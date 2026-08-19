@@ -48,6 +48,12 @@ import '../../components/chat/ReasoningBlock.js';
 import '../../components/Control.js';
 import type { CitationHoverCard, CitationHoverData } from '../../components/chat/CitationHoverCard.js';
 import type { CitationSelectDetail } from '../../components/chat/citationTypes.js';
+import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
+import {
+  sv3CitationAnchor,
+  sv3MatchedSentence,
+  sv3SourceIndex,
+} from './sv3-citation-anchor.js';
 import type { ReasoningController } from '../../controllers/ReasoningController.js';
 // The shared clipboard util (slice 486 G35) — permission-denied and API-absent already handled, so a
 // per-turn copy needs no error path of its own.
@@ -124,8 +130,21 @@ export const SV3_CITATION_OPEN = 'sv3-citation-open';
 
 export interface Sv3CitationOpen {
   readonly docPath: string;
-  /** The cited passage's 0-based inclusive line span, or null when the citation carried none. */
-  readonly range: { readonly startLine: number; readonly endLine: number } | null;
+  /**
+   * Tempdoc 849 §3 — the cited passage in the producer's OWN coordinate: document-relative character
+   * offsets plus the excerpt quoted from them, or null when the citation carried no usable span. The
+   * derived line numbers this used to carry are gone: they were computed 1-based upstream and read
+   * 0-based by the reader, an off-by-one nothing downstream could recompute because the primary they
+   * came from was dropped at this very hop.
+   */
+  readonly anchor: DocumentCitationAnchor | null;
+  /** Which turn cited it. */
+  readonly turnId: string;
+  /**
+   * Where the source sits in that turn's retrieval set (`-1` ⇒ not in it). With {@link turnId} this
+   * is how a claim match arriving AFTER the pane opened is re-resolved onto the open pane (§4).
+   */
+  readonly sourceIndex: number;
 }
 
 export type Sv3RunDecision =
@@ -1327,6 +1346,7 @@ export class Sv3Main extends JfElement {
                       class="sv3-markdown"
                       prose
                       data-testid="sv3-turn-markdown"
+                      data-turn-id=${turn.id}
                       .text=${turn.answer}
                       ?is-streaming=${streaming}
                       .citations=${[...(turn.evidence?.marks ?? [])]}
@@ -1755,6 +1775,7 @@ export class Sv3Main extends JfElement {
       class="sv3-citations"
       id=${sourcesBodyId(turn.id)}
       data-testid="sv3-turn-citations"
+      data-turn-id=${turn.id}
       .externalDisclosure=${true}
       .sourcesExpanded=${true}
       .citations=${[...turn.evidence.matches]}
@@ -1785,13 +1806,16 @@ export class Sv3Main extends JfElement {
     event.stopPropagation();
     const detail = (event as CustomEvent<CitationSelectDetail>).detail;
     if (!detail?.parentDocId) return;
-    const range =
-      Number.isFinite(detail.startLine) && Number.isFinite(detail.endLine)
-        ? { startLine: detail.startLine, endLine: detail.endLine }
-        : null;
+    // WHICH TURN raised it comes off the listening element, not off a per-turn closure: this handler
+    // is bound on every turn's markdown block and citations panel, and a closure would be a new
+    // function identity on every render — re-binding two listeners per turn on every streamed chunk.
+    const turnId = (event.currentTarget as HTMLElement | null)?.dataset.turnId ?? '';
+    const turn = this.turns.find((candidate) => candidate.id === turnId) ?? null;
+    const sourceIndex = sv3SourceIndex(turn, detail);
+    const anchor = sv3CitationAnchor(detail, sv3MatchedSentence(turn, sourceIndex));
     this.dispatchEvent(
       new CustomEvent<Sv3CitationOpen>(SV3_CITATION_OPEN, {
-        detail: { docPath: detail.parentDocId, range },
+        detail: { docPath: detail.parentDocId, anchor, turnId, sourceIndex },
         bubbles: true,
         composed: true,
       }),

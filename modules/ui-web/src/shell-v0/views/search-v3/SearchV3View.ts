@@ -240,7 +240,8 @@ import {
   type Sv3RunView,
 } from './sv3-run.js';
 import { type Sv3CitationOpen, type Sv3RunDecision } from './Sv3Main.js';
-import type { DocumentLineRange } from '../../components/documentPane/DocumentPane.js';
+import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
+import { sv3MatchedSentence, SV3_SOURCE_INDEX_ABSENT } from './sv3-citation-anchor.js';
 import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiStateStore.js';
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
@@ -486,7 +487,8 @@ export class SearchV3View extends JfElement {
     sidebarCollapsed: { type: Boolean, reflect: true, attribute: 'sidebar-collapsed' },
     resizing: { type: Boolean, reflect: true },
     paneDocPath: { state: true },
-    paneRange: { state: true },
+    paneCitation: { state: true },
+    paneSource: { state: true },
     paneWidthPx: { state: true },
     paneOverlay: { type: Boolean, reflect: true, attribute: 'pane-overlay' },
     renamingId: { state: true },
@@ -533,8 +535,18 @@ export class SearchV3View extends JfElement {
    * path can reach the reading surface from this window, because nothing else assigns here.
    */
   declare paneDocPath: string | null;
-  /** The cited passage's line span, handed to the shared reader as its `highlightRange`. */
-  declare paneRange: DocumentLineRange | null;
+  /**
+   * The cited passage in CHARACTER coordinates, handed to the reader as its anchor (tempdoc 849 §3).
+   * The reader derives its own lines from it; this window converts nothing.
+   */
+  declare paneCitation: DocumentCitationAnchor | null;
+  /**
+   * Which turn's which source the open pane is showing, so a claim match that lands AFTER the pane
+   * opened can be re-resolved onto it (§4). `rag.citations` arrives at retrieval time and
+   * `rag.citation_matches` only once the answer has streamed, so the pane is routinely opened before
+   * its matched sentence exists — the upgrade is the common path, not a repair.
+   */
+  declare paneSource: { readonly turnId: string; readonly sourceIndex: number } | null;
   /** The pane's chosen width. Held whether or not the pane is open, exactly as the sidebar's is. */
   declare paneWidthPx: number;
   /** The pane presents as a window-scoped overlay — the spec's 980px switch, asked of OUR box. */
@@ -647,7 +659,8 @@ export class SearchV3View extends JfElement {
     this.sidebarCollapsed = false;
     this.resizing = false;
     this.paneDocPath = null;
-    this.paneRange = null;
+    this.paneCitation = null;
+    this.paneSource = null;
     this.paneWidthPx = SV3_PANE_DEFAULT_PX;
     this.paneOverlay = false;
     this.renamingId = null;
@@ -780,6 +793,16 @@ export class SearchV3View extends JfElement {
    * The shell re-sets `api-base` on a CACHED element rather than reconstructing it, so the base has
    * to follow the attribute and not just the first connect.
    */
+  /**
+   * The late claim match is resolved BEFORE the render that will show it, not after: writing state
+   * from `updated()` schedules a second update for the same frame and Lit's dev build warns about
+   * exactly that. The shared reader does its equivalent derivation in `willUpdate` for the same
+   * reason.
+   */
+  protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('sessions')) this.upgradeOpenPaneAnchor();
+  }
+
   protected override updated(changed: Map<string, unknown>): void {
     if (changed.has('apiBase')) {
       setSearchApiBase(this.apiBase || '');
@@ -1456,7 +1479,29 @@ export class SearchV3View extends JfElement {
     this.paneWidthPx = clampSv3PaneWidth(this.paneWidthPx, available, this.sidebarOccupiedWidth());
     this.applyPaneWidth(this.paneWidthPx);
     this.paneDocPath = detail.docPath;
-    this.paneRange = detail.range;
+    this.paneCitation = detail.anchor ?? null;
+    this.paneSource = { turnId: detail.turnId, sourceIndex: detail.sourceIndex };
+  }
+
+  /**
+   * Tempdoc 849 §4 — the late claim match. A citation followed while the answer is still streaming
+   * has a retrieved chunk and no matched sentence, so the pane opens tinting the passage; when
+   * `rag.citation_matches` lands, the open pane gains its sentence and lands the strong emphasis.
+   *
+   * Only the OPEN pane's own source is upgraded, and only from `null` — a match for a different
+   * source does not touch it, and a pane that already has its sentence is not re-anchored by a later
+   * projection of the same turn. The reader's `armedHighlightKey` guard does the rest: the new,
+   * distinct range arms the strong phase exactly once.
+   */
+  private upgradeOpenPaneAnchor(): void {
+    const source = this.paneSource;
+    const anchor = this.paneCitation;
+    if (source === null || anchor === null || anchor.sentenceText !== null) return;
+    if (source.sourceIndex === SV3_SOURCE_INDEX_ABSENT) return;
+    const turn = activeTurns(this.sessions).find((candidate) => candidate.id === source.turnId) ?? null;
+    const sentence = sv3MatchedSentence(turn, source.sourceIndex);
+    if (sentence === null) return;
+    this.paneCitation = { ...anchor, sentenceText: sentence };
   }
 
   /**
@@ -1465,7 +1510,8 @@ export class SearchV3View extends JfElement {
    */
   private closePane(): void {
     this.paneDocPath = null;
-    this.paneRange = null;
+    this.paneCitation = null;
+    this.paneSource = null;
   }
 
   private readonly onHostKeydown = (event: KeyboardEvent): void => {
@@ -2402,7 +2448,7 @@ export class SearchV3View extends JfElement {
       <jf-sv3-pane
         data-testid="sv3-pane"
         .docPath=${this.paneDocPath}
-        .highlightRange=${this.paneRange}
+        .citation=${this.paneCitation}
         ?overlay=${this.paneOverlay}
         api-base=${this.apiBase}
         @sv3-pane-close=${this.closePane}
