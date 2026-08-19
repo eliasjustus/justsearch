@@ -57,6 +57,73 @@ function fakeCitation(overrides: Partial<CitationMatch> = {}): CitationMatch {
   };
 }
 
+/**
+ * Tempdoc 849 slice 3 §5 — the RETRIEVED-vs-RECEIVED badge on the source card.
+ *
+ * Its own describe block because the discipline being pinned is not "the badge renders" but "the
+ * badge renders EXACTLY when the producer resolved the state": the absence case is the one that
+ * keeps a pre-849 conversation from being retroactively described.
+ */
+describe('CitationsPanel — 849 inclusion badge', () => {
+  async function panelText(source: RetrievalCitation): Promise<string> {
+    const el = document.createElement('jf-citations-panel') as CitationsPanel;
+    el.sources = [source];
+    el.citations = [fakeCitation({ parentDocId: source.parentDocId, sourceIndex: 0 })];
+    document.body.appendChild(el);
+    await settle(el);
+    const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
+    el.remove();
+    return text;
+  }
+
+  it('names a DROPPED passage as retrieved but never sent to the model', async () => {
+    const text = await panelText(fakeSource({ contextInclusion: 'dropped' }));
+    expect(text).toContain('Retrieved · never sent to the model');
+  });
+
+  it('a DROPPED passage does not ALSO claim it grounded a sentence', async () => {
+    // Slice-3 review MEDIUM-3. The pair is reachable: `RAGContext.java:429` hands the matcher every
+    // kept citation regardless of the cut, and the matcher scores against chunk text it re-fetches
+    // by identity — not against what the model was shown. So this card's fixture (a dropped passage
+    // WITH a citation match) is the real production shape, and it used to render both
+    // "never sent to the model" and "Grounds 1 sentence".
+    const text = await panelText(fakeSource({ contextInclusion: 'dropped' }));
+    expect(text).toContain('Retrieved · never sent to the model');
+    // The badge stands alone. Its producer observed the actual cut; the grounding label is a
+    // similarity against text the model never saw, and the two cannot both be informative.
+    expect(text).not.toContain('Grounds 1 sentence');
+  });
+
+  it('names the partial and included states in the same vocabulary — and they KEEP their grounding', async () => {
+    // The discriminator for the suppression above: it must be scoped to `dropped`, not a blanket
+    // removal of the grounding badge from every card that carries an inclusion state.
+    const partial = await panelText(fakeSource({ contextInclusion: 'partial' }));
+    expect(partial).toContain('Partly sent to the model');
+    expect(partial).toContain('Grounds 1 sentence');
+    const included = await panelText(fakeSource({ contextInclusion: 'included' }));
+    expect(included).toContain('Sent to the model');
+    expect(included).toContain('Grounds 1 sentence');
+  });
+
+  it('renders NOTHING for a citation that said nothing about inclusion', async () => {
+    // Every conversation persisted before 849 lands here. The card must be silent — not "included",
+    // and not a placeholder caveat, which would put a hedge on the entire history.
+    const text = await panelText(fakeSource());
+    expect(text).not.toContain('sent to the model');
+    expect(text).not.toContain('Sent to the model');
+    // Non-vacuity: the card DID render (so "no badge" is the badge's absence, not an empty panel).
+    expect(text).toContain('Grounds 1 sentence');
+  });
+
+  it('an unrecognised state is absence, not a guess', async () => {
+    const text = await panelText(
+      fakeSource({ contextInclusion: 'mostly' as never }),
+    );
+    expect(text).not.toContain('sent to the model');
+    expect(text).not.toContain('mostly');
+  });
+});
+
 describe('CitationsPanel', () => {
   it('renders nothing when both arrays are empty', async () => {
     const el = document.createElement('jf-citations-panel') as CitationsPanel;

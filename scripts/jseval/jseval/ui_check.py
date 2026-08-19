@@ -1479,6 +1479,105 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.locator(
             f'button.source[data-cite-key="{cite_key}"][data-selected][aria-current="true"]'
         ).first.wait_for(state="visible", timeout=10_000)
+        # --- Tempdoc 849 slice 3 §D-8: EXTENDED, not duplicated. ---
+        # The card click that proved the selection above ALSO opens the window's reading pane, so
+        # this step is already standing in the state the evidence reader's header renders in.
+        # Minting a parallel `sv3-citation-pane` step would have paid the 5-minute live-ask cost a
+        # second time to reach a state this run is already in.
+        #
+        # It is what gives `Sv3Pane.ts` and `SearchV3View.ts` their first step-index rows: the pane
+        # is a region of the window grid and the header's facts are joined in the view, so neither
+        # file had any capture that could see it.
+        await page.locator('[data-testid="sv3-pane-document"]').first.wait_for(
+            state="visible", timeout=15_000
+        )
+        # The header is a condition-poll, not a screenshot: this turn's citation carries a chunk
+        # ordinal and a retrieval mode at minimum, so a pane that renders no header at all is a
+        # regression rather than an honest silence. Which FACTS it carries is deliberately not
+        # asserted here — the inclusion state depends on whether this run's context fitted, and
+        # `sv3-citation-dropped` below is the step that forces the interesting case.
+        await page.locator('[data-testid="citation-header"]').first.wait_for(
+            state="visible", timeout=15_000
+        )
+        await asyncio.sleep(0.3)
+
+    async def setup_sv3_citation_dropped(page):
+        # Tempdoc 849 slice 3 §D-8 — THE FLAGSHIP STATE: a source that was retrieved and never
+        # reached the model.
+        #
+        # WHY THIS IS ITS OWN STEP rather than another extension of the one above: the two states
+        # are mutually exclusive within a turn's citation. `sv3-citation-selected` asks a question
+        # whose context fits (that is what makes its grounded marks reliable); this one asks a
+        # question whose context provably does NOT. One ask cannot be both.
+        #
+        # WHAT MAKES IT DETERMINISTIC is 845's budget arithmetic, driven entirely from the UI. The
+        # composer's THOROUGH rung sends `topK: 12` AND `maxTokens: 3072` (`sv3-ask.ts:158-168`), and
+        # since 845 the input budget is the live context window minus the turn's real completion
+        # reserve — so the rung simultaneously maximises the retrieved set and shrinks the room it
+        # has to fit in. Twelve passages against a reserve-shrunk budget overflow at the boundary
+        # section (`partial`) and beyond it (`dropped`); the step drives that rather than hoping a
+        # natural query overflows, which is the §D-8 instruction.
+        #
+        # LIVE STACK ONLY, for the same reason `sv3-citation-selected` is: a v3 turn's evidence comes
+        # only from the live stream, and `fixtures.ts` in that directory is a constants module, not a
+        # turn-seeding fixture source. Not registered in `governance/ui-proportion-baseline.v1.json`,
+        # whose gate captures under `--fixtures` where this state is unreachable.
+        #
+        # NOT YET CAPTURED LIVE, and `required=False` until it is — see the Step() registration for
+        # the reversal trigger. The arithmetic above makes overflow plausible; `maxTokens` is the
+        # completion reserve, not proof that twelve passages exceed what remains. That proof is the
+        # first live capture's job, and until it exists this step must not be able to fail a run for
+        # a reason that is not a regression.
+        await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
+        await page.evaluate(
+            "() => { location.hash = 'justsearch://surface/core.search-v3-surface'; }"
+        )
+        await page.locator("jf-sv3-window").first.wait_for(state="visible", timeout=20_000)
+        # Pick the THOROUGH rung before asking — the whole determinism argument rests on it.
+        await page.locator('[data-testid="sv3-composer-effort"]').first.click(timeout=15_000)
+        await page.locator(
+            '[data-testid="sv3-composer-effort-option"][data-effort="thorough"]'
+        ).first.click(timeout=10_000)
+        ta = page.locator('[data-testid="sv3-composer-input"]').first
+        await ta.wait_for(state="visible", timeout=15_000)
+        await ta.click()
+        # A BROAD ask, deliberately: the retrieval must return its full topK of long passages, so the
+        # question names several unrelated areas rather than one specific fact.
+        await ta.fill(
+            "Compare everything the indexed documents say about indexing, search ranking, "
+            "the inference runtime, the installer and the governance gates, quoting the "
+            "relevant passages from each area at length."
+        )
+        await ta.press("Enter")
+        await page.locator('[data-testid="sv3-turn-sources"]').first.wait_for(
+            state="visible", timeout=300_000
+        )
+        await page.locator('[data-testid="sv3-turn-sources"]').first.click(timeout=15_000)
+        # THE ASSERTION. A source card carrying a non-included inclusion badge is the state nothing
+        # in this product could show before slice 3 — the reader can finally see that a source in
+        # the panel never reached the model. A condition-poll that RAISES on timeout, so a run whose
+        # context fitted fails the step instead of being photographed as a success.
+        await page.wait_for_function(
+            """() => {
+              // The badge lives inside jf-citations-panel's shadow root, so a flat query cannot
+              // see it; walk every open root the way the other shadow-piercing probes here do.
+              const seen = [];
+              const walk = (node) => {
+                for (const el of node.querySelectorAll('.inclusion')) seen.push(el.className);
+                for (const el of node.querySelectorAll('*')) if (el.shadowRoot) walk(el.shadowRoot);
+              };
+              walk(document);
+              return seen.some((c) => c.includes('dropped') || c.includes('partial'));
+            }""",
+            timeout=60_000,
+        )
+        # …and the same fact reaches the READING pane's header, which is where a reader who follows
+        # the citation meets it.
+        card = page.locator('[data-testid="sv3-turn-citations"] button.source').first
+        await card.click(timeout=10_000)
+        await page.locator('[data-testid="citation-header"]').first.wait_for(
+            state="visible", timeout=15_000
+        )
         await asyncio.sleep(0.3)
 
     async def setup_responsive(page):
@@ -1725,6 +1824,25 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # check.
         Step("sv3-citation-selected", setup=setup_sv3_citation_selected, isolated=True,
              init_scripts=[ai_init]),
+        # --- Tempdoc 849 slice 3 §D-8: the retrieved-but-never-sent state ---
+        # The one state the evidence reader exists to make visible, and the one the step above
+        # cannot reach: its ask is chosen so the context FITS.
+        #
+        # `required=False`, DELIBERATELY AND TEMPORARILY, against §D-8's "it must be required=True"
+        # — with the reversal trigger named so this does not become the permanent hedge that
+        # instruction was written against. §D-8's determinism argument was that the THOROUGH rung's
+        # `maxTokens: 3072` shrinks the input budget; slice-3 review established that `maxTokens` is
+        # the completion RESERVE, which makes overflow PLAUSIBLE but is not proof that twelve
+        # passages exceed the remaining budget on a real corpus. A required step that cannot be shown
+        # to reach its state fails every run for a reason that is not a regression, and a harness
+        # that cries wolf is worse than one step short.
+        #
+        # TRIGGER: the first live capture (next dev-stack session). Confirms overflow → flip to
+        # `required=True` immediately, which is where §D-8 wants it. Does NOT overflow → retune the
+        # ask (more documents, longer passages, a higher rung) until it does, THEN flip. Either way
+        # the flag moves at that session; it does not stay False by default.
+        Step("sv3-citation-dropped", setup=setup_sv3_citation_dropped, isolated=True,
+             init_scripts=[ai_init], required=False),
         Step("responsive-collapsed",     setup=setup_responsive,      isolated=True),
         # action-panel-open / action-panel-filtered retired (615 §6.1b) — no shell-v0 equivalent.
 

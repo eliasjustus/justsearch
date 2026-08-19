@@ -737,9 +737,238 @@ export function toEvidenceItem(c: RetrievalCitation): EvidenceItem {
  * for the same reason — an unknown state is not a known one, and guessing which of the three it
  * meant is how a vocabulary drift becomes a false claim about evidence.
  */
-function contextInclusionOf(
+export function contextInclusionOf(
   c: Pick<RetrievalCitation, 'contextInclusion'> | null | undefined,
 ): ContextInclusion | null {
   const raw = c?.contextInclusion;
   return raw === 'included' || raw === 'partial' || raw === 'dropped' ? raw : null;
+}
+
+/**
+ * Tempdoc 849 §7 — the retrieved-vs-received badge, as WORDS. One authority, because the sources
+ * panel and the reading pane must not describe the same budget fact two different ways.
+ *
+ * <p>`detail` is the sentence, not a restatement of the label: the label answers "what happened",
+ * the detail answers "so what". Neither ever quotes `contextIncludedChars` — 849 §9 Q6 kept that
+ * record-only, because a character count invites precision about a cut the reader cannot see.
+ */
+export interface InclusionBadge {
+  readonly state: ContextInclusion;
+  readonly label: string;
+  readonly detail: string;
+}
+
+/**
+ * The badge for a resolved inclusion state — `null` for ABSENCE, which is the whole point.
+ *
+ * <p>The `dropped` wording is the flagship. "Retrieved" is the half the reader can already see (the
+ * source is sitting in the panel); "never sent to the model" is the half nothing in the product has
+ * ever said. It deliberately echoes {@link sourceGroundingLabel}'s `Retrieved · not cited` shape, so
+ * the two budget facts read as siblings rather than as a verdict and an error — they are two
+ * different cuts (§5.5) and neither is a fault.
+ */
+export function inclusionBadge(inclusion: ContextInclusion | null): InclusionBadge | null {
+  switch (inclusion) {
+    case 'included':
+      return {
+        state: 'included',
+        label: 'Sent to the model',
+        detail: 'The whole of this passage was in the prompt the model answered from.',
+      };
+    case 'partial':
+      return {
+        state: 'partial',
+        label: 'Partly sent to the model',
+        detail:
+          'The prompt had room for only the start of this passage, so the model never saw the rest of it.',
+      };
+    case 'dropped':
+      return {
+        state: 'dropped',
+        label: 'Retrieved · never sent to the model',
+        detail:
+          'The search found this passage, but the prompt had no room left for it — the model answered without ever seeing it.',
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Tempdoc 849 §7 — the header's ONE score metric, named by what it MEASURES: how closely the
+ * answer's sentence matched this passage. `RetrievalCitation.score` measures something else
+ * entirely and is deliberately not rendered at all — see {@link claimMatch}.
+ */
+export const CLAIM_MATCH_METRIC = 'Claim match';
+
+/** A score rendered as its metric plus a BAND — never a bare percentage (§7 rule 2). */
+export interface ScoreBand {
+  readonly metric: string;
+  readonly band: 'strong' | 'moderate' | 'weak';
+}
+
+/**
+ * The claim side, from the grounding join. `null` for an UNCITED source: there is no matched
+ * sentence, so there is no similarity to band — and banding a `0` would print "weak claim match"
+ * over a source no claim ever referenced.
+ *
+ * <p>THE ONLY banded score in the header, and the reason its retrieval sibling does not exist is
+ * worth keeping next to it. `RetrievalCitation.score` is the RAW Lucene hit score
+ * (`RagContextOps.java:395` — `setScore(hit.score())`; the chunk reranker reorders candidates and
+ * never writes its cross-encoder scores back), while {@link evidenceTier}'s thresholds are anchored
+ * to the cross-encoder cutoff. Banding one through the other is not merely imprecise, it is
+ * CONSTANT: RRF-fused hybrid scores cap around 0.09 and would always read "weak", raw BM25 scores
+ * are unbounded and would always clamp to "strong". A band that cannot vary with the evidence is
+ * negative information — it looks like a measurement and carries none.
+ */
+export function claimMatch(g: SourceGrounding | null): ScoreBand | null {
+  if (g === null || !g.cited) return null;
+  return { metric: CLAIM_MATCH_METRIC, band: groundingLabel(g.similarity) };
+}
+
+/** How much of the reader's own question the header quotes back before eliding it. */
+const TURN_LABEL_MAX_CHARS = 80;
+
+/**
+ * The turn a citation was followed from, as the reader's own words. Elided at a word boundary so a
+ * long question does not become the header.
+ */
+export function citingTurnLabel(question: string | null | undefined): string | null {
+  const q = (question ?? '').trim().replace(/\s+/g, ' ');
+  if (q.length === 0) return null;
+  if (q.length <= TURN_LABEL_MAX_CHARS) return q;
+  const cut = q.slice(0, TURN_LABEL_MAX_CHARS);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > TURN_LABEL_MAX_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+/**
+ * Tempdoc 849 §7 — the CITATION HEADER: what the reading pane can honestly say about the citation
+ * it was opened by.
+ *
+ * <p>Named for what it is. `DocumentPane.provenance` is TEXT-EXTRACTION provenance (the OCR/text-layer
+ * route) and keeps its name, its line and its behaviour; overloading "provenance" with this would
+ * have merged two unrelated facts under one word (§7's opening instruction).
+ *
+ * <p>Every member is nullable and every null means the same thing: the producer said nothing, so the
+ * header says nothing. There is no member whose absence is rendered as a default.
+ */
+export interface CitationHeader {
+  /** The question whose answer cited this document, elided ({@link citingTurnLabel}). */
+  readonly turnLabel: string | null;
+  /** `Passage 4 of 9` — suppressed when the producer had no chunk ordinal ({@link DOC_LEVEL_CHUNK_SENTINEL}). */
+  readonly passage: string | null;
+  /** §5 retrieved-vs-received. Absent ⇒ nothing is rendered, never "included". */
+  readonly inclusion: InclusionBadge | null;
+  /**
+   * {@link sourceGroundingLabel} verbatim — the panel's own words, not a second vocabulary.
+   * Suppressed entirely on a `dropped` passage; see {@link suppressGroundingFor}.
+   */
+  readonly grounding: string | null;
+  /** The claim similarity, labelled by what it measures. Suppressed with {@link grounding}. */
+  readonly claim: ScoreBand | null;
+  /**
+   * Tempdoc 849 slice 2 S10 — the citation named a span the reader cannot use (`endChar <=
+   * startChar`, or a non-finite offset). Distinct from "this pane was not opened by a citation",
+   * which is the header being absent altogether.
+   */
+  readonly spanUnusable: boolean;
+}
+
+/**
+ * Do two headers say the same thing? Value equality, because {@link citationHeader} mints a fresh
+ * object on every call and a consumer that re-derives on each stream event would otherwise hand its
+ * renderer a new identity per chunk for words that never moved.
+ *
+ * <p>Compares every member of {@link CitationHeader} — `evidenceProjection.test` pins the member
+ * COUNT so a member added to the type without a line here fails loudly instead of silently
+ * disappearing from the change detection.
+ */
+export function sameCitationHeader(
+  a: CitationHeader | null,
+  b: CitationHeader | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.turnLabel === b.turnLabel &&
+    a.passage === b.passage &&
+    a.inclusion?.state === b.inclusion?.state &&
+    a.grounding === b.grounding &&
+    a.claim?.metric === b.claim?.metric &&
+    a.claim?.band === b.claim?.band &&
+    a.spanUnusable === b.spanUnusable
+  );
+}
+
+/** What the pane says when the citation's own span was unusable (849 S10). */
+export const CITATION_SPAN_UNUSABLE =
+  'This citation did not record a usable position in the document, so nothing is highlighted.';
+
+/**
+ * Tempdoc 849 slice-3 review MEDIUM-3 — a `dropped` passage may not carry a grounding claim.
+ *
+ * <p>The pair is REACHABLE, not hypothetical: `RAGContext.java:429` stashes every kept citation for
+ * the matcher regardless of what the cut did with it, and `StreamingCitationMatcher` scores answer
+ * sentences against chunk text it RE-FETCHES by `(parentDocId, chunkIndex)` — not against what the
+ * model was shown. So a passage the prompt had no room for can still be "matched" against the
+ * answer, and the card would read "Retrieved · never sent to the model" beside "Grounds 1 sentence".
+ *
+ * <p>Those two statements cannot both be informative. The inclusion state has a producer that
+ * observed the actual cut; the grounding label is a similarity between the answer and text the model
+ * never saw. So the inclusion badge stands alone and the grounding claim is withheld — the honest
+ * reduction, rather than printing a contradiction and leaving the reader to pick which half to
+ * believe. The deeper fix (never showing the matcher a dropped citation) is a backend follow-up,
+ * logged to the inbox; this is the presentation-side refusal to state the contradiction.
+ */
+export function suppressGroundingFor(inclusion: ContextInclusion | null): boolean {
+  return inclusion === 'dropped';
+}
+
+/**
+ * Project a followed citation into its header. `null` when there is nothing at all to say — a
+ * header of five nulls is a row of empty space, not honesty.
+ *
+ * <p>One projector rather than five call sites, so §7's rules and the MEDIUM-3 suppression above
+ * hold wherever a header is built: the pane and the sources panel cannot disagree about whether a
+ * dropped passage is allowed to claim it grounded something.
+ */
+export function citationHeader(input: {
+  readonly citation: RetrievalCitation | null;
+  readonly grounding: SourceGrounding | null;
+  readonly question: string | null;
+  readonly spanUnusable: boolean;
+}): CitationHeader | null {
+  const { citation, grounding, question, spanUnusable } = input;
+  const inclusion = contextInclusionOf(citation);
+  const claimable = suppressGroundingFor(inclusion) ? null : grounding;
+  const header: CitationHeader = {
+    turnLabel: citingTurnLabel(question),
+    passage: passageLabel(citation),
+    inclusion: inclusionBadge(inclusion),
+    grounding: claimable === null ? null : sourceGroundingLabel(claimable),
+    claim: claimMatch(claimable),
+    spanUnusable,
+  };
+  const facts: ReadonlyArray<unknown> = [
+    header.turnLabel,
+    header.passage,
+    header.inclusion,
+    header.grounding,
+    header.claim,
+  ];
+  return facts.some((fact) => fact !== null) || header.spanUnusable ? header : null;
+}
+
+/**
+ * `Passage 4 of 9`, 1-based for the reader. Suppressed on the ABSENT sentinel and on a total that
+ * cannot contain the index — a chunk ordinal the producer did not record is not passage zero.
+ */
+function passageLabel(citation: RetrievalCitation | null): string | null {
+  if (citation === null) return null;
+  const { chunkIndex, chunkTotal } = citation;
+  if (!Number.isInteger(chunkIndex) || chunkIndex === DOC_LEVEL_CHUNK_SENTINEL || chunkIndex < 0) {
+    return null;
+  }
+  if (!Number.isInteger(chunkTotal) || chunkTotal <= chunkIndex) return null;
+  return `Passage ${chunkIndex + 1} of ${chunkTotal}`;
 }
