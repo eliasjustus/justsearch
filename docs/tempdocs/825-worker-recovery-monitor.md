@@ -1,7 +1,7 @@
 ---
 title: "825 — Worker recovery for the knowledgeServer==null state + worker.spawn.failed disambiguation"
 type: tempdocs
-status: "IMPLEMENTED (2026-08-19) — owner approved the D5 recommendations 2026-08-19 (all five). Option B built, tested to the isolated-backend tier; the LIVE dev-stack leg is the one open item (see §I.7)."
+status: "IMPLEMENTED + LIVE-VERIFIED (2026-08-19) — owner approved the D5 recommendations 2026-08-19 (all five); independent review applied (§I.9); live dev-stack leg executed over three runs, acceptance criterion MET (§I.7), with its two message-honesty findings fixed (§I.10)."
 created: 2026-08-14
 author: agent session 776e10cd-eef9-4873-a027-1fc2887a334d (Fable orchestration)
 category: structural / lifecycle / state-truthfulness (821 class C1)
@@ -323,13 +323,54 @@ Commands run (all green unless noted):
 - `node scripts/governance/run.mjs --gate hook-integrity` FAILS with 6 `unwired-hook` findings, all
   pre-existing and unrelated (this worktree's gitignored `settings.local.json` predates six hooks).
 
-**Open item — the LIVE dev-stack leg is PENDING.** Everything above is unit / component /
-isolated-backend tier. The acceptance criterion's "live-verified on the dev stack, not just
-unit-tested" (`static-green ≠ live-working`) has NOT been run: it is out of the implementing agent's
-scope by instruction, and the orchestrator runs it supervised before merge. Suggested procedure:
-start the stack with `-Djustsearch.worker.boot.faultInjectAttempts=3`, watch `/api/health` go
-`worker.spawn.failed` → `worker.recovering` → READY, confirm ONE `worker.restart-attempted` in
-Recent Events, and separately POST `/api/worker/restart` in the pinned state to see the 202.
+**LIVE dev-stack leg — EXECUTED 2026-08-19 (supervised by the orchestrator, three runs from this
+worktree's dist at git `6a1f4efb`). The acceptance criterion is MET**: "a transient bootstrap failure
+that exhausts #439's boot retries converges to a READY worker without process restart, live-verified
+on the dev stack, not just unit-tested" (`static-green ≠ live-working`) is now a measured fact, not
+an inference from the isolated-backend tier.
+
+- **Run 1 — convergence** (countdown injector `JUSTSEARCH_WORKER_BOOT_FAULT_INJECT_ATTEMPTS=3`,
+  dev-runner run `ea3bd709`). Converged to READY **without a process restart**. Process-level
+  evidence: three rotated worker logs at the boot-retry cadence (`worker.log.2` 16:23:51, `.1`
+  16:23:58, current 16:24:15 local — the first attempt's log had already rotated out at the keep-3
+  cap), the final worker boot ~17s after the last failure (the recovery-tick spacing, not the boot
+  retry's 500ms), `/api/health` worker READY, and the runtime manifest carrying live
+  `grpcPort 58448` with `readyAt` — **the F3 fix asserted LIVE**, on the exact projection the review
+  found publishing a null port.
+- **Run 2 — the terminal state and the manual path** (permanent knob
+  `JUSTSEARCH_WORKER_PID_VALIDATION_TIMEOUT_MS=1`, run `c365d9dd`). `/api/health` reported lifecycle
+  `ERROR` / `worker.spawn_recovery_exhausted` behind an honest 503 envelope. A post-terminal
+  `POST /api/worker/restart` was declined —
+  `{"error":"Worker recovery declined: EXHAUSTED","errorCode":"SERVICE_UNAVAILABLE","errorClass":"TRANSIENT","retryable":true}`,
+  HTTP 503 — proving **the budget is not bypassable manually (F5 live)**, and exposing the message
+  defect fixed in §I.10 below.
+- **Run 3 — the whole arc**, from a status-code-agnostic watcher (same knob, run `8fd7b6df`):
+
+  | wall clock | `/api/health` |
+  |---|---|
+  | 16:31:16.8 | `STARTING` / `worker.starting` |
+  | 16:31:31.3 | `ERROR` / `worker.spawn.failed` |
+  | 16:31:46.5 | `DEGRADED` / `worker.recovering` — ONE entry covering the whole bounded budget |
+  | 16:34:25.3 | `ERROR` / `worker.spawn_recovery_exhausted` (arc 2:39) |
+
+  The single `worker.recovering` row spanning the entire multi-attempt budget is **cross-cycle flap
+  suppression observed live** — the property deviation 8 records as component-tier-only in the E2E
+  (whose run converges on attempt 1). Run 3 was then killed by a peer session's `stale_reclaim`,
+  unrelated to 825 and logged separately.
+
+Honest limits of the live leg: **occurrence-CONTENT assertions stay at the E2E tier.** The
+occurrence stream is SSE-only — there is no REST read-back endpoint — so the live runs evidence the
+arc through `/api/health` transitions, the manifest, and worker-log rotation, while
+`worker.restart-attempted`'s `{attempt, faultKind:"boot", backoffMs}` and the exactly-one count are
+asserted by `WorkerBootRecoveryE2ETest` against the SSE snapshot.
+
+One finding the live leg produced that the tiers below it could not: a `POST /api/worker/restart`
+fired 0.0s after the pin became visible answered
+`503 {"error":"Knowledge Server not configured"}` — the **pre-bind startup window**. The bootstrap
+narrates the pin inside `tryStartKnowledgeServer`, while the recovery authority is bound a moment
+later in `connectWorker`'s else-arm (`HeadlessApp.java:461`/`:511`). The window is milliseconds-scale
+and inherent to the F1-approved narration ordering, so it is **ACCEPTED as behaviour** — but its
+message was stale, and §I.10 fixes that.
 
 ### I.8 Deviations from the design, argued
 
@@ -412,3 +453,40 @@ green (1m12s); `:modules:system-tests:integrationTest` for `WorkerBootRecoveryE2
 `IsolatedBackendFixtureFailFastTest` green (READY 25.5s after spawn, manifest port asserted);
 `check-readiness-reason-codes` OK. The FE was not touched by this pass. The reviewer's confirmed-clean
 items (the ReasonRetention arm, the FE tail, deviation 5) were left alone.
+
+### I.10 Message-honesty fixes from the live leg (2026-08-19)
+
+Two response-shape defects the live runs exposed — the class of thing only a live leg finds, because
+every tier below it asserts the status code and the mechanism, not the sentence a person reads. Both
+are wording/classification only: no mechanism, no status code, and no recovery-policy change.
+
+**1. A terminal decline was advertised as retryable.** Run 2 measured
+`errorClass: TRANSIENT, retryable: true` on `EXHAUSTED` — a state where the very next request
+provably returns the same answer until the application restarts, so the retry hint is one no client
+can act on. Fixed with a dedicated `ApiErrorCode.WORKER_RECOVERY_EXHAUSTED(ErrorClass.PERMANENT)`
+(`ApiErrorCode.java:428`) used by the `EXHAUSTED` / `VETOED_RESTART_EXHAUSTED` arms
+(`InferenceHandlers.java:721`): `retryable=false` is then derived from the class (the invariant
+`ApiErrorCodeInvariantTest` already pins), the envelope's `i18nKey` becomes
+`errors.WORKER_RECOVERY_EXHAUSTED`, and the catalog entry names the one remedy that works. The
+still-supervised veto is deliberately NOT swept in with it: it keeps `SERVICE_UNAVAILABLE` /
+TRANSIENT and now says "retry shortly" (`:701`), because that refusal really can change on the next
+tick — the same temporary-vs-terminal distinction review F2 drew inside the decision, now visible on
+the wire.
+
+**2. The pre-bind window claimed "not configured".** Run 3's 0.0s POST hit the startup window and was
+told the knowledge server was not configured, when it was mid-boot. The not-yet-bound branch now
+answers "Worker recovery is still initializing — retry shortly" (`InferenceHandlers.java:643`), still
+`SERVICE_UNAVAILABLE` / TRANSIENT / retryable — correct there, since retrying does resolve it.
+
+The taxonomy was checked before being extended: `ErrorClass` has exactly
+`TRANSIENT | PERMANENT | POLICY | VALIDATION`, and `PERMANENT` ("unrecoverable — stop retrying") is
+the existing fit; no new class was invented. The HTTP status stays **503** on both declines rather
+than following `httpStatusFor`'s PERMANENT default of 500 — the service genuinely is not serving,
+which is what 503 says, whereas 500 would misreport it as an internal fault.
+
+Derived-artifact tail: the new code required regenerating `SSOT/messages/errors.en.json` with
+`-PupdateSchemas`; the `ErrorCatalogJsonArtifactTest` drift gate caught it first, as designed.
+
+Fail-first: reverting BOTH messages to their pre-fix form turned `terminalDeclineIsNotRetryable` and
+`preBindWindowIsWordedHonestly` RED; restored, all 7 cases in `InferenceHandlersWorkerRestartTest`
+pass.
