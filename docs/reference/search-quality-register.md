@@ -713,6 +713,26 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   entry + the committed harness are the durable record); practicality probe + ONNX export
   under the same root; two adjacent stale-doc observations logged (D-001's 512→8192 line;
   the 512 cap leaving ~100 tokens for evidence on legal-length queries).
+- **RECENCY EXTENSION (2026-08-19, same session — two candidates from a live 2026 sweep; the
+  shortlist DOES NOT CHANGE):** (1) **the mmBERT watch item materialized and screened WEAK** —
+  of all 60 HF fine-tunes of `jhu-clsp/mmBERT-{base,small}`, only two are general-purpose
+  rerankers, and both lose to the incumbent outright on the frozen F-053 pools:
+  `aqweteddy/AuroraX-Reranker-Base-v1.0` (MIT, 300M, EN/zh) scifact 0.7523 (tie, p=1.0) but
+  **legal 0.3098 (−49.0%, p<0.0001)**; `llm-semantic-router/mmbert-rerank-32k-2d-matryoshka`
+  (Apache-2.0, 308M) scifact 0.7060 (−6.5%, p=0.0084), **legal 0.2203 (−63.7%)** — the latter
+  scored via a best-effort reconstruction of its UNPUBLISHED custom head class (no source
+  exists anywhere; directionally sanity-checked against the card's own worked example — a real
+  reconstruction risk, but not one that plausibly closes a −64% gap). Neither shows the
+  decoder-family truncation instability (plain seq-cls, no chat template) — confirming the
+  architecture keeps the incumbent's robustness; the community TRAINING is what falls short.
+  The watch item therefore narrows, not closes: a SERIOUSLY-trained mmBERT-class reranker
+  remains the natural successor shape; none exists. (2) **Contextual AI Reranker v2 EXCLUDED
+  on license** (`ctxl-rerank-v2-instruct-multilingual-*` is `cc-by-nc-sa-4.0` per its HF card)
+  — the suspected screen gap resolves as never-eligible. Latency cells SKIPPED-CONTENDED
+  (neighbor held the GPU throughout; VRAM peaks 800-1012 MB recorded, contention-insensitive).
+  Net: **mxbai-rerank-base-v2 remains the only headroom candidate**, and the parked
+  disposition above stands with no competing branch. Artifacts `tmp/ce-bakeoff/ext/`
+  (extension harness + NOTES.md + 12 run JSONs, gitignored — this rider is the durable record).
 
 ### F-052: CE model quality IS a quality lever — the delivered-rank swap A/B refutes F-001/F-006 (MiniLM vs incumbent: email −5.7%, scifact −6.9%, legal −23.4%), and exposed a SILENT CE-deadline drop that no comparability field reports (2026-08-19; first CE-model measurement on the corrected harness)
 
