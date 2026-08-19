@@ -670,6 +670,47 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-051: the German 10⁴ collapse is attributed — task-shape dominant, German representation a measured secondary cause, and the ENGINE IS EXONERATED on headroom: its leg-union sits at/above the offline exact-NN ceiling on the rebuilt DE cells; the only internal loss is a 1k-scale fusion/judge leak that vanishes at 10k (tempdoc 748 §G.1-§G.3, 2026-08-19; closes Q-018)
+
+- **Answer (final attribution for Q-018's four hypotheses):** **(c) gold-design/task-shape is
+  dominant** — the identical EN zero-lexical-overlap construction collapses at 10k too, and the
+  lexical leg is 0.0 by construction, not by German (748 §A). **(a) German representation quality
+  is a real, measured SECONDARY cause** — at matched payload.v2 the EN/DE pool-bridge gap persists
+  (P@1 0.84 vs 0.30, §G.1). **(b) scale/candidate-depth is REFUTED on both members** — offline
+  exact-NN with no candidate cut-off collapses the same way (EN: F-040; DE: §G.2 R@100 0.48→0.14).
+  **(d) German text mechanics eliminated** (real German scores 0.7283 nDCG / 0.9805 R@10 with
+  recall holding at zero lexical overlap, 748 §A).
+- **The §G.3 live fidelity re-measure (2026-08-19, rebuilt defillered cells, eval backend, git
+  `e4af3af2`, all runs `comparable: true` / `ann_proof PASS` / CE loaded, 50 q/cell):** engine
+  leg-union@100 **0.70 at 1k vs the 0.48 offline ceiling (ABOVE)** and **0.16 at 10k vs 0.14
+  (AT)** — the engine does not leave DE recall headroom unexploited, and DE behaves like EN
+  (the F-040 engine-beats-its-own-offline-ceiling shape). The earlier "unlike EN" reading was an
+  artifact of comparing a fillered-v1 union number against a dense-only probe. Mechanism: the
+  dense leg tracks the exact-NN ceiling from slightly below (0.44 vs 0.48 at 1k; 0.12 vs 0.14 at
+  10k — HNSW vs exact); the surplus is legs the probe does not model, dominated by **SPLADE
+  (R@100 0.62 at 1k)** plus chunk matching. Full per-mode tables: 748 §G.3 RESULT.
+- **Secondary findings:** (1) the engine's recall advantage is **scale-fragile** — union@100
+  0.70 → 0.16 (÷4.4) vs the ceiling's ÷3.4, with SPLADE the collapsing leg (0.62 → 0.10);
+  the engine converges onto the representation ceiling at 10k. (2) the only internal loss is a
+  **1k-scale fusion/judge leak**: legs deliver union 0.70, hybrid surfaces 0.36@100 / 0.12@10 —
+  `leak_rate 0.34` (17 CASCADE_LEAK + 15 JUDGE_RANK_LOW of 50); at 10k the leak is 0.04 because
+  the legs find almost nothing to drop. This is the standing fusion-territory item's sharpest
+  measured instance to date and D-005's "fusion is a ranking step, not a recall gate" applied —
+  but on a `claim_eligible: false` synthetic stratum: a capability probe, NOT a production
+  regression, and not by itself a licence for a fusion lane.
+- **Conditions/caveats:** DE remains a **non-claim-bearing** secondary stratum — the rebuilt
+  cells are structurally certified only (`claim_eligible: false`; the four SCIENTIFIC_GATES were
+  not run and these runs do not substitute for them). Single run per cell (plus a `--top-k 100`
+  variant per cell for the R@100 comparison — which exposed that `staged_recall_accounting`'s
+  self-reconciliation is invalid at `top_n != 10`, reporting `rank_11_plus` counts as
+  "mismatches"; k10 runs reconcile 0/50). The pre-registered `corpus-fidelity --base-url`
+  command could not execute §G.3 as written (no ingest, `output_dir=None` writes no artifacts,
+  paid sub-gate) — the run used `jseval run` multi-mode against the same backend; deviation
+  recorded in 748 §G.3.
+- **Evidence:** tempdoc 748 §G.1/§G.2/§G.3 (tables, provenance digests, deviation record); run
+  dirs `scripts/jseval/tmp/748/g3-{1k,10k}{,-k100}/` (session machine, gitignored — the §G.3
+  tables are the durable record); offline ceiling artifact `tmp/748/bridge-scale-de-miracl-v2.json`.
+
 ### F-024: buried-fact retrieval is a fusion/recall-gating problem, not a query-expansion one
 
 *(needle numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above)*
@@ -2692,7 +2733,14 @@ above)*
   Interim agent-utility numbers from these corpora exist but every record is `comparable=False`
   (internal only, per 624 §M.8); the certified 5-seed run is the pending step, not a corpus question.
 
-### Q-018: Why does German semantic bridging collapse at 10⁴ docs (de-miracl 10k hybrid 0.043, union recall 0.40 → 0.10) on post-F-031/F-032 code, while EN legal/email stay in-band at the same scale?
+### Q-018: Why does German semantic bridging collapse at 10⁴ docs (de-miracl 10k hybrid 0.043, union recall 0.40 → 0.10) on post-F-031/F-032 code, while EN legal/email stay in-band at the same scale? → ANSWERED → F-051
+
+- **Disposition (2026-08-19, tempdoc 748 §G.3):** attribution complete — (c) task-shape dominant,
+  (a) German representation a measured secondary cause, (b) refuted on both members, (d)
+  eliminated, and the engine exonerated on headroom (leg-union at/above the offline exact-NN
+  ceiling on the rebuilt cells). See F-051 for the numbers and caveats. §G.3 was the last open
+  item; the German-specific residue (a) is revisitable only under D-003's rule — a measured large
+  monolingual gap that a uniform mechanism could close — never an O(languages) program.
 
 - **Question:** On the 707 DE member (real German Wikipedia distractor mass + fabricated v2 gold at
   hops=1, pure zero-lexical-overlap synonym descriptors), the semantic leg bridges at ~half CLERC
