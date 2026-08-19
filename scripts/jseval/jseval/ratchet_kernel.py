@@ -272,12 +272,23 @@ def assert_ce_coverage(
     sys.exit(2)
 
 
-def resolve_run_dir(run_dir: str | None, data_dir: str | Path) -> Path:
-    """Return the explicit ``--run-dir`` or the latest eval-results run; echo + ``exit 2`` if none."""
-    rd = Path(run_dir) if run_dir else _gate._latest_run_dir(Path(data_dir))
+def resolve_run_dir(run_dir: str | None, data_dir: str | Path, dataset: str | None = None) -> Path:
+    """Return the explicit ``--run-dir`` or the latest eval-results run; echo + ``exit 2`` if none.
+
+    ``dataset``, when given and ``run_dir`` is not explicit, restricts the auto-resolved
+    "latest" run to one whose own ``summary.json`` records that dataset — see
+    :func:`jseval.gate._latest_run_dir`. A data-dir holding runs for more than one dataset
+    hard-errors here (exit 2) instead of silently gating the wrong corpus's metrics against
+    ``dataset``'s baseline when the two datasets' latest runs disagree. An explicit
+    ``--run-dir`` is trusted as-is (the caller named it deliberately).
+    """
+    if run_dir:
+        return Path(run_dir)
+    rd = _gate._latest_run_dir(Path(data_dir), dataset=dataset)
     if rd is None:
-        click.echo(json.dumps(
-            {"exit_code": 2, "error": "no eval-results run with summary.json"}, indent=2), err=True)
+        detail = ("no eval-results run with summary.json matching "
+                  f"dataset={dataset!r}" if dataset else "no eval-results run with summary.json")
+        click.echo(json.dumps({"exit_code": 2, "error": detail}, indent=2), err=True)
         sys.exit(2)
     return rd
 
@@ -334,7 +345,7 @@ def run_gate(
     directly instead. ``read_inputs`` returns a tuple spliced as positional args before ``dataset``.
     """
     baselines_doc = load_baselines_doc(baselines_path, project_release=project_release)
-    rd = resolve_run_dir(run_dir, data_dir)
+    rd = resolve_run_dir(run_dir, data_dir, dataset=dataset)
     inputs = read_inputs(rd)
     args = inputs if isinstance(inputs, tuple) else (inputs,)
     report = evaluate(baselines_doc, *args, dataset)
