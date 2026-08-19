@@ -94,7 +94,22 @@ public final class IsolatedBackendFixture {
   private final HttpClient httpClient =
       HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build();
 
+  /**
+   * Tempdoc 825 (charter item 3): the TERMINAL worker reason code. Its whole reason for existing is
+   * that it is unambiguous — {@code worker.spawn.failed} means "failed, recovery pending or in
+   * flight" and would fail fast on a boot that is about to succeed, which is why tempdoc 836
+   * deliberately left this fixture blind. Once this appears in the body, the Head has stopped
+   * trying, so every remaining millisecond of the health budget is spent waiting for nothing.
+   */
+  private static final String TERMINAL_WORKER_REASON = "worker.spawn_recovery_exhausted";
+
   private final String ownerLabel = resolveOwnerLabel();
+
+  /**
+   * Extra {@code -D} system properties for the spawned Head (tempdoc 825): the boot fault injector
+   * is the only way to exercise recovery deterministically, and it is a launch-time config value.
+   */
+  private final Map<String, String> extraSystemProperties = new LinkedHashMap<>();
 
   private Path dataDir;
   private Path runtimeDir;
@@ -102,6 +117,15 @@ public final class IsolatedBackendFixture {
   private Process process;
   private int port = -1;
   private boolean logsPreserved;
+
+  /**
+   * Adds a {@code -D} system property to the spawned Head. Must be called before {@link #start()}.
+   * Returns {@code this} so a test can configure and start in one expression.
+   */
+  public IsolatedBackendFixture withSystemProperty(String key, String value) {
+    extraSystemProperties.put(key, value);
+    return this;
+  }
 
   /** Spawns the backend and blocks until {@code /api/health} returns 200. */
   public void start() throws IOException, InterruptedException {
@@ -121,6 +145,7 @@ public final class IsolatedBackendFixture {
     // configuration loader and SSOT discovery don't have to walk up from user.dir.
     cmd.add("-Djustsearch.repo.root=" + repoRoot.toAbsolutePath());
     cmd.add("-Djustsearch.data.dir=" + dataDir.toAbsolutePath());
+    extraSystemProperties.forEach((k, v) -> cmd.add("-D" + k + "=" + v));
     cmd.add("io.justsearch.ui.HeadlessApp");
 
     ProcessBuilder pb = new ProcessBuilder(cmd);
@@ -328,6 +353,7 @@ public final class IsolatedBackendFixture {
                 || lastBody.contains("\"worker\":{\"state\":\"READY\""))) {
           return;
         }
+        failFastOnTerminalWorkerReason(lastBody, "worker.state=READY");
       } catch (IOException ioe) {
         // keep polling
       }
@@ -365,6 +391,7 @@ public final class IsolatedBackendFixture {
         // message — without it the failure reads as a bare timeout with no cause.
         lastStatus = resp.statusCode();
         lastBody = resp.body();
+        failFastOnTerminalWorkerReason(lastBody, "/api/health 200");
       } catch (IOException ioe) {
         lastError = ioe;
       }
@@ -374,6 +401,24 @@ public final class IsolatedBackendFixture {
     throw new IllegalStateException(
         "/api/health did not return 200 within " + HEALTH_TIMEOUT_MS + "ms" + hint
             + ". Last response: status=" + lastStatus + " body=" + truncate(lastBody));
+  }
+
+  /**
+   * Tempdoc 825 (charter item 3): stop waiting the moment the Head says it has stopped trying.
+   * Before the terminal code existed there was nothing safe to key on — {@code worker.spawn.failed}
+   * is emitted mid-recovery too — so a bricked boot burned the whole {@value #HEALTH_TIMEOUT_MS}ms
+   * budget and reported a bare timeout. This turns that into an immediate, causally-named failure.
+   */
+  static void failFastOnTerminalWorkerReason(String body, String waitingFor) {
+    if (body != null && body.contains(TERMINAL_WORKER_REASON)) {
+      throw new IllegalStateException(
+          "Worker boot recovery is exhausted ("
+              + TERMINAL_WORKER_REASON
+              + ") — the Head has stopped retrying, so waiting for "
+              + waitingFor
+              + " cannot succeed. Last /api/health body: "
+              + truncate(body));
+    }
   }
 
   /** Caps a response body so a timeout message stays readable in the JUnit XML. */
