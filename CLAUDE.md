@@ -164,7 +164,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | `SSOT/catalogs/**` · analyzers schema · `adapters-lucene/**` | `check-language-agnostic-analysis` |
 | new tempdoc/changeset (cross-worktree) | `check-tempdoc-numbers` |
 | indexing-job lifecycle surfaces | `--gate operation-surface` |
-| `CoreSurfaceCatalog.java` / surface `altitude` | `--gate surface-altitude` |
+| `CoreSurfaceCatalog.java` / surface `altitude` | `--gate surface-altitude` · `check-surface-composition` |
 | `governance/logic-seams.v1.json` or a registered seam | `check-logic-seams --mode gate` |
 | `RegistrySnapshotExporter` / `LiveWitness` | `check-live-witness` |
 | guard-string register (`execution-surfaces`/`operation-surfaces`) | `--gate register-guard-resolution` |
