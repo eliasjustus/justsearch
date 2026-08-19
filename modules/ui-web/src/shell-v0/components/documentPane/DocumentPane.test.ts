@@ -5,6 +5,11 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { setUiMode, __resetUiModeForTest } from '../../state/uiModeState.js';
 import './DocumentPane.js';
 import type { DocumentPane } from './DocumentPane.js';
+import {
+  citationHeader,
+  CITATION_SPAN_UNUSABLE,
+  type CitationHeader,
+} from '../chat/evidenceProjection.js';
 
 function make(): DocumentPane {
   const el = document.createElement('jf-document-pane') as DocumentPane;
@@ -81,6 +86,146 @@ async function clickIconButton(host: Element): Promise<void> {
 }
 
 const MD_FIXTURE = ['# Title', '', 'Paragraph text here.', '', '- item a', '- item b'].join('\n');
+
+/**
+ * Tempdoc 849 §7 — the citation header, as the WINDOW would hand it over. Built through the real
+ * `citationHeader` projector rather than as a hand-written literal, so a test cannot assert a header
+ * shape the product can never produce.
+ */
+function headerFor(
+  overrides: Partial<Parameters<typeof citationHeader>[0]> = {},
+): CitationHeader | null {
+  return citationHeader({
+    citation: {
+      parentDocId: 'notes/thread.md',
+      chunkIndex: 3,
+      chunkTotal: 9,
+      startChar: 10,
+      endChar: 40,
+      score: 0.9,
+      excerpt: 'Paragraph text here.',
+      startLine: 2,
+      endLine: 2,
+      headingText: 'Title',
+      headingLevel: 1,
+      contextInclusion: 'dropped',
+    },
+    grounding: {
+      cited: true,
+      groundedSentences: 2,
+      similarity: 0.51,
+      tier: 'medium' as never,
+      state: 'cited',
+    },
+    retrievalMode: 'HYBRID',
+    question: 'How does indexing reach the head?',
+    spanUnusable: false,
+    ...overrides,
+  });
+}
+
+/**
+ * Tempdoc 849 slice 3 §7 — the CITATION header (distinct from the text-extraction provenance line,
+ * which §7's first instruction says must keep its name and its behaviour).
+ */
+describe('DocumentPane — 849 citation header', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function open(header: CitationHeader | null): Promise<DocumentPane> {
+    stubFetchOnce({ content: MD_FIXTURE, textProvenance: 'tika' });
+    const el = make();
+    el.citationHeader = header;
+    el.docPath = 'notes/thread.md';
+    await flush(el);
+    return el;
+  }
+
+  const headerText = (el: DocumentPane): string =>
+    (el.shadowRoot?.querySelector('[data-testid="citation-header"]')?.textContent ?? '').replace(
+      /\s+/g,
+      ' ',
+    );
+
+  it('says which turn cited the document, where the passage sits, and what happened to it', async () => {
+    const el = await open(headerFor());
+    const text = headerText(el);
+    expect(text).toContain('How does indexing reach the head?');
+    expect(text).toContain('Passage 4 of 9');
+    expect(text).toContain('Grounds 2 sentences');
+    // The flagship: retrieved, and the model never saw it.
+    expect(text).toContain('Retrieved · never sent to the model');
+    expect(
+      el.shadowRoot?.querySelector('.citation-inclusion')?.getAttribute('data-inclusion'),
+    ).toBe('dropped');
+  });
+
+  it('labels the two scores by what each MEASURES, so neither can be read as the other', async () => {
+    // The fixture is asymmetric on purpose (retrieval 0.9, claim similarity 0.51): a header that
+    // rendered one number twice would show one band twice and fail here.
+    const el = await open(headerFor());
+    const text = headerText(el);
+    expect(text).toContain('Retrieval match strong');
+    expect(text).toContain('Claim match moderate');
+    // §7 rule 2 — no bare percentages anywhere in the header.
+    expect(text).not.toMatch(/\d+%/);
+  });
+
+  it('renders a SHORTER header when the producer said less — never a padded one', async () => {
+    // A fallback-mode retrieval of an uncited, pre-849 source: no inclusion state, no comparable
+    // retrieval score, no claim match. Everything that remains true is still said.
+    const el = await open(
+      headerFor({
+        citation: {
+          parentDocId: 'notes/thread.md',
+          chunkIndex: 3,
+          chunkTotal: 9,
+          startChar: 10,
+          endChar: 40,
+          score: 0.9,
+          excerpt: '',
+          startLine: 2,
+          endLine: 2,
+          headingText: '',
+          headingLevel: 0,
+        },
+        grounding: null,
+        retrievalMode: 'FULLTEXT_FALLBACK',
+      }),
+    );
+    const text = headerText(el);
+    expect(text).toContain('Passage 4 of 9');
+    expect(text).not.toContain('sent to the model');
+    expect(text).not.toContain('Retrieval match');
+    expect(text).not.toContain('Claim match');
+  });
+
+  it('renders no header at all for the line-addressed mount sites', async () => {
+    const el = await open(null);
+    expect(el.shadowRoot?.querySelector('[data-testid="citation-header"]')).toBeNull();
+    // …and the TEXT-EXTRACTION provenance line is untouched by any of this (§7's name-collision
+    // instruction): it still renders on its own, as it did before the header existed.
+    expect(el.shadowRoot?.querySelector('.preview-source')?.textContent).toContain('Text source');
+  });
+
+  it('849 S10 — a degenerate span is explained instead of opening in silence', async () => {
+    const el = await open(headerFor({ citation: null, grounding: null, spanUnusable: true }));
+    const notice = el.shadowRoot?.querySelector('.span-notice');
+    expect(notice?.textContent?.trim()).toBe(CITATION_SPAN_UNUSABLE);
+    // The message the slice-2 review asked for: the reader is told the citation had no usable
+    // position, rather than being left to wonder why nothing is highlighted.
+    expect(notice?.textContent).toContain('did not record a usable position');
+  });
+
+  it('849 S10 — a citation WITH a usable span shows no such notice', async () => {
+    // The discriminator. Without it the previous test would pass against a pane that showed the
+    // notice unconditionally.
+    const el = await open(headerFor());
+    expect(el.shadowRoot?.querySelector('.span-notice')).toBeNull();
+  });
+});
 
 describe('DocumentPane — empty state', () => {
   beforeEach(() => {

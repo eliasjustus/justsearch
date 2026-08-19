@@ -20,8 +20,9 @@ number:  849 provisional. `check-tempdoc-numbers` reports one live collision (#8
 ## 0. Implementation status (2026-08-19)
 
 **Slice 1 (§8 "The honest record") is implemented and merged as one PR; Slice 2 (§8 "Anchoring
-fidelity") followed as a second, frontend-only PR (§0.1).** Slice 3 is unstarted; everything below
-§8 Slice 2 remains design, not description.
+fidelity") followed as a second, frontend-only PR (§0.1); Slice 3 (§8 "The citation header +
+measured closure") is the third, frontend-plus-harness (§0.2).** Everything below §8 Slice 3 that
+§0.2 does not claim remains design, not description.
 
 What Slice 1 landed, and where it differs from the design as written:
 
@@ -183,6 +184,105 @@ regression guard rather than a new claim. The late-match case was additionally v
 `upgradeOpenPaneAnchor` removed, so it discriminates the mechanism and not merely the event shape.
 The off-by-one fixture asserts the RENDERED text of the tinted line (`line three..` at 0-based 3,
 1-based 4), so a surviving off-by-one names a different line rather than a different number.
+
+### 0.2 Slice 3 (§8 "The citation header + measured closure") — implemented, frontend + harness
+
+| §8 Slice 3 item | Status |
+|---|---|
+| 1. New label/projection functions in `evidenceProjection.ts` with unit tests | Done. `inclusionBadge`, `retrievalMatch`, `claimMatch`, `citingTurnLabel`, `citationHeader`, `CITATION_SPAN_UNUSABLE`, and the two metric constants. `contextInclusionOf` went from private to exported for the same reason |
+| 2. Header renders per §7; extraction-provenance line untouched | Done. `DocumentPane.citationHeader` is a new property beside — never merged into — `provenance`, which keeps its name, its line and its tempdoc-671 render-even-when-empty behaviour |
+| 3. Typography consumed from 846 | Done by consumption, not authorship: the header wears `--font-size-xs` + the `--text-*` roles the pane's own notices already use, and this slice authors no scale |
+| 4. Harness — extend, don't duplicate; new rows for `Sv3Pane.ts`/`SearchV3View.ts`; the live route for dropped/partial | Done, with one deliberate split — see below |
+| 5. `Sv3Pane.test.ts` (also the register guard) | Done, 5 cases; `evidence-fe-sv3-pane`'s `test:Sv3Pane` guard resolves against it |
+| Inclusion badge in the SOURCES panel (R3, §5.1) | Done in the shared `CitationsPanel.renderSourceCard`, so the shipped chat window and Search v3 gain it from one edit |
+
+**The data path is slice 2's deviation paying off.** `Sv3CitationOpen` carries `turnId` +
+`sourceIndex` and no copies, so `sv3CitationHeader` reads `chunkIndex`/`chunkTotal`/`score`/
+`contextInclusion` off the ONE citation record the turn already holds. The header is resolved twice
+by the same join — on open, and again in `upgradeOpenPaneAnchor` when a late `rag.citation_matches`
+lands — because the match is exactly what turns "Retrieved · not cited" into "Grounds N sentences"
+and mints the claim band. A header left on the pre-match join would have the pane emphasise a
+matched sentence while its own header still said no claim used this source.
+
+**Three §7 decisions, stated because each one chooses SILENCE over a plausible default.**
+
+- **The retrieval score is omitted under `FULLTEXT_FALLBACK` and under an unknown/empty mode.** §7
+  said to qualify it by `retrieval_mode` "or omit it when the mode makes it non-comparable"; the
+  fallback path's `score` is `RagContextOps.scoreByTermOverlap` and banding it through
+  `evidenceTier` would feed a lexical number into thresholds calibrated on the cross-encoder cutoff
+  — the mis-calibration 822 §3d removed from `lexicalScore`. The unknown-mode case is the one with
+  reach: **every reloaded conversation** lands there, because `sv3-record.ts` reconstructs evidence
+  with `retrievalMode: ''`. So a persisted turn's header shows no retrieval band at all. That is
+  the absence discipline applied to ourselves rather than only to the backend, and it is the honest
+  answer — we do not know which scorer wrote the number — but it means the record path's header is
+  genuinely thinner than the live one, which is a real cost and not a bug to be "fixed" by
+  defaulting the mode.
+- **Neither score is a percentage.** §7 rule 1 (never adjacent as bare numbers) is enforced
+  structurally: there is no number in the header at all. Each score is a metric NAME plus a band
+  word, and `citationHeader` mints both so no caller can render one without the other's labelling.
+- **`included` gets a badge too**, quietly. The design lists three states plus absence, and a
+  `dropped` badge sitting alone would be read as an exception rather than as one value of a field.
+
+**S10 is closed, and the mechanism is the header's presence, not a new event field.** Slice 2 logged
+that a degenerate `endChar <= startChar` span opens the pane in silence, indistinguishable from "no
+citation", and concluded it "belongs with slice 3's header". It does, and it needed no widening of
+`Sv3CitationOpen`: `spanUnusable` is derived from `sv3CitationAnchor` returning `null` — the one
+authority on what a usable span is — so the header being PRESENT with `spanUnusable: true` is what
+distinguishes it from the header being absent, which is what a line-addressed mount site gets.
+
+**What was NOT done, and why.** The unbound `.sourceCoverage` binding in `Sv3Main`'s
+`jf-citations-panel` mount (inbox-logged) stays unbound. §5.5 names `SourceExamination` only as the
+ORTHOGONAL axis and §7's table reuses `sourceGroundingLabel` verbatim; nothing in R3 or R5 scopes
+wiring `sourceCoverage` through `Sv3TurnEvidence`, `sv3-ask.ts` and `sv3-record.ts`, and doing it
+here would be scope the design did not ask for. Consequence, stated rather than hidden: in Search v3
+an unexamined source still reads "Retrieved · not cited" in both the panel and the new header.
+
+**The harness, and the one place it departs from §D-8's letter.** `sv3-citation-selected` is
+EXTENDED as instructed — the card click it already performs opens the pane, so the step now waits on
+`[data-testid="sv3-pane-document"]` and `[data-testid="citation-header"]`, which is what earns
+`Sv3Pane.ts` and `SearchV3View.ts` their first step-index rows (plus `evidenceProjection.ts`, which
+now owns the words those captures show). The departure is that `dropped`/`partial` gets its OWN step,
+`sv3-citation-dropped`, rather than a further extension: the two states are mutually exclusive within
+a turn, because `sv3-citation-selected`'s ask is chosen so the context FITS (that is what makes its
+grounded marks reliable) and this one needs an ask whose context provably does not. Its determinism
+is 845's arithmetic driven from the UI — the composer's THOROUGH rung sends `topK: 12` **and**
+`maxTokens: 3072` (`sv3-ask.ts:158-168`), so one control simultaneously maximises the retrieved set
+and shrinks, via the completion reserve, the budget it must fit in. It is `required=True` by default,
+inheriting the lesson `sv3-citation-selected` records. **Its first live capture is not in this PR**
+and the step's own comment says so: the definition ships now, the baseline folds into the program's
+next dev-stack session, where the overflow arithmetic is confirmed against a real corpus and the ask
+retuned if twelve passages turn out to fit.
+
+**One gate finding worth recording, because it was a false positive that would have been wrong to
+allow-list.** `check-verdict-derivation` failed on `evidenceProjection.ts`: its predicate is the
+string `retrieval\s*[=!]==`, and the header's own emptiness check contained `header.retrieval !==
+null`. The gate guards a real rule (one verdict derivation) and the file does not break it, so the
+fix was to restructure the check into a `.some()` over the facts rather than to add the projection
+authority to the gate's `allowed` list — an allow-list entry buys a passing gate by permanently
+blinding it to the file most likely to grow a real violation.
+
+**Tests — 29 new, of which 24 were verified to FAIL against the pre-change sources** (the six
+touched source files reverted to `HEAD`, the tests left in place). The five that passed both sides
+are regression guards by construction and are named as such: the two absence cases in
+`CitationsPanel.test.ts` (a citation that says nothing renders nothing; an unrecognised value is not
+coerced), `DocumentPane`'s "renders no header at all for the line-addressed mount sites", and
+`Sv3Pane`'s "renders nothing until a document is set" + "re-raises the close as the window's own
+event". Honest caveat on one of the 24: `DocumentPane`'s "a citation WITH a usable span shows no
+such notice" fails pre-change because its fixture builder calls the not-yet-existing `citationHeader`,
+not because the pane rendered a notice — it is a discriminator for the S10 case beside it, not an
+independent pre-change claim. Full suite green: 428 files / 5433 tests, typecheck clean,
+`check-ui-step-coverage` + the ui-web gate set + the kernel gates green (the four pre-existing reds
+— `theme-token-closure`/`strip-token-fallbacks` on `RecentsMenu.ts`, `accent-as-text` on
+`ActionLedgerView.ts`, `controls-a11y` on `UnifiedChatView.ts:2137` — are in files this slice does
+not touch).
+
+**Presentation-authority closure is NOT complete.** `ux-audit-closure` asks for an independent,
+measured (axe + contrast oracle) live-verified audit by an auditor ≠ committer. This slice adds two
+new rendered vocabularies — the inclusion badge (three states, `dropped` on `--text-warning`) and the
+citation header — and the measured audit of both **in all four palettes**, plus the degraded states
+(absent header, absent inclusion, S10 notice), folds into the next audit round. Recorded here rather
+than left implicit, since the honor-system gate was retired in 563 and nothing will fail the build
+for its absence.
 
 ---
 

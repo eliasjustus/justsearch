@@ -737,9 +737,214 @@ export function toEvidenceItem(c: RetrievalCitation): EvidenceItem {
  * for the same reason — an unknown state is not a known one, and guessing which of the three it
  * meant is how a vocabulary drift becomes a false claim about evidence.
  */
-function contextInclusionOf(
+export function contextInclusionOf(
   c: Pick<RetrievalCitation, 'contextInclusion'> | null | undefined,
 ): ContextInclusion | null {
   const raw = c?.contextInclusion;
   return raw === 'included' || raw === 'partial' || raw === 'dropped' ? raw : null;
+}
+
+/**
+ * Tempdoc 849 §7 — the retrieved-vs-received badge, as WORDS. One authority, because the sources
+ * panel and the reading pane must not describe the same budget fact two different ways.
+ *
+ * <p>`detail` is the sentence, not a restatement of the label: the label answers "what happened",
+ * the detail answers "so what". Neither ever quotes `contextIncludedChars` — 849 §9 Q6 kept that
+ * record-only, because a character count invites precision about a cut the reader cannot see.
+ */
+export interface InclusionBadge {
+  readonly state: ContextInclusion;
+  readonly label: string;
+  readonly detail: string;
+}
+
+/**
+ * The badge for a resolved inclusion state — `null` for ABSENCE, which is the whole point.
+ *
+ * <p>The `dropped` wording is the flagship. "Retrieved" is the half the reader can already see (the
+ * source is sitting in the panel); "never sent to the model" is the half nothing in the product has
+ * ever said. It deliberately echoes {@link sourceGroundingLabel}'s `Retrieved · not cited` shape, so
+ * the two budget facts read as siblings rather than as a verdict and an error — they are two
+ * different cuts (§5.5) and neither is a fault.
+ */
+export function inclusionBadge(inclusion: ContextInclusion | null): InclusionBadge | null {
+  switch (inclusion) {
+    case 'included':
+      return {
+        state: 'included',
+        label: 'Sent to the model',
+        detail: 'The whole of this passage was in the prompt the model answered from.',
+      };
+    case 'partial':
+      return {
+        state: 'partial',
+        label: 'Partly sent to the model',
+        detail:
+          'The prompt had room for only the start of this passage, so the model never saw the rest of it.',
+      };
+    case 'dropped':
+      return {
+        state: 'dropped',
+        label: 'Retrieved · never sent to the model',
+        detail:
+          'The search found this passage, but the prompt had no room left for it — the model answered without ever seeing it.',
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Tempdoc 849 §7 — the retrieval side of the two scores, and the metric name is the load-bearing
+ * part. `RetrievalCitation.score` and `CitationMatch.similarity` are DIFFERENT QUANTITIES, and the
+ * first one is secretly two: on the fallback path it is a word-overlap ratio
+ * (`RagContextOps.scoreByTermOverlap:1177`), not a retrieval relevance score.
+ */
+export const RETRIEVAL_MATCH_METRIC = 'Retrieval match';
+/** …and the claim side: how closely the ANSWER's sentence matched this passage. */
+export const CLAIM_MATCH_METRIC = 'Claim match';
+
+/** A score rendered as its metric plus a BAND — never a bare percentage (§7 rule 2). */
+export interface ScoreBand {
+  readonly metric: string;
+  readonly band: 'strong' | 'moderate' | 'weak';
+}
+
+/**
+ * The retrieval modes whose `score` is a retrieval relevance score on the scale
+ * {@link evidenceTier} is calibrated against. `FULLTEXT_FALLBACK` is absent on purpose and so is
+ * every unknown mode — see {@link retrievalMatch}.
+ */
+const COMPARABLE_RETRIEVAL_MODES: ReadonlySet<string> = new Set(['HYBRID', 'BM25']);
+
+/**
+ * The retrieval score as a labelled band, or `null` when the mode makes the number non-comparable
+ * (§7 rule 3).
+ *
+ * <p>Two ways to get `null`, and they are the same discipline twice:
+ *
+ * <ul>
+ *   <li><b>`FULLTEXT_FALLBACK`</b> — the score is `scoreByTermOverlap`, a word-overlap ratio. Banding
+ *       it here would feed a lexical number into thresholds calibrated on the cross-encoder cutoff,
+ *       which is exactly the mis-calibration tempdoc 822 §3d removed from `Claim.lexicalScore`.
+ *   <li><b>An unknown or empty mode</b> — including every RELOADED conversation, whose record carries
+ *       no `retrieval_mode`. If we do not know which scorer wrote the number we do not know what it
+ *       measures, and naming a band for it would assert a meaning nobody recorded. Absence renders
+ *       nothing, the same rule {@link contextInclusionOf} follows.
+ * </ul>
+ */
+export function retrievalMatch(score: number, retrievalMode: string): ScoreBand | null {
+  if (!COMPARABLE_RETRIEVAL_MODES.has(retrievalMode)) return null;
+  return { metric: RETRIEVAL_MATCH_METRIC, band: groundingLabel(score) };
+}
+
+/**
+ * The claim side, from the grounding join. `null` for an UNCITED source: there is no matched
+ * sentence, so there is no similarity to band — and banding a `0` would print "weak claim match"
+ * over a source no claim ever referenced.
+ */
+export function claimMatch(g: SourceGrounding | null): ScoreBand | null {
+  if (g === null || !g.cited) return null;
+  return { metric: CLAIM_MATCH_METRIC, band: groundingLabel(g.similarity) };
+}
+
+/** How much of the reader's own question the header quotes back before eliding it. */
+const TURN_LABEL_MAX_CHARS = 80;
+
+/**
+ * The turn a citation was followed from, as the reader's own words. Elided at a word boundary so a
+ * long question does not become the header.
+ */
+export function citingTurnLabel(question: string | null | undefined): string | null {
+  const q = (question ?? '').trim().replace(/\s+/g, ' ');
+  if (q.length === 0) return null;
+  if (q.length <= TURN_LABEL_MAX_CHARS) return q;
+  const cut = q.slice(0, TURN_LABEL_MAX_CHARS);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > TURN_LABEL_MAX_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+/**
+ * Tempdoc 849 §7 — the CITATION HEADER: what the reading pane can honestly say about the citation
+ * it was opened by.
+ *
+ * <p>Named for what it is. `DocumentPane.provenance` is TEXT-EXTRACTION provenance (the OCR/text-layer
+ * route) and keeps its name, its line and its behaviour; overloading "provenance" with this would
+ * have merged two unrelated facts under one word (§7's opening instruction).
+ *
+ * <p>Every member is nullable and every null means the same thing: the producer said nothing, so the
+ * header says nothing. There is no member whose absence is rendered as a default.
+ */
+export interface CitationHeader {
+  /** The question whose answer cited this document, elided ({@link citingTurnLabel}). */
+  readonly turnLabel: string | null;
+  /** `Passage 4 of 9` — suppressed when the producer had no chunk ordinal ({@link DOC_LEVEL_CHUNK_SENTINEL}). */
+  readonly passage: string | null;
+  /** §5 retrieved-vs-received. Absent ⇒ nothing is rendered, never "included". */
+  readonly inclusion: InclusionBadge | null;
+  /** {@link sourceGroundingLabel} verbatim — the panel's own words, not a second vocabulary. */
+  readonly grounding: string | null;
+  /** The two scores, each labelled by what it measures. Either may be absent independently. */
+  readonly retrieval: ScoreBand | null;
+  readonly claim: ScoreBand | null;
+  /**
+   * Tempdoc 849 slice 2 S10 — the citation named a span the reader cannot use (`endChar <=
+   * startChar`, or a non-finite offset). Distinct from "this pane was not opened by a citation",
+   * which is the header being absent altogether.
+   */
+  readonly spanUnusable: boolean;
+}
+
+/** What the pane says when the citation's own span was unusable (849 S10). */
+export const CITATION_SPAN_UNUSABLE =
+  'This citation did not record a usable position in the document, so nothing is highlighted.';
+
+/**
+ * Project a followed citation into its header. `null` when there is nothing at all to say — a
+ * header of six nulls is a row of empty space, not honesty.
+ *
+ * <p>The score pair is the reason this is one function rather than six call sites: §7 rule 1 says the
+ * two numbers may never sit adjacent as bare scalars, and the only way to guarantee that is for one
+ * projector to mint both, each already carrying its own metric name.
+ */
+export function citationHeader(input: {
+  readonly citation: RetrievalCitation | null;
+  readonly grounding: SourceGrounding | null;
+  readonly retrievalMode: string;
+  readonly question: string | null;
+  readonly spanUnusable: boolean;
+}): CitationHeader | null {
+  const { citation, grounding, retrievalMode, question, spanUnusable } = input;
+  const header: CitationHeader = {
+    turnLabel: citingTurnLabel(question),
+    passage: passageLabel(citation),
+    inclusion: inclusionBadge(contextInclusionOf(citation)),
+    grounding: grounding === null ? null : sourceGroundingLabel(grounding),
+    retrieval: citation === null ? null : retrievalMatch(citation.score, retrievalMode),
+    claim: claimMatch(grounding),
+    spanUnusable,
+  };
+  const facts: ReadonlyArray<unknown> = [
+    header.turnLabel,
+    header.passage,
+    header.inclusion,
+    header.grounding,
+    header.retrieval,
+    header.claim,
+  ];
+  return facts.some((fact) => fact !== null) || header.spanUnusable ? header : null;
+}
+
+/**
+ * `Passage 4 of 9`, 1-based for the reader. Suppressed on the ABSENT sentinel and on a total that
+ * cannot contain the index — a chunk ordinal the producer did not record is not passage zero.
+ */
+function passageLabel(citation: RetrievalCitation | null): string | null {
+  if (citation === null) return null;
+  const { chunkIndex, chunkTotal } = citation;
+  if (!Number.isInteger(chunkIndex) || chunkIndex === DOC_LEVEL_CHUNK_SENTINEL || chunkIndex < 0) {
+    return null;
+  }
+  if (!Number.isInteger(chunkTotal) || chunkTotal <= chunkIndex) return null;
+  return `Passage ${chunkIndex + 1} of ${chunkTotal}`;
 }

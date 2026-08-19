@@ -57,6 +57,61 @@ function fakeCitation(overrides: Partial<CitationMatch> = {}): CitationMatch {
   };
 }
 
+/**
+ * Tempdoc 849 slice 3 §5 — the RETRIEVED-vs-RECEIVED badge on the source card.
+ *
+ * Its own describe block because the discipline being pinned is not "the badge renders" but "the
+ * badge renders EXACTLY when the producer resolved the state": the absence case is the one that
+ * keeps a pre-849 conversation from being retroactively described.
+ */
+describe('CitationsPanel — 849 inclusion badge', () => {
+  async function panelText(source: RetrievalCitation): Promise<string> {
+    const el = document.createElement('jf-citations-panel') as CitationsPanel;
+    el.sources = [source];
+    el.citations = [fakeCitation({ parentDocId: source.parentDocId, sourceIndex: 0 })];
+    document.body.appendChild(el);
+    await settle(el);
+    const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
+    el.remove();
+    return text;
+  }
+
+  it('names a DROPPED passage as retrieved but never sent to the model', async () => {
+    const text = await panelText(fakeSource({ contextInclusion: 'dropped' }));
+    expect(text).toContain('Retrieved · never sent to the model');
+    // The two budget facts sit side by side and stay distinguishable: one is about the MATCHER
+    // (did it ground a sentence), the other about the PROMPT (did the model see it) — 849 §5.5.
+    expect(text).toContain('Grounds 1 sentence');
+  });
+
+  it('names the partial and included states in the same vocabulary', async () => {
+    expect(await panelText(fakeSource({ contextInclusion: 'partial' }))).toContain(
+      'Partly sent to the model',
+    );
+    expect(await panelText(fakeSource({ contextInclusion: 'included' }))).toContain(
+      'Sent to the model',
+    );
+  });
+
+  it('renders NOTHING for a citation that said nothing about inclusion', async () => {
+    // Every conversation persisted before 849 lands here. The card must be silent — not "included",
+    // and not a placeholder caveat, which would put a hedge on the entire history.
+    const text = await panelText(fakeSource());
+    expect(text).not.toContain('sent to the model');
+    expect(text).not.toContain('Sent to the model');
+    // Non-vacuity: the card DID render (so "no badge" is the badge's absence, not an empty panel).
+    expect(text).toContain('Grounds 1 sentence');
+  });
+
+  it('an unrecognised state is absence, not a guess', async () => {
+    const text = await panelText(
+      fakeSource({ contextInclusion: 'mostly' as never }),
+    );
+    expect(text).not.toContain('sent to the model');
+    expect(text).not.toContain('mostly');
+  });
+});
+
 describe('CitationsPanel', () => {
   it('renders nothing when both arrays are empty', async () => {
     const el = document.createElement('jf-citations-panel') as CitationsPanel;

@@ -40,8 +40,10 @@ import {
   filenameOf,
   sourceGrounding,
   sourceGroundingLabel,
+  inclusionBadge,
   type EvidenceScore,
   type SourceGrounding,
+  type InclusionBadge,
 } from './evidenceProjection.js';
 import type {
   CitationMatch,
@@ -294,6 +296,18 @@ export class CitationsPanel extends JfElement {
     .grounding.high { color: var(--text-tint); }
     .grounding.medium { color: var(--text-secondary); }
     .grounding.uncited { color: var(--text-secondary); font-style: italic; }
+    /* Tempdoc 849 §5/§7 — the RETRIEVED-vs-RECEIVED badge, beside the grounding badge because they
+       are siblings: two budget cuts, one stage apart (§5.5). Quiet by default — "sent to the model"
+       is the unremarkable case and must not compete with the grounding tier for attention. DROPPED
+       takes the warning ink and nothing stronger: a passage the prompt had no room for is a fact
+       about the budget, not a fault, and the danger ink would read as an error the reader must fix. */
+    .inclusion {
+      font-size: var(--font-size-xs);
+      font-weight: 500;
+      white-space: nowrap;
+      color: var(--text-secondary);
+    }
+    .inclusion.dropped { color: var(--text-warning); }
     /* 559 Authority IV — the declared metric label (the "%" is no longer bare). */
     .score-metric {
       margin-left: 0.3rem;
@@ -410,6 +424,23 @@ export class CitationsPanel extends JfElement {
     return html`<span class="${cls}" aria-label=${sourceGroundingLabel(g)}>${sourceGroundingLabel(g)}</span>`;
   }
 
+  /**
+   * Tempdoc 849 §5 — whether the passage this card names actually reached the model. The badge is
+   * rendered from the {@link InclusionBadge} authority and NEVER from a state test here: the panel
+   * saying "dropped" in its own words while the reading pane says something else is the drift the
+   * one label authority exists to prevent.
+   *
+   * <p>ABSENCE RENDERS NOTHING. Every conversation persisted before 849 carries no inclusion state,
+   * and the correct thing to show for it is empty space — not "included", and not a placeholder
+   * saying we do not know, which would put a caveat on every historical source.
+   */
+  private renderInclusion(badge: InclusionBadge | null): TemplateResult | typeof nothing {
+    if (badge === null) return nothing;
+    return html`<span class="inclusion ${badge.state}" title=${badge.detail} aria-label=${badge.label}
+      >${badge.label}</span
+    >`;
+  }
+
   private renderSourceCard(s: RetrievalCitation, grounding?: SourceGrounding | null): TemplateResult {
     // 559 Authority IV — render the citation card as a typed projection of the
     // evidence record, not ad-hoc field reads.
@@ -443,6 +474,7 @@ export class CitationsPanel extends JfElement {
         >
           <div class="header">
             ${grounding ? this.renderGrounding(grounding) : nothing}
+            ${this.renderInclusion(inclusionBadge(item.inclusion))}
             ${item.headingText
               ? html`<span class="heading-breadcrumb">${item.headingText}</span>`
               : nothing}

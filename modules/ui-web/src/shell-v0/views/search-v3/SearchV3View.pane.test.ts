@@ -707,6 +707,131 @@ describe('a claim match that arrives after the pane opened', () => {
   });
 });
 
+/* ── 5c. The citation header (tempdoc 849 slice 3 §7) ────────────────────────────────────────── */
+
+describe('the pane is told what the citation that opened it can honestly say', () => {
+  it('reads the header OFF THE RECORD, not off the event', async () => {
+    // The point of slice 2's deviation: `Sv3CitationOpen` carries `turnId` + `sourceIndex` and
+    // nothing more, so every fact below had to be joined from the turn's own evidence. A pane that
+    // could only see the event would have none of them.
+    const el = await mount();
+    const stream = stubStream();
+    const composer = await region(el, 'jf-sv3-composer');
+    const field = composer.shadowRoot?.querySelector<HTMLTextAreaElement>(
+      '[data-testid="sv3-composer-input"]',
+    );
+    if (!field) throw new Error('no field in the composer');
+    field.value = 'why did the renewal fail?';
+    field.dispatchEvent(new Event('input'));
+    await composer.updateComplete;
+    q<HTMLButtonElement>(composer, 'sv3-composer-send')?.click();
+    await settle(el);
+    stream.emit('rag.meta', { retrieval_mode: 'HYBRID' });
+    stream.emit('rag.citations', {
+      citations: [{ ...source(), contextInclusion: 'dropped', contextIncludedChars: 0 }],
+    });
+    stream.emit('chunk', { text: 'The lock held.' });
+    stream.emit('rag.citation_matches', {
+      // `parentDocId` is part of the wire shape (`CitationMatch`) and the grounding join uses it as
+      // a correctness guard, exactly as the shared panel does — so it belongs in the fixture.
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          similarity: 0.9,
+          sourceIndex: 0,
+          parentDocId: CITED_DOC,
+        },
+      ],
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    const main = await region(el, 'jf-sv3-main');
+    q<HTMLButtonElement>(main, 'sv3-turn-sources')?.click();
+    await main.updateComplete;
+    const panel = q(main, 'sv3-turn-citations');
+    if (panel === null) throw new Error('the answer landed without a citations panel');
+    fireCitation(panel);
+    await el.updateComplete;
+    const pane = (await region(el, 'jf-sv3-pane')) as Sv3Pane & { updateComplete: Promise<unknown> };
+
+    const header = pane.citationHeader;
+    expect(header).not.toBeNull();
+    // The reader's own question, from the turn.
+    expect(header?.turnLabel).toBe('why did the renewal fail?');
+    // chunkIndex 0 of 2 — off the citation record, which the event never carried.
+    expect(header?.passage).toBe('Passage 1 of 2');
+    // The flagship, also off the record.
+    expect(header?.inclusion?.state).toBe('dropped');
+    // Both scores, each named by what it measures — and the retrieval one exists only because
+    // `rag.meta` said which scorer produced it.
+    expect(header?.retrieval?.metric).toBe('Retrieval match');
+    expect(header?.claim?.metric).toBe('Claim match');
+    expect(header?.grounding).toBe('Grounds 1 sentence');
+    expect(header?.spanUnusable).toBe(false);
+    // …and the shared reader is actually given it.
+    const reader = pane.shadowRoot?.querySelector('jf-document-pane') as
+      | (HTMLElement & { citationHeader: unknown })
+      | null;
+    expect(reader?.citationHeader).toBe(header);
+  });
+
+  it('the header follows the LATE claim match onto the open pane', async () => {
+    // The pane is routinely opened before the matches land, so the header opens saying the source
+    // is uncited. Leaving it there would have the pane emphasise a matched sentence while its own
+    // header still said no claim used this source.
+    const el = await mount();
+    const stream = await askUnmatched(el, [source()]);
+    const pane = await openPaneMidStream(el);
+    expect(pane.citationHeader?.grounding).toBe('Retrieved · not cited');
+    expect(pane.citationHeader?.claim).toBeNull();
+
+    stream.emit('rag.citation_matches', {
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          similarity: 0.9,
+          sourceIndex: 0,
+          parentDocId: CITED_DOC,
+        },
+      ],
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    expect(pane.citationHeader?.grounding).toBe('Grounds 1 sentence');
+    expect(pane.citationHeader?.claim?.metric).toBe('Claim match');
+  });
+
+  it('849 S10 — a DEGENERATE span opens a pane that says so', async () => {
+    // `endChar <= startChar` yields no anchor, so before slice 3 the pane opened silent and
+    // indistinguishable from a document opened with no citation at all.
+    const el = await mount();
+    await askUnmatched(el, [{ ...source(), startChar: 40, endChar: 40 }]);
+    const main = await region(el, 'jf-sv3-main');
+    const block = q(main, 'sv3-turn-markdown');
+    if (block === null) throw new Error('the stream produced no answer block to cite from');
+    block.dispatchEvent(
+      new CustomEvent('citation-select', {
+        detail: { ...citationDetail, startChar: 40, endChar: 40 },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await el.updateComplete;
+    const pane = (await region(el, 'jf-sv3-pane')) as Sv3Pane & { updateComplete: Promise<unknown> };
+
+    expect(pane.citation).toBeNull();
+    // …and THAT is what the header distinguishes: present, and saying the span was unusable.
+    expect(pane.citationHeader).not.toBeNull();
+    expect(pane.citationHeader?.spanUnusable).toBe(true);
+  });
+});
+
 /* ── 6. The scope guard: cited documents only ────────────────────────────────────────────────── */
 
 describe('the pane reads CITED documents and nothing else', () => {
