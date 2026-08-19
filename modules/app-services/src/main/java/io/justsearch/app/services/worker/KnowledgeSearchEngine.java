@@ -12,6 +12,7 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.justsearch.configuration.resolved.ConfigStore;
+import io.justsearch.app.api.knowledge.CrossEncoderSkipReason;
 import io.justsearch.app.api.knowledge.FolderBrowseRequest;
 import io.justsearch.app.api.knowledge.FolderBrowseResponse;
 import io.justsearch.app.api.knowledge.FolderFilesRequest;
@@ -937,7 +938,9 @@ final class KnowledgeSearchEngine {
 
     // 250: Cross-encoder execution tracking
     boolean crossEncoderApplied = false;
-    String crossEncoderSkipReason = null;
+    // Register F-052: the skip reason is a closed head-owned vocabulary, not a raw string — a
+    // drop-class member (deadline / RPC / model-absent) is worded at the user tier by the FE.
+    CrossEncoderSkipReason crossEncoderSkipReason = null;
     Map<String, Float> ceScoresByDocId = null;
     long crossEncoderMs = -1;
 
@@ -946,20 +949,20 @@ final class KnowledgeSearchEngine {
     if (!isRerankerEligible(
         pipelineConfig, rerankConfig, results.size(), statusCache.avgContentLengthChars(), effectiveQueryType)) {
       if (effectiveQueryType == QueryType.NAVIGATIONAL) {
-        crossEncoderSkipReason = "NAVIGATIONAL_QUERY";
+        crossEncoderSkipReason = CrossEncoderSkipReason.NAVIGATIONAL_QUERY;
       } else if (!rerankConfig.enabled()) {
-        crossEncoderSkipReason = "DISABLED";
+        crossEncoderSkipReason = CrossEncoderSkipReason.DISABLED;
       } else if (results.size() < rerankConfig.minHitsThreshold()) {
-        crossEncoderSkipReason = "BELOW_MIN_THRESHOLD";
+        crossEncoderSkipReason = CrossEncoderSkipReason.BELOW_MIN_THRESHOLD;
       } else if (rerankConfig.maxAvgDocLengthChars() > 0
           && statusCache.avgContentLengthChars() > rerankConfig.maxAvgDocLengthChars()) {
-        crossEncoderSkipReason = "DOCS_TOO_LONG";
+        crossEncoderSkipReason = CrossEncoderSkipReason.DOCS_TOO_LONG;
       } else {
-        crossEncoderSkipReason = "PIPELINE_NOT_ELIGIBLE";
+        crossEncoderSkipReason = CrossEncoderSkipReason.PIPELINE_NOT_ELIGIBLE;
       }
     } else if (!rerankConfig.isReady()) {
       // 360: model not configured — skip without RPC round-trip
-      crossEncoderSkipReason = "MODEL_NOT_CONFIGURED";
+      crossEncoderSkipReason = CrossEncoderSkipReason.MODEL_NOT_CONFIGURED;
     } else {
       // 360: Remote reranking via Worker's GPU-capable cross-encoder
       // 256-F4: PipelineConfig window overrides global config default
@@ -976,7 +979,7 @@ final class KnowledgeSearchEngine {
       // sharper risk than re-weighting it, so it needs its own evidence, not a free ride on the
       // blend gate's own "unknown -> don't intervene" convention. Kept behind its own flag.
       if (shouldSkipCrossEncoder(rerankConfig, results.subList(0, topK))) {
-        crossEncoderSkipReason = "FUSION_CONFIDENT";
+        crossEncoderSkipReason = CrossEncoderSkipReason.FUSION_CONFIDENT;
         reranked = null;
       } else {
         List<String> docTexts = new ArrayList<>(topK);
@@ -999,7 +1002,7 @@ final class KnowledgeSearchEngine {
           }
         } catch (Exception e) {
           log.warn("Remote rerank failed, using original order: {}", e.getMessage());
-          crossEncoderSkipReason = "RPC_FAILED";
+          crossEncoderSkipReason = CrossEncoderSkipReason.RPC_FAILED;
           reranked = null;
         } finally {
           ceSpan.end();
@@ -1076,10 +1079,22 @@ final class KnowledgeSearchEngine {
         crossEncoderMs = reranked.getElapsedMs();
         log.debug("Reranked {} docs in {}ms (remote)", topK, reranked.getElapsedMs());
       } else if (reranked != null) {
-        crossEncoderSkipReason = reranked.getSkipReason().isEmpty()
-            ? "DEADLINE_EXCEEDED" : reranked.getSkipReason();
+        // Register F-052: normalise the Worker's skip_reason into the closed vocabulary — an
+        // unrecognised string becomes UNKNOWN instead of reaching the FE as an unworded code.
+        crossEncoderSkipReason =
+            CrossEncoderSkipReason.fromWorkerSkipReason(reranked.getSkipReason());
         crossEncoderMs = reranked.getElapsedMs();
-        log.debug("Rerank skipped: {} ({}ms)", crossEncoderSkipReason, reranked.getElapsedMs());
+        // A drop means the relevance model was expected to run and did not — the ranking the user
+        // gets is fusion/LambdaMART order. That is a degradation, so it logs at WARN; a by-design
+        // skip stays at DEBUG.
+        if (crossEncoderSkipReason.isDrop()) {
+          log.warn(
+              "Cross-encoder dropped: {} after {}ms — results keep their fusion order",
+              crossEncoderSkipReason,
+              reranked.getElapsedMs());
+        } else {
+          log.debug("Rerank skipped: {} ({}ms)", crossEncoderSkipReason, reranked.getElapsedMs());
+        }
       }
     }
 

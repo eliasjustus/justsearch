@@ -169,7 +169,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | `RegistrySnapshotExporter` / `LiveWitness` | `check-live-witness` |
 | guard-string register (`execution-surfaces`/`operation-surfaces`) | `--gate register-guard-resolution` |
 | `LifecycleReasonCode.java` / `readinessNotice.ts` | `check-readiness-reason-codes` |
-| `SearchReasonCode.java` / `searchTraceExplain.ts` | `check-search-degradation-reason-codes` |
+| search-degradation reason-code vocabularies | `check-search-degradation-reason-codes` |
 | `justsearch-dev-mcp/**` | `check-dev-mcp-doc-sync` |
 | `StoreCatalog.java` · store construction sites | `check-store-recoverability` |
 | `UnifiedChatView.ts` / `CoreConversationShapeCatalog.java` | `check-intent-tier-coverage` |

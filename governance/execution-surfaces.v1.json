@@ -225,7 +225,7 @@
       "lang": "ts",
       "path": "modules/ui-web/src/shell-v0/components/searchResults/ResultsCard.ts",
       "guard": "test:ResultsCard.searchTrace.test",
-      "note": "Search Thread S1: the ONE results card \u2014 meta-line mode/latency projection from SearchTrace.effectiveMode + per-hit why-chips (Search Thread S5b: the standalone SearchSurface + its fe-search-surface row retired; this is now the sole FE projection)."
+      "note": "Search Thread S1: the ONE results card \u2014 meta-line mode/latency projection from SearchTrace.effectiveMode + per-hit why-chips (Search Thread S5b: the standalone SearchSurface + its fe-search-surface row retired; this is now the sole FE projection). Register F-052 adds a second meta-line projection: the `cross-encoder` stage's DROP reason, worded from the ONE authority `CROSS_ENCODER_SKIP_WORDING` (searchTraceExplain.ts) \u2014 the retired SearchSurface took the `<jf-search-trace>` explain-panel mount with it, so this card is the only place a per-query trace fact can reach a user."
     },
     {
       "id": "sv3-ask-client",

@@ -3299,7 +3299,8 @@ The pipeline degrades gracefully when components are unavailable:
 | Dense embeddings unavailable   | HYBRID falls back to TEXT | `hybridFallback` + reason |
 | Dense embeddings blocked       | VECTOR returns empty      | `vectorBlocked` + reason  |
 | SPLADE encoder absent          | SPLADE leg skipped        | `spladeSkipReason`        |
-| Cross-encoder model not loaded | CE step skipped           | `crossEncoderSkipReason`  |
+| Cross-encoder model not loaded | CE step skipped           | `crossEncoderSkipReason` (`MODEL_NOT_LOADED`) |
+| Cross-encoder missed its latency budget, or the rerank RPC failed | CE step dropped; results keep the fusion/LambdaMART order | `crossEncoderSkipReason` (`DEADLINE_EXCEEDED` / `RPC_FAILED`) — worded at the user tier |
 | LambdaMART model not loaded    | LambdaMART step skipped   | `lambdaMartSkipReason`    |
 | LLM unavailable                | Expansion skipped         | `expansionSkipReason`     |
 | QU unavailable (Brain offline) | QU skipped, no boostFilters applied | `queryUnderstanding` absent from response |
