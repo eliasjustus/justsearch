@@ -86,9 +86,14 @@ def cmd_gate(ctx, data_dir, baseline_stdev, tolerance_pct, report_out):
                    "the tempdoc-717 degenerate build). Also settable via "
                    "JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1. Use only when certifying a "
                    "deliberately chunk-incomplete run.")
+@click.option("--allow-ce-degradation", is_flag=True,
+              help="Override the register-F-052 ce-coverage refusal (the cross-encoder silently "
+                   "dropped out on part of the query set — e.g. the rerank deadline was exceeded "
+                   "— so the run's metrics blend a reranked and a fusion-only pipeline). Also "
+                   "settable via JUSTSEARCH_ALLOW_CE_DEGRADATION=1.")
 @click.pass_context
 def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
-                       allow_engine_mismatch, allow_chunk_incompleteness):
+                       allow_engine_mismatch, allow_chunk_incompleteness, allow_ce_degradation):
     """Q-010 relevance ratchet (tempdoc 580 §4c) — fail on nDCG@10 regression.
 
     Reads the latest eval-results run's summary.json for DATASET and compares
@@ -127,6 +132,9 @@ def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
     # tempdoc 718: refuse a run whose index shipped without its chunk sub-system (the 717
     # degenerate build) despite the corpus needing one. Backward-compatible (no-verdict skips).
     _rk.assert_chunk_completeness(rd, allow_incomplete=allow_chunk_incompleteness)
+    # register F-052: refuse a run whose cross-encoder silently dropped out on part of the query
+    # set (rerank deadline exceeded) — its metrics blend two pipelines. Backward-compatible.
+    _rk.assert_ce_coverage(rd, allow_degraded=allow_ce_degradation)
     run_summary = json.loads((rd / "summary.json").read_text(encoding="utf-8"))
     report = _rgate.evaluate(baselines_doc, run_summary, dataset)
     _rk.finalize_report(report, run_dir=rd, baselines_path=baselines,
@@ -160,9 +168,13 @@ def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
                    "observed no/incomplete chunk docs despite the corpus needing them — likely "
                    "the tempdoc-717 degenerate build). Also settable via "
                    "JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1.")
+@click.option("--allow-ce-degradation", is_flag=True,
+              help="Override the register-F-052 ce-coverage refusal (the cross-encoder silently "
+                   "dropped out on part of the query set — e.g. the rerank deadline was exceeded). "
+                   "Also settable via JUSTSEARCH_ALLOW_CE_DEGRADATION=1.")
 @click.pass_context
 def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, update_baseline,
-                  allow_engine_mismatch, allow_chunk_incompleteness):
+                  allow_engine_mismatch, allow_chunk_incompleteness, allow_ce_degradation):
     """Performance ratchet (tempdoc 640) — fail on a latency/throughput/footprint regression.
 
     The perf-metric-family sibling of ``relevance-gate``. Reads the latest eval-results run's
@@ -207,6 +219,9 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
     # tempdoc 718: refuse a run whose index shipped without its chunk sub-system; also protects
     # --update-baseline from pinning a chunk-degenerate run. Backward-compatible (no-verdict skips).
     _rk.assert_chunk_completeness(rd, allow_incomplete=allow_chunk_incompleteness)
+    # register F-052: a CE that silently dropped out inflates the ce_p50_ms this gate pins, so the
+    # refusal also protects --update-baseline from pinning a half-reranked run.
+    _rk.assert_ce_coverage(rd, allow_degraded=allow_ce_degradation)
 
     if update_baseline:
         # Re-pin the floor from this (green) run -- measured, never hand-typed (review fix #3).
@@ -276,9 +291,13 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
                    "observed no/incomplete chunk docs despite the corpus needing them — likely "
                    "the tempdoc-717 degenerate build). Also settable via "
                    "JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1.")
+@click.option("--allow-ce-degradation", is_flag=True,
+              help="Override the register-F-052 ce-coverage refusal (the cross-encoder silently "
+                   "dropped out on part of the query set — e.g. the rerank deadline was exceeded). "
+                   "Also settable via JUSTSEARCH_ALLOW_CE_DEGRADATION=1.")
 @click.pass_context
 def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_engine_mismatch,
-                  allow_chunk_incompleteness):
+                  allow_chunk_incompleteness, allow_ce_degradation):
     """Recall-leak ratchet (tempdoc 636 / register D-005) — fail on leak-rate regression.
 
     Reads the latest eval-results run's staged_recall_accounting projection for
@@ -310,6 +329,9 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
     # tempdoc 718: refuse a run whose index shipped without its chunk sub-system.
     # Backward-compatible (no-verdict skips) -- summary.json (not the projection) carries the block.
     _rk.assert_chunk_completeness(_resolved_rd, allow_incomplete=allow_chunk_incompleteness)
+    # register F-052: refuse a run whose cross-encoder silently dropped out on part of the query
+    # set — the leak/survival accounting is read off the same contaminated ranking.
+    _rk.assert_ce_coverage(_resolved_rd, allow_degraded=allow_ce_degradation)
     # Tempdoc 683: leak now uses the same `current_release` pointer as relevance/perf — ceilings
     # project from the release's optional per-corpus `leak` section, with `fallback_baselines`
     # (the previously pinned measured values) governing any corpus the release doesn't carry.
@@ -346,9 +368,14 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
                    "observed no/incomplete chunk docs despite the corpus needing them — likely "
                    "the tempdoc-717 degenerate build). Also settable via "
                    "JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1.")
+@click.option("--allow-ce-degradation", is_flag=True,
+              help="Override the register-F-052 ce-coverage refusal (the cross-encoder silently "
+                   "dropped out on part of the query set — e.g. the rerank deadline was exceeded). "
+                   "Also settable via JUSTSEARCH_ALLOW_CE_DEGRADATION=1.")
 @click.pass_context
 def cmd_union_recall_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
-                          allow_engine_mismatch, allow_chunk_incompleteness):
+                          allow_engine_mismatch, allow_chunk_incompleteness,
+                          allow_ce_degradation):
     """Recall-completeness ratchet (tempdoc 701 / register D-005) — fail on a union-recall drop.
 
     Reads the latest eval-results run's staged_recall_accounting projection for DATASET and
@@ -380,6 +407,9 @@ def cmd_union_recall_gate(ctx, data_dir, dataset, baselines, run_dir, report_out
     # tempdoc 718: refuse a run whose index shipped without its chunk sub-system.
     # Backward-compatible (no-verdict skips) -- summary.json (not the projection) carries the block.
     _rk.assert_chunk_completeness(_resolved_rd, allow_incomplete=allow_chunk_incompleteness)
+    # register F-052: refuse a run whose cross-encoder silently dropped out on part of the query
+    # set — the union-recall accounting is read off the same contaminated ranking.
+    _rk.assert_ce_coverage(_resolved_rd, allow_degraded=allow_ce_degradation)
     # Mirrors leak-gate's tempdoc 683 pattern: floors project from the release's optional
     # per-corpus `union_recall` section, with `fallback_baselines` governing any corpus the
     # release doesn't carry.
