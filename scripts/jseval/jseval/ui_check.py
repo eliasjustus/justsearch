@@ -1523,13 +1523,11 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # turn-seeding fixture source. Not registered in `governance/ui-proportion-baseline.v1.json`,
         # whose gate captures under `--fixtures` where this state is unreachable.
         #
-        # REQUIRED, inheriting the lesson `sv3-citation-selected` records explicitly: a step whose
-        # verdict is discarded is a screenshot, not a check.
-        #
-        # NOT YET CAPTURED LIVE. This definition ships with slice 3; the first live capture folds
-        # into the program's next dev-stack session, where the overflow arithmetic above is confirmed
-        # against a real corpus and the ask retuned if twelve passages turn out to fit. Said out loud
-        # rather than left for a reader to discover from an empty baseline directory.
+        # NOT YET CAPTURED LIVE, and `required=False` until it is — see the Step() registration for
+        # the reversal trigger. The arithmetic above makes overflow plausible; `maxTokens` is the
+        # completion reserve, not proof that twelve passages exceed what remains. That proof is the
+        # first live capture's job, and until it exists this step must not be able to fail a run for
+        # a reason that is not a regression.
         await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
         await page.evaluate(
             "() => { location.hash = 'justsearch://surface/core.search-v3-surface'; }"
@@ -1828,12 +1826,23 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
              init_scripts=[ai_init]),
         # --- Tempdoc 849 slice 3 §D-8: the retrieved-but-never-sent state ---
         # The one state the evidence reader exists to make visible, and the one the step above
-        # cannot reach: its ask is chosen so the context FITS. Same live-stack constraint, same
-        # `required` lesson, and the determinism argument (the THOROUGH rung's topK + reserve
-        # against 845's budget arithmetic) is in the setup. Its first live capture folds into the
-        # program's next dev-stack session — the definition ships here, the baseline does not.
+        # cannot reach: its ask is chosen so the context FITS.
+        #
+        # `required=False`, DELIBERATELY AND TEMPORARILY, against §D-8's "it must be required=True"
+        # — with the reversal trigger named so this does not become the permanent hedge that
+        # instruction was written against. §D-8's determinism argument was that the THOROUGH rung's
+        # `maxTokens: 3072` shrinks the input budget; slice-3 review established that `maxTokens` is
+        # the completion RESERVE, which makes overflow PLAUSIBLE but is not proof that twelve
+        # passages exceed the remaining budget on a real corpus. A required step that cannot be shown
+        # to reach its state fails every run for a reason that is not a regression, and a harness
+        # that cries wolf is worse than one step short.
+        #
+        # TRIGGER: the first live capture (next dev-stack session). Confirms overflow → flip to
+        # `required=True` immediately, which is where §D-8 wants it. Does NOT overflow → retune the
+        # ask (more documents, longer passages, a higher rung) until it does, THEN flip. Either way
+        # the flag moves at that session; it does not stay False by default.
         Step("sv3-citation-dropped", setup=setup_sv3_citation_dropped, isolated=True,
-             init_scripts=[ai_init]),
+             init_scripts=[ai_init], required=False),
         Step("responsive-collapsed",     setup=setup_responsive,      isolated=True),
         # action-panel-open / action-panel-filtered retired (615 §6.1b) — no shell-v0 equivalent.
 

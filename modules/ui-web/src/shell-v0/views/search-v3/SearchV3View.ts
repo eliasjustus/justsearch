@@ -240,7 +240,10 @@ import {
   type Sv3RunView,
 } from './sv3-run.js';
 import { type Sv3CitationOpen, type Sv3RunDecision } from './Sv3Main.js';
-import type { CitationHeader } from '../../components/chat/evidenceProjection.js';
+import {
+  sameCitationHeader,
+  type CitationHeader,
+} from '../../components/chat/evidenceProjection.js';
 import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
 import {
   sv3CitationHeader,
@@ -1525,19 +1528,27 @@ export class SearchV3View extends JfElement {
    */
   private upgradeOpenPaneAnchor(): void {
     const source = this.paneSource;
+    if (source === null || source.sourceIndex === SV3_SOURCE_INDEX_ABSENT) return;
     const anchor = this.paneCitation;
-    if (source === null || anchor === null || anchor.sentenceText !== null) return;
-    if (source.sourceIndex === SV3_SOURCE_INDEX_ABSENT) return;
-    const turn = activeTurns(this.sessions).find((candidate) => candidate.id === source.turnId) ?? null;
-    const sentence = sv3MatchedSentence(turn, source.sourceIndex);
-    if (sentence === null) return;
-    const upgraded = { ...anchor, sentenceText: sentence };
-    this.paneCitation = upgraded;
-    // The header moves with it: the match that just landed is exactly what turns "Retrieved · not
-    // cited" into "Grounds N sentences" and mints the claim-match band. Leaving the header on the
-    // pre-match join would have the pane emphasise a sentence while its own header still said no
-    // claim used this source.
-    this.paneCitationHeader = this.headerFor(source.turnId, source.sourceIndex, upgraded);
+
+    // The ANCHOR upgrade, which needs an anchor to upgrade and a sentence it does not yet have.
+    if (anchor !== null && anchor.sentenceText === null) {
+      const turn = activeTurns(this.sessions).find((c) => c.id === source.turnId) ?? null;
+      const sentence = sv3MatchedSentence(turn, source.sourceIndex);
+      if (sentence !== null) this.paneCitation = { ...anchor, sentenceText: sentence };
+    }
+
+    // The HEADER refresh, which needs neither (review LOW-5). The two used to share one early
+    // return, so a pane opened on an UNUSABLE span — `citation === null`, exactly the S10 case this
+    // slice added — was excluded from the header refresh forever: its grounding line stayed frozen
+    // at "Retrieved · not cited" no matter what the matcher later found. A citation with no usable
+    // position is still a citation whose source can be grounded, and the header is the only thing
+    // that can say so.
+    const next = this.headerFor(source.turnId, source.sourceIndex, this.paneCitation);
+    // Written only on a real change: this runs on every `sessions` update, i.e. every streamed
+    // chunk, and a fresh object each time would re-render the reader continuously for a header
+    // whose words never moved.
+    if (!sameCitationHeader(this.paneCitationHeader, next)) this.paneCitationHeader = next;
   }
 
   /**

@@ -104,7 +104,6 @@ export function sv3CitationHeader(
       citation === null
         ? null
         : sourceGrounding(sourceIndex, evidence?.matches ?? [], citation.parentDocId),
-    retrievalMode: evidence?.retrievalMode ?? '',
     question: turn?.question ?? null,
     spanUnusable: anchor === null,
   });

@@ -1062,7 +1062,6 @@ export class DocumentPane extends JfElement {
       h.passage === null ? nothing : html`<span class="citation-passage">${h.passage}</span>`,
       this.renderInclusion(h),
       h.grounding === null ? nothing : html`<span class="citation-grounding">${h.grounding}</span>`,
-      this.renderBand(h.retrieval),
       this.renderBand(h.claim),
     ].filter((part) => part !== nothing);
     if (h.turnLabel === null && parts.length === 0) return nothing;
@@ -1087,11 +1086,11 @@ export class DocumentPane extends JfElement {
   }
 
   /**
-   * §7 — a score as METRIC + BAND. The metric name is not decoration: `RetrievalCitation.score` and
-   * `CitationMatch.similarity` measure different things, so rendering either as a bare number beside
-   * the other would invite the reader to compare them.
+   * §7 — a score as METRIC + BAND, never a bare number. Only the CLAIM similarity is banded here;
+   * the retrieval score is not rendered at all, because it is the raw Lucene hit score and the
+   * tier thresholds are anchored to the cross-encoder scale (see `claimMatch`).
    */
-  private renderBand(score: CitationHeader['retrieval']): TemplateResult | typeof nothing {
+  private renderBand(score: CitationHeader['claim']): TemplateResult | typeof nothing {
     if (score === null) return nothing;
     return html`<span class="citation-score"
       ><span class="citation-metric">${score.metric}</span>

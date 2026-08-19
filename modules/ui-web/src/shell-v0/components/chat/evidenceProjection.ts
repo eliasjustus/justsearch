@@ -795,13 +795,10 @@ export function inclusionBadge(inclusion: ContextInclusion | null): InclusionBad
 }
 
 /**
- * Tempdoc 849 §7 — the retrieval side of the two scores, and the metric name is the load-bearing
- * part. `RetrievalCitation.score` and `CitationMatch.similarity` are DIFFERENT QUANTITIES, and the
- * first one is secretly two: on the fallback path it is a word-overlap ratio
- * (`RagContextOps.scoreByTermOverlap:1177`), not a retrieval relevance score.
+ * Tempdoc 849 §7 — the header's ONE score metric, named by what it MEASURES: how closely the
+ * answer's sentence matched this passage. `RetrievalCitation.score` measures something else
+ * entirely and is deliberately not rendered at all — see {@link claimMatch}.
  */
-export const RETRIEVAL_MATCH_METRIC = 'Retrieval match';
-/** …and the claim side: how closely the ANSWER's sentence matched this passage. */
 export const CLAIM_MATCH_METRIC = 'Claim match';
 
 /** A score rendered as its metric plus a BAND — never a bare percentage (§7 rule 2). */
@@ -811,37 +808,18 @@ export interface ScoreBand {
 }
 
 /**
- * The retrieval modes whose `score` is a retrieval relevance score on the scale
- * {@link evidenceTier} is calibrated against. `FULLTEXT_FALLBACK` is absent on purpose and so is
- * every unknown mode — see {@link retrievalMatch}.
- */
-const COMPARABLE_RETRIEVAL_MODES: ReadonlySet<string> = new Set(['HYBRID', 'BM25']);
-
-/**
- * The retrieval score as a labelled band, or `null` when the mode makes the number non-comparable
- * (§7 rule 3).
- *
- * <p>Two ways to get `null`, and they are the same discipline twice:
- *
- * <ul>
- *   <li><b>`FULLTEXT_FALLBACK`</b> — the score is `scoreByTermOverlap`, a word-overlap ratio. Banding
- *       it here would feed a lexical number into thresholds calibrated on the cross-encoder cutoff,
- *       which is exactly the mis-calibration tempdoc 822 §3d removed from `Claim.lexicalScore`.
- *   <li><b>An unknown or empty mode</b> — including every RELOADED conversation, whose record carries
- *       no `retrieval_mode`. If we do not know which scorer wrote the number we do not know what it
- *       measures, and naming a band for it would assert a meaning nobody recorded. Absence renders
- *       nothing, the same rule {@link contextInclusionOf} follows.
- * </ul>
- */
-export function retrievalMatch(score: number, retrievalMode: string): ScoreBand | null {
-  if (!COMPARABLE_RETRIEVAL_MODES.has(retrievalMode)) return null;
-  return { metric: RETRIEVAL_MATCH_METRIC, band: groundingLabel(score) };
-}
-
-/**
  * The claim side, from the grounding join. `null` for an UNCITED source: there is no matched
  * sentence, so there is no similarity to band — and banding a `0` would print "weak claim match"
  * over a source no claim ever referenced.
+ *
+ * <p>THE ONLY banded score in the header, and the reason its retrieval sibling does not exist is
+ * worth keeping next to it. `RetrievalCitation.score` is the RAW Lucene hit score
+ * (`RagContextOps.java:395` — `setScore(hit.score())`; the chunk reranker reorders candidates and
+ * never writes its cross-encoder scores back), while {@link evidenceTier}'s thresholds are anchored
+ * to the cross-encoder cutoff. Banding one through the other is not merely imprecise, it is
+ * CONSTANT: RRF-fused hybrid scores cap around 0.09 and would always read "weak", raw BM25 scores
+ * are unbounded and would always clamp to "strong". A band that cannot vary with the evidence is
+ * negative information — it looks like a measurement and carries none.
  */
 export function claimMatch(g: SourceGrounding | null): ScoreBand | null {
   if (g === null || !g.cited) return null;
@@ -882,10 +860,12 @@ export interface CitationHeader {
   readonly passage: string | null;
   /** §5 retrieved-vs-received. Absent ⇒ nothing is rendered, never "included". */
   readonly inclusion: InclusionBadge | null;
-  /** {@link sourceGroundingLabel} verbatim — the panel's own words, not a second vocabulary. */
+  /**
+   * {@link sourceGroundingLabel} verbatim — the panel's own words, not a second vocabulary.
+   * Suppressed entirely on a `dropped` passage; see {@link suppressGroundingFor}.
+   */
   readonly grounding: string | null;
-  /** The two scores, each labelled by what it measures. Either may be absent independently. */
-  readonly retrieval: ScoreBand | null;
+  /** The claim similarity, labelled by what it measures. Suppressed with {@link grounding}. */
   readonly claim: ScoreBand | null;
   /**
    * Tempdoc 849 slice 2 S10 — the citation named a span the reader cannot use (`endChar <=
@@ -895,33 +875,78 @@ export interface CitationHeader {
   readonly spanUnusable: boolean;
 }
 
+/**
+ * Do two headers say the same thing? Value equality, because {@link citationHeader} mints a fresh
+ * object on every call and a consumer that re-derives on each stream event would otherwise hand its
+ * renderer a new identity per chunk for words that never moved.
+ *
+ * <p>Compares every member of {@link CitationHeader} — `evidenceProjection.test` pins the member
+ * COUNT so a member added to the type without a line here fails loudly instead of silently
+ * disappearing from the change detection.
+ */
+export function sameCitationHeader(
+  a: CitationHeader | null,
+  b: CitationHeader | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.turnLabel === b.turnLabel &&
+    a.passage === b.passage &&
+    a.inclusion?.state === b.inclusion?.state &&
+    a.grounding === b.grounding &&
+    a.claim?.metric === b.claim?.metric &&
+    a.claim?.band === b.claim?.band &&
+    a.spanUnusable === b.spanUnusable
+  );
+}
+
 /** What the pane says when the citation's own span was unusable (849 S10). */
 export const CITATION_SPAN_UNUSABLE =
   'This citation did not record a usable position in the document, so nothing is highlighted.';
 
 /**
- * Project a followed citation into its header. `null` when there is nothing at all to say — a
- * header of six nulls is a row of empty space, not honesty.
+ * Tempdoc 849 slice-3 review MEDIUM-3 — a `dropped` passage may not carry a grounding claim.
  *
- * <p>The score pair is the reason this is one function rather than six call sites: §7 rule 1 says the
- * two numbers may never sit adjacent as bare scalars, and the only way to guarantee that is for one
- * projector to mint both, each already carrying its own metric name.
+ * <p>The pair is REACHABLE, not hypothetical: `RAGContext.java:429` stashes every kept citation for
+ * the matcher regardless of what the cut did with it, and `StreamingCitationMatcher` scores answer
+ * sentences against chunk text it RE-FETCHES by `(parentDocId, chunkIndex)` — not against what the
+ * model was shown. So a passage the prompt had no room for can still be "matched" against the
+ * answer, and the card would read "Retrieved · never sent to the model" beside "Grounds 1 sentence".
+ *
+ * <p>Those two statements cannot both be informative. The inclusion state has a producer that
+ * observed the actual cut; the grounding label is a similarity between the answer and text the model
+ * never saw. So the inclusion badge stands alone and the grounding claim is withheld — the honest
+ * reduction, rather than printing a contradiction and leaving the reader to pick which half to
+ * believe. The deeper fix (never showing the matcher a dropped citation) is a backend follow-up,
+ * logged to the inbox; this is the presentation-side refusal to state the contradiction.
+ */
+export function suppressGroundingFor(inclusion: ContextInclusion | null): boolean {
+  return inclusion === 'dropped';
+}
+
+/**
+ * Project a followed citation into its header. `null` when there is nothing at all to say — a
+ * header of five nulls is a row of empty space, not honesty.
+ *
+ * <p>One projector rather than five call sites, so §7's rules and the MEDIUM-3 suppression above
+ * hold wherever a header is built: the pane and the sources panel cannot disagree about whether a
+ * dropped passage is allowed to claim it grounded something.
  */
 export function citationHeader(input: {
   readonly citation: RetrievalCitation | null;
   readonly grounding: SourceGrounding | null;
-  readonly retrievalMode: string;
   readonly question: string | null;
   readonly spanUnusable: boolean;
 }): CitationHeader | null {
-  const { citation, grounding, retrievalMode, question, spanUnusable } = input;
+  const { citation, grounding, question, spanUnusable } = input;
+  const inclusion = contextInclusionOf(citation);
+  const claimable = suppressGroundingFor(inclusion) ? null : grounding;
   const header: CitationHeader = {
     turnLabel: citingTurnLabel(question),
     passage: passageLabel(citation),
-    inclusion: inclusionBadge(contextInclusionOf(citation)),
-    grounding: grounding === null ? null : sourceGroundingLabel(grounding),
-    retrieval: citation === null ? null : retrievalMatch(citation.score, retrievalMode),
-    claim: claimMatch(grounding),
+    inclusion: inclusionBadge(inclusion),
+    grounding: claimable === null ? null : sourceGroundingLabel(claimable),
+    claim: claimMatch(claimable),
     spanUnusable,
   };
   const facts: ReadonlyArray<unknown> = [
@@ -929,7 +954,6 @@ export function citationHeader(input: {
     header.passage,
     header.inclusion,
     header.grounding,
-    header.retrieval,
     header.claim,
   ];
   return facts.some((fact) => fact !== null) || header.spanUnusable ? header : null;

@@ -41,6 +41,7 @@ import {
   sourceGrounding,
   sourceGroundingLabel,
   inclusionBadge,
+  suppressGroundingFor,
   type EvidenceScore,
   type SourceGrounding,
   type InclusionBadge,
@@ -473,7 +474,9 @@ export class CitationsPanel extends JfElement {
           @click=${(e: MouseEvent) => this.onSourceClick(s, e)}
         >
           <div class="header">
-            ${grounding ? this.renderGrounding(grounding) : nothing}
+            ${grounding && !suppressGroundingFor(item.inclusion)
+              ? this.renderGrounding(grounding)
+              : nothing}
             ${this.renderInclusion(inclusionBadge(item.inclusion))}
             ${item.headingText
               ? html`<span class="heading-breadcrumb">${item.headingText}</span>`

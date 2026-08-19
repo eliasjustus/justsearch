@@ -79,18 +79,30 @@ describe('CitationsPanel — 849 inclusion badge', () => {
   it('names a DROPPED passage as retrieved but never sent to the model', async () => {
     const text = await panelText(fakeSource({ contextInclusion: 'dropped' }));
     expect(text).toContain('Retrieved · never sent to the model');
-    // The two budget facts sit side by side and stay distinguishable: one is about the MATCHER
-    // (did it ground a sentence), the other about the PROMPT (did the model see it) — 849 §5.5.
-    expect(text).toContain('Grounds 1 sentence');
   });
 
-  it('names the partial and included states in the same vocabulary', async () => {
-    expect(await panelText(fakeSource({ contextInclusion: 'partial' }))).toContain(
-      'Partly sent to the model',
-    );
-    expect(await panelText(fakeSource({ contextInclusion: 'included' }))).toContain(
-      'Sent to the model',
-    );
+  it('a DROPPED passage does not ALSO claim it grounded a sentence', async () => {
+    // Slice-3 review MEDIUM-3. The pair is reachable: `RAGContext.java:429` hands the matcher every
+    // kept citation regardless of the cut, and the matcher scores against chunk text it re-fetches
+    // by identity — not against what the model was shown. So this card's fixture (a dropped passage
+    // WITH a citation match) is the real production shape, and it used to render both
+    // "never sent to the model" and "Grounds 1 sentence".
+    const text = await panelText(fakeSource({ contextInclusion: 'dropped' }));
+    expect(text).toContain('Retrieved · never sent to the model');
+    // The badge stands alone. Its producer observed the actual cut; the grounding label is a
+    // similarity against text the model never saw, and the two cannot both be informative.
+    expect(text).not.toContain('Grounds 1 sentence');
+  });
+
+  it('names the partial and included states in the same vocabulary — and they KEEP their grounding', async () => {
+    // The discriminator for the suppression above: it must be scoped to `dropped`, not a blanket
+    // removal of the grounding badge from every card that carries an inclusion state.
+    const partial = await panelText(fakeSource({ contextInclusion: 'partial' }));
+    expect(partial).toContain('Partly sent to the model');
+    expect(partial).toContain('Grounds 1 sentence');
+    const included = await panelText(fakeSource({ contextInclusion: 'included' }));
+    expect(included).toContain('Sent to the model');
+    expect(included).toContain('Grounds 1 sentence');
   });
 
   it('renders NOTHING for a citation that said nothing about inclusion', async () => {

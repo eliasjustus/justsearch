@@ -29,12 +29,12 @@ import {
   sourceGroundingLabel,
   // Tempdoc 849 slice 3 §7 — the citation header's label authority.
   inclusionBadge,
-  retrievalMatch,
   claimMatch,
   citationHeader,
   citingTurnLabel,
+  sameCitationHeader,
+  suppressGroundingFor,
   DOC_LEVEL_CHUNK_SENTINEL,
-  RETRIEVAL_MATCH_METRIC,
   CLAIM_MATCH_METRIC,
   CITATION_SPAN_UNUSABLE,
   type SourceGrounding,
@@ -440,20 +440,6 @@ describe('849 §7 — the citation header labels', () => {
     }
   });
 
-  it('bands the retrieval score only under a mode whose score is on that scale', () => {
-    expect(retrievalMatch(0.83, 'HYBRID')).toEqual({ metric: RETRIEVAL_MATCH_METRIC, band: 'strong' });
-    expect(retrievalMatch(0.52, 'BM25')).toEqual({ metric: RETRIEVAL_MATCH_METRIC, band: 'moderate' });
-    // FULLTEXT_FALLBACK's `score` is RagContextOps.scoreByTermOverlap — a word-overlap ratio, not a
-    // retrieval relevance score. Banding it would feed a lexical number into thresholds calibrated
-    // on the cross-encoder cutoff, which is the mis-calibration 822 §3d removed from lexicalScore.
-    expect(retrievalMatch(0.83, 'FULLTEXT_FALLBACK')).toBeNull();
-    // An unknown or absent mode — which is EVERY reloaded conversation, whose record carries no
-    // retrieval_mode. If we do not know which scorer wrote the number we do not know what it
-    // measures, and a band would assert a meaning nobody recorded.
-    expect(retrievalMatch(0.83, '')).toBeNull();
-    expect(retrievalMatch(0.83, 'SOMETHING_NEW')).toBeNull();
-  });
-
   it('bands the claim score only for a source a claim actually matched', () => {
     expect(claimMatch(cited)).toEqual({ metric: CLAIM_MATCH_METRIC, band: 'strong' });
     // An uncited source has similarity 0. Banding it would print "weak claim match" over a source
@@ -462,30 +448,49 @@ describe('849 §7 — the citation header labels', () => {
     expect(claimMatch(null)).toBeNull();
   });
 
-  it('the two scores are DIFFERENT quantities and never share a label (§7 rule 1)', () => {
-    // The header's headline risk: `RetrievalCitation.score` and `CitationMatch.similarity` are not
-    // comparable, so the reader must never be invited to compare them. The fixture is deliberately
-    // ASYMMETRIC — a strong retrieval score against a moderate claim similarity — so a projector
-    // that fed one number into both bands would fail here rather than pass by coincidence.
+  it('renders NO retrieval band — the raw hit score is not on the tier scale', () => {
+    // Slice-3 review HIGH-1. `RetrievalCitation.score` is the raw Lucene hit score
+    // (`RagContextOps.java:395` — `setScore(hit.score())`; the chunk reranker reorders and never
+    // writes cross-encoder scores back), while the tier thresholds are anchored to the CE cutoff.
+    // Banding one through the other is not merely imprecise, it is CONSTANT: RRF-fused hybrid
+    // scores cap near 0.09 → always "weak"; raw BM25 scores are unbounded → always "strong".
+    //
+    // So the header must carry no retrieval band AT ALL, under any mode. The two fixtures below are
+    // the two ends of that reproduction, and neither may produce a second band.
+    for (const score of [0.09, 12.4]) {
+      const header = citationHeader({
+        citation: { ...FULL, score },
+        grounding: cited,
+        question: 'q',
+        spanUnusable: false,
+      });
+      expect(header).not.toBeNull();
+      // Exhaustive, not a spot check: the ONLY band the header may carry is the claim one.
+      const bands = Object.values(header as object).filter(
+        (v) => v !== null && typeof v === 'object' && 'band' in (v as object),
+      );
+      expect(bands).toEqual([{ metric: CLAIM_MATCH_METRIC, band: 'strong' }]);
+    }
+  });
+
+  it('the one score names what it MEASURES, and is a band rather than a number (§7 rule 2)', () => {
     const header = citationHeader({
-      citation: { ...FULL, score: 0.9, contextInclusion: 'dropped' },
+      citation: { ...FULL, score: 0.9 },
       grounding: { ...cited, similarity: 0.51 },
-      retrievalMode: 'HYBRID',
       question: 'How does indexing reach the head?',
       spanUnusable: false,
     });
-    expect(header?.retrieval).toEqual({ metric: RETRIEVAL_MATCH_METRIC, band: 'strong' });
+    // Deliberately asymmetric (retrieval 0.9 against claim similarity 0.51): the band must come
+    // from the CLAIM similarity, so a projector that reached for `citation.score` would read
+    // "strong" here instead of "moderate".
     expect(header?.claim).toEqual({ metric: CLAIM_MATCH_METRIC, band: 'moderate' });
-    expect(header?.retrieval?.metric).not.toBe(header?.claim?.metric);
-    // …and neither is a bare percentage (§7 rule 2): the band word IS the value.
-    expect(`${header?.retrieval?.band}${header?.claim?.band}`).not.toMatch(/[\d%]/);
+    expect(`${header?.claim?.band}`).not.toMatch(/[\d%]/);
   });
 
   it('carries the citing turn, the passage position and the grounding label verbatim', () => {
     const header = citationHeader({
       citation: FULL, // chunkIndex 3 of 9 → 1-based for the reader
       grounding: cited,
-      retrievalMode: 'HYBRID',
       question: '  How   does indexing reach the head?  ',
       spanUnusable: false,
     });
@@ -496,13 +501,61 @@ describe('849 §7 — the citation header labels', () => {
     expect(header?.inclusion?.state).toBe('partial');
   });
 
+  // --- Slice-3 review MEDIUM-3: a dropped passage may not also claim it grounded the answer.
+
+  it('withholds the grounding claim from a DROPPED passage', () => {
+    // The pair is reachable, not hypothetical: `RAGContext.java:429` hands the matcher every kept
+    // citation regardless of the cut, and the matcher scores against chunk text it RE-FETCHES — not
+    // against what the model saw. So "never sent to the model" and "Grounds 2 sentences" can both
+    // be produced for one source, and they cannot both be informative.
+    const header = citationHeader({
+      citation: { ...FULL, contextInclusion: 'dropped' },
+      grounding: cited,
+      question: 'q',
+      spanUnusable: false,
+    });
+    expect(header?.inclusion?.state).toBe('dropped');
+    // The inclusion badge stands ALONE. Its producer observed the actual cut; the grounding label
+    // is a similarity against text the model never saw.
+    expect(header?.grounding).toBeNull();
+    expect(header?.claim).toBeNull();
+  });
+
+  it('withholds it ONLY for dropped — partial and included keep their grounding', () => {
+    // The discriminator. Without it the test above would pass against a projector that had simply
+    // stopped emitting grounding altogether.
+    for (const state of ['included', 'partial'] as const) {
+      const header = citationHeader({
+        citation: { ...FULL, contextInclusion: state },
+        grounding: cited,
+        question: 'q',
+        spanUnusable: false,
+      });
+      expect(header?.grounding).toBe(sourceGroundingLabel(cited));
+      expect(header?.claim).not.toBeNull();
+    }
+    // …and an ABSENT inclusion state is not "dropped": a pre-849 citation keeps its grounding.
+    const silent = { ...FULL };
+    delete silent.contextInclusion;
+    expect(
+      citationHeader({ citation: silent, grounding: cited, question: 'q', spanUnusable: false })
+        ?.grounding,
+    ).toBe(sourceGroundingLabel(cited));
+  });
+
+  it('suppressGroundingFor is the one predicate both surfaces read', () => {
+    expect(suppressGroundingFor('dropped')).toBe(true);
+    expect(suppressGroundingFor('partial')).toBe(false);
+    expect(suppressGroundingFor('included')).toBe(false);
+    expect(suppressGroundingFor(null)).toBe(false);
+  });
+
   it('suppresses the passage position when the producer recorded no chunk ordinal', () => {
     const absent = { ...FULL, chunkIndex: DOC_LEVEL_CHUNK_SENTINEL };
     const of = (citation: RetrievalCitation): string | null =>
       citationHeader({
         citation,
         grounding: null,
-        retrievalMode: 'HYBRID',
         question: null,
         spanUnusable: false,
       })?.passage ?? null;
@@ -524,12 +577,11 @@ describe('849 §7 — the citation header labels', () => {
     expect(citingTurnLabel(null)).toBeNull();
   });
 
-  it('is NULL when there is nothing to say — a header of six absences is empty space', () => {
+  it('is NULL when there is nothing to say — a header of five absences is empty space', () => {
     expect(
       citationHeader({
         citation: null,
         grounding: null,
-        retrievalMode: '',
         question: null,
         spanUnusable: false,
       }),
@@ -540,7 +592,6 @@ describe('849 §7 — the citation header labels', () => {
     const header = citationHeader({
       citation: null,
       grounding: null,
-      retrievalMode: '',
       question: null,
       spanUnusable: true,
     });
@@ -558,13 +609,45 @@ describe('849 §7 — the citation header labels', () => {
     const header = citationHeader({
       citation: silent,
       grounding: cited,
-      retrievalMode: 'HYBRID',
       question: 'q',
       spanUnusable: false,
     });
     // The absence is CONTAINED: it silences one member, not the header.
     expect(header?.inclusion).toBeNull();
     expect(header?.passage).toBe('Passage 4 of 9');
-    expect(header?.retrieval).not.toBeNull();
+    expect(header?.grounding).not.toBeNull();
+  });
+
+  // --- Slice-3 review LOW-5: the header is re-derived per stream event, so it needs value equality.
+
+  it('sameCitationHeader detects a change in EVERY member it must watch', () => {
+    const base = citationHeader({
+      citation: FULL,
+      grounding: cited,
+      question: 'q',
+      spanUnusable: false,
+    });
+    expect(base).not.toBeNull();
+    const full = base as NonNullable<typeof base>;
+    // The drift guard. `sameCitationHeader` compares member by member, so a member added to
+    // `CitationHeader` without a line there would silently stop being watched — and the consumer
+    // that re-derives on every streamed chunk would never re-render for it. If this count changes,
+    // add the new member to `sameCitationHeader` (and to the mutations below).
+    // Five nullable facts + `spanUnusable`.
+    expect(Object.keys(full)).toHaveLength(6);
+
+    expect(sameCitationHeader(full, { ...full })).toBe(true);
+    expect(sameCitationHeader(null, null)).toBe(true);
+    expect(sameCitationHeader(full, null)).toBe(false);
+
+    expect(sameCitationHeader(full, { ...full, turnLabel: 'other' })).toBe(false);
+    expect(sameCitationHeader(full, { ...full, passage: 'Passage 1 of 9' })).toBe(false);
+    expect(sameCitationHeader(full, { ...full, inclusion: inclusionBadge('dropped') })).toBe(false);
+    expect(sameCitationHeader(full, { ...full, grounding: 'Retrieved · not cited' })).toBe(false);
+    expect(sameCitationHeader(full, { ...full, claim: null })).toBe(false);
+    expect(
+      sameCitationHeader(full, { ...full, claim: { metric: CLAIM_MATCH_METRIC, band: 'weak' } }),
+    ).toBe(false);
+    expect(sameCitationHeader(full, { ...full, spanUnusable: true })).toBe(false);
   });
 });

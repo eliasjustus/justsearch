@@ -46,7 +46,6 @@ function header(spanUnusable = false): CitationHeader {
       contextInclusion: 'dropped',
     },
     grounding: null,
-    retrievalMode: 'HYBRID',
     question: 'why did the renewal fail?',
     spanUnusable,
   });

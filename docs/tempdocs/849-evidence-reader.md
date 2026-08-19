@@ -189,7 +189,7 @@ The off-by-one fixture asserts the RENDERED text of the tinted line (`line three
 
 | §8 Slice 3 item | Status |
 |---|---|
-| 1. New label/projection functions in `evidenceProjection.ts` with unit tests | Done. `inclusionBadge`, `retrievalMatch`, `claimMatch`, `citingTurnLabel`, `citationHeader`, `CITATION_SPAN_UNUSABLE`, and the two metric constants. `contextInclusionOf` went from private to exported for the same reason |
+| 1. New label/projection functions in `evidenceProjection.ts` with unit tests | Done. `inclusionBadge`, `claimMatch`, `citingTurnLabel`, `citationHeader`, `suppressGroundingFor`, `sameCitationHeader`, `CITATION_SPAN_UNUSABLE`, `CLAIM_MATCH_METRIC`. `contextInclusionOf` went from private to exported for the same reason. A `retrievalMatch` band shipped in the first revision and was REMOVED at review — see "the band that was wrong" below |
 | 2. Header renders per §7; extraction-provenance line untouched | Done. `DocumentPane.citationHeader` is a new property beside — never merged into — `provenance`, which keeps its name, its line and its tempdoc-671 render-even-when-empty behaviour |
 | 3. Typography consumed from 846 | Done by consumption, not authorship: the header wears `--font-size-xs` + the `--text-*` roles the pane's own notices already use, and this slice authors no scale |
 | 4. Harness — extend, don't duplicate; new rows for `Sv3Pane.ts`/`SearchV3View.ts`; the live route for dropped/partial | Done, with one deliberate split — see below |
@@ -204,24 +204,58 @@ lands — because the match is exactly what turns "Retrieved · not cited" into 
 and mints the claim band. A header left on the pre-match join would have the pane emphasise a
 matched sentence while its own header still said no claim used this source.
 
-**Three §7 decisions, stated because each one chooses SILENCE over a plausible default.**
+**Two §7 decisions, stated because each one chooses SILENCE over a plausible default.**
 
-- **The retrieval score is omitted under `FULLTEXT_FALLBACK` and under an unknown/empty mode.** §7
-  said to qualify it by `retrieval_mode` "or omit it when the mode makes it non-comparable"; the
-  fallback path's `score` is `RagContextOps.scoreByTermOverlap` and banding it through
-  `evidenceTier` would feed a lexical number into thresholds calibrated on the cross-encoder cutoff
-  — the mis-calibration 822 §3d removed from `lexicalScore`. The unknown-mode case is the one with
-  reach: **every reloaded conversation** lands there, because `sv3-record.ts` reconstructs evidence
-  with `retrievalMode: ''`. So a persisted turn's header shows no retrieval band at all. That is
-  the absence discipline applied to ourselves rather than only to the backend, and it is the honest
-  answer — we do not know which scorer wrote the number — but it means the record path's header is
-  genuinely thinner than the live one, which is a real cost and not a bug to be "fixed" by
-  defaulting the mode.
-- **Neither score is a percentage.** §7 rule 1 (never adjacent as bare numbers) is enforced
-  structurally: there is no number in the header at all. Each score is a metric NAME plus a band
-  word, and `citationHeader` mints both so no caller can render one without the other's labelling.
+- **No score is a percentage.** §7 rule 1 (never adjacent as bare numbers) is enforced structurally:
+  there is no number in the header at all. The one score is a metric NAME plus a band word.
 - **`included` gets a badge too**, quietly. The design lists three states plus absence, and a
   `dropped` badge sitting alone would be read as an exception rather than as one value of a field.
+
+**The band that was wrong, and why the first revision's reasoning did not save it (review HIGH-1 /
+HIGH-2).** The first revision shipped a second band, `retrievalMatch`, gated by an allow-list of
+"comparable" retrieval modes. The gating was the wrong shape of caution, and the review's numeric
+reproduction is what settled it:
+
+- `ContextCitation.score` is the **raw Lucene hit score** — `RagContextOps.java:395` does
+  `setScore(hit.score())`, and the chunk reranker at `:1317-1322` REORDERS candidates without ever
+  writing its cross-encoder scores back. Meanwhile `TIER_HIGH = 0.6` / `TIER_MEDIUM = 0.5` are
+  anchored to the cross-encoder cutoff (`evidenceProjection.ts`, §15.C-fix). So the two are not on
+  one scale in any mode.
+- The consequence is not imprecision, it is **constancy**: RRF-fused hybrid scores cap around 0.09,
+  so every hybrid citation would have read "weak"; raw BM25 scores are unbounded, so every BM25
+  citation would have clamped to "strong". A band that cannot vary with the evidence is not a weak
+  measurement, it is **negative information** — it looks like one and carries none. Worse than the
+  bare percentage §7 set out to replace.
+- **The allow-list was also derived from a stale source, which is the transferable half.**
+  `HYBRID`/`BM25` came from `DocumentService.java:175`'s javadoc; the actual emitter
+  (`RagContextOps.java:534/541/550`) makes **`CHUNK_HYBRID` the default live mode**, and
+  `RAGContext.java:363` adds `FALLBACK_FAILED`. So the band was silent on the PRIMARY healthy path
+  and nobody would have noticed, because its failure mode was silence. Rule taken from this: **a
+  mode-conditional vocabulary must be derived from the emitter, never from a doc comment about the
+  emitter.** No mode-conditional logic survives in this slice, so there is nothing left to re-derive
+  — but the next one starts at the emitter.
+- **Correcting this section's own earlier cost analysis:** it said the omission cost was
+  "`FULLTEXT_FALLBACK` + every reloaded conversation". That was already an understatement of a
+  feature that should not have existed — the default live retrieval path was silenced too. The
+  register note that recorded the band as per-mode calibrated has been corrected; a register entry
+  asserting a calibration that was never true is exactly the false authority the register exists to
+  prevent.
+- **What replaces it: nothing, for now.** Deliberately, rather than substituting a second guess. The
+  mode-independent alternative — a source's RANK within the turn's own list, which needs no
+  calibration and is already available FE-side — is logged as a follow-up. It is a design question,
+  not a gap this PR should fill under review pressure.
+
+**A dropped passage may not also claim it grounded the answer (review MEDIUM-3).** The pair is
+REACHABLE, not hypothetical: `RAGContext.java:429` stashes every kept citation for the matcher
+regardless of what the cut did with it, and `StreamingCitationMatcher` scores answer sentences
+against chunk text it **re-fetches** by `(parentDocId, chunkIndex)` — not against what the model was
+shown. So a card could read "Retrieved · never sent to the model" beside "Grounds 1 sentence", and
+the first revision's tests *enshrined that pair as correct*. Both surfaces now withhold the grounding
+label and the claim band for `dropped` (`suppressGroundingFor`, one predicate, both surfaces), and
+the tests pin the suppression plus a discriminator proving it is scoped to `dropped` and is not a
+blanket removal. §5.5 predicted this contradiction would become *visible*; it did, and the honest
+response is to stop printing one half rather than to print both and let the reader choose. The deeper
+fix — never showing the matcher a dropped citation — is a backend follow-up, logged.
 
 **S10 is closed, and the mechanism is the header's presence, not a new event field.** Slice 2 logged
 that a degenerate `endChar <= startChar` span opens the pane in silence, indistinguishable from "no
@@ -247,34 +281,70 @@ a turn, because `sv3-citation-selected`'s ask is chosen so the context FITS (tha
 grounded marks reliable) and this one needs an ask whose context provably does not. Its determinism
 is 845's arithmetic driven from the UI — the composer's THOROUGH rung sends `topK: 12` **and**
 `maxTokens: 3072` (`sv3-ask.ts:158-168`), so one control simultaneously maximises the retrieved set
-and shrinks, via the completion reserve, the budget it must fit in. It is `required=True` by default,
-inheriting the lesson `sv3-citation-selected` records. **Its first live capture is not in this PR**
-and the step's own comment says so: the definition ships now, the baseline folds into the program's
-next dev-stack session, where the overflow arithmetic is confirmed against a real corpus and the ask
-retuned if twelve passages turn out to fit.
+and shrinks, via the completion reserve, the budget it must fit in. **Its first live capture is not in
+this PR**: the definition ships now, the baseline folds into the program's next dev-stack session.
 
-**One gate finding worth recording, because it was a false positive that would have been wrong to
-allow-list.** `check-verdict-derivation` failed on `evidenceProjection.ts`: its predicate is the
-string `retrieval\s*[=!]==`, and the header's own emptiness check contained `header.retrieval !==
-null`. The gate guards a real rule (one verdict derivation) and the file does not break it, so the
-fix was to restructure the check into a `.some()` over the facts rather than to add the projection
-authority to the gate's `allowed` list — an allow-list entry buys a passing gate by permanently
-blinding it to the file most likely to grow a real violation.
+**And it ships `required=False`, against §D-8's explicit "it must be `required=True`" (review
+LOW-6).** The deviation is recorded here rather than buried, because §D-8's instruction exists to stop
+exactly this move. Its determinism argument was that `maxTokens: 3072` shrinks the input budget;
+review established that `maxTokens` is the completion RESERVE, which makes overflow **plausible but
+not proven** — nobody has yet shown twelve passages exceed what remains on a real corpus. A required
+step that cannot be shown to reach its state fails every run for a reason that is not a regression,
+and a harness that cries wolf is worse than one step short. So the flag is temporary and its reversal
+trigger is named in the step's own comment: at the first live capture, overflow confirmed → flip to
+`required=True`; not confirmed → retune the ask (more documents, longer passages, a higher rung)
+until it overflows, then flip. It does not stay `False` by default, and "we never got round to the
+capture" is the predictable evasion this sentence exists to foreclose.
 
-**Tests — 29 new, of which 24 were verified to FAIL against the pre-change sources** (the six
-touched source files reverted to `HEAD`, the tests left in place). The five that passed both sides
-are regression guards by construction and are named as such: the two absence cases in
-`CitationsPanel.test.ts` (a citation that says nothing renders nothing; an unrecognised value is not
-coerced), `DocumentPane`'s "renders no header at all for the line-addressed mount sites", and
+**One gate finding, and the fix moved twice (review MEDIUM-4).** `check-verdict-derivation` failed on
+`evidenceProjection.ts`: its predicate was the string `retrieval\s*[=!]==`, and the header's own
+emptiness check contained `header.retrieval !== null`. The first response restructured the PRODUCT
+code to avoid the string — which passes the gate while leaving the false-positive class in place for
+the next file that names a field `retrieval`. The right fix is the predicate, and it is now
+`retrieval\s*[=!]==\s*['"]`: forming a verdict means comparing the retrieval readiness to a STATE
+LITERAL, which is what the gate's own note says it guards.
+
+The reviewer proposed scoping to `readiness\.` instead. That would have **broken the gate**: the seam
+itself destructures (`verdict.ts:318-324` reads `r.retrieval === 'degraded'`), so a receiver-name
+pattern fails the seam-integrity leg and would miss any second site that aliased the same way.
+Verified by probe rather than by reading — a crafted `readiness.retrieval === 'DEGRADED'` in a
+non-allow-listed `shell-v0` file still FAILS the gate; the crafted `header.retrieval !== null` shape
+now PASSES; the clean tree passes before and after. Both legs still bite. The `allowed` list was
+never touched: an allow-list entry buys a passing gate by permanently blinding it to the file most
+likely to grow a real violation.
+
+**Tests — 37 new, of which 32 were verified to FAIL against the pre-slice-3 sources** (the six
+touched source files checked out at the preceding commit, the tests left in place). The five that
+passed both sides are regression guards by construction and are named as such: the two absence cases
+in `CitationsPanel.test.ts` (a citation that says nothing renders nothing; an unrecognised value is
+not coerced), `DocumentPane`'s "renders no header at all for the line-addressed mount sites", and
 `Sv3Pane`'s "renders nothing until a document is set" + "re-raises the close as the window's own
-event". Honest caveat on one of the 24: `DocumentPane`'s "a citation WITH a usable span shows no
-such notice" fails pre-change because its fixture builder calls the not-yet-existing `citationHeader`,
-not because the pane rendered a notice — it is a discriminator for the S10 case beside it, not an
-independent pre-change claim. Full suite green: 428 files / 5433 tests, typecheck clean,
-`check-ui-step-coverage` + the ui-web gate set + the kernel gates green (the four pre-existing reds
-— `theme-token-closure`/`strip-token-fallbacks` on `RecentsMenu.ts`, `accent-as-text` on
-`ActionLedgerView.ts`, `controls-a11y` on `UnifiedChatView.ts:2137` — are in files this slice does
-not touch).
+event". Honest caveat on one of the 32: `DocumentPane`'s "a citation WITH a usable span shows no
+such notice" fails there because its fixture builder calls the not-yet-existing `citationHeader`, not
+because the pane rendered a notice — it is a discriminator for the S10 case beside it, not an
+independent pre-change claim.
+
+**The review fixes are pinned at their own granularity**, which is the stricter check: reverting the
+FIX rather than the slice. Switching `suppressGroundingFor` off fails **5** tests across all four
+surfaces (projection, panel, pane, window); restoring the shared early return in
+`upgradeOpenPaneAnchor` fails the LOW-5 case; the removed retrieval band is held out by an
+EXHAUSTIVE assertion (the header's only band-shaped member is the claim one) rather than by a
+`not.toContain`, so re-adding it under any label fails. `sameCitationHeader`'s member-count assertion
+earned itself immediately — it caught a miscount in its own first draft.
+
+Full suite green: 428 files / 5441 tests, typecheck clean, `check-ui-step-coverage` + the ui-web
+gate set green (four pre-existing reds — `theme-token-closure`/`strip-token-fallbacks` on
+`RecentsMenu.ts`, `accent-as-text` on `ActionLedgerView.ts`, `controls-a11y` on
+`UnifiedChatView.ts:2137` — in files this slice does not touch).
+
+**Correcting this section's own earlier claim about the kernel (review LOW-7):** it said "the kernel
+gates green", which was true only of the eight gates actually run. The FULL kernel is **35 gates, of
+which 8 fail on this branch** (`hook-integrity`, `npm-audit`, `ts-any`, `module-deps`, `dead-code`,
+`dead-code-jvm`, `contract-projection`, `config-surface`) — all pre-existing. What makes that
+harmless here is not the word "green" but the overlap check, which is the claim actually worth making
+and is now measured: all **79** findings across those 8 gates were scanned for this slice's file
+names and **zero** name any of them. `subset-isnt-the-suite`, applied to the sentence rather than
+only to the run.
 
 **Presentation-authority closure is NOT complete.** `ux-audit-closure` asks for an independent,
 measured (axe + contrast oracle) live-verified audit by an auditor ≠ committer. This slice adds two

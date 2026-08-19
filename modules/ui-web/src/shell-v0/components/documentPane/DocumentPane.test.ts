@@ -87,6 +87,25 @@ async function clickIconButton(host: Element): Promise<void> {
 
 const MD_FIXTURE = ['# Title', '', 'Paragraph text here.', '', '- item a', '- item b'].join('\n');
 
+const CITATION_FIXTURE = {
+  parentDocId: 'notes/thread.md',
+  chunkIndex: 3,
+  chunkTotal: 9,
+  startChar: 10,
+  endChar: 40,
+  // Deliberately high, and deliberately never rendered: slice-3 review HIGH-1 removed the retrieval
+  // band because this is the RAW Lucene hit score, not a value on the grounding tier scale.
+  score: 0.9,
+  excerpt: 'Paragraph text here.',
+  startLine: 2,
+  endLine: 2,
+  headingText: 'Title',
+  headingLevel: 1,
+  // PARTIAL, not dropped: the default fixture must be a state that KEEPS its grounding, so the
+  // header-content tests below assert the full header rather than the MEDIUM-3 suppressed one.
+  contextInclusion: 'partial' as const,
+};
+
 /**
  * Tempdoc 849 §7 — the citation header, as the WINDOW would hand it over. Built through the real
  * `citationHeader` projector rather than as a hand-written literal, so a test cannot assert a header
@@ -96,20 +115,7 @@ function headerFor(
   overrides: Partial<Parameters<typeof citationHeader>[0]> = {},
 ): CitationHeader | null {
   return citationHeader({
-    citation: {
-      parentDocId: 'notes/thread.md',
-      chunkIndex: 3,
-      chunkTotal: 9,
-      startChar: 10,
-      endChar: 40,
-      score: 0.9,
-      excerpt: 'Paragraph text here.',
-      startLine: 2,
-      endLine: 2,
-      headingText: 'Title',
-      headingLevel: 1,
-      contextInclusion: 'dropped',
-    },
+    citation: CITATION_FIXTURE,
     grounding: {
       cited: true,
       groundedSentences: 2,
@@ -117,7 +123,6 @@ function headerFor(
       tier: 'medium' as never,
       state: 'cited',
     },
-    retrievalMode: 'HYBRID',
     question: 'How does indexing reach the head?',
     spanUnusable: false,
     ...overrides,
@@ -155,27 +160,45 @@ describe('DocumentPane — 849 citation header', () => {
     expect(text).toContain('How does indexing reach the head?');
     expect(text).toContain('Passage 4 of 9');
     expect(text).toContain('Grounds 2 sentences');
-    // The flagship: retrieved, and the model never saw it.
-    expect(text).toContain('Retrieved · never sent to the model');
+    expect(text).toContain('Partly sent to the model');
     expect(
       el.shadowRoot?.querySelector('.citation-inclusion')?.getAttribute('data-inclusion'),
-    ).toBe('dropped');
+    ).toBe('partial');
   });
 
-  it('labels the two scores by what each MEASURES, so neither can be read as the other', async () => {
-    // The fixture is asymmetric on purpose (retrieval 0.9, claim similarity 0.51): a header that
-    // rendered one number twice would show one band twice and fail here.
+  it('labels its ONE score by what it MEASURES, and renders no retrieval band', async () => {
+    // Slice-3 review HIGH-1: the retrieval score is the raw Lucene hit score and the tier
+    // thresholds are anchored to the cross-encoder scale, so banding it produced a mode-constant —
+    // always "weak" for RRF-fused hybrid, always "strong" for unbounded BM25. It is gone.
     const el = await open(headerFor());
     const text = headerText(el);
-    expect(text).toContain('Retrieval match strong');
+    // The band that remains comes from the CLAIM similarity (0.51 → moderate). The fixture's
+    // retrieval score is 0.9, so a header that had reached for it would read "strong" here.
     expect(text).toContain('Claim match moderate');
+    expect(text).not.toContain('Retrieval match');
+    expect(text).not.toContain('strong');
     // §7 rule 2 — no bare percentages anywhere in the header.
     expect(text).not.toMatch(/\d+%/);
   });
 
+  it('a DROPPED passage shows the badge ALONE, with no grounding claim beside it', async () => {
+    // Slice-3 review MEDIUM-3, on the pane side. A source the prompt had no room for can still be
+    // scored by the matcher (which re-fetches chunk text by identity), so this fixture — dropped
+    // AND cited — is the real shape, and it used to render both statements at once.
+    const el = await open(
+      headerFor({ citation: { ...CITATION_FIXTURE, contextInclusion: 'dropped' } }),
+    );
+    const text = headerText(el);
+    expect(text).toContain('Retrieved · never sent to the model');
+    expect(text).not.toContain('Grounds 2 sentences');
+    expect(text).not.toContain('Claim match');
+    // Not a blanket blanking of the header: what the producer DID observe is still said.
+    expect(text).toContain('Passage 4 of 9');
+  });
+
   it('renders a SHORTER header when the producer said less — never a padded one', async () => {
-    // A fallback-mode retrieval of an uncited, pre-849 source: no inclusion state, no comparable
-    // retrieval score, no claim match. Everything that remains true is still said.
+    // An uncited, pre-849 source: no inclusion state, no claim match. Everything that remains true
+    // is still said, and nothing is padded in to fill the row.
     const el = await open(
       headerFor({
         citation: {
@@ -192,13 +215,11 @@ describe('DocumentPane — 849 citation header', () => {
           headingLevel: 0,
         },
         grounding: null,
-        retrievalMode: 'FULLTEXT_FALLBACK',
       }),
     );
     const text = headerText(el);
     expect(text).toContain('Passage 4 of 9');
     expect(text).not.toContain('sent to the model');
-    expect(text).not.toContain('Retrieval match');
     expect(text).not.toContain('Claim match');
   });
 

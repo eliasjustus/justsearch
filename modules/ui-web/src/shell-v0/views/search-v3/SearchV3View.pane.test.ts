@@ -726,9 +726,11 @@ describe('the pane is told what the citation that opened it can honestly say', (
     await composer.updateComplete;
     q<HTMLButtonElement>(composer, 'sv3-composer-send')?.click();
     await settle(el);
-    stream.emit('rag.meta', { retrieval_mode: 'HYBRID' });
     stream.emit('rag.citations', {
-      citations: [{ ...source(), contextInclusion: 'dropped', contextIncludedChars: 0 }],
+      // PARTIAL, not dropped: a dropped passage's grounding claim is withheld (review MEDIUM-3),
+      // and this case is about the header reading every fact off the RECORD — so it uses a state
+      // that keeps them all. The dropped suppression has its own case below.
+      citations: [{ ...source(), contextInclusion: 'partial', contextIncludedChars: 20 }],
     });
     stream.emit('chunk', { text: 'The lock held.' });
     stream.emit('rag.citation_matches', {
@@ -763,12 +765,11 @@ describe('the pane is told what the citation that opened it can honestly say', (
     expect(header?.turnLabel).toBe('why did the renewal fail?');
     // chunkIndex 0 of 2 — off the citation record, which the event never carried.
     expect(header?.passage).toBe('Passage 1 of 2');
-    // The flagship, also off the record.
-    expect(header?.inclusion?.state).toBe('dropped');
-    // Both scores, each named by what it measures — and the retrieval one exists only because
-    // `rag.meta` said which scorer produced it.
-    expect(header?.retrieval?.metric).toBe('Retrieval match');
+    // The inclusion state, also off the record.
+    expect(header?.inclusion?.state).toBe('partial');
+    // The one score, named by what it measures. There is no retrieval band at all (review HIGH-1).
     expect(header?.claim?.metric).toBe('Claim match');
+    expect(header).not.toHaveProperty('retrieval');
     expect(header?.grounding).toBe('Grounds 1 sentence');
     expect(header?.spanUnusable).toBe(false);
     // …and the shared reader is actually given it.
@@ -805,6 +806,83 @@ describe('the pane is told what the citation that opened it can honestly say', (
 
     expect(pane.citationHeader?.grounding).toBe('Grounds 1 sentence');
     expect(pane.citationHeader?.claim?.metric).toBe('Claim match');
+  });
+
+  it('a DROPPED source never gains a grounding claim, however the match lands', async () => {
+    // Slice-3 review MEDIUM-3, end to end through the window. The matcher scores against chunk text
+    // it RE-FETCHES by identity, so a passage the prompt had no room for can still be matched —
+    // which is exactly what this stream does. The header must refuse the pair.
+    const el = await mount();
+    const stream = await askUnmatched(el, [
+      { ...source(), contextInclusion: 'dropped', contextIncludedChars: 0 },
+    ]);
+    const pane = await openPaneMidStream(el);
+    expect(pane.citationHeader?.inclusion?.state).toBe('dropped');
+
+    stream.emit('rag.citation_matches', {
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          similarity: 0.9,
+          sourceIndex: 0,
+          parentDocId: CITED_DOC,
+        },
+      ],
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    // The match landed — the previous test proves that same stream produces "Grounds 1 sentence"
+    // for an unsuppressed source — and this header still refuses to claim it.
+    expect(pane.citationHeader?.grounding).toBeNull();
+    expect(pane.citationHeader?.claim).toBeNull();
+    expect(pane.citationHeader?.inclusion?.state).toBe('dropped');
+  });
+
+  it('refreshes the header of a SPAN-UNUSABLE pane when the match lands (review LOW-5)', async () => {
+    // The anchor upgrade and the header refresh used to share one early return on `anchor === null`.
+    // A pane opened on a degenerate span has no anchor by construction — so it was excluded from
+    // the refresh forever, and its header stayed frozen at "Retrieved · not cited" no matter what
+    // the matcher later found. A citation with no usable position is still a citation whose source
+    // can be grounded.
+    const el = await mount();
+    const stream = await askUnmatched(el, [{ ...source(), startChar: 40, endChar: 40 }]);
+    const main = await region(el, 'jf-sv3-main');
+    const block = q(main, 'sv3-turn-markdown');
+    if (block === null) throw new Error('the stream produced no answer block to cite from');
+    block.dispatchEvent(
+      new CustomEvent('citation-select', {
+        detail: { ...citationDetail, startChar: 40, endChar: 40 },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await el.updateComplete;
+    const pane = (await region(el, 'jf-sv3-pane')) as Sv3Pane & { updateComplete: Promise<unknown> };
+    expect(pane.citation).toBeNull(); // no anchor — the condition that used to skip the refresh
+    expect(pane.citationHeader?.grounding).toBe('Retrieved · not cited');
+
+    stream.emit('rag.citation_matches', {
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          similarity: 0.9,
+          sourceIndex: 0,
+          parentDocId: CITED_DOC,
+        },
+      ],
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    expect(pane.citationHeader?.grounding).toBe('Grounds 1 sentence');
+    // …and the pane still honestly reports that it cannot highlight anything.
+    expect(pane.citation).toBeNull();
+    expect(pane.citationHeader?.spanUnusable).toBe(true);
   });
 
   it('849 S10 — a DEGENERATE span opens a pane that says so', async () => {
