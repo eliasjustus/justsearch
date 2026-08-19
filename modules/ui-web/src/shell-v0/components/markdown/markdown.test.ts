@@ -122,6 +122,7 @@ describe('MarkdownBlock renders model prose as prose (846 §2.2)', () => {
 const CITED: Citation = {
   sentenceText: 'The lock is held for the run.',
   similarity: 0.9,
+  sentenceIndex: 0,
   label: 1,
   detail: {
     parentDocId: 'f:/docs/x.md',
