@@ -485,7 +485,11 @@ export function countSentences(text: string): number {
  * §15.A grounding verdict ({@link groundingClass}) per cite — no second classifier.
  */
 export function groundingCoverage(
-  citations: ReadonlyArray<{ readonly similarity: number; readonly sentenceText?: string }>,
+  citations: ReadonlyArray<{
+    readonly similarity: number;
+    readonly sentenceText?: string;
+    readonly sentenceIndex?: number;
+  }>,
   answerText: string,
   // Tempdoc 836 S2S3-A.2 — the run's coverage facts, when the producer reported them. Absent for a
   // producer that reports none, which keeps that caller's line exactly as it was.
@@ -493,11 +497,16 @@ export function groundingCoverage(
 ): GroundingCoverage {
   // Tempdoc 847 §2.1e — the N in "N of M" counts SENTENCES, and since 847 a sentence supported by
   // two sources arrives as two citations (one mark per verified ref). Counting citations would read
-  // "5 of 4 sentences" off a four-sentence answer, so identical sentence text collapses to one
-  // entry, classified by its STRONGEST support: the question the count answers is whether the
-  // sentence is grounded, which one strong source settles. A citation shape carrying no sentence
-  // text (a caller that passes bare similarities) is counted individually, exactly as before.
-  const bySentence = new Map<string, number>();
+  // "5 of 4 sentences" off a four-sentence answer, so a sentence's citations collapse to one entry,
+  // classified by its STRONGEST support: the question the count answers is whether the sentence is
+  // grounded, which one strong source settles.
+  //
+  // The identity is the producer's `sentenceIndex` where it exists, and the sentence TEXT only as a
+  // fallback (847 S4 review F3). Keying on text alone merged two DIFFERENT sentences that happen to
+  // read identically — a real shape in list answers ("It does not.") — and under-reported coverage
+  // as "1 of 4" where the truth was 2 of 4. A citation shape carrying neither (a caller that passes
+  // bare similarities) is counted individually, exactly as before 847.
+  const bySentence = new Map<string | number, number>();
   let grounded = 0;
   let weak = 0;
   const tally = (similarity: number): void => {
@@ -506,12 +515,18 @@ export function groundingCoverage(
     else if (verdict === 'weak') weak += 1;
   };
   for (const c of citations) {
-    if (typeof c.sentenceText !== 'string' || c.sentenceText.length === 0) {
+    const key =
+      typeof c.sentenceIndex === 'number'
+        ? c.sentenceIndex
+        : typeof c.sentenceText === 'string' && c.sentenceText.length > 0
+          ? c.sentenceText
+          : null;
+    if (key === null) {
       tally(c.similarity);
       continue;
     }
-    const best = bySentence.get(c.sentenceText);
-    if (best === undefined || c.similarity > best) bySentence.set(c.sentenceText, c.similarity);
+    const best = bySentence.get(key);
+    if (best === undefined || c.similarity > best) bySentence.set(key, c.similarity);
   }
   for (const similarity of bySentence.values()) tally(similarity);
   const cited = grounded + weak;

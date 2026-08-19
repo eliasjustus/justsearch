@@ -55,13 +55,20 @@ export interface Citation {
   similarity: number;
   /**
    * Tempdoc 847 §2.1d/§2.1e — the ANSWER SENTENCE this mark belongs to, as the producer ordered its
-   * sentences. Two jobs, both structural: citations sharing it are the several sources of ONE
-   * sentence and anchor to one run (so a two-source sentence renders two marks at one boundary),
-   * and anchoring advances in this order (so a sentence repeated in the answer is marked at each
-   * occurrence instead of stacking every mark on the first). Absent on a hand-built citation, which
-   * then groups with nothing — the conservative reading.
+   * sentences. Three jobs, all structural: citations sharing it are the several sources of ONE
+   * sentence and anchor to one run (so a two-source sentence renders two marks at one boundary);
+   * anchoring is SORTED by it, so the consume-and-advance rule advances in the answer's own
+   * sentence order rather than in whatever order a persisted array happened to keep; and a sentence
+   * repeated in the answer is therefore marked at each occurrence instead of stacking on the first.
+   *
+   * REQUIRED (847 S4 review F2). It was briefly optional with "absent ⇒ groups with nothing" called
+   * the conservative reading; that was measurably wrong — two same-text citations without ordinals
+   * anchor the second mark at the OTHER occurrence, which is a mark on prose that source did not
+   * ground. Every producer supplies it ({@link claimsToCitations}, {@link resolveAnswerCitations}),
+   * so the type carries the requirement and {@link decorateCitations} keeps a positional fallback
+   * for an untyped object arriving from JS.
    */
-  sentenceIndex?: number;
+  sentenceIndex: number;
   /** The `[n]` label shown (1-based source position). */
   label: number;
   /** Click target — the `citation-select` deep-link to the exact local passage. */
@@ -250,6 +257,12 @@ interface MatchedRun {
  * stray ordinal. It is robust in that direction only — a single foreign token at the key's HEAD
  * zeroes the match (a fence's info string is a class attribute, not text), which is the right
  * outcome there (a code block has no sentence to mark) but must not be generalized.
+ *
+ * Two known asymmetries, both failing CLOSED (no mark), recorded so neither is re-discovered as a
+ * surprise: (1) the leading-token case above; (2) INTRAWORD emphasis — `**fast**est` segments as
+ * `fast` + `est` in the key but as the single token `fastest` in the rendered DOM, so a key whose
+ * FIRST word carries intraword emphasis matches nothing and that sentence goes unmarked. Both lose
+ * a mark that was earned; neither places one that was not.
  */
 function matchWordRun(
   keyToks: readonly WordToken[],
@@ -320,6 +333,12 @@ const BLOCK_TAGS = new Set([
   'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'CAPTION',
   'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR',
   'SECTION', 'ARTICLE', 'ASIDE', 'FIGURE', 'FIGCAPTION', 'DETAILS', 'SUMMARY',
+  // Sanitizer-surviving raw-HTML containers a model can write directly into its answer. `marked`
+  // emits none of them, so they only arrive as literal HTML — but two ADJACENT unlisted siblings
+  // would resolve to the same (root) ancestor and read as one block, which is the one way the
+  // guard can under-clamp. Listing them closes that by construction rather than by argument.
+  'MAIN', 'NAV', 'HEADER', 'FOOTER', 'ADDRESS', 'HGROUP', 'MENU',
+  'FORM', 'FIELDSET', 'LEGEND',
 ]);
 
 /** The nearest block-level ancestor of `node` inside `root` (the root itself when there is none). */
@@ -736,9 +755,31 @@ export class MarkdownBlock extends JfElement {
     let group: { startIndex: number; endIndex: number; cites: Citation[] } | null = null;
     let groupSentence: number | null = null;
 
-    for (const cite of this.citations) {
-      const sid = typeof cite.sentenceIndex === 'number' ? cite.sentenceIndex : null;
-      if (group !== null && sid !== null && sid === groupSentence) {
+    // §2.1d is a statement about the ANSWER'S sentence order, so the order is established here
+    // rather than assumed of the input. Two of the four construction paths already sort; the two
+    // that project a persisted array inherit whatever order was stored, and a single out-of-order
+    // pair would make the advance rule skip past a sentence — reproducing the very marks-vanish
+    // defect this slice closes. Stable by `sentenceIndex`, so a sentence's several sources keep the
+    // resolver's ref order (and with it their ascending labels). The positional fallback is for an
+    // untyped object arriving from JS: it gives such a citation its own ordinal (no grouping) and
+    // keeps it where the caller put it, instead of collapsing every one of them onto index 0.
+    const ordered = this.citations
+      .map((cite, position) => {
+        const typed = typeof cite.sentenceIndex === 'number';
+        return {
+          cite,
+          position,
+          sort: typed ? cite.sentenceIndex : position,
+          // A negative, per-position key for the untyped case: it can never equal a real sentence
+          // ordinal, so such a citation groups with nothing instead of merging into whichever
+          // sentence happened to share its array position.
+          sid: typed ? cite.sentenceIndex : -1 - position,
+        };
+      })
+      .sort((a, b) => a.sort - b.sort || a.position - b.position);
+
+    for (const { cite, sid } of ordered) {
+      if (group !== null && sid === groupSentence) {
         // Another source of the SAME sentence — one run, one boundary, its own mark.
         const key = `${group.endIndex}:${Number(cite.label)}`;
         if (seen.has(key)) continue;

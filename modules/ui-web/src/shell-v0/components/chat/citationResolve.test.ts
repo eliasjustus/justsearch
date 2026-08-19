@@ -299,6 +299,27 @@ describe('claimsToCitations — one citation per verified ref (847 §2.1e)', () 
     expect(cov.grounded).toBe(1);
     expect(cov.total).toBe(2);
   });
+
+  it('counts two DIFFERENT sentences that read identically as two (847 S4 review F3)', () => {
+    // A real shape in list answers: "It does not." twice, two separate sentences the matcher scored
+    // separately. Collapsing them on TEXT reported "1 of 4" where the truth is 2 of 4 — an
+    // under-claim, so it fails in the honest direction, but it is still a wrong number on a surface
+    // whose whole job is being right about how much of the answer is grounded. The identity is the
+    // producer's `sentenceIndex`; text is only the fallback for a shape that carries none.
+    const repeated = 'It does not.';
+    const marks = claimsToCitations(
+      [
+        { ...twoSourceClaim[0]!, sentenceIndex: 1, sentenceText: repeated, verifiedRefs: [0] },
+        { ...twoSourceClaim[0]!, sentenceIndex: 3, sentenceText: repeated, verifiedRefs: [1] },
+      ],
+      fiveSources,
+    );
+    expect(marks).toHaveLength(2);
+    const cov = groundingCoverage(marks, 'Does it rebuild? It does not. Does it reopen? It does not.');
+    expect(cov.cited).toBe(2);
+    expect(cov.grounded).toBe(2);
+    expect(cov.total).toBe(4);
+  });
 });
 
 // Tempdoc 577 Phase 1 (Move F) — the ONE agent-answer resolver, extracted from UnifiedChatView so

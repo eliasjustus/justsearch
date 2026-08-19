@@ -51,10 +51,18 @@ async function settle(el: Element): Promise<void> {
   await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
 }
 
-function mark(sentenceText: string, similarity = 0.8, label = 1): MarkdownCitation {
+function mark(
+  sentenceText: string,
+  similarity = 0.8,
+  label = 1,
+  // 847 §2.1d — the producer's sentence ordinal, required on a `Citation`. Every fixture using this
+  // helper carries ONE citation, so the default is the answer's first sentence.
+  sentenceIndex = 0,
+): MarkdownCitation {
   return {
     sentenceText,
     similarity,
+    sentenceIndex,
     label,
     detail: { parentDocId: 'f:/docs/x.md', startLine: 1, endLine: 5, startChar: 0, endChar: 0, excerpt: 'x' },
     hover: { excerpt: 'an excerpt', title: 'X', headingText: '' },
@@ -618,6 +626,9 @@ function citeAt(sentenceText: string, similarity: number, label: number, docId: 
   return {
     sentenceText,
     similarity,
+    // These fixtures pair one sentence with one source, in order, so the label's 0-based twin IS the
+    // sentence ordinal (847 §2.1d).
+    sentenceIndex: label - 1,
     label,
     detail: { parentDocId: docId, startLine: 1, endLine: 5, startChar: 0, endChar: 0, excerpt: 'x' },
     hover: { excerpt: 'an excerpt', title: 'X', headingText: '' },
@@ -1041,6 +1052,45 @@ describe('847 T3b — a repeated sentence is marked at EACH occurrence, never st
     expect(content.textContent).toMatch(
       /substrate\.1 Then some intervening prose\. The kernel is a shared substrate\.2/,
     );
+    el.remove();
+  });
+});
+
+describe('847 F1 — anchoring order is established here, not assumed of the input', () => {
+  it('marks both sentences when the citations arrive in DESCENDING sentence order', async () => {
+    // §2.1d's consume-and-advance is a statement about the ANSWER'S sentence order. Two of the four
+    // construction paths sort; the two that project a persisted array inherit whatever order was
+    // stored, and nothing pins that contract on the producer side. Unsorted, the later sentence
+    // anchors first, the cursor advances past it, and the EARLIER sentence can no longer match —
+    // its mark vanishes, which is precisely the defect this slice exists to close.
+    const first = 'The kernel is a shared substrate.';
+    const second = 'The worker owns all index IO.';
+    const el = await renderAnswer([first, second], [claim(1, second, [1]), claim(0, first, [0])]);
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.querySelectorAll('.cite-ref').length).toBe(2);
+    // …and each mark sits on ITS OWN sentence, not merely present somewhere.
+    expect(content.textContent).toMatch(/substrate\.1 The worker owns all index IO\.2/);
+    el.remove();
+  });
+
+  it('an untyped citation gets its own ordinal — it never merges into the sentence at its index', async () => {
+    // The positional fallback for an object arriving from JS without the (now required) field. A
+    // naive `sentenceIndex ?? position` would have let citation @1 group with the real sentence 1
+    // and put its mark on prose it never grounded; the fallback key is per-position and negative,
+    // so it can collide with no real ordinal.
+    const first = 'The kernel is a shared substrate.';
+    const second = 'The worker owns all index IO.';
+    const untyped = { ...mark(second, 0.8, 2) } as Record<string, unknown>;
+    delete untyped.sentenceIndex;
+    const el = document.createElement('jf-markdown-block') as MarkdownBlock;
+    el.text = `${first} ${second}`;
+    el.citations = [mark(first, 0.8, 1, 0), untyped as unknown as MarkdownCitation];
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.querySelectorAll('.cite-sentence').length).toBe(2);
+    expect(content.textContent).toMatch(/substrate\.1 The worker owns all index IO\.2/);
     el.remove();
   });
 });

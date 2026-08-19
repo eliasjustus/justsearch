@@ -1074,29 +1074,61 @@ here — the code file sets are disjoint by design (`recordEvidence.ts` / `sv3-*
 | §2.1e | One `Citation` per verified ref; dedupe on `` `${endIndex}:${label}` ``; grouped marks emitted ascending by label in one split; dead `sourceRefs` deleted | `citationResolve.claimsToCitations`, `MarkdownBlock.Citation` |
 | §2.1 tier 2/3 (H3) | Unchanged in mechanism, named as an invariant and pinned: a tier-2 mark carries no `.cite-sentence` | `normalizeLiteralCitationTokens` doc + T5 |
 | §2.1 (846) | Ordering vs `highlightCodeBlocks` asserted, including the DEFERRED pass | `updated()` comment + T19 |
+| §2.1d (F1) | Citations sorted by `sentenceIndex` before the anchor loop — the order the advance rule assumes is established, not inherited from a persisted array | `decorateCitations` |
 | §2.0 | `stripMarkers` (the character blacklist) and `escapeRegex` deleted; only inline-link collapsing survives | `collapseInlineLinks` |
 
 ### Deviations from the design, each deliberate
 
-1. **`Citation.sentenceIndex` was added** (the design named no carrier). §2.1d's advance rule and
-   §2.1e's grouping need to tell "two sources of one sentence" from "one sentence written twice",
-   and `sentenceText` alone cannot: both cases produce identical text. The field is a projection of
-   `Claim.sentenceIndex`, which the producer already supplies — not a new fact. Absent ⇒ no
-   grouping, which is the conservative reading.
+1. **`Citation.sentenceIndex` was added, and is REQUIRED** (the design named no carrier). §2.1d's
+   advance rule and §2.1e's grouping need to tell "two sources of one sentence" from "one sentence
+   written twice", and `sentenceText` alone cannot: both cases produce identical text. The field is
+   a projection of `Claim.sentenceIndex`, which the producer already supplies — not a new fact.
+   It shipped OPTIONAL first, with "absent ⇒ groups with nothing" called the conservative reading;
+   independent review (F2) showed that is measurably wrong — two same-text citations without
+   ordinals anchor the second mark at the OTHER occurrence, a mark on prose that source did not
+   ground. All three producers set it, so the type now requires it (three test fixtures updated),
+   and the renderer keeps a per-position NEGATIVE fallback key for an untyped object arriving from
+   JS: it can collide with no real ordinal, so such a citation groups with nothing for real.
 2. **The uniqueness clause covers a single-token run as well as `matchedWordChars < 4`.** §2.1a's
    own worked example (`"2026."`) does not fire the clause as literally specified — a 4-character
    key matched whole gives `matchedWordChars = 4`. A one-token run carries no sequence evidence
    about which occurrence it is, so the clause is applied there too. It rejects nothing S0 measured
    as acceptable: the 18-shape matrix pins that, and it is what makes T2c's own case reject.
-3. **`groundingCoverage` now counts distinct sentences.** Per-ref emission would otherwise inflate
-   the "N of M sentences" honesty line (two marks on one sentence read as two grounded sentences).
-   A citation carrying no `sentenceText` is counted individually, so no other caller moves.
+3. **`groundingCoverage` now counts distinct sentences**, keyed on `sentenceIndex` with
+   `sentenceText` only as a fallback. Per-ref emission would otherwise inflate the "N of M
+   sentences" honesty line (two marks on one sentence read as two grounded sentences). Keying on
+   text alone — the first cut, corrected under review F3 — merged two DIFFERENT sentences that read
+   identically ("It does not." twice in a list answer) and under-reported "1 of 4" where the truth
+   was 2 of 4. A citation carrying neither field is counted individually, so no other caller moves.
 4. **A multi-source sentence's underline takes the STRONGEST tier**, while each mark keeps its own
    source's tier (H2). The span answers "is this sentence grounded", which one strong source
    settles; the weak source still reads weak where it is claimed, on its own numeral.
 5. **The agent path derives its sentence ordinal** by grouping consecutive identical `sentenceText`
    (its payload carries no ordinal). Stated as an honest limit in the code: a repeated identical
    sentence is read as the multi-source case there.
+6. **Anchoring order is established in the renderer, not assumed of the input** (review F1). §2.1d
+   is a claim about the ANSWER'S sentence order; two of the four construction paths sort, and the
+   two that project a persisted array inherit whatever order was stored. The citations are sorted
+   (stably, by `sentenceIndex`) before the anchor loop, so a single out-of-order pair can no longer
+   make the advance rule skip a sentence — which would reproduce the marks-vanish defect this slice
+   closes. The backend emits ascending today (`CitationScorer.java:136`,
+   `CitationMatchOps.java:297`) but nothing pins that as a contract, so the renderer does not rely
+   on it.
+7. **`insertedLabels` is scoped to markers actually inserted.** The pre-847 code added every
+   candidate label up front, so a label whose boundary node could not be split was treated as
+   rendered and its literal `[n]` was STRIPPED. It is now collected during insertion, so such a
+   label falls through to the tier-2 upgrade instead — strictly more correct, and a case the reader
+   would otherwise have lost silently.
+8. **`BLOCK_TAGS` lists the raw-HTML block containers** (`MAIN`/`NAV`/`HEADER`/`FOOTER`/`ADDRESS`/
+   `HGROUP`/`MENU`/`FORM`/`FIELDSET`/`LEGEND`) alongside what `marked` emits. They can only arrive
+   as literal HTML in a model answer, but two ADJACENT unlisted siblings would resolve to the same
+   (root) ancestor and read as one block — the guard's one under-clamp path, closed by construction
+   rather than by argument (review O3).
+
+Two asymmetries of prefix matching are named in the code rather than fixed, both failing CLOSED
+(a mark is lost, never misplaced): a foreign token at the key's HEAD zeroes the match (a fence's
+info string), and INTRAWORD emphasis (`**fast**est` → `fast`+`est` in the key, `fastest` in the DOM)
+makes a leading emphasized word unmatchable (review O2).
 
 ### Tests, and what fails without the change
 
@@ -1112,14 +1144,24 @@ assertions fail** (26 in the matrix, 4 in `MarkdownBlock.test.ts`, 3 in `citatio
 The shapes that pass pre-change are exactly the prose-only ones (A, O, S) — the pre-847 anchorer
 worked on prose and only on prose.
 
+The review round added four tests. Two fail against the pre-review implementation and are the
+regression pins for F1 and F3: out-of-order citations marking both sentences (without the sort, the
+earlier sentence's mark vanishes), and two identical-reading sentences counting as two. The other
+two PIN behaviour rather than fix a defect and pass either way: the untyped-citation fallback (it
+pins the negative per-position key, so a naive `?? position` cannot be reintroduced) and the
+single-token accept/reject boundary (review O1 — `"Correct."` unique marks, recurring does not;
+that rejection class is new with S4 and fails closed, and S0's matrix was silent on it rather than
+supportive).
+
 T6 is already covered by the pre-existing 687 R3a test (`[7]` with no matching citation stays inert
 text). T8 is the 822 §3d underline-density fixture, reused UNEDITED and green — the new anchorer
 bought no coverage by over-marking.
 
-Full ui-web suite: 419 files / 5262 tests green; typecheck clean; ui-web gate set + kernel gates
-green apart from three reds pre-existing on `main` (`check-theme-token-closure`,
-`check-accent-as-text`, `strip-token-fallbacks` — all in `RecentsMenu.ts` / `ActionLedgerView.ts`,
-plus `check-controls-a11y`, confirmed red with this branch's only `UnifiedChatView` line reverted).
+Full ui-web suite: 420 files / 5277 tests green (over the union with #488's S1–S3); typecheck clean;
+ui-web gate set + kernel gates green apart from three reds pre-existing on `main`
+(`check-theme-token-closure`, `check-accent-as-text`, `strip-token-fallbacks` — all in
+`RecentsMenu.ts` / `ActionLedgerView.ts`, plus `check-controls-a11y`, confirmed red with this
+branch's only `UnifiedChatView` line reverted).
 
 ### Still open after S4
 

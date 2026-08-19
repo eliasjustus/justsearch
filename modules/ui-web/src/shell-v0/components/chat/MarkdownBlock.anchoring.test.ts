@@ -506,6 +506,25 @@ describe('847 T2c — the acceptance rule at its boundaries', () => {
     el.remove();
   });
 
+  it('a SINGLE-TOKEN sentence anchors when its word occurs once, and not when it recurs', async () => {
+    // The boundary S0's matrix was silent on rather than supportive of: a one-word sentence clears
+    // the character floor and the 4-char matched threshold, so only the uniqueness clause decides.
+    // Unique ⇒ the run IS the sentence. Recurring ⇒ nothing in the key says which occurrence the
+    // cross-encoder scored, so the mark is withheld — a NEW rejection class, and it fails closed.
+    const unique = await render('Is the index rebuilt? Correct. The worker reopens the reader.', [
+      cite('Correct.'),
+    ]);
+    expect(unique.renderRoot.querySelectorAll('.cite-sentence').length).toBe(1);
+    expect(unique.renderRoot.querySelector('.cite-sentence')?.textContent).toContain('Correct');
+    unique.remove();
+
+    const ambiguous = await render('Correct. The worker reopens the reader. Correct.', [
+      cite('Correct.'),
+    ]);
+    expect(ambiguous.renderRoot.querySelectorAll('.cite-sentence').length).toBe(0);
+    ambiguous.remove();
+  });
+
   it('REJECTS a key whose match is too small a share of it (the 0.4 slack, upper regime)', async () => {
     // keyWordChars ≈ 60, matched = "The kernel" (9): the slack is 24, the shortfall is ~51.
     const el = await render('The kernel is a shared substrate for every governed projection.', [
