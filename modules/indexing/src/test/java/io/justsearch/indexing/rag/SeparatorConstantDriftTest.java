@@ -65,11 +65,12 @@ class SeparatorConstantDriftTest {
    * or be added here with justification.
    */
   private static final Set<String> RAW_LITERAL_ALLOWLIST =
-      // SelectionContextInjector pre-dates this worktree and already shipped on main with the raw
-      // literal (no canonical constant is reachable across its module boundary). Allowlisted here via
-      // the test's sanctioned escape; the structural follow-up (a shared separator constant usable
-      // from app-services) is logged in observations.md.
-      Set.of("ContextBudgeter.java", "DocumentService.java", "SelectionContextInjector.java");
+      // Only the two files that DEFINE the constant may spell it out. SelectionContextInjector was
+      // allowlisted on the claim that "no canonical constant is reachable across its module
+      // boundary" — false: it already imports DocumentService, whose SECTION_SEPARATOR is the
+      // app-api mirror, and it now uses it (tempdoc 849 review F4). An allowlist entry whose stated
+      // reason is untrue is worse than no allowlist: it teaches the next reader a false constraint.
+      Set.of("ContextBudgeter.java", "DocumentService.java");
 
   @Test
   @DisplayName("No raw separator literals outside allowlisted files")

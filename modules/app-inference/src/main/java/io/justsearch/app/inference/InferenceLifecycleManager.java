@@ -1135,8 +1135,17 @@ public class InferenceLifecycleManager
 
   // ==================== Static helpers preserved for tests ====================
 
-  @SuppressWarnings("unused") // Called from OnlineModeOpsTest (ArchUnit excludes test sources)
-  static String formatContextAsNumberedPassages(String rawContext) {
+  /**
+   * The online path's passage re-tagging, exposed for the ASSEMBLING side (tempdoc 849).
+   *
+   * <p>{@code RAGContext}'s section-aware cut exists partly so these headers survive a budget cut —
+   * the old structure-blind trim flattened every newline, so every header failed to parse and the
+   * fallback counter silently diverged from the {@code sources[n - 1]} the FE resolves. Asserting
+   * that against a re-implementation of the parser would prove nothing about the real one, so the
+   * head-side test round-trips through this delegate.
+   */
+  @SuppressWarnings("unused") // Called from RAGContextTest (ArchUnit excludes test sources)
+  public static String formatContextAsNumberedPassages(String rawContext) {
     return OnlineModeOps.formatContextAsNumberedPassages(rawContext);
   }
 

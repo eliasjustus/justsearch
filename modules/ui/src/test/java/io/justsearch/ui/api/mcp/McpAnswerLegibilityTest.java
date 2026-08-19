@@ -12,6 +12,7 @@ import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.DocumentService.ContextCitation;
+import io.justsearch.app.api.DocumentService.ContextInclusion;
 import io.justsearch.app.api.DocumentService.ContextResult;
 import io.justsearch.app.api.DocumentService.ContextSection;
 import io.justsearch.app.api.DocumentService.QualitySignals;
@@ -83,9 +84,12 @@ final class McpAnswerLegibilityTest {
   private static ContextResult fixtureResult(boolean truncated, List<ContextSection> sections) {
     List<ContextCitation> citations =
         List.of(
-            new ContextCitation("doc-1", 0, 2, 0, 40, 0.9f, "excerpt-1", 1, 4, "", 0),
-            new ContextCitation("doc-1", 1, 2, 40, 80, 0.8f, "excerpt-2", 5, 8, "", 0),
-            new ContextCitation("doc-2", 0, 1, 0, 30, 0.7f, "excerpt-3", 1, 3, "", 0));
+            new ContextCitation(
+                "doc-1", 0, 2, 0, 40, 0.9f, "excerpt-1", 1, 4, "", 0, ContextInclusion.ABSENT),
+            new ContextCitation(
+                "doc-1", 1, 2, 40, 80, 0.8f, "excerpt-2", 5, 8, "", 0, ContextInclusion.ABSENT),
+            new ContextCitation(
+                "doc-2", 0, 1, 0, 30, 0.7f, "excerpt-3", 1, 3, "", 0, ContextInclusion.ABSENT));
     return new ContextResult(
         "[From: doc-1]\nexcerpt-1\n\n---\n\n[From: doc-2]\nexcerpt-3",
         3,
@@ -266,7 +270,9 @@ final class McpAnswerLegibilityTest {
 
   private static ContextResult customContextFixture(String context, List<ContextSection> sections) {
     List<ContextCitation> citations =
-        List.of(new ContextCitation("doc-1", 0, 1, 0, 40, 0.9f, "excerpt-1", 1, 4, "", 0));
+        List.of(
+            new ContextCitation(
+                "doc-1", 0, 1, 0, 40, 0.9f, "excerpt-1", 1, 4, "", 0, ContextInclusion.ABSENT));
     return new ContextResult(
         context,
         1,
