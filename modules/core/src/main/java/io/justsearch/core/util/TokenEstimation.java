@@ -128,6 +128,24 @@ public final class TokenEstimation {
   // ==========================================================================
 
   /**
+   * The floor a context cut applies to its token budget: never cut below {@value #MIN_BUDGET}
+   * tokens of content, whatever the budget says.
+   *
+   * <p>Tempdoc 849 D-5: {@link #truncateIfNeeded} has always floored this way, and since 845
+   * {@code computeSafeInputBudgetTokens} genuinely can return {@code 0} — so a zero budget means
+   * "a {@value #MIN_BUDGET}-token floor of context", not "no context at all". The section-aware cut
+   * (tempdoc 849 §5.2) reads the floor from here rather than re-deriving it, so the two cut
+   * branches cannot disagree about what a zero budget means. This does NOT touch
+   * {@link #computeSafeInputBudgetTokens}: that stays the one place the budget itself is decided.
+   *
+   * @param maxContextTokens the requested content budget in tokens
+   * @return the budget actually applied, never below {@value #MIN_BUDGET}
+   */
+  public static int effectiveContextCap(int maxContextTokens) {
+    return Math.max(MIN_BUDGET, maxContextTokens);
+  }
+
+  /**
    * Truncate content using first/last strategy with warning marker.
    * Used for non-RAG content where document structure matters.
    *
@@ -139,7 +157,7 @@ public final class TokenEstimation {
     if (content == null) {
       return new TruncationResult(null, false, 0, 0, -1);
     }
-    int cap = Math.max(MIN_BUDGET, maxContextTokens);
+    int cap = effectiveContextCap(maxContextTokens);
     int tokens = estimateTokens(content);
     if (tokens <= cap) {
       return new TruncationResult(content, false, tokens, tokens, -1);

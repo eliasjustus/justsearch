@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.api.DocumentService.ContextCitation;
+import io.justsearch.app.api.DocumentService.ContextInclusion;
 import io.justsearch.app.api.DocumentService.ContextResult;
 import io.justsearch.app.api.DocumentService.QualitySignals;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
@@ -171,7 +172,9 @@ final class McpEvidenceProjectionTest {
   @DisplayName("answer: projects every ContextCitation field + the quality/degradation signals")
   void answerProjectsCitationsAndQuality() {
     ContextCitation cite =
-        new ContextCitation("doc-42", 2, 5, 100, 260, 0.87f, "an excerpt", 12, 18, "Overview", 2);
+        new ContextCitation(
+            "doc-42", 2, 5, 100, 260, 0.87f, "an excerpt", 12, 18, "Overview", 2,
+            ContextInclusion.ABSENT);
     ContextResult result =
         new ContextResult(
             "assembled context",
@@ -405,14 +408,21 @@ final class McpEvidenceProjectionTest {
     // splade must be a key).
     assertCovers(SearchTrace.LegScores.class, asMap(hitMap.get("legScores")), Set.of());
 
+    // Tempdoc 849: the MAXIMAL fixture carries a RESOLVED inclusion. Absence is expressed by
+    // omitting the key (the same discipline `headingText` already follows), so a fixture built
+    // ABSENT would let the totality guard pass while the field is never projected at all.
     ContextCitation cite =
-        new ContextCitation("doc-42", 2, 5, 100, 260, 0.87f, "excerpt", 12, 18, "Overview", 2);
+        new ContextCitation(
+            "doc-42", 2, 5, 100, 260, 0.87f, "excerpt", 12, 18, "Overview", 2,
+            ContextInclusion.partial(120));
     ContextResult result =
         new ContextResult(
             "ctx", 3, 7, 0, List.of(cite), "HYBRID", "HYBRID_AVAILABLE", false, List.of(),
             new QualitySignals(0.87f, 0.1f, 0.42f, 7, 3));
     Map<String, Object> answerEvidence = McpEvidenceProjection.answerEvidence(result);
-    assertCovers(ContextCitation.class, asMap(asList(answerEvidence.get("citations")).get(0)), Set.of());
+    Map<String, Object> citationMap = asMap(asList(answerEvidence.get("citations")).get(0));
+    assertCovers(ContextCitation.class, citationMap, Set.of());
+    assertCovers(ContextInclusion.class, asMap(citationMap.get("inclusion")), Set.of());
     // The `quality` map is a SUPERSET (QualitySignals fields + ContextResult counts) — assert it covers
     // every QualitySignals component.
     assertCovers(QualitySignals.class, asMap(answerEvidence.get("quality")), Set.of());

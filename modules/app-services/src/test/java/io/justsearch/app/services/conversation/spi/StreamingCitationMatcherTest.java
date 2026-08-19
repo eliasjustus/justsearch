@@ -14,6 +14,7 @@ import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.DocumentService.CitationMatchEntry;
 import io.justsearch.app.api.DocumentService.CitationMatchResult;
 import io.justsearch.app.api.DocumentService.ContextCitation;
+import io.justsearch.app.api.DocumentService.ContextInclusion;
 import io.justsearch.app.api.DocumentService.DocumentRecord;
 import io.justsearch.app.api.DocumentService.ScorerKind;
 import io.justsearch.app.api.DocumentService.TextSource;
@@ -295,7 +296,7 @@ final class StreamingCitationMatcherTest {
 
   private static ContextCitation citation(String docId, int chunkIdx, String excerpt) {
     return new ContextCitation(
-        docId, chunkIdx, 1, 0, 100, 1.0f, excerpt, 0, 10, "", 0);
+        docId, chunkIdx, 1, 0, 100, 1.0f, excerpt, 0, 10, "", 0, ContextInclusion.ABSENT);
   }
 
   private static ConversationContext ctxWithCitations(List<ContextCitation> citations) {

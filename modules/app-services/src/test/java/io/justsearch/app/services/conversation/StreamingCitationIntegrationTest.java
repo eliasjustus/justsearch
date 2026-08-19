@@ -195,7 +195,8 @@ final class StreamingCitationIntegrationTest {
           new DocumentService.ContextCitation(
               "doc-1", 0, 1, 0, 100, 0.9f,
               "The grass is green in the field nearby",
-              0, 5, "Introduction", 1);
+              0, 5, "Introduction", 1,
+              DocumentService.ContextInclusion.ABSENT);
 
       ctx.attributes().put(RAGContext.ATTR_CITATIONS, List.of(citation));
       ctx.attributes().put(RAGContext.ATTR_USED_RAG, true);

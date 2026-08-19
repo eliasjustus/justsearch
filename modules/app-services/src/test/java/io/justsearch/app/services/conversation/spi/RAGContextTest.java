@@ -11,10 +11,13 @@ import io.justsearch.agent.api.conversation.SseEvent;
 import io.justsearch.agent.api.registry.Audience;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.DocumentService.ContextCitation;
+import io.justsearch.app.api.DocumentService.ContextInclusion;
 import io.justsearch.app.api.DocumentService.ContextResult;
 import io.justsearch.app.api.DocumentService.ContextSection;
 import io.justsearch.app.api.DocumentService.DocumentRecord;
 import io.justsearch.app.api.RetrieveContextParams;
+import io.justsearch.app.inference.InferenceLifecycleManager;
+import io.justsearch.core.util.TokenEstimation;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -114,7 +117,9 @@ final class RAGContextTest {
   @Test
   @DisplayName("Happy path: chunked retrieval → emits rag.meta, builds user message, stashes attributes")
   void happyPathChunkedRetrieval() {
-    var citation = new ContextCitation("doc-1", 0, 1, 0, 100, 0.9f, "excerpt", 0, 0, "", 0);
+    var citation =
+        new ContextCitation(
+            "doc-1", 0, 1, 0, 100, 0.9f, "excerpt", 0, 0, "", 0, ContextInclusion.ABSENT);
     var section = new ContextSection("[doc-1]", "the chunk text", false, 0, 0);
     var ctxResult =
         new ContextResult(
@@ -517,7 +522,8 @@ final class RAGContextTest {
   @Test
   @DisplayName("845: rag.meta is still emitted before rag.citations")
   void ragMetaStillPrecedesCitations() {
-    var citation = new ContextCitation("a", 0, 1, 0, 4, 0.9f, "text", 1, 1, null, 0);
+    var citation =
+        new ContextCitation("a", 0, 1, 0, 4, 0.9f, "text", 1, 1, null, 0, ContextInclusion.ABSENT);
     var docs =
         new StubDocs(
             new ContextResult("text", 1, 1, 1, List.of(citation), "BM25", "ok", false, List.of()),
@@ -532,6 +538,265 @@ final class RAGContextTest {
     assertTrue(
         order.indexOf("rag.meta") < order.indexOf("rag.citations"),
         "deferring the emission must not reorder the stream: " + order);
+  }
+
+  // --- Tempdoc 849: retrieved is not received. The cut is now section-aware on the SECTIONED
+  // branch and records, per citation, what it did with that passage. The whole-document fallback
+  // keeps the structure-blind cut (D-1) — deleting it would leave a whole-document context
+  // entirely untruncated, re-opening the overcommit 845 closed.
+
+  /** 6 words / 39 chars per repeat; 30 repeats estimate to 293 tokens against a 460-token budget. */
+  private static final String PASSAGE_BODY = "lorem ipsum dolor sit amet consectetur ".repeat(30);
+
+  @Test
+  @DisplayName("849: the passage the cut discarded is DROPPED on ITS OWN citation")
+  void droppedIsRecordedOnTheCitationItDescribes() {
+    InjectorResult result = injectOverBudgetSectionedTurn(4);
+    List<Map<String, Object>> citations = citationsOf(result);
+
+    assertEquals(4, citations.size(), "every retrieved passage still gets a citation");
+    // Named citations, not "some citation is dropped" — the whole point is per-passage truth.
+    assertEquals("included", citationFor(citations, "doc-0").get("contextInclusion"));
+    assertEquals("dropped", citationFor(citations, "doc-3").get("contextInclusion"));
+    // …and the prompt genuinely does not contain the dropped passage's header.
+    String raw = assembledContextOf(result);
+    assertFalse(raw.contains("] doc-3"), "a dropped passage must not be in the prompt: " + raw);
+  }
+
+  @Test
+  @DisplayName("849: a boundary passage is PARTIAL with a plausible contextIncludedChars")
+  void boundaryPassageIsPartial() {
+    InjectorResult result = injectOverBudgetSectionedTurn(4);
+    Map<String, Object> boundary = citationFor(citationsOf(result), "doc-1");
+
+    assertEquals("partial", boundary.get("contextInclusion"));
+    int includedChars = (Integer) boundary.get("contextIncludedChars");
+    assertTrue(includedChars > 0, "partial means SOME text reached the model, not none");
+    assertTrue(
+        includedChars < PASSAGE_BODY.length(),
+        "partial means NOT all of it either: " + includedChars + " of " + PASSAGE_BODY.length());
+  }
+
+  @Test
+  @DisplayName("849: a turn that FITS marks every citation included AND reports untruncated")
+  void fittingTurnMarksEveryCitationIncluded() {
+    var retrieval = sectionedRetrieval(3, "a short retrieved passage");
+    var ctx = stubCtx(Map.of("question", "what?", "docIds", List.of("a")));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 1024);
+    InjectorResult result =
+        new RAGContext(new StubDocs(retrieval, Map.of()), RAGContext.DEFAULT_TOP_K,
+                () -> stubAi(4096, 4096))
+            .inject(ctx);
+
+    for (Map<String, Object> c : citationsOf(result)) {
+      assertEquals("included", c.get("contextInclusion"), "nothing was cut: " + c);
+    }
+    // The discriminator: without this the test would also pass if the field simply defaulted to
+    // "included" for a turn that WAS truncated.
+    assertEquals(false, ragMetaOf(result).get("context_truncated"));
+  }
+
+  @Test
+  @DisplayName("849: the re-assembled context still parses as numbered passages (flattening fix)")
+  void reAssembledContextSurvivesTheRealPromptFormatter() {
+    InjectorResult result = injectOverBudgetSectionedTurn(4);
+    String raw = assembledContextOf(result);
+
+    assertTrue(
+        raw.contains(DocumentService.SECTION_SEPARATOR),
+        "the separators the old structure-blind cut flattened must survive: " + raw);
+
+    // Round-tripped through the REAL online-path parser, not a re-implementation of it: that
+    // parser keys each passage id to the header ordinal precisely so it cannot disagree with the
+    // FE's sources[n - 1]. The old cut destroyed every header, so every parse fell back to a
+    // running counter — the exact divergence its javadoc was written to prevent.
+    String passages = InferenceLifecycleManager.formatContextAsNumberedPassages(raw);
+    assertTrue(passages.contains("<passage id=\"1\" source=\"doc-0\">"), passages);
+    assertTrue(passages.contains("<passage id=\"2\" source=\"doc-1\">"), passages);
+    assertEquals(
+        2,
+        passages.split("<passage id=", -1).length - 1,
+        "exactly the two passages that survived the cut, each with its ORIGINAL ordinal");
+  }
+
+  @Test
+  @DisplayName("849 D-1: a whole-document fallback over budget is STILL truncated")
+  void wholeDocumentFallbackIsStillTruncated() {
+    // chunksUsed == 0 → the context is REPLACED by fetchBatch text, which has no sections. This
+    // branch must keep the structure-blind cut; the section-aware branch has nothing to work with.
+    var emptyRetrieval =
+        new ContextResult("", 0, 0, 0, List.of(), "BM25", "no_hits", false, List.of());
+    String huge = "lorem ipsum dolor sit amet consectetur ".repeat(300);
+    var docs =
+        new StubDocs(
+            emptyRetrieval, Map.of("doc-1", new DocumentRecord("doc-1", huge, Map.of())));
+
+    var ctx = stubCtx(Map.of("question", "q", "docIds", List.of("doc-1")));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 3072);
+    InjectorResult result =
+        new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096)).inject(ctx);
+
+    String injected = (String) result.messages().get(0).get("content");
+    assertTrue(
+        injected.contains("[... content truncated ...]"),
+        "the fallback branch must keep truncating — 845's overcommit is one deleted call away");
+    assertTrue(injected.length() < huge.length());
+    assertEquals(true, ragMetaOf(result).get("context_truncated"));
+  }
+
+  @Test
+  @DisplayName("849 D-5: headers and separators count against the budget, not just content")
+  void sectionOverheadIsChargedAgainstTheBudget() {
+    // Content alone fits the 460-token budget; content + the 20 headers + 19 separators does not.
+    // A re-assembly that budgeted only content would emit every section and overshoot.
+    String label = "a-source-label-long-enough-to-cost-real-tokens-in-its-header";
+    String body = "alpha beta gamma delta ".repeat(4);
+    var retrieval = sectionedRetrieval(20, body, label);
+    int contentTokens = 20 * TokenEstimation.estimateTokens(body);
+    assertTrue(contentTokens <= 460, "precondition: the CONTENT alone fits (" + contentTokens + ")");
+
+    var ctx = stubCtx(Map.of("question", "what?", "docIds", List.of("a")));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 3072);
+    InjectorResult result =
+        new RAGContext(new StubDocs(retrieval, Map.of()), RAGContext.DEFAULT_TOP_K,
+                () -> stubAi(4096, 4096))
+            .inject(ctx);
+
+    String raw = assembledContextOf(result);
+    assertTrue(
+        TokenEstimation.estimateTokens(raw) <= 460,
+        "the assembled context must respect the budget INCLUDING its own overhead: "
+            + TokenEstimation.estimateTokens(raw));
+    assertEquals(true, ragMetaOf(result).get("context_truncated"));
+  }
+
+  @Test
+  @DisplayName("849 D-5: a zero input budget means the same floor on BOTH cut branches")
+  void zeroBudgetCarriesTheSameFloorOnBothBranches() {
+    // Since 845 the budget genuinely can be 0 (the reserve swallows the window). truncateIfNeeded
+    // has always floored that at MIN_BUDGET, so 0 means "a 256-token floor of context", not "no
+    // context". Both branches must agree — otherwise the sectioned branch silently returns nothing.
+    var ctx = stubCtx(Map.of("question", "what?", "docIds", List.of("doc-1")));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 9000);
+    assertEquals(
+        0,
+        TokenEstimation.computeSafeInputBudgetTokens(4096, 9000),
+        "precondition: this really is the zero-budget case");
+
+    InjectorResult sectioned =
+        new RAGContext(
+                new StubDocs(sectionedRetrieval(4, PASSAGE_BODY), Map.of()),
+                RAGContext.DEFAULT_TOP_K,
+                () -> stubAi(4096, 4096))
+            .inject(ctx);
+    String sectionedContext = assembledContextOf(sectioned);
+    assertFalse(sectionedContext.isEmpty(), "a zero budget must not silently mean NO context");
+    assertTrue(
+        TokenEstimation.estimateTokens(sectionedContext) <= 256,
+        "…but it must respect the same MIN_BUDGET floor the other branch applies");
+
+    var fallbackCtx = stubCtx(Map.of("question", "what?", "docIds", List.of("doc-1")));
+    fallbackCtx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 9000);
+    var docs =
+        new StubDocs(
+            new ContextResult("", 0, 0, 0, List.of(), "BM25", "no_hits", false, List.of()),
+            Map.of("doc-1", new DocumentRecord("doc-1", PASSAGE_BODY.repeat(4), Map.of())));
+    InjectorResult fallback =
+        new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096)).inject(fallbackCtx);
+    String fallbackContent = (String) fallback.messages().get(0).get("content");
+    assertTrue(fallbackContent.contains("lorem"), "the floor leaves real content on both branches");
+    assertEquals(true, ragMetaOf(fallback).get("context_truncated"));
+  }
+
+  @Test
+  @DisplayName("849: a citations/sections length mismatch leaves inclusion ABSENT, not guessed")
+  void lengthMismatchLeavesInclusionUnresolved() {
+    // The join is positional. When the two lists disagree the alignment is suspect, and a state
+    // derived from a suspect alignment is worse than no state at all.
+    List<ContextCitation> citations =
+        List.of(
+            new ContextCitation(
+                "doc-0", 0, 2, 0, 10, 0.9f, "e0", 0, 0, "", 0, ContextInclusion.ABSENT),
+            new ContextCitation(
+                "doc-1", 1, 2, 0, 10, 0.8f, "e1", 0, 0, "", 0, ContextInclusion.ABSENT));
+    List<ContextSection> sections =
+        List.of(
+            new ContextSection("doc-0", "one", false, 0, 0),
+            new ContextSection("doc-1", "two", false, 1, 1),
+            new ContextSection("doc-2", "three", false, 2, 2));
+    var retrieval =
+        new ContextResult("one", 2, 2, 2, citations, "BM25", "ok", false, sections);
+
+    InjectorResult result =
+        new RAGContext(new StubDocs(retrieval, Map.of()), RAGContext.DEFAULT_TOP_K,
+                () -> stubAi(4096, 4096))
+            .inject(stubCtx(Map.of("question", "what?", "docIds", List.of("a"))));
+
+    for (Map<String, Object> c : citationsOf(result)) {
+      assertFalse(
+          c.containsKey("contextInclusion"),
+          "absence is expressed by omitting the key, never by a guessed state: " + c);
+    }
+  }
+
+  /** A sectioned retrieval whose four passages cannot all fit the honest 460-token budget. */
+  private static InjectorResult injectOverBudgetSectionedTurn(int sectionCount) {
+    var ctx = stubCtx(Map.of("question", "what?", "docIds", List.of("a")));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 3072);
+    return new RAGContext(
+            new StubDocs(sectionedRetrieval(sectionCount, PASSAGE_BODY), Map.of()),
+            RAGContext.DEFAULT_TOP_K,
+            () -> stubAi(4096, 4096))
+        .inject(ctx);
+  }
+
+  private static ContextResult sectionedRetrieval(int count, String body) {
+    return sectionedRetrieval(count, body, null);
+  }
+
+  /** Mirrors what the Worker's ContextBudgeter produces: index-aligned citations and sections. */
+  private static ContextResult sectionedRetrieval(int count, String body, String labelPrefix) {
+    List<ContextCitation> citations = new java.util.ArrayList<>(count);
+    List<ContextSection> sections = new java.util.ArrayList<>(count);
+    StringBuilder assembled = new StringBuilder();
+    for (int i = 0; i < count; i++) {
+      String label = labelPrefix == null ? "doc-" + i : labelPrefix + "-" + i;
+      citations.add(
+          new ContextCitation(
+              "doc-" + i, i, count, 0, body.length(), 0.9f, "excerpt-" + i, 0, 0, "", 0,
+              ContextInclusion.ABSENT));
+      sections.add(new ContextSection(label, body, false, i, i));
+      if (i > 0) assembled.append(DocumentService.SECTION_SEPARATOR);
+      assembled.append('[').append(i + 1).append("] ").append(label).append('\n').append(body);
+    }
+    return new ContextResult(
+        assembled.toString(), count, count, count, citations, "BM25", "ok", false, sections);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static List<Map<String, Object>> citationsOf(InjectorResult result) {
+    return (List<Map<String, Object>>)
+        result.events().stream()
+            .filter(e -> "rag.citations".equals(e.name()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no rag.citations event emitted"))
+            .payload()
+            .get("citations");
+  }
+
+  private static Map<String, Object> citationFor(
+      List<Map<String, Object>> citations, String parentDocId) {
+    return citations.stream()
+        .filter(c -> parentDocId.equals(c.get("parentDocId")))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("no citation for " + parentDocId));
+  }
+
+  /** The context actually put in front of the model, unwrapped from the injected user message. */
+  private static String assembledContextOf(InjectorResult result) {
+    String injected = (String) result.messages().get(0).get("content");
+    int end = injected.indexOf("\n\nQuestion: ");
+    return injected.substring("Documents:\n".length(), end);
   }
 
   @SuppressWarnings("unchecked")

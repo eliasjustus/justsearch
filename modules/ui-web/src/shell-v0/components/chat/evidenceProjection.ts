@@ -27,7 +27,12 @@
  * docs/observations.md — not an FE deliverable. This projection carries the
  * boundary-aware fields (startLine/endLine/headingText) verbatim for navigation.
  */
-import type { RetrievalCitation, CitationMatch, SourceCoverage } from './citationTypes.js';
+import type {
+  RetrievalCitation,
+  CitationMatch,
+  SourceCoverage,
+  ContextInclusion,
+} from './citationTypes.js';
 import type { CoreInteractionShapeId } from '../../plugin-api/coreInteractionShapes.js';
 
 /**
@@ -216,6 +221,15 @@ export interface EvidenceItem {
   readonly excerpt: string;
   readonly headingText: string;
   readonly location: EvidenceLocation;
+  /**
+   * Tempdoc 849 §5.1 — whether this passage reached the model, when the producer resolved it.
+   * `null` is ABSENCE, not a state: a surface must render nothing for it, exactly as
+   * {@link CoverageHonesty} returns `null` when the producer said nothing.
+   *
+   * <p>Containment (same rule {@link SourceExamination} carries): a budget fact never feeds a
+   * grounding tier, a grounding count, or {@link EvidenceScore}.
+   */
+  readonly inclusion: ContextInclusion | null;
 }
 
 /** Default declared metric for retrieval evidence — the relevance of the chunk. */
@@ -710,5 +724,22 @@ export function toEvidenceItem(c: RetrievalCitation): EvidenceItem {
       startChar: c.startChar,
       endChar: c.endChar,
     },
+    inclusion: contextInclusionOf(c),
   };
+}
+
+/**
+ * Tempdoc 849 §5.1 — read the producer's inclusion state off a citation, or `null`.
+ *
+ * <p>The whole point is what it refuses to do. An absent field yields `null`, never `'included'`:
+ * a producer that said nothing has not told us the model saw the passage, and inventing that on its
+ * behalf is the fabrication the record exists to remove. An unrecognised value also yields `null`
+ * for the same reason — an unknown state is not a known one, and guessing which of the three it
+ * meant is how a vocabulary drift becomes a false claim about evidence.
+ */
+function contextInclusionOf(
+  c: Pick<RetrievalCitation, 'contextInclusion'> | null | undefined,
+): ContextInclusion | null {
+  const raw = c?.contextInclusion;
+  return raw === 'included' || raw === 'partial' || raw === 'dropped' ? raw : null;
 }

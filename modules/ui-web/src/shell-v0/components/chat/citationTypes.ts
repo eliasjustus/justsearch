@@ -98,6 +98,21 @@ export interface SourceCoverage {
   windowsScored: number;
 }
 
+/**
+ * Tempdoc 849 §5.1 — whether the passage a citation names actually REACHED the model, as opposed
+ * to merely having been retrieved.
+ *
+ * <p>Every retrieved passage gets a citation; the head's token budget then decides how much of that
+ * set the prompt could hold. `dropped` is a source the model never saw, `partial` one it saw with
+ * its tail cut. The mirror of Java `DocumentService.ContextInclusion.State`, minus its `ABSENT`
+ * member: absence is expressed by the field being missing, never by a fourth string.
+ *
+ * <p>Orthogonal to {@link SourceExamination} (836), which answers whether the MATCHER scored the
+ * source — one pipeline stage later. Like it, this is a BUDGET fact: it never feeds a grounding
+ * tier, a grounding count, or a relevance score.
+ */
+export type ContextInclusion = 'included' | 'partial' | 'dropped';
+
 /** Retrieval-time citation from rag.citations event. */
 export interface RetrievalCitation {
   parentDocId: string;
@@ -111,6 +126,14 @@ export interface RetrievalCitation {
   endLine: number;
   headingText: string;
   headingLevel: number;
+  /**
+   * Tempdoc 849 — ABSENT ⇒ the producer said nothing about inclusion, and the reader says nothing.
+   * Not "included": every turn persisted before 849 is absent, and describing those retroactively
+   * is exactly the fabrication this field exists to remove.
+   */
+  contextInclusion?: ContextInclusion;
+  /** Characters of this passage that reached the model. Absent together with `contextInclusion`. */
+  contextIncludedChars?: number;
 }
 
 /** Emitted on citation click for navigate-to-source. */

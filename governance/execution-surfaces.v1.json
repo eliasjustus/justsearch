@@ -20,7 +20,7 @@
       "definition": "modules/app-api/src/main/java/io/justsearch/app/api/DocumentService.java",
       "feMirror": "modules/ui-web/src/shell-v0/components/chat/CitationsPanel.ts (RetrievalCitation)",
       "feProjection": "modules/ui-web/src/shell-v0/components/chat/evidenceProjection.ts (EvidenceItem + a labeled EvidenceScore)",
-      "note": "RAG-retrieval evidence \u2014 the citations behind a generated answer (parentDocId, score, excerpt, startLine/endLine/headingText). The sibling of SearchTrace (559 Authority IV): a SECOND evidence record, NOT a SearchTrace projection (no shared field; the RAG ask flow emits no trace). Registered here so it cannot drift unregistered. PRODUCER-OWNED BOUNDARY (559 \u00a75, cross-process follow-up): the excerpt is a backend character window (startChar/endChar) that clips mid-word; the boundary-aware fields (startLine/endLine/headingText) already ride alongside and should drive a clean window at the Worker that mints the record \u2014 the FE never re-windows. Logged in docs/observations.md."
+      "note": "RAG-retrieval evidence \u2014 the citations behind a generated answer (parentDocId, score, excerpt, startLine/endLine/headingText). The sibling of SearchTrace (559 Authority IV): a SECOND evidence record, NOT a SearchTrace projection (no shared field; the RAG ask flow emits no trace). Registered here so it cannot drift unregistered. PRODUCER-OWNED BOUNDARY (559 \u00a75, cross-process follow-up): the excerpt is a backend character window (startChar/endChar) that clips mid-word; the boundary-aware fields (startLine/endLine/headingText) already ride alongside and should drive a clean window at the Worker that mints the record \u2014 the FE never re-windows. Logged in docs/observations.md. TEMPDOC 849 (retrieved-vs-received): the record gained an `inclusion` component (DocumentService.ContextInclusion \u2014 included/partial/dropped, plus ABSENT). It is a PROJECTION of ContextBudgeter.Section, which was built for exactly this ('Phase 4: structured section tracking for citation filtering on truncation') and never consumed for it \u2014 deliberately NOT a parallel index-aligned list, which would have minted the second positional authority this register exists to prevent. Constructed ABSENT everywhere (the CHUNK_INDEX_ABSENT idiom: the Worker cannot know it, because the head's cut has not run) and resolved exactly once, at RAGContext's cut, via the immutable withInclusion(...). Absence discipline mirrors SourceExamination (836): an absent state emits NO key on any wire, so a consumer told nothing says nothing rather than assuming 'included'. Containment likewise: a budget fact never feeds a grounding tier, count, or score."
     },
     {
       "name": "EvidenceSpan",
@@ -202,7 +202,7 @@
       "lang": "ts",
       "path": "modules/ui-web/src/shell-v0/components/chat/citationTypes.ts",
       "guard": "exempt:opaque carrier \u2014 passes the record through, does not project it",
-      "note": "FE RetrievalCitation evidence type (sibling record; tempdoc 559 Authority IV). Extracted from CitationsPanel to break an import cycle; registered here during the 564 merge (was previously undeclared)."
+      "note": "FE RetrievalCitation evidence type (sibling record; tempdoc 559 Authority IV). Extracted from CitationsPanel to break an import cycle; registered here during the 564 merge (was previously undeclared). Tempdoc 849: mirrors the inclusion component as OPTIONAL `contextInclusion` ('included' | 'partial' | 'dropped') + `contextIncludedChars`. The Java ABSENT member has no mirror on purpose — absence is the field being missing, never a fourth string a consumer would have to interpret."
     },
     {
       "id": "evidence-fe-claim-resolver",
@@ -327,7 +327,7 @@
       "lang": "java",
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/RAGContext.java",
       "guard": "test:RAGContextTest",
-      "note": "559 Authority IV: assembles/carries ContextCitation into the RAG prompt context (the rag.citations envelope source)."
+      "note": "559 Authority IV: assembles/carries ContextCitation into the RAG prompt context (the rag.citations envelope source). Tempdoc 849: also the ONE site that RESOLVES ContextCitation.inclusion — the cut is where retrieved becomes received, so it is the only place the state can honestly be minted. The cut branches on whether the whole-document fallback replaced the context (never on sections.isEmpty(), which would mis-route RemoteDocumentService's FULLTEXT_FALLBACK): sectioned → section-aware re-assembly recording per-passage inclusion; unsectioned → the retained structure-blind truncateIfNeeded, which claims nothing."
     },
     {
       "id": "evidence-doc-access",
@@ -343,7 +343,7 @@
       "lang": "java",
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/RAGDoneEnricher.java",
       "guard": "exempt:consumer reads the canonical type; no projection law to mutate-guard",
-      "note": "559 Authority IV: enriches the done event with citation metadata."
+      "note": "559 Authority IV: enriches the done event with citation metadata. Tempdoc 849 §5.4: this is the PERSISTED copy, so ContextCitation.inclusion rides through toCitationMap into the conversation record — ragMeta is not persisted, so a meta-level inclusion list would have evaporated on reload."
     },
     {
       "id": "evidence-selection-context-injector",
@@ -369,7 +369,7 @@
       "guard": "test:evidenceProjection",
       "recordId": "ContextCitation",
       "guardKind": "reflective",
-      "note": "559 Authority IV: THE shared FE evidence view-model \u2014 projects RetrievalCitation (\u2190 ContextCitation) into EvidenceItem with a LABELED score (the bare '100%' fix). Conformance: evidenceProjection.test pins it as a total projection of the record."
+      "note": "559 Authority IV: THE shared FE evidence view-model \u2014 projects RetrievalCitation (\u2190 ContextCitation) into EvidenceItem with a LABELED score (the bare '100%' fix). Conformance: evidenceProjection.test pins it as a total projection of the record. Tempdoc 849: also owns `contextInclusionOf` and EvidenceItem.inclusion \u2014 `null` for an absent OR unrecognised state, never a guessed one, and pinned as never feeding the score or its tier (the same containment SourceExamination carries). Label/rendering of the state is Slice 3, and belongs here too, not in a view."
     },
     {
       "id": "evidence-fe-citations-panel",

@@ -287,7 +287,8 @@ public class RetrieveContextController {
             new DocumentService.ContextCitation(
                 (String) ref.get("parent_doc_id"),
                 getInt(ref, "chunk_index", 0),
-                1, 0, 0, 0f, "", 0, 0, "", 0),
+                1, 0, 0, 0f, "", 0, 0, "", 0,
+                DocumentService.ContextInclusion.ABSENT),
             ref.get("passage_text") instanceof String s ? s : ""))
         .toList();
 
