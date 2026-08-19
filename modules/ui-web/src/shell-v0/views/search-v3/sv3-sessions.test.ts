@@ -13,6 +13,7 @@ import {
   activeTurns,
   adoptRunSession,
   appendTurnDelta,
+  applySv3History,
   applySv3Record,
   focusSession,
   latestTurnRef,
@@ -32,6 +33,8 @@ import {
   startNewSession,
   submitInSession,
   sv3RelativeTime,
+  sv3TurnByMessageId,
+  sv3TurnMessageIds,
   sv3TurnSourceCount,
   toggleSessionPin,
   SV3_SESSIONS_EMPTY,
@@ -40,6 +43,7 @@ import {
   type Sv3RunGate,
   type Sv3Session,
   type Sv3SessionGroup,
+  type Sv3SessionHistory,
   type Sv3SessionList,
   type Sv3SessionProjection,
   type Sv3SessionRowView,
@@ -865,6 +869,10 @@ const row838 = (id: string): Sv3StoreConversation => ({
 
 describe('the canonical record, applied to a conversation (Phase F6 / inventory D1)', () => {
   const recordTurn = (over: Partial<Sv3Turn> & { id: string }): Sv3Turn => ({
+    assistantRecordId: null,
+    // A record-projected ask turn is opened by its user message; a case that needs the other
+    // provenance (a run's activity arriving before any prompt) overrides it.
+    recordOpenedByUser: true,
     kind: 'ask',
     question: 'q',
     answer: 'a',
@@ -1036,6 +1044,7 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
           pinned: false,
           completedAt: null,
           lastVisitedAt: 0,
+          history: null,
           createdAt: T0,
           updatedAt: T0,
           turns: [
@@ -1168,6 +1177,295 @@ describe('a conversation can be discarded, unless work is in flight in it', () =
     }
     // A matrix that never produced a live row would have passed on vacuity alone.
     expect(sawLive).toBe(true);
+  });
+});
+
+/**
+ * Turn identity (tempdoc 852 S1). Three properties, asserted as mechanisms:
+ *
+ *  - **A message id resolves to the turn that OWNS it, never to the turn at its index.** The two
+ *    orders really do differ — a turn holds a user message and one or more assistant messages, and
+ *    `/history` counts rows `/api/thread` never emits — so the cases below construct the skew and
+ *    assert the index answer is the wrong one.
+ *  - **Only an id the CONVERSATION STORE minted is reported.** `GET /api/thread/{id}` interleaves
+ *    two planes (`InteractionThreadController.java:66-73`): store rows, and every agent run's events
+ *    projected read-time from `AgentRunStore` — which mint user messages (`${runId}:user`),
+ *    assistant messages (`${conversationId}:assistant:${stamp}`), workflow node outputs and search
+ *    events that exist as messages NOWHERE. The cases construct them and assert `null`.
+ *  - **The legacy `idx-N` id survives**, because it is a real store id and rejecting it would make
+ *    every pre-513 conversation unbranchable.
+ */
+describe('a turn’s backend message identity (tempdoc 852 §2.3)', () => {
+  const TS = Date.parse('2026-08-19T09:00:00.000Z');
+  let tick = 0;
+  /** A `FileConversationStore.enrichMessage` id: the UUID it mints before every write (`:213-219`). */
+  const stored = (n: number): string => `11111111-2222-4333-8444-55555555555${n}`;
+  const event = (
+    id: string,
+    kind: ThreadEvent['kind'],
+    content: string,
+    attributes: Record<string, unknown> = {},
+  ): ThreadEvent => ({
+    id,
+    occurredAt: new Date(TS + tick++ * 1000).toISOString(),
+    kind,
+    originator: kind === 'USER_MESSAGE' ? 'user' : 'agent',
+    content,
+    attributes,
+  });
+  const message = (
+    id: string,
+    role: 'user' | 'assistant',
+    content: string,
+    attributes: Record<string, unknown> = {},
+  ): ThreadEvent =>
+    event(id, role === 'user' ? 'USER_MESSAGE' : 'ASSISTANT_MESSAGE', content, attributes);
+  const oneSource = [
+    {
+      parentDocId: 'docs/lease.md',
+      chunkIndex: 0,
+      chunkTotal: 1,
+      startChar: 0,
+      endChar: 10,
+      score: 0.9,
+      excerpt: 'The lock held.',
+      startLine: 1,
+      endLine: 1,
+      headingText: 'Renewal',
+      headingLevel: 2,
+    },
+  ];
+
+  beforeEach(() => {
+    tick = 0;
+  });
+
+  it('names BOTH of an ask turn’s messages, while still dropping its render list', () => {
+    // Tempdoc 852 §2.3a — the projection used to throw the whole activity list away for an ask turn,
+    // and every assistant id with it. The RENDERING rule is right and is asserted here too: a
+    // one-item activity list would be a second way to draw the same paragraph. Only the identity is
+    // kept.
+    const [turn] = projectSv3RecordTurns([
+      message(stored(0), 'user', 'why did the renewal fail?'),
+      message(stored(1), 'assistant', 'The lock held.'),
+    ]);
+    expect(turn?.kind).toBe('ask');
+    expect(turn?.activity).toEqual([]);
+    expect(sv3TurnMessageIds(turn as Sv3Turn)).toEqual({
+      userMsgId: stored(0),
+      assistantMsgId: stored(1),
+    });
+  });
+
+  it('takes the LAST STORED assistant message, never a run event that arrived after it', () => {
+    // The two planes interleave inside ONE turn: the agent's read-time projected message is not a
+    // message anybody can address, so a plain last-wins would replace the real id with it.
+    const [turn] = projectSv3RecordTurns([
+      message(stored(0), 'user', 'why?'),
+      message(stored(1), 'assistant', 'One moment.'),
+      message(stored(2), 'assistant', 'The lock held.'),
+      message('uc-a:assistant:1755600000000', 'assistant', 'And the run says so too.'),
+    ]);
+    expect(sv3TurnMessageIds(turn as Sv3Turn).assistantMsgId).toBe(stored(2));
+  });
+
+  it('names NOTHING for a turn the record has not spoken for', () => {
+    // A live turn carries the positional `${sessionId}#t${n}` handle, which addresses a turn inside
+    // this tab and nothing on the backend. An affordance that needs a backend id is unavailable
+    // until the record arrives, and this is what says so instead of handing over the local handle.
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'why?', T0, 'ask', 'uc-live');
+    const turn = list.sessions[0]?.turns[0] as Sv3Turn;
+    expect(turn.id).toBe('uc-live#t1');
+    expect(sv3TurnMessageIds(turn)).toEqual({ userMsgId: null, assistantMsgId: null });
+  });
+
+  it('reports the legacy idx-N id, which IS a real store id', () => {
+    // PREMISE: `FileConversationStore.loadHistory` back-fills `idx-N` for pre-513 messages precisely
+    // "so the FE can pass it back to the branch endpoint" (`:159-165`). Rejecting it as foreign
+    // would make every legacy conversation unbranchable.
+    const [turn] = projectSv3RecordTurns([
+      message('idx-4', 'user', 'why?'),
+      message('idx-5', 'assistant', 'The lock held.'),
+    ]);
+    expect(sv3TurnMessageIds(turn as Sv3Turn)).toEqual({
+      userMsgId: 'idx-4',
+      assistantMsgId: 'idx-5',
+    });
+  });
+
+  it('names NOTHING for an AGENT RUN’s turn — its messages are a projection, not store rows', () => {
+    // Both halves of a run turn are minted by the run plane: the user message by
+    // `AgentRunQueryService` (`${runId}:user`, `:346-350`) and the answer by
+    // `AgentInteractionMapper` (`${conversationId}:assistant:${stamp}`, `:69`) — `AgentSession`
+    // keeps the run's messages in its own state and writes none of them to the conversation store.
+    // `POST …/messages/{id}/exclude` would therefore mis-target on either.
+    const [turn] = projectSv3RecordTurns([
+      message('run-7:user', 'user', 'index the vendor folder'),
+      event('c1:proposed', 'TOOL_ACTIVITY', '', { callId: 'c1', toolName: 'core_search' }),
+      message('uc-a:assistant:1755600000000', 'assistant', 'Indexed.'),
+    ]);
+    expect(turn?.kind).toBe('agent');
+    expect(sv3TurnMessageIds(turn as Sv3Turn)).toEqual({ userMsgId: null, assistantMsgId: null });
+  });
+
+  it('names no USER message for a turn the record opened on something that is not one', () => {
+    // `projectSv3RecordTurns` opens a turn on whatever arrives before any user item — a run whose
+    // prompt was never recorded (the behaviour `sv3-record.test.ts` pins). That item's id becomes the
+    // turn's `recordId` without being anybody's message, so provenance decides here, not shape.
+    const [turn] = projectSv3RecordTurns([
+      event('uc-a:search:1755600000000', 'SEARCH', 'renewal', {}),
+      message(stored(3), 'assistant', 'Found it.'),
+    ]);
+    expect(turn?.question).toBe('');
+    expect(sv3TurnMessageIds(turn as Sv3Turn)).toEqual({
+      userMsgId: null,
+      // ...and the STORED assistant message in the same turn is still addressable: provenance is
+      // decided per message, not written off per turn.
+      assistantMsgId: stored(3),
+    });
+  });
+
+  it('names no USER message when the turn opens on a STORED ASSISTANT row — shape alone is not provenance', () => {
+    // The case the id's shape cannot decide, and it is reachable: a sealed first line becomes a
+    // `role:"locked"` placeholder (`FileConversationStore.java:149-157`) that `chatTurn` drops
+    // (`:247-259`), so the thread can OPEN on a stored assistant row. Its id is a real store UUID —
+    // and it is an assistant message, not the user message `?fromMsgId=` and a branch point mean.
+    const [turn] = projectSv3RecordTurns([
+      message(stored(0), 'assistant', 'The lock held.'),
+      message(stored(1), 'user', 'and the second one?'),
+      message(stored(2), 'assistant', 'The same lock.'),
+    ]);
+    expect(sv3TurnMessageIds(turn as Sv3Turn)).toEqual({
+      userMsgId: null,
+      assistantMsgId: stored(0),
+    });
+  });
+
+  it('names NOTHING for chatTurn’s own synthesised fallback id', () => {
+    // PREMISE, and the reason this is a guard rather than a live expectation: a store-backed
+    // conversation cannot produce this shape. `enrichMessage` mints a UUID before every write
+    // (`FileConversationStore.java:213-219`), `loadHistory` back-fills `idx-N` on read (`:162-165`)
+    // and a sealed line becomes an `idx-N-locked` placeholder (`:149-155`) — so `chatTurn`'s
+    // `conversationId + ":chat:" + msg.hashCode()` fallback
+    // (`InteractionThreadController.java:260-262`) is unreachable for anything the store holds. It
+    // is reachable for a row that came from somewhere else, and that id exists in no store.
+    const [turn] = projectSv3RecordTurns([
+      message('uc-a:chat:-1873452901', 'user', 'why?'),
+      message('uc-a:chat:88123', 'assistant', 'The lock held.'),
+    ]);
+    expect(sv3TurnMessageIds(turn as Sv3Turn)).toEqual({ userMsgId: null, assistantMsgId: null });
+  });
+
+  it('resolves a /history message id to the turn that OWNS it, not to the turn at its index', () => {
+    // The skew, constructed: `/history` returns every row it read, INCLUDING the `role:"locked"`
+    // placeholder a sealed line becomes (`FileConversationStore.java:149-157`), while
+    // `/api/thread`'s `chatTurn` returns null for every role that is not user/assistant
+    // (`InteractionThreadController.java:247-259`). So the two arrays differ in length AND in
+    // position — and turns group messages besides, so the nth message is not the nth turn either.
+    const historyMessages = [
+      { id: stored(0), role: 'user' },
+      { id: stored(1), role: 'assistant' },
+      { id: 'idx-2-locked', role: 'locked' },
+      { id: stored(3), role: 'user' },
+      { id: stored(4), role: 'assistant' },
+    ];
+    const turns = projectSv3RecordTurns([
+      message(stored(0), 'user', 'why did the renewal fail?'),
+      message(stored(1), 'assistant', 'The lock held.'),
+      message(stored(3), 'user', 'and the second one?'),
+      message(stored(4), 'assistant', 'The same lock.'),
+    ]);
+    expect(turns).toHaveLength(2);
+    // What `/history` carries and only it: a floor and an exclusion, each naming a MESSAGE.
+    expect(sv3TurnByMessageId(turns, stored(3))).toBe(turns[1]);
+    expect(sv3TurnByMessageId(turns, stored(4))).toBe(turns[1]);
+    expect(sv3TurnByMessageId(turns, stored(0))).toBe(turns[0]);
+    // ...and the index answer is a DIFFERENT, entirely plausible-looking turn: the first turn's
+    // assistant message sits at position 1 of the history array, so a pairing by position would
+    // attach the first exchange's floor to the second one, silently.
+    expect(historyMessages.findIndex((m) => m.id === stored(1))).toBe(1);
+    expect(sv3TurnByMessageId(turns, stored(1))).toBe(turns[0]);
+    expect(sv3TurnByMessageId(turns, stored(1))).not.toBe(turns[1]);
+    // A row the thread endpoint dropped resolves to nothing — the honest answer, and never a
+    // neighbour picked up by position.
+    expect(sv3TurnByMessageId(turns, 'idx-2-locked')).toBeNull();
+    expect(historyMessages.findIndex((m) => m.id === 'idx-2-locked')).toBe(2);
+  });
+
+  it('attaches the record’s evidence and ids to the turn bearing its id when the ORDERS disagree', () => {
+    // The merge's own half of the same property (847 §2.4.3, extended to the assistant id): a second
+    // refresh whose record emits the newer exchange FIRST must still land each record turn's
+    // evidence and message ids on the turn carrying its `recordId`.
+    let list = submitInSession(SV3_SESSIONS_EMPTY, 'why did the renewal fail?', T0, 'ask', 'uc-h');
+    const first = latestTurnRef(list) as Sv3TurnRef;
+    list = settleTurn(list, first, 'complete', T0 + MINUTE);
+    list = applySv3Record(list, 'uc-h', projectSv3RecordTurns([
+      message(stored(0), 'user', 'why did the renewal fail?'),
+      message(stored(1), 'assistant', 'The lock held.'),
+    ]));
+    list = submitInSession(list, 'and the second one?', T0 + 2 * MINUTE, 'ask', 'uc-h');
+    const second = latestTurnRef(list) as Sv3TurnRef;
+    list = settleTurn(list, second, 'complete', T0 + 3 * MINUTE);
+    tick = 10;
+    list = applySv3Record(list, 'uc-h', projectSv3RecordTurns([
+      message(stored(3), 'user', 'and the second one?', {}),
+      message(stored(4), 'assistant', 'The same lock.', { citations: oneSource }),
+      message(stored(0), 'user', 'why did the renewal fail?'),
+      message(stored(1), 'assistant', 'The lock held.'),
+    ]));
+    const turns = list.sessions[0]?.turns as readonly Sv3Turn[];
+    const opener = sv3TurnByMessageId(turns, stored(0)) as Sv3Turn;
+    const follow = sv3TurnByMessageId(turns, stored(3)) as Sv3Turn;
+    expect(opener.question).toBe('why did the renewal fail?');
+    expect(follow.question).toBe('and the second one?');
+    expect(sv3TurnMessageIds(opener)).toEqual({
+      userMsgId: stored(0),
+      assistantMsgId: stored(1),
+    });
+    expect(sv3TurnMessageIds(follow)).toEqual({
+      userMsgId: stored(3),
+      assistantMsgId: stored(4),
+    });
+    // The evidence rode with the id, not with the position: only the second exchange was grounded.
+    expect(follow.evidence?.sources).toHaveLength(1);
+    expect(opener.evidence).toBeNull();
+  });
+});
+
+describe('the /history companion load (tempdoc 852 §2.3c)', () => {
+  const history: Sv3SessionHistory = {
+    parentSessionId: 'uc-parent',
+    branchPointMessageId: 'm1',
+    parentFirstUserMessage: 'the original question',
+    contextFloor: 'm3',
+    contextFloorSummary: 'Everything above was compacted.',
+    excludedMessageIds: ['m4'],
+    excludedSourceIds: ['docs/lease.md0'],
+    locked: false,
+  };
+
+  it('is null until the load happens — “not told” is not “no floor and no parent”', () => {
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'why?', T0, 'ask', 'uc-a');
+    expect(list.sessions[0]?.history).toBeNull();
+    expect(mergeStoreConversations(SV3_SESSIONS_EMPTY, [
+      { id: 'uc-b', title: 'b', firstUserMessage: '', createdAt: T0, lastActiveAt: T0 },
+    ]).sessions[0]?.history).toBeNull();
+  });
+
+  it('records what only /history carries, on the conversation it names', () => {
+    let list = submitInSession(SV3_SESSIONS_EMPTY, 'why?', T0, 'ask', 'uc-a');
+    list = submitInSession(startNewSession(list), 'other', T0, 'ask', 'uc-b');
+    const applied = applySv3History(list, 'uc-a', history);
+    expect(sessionById(applied, 'uc-a')?.history).toEqual(history);
+    // The OTHER conversation is untouched: a companion load is about one conversation.
+    expect(sessionById(applied, 'uc-b')?.history).toBeNull();
+    // ...and the transcript is not the load's to write — it carries no messages at all.
+    expect(sessionById(applied, 'uc-a')?.turns).toEqual(sessionById(list, 'uc-a')?.turns);
+  });
+
+  it('drops a load for a conversation this window is not listing', () => {
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'why?', T0, 'ask', 'uc-a');
+    expect(applySv3History(list, 'uc-gone', history)).toBe(list);
   });
 });
 

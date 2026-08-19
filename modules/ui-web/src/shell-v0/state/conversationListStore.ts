@@ -498,9 +498,21 @@ export interface ResumedConversation {
   locked?: boolean;
 }
 
+/**
+ * Reading a conversation's history CLAIMS it as the app-wide active conversation by default, because
+ * the shipped window's only caller is its open path. A caller that reads the history WITHOUT the
+ * reader navigating — search-v3's companion load (tempdoc 852 S1), which does its own claiming at
+ * open — passes `claim: false`: a read that moved the product's idea of where the reader is, while
+ * they were somewhere else entirely, is a side effect no read should have.
+ */
+export interface ResumeOptions {
+  readonly claim?: boolean;
+}
+
 export async function resumeConversation(
   sessionId: string,
   shapeId: string,
+  { claim = true }: ResumeOptions = {},
 ): Promise<ResumedConversation> {
   try {
     const res = await authorizedFetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/history`);
@@ -526,7 +538,7 @@ export async function resumeConversation(
         content: m.content as string,
         id: typeof m.id === 'string' ? m.id : undefined,
       }));
-    setActiveConversation(sessionId);
+    if (claim) setActiveConversation(sessionId);
     return {
       sessionId,
       shapeId,
