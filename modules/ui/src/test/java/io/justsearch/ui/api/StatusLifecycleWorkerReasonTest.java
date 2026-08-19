@@ -99,6 +99,23 @@ final class StatusLifecycleWorkerReasonTest {
   }
 
   @Test
+  @DisplayName("825: the boot-recovery give-up reaches the wire as its own terminal code")
+  void bootRecoveryExhaustedPassesThrough() {
+    WorkerCapability cap = new WorkerCapability();
+    cap.transition(
+        CapabilityHealth.DEGRADED,
+        LifecycleReasonCode.WORKER_SPAWN_RECOVERY_EXHAUSTED.code(),
+        "4 recovery attempts did not bring it up");
+
+    LifecycleSnapshotV1.Component c = workerComponent(cap);
+    assertEquals(LifecycleState.LIFECYCLE_STATE_ERROR, c.state());
+    // Distinct from BOTH neighbours on purpose: worker.spawn.failed now means "failed, recovery
+    // pending or in flight", and worker.restart_exhausted is supervision's verdict about a worker
+    // that HAD been running. Collapsing either way destroys what the fixture fail-fast keys on.
+    assertEquals(LifecycleReasonCode.WORKER_SPAWN_RECOVERY_EXHAUSTED.code(), c.reason_code());
+  }
+
+  @Test
   @DisplayName("an unrecognized reason falls back to the generic code, per capability state")
   void unknownReasonFallsBack() {
     WorkerCapability degraded = new WorkerCapability();
