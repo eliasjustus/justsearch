@@ -294,6 +294,79 @@ export const CITATIONS_LABEL = 'Citations';
 /** How long the copy confirmation stands before the label returns. */
 export const TURN_COPY_FEEDBACK_MS = 1600;
 
+/* ── The effective-context set (tempdoc 610, ported by 852 S2) ─────────────────────────────────
+ *
+ * The reference window's own wording wherever it had some, because these five acts change what the
+ * MODEL sees and a second phrasing of "the assistant no longer sees this" in a second window is a
+ * second contract. What is re-worded is only what the unit changed: this window's transcript is
+ * made of TURNS, so a per-message act is named for the turn it acts on.
+ */
+
+/** The ⋯ trigger's accessible name — icon-only, so this IS the name and not a tooltip. */
+export const CONTEXT_MENU_LABEL = 'Context actions for this turn';
+
+export const CONTEXT_MENU_RESET = 'Reset context to here';
+export const CONTEXT_MENU_COMPACT = 'Compact up to here';
+export const CONTEXT_MENU_EXCLUDE = 'Exclude from context';
+export const CONTEXT_MENU_INCLUDE = 'Include in context';
+
+/** The divider above the floor turn, in its two forms — a plain rewind, and one carrying a summary. */
+export const CONTEXT_FLOOR_RESET =
+  'Context reset — the assistant no longer sees the turns above this line';
+export const CONTEXT_FLOOR_COMPACTED =
+  'Context compacted — the turns above this line are summarized for the assistant';
+
+export const CONTEXT_FLOOR_RESTORE = 'Restore';
+export const CONTEXT_FLOOR_RESTORE_LABEL = 'Restore the full context for this conversation';
+export const CONTEXT_SUMMARY_SHOW = 'Show summary';
+export const CONTEXT_SUMMARY_HIDE = 'Hide summary';
+export const CONTEXT_SUMMARY_EDIT = 'Edit';
+export const CONTEXT_SUMMARY_EDIT_LABEL = 'Edit the context summary';
+export const CONTEXT_SUMMARY_INPUT_LABEL = 'Context summary';
+export const CONTEXT_SUMMARY_SAVE = 'Save';
+export const CONTEXT_SUMMARY_CANCEL = 'Cancel';
+
+/** The bar under the transcript: the meter's trigger, and the aggregate of what is hidden. */
+export const CONTEXT_METER_LABEL = 'Context';
+export const CONTEXT_METER_BAR_LABEL = 'Context window used';
+export const CONTEXT_INCLUDE_ALL = 'Include all';
+export const CONTEXT_INCLUDE_ALL_LABEL = 'Include every hidden turn back into the context';
+
+/** "N turns hidden from context" — a count the reader can act on, so it says which number it is. */
+export const contextHiddenLabel = (turns: number): string =>
+  `${turns} turn${turns === 1 ? '' : 's'} hidden from context`;
+
+/** The occupancy readout, and what pressing it opens. */
+export const contextMeterLabel = (pct: number, occupancy: number, window: number): string =>
+  `${CONTEXT_METER_LABEL} ${pct}% · ${occupancy} / ${window} tokens`;
+
+export const contextMeterTrigger = (pct: number): string =>
+  `Context ${pct}% used — show what the assistant sees`;
+
+/** The estimated split, named as an estimate everywhere it appears (tempdoc 610 §I.2). */
+export const contextSplitLabel = (system: number, conversation: number, retrieved: number): string =>
+  `split (estimated): system ~${system}, conversation ~${conversation}, documents ~${retrieved}`;
+
+/** The inspector's own section names and speaker labels. */
+export const CONTEXT_INSPECTOR_SUMMARY = 'Summary of earlier turns';
+export const CONTEXT_INSPECTOR_CONVERSATION = 'Conversation';
+export const CONTEXT_INSPECTOR_DOCUMENTS = 'Documents';
+export const CONTEXT_TURN_USER = 'You';
+export const CONTEXT_TURN_ASSISTANT = 'Assistant';
+
+/**
+ * What a refused write says. Each names the ACT that failed rather than "something went wrong",
+ * because the reader's next move differs per act. None of them words the model's availability: this
+ * window has ONE vocabulary for that (`state/readinessNotice.ts`, spoken by the composer's own
+ * notice), and a second phrasing here would be a second sense of the same state (inventory E8).
+ */
+export const CONTEXT_FLOOR_FAILED = 'The context could not be reset';
+export const CONTEXT_RESTORE_FAILED = 'The context could not be restored';
+export const CONTEXT_COMPACT_FAILED = 'The turns above this one could not be summarized';
+export const CONTEXT_SUMMARY_FAILED = 'The summary could not be saved';
+export const CONTEXT_EXCLUDE_FAILED = 'That turn could not be hidden from the context';
+export const CONTEXT_INCLUDE_FAILED = 'That turn could not be put back into the context';
+
 /**
  * The citation pane's own words (tempdoc 822 Phase F8). The region is named for WHAT IT HOLDS — a
  * cited document — rather than "Document", because the pane's scope guard is that it never holds

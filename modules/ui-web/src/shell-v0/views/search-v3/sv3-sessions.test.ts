@@ -1154,6 +1154,7 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
           completedAt: null,
           lastVisitedAt: 0,
           history: null,
+          contextUsage: null,
           createdAt: T0,
           updatedAt: T0,
           turns: [
