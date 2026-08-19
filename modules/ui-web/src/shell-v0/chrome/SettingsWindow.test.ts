@@ -15,6 +15,12 @@ import './SettingsWindow.js';
 import type { SettingsWindow } from './SettingsWindow.js';
 import { __seedForTest, __resetForTest } from '../../api/registry/SurfaceCatalogClient.js';
 import type { Surface, SurfaceCatalog } from '../../api/types/surface.js';
+import '../views/SettingsSurface.js';
+import { createMockHostApi } from '../plugin-api/testHostApi.js';
+import { __resetUserConfigForTest } from '../state/userConfigState.js';
+import { __resetThemeStateForTest } from '../state/themeState.js';
+import { __resetSessionRegistryForTest } from '../plugin-api/sessionRegistry.js';
+import { __resetUserStateForTest } from '../state/UserStateDocument.js';
 
 const SETTINGS_ID = 'core.settings-surface';
 const SETTINGS_TAG = 'jf-test-settings-surface';
@@ -316,5 +322,107 @@ describe('jf-settings-window', () => {
     const close = el.shadowRoot?.querySelector('button.close');
     expect(close?.getAttribute('aria-label')).toBe('Close Settings');
     expect(close?.getAttribute('title')).toBe('Close Settings');
+  });
+});
+
+// 855 P4 review should-fix: two-stage ESC seam, with the REAL `jf-settings-surface` (and its
+// nested `jf-settings-nav`) mounted, not the `TestSettingsElement` stub the rest of this file uses.
+describe('jf-settings-window × the search box\'s two-stage ESC (855 P4 review)', () => {
+  const REAL_SETTINGS_SURFACE: Surface = {
+    id: SETTINGS_ID,
+    presentation: {
+      labelKey: 'registry-surface.settings-surface.label',
+      descriptionKey: 'registry-surface.settings-surface.description',
+      iconHint: null,
+      category: null,
+    },
+    audience: 'USER',
+    placement: 'MODAL',
+    consumes: { resources: [], operations: [], prompts: [], diagnosticChannels: [] },
+    mountTag: 'jf-settings-surface',
+    provenance: { tier: 'CORE', contributorId: 'core', version: '1.0' },
+  };
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    __resetForTest();
+    __resetUserConfigForTest();
+    __resetThemeStateForTest();
+    __resetUserStateForTest();
+    __resetSessionRegistryForTest();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ui: {} }), { status: 200 }),
+    );
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    __resetForTest();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * happy-dom's `<dialog>` does not implement the browser's native "Escape while `showModal()` is
+   * open fires `cancel`" behavior — `ConfirmDialog.test.ts`'s own precedent simulates that step by
+   * dispatching a synthetic `cancel` Event directly on the dialog, not via a keydown. So this test
+   * covers exactly what the harness DOES support: (1) our fix's contract — an Escape keydown on an
+   * EMPTY search input is NOT intercepted by the nav (no `preventDefault`, propagation not stopped)
+   * all the way out to `document`, proving the nav no longer blocks the native mechanism from
+   * running; (2) the "no double-close" invariant — the dialog's native cancel (simulated the same
+   * way this file's other tests already do) still runs `requestClose()` exactly once, not doubled
+   * by anything on the nav's side of the two-stage ESC change.
+   */
+  it('an Escape on an empty search input is not intercepted by the nav, and the dialog close path fires exactly once', async () => {
+    __seedForTest(catalogOf(REAL_SETTINGS_SURFACE));
+    const el = document.createElement('jf-settings-window') as SettingsWindow;
+    el.host_ = createMockHostApi();
+    document.body.appendChild(el);
+    await el.updateComplete;
+    const closes = spyOnClose(el);
+
+    el.open = true;
+    await el.updateComplete;
+    // Flush the nested `jf-settings-surface`'s own connectedCallback-triggered init render (and
+    // its nested `jf-settings-nav`'s), which lands on a later microtask than THIS element's update.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await el.updateComplete;
+
+    const surfaceEl = el.shadowRoot!.querySelector('jf-settings-surface') as HTMLElement & {
+      updateComplete: Promise<unknown>;
+    };
+    expect(surfaceEl).not.toBeNull();
+    await surfaceEl.updateComplete;
+    const nav = surfaceEl.shadowRoot!.querySelector('jf-settings-nav') as HTMLElement & {
+      updateComplete: Promise<unknown>;
+    };
+    expect(nav).not.toBeNull();
+    await nav.updateComplete;
+    const input = nav.shadowRoot!.querySelector<HTMLInputElement>('input.search-input')!;
+    input.focus();
+    expect(nav.shadowRoot!.activeElement).toBe(input);
+
+    const outerKeydown = vi.fn();
+    document.addEventListener('keydown', outerKeydown);
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(event);
+    document.removeEventListener('keydown', outerKeydown);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(outerKeydown).toHaveBeenCalledTimes(1);
+    expect(closes).not.toHaveBeenCalled();
+
+    // Simulate the browser's native Escape → dialog `cancel` (the substitution this file's other
+    // Escape tests already make) and confirm the close path fires exactly once — not doubled by
+    // anything the nav's two-stage ESC change touches.
+    el.shadowRoot!.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true }));
+    await el.updateComplete;
+
+    expect(el.open).toBe(false);
+    expect(closes).toHaveBeenCalledTimes(1);
   });
 });

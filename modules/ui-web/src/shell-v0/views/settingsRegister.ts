@@ -26,8 +26,20 @@
  * resolve through `present({kind:'surface', id})` (the existing surface-label authority) instead —
  * no `EntityRef` kind exists for a bare settings category, so native labels use the resource-key
  * convention directly (855 §11.5).
+ *
+ * Phase 4 (855 §6 / §9.3 item 4): `searchRegister()` is the register's SECOND projection — a
+ * query over the exact same tree `<jf-settings-nav>` already renders, resolved through the exact
+ * same label paths (`categoryLabel()` below — extracted from `<jf-settings-nav>` so nav and search
+ * share one label-resolution function instead of forking a second copy). It matches group labels
+ * too: a group-label hit surfaces every category in that group (there is no single "activate a
+ * group" target, so the group match fans out to its categories). Section-level audience gating
+ * reuses each entry's own `gate()` — the SAME live `getViewerAudience()` read the nav's accordion
+ * already filters sections with, so a USER querying a DEVELOPER-only section's label gets no hit,
+ * with no second gating rule to drift.
  */
 import { getViewerAudience } from '../state/viewerAudienceState.js';
+import { localizeResourceKey } from '../../i18n/resourceCatalog.js';
+import { present } from '../display/present.js';
 
 export type SettingsCategoryKind = 'native' | 'member';
 
@@ -213,4 +225,62 @@ export function findCategory(
 /** The default active category — the first entry of the first group. */
 export function firstCategoryId(register: readonly SettingsGroup[] = SETTINGS_REGISTER): string {
   return register[0]?.categories[0]?.id ?? '';
+}
+
+/** The one category-label authority (855 §9.5 origin, moved here for §6 Phase 4 so
+ *  `<jf-settings-nav>`'s row labels and `searchRegister()`'s hit labels can never drift apart). */
+export function categoryLabel(category: SettingsCategory): string {
+  if (category.kind === 'member' && category.memberSurfaceId) {
+    return present({ kind: 'surface', id: category.memberSurfaceId }).label;
+  }
+  return category.labelKey ? localizeResourceKey(category.labelKey) : category.id;
+}
+
+/** One `searchRegister()` hit: a category match (`section` absent) or a sub-anchor match. */
+export interface SettingsSearchResult {
+  readonly group: SettingsGroup;
+  readonly category: SettingsCategory;
+  readonly section?: SettingsSectionEntry;
+}
+
+function includesCaseInsensitive(label: string, needle: string): boolean {
+  return label.toLowerCase().includes(needle);
+}
+
+/**
+ * 855 §6 Phase 4 / §9.3 item 4 — the register's second projection: a query over the SAME resolved
+ * labels the nav renders (native via `localizeResourceKey`, member categories via `present()`),
+ * plus group labels. Case-insensitive substring match only (~30 entries total — no fuzzy scoring,
+ * 855 Phase-4 brief). An empty/whitespace-only query returns no results (the caller's signal to
+ * show the grouped nav instead of a flat result list).
+ */
+export function searchRegister(
+  query: string,
+  register: readonly SettingsGroup[] = SETTINGS_REGISTER,
+): SettingsSearchResult[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const results: SettingsSearchResult[] = [];
+  const seen = new Set<string>();
+  const push = (result: SettingsSearchResult): void => {
+    const dedupeKey = `${result.category.id}::${result.section?.key ?? ''}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    results.push(result);
+  };
+  for (const group of register) {
+    const groupHit = includesCaseInsensitive(localizeResourceKey(group.labelKey), needle);
+    for (const category of group.categories) {
+      if (groupHit || includesCaseInsensitive(categoryLabel(category), needle)) {
+        push({ group, category });
+      }
+      for (const section of category.sections ?? []) {
+        if (section.gate && !section.gate()) continue;
+        if (includesCaseInsensitive(localizeResourceKey(section.labelKey), needle)) {
+          push({ group, category, section });
+        }
+      }
+    }
+  }
+  return results;
 }

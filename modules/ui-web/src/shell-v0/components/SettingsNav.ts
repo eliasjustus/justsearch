@@ -14,15 +14,34 @@
  * and the host scrolls (honoring `prefers-reduced-motion`, mirroring `NavigationController.jumpTo`).
  *
  * a11y (853 floor): real sibling `<button>` rows, never nested-interactive; roving tabindex over
- * every VISIBLE row (category rows + the active category's sub-anchors); `aria-current` marks the
- * active category/anchor; row hit areas are ≥32px tall (≥24px floor); every color is an existing
- * token role valid across all four palettes (no new colors).
+ * every VISIBLE row (category rows + the active category's sub-anchors, OR the flat search-result
+ * rows when a query is active); `aria-current` marks the active category/anchor; row hit areas are
+ * ≥32px tall (≥24px floor); every color is an existing token role valid across all four palettes
+ * (no new colors).
+ *
+ * Search (855 §6 Phase 4): a labeled input tops the nav (the reserved spot per §4's footer note —
+ * "search field tops the nav instead" of a profile header). A non-empty query switches the body
+ * from the grouped/accordion view to a flat `searchRegister()` result list (category rows + section
+ * rows, section rows labeled with their category); activating a hit dispatches `search-select`
+ * (the SAME `selectCategory`/`jumpToAnchor` paths `category-select`/`anchor-jump` already drive —
+ * the host composes them), then deterministically restores focus to the grouped view's active
+ * category row (855 P4 review merge-blocker — clearing the query removes the focused result row
+ * from the DOM, so this must not rely on browser default focus behavior). Escape is two-stage
+ * (855 P4 review should-fix): a non-empty query clears + `stopPropagation`s, same as before, so it
+ * never reaches the enclosing `<dialog>`'s `cancel` handler; an ALREADY-EMPTY query does nothing
+ * here, letting Escape reach the host `<dialog>` and close the window (house convention: ESC closes
+ * when there's nothing left to clear).
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 import { localizeResourceKey } from '../../i18n/resourceCatalog.js';
-import { present } from '../display/present.js';
-import type { SettingsGroup, SettingsCategory } from '../views/settingsRegister.js';
+import {
+  categoryLabel,
+  searchRegister,
+  type SettingsGroup,
+  type SettingsCategory,
+  type SettingsSearchResult,
+} from '../views/settingsRegister.js';
 
 export class SettingsNav extends JfElement {
   static properties = {
@@ -30,6 +49,7 @@ export class SettingsNav extends JfElement {
     activeCategory: { type: String, attribute: 'active-category' },
     activeAnchor: { type: String, attribute: 'active-anchor' },
     footerVersion: { type: String, attribute: 'footer-version' },
+    query: { state: true },
   };
 
   declare register: readonly SettingsGroup[];
@@ -38,6 +58,13 @@ export class SettingsNav extends JfElement {
   /** Optional app-version string for the nav footer (855 §4 — "footer: app version, click-to-copy").
    *  Omitted entirely when no clean source is available (see SettingsSurface for the source check). */
   declare footerVersion: string | null;
+  /** 855 §6 Phase 4 — the search box's live value; internal to the nav (not reflected to an
+   *  attribute — the host never needs to read it, only the `search-select` activation result). */
+  declare query: string;
+  /** 855 P4 review nit — roving tabindex over search-result rows tracks the LAST-focused row
+   *  (not always index 0), matching the category/anchor rows' existing active-row tabindex
+   *  pattern; reset to 0 whenever the query (and therefore the result set) changes. */
+  private lastFocusedResultIndex = 0;
 
   constructor() {
     super();
@@ -45,6 +72,7 @@ export class SettingsNav extends JfElement {
     this.activeCategory = '';
     this.activeAnchor = null;
     this.footerVersion = null;
+    this.query = '';
   }
 
   static styles = css`
@@ -58,11 +86,71 @@ export class SettingsNav extends JfElement {
       border-right: 1px solid var(--border-subtle);
       background: var(--surface-2, var(--surface-secondary));
     }
-    .groups {
+    .search-row {
+      flex-shrink: 0;
+      padding: 0.75rem 0.5rem 0.5rem;
+    }
+    .search-input {
+      width: 100%;
+      min-height: 2rem;
+      box-sizing: border-box;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.5rem;
+      background: var(--surface-1);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: var(--font-size-sm);
+      padding: 0.375rem 0.625rem;
+    }
+    .search-input::placeholder {
+      color: var(--text-tertiary, var(--text-secondary));
+    }
+    .search-input:focus-visible {
+      outline: 2px solid var(--focus-ring-color, var(--accent-tint));
+      outline-offset: -1px;
+    }
+    .groups,
+    .results {
       flex: 1;
       min-height: 0;
       overflow-y: auto;
       padding: 0.75rem 0.5rem;
+    }
+    .results-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.125rem;
+    }
+    button.search-result-row {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      width: 100%;
+      min-height: 2rem;
+      box-sizing: border-box;
+      border: none;
+      border-radius: 0.5rem;
+      background: transparent;
+      color: var(--text-primary);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      padding: 0.375rem 0.5rem;
+    }
+    button.search-result-row:hover {
+      background: var(--surface-hover);
+    }
+    button.search-result-row .result-category {
+      font-size: var(--font-size-xs);
+      color: var(--text-tertiary, var(--text-secondary));
+    }
+    .search-empty {
+      padding: 0.5rem;
+      font-size: var(--font-size-sm);
+      color: var(--text-secondary);
     }
     .group {
       padding-top: 0.75rem;
@@ -195,11 +283,117 @@ export class SettingsNav extends JfElement {
     rows[next]?.focus();
   }
 
-  private categoryLabel(category: SettingsCategory): string {
-    if (category.kind === 'member' && category.memberSurfaceId) {
-      return present({ kind: 'surface', id: category.memberSurfaceId }).label;
+  private onSearchInput(e: Event): void {
+    this.query = (e.target as HTMLInputElement).value;
+    // A fresh filter is a fresh result set — restart the roving tabindex at row 0 (855 P4 review
+    // nit) rather than keeping a stale index from the previous query's rows.
+    this.lastFocusedResultIndex = 0;
+  }
+
+  /** Non-Escape keys typed into the search input are the input's own business (cursor movement via
+   *  Home/End/arrows must NOT be hijacked by `onKeydown`'s row roving-tabindex, which listens on
+   *  the enclosing `<nav>`) — so those stop propagation unconditionally.
+   *
+   *  Escape is two-stage (855 P4 review should-fix): a non-empty query means Escape's job is
+   *  "clear the search", so it clears + stops here, exactly as before. An ALREADY-EMPTY query means
+   *  there is nothing left for this nav to do with Escape — the house convention (CommandPalette
+   *  closes on ESC unconditionally; Discord's own window closes on ESC) is that Escape now means
+   *  "close the window", so this deliberately does NOT preventDefault/stopPropagation, letting the
+   *  keydown reach the host `<dialog>`'s native Escape handling (which fires `cancel`). */
+  private onSearchKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      if (!this.query) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.query = '';
+      return;
     }
-    return category.labelKey ? localizeResourceKey(category.labelKey) : category.id;
+    e.stopPropagation();
+  }
+
+  /** Activation reuses the SAME `selectCategory`/`jumpToAnchor` paths `category-select` and
+   *  `anchor-jump` already drive — the host composes them from one event (855 §6 Phase 4). Clears
+   *  the query afterward so the nav returns to the grouped view at the newly active category, and
+   *  deterministically restores focus there (855 P4 review merge-blocker): clearing `query` removes
+   *  the just-activated result row from the DOM, so without an explicit `focus()` the browser drops
+   *  focus to `<body>` (empirically verified).
+   *
+   *  The host's `search-select` listener (`SettingsSurface.activateSearchHit` → `selectCategory`)
+   *  sets ITS OWN `activeCategory` property synchronously, but that only reaches this nav as a
+   *  re-rendered `active-category` ATTRIBUTE one Lit update cycle later than THIS nav's own
+   *  query-clear render (host update → attribute write → this nav's second update) — so a single
+   *  `await this.updateComplete` is not guaranteed to observe the restored `activeCategory` yet.
+   *  Lit's own documented pattern for exactly this ("updateComplete... won't account for updates
+   *  triggered during the update itself... await it in a loop") is the deterministic settle point:
+   *  loop until no further update is pending, THEN read the DOM. */
+  private async activateSearchResult(result: SettingsSearchResult): Promise<void> {
+    this.dispatchEvent(
+      new CustomEvent('search-select', {
+        detail: { categoryId: result.category.id, sectionKey: result.section?.key },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    this.query = '';
+    let settled = await this.updateComplete;
+    while (!settled) {
+      settled = await this.updateComplete;
+    }
+    const activeRow = this.shadowRoot?.querySelector<HTMLButtonElement>('.category-row.active');
+    if (activeRow) {
+      activeRow.focus();
+    } else {
+      this.shadowRoot?.querySelector<HTMLInputElement>('.search-input')?.focus();
+    }
+  }
+
+  private renderSearchResult(
+    result: SettingsSearchResult,
+    isRoving: boolean,
+    onFocus: () => void,
+  ): TemplateResult {
+    const label = result.section ? localizeResourceKey(result.section.labelKey) : categoryLabel(result.category);
+    return html`
+      <li>
+        <button
+          type="button"
+          data-nav-row
+          class="search-result-row"
+          tabindex=${isRoving ? '0' : '-1'}
+          @click=${() => void this.activateSearchResult(result)}
+          @focus=${onFocus}
+        >
+          <span>${label}</span>
+          ${result.section
+            ? html`<span class="result-category">${categoryLabel(result.category)}</span>`
+            : nothing}
+        </button>
+      </li>
+    `;
+  }
+
+  private renderSearchResults(): TemplateResult {
+    const results = searchRegister(this.query, this.register);
+    if (results.length === 0) {
+      return html`<div class="search-empty" role="status">
+        ${localizeResourceKey('settings.search.no-results')}
+      </div>`;
+    }
+    // 855 P4 review nit: roving tabindex follows the last-focused row, falling back to 0 when it
+    // no longer fits the (possibly narrower) filtered result set.
+    const rovingIndex =
+      this.lastFocusedResultIndex < results.length ? this.lastFocusedResultIndex : 0;
+    return html`
+      <div class="results">
+        <ul class="results-list">
+          ${results.map((r, i) =>
+            this.renderSearchResult(r, i === rovingIndex, () => {
+              this.lastFocusedResultIndex = i;
+            }),
+          )}
+        </ul>
+      </div>
+    `;
   }
 
   private renderCategory(category: SettingsCategory, danger: boolean): TemplateResult {
@@ -216,7 +410,7 @@ export class SettingsNav extends JfElement {
           tabindex=${isActive ? '0' : '-1'}
           @click=${() => this.select(category.id)}
         >
-          ${this.categoryLabel(category)}
+          ${categoryLabel(category)}
         </button>
         ${isActive && sections.length > 0
           ? html`
@@ -258,9 +452,24 @@ export class SettingsNav extends JfElement {
   }
 
   override render(): TemplateResult {
+    const searching = this.query.trim().length > 0;
+    const searchLabel = localizeResourceKey('settings.search.placeholder');
     return html`
       <nav aria-label="Settings categories" @keydown=${(e: KeyboardEvent) => this.onKeydown(e)}>
-        <div class="groups">${this.register.map((g) => this.renderGroup(g))}</div>
+        <div class="search-row">
+          <input
+            type="text"
+            class="search-input"
+            aria-label=${searchLabel}
+            placeholder=${searchLabel}
+            .value=${this.query}
+            @input=${this.onSearchInput}
+            @keydown=${(e: KeyboardEvent) => this.onSearchKeydown(e)}
+          />
+        </div>
+        ${searching
+          ? this.renderSearchResults()
+          : html`<div class="groups">${this.register.map((g) => this.renderGroup(g))}</div>`}
         ${this.footerVersion
           ? html`<div class="footer">${this.footerVersion}</div>`
           : nothing}

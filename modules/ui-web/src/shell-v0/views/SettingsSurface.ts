@@ -2310,6 +2310,8 @@ export class SettingsSurface extends JfElement {
               : null}
             @category-select=${(e: CustomEvent<{ id: string }>) => this.selectCategory(e.detail.id)}
             @anchor-jump=${(e: CustomEvent<{ key: string }>) => this.jumpToAnchor(e.detail.key)}
+            @search-select=${(e: CustomEvent<{ categoryId: string; sectionKey?: string }>) =>
+              this.activateSearchHit(e.detail.categoryId, e.detail.sectionKey)}
           ></jf-settings-nav>
           ${this.renderCategoryContent(category)}
         </div>
@@ -2419,6 +2421,24 @@ export class SettingsSurface extends JfElement {
       if (conv) conv.scrollTop = 0;
       this.setupAnchorObservers();
     });
+  }
+
+  /** Tempdoc 855 §6 Phase 4 — a `<jf-settings-nav>` search-result activation: reuses `selectCategory`
+   *  and `jumpToAnchor` exactly as `category-select`/`anchor-jump` do, just composed from one event.
+   *  A category-only hit (no `sectionKey`) is just `selectCategory`. A section hit in the category
+   *  that's ALREADY active jumps immediately (the content is already rendered); a section hit in a
+   *  DIFFERENT category must wait for that category's content to render first — `selectCategory`
+   *  schedules its own `updateComplete` continuation (scrollTop reset + anchor-observer rewire), so
+   *  this chains a second one that runs after it in the same microtask batch (registration order). */
+  private activateSearchHit(categoryId: string, sectionKey?: string): void {
+    const switchingCategory = categoryId !== this.activeCategory;
+    this.selectCategory(categoryId);
+    if (!sectionKey) return;
+    if (switchingCategory) {
+      void this.updateComplete.then(() => this.jumpToAnchor(sectionKey));
+    } else {
+      this.jumpToAnchor(sectionKey);
+    }
   }
 
   /** Tempdoc 855 §9.5 — click-jump from the nav: scroll the content pane to the sub-anchor,

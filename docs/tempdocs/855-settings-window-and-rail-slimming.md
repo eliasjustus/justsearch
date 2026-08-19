@@ -558,3 +558,18 @@ mechanism).
   fixed: nav `.active` now uses `--surface-active` (was sharing `--surface-hover`
   with `:hover` — the double-highlight defect), stale plugin comment, and direct
   test coverage for the launch link.
+
+- **P4 (this commit)** — settings search: the register's chartered second projection.
+  `searchRegister()` lives in the register (shared `categoryLabel()` extracted so nav
+  and search resolve labels through one function — no second index, reviewed clean);
+  the nav input swaps grouped view for a flat result list; activation composes the
+  existing selectCategory/jumpToAnchor paths. Review found one merge-blocker fixed
+  in-commit: result activation dropped keyboard focus to body (the same focus class
+  P3a fixed for dismissal) — activation now focuses the restored active category
+  row; plus the two-stage ESC (non-empty query clears; empty query bubbles to the
+  dialog's native cancel and closes — house CommandPalette convention) and roving
+  tabindex tracking in results. Live-verified: filter → activate → land-on-anchor
+  with correct accordion/spy state and focus on the active row; empty-input ESC
+  closes the window; i18n resolved; ui-shot settings/settings-light 0 new axe.
+  With P4, the window exceeds the Discord reference on search (theirs shipped only
+  in the 2025 redesign; ours queries the declared register).

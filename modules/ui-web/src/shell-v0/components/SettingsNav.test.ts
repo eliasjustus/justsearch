@@ -5,10 +5,12 @@
  * `<jf-settings-nav>` — tempdoc 855 §9.5: the register-driven vertical grouped nav.
  *
  * Covers the projection contract (nav renders exactly what the register declares), the accordion
- * (only the active category shows sub-anchors), the danger-group isolation, and the two events the
- * host (`SettingsSurface`) wires (`category-select` / `anchor-jump`).
+ * (only the active category shows sub-anchors), the danger-group isolation, the three events the
+ * host (`SettingsSurface`) wires (`category-select` / `anchor-jump` / `search-select`, 855 §6
+ * Phase 4), and the search box itself: filtering, activation, the no-results state, and the
+ * ESC-clears-without-bubbling-to-the-host-dialog contract.
  */
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import './SettingsNav.js';
 import type { SettingsGroup } from '../views/settingsRegister.js';
 import { __seedForTest, __resetForTest } from '../../i18n/resourceCatalog.js';
@@ -45,7 +47,16 @@ const FIXTURE_REGISTER: readonly SettingsGroup[] = [
   },
 ];
 
-async function mountNav(activeCategory: string): Promise<HTMLElement & { register: unknown; activeAnchor: string | null }> {
+async function mountNav(
+  activeCategory: string,
+): Promise<
+  HTMLElement & {
+    register: unknown;
+    activeCategory: string;
+    activeAnchor: string | null;
+    updateComplete: Promise<unknown>;
+  }
+> {
   const el = document.createElement('jf-settings-nav') as HTMLElement & {
     register: unknown;
     activeCategory: string;
@@ -71,6 +82,8 @@ describe('jf-settings-nav', () => {
       'settings.section.interface': 'Interface',
       'settings.section.theme': 'Theme',
       'settings.section.data': 'Data',
+      'settings.search.placeholder': 'Search settings',
+      'settings.search.no-results': 'No matching settings',
     });
   });
 
@@ -156,5 +169,225 @@ describe('jf-settings-nav', () => {
     )!;
     expect(dataRow.getAttribute('aria-current')).toBe('true');
     expect(appearanceRow.hasAttribute('aria-current')).toBe(false);
+  });
+
+  describe('search (855 §6 Phase 4)', () => {
+    function searchInput(el: HTMLElement): HTMLInputElement {
+      return el.shadowRoot!.querySelector<HTMLInputElement>('input.search-input')!;
+    }
+
+    it('the search input is a real labeled input (aria-label from i18n)', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      expect(input).not.toBeNull();
+      expect(input.getAttribute('aria-label')).toBe('Search settings');
+      expect(input.getAttribute('placeholder')).toBe('Search settings');
+    });
+
+    it('an empty query shows the grouped view, not the results list', async () => {
+      const el = await mountNav('appearance');
+      expect(el.shadowRoot!.querySelector('.groups')).not.toBeNull();
+      expect(el.shadowRoot!.querySelector('.results')).toBeNull();
+    });
+
+    it('typing filters to a flat result list (category row for a category-label match)', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'appear';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      expect(el.shadowRoot!.querySelector('.groups')).toBeNull();
+      const rows = Array.from(el.shadowRoot!.querySelectorAll('button.search-result-row'));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.textContent).toContain('Appearance');
+    });
+
+    it('typing a section term filters to a section row, labeled with its category', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'theme';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      const rows = Array.from(el.shadowRoot!.querySelectorAll('button.search-result-row'));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.textContent).toContain('Theme');
+      expect(rows[0]!.querySelector('.result-category')?.textContent).toBe('Appearance');
+    });
+
+    it('a query with no matches renders the no-results state', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'zzz-nonexistent';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      expect(el.shadowRoot!.querySelector('.search-empty')?.textContent?.trim()).toBe(
+        'No matching settings',
+      );
+      expect(el.shadowRoot!.querySelectorAll('button.search-result-row')).toHaveLength(0);
+    });
+
+    it('clicking a category-match result dispatches search-select with just the categoryId', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'appear';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      let detail: { categoryId: string; sectionKey?: string } | null = null;
+      el.addEventListener('search-select', (e) => {
+        detail = (e as CustomEvent<{ categoryId: string; sectionKey?: string }>).detail;
+      });
+      el.shadowRoot!.querySelector<HTMLButtonElement>('button.search-result-row')!.click();
+      expect(detail).toEqual({ categoryId: 'appearance', sectionKey: undefined });
+    });
+
+    it('clicking a section-match result dispatches search-select with both categoryId and sectionKey', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'theme';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      let detail: { categoryId: string; sectionKey?: string } | null = null;
+      el.addEventListener('search-select', (e) => {
+        detail = (e as CustomEvent<{ categoryId: string; sectionKey?: string }>).detail;
+      });
+      el.shadowRoot!.querySelector<HTMLButtonElement>('button.search-result-row')!.click();
+      expect(detail).toEqual({ categoryId: 'appearance', sectionKey: 'theme' });
+    });
+
+    it('activating a result clears the query, restoring the grouped view', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'appear';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      el.shadowRoot!.querySelector<HTMLButtonElement>('button.search-result-row')!.click();
+      await el.updateComplete;
+      expect(searchInput(el).value).toBe('');
+      expect(el.shadowRoot!.querySelector('.groups')).not.toBeNull();
+    });
+
+    // 855 P4 review MERGE-BLOCKER: clearing `query` on activation removes the just-focused result
+    // row from the DOM, so without an explicit focus() call the browser drops focus to `<body>`
+    // (empirically verified pre-fix). This mounts nav standalone (no host listener rewriting
+    // `activeCategory`), so the already-active 'appearance' row is available from the FIRST render —
+    // the multi-hop host round-trip case (host sets `activeCategory` a tick later than this nav's
+    // own query-clear update) is covered separately in SettingsSurface.search.test.ts, where the
+    // REAL host is present.
+    it('activating a result focuses the restored active category row, not body', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'appear';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      const resultRow = el.shadowRoot!.querySelector<HTMLButtonElement>('button.search-result-row')!;
+      resultRow.focus();
+      expect(el.shadowRoot!.activeElement).toBe(resultRow);
+
+      resultRow.click();
+      await el.updateComplete;
+      // Flush any additional microtask hops the fix's settle-loop needs beyond this one
+      // `updateComplete`, so the assertion below observes the loop's end state deterministically.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const activeRow = el.shadowRoot!.querySelector<HTMLButtonElement>('.category-row.active');
+      expect(activeRow).not.toBeNull();
+      expect(activeRow?.dataset.settingsCategory).toBe('appearance');
+      expect(el.shadowRoot!.activeElement).toBe(activeRow);
+    });
+
+    it('Escape in the search input clears a non-empty query', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'appear';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      expect(el.shadowRoot!.querySelector('.results')).not.toBeNull();
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true }),
+      );
+      await el.updateComplete;
+      expect(input.value).toBe('');
+      expect(el.shadowRoot!.querySelector('.groups')).not.toBeNull();
+    });
+
+    // The nav lives inside `<jf-settings-window>`'s native <dialog>; an ESC that only means
+    // "clear my search" must never bubble to a listener that would interpret it as "close the
+    // dialog" (the host's `@cancel` handler). This is the exact regression 855 §6 Phase 4 names.
+    it('Escape in the search input does NOT bubble past the nav (would-be dialog cancel stays silent)', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'appear';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+
+      const outerKeydown = vi.fn();
+      document.addEventListener('keydown', outerKeydown);
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true }),
+      );
+      document.removeEventListener('keydown', outerKeydown);
+      await el.updateComplete;
+
+      expect(outerKeydown).not.toHaveBeenCalled();
+      expect(input.value).toBe('');
+    });
+
+    // 855 P4 review should-fix: two-stage ESC. A non-empty query's Escape stays nav-local (the test
+    // above). An ALREADY-EMPTY query has nothing left for this nav to clear, so Escape must now
+    // bubble past the nav — the house convention (CommandPalette closes on ESC unconditionally;
+    // Discord's own window closes on ESC) is that the enclosing `<dialog>`'s native Escape handling
+    // (not simulated by happy-dom's synthetic keydown here, but reachable — see the
+    // SettingsWindow-seam test) gets to run instead of the nav silently eating the keystroke.
+    it('Escape in the search input when already empty bubbles past the nav (two-stage ESC lets the dialog close)', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      const outerKeydown = vi.fn();
+      document.addEventListener('keydown', outerKeydown);
+      const event = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(event);
+      document.removeEventListener('keydown', outerKeydown);
+      expect(outerKeydown).toHaveBeenCalledTimes(1);
+      expect(event.defaultPrevented).toBe(false);
+      expect(el.shadowRoot!.querySelector('.groups')).not.toBeNull();
+    });
+
+    it('ArrowDown roves focus between search-result rows (reuses the nav row-navigation handler)', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'a';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      const rows = Array.from(
+        el.shadowRoot!.querySelectorAll<HTMLButtonElement>('button.search-result-row'),
+      );
+      expect(rows.length).toBeGreaterThanOrEqual(2);
+      rows[0]!.focus();
+      expect(el.shadowRoot!.activeElement).toBe(rows[0]);
+      rows[0]!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true, cancelable: true }),
+      );
+      expect(el.shadowRoot!.activeElement).toBe(rows[1]);
+    });
+
+    it('Home/End typed in the search input are NOT hijacked by the row roving-tabindex handler', async () => {
+      const el = await mountNav('appearance');
+      const input = searchInput(el);
+      input.value = 'a';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await el.updateComplete;
+      input.focus();
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Home', bubbles: true, composed: true, cancelable: true }),
+      );
+      // Focus must stay on the input — the nav-level onKeydown row-navigation handler (which would
+      // call rows[0]?.focus()) must never see this event.
+      expect(el.shadowRoot!.activeElement).toBe(input);
+    });
   });
 });
