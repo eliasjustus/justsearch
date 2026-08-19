@@ -364,7 +364,51 @@ Recent Events, and separately POST `/api/worker/restart` in the pinned state to 
 6. **`requestRecoveryNow` catches `RejectedExecutionException`** (`KnowledgeServerHealthMonitor.java`
    `:346` region). Same pass: after `close()` the executor rejects, and an HTTP request must not
    become a 500 because the process is shutting down.
-7. **No dedicated E2E for the give-up path.** An unrecoverable boot reaches the terminal code only
+7. **No dedicated E2E for the give-up path.**
+8. **(review F9) The E2E's shape is single-cycle.** Its run converges on recovery attempt 1, so the
+   CROSS-CYCLE suppression — the property that a multi-attempt arc still narrates one
+   `worker.restart-attempted` — is covered at component tier only (`arcDoesNotFlap`, 2 transitions
+   over a 2-attempt arc). Making the E2E multi-cycle would mean an injector that fails the first
+   recovery attempt too, i.e. a second knob; the live leg is the cheaper place to see it. An unrecoverable boot reaches the terminal code only
    after the full backoff arc (~2.5 min), which is a poor CI trade for a state already pinned at the
    component tier (`arcGivesUpOnceAfterTheBudget`) plus a fast in-process test of the fixture's
    fail-fast (`IsolatedBackendFixtureFailFastTest`).
+
+### I.9 Review fixes (independent refute-first review, 2026-08-19 — READY-WITH-FIXES, 10 findings)
+
+All ten dispositioned; the reviewer's cites were re-verified in the tree before each change. Two
+findings turned out to be deeper than reported (F1 and F5), and the tests caught both.
+
+| # | Disposition | Where |
+|---|---|---|
+| **F1** | FIXED, wider than reported | The overwrite was at `start()`'s per-attempt catch as well as `startWithRetry`'s final one, so the guard went into the ONE funnel every worker-down verdict passes through: `KnowledgeServerBootstrap.transitionWorkerDown:773` refuses to overwrite a held `worker.restart_exhausted` (the corrupt-index verdict is the one exception, and it is computed BEFORE the guard so the unrepeatable marker is still consumed). The three site-level guards are gone; the call sites at `:300`, `:310`, `:353` are now unconditional. The false comment at the failed-boot arm is corrected (`HeadlessApp.java:453`). `restartExhaustedIsNeverSuperseded` now builds its state through the real path via a new `brickedAfterSupervisionGaveUp` helper (the verdict lands, then the boot fails over it). |
+| **F2** | FIXED, split as directed | (a) A live supervisor now yields `Action.STAND_DOWN` — this cycle only, no narration, no latch (`BootRecoveryDecision.java:149`); `narrateGiveUp` sets the latch per-arm so the supervision case can never set it. The input also changed from a latched fact to a LIVE one: `supervisionEngagedOnLastAttempt` is never cleared until the next `startWithRetry`, so gating on it would stand down forever and never run the attempt that clears it — the arm now asks `KnowledgeServerBootstrap.supervisionActive():418` (`spawner != null && spawner.supervisionEngaged()`), which is false once the failed start's `close()` dropped the spawner. (b) The permanent veto stays, and `worker.restart_exhausted` joins the fixture's terminal set (`IsolatedBackendFixture.TERMINAL_WORKER_REASONS`). (c) `requestRecoveryNow` answers `VETOED_SUPERVISION` (temporary) vs `VETOED_RESTART_EXHAUSTED` (terminal), with the difference documented on the enum. |
+| **F3** | FIXED (root cause, not a re-publish) | The manifest's live-worker supplier now falls back to the boot-time instance (`HeadlessApp.java:803-809`). Deviation from the literal directive, argued: the READY transition fires INSIDE the attempt, when the signal bus is already live, so the fallback makes the publish correct AT the event rather than correcting it afterwards, and it adds no second publish path to keep in sync. The E2E asserts a non-null `grpcPort` in `runtime/manifest.json` after convergence. |
+| **F4** | FIXED | `closed` flag checked before the slot and again before the spawn (`KnowledgeServerHealthMonitor.java:251`, `:262`, `:302`); `close()` = `shutdownNow` + bounded `awaitTermination(CLOSE_AWAIT_MS=5s)` so a return means no recovery is in flight (`:511`); `signalBus`/`spawner`/`client` are volatile (`KnowledgeServerBootstrap.java:72-74`, F10). |
+| **F5** | FIXED, and the first fix was not enough | The executor-side re-decide landed as directed — but the burst test then showed two further holes the reviewer's sketch did not reach: (i) a dropped-because-stale attempt returned silently, so a manual-only sequence never reached its terminal state; it now narrates the give-up where the decision is made (`:275`); (ii) `requestRecoveryNow` checked "is one running" AFTER deciding, so ten requests queued ten runnables before the first started and all ten were told ACCEPTED. The slot is now RESERVED on the caller thread and handed to the runnable (`:422`, `slotAlreadyHeld`), which makes the ACCEPTED verdict true. Counter increments rather than assigns. |
+| **F6** | FIXED (comment only) | The injector comment now states the actual guard — `isProduction()` is DETECTED (explicit flag or bundled-JRE layout), so a shipped build launched with the flag forced false can arm it; same reach as every other dev sysprop, not a security boundary. |
+| **F7** | FIXED via the funnel | Rather than a fourth site-level guard, `narrationSuppressed()` moved into `transitionWorkerDown` (`:773`), so the health-budget branch and any future site inherit it. Test `workerDownFunnelOwnsTheSuppressionRule` pins both directions (narrates outside an arc, silent inside). Honest limit: provoking the specific spawn-but-never-healthy branch needs a half-alive worker — the live leg's territory — so what is pinned is the shared rule, not that one branch's call. |
+| **F8** | FIXED (javadoc) | `BootRecoveryDecision.Input#msSinceLastAttempt` now says the first attempt is due immediately and names the poll interval as the spacing. |
+| **F9** | RECORDED | Deviation 8 above. |
+| **F10** | FIXED | Folded into F4 (the three volatile fields). |
+
+Fail-first evidence for the merge-blockers (mutate, observe RED, restore):
+
+| Mutation | Test that went RED |
+|---|---|
+| F1: funnel guard `supervisionVerdictHeld()` disabled | `supervisionVerdictSurvivesTheFailedStartThatFollowsIt` **and** `restartExhaustedIsNeverSuperseded` |
+| F4: BOTH `closed` gates disabled | `closedMonitorNeverSpawns` (with only one disabled it stays green — the gates are deliberately redundant) |
+| F5: caller-side slot reservation reverted to the pre-review "is one running" check | `manualBurstCannotOutspendTheBudget` |
+| F3: supplier fallback removed | `WorkerBootRecoveryE2ETest` — manifest carried no `grpcPort` at all after recovery |
+
+One mutation did NOT turn a test red and is reported as such: removing the GIVE_UP arm inside the
+executor-side re-decide (`:275`). With the slot reservation in place, no currently-reachable sequence
+queues a stale attempt, so that arm is defence-in-depth. It is kept because if the window ever
+reopens, narrating beats dropping silently — the failure it would prevent is exactly the one the
+burst test caught.
+
+Re-verification after the fixes: `spotlessApply` + `build -x test` green; full `./gradlew.bat test`
+green (1m12s); `:modules:system-tests:integrationTest` for `WorkerBootRecoveryE2ETest` +
+`IsolatedBackendFixtureFailFastTest` green (READY 25.5s after spawn, manifest port asserted);
+`check-readiness-reason-codes` OK. The FE was not touched by this pass. The reviewer's confirmed-clean
+items (the ReasonRetention arm, the FE tail, deviation 5) were left alone.
