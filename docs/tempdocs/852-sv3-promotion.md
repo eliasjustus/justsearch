@@ -620,6 +620,20 @@ would "catch up" to the writes that landed while it waited and the stale answer 
   answers `409`, the cascade aborts, and nothing is deleted. That is the safe behaviour and it is
   kept; what this slice fixed is the COPY, which used to promise "those branches too". A reader who
   actually wants a three-level delete must currently remove the deepest fork first.
+- **F15 — the inherited turn's rendered ABSENCE is not pinned at the DOM level** (review L2). The pure
+  tier asserts the derivation (`canEdit === false`, no menu entries) and the live tier asserts the
+  absence for a turn whose fork point is a RUN-PLANE id, but no case mounts a BRANCH and asserts that
+  its inherited turns render no edit pencil and no branch entries. The two are different refusals —
+  one is "this id is not a store message", the other is "this message belongs to the parent" — and a
+  regression that dropped only the second would leave the pure tier green. The gap is coverage, not
+  behaviour; the honest form of the limit is that the inherited refusal is derivation-tested only.
+- **F16 — "consented, then broke halfway" is untested** (review L3). The production comment in
+  `SearchV3View.deleteThroughStore` explains that the local `declined` flag exists because the store
+  function's return cannot separate a declined cascade from a consented one that failed partway
+  (`{ok:false, childIds}` is both). The declined branch and the plain-refusal branch are both
+  covered; the third — consent given, one child deleted, the next child refused — is not, so the
+  flag's whole reason for existing is asserted at two of its three corners. Reaching it needs a fake
+  that refuses a SPECIFIC child mid-cascade.
 - **S2's F4 and F6 are untouched.** They are context-set limits, not branch limits, and nothing here
   makes either better or worse. F4 and F12 are the same shape and want the same backend-side count.
 
