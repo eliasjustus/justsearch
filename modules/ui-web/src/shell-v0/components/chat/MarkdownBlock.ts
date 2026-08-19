@@ -53,8 +53,15 @@ export interface Citation {
   sentenceText: string;
   /** Cross-encoder similarity → grounding tier (the one `groundingClass`/`groundingLabel` authority). */
   similarity: number;
-  /** The other source indices this sentence also grounds to (multi-source; the primary is `detail`). */
-  sourceRefs?: number[];
+  /**
+   * Tempdoc 847 §2.1d/§2.1e — the ANSWER SENTENCE this mark belongs to, as the producer ordered its
+   * sentences. Two jobs, both structural: citations sharing it are the several sources of ONE
+   * sentence and anchor to one run (so a two-source sentence renders two marks at one boundary),
+   * and anchoring advances in this order (so a sentence repeated in the answer is marked at each
+   * occurrence instead of stacking every mark on the first). Absent on a hand-built citation, which
+   * then groups with nothing — the conservative reading.
+   */
+  sentenceIndex?: number;
   /** The `[n]` label shown (1-based source position). */
   label: number;
   /** Click target — the `citation-select` deep-link to the exact local passage. */
@@ -147,6 +154,179 @@ export function stripTrailingCitationBlock(text: string): string {
   // Only strip a block that LOOKS like a citation list (carries a [n] reference) — never bare prose.
   if (!/\[\d+\]/.test(m[0])) return text;
   return text.slice(0, m.index).replace(/[ \t\r\n]+$/, '');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+ * Tempdoc 847 §2.1 — the anchoring substrate: word sequences, not a marker-stripped regex.
+ *
+ * One answer text exists in two representations — the raw markdown the model emitted (what the
+ * backend segments and the cross-encoder scores) and the rendered DOM (where a mark must land).
+ * Before 847 they were bridged by a character blacklist applied to ONE side, so every block-level
+ * markdown shape desynced it and the mark silently vanished (§1.1). The bridge below is instead
+ * independent of the markdown grammar: both sides are tokenized by the SAME ICU word segmenter, and
+ * every markdown syntax character is non-word-like, so it is absent from both streams by
+ * construction rather than by a list someone has to maintain.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Tempdoc 847 §2.1a — ICU word segmentation, applied LOCALE-INVARIANTLY (`undefined` locale, no
+ * per-language configuration and nothing to author per script). Hard Invariant 6 is why: a token
+ * COUNT floor would be a per-language lever, because a whole CJK/Thai/Japanese clause segments into
+ * one to three naive tokens while its Latin equivalent gives a dozen. Every threshold below is
+ * therefore expressed in word-like CHARACTERS, and the CJK shapes in the anchoring matrix run
+ * through this one code path.
+ */
+const WORD_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'word' });
+
+/** A word-like segment, with its offsets in the string it was segmented from. */
+interface WordToken {
+  start: number;
+  end: number;
+  /** Folded text — the unit of comparison (NFC + lowercase, the repo's locale-invariant folding). */
+  text: string;
+  /** Word-like characters (code points) — the unit every §2.1a threshold is measured in. */
+  chars: number;
+}
+
+function wordTokens(s: string): WordToken[] {
+  const out: WordToken[] = [];
+  for (const seg of WORD_SEGMENTER.segment(s)) {
+    if (!seg.isWordLike) continue;
+    const text = seg.segment.normalize('NFC').toLowerCase();
+    out.push({
+      start: seg.index,
+      end: seg.index + seg.segment.length,
+      text,
+      chars: [...text].length,
+    });
+  }
+  return out;
+}
+
+/**
+ * Collapse `[text](url)` → `text`. The ONLY normalization a citation key gets: a URL's words would
+ * otherwise enter the key as tokens the reader never sees. Everything else markdown writes —
+ * bullets, ordinals, pipes, `#`, `>`, `*`, `_`, backticks — is non-word-like and therefore never a
+ * token, which is why the blacklist this replaces (`stripMarkers`) is gone rather than extended
+ * (§2.1 rejected alternative B).
+ */
+function collapseInlineLinks(s: string): string {
+  return s.replace(/\[(.*?)\]\((.*?)\)/g, '$1');
+}
+
+/** An accepted anchor run, in character offsets of the flattened DOM text. */
+interface MatchedRun {
+  startIndex: number;
+  endIndex: number;
+  /** Index of the run's last token in the DOM token array — where the next citation resumes. */
+  lastTok: number;
+}
+
+/**
+ * Tempdoc 847 §2.1a — find the run of DOM tokens matching the LONGEST PREFIX of the key's tokens,
+ * searching only from `fromTok` (§2.1d's consume-and-advance), and accept it under the MEASURED
+ * rule (S0: 18 markdown shapes → 64 keys, computed exactly):
+ *
+ * ```
+ * eligible   ⟺  keyWordChars ≥ 4
+ * accept run ⟺  matchedWordChars ≥ 2
+ *            ∧  (keyWordChars − matchedWordChars) ≤ max(4, 0.4 × keyWordChars)
+ *            ∧  [ if matchedWordChars < 4: the run is the only occurrence in the window ]
+ * ```
+ *
+ * Why that shape rather than a ratio: the backend's `BreakIterator` fuses the NEXT list item's
+ * ordinal onto a key, and that costs 1–2 characters — an absolute tax, which on a short list item
+ * (`"No.\n13."`) is half the key. A pure ratio therefore rejects short items for a fixed-size
+ * defect, so the slack is `max(4, 0.4 × …)`: "≥ 60 % of the key" above 10 word-chars, a constant
+ * 4-character allowance below it. One formula, no new lever.
+ *
+ * The ≥ 4-character ELIGIBILITY floor is load-bearing for honesty, not a legacy carry-over: CJK
+ * answers segment standalone ordinal keys (`"2."`), which match an arbitrary `[2]` token elsewhere
+ * in the answer at 100 % coverage. The floor excludes those; the uniqueness clause closes the case
+ * the floor cannot (a 4-character numeric key such as `"2026."`).
+ *
+ * Longest PREFIX rather than whole-key matching is what dissolves the fused tail: the key's tokens
+ * run `… search 1 3 2` while the DOM's run `… search 1 3`, and the prefix covers everything but the
+ * stray ordinal. It is robust in that direction only — a single foreign token at the key's HEAD
+ * zeroes the match (a fence's info string is a class attribute, not text), which is the right
+ * outcome there (a code block has no sentence to mark) but must not be generalized.
+ */
+function matchWordRun(
+  keyToks: readonly WordToken[],
+  domToks: readonly WordToken[],
+  fromTok: number,
+  full: string,
+): MatchedRun | null {
+  const first = keyToks[0];
+  if (!first) return null;
+  let keyWordChars = 0;
+  for (const t of keyToks) keyWordChars += t.chars;
+  if (keyWordChars < 4) return null; // eligibility — unchanged from the pre-847 `norm.length < 4`
+
+  let at = -1;
+  let len = 0;
+  let matchedChars = 0;
+  let occurrences = 0;
+  for (let i = fromTok; i < domToks.length; i++) {
+    if (domToks[i]!.text !== first.text) continue;
+    let runLen = 1;
+    let runChars = first.chars;
+    while (
+      runLen < keyToks.length &&
+      i + runLen < domToks.length &&
+      domToks[i + runLen]!.text === keyToks[runLen]!.text
+    ) {
+      runChars += keyToks[runLen]!.chars;
+      runLen++;
+    }
+    if (runLen > len) {
+      at = i;
+      len = runLen;
+      matchedChars = runChars;
+      occurrences = 1;
+    } else if (runLen === len) {
+      occurrences++; // ties resolve to the EARLIEST run; the count feeds the uniqueness clause
+    }
+  }
+  if (at < 0) return null;
+
+  if (matchedChars < 2) return null;
+  if (keyWordChars - matchedChars > Math.max(4, 0.4 * keyWordChars)) return null;
+  // The uniqueness clause. §2.1a states it as "if matchedWordChars < 4"; it is applied to a
+  // SINGLE-TOKEN run as well, because that is the case §2.1a's own worked example needs — a 4-char
+  // numeric key such as `"2026."` clears both the character floor and the 4-char matched threshold,
+  // yet a one-token run carries no sequence evidence about WHICH occurrence it is. Extending the
+  // clause rejects nothing S0 measured as acceptable (the 18-shape matrix pins that) and closes the
+  // hole the floor alone cannot: a mark landing on whichever occurrence happened to come first.
+  if ((matchedChars < 4 || len === 1) && occurrences > 1) return null;
+
+  const lastTok = at + len - 1;
+  const startIndex = domToks[at]!.start;
+  let endIndex = domToks[lastTok]!.end;
+  // Extend over the punctuation that immediately follows (no whitespace, no next token), so the
+  // mark still lands AFTER the sentence's period rather than inside it.
+  const nextTokStart = domToks[lastTok + 1]?.start ?? full.length;
+  while (endIndex < nextTokStart && !/\s/.test(full[endIndex]!)) endIndex++;
+  return { startIndex, endIndex, lastTok };
+}
+
+/**
+ * Tempdoc 847 §2.1c — the block set the span guard (H4) compares against. HTML's own block content
+ * model, not a markdown grammar: what `marked` emits for a list item, a table cell, a quote or a
+ * heading is one of these regardless of which markdown feature produced it.
+ */
+const BLOCK_TAGS = new Set([
+  'P', 'DIV', 'LI', 'UL', 'OL', 'DL', 'DT', 'DD', 'BLOCKQUOTE', 'PRE',
+  'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'CAPTION',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR',
+  'SECTION', 'ARTICLE', 'ASIDE', 'FIGURE', 'FIGCAPTION', 'DETAILS', 'SUMMARY',
+]);
+
+/** The nearest block-level ancestor of `node` inside `root` (the root itself when there is none). */
+function blockAncestor(node: Node, root: Element): Element {
+  let el: Element | null = node.parentElement;
+  while (el && el !== root && !BLOCK_TAGS.has(el.tagName)) el = el.parentElement;
+  return el ?? root;
 }
 
 export class MarkdownBlock extends JfElement {
@@ -261,7 +441,9 @@ export class MarkdownBlock extends JfElement {
       else m.removeAttribute('aria-current');
     }
     for (const s of root.querySelectorAll<HTMLElement>('.cite-sentence')) {
-      s.classList.toggle('cite-sentence-selected', !!selected && s.dataset.citeKey === selected);
+      // 847 §2.1e — a sentence two sources support carries BOTH keys, so either source lights it.
+      const keys = (s.dataset.citeKeys ?? s.dataset.citeKey ?? '').split('\n');
+      s.classList.toggle('cite-sentence-selected', !!selected && keys.includes(selected));
     }
   }
 
@@ -284,6 +466,9 @@ export class MarkdownBlock extends JfElement {
     // Tempdoc 846 §2.4 — highlight fenced code on the SETTLED answer only (a stream re-renders per
     // frame, and a mended fence would flicker through languages). Runs BEFORE the citation weave:
     // highlighting rewrites a code block's innerHTML, which would discard anything woven into it.
+    // Tempdoc 847 §2.1 — this ordering is asserted, not assumed: the highlighter arrives
+    // ASYNCHRONOUSLY, so the pass that matters re-visits this root AFTER the weave has run, and what
+    // keeps the marks then is `markdownHighlight`'s children-length guard. A test covers that path.
     if (!this.isStreaming && this.format === 'markdown') {
       highlightCodeBlocks(this.renderRoot.querySelector('.md-content'));
     }
@@ -509,10 +694,16 @@ export class MarkdownBlock extends JfElement {
   }
 
   /**
-   * Tempdoc 565 §3.C — weave `[n]` citation superscripts into the rendered markdown. Walks the
-   * settled `.md-content` text nodes, locates each citation's sentence by a whitespace-tolerant,
-   * marker-stripped match, and splices a `.cite-ref` marker at the sentence boundary. A sentence that
-   * can't be located is skipped (it still appears in the Sources pane — never fail the whole render).
+   * Tempdoc 565 §3.C / 847 §2.1 — weave `[n]` citation superscripts into the rendered markdown.
+   *
+   * TIER 1 (here): word-sequence anchoring. The settled `.md-content` text nodes are flattened and
+   * tokenized by the one ICU segmenter; each citation's sentence key is tokenized the same way, and
+   * the longest prefix run that clears the §2.1a acceptance rule wins. A sentence that cannot be
+   * located is SKIPPED — it still appears in the Sources pane, and no mark is invented for it: the
+   * absence of a mark is always an acceptable outcome, a mark that outruns its evidence never is.
+   *
+   * TIER 2 ({@link normalizeLiteralCitationTokens}) then upgrades a literal `[n]` the model wrote,
+   * for a verified label tier 1 could not place. TIER 3 is no mark at all.
    */
   private decorateCitations(): void {
     const root = this.renderRoot.querySelector('.md-content') as HTMLElement | null;
@@ -532,70 +723,156 @@ export class MarkdownBlock extends JfElement {
     }
     if (!full) return;
 
-    const inserts: Array<{ startIndex: number; endIndex: number; cite: Citation }> = [];
-    const seen = new Set<number>();
+    const domToks = wordTokens(full);
+    /** One anchored run, carrying every citation of the sentence that anchored there (§2.1e). */
+    const anchors: Array<{ startIndex: number; endIndex: number; cites: Citation[] }> = [];
+    // §2.1e — the dedupe key is `endIndex:label`, not `endIndex`: two sources of ONE sentence are
+    // two marks at one boundary, and only a repeat of the SAME label there is a duplicate.
+    const seen = new Set<string>();
+    // §2.1d — matched DOM ranges are consumed: the next citation searches from the previous
+    // accepted run's end. Without it, an answer repeating a sentence stacks every mark on the first
+    // occurrence, which is strictly worse than the pre-847 single-mark behaviour.
+    let cursor = 0;
+    let group: { startIndex: number; endIndex: number; cites: Citation[] } | null = null;
+    let groupSentence: number | null = null;
+
     for (const cite of this.citations) {
-      const norm = this.stripMarkers(cite.sentenceText).trim();
-      if (norm.length < 4) continue; // too short to anchor reliably
-      let re: RegExp;
-      try {
-        re = new RegExp(this.escapeRegex(norm).replace(/\s+/g, '\\s+'), 'i');
-      } catch {
+      const sid = typeof cite.sentenceIndex === 'number' ? cite.sentenceIndex : null;
+      if (group !== null && sid !== null && sid === groupSentence) {
+        // Another source of the SAME sentence — one run, one boundary, its own mark.
+        const key = `${group.endIndex}:${Number(cite.label)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        group.cites.push(cite);
         continue;
       }
-      const m = re.exec(full);
-      if (!m) continue; // graceful skip
-      const endIndex = m.index + m[0].length;
-      if (seen.has(endIndex)) continue;
-      seen.add(endIndex);
-      inserts.push({ startIndex: m.index, endIndex, cite });
+      group = null;
+      groupSentence = sid;
+      const run = matchWordRun(
+        wordTokens(collapseInlineLinks(cite.sentenceText)),
+        domToks,
+        cursor,
+        full,
+      );
+      if (!run) continue; // graceful skip — tier 2 or tier 3 decides what happens next
+      cursor = run.lastTok + 1;
+      const endIndex = this.clampToBlock(root, ranges, run.startIndex, run.endIndex);
+      const key = `${endIndex}:${Number(cite.label)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      group = { startIndex: run.startIndex, endIndex, cites: [cite] };
+      anchors.push(group);
     }
+
     // Tempdoc 687 R3a — labels that get a real rendered marker below; the literal-token
     // normalizer strips duplicates of these and upgrades the rest.
-    const insertedLabels = new Set<number>(inserts.map((i) => Number(i.cite.label)));
-    if (inserts.length === 0) {
+    const insertedLabels = new Set<number>();
+    if (anchors.length === 0) {
       this.normalizeLiteralCitationTokens(root, insertedLabels);
       return;
     }
 
     // Insert LAST→FIRST so earlier node offsets stay valid across splitText.
-    inserts.sort((a, b) => b.endIndex - a.endIndex);
-    for (const { startIndex, endIndex, cite } of inserts) {
+    anchors.sort((a, b) => b.endIndex - a.endIndex);
+    for (const { startIndex, endIndex, cites } of anchors) {
       const endRange = ranges.find((r) => endIndex > r.start && endIndex <= r.end);
       if (!endRange) continue;
-      // Tempdoc 565 §15.B — insert the tier-colored `[n]` mark at the sentence boundary…
-      const tail = endRange.node.splitText(endIndex - endRange.start);
-      endRange.node.parentNode?.insertBefore(this.makeMarker(cite), tail);
+      // The offsets were measured before any split. Two anchors CAN land on one boundary (two runs
+      // in one block that both clamp to that block's end), and the second would then address a node
+      // its predecessor already truncated. Skipping is the same graceful-skip this function applies
+      // to an unlocatable sentence — never throw out of a render over a missing mark.
+      const endOffset = endIndex - endRange.start;
+      if (endOffset > endRange.node.data.length) continue;
+      // Tempdoc 565 §15.B / 847 §2.1e — insert the tier-colored `[n]` marks at the sentence
+      // boundary, ascending by label, in ONE split (a sentence two sources support gets both).
+      const tail = endRange.node.splitText(endOffset);
+      const ordered = [...cites].sort((a, b) => Number(a.label) - Number(b.label));
+      for (const cite of ordered) {
+        endRange.node.parentNode?.insertBefore(this.makeMarker(cite), tail);
+        insertedLabels.add(Number(cite.label));
+      }
       // …then color the cited sentence body by its grounding tier (the union with the retired
       // StreamingTextBlock's per-sentence coloring). §15.C fix: wrap EVERY text-node segment the
       // sentence spans (not just the single-node case), so a sentence crossing inline markup still
       // underlines its text runs; inline elements (bold/link) between runs are left intact (no
       // cross-element extract — the DOM is never corrupted). Process the spanned nodes LAST→FIRST so
       // each split keeps earlier nodes' offsets valid.
-      const cls = `cite-sentence grounding-${groundingClass(cite.similarity)}`;
-      // Tempdoc 822 §5.3 — the sentence carries the SAME source identity the mark does, so selecting
-      // a source can highlight the sentences it supports. Computed through the one `sourceKey`
-      // authority `makeMarker` uses: a second key function here would silently never match.
-      const sentenceKey = sourceKey(cite.detail.parentDocId, cite.detail.startLine);
+      //
+      // The tier is the STRONGEST of the sources supporting the sentence: the span answers "is this
+      // sentence grounded", which one strong source settles, while each mark keeps its own source's
+      // tier (H2) — so a weak second source still reads weak where it is claimed, on its numeral.
+      const best = ordered.reduce((m, c) => Math.max(m, c.similarity), Number.NEGATIVE_INFINITY);
+      const cls = `cite-sentence grounding-${groundingClass(best)}`;
+      // Tempdoc 822 §5.3 — the sentence carries the SAME source identities the marks do, so
+      // selecting a source can highlight the sentences it supports. Computed through the one
+      // `sourceKey` authority `makeMarker` uses: a second key function here would silently never
+      // match. `citeKey` stays the primary (what a single-source sentence always was); `citeKeys`
+      // carries the whole set, newline-joined because a key embeds a file path.
+      const keys = [
+        ...new Set(ordered.map((c) => sourceKey(c.detail.parentDocId, c.detail.startLine))),
+      ];
+      const selected = getSelectedSource();
       const spanned = ranges
         .filter((r) => r.end > startIndex && r.start < endIndex)
         .sort((a, b) => b.start - a.start);
       for (const r of spanned) {
         // For the boundary node the marker split already truncated it to [r.start, endIndex).
         const segStart = Math.max(startIndex, r.start);
-        const seg =
-          segStart > r.start ? r.node.splitText(segStart - r.start) : r.node;
+        const offset = segStart - r.start;
+        if (offset > r.node.data.length) continue; // same graceful skip as the boundary split above
+        const seg = offset > 0 ? r.node.splitText(offset) : r.node;
+        if (seg.data.length === 0) continue;
         const wrap = document.createElement('span');
         wrap.className = cls;
-        wrap.dataset.citeKey = sentenceKey;
+        wrap.dataset.citeKey = keys[0]!;
+        wrap.dataset.citeKeys = keys.join('\n');
         // A re-render rebuilds these spans, so a region already selected has to come back selected —
         // the same reason `makeMarker` reads the store at construction.
-        if (sentenceKey === getSelectedSource()) wrap.classList.add('cite-sentence-selected');
+        if (selected !== null && keys.includes(selected)) {
+          wrap.classList.add('cite-sentence-selected');
+        }
         seg.parentNode?.insertBefore(wrap, seg);
         wrap.appendChild(seg);
       }
     }
     this.normalizeLiteralCitationTokens(root, insertedLabels);
+  }
+
+  /**
+   * Tempdoc 847 §2.1c (H4) — THE SPAN GUARD. A matched run must not cross a rendered block
+   * boundary; when it does, the span is clamped to the FIRST block and the marker is placed at the
+   * clamp.
+   *
+   * Measured need (S0): 7 of 56 eligible runs — every bullet list, the blockquote, the GFM table and
+   * the heading-into-list shape — span 2–5 rendered blocks, because the backend's sentence iterator
+   * fuses a whole block into one key. Such a key matches CONTIGUOUSLY at 100 % coverage, so no
+   * acceptance threshold can see it: without this guard one citation underlines a three-item list
+   * plus its lead-in paragraph while reporting a perfect match. A mark may not claim text the
+   * cross-encoder did not score as part of that sentence.
+   *
+   * The comparison is the nearest block-level ANCESTOR, deliberately not "a newline in the flattened
+   * text" — S0 used the newline as a modelling stand-in and it fires falsely on a soft-wrapped
+   * paragraph, which is one `<p>` and one sentence.
+   */
+  private clampToBlock(
+    root: HTMLElement,
+    ranges: ReadonlyArray<{ node: Text; start: number; end: number }>,
+    startIndex: number,
+    endIndex: number,
+  ): number {
+    let firstBlock: Element | null = null;
+    let clamped = endIndex;
+    for (const r of ranges) {
+      if (r.end <= startIndex || r.start >= endIndex) continue;
+      const block = blockAncestor(r.node, root);
+      if (firstBlock === null) {
+        firstBlock = block;
+      } else if (block !== firstBlock) {
+        return clamped;
+      }
+      clamped = Math.min(endIndex, r.end);
+    }
+    return endIndex;
   }
   /**
    * Tempdoc 687 R3a (trust surfaces are literal — one citation notation per answer): local models
@@ -604,6 +881,12 @@ export class MarkdownBlock extends JfElement {
    * already carries a rendered marker (dedupe), upgraded to the same marker span otherwise.
    * Tokens inside code/pre are untouched (verbatim content), as are numbers with no matching
    * citation (e.g. "[3]" in quoted document text with 2 sources).
+   *
+   * Tempdoc 847 §2.1 TIER 2, and its honesty invariant H3: this upgrade asserts SOURCE-level
+   * attribution the MODEL placed, where tier 1 asserts SENTENCE-level attribution the cross-encoder
+   * placed. That is why a tier-2 mark gets NO `.cite-sentence` underline — the sentence was never
+   * identified, so no span may claim it was. Structural rather than checked (only the tier-1 weave
+   * builds spans), and pinned by a test so a future refactor cannot let a span follow the marker.
    */
   private normalizeLiteralCitationTokens(root: HTMLElement, insertedLabels: Set<number>): void {
     const byLabel = new Map<number, Citation>(this.citations.map((c) => [Number(c.label), c]));
@@ -700,14 +983,6 @@ export class MarkdownBlock extends JfElement {
     return span;
   }
 
-  /** Strip common inline markdown markers so the raw-text sentence matches the rendered DOM text. */
-  private stripMarkers(s: string): string {
-    return s.replace(/\[(.*?)\]\((.*?)\)/g, '$1').replace(/[*_`~#>]/g, '');
-  }
-
-  private escapeRegex(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
 }
 
 if (typeof customElements !== 'undefined' && !customElements.get('jf-markdown-block')) {

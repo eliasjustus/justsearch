@@ -485,19 +485,35 @@ export function countSentences(text: string): number {
  * §15.A grounding verdict ({@link groundingClass}) per cite — no second classifier.
  */
 export function groundingCoverage(
-  citations: ReadonlyArray<{ readonly similarity: number }>,
+  citations: ReadonlyArray<{ readonly similarity: number; readonly sentenceText?: string }>,
   answerText: string,
   // Tempdoc 836 S2S3-A.2 — the run's coverage facts, when the producer reported them. Absent for a
   // producer that reports none, which keeps that caller's line exactly as it was.
   honesty: CoverageHonesty | null = null,
 ): GroundingCoverage {
+  // Tempdoc 847 §2.1e — the N in "N of M" counts SENTENCES, and since 847 a sentence supported by
+  // two sources arrives as two citations (one mark per verified ref). Counting citations would read
+  // "5 of 4 sentences" off a four-sentence answer, so identical sentence text collapses to one
+  // entry, classified by its STRONGEST support: the question the count answers is whether the
+  // sentence is grounded, which one strong source settles. A citation shape carrying no sentence
+  // text (a caller that passes bare similarities) is counted individually, exactly as before.
+  const bySentence = new Map<string, number>();
   let grounded = 0;
   let weak = 0;
-  for (const c of citations) {
-    const verdict = groundingClass(c.similarity);
+  const tally = (similarity: number): void => {
+    const verdict = groundingClass(similarity);
     if (verdict === 'grounded') grounded += 1;
     else if (verdict === 'weak') weak += 1;
+  };
+  for (const c of citations) {
+    if (typeof c.sentenceText !== 'string' || c.sentenceText.length === 0) {
+      tally(c.similarity);
+      continue;
+    }
+    const best = bySentence.get(c.sentenceText);
+    if (best === undefined || c.similarity > best) bySentence.set(c.sentenceText, c.similarity);
   }
+  for (const similarity of bySentence.values()) tally(similarity);
   const cited = grounded + weak;
   // Tempdoc 836 §3.6 — the backend's BreakIterator count is the authority for M when it is
   // reported; the regex counter is the fallback for producers that report nothing.

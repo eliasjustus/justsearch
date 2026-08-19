@@ -25,6 +25,14 @@ import {
 // list, so the test fails if the provenance split is ever undone upstream of the renderer.
 import { claimsToCitations } from './citationResolve.js';
 import type { Claim, RetrievalCitation } from './citationTypes.js';
+// Tempdoc 847 T19 — the 846 highlight pass runs over the same root the citation weave writes into,
+// and it arrives ASYNCHRONOUSLY, so the ordering is asserted rather than assumed.
+import {
+  highlightCodeBlocks,
+  isHighlighterLoaded,
+  loadHighlighter,
+  resetHighlighterForTest,
+} from '../markdown/markdownHighlight.js';
 
 /**
  * Tempdoc 846 §2.3 — `styles` is an ARRAY now (the shared typography ramp + the shared code theme +
@@ -928,5 +936,226 @@ describe('822 §5.2 — frozen defaults: the shipped window is unmoved (S4-style
   it('mints no ink override — an ink escape hatch is an F2 escape hatch', () => {
     const cssText = markdownBlockCssText();
     expect(cssText).not.toContain('--md-cite-selected-ink');
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * Tempdoc 847 S4 — WORD-SEQUENCE ANCHORING: the mark lands, and it never outruns its evidence.
+ *
+ * The pre-847 anchorer matched a marker-stripped regex against the flattened DOM — two
+ * representations of one text, normalized by DIFFERENT rules, so every block-level markdown shape
+ * desynced them and a cross-encoder-verified sentence rendered nothing. What is pinned here is the
+ * three-tier contract: tier 1 anchors by word sequence (this block), tier 2 upgrades a literal `[n]`
+ * the model placed WITHOUT claiming a sentence (H3), tier 3 marks nothing at all.
+ *
+ * The shape matrix that proves the CLASS (18 markdown shapes, CJK included) is a file of its own:
+ * `MarkdownBlock.anchoring.test.ts`.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+const TWO_SOURCE_SENTENCE = 'The retrieval pipeline fuses two rankers.';
+
+function claim(
+  sentenceIndex: number,
+  sentenceText: string,
+  verifiedRefs: number[],
+  verifiedScore = 0.8,
+): Claim {
+  return { sentenceIndex, sentenceText, verifiedScore, lexicalScore: 0, verifiedRefs, lexicalRefs: [] };
+}
+
+describe('847 T1 — a list-shaped answer anchors inside the rendered <li>', () => {
+  it('anchors the FUSED key of a bulleted item, marker and all', async () => {
+    const el = document.createElement('jf-markdown-block') as MarkdownBlock;
+    el.text = 'Items:\n\n- **Foo**: bar baz qux [1].\n- **Bar**: another item [2].';
+    // Both halves of §1.1 in one fixture: the key carries a bullet marker and bold markers the DOM
+    // does not have, AND the next item's ordinal fused onto its tail by the backend's segmenter.
+    el.citations = [{ ...mark('- **Foo**: bar baz qux [1].\n\n2. ', 0.8, 91), sentenceIndex: 0 }];
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    const ref = el.renderRoot.querySelector('.cite-ref');
+    expect(ref).not.toBeNull();
+    expect(ref!.closest('li')).not.toBeNull();
+    // …and the sentence body it underlines is that item, not the list.
+    const span = el.renderRoot.querySelector('.cite-sentence')!;
+    expect(span.closest('li')).not.toBeNull();
+    expect(span.textContent).not.toContain('another item');
+    el.remove();
+  });
+});
+
+describe('847 T3 — a sentence two sources support renders BOTH marks', () => {
+  beforeEach(() => {
+    __resetSelectedSource();
+  });
+
+  it('resolves two citations and renders two marks at one boundary, ascending by label', async () => {
+    // Through the REAL resolver: the render half is only reachable because `claimsToCitations` now
+    // emits per verified ref. A hand-built pair would prove nothing about that.
+    const citations = claimsToCitations([claim(0, TWO_SOURCE_SENTENCE, [0, 2])], DENSITY_SOURCES);
+    expect(citations).toHaveLength(2);
+    const el = await renderAnswer([TWO_SOURCE_SENTENCE, 'A second sentence follows it.'], []);
+    el.citations = citations;
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    const content = el.renderRoot.querySelector('.md-content')!;
+    const refs = [...content.querySelectorAll('.cite-ref')];
+    expect(refs.map((r) => r.textContent)).toEqual(['1', '3']);
+    // ONE sentence, so ONE underline — two spans would double-count the same prose.
+    expect(content.querySelectorAll('.cite-sentence').length).toBe(1);
+    el.remove();
+  });
+
+  it('lets EITHER source light the sentence it supports (§5.3 with two keys)', async () => {
+    const citations = claimsToCitations([claim(0, TWO_SOURCE_SENTENCE, [0, 2])], DENSITY_SOURCES);
+    const el = await renderAnswer([TWO_SOURCE_SENTENCE], []);
+    el.citations = citations;
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    const span = el.renderRoot.querySelector<HTMLElement>('.cite-sentence')!;
+    expect(span.classList.contains('cite-sentence-selected')).toBe(false);
+
+    // The SECOND source — the one the pre-847 resolver dropped entirely.
+    setSelectedSource(sourceKey(DENSITY_SOURCES[2]!.parentDocId, DENSITY_SOURCES[2]!.startLine));
+    expect(span.classList.contains('cite-sentence-selected')).toBe(true);
+    setSelectedSource(sourceKey(DENSITY_SOURCES[0]!.parentDocId, DENSITY_SOURCES[0]!.startLine));
+    expect(span.classList.contains('cite-sentence-selected')).toBe(true);
+    setSelectedSource('docs/unrelated.md:9');
+    expect(span.classList.contains('cite-sentence-selected')).toBe(false);
+    el.remove();
+  });
+});
+
+describe('847 T3b — a repeated sentence is marked at EACH occurrence, never stacked', () => {
+  it('anchors the second citation after the first match, not on top of it', async () => {
+    const repeated = 'The kernel is a shared substrate.';
+    const el = await renderAnswer([repeated, 'Then some intervening prose.', repeated], [
+      claim(0, repeated, [0]),
+      claim(1, repeated, [1]),
+    ]);
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.querySelectorAll('.cite-ref').length).toBe(2);
+    // The ORDER is the assertion: without the consume-and-advance rule both marks resolve at
+    // occurrence 1 and the per-label dedupe happily inserts both there — strictly worse than the
+    // single mark the pre-847 renderer produced.
+    expect(content.textContent).toMatch(
+      /substrate\.1 Then some intervening prose\. The kernel is a shared substrate\.2/,
+    );
+    el.remove();
+  });
+});
+
+describe('847 T3c/T4/T7 — what the rewrite must NOT regress', () => {
+  it('T3c: a three-token sentence still anchors (the floor is CHARACTERS, not tokens)', async () => {
+    const el = await renderAnswer(['Does it rebuild the index?', 'It does not.', 'It reuses the segment.'], [
+      claim(1, 'It does not.', [0]),
+    ]);
+    expect(el.renderRoot.querySelectorAll('.cite-ref').length).toBe(1);
+    expect(el.renderRoot.querySelector('.cite-sentence')?.textContent).toContain('It does not');
+    el.remove();
+  });
+
+  it('T4: an answer with NO literal [n] anywhere still gets its tier-1 marks', async () => {
+    const el = await renderAnswer(
+      ['The kernel is a shared substrate for every projection.', 'The worker owns all index IO.'],
+      [claim(0, 'The kernel is a shared substrate for every projection.', [0]), claim(1, 'The worker owns all index IO.', [1])],
+    );
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.querySelectorAll('.cite-ref').length).toBe(2);
+    expect(content.textContent).not.toContain('[1]');
+    el.remove();
+  });
+
+  it('T7: a sentence whose first words repeat earlier anchors at the RIGHT occurrence', async () => {
+    // Longest-run, not first-hit: the prefix `The kernel is a` matches the earlier sentence too.
+    const el = await renderAnswer(
+      ['The kernel is a shared substrate.', 'The kernel is a governed projection.'],
+      [claim(1, 'The kernel is a governed projection.', [0])],
+    );
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.querySelectorAll('.cite-ref').length).toBe(1);
+    expect(content.textContent).toMatch(/governed projection\.1/);
+    expect(content.textContent).not.toMatch(/shared substrate\.1/);
+    el.remove();
+  });
+});
+
+describe('847 T5 — tier 2 asserts SOURCE attribution, so it claims no sentence (H3)', () => {
+  it('upgrades the literal [1] and leaves the prose without a cited-sentence span', async () => {
+    const el = document.createElement('jf-markdown-block') as MarkdownBlock;
+    // Tier 1 finds nothing (the key is absent from the answer), so the model's own literal token is
+    // all the evidence there is about WHERE the source applies — source-level, not sentence-level.
+    el.text = 'Unmatched prose with a bare token [1] inline.';
+    el.citations = [mark('A sentence that does not appear at all.', 0.8, 1)];
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.querySelectorAll('.cite-ref').length).toBe(1);
+    // THE INVARIANT: a tier-2 mark carries no underline. The sentence was never identified, so no
+    // span may claim it was — the difference between "this source supports the answer" and "this
+    // source supports THIS sentence", which is the whole content of a `.cite-sentence`.
+    expect(content.querySelectorAll('.cite-sentence').length).toBe(0);
+    el.remove();
+  });
+});
+
+describe('847 §2.1 × 846 §2.4 — the deferred highlight pass must not eat the weave (T19)', () => {
+  beforeEach(() => {
+    resetHighlighterForTest();
+  });
+
+  it('keeps a cited sentence inside a fence after the highlighter resolves', async () => {
+    const cited = 'const kernel = "a shared substrate";';
+    const el = document.createElement('jf-markdown-block') as MarkdownBlock;
+    el.text = `Config:\n\n\`\`\`js\n${cited}\n\`\`\`\n\nAnd a second, uncited block:\n\n\`\`\`js\nconst other = 2;\n\`\`\`\n`;
+    el.citations = [{ ...mark(cited, 0.8, 91), sentenceIndex: 0 }];
+    document.body.appendChild(el);
+    // The ordering that matters is the ASYNC one: `updated()` calls `highlightCodeBlocks` before the
+    // weave, but the highlighter chunk is not loaded yet, so the pass that actually rewrites the
+    // code blocks runs AFTER the marks are in.
+    expect(isHighlighterLoaded()).toBe(false);
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    const content = el.renderRoot.querySelector('.md-content') as HTMLElement;
+    expect(content.querySelectorAll('.cite-ref').length).toBe(1);
+
+    await loadHighlighter();
+    highlightCodeBlocks(content);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The weave survived — `markdownHighlight`'s children guard yielded on the block that carries it.
+    expect(content.querySelectorAll('.cite-ref').length).toBe(1);
+    expect(content.querySelector('.cite-sentence')).not.toBeNull();
+    expect(content.querySelector('pre code')!.textContent).toContain('a shared substrate');
+    // NON-VACUITY: the pass really ran — the uncited block beside it did get highlighted.
+    const blocks = [...content.querySelectorAll<HTMLElement>('pre code')];
+    expect(blocks.length).toBe(2);
+    expect(blocks.some((b) => b.querySelector('.hljs-keyword') !== null)).toBe(true);
+    el.remove();
+  });
+});
+
+describe('847 × 846 §2.5 — a RESTORED turn flips the trailing-list strip from 0 to N citations', () => {
+  it('preserves the model list while evidence is absent, strips it once evidence rehydrates', async () => {
+    const answer = 'The kernel is a shared substrate.\n\nSources:\n[1] The kernel doc';
+    const el = document.createElement('jf-markdown-block') as MarkdownBlock;
+    el.text = answer;
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    // The restored turn as search v3 rendered it before its evidence came back: no citations, so the
+    // interface presents no sources and the model's own list is the only source information there is.
+    expect(el.renderRoot.querySelector('.md-content')!.textContent).toContain('The kernel doc');
+
+    // …and the moment the record's evidence is projected in, the UI owns the source presentation
+    // again: the list goes, and the mark it was standing in for arrives.
+    el.citations = claimsToCitations([claim(0, 'The kernel is a shared substrate.', [0])], DENSITY_SOURCES);
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.textContent).not.toContain('The kernel doc');
+    expect(content.querySelectorAll('.cite-ref').length).toBe(1);
+    el.remove();
   });
 });

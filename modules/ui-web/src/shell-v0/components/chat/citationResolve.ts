@@ -52,25 +52,36 @@ export function claimsToCitations(
     // renders, so the frame degrades to `partially-grounded` because the evidence degraded.
     // Fails CLOSED on a claim with no verified ref list at all (a legacy/untyped object), exactly as
     // the score gate above does: a missing producer is not a verified one.
-    const refIdx = Array.isArray(cl.verifiedRefs) ? cl.verifiedRefs[0] : undefined;
-    if (refIdx === undefined) continue;
-    const s = sources[refIdx];
-    if (!s) continue;
-    out.push({
-      sentenceText: cl.sentenceText,
-      similarity: cl.verifiedScore,
-      sourceRefs: cl.verifiedRefs,
-      label: refIdx + 1,
-      detail: {
-        parentDocId: s.parentDocId,
-        startLine: s.startLine,
-        endLine: s.endLine,
-        startChar: s.startChar,
-        endChar: s.endChar,
-        excerpt: s.excerpt,
-      },
-      hover: { excerpt: s.excerpt, title: filenameOf(s.parentDocId), headingText: s.headingText },
-    });
+    //
+    // Tempdoc 847 §1.2/§2.1e — ONE CITATION PER VERIFIED REF, not per claim. Taking `verifiedRefs[0]`
+    // meant a sentence the matcher tied to sources 1 AND 3 rendered a single mark labelled 1, and
+    // the second source was lost HERE — before the renderer was ever entered, which is why a
+    // renderer-side dedupe fix for it was unreachable. Each ref that addresses a real source mints
+    // its own mark with its own label and deep link; `sentenceIndex` is what tells the renderer they
+    // are one sentence's several sources rather than several sentences.
+    const refs = Array.isArray(cl.verifiedRefs) ? cl.verifiedRefs : [];
+    const emitted = new Set<number>();
+    for (const refIdx of refs) {
+      if (typeof refIdx !== 'number' || emitted.has(refIdx)) continue;
+      const s = sources[refIdx];
+      if (!s) continue;
+      emitted.add(refIdx);
+      out.push({
+        sentenceText: cl.sentenceText,
+        similarity: cl.verifiedScore,
+        sentenceIndex: cl.sentenceIndex,
+        label: refIdx + 1,
+        detail: {
+          parentDocId: s.parentDocId,
+          startLine: s.startLine,
+          endLine: s.endLine,
+          startChar: s.startChar,
+          endChar: s.endChar,
+          excerpt: s.excerpt,
+        },
+        hover: { excerpt: s.excerpt, title: filenameOf(s.parentDocId), headingText: s.headingText },
+      });
+    }
   }
   return out;
 }
@@ -89,12 +100,26 @@ export function resolveAnswerCitations(
 ): Citation[] {
   if (sources.length === 0 || cites.length === 0) return [];
   const out: Citation[] = [];
+  // Tempdoc 847 §2.1d/§2.1e — the agent payload carries no sentence ordinal, only per-(sentence,
+  // source) cites in sentence order, so the ordinal is derived: consecutive cites bearing the SAME
+  // sentence text are that sentence's several sources and share one anchor. The honest limit, stated
+  // rather than hidden: an answer that repeats an identical sentence and cites both occurrences is
+  // indistinguishable from that in this payload, and is read as the multi-source case — which costs
+  // a duplicate mark position in a rare shape, where the other reading costs a real second source's
+  // mark in a common one. The RAG path does not rely on this: its `sentenceIndex` is the producer's.
+  let sentenceIndex = -1;
+  let prevText: string | null = null;
   for (const c of cites) {
+    if (c.sentenceText !== prevText) {
+      sentenceIndex++;
+      prevText = c.sentenceText;
+    }
     const s = sources[c.sourceIndex];
     if (!s) continue;
     out.push({
       sentenceText: c.sentenceText,
       similarity: c.similarity,
+      sentenceIndex,
       label: c.sourceIndex + 1,
       detail: {
         parentDocId: s.parentDocId,

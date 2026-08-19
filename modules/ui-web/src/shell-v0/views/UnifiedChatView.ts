@@ -3620,7 +3620,7 @@ export class UnifiedChatView extends JfElement {
    * sources into the SAME `Citation` shape the agent path uses, so both render through the one
    * `MarkdownBlock` weave. Mirrors the (now-retired) `cite-ref-click` source-index lookup, so RAG marks
    * gain the deep-link + cross-surface selection they previously lacked. Ungrounded sentences
-   * (`sourceRefs` empty) get no mark — they render as neutral prose (the medium-appropriate take on the
+   * (`verifiedRefs` empty) get no mark — they render as neutral prose (the medium-appropriate take on the
    * flat-text dimming). The matcher already filtered to grounded sentences via the §15.A cutoff.
    */
   private resolveClaimCitations(

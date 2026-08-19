@@ -4,7 +4,11 @@
  * Pins the bridge that lets the RAG path render through the same `MarkdownBlock` weave as the agent
  * path: a grounded `Claim` (sentence + score + the source index it grounds to) maps to a `Citation`
  * carrying the deep-link `detail` + `hover` (which the flat-text fork lacked); an ungrounded claim
- * (empty `sourceRefs`) produces no mark.
+ * (empty `verifiedRefs`) produces no mark.
+ *
+ * Tempdoc 847 §2.1e — and one citation PER VERIFIED REF, so a sentence two sources support can
+ * render two marks. Before 847 this resolver took `verifiedRefs[0]` and the second source was lost
+ * here, which is why the renderer-side half of that defect was unreachable.
  */
 import { describe, it, expect } from 'vitest';
 import { claimsToCitations } from './citationResolve.js';
@@ -51,10 +55,12 @@ describe('claimsToCitations — the one RAG claim→Citation resolver (§15.B)',
     expect(c.detail.startChar).toBe(5);
     expect(c.hover.title).toBe('a.md'); // filenameOf the parentDocId
     expect(c.hover.excerpt).toBe('the cited passage');
-    expect(c.sourceRefs).toEqual([0]);
+    // 847 §2.1d — the producer's sentence ordinal travels with the mark: it is what tells the
+    // renderer that two citations are one sentence's sources, and what keeps anchoring monotone.
+    expect(c.sentenceIndex).toBe(0);
   });
 
-  it('drops an ungrounded claim (no sourceRefs) — neutral prose, no mark', () => {
+  it('drops an ungrounded claim (no verifiedRefs) — neutral prose, no mark', () => {
     const claims: Claim[] = [
       {
         sentenceIndex: 0,
@@ -186,7 +192,8 @@ describe('claimsToCitations — the 822 §3b numbering contract', () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.label).toBe(4);
     expect(out[0]!.detail.parentDocId).toBe('docs/3.md');
-    expect(out[0]!.sourceRefs).toEqual([3]);
+    // The lexical ref mints nothing: one citation, and it is the verified ref's.
+    expect(out.map((c) => c.label)).toEqual([4]);
   });
 
   it('mints NO citation for a claim with lexical refs only, even with a verified score', () => {
@@ -231,6 +238,66 @@ describe('the dropped claim degrades the frame (822 §3b)', () => {
     expect(cov.total).toBe(6);
     expect(cov.label).toBe('Grounded · 4 of 6 sentences');
     expect(answerFrame('core.rag-ask', sources.length, cov, true, true)).toBe('partially-grounded');
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────
+ * Tempdoc 847 §1.2/§2.1e — T3's RESOLVER half. A sentence the matcher tied to two sources produced
+ * ONE mark before 847, and the loss happened here rather than in the renderer: `verifiedRefs[0]`
+ * discarded every ref but the first, so no renderer-side change could have recovered the second.
+ * The render half of T3 lives in `MarkdownBlock.test.ts` — both are needed, because the resolver
+ * half is what makes the render half REACHABLE at all.
+ * ─────────────────────────────────────────────────────────────────────────────────────────────── */
+describe('claimsToCitations — one citation per verified ref (847 §2.1e)', () => {
+  const fiveSources: RetrievalCitation[] = Array.from({ length: 5 }, (_, i) => ({
+    ...SOURCES[0]!,
+    parentDocId: `docs/${i}.md`,
+    startLine: 3 + i,
+    excerpt: `passage ${i}`,
+  }));
+  const twoSourceClaim: Claim[] = [
+    {
+      sentenceIndex: 0,
+      sentenceText: 'A sentence two passages support.',
+      verifiedScore: 0.8,
+      lexicalScore: 0,
+      verifiedRefs: [0, 2],
+      lexicalRefs: [],
+    },
+  ];
+
+  it('emits TWO citations, labelled 1 and 3, each deep-linking to its OWN source', () => {
+    const out = claimsToCitations(twoSourceClaim, fiveSources);
+    expect(out).toHaveLength(2);
+    expect(out.map((c) => c.label)).toEqual([1, 3]);
+    expect(out.map((c) => c.detail.parentDocId)).toEqual(['docs/0.md', 'docs/2.md']);
+    // Both carry the SAME sentence ordinal — that is what makes the renderer put both marks at one
+    // boundary instead of hunting a second occurrence of the sentence.
+    expect(out.map((c) => c.sentenceIndex)).toEqual([0, 0]);
+    // …and the same cross-encoder score: the score is the sentence's, the label is the source's.
+    expect(new Set(out.map((c) => c.similarity))).toEqual(new Set([0.8]));
+  });
+
+  it('skips a ref that addresses no source while keeping the ones that do', () => {
+    const claims: Claim[] = [{ ...twoSourceClaim[0]!, verifiedRefs: [1, 59] }];
+    const out = claimsToCitations(claims, fiveSources);
+    expect(out.map((c) => c.label)).toEqual([2]);
+  });
+
+  it('emits one citation per DISTINCT ref (a repeated ref is not a second mark)', () => {
+    const claims: Claim[] = [{ ...twoSourceClaim[0]!, verifiedRefs: [1, 1] }];
+    expect(claimsToCitations(claims, fiveSources)).toHaveLength(1);
+  });
+
+  it('counts the two-source sentence ONCE in coverage — "N of M" counts sentences, not marks', () => {
+    const marks = claimsToCitations(twoSourceClaim, fiveSources);
+    expect(marks).toHaveLength(2);
+    const cov = groundingCoverage(marks, 'A sentence two passages support. And a second one.');
+    // Two marks, one grounded sentence: the count that would read "2 of 2" is the defect this
+    // guards — per-ref emission must not inflate the honesty line it feeds.
+    expect(cov.cited).toBe(1);
+    expect(cov.grounded).toBe(1);
+    expect(cov.total).toBe(2);
   });
 });
 
