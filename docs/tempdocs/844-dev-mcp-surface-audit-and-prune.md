@@ -973,6 +973,28 @@ because nothing would be rejected. The drop is a bet, and this metric makes it a
 prediction** rather than a preference — if items 1-5 leave `api_call` near 51% while everything
 else improves, that is evidence *for* the §11.5 endstate, not against the sequencing.
 
+> **The falsifier is under-specified as written, and must not be run without this caveat.**
+> It has a numerator and no denominator. "`reload` still unused after six weeks" has two
+> incompatible readings:
+>
+> - nobody wanted it → retire, correctly; or
+> - **nobody was ever in a position to want it** → the measurement said nothing at all.
+>
+> Those are indistinguishable today, and the second is live: hot reload needs one agent to hold a
+> stack *and* edit Worker Java in the same context, while this repo routes implementation to
+> delegated workers who are kept off the shared stack by the lease model. Every worker brief in the
+> lane that built this feature forbade touching the stack — so the conjunction the capability
+> depends on may simply never occur.
+>
+> **Before judging D2's falsifier, measure the opportunity rate**: how often does a single session
+> both hold a live run and edit `modules/worker-services/**/*.java` while that run is active? It is
+> computable from the same transcript substrate `dev-tool-usage.mjs` already walks (join
+> `start`/`stop` against `Edit`/`Write` on Worker Java paths, per session). If that count is near
+> zero, a usage count of zero is uninformative, and the real question is not whether to retire hot
+> reload — it is whether a worker should be allowed to drive a stack inside a supervised window it
+> holds. That is a §11.4 / lease-model question affecting far more than one tool, and it would be
+> its own lane.
+
 ## 13. As-built (2026-08-18)
 
 Implemented on `worktree-844-dev-surface-honesty` against the §12.3 order. Nothing merged.
@@ -1423,3 +1445,83 @@ the recovery: the build having run **is** the pairing, and under `skipBuild` the
 on unchanged artifacts therefore keeps hot reload; only a genuinely divergent tree loses it, loudly.
 The outcome is stronger than "no silent mixture": **no mixture at all**, because the prefix is the
 mechanism and it is never applied unpaired.
+
+## 14. Closed (2026-08-19) — merged, and what a later reader needs
+
+**Merged to `main` as `6a9fa1e0` (PR #513).** Public CI on `main` verified green afterwards via
+run `32286221701` — note this lane's own push-run was `cancelled` by a superseding push, so the
+green comes from the next run whose tree contains `6a9fa1e0`, not from a cancellation read as a
+pass.
+
+### 14.1 Verification claims and their evidence
+
+Every claim below has a pointer; anything without one is in §14.2 instead.
+
+| Claim | Evidence |
+|---|---|
+| Full unit suite green | `./gradlew.bat test` — 186 tasks, BUILD SUCCESSFUL, run before and after the catch-up merge. First execution of the full suite on this branch; earlier passes were `build -x test` only |
+| Compile green on the integrated tree | `./gradlew.bat build -x test` post-merge, 123 tasks executed |
+| Dev-MCP behaviour | `scripts/dev/test-dev-mcp-surface-honesty.mjs` 70/70 · `test-dev-mcp-hot-reload.mjs` 56/56 · `test-dev-mcp-projection-live.mjs` 18 assertions (spawns the real server over stdio) |
+| Ownership model unbroken | `scripts/dev/test-ownership-verdict.mjs` 34/34; all seven `test-dev-runner-*.mjs` |
+| Doc/code inventory agreement | `scripts/ci/check-dev-mcp-doc-sync.mjs` exit 0; its test 25 assertions; it **failed a real catch-up merge** naming five undocumented allowlist entries |
+| jseval register | `pytest scripts/jseval/tests/test_run_register.py test_backend.py` — 62 passed |
+| Analytics reader | `scripts/agent-analytics/run-all-tests.mjs` 33/33 files |
+| Hot reload works live | §13.9 — `version` gained `[HOTRELOAD-PROOF]`, `pid` 29616 unchanged across three reloads, `embedding_ready` true throughout, reconstruction 434 ms, `compiledFrom` = the worktree |
+| Models stay warm across reload | §13.9 — every ONNX session initialised before the reload has no re-init line after it; the single post-reload load (`embed:`) has no earlier init anywhere |
+| Pusher attach/identity/exit codes | §13.7 — live-verified against throwaway JVMs (ports 5096/5097/5099), all five outcome paths |
+| Onramp 504 is pre-existing | Ran `test-onramp-first-success.mjs` on a clean worktree at `origin/main` `63fa9163`: identical `/api/knowledge/search → HTTP 504` |
+| `skipBuild` is the dominant path | Independent corpus scan: `starts=179 skipBuild=124` |
+| Usage figures | `scripts/agent-analytics/dev-tool-usage.mjs` — the shipped reader; re-run it rather than trusting the numbers here |
+
+### 14.2 Unverified assumptions and deferred checks
+
+- **`DIST_NOT_BUILT` is not exercised live.** Reaching it needs a real `dev-runner start` failure;
+  its tests are source-structural and say so. The weakest link in the change.
+- **The M3 classpath-pairing check is an mtime proxy.** Classes newer than the `worker-services`
+  jar means divergence; equal-or-older is *inferred* to mean the jar contains them. A jar touched
+  without a rebuild would read as paired. A content hash would be sound but costs a jar read per
+  start.
+- **The `foreignRuns` register is unproven end-to-end.** `run_register.py`'s `Popen` path is mocked
+  in tests, and the reader's `mainRepoRoot` join against the real
+  `<main>/tmp/dev-runner/foreign` was never exercised, because writing into the main checkout was
+  correctly refused. A live `runHeadlessEval` would close it.
+- **The `WatchedRootScanCollectionTest` flake is classified, not root-caused.** Failed once in CI,
+  passed on a plain re-run of the same commit; signature is JUnit `@TempDir` cleanup, not an
+  assertion. Evidence it is not caller-caused is in the observations inbox.
+- **`hotReload` defaulting on is a live behaviour change** for every dev stack (JDWP on a loopback
+  port; classes dir first on the Worker classpath when the pairing is established). Verified not to
+  break Worker startup, but it has had one day of exposure.
+
+### 14.3 Stale docs found while working here
+
+- `305-hot-reload` is marked `done` and describes a capability that was incoherent for months;
+  a forward pointer to §13.7 was added so a reader does not trust it as current.
+- `254-mcp-dev-tools-issues` (`done`, 2026-03-03) is superseded by this document; forward pointer
+  added.
+- `scripts/README.md` advertised a `justsearch_dev_wait_ready` tool that no longer exists — a fifth
+  stale inventory beyond the four §6.3 counted. Fixed.
+
+### 14.4 Follow-up that should not be forgotten
+
+1. **The opportunity metric** (§12.6 caveat). Without it the D2 falsifier cannot be interpreted.
+   Needed before the ~6-week judgement, not now.
+2. **§6.2 — ownership on the other mutating tools** (`ingest`, `reindex`, `gc`, migration). Still
+   open, and now cheap: R2 built and live-proved the Class-C middleware it needs. This is the last
+   unaddressed correctness gap in the audit.
+3. **The onramp is broken on `main`** — `/api/knowledge/search → HTTP 504`, proven by baseline —
+   and `onramp-smoke.yml` is `workflow_dispatch`-only, last run 2026-07-08. The repo's "a developer
+   reaches first success" proof is both failing and unexercised. Likely 656's lane, not this one.
+4. **The `config-surface` baseline-advance toll**, third occurrence (see the `merge-import`
+   changeset). Already has `worktree-config-surface-advance` in flight — corroboration, not a new
+   ask.
+5. **`remove-worktree.cjs` partially destroys its caller's own worktree** — it unlinks `.git`
+   before attempting the directory delete, so a held directory leaves a half-removed tree rather
+   than an untouched one.
+
+### 14.5 The lesson worth carrying past this lane
+
+A method defect invalidates *every* figure computed with it, not just the one that surfaced it.
+The non-recursive transcript glob here produced a wrong call count in §3 **and** a wrong byte share
+in §6.4; fixing §3 did not fix §6.4, because the byte totals were never re-derived, and the second
+error survived until a pre-merge scan happened to sample it. When a measurement bug is found,
+re-derive the whole set.
