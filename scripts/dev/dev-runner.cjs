@@ -1433,13 +1433,21 @@ async function cmdStart(opts) {
     }
   }
 
-  // Ensure distribution is up-to-date before direct launch (S7: bypass Gradle at runtime).
-  // Config-cached assemble: ~3s warm, ~15s cold. Skippable with --skip-build when dist is known-good.
+  // Ensure the distribution that is actually LAUNCHED is up-to-date (S7: bypass Gradle at runtime).
+  // Tempdoc 844 F4: this step said "Ensuring distribution is up-to-date" and ran `assemble`, which
+  // does NOT run installDist — so a Java edit rebuilt the jars and left
+  // modules/ui/build/install/ui (the tree the Head is launched from, a few lines below) untouched.
+  // Proven live 2026-08-19: after editing WorkerSpawner.java, a `start` without skipBuild launched a
+  // Worker with the OLD classpath, and an explicit installDist then did real work. The launched
+  // artifacts are now built by name. Warm cost measured in this worktree (config cache reused):
+  // assemble alone 891/957/923 ms, assemble + both installDist 1055/1156 ms - about +0.15 s, once
+  // per start, to make the message true.
   if (!opts.skipBuild) {
-    process.stderr.write('[dev-runner] Ensuring distribution is up-to-date (assemble)...\n');
+    process.stderr.write(
+      '[dev-runner] Ensuring distribution is up-to-date (assemble + installDist)...\n');
     const buildResult = spawnSync(
       gradlePath,
-      ['assemble', '-PskipWebBuild=true'],
+      ['assemble', ':modules:ui:installDist', ':modules:indexer-worker:installDist', '-PskipWebBuild=true'],
       // Tempdoc 696: pin a >= 24 JDK so a stale JDK-8 JAVA_HOME can't fail the assemble.
       {
         cwd: repoRoot,
@@ -1449,7 +1457,8 @@ async function cmdStart(opts) {
       },
     );
     if (buildResult.status !== 0) {
-      throw new Error(`Gradle assemble failed with exit code ${buildResult.status}`);
+      throw new Error(
+        `Gradle assemble + installDist failed with exit code ${buildResult.status}`);
     }
   }
 

@@ -1201,6 +1201,29 @@ export async function checkRunMutationOwnership({
 }
 
 /**
+ * Tempdoc 844 F1 — what a structural change actually looks like in the pusher's output.
+ *
+ * The first pattern is HotSwapPush's own remedy sentence. The rest are the JVM's wording, and that
+ * is the one that fires in practice: JDI throws `UnsupportedOperationException("<capability> not
+ * implemented")` and HotSwapPush prints it verbatim — observed live 2026-08-19 as
+ * `HotSwap not supported by target VM: add method not implemented`. Matching HotSwapPush's phrasing
+ * alone made the gate dead: a real structural change fell through to the generic `HOTSWAP_FAILED`
+ * ("no bytecode was pushed") and lost the restart remedy the output already contained.
+ *
+ * The family is matched, not the single observed string (JDI also reports delete method / schema
+ * change / hierarchy change / class attribute change / class-file version change), but each pattern
+ * is anchored either to the pusher's "not supported by target VM" line or to a named JDI
+ * redefinition capability — so an unrelated failure (attach refused, timeout, ENOENT) does not land
+ * here just because its text happens to contain "not implemented".
+ */
+const STRUCTURAL_CHANGE_PATTERNS = [
+  /added\/removed methods or fields/,
+  /HotSwap not supported by target VM:[^\r\n]*\bnot implemented\b/,
+  /\b(?:add|delete) method not implemented\b/,
+  /\b(?:schema|hierarchy|class attribute|class modifiers|method modifiers|class file version) change not implemented\b/,
+];
+
+/**
  * Tempdoc 844 §4.2 R5 — what HotSwapPush actually did, read from its exit code and its
  * machine-readable lines instead of from "it exited 0".
  *
@@ -1217,17 +1240,37 @@ export function classifyHotSwapOutcome({ exitCode, stdout = '', stderr = '', ide
   const count = (re) => { const m = out.match(re); return m ? Number(m[1]) : null; };
   const facts = {
     classesChanged: count(/^CHANGED (\d+)\s*$/m),
-    classesRedefined: count(/^REDEFINED (\d+)\s*$/m),
+    // Tempdoc 844 F2: a non-zero exit reports 0 redefined classes, never the pusher's printed
+    // number. This is a verified 0, not a defensive unknown: a JVMTI redefinition is atomic (all
+    // classes or none), HotSwapPush never exits non-zero after `redefineClasses` returned, and the
+    // live 2026-08-19 run showed the opposite — `REDEFINED 3` alongside exit 1 and a false claim
+    // that three classes had been replaced. The pusher no longer prints the line before the call;
+    // this guard also covers an older HotSwapPush copy in the run's tree.
+    classesRedefined: exitCode === 0 ? count(/^REDEFINED (\d+)\s*$/m) : 0,
     classesNotLoaded: count(/^NOT_LOADED (\d+)\s*$/m),
     identityVerified: /^IDENTITY_OK /m.test(out),
-    structuralChangeDetected: out.includes('added/removed methods or fields'),
+    structuralChangeDetected: STRUCTURAL_CHANGE_PATTERNS.some((re) => re.test(out)),
   };
   if (exitCode === 5) {
     return { ...facts, hotSwapOk: false, outcome: 'IDENTITY_REFUSED', error: {
       code: 'TARGET_IDENTITY_MISMATCH',
       message: 'The JVM listening on the run\'s JDWP port was NOT launched from the tree this run '
-        + 'record names, so nothing was pushed. This is the cross-tree injection case — pushing '
-        + 'would have replaced another stack\'s code with this tree\'s.',
+        + 'record names — none of its classpath entries lie under that tree — so nothing was '
+        + 'pushed. This is the cross-tree injection case: pushing would have replaced another '
+        + 'stack\'s code with this tree\'s.',
+    } };
+  }
+  if (exitCode === 6) {
+    // Tempdoc 844 F3: same tree, wrong classpath. The live run misreported this as cross-tree
+    // injection while all 183 of the VM's classpath entries were under this very worktree.
+    return { ...facts, hotSwapOk: false, outcome: 'CLASSPATH_ABSENT', error: {
+      code: 'HOT_RELOAD_CLASSPATH_ABSENT',
+      message: 'The JVM listening on the run\'s JDWP port WAS launched from the tree this run '
+        + 'record names, but WITHOUT the hot-reload classes dir on its classpath, so nothing was '
+        + 'pushed. That means the process was launched from a stale distribution predating the '
+        + 'hot-reload classpath. Remedy: rebuild the dist in that tree '
+        + '(./gradlew.bat :modules:ui:installDist :modules:indexer-worker:installDist) and restart '
+        + 'the stack.',
     } };
   }
   if (exitCode === 3) {
@@ -2771,7 +2814,10 @@ export async function main() {
 
       // 3. HotSwapPush — push bytecode into the run's Worker, after that VM proves its identity.
       const hsArgs = ['--add-modules', 'jdk.jdi', '--source', '25', hotSwapScript, String(debugPort), classesDir];
-      if (identityClassesDir) hsArgs.push(identityClassesDir);
+      // Tempdoc 844 F3: the run's own tree is passed as the expected repo root so the pusher can
+      // tell "this VM belongs to another tree" from "this VM belongs to THIS tree but was launched
+      // without the hot-reload classpath". Both refuse; only the explanation and remedy differ.
+      if (identityClassesDir) hsArgs.push(identityClassesDir, runRoot);
       let hsExit = 0;
       let hsStdout = '';
       let hsStderr = '';

@@ -68,7 +68,7 @@ The **EvidenceBundle format itself is live and load-bearing** — only the two M
 Build the Worker distribution and UI assets before relying on the dev stack:
 
 ```bash
-./gradlew.bat :modules:indexer-worker:installDist :modules:ui:assemble
+./gradlew.bat :modules:ui:installDist :modules:indexer-worker:installDist
 ```
 
 If AI runtime behavior is part of the investigation, also verify model files, native runtime availability, and GPU/runtime prerequisites with the project-specific preflight scripts before drawing conclusions from failures.
@@ -256,7 +256,10 @@ Three properties are load-bearing, and each replaces a measured silent failure (
   unless the entry is there. Attaching to "whatever listens on 5005" is no longer possible.
 - **Success is confirmed, not assumed.** A push that redefined zero classes is not success, the
   marker file is not advanced, and the reload signal is **not** written — a failed push no longer
-  tears down and reconstructs a stack's services with no new bytecode to show for it.
+  tears down and reconstructs a stack's services with no new bytecode to show for it. `REDEFINED n`
+  is printed only after the JVM's redefinition returned, and any non-zero exit reports
+  `classesRedefined: 0` — a JVMTI redefinition is atomic, so a failed push replaced nothing (tempdoc
+  844 F2: a failed structural push reported three classes redefined).
 
 ### Reload Error Codes
 
@@ -267,10 +270,11 @@ Three properties are load-bearing, and each replaces a measured silent failure (
 | `RUN_ROOT_UNRESOLVED` | The active run record does not say which checkout it was launched from, or that checkout is gone. | Stop and start the stack again. `reload` refuses rather than falling back to the caller's tree — that fallback was the defect. |
 | `HOT_RELOAD_NOT_ENABLED` | The stack was started with `hotReload: false` (no JDWP listener exists), or its run record predates the per-run hot-reload record. | Restart the stack; `hotReload` defaults true. |
 | `COMPILE_FAILED` | Gradle `compileJava` failed in the run's tree. | Fix the compile error; the tail of the Gradle output is in the message. |
-| `TARGET_IDENTITY_MISMATCH` | The JVM on the run's JDWP port was not launched from the tree the run record names. | Nothing was pushed. Re-orient with `quick_health` — a foreign or stale backend is holding that port. |
+| `TARGET_IDENTITY_MISMATCH` | The JVM on the run's JDWP port was not launched from the tree the run record names — **none** of its classpath entries lie under that tree. | Nothing was pushed. Re-orient with `quick_health` — a foreign or stale backend is holding that port. |
+| `HOT_RELOAD_CLASSPATH_ABSENT` | The JVM **was** launched from the run record's tree, but without the hot-reload classes dir on its classpath — a distribution built before that classpath existed. Distinct from the cross-tree case above, which it used to be misreported as (tempdoc 844 F3). | Nothing was pushed. Rebuild the dist in that tree (`./gradlew.bat :modules:ui:installDist :modules:indexer-worker:installDist`) and restart the stack. |
 | `TARGET_IDENTITY_UNVERIFIED` | The push tool did not confirm the target's identity (e.g. an older `HotSwapPush` copy). | Treated as not-confirmed rather than success; rebuild/refresh the checkout. |
 | `NO_CLASSES_REDEFINED` | Changed classes existed, but none is loaded in the target VM, so no bytecode was replaced. | Not a success and not a signal-worthy event. Exercise the code path first, or restart. |
-| `STRUCTURAL_CHANGE` | Added/removed methods or fields — standard HotSwap cannot apply it. | Restart the dev stack. |
+| `STRUCTURAL_CHANGE` | Added/removed methods or fields — standard HotSwap cannot apply it. Detected from the JVM's own wording too (`HotSwap not supported by target VM: add method not implemented` and the rest of that JDI family), which is what a real structural change actually prints; matching only the pusher's phrasing made this code unreachable until tempdoc 844 F1. | Restart the dev stack. |
 | `HOTSWAP_FAILED` | The push failed for another reason (JDWP unreachable, timeout). | `hotSwapOutput` carries the tail; check the stack is alive. |
 
 A call that finds no changed class file since the last push returns `ok: true` with `noOp: true`

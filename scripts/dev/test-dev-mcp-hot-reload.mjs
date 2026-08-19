@@ -16,6 +16,17 @@
 //                                    gated on hotSwapOk, and every non-REDEFINED outcome is
 //                                    hotSwapOk:false, so a failed push cannot reconstruct services.
 //
+// The four defects the 2026-08-19 live pass found, each a violation of the same criterion:
+//   F1  classifyHotSwapOutcome     — the structural-change gate matched only HotSwapPush's own
+//                                    phrasing, so the JVM's real message ("HotSwap not supported by
+//                                    target VM: add method not implemented") fell through to a
+//                                    generic HOTSWAP_FAILED and lost the restart remedy.
+//   F2  classifyHotSwapOutcome     — a FAILED push reported classesRedefined: 3.
+//   F3  HotSwapPush.confirmIdentity — the identity refusal asserted "cross-tree injection" for a VM
+//                                    launched from the right tree with a stale dist.
+//   F4  dev-runner.cjs             — `start` logged "Ensuring distribution is up-to-date" and ran
+//                                    `assemble`, which does not refresh the dist it launches.
+//
 // Pure unit tests: no dev stack, no JVM, no network. The two async helpers touch only a tmp
 // fixture tree.
 //
@@ -259,6 +270,107 @@ const outcomeTests = [
     assert.equal(o.error.code, 'STRUCTURAL_CHANGE');
     assert.equal(o.structuralChangeDetected, true);
   }],
+  // ── F1: the gate must fire on the JVM's wording, which is what a real structural change prints.
+  ['F1: the EXACT line the live run produced classifies as STRUCTURAL_CHANGE with the restart remedy', () => {
+    // Verbatim from the 2026-08-19 live pass (tempdoc 844 §13.6 step 8), where this returned
+    // HOTSWAP_FAILED / "no bytecode was pushed" instead.
+    const o = classifyHotSwapOutcome({
+      exitCode: 1,
+      stdout: 'CHANGED 3\nIDENTITY_OK F:/t/classes\nNOT_LOADED 0\n',
+      stderr: 'HotSwap not supported by target VM: add method not implemented',
+    });
+    assert.equal(o.structuralChangeDetected, true);
+    assert.equal(o.error.code, 'STRUCTURAL_CHANGE');
+    assert.match(o.error.message, /restart the stack for this change/);
+  }],
+  ['F1: the rest of the JDI "not implemented" family classifies the same way', () => {
+    const family = [
+      'HotSwap not supported by target VM: delete method not implemented',
+      'HotSwap not supported by target VM: schema change not implemented',
+      'HotSwap not supported by target VM: hierarchy change not implemented',
+      'HotSwap not supported by target VM: class attribute change not implemented',
+      'HotSwap failed: schema change not implemented',
+    ];
+    for (const stderr of family) {
+      const o = classifyHotSwapOutcome({ exitCode: 1, stderr });
+      assert.equal(o.error.code, 'STRUCTURAL_CHANGE', `expected STRUCTURAL_CHANGE for: ${stderr}`);
+    }
+  }],
+  ['F1: the widened predicate is NOT a catch-all — unrelated failures stay HOTSWAP_FAILED', () => {
+    const unrelated = [
+      'Failed to connect to JDWP agent on port 5011\nIs the Worker running with JUSTSEARCH_DEV_DEBUG_PORT=5011?',
+      'HotSwap failed: com.sun.jdi.VMDisconnectedException',
+      'Error: spawn java ENOENT',
+      'com.sun.jdi.InternalException: Unexpected JDWP Error: 103',
+      // "not implemented" on its own, in a sentence that is not a redefinition capability, must not
+      // be swallowed by the family patterns.
+      'HotSwap failed: the connector feature is not implemented on this platform',
+    ];
+    for (const stderr of unrelated) {
+      const o = classifyHotSwapOutcome({ exitCode: 1, stderr });
+      assert.equal(o.structuralChangeDetected, false, `unexpected structural verdict for: ${stderr}`);
+      assert.equal(o.error.code, 'HOTSWAP_FAILED', `expected HOTSWAP_FAILED for: ${stderr}`);
+    }
+  }],
+  // ── F2: a failed push must never report classes as redefined.
+  ['F2: a non-zero exit with "REDEFINED 3" in the output reports classesRedefined 0, not 3', () => {
+    // Verbatim shape of the live failed structural push, which returned ok:false WITH
+    // classesRedefined: 3 — a false success signal inside a failure result.
+    const o = classifyHotSwapOutcome({
+      exitCode: 1,
+      stdout: 'CHANGED 3\nIDENTITY_OK F:/t/classes\nREDEFINED 3\nNOT_LOADED 0\n',
+      stderr: 'HotSwap not supported by target VM: add method not implemented',
+    });
+    assert.equal(o.hotSwapOk, false);
+    assert.equal(o.classesRedefined, 0);
+    assert.equal(o.classesChanged, 3);
+  }],
+  ['F2: no non-zero exit code can report a positive classesRedefined', () => {
+    const stdout = 'CHANGED 3\nIDENTITY_OK F:/t/classes\nREDEFINED 3\nNOT_LOADED 0\n';
+    for (const exitCode of [1, 3, 4, 5, 6, -1]) {
+      const o = classifyHotSwapOutcome({ exitCode, stdout });
+      assert.equal(o.classesRedefined, 0, `exit ${exitCode} reported ${o.classesRedefined} redefined`);
+    }
+    // …and a successful push still reports its real count.
+    assert.equal(classifyHotSwapOutcome(REDEFINED_OK).classesRedefined, 2);
+  }],
+  ['F2: HotSwapPush prints REDEFINED only after the redefinition returned (source-structural)', async () => {
+    const src = await fsp.readFile(path.join(HERE, 'HotSwapPush.java'), 'utf8');
+    const call = src.indexOf('vm.redefineClasses(redefinitions);');
+    const print = src.indexOf('System.out.printf("REDEFINED %d%n", redefinitions.size());');
+    assert.ok(call > 0, 'redefineClasses call not found');
+    assert.ok(print > call, 'the REDEFINED count is printed BEFORE the redefinition it claims');
+    assert.equal(
+      (src.match(/printf\("REDEFINED %d%n"/g) || []).length, 1,
+      'the REDEFINED count is printed from more than one place',
+    );
+    // The failure paths state the honest count rather than staying silent about it.
+    assert.equal(
+      (src.match(/System\.out\.println\("REDEFINED 0"\);/g) || []).length, 3,
+      'expected REDEFINED 0 on the none-loaded path and on both redefinition-failure paths',
+    );
+  }],
+  // ── F3: the identity refusal must not assert a cause it did not verify.
+  ['F3: exit 6 is HOT_RELOAD_CLASSPATH_ABSENT — same tree, stale dist, NOT cross-tree', () => {
+    const o = classifyHotSwapOutcome({
+      exitCode: 6,
+      stderr: 'IDENTITY_CLASSPATH_ABSENT the VM on port 5011 WAS launched from the expected tree '
+        + '(183 of 183 classpath entries are under F:/repo), but the hot-reload classes dir is NOT '
+        + 'on its classpath',
+    });
+    assert.equal(o.hotSwapOk, false);
+    assert.equal(o.outcome, 'CLASSPATH_ABSENT');
+    assert.equal(o.error.code, 'HOT_RELOAD_CLASSPATH_ABSENT');
+    assert.match(o.error.message, /WAS launched from the tree/);
+    assert.match(o.error.message, /installDist/);
+    assert.doesNotMatch(o.error.message, /cross-tree/);
+  }],
+  ['F3: exit 5 stays the cross-tree case, and now names the evidence for it', () => {
+    const o = classifyHotSwapOutcome({ exitCode: 5, stderr: 'IDENTITY_REFUSED the VM on port 5011 was NOT launched from the tree this push comes from - none of its classpath entries are under F:/repo' });
+    assert.equal(o.error.code, 'TARGET_IDENTITY_MISMATCH');
+    assert.match(o.error.message, /cross-tree/);
+    assert.match(o.error.message, /none of its classpath entries/);
+  }],
   ['a spawn failure (no numeric exit code) is a failure, not an unknown-shaped success', () => {
     const o = classifyHotSwapOutcome({ exitCode: -1, stderr: 'ENOENT' });
     assert.equal(o.hotSwapOk, false);
@@ -266,7 +378,7 @@ const outcomeTests = [
   }],
   ['every non-REDEFINED outcome is hotSwapOk:false — the property the signal gate rests on', () => {
     const cases = [
-      { exitCode: 3 }, { exitCode: 4 }, { exitCode: 5 }, { exitCode: 1 }, { exitCode: -1 },
+      { exitCode: 3 }, { exitCode: 4 }, { exitCode: 5 }, { exitCode: 6 }, { exitCode: 1 }, { exitCode: -1 },
       { exitCode: 0, stdout: 'REDEFINED 0\nIDENTITY_OK x\n' },
       { exitCode: 0, stdout: 'REDEFINED 2\n' },
     ];
@@ -299,7 +411,10 @@ const signalGateTests = [
   }],
   ['the pusher is invoked with the recorded identity token when the run has one', async () => {
     const src = await fsp.readFile(path.join(HERE, 'justsearch-dev-mcp', 'server.mjs'), 'utf8');
-    assert.match(src, /if \(identityClassesDir\) hsArgs\.push\(identityClassesDir\)/);
+    assert.ok(
+      src.includes('if (identityClassesDir) hsArgs.push(identityClassesDir, runRoot);'),
+      'the identity token (and, since F3, the run root) is not passed to the pusher',
+    );
   }],
   ['HotSwapPush refuses a VM whose classpath does not carry the identity entry', async () => {
     const src = await fsp.readFile(path.join(HERE, 'HotSwapPush.java'), 'utf8');
@@ -307,6 +422,39 @@ const signalGateTests = [
     assert.match(src, /IDENTITY_REFUSED/);
     // …and the marker is only touched when bytecode actually moved (§5.6 #4).
     assert.match(src, /if \(exitCode == 0\) \{\s*\n\s*Files\.writeString\(markerFile/);
+  }],
+  // ── F3 (source-structural — the live exit codes were probed against a throwaway JVM; see the
+  //    tempdoc). The two refusals are distinct outcomes with distinct exit codes and remedies.
+  ['F3: HotSwapPush distinguishes stale-dist (exit 6) from cross-tree (exit 5)', async () => {
+    const src = await fsp.readFile(path.join(HERE, 'HotSwapPush.java'), 'utf8');
+    assert.match(src, /EXIT_CLASSPATH_ABSENT = 6/);
+    assert.match(src, /IDENTITY_CLASSPATH_ABSENT/);
+    assert.match(src, /enum Identity \{ CONFIRMED, REFUSED_CROSS_TREE, REFUSED_CLASSPATH_ABSENT \}/);
+    // The stale-dist branch is chosen from measured evidence (entries under the expected root),
+    // not assumed, and it carries the rebuild remedy.
+    assert.match(src, /isUnderRoot\(e, expectedRepoRoot\)/);
+    assert.match(src, /installDist/);
+    // A worktree lives UNDER the main checkout's path, so it must not count as "same tree".
+    assert.match(src, /\.claude\/worktrees\//);
+  }],
+  ['F3: the server passes the run\'s tree as the expected repo root, so the pusher can tell them apart', async () => {
+    const src = await fsp.readFile(path.join(HERE, 'justsearch-dev-mcp', 'server.mjs'), 'utf8');
+    assert.match(src, /hsArgs\.push\(identityClassesDir, runRoot\)/);
+  }],
+  // ── F4: `start` builds what it launches, so its "up-to-date" claim is true.
+  ['F4: the dev-runner build step runs the two installDist tasks, not assemble alone', async () => {
+    const src = await fsp.readFile(path.join(HERE, 'dev-runner.cjs'), 'utf8');
+    const tasks = src.match(/\[\s*'assemble',\s*'([^']+)',\s*'([^']+)',\s*'-PskipWebBuild=true'\s*\]/);
+    assert.ok(tasks, 'the gradle task list for the pre-launch build was not found');
+    assert.deepEqual(
+      [tasks[1], tasks[2]],
+      [':modules:ui:installDist', ':modules:indexer-worker:installDist'],
+    );
+  }],
+  ['F4: the message names what it actually runs (assemble alone did not refresh the launched dist)', async () => {
+    const src = await fsp.readFile(path.join(HERE, 'dev-runner.cjs'), 'utf8');
+    assert.match(src, /Ensuring distribution is up-to-date \(assemble \+ installDist\)/);
+    assert.doesNotMatch(src, /Ensuring distribution is up-to-date \(assemble\)/);
   }],
 ];
 

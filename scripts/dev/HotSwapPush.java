@@ -7,12 +7,14 @@
 // since the last push. Uses a marker file to track timestamps.
 //
 // Usage:
-//   java --add-modules jdk.jdi scripts/dev/HotSwapPush.java <port> <classesDir> [<identityEntry>]
+//   java --add-modules jdk.jdi scripts/dev/HotSwapPush.java <port> <classesDir> \
+//       [<identityEntry> [<expectedRepoRoot>]]
 //
 // Example:
 //   java --add-modules jdk.jdi scripts/dev/HotSwapPush.java 5005 \
 //       modules/worker-services/build/classes/java/main \
-//       F:/repo/modules/worker-services/build/classes/java/main
+//       F:/repo/modules/worker-services/build/classes/java/main \
+//       F:/repo
 //
 // Tempdoc 844 §4.2 R3 — target identity. Without <identityEntry> this tool attaches to
 // "whatever listens on 127.0.0.1:<port>" and redefines classes there by NAME only, so a
@@ -28,15 +30,26 @@
 // tool has no reason to perform. The classpath entry carries the same value and is readable
 // from the attached VM directly.)
 //
+// Tempdoc 844 F3 — <expectedRepoRoot> separates two causes the tool used to conflate. When the
+// identity entry is absent from the attached VM's classpath, the VM may belong to ANOTHER tree
+// (exit 5, the cross-tree case) or to THIS tree yet have been launched from a stale distribution
+// built before the hot-reload classpath existed (exit 6). The live 2026-08-19 run hit the second
+// and was told the first, with all 183 of the VM's classpath entries under the expected tree.
+// Without <expectedRepoRoot> the two cannot be told apart, and the refusal says so instead of
+// asserting a cause.
+//
 // Exit codes (the caller distinguishes "nothing to do" from "did nothing"):
 //   0  at least one class was redefined
 //   1  usage / attach / redefine failure
 //   3  no changed class files since the last push — nothing was pushed
 //   4  changed classes existed but NONE is loaded in the target VM — nothing was redefined
-//   5  target identity could not be confirmed — refused to push
+//   5  target identity could not be confirmed — refused to push (cross-tree / unknown)
+//   6  the VM is from the expected tree but lacks the hot-reload classes dir on its classpath
+//      (stale distribution) — refused to push
 //
 // Machine-readable stdout lines: CHANGED <n>, REDEFINED <n>, NOT_LOADED <n>,
-// IDENTITY_OK <entry>, BASEDIR <dir>.
+// IDENTITY_OK <entry>, BASEDIR <dir>. REDEFINED is printed only AFTER redefineClasses returned
+// successfully (844 F2: printing it beforehand made a failed push report classes as redefined).
 //
 // Prerequisites:
 //   - Worker running with JUSTSEARCH_DEV_DEBUG_PORT=<port>
@@ -60,11 +73,16 @@ public class HotSwapPush {
     private static final int EXIT_NOTHING_CHANGED = 3;
     private static final int EXIT_NONE_LOADED = 4;
     private static final int EXIT_IDENTITY_REFUSED = 5;
+    private static final int EXIT_CLASSPATH_ABSENT = 6;
+
+    /** Outcome of the identity check: confirmed, or refused for one of two distinct reasons. */
+    private enum Identity { CONFIRMED, REFUSED_CROSS_TREE, REFUSED_CLASSPATH_ABSENT }
 
     public static void main(String[] args) throws Exception {
         if (args.length < 2) {
             System.err.println(
-                "Usage: java --add-modules jdk.jdi HotSwapPush.java <port> <classesDir> [<identityEntry>]");
+                "Usage: java --add-modules jdk.jdi HotSwapPush.java <port> <classesDir>"
+                + " [<identityEntry> [<expectedRepoRoot>]]");
             System.exit(EXIT_FAILURE);
         }
 
@@ -72,6 +90,9 @@ public class HotSwapPush {
         Path classesDir = Path.of(args[1]).toAbsolutePath().normalize();
         Path identityEntry = args.length >= 3 && !args[2].isBlank()
             ? Path.of(args[2]).toAbsolutePath().normalize()
+            : null;
+        Path expectedRepoRoot = args.length >= 4 && !args[3].isBlank()
+            ? Path.of(args[3]).toAbsolutePath().normalize()
             : null;
 
         if (!Files.isDirectory(classesDir)) {
@@ -134,9 +155,12 @@ public class HotSwapPush {
 
         int exitCode = EXIT_FAILURE;
         try {
-            if (!confirmIdentity(vm, identityEntry, port)) {
+            Identity identity = confirmIdentity(vm, identityEntry, expectedRepoRoot, port);
+            if (identity != Identity.CONFIRMED) {
                 vm.dispose();
-                System.exit(EXIT_IDENTITY_REFUSED);
+                System.exit(identity == Identity.REFUSED_CLASSPATH_ABSENT
+                    ? EXIT_CLASSPATH_ABSENT
+                    : EXIT_IDENTITY_REFUSED);
             }
 
             Map<ReferenceType, byte[]> redefinitions = new LinkedHashMap<>();
@@ -160,10 +184,10 @@ public class HotSwapPush {
                 redefinitions.put(types.get(0), bytecode);
             }
 
-            System.out.printf("REDEFINED %d%n", redefinitions.size());
             System.out.printf("NOT_LOADED %d%n", notLoaded.size());
 
             if (redefinitions.isEmpty()) {
+                System.out.println("REDEFINED 0");
                 // Tempdoc 844 §5.6 #4: this used to exit 0 AND touch the marker, so the call
                 // reported success, the next call saw "nothing changed", and no bytecode had
                 // ever moved. It is a distinct outcome, not a success.
@@ -173,16 +197,26 @@ public class HotSwapPush {
             } else {
                 try {
                     vm.redefineClasses(redefinitions);
+                    // Tempdoc 844 F2: REDEFINED is printed HERE, after the redefinition returned,
+                    // not before the call. It used to be printed up front, so the live structural
+                    // failure below reported "REDEFINED 3" while nothing had been replaced. A JVMTI
+                    // redefinition is atomic (all classes or none), so the failure paths print 0.
+                    System.out.printf("REDEFINED %d%n", redefinitions.size());
                     System.out.printf("Redefined %d class(es):%n", redefinitions.size());
                     for (ReferenceType type : redefinitions.keySet()) {
                         System.out.println("  " + type.name());
                     }
                     exitCode = 0;
                 } catch (UnsupportedOperationException e) {
+                    System.out.println("REDEFINED 0");
                     System.err.println("HotSwap not supported by target VM: " + e.getMessage());
+                    System.err.println(
+                        "If you added/removed methods or fields, standard HotSwap cannot apply them"
+                        + " - restart the stack.");
                     System.exit(EXIT_FAILURE);
                 } catch (Exception e) {
                     // Common case: structural change rejected by standard HotSwap
+                    System.out.println("REDEFINED 0");
                     System.err.println("HotSwap failed: " + e.getMessage());
                     System.err.println(
                         "If you added/removed methods or fields, standard HotSwap cannot apply them"
@@ -208,23 +242,27 @@ public class HotSwapPush {
 
     /**
      * Confirms the attached VM is the one the caller meant, by reading the VM's OWN classpath
-     * back over JDI and requiring {@code identityEntry} to be on it. Returns false (after
-     * printing the refusal) when identity cannot be established; true when it is confirmed —
-     * or when no identity token was supplied at all, which the caller must treat as unverified.
+     * back over JDI and requiring {@code identityEntry} to be on it. Returns CONFIRMED when the
+     * entry is there - or when no identity token was supplied at all, which the caller must treat
+     * as unverified. Otherwise it prints the refusal and reports WHICH refusal it is: the VM
+     * belongs to another tree (REFUSED_CROSS_TREE), or it belongs to {@code expectedRepoRoot} but
+     * carries no hot-reload classes dir (REFUSED_CLASSPATH_ABSENT - a stale distribution).
+     * Both refuse the push; only the explanation and the remedy differ (tempdoc 844 F3).
      */
-    private static boolean confirmIdentity(VirtualMachine vm, Path identityEntry, int port) {
+    private static Identity confirmIdentity(
+            VirtualMachine vm, Path identityEntry, Path expectedRepoRoot, int port) {
         if (identityEntry == null) {
             System.err.println(
                 "IDENTITY_UNVERIFIED no identity entry supplied - pushing to whatever answers on port "
                 + port);
-            return true;
+            return Identity.CONFIRMED;
         }
         if (!(vm instanceof PathSearchingVirtualMachine psvm)) {
             System.err.println(
                 "IDENTITY_REFUSED the target VM does not expose its classpath over JDWP, so it cannot"
                 + " be identified. Refusing to redefine classes in an unidentified VM on port " + port
                 + ".");
-            return false;
+            return Identity.REFUSED_CROSS_TREE;
         }
         List<String> classPath;
         try {
@@ -233,7 +271,7 @@ public class HotSwapPush {
             System.err.println(
                 "IDENTITY_REFUSED could not read the target VM's classpath (" + e + "). Refusing to"
                 + " redefine classes in an unidentified VM on port " + port + ".");
-            return false;
+            return Identity.REFUSED_CROSS_TREE;
         }
         for (String entry : classPath) {
             try {
@@ -244,20 +282,61 @@ public class HotSwapPush {
                     } catch (Exception ignored) {
                         // Best-effort context line only.
                     }
-                    return true;
+                    return Identity.CONFIRMED;
                 }
             } catch (InvalidPathException ignored) {
                 // A classpath entry that is not a usable path cannot be the one we want.
             }
         }
+
+        // The entry is absent. WHY it is absent is a separate question, and this tool used to
+        // assert the answer it had not checked (tempdoc 844 F3).
+        long sameRoot = expectedRepoRoot == null
+            ? 0
+            : classPath.stream().filter(e -> isUnderRoot(e, expectedRepoRoot)).count();
+        if (sameRoot > 0) {
+            System.err.println(
+                "IDENTITY_CLASSPATH_ABSENT the VM on port " + port + " WAS launched from the expected"
+                + " tree (" + sameRoot + " of " + classPath.size() + " classpath entries are under "
+                + expectedRepoRoot + "), but the hot-reload classes dir is NOT on its classpath:\n  "
+                + identityEntry
+                + "\nThat is a stale distribution - the launcher predates the hot-reload classpath, so"
+                + " the process cannot see that directory at all. Refusing to push.\nRemedy: rebuild"
+                + " the dist in that tree (gradlew.bat :modules:ui:installDist"
+                + " :modules:indexer-worker:installDist) and restart the stack.");
+            return Identity.REFUSED_CLASSPATH_ABSENT;
+        }
         System.err.println(
             "IDENTITY_REFUSED the VM on port " + port + " was NOT launched from the tree this push"
-            + " comes from. Expected this entry on its classpath:\n  " + identityEntry
+            + " comes from"
+            + (expectedRepoRoot == null
+                ? " (no expected repo root was supplied, so a stale-distribution case cannot be ruled"
+                  + " out here)"
+                : " - none of its classpath entries are under " + expectedRepoRoot)
+            + ". Expected this entry on its classpath:\n  " + identityEntry
             + "\nThe VM reports " + classPath.size() + " classpath entrie(s), first few:");
         classPath.stream().limit(5).forEach(e -> System.err.println("  " + e));
         System.err.println(
             "Refusing to push - this is the cross-tree injection tempdoc 844 section 5.6 case (c)"
             + " describes.");
-        return false;
+        return Identity.REFUSED_CROSS_TREE;
+    }
+
+    /**
+     * True when {@code entry} lies inside {@code root}. Entries under {@code root/.claude/worktrees}
+     * are excluded: a worktree is a DIFFERENT tree that merely lives under the main checkout's path,
+     * so counting its jars as "under main" would report a genuine cross-tree VM as same-tree.
+     */
+    private static boolean isUnderRoot(String entry, Path root) {
+        try {
+            Path p = Path.of(entry).toAbsolutePath().normalize();
+            if (!p.startsWith(root)) {
+                return false;
+            }
+            String rel = root.relativize(p).toString().replace(File.separatorChar, '/');
+            return !rel.startsWith(".claude/worktrees/");
+        } catch (InvalidPathException e) {
+            return false;
+        }
     }
 }
