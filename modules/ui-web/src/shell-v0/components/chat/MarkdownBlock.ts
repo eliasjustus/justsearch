@@ -2,19 +2,22 @@
 /**
  * Slice 497 — Markdown rendering block for chat messages.
  *
- * Renders text as markdown using `marked` + `DOMPurify`. During streaming,
- * applies a mend pass to auto-close unclosed syntax (code fences, bold,
- * inline code) on a copy before parsing, preventing visual glitches.
- * Renders are throttled to requestAnimationFrame during streaming.
+ * Renders text as markdown through the shared `createMarkdownRenderer` factory (tempdoc 846 §2.1 —
+ * `marked` + `DOMPurify` configured in ONE place, with this consumer's `breaks` answer stated at the
+ * call site). During streaming, applies a mend pass to auto-close unclosed syntax (code fences,
+ * bold, inline code) on a copy before parsing, preventing visual glitches. Renders are throttled to
+ * requestAnimationFrame during streaming.
  *
- * Uses a module-scoped Marked instance to avoid polluting global state.
+ * Typography is the shared ramp (846 §2.3), worn by this block and by `DocumentPane` alike; what
+ * this file styles is what belongs to chat alone — the cursor and the citation vocabulary.
  */
 
 import { html, css, type TemplateResult, type PropertyValues } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import { Marked } from 'marked';
-import DOMPurify from 'dompurify';
+import { createMarkdownRenderer } from '../markdown/markdownRenderer.js';
+import { markdownCodeHighlight, markdownTypography } from '../markdown/markdownStyles.js';
+import { highlightCodeBlocks } from '../markdown/markdownHighlight.js';
 import type { CitationSelectDetail } from './citationTypes.js';
 import {
   getSelectedSource,
@@ -25,7 +28,13 @@ import {
 // Tempdoc 565 §15.A — the ONE grounding-tier authority (was a forked `groundingStatus` here).
 import { groundingClass, type AnswerFrame } from './evidenceProjection.js';
 
-const md = new Marked({ breaks: true, gfm: true });
+/**
+ * Tempdoc 846 §2.1/§2.2 — the ONE configured parser, with this consumer's `breaks` answer stated at
+ * the call site. OFF: every call site of this block renders MODEL-generated text (the agent answer,
+ * the RAG answer, the extract, the summary/navigate streams, the reasoning trace), and a model
+ * emits real markdown paragraphs — `breaks: true` chopped its soft-wrapped prose into forced lines.
+ */
+const md = createMarkdownRenderer({ breaks: false });
 
 /**
  * Tempdoc 565 §15.B — the ONE resolved inline citation, shared by every answer mode.
@@ -272,6 +281,12 @@ export class MarkdownBlock extends JfElement {
         this.pendingText = this.text;
       }
     }
+    // Tempdoc 846 §2.4 — highlight fenced code on the SETTLED answer only (a stream re-renders per
+    // frame, and a mended fence would flicker through languages). Runs BEFORE the citation weave:
+    // highlighting rewrites a code block's innerHTML, which would discard anything woven into it.
+    if (!this.isStreaming && this.format === 'markdown') {
+      highlightCodeBlocks(this.renderRoot.querySelector('.md-content'));
+    }
     // Tempdoc 565 §3.C — weave inline citation marks into the freshly-rendered markdown. Citations
     // attach post-stream (the matcher runs at AgentDone), so only decorate the settled answer. Lit's
     // unsafeHTML re-render wipes prior markers, so re-decorating on every render keeps them correct.
@@ -320,41 +335,19 @@ export class MarkdownBlock extends JfElement {
     }
   }
 
-  static styles = css`
-    /* Tempdoc 822 §C2/§2.2 (slice S4) — the block-geometry vocabulary. Every value below is the
-       literal this stylesheet already carried, moved to a name a consumer can re-point from the
-       outer tree (an outer-tree rule on the host beats a :host rule). The containment rule is the
-       point of the slice: changing ANY default here changes shipped rendering, so the defaults are
-       frozen verbatim in 'MarkdownBlock.geometry.test.ts' and asserted against the pre-tokenization
-       computed set — a "tidy-up" of 0.125em to 2px is a containment failure, not a cleanup.
-       The rules that do NOT exist today (headings, tables, hr, img) are deliberately NOT tokens: a
-       token cannot express "this rule exists", so they land behind ':host([prose])' in slice S5. */
-    :host {
-      --md-line-height: 1.6;
-      --md-block-gap: 0.25em;
-      --md-block-gap-wide: 0.5em;
-      --md-item-gap: 0.125em;
-      --md-list-indent: 1.25rem;
-      /* A shorthand, not a width: the default 'none' computes to zero width, which is byte-identical
-         to declaring no border at all ('1px solid transparent' would shift every chip by 2px). */
-      --md-code-border: none;
-      --md-code-radius: 0.25rem;
-      --md-code-padding: 0.125rem 0.375rem;
-      --md-code-size: var(--font-size-sm);
-      --md-code-font: monospace;
-      --md-pre-radius: 0.375rem;
-      --md-pre-padding: 0.625rem 0.75rem;
-      --md-quote-border: 3px solid var(--border-subtle);
-      --md-quote-padding: 0.75rem;
-      --md-link-decoration: underline;
-
-      display: block;
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: var(--font-size-sm);
-      line-height: var(--md-line-height);
-      color: var(--text-primary);
-      word-wrap: break-word;
-    }
+  /**
+   * Tempdoc 846 §2.3 — the markdown typography ramp is no longer this component's private
+   * property: `markdownTypography` carries the `:host` geometry vocabulary, every `.md-content`
+   * element rule and the whole `:host([prose])` variant, and `DocumentPane` wears the same sheet so
+   * a rendered `.md` file stops falling back to user-agent defaults. `markdownCodeHighlight` is the
+   * fenced-code theme (§2.4). What stays below is what belongs to CHAT and to no other markdown
+   * surface: the verbatim `plain` format, the streaming cursor, and the citation vocabulary.
+   *
+   * The sheets are listed FIRST so a rule here has the last word, and this array must not declare a
+   * second `:host` markdown-geometry rule — `MarkdownBlock.geometry.test.ts` reads the flattened
+   * `styles` and proves the containment against the ONE `:host` rule the shared sheet declares.
+   */
+  static styles = [markdownTypography, markdownCodeHighlight, css`
     /* Tempdoc 565 §15.B — plain format renders verbatim (the retired StreamingTextBlock job):
        preserve whitespace/newlines, no markdown block styling. */
     .md-content.plain {
@@ -408,215 +401,6 @@ export class MarkdownBlock extends JfElement {
       padding: 0 var(--md-cite-region-pad-x, 0);
       margin: 0 var(--md-cite-region-inset-x, 0);
     }
-    .md-content p {
-      margin: var(--md-block-gap) 0;
-    }
-    .md-content p:first-child {
-      margin-top: 0;
-    }
-    .md-content p:last-child {
-      margin-bottom: 0;
-    }
-    .md-content code {
-      background: var(--surface-tertiary);
-      padding: var(--md-code-padding);
-      border: var(--md-code-border);
-      border-radius: var(--md-code-radius);
-      font-family: var(--md-code-font);
-      font-size: var(--md-code-size);
-    }
-    .md-content pre {
-      background: var(--surface-tertiary);
-      padding: var(--md-pre-padding);
-      border-radius: var(--md-pre-radius);
-      overflow-x: auto;
-      margin: var(--md-block-gap-wide) 0;
-    }
-    /* The block's inner <code> keeps shedding the inline chip's clothes (this rule's existing job):
-       'border: none' joins background/padding/size because a consumer that gives the inline chip an
-       edge means the CHIP, not a second rule inside the already-framed block. Zero shipped delta —
-       the chip's own default is 'none'. */
-    .md-content pre code {
-      background: none;
-      border: none;
-      padding: 0;
-      font-size: var(--font-size-xs);
-    }
-    .md-content ul, .md-content ol {
-      margin: var(--md-block-gap) 0;
-      padding-left: var(--md-list-indent);
-    }
-    .md-content li {
-      margin: var(--md-item-gap) 0;
-    }
-    .md-content a {
-      color: var(--text-tint);
-      text-decoration: var(--md-link-decoration);
-    }
-    /* Unconditional, not variant-gated: with the default 'underline' at rest this is a no-op on
-       every shipped surface (already underlined); it restores the hover affordance for a consumer
-       whose override removes the resting rule. */
-    .md-content a:hover {
-      text-decoration: underline;
-    }
-    .md-content strong {
-      color: var(--text-primary);
-      font-weight: 600;
-    }
-    .md-content blockquote {
-      border-left: var(--md-quote-border);
-      padding-left: var(--md-quote-padding);
-      margin: var(--md-block-gap-wide) 0;
-      color: var(--text-secondary);
-    }
-
-    /* ── Tempdoc 822 §C2/§2.3 (slice S5) — the opt-in prose variant ─────────────────────────────
-       Everything below is markup this stylesheet declares NOTHING for today (headings, tables, hr,
-       img, task lists) or a rhythm the shipped surfaces deliberately do not have. A token cannot
-       express "this rule exists" and any declared default would change shipped rendering the moment
-       a model emits a heading — so containment here is a property of the SELECTOR, not of a value:
-       a consumer that does not set the attribute cannot be reached by ANY of it, and
-       'MarkdownBlock.geometry.test.ts' proves no heading/table/hr/img selector lives outside this
-       block. The variant's own tokens are declared on ':host([prose])' rather than ':host' for the
-       same reason — a ':host' declaration would add declarations to the default path, which is the
-       thing slice S4 froze. Values are the SHIPPED type ramp plus generic geometry; the design
-       spec's numbers arrive only through a consumer's override (license containment, §2.1). */
-    :host([prose]) {
-      --md-heading-weight: 600;
-      --md-heading-line-height: 1.3;
-      /* Asymmetric on purpose — a heading belongs to what FOLLOWS it, so the space above is the
-         separation from the previous block and the space below is not. */
-      --md-heading-margin: 1.25rem 0 0.5rem;
-      --md-table-size: var(--font-size-xs);
-      --md-table-cell-padding: 0.45rem 0.75rem;
-      --md-table-rule: 1px solid var(--border-subtle);
-      /* The truncation cap (the design spec named this rule worth
-         lifting): a single-line cell so arbitrary chat content cannot blow a column out. */
-      --md-table-cell-max: 24rem;
-      --md-rule: 1px solid var(--border-subtle);
-      /* The gap lives BETWEEN items, not around each one — pairs with a consumer setting
-         '--md-item-gap: 0' (the shipped default keeps its symmetric margins). */
-      --md-item-adjacent-gap: 0.25rem;
-    }
-    :host([prose]) .md-content :is(h1, h2, h3, h4, h5, h6) {
-      font-weight: var(--md-heading-weight);
-      line-height: var(--md-heading-line-height);
-      margin: var(--md-heading-margin);
-    }
-    /* The heading scale is the SHIPPED type ramp, step for step — the one typographic authority,
-       read directly rather than wrapped in a second name (which would be a fork, and which the
-       style-literal ratchet is right to distrust). A consumer retunes the ramp inside its own bridge:
-       sv3 points these three steps at its '--font-size-sv3-*' scale, which already equals the
-       spec's heading scale, so no rem literal of the spec's is copied here (§2.1). Nothing else in
-       this stylesheet reads xl/lg/md, so "the ramp step" and "the heading size" are the same knob. */
-    :host([prose]) .md-content h1 {
-      font-size: var(--font-size-xl);
-    }
-    :host([prose]) .md-content h2 {
-      font-size: var(--font-size-lg);
-    }
-    :host([prose]) .md-content h3 {
-      font-size: var(--font-size-md);
-    }
-    /* h4-h6 share the bottom step — the ramp bottoms out there, and so does the spec's: the
-       deepest headings sit at body size and are distinguished by weight alone. */
-    :host([prose]) .md-content :is(h4, h5, h6) {
-      font-size: var(--font-size-sm);
-    }
-    /* The deepest step recedes rather than shrinking further (there is no smaller step). */
-    :host([prose]) .md-content h6 {
-      color: var(--text-secondary);
-    }
-    :host([prose]) .md-content table {
-      width: 100%;
-      /* The renderer emits a BARE <table> — there is no wrapper element to scroll, and synthesising
-         one would fight 'unsafeHTML': every re-render rebuilds this subtree, so a post-processed
-         wrapper would have to be re-applied on each frame. A block-level table scrolls itself. */
-      display: block;
-      overflow-x: auto;
-      max-inline-size: 100%;
-      border-collapse: collapse;
-      font-size: var(--md-table-size);
-      margin: var(--md-block-gap-wide) 0;
-    }
-    :host([prose]) .md-content :is(th, td) {
-      padding: var(--md-table-cell-padding);
-      border-bottom: var(--md-table-rule);
-      /* Truncate: one line per cell, clipped at the cap, so a pasted path or a long sentence cannot
-         widen the column past the reading measure (per the design spec). */
-      max-inline-size: var(--md-table-cell-max);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      /* The word-boundary restoration the same spec note calls for: a consumer that sets
-         'word-break: break-word' on the block (sv3 does, so an unbroken token in prose cannot widen
-         the measure) would otherwise let a table column collapse mid-word. Inside a cell the
-         minimum column width is the longest WORD. */
-      word-break: normal;
-      overflow-wrap: normal;
-    }
-    :host([prose]) .md-content th {
-      text-align: start;
-      font-weight: 600;
-    }
-    /* Expand: the spec's control is a button on a table component we do not port (no DOM
-       post-processing, see above), so the affordance is the row itself — pointing at or tabbing into
-       a truncated row releases the single-line clamp and the cells wrap to their full content. The
-       row, not the cell, because expanding one cell reflows the whole row anyway. */
-    :host([prose]) .md-content tr:hover :is(th, td),
-    :host([prose]) .md-content tr:focus-within :is(th, td) {
-      white-space: normal;
-      overflow: visible;
-      text-overflow: clip;
-    }
-    :host([prose]) .md-content hr {
-      border: 0;
-      border-top: var(--md-rule);
-      margin: var(--md-block-gap-wide) 0;
-    }
-    :host([prose]) .md-content img {
-      max-inline-size: 100%;
-      height: auto;
-      border-radius: var(--md-pre-radius);
-    }
-    /* GFM task lists: the checkbox replaces the marker and reclaims the list indent, so a checked
-       item lines up with the prose above it instead of hanging off a bullet. */
-    :host([prose]) .md-content li:has(> input[type='checkbox']) {
-      list-style: none;
-      margin-inline-start: calc(var(--md-list-indent) * -1);
-    }
-    :host([prose]) .md-content li > input[type='checkbox'] {
-      margin-inline-end: 0.4em;
-    }
-    :host([prose]) .md-content li + li {
-      margin-block-start: var(--md-item-adjacent-gap);
-    }
-    /* A nesting vocabulary: depth is readable from the marker alone. */
-    :host([prose]) .md-content ul ul {
-      list-style: circle;
-    }
-    :host([prose]) .md-content ul ul ul {
-      list-style: square;
-    }
-    :host([prose]) .md-content ol ol {
-      list-style: lower-alpha;
-    }
-    :host([prose]) .md-content ol ol ol {
-      list-style: lower-roman;
-    }
-    /* Four-sided, not just the left inset: a quote in prose rhythm is a block, not an indent. */
-    :host([prose]) .md-content blockquote {
-      padding: var(--md-quote-padding);
-    }
-    /* The block's own edges belong to the container, for EVERY block child — the default path zeroes
-       only 'p' (the only block it can be sure a shipped surface renders). */
-    :host([prose]) .md-content > :first-child {
-      margin-block-start: 0;
-    }
-    :host([prose]) .md-content > :last-child {
-      margin-block-end: 0;
-    }
-
     .cursor {
       display: inline-block;
       width: 0.5ch;
@@ -699,13 +483,20 @@ export class MarkdownBlock extends JfElement {
       color: var(--text-secondary);
       opacity: 0.7;
     }
-  `;
+  `];
 
   override render(): TemplateResult {
     // §13.8 — strip any model-authored trailing "Citations:" list (the UI is the source authority);
     // then mend partial syntax during streaming. Strip-before-mend so a half-written trailing list
     // never flashes (the strip matches the partial block's trailing-to-EOF shape too).
-    const stripped = stripTrailingCitationBlock(this.text);
+    //
+    // Tempdoc 846 §2.5 — but ONLY when this block actually has sources to show. The strip's whole
+    // justification is that the interface presents the sources itself; with no citations the UI
+    // presents nothing, so deleting the model's own trailing list replaces information with
+    // silence. Accepted consequence: citations attach post-stream (the matcher runs at AgentDone),
+    // so a trailing list the model is writing is now visible until they arrive — a brief flash of
+    // real output beats a silent deletion in the case where nothing replaces it.
+    const stripped = this.citations.length > 0 ? stripTrailingCitationBlock(this.text) : this.text;
     const cursor = this.isStreaming ? html`<span class="cursor">&nbsp;</span>` : '';
     // Tempdoc 565 §15.B — the ONE renderer: `plain` renders the text verbatim (the retired
     // StreamingTextBlock's job — no markdown styling, whitespace preserved); `markdown` parses GFM.
@@ -714,9 +505,7 @@ export class MarkdownBlock extends JfElement {
       return html`<div class="md-content plain">${stripped}</div>${cursor}`;
     }
     const source = this.isStreaming ? mendMarkdown(stripped) : stripped;
-    const raw = source ? (md.parse(source, { async: false }) as string) : '';
-    const safe = DOMPurify.sanitize(raw);
-    return html`<div class="md-content">${unsafeHTML(safe)}</div>${cursor}`;
+    return html`<div class="md-content">${unsafeHTML(md.render(source))}</div>${cursor}`;
   }
 
   /**
