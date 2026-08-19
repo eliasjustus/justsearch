@@ -182,6 +182,24 @@ const all = (host: Mounted, testid: string): HTMLElement[] => [
   ...(host.shadowRoot?.querySelectorAll<HTMLElement>(`[data-testid="${testid}"]`) ?? []),
 ];
 
+/**
+ * Press a control the way a reader does — through the native button inside it. A control born on the
+ * shared operability primitive (852 S4's jf-control adoption, which the run-prompt decisions moved
+ * to) renders its button in its OWN shadow root, so a click on the host element reaches no handler;
+ * a hand-rolled native button is clicked directly. Same helper, same reason, as the branch suite's.
+ */
+async function pressControl(host: Element | null | undefined): Promise<void> {
+  if (!host) throw new Error('pressControl: no control');
+  if (host.localName === 'button') {
+    (host as HTMLButtonElement).click();
+    return;
+  }
+  await (host as Mounted).updateComplete;
+  const button = host.shadowRoot?.querySelector('button');
+  if (!button) throw new Error('pressControl: the control rendered no button');
+  button.click();
+}
+
 async function type(el: Mounted, draft: string): Promise<HTMLTextAreaElement> {
   const composer = await region(el, 'jf-sv3-composer');
   const field = composer.shadowRoot?.querySelector<HTMLTextAreaElement>(
@@ -402,7 +420,7 @@ describe('a typed prompt is resolved by its OWN command, never by chat text', ()
       budgetGate: { tokensNeeded: 500, tokensRemaining: 10, totalTokensConsumed: 90 },
     });
     const main = await region(el, 'jf-sv3-main');
-    (q(main, 'sv3-run-budget-finalize') as HTMLButtonElement | null)?.click();
+    await pressControl(q(main, 'sv3-run-budget-finalize'));
     await settle(el);
     expect(ctrl.resolveBudgetGate).toHaveBeenCalledWith('finalize');
   });
@@ -419,7 +437,7 @@ describe('a typed prompt is resolved by its OWN command, never by chat text', ()
     // The label states the step the directive actually spends — read from the SHARED constant, so a
     // button that promised one number and dispatched another would fail here.
     expect(raise?.textContent).toContain(RAISE_BUDGET_STEP_TOKENS.toLocaleString());
-    raise?.click();
+    await pressControl(raise);
     await settle(el);
 
     // Through the seam's own `raise-budget` directive, not by resolving the gate: raising is not a
@@ -440,7 +458,7 @@ describe('a typed prompt is resolved by its OWN command, never by chat text', ()
     // The backend evicts finished sessions, so a raise on one is the 404 class tempdoc 577 Ext III
     // made structural. The window dispatches; the SEAM refuses.
     await frame(el, { runInFlight: false, isStreaming: false });
-    (q(main, 'sv3-run-budget-raise') as HTMLButtonElement | null)?.click();
+    await pressControl(q(main, 'sv3-run-budget-raise'));
     await settle(el);
     expect(ctrl.raiseBudget).not.toHaveBeenCalled();
   });

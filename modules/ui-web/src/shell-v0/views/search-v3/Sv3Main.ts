@@ -701,8 +701,9 @@ export class Sv3Main extends JfElement {
       /* ── The same clothes on the three remaining imports (Phase F9) ────────
          Identical pattern to '.sv3-markdown' above and 'Sv3Pane.ts:78' — the shared components are
          NOT forked; what they expose is the set of custom properties they read, and a property the
-         window does not re-point falls through to the shipped app's ':root', which is the LIGHT
-         palette (the window carries no theme attribute; the app does). Unbridged, that is not a
+         window does not re-point falls through to the shipped app's ':root' — a palette that is now
+         in the SAME mode as this window (852 S4 mirrors the app's light/dark onto the host) but is
+         still a different scale. Unbridged, that is not a
          taste difference but a polarity inversion: the F-series fit audit measured this card
          painting a near-white light-theme fill under a near-white tool name — white on white —
          and the reasoning block painting light-theme slate text on the window's near-black.
@@ -930,7 +931,9 @@ export class Sv3Main extends JfElement {
         margin: 0;
         color: var(--foreground);
       }
-      .locked-remedy {
+      /* Geometry only — the focus ring is the primitive's own (components/Control.ts), which is the
+         point of adopting it: one ring, one keyboard contract, across every control in the window. */
+      .locked-remedy::part(control) {
         display: inline-flex;
         align-items: center;
         gap: var(--space-1-5);
@@ -943,12 +946,8 @@ export class Sv3Main extends JfElement {
         font-size: var(--font-size-sv3-sm);
         cursor: pointer;
       }
-      .locked-remedy:hover {
+      .locked-remedy::part(control):hover {
         background: var(--muted);
-      }
-      .locked-remedy:focus-visible {
-        outline: 2px solid var(--ring);
-        outline-offset: 1px;
       }
       /* The turn's terminal, said in words. Halting is the reader's own act and gets no colour — the
          3-colour budget is for act-now / in-motion / broken, and a stop is none of those. */
@@ -1006,7 +1005,7 @@ export class Sv3Main extends JfElement {
         margin: 0;
         font-size: var(--font-size-sv3-sm);
       }
-      .run-prompt button {
+      .run-prompt jf-control::part(control) {
         padding: var(--space-1) var(--space-3);
         border: 1px solid var(--border);
         border-radius: var(--control-radius);
@@ -1016,12 +1015,8 @@ export class Sv3Main extends JfElement {
         font-size: var(--font-size-sv3-xs);
         cursor: pointer;
       }
-      .run-prompt button:hover {
+      .run-prompt jf-control::part(control):hover {
         background: var(--muted);
-      }
-      .run-prompt button:focus-visible {
-        outline: 2px solid var(--ring);
-        outline-offset: 1px;
       }
 
       /* The store's own failure text, kept at diagnostic altitude: the state is said in words above
@@ -1420,14 +1415,14 @@ export class Sv3Main extends JfElement {
             : nothing}
           ${nav === null
             ? nothing
-            : html`<button
-                type="button"
+            : html`<jf-control
                 class="locked-remedy"
                 data-testid="sv3-history-locked-remedy"
-                @click=${() => this.remedy(nav.target)}
+                label=${nav.label}
+                .onActivate=${() => this.remedy(nav.target)}
               >
                 ${icon({ name: 'shield', size: 14 })} ${nav.label}
-              </button>`}
+              </jf-control>`}
         </div>
       </jf-sv3-empty>
     `;
@@ -2197,18 +2192,24 @@ export class Sv3Main extends JfElement {
                would put the concession where the reader looks first. The step is the shared
                RAISE_BUDGET_STEP_TOKENS, so the label cannot promise a different number than the
                directive spends. -->
-          <button type="button" data-testid="sv3-run-budget-raise" @click=${() =>
-            this.decide({ kind: 'budget', decision: 'raise' })}>
-            Add ${RAISE_BUDGET_STEP_TOKENS.toLocaleString()} tokens
-          </button>
-          <button type="button" data-testid="sv3-run-budget-finalize" @click=${() =>
-            this.decide({ kind: 'budget', decision: 'finalize' })}>
-            Finish with what it has
-          </button>
-          <button type="button" data-testid="sv3-run-budget-stop" @click=${() =>
-            this.decide({ kind: 'budget', decision: 'stop' })}>
-            Stop the run
-          </button>
+          <jf-control
+            data-testid="sv3-run-budget-raise"
+            label=${`Add ${RAISE_BUDGET_STEP_TOKENS.toLocaleString()} tokens`}
+            .onActivate=${() => this.decide({ kind: 'budget', decision: 'raise' })}
+            >Add ${RAISE_BUDGET_STEP_TOKENS.toLocaleString()} tokens</jf-control
+          >
+          <jf-control
+            data-testid="sv3-run-budget-finalize"
+            label="Finish with what it has"
+            .onActivate=${() => this.decide({ kind: 'budget', decision: 'finalize' })}
+            >Finish with what it has</jf-control
+          >
+          <jf-control
+            data-testid="sv3-run-budget-stop"
+            label="Stop the run"
+            .onActivate=${() => this.decide({ kind: 'budget', decision: 'stop' })}
+            >Stop the run</jf-control
+          >
         </div>
       `;
     }
@@ -2219,18 +2220,24 @@ export class Sv3Main extends JfElement {
             The prompt is ${prompt.promptTokens.toLocaleString()} of
             ${prompt.contextWindow.toLocaleString()} tokens.
           </p>
-          <button type="button" data-testid="sv3-run-context-continue" @click=${() =>
-            this.decide({ kind: 'context', decision: 'continue' })}>
-            Continue anyway
-          </button>
-          <button type="button" data-testid="sv3-run-context-summarize" @click=${() =>
-            this.decide({ kind: 'context', decision: 'summarize' })}>
-            Compact older turns
-          </button>
-          <button type="button" data-testid="sv3-run-context-stop" @click=${() =>
-            this.decide({ kind: 'context', decision: 'stop' })}>
-            Stop the run
-          </button>
+          <jf-control
+            data-testid="sv3-run-context-continue"
+            label="Continue anyway"
+            .onActivate=${() => this.decide({ kind: 'context', decision: 'continue' })}
+            >Continue anyway</jf-control
+          >
+          <jf-control
+            data-testid="sv3-run-context-summarize"
+            label="Compact older turns"
+            .onActivate=${() => this.decide({ kind: 'context', decision: 'summarize' })}
+            >Compact older turns</jf-control
+          >
+          <jf-control
+            data-testid="sv3-run-context-stop"
+            label="Stop the run"
+            .onActivate=${() => this.decide({ kind: 'context', decision: 'stop' })}
+            >Stop the run</jf-control
+          >
         </div>
       `;
     }
