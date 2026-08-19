@@ -176,6 +176,7 @@ org.checkerframework:checker-qual:3.49.5=annotationProcessor,integrationTestAnno
 org.codehaus.mojo:animal-sniffer-annotations:1.26=compileClasspath,integrationTestRuntimeClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
 org.codelibs:jhighlight:1.1.0=integrationTestRuntimeClasspath,runtimeClasspath,testRuntimeClasspath
 org.commonmark:commonmark-ext-gfm-tables:0.27.1=integrationTestRuntimeClasspath,runtimeClasspath,testRuntimeClasspath
+org.commonmark:commonmark-ext-task-list-items:0.27.1=integrationTestRuntimeClasspath,runtimeClasspath,testRuntimeClasspath
 org.commonmark:commonmark:0.27.1=integrationTestRuntimeClasspath,runtimeClasspath,testRuntimeClasspath
 org.eclipse.angus:angus-activation:2.0.2=integrationTestRuntimeClasspath,runtimeClasspath,testRuntimeClasspath
 org.eclipse.jetty.toolchain:jetty-jakarta-servlet-api:5.0.2=integrationTestRuntimeClasspath,runtimeClasspath,testRuntimeClasspath

@@ -16,15 +16,15 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Tempdoc 847 T18/T18b/T18c — the S0 markdown shape matrix, promoted from a throwaway probe to the
- * permanent pin that {@link CitationMatchOps#splitSentences} segments markdown as markdown.
+ * permanent pin that {@link AnswerSegmentation#splitSentences} segments markdown as markdown.
  *
- * <p>The shapes are S0's verbatim (847 §S0-results): 19 answers an LLM really produces, chosen to
+ * <p>The shapes are S0's verbatim (847 §S0-results): 23 answers an LLM really produces, chosen to
  * cover every way the pre-847 prose segmentation fused or invented a key — the whole-block collapse
  * of single-newline lists/quotes/tables, the trailing ordinal, the orphan {@code "."}, the
  * standalone ordinal, and the CJK/Japanese variants that fuse differently.
  */
 @DisplayName("847 S5 — markdown-structure-aware sentence segmentation")
-class CitationMatchOpsSegmentationTest {
+class AnswerSegmentationTest {
 
   record Shape(String id, String markdown, List<String> expected) {}
 
@@ -316,7 +316,57 @@ class CitationMatchOpsSegmentationTest {
                   "The Worker owns the Lucene index and the Head delegates every index read and"
                       + " write to it over gRPC, so no index handle ever exists in the Head process"
                       + " [1].",
-                  "That boundary is enforced by an ArchUnit rule [2].")));
+                  "That boundary is enforced by an ArchUnit rule [2].")),
+          new Shape(
+              "T-abbreviation",
+              // The residual BreakIterator leaves behind, EXHIBITED rather than asserted. Block
+              // structure cannot help: the split is INSIDE one paragraph. Measured precisely — an
+              // abbreviation only ends a sentence when what follows looks like a new one, so
+              // "Dr. Smith" splits and "e.g. lexical" does not. Note what the split key is: "Dr."
+              // has a letter, so the junk predicate cannot catch it; it is a real key that will
+              // never anchor, and it counts in sentences_total.
+              """
+              Dr. Smith owns the retrieval spec [1]. The pipeline runs in two passes, e.g. lexical then dense [2].
+              """,
+              List.of(
+                  "Dr.",
+                  "Smith owns the retrieval spec [1].",
+                  "The pipeline runs in two passes, e.g. lexical then dense [2].")),
+          new Shape(
+              "U-task-list",
+              """
+              Checklist:
+
+              - [x] The index is written only by the Worker process [1].
+              - [ ] The Head delegates all index IO over gRPC [2].
+              """,
+              // The task marker is structure: `marked` renders a checkbox element, so a key that
+              // began with a literal "[x]" would open with a token no DOM run can match.
+              List.of(
+                  "Checklist:",
+                  "The index is written only by the Worker process [1].",
+                  "The Head delegates all index IO over gRPC [2].")),
+          new Shape(
+              "V-raw-html-block",
+              // DOMPurify keeps the container and the renderer walks its text nodes, so the prose
+              // inside is a citable sentence the reader sees. Skipping the block would leave it
+              // with no key at all — unscored, uncounted, absent from the sources panel.
+              """
+              <div class="note">
+              The Worker owns the index [1]. The Head delegates all IO [2].
+              </div>
+              """,
+              List.of("The Worker owns the index [1].", "The Head delegates all IO [2].")),
+          new Shape(
+              "W-block-image",
+              // Alt text is an ATTRIBUTE in the rendered DOM, never a text node. A key minted from
+              // it could match nothing and would sit in sentences_total reading as ungrounded.
+              """
+              ![Architecture diagram of the retrieval pipeline](docs/arch.png)
+
+              The Worker owns the index [1].
+              """,
+              List.of("The Worker owns the index [1].")));
 
   /** A block marker surviving into a key — the fusion signature the pre-847 splitter produced. */
   private static final Pattern LEADING_MARKER =
@@ -330,7 +380,7 @@ class CitationMatchOpsSegmentationTest {
     List<String> drifted = new ArrayList<>();
     StringBuilder detail = new StringBuilder();
     for (Shape shape : SHAPES) {
-      List<String> actual = CitationMatchOps.splitSentences(shape.markdown());
+      List<String> actual = AnswerSegmentation.splitSentences(shape.markdown());
       if (!shape.expected().equals(actual)) {
         drifted.add(shape.id());
         detail
@@ -351,13 +401,13 @@ class CitationMatchOpsSegmentationTest {
   void classificationCounters() {
     Map<String, Integer> classes = new LinkedHashMap<>();
     for (Shape shape : SHAPES) {
-      for (String key : CitationMatchOps.splitSentences(shape.markdown())) {
+      for (String key : AnswerSegmentation.splitSentences(shape.markdown())) {
         classes.merge(classify(key), 1, Integer::sum);
       }
     }
     // A partial fix (blank-line rule only, or marker strip only) leaves one of these non-zero.
     assertEquals(
-        Map.of("SENTENCE", 76),
+        Map.of("SENTENCE", 85),
         classes,
         "every key must be a plain sentence; classes found: " + classes);
   }
@@ -367,21 +417,21 @@ class CitationMatchOpsSegmentationTest {
   void breakMechanism() {
     // 847 §S0-results surprise 1, inverted: each of these emitted ONE fused key (or a key plus an
     // orphan ".") under the pre-847 prose splitter.
-    assertEquals(List.of("Alpha one.", "Beta two."), CitationMatchOps.splitSentences("Alpha one.\n- Beta two."));
-    assertEquals(List.of("Alpha one.", "Beta two."), CitationMatchOps.splitSentences("Alpha one.\n\n- Beta two."));
-    assertEquals(List.of("Alpha one.", "Beta two."), CitationMatchOps.splitSentences("Alpha one.\n* Beta two."));
-    assertEquals(List.of("Alpha one.", "Beta two."), CitationMatchOps.splitSentences("Alpha one.\n> Beta two."));
-    assertEquals(List.of("Alpha one.", "Beta two."), CitationMatchOps.splitSentences("Alpha one.\n## Beta two."));
-    assertEquals(List.of("Alpha one.", "Beta two."), CitationMatchOps.splitSentences("Alpha one.\n\n2. Beta two."));
+    assertEquals(List.of("Alpha one.", "Beta two."), AnswerSegmentation.splitSentences("Alpha one.\n- Beta two."));
+    assertEquals(List.of("Alpha one.", "Beta two."), AnswerSegmentation.splitSentences("Alpha one.\n\n- Beta two."));
+    assertEquals(List.of("Alpha one.", "Beta two."), AnswerSegmentation.splitSentences("Alpha one.\n* Beta two."));
+    assertEquals(List.of("Alpha one.", "Beta two."), AnswerSegmentation.splitSentences("Alpha one.\n> Beta two."));
+    assertEquals(List.of("Alpha one.", "Beta two."), AnswerSegmentation.splitSentences("Alpha one.\n## Beta two."));
+    assertEquals(List.of("Alpha one.", "Beta two."), AnswerSegmentation.splitSentences("Alpha one.\n\n2. Beta two."));
     // Not a list, and the key says so: an ordered list may only interrupt a paragraph when it
     // starts at 1 (CommonMark 0.31 §5.3), so `marked` renders this as ONE paragraph reading
     // "Alpha one. 2. Beta two." — and the key now matches what the reader sees rather than what
     // the source looks like. The blank-line variant above is a real list, and breaks.
     assertEquals(
         List.of("Alpha one. 2.", "Beta two."),
-        CitationMatchOps.splitSentences("Alpha one.\n2. Beta two."));
-    assertEquals(List.of("阿尔法一。", "贝塔二。"), CitationMatchOps.splitSentences("阿尔法一。\n- 贝塔二。"));
-    assertEquals(List.of("阿尔法一。", "贝塔二。"), CitationMatchOps.splitSentences("阿尔法一。\n\n2. 贝塔二。"));
+        AnswerSegmentation.splitSentences("Alpha one.\n2. Beta two."));
+    assertEquals(List.of("阿尔法一。", "贝塔二。"), AnswerSegmentation.splitSentences("阿尔法一。\n- 贝塔二。"));
+    assertEquals(List.of("阿尔法一。", "贝塔二。"), AnswerSegmentation.splitSentences("阿尔法一。\n\n2. 贝塔二。"));
   }
 
   // --- T18b --------------------------------------------------------------------------------
@@ -405,11 +455,11 @@ class CitationMatchOpsSegmentationTest {
     // Measured on the pre-847 splitter over this matrix (847 §S0-results): orphan "." and
     // standalone-ordinal keys were scored by the cross-encoder and counted in 836 §3.6's coverage
     // denominator, and one key in five fused a foreign block's text.
-    assertEquals(64, legacyTotal, "legacy key count over the matrix");
-    assertEquals(8, legacyJunk, "legacy junk keys (orphan '.' / bare ordinal)");
-    assertEquals(34, legacyFused, "legacy keys carrying a marker, a line break or a sibling block");
+    assertEquals(73, legacyTotal, "legacy key count over the matrix");
+    assertEquals(9, legacyJunk, "legacy junk keys (orphan '.' / bare ordinal)");
+    assertEquals(37, legacyFused, "legacy keys carrying a marker, a line break or a sibling block");
     assertEquals(
-        12.5,
+        12.3,
         Math.round(1000.0 * legacyJunk / legacyTotal) / 10.0,
         0.05,
         "legacy junk share of sentences_total, percent");
@@ -417,7 +467,7 @@ class CitationMatchOpsSegmentationTest {
     int total = 0;
     int junk = 0;
     for (Shape shape : SHAPES) {
-      for (String key : CitationMatchOps.splitSentences(shape.markdown())) {
+      for (String key : AnswerSegmentation.splitSentences(shape.markdown())) {
         total++;
         if (!carriesLetter(key)) {
           junk++;
@@ -425,7 +475,7 @@ class CitationMatchOpsSegmentationTest {
       }
     }
     assertEquals(0, junk, "no key may be scored that carries no sentence");
-    assertEquals(76, total, "sentences_total over the matrix after S5");
+    assertEquals(85, total, "sentences_total over the matrix after S5");
     // The denominator did not merely shrink: de-fusion ADDS the keys a fused block hid (a 3-item
     // list was one key), while junk removal takes keys away. Both effects are real and opposite,
     // which is why 836's coverage numbers move in a direction no single count predicts.
@@ -437,17 +487,17 @@ class CitationMatchOpsSegmentationTest {
   @Test
   @DisplayName("T18b — a key the renderer could never anchor is never scored")
   void junkKeysAreNotScored() {
-    assertEquals(List.of(), CitationMatchOps.splitSentences("1.\n\n2.\n\n3."));
-    assertEquals(List.of(), CitationMatchOps.splitSentences("- 2026.\n- 1999."));
-    assertEquals(List.of(), CitationMatchOps.splitSentences("."));
+    assertEquals(List.of(), AnswerSegmentation.splitSentences("1.\n\n2.\n\n3."));
+    assertEquals(List.of(), AnswerSegmentation.splitSentences("- 2026.\n- 1999."));
+    assertEquals(List.of(), AnswerSegmentation.splitSentences("."));
     assertEquals(
         List.of("Real sentence here."),
-        CitationMatchOps.splitSentences("2026.\n\nReal sentence here."));
+        AnswerSegmentation.splitSentences("2026.\n\nReal sentence here."));
     // A short sentence is NOT junk. The renderer may decline to anchor it (its floor is 4 word-like
     // characters), but the producer does not delete evidence on the consumer's behalf — and a Han
     // sentence reaches that floor in three characters (HI-6).
-    assertEquals(List.of("No."), CitationMatchOps.splitSentences("- No."));
-    assertEquals(List.of("阿尔法一。", "贝塔二。"), CitationMatchOps.splitSentences("阿尔法一。\n- 贝塔二。"));
+    assertEquals(List.of("No."), AnswerSegmentation.splitSentences("- No."));
+    assertEquals(List.of("阿尔法一。", "贝塔二。"), AnswerSegmentation.splitSentences("阿尔法一。\n- 贝塔二。"));
   }
 
   // --- T18c --------------------------------------------------------------------------------
@@ -460,13 +510,13 @@ class CitationMatchOpsSegmentationTest {
       for (Locale forced : List.of(Locale.ROOT, Locale.JAPAN, new Locale("tr", "TR"))) {
         Locale.setDefault(forced);
         for (Shape shape : SHAPES) {
-          List<String> root = CitationMatchOps.splitSentences(shape.markdown(), Locale.ROOT);
+          List<String> root = AnswerSegmentation.splitSentences(shape.markdown(), Locale.ROOT);
           assertEquals(shape.expected(), root, "shape " + shape.id() + " under default " + forced);
           for (Locale locale :
               List.of(Locale.ENGLISH, Locale.JAPANESE, Locale.SIMPLIFIED_CHINESE, Locale.GERMAN)) {
             assertEquals(
                 root,
-                CitationMatchOps.splitSentences(shape.markdown(), locale),
+                AnswerSegmentation.splitSentences(shape.markdown(), locale),
                 "shape " + shape.id() + " differs under " + locale);
           }
         }

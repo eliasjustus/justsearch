@@ -5607,6 +5607,39 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
     view.remove();
   });
 
+  it('a citation_matches merge REPLACES the draft sentence text at the same index (847 S5)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitations?.({ citations: [ragSource(0)] });
+    // The draft cuts an incomplete markdown buffer as prose, so a whole list arrives as one
+    // "sentence"; the final matches cut parsed block nodes. Same index, different sentence.
+    h.onRagCitationDelta?.({
+      sentenceIndex: 0,
+      sentenceText: 'The lock held.\n- And the renewal date passed.',
+      citations: [{ parentDocId: 'docs/a.md', sourceIndex: 0, score: 0.9 }],
+    });
+    h.onRagCitationMatches?.({
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          sourceIndex: 0,
+          similarity: 0.61,
+          parentDocId: 'docs/a.md',
+        },
+      ],
+    });
+    await view.updateComplete;
+
+    const claims = claimsOf(view);
+    expect(claims).toHaveLength(1);
+    // Keeping the draft's text would anchor this mark by a key naming a sentence that earned no
+    // score, and make the live render disagree with the reload (which only ever sees the final).
+    expect(claims[0]!.sentenceText).toBe('The lock held.');
+    view.remove();
+  });
+
   it('a rendered turn weaves marks for verified claims only — the lexical one stays plain prose', async () => {
     const view = mountView();
     await view.updateComplete;
