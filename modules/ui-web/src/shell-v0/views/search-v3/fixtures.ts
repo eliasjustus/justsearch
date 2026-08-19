@@ -374,6 +374,56 @@ export const CONTEXT_SUMMARY_FAILED = 'The summary could not be saved';
 export const CONTEXT_EXCLUDE_FAILED = 'That turn could not be hidden from the context';
 export const CONTEXT_INCLUDE_FAILED = 'That turn could not be put back into the context';
 
+/* ── Branch, edit / retry and the version pager (slice 513 + 610 Phase A/B, ported by 852 S3) ───
+ *
+ * The reference window's wording verbatim wherever it had some, for the reason S2 kept the context
+ * wording: these acts create a real, navigable fork of a conversation, and a second name for
+ * "branch to a new thread" in a second window would be a second concept to the reader.
+ */
+
+export const BRANCH_MENU_RETRY = 'Retry from here';
+export const BRANCH_MENU_BRANCH = 'Branch to new thread';
+
+/** Edit renders INLINE on the question — the reference's §13.1 split — so this is its own name. */
+export const BRANCH_EDIT_LABEL = 'Edit this question';
+export const BRANCH_EDIT_INPUT_LABEL = 'Rewrite this question';
+export const BRANCH_EDIT_SEND = 'Send';
+export const BRANCH_EDIT_CANCEL = 'Cancel';
+/**
+ * A stream started while the editor was open. The rewrite is KEPT and Send says why it cannot go —
+ * a fork of a transcript with a prompt in flight is not a fork of it, the same gate the ⋯ entries
+ * take. Silently doing nothing here would be "a control that fails when pressed".
+ */
+export const BRANCH_EDIT_WAIT = 'Wait for the answer in flight before re-asking this question';
+
+/**
+ * The pager names itself as a GROUP and each control as a direction, because "1 / 3" alone is a
+ * position with nothing to say what it positions.
+ */
+export const VERSION_PAGER_LABEL = 'Versions of this turn';
+export const VERSION_PREVIOUS = 'Previous version';
+export const VERSION_NEXT = 'Next version';
+/** Why an END of the pager does not move — carried as `jf-control`'s reason, not left as silence. */
+export const VERSION_AT_FIRST = 'This is the first version of this turn';
+export const VERSION_AT_LAST = 'This is the last version of this turn';
+export const versionPagerCount = (index: number, total: number): string => `${index + 1} / ${total}`;
+
+/**
+ * A refused branch, in the same grammar as the context refusals above: name the act, and say what
+ * the conversation is now — an unchanged conversation is the reassurance the reader needs most,
+ * because the act they pressed was about to replace what is on screen.
+ */
+export const BRANCH_FAILED = 'That thread could not be branched — this conversation is unchanged';
+
+/** Delete's two new words: the cascade prompt, and the refusal when the store declined. */
+export const DELETE_FAILED = 'That conversation could not be deleted';
+export const deleteCascadeTitle = 'Delete this conversation and its branches?';
+export const deleteCascadeMessage = (label: string, branches: readonly string[]): string =>
+  `"${label}" has ${branches.length} branch${branches.length === 1 ? '' : 'es'} forked from it:\n`
+  + `${branches.map((b) => `• ${b}`).join('\n')}\n\n`
+  + `Deleting it deletes ${branches.length === 1 ? 'that branch' : 'those branches'} too.`;
+export const deleteCascadeConfirm = (branches: number): string => `Delete all (${branches + 1})`;
+
 /**
  * The citation pane's own words (tempdoc 822 Phase F8). The region is named for WHAT IT HOLDS — a
  * cited document — rather than "Document", because the pane's scope guard is that it never holds
