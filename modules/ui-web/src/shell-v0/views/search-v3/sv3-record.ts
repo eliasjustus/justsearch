@@ -128,6 +128,13 @@ interface Building {
    * covers the whole answer.
    */
   evidence: Sv3TurnEvidence | null;
+  /**
+   * The id of the LAST assistant message in the turn — last-wins for the same reason
+   * {@link evidence} is, and kept even though the ask turn's activity list is not (tempdoc 852
+   * §2.3a): the rendering rule that drops the list says nothing about the identity, and edit-retry,
+   * branch and floor-setting all address an assistant message by it.
+   */
+  assistantId: string | null;
 }
 
 const open = (id: string, question: string, askedAt: number): Building => ({
@@ -139,6 +146,7 @@ const open = (id: string, question: string, askedAt: number): Building => ({
   tools: 0,
   errored: false,
   evidence: null,
+  assistantId: null,
 });
 
 /**
@@ -186,6 +194,7 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
     if (item.kind === 'assistant') {
       turn.answers.push(item.content);
       turn.activity.push({ kind: 'text', id: item.id, text: item.content });
+      turn.assistantId = item.id;
       const evidence = recordEvidenceOf(item);
       if (evidence !== null) turn.evidence = evidence;
       continue;
@@ -215,6 +224,11 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       // overwritten by it, because UI state (expanded sources, the copied-turn flag, the live run's
       // `turnId`) is keyed on that id and a swap silently invalidates it.
       recordId: turn.id,
+      // Tempdoc 852 §2.3a — the OTHER half of the exchange's identity. An ask turn drops its
+      // activity list below, and used to drop every assistant id with it; the id is what edit-retry,
+      // branch and floor-setting address, and none of them can be built on a turn that cannot name
+      // the message they act on.
+      assistantRecordId: turn.assistantId,
       kind: agent ? 'agent' : 'ask',
       question: turn.question,
       answer: turn.answers.join('\n\n'),

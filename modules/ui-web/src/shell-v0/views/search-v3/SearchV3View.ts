@@ -97,6 +97,7 @@ import {
   activeTurns,
   adoptRunSession,
   appendTurnDelta,
+  applySv3History,
   applySv3Record,
   focusSession,
   mergeStoreConversations,
@@ -149,6 +150,7 @@ import {
   exportConversationMarkdown,
   generateConversationTitle,
   loadConversations,
+  resumeConversation,
   setActiveConversation,
   setConversationApiBase,
   setConversationTitle,
@@ -764,6 +766,7 @@ export class SearchV3View extends JfElement {
     setActiveConversation(id);
     void this.setComposerState('docked');
     void this.refreshRecord(id);
+    void this.refreshHistory(id);
   }
 
   /**
@@ -794,6 +797,47 @@ export class SearchV3View extends JfElement {
       conversationId,
       projectSv3RecordTurns(record.events),
     );
+  }
+
+  /**
+   * The `/history` COMPANION load (tempdoc 852 §2.3c). The shipped window reads both records at
+   * adjacent lines (`views/UnifiedChatView.ts:2048-2049`); this one read only the thread, so a
+   * conversation's branch lineage, its effective-context floor and its two exclusion ledgers were
+   * never on the wire it listened to. Nothing renders them yet — S2/S3 do — but a window that cannot
+   * ask for them cannot grow an affordance that needs them.
+   *
+   * On CLAIM, not per turn: these are properties of a conversation, and re-asking at every terminal
+   * would spend a round trip per answer to re-read facts that a turn does not change.
+   *
+   * A superseded load is DISCARDED, and the shared active-conversation pointer is put back — the
+   * store's `resumeConversation` claims that pointer as a side effect of a successful read
+   * (`state/conversationListStore.ts:529`), so a slow load for a conversation the reader has already
+   * left would otherwise re-point the product at the one they walked away from. Put back to whatever
+   * is active NOW, `null` included: New session clears the pointer, and a load landing after it must
+   * not resurrect the conversation the reader just left.
+   *
+   * HONEST LIMIT: `resumeConversation` reports a failed read as an empty resume by contract, so a
+   * conversation whose history could not be read is recorded as one with no floor and no parent
+   * rather than as one that was not told. The record half has {@link recordNotice} for that; this
+   * half would need the shared store to distinguish the two, which is not S1's to change.
+   */
+  private async refreshHistory(conversationId: string): Promise<void> {
+    const history = await resumeConversation(conversationId, SV3_ASK_SHAPE_ID);
+    const active = this.sessions.activeId;
+    if (active !== conversationId) {
+      setActiveConversation(active);
+      return;
+    }
+    this.sessions = applySv3History(this.sessions, conversationId, {
+      parentSessionId: history.parentSessionId,
+      branchPointMessageId: history.branchPointMessageId,
+      parentFirstUserMessage: history.parentFirstUserMessage,
+      contextFloor: history.contextFloor,
+      contextFloorSummary: history.contextFloorSummary,
+      excludedMessageIds: history.excludedMessageIds,
+      excludedSourceIds: history.excludedSourceIds,
+      locked: history.locked,
+    });
   }
 
   /**
@@ -1838,6 +1882,7 @@ export class SearchV3View extends JfElement {
     // The RECORD is what the reader is being shown, so it is fetched on the claim rather than trusted
     // from whatever this window happened to still hold (inventory D1).
     void this.refreshRecord(id);
+    void this.refreshHistory(id);
     void this.setComposerState('docked');
   }
 
