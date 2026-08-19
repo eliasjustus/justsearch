@@ -257,8 +257,16 @@ import {
   type Sv3RunView,
 } from './sv3-run.js';
 import { type Sv3CitationOpen, type Sv3RunDecision } from './Sv3Main.js';
+import {
+  sameCitationHeader,
+  type CitationHeader,
+} from '../../components/chat/evidenceProjection.js';
 import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
-import { sv3MatchedSentence, SV3_SOURCE_INDEX_ABSENT } from './sv3-citation-anchor.js';
+import {
+  sv3CitationHeader,
+  sv3MatchedSentence,
+  SV3_SOURCE_INDEX_ABSENT,
+} from './sv3-citation-anchor.js';
 import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiStateStore.js';
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
@@ -510,6 +518,7 @@ export class SearchV3View extends JfElement {
     resizing: { type: Boolean, reflect: true },
     paneDocPath: { state: true },
     paneCitation: { state: true },
+    paneCitationHeader: { state: true },
     paneSource: { state: true },
     paneWidthPx: { state: true },
     paneOverlay: { type: Boolean, reflect: true, attribute: 'pane-overlay' },
@@ -570,6 +579,13 @@ export class SearchV3View extends JfElement {
    * its matched sentence exists — the upgrade is the common path, not a repair.
    */
   declare paneSource: { readonly turnId: string; readonly sourceIndex: number } | null;
+  /**
+   * Tempdoc 849 §7 — what the open pane may say about the citation that opened it. Held HERE rather
+   * than derived inside the pane for the reason slice 2 recorded: the event carries identity only,
+   * and the facts live on this window's own turn records, which the reading pane has no access to
+   * and must not be given a second copy of.
+   */
+  declare paneCitationHeader: CitationHeader | null;
   /** The pane's chosen width. Held whether or not the pane is open, exactly as the sidebar's is. */
   declare paneWidthPx: number;
   /** The pane presents as a window-scoped overlay — the spec's 980px switch, asked of OUR box. */
@@ -700,6 +716,7 @@ export class SearchV3View extends JfElement {
     this.paneDocPath = null;
     this.paneCitation = null;
     this.paneSource = null;
+    this.paneCitationHeader = null;
     this.paneWidthPx = SV3_PANE_DEFAULT_PX;
     this.paneOverlay = false;
     this.renamingId = null;
@@ -1690,6 +1707,22 @@ export class SearchV3View extends JfElement {
     this.paneDocPath = detail.docPath;
     this.paneCitation = detail.anchor ?? null;
     this.paneSource = { turnId: detail.turnId, sourceIndex: detail.sourceIndex };
+    this.paneCitationHeader = this.headerFor(detail.turnId, detail.sourceIndex, this.paneCitation);
+  }
+
+  /**
+   * Tempdoc 849 §7 — the citation header for the turn/source the pane is showing. One helper, two
+   * callers, for the same reason `sv3CitationAnchor` has two: the header is resolved when the
+   * citation is followed and AGAIN when a late claim match changes what may be said about it, and
+   * the two answers must be produced by the same join.
+   */
+  private headerFor(
+    turnId: string,
+    sourceIndex: number,
+    anchor: DocumentCitationAnchor | null,
+  ): CitationHeader | null {
+    const turn = activeTurns(this.sessions).find((candidate) => candidate.id === turnId) ?? null;
+    return sv3CitationHeader(turn, sourceIndex, anchor);
   }
 
   /**
@@ -1704,13 +1737,27 @@ export class SearchV3View extends JfElement {
    */
   private upgradeOpenPaneAnchor(): void {
     const source = this.paneSource;
+    if (source === null || source.sourceIndex === SV3_SOURCE_INDEX_ABSENT) return;
     const anchor = this.paneCitation;
-    if (source === null || anchor === null || anchor.sentenceText !== null) return;
-    if (source.sourceIndex === SV3_SOURCE_INDEX_ABSENT) return;
-    const turn = activeTurns(this.sessions).find((candidate) => candidate.id === source.turnId) ?? null;
-    const sentence = sv3MatchedSentence(turn, source.sourceIndex);
-    if (sentence === null) return;
-    this.paneCitation = { ...anchor, sentenceText: sentence };
+
+    // The ANCHOR upgrade, which needs an anchor to upgrade and a sentence it does not yet have.
+    if (anchor !== null && anchor.sentenceText === null) {
+      const turn = activeTurns(this.sessions).find((c) => c.id === source.turnId) ?? null;
+      const sentence = sv3MatchedSentence(turn, source.sourceIndex);
+      if (sentence !== null) this.paneCitation = { ...anchor, sentenceText: sentence };
+    }
+
+    // The HEADER refresh, which needs neither (review LOW-5). The two used to share one early
+    // return, so a pane opened on an UNUSABLE span — `citation === null`, exactly the S10 case this
+    // slice added — was excluded from the header refresh forever: its grounding line stayed frozen
+    // at "Retrieved · not cited" no matter what the matcher later found. A citation with no usable
+    // position is still a citation whose source can be grounded, and the header is the only thing
+    // that can say so.
+    const next = this.headerFor(source.turnId, source.sourceIndex, this.paneCitation);
+    // Written only on a real change: this runs on every `sessions` update, i.e. every streamed
+    // chunk, and a fresh object each time would re-render the reader continuously for a header
+    // whose words never moved.
+    if (!sameCitationHeader(this.paneCitationHeader, next)) this.paneCitationHeader = next;
   }
 
   /**
@@ -1721,6 +1768,7 @@ export class SearchV3View extends JfElement {
     this.paneDocPath = null;
     this.paneCitation = null;
     this.paneSource = null;
+    this.paneCitationHeader = null;
   }
 
   private readonly onHostKeydown = (event: KeyboardEvent): void => {
@@ -2722,6 +2770,7 @@ export class SearchV3View extends JfElement {
         data-testid="sv3-pane"
         .docPath=${this.paneDocPath}
         .citation=${this.paneCitation}
+        .citationHeader=${this.paneCitationHeader}
         ?overlay=${this.paneOverlay}
         api-base=${this.apiBase}
         @sv3-pane-close=${this.closePane}

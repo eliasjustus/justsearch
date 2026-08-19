@@ -17,6 +17,11 @@
  */
 import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
 import type { CitationSelectDetail } from '../../components/chat/citationTypes.js';
+import {
+  citationHeader,
+  sourceGrounding,
+  type CitationHeader,
+} from '../../components/chat/evidenceProjection.js';
 import type { Sv3Turn } from './sv3-sessions.js';
 
 /** The source is not part of this turn's retrieval set (or the turn is gone). */
@@ -65,4 +70,41 @@ export function sv3CitationAnchor(
   const { startChar, endChar } = detail;
   if (!Number.isFinite(startChar) || !Number.isFinite(endChar) || endChar <= startChar) return null;
   return { startChar, endChar, excerpt: detail.excerpt ?? '', sentenceText };
+}
+
+/**
+ * Tempdoc 849 §7 — the followed citation's HEADER, joined here and worded in `evidenceProjection.ts`.
+ *
+ * <p>This is what slice 2's deviation bought. The event carries IDENTITY (`turnId` + `sourceIndex`)
+ * and nothing else, so the header reads `chunkIndex`/`chunkTotal`/`score`/`contextInclusion` off the
+ * ONE citation record the turn already holds. Copying them onto the event would have minted a second
+ * `RetrievalCitation` in flight — the fork `governance/execution-surfaces.v1.json` exists to prevent,
+ * and the same projection-not-fork rule §5.3 applied on the backend.
+ *
+ * <p>`spanUnusable` is derived from the anchor rather than passed in: {@link sv3CitationAnchor} is
+ * already the one authority on what a usable span is, and a second predicate here could disagree
+ * with it about the citation the pane is currently showing.
+ */
+export function sv3CitationHeader(
+  turn: Sv3Turn | null,
+  sourceIndex: number,
+  anchor: DocumentCitationAnchor | null,
+): CitationHeader | null {
+  const evidence = turn?.evidence ?? null;
+  const citation =
+    evidence !== null && sourceIndex !== SV3_SOURCE_INDEX_ABSENT
+      ? (evidence.sources[sourceIndex] ?? null)
+      : null;
+  return citationHeader({
+    citation,
+    // The matcher's own join, not a second one. `sourceCoverage` is NOT part of `Sv3TurnEvidence`
+    // (the window never carried it), so the examination state stays the established binary — a
+    // producer that said nothing about coverage does not get "unexamined" assumed on its behalf.
+    grounding:
+      citation === null
+        ? null
+        : sourceGrounding(sourceIndex, evidence?.matches ?? [], citation.parentDocId),
+    question: turn?.question ?? null,
+    spanUnusable: anchor === null,
+  });
 }

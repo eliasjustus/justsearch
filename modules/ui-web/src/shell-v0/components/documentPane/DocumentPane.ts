@@ -70,6 +70,10 @@ import { html, css, nothing, type TemplateResult, type PropertyValues } from 'li
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { JfElement } from '../../primitives/JfElement.js';
 import { markdownBlockMap, type MarkdownBlockDescriptor } from './markdownBlockMap.js';
+// Tempdoc 849 §7 — the header's WORDS come from the registered projection authority, never from
+// this view. A label minted in a renderer is the fork `governance/execution-surfaces.v1.json` exists
+// to prevent, and the pane and the sources panel must describe one budget fact identically.
+import { CITATION_SPAN_UNUSABLE, type CitationHeader } from '../chat/evidenceProjection.js';
 import { lineSpanOfChars, locateText, locateWitness } from './charAnchor.js';
 import { markdownCodeHighlight, markdownTypography } from '../markdown/markdownStyles.js';
 import { highlightCodeBlocks } from '../markdown/markdownHighlight.js';
@@ -225,6 +229,8 @@ export class DocumentPane extends JfElement {
     chunkRange: { attribute: false },
     // Tempdoc 849 §3 — the char-anchored citation; when set, the authority for both tiers.
     citation: { attribute: false },
+    // Tempdoc 849 §7 — what the citation that opened this pane can honestly be said about.
+    citationHeader: { attribute: false },
     anchorState: { state: true },
     previewWindow: { state: true },
     mode: { state: true },
@@ -251,6 +257,18 @@ export class DocumentPane extends JfElement {
    * {@link chunkRange} are not read, so a line number never has to survive a process boundary.
    */
   declare citation: DocumentCitationAnchor | null;
+  /**
+   * Tempdoc 849 §7 — the CITATION header: which turn cited this document, where in it the passage
+   * sits, whether the passage reached the model, and the two differently-measured scores. Distinct
+   * from {@link provenance}, which is TEXT-EXTRACTION provenance (the OCR/text-layer route) and is
+   * untouched by this: §7's first instruction is not to overload that word.
+   *
+   * <p>`null` means this pane was NOT opened by a citation — the three line-addressed mount sites
+   * never set it. That is also what distinguishes those from a citation whose span was unusable,
+   * which is a header PRESENT with {@link CitationHeader.spanUnusable} set (849 S10): before this
+   * property existed the pane could not tell the two apart and so said nothing about either.
+   */
+  declare citationHeader: CitationHeader | null;
   /** Derived from {@link citation} + the fetched window; never written from outside. */
   declare anchorState: CitationAnchorState | null;
   /** Which slice of the document {@link content} is, and whether more of it follows. */
@@ -284,6 +302,7 @@ export class DocumentPane extends JfElement {
     this.highlightRange = null;
     this.chunkRange = null;
     this.citation = null;
+    this.citationHeader = null;
     this.anchorState = null;
     this.previewWindow = null;
     this.mode = 'source';
@@ -858,6 +877,45 @@ export class DocumentPane extends JfElement {
     .preview-source-detail {
       color: var(--text-tertiary);
     }
+    /* Tempdoc 849 §7 — the CITATION header. Above the extraction-provenance line and visually its
+       sibling, not its replacement: one says where this TEXT came from, the other says why this
+       document is open. Wraps, because the fact count varies with what the producer recorded and a
+       fixed row would either clip the honest cases or reserve space for absent ones. */
+    .citation-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.25rem 0.6rem;
+      margin: 0.75rem 0.875rem 0;
+      padding: 0.3rem 0.5rem;
+      border-inline-start: 2px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      line-height: 1.35;
+    }
+    .citation-turn {
+      flex-basis: 100%;
+      color: var(--text-tertiary);
+    }
+    .citation-turn q {
+      color: var(--text-primary);
+    }
+    /* Each score names its own metric. §7 rule 1: the two are NEVER adjacent as bare numbers, which
+       is enforced by there being no number here at all — the band word is the whole value. */
+    .citation-metric {
+      color: var(--text-tertiary);
+    }
+    .citation-band {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .citation-inclusion {
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .citation-inclusion.dropped {
+      color: var(--text-warning);
+    }
     /* Tempdoc 849 §3 — the reader's own notices (why nothing is highlighted; what slice this is).
        Deliberately the quiet chrome voice the provenance line already speaks in: these say the pane
        is claiming LESS than usual, which is not an alert. */
@@ -991,6 +1049,67 @@ export class DocumentPane extends JfElement {
   }
 
   /**
+   * Tempdoc 849 §7 — the citation header. Every element is projected by `evidenceProjection.ts` and
+   * every one of them is suppressed when its producer said nothing, so a pre-849 conversation, a
+   * fallback-mode retrieval and an uncited source each render a SHORTER header rather than a
+   * padded one. There is no "unknown" placeholder: a caveat on every historical citation would be a
+   * claim of its own.
+   */
+  private renderCitationHeader(): TemplateResult | typeof nothing {
+    const h = this.citationHeader;
+    if (h === null) return nothing;
+    const parts = [
+      h.passage === null ? nothing : html`<span class="citation-passage">${h.passage}</span>`,
+      this.renderInclusion(h),
+      h.grounding === null ? nothing : html`<span class="citation-grounding">${h.grounding}</span>`,
+      this.renderBand(h.claim),
+    ].filter((part) => part !== nothing);
+    if (h.turnLabel === null && parts.length === 0) return nothing;
+    return html`<div class="citation-header" data-testid="citation-header">
+      ${h.turnLabel === null
+        ? nothing
+        : html`<span class="citation-turn">Cited in the answer to <q>${h.turnLabel}</q></span>`}
+      ${parts}
+    </div>`;
+  }
+
+  /** §5 — the flagship. Absent ⇒ nothing, never "included" (`inclusionBadge` already refuses). */
+  private renderInclusion(h: CitationHeader): TemplateResult | typeof nothing {
+    const badge = h.inclusion;
+    if (badge === null) return nothing;
+    return html`<span
+      class="citation-inclusion ${badge.state}"
+      data-inclusion=${badge.state}
+      title=${badge.detail}
+      >${badge.label}</span
+    >`;
+  }
+
+  /**
+   * §7 — a score as METRIC + BAND, never a bare number. Only the CLAIM similarity is banded here;
+   * the retrieval score is not rendered at all, because it is the raw Lucene hit score and the
+   * tier thresholds are anchored to the cross-encoder scale (see `claimMatch`).
+   */
+  private renderBand(score: CitationHeader['claim']): TemplateResult | typeof nothing {
+    if (score === null) return nothing;
+    return html`<span class="citation-score"
+      ><span class="citation-metric">${score.metric}</span>
+      <span class="citation-band">${score.band}</span></span
+    >`;
+  }
+
+  /**
+   * Tempdoc 849 slice 2 S10 — the citation carried a span this reader cannot use (`endChar <=
+   * startChar`, or a non-finite offset). The pane used to open in silence, indistinguishable from a
+   * document opened with no citation at all; the header is what finally lets it tell the difference,
+   * so this is where the message belongs.
+   */
+  private renderSpanNotice(): TemplateResult | typeof nothing {
+    if (this.citationHeader?.spanUnusable !== true) return nothing;
+    return html`<p class="reader-notice span-notice" role="note">${CITATION_SPAN_UNUSABLE}</p>`;
+  }
+
+  /**
    * Tempdoc 849 §3 R1.4 — why nothing is highlighted, when the anchor could not be confirmed. It
    * renders INSTEAD of a highlight, never beside one: a tinted passage plus a hedge is read as a
    * tinted passage.
@@ -1064,7 +1183,7 @@ export class DocumentPane extends JfElement {
       return html`<jf-error-alert tone="error">${this.error}</jf-error-alert>`;
     }
     return html`
-      ${this.renderProvenanceLine()}${this.renderAnchorNotice()}${this.renderWindowNote()}
+      ${this.renderCitationHeader()}${this.renderProvenanceLine()}${this.renderSpanNotice()}${this.renderAnchorNotice()}${this.renderWindowNote()}
       <div
         class="scroll-region"
         tabindex="0"

@@ -5,6 +5,11 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { setUiMode, __resetUiModeForTest } from '../../state/uiModeState.js';
 import './DocumentPane.js';
 import type { DocumentPane } from './DocumentPane.js';
+import {
+  citationHeader,
+  CITATION_SPAN_UNUSABLE,
+  type CitationHeader,
+} from '../chat/evidenceProjection.js';
 
 function make(): DocumentPane {
   const el = document.createElement('jf-document-pane') as DocumentPane;
@@ -81,6 +86,167 @@ async function clickIconButton(host: Element): Promise<void> {
 }
 
 const MD_FIXTURE = ['# Title', '', 'Paragraph text here.', '', '- item a', '- item b'].join('\n');
+
+const CITATION_FIXTURE = {
+  parentDocId: 'notes/thread.md',
+  chunkIndex: 3,
+  chunkTotal: 9,
+  startChar: 10,
+  endChar: 40,
+  // Deliberately high, and deliberately never rendered: slice-3 review HIGH-1 removed the retrieval
+  // band because this is the RAW Lucene hit score, not a value on the grounding tier scale.
+  score: 0.9,
+  excerpt: 'Paragraph text here.',
+  startLine: 2,
+  endLine: 2,
+  headingText: 'Title',
+  headingLevel: 1,
+  // PARTIAL, not dropped: the default fixture must be a state that KEEPS its grounding, so the
+  // header-content tests below assert the full header rather than the MEDIUM-3 suppressed one.
+  contextInclusion: 'partial' as const,
+};
+
+/**
+ * Tempdoc 849 §7 — the citation header, as the WINDOW would hand it over. Built through the real
+ * `citationHeader` projector rather than as a hand-written literal, so a test cannot assert a header
+ * shape the product can never produce.
+ */
+function headerFor(
+  overrides: Partial<Parameters<typeof citationHeader>[0]> = {},
+): CitationHeader | null {
+  return citationHeader({
+    citation: CITATION_FIXTURE,
+    grounding: {
+      cited: true,
+      groundedSentences: 2,
+      similarity: 0.51,
+      tier: 'medium' as never,
+      state: 'cited',
+    },
+    question: 'How does indexing reach the head?',
+    spanUnusable: false,
+    ...overrides,
+  });
+}
+
+/**
+ * Tempdoc 849 slice 3 §7 — the CITATION header (distinct from the text-extraction provenance line,
+ * which §7's first instruction says must keep its name and its behaviour).
+ */
+describe('DocumentPane — 849 citation header', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function open(header: CitationHeader | null): Promise<DocumentPane> {
+    stubFetchOnce({ content: MD_FIXTURE, textProvenance: 'tika' });
+    const el = make();
+    el.citationHeader = header;
+    el.docPath = 'notes/thread.md';
+    await flush(el);
+    return el;
+  }
+
+  const headerText = (el: DocumentPane): string =>
+    (el.shadowRoot?.querySelector('[data-testid="citation-header"]')?.textContent ?? '').replace(
+      /\s+/g,
+      ' ',
+    );
+
+  it('says which turn cited the document, where the passage sits, and what happened to it', async () => {
+    const el = await open(headerFor());
+    const text = headerText(el);
+    expect(text).toContain('How does indexing reach the head?');
+    expect(text).toContain('Passage 4 of 9');
+    expect(text).toContain('Grounds 2 sentences');
+    expect(text).toContain('Partly sent to the model');
+    expect(
+      el.shadowRoot?.querySelector('.citation-inclusion')?.getAttribute('data-inclusion'),
+    ).toBe('partial');
+  });
+
+  it('labels its ONE score by what it MEASURES, and renders no retrieval band', async () => {
+    // Slice-3 review HIGH-1: the retrieval score is the raw Lucene hit score and the tier
+    // thresholds are anchored to the cross-encoder scale, so banding it produced a mode-constant —
+    // always "weak" for RRF-fused hybrid, always "strong" for unbounded BM25. It is gone.
+    const el = await open(headerFor());
+    const text = headerText(el);
+    // The band that remains comes from the CLAIM similarity (0.51 → moderate). The fixture's
+    // retrieval score is 0.9, so a header that had reached for it would read "strong" here.
+    expect(text).toContain('Claim match moderate');
+    expect(text).not.toContain('Retrieval match');
+    expect(text).not.toContain('strong');
+    // §7 rule 2 — no bare percentages anywhere in the header.
+    expect(text).not.toMatch(/\d+%/);
+  });
+
+  it('a DROPPED passage shows the badge ALONE, with no grounding claim beside it', async () => {
+    // Slice-3 review MEDIUM-3, on the pane side. A source the prompt had no room for can still be
+    // scored by the matcher (which re-fetches chunk text by identity), so this fixture — dropped
+    // AND cited — is the real shape, and it used to render both statements at once.
+    const el = await open(
+      headerFor({ citation: { ...CITATION_FIXTURE, contextInclusion: 'dropped' } }),
+    );
+    const text = headerText(el);
+    expect(text).toContain('Retrieved · never sent to the model');
+    expect(text).not.toContain('Grounds 2 sentences');
+    expect(text).not.toContain('Claim match');
+    // Not a blanket blanking of the header: what the producer DID observe is still said.
+    expect(text).toContain('Passage 4 of 9');
+  });
+
+  it('renders a SHORTER header when the producer said less — never a padded one', async () => {
+    // An uncited, pre-849 source: no inclusion state, no claim match. Everything that remains true
+    // is still said, and nothing is padded in to fill the row.
+    const el = await open(
+      headerFor({
+        citation: {
+          parentDocId: 'notes/thread.md',
+          chunkIndex: 3,
+          chunkTotal: 9,
+          startChar: 10,
+          endChar: 40,
+          score: 0.9,
+          excerpt: '',
+          startLine: 2,
+          endLine: 2,
+          headingText: '',
+          headingLevel: 0,
+        },
+        grounding: null,
+      }),
+    );
+    const text = headerText(el);
+    expect(text).toContain('Passage 4 of 9');
+    expect(text).not.toContain('sent to the model');
+    expect(text).not.toContain('Claim match');
+  });
+
+  it('renders no header at all for the line-addressed mount sites', async () => {
+    const el = await open(null);
+    expect(el.shadowRoot?.querySelector('[data-testid="citation-header"]')).toBeNull();
+    // …and the TEXT-EXTRACTION provenance line is untouched by any of this (§7's name-collision
+    // instruction): it still renders on its own, as it did before the header existed.
+    expect(el.shadowRoot?.querySelector('.preview-source')?.textContent).toContain('Text source');
+  });
+
+  it('849 S10 — a degenerate span is explained instead of opening in silence', async () => {
+    const el = await open(headerFor({ citation: null, grounding: null, spanUnusable: true }));
+    const notice = el.shadowRoot?.querySelector('.span-notice');
+    expect(notice?.textContent?.trim()).toBe(CITATION_SPAN_UNUSABLE);
+    // The message the slice-2 review asked for: the reader is told the citation had no usable
+    // position, rather than being left to wonder why nothing is highlighted.
+    expect(notice?.textContent).toContain('did not record a usable position');
+  });
+
+  it('849 S10 — a citation WITH a usable span shows no such notice', async () => {
+    // The discriminator. Without it the previous test would pass against a pane that showed the
+    // notice unconditionally.
+    const el = await open(headerFor());
+    expect(el.shadowRoot?.querySelector('.span-notice')).toBeNull();
+  });
+});
 
 describe('DocumentPane — empty state', () => {
   beforeEach(() => {

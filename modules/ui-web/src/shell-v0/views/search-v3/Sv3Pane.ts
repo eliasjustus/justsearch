@@ -37,6 +37,7 @@ import { sv3Shared } from './sv3-shared-styles.js';
 // registration would render an unknown element whenever it was reached first.
 import '../../components/documentPane/DocumentPane.js';
 import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
+import type { CitationHeader } from '../../components/chat/evidenceProjection.js';
 import { PANE_LABEL } from './fixtures.js';
 
 /** Raised when the pane's own close control is used; the window decides what closing means. */
@@ -166,6 +167,7 @@ export class Sv3Pane extends JfElement {
   static properties = {
     docPath: { attribute: false },
     citation: { attribute: false },
+    citationHeader: { attribute: false },
     apiBase: { type: String, attribute: 'api-base' },
     overlay: { type: Boolean, reflect: true },
   };
@@ -182,6 +184,12 @@ export class Sv3Pane extends JfElement {
    * would be exactly the extra hop the char anchor exists to remove.
    */
   declare citation: DocumentCitationAnchor | null;
+  /**
+   * Tempdoc 849 §7 — the citation header, forwarded VERBATIM. This region derives no part of it: the
+   * facts are joined from the turn's own evidence record in `SearchV3View` and worded by
+   * `evidenceProjection.ts`, so a label cannot be re-authored on the way through a frame element.
+   */
+  declare citationHeader: CitationHeader | null;
   declare apiBase: string;
   /**
    * The narrow presentation, decided by the window from its own box (see the styles above for why it
@@ -196,6 +204,7 @@ export class Sv3Pane extends JfElement {
     super();
     this.docPath = null;
     this.citation = null;
+    this.citationHeader = null;
     this.apiBase = '';
     this.overlay = false;
   }
@@ -220,6 +229,7 @@ export class Sv3Pane extends JfElement {
           data-testid="sv3-pane-document"
           .docPath=${this.docPath}
           .citation=${this.citation}
+          .citationHeader=${this.citationHeader}
           api-base=${this.apiBase}
           @pane-close=${this.onPaneClose}
         ></jf-document-pane>
