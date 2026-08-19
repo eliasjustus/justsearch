@@ -1,30 +1,168 @@
-# 852 — Promoting Search v3 to the product's chat window
-
-```
-status:  PARTIALLY IMPLEMENTED — rev 2 design (adversarially reviewed, APPROVE-WITH-AMENDMENTS).
-         S1 (turn identity + the /history companion load) is IMPLEMENTED by this PR.
-         S0 and S2-S11 remain PENDING.
-created: 2026-08-19
-related: 847 (citation correctness — S1-S3 shipped in #488; 852-S1 is sequenced strictly behind
-              847-S3, which owns `Sv3Turn.recordId` and the identity-keyed merge),
-         848 (reasoning parity), 846 (markdown substrate), 849 (evidence reader),
-         822 (the Search v3 window itself: Phases F1-F10), 610 (the context set),
-         513 (stable message ids + branch), 629/734 (the conversation-store lock)
-```
-
-The program's shape (slices, parity ledger, the flip and its sweep) lives in the rev-2 design
-document. This tempdoc records what each slice actually shipped, and is the durable half.
-
-| Slice | What | Status |
-|---|---|---|
-| S0 | FE↔Java surface-parity leg on `check-surface-composition`; record-attribute hydration lives in `components/chat/` | PENDING |
-| **S1** | **Turn identity + the `/history` companion load. No UI.** | **IMPLEMENTED (this PR)** |
-| S2 | The tempdoc-610 context set (floor / clear / compact / summary-edit / message-exclude) | PENDING |
-| S3 | Branch + version pager + edit/retry/resend + cascade-aware delete | PENDING |
-| S4-S7 | Composer tier control, retrieve tier, `jf-control` adoption, flip prerequisites | PENDING |
-| S8-S11 | The flip, the sweep, the marker, the renames | PENDING |
-
 ---
+number: 852
+title: The window cutover — promoting Search v3 to the one interaction surface
+status: IN PROGRESS — S0 implemented (merged, #493); S1 implemented (this PR); S2+ pending
+created: 2026-08-19
+scope-of-this-file: S0 and S1. The full program charter (target end state, the parity ledger,
+  the slice DAG S1-S11, the open questions) lives with the orchestrator and lands here as the
+  program's later slices land. This file exists so each slice's code has its design of record
+  in-repo rather than only in a PR body.
+forcing-function: `check-window-cutover` (shipped with 851) WARNs until 2026-09-30 and FAILS
+  after, keyed on (a) `core.search-v3-surface` audience USER in CorePlugin.ts and (b) the
+  `governance/window-cutover.done` marker the program's final slice writes.
+related: 847 (citation correctness — S1-S3 shipped in #488; 852-S1 is sequenced strictly behind
+  847-S3, which owns `Sv3Turn.recordId` and the identity-keyed merge), 848 (reasoning parity),
+  846 (markdown substrate), 849 (evidence reader), 822 (the Search v3 window itself: Phases
+  F1-F10), 610 (the context set), 513 (stable message ids + branch), 629/734 (the
+  conversation-store lock)
+---
+
+## Status
+
+| Slice | What | State |
+|---|---|---|
+| **S0** | FE↔Java surface-parity leg on `check-surface-composition` | **implemented (merged, #493)** |
+| **S1** | Turn identity + the `/history` companion load. No UI. | **implemented (this PR)** |
+| S2 | The tempdoc-610 context set (floor / clear / compact / summary-edit / message-exclude) | pending |
+| S3 | Branch + version pager + edit/retry/resend + cascade-aware delete | pending |
+| S4-S7 | Composer tier control, retrieve tier, `jf-control` adoption, flip prerequisites | pending |
+| S8-S11 | The flip, the sweep, the marker, the renames | pending |
+
+S0's second half — recording that record-attribute hydration lives in
+`modules/ui-web/src/shell-v0/components/chat/` (adopting 847-S1's location) — is a decision
+addressed to the 847 and 848 implementers and carries no code. It is noted here and not
+duplicated as an entry above.
+
+## S0 — the FE↔Java surface-parity leg
+
+### Why this exists
+
+Three facts, each fine alone, compose into one specific hole:
+
+1. The `interaction-surface` gate parses `new Surface(...)` declarations out of
+   `modules/app-observability/src/main/java/io/justsearch/app/observability/surface/CoreSurfaceCatalog.java`
+   **only** (`governance/interaction-surfaces.v1.json` `scan`). Its FE leg scans for a second
+   `registerViewFactory` mount, and its `feMirror` is `coreInteractionShapes.ts` — a *shape*
+   mirror, not a surface/audience mirror.
+2. `check-window-cutover.mjs` keys "the promotion is complete" on
+   `registeredAudience(CorePlugin.ts)` plus the marker file (`:79-88`, `:129-130`) — i.e. it reads
+   **only** the TypeScript side.
+3. `check-surface-composition.mjs` already read *both* files, but only to resolve dangling
+   member refs against the merged id set. Its own comment recorded the limit: the RAIL set was
+   "Java-only (the only placement this static gate authoritatively knows)".
+
+Composed: **an implementer who flips `audience` in `CorePlugin.ts` alone ships two USER/RAIL
+interaction windows, passes every gate, and satisfies the 2026-09-30 forcing function.** The gate
+meant to prevent the outcome cannot see the FE registration; the gate enforcing the deadline reads
+nothing else. Neither is wrong on its own.
+
+`core.search-v3-surface` has **no entry in `CoreSurfaceCatalog.java` at all** today, so the
+`interaction-surface` gate is currently blind to search-v3 on every leg — it is not "allowing" a
+second window, it cannot see one. The safety S8 (the flip) depends on is created *by* S8 unless
+something arms it earlier. That is what S0 is.
+
+### What shipped
+
+A second leg on `scripts/ci/check-surface-composition.mjs` — a leg on plumbing the gate already
+had, not a new gate:
+
+> Any surface id declared in **both** `CorePlugin.ts` and `CoreSurfaceCatalog.java` must agree on
+> `audience` and `placement`. A disagreement fails the build.
+
+- **Comment-stripped first**, both sources, using the same technique and for the same reason as
+  `check-window-cutover.mjs` `stripComments` — a commented-out or merely discussed registration is
+  not a declaration. (This also hardened leg 1's Java parse, which previously matched
+  `Placement.*` inside comments; leg 1's result on `main` is byte-identical either way —
+  `4 host(s), 7 member(s)` before and after.)
+- **One-sided surfaces are out of scope.** FE-only (`core.search-v3-surface`,
+  `core.memory-surface`, `core.command-palette`) and Java-only (`core.ask-surface`,
+  `core.system-surface`, `core.free-chat-surface`, `core.extract-surface`) ids are not compared:
+  there is no second declaration to disagree with. 14 of the 21 ids are compared today.
+- **The failure message names both files, both values, and the rationale**, because a gate whose
+  message does not explain the hazard gets "fixed" by editing whichever side is nearer.
+- The script was refactored to export pure functions (`parseJavaSurfaces`,
+  `parseCorePluginSurfaces`, `checkComposition`, `checkParity`, `run`) so both legs are testable
+  without a repo on disk. Leg 1's rules and messages are unchanged.
+
+### The pre-existing drift this leg found
+
+Arming the leg immediately surfaced two live disagreements that predate it:
+
+| Surface | `CorePlugin.ts` | `CoreSurfaceCatalog.java` |
+|---|---|---|
+| `core.health-surface` | `audience: 'OPERATOR'` | `Audience.USER` |
+| `core.activity-surface` | `audience: 'OPERATOR'` | `Audience.USER` |
+
+The FE re-declaration wins in the shell (`CorePlugin.ts:45-53` states this for `core.help-surface`
+in as many words: "this FE re-declaration would otherwise override the wire's placement"), so the
+wire catalog is currently wrong about who can see Health and Activity. `core.logs-surface`, the
+third System-hub member, agrees at OPERATOR on both sides — which is what makes these two look
+like drift rather than a rule.
+
+**Which side is right is a product decision about who sees Health and Activity, not a gate fix**,
+and it is outside S0's scope. So they are recorded rather than silently tolerated, in the script's
+`KNOWN_PARITY_DRIFT` ledger, with three properties that keep it from becoming an escape hatch:
+
+1. Each entry **pins the exact pair of values**. The pinned pair warns.
+2. **Any change to that pair fails** — settled (delete the stale entry) or drifted further (that is
+   new drift, and the ledger does not exempt it).
+3. **An entry naming a pair no longer declared in both files fails** as residue.
+
+`core.search-v3-surface` and `core.unified-chat-surface` are deliberately not in the ledger —
+those are the ids S0 exists to protect. Logged to the observations inbox as a pre-existing issue.
+
+### Mutation probe — evidence the leg bites
+
+A gate armed slices before the thing it protects is the shape that ships inert, so the bite was
+verified against the real tree, not only against fixtures. `core.search-v3-surface` cannot serve as
+the probe subject (it has no Java entry), so `core.unified-chat-surface` — the shipped USER/RAIL
+window, and the closest analogue of the flip — was mutated on the FE side only:
+
+| # | Mutation (`CorePlugin.ts` only) | Result |
+|---|---|---|
+| 0 | none | **PASS** (exit 0) — `4 host(s), 7 member(s); 14 surface(s) … checked, 2 recorded pre-existing disagreement(s)` |
+| 1 | `audience: 'USER'` → `'DEVELOPER'` | **FAIL** (exit 1) — `core.unified-chat-surface declares audience 'DEVELOPER' in …/CorePlugin.ts but 'USER' in …/CoreSurfaceCatalog.java. … a ONE-SIDED flip ships a broken or duplicated USER window while every other gate stays green …` |
+| 2 | `placement: 'RAIL'` → `'DEEPLINK'` | **FAIL** (exit 1) — same message shape, on `placement` |
+| 3 | reverted | **PASS** (exit 0), output identical to #0; `git diff` shows no change to `CorePlugin.ts` |
+
+A second probe checked **test precision** rather than gate bite: replacing `stripComments` with the
+identity function turned exactly the four comment-handling assertions red
+(`FAIL (4 of 28)`) and nothing else — so those tests pass because stripping works, not because the
+fixture happened to parse. Reverted.
+
+### Tests
+
+`scripts/ci/check-surface-composition.test.mjs` (new, 28 assertions, the bare-node style of
+`check-window-cutover.test.mjs`): parser behaviour; agreement passes; audience mismatch fails;
+placement mismatch fails; both fields disagreeing yields one failure per field; a one-sided
+search-v3 promotion fails on both fields; FE-only and Java-only surfaces are not compared; four
+comment cases (line-commented FE field, block-commented FE field, a commented-out whole FE
+registration placed *after* the live one so it cannot pass by overwrite order, commented-out Java
+field); the ledger's warn / drifted-further / settled / residue paths; and leg 1's four composition
+rules plus the 578-Option-A merged-id-set resolution, so the refactor cannot silently regress them.
+
+### Routing, and one limitation left open
+
+The leg adds a second **subject** to this gate: `CoreSurfaceCatalog.java`. The gate's existing
+wiring — the `ui-web-gates` recipe in `governance/consult-register.v1.json`, pushed by the consult
+hook on any `modules/ui-web/src/**` edit — only covers the FE side, so a Java-only edit would not
+have reached it.
+
+The first attempt added `check-surface-composition` to the CLAUDE.md pre-merge row for
+`CoreSurfaceCatalog.java`. **`check-always-loaded-budget` rejected it** — 31 B over CLAUDE.md's
+ratchet ceiling — and its failure message names the correct remedy: migrate the addition out to
+the consult-register. So the routing lives in a new `surface-catalog-parity` region
+(`pathIncludes: ["CoreSurfaceCatalog.java"]`) whose recipe names both this gate and
+`--gate surface-altitude`; `regionFor()` was probed against the catalog's real path and resolves
+it. `governance/surface-composition.v1.json`'s description was updated to describe both legs
+rather than only the first. `check-premerge-table` validates the register's script refs
+(50 refs, all resolving) and `check-always-loaded-budget` is green with CLAUDE.md unchanged.
+
+**Open:** neither this gate nor its test is wired into `.github/workflows/ci.yml` — that is the
+pre-existing arrangement for this gate and is unchanged here, so the leg is enforced by the
+pre-merge/consult path, not by hosted CI. Recorded rather than fixed: adding a gate to CI is a
+workflow change with its own review surface, and S8 lists `check-surface-composition` explicitly
+in its required-gate set regardless.
 
 ## S1 — turn identity and the two-record load
 
@@ -126,10 +264,10 @@ these two:
    including the placeholder a sealed line becomes (`FileConversationStore.java:149-157`), while
    `chatTurn` returns `null` for every role that is not user/assistant (`:247-259`) — so the two
    arrays differ in length and position, and turns group messages besides. The test constructs the
-   skew and asserts the id answer, naming the index answer that would look entirely plausible
-   (`m1` sits at history position 1 and belongs to the FIRST turn). A merge leg asserts the
-   record's evidence and message ids land on the turn bearing the matching `recordId` when the
-   record's order disagrees with the local one.
+   skew and asserts the id answer, naming the index answer that would look entirely plausible (the
+   first turn's assistant message sits at history position 1). A merge leg asserts the record's
+   evidence and message ids land on the turn bearing the matching `recordId` when the record's
+   order disagrees with the local one.
 2. **The `idx-N` backfill, the run plane, and the `hashCode()` fallback.** `idx-N` is a real store id
    and is reported; a run turn's `${runId}:user` + `${conversationId}:assistant:${stamp}` pair, a
    turn opened on a search event, a turn opened on a stored *assistant* row, and the `:chat:`
@@ -144,12 +282,13 @@ allowlist fails 3; dropping the `recordOpenedByUser` condition fails the stored-
 of provenance fails the mixed-turn case; disabling the `refreshHistory` calls fails the arrival case;
 and restoring the claiming read fails both pointer cases.
 
-Green: `npm run typecheck` clean; `npm run test:unit:run` 5221 passed (one unrelated pre-existing
-flake in `EnvelopeStream.test.ts`'s 70 ms watchdog, green in isolation). ui-web gate set + the six
-kernel gates + `execution-surface` + `register-guard-resolution` pass, except three reds already
-red on `main` and in files this PR does not touch (`check-theme-token-closure`,
-`check-accent-as-text`, `strip-token-fallbacks --check`, plus `check-controls-a11y`'s
-`UnifiedChatView.ts:2137` finding).
+Green: `npm run typecheck` clean; `npm run test:unit:run` 419 files / 5227 tests passed. ui-web gate
+set + the six kernel gates + `execution-surface` + `register-guard-resolution` pass, except reds
+already red on `main` in files this PR does not touch (`check-theme-token-closure`,
+`check-accent-as-text`, `strip-token-fallbacks --check`, and `check-controls-a11y`'s
+`UnifiedChatView.ts` title-on-disabled finding). One unrelated flake was seen once in a parallel
+suite run (`EnvelopeStream.test.ts`'s 70 ms watchdog, green in isolation and on the final run) and
+is logged to the observations inbox.
 
 ### Deviation from the design's letter
 
