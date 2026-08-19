@@ -43,7 +43,16 @@ pool"; charter the levers below.
 
 ## Chartered work (each item independently landable; D-005 regime-blind throughout)
 
-1. **W1 — the shared-constant wrong-gate (smallest, do first).** F-036 §K (2026-07-29,
+1. **W1 — the shared-constant wrong-gate (smallest, do first). DONE 2026-08-19** (commit
+   `8c4ae246`, rides with this charter): the Stage-3B branch ramp now has its own bounds
+   (`index.hybrid.branch_ramp.{full_weight_max,zero_weight_min}_tokens`, defaults 1024/4096,
+   wired EnvRegistry -> ResolvedConfig -> SearchExecutor; adapters-lucene still performs zero
+   env reads via bounds-aware overloads). Byte-identical-at-defaults pinned across the token
+   grid, plus the divergence pin that would have caught 784 §K (raising the SPLADE bound no
+   longer moves the branch ramp). Config-surface changeset declared. Bonus finding, logged to
+   the inbox not fixed: the legacy SPLADE constants are raw `Long.getLong` reads that evade
+   BOTH the ArchUnit env-read rule and `checkNoDirectJustsearchSysProp` — a gate-loophole
+   class worth its own sweep. F-036 §K (2026-07-29,
    analysis-only) proved `justsearch.splade.zero_weight_min_tokens` is ONE constant read by
    TWO levers: the SPLADE parent-length fade AND the whole-vs-chunk branch ramp
    (`HybridFusionUtils.java:24-27` at the time; re-cite at HEAD). Raising it for a SPLADE
