@@ -498,6 +498,15 @@ the ordering holds, the multiple does not.)*
 > because it was the one sampled claim the shipped instrument could not re-derive:
 > `dev-tool-usage.mjs` reports MCP servers only, so a non-MCP denominator has no instrument behind
 > it. `.claude/skills/ui-check/SKILL.md` is corrected accordingly.
+>
+> **Root cause — the same defect as §3's, not a second one.** The 73.3 MB denominator came from the
+> original non-recursive extraction that excluded subagent transcripts (§1's method correction).
+> Subagent sessions are dominated by `Read` and `Bash`, so excluding them deflated exactly the
+> denominators that outweigh the browser, while `claude-in-chrome` — used almost entirely from main
+> sessions — was barely affected. One measurement bug therefore produced two wrong numbers in
+> different sections, and fixing §3 did not fix §6.4 because the byte totals were never re-derived.
+> The lesson generalizes past this document: when a method defect is found, every figure computed
+> with that method needs re-deriving, not just the one that surfaced it.
 
 Browser use is concentrated in 17 sessions and is mostly local (`127.0.0.1` dev UI), i.e.
 overlapping `jseval ui-shot`'s territory — which writes PNGs to disk and returns a `.measure.json`,
