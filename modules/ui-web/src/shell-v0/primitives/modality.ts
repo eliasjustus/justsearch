@@ -59,8 +59,16 @@ export class ModalityController implements ReactiveController {
     acquireScrollLock();
   }
 
-  /** Call when the modal closes: release scroll-lock + restore focus. Idempotent. */
-  exit(): void {
+  /**
+   * Call when the modal closes: release scroll-lock + restore focus. Idempotent.
+   *
+   * `skipFocusRestore` (855 §11.2 merge-blocker): a navigation-initiated close (the address has
+   * already moved to a different stage surface — Shell's dismiss-on-realized-stage-navigation) must
+   * NOT restore focus to the pre-modal invoker, because that invoker is no longer the rightful focus
+   * destination for the surface the user is now on. Scroll-lock release is unconditional either way —
+   * only the WAI-ARIA restore-to-invoker behaviour is what a navigation should skip.
+   */
+  exit(opts?: { skipFocusRestore?: boolean }): void {
     if (!this.active) return;
     this.active = false;
     releaseScrollLock();
@@ -68,6 +76,7 @@ export class ModalityController implements ReactiveController {
     // native <dialog> only auto-restores for invoker clicks, not property-driven opens).
     const target = this.savedFocus;
     this.savedFocus = null;
+    if (opts?.skipFocusRestore) return;
     if (target && typeof target.focus === 'function' && target.isConnected) {
       target.focus();
     }

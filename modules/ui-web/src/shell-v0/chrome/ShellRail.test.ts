@@ -55,12 +55,15 @@ const SETTINGS = makeRailSurface(
   'core.settings-surface',
   'jf-settings-surface',
 );
-// Tempdoc 586 F-2 — the two surfaces hidden from the rail in Simple mode.
+// Tempdoc 586 F-2 — the surface hidden from the rail in Simple mode.
 const SYSTEM = makeRailSurface('core.system-surface', 'jf-system-surface');
-const THEME_EDITOR = makeRailSurface(
-  'vendor.token-editor.editor-surface',
-  'jf-token-editor-surface',
-);
+// Tempdoc 855 §5 item 2 — Token Editor is DEEPLINK-placement now, not RAIL: seeded here (not via
+// `makeRailSurface`) so the fixture is honest about what the real catalog wire declares, to assert
+// it never reaches the rail's `railSurfaces` base filter, in either Simple or Advanced mode.
+const THEME_EDITOR: Surface = {
+  ...makeRailSurface('vendor.token-editor.editor-surface', 'jf-token-editor-surface'),
+  placement: 'DEEPLINK',
+};
 
 function seedSurfacesWithDiagnostics(): void {
   const catalog: SurfaceCatalog = {
@@ -224,29 +227,33 @@ describe('Shell — Simple/Advanced rail filter (tempdoc 586 F-2)', () => {
     __resetUiModeForTest();
   });
 
-  it('Simple mode hides System + Theme Editor from the rail but keeps AI Brain', async () => {
+  it('Simple mode hides System from the rail but keeps AI Brain (Theme Editor is DEEPLINK — never on the rail)', async () => {
     seedSurfacesWithDiagnostics();
     setUiMode('simple');
     const shell = await renderShell();
     const ids = shell.surfaces.map((s) => s.id);
-    // The two advanced/diagnostic surfaces drop off in Simple mode...
+    // The advanced/diagnostic surface drops off in Simple mode...
     expect(ids).not.toContain('core.system-surface');
-    expect(ids).not.toContain('vendor.token-editor.editor-surface');
     // ...while AI Brain stays (the user's explicit choice), as do the consumer surfaces.
     expect(ids).toContain('core.brain-surface');
     expect(ids).toContain('core.library-surface');
     expect(ids).toContain('core.search-surface');
     // 855 S1 — and Settings is out of the rail set in BOTH modes, not a Simple-mode trim.
     expect(ids).not.toContain('core.settings-surface');
+    // 855 §5 item 2 — Token Editor is DEEPLINK-placement: it never reaches `railSurfaces` at all,
+    // regardless of mode, so it is absent here too (not because Simple mode hid it).
+    expect(ids).not.toContain('vendor.token-editor.editor-surface');
   });
 
-  it('Advanced mode restores System + Theme Editor', async () => {
+  it('Advanced mode restores System (Theme Editor stays off the rail — it is DEEPLINK, not RAIL)', async () => {
     seedSurfacesWithDiagnostics();
     setUiMode('advanced');
     const shell = await renderShell();
     const ids = shell.surfaces.map((s) => s.id);
     expect(ids).toContain('core.system-surface');
-    expect(ids).toContain('vendor.token-editor.editor-surface');
     expect(ids).toContain('core.brain-surface');
+    // 855 §5 item 2 — DEEPLINK placement means Advanced mode does not restore it either; it was
+    // never excluded by the Simple-mode filter to begin with.
+    expect(ids).not.toContain('vendor.token-editor.editor-surface');
   });
 });

@@ -115,11 +115,14 @@ export class SettingsNav extends JfElement {
       color: var(--text-primary);
       background: var(--surface-hover);
     }
-    /* Discord-2025 measured spec (855 §2): a NEUTRAL translucent active pill, not the brand accent. */
+    /* Discord-2025 measured spec (855 §2): a NEUTRAL translucent active pill, not the brand accent.
+       Uses --surface-active (distinct from :hover's --surface-hover, tempdoc 855 §12 P3a) — sharing
+       --surface-hover made the active row and a hovered-but-inactive row render identically, so
+       hovering elsewhere in the list visually "double-highlighted" two rows at once. */
     button.category-row.active,
     button.anchor-row.active {
       color: var(--text-primary);
-      background: var(--surface-hover);
+      background: var(--surface-active);
     }
     button.category-row.danger {
       color: var(--text-danger);

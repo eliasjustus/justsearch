@@ -66,12 +66,16 @@ export class ModalController implements ReactiveController {
     this.modality.enter();
   }
 
-  /** Close the modal: close the dialog, then release scroll-lock + restore focus. Idempotent. */
-  close(): void {
+  /**
+   * Close the modal: close the dialog, then release scroll-lock + restore focus. Idempotent.
+   * `skipFocusRestore` passes straight through to {@link ModalityController.exit} (855 §11.2
+   * merge-blocker) — for a navigation-initiated close where the address already moved elsewhere.
+   */
+  close(opts?: { skipFocusRestore?: boolean }): void {
     const dlg = this.opts.dialog();
     if (!dlg || !dlg.open) return;
     dlg.close();
-    this.modality.exit();
+    this.modality.exit(opts);
   }
 
   hostDisconnected(): void {

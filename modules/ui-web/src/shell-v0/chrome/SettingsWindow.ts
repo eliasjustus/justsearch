@@ -62,6 +62,11 @@ export class SettingsWindow extends JfElement {
   private shouldMount = false;
   private idleHandle: number | null = null;
   private cancelIdle: (() => void) | null = null;
+  // 855 §11.2 merge-blocker: set by `dismiss()` right before `open` flips false, consumed by the
+  // `updated()` open→false path, then reset — so a navigation-initiated close (the address already
+  // moved to a different stage surface) skips the WAI-ARIA restore-to-invoker behaviour that
+  // `requestClose()` (ESC / X / backdrop) still gets. See `modality.ts` ModalityController.exit.
+  private pendingCloseSkipsFocusRestore = false;
 
   constructor() {
     super();
@@ -180,7 +185,9 @@ export class SettingsWindow extends JfElement {
     if (this.open) {
       this.modal.open();
     } else {
-      this.modal.close();
+      const skipFocusRestore = this.pendingCloseSkipsFocusRestore;
+      this.pendingCloseSkipsFocusRestore = false;
+      this.modal.close({ skipFocusRestore });
     }
   }
 
@@ -200,9 +207,13 @@ export class SettingsWindow extends JfElement {
   /**
    * Close WITHOUT emitting the close event — for a navigation that has ALREADY moved the address (a
    * real browser Back, or any other realized stage navigation). `requestClose()` would ask the Shell
-   * to unwind a second time on top of the navigation that just happened.
+   * to unwind a second time on top of the navigation that just happened. It also skips the
+   * WAI-ARIA restore-to-invoker behaviour (855 §11.2 merge-blocker): the navigation has already moved
+   * focus's rightful destination, so restoring to the pre-modal invoker (a rail button) would be
+   * wrong for keyboard/SR users.
    */
   dismiss(): void {
+    this.pendingCloseSkipsFocusRestore = true;
     this.open = false;
   }
 

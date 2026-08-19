@@ -2097,12 +2097,15 @@ export class Shell extends JfElement {
     }
 
     // Tempdoc 586 F-2 — Simple-mode rail trim. The Simple/Advanced toggle (uiModeState) now
-    // actually shapes the rail: in Simple mode the advanced/diagnostic surfaces (the System
-    // dashboard + the Theme Editor) drop off so a non-technical user sees a cleaner set; AI Brain
-    // stays (local-model management is user-facing). Advanced restores them. Applied after the
+    // actually shapes the rail: in Simple mode the advanced/diagnostic surface (the System
+    // dashboard) drops off so a non-technical user sees a cleaner set; AI Brain stays
+    // (local-model management is user-facing). Advanced restores it. Applied after the
     // visibility filter and before ordering, so altitude-band clamping below still holds.
+    // (Tempdoc 855 §5 item 2 — the Theme Editor used to be listed here too, but it is now
+    // DEEPLINK-placement, not RAIL, so it never reaches `railSurfaces` in the first place;
+    // listing it in this set would have been dead code.)
     if (getUiMode() === 'simple') {
-      const hiddenInSimple = new Set(['core.system-surface', 'vendor.token-editor.editor-surface']);
+      const hiddenInSimple = new Set(['core.system-surface']);
       railSurfaces = railSurfaces.filter((s) => !hiddenInSimple.has(s.id));
     }
 

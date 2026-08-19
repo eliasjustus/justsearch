@@ -82,6 +82,10 @@ export const SETTINGS_REGISTER: readonly SettingsGroup[] = [
           { key: 'interface', labelKey: 'settings.section.interface' },
           { key: 'theme', labelKey: 'settings.section.theme' },
           { key: 'accessibility', labelKey: 'settings.section.accessibility' },
+          // Tempdoc 855 §5 item 2 / §9.6 item 5 — Token Editor's rail placement is demoted
+          // (RAIL → DEEPLINK); this sub-anchor is its replacement launch affordance, a LINK to
+          // the plugin surface per ADR-0035 (settings never embeds plugin UI).
+          { key: 'token-editor', labelKey: 'settings.section.token-editor' },
         ],
       },
       {

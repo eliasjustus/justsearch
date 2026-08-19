@@ -442,3 +442,77 @@ describe('SettingsSurface — Security member deep-link (tempdoc 855 §5 item 1 
     el.remove();
   });
 });
+
+describe('SettingsSurface — Token Editor link (855 §5 item 2 / §9.6 item 5)', () => {
+  beforeEach(() => {
+    __resetUserConfigForTest();
+    __resetThemeStateForTest();
+    __resetCatalogForTest();
+    resetSurfaceCatalog();
+    seedSurfaceCatalog(RAIL_FIXTURE);
+    __resetSessionRegistryForTest();
+  });
+
+  /**
+   * Its own mount (rather than the shared `mountSurface`) so the test can capture a spy on
+   * `host_.navigation.navigate` — the assertion this test exists for.
+   */
+  async function mountWithNavigateSpy(): Promise<{
+    el: HTMLElement & { activeCategory?: string; updateComplete: Promise<unknown> };
+    navigate: ReturnType<typeof vi.fn>;
+  }> {
+    const navigate = vi.fn();
+    const el = document.createElement('jf-settings-surface') as HTMLElement & {
+      activeCategory?: string;
+      updateComplete: Promise<unknown>;
+    };
+    (el as unknown as Record<string, unknown>).host_ = createMockHostApi({
+      data: {
+        fetch: () => Promise.resolve(new Response(JSON.stringify({ ui: {} }), { status: 200 })),
+      },
+      layout: {
+        subscribeUserConfig: (h) => realSubscribeUserConfig(h as (cfg: unknown) => void),
+        getUserConfig: () => realGetUserConfig(),
+        onSurfaceCatalogChange: (h) => realOnSurfaceCatalogChange(h),
+        setSurfaceVisibility,
+        setSurfaceOrder,
+      },
+      theme: {
+        subscribeActiveTheme: (h) => realSubscribeActiveTheme(h),
+        getActiveThemeId: () => realGetActiveThemeId(),
+        selectTheme: async (id) => {
+          if (id === null) realClearActiveTheme();
+          else await realLoadAndApplyTheme(id);
+        },
+      },
+      navigation: { navigate },
+    });
+    document.body.appendChild(el);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    el.activeCategory = 'appearance';
+    await el.updateComplete;
+    return { el, navigate };
+  }
+
+  it('renders the Token Editor anchor under the Appearance category', async () => {
+    const { el } = await mountWithNavigateSpy();
+    const anchor = el.shadowRoot?.querySelector('[data-settings-anchor="token-editor"]');
+    expect(anchor).not.toBeNull();
+    expect(anchor?.textContent).toContain('Token Editor');
+    expect(anchor?.querySelector('jf-button')).not.toBeNull();
+    el.remove();
+  });
+
+  it('activating the Token Editor link navigates to vendor.token-editor.editor-surface', async () => {
+    const { el, navigate } = await mountWithNavigateSpy();
+    const button = el.shadowRoot?.querySelector(
+      '[data-settings-anchor="token-editor"] jf-button',
+    );
+    expect(button).not.toBeNull();
+    await activateJfButton(button!);
+
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith('vendor.token-editor.editor-surface');
+    el.remove();
+  });
+});

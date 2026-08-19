@@ -1615,6 +1615,31 @@ export class SettingsSurface extends JfElement {
     `;
   }
 
+  /** Tempdoc 855 §5 item 2 / §9.6 item 5 — Token Editor's launch affordance, replacing its RAIL
+   *  placement. ADR-0035 boundary: settings hosts a LINK to the plugin surface, never the plugin's
+   *  UI itself, so this is the same `.onActivate` → `host_.navigation.navigate(surfaceId)` idiom the
+   *  old Security & Privacy pointer used (`renderSecurityPrivacyPointer`, superseded by full
+   *  absorption in P2) — the surface is DEEPLINK-placement, so the navigation stage-mounts it and
+   *  the settings window dismisses automatically (Shell dismisses on realized stage navigation, P0). */
+  private renderTokenEditorLink(): TemplateResult {
+    return html`
+      <div class="section">
+        <h3>${icon({ name: 'layers', size: 12 })} Token Editor</h3>
+        <p class="help" style="margin-top: 0">
+          Author custom theme tokens — colors, seeds, and roles — in the dedicated editor.
+        </p>
+        <div style="margin-top: 0.5rem">
+          <jf-button
+            variant="secondary"
+            .onActivate=${() =>
+              this.host_.navigation.navigate('vendor.token-editor.editor-surface')}
+            >Open Token Editor</jf-button
+          >
+        </div>
+      </div>
+    `;
+  }
+
   /**
    * Slice 477 H1 — V1.5 Rail customization section.
    *
@@ -2332,6 +2357,7 @@ export class SettingsSurface extends JfElement {
       interface: () => this.renderInterfaceRegion(),
       theme: () => this.renderThemes(),
       accessibility: () => this.renderAccessibility(),
+      'token-editor': () => this.renderTokenEditorLink(),
       layout: () => this.renderLayout(),
       rail: () => this.renderRail(),
       keyboard: () => this.renderKeyboard(),

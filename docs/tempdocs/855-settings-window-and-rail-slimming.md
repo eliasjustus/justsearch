@@ -1,7 +1,7 @@
 ---
 number: 855
 title: Settings window — Discord-2025 centered-modal pattern + rail slimming
-status: designed v2 (measured spec + mechanism-level design settled after codebase probes; §9 is the design authority where it refines §3/§6/§7; implementation not started)
+status: implementing (P0 + P1 shipped on worktree-855-settings-window, each independently reviewed + live-verified — see §12; P2 security absorption in progress; D1/Brain pending owner)
 created: 2026-08-19
 updated: 2026-08-19
 charter: replace the in-Stage settings page with a Discord-style categorized settings window, and decide which main-window chrome items relocate into it
@@ -494,3 +494,67 @@ live sanity check in the Tauri webview during Phase 0; Shell.ts merge contention
 process risk, not design risk. Phase 3 (Brain absorption, if chosen): 8 — same
 mechanism as Security, bigger surface. Phase 4 (search): unplanned in detail, by
 design.
+
+## 12. Implementation log (2026-08-19, worktree-855-settings-window)
+
+- **P0 (commit 85a838ca)** — MODAL branch + window frame. Contract §11.1 held with
+  one amendment discovered in implementation (dismiss ≠ close) and two more found by
+  the independent refute-first review and fixed with regression tests: push-dedupe
+  when the address is already current (a bookmarked settings URL re-opened on ESC),
+  and pushed-aware close (history.back only when the open actually pushed; otherwise
+  forward-navigate to the stage surface — which also restores the boot-case URL
+  projection). Review also caught: stale Java catalog test, missing vocabulary
+  regen, rail hardening (settings excluded unconditionally), i18n of dialog strings.
+  Live-verified: rail/palette/URL open, boot-under-modal, one-ESC close from boot
+  entry, browser-Back dismissal, member deep-link (Skins tab), single rail button,
+  ui-shot settings/settings-light with 0 new axe.
+- **P1 (commit 805c134f)** — register + `<jf-settings-nav>` + category pages.
+  Register verified 1:1 against the old 17-section body (review: no drops, no
+  parallel lists); scroll-spy on `deriveFocus()`; audience gates byte-identical to
+  the old self-gates; select-name axe defect fixed at the renderer (baseline entries
+  removed); SettingsLitView deleted + vocab regen. Review found zero merge-blockers;
+  its one latent-trap note (member-element cache not reset on native-branch renders,
+  contrary to the SurfaceTabs precedent) was fixed and live-verified (fresh instance
+  on member→native→member cycle). Deviation accepted: no per-category title strip —
+  single-section categories read their section h3 as the de facto title; member
+  surfaces bring their own h2.
+- **Exposed pre-existing defects** (observations inbox, not this tempdoc's scope):
+  light-palette AA contrast failures in chat view/status deck/walkthrough card newly
+  visible behind the modal (baselined for the settings-light step with a note), and
+  the known controls-a11y UnifiedChatView finding.
+- **Freshness trap worth naming for future live passes**: the Head serves i18n
+  catalogs from `modules/ui/build/install/ui/lib/*.jar` — `:modules:ui:assemble`
+  does NOT refresh installDist, so new .properties keys need
+  `:modules:ui:installDist` + stack restart (plus a hard browser reload past the
+  Vite module cache) before they appear. Cost one diagnostic loop in P1's live pass.
+
+**Closure obligation (canonical docs):** before this tempdoc closes, document the
+realized `Placement.MODAL` routing tier (navigate → overlay-open, skip
+setActiveSurface/activateProjection, pushed-aware close) and the settings-window
+composition in the canonical routing/system-overview docs — deferred mid-flight
+because P2/P3 are still moving placements; the presentation-kernel doc needs no
+change (the window is a registered `modals.v1.json` adopter, that doc's own
+mechanism).
+
+- **P2 (commit b14ebe23)** — Security & Privacy absorbed as a member category
+  (Java `withMembers` + RAIL→DEEPLINK, FE parity, register swap, pointer renderer +
+  orphaned i18n keys swept). Live-verified: `core.security-surface` deep-link boots
+  into the modal at the Security category with the full encryption UI; rail no longer
+  shows Security; ui-shot security/security-light re-pointed to the modal strategy
+  (light baselined for the same pre-existing exposed chrome contrast as settings).
+  Combined review verdict: clean; noted the 629-era delete-confirm pointer now
+  switches category in-window via the member redirect instead of dismissing — judged
+  an improvement, covered by the live member-tab test.
+- **P3a (this commit)** — Token Editor off the rail (placement RAIL→DEEPLINK,
+  one-field as designed) + a registered `token-editor` sub-anchor under Appearance
+  hosting a launch LINK (ADR-0035: link, never embedded plugin UI); dead
+  `hiddenInSimple` entry swept. Live-verified: rail end-state Library · Brain ·
+  Chat · Settings; real click on the link dismisses the window and stage-mounts the
+  editor; Back reopens the modal (meaningful). Review found one merge-blocker fixed
+  in the same commit: **dismiss-vs-close focus rule** — user-initiated close (ESC/X/
+  backdrop) restores focus to the invoker per WAI-ARIA; navigation-initiated
+  `dismiss()` skips restore (`ModalityController.exit({skipFocusRestore})`,
+  additive), because a realized stage navigation owns focus's destination. Also
+  fixed: nav `.active` now uses `--surface-active` (was sharing `--surface-hover`
+  with `:hover` — the double-highlight defect), stale plugin comment, and direct
+  test coverage for the launch link.

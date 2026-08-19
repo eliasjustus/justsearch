@@ -247,6 +247,59 @@ describe('jf-settings-window', () => {
     expect(closes).not.toHaveBeenCalled();
   });
 
+  it('requestClose() (Escape/X/backdrop) restores focus to the pre-open invoker', async () => {
+    __seedForTest(catalogOf(settingsSurface()));
+    const trigger = document.createElement('button');
+    trigger.textContent = 'open settings';
+    document.body.appendChild(trigger);
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    const el = await mountWindow();
+    el.open = true;
+    await el.updateComplete;
+    // happy-dom's showModal() does not itself move focus, so simulate what a real modal does:
+    // focus lands on content inside the dialog (here, its own close button) while it is open.
+    // `document.activeElement` retargets across the shadow boundary to the host element, so check
+    // focus via `shadowRoot.activeElement` instead.
+    const closeBtn = el.shadowRoot?.querySelector<HTMLButtonElement>('button.close');
+    closeBtn?.focus();
+    expect(el.shadowRoot?.activeElement).toBe(closeBtn);
+
+    closeBtn?.click();
+    await el.updateComplete;
+
+    expect(el.open).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('dismiss() (navigation-initiated close) does NOT restore focus to the pre-open invoker (855 §11.2 merge-blocker)', async () => {
+    __seedForTest(catalogOf(settingsSurface()));
+    const trigger = document.createElement('button');
+    trigger.textContent = 'open settings';
+    document.body.appendChild(trigger);
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    const el = await mountWindow();
+    el.open = true;
+    await el.updateComplete;
+    // Simulate the dialog holding focus while open (same setup as the requestClose() test above;
+    // `shadowRoot.activeElement` is the shadow-boundary-safe way to check it — see that test).
+    const closeBtn = el.shadowRoot?.querySelector<HTMLButtonElement>('button.close');
+    closeBtn?.focus();
+    expect(el.shadowRoot?.activeElement).toBe(closeBtn);
+
+    el.dismiss();
+    await el.updateComplete;
+
+    expect(el.open).toBe(false);
+    // The address has already moved to a different stage surface (Shell's
+    // dismiss-on-realized-stage-navigation) — restoring focus to the rail-button invoker would be
+    // wrong for keyboard/SR users, so focus must NOT land back on `trigger`.
+    expect(document.activeElement).not.toBe(trigger);
+  });
+
   it('renders an empty state (and does not throw) when the catalog has no settings surface', async () => {
     __seedForTest(catalogOf());
     const el = await mountWindow();
