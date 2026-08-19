@@ -94,13 +94,18 @@ public final class ResumableFetch {
    * @param firstAction the resume verdict this fetch started from — how progress was reused
    * @param transferAttempts how many transfers ran (2 means a resumed attempt failed integrity and
    *     was restarted from zero)
+   * @param failure the typed transport classification, non-null <em>iff</em> the fetch ended at
+   *     TRANSPORT; null for success, cancellation, verification failure, and bookkeeping failure.
+   *     Consumers that act only on transport failures ({@link InstallAttemptMemory}'s escalation and
+   *     terminal verdict) test this field rather than the wording of {@link #error()}.
    */
   public record Outcome(
       boolean ok,
       boolean cancelled,
       String error,
       DownloadResume.Action firstAction,
-      int transferAttempts) {}
+      int transferAttempts,
+      TransportFailure failure) {}
 
   /**
    * Side-channel callbacks the fetch fires as it moves through its phases.
@@ -178,7 +183,7 @@ public final class ResumableFetch {
     for (int attempt = 0; attempt < retry.maxAttempts(); attempt++) {
       if (attempt > 0) {
         if (isCancelled(cancelRequested)) {
-          return new Outcome(false, true, "Cancelled.", firstAction, transfers);
+          return new Outcome(false, true, "Cancelled.", firstAction, transfers, null);
         }
         long waitMs = retry.delayMsBeforeAttempt(attempt);
         log.info(
@@ -191,7 +196,7 @@ public final class ResumableFetch {
         // Sliced, cancellation-polling wait: cancel() only raises a flag, so a wait that ignored it
         // would keep the user staring at a cancelled install for up to the whole 27 s backoff.
         if (!retry.sleep(waitMs, cancelRequested)) {
-          return new Outcome(false, true, "Cancelled.", firstAction, transfers);
+          return new Outcome(false, true, "Cancelled.", firstAction, transfers, null);
         }
         // Re-decide against disk: the failed attempt may have staged bytes worth resuming, and the
         // sidecar identity check is still what gates whether they are reusable.
@@ -233,7 +238,8 @@ public final class ResumableFetch {
             + " attempts"
             + (lastFailure == null ? "" : " (" + lastFailure.summary() + ")"),
         firstAction,
-        transfers);
+        transfers,
+        lastFailure);
   }
 
   /**
@@ -271,7 +277,8 @@ public final class ResumableFetch {
                 false,
                 "Failed to record resume state: " + e.getMessage(),
                 firstAction,
-                transfers),
+                transfers,
+                null),
             transfers,
             false,
             null);
@@ -285,20 +292,25 @@ public final class ResumableFetch {
           persistSuspendedJob(transfer, partial, url, expectedSize, expectedSha);
           if (isCancelled(cancelRequested)) {
             return new AttemptResult(
-                new Outcome(false, true, "Cancelled.", firstAction, transfers),
+                new Outcome(false, true, "Cancelled.", firstAction, transfers, null),
                 transfers,
                 false,
                 null);
           }
-          TransportFailure failure = transfer.lastFailure();
+          TransportFailure classified = transfer.lastFailure();
           String reason =
-              failure == null
+              classified == null
                   ? "Download failed for " + request.label()
-                  : "Download failed for " + request.label() + " (" + failure.summary() + ")";
+                  : "Download failed for " + request.label() + " (" + classified.summary() + ")";
+          // Ended at TRANSPORT, so the outcome carries a typed failure either way: the escalation
+          // memory keys on "was this transport" and must not silently disengage because the
+          // transport could not name a code (an unclassified failure is still non-retryable).
+          TransportFailure failure =
+              classified == null ? TransportFailure.unclassified() : classified;
           return new AttemptResult(
-              new Outcome(false, false, reason, firstAction, transfers),
+              new Outcome(false, false, reason, firstAction, transfers, failure),
               transfers,
-              failure != null && failure.retryable(),
+              failure.retryable(),
               failure);
         }
       }
@@ -308,7 +320,7 @@ public final class ResumableFetch {
         DownloadExecutor.verify(partial, expectedSize, expectedSha);
         DownloadResume.deleteSidecar(partial);
         return new AttemptResult(
-            new Outcome(true, false, null, firstAction, transfers), transfers, false, null);
+            new Outcome(true, false, null, firstAction, transfers, null), transfers, false, null);
       } catch (Exception e) {
         // The bytes are not what the manifest promises: upstream changed under the partial, the
         // partial was stale, or the transfer corrupted it. Destroy, never accept. This is NOT a
@@ -317,7 +329,12 @@ public final class ResumableFetch {
         if (decision.action() == DownloadResume.Action.FRESH) {
           return new AttemptResult(
               new Outcome(
-                  false, false, "Verification failed: " + e.getMessage(), firstAction, transfers),
+                  false,
+                  false,
+                  "Verification failed: " + e.getMessage(),
+                  firstAction,
+                  transfers,
+                  null),
               transfers,
               false,
               null);
@@ -336,7 +353,7 @@ public final class ResumableFetch {
     }
     // Unreachable: pass 0 either returns or downgrades to FRESH, and a FRESH pass always returns.
     return new AttemptResult(
-        new Outcome(false, false, "Verification failed after restart", firstAction, transfers),
+        new Outcome(false, false, "Verification failed after restart", firstAction, transfers, null),
         transfers,
         false,
         null);

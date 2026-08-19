@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Computes a download plan from the registry, hardware profile, and current installed state.
@@ -87,6 +88,20 @@ public final class InstallPlanner {
   }
 
   /**
+   * Computes the install plan for an explicit {@link InstallIntent}, with nothing declined.
+   * Backwards-compat overload — see {@link #plan(ModelRegistry, HardwareProfile, InstallIntent,
+   * Set, Path, Path)} for the per-component form.
+   */
+  public static InstallPlan plan(
+      ModelRegistry registry,
+      HardwareProfile hardware,
+      InstallIntent intent,
+      Path modelsDir,
+      Path homeDir) {
+    return plan(registry, hardware, intent, Set.of(), modelsDir, homeDir);
+  }
+
+  /**
    * Computes the install plan for an explicit {@link InstallIntent} (tempdoc 657).
    *
    * <p>Intent is the product-shape axis, orthogonal to the hardware
@@ -103,9 +118,16 @@ public final class InstallPlanner {
    * {@code targetPath} for these packages so {@link InstallPlan.PlannedDownload}
    * carries the resolved path through to the install service unchanged.
    *
+   * <p>Tempdoc 840 Phase 2: {@code declined} is the third selection axis — the user's per-component
+   * choice, orthogonal to both intent and hardware. It arrives as a PARAMETER precisely so this
+   * function stays pure: the planner never reads settings, the service does and passes the set in.
+   *
    * @param registry the v2 model registry
    * @param hardware the detected hardware profile
    * @param intent the install/runtime intent selecting which capability tiers are wanted
+   * @param declined package ids the user chose not to install. Only honored for a package whose
+   *     {@link Necessity#userDeclinable()} is true — a stale or hand-edited setting naming {@code
+   *     embedding} or {@code cuda-runtime} is ignored, not obeyed.
    * @param modelsDir root models directory (typically {@code homeDir/models})
    * @param homeDir AI home directory (typically {@code %APPDATA%/io.justsearch.shell})
    * @return the install plan
@@ -114,8 +136,10 @@ public final class InstallPlanner {
       ModelRegistry registry,
       HardwareProfile hardware,
       InstallIntent intent,
+      Set<String> declined,
       Path modelsDir,
       Path homeDir) {
+    Set<String> declinedIds = declined == null ? Set.of() : declined;
     DownloadProfile profile = hardware.downloadProfile();
     List<InstallPlan.PlannedDownload> downloads = new ArrayList<>();
     List<InstallPlan.SkippedPackage> skipped = new ArrayList<>();
@@ -130,7 +154,9 @@ public final class InstallPlanner {
       if (pkg.devOnly()) {
         skipped.add(
             new InstallPlan.SkippedPackage(
-                pkg.id(), String.format("%s is a development-only package", pkg.label())));
+                pkg.id(),
+                SkipCause.DEV_ONLY,
+                String.format("%s is a development-only package", pkg.label())));
         continue;
       }
 
@@ -141,7 +167,22 @@ public final class InstallPlanner {
         skipped.add(
             new InstallPlan.SkippedPackage(
                 pkg.id(),
+                SkipCause.INTENT,
                 String.format("Not included in %s mode", intent.id())));
+        continue;
+      }
+
+      // User-decline gate (tempdoc 840 Phase 2). Guarded by necessity, not by the set alone: a
+      // package the product cannot work without (REQUIRED) or that is pure plumbing with
+      // consequences its label does not name (INFRASTRUCTURE — cuda-runtime also carries the cuda12
+      // llama-server chat runs on) is installed even when its id appears in `declined`. That makes a
+      // stale settings file, a hand edit, or a future UI bug unable to turn off `embedding`.
+      if (pkg.necessity().userDeclinable() && declinedIds.contains(pkg.id())) {
+        skipped.add(
+            new InstallPlan.SkippedPackage(
+                pkg.id(),
+                SkipCause.USER_DECLINED,
+                String.format("%s was declined — you chose not to install it.", pkg.label())));
         continue;
       }
 
@@ -157,6 +198,7 @@ public final class InstallPlanner {
         skipped.add(
             new InstallPlan.SkippedPackage(
                 pkg.id(),
+                SkipCause.HARDWARE,
                 String.format(
                     "%s requires a CUDA-capable GPU (none detected on this system).", pkg.label())));
         continue;
@@ -188,7 +230,7 @@ public final class InstallPlanner {
                       + " not supported in this build.",
                   pkg.label());
         }
-        skipped.add(new InstallPlan.SkippedPackage(pkg.id(), reason));
+        skipped.add(new InstallPlan.SkippedPackage(pkg.id(), SkipCause.HARDWARE, reason));
         continue;
       }
 
@@ -208,17 +250,19 @@ public final class InstallPlanner {
       if (variant != null) {
         Path targetFile = installBaseDir.resolve(variant.filename());
         if (isAlreadyInstalled(targetFile, variant.sizeBytes())) {
-          // Already installed with correct hash — skip download
+          // Already present at the expected size — skip download. Not a hash check: see
+          // isAlreadyInstalled for why the pure planner deliberately does not hash multi-GB files.
         } else {
           String targetPath = useAbsoluteTargetPath
               ? targetFile.toAbsolutePath().toString()
               : joinTargetPath(pkg.targetDir(), variant.filename());
+          long staged = partialBytesFor(targetFile, variant.sizeBytes());
           downloads.add(
               new InstallPlan.PlannedDownload(
                   pkg.id(), variant.downloadUrl(), targetPath, variant.sha256(),
-                  variant.sizeBytes(), true, false, true));
+                  variant.sizeBytes(), true, false, true, staged));
           totalBytes += variant.sizeBytes();
-          resumableBytes += partialBytesFor(targetFile, variant.sizeBytes());
+          resumableBytes += staged;
           packageFullyInstalled = false;
         }
       }
@@ -232,6 +276,7 @@ public final class InstallPlanner {
         String targetPath = useAbsoluteTargetPath
             ? targetFile.toAbsolutePath().toString()
             : joinTargetPath(pkg.targetDir(), sf.filename());
+        long staged = partialBytesFor(targetFile, sf.sizeBytes());
         downloads.add(
             new InstallPlan.PlannedDownload(
                 pkg.id(),
@@ -241,9 +286,10 @@ public final class InstallPlanner {
                 sf.sizeBytes(),
                 false,
                 sf.extract(),
-                sf.required()));
+                sf.required(),
+                staged));
         totalBytes += sf.sizeBytes();
-        resumableBytes += partialBytesFor(targetFile, sf.sizeBytes());
+        resumableBytes += staged;
         packageFullyInstalled = false;
       }
 
@@ -276,11 +322,26 @@ public final class InstallPlanner {
    */
   public static boolean isIncludedByPlan(
       ModelPackage pkg, InstallIntent intent, HardwareProfile hardware) {
+    return isIncludedByPlan(pkg, intent, Set.of(), hardware);
+  }
+
+  /**
+   * Whether the package would be included in the plan, accounting for the user's declined set too
+   * (tempdoc 840 Phase 2). Kept in step with {@link #plan}'s loop deliberately: the two answer the
+   * same question, and a consumer that asks this one must not learn that a package the plan skips is
+   * "included" — that is how a deliberately declined component would come back as a blocking gap on
+   * a preflight surface.
+   */
+  public static boolean isIncludedByPlan(
+      ModelPackage pkg, InstallIntent intent, Set<String> declined, HardwareProfile hardware) {
     DownloadProfile profile = hardware.downloadProfile();
     if (pkg.devOnly()) {
       return false;
     }
     if (!intent.wants(pkg.tier())) {
+      return false;
+    }
+    if (pkg.necessity().userDeclinable() && declined != null && declined.contains(pkg.id())) {
       return false;
     }
     if (requiresUnavailableCuda(pkg, profile)) {

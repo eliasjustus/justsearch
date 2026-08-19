@@ -625,7 +625,7 @@ describe('the pane reads CITED documents and nothing else', () => {
     const paneSrc = readFileSync(join(here, 'Sv3Pane.ts'), 'utf8');
     expect(paneSrc).toContain("import '../../components/documentPane/DocumentPane.js';");
     // Cited in prose (that is where the pattern comes from), imported from nowhere.
-    expect(paneSrc).not.toMatch(/from '[^']*(search-v2|UnifiedChatView)/);
-    expect(paneSrc).not.toMatch(/import '[^']*(search-v2|UnifiedChatView)/);
+    expect(paneSrc).not.toMatch(/from '[^']*UnifiedChatView/);
+    expect(paneSrc).not.toMatch(/import '[^']*UnifiedChatView/);
   });
 });

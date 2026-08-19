@@ -159,6 +159,9 @@ import { dispatchEffectToChrome } from '../substrates/actions/index.js';
 import { startTask, completeTask } from '../substrates/tasks/index.js';
 // §32 #1 — project the backend indexing-jobs stream into the Task tray.
 import { startIndexingJobsBridge } from '../substrates/tasks/indexingJobsBridge.js';
+// Tempdoc 840 Phase 5 — project the staged AI model acquisition into the SAME Task tray, so the
+// footer chip + floating task list carry "what is downloading right now" with no new surface.
+import { startAiInstallTasksBridge } from '../substrates/tasks/aiInstallTasksBridge.js';
 // Tempdoc 655 — surface a pending authorization created by an out-of-band caller (MCP).
 import { startPendingAuthorizationBridge } from '../operations/pendingAuthorizationBridge.js';
 import { MultiplexedStream } from '../streaming/MultiplexedStream.js';
@@ -442,6 +445,8 @@ export class Shell extends JfElement {
   private evalContextScopeBumpUnsub: (() => void) | null = null;
   // §32 #1 — indexing-jobs → Task tray bridge teardown handle.
   private indexingJobsBridgeStop: (() => void) | null = null;
+  // Tempdoc 840 Phase 5 — AI-install stages → Task tray bridge teardown handle.
+  private aiInstallTasksBridgeStop: (() => void) | null = null;
   private appUpdateMonitorStop: (() => void) | null = null;
   // Tempdoc 655 — pending-authorization (out-of-band gate, e.g. MCP) bridge teardown handle.
   private pendingAuthorizationBridgeStop: (() => void) | null = null;
@@ -767,6 +772,10 @@ export class Shell extends JfElement {
     this.indexingJobsBridgeStop = startIndexingJobsBridge(this.apiBase, {
       multiplex: this.shellEventsMultiplex ?? undefined,
     });
+    // Tempdoc 840 Phase 5 — same tray, second producer: the staged model acquisition. Read-only
+    // (pause/cancel stay on Brain, which owns the ceremony); rides the shared install poller, so it
+    // opens no transport of its own.
+    this.aiInstallTasksBridgeStop = startAiInstallTasksBridge();
     // Tempdoc 655 — surface a pending authorization created by a caller other than a live
     // frontend request (an MCP tool call) via the same `<jf-authorization-host>` ceremony.
     this.pendingAuthorizationBridgeStop = startPendingAuthorizationBridge(this.apiBase, {
@@ -1677,6 +1686,9 @@ export class Shell extends JfElement {
     // §32 #1 — close the indexing-jobs SSE stream.
     this.indexingJobsBridgeStop?.();
     this.indexingJobsBridgeStop = null;
+    // Tempdoc 840 Phase 5 — release the install-poller subscription and clear the mirrored rows.
+    this.aiInstallTasksBridgeStop?.();
+    this.aiInstallTasksBridgeStop = null;
     // Tempdoc 655 — close the pending-authorization bridge subscription.
     this.pendingAuthorizationBridgeStop?.();
     this.pendingAuthorizationBridgeStop = null;

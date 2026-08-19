@@ -170,7 +170,7 @@ python scripts/models/build-crossencoder.py \
 
 ### Packaged / Registry Defaults (GGUF)
 
-These are the models defined in `modules/ui/src/main/resources/ai/model-registry.v2.json`.
+These are the models defined in `modules/configuration/src/main/resources/ai/model-registry.v2.json`.
 They are downloaded by the desktop app's AI install flow and used by the Brain (inference)
 process.
 
@@ -363,7 +363,7 @@ describe a snapshot in time.
 
 ## Open Decisions
 
-1. ~~Should ONNX embedding + SPLADE enter `model-registry.v2.json` for packaged app distribution?~~ **Settled:** both are already registry packages (`"id": "embedding"`, `"id": "splade"`) — `modules/ui/src/main/resources/ai/model-registry.v2.json`.
+1. ~~Should ONNX embedding + SPLADE enter `model-registry.v2.json` for packaged app distribution?~~ **Settled:** both are already registry packages (`"id": "embedding"`, `"id": "splade"`) — `modules/configuration/src/main/resources/ai/model-registry.v2.json`.
 2. Should the legacy MiniLM reranker be removed from the registry?
 3. Should `Qwen3.5-9B` replace `Qwen3VL-8B-Thinking` as the packaged chat model?
 4. ~~Should NER be included in the default `models/` set or remain dev-only?~~ **Settled:** NER is in the default `models/` set, confirmed at `models/onnx/ner/model.onnx` with `build.json` (tempdoc 343 Phase A.2).

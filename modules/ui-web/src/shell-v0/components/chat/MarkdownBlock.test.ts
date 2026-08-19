@@ -829,7 +829,7 @@ describe('822 §5.3 — selection highlights the sentences the source supports',
     expect(shippedRegion).not.toBeNull();
 
     // CONTAINMENT: no `--md-cite-region-*` set, so the region occupies exactly the glyphs — every
-    // shipped surface (search-v2, SummarizeView) is byte-identical to before.
+    // shipped surface (UnifiedChatView, SummarizeView) is byte-identical to before.
     const shippedCs = getComputedStyle(shippedRegion);
     expect(shippedCs.paddingLeft).toBe('0px');
     expect(shippedCs.paddingRight).toBe('0px');

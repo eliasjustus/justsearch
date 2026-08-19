@@ -11,8 +11,9 @@
  * issuance site can have. With one site the refusal is structural: there is no second path to forget.
  *
  * Shared authorities consumed, not re-authored (the charter's "from-scratch components, shared
- * authorities"; the PATTERN is search-v2's `askClient.ts:26-37`, mined — never imported, because a
- * dev window importing another dev window's module is the coupling this arc exists to avoid):
+ * authorities"; the PATTERN was mined from the since-retired search-v2 window's ask client — never
+ * imported, because a dev window importing another dev window's module is the coupling this arc
+ * exists to avoid):
  *  - `buildRequestBody('core.rag-ask', …)` — the per-shape POST body.
  *  - `consumeShapeStream` + `dispatchShapeEventToHandlers` — the ONE SSE consumer, so the
  *    connection-budget accounting in `streams.ts` stays correct.
@@ -198,9 +199,10 @@ export interface Sv3AskSink {
 }
 
 /**
- * The per-sentence grounding model both citation events contribute to. Mined from search-v2's
- * `askClient.ts:75-105` (the same reason F1 mined the dispatch: a dev window importing another dev
- * window's module is the coupling this arc exists to avoid); the RESOLVER it feeds is shared.
+ * The per-sentence grounding model both citation events contribute to. Mined from the since-retired
+ * search-v2 window's ask client (the same reason F1 mined the dispatch: a dev window importing
+ * another dev window's module is the coupling this arc exists to avoid); the RESOLVER it feeds is
+ * shared.
  */
 interface ClaimAcc {
   text: string;
@@ -293,8 +295,8 @@ function claimsOf(acc: Map<number, ClaimAcc>, scorer: string | null): Claim[] {
  * Dispatch one grounded ask and drive `sink` from the stream.
  *
  * `docIds` is empty by construction: this window has no committed document set to scope an answer to
- * (search-v2's frozen-snapshot law has no counterpart here yet), and an empty array is the backend's
- * documented open-retrieval fallback (`views/unifiedChatRequest.ts:80-84`) rather than a scope this
+ * (the retired search-v2 window's frozen-snapshot law has no counterpart here yet), and an empty
+ * array is the backend's documented open-retrieval fallback (`views/unifiedChatRequest.ts:80-84`) rather than a scope this
  * FE invented.
  */
 export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void> {

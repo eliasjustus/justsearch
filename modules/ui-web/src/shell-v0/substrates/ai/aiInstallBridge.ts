@@ -15,6 +15,8 @@
 
 import { isAiInstallLive } from './aiInstallLiveness.js';
 import { authorizedFetch } from '../../api/authorizedFetch.js';
+import { friendlyInstallMessage } from '../../state/installComponents.js';
+import type { AiInstallStatus } from '../../../api/generated/schema-types/ai-install-status.js';
 
 export interface InstallLiveStatus {
   /** 'idle' | 'running' | 'succeeded' | 'failed' (the backend AiInstallStatus.state). */
@@ -58,14 +60,23 @@ export function subscribeInstallStatus(listener: () => void, base?: string): () 
  * it is unit-testable without a real poll (the FE analogue of the worker `PolledStateLiveness` law).
  */
 export function projectInstallStatus(
-  raw: { state?: string; message?: string; updatedAtEpochMs?: number },
+  raw: {
+    state?: string;
+    message?: string;
+    updatedAtEpochMs?: number;
+    packages?: AiInstallStatus['packages'];
+  },
   now: number = Date.now(),
 ): InstallLiveStatus {
   const updatedAtEpochMs = raw.updatedAtEpochMs ?? 0;
   const state = raw.state ?? 'idle';
   return {
     state,
-    message: raw.message ?? '',
+    // Tempdoc 840 Phase 5 (U5) — the backend words this message with the download's TARGET PATH
+    // ("Downloading onnx/gte-multilingual-base/model.onnx..."), because the scheduler's item id is
+    // the path. This is the one place that message reaches a user-facing surface, so the friendly
+    // label is applied here rather than at the render site.
+    message: friendlyInstallMessage(raw.message, raw.packages),
     updatedAtEpochMs,
     stalled: state === 'running' && !isAiInstallLive(updatedAtEpochMs, now),
   };
@@ -79,7 +90,12 @@ async function poll(): Promise<void> {
   try {
     const r = await authorizedFetch(installStatusUrl(apiBase));
     if (!r.ok) return;
-    const raw = (await r.json()) as { state?: string; message?: string; updatedAtEpochMs?: number };
+    const raw = (await r.json()) as {
+      state?: string;
+      message?: string;
+      updatedAtEpochMs?: number;
+      packages?: AiInstallStatus['packages'];
+    };
     current = projectInstallStatus(raw);
     for (const l of listeners) l();
   } catch {

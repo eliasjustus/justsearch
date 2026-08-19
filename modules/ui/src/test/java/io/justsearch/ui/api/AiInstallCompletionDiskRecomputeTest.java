@@ -17,12 +17,14 @@ import org.junit.jupiter.api.io.TempDir;
  * Tempdoc 824 §3.3d — the completion-time disk recompute is REACHABLE in production, not just in
  * the injected-verdict unit tests.
  *
- * <p>This lives in {@code modules:ui} for the same reason {@code AiInstallPlanPreviewResumeTest}
- * does: this is the module carrying {@code ai/model-registry.v2.json} on its classpath, so
- * {@code AiInstallService.getManifest()} — and therefore the disk probe — actually answers here. In
- * {@code app-services} the probe always returns "indeterminate" and every assertion about it would
- * be about the degradation branch. Without this test, "the completion claim is checked against
- * disk" would be an audit conclusion rather than a demonstrated one ({@code audit-without-test}).
+ * <p>This lives in {@code modules:ui} alongside {@code AiInstallPlanPreviewResumeTest}, which
+ * exercises the same {@code AiInstallService} disk-probe path end to end. (Historically this was the
+ * only module whose test classpath carried {@code ai/model-registry.v2.json}; since tempdoc 840 the
+ * registry ships from {@code modules:configuration}, so {@code app-services} tests can load it too —
+ * see {@code ModelRegistryClasspathReachabilityTest}. The tests stay here for continuity with the
+ * rest of the {@code modules:ui} install-flow suite, not because the resource is unreachable
+ * elsewhere.) Without this test, "the completion claim is checked against disk" would be an audit
+ * conclusion rather than a demonstrated one ({@code audit-without-test}).
  *
  * <p>The setup is deliberately adversarial: the packages are staged as {@code "installed"} while the
  * models directory is EMPTY. Pre-824 the run would publish {@code installedFully: true} — the exact

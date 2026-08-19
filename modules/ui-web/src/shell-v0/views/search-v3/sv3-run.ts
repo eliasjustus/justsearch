@@ -33,8 +33,8 @@
  *
  * The feed projection is ONE pass ({@link projectSv3RunFeed}): the live feed renders its items and the
  * run's receipt counts them. The count therefore cannot come to describe a different set than the
- * cards on screen — the same construction search-v2 uses for its receipt
- * (`views/search-v2/SearchV2View.ts:543-549`), expressed as a projection both halves read.
+ * cards on screen — the same construction the retired search-v2 window used for its receipt,
+ * expressed as a projection both halves read.
  */
 import type {
   AgentSessionController,

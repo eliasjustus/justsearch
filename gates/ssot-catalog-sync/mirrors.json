@@ -12,13 +12,6 @@
       "root": "SSOT/catalogs/analyzers.v1.json",
       "copy": "modules/adapters-lucene/src/main/resources/SSOT/catalogs/analyzers.v1.json",
       "kind": "json"
-    },
-    {
-      "$comment": "Tempdoc 633 #6 — the model registry the Head loads at runtime (ui main resource) and the configuration-module test copy that ModelRegistryLoaderTest exercises must not diverge, else the test validates a registry production never sees.",
-      "id": "model-registry",
-      "root": "modules/ui/src/main/resources/ai/model-registry.v2.json",
-      "copy": "modules/configuration/src/test/resources/ai/model-registry.v2.json",
-      "kind": "json"
     }
   ]
 }

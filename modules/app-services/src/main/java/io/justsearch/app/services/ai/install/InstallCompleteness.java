@@ -11,15 +11,22 @@ import java.util.Set;
 /**
  * Pure per-FILE install-completeness decision (tempdoc 805 G.3 W-TRUTH).
  *
- * <p>Three authorities meet here and each answers exactly one question:
+ * <p>Four authorities meet here and each answers exactly one question:
  *
  * <ul>
  *   <li>the <b>registry × profile</b> (via {@link InstallPlan}) — what is required now;
  *   <li><b>disk</b> (via the planner's own already-installed probe) — what is actually present: a
  *       required file is missing iff the plan still wants to download it;
  *   <li>the <b>{@link InstallContract}</b> — what the run that installed this machine claimed, at
- *       file granularity ({@code InstalledModel.installedFiles}).
+ *       file granularity ({@code InstalledModel.installedFiles});
+ *   <li>the <b>declined set</b> — what the user currently does not want (tempdoc 840 Phase 2).
  * </ul>
+ *
+ * <p><b>The declined set is INTENT, not the record.</b> It arrives as a parameter, read by the
+ * service from settings; this function stays pure. It is deliberately the user's <em>current</em>
+ * preference and not the contract's historical {@code SkipCause.USER_DECLINED}: if a user declines
+ * the reranker today and re-enables it next month, intent flips and its missing files become a
+ * real, offerable gap again. Reading the contract instead would freeze the old decision forever.
  *
  * <p>The resulting classification per missing file:
  *
@@ -62,14 +69,28 @@ import java.util.Set;
 public record InstallCompleteness(
     List<FileState> files, boolean anyPackageInstalled, boolean contractPresent) {
 
-  /** How one required file stands against disk and the install contract. */
+  /** How one required file stands against disk, the install contract, and the user's intent. */
   public enum Classification {
     /** Present on disk. */
     SATISFIED,
     /** Missing from disk, and the contract claimed it — a real gap. */
     MISSING_CONTRACTED,
     /** Missing from disk, and the contract never claimed it — a registry addition. */
-    MISSING_UNCONTRACTED
+    MISSING_UNCONTRACTED,
+    /**
+     * Absent because the user declined the package (tempdoc 840 Phase 2). Not a gap of any kind: a
+     * deliberate decline must never read as an incomplete install nor raise a Repair prompt.
+     */
+    DECLINED;
+
+    /**
+     * Whether this classification is an unwanted absence — the only kind either truth claim counts.
+     * Exists so DECLINED cannot be swept into a gap by a {@code != SATISFIED} test, which is how a
+     * user's own choice would turn into "a required component is missing".
+     */
+    boolean isMissingGap() {
+      return this == MISSING_CONTRACTED || this == MISSING_UNCONTRACTED;
+    }
   }
 
   /**
@@ -111,6 +132,25 @@ public record InstallCompleteness(
    *     / unreadable (a fresh machine, or a pre-contract install)
    */
   public static InstallCompleteness compute(InstallPlan plan, InstallContract contract) {
+    return compute(plan, contract, Set.of());
+  }
+
+  /**
+   * Classifies every file the plan knows about, against the user's current per-component intent.
+   *
+   * @param plan the current registry × hardware × disk plan; its {@code downloads()} are exactly the
+   *     required-but-missing files, its {@code alreadyInstalled()} the fully-present packages
+   * @param contract the install contract that recorded this machine's install, or null when absent
+   *     / unreadable (a fresh machine, or a pre-contract install)
+   * @param declined package ids the user currently does not want (tempdoc 840 Phase 2). Their
+   *     absence is classified {@link Classification#DECLINED} and counts toward neither truth claim.
+   *     Handled in BOTH plan positions on purpose: a plan computed with the same declined set
+   *     reports those packages under {@code skipped()}, while a plan computed without it still lists
+   *     their files under {@code downloads()} — either way the user's choice wins here.
+   */
+  public static InstallCompleteness compute(
+      InstallPlan plan, InstallContract contract, Set<String> declined) {
+    Set<String> declinedIds = declined == null ? Set.of() : declined;
     List<FileState> files = new ArrayList<>();
     boolean contractPresent = contract != null && !contract.models().isEmpty();
 
@@ -127,6 +167,11 @@ public record InstallCompleteness(
       }
       for (InstallPlan.PlannedDownload dl : plan.downloads()) {
         String fileName = fileNameOf(dl.targetPath());
+        if (declinedIds.contains(dl.packageId())) {
+          files.add(
+              new FileState(dl.packageId(), fileName, Classification.DECLINED, dl.required()));
+          continue;
+        }
         boolean claimed = contractedFiles(contract, dl.packageId()).contains(fileName);
         files.add(
             new FileState(
@@ -134,6 +179,17 @@ public record InstallCompleteness(
                 fileName,
                 claimed ? Classification.MISSING_CONTRACTED : Classification.MISSING_UNCONTRACTED,
                 dl.required()));
+      }
+      for (InstallPlan.SkippedPackage sk : plan.skipped()) {
+        // A package the planner skipped BECAUSE the user declined it, recorded at package
+        // granularity (the plan carries no filenames for a package it never planned) so {@link
+        // #files} tells the whole story of why this machine's set is what it is. A package skipped
+        // for hardware or intent reasons is NOT recorded here — it was never the user's choice and
+        // has its own surfaces. The user-facing authority on declines is the per-component
+        // `declined` flag on the plan preview, not this classification.
+        if (declinedIds.contains(sk.packageId())) {
+          files.add(new FileState(sk.packageId(), null, Classification.DECLINED));
+        }
       }
     }
 
@@ -164,9 +220,7 @@ public record InstallCompleteness(
    * optional file's absence is reported by {@link #optionalGaps()} and nowhere else.
    */
   private List<FileState> missing() {
-    return files.stream()
-        .filter(f -> f.classification() != Classification.SATISFIED && f.required())
-        .toList();
+    return files.stream().filter(f -> f.classification().isMissingGap() && f.required()).toList();
   }
 
   /**
@@ -175,6 +229,10 @@ public record InstallCompleteness(
    * <p>True when something is installed and no CONTRACTED required file is missing. Without a
    * contract the plan is the only authority, so any remaining required download keeps this false —
    * the pre-805 behaviour for a fresh/pre-contract machine, unchanged.
+   *
+   * <p>Declined packages are ignored (tempdoc 840 Phase 2): an install the user shaped by declining
+   * a component is COMPLETE, not partial. Counting a decline here would leave every such machine
+   * permanently reporting "Not Installed".
    */
   public boolean installedFully() {
     if (!anyPackageInstalled) return false;
@@ -223,7 +281,7 @@ public record InstallCompleteness(
    */
   public List<OptionalGap> optionalGaps() {
     return files.stream()
-        .filter(f -> f.classification() != Classification.SATISFIED && !f.required())
+        .filter(f -> f.classification().isMissingGap() && !f.required())
         .map(f -> new OptionalGap(f.packageId(), f.fileName()))
         .toList();
   }
@@ -232,6 +290,10 @@ public record InstallCompleteness(
    * Whether a repair is warranted: ANY file the current registry requires for this profile is
    * missing from disk — contracted or not. Round 11's machine had {@code installedFully} true and
    * an unusable GPU at the same time; that combination is exactly this signal's job.
+   *
+   * <p>Declined packages are excluded (tempdoc 840 Phase 2): a Repair prompt for a component the
+   * user deliberately switched off is nagging, not a signal. It returns the moment intent flips
+   * back, because this reads the current preference and not the contract's historical record.
    */
   public boolean repairNeeded() {
     return !missing().isEmpty();

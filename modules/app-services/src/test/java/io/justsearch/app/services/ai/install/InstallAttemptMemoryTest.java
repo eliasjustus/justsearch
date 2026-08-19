@@ -4,8 +4,11 @@ package io.justsearch.app.services.ai.install;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
@@ -104,26 +107,17 @@ final class InstallAttemptMemoryTest {
   /**
    * Only a TRANSPORT failure escalates. A SHA mismatch is an upstream/registry problem that a
    * different transport will not fix, and spending 40 s of backoff on it is pure latency.
+   *
+   * <p>Pinned against REAL {@code ResumableFetch.fetch} outcomes, and against the TYPED field the
+   * classification reads. It used to match a prefix of the user-facing message, so rewording the
+   * failure would have disabled escalation and the terminal verdict with every test still green;
+   * {@link ResumableFetch.Outcome#failure()} makes that structurally impossible rather than merely
+   * test-guarded.
    */
   @Test
-  @DisplayName("a verification failure is not a transport failure")
-  void verificationFailureIsNotTransport() {
-    assertTrue(InstallAttemptMemory.isTransportFailure("Download failed for splade/config.json"));
-    assertFalse(InstallAttemptMemory.isTransportFailure("Verification failed: sha mismatch"));
-    assertFalse(InstallAttemptMemory.isTransportFailure("Failed to record resume state: disk full"));
-    assertFalse(InstallAttemptMemory.isTransportFailure("Cancelled."));
-    assertFalse(InstallAttemptMemory.isTransportFailure(null));
-  }
-
-  /**
-   * The classifier reads a message {@code ResumableFetch} produces, so it is pinned against a REAL
-   * outcome rather than against a copy of the literal. Rewording the failure would otherwise
-   * silently disable escalation and the terminal verdict with every test still green.
-   */
-  @Test
-  @DisplayName("the transport-failure prefix matches what ResumableFetch actually emits")
-  void prefixMatchesResumableFetchOutcome() {
-    ResumableFetch.Outcome outcome =
+  @DisplayName("a verification failure carries no transport classification, so it does not escalate")
+  void onlyTransportOutcomesEscalate() {
+    ResumableFetch.Outcome transport =
         ResumableFetch.fetch(
             new ResumableFetch.Request(
                 home.resolve("model.onnx.partial"), URL, 100L, "ABCD", "splade/model.onnx"),
@@ -131,13 +125,51 @@ final class InstallAttemptMemoryTest {
             (bytes, total) -> {},
             () -> false,
             ResumableFetch.Hooks.none(),
-            // One attempt, no backoff: this test is about the message, not the ladder.
+            // One attempt, no backoff: this test is about the classification, not the ladder.
             TransportRetryPolicy.defaultPolicy().withMaxAttempts(1).withSleeper(ms -> {}));
 
-    assertFalse(outcome.ok());
-    assertTrue(
-        InstallAttemptMemory.isTransportFailure(outcome.error()),
-        "a real transport failure must classify as one: " + outcome.error());
+    assertFalse(transport.ok());
+    assertNotNull(transport.failure(), "a real transport failure must carry its classification");
+    assertTrue(InstallAttemptMemory.isTransportFailure(transport), transport.error());
+
+    ResumableFetch.Outcome verification =
+        ResumableFetch.fetch(
+            new ResumableFetch.Request(
+                home.resolve("config.json.partial"), URL, 4L, "ABCD", "splade/config.json"),
+            (url, dest, decision, callback, tier) -> {
+              try {
+                Files.write(dest, new byte[] {1, 2, 3, 4});
+              } catch (IOException e) {
+                throw new UncheckedIOException(e);
+              }
+              return true;
+            },
+            (bytes, total) -> {},
+            () -> false,
+            ResumableFetch.Hooks.none(),
+            TransportRetryPolicy.defaultPolicy().withMaxAttempts(1).withSleeper(ms -> {}));
+
+    assertFalse(verification.ok());
+    assertTrue(verification.error().startsWith("Verification failed"), verification.error());
+    assertNull(verification.failure(), "a SHA mismatch is not a transport failure");
+    assertFalse(InstallAttemptMemory.isTransportFailure(verification), verification.error());
+    assertFalse(InstallAttemptMemory.isTransportFailure(null), "nor is a missing outcome");
+
+    // …and the consumer's branch: only the transport outcome moves the next pass up a rung.
+    InstallAttemptMemory memory = InstallAttemptMemory.load(home);
+    recordIfTransport(memory, verification);
+    assertEquals(0, memory.startTierFor(TARGET), "a verification failure must not escalate");
+    recordIfTransport(memory, transport);
+    assertEquals(1, memory.startTierFor(TARGET), "a transport failure escalates the next pass");
+  }
+
+  /** Mirrors {@code AiInstallService}'s branch: only a transport outcome reaches the memory. */
+  private static void recordIfTransport(
+      InstallAttemptMemory memory, ResumableFetch.Outcome outcome) {
+    if (InstallAttemptMemory.isTransportFailure(outcome)) {
+      memory.recordTransportFailure(
+          TARGET, URL, outcome.transferAttempts(), outcome.error(), 0);
+    }
   }
 
   /**
