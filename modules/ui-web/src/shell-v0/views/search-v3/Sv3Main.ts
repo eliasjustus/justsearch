@@ -62,8 +62,14 @@ import { icon } from '../../components/Icon.js';
 // The ONE readiness vocabulary. The locked transcript's heading and its remedy are read from it, not
 // worded here (tempdoc 629 #3 — the locked-chat gate speaks the same words as every other cause).
 import { reasonFor } from '../../state/readinessNotice.js';
+import type { Availability } from '../../state/availability.js';
 import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 import {
+  BRANCH_EDIT_CANCEL,
+  BRANCH_EDIT_INPUT_LABEL,
+  BRANCH_EDIT_LABEL,
+  BRANCH_EDIT_SEND,
+  BRANCH_EDIT_WAIT,
   COMPOSER_STATE_DEFAULT,
   CONTEXT_FLOOR_COMPACTED,
   CONTEXT_FLOOR_GROUP_LABEL,
@@ -91,6 +97,12 @@ import {
   TURN_EMPTY_ANSWER,
   TURN_FAILED,
   TURN_HALTED,
+  VERSION_AT_FIRST,
+  VERSION_AT_LAST,
+  VERSION_NEXT,
+  VERSION_PAGER_LABEL,
+  VERSION_PREVIOUS,
+  versionPagerCount,
 } from './fixtures.js';
 import type { Sv3ComposerState } from './fixtures.js';
 import { SV3_RESULTS_IDLE, type Sv3ResultsView } from './sv3-results.js';
@@ -103,6 +115,15 @@ import {
   type Sv3ContextMenuRequest,
   type Sv3TurnContext,
 } from './sv3-context.js';
+import {
+  SV3_BRANCH_ACTION,
+  SV3_VERSION_SELECT,
+  sv3LineageFor,
+  type Sv3BranchAction,
+  type Sv3TurnLineage,
+  type Sv3VersionSelect,
+  type Sv3VersionSet,
+} from './sv3-branch.js';
 import {
   projectSv3AnswerFrame,
   sv3SourcesTrigger,
@@ -401,6 +422,87 @@ export class Sv3Main extends JfElement {
         line-height: 1.625;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
+      }
+      /* Edit RESTS beside the question for the reason the ⋯ rests below the answer: it is the only
+         way to rewrite a question in this window, and a capability reachable nowhere else must not
+         be discoverable by pointer alone. Muted at rest, like its sibling. */
+      .ask-edit::part(control) {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        inline-size: var(--space-6);
+        block-size: var(--space-6);
+        border-radius: var(--control-radius);
+        color: var(--icon-muted);
+        cursor: pointer;
+      }
+      .ask-edit::part(control):hover {
+        color: var(--foreground);
+      }
+      /* The editor takes the bubble's own measure, so a rewrite sits where the question sat rather
+         than jumping the column width the moment it opens. */
+      .ask-editing {
+        align-items: stretch;
+      }
+      .ask-input {
+        inline-size: 100%;
+        min-block-size: var(--space-12);
+        box-sizing: border-box;
+        padding: var(--space-2);
+        border: 1px solid var(--border);
+        border-radius: var(--control-radius);
+        background: var(--background);
+        color: var(--foreground);
+        font: inherit;
+        font-size: var(--font-size-sv3-sm);
+        resize: vertical;
+      }
+      .ask-input:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 1px;
+      }
+      .ask-edit-acts {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--space-2);
+      }
+      .ask-edit-act::part(control) {
+        display: inline-flex;
+        align-items: center;
+        height: var(--space-6);
+        padding-inline: var(--space-2);
+        border: 0;
+        border-radius: var(--control-radius);
+        background: none;
+        color: var(--secondary-label);
+        font: inherit;
+        font-size: var(--font-size-sv3-xs);
+        cursor: pointer;
+      }
+      .ask-edit-act::part(control):hover {
+        color: var(--foreground);
+      }
+      /* The pager is a READING, not an action: the count is the fact and the two chevrons move it. */
+      .version-pager {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-1);
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+        font-variant-numeric: tabular-nums;
+      }
+      .version-nav::part(control) {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        inline-size: var(--space-5);
+        block-size: var(--space-5);
+        border-radius: var(--control-radius);
+        color: var(--icon-muted);
+        cursor: pointer;
+      }
+      .version-nav::part(control):hover {
+        color: var(--foreground);
       }
       /* The response has NO bubble and NO alignment — plain content on the panel, inset by the
          design spec's 'px-1 py-0.5'. Phase F4 fills it with the shared
@@ -975,11 +1077,14 @@ export class Sv3Main extends JfElement {
     copiedTurnId: { state: true },
     expandedSources: { state: true },
     turnContexts: { attribute: false },
+    turnLineage: { attribute: false },
     floorSummary: { attribute: false },
     streaming: { type: Boolean },
     showFloorSummary: { state: true },
     editingFloorSummary: { state: true },
     floorSummaryDraft: { state: true },
+    editingTurnId: { state: true },
+    editingDraft: { state: true },
   };
 
   declare state: Sv3ComposerState;
@@ -1050,6 +1155,13 @@ export class Sv3Main extends JfElement {
    * after every write; this region decides nothing about the context and renders what it is given.
    */
   declare turnContexts: readonly Sv3TurnContext[];
+  /**
+   * What each turn can do about BRANCHING (852 S3) — positional, one entry per turn, derived by the
+   * window because the version sets are a read over the shared conversation LIST and this region
+   * holds no list. Same split as {@link turnContexts}, and for the same reason: the region renders
+   * the arithmetic and performs none of it.
+   */
+  declare turnLineage: readonly Sv3TurnLineage[];
   /** The compaction summary standing at the floor, or null for a plain rewind / no floor. */
   declare floorSummary: string | null;
   /**
@@ -1062,6 +1174,14 @@ export class Sv3Main extends JfElement {
   declare showFloorSummary: boolean;
   declare editingFloorSummary: boolean;
   declare floorSummaryDraft: string;
+  /**
+   * The turn whose question is open for rewriting, and the rewrite itself (852 S3). Region state,
+   * exactly like the floor-summary editor above and for the same reason: an editor is a place the
+   * reader is standing, not a fact about the conversation, and the window has no use for it until
+   * the reader presses Send.
+   */
+  declare editingTurnId: string | null;
+  declare editingDraft: string;
 
   /**
    * The design spec's two scroll modes as one flag: armed = `following-end` (the reader is at the end, so
@@ -1089,11 +1209,14 @@ export class Sv3Main extends JfElement {
     this.copiedTurnId = null;
     this.expandedSources = new Set();
     this.turnContexts = [];
+    this.turnLineage = [];
     this.floorSummary = null;
     this.streaming = false;
     this.showFloorSummary = false;
     this.editingFloorSummary = false;
     this.floorSummaryDraft = '';
+    this.editingTurnId = null;
+    this.editingDraft = '';
   }
 
   override disconnectedCallback(): void {
@@ -1116,6 +1239,7 @@ export class Sv3Main extends JfElement {
 
   protected override updated(changed: Map<string, unknown>): void {
     this.settleFloorSummaryEditor(changed);
+    this.settleQuestionEditor();
     const el = this.scroller;
     if (el === null || !this.followEnd) return;
     // Assigned unconditionally while armed, which is what makes a streaming answer stay in view:
@@ -1144,6 +1268,25 @@ export class Sv3Main extends JfElement {
     this.editingFloorSummary = false;
     this.floorSummaryDraft = '';
     this.showFloorSummary = false;
+  }
+
+  /**
+   * The question editor answers to the TRANSCRIPT, for the reason the summary editor answers to the
+   * store (S2's own defect): closing it on the press would throw away the reader's rewrite exactly
+   * when the branch was refused and it is hardest to reproduce.
+   *
+   * What it waits for is the turn LEAVING. An accepted edit forks from before this question, so the
+   * branch the window then opens does not contain the turn that was being edited — its disappearance
+   * IS the write landing, and the same rule closes the editor when the reader claims some other
+   * conversation. A refused branch leaves the transcript exactly as it was, so the editor stays open
+   * with the rewrite in it while the window's toast names the act that failed.
+   */
+  private settleQuestionEditor(): void {
+    const editing = this.editingTurnId;
+    if (editing === null) return;
+    if ((this.turns ?? []).some((turn) => turn.id === editing)) return;
+    this.editingTurnId = null;
+    this.editingDraft = '';
   }
 
   render(): TemplateResult {
@@ -1323,11 +1466,7 @@ export class Sv3Main extends JfElement {
         ?data-out-of-context=${context?.outOfContext === true}
         ?data-excluded=${context?.hasExcluded === true}
       >
-        ${turn.question === ''
-          ? nothing
-          : html`<div class="ask">
-              <div class="ask-bubble" data-testid="sv3-turn-question">${turn.question}</div>
-            </div>`}
+        ${this.question(turn)}
         ${turn.kind === 'agent'
           ? html`${/* Tempdoc 848 §2.7 — an agent turn shows its thinking too. Leaving one turn kind
                       reasoning-less would rebuild, inside this window, the same live/record
@@ -1357,6 +1496,172 @@ export class Sv3Main extends JfElement {
         ${this.tail(turn)}${this.citations(turn)}
       </div>
     `;
+  }
+
+  /**
+   * The turn's question, and the ONE affordance that acts on it: EDIT (tempdoc 610 Phase A, ported
+   * by 852 S3).
+   *
+   * Edit renders here rather than in the ⋯ because it is the question's defining act and the
+   * reference window makes the same split for the same reason (§13.1 — "Edit is the user turn's
+   * defining action and renders INLINE on the turn"). Retry and Branch are in the overflow, where
+   * that window also keeps them.
+   *
+   * It renders only when the turn can actually be edited: a store-minted question AND a nameable
+   * fork point ({@link Sv3TurnLineage.canEdit}). An inherited turn, an agent turn and a live turn all
+   * fail that and get no control — the honest null this window already applies to the context acts,
+   * rather than a pencil that would fork the wrong conversation or 404.
+   */
+  private question(turn: Sv3Turn): TemplateResult | typeof nothing {
+    if (turn.question === '') return nothing;
+    if (this.editingTurnId === turn.id) return this.questionEditor(turn);
+    const canEdit = sv3LineageFor(this.turnLineage, turn.id)?.canEdit === true;
+    return html`<div class="ask">
+      <div class="ask-bubble" data-testid="sv3-turn-question">${turn.question}</div>
+      ${canEdit && !this.streaming
+        ? html`<jf-control
+            class="ask-edit"
+            data-testid="sv3-turn-edit"
+            data-turn=${turn.id}
+            label=${BRANCH_EDIT_LABEL}
+            .onActivate=${() => {
+              this.editingDraft = turn.question;
+              this.editingTurnId = turn.id;
+            }}
+            >${icon({ name: 'pencil', size: TAIL_GLYPH_SIZE })}</jf-control
+          >`
+        : nothing}
+    </div>`;
+  }
+
+  /**
+   * The rewrite in progress. Ctrl/⌘+Enter sends and Escape cancels — the reference's own keys
+   * (`onEditKeydown`, `views/UnifiedChatView.ts:1668-1677`), so the gesture a reader learned in one
+   * window is the gesture in this one.
+   */
+  private questionEditor(turn: Sv3Turn): TemplateResult {
+    // ONE refusal for BOTH ways in. The window refuses an edit raised while something is streaming,
+    // and a keyboard path that raised it anyway would be refused out of sight — the button explains
+    // itself, the shortcut would just do nothing. Both go through this, so the only way to reach the
+    // act is the way the control describes.
+    const blocked = (): boolean => this.streaming;
+    const send = (): void => {
+      const text = this.editingDraft.trim();
+      if (text === '' || blocked()) return;
+      this.branchAct({ action: 'edit', turnId: turn.id, text });
+    };
+    return html`<div class="ask ask-editing">
+      <textarea
+        class="ask-input"
+        data-testid="sv3-turn-edit-input"
+        aria-label=${BRANCH_EDIT_INPUT_LABEL}
+        .value=${this.editingDraft}
+        @input=${(event: Event) => {
+          this.editingDraft = (event.target as HTMLTextAreaElement).value;
+        }}
+        @keydown=${(event: KeyboardEvent) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            this.editingTurnId = null;
+            this.editingDraft = '';
+          } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            send();
+          }
+        }}
+      ></textarea>
+      <div class="ask-edit-acts">
+        <jf-control
+          class="ask-edit-act"
+          data-testid="sv3-turn-edit-send"
+          label=${BRANCH_EDIT_SEND}
+          .availability=${this.streaming
+            ? ({ kind: 'unavailable', reason: BRANCH_EDIT_WAIT } as const)
+            : ({ kind: 'available' } as const)}
+          .onActivate=${send}
+          >${BRANCH_EDIT_SEND}</jf-control
+        >
+        <jf-control
+          class="ask-edit-act"
+          data-testid="sv3-turn-edit-cancel"
+          label=${BRANCH_EDIT_CANCEL}
+          .onActivate=${() => {
+            this.editingTurnId = null;
+            this.editingDraft = '';
+          }}
+          >${BRANCH_EDIT_CANCEL}</jf-control
+        >
+      </div>
+    </div>`;
+  }
+
+  /**
+   * The inline pager between the versions of one turn (tempdoc 610 Phase B). It renders wherever a
+   * divergence point has more than one version — INCLUDING on a turn that offers no other control,
+   * because a fork the reader cannot navigate is a fork they cannot see they made (the reference
+   * gates it independently of its action bar for the same reason, `:1583-1588`).
+   *
+   * Selecting a version CLAIMS that conversation; it is navigation, not a write, so the window's
+   * ordinary open path handles it and nothing here is optimistic.
+   */
+  private versionPager(turn: Sv3Turn): TemplateResult | typeof nothing {
+    const versions = sv3LineageFor(this.turnLineage, turn.id)?.versions ?? null;
+    if (versions === null) return nothing;
+    const go = (next: number): void => {
+      const target = versions.sessions[next];
+      if (target === undefined || next === versions.index) return;
+      this.dispatchEvent(
+        new CustomEvent<Sv3VersionSelect>(SV3_VERSION_SELECT, {
+          detail: { sessionId: target },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    };
+    return html`<span class="version-pager" role="group" aria-label=${VERSION_PAGER_LABEL}>
+      <jf-control
+        class="version-nav"
+        data-testid="sv3-version-previous"
+        label=${VERSION_PREVIOUS}
+        .availability=${this.versionStep(versions, -1)}
+        .onActivate=${() => go(versions.index - 1)}
+        >${icon({ name: 'chevron-left', size: TAIL_GLYPH_SIZE })}</jf-control
+      >
+      <span class="version-count" data-testid="sv3-version-count"
+        >${versionPagerCount(versions.index, versions.sessions.length)}</span
+      >
+      <jf-control
+        class="version-nav"
+        data-testid="sv3-version-next"
+        label=${VERSION_NEXT}
+        .availability=${this.versionStep(versions, 1)}
+        .onActivate=${() => go(versions.index + 1)}
+        >${icon({ name: 'chevron-right', size: TAIL_GLYPH_SIZE })}</jf-control
+      >
+    </span>`;
+  }
+
+  /**
+   * Why an END of the pager is UNAVAILABLE rather than disabled-and-silent: `jf-control`'s typed
+   * availability carries the reason to assistive tech, and "this is the first version" is the whole
+   * answer to why the control did not move.
+   */
+  private versionStep(versions: Sv3VersionSet, step: number): Availability {
+    const next = versions.index + step;
+    return next >= 0 && next < versions.sessions.length
+      ? { kind: 'available' }
+      : { kind: 'unavailable', reason: step < 0 ? VERSION_AT_FIRST : VERSION_AT_LAST };
+  }
+
+  /** Every branch act this region raises goes through one seam, for the window to resolve. */
+  private branchAct(detail: Sv3BranchAction): void {
+    this.dispatchEvent(
+      new CustomEvent<Sv3BranchAction>(SV3_BRANCH_ACTION, {
+        detail,
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   /**
@@ -1418,17 +1723,21 @@ export class Sv3Main extends JfElement {
     const sources = this.tailSources(turn);
     const copy = this.tailCopy(turn);
     const context = this.tailContextMenu(turn);
+    // The pager is the one tail member that is NOT an action on this turn — it says which of several
+    // versions of it is on screen — so it leads the controls rather than sitting among them.
+    const versions = this.versionPager(turn);
     if (
       facts === nothing &&
       note === nothing &&
       sources === nothing &&
       copy === nothing &&
-      context === nothing
+      context === nothing &&
+      versions === nothing
     ) {
       return nothing;
     }
     return html`<div class="tail" data-testid="sv3-turn-tail">
-      ${facts}${note}${sources}${copy}${context}
+      ${facts}${note}${sources}${versions}${copy}${context}
     </div>`;
   }
 
