@@ -1,7 +1,7 @@
 # 849 — The Search v3 pane is an evidence reader, not a file previewer
 
 ```
-status:  SLICE 1 IMPLEMENTED — Slices 2 and 3 PENDING
+status:  SLICES 1-2 IMPLEMENTED — Slice 3 PENDING
 created: 2026-08-19
 updated: 2026-08-19
 related: 822 F8 (the pane's original charter), 845 (RAG budget honesty — IMPLEMENTING,
@@ -19,8 +19,9 @@ number:  849 provisional. `check-tempdoc-numbers` reports one live collision (#8
 
 ## 0. Implementation status (2026-08-19)
 
-**Slice 1 (§8 "The honest record") is implemented and merged as one PR.** Slices 2 and 3 are
-unstarted; everything below §8 Slice 1 remains design, not description.
+**Slice 1 (§8 "The honest record") is implemented and merged as one PR; Slice 2 (§8 "Anchoring
+fidelity") followed as a second, frontend-only PR (§0.1).** Slice 3 is unstarted; everything below
+§8 Slice 2 remains design, not description.
 
 What Slice 1 landed, and where it differs from the design as written:
 
@@ -103,6 +104,85 @@ next reader a constraint that does not exist.
 
 Open questions §9 answered by implementation: **Q6 is decided — record-only.**
 `contextIncludedChars` is classified `DROPPED` in the FE totality guard with that reason.
+
+### 0.1 Slice 2 (§8 "Anchoring fidelity") — implemented, frontend only
+
+| §8 Slice 2 item | Status |
+|---|---|
+| 1. `Sv3Main` stops discarding the primary | Done. `Sv3CitationOpen` now carries `{docPath, anchor, turnId, sourceIndex}`; the derived line span is GONE from the event rather than carried alongside — see the deviation note below |
+| 2. Char-anchored addressing + `offsetChars` window + the `truncated` flag | Done. `DocumentPane.citation` (`DocumentCitationAnchor`) is the anchor when set; the fetch is a lead-in/span/trail window around `startChar`, and `truncated` (plus a non-zero offset) renders a "this is a window" note |
+| 3. Excerpt-as-witness | Done, as SUPPRESSION with two distinguished reasons: `witness` (the excerpt is not at the offsets) and `window` (the served slice does not contain them). Whitespace- and case-insensitive, because the chunker's quote and the extractor's text differ in whitespace far more often than in words; an EMPTY excerpt confirms (absence of a witness is not evidence of a move) |
+| 4. `chunkRange` gains its first production writer | Done, via the anchor: weak = the cited chunk, strong = the claim-matched sentence located inside it, none = no claim match |
+| 5. Weak tier scrollable + late-match upgrade | Done. `updated()` fires for EITHER tier; `SearchV3View.upgradeOpenPaneAnchor` re-resolves the open pane when `rag.citation_matches` lands |
+| 6. The false "0-based inclusive line span" comment | Gone with the field it described |
+
+**Three deviations from the design as written, all deliberate.**
+
+- **The scroll selector is two queries, not one.** §4/D-2 specified `.hl-strong, .hl-weak` on the
+  ground that "`.hl-strong` precedes `.hl-weak` in document order whenever both exist". That is
+  false whenever the matched sentence sits anywhere but the head of its chunk — the chunk's opening
+  line comes first — and a single selector returns the first DOCUMENT-order match, so it would
+  scroll past the emphasis. The pane asks for `.hl-strong` first and falls back to `.hl-weak`.
+- **The event carries identity, not copies.** §8.2(1) listed `chunkIndex/chunkTotal/score/
+  headingText/headingLevel` as fields to widen `Sv3CitationOpen` with. They are not on
+  `CitationSelectDetail` at all (`citationTypes.ts:138-147`), so forwarding them would mean widening
+  the shared detail AND minting a second copy of the citation record on an event — a fork of
+  `RetrievalCitation`. `turnId` + `sourceIndex` let Slice 3's header read those fields off the one
+  citation record instead, which is the same projection-not-fork rule §5.3 applied backend-side.
+- **`citation` is read through one normalizer.** Lit leaves an unbound property `undefined`, and
+  three of the reader's four mount sites are line-addressed and never bind it, so `=== null` reads
+  sent exactly those consumers down the anchored path with nothing to anchor on. Pinned by its own
+  test.
+
+**The critical-analysis pass found one real defect and one false alarm, and both are recorded.**
+
+- **Real: the mid-line trim could cut away the evidence.** A window cut at an arbitrary character
+  starts mid-line, so the reader drops the leading remainder to make line 0 a real line. On text
+  whose first line break falls AFTER the cited span — an extracted PDF is routinely one very long
+  line — that trim moved the window past the citation, which then reported itself as *outside the
+  part of this document that could be loaded*: a suppression notice manufactured by the reader's own
+  arithmetic. The trim is now taken only when the whole remainder precedes the span. Pinned by a
+  test that FAILS with the guard removed, and whose fixture asserts it actually exercises the trim
+  (the first draft's fixture did not — the line break fell one character outside the window, so the
+  test passed for a wrong reason and the probe is what exposed it).
+- **False alarm: re-arming the decay from `willUpdate` was NOT broken.** The pass suspected that
+  arming off `changed.has('anchorState')` would read the derived range a cycle late. Probed by
+  reverting: 33/33 still green, because Lit records a property changed *during* `willUpdate` in the
+  same `changedProperties`. The arming call now sits next to the derivation because that is the
+  shorter path, and the code comment says so rather than claiming a repair it did not make.
+
+**Independent review (PR #502) — APPROVE-WITH-FIXES, all applied.** The reviewer verified the
+central premise end to end (one character coordinate system from chunker to store to `/api/preview`,
+with no CRLF/BOM rewrite between the buffers) and confirmed deviation 1's document-order claim
+against the DOM spec. Eight findings, each now pinned by a test that fails with the fix reverted:
+
+| # | Finding | Fix |
+|---|---|---|
+| S1 | `normalize()` desynced its origin map on U+0130 (`'İ'.toLowerCase()` is 2 code units — the only length-changing lowercase in U+0000-U+2FFFF), so `locateText` returned `end: NaN`: the strong highlight silently vanished or landed wrong. **Failed OPEN** | every produced unit maps back to its one source index |
+| S2 | `end > content.length` was always reported as an under-loaded *window*, even when the slice ran to EOF with `truncated === false` — that document is SHRUNK, and blaming the reader's window for it is the same dishonesty inverted. Also covers `offsetChars` past EOF (the worker clamps and returns empty) | third reason `shrunk`, keyed on the `truncated` flag |
+| S3 | The window note and a suppression notice rendered together — "showing the part around the cited passage" beside "the passage could not be confirmed" | the window note yields to any suppression |
+| S4 | The witness comment claimed 48 chars defeats boilerplate, but `slice(0, 48)` is a MAXIMUM: a 12-char excerpt ("Introduction") false-confirms a rewritten document | `WITNESS_MIN_CHARS = 24` — too short to testify is treated as **no usable witness** (confirm-by-absence, like an empty excerpt), which is the honest statement rather than dressing a 12-character match as verification |
+| S5 | The witness confirmed ANYWHERE in the span, so a 500-char insertion before the passage still confirmed while the tint had silently shifted | `WITNESS_DRIFT_CHARS = 64` — the excerpt is a word-clamped PREFIX of the chunk (`RagContextOps.clampExcerptToWordBoundary(content, 240)`), so it belongs at the span's start |
+| S6 | The comment claimed the endpoint echoes the SERVED offset; `PreviewController.java:167` echoes the request parameter and the worker clamps silently | comment corrected, the echo dropped (`nextOffsetChars` is the only served-position fact); a clamp is caught by S2's coverage check |
+| S7 | The `citation` branch consulted `windowCovers()` while the first fetch was still in flight (`previewWindow` still null) → a duplicate identical request | coverage also consults the in-flight request |
+| S8 | `upgradeOpenPaneAnchor` wrote state from `updated()` (Lit dev-build warns) | moved to `willUpdate`, matching the reader's own derivation |
+
+Also added: the missing **different-turn** case for the late-match upgrade (the turn-id half of the
+key was code-verified but untested; it fails when the lookup is swapped for "the latest turn").
+Logged rather than fixed: S9 (`pane-visible-range` emits window-relative lines against a documented
+absolute contract — latent, no consumer), S10 (a degenerate `endChar <= startChar` span opens the
+pane with no message; the pane cannot tell "no citation" from "unusable span" without a new event
+field, so it belongs with slice 3's header), S11 (pre-existing backend: `RagContextOps` fabricates
+`startChar = searchFrom` on an `indexOf` miss, so those citations will now suppress with a
+"document may have changed" explanation that is false — the producer guessed).
+
+**Tests (all in `DocumentPane.test.ts` + `SearchV3View.pane.test.ts`), each verified to fail before
+the change** — the eight new pane cases were run against the pre-change component and failed 8/8;
+the ninth ("leaves the line-addressed consumers alone") passed both sides, which is what makes it a
+regression guard rather than a new claim. The late-match case was additionally verified to fail with
+`upgradeOpenPaneAnchor` removed, so it discriminates the mechanism and not merely the event shape.
+The off-by-one fixture asserts the RENDERED text of the tinted line (`line three..` at 0-based 3,
+1-based 4), so a surviving off-by-one names a different line rather than a different number.
 
 ---
 

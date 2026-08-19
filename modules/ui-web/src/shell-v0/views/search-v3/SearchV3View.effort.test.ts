@@ -327,7 +327,7 @@ describe('an open control menu is more local than the pane', () => {
     const main = await region(el, 'jf-sv3-main');
     main.dispatchEvent(
       new CustomEvent(SV3_CITATION_OPEN, {
-        detail: { docPath: 'C:/corpus/notes.md', range: null },
+        detail: { docPath: 'C:/corpus/notes.md', anchor: null, turnId: '', sourceIndex: -1 },
         bubbles: true,
         composed: true,
       }),
