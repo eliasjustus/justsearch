@@ -11,6 +11,7 @@
 import { getDocument, mutateDocument } from '../state/UserStateDocument.js';
 import { getShellContext } from '../state/shellContextState.js';
 import { evaluateWhen } from './whenExpression.js';
+import { isTypingTarget } from '../utils/keyboardHandler.js';
 import { makeCoreProvenance } from '../primitives/provenance.js';
 import type { Provenance } from '../primitives/provenance.js';
 
@@ -160,11 +161,13 @@ export function attachKeybindingDispatcher(invoke: (commandId: string) => void):
     // when the event originates in an editable control, only modified chords fire.
     // (The listener is capture-phase on window, so without this guard a plain-key
     // binding would steal characters from every input in the app.)
+    // Tempdoc 857 PR-A — the SUBJECT stays this registry's own (`composedPath()[0]`, where the event
+    // came FROM, which is not the question "where is focus now?" that the shadow-root descent
+    // answers). Only the PREDICATE is shared: what counts as an editable is one definition for the
+    // whole app, and this file held the third copy of it.
     const path = e.composedPath();
     const origin = (path.length > 0 ? path[0] : e.target) as HTMLElement | null;
-    const tag = origin?.tagName;
-    const inEditable =
-      tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || origin?.isContentEditable === true;
+    const inEditable = isTypingTarget(origin);
     for (const entry of entries) {
       const parsed = parseKey(entry.key);
       if (!matchesEvent(parsed, e)) continue;

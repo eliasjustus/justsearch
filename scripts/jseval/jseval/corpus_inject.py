@@ -549,6 +549,17 @@ def _cross_process_assembly(
         "host_min_words": host_min_words,
     }
     outputs = []
+    # Spawn via `-m jseval.corpus_inject` with cwd at the jseval package's parent directory,
+    # rather than running this file as a bare script. A bare-script invocation puts this file's
+    # own directory (`.../jseval/jseval/`) on sys.path[0], where the package's own `types.py`
+    # shadows the Python 3.13 stdlib `types` module (`_weakrefset.py` does
+    # `from types import GenericAlias` transitively via `import json` -> `re` -> `enum` ->
+    # `dataclasses` -> `copy` -> `weakref`), crashing the child before it can even parse its
+    # request. `-m` + the package's parent as cwd makes sys.path[0] that parent directory
+    # instead, which has no `types.py` of its own, while still resolving `jseval.corpus_build` /
+    # `jseval.evidence_offset` (this module's own top-level imports) via the `jseval` package
+    # sitting directly under cwd — never rename the real `jseval/types.py`.
+    package_parent = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         request_path = root / "request.json"
@@ -556,10 +567,11 @@ def _cross_process_assembly(
         for index in range(2):
             output_path = root / f"result-{index}.json"
             completed = subprocess.run(
-                [sys.executable, str(Path(__file__).resolve()), str(request_path), str(output_path)],
+                [sys.executable, "-m", "jseval.corpus_inject", str(request_path), str(output_path)],
                 check=False,
                 capture_output=True,
                 text=True,
+                cwd=str(package_parent),
             )
             if completed.returncode != 0:
                 raise RuntimeError(
