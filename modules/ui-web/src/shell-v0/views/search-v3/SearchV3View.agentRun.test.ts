@@ -4,7 +4,8 @@
  * The delegate tier of the Search v3 window (tempdoc 822 Phase F2).
  *
  * The shared agent controller is mocked at the STORE boundary (`agentSessionStore`), the way
- * search-v2's run cases do — but `runControlIntent` is deliberately NOT mocked, so every case here
+ * the retired search-v2 window's run cases did — but `runControlIntent` is deliberately NOT mocked,
+ * so every case here
  * exercises the REAL `dispatchRunControl` seam and its lifecycle predicates against a fake run. A
  * hand-rolled directive would therefore not merely be un-asserted; it would take a different code
  * path than the one the steering register governs.

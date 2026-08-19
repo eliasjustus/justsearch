@@ -275,7 +275,7 @@ describe('CitationsPanel', () => {
     it(`leaves the SHIPPED default untouched — ${path.what}`, async () => {
       const el = await mount(path.apply, false);
       // The header is still the panel's own, and the two always-open bodies are still open: a
-      // default that quietly started gating itself would close SearchV2View and SummarizeView.
+      // default that quietly started gating itself would close UnifiedChatView and SummarizeView.
       expect(el.externalDisclosure).toBe(false);
       expect(el.shadowRoot?.querySelector(path.header)).not.toBeNull();
       const openByDefault = path.header === 'div.panel-header';
@@ -482,7 +482,7 @@ describe('CitationsPanel 822 §5.4 — the source card is the selection’s far 
 
     // `.source[data-selected]` is (0,2,0) and OUTRANKS the base `.citation, .source` at (0,1,0), so
     // its fallbacks are not decoration — they are what a selected card resolves to in every consumer
-    // that does not opt in (search-v2, SummarizeView, where `MarkdownBlock` marks and `SourcesPane`
+    // that does not opt in (UnifiedChatView, SummarizeView, where `MarkdownBlock` marks and `SourcesPane`
     // both write the store, so `data-selected` IS reachable). Defaulting them to the base rule's own
     // `--surface-2` / `--border-subtle` is what makes "shipped is unaffected" true: the two cards
     // must be indistinguishable. A `transparent` default would blank the selected card instead.
@@ -547,7 +547,7 @@ describe('CitationsPanel 822 §5.4 — the source card is the selection’s far 
     // are both (0,2,0) and the selected rule is later, so it took the border of any card the pointer
     // was over. While `data-selected` was unreachable that never showed; the moment this slice wired
     // the store up, the card the reader had just CLICKED became the one card in the panel with no
-    // pointer feedback — in search-v2, SummarizeView and UnifiedChatView alike. So the more specific
+    // pointer feedback — in SummarizeView and UnifiedChatView alike. So the more specific
     // (0,3,0) rule has to restate the hover edge, not the background alone.
     const hovered = ruleBody('\\.source\\[data-selected\\]:hover');
     const resting = ruleBody('\\.source\\[data-selected\\]');

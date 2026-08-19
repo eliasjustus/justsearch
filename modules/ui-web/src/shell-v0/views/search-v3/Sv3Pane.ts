@@ -33,9 +33,8 @@ import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 // The product's ONE reading surface. Registered by ITS OWN side-effect import, never by relying on
-// another window having been mounted first (`views/search-v2/SearchV2View.ts:96` registers the same
-// element for search-v2; a surface that leaned on that would render an unknown element whenever it
-// was reached first).
+// another window having been mounted first — a surface that leaned on a sibling window's
+// registration would render an unknown element whenever it was reached first.
 import '../../components/documentPane/DocumentPane.js';
 import type { DocumentLineRange } from '../../components/documentPane/DocumentPane.js';
 import { PANE_LABEL } from './fixtures.js';

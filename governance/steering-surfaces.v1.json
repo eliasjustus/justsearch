@@ -8,7 +8,6 @@
   "adopters": [
     "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
     "modules/ui-web/src/shell-v0/components/RetrospectivePanel.ts",
-    "modules/ui-web/src/shell-v0/views/search-v2/SearchV2View.ts",
     "modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.ts"
   ],
   "runDirectiveChannels": {
