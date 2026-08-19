@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The shared "is the reader typing?" guard (tempdoc 854 PR-A).
+ * The shared "is the reader typing?" guard (tempdoc 857 PR-A).
  *
  * Two units, deliberately split: {@link deepActiveElement} answers WHERE FOCUS IS (descending
  * nested shadow roots), {@link isTypingTarget} answers WHETHER THAT IS AN EDITABLE. Splitting them

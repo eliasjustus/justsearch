@@ -161,7 +161,7 @@ export function attachKeybindingDispatcher(invoke: (commandId: string) => void):
     // when the event originates in an editable control, only modified chords fire.
     // (The listener is capture-phase on window, so without this guard a plain-key
     // binding would steal characters from every input in the app.)
-    // Tempdoc 854 PR-A — the SUBJECT stays this registry's own (`composedPath()[0]`, where the event
+    // Tempdoc 857 PR-A — the SUBJECT stays this registry's own (`composedPath()[0]`, where the event
     // came FROM, which is not the question "where is focus now?" that the shadow-root descent
     // answers). Only the PREDICATE is shared: what counts as an editable is one definition for the
     // whole app, and this file held the third copy of it.

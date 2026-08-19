@@ -1,6 +1,6 @@
 ---
 classification: merge-import
-tempdoc: 854
+tempdoc: 857
 ---
 
 `yaml_keys` baseline advanced 110 → 112 and `env_sysprop_pairs` 241 → 243, recording growth that was
@@ -31,3 +31,9 @@ recorded so the gate stops re-litigating it. `--rebalance` cannot do this — th
 ratchets DOWN by design, so advancing it is necessarily a deliberate act.
 
 `854-branch-ramp-bounds.md` is left in place as the record of what was accepted and why.
+
+**The filename deliberately carries no tempdoc number**, matching
+`config-surface-advance-baseline-to-240.md`. `check-tempdoc-numbers` reads a leading number in a
+changeset filename as a claim on that number, so a `NNN-` prefix here would collide with the tempdoc
+that owns it — which is exactly what happened when this entry was first filed as `854-…` and then
+`857-…`. A baseline advance belongs to the gate, not to a lane, so it is named for the gate.

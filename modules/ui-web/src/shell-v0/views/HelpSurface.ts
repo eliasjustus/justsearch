@@ -74,7 +74,7 @@ const SHORTCUTS: ShortcutRow[] = [
   { keys: 'Esc', desc: 'Clear the search box · close an open panel or drawer' },
   { keys: 'Ctrl / ⌘ + Z', desc: 'Undo' },
   { keys: 'Ctrl / ⌘ + Shift + Z', desc: 'Redo' },
-  // Tempdoc 854 PR-A — J/K is the only keyboard navigation the product has for a run's steps, and it
+  // Tempdoc 857 PR-A — J/K is the only keyboard navigation the product has for a run's steps, and it
   // was the least discoverable thing in it: a raw window listener, unregistered in the palette and
   // absent from this table. P-3's rule cuts both ways — a table that omits a binding that DOES fire
   // is as partial a mirror as one that lists bindings that don't. The scope note is part of the row

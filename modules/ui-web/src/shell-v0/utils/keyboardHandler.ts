@@ -32,7 +32,7 @@ export function activateOnKey(e: KeyboardEvent, onActivate: () => void): void {
 }
 
 /**
- * Tempdoc 854 PR-A — the shadow-piercing half of the "is the reader typing?" guard: descend from the
+ * Tempdoc 857 PR-A — the shadow-piercing half of the "is the reader typing?" guard: descend from the
  * document's active element through nested shadow roots to the element that ACTUALLY has focus
  * (`jf-sv3-main` → `jf-sv3-composer` → `textarea`). A bare `document.activeElement` check stops at the
  * outermost custom element and reports a non-editable host, which is why every modifier-less window
@@ -50,7 +50,7 @@ export function deepActiveElement(doc: Document = document): Element | null {
 }
 
 /**
- * Tempdoc 854 PR-A — is this element one the reader types into? The UNION of the two copies that
+ * Tempdoc 857 PR-A — is this element one the reader types into? The UNION of the two copies that
  * existed before: `KeybindingRegistry.ts`'s modifier-less guard (which covered `SELECT`) and
  * `UnifiedChatView`'s inline J/K guard (which did not). The omission was a live bug — with the
  * workflow `<select>` focused (`views/UnifiedChatView.ts:3987`) a `j` press stole the element's

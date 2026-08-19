@@ -1,5 +1,5 @@
 ---
-number: 854
+number: 857
 title: The ratified batch — run-spine navigation ported, surface-audience honesty, pane closes on conversation switch
 status: PR-A IMPLEMENTED (2026-08-19) — PR-B NOT STARTED. Design is rev 2, adversarially reviewed.
   PR-A (§10 "the run-spine navigation port", rows PR-A1-PR-A6) is implemented in full, with the rev 2
@@ -11,16 +11,17 @@ status: PR-A IMPLEMENTED (2026-08-19) — PR-B NOT STARTED. Design is rev 2, adv
   `closePane()`, `CorePlugin.ts` still declares both surfaces `OPERATOR`, and both
   `KNOWN_PARITY_DRIFT` ledger entries still stand. The two PRs touch disjoint files, so PR-B is
   unblocked by this landing.
-  NUMBER ARBITRATION — SUPERSEDED BY EVENTS, NEEDS A RE-RULING BEFORE MERGE. The coordinator ruled
-  (2026-08-19) that this doc keeps 854 because the competing claim lived in another session's
-  worktree and "renumbers at its own merge". That premise no longer holds: `854-fusion-residue-lane.md`
-  MERGED TO `main` FIRST (PR #517, commit `b816b98e`), so 854 is taken in published history and this
-  doc is now the one colliding. `check-tempdoc-numbers` is not in the merge queue, so nothing blocks
-  PR #516 mechanically — but merging as-is would put two different 854s on `main`. This doc must be
-  renumbered (next free: 857 — 855 and 856 are claimed by the settings-window and merge-attribution
-  worktrees) before merge, which also means re-stamping the `854 PR-A` references in
-  the ported code comments. Flagged to the coordinator rather than done unilaterally: the rename
-  touches every comment the independent review just read.
+  RENUMBERED 854 → 857 (2026-08-19). This design was authored, reviewed and implemented as **854**;
+  every commit message on the branch still carries that scope, because history is history. It was
+  renumbered when `854-fusion-residue-lane.md` MERGED TO `main` first (PR #517, commit `b816b98e`) and
+  took 854 in published history. 855 and 856 were already claimed by the settings-window and
+  merge-attribution worktrees, so 857 is the next free number. The ported code comments were
+  re-stamped to `857 PR-A` in the same change; `SearchV3View.ts:1854-1856` is a line number, not a
+  reference, and is deliberately untouched.
+  Worth recording for the next agent who hits this: `check-tempdoc-numbers` did NOT catch the
+  collision. It compares claims ACROSS worktrees, so once the competing doc merged, this tree held
+  both `854-fusion-residue-lane.md` and `854-ratified-batch.md` and the check still reported OK —
+  nothing mechanical would have stopped two 854s reaching `main`.
   Rev 2 folded an adversarial review: three BLOCKING corrections to PR-A (A1 the `active()` deadlock,
   A2 the unstable `.scroller`, A3 the structurally blind test tier) and seven amendments (A4-A10).
   PR-B was unchanged by the review; D4's route enumeration and D3's reframing both survived
@@ -38,7 +39,7 @@ scope-note: search work (query trail, pinned searches) is OUT — deferred to th
   search deliberation. 852 slices S7-S10 and HC-palette work are OUT.
 ---
 
-# 854 — The ratified batch
+# 857 — The ratified batch
 
 ## 1. The owner's decisions (2026-08-19), verbatim in substance
 
@@ -786,11 +787,11 @@ in 852 so that slice does not have to rediscover it.
 
 ## 9. Tempdoc updates this design mandates
 
-1. **`docs/tempdocs/854-ratified-batch.md`** — this document, committed with PR-A (number verified free:
+1. **`docs/tempdocs/857-ratified-batch.md`** — this document, committed with PR-A (number verified free:
    `node scripts/ci/check-tempdoc-numbers.mjs` → OK, 560 distinct numbers, no collisions).
 2. **`docs/tempdocs/852-sv3-promotion.md`** — add a section *"Ratified parity-ledger dispositions
    (owner, 2026-08-19)"* carrying: the §3 disposition table; the note that the run spine's **navigation
-   tier** ships in 854 PR-A while the **minimap tier** is DEFERRED-undecided (§5.7); and the §8 sweep
+   tier** ships in 857 PR-A while the **minimap tier** is DEFERRED-undecided (§5.7); and the §8 sweep
    obligations addressed to S8-S11. 852 explicitly says the ledger lives with the orchestrator and
    lands in-repo as slices land (`:9-12`), so this is that landing, not a fork.
 3. **No change to 851.** `check-window-cutover` keys on `core.search-v3-surface`'s audience and the

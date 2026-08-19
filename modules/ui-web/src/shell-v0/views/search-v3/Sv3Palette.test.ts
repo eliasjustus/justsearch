@@ -151,7 +151,7 @@ describe('Ctrl+K is scoped to the window, and the shipped binding is left alone'
   });
 
   it('registers no global CHORD dispatcher, so the shipped Ctrl+K is untouched', async () => {
-    // Tempdoc 854 PR-A narrowed this case to the contract it names in the file header — "the chord is
+    // Tempdoc 857 PR-A narrowed this case to the contract it names in the file header — "the chord is
     // scoped to the window host (so the shipped shell's own Ctrl+K keeps working outside it)".
     //
     // It used to assert the PROXY for that: zero global keydown listeners anywhere in the window. That

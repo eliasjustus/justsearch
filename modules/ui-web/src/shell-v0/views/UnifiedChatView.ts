@@ -4806,7 +4806,7 @@ export class UnifiedChatView extends JfElement {
     if (dir === 0) return;
     // §33 — never hijack typing: descend through nested shadow roots (jf-unified-chat-view →
     // jf-composer → textarea) to the truly-focused element, and bail if it's an editable control.
-    // Tempdoc 854 PR-A — the descent and the predicate are the SHARED ones now
+    // Tempdoc 857 PR-A — the descent and the predicate are the SHARED ones now
     // (`utils/keyboardHandler.ts`), so this window and Search v3 cannot disagree about what "typing"
     // is. The shared predicate's union also covers `SELECT`, which this inline copy omitted: with the
     // workflow picker (`:3987`) focused, `j`/`k` used to steal its native type-ahead.

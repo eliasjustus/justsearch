@@ -137,7 +137,7 @@ export class NavigationController implements ReactiveController {
   }
 
   /**
-   * Tempdoc 854 PR-A / A9 — at most ONE measure per animation frame, leading edge.
+   * Tempdoc 857 PR-A / A9 — at most ONE measure per animation frame, leading edge.
    *
    * `measure()` is a `querySelectorAll` plus a `getBoundingClientRect` per landmark, and it ran on
    * EVERY render. The first adopter could afford that because its whole navigation was gated behind
@@ -291,7 +291,7 @@ export class NavigationController implements ReactiveController {
     if (typeof ResizeObserver === 'undefined') return; // happy-dom / SSR guard
     const conv = this.opts.scrollEl();
     if (!conv) return;
-    // Observe the scroll container ONCE per NODE, not once per controller (tempdoc 854 PR-A / A2).
+    // Observe the scroll container ONCE per NODE, not once per controller (tempdoc 857 PR-A / A2).
     //
     // This used to read "`.conversation` is a stable DOM node across renders → observe it ONCE
     // (guarded)". That is true of the FIRST adopter and false of the second: `Sv3Main` emits

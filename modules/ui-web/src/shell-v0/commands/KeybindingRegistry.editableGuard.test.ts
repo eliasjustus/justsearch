@@ -70,7 +70,7 @@ describe('KeybindingRegistry editable-target guard (Search Thread S2)', () => {
       return el;
     }],
   ])("plain '/' is suppressed when the target is a %s", (_name, make) => {
-    // Tempdoc 854 PR-A / review F3 — this guard's predicate is now the SHARED `isTypingTarget`
+    // Tempdoc 857 PR-A / review F3 — this guard's predicate is now the SHARED `isTypingTarget`
     // rather than an inline copy, so the union it covers is a dependency of this file and not just
     // a local literal. `select` in particular was covered here and NOWHERE else: dropping it from
     // the shared predicate used to leave this suite entirely green, which is exactly the kind of

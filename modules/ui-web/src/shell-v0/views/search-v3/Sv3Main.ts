@@ -27,7 +27,7 @@ import { JfElement } from '../../primitives/JfElement.js';
 // returns null, which the authority explicitly supports (`primitives/navigation.ts:332-333`), so
 // the minimap's measurements degrade to zero and the landmark/jump path is untouched.
 import { NavigationController } from '../../primitives/navigation.js';
-// The product's ONE "is the reader typing?" predicate (tempdoc 854 PR-A). A window-local copy is
+// The product's ONE "is the reader typing?" predicate (tempdoc 857 PR-A). A window-local copy is
 // what let the retiree's own guard drift out of sync with `KeybindingRegistry`'s.
 import { deepActiveElement, isTypingTarget } from '../../utils/keyboardHandler.js';
 import { matchCountLabel } from '../../components/searchResults/matchCountLabel.js';
@@ -1198,7 +1198,7 @@ export class Sv3Main extends JfElement {
   private pendingSummary: string | null = null;
 
   /**
-   * The reading-position authority for this transcript (tempdoc 854 PR-A; 565 §21's 2nd adopter).
+   * The reading-position authority for this transcript (tempdoc 857 PR-A; 565 §21's 2nd adopter).
    *
    * `spineEl` returns null on purpose: this window ports the run spine's KEYBOARD NAVIGATION, not
    * its minimap. The authority allows it — `trackPx` degrades to 0 and feeds only dot placement —
@@ -1290,7 +1290,7 @@ export class Sv3Main extends JfElement {
   }
 
   /**
-   * J / K — step focus forward and back through the run's landmarks (tempdoc 854 PR-A, porting
+   * J / K — step focus forward and back through the run's landmarks (tempdoc 857 PR-A, porting
    * 565 §33 from `views/UnifiedChatView.ts:4803-4825`). The ONLY keyboard navigation the product has
    * for run steps, and the reason it is kept: `jumpTo` moves real DOM focus to the step, so a
    * keyboard or screen-reader reader lands on the content.
@@ -1635,7 +1635,7 @@ export class Sv3Main extends JfElement {
     if (this.editingTurnId === turn.id) return this.questionEditor(turn);
     const canEdit = sv3LineageFor(this.turnLineage, turn.id)?.canEdit === true;
     return html`<div class="ask">
-      <!-- 854 PR-A — a J/K landmark. The :q suffix keeps the turn's anchors out of the run feed's
+      <!-- 857 PR-A — a J/K landmark. The :q suffix keeps the turn's anchors out of the run feed's
            id space by construction (feed ids are the controller's entry/call ids). -->
       <div class="ask-bubble" data-testid="sv3-turn-question" data-item-id=${`${turn.id}:q`}>${turn.question}</div>
       ${canEdit && !this.streaming
@@ -2317,7 +2317,7 @@ export class Sv3Main extends JfElement {
    * the composer, which refuses to send while any prompt is pending.
    */
   /**
-   * 854 PR-A — a held decision is a J/K landmark, and the fourth stamp site is not optional: prompts
+   * 857 PR-A — a held decision is a J/K landmark, and the fourth stamp site is not optional: prompts
    * render OUTSIDE `.run-feed` precisely because "a held decision must not be something the reader
    * can scroll past", so a three-site plan would have made the one item this window most wants a
    * reader to reach the only run element the keyboard skips.

@@ -184,7 +184,7 @@ describe('navigation — §21 AFFORDANCE (the minimap-as-scrollbar)', () => {
   });
 });
 
-describe('navigation — the jump moves real DOM focus (tempdoc 854 PR-A)', () => {
+describe('navigation — the jump moves real DOM focus (tempdoc 857 PR-A)', () => {
   it('focuses the landmark it scrolls to, so a keyboard reader lands on the content', () => {
     // `el.focus({preventScroll:true})` (`navigation.ts:206`) is this feature's ENTIRE accessibility
     // payload — the difference between "the column scrolled" and "the reader is now on the step" for
@@ -209,7 +209,7 @@ describe('navigation — the jump moves real DOM focus (tempdoc 854 PR-A)', () =
   });
 });
 
-describe('navigation — the scroll container is observed per NODE, not once per controller (854 A2)', () => {
+describe('navigation — the scroll container is observed per NODE, not once per controller (857 A2)', () => {
   it('rebinds its listeners when scrollEl() returns a different element', () => {
     // The authority used to early-return forever once bound, on the premise that the scroll column
     // is "a stable DOM node across renders". That holds for the first adopter and NOT for the

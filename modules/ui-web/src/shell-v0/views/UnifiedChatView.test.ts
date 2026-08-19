@@ -2498,8 +2498,8 @@ describe('UnifiedChatView §33 — window-level J/K step navigation', () => {
     }
   });
 
-  it('never hijacks typing — a focused <select> blocks navigation (tempdoc 854 PR-A: a fix, not a port)', () => {
-    // This case FAILED before 854 PR-A. The inline guard here covered INPUT/TEXTAREA/contentEditable
+  it('never hijacks typing — a focused <select> blocks navigation (tempdoc 857 PR-A: a fix, not a port)', () => {
+    // This case FAILED before 857 PR-A. The inline guard here covered INPUT/TEXTAREA/contentEditable
     // and omitted SELECT, while `commands/KeybindingRegistry.ts:163-167` — the second copy of the
     // same check — always covered it. The omission was live: this view renders a
     // `<select class="workflow-picker">` (`views/UnifiedChatView.ts:3986`), and with it focused a

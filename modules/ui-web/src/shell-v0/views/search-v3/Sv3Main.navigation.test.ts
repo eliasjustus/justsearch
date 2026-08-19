@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The run spine's KEYBOARD NAVIGATION in Search v3 (tempdoc 854 PR-A) — J/K steps focus through a
+ * The run spine's KEYBOARD NAVIGATION in Search v3 (tempdoc 857 PR-A) — J/K steps focus through a
  * run's landmarks, the only keyboard navigation the product has for run steps and the reason the
  * mechanism was ported rather than dropped with `UnifiedChatView`.
  *
@@ -90,7 +90,7 @@ const scrollerOf = (el: Mounted): HTMLElement | null =>
 
 /**
  * Give the scroll column and every stamped element a laid-out box, then drive renders until the
- * controller has measured. `measure()` is coalesced to one leading pass per frame (tempdoc 854 A9),
+ * controller has measured. `measure()` is coalesced to one leading pass per frame (tempdoc 857 A9),
  * so a stub applied AFTER the mount render needs another cycle plus a macrotask to be seen.
  */
 async function layOut(el: Mounted): Promise<HTMLElement> {
@@ -127,7 +127,7 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('854 PR-A — the stamped transcript becomes the controller’s landmarks (the wiring)', () => {
+describe('857 PR-A — the stamped transcript becomes the controller’s landmarks (the wiring)', () => {
   it('measures every stamped anchor, in DOM order, from the element scrollEl() returns', async () => {
     const el = await mount({
       turns: [
@@ -198,7 +198,7 @@ describe('854 PR-A — the stamped transcript becomes the controller’s landmar
   });
 });
 
-describe('854 PR-A — the anchor id space', () => {
+describe('857 PR-A — the anchor id space', () => {
   it('mints no duplicate data-item-id across turns, records, a live feed and a held approval', async () => {
     const el = await mount({
       turns: [
@@ -251,7 +251,7 @@ describe('854 PR-A — the anchor id space', () => {
   });
 });
 
-describe('854 PR-A — J/K stepping', () => {
+describe('857 PR-A — J/K stepping', () => {
   async function transcript(): Promise<Mounted> {
     const el = await mount({
       turns: [
@@ -371,7 +371,7 @@ describe('854 PR-A — J/K stepping', () => {
   });
 });
 
-describe('854 PR-A — the guards', () => {
+describe('857 PR-A — the guards', () => {
   async function transcript(): Promise<{ el: Mounted; nav: NavigationController }> {
     const el = await mount({ turns: [turn({ id: 'g1' }), turn({ id: 'g2' })] });
     await layOut(el);
@@ -472,7 +472,7 @@ describe('854 PR-A — the guards', () => {
   });
 });
 
-describe('854 PR-A — active() is host state, and false in every non-transcript arm', () => {
+describe('857 PR-A — active() is host state, and false in every non-transcript arm', () => {
   const armed = (el: Mounted): boolean =>
     (el as unknown as { transcriptArmRendered: boolean }).transcriptArmRendered;
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Document-structure closure for the Search v3 window (tempdoc 854 PR-A).
+ * Document-structure closure for the Search v3 window (tempdoc 857 PR-A).
  *
  * `scripts/ci/check-a11y-closure.mjs` enforces rule (5) — one page `<h1>` and one `main` landmark,
  * both owned by the Shell — but it CANNOT see this directory: its walk reads `VIEWS_DIR` with a
@@ -34,7 +34,7 @@ const sources = (): { name: string; text: string }[] =>
 const H1 = /<\/h1>/g;
 const MAIN_LANDMARK = /role=(['"`])main\1|<main[\s>]/;
 
-describe('Search v3 document structure (854 PR-A — the scoped stand-in for check-a11y-closure)', () => {
+describe('Search v3 document structure (857 PR-A — the scoped stand-in for check-a11y-closure)', () => {
   it('the transcript region declares no page heading and no main landmark of its own', () => {
     // Sv3Main is the file this PR restructured: it now stamps navigation landmarks on the question,
     // the answer, every run step and every held decision. Landmarks are `data-item-id` anchors, NOT
