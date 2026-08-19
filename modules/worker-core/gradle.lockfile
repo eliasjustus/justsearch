@@ -69,6 +69,7 @@ org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath
 org.checkerframework:checker-qual:3.49.5=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
 org.codehaus.mojo:animal-sniffer-annotations:1.26=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
 org.hdrhistogram:HdrHistogram:2.2.2=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0=dependencyAnalysisKotlinMetadataClasspath
 org.jetbrains.kotlin:kotlin-stdlib:2.2.21=runtimeClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
 org.jetbrains:annotations:13.0=runtimeClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
 org.jspecify:jspecify:1.0.0=annotationProcessor,compileClasspath,runtimeClasspath,testAnnotationProcessor,testCompileClasspath,testFixturesAnnotationProcessor,testFixturesCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath

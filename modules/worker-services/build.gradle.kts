@@ -28,6 +28,10 @@ dependencies {
   api(libs.grpc.stub)
   implementation(libs.jackson.databind)
   implementation(libs.commonmark)
+  // Tempdoc 847 §2.2 — GFM tables are block structure in the rendered answer (marked parses them),
+  // so citation segmentation must see them as blocks too; core commonmark reads a table as one
+  // paragraph and would fuse a whole table into one citation key.
+  implementation(libs.commonmark.ext.gfm.tables)
   api(libs.slf4j.api)
   api(libs.opentelemetry.api)
   implementation(libs.logstash.logback.encoder)

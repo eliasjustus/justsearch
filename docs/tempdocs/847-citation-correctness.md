@@ -18,9 +18,10 @@ status:  PARTIALLY IMPLEMENTED — charter A; rev 3. S0–S4 done, S5/S6 open.
              p.matches` assignment is gated too. Gating only the record path would have made a
              reloaded render stricter than the live one — the 561 P-A divergence in a new place.
          S4 (anchoring rewrite) is IMPLEMENTED on top of 846 — see "S4 — implementation record".
-         S5 (backend segmentation) and S6 (live validation) remain PENDING.
+         S5 (backend segmentation) is IMPLEMENTED — see "S5 — implementation record".
+         S6 (live validation) remains PENDING.
 created: 2026-08-19
-updated: 2026-08-19 (S4)
+updated: 2026-08-19 (S5)
 related: 836 (literal-passage verification seam + the §4 producer gate — SHIPPED, #466/#473),
          839 (citation-mark presentation — shipped), 822 (the citation chain: F-047…F-050),
          561 P-A (evidence non-divergence: live and reloaded renders may not disagree),
@@ -1167,6 +1168,127 @@ branch's only `UnifiedChatView` line reverted).
 
 - **S5** — backend markdown-aware segmentation. S4 tolerates the fused key; it does not remove it,
   and the junk keys (orphan `.`, standalone ordinals) still reach the cross-encoder and still count
-  in the coverage denominator.
+  in the coverage denominator. **Closed by the S5 record below.**
 - **S6** — L1/L2/L3 live validation. Everything above is happy-dom; only the browser exercises the
   real `marked` → DOMPurify → text-node path this anchoring targets.
+
+---
+
+## S5 — implementation record (2026-08-19)
+
+Backend only (`modules/worker-services` plus the dependency wiring it needs). Implemented on top of
+S4 (#494), so the anchoring this resegmentation feeds is already pinned by the FE matrix.
+
+### What shipped
+
+| § | Change | Site |
+|---|---|---|
+| §2.2 | `splitSentences` parses the answer with commonmark and runs `BreakIterator` **per block node**, never across one. Block structure — not a marker blacklist — is what removes the fusion | `CitationMatchOps.splitSentences` / `blockTexts` / `collectBlocks` |
+| §2.2 | A leaf block's text is what the reader sees: emphasis and inline-code fences drop away, a link contributes its label and not its URL (the same collapsing the renderer applies before anchoring), an image its alt text, and every line break inside a block becomes one space | `CitationMatchOps.inlineText` / `appendInline` |
+| §2.2 | Junk suppression: a segment with **no letter** is never scored, never persisted, never counted | `CitationMatchOps.carriesClaim` |
+| §2.2 (HI-6) | `Locale.ROOT` replaces `Locale.ENGLISH`, and the locale is now a parameter so a test can *pin* that it is inert rather than assert it in prose | `splitSentences(String, Locale)` |
+| §2.2 | GFM tables parsed as tables (one block per cell) via `commonmark-ext-gfm-tables` | `modules/worker-services/build.gradle.kts`, `gradle/libs.versions.toml`, lockfiles, `gradle/verification-metadata.xml`, `THIRD_PARTY_NOTICES` |
+
+Event shapes are untouched: no proto change, no payload field added or renamed, no scorer semantics,
+no deadline change. Only the *content* of `sentence_text` and the *count* of `sentences_total` move
+— which is the point of the slice.
+
+### Deviations from the design, each deliberate
+
+1. **The junk predicate is "no letter", not the renderer's `>= 4` word-like-character floor.** §2.2
+   names the junk class as orphan `.` and bare-ordinal keys; measured over the matrix, "no letter"
+   selects **exactly** that class (8 of 64 legacy keys, matching S0's count), and it additionally
+   closes the `"2026."` hole §2.1a flagged — a numeric key clears any length floor but has no
+   letter. Applying the renderer's floor at the producer was implemented first and **reverted**: it
+   deleted `"No."` (shape Q) and, worse, a three-character Han sentence (`"贝塔二。"` is 3 word-like
+   characters — HI-6: a Han sentence reaches four characters far later than an English one). The
+   producer emits sentences; whether one can be *anchored* is the renderer's judgment, and a
+   producer that pre-applies the consumer's floor silently deletes evidence from the sources panel.
+2. **A new dependency: `commonmark-ext-gfm-tables`** (same group and version as the core parser
+   already on the classpath, same 2-Clause BSD licence, already inside the licence allowlist). Core
+   commonmark reads a GFM table as ONE paragraph, so without the extension shape I stayed a single
+   key spanning the whole table — the very fusion class this slice removes, and the one shape T18
+   names explicitly. Measured both ways before deciding: without it, 1 key of pipe-soup; with it, 9
+   keys (3 real sentences, 6 label cells; the `[2]`/`[1]`/`[3]` source cells carry no letter and
+   self-suppress). The decisive argument is not the count but agreement: `marked` renders cells as
+   blocks and S4's span clamp measures against rendered blocks, so the producer must see cells as
+   blocks too or the two sides disagree about what a block is. Cost paid in the same PR: lockfile
+   regeneration (`resolveAndLockAll --write-locks`), one verification-metadata component, one
+   `THIRD_PARTY_NOTICES` line.
+3. **An ordered list that cannot interrupt a paragraph no longer breaks the key** — and that is
+   correct. `Alpha one.\n2. Beta two.` segments as `["Alpha one. 2.", "Beta two."]`, because
+   CommonMark only lets an ordered list interrupt a paragraph when it starts at 1, so `marked`
+   renders exactly that one paragraph. The key now says what the reader sees rather than what the
+   source looks like. The blank-line variant is a real list and breaks into two clean keys.
+4. **`StreamingCitationMatcher`'s mid-stream draft path is untouched.** It runs its own incremental
+   `BreakIterator` over a partial buffer (`StreamingCitationMatcher.java:225`) and carries the same
+   fusion, but it segments text whose markdown is still incomplete, so block parsing is not
+   available to it; §2.2's target is the scored/persisted path. Its drafts are superseded at
+   `onDone` by the authoritative `rag.citation_matches`, which now carries the de-fused keys. Named
+   here as remaining work rather than absorbed silently.
+5. **Code blocks keep their own key**, as before, but no longer lead with the fence's info string —
+   the leading foreign token that zeroed shape L's match (§S0-results surprise 4) was the ```` ```json ````
+   line, which is structure. A cited fence can now anchor, which S4's T19 already pins as supported.
+   Headings likewise become their own keys instead of fusing into the next block; a one-word heading
+   is a single-token run, so the renderer's uniqueness clause decides it, failing closed.
+
+### The denominator moved, deliberately — flag this
+
+`sentences_total` is 836 §3.6's coverage denominator, and it is **not comparable across this
+change**. Measured over the 19-shape matrix (`CitationMatchOpsSegmentationTest`, T18b):
+
+| | keys | junk keys (no letter) | keys carrying a marker / a line break / a sibling block |
+|---|---|---|---|
+| before S5 | 64 | 8 (12.5 %) | 34 |
+| after S5 | 76 | 0 | 0 |
+
+Two opposite effects, both real: **junk removal** takes 8 keys away, **de-fusion** adds back more
+than that (a 3-item bullet list that was one key is now four). A persisted coverage figure from
+before this change and one from after answer different questions — the same class of flag as 845's.
+Reported coverage will generally **rise** on list-shaped answers (sentences hidden inside a fused
+key are now individually matchable) and may **fall** on table-shaped ones (a table's label cells are
+counted as unmatched sentences instead of hiding inside one key that matched trivially). Both
+directions are more honest than what they replace.
+
+### The FE contract is untouched, and the anchoring gets strictly easier
+
+No payload field changes name or type; `sentenceText`/`sentenceIndex` keep their meanings. The
+consumers were checked: `MarkdownBlock.ts:793` tokenizes `sentenceText` (whitespace-insensitive),
+`CitationsPanel.ts:503` displays it, `recordEvidence.ts` / `sv3-ask.ts` / `SummarizeView.ts` copy
+it. Nothing searches the answer text for the key as a substring, so cleaner keys cannot break a
+lookup.
+
+**S4's 19-shape matrix was measured against the OLD segmentation** — its keys are verbatim fused
+keys from `## S0-results`. That matrix stays valid as a regression pin (the renderer must keep
+tolerating an old persisted key, which every stored conversation still contains), and the new keys
+are strictly easier for the same rule: the fusion tax it was calibrated against (1–2 unmatched
+word-characters, against `matchWordRun`'s `keyWordChars - matchedChars <= max(4, 0.4 *
+keyWordChars)`) is now zero for prose keys. Three key shapes are NEW with S5 and each fails closed
+under the unchanged rule: a single-word heading or table cell (`len === 1` → rejected unless
+unique), `"No."` (2 word-characters → below the `keyWordChars < 4` eligibility floor → skipped to
+tier 2/3), and a code-fence body (now matchable, which T19 covers).
+
+### Tests, and what fails without the change
+
+`CitationMatchOpsSegmentationTest` (new, `modules/worker-services`): the S0 matrix promoted to
+permanent coverage — 19 shapes with the expected segment list verbatim (T18), the classification
+counters (`{SENTENCE=76}`, so a partial fix that removes only markers or only orphans cannot pass),
+the break-mechanism micro-cases from §S0-results surprise 1, the denominator accounting against an
+in-test mirror of the pre-847 splitter (T18b), junk-key suppression including `"2026."`, and the
+locale pin across `root`/`en`/`ja`/`zh`/`de` under three forced *default* locales including `tr-TR`
+(T18c).
+
+Revert-run (the production body swapped back to prose segmentation, tests unchanged): **all six test
+methods fail**, and the shape matrix names **18 of 19 shapes** — every shape except
+`A-prose-baseline`, the one shape with no markdown structure. Pre-change classification over the
+same matrix: `{SENTENCE=22, MULTILINE=32, JUNK=8, MARKER=2}`.
+
+`GrpcSearchServiceSplitSentencesTest` (pre-existing, prose only) passes unchanged.
+`./gradlew.bat build -x test -PskipWebBuild=true`, `:modules:worker-services:test` and the full
+`./gradlew.bat test` are green.
+
+### Still open after S5
+
+- **S6** — L1/L2/L3 live validation. Everything above is unit-level; only the browser exercises the
+  real `marked` → DOMPurify → text-node path against a real answer's keys.
+- **The streaming draft path** (deviation 4) still fuses mid-stream `rag.citation_delta` keys.

@@ -25,6 +25,22 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import org.apache.lucene.search.TermQuery;
+import org.commonmark.ext.gfm.tables.TableCell;
+import org.commonmark.ext.gfm.tables.TablesExtension;
+import org.commonmark.node.Code;
+import org.commonmark.node.FencedCodeBlock;
+import org.commonmark.node.HardLineBreak;
+import org.commonmark.node.Heading;
+import org.commonmark.node.HtmlBlock;
+import org.commonmark.node.HtmlInline;
+import org.commonmark.node.IndentedCodeBlock;
+import org.commonmark.node.LinkReferenceDefinition;
+import org.commonmark.node.Node;
+import org.commonmark.node.Paragraph;
+import org.commonmark.node.SoftLineBreak;
+import org.commonmark.node.Text;
+import org.commonmark.node.ThematicBreak;
+import org.commonmark.parser.Parser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -469,24 +485,155 @@ final class CitationMatchOps {
   }
 
   /**
-   * Splits text into sentences using {@link java.text.BreakIterator}.
-   * Better than regex for boundary detection but still imperfect on abbreviations (Dr., Mr.).
+   * Splits an answer into the sentence keys that are scored, persisted and later anchored in the
+   * rendered answer.
+   *
+   * <p>Tempdoc 847 §2.2 — the answer is markdown, so it is segmented as markdown: the same
+   * commonmark parser {@link LanguageUtils} already uses supplies the block structure, and {@link
+   * BreakIterator} runs over ONE block's text at a time, never across a block boundary. Segmenting
+   * the raw markdown as prose fused wholesale (847 §S0-results, measured over 18 shapes): a
+   * terminal {@code .} followed by whitespace and a marker (`- `, `* `, `&gt; `, `| `, `## `)
+   * suppresses the sentence boundary entirely, so a whole bullet list, blockquote or table plus its
+   * lead-in paragraph became a single key; inserting a blank line instead split the terminator off
+   * as an orphan {@code "."} key. Block structure subsumes both — no marker blacklist to maintain.
+   *
+   * <p>{@link Locale#ROOT}, not {@code Locale.ENGLISH}: all 18 measured shapes segment identically
+   * under {@code en}/{@code root}/{@code ja}/{@code zh}, so the former locale was a per-language
+   * lever in appearance only (HI-6). Abbreviations (Dr., Mr.) remain imperfect — unchanged.
    */
   static List<String> splitSentences(String text) {
+    return splitSentences(text, Locale.ROOT);
+  }
+
+  /**
+   * Segmentation under an explicit locale. Production always passes {@link Locale#ROOT}; the
+   * parameter exists so a test can pin that the locale is inert (HI-6), which a hardcoded constant
+   * cannot be asked.
+   */
+  static List<String> splitSentences(String text, Locale locale) {
     if (text == null || text.isBlank()) {
       return List.of();
     }
-    BreakIterator bi = BreakIterator.getSentenceInstance(Locale.ENGLISH);
-    bi.setText(text);
     List<String> sentences = new ArrayList<>();
-    int start = bi.first();
-    for (int end = bi.next(); end != BreakIterator.DONE; start = end, end = bi.next()) {
-      String sentence = text.substring(start, end).trim();
-      if (!sentence.isEmpty()) {
-        sentences.add(sentence);
-      }
+    for (String block : blockTexts(text)) {
+      segmentBlock(block, locale, sentences);
     }
     return sentences;
+  }
+
+  /** Sentence-terminator segmentation WITHIN one block's text. */
+  private static void segmentBlock(String block, Locale locale, List<String> out) {
+    BreakIterator bi = BreakIterator.getSentenceInstance(locale);
+    bi.setText(block);
+    int start = bi.first();
+    for (int end = bi.next(); end != BreakIterator.DONE; start = end, end = bi.next()) {
+      String sentence = block.substring(start, end).trim();
+      if (carriesClaim(sentence)) {
+        out.add(sentence);
+      }
+    }
+  }
+
+  /**
+   * True when a segment carries a claim — a segment with no letter in it does not.
+   *
+   * <p>That single predicate is exactly the junk 847 §2.2 measured: the orphan {@code "."} a blank
+   * line splits off a terminator, and the bare ordinal ({@code "1."}, {@code "2."}, and the
+   * {@code "2026."}-shaped key a word-count floor alone would admit). 8 of 64 keys over the shape
+   * matrix (12.5 %) were one of these — scored by the cross-encoder, persisted as evidence, and
+   * counted in 836 §3.6's coverage denominator.
+   *
+   * <p>Deliberately NOT the renderer's {@code >= 4} word-like-character anchoring floor (847
+   * §2.1a): a three-character Han sentence is a real sentence, and a producer that applied the
+   * consumer's floor would silently delete it from the evidence a reader can open in the sources
+   * panel (HI-6). Anchorability is the renderer's judgment to make, not the producer's.
+   */
+  private static boolean carriesClaim(String segment) {
+    return segment.codePoints().anyMatch(Character::isLetter);
+  }
+
+  /**
+   * The answer's block texts in reading order: one entry per leaf block that carries content, with
+   * markdown structure (list markers, ordinals, quote guillemets, emphasis, link URLs) removed —
+   * it is structure the reader never sees as text, and it is what fused the keys.
+   *
+   * <p>GFM tables are parsed as tables, one block per CELL, because that is what {@code marked}
+   * renders and what the renderer's block clamp measures against (847 §2.1c): the two sides agree
+   * on what a block is by construction. Core commonmark reads a table as one paragraph, which would
+   * leave the whole table as a single key — the fusion class this slice removes.
+   *
+   * <p>Falls back to segmenting the raw answer when the parse fails, so a malformed answer still
+   * produces keys rather than none.
+   */
+  private static List<String> blockTexts(String markdown) {
+    List<String> blocks = new ArrayList<>();
+    try {
+      Parser parser = Parser.builder().extensions(List.of(TablesExtension.create())).build();
+      collectBlocks(parser.parse(markdown), blocks);
+    } catch (RuntimeException e) {
+      log.debug("Markdown parse failed; segmenting the answer as prose: {}", e.getMessage());
+      return List.of(markdown);
+    }
+    return blocks;
+  }
+
+  private static void collectBlocks(Node node, List<String> out) {
+    for (Node child = node.getFirstChild(); child != null; child = child.getNext()) {
+      if (child instanceof Paragraph || child instanceof Heading || child instanceof TableCell) {
+        String inline = inlineText(child);
+        if (!inline.isEmpty()) {
+          out.add(inline);
+        }
+      } else if (child instanceof FencedCodeBlock fenced) {
+        addLiteral(fenced.getLiteral(), out);
+      } else if (child instanceof IndentedCodeBlock indented) {
+        addLiteral(indented.getLiteral(), out);
+      } else if (child instanceof ThematicBreak
+          || child instanceof HtmlBlock
+          || child instanceof LinkReferenceDefinition) {
+        // Structure or raw markup — no sentence a reader could see grounded.
+        continue;
+      } else {
+        // Container block (list, list item, blockquote, custom): its children are the leaves.
+        collectBlocks(child, out);
+      }
+    }
+  }
+
+  private static void addLiteral(String literal, List<String> out) {
+    String trimmed = literal == null ? "" : literal.strip();
+    if (!trimmed.isEmpty()) {
+      out.add(trimmed);
+    }
+  }
+
+  /**
+   * A leaf block's text as the reader sees it: inline emphasis and code fences drop away, a link
+   * contributes its label and not its URL (the renderer collapses inline links the same way before
+   * anchoring), an image contributes its alt text, and every line break inside the block becomes a
+   * single space so a soft-wrapped sentence stays one sentence.
+   */
+  private static String inlineText(Node block) {
+    StringBuilder sb = new StringBuilder();
+    appendInline(block, sb);
+    return sb.toString().replaceAll("\\s+", " ").strip();
+  }
+
+  private static void appendInline(Node node, StringBuilder sb) {
+    for (Node child = node.getFirstChild(); child != null; child = child.getNext()) {
+      if (child instanceof Text text) {
+        sb.append(text.getLiteral());
+      } else if (child instanceof Code code) {
+        sb.append(code.getLiteral());
+      } else if (child instanceof SoftLineBreak
+          || child instanceof HardLineBreak
+          || child instanceof HtmlInline) {
+        sb.append(' ');
+      } else {
+        // Emphasis, strong emphasis, link, image, custom inline: the label is the text.
+        appendInline(child, sb);
+      }
+    }
   }
 
   /**
