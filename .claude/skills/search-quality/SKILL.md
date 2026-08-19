@@ -1195,9 +1195,10 @@ above)*
 ### F-051: citation sentences were cut out of MARKDOWN as if it were prose, so a whole list scored as one "sentence" — segmentation now follows block structure, and `sentences_total` (836 §3.6's coverage denominator) is not comparable across the change (tempdoc 847 S5, 2026-08-19)
 
 - **Defect, measured over 19 answer shapes (64 keys, 847 §S0-results):** `BreakIterator` over the
-  raw markdown never breaks at a marker — a terminal `.` followed by whitespace and `- `/`* `/`> `/
-  `| `/`## ` suppresses the boundary outright — so a bullet list, blockquote or table plus its
-  lead-in paragraph became ONE key handed to the cross-encoder. A blank line does not fix it: it
+  raw markdown never breaks at a marker — a terminal `.` followed by whitespace and a bullet,
+  ordinal, quote, pipe or heading marker (each with its trailing space) suppresses the boundary
+  outright — so a bullet list, blockquote or table plus its lead-in paragraph became ONE key handed
+  to the cross-encoder. A blank line does not fix it: it
   splits the terminator off as an orphan `"."`. 8 of 64 keys (12.5 %) carried no sentence at all
   (orphan `.`, bare ordinals) and were scored, persisted as evidence, and counted in the denominator.
 - **Fix:** one authority, `AnswerSegmentation.splitSentences`, parses the answer with commonmark
