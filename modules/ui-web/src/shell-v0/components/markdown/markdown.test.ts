@@ -224,6 +224,35 @@ describe('fenced-code highlighting (846 §2.4)', () => {
     expect((root.querySelector('code') as HTMLElement).dataset.hl).toBe('Python');
   });
 
+  it('escapes markup in the code it highlights — the guard on not re-sanitizing', async () => {
+    // §2.4 decided the highlighted HTML is NOT run back through DOMPurify, on the grounds that the
+    // input is textContent and `hljs` escapes what it is given. That is a SECURITY decision resting
+    // on a library behaviour, so it gets a regression test: a future `hljs` bump that stops escaping
+    // must fail here rather than ship. Built programmatically — assigning this string to innerHTML
+    // would let the DOM parser close the block and make the fixture prove nothing.
+    await loadHighlighter();
+    const root = document.createElement('div');
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.className = 'language-js';
+    code.textContent = 'const a = 1; // </code></pre><script>alert(1)</script>';
+    pre.appendChild(code);
+    root.appendChild(pre);
+    document.body.appendChild(root);
+
+    highlightCodeBlocks(root);
+    const el = root.querySelector('code') as HTMLElement;
+    expect(el.dataset.hl).toBeTruthy();
+    expect(el.dataset.hl).not.toBe('plain'); // the grammar really ran
+    expect(el.innerHTML).not.toContain('<script');
+    expect(el.innerHTML).toContain('&lt;script');
+    // The block is still one <code> — nothing escaped its container.
+    expect(root.querySelectorAll('code')).toHaveLength(1);
+    expect(root.querySelector('script')).toBeNull();
+    // …and the reader still sees the original text.
+    expect(el.textContent).toBe('const a = 1; // </code></pre><script>alert(1)</script>');
+  });
+
   it('is idempotent — a second pass does not re-wrap an already-highlighted block', async () => {
     await loadHighlighter();
     const root = fixture('<pre><code class="language-json">{"a": 1}</code></pre>');

@@ -190,12 +190,19 @@ outer element leaves a `<code>` with no `<pre>` parent. A `language-` class is o
 a fence, so the second selector cannot reach an inline code chip.
 
 **Theme from existing tokens, not new ones.** The eight scope groups map onto `--text-*` role tokens
-that already exist in `tokens.css` for every palette (comment → `--text-tertiary` + italic, keyword →
+that already exist in `tokens.css` (comment → `--text-tertiary` + italic, keyword →
 `--text-command`, string → `--text-success`, number/literal → `--text-highlight`, title/function →
 `--text-link`, type/built-in → `--text-chat`, meta/attr → `--text-secondary`, everything else
-inherits `--text-primary`). This buys theme completeness for free (light, dark and the two
-high-contrast palettes all define these), avoids minting a parallel colour vocabulary, and keeps
+inherits `--text-primary`). This avoids minting a parallel colour vocabulary and keeps
 `check-color-tokens` / `check-accent-as-text` clean by construction: no hex, no `--accent-*` as text.
+
+**Honest limit on that claim** (independent review, verified against `styles/tokens.css`): every one
+of these roles *resolves* in every palette, but the two high-contrast blocks redeclare only
+`--text-primary` / `-secondary` / `-tertiary` / `-ghost`. The six hue-bearing roles the code theme
+leans on are **inherited** in HC, not HC-tuned — so a high-contrast user gets the base theme's
+syntax hues on the HC surface, which is a rendering nobody has looked at. That is a measurement
+question, not a design one, and it is listed in §5 as deferred audit scope rather than guessed at
+here.
 
 ### 2.5 Conditional citation stripping
 
@@ -223,6 +230,12 @@ citation marks are not yet woven either.
   `data-line-start`/`data-line-end`, and because each rendered block is its own wrapper the ramp's
   `p:first-child` / `p:last-child` zeroing fires on every paragraph, so the wrapper is exactly where
   the inter-block gap belongs and nothing double-counts it.
+* **The pane's first and last rendered block lose their outer margin** — named because it is a real
+  rendering delta, not a no-op. `:host([prose]) .md-content > :first-child { margin-block-start: 0 }`
+  (and its `:last-child` twin) computes to specificity **0,4,0** against `.blocks .block`'s **0,2,0**
+  and targets the same element, so the shared rule wins. This is the ramp's own principle — "the
+  block's own edges belong to the container" — arriving in the pane, and it is the direction the
+  scroll region wants (no phantom gap above the first block). It is a delta all the same.
 * Nothing else is orphaned: no file, gate, baseline or doc names the removed constructs.
 
 ## 4. Reach — the principle, and its retirement condition
@@ -288,8 +301,13 @@ Edited:
   `gen-notices.mjs` projects (the generator needs a Gradle license report this worktree has not
   produced, so the row was placed by hand to match its output exactly; CI's `check-notices-regen`
   is the check that this is right).
+* `package-lock.json` — **exactly two hunks**, both `highlight.js`. A plain `npm install` on Windows
+  additionally PRUNED five platform/optional dev entries it could not install here (`fsevents`
+  darwin-only, two `@emnapi` pairs), which would have silently narrowed the lock for every other
+  platform. Caught in independent review; the lock was rebuilt from `main` with only the two
+  additions grafted in, verified byte-faithful by a parse→stringify round-trip of `main`'s file.
 
-**Verification.** `npm run typecheck` clean; `npm run test:unit:run` 424 files / 5259 tests passed.
+**Verification.** `npm run typecheck` clean; `npm run test:unit:run` 424 files / 5260 tests passed.
 The whole `ui-web-gates` recipe was run: every gate passes except three that are RED on `main` in
 files this branch does not touch (`check-theme-token-closure` and `strip-token-fallbacks` on
 `RecentsMenu.ts`, `check-accent-as-text` and `strip-token-fallbacks` on `ActionLedgerView.ts`,
@@ -297,10 +315,23 @@ files this branch does not touch (`check-theme-token-closure` and `strip-token-f
 `main`. `MarkdownBlock.geometry.test.ts` passes **unmodified**, which is the §2.3 faithfulness
 evidence.
 
-**Not done, deliberately:** no live browser/`ui-shot` verification of the new rendering (this was a
-worktree-only, backend-free charter and the dev stack is shared); the ramp's arrival in the pane and
-the code theme's colours across the four palettes are the natural subject of a measured UX audit by
-someone other than the implementer, per the presentation-authority closure discipline.
+**Not done, deliberately — the deferred-audit scope.** No live browser/`ui-shot` verification of the
+new rendering (this was a worktree-only, backend-free charter and the dev stack is shared). Per the
+presentation-authority closure discipline, a measured UX audit by someone other than the implementer
+should cover, specifically:
+
+1. **The ramp's arrival in `DocumentPane`** — a rendered `.md` file at each heading level, a table, a
+   fence, a quote; plus the first/last-block margin delta named in §3.
+2. **HC-mode code-block colours** — the six hue roles the syntax theme uses are inherited, not
+   HC-tuned (§2.4's honest limit). Measure the highlighted `<pre>` on the HC surface; if a scope
+   fails contrast there, the fix is an HC declaration for that role in `tokens.css`, not a literal in
+   the theme.
+3. **Pane chrome under the shared `:host` typography** — the sheet adds `line-height: 1.6` and
+   `font-size: var(--font-size-sm)` to the pane host. Every chrome row was checked to declare its own
+   `font-size` (`.path`, `.empty`, `pre.source`, the toggle and provenance rows), but `line-height`
+   is NOT re-declared by them, so the header/toggle rows can gain vertical height. Measure, then
+   either accept it or pin `line-height` on the chrome rows — the ramp's value is right for the
+   document body, which is what it was moved here for.
 
 Constraints honoured: `decorateCitations` / `normalizeLiteralCitationTokens` / `makeMarker` /
 `applyCitationHighlight` and every `.cite-*` rule are untouched (839's successor charter re-designs
