@@ -2,9 +2,11 @@
 number: 852
 title: The window cutover — promoting Search v3 to the one interaction surface
 status: IN PROGRESS — S0 implemented (merged, #493); S1 implemented (merged, #495); S2 implemented
-  (this PR); S3+ pending
+  (merged, #503); S3 implemented (merged, #505); S4 PARTIAL (this PR — the Q1-independent half);
+  S4's remainder + S5-S11 pending
 created: 2026-08-19
-scope-of-this-file: S0, S1 and S2. The full program charter (target end state, the parity ledger,
+updated: 2026-08-19
+scope-of-this-file: S0, S1, S2, S3 and S4-partial. The full program charter (target end state, the parity ledger,
   the slice DAG S1-S11, the open questions) lives with the orchestrator and lands here as the
   program's later slices land. This file exists so each slice's code has its design of record
   in-repo rather than only in a PR body.
@@ -25,8 +27,10 @@ related: 847 (citation correctness — S1-S3 shipped in #488; 852-S1 is sequence
 | **S0** | FE↔Java surface-parity leg on `check-surface-composition` | **implemented (merged, #493)** |
 | **S1** | Turn identity + the `/history` companion load. No UI. | **implemented (merged, #495)** |
 | **S2** | The tempdoc-610 context set (floor / clear / compact / summary-edit / message-exclude) | **implemented (merged, #503)** |
-| **S3** | Branch + version pager + edit/retry/resend + cascade-aware delete | **implemented (this PR)** |
-| S4-S7 | Composer tier control, retrieve tier, `jf-control` adoption, flip prerequisites | pending |
+| **S3** | Branch + version pager + edit/retry/resend + cascade-aware delete | **implemented (merged, #505)** |
+| **S4 (partial)** | Composer MODE control + light-theme wiring (ledger 14) + `jf-control` adoption (ledger 11) | **implemented (this PR)** |
+| S4 (rest) | The extract tier (ledger 2) + `deriveAffordance` / intent-tier vocabulary adoption | pending — **Q1-gated** |
+| S5-S7 | Retrieve tier, flip prerequisites | pending |
 | S8-S11 | The flip, the sweep, the marker, the renames | pending |
 
 S0's second half — recording that record-attribute hydration lives in
@@ -685,3 +689,144 @@ coverage**, which is the interesting part: three of them were greens that could 
 - **Not verified live.** FE-only against a fake backend; a dev-stack pass (branch a real conversation,
   page between versions, edit a question, delete a parent that has branches) is the design's S3 gate
   row and is left for the live leg.
+
+## S4 (partial) — the composer mode control, the light-theme seam, and `jf-control` adoption
+
+**What this slice is NOT.** The design splits S4 in two, and only the Q1-independent half ships
+here: the composer's **tier control** (§3.2), plus two parity-ledger wiring rows (14 — light theme;
+11 — `jf-control` adoption). The `deriveAffordance` / intent-tier **vocabulary** adoption waits on
+Q1, because the authority's default return is `'retrieve'` (`agencyPosture.ts:99`) — the tier whose
+existence Q1 decides. Nothing here touches routing or the shape vocabulary: the two tiers the
+control offers are the two the window already dispatched. The **extract tier** (ledger row 2), also
+part of S4's full scope, is not in this slice either.
+
+### The mode control (ledger row 12)
+
+Delegate has been live since Phase F2 and reachable **only** by chord —
+`submit(ctrlKey||metaKey ? 'delegate' : 'ask')` (`Sv3Composer.ts:931` pre-change), with the send
+button hardcoded to `'ask'` and the only statement of the routing in that button's `aria-label`. A
+capability whose sole discovery path is a chord nobody was told about is not an affordance.
+
+- **A second `composer-control` in the `.controls` row**, on the effort menu's exact grammar:
+  `aria-haspopup="menu"`, `aria-expanded`, an accessible name carrying both halves ("Mode: Ask"),
+  glyph + label + chevron, and a `role="menu"` of `menuitemradio` rungs with a badged default and a
+  one-line description each. It is NOT in the primary-action slot (that slot early-returns exactly
+  one control), and unlike `modelLabelFact()` beside it, it takes the full button treatment because
+  it is a real control rather than a fact.
+- **One renderer for both triggers** (`controlTrigger`). The two MENUS are still written twice,
+  because their option rows differ in an attribute *name* — `data-effort` is read by the ui-shot
+  harness (`scripts/jseval/jseval/ui_check.py:1539`) — and a lit template cannot parametrise that.
+- **The window owns the value.** `Sv3ComposerTier` moves to `sv3-run.ts` (the module that already
+  owns the send-routing vocabulary) and is re-exported from `Sv3Composer.ts`; the composer announces
+  `sv3-tier-change` and the window validates it with `isSv3Tier` before keeping it, exactly as it
+  does for the effort rung.
+- **The keyboard is unchanged.** `Ctrl/⌘+Enter` still delegates from either mode — the modifier is
+  read first, the chosen tier second — so the accelerator is not a toggle. Plain Enter and the send
+  control both route at the chosen tier, which is `ask` in a window whose reader never touched the
+  control.
+- **Two consequences the affordance forces, both honesty-shaped.** (1) The send control's routing
+  hint follows the tier (`SV3_DELEGATE_SEND_HINT`), because a send that delegates while its label
+  says "Enter asks" is chrome that lies; `sv3PrimaryAction` takes an OPTIONAL `tier`, so every
+  existing caller words the sentence it worded before. (2) The composer's availability NOTICE follows
+  the chosen tier. Before the control, showing the ask tier's reason was right — Enter always asked.
+  Now Enter can route two ways, and a delegate-mode window displaying ask's refusal would refuse a
+  send for a reason nothing on screen states. The two gates stay two projections
+  (`askUnavailableReason` / `delegateUnavailableReason`); only which one is DISPLAYED follows the mode.
+
+### The light-theme seam (ledger row 14) — audit F-06
+
+`sv3-tokens.css.ts:333` has carried a complete authored light palette behind `:host([theme='light'])`
+since slice 1 and **nothing ever set the attribute**, so the window painted its dark set inside a
+light app. The 2026-08-19 measured closure audit recorded that as **F-06** (the unwired sv3 light
+seam; the orchestrator's brief carries its measured 1.08:1 pair). No palette values are authored
+here — the set existed; the wire did not.
+
+- `themeState.ts` gains the READ side of the decision it already owns as writer:
+  `getAppearanceMode()` and `subscribeAppearanceMode()` (one `MutationObserver` on
+  `documentElement`'s `data-theme`, fanned out — the "one matchMedia, fanned out" precedent the file
+  already establishes). It observes the ATTRIBUTE rather than hooking `applyAppearance`, because the
+  attribute has writers the settings path never goes through: the pre-paint inline script in
+  `index.html`, and the OS-preference change while `system` is active.
+- `SearchV3View` mirrors it onto a reflected `theme` property — read in the CONSTRUCTOR (so the
+  first paint is already right), re-read on connect (a retained instance re-attaches into the mode
+  the app is in now), and unsubscribed on disconnect. **One-way**: this window has no theme control
+  of its own and must not grow one.
+- Swept: three comments that asserted the window is dark by construction or carries no theme
+  attribute (`Sv3Main.ts`, `sv3-tokens.css.ts`, `Sv3Main.imports.test.ts`).
+
+### `jf-control` adoption (ledger row 11)
+
+The ledger's row — "598-line primitive, 28 B call sites, 0 uses" — was written against the window as
+it stood before S2/S3. **That count is stale**: S2 and S3 already put their own controls on the
+primitive (24 uses in `Sv3Main.ts`, 4 in `Sv3ContextBar.ts`), including the typed-availability arm
+(the version pager's ends, the edit Send while a stream is in flight). What remained hand-rolled was
+28 buttons, of which this slice moves the **nine plain commands**:
+
+| Adopted | Where |
+|---|---|
+| six run-gate decisions (budget raise / finalize / stop, context continue / summarize / stop) | `Sv3Main.ts` |
+| locked-history remedy | `Sv3Main.ts` |
+| corpus remedy · degradation remedy | `Sv3Composer.ts` |
+
+Each keeps its `data-testid` on the host and its accessible name; the skin moves from `.x { … }` to
+`jf-control.x::part(control) { … }` and each site drops its own `:focus-visible` rule, because the
+primitive brings one.
+
+**The nineteen that stay hand-rolled, and why** — a list, not an omission:
+
+1. **Menu triggers** (mode, effort) — `aria-haspopup` + `aria-expanded`; the primitive renders a
+   fixed-shape button and expresses neither.
+2. **Menu rungs** (mode ×2, effort ×3) — `role="menuitemradio"` + `aria-checked`.
+3. **Disclosures** (turn sources, degradation detail) — `aria-expanded` + `aria-controls`.
+4. **The primary slot** (send ×2, stop, answer) — the empty-draft send is natively `disabled` with
+   no `title` **by design** (a browser suppresses a tooltip on a disabled element), and the slot's
+   whole discipline is one control with a derived reason in its own label.
+5. **The session row** (row button + rename / pin / delete) — the row itself is the `aria-current`
+   row pattern with its own dblclick/keydown; the three acts are one trio that must move together,
+   and `delete` is pressed directly by an **S3** test this slice is constrained not to touch.
+6. **Grips** (sidebar, pane) — drag separators driven by `pointerdown`, not command buttons.
+7. **Pane backdrop** — a dismiss layer; its keyboard path is Escape (the `controls-a11y` gate's own
+   category for exactly this).
+8. **Topbar palette trigger** and **sidebar new/collapse** — plain always-available commands whose
+   names and keyboard paths are already correct, so adoption would buy nothing; the palette trigger
+   is additionally the element the palette restores focus to.
+
+**Two findings the "wiring, not rewrite" claim understates**, both verified in source:
+
+- **`jf-control` does not delegate focus** (no `delegatesFocus` in `components/Control.ts` or
+  `primitives/JfElement.ts`), so `host.focus()` on an adopted control focuses nothing. The
+  run-prompt focus in `SearchV3View.onComposerAnswer` had to be re-aimed through the control's
+  shadow root. Any adopted control that is a programmatic focus target needs the same at its caller.
+- **Adoption is visible to every test that presses the control.** A click on the HOST reaches no
+  handler, so five press sites in three suites moved to a `press`/`pressControl` helper that goes
+  through the inner button — the same helper S3's branch suite already carries. S2's and S3's suites
+  are untouched and green.
+
+`check-controls-a11y` gained no new finding from the adoption: it accepts a native button, so this
+was a capability upgrade, not a gate fix — as the ledger says.
+
+### Verification
+
+- `npm run typecheck` clean; `npm run test:unit:run` **433 files / 5505 tests** pass, with S2's
+  `SearchV3View.context.test.ts` / `sv3-context.test.ts` and S3's `SearchV3View.branch.test.ts` /
+  `sv3-branch.test.ts` unmodified and green.
+- The ui-web gate set + the six kernel gates pass, except reds already red on `main` in files this
+  PR does not touch: `check-theme-token-closure` and `strip-token-fallbacks --check`
+  (`RecentsMenu.ts`, `ActionLedgerView.ts`), `check-accent-as-text` (`ActionLedgerView.ts`), and
+  `check-controls-a11y` (`UnifiedChatView.ts:2137`).
+- **Mutation probes** (each applied and reverted, with the suite re-run): hardcoding the send
+  button's tier back to `'ask'` fails 3 cases; making plain Enter ignore the mode fails 1; dropping
+  the tier from `sv3PrimaryAction`'s input fails 1; showing the ask tier's reason regardless of mode
+  fails 1; removing the menus' mutual exclusion fails 1; removing the appearance subscription fails
+  2; dropping `reflect` on `theme` fails 5; renaming the light block's selector fails 2; reverting
+  one adopted control to a hand-rolled button fails 2.
+- New tests: `SearchV3View.tier.test.ts` (13 cases — the affordance, the equality probe between the
+  control and the chord, the unchanged keyboard, the routing hint, the tier-following notice, and the
+  row's one-open-menu rule), `SearchV3View.theme.test.ts` (7 — mount, both directions, a runtime OS
+  flip while on Follow OS, remount, the one-way mirror, and the palette's own polarity inversion
+  computed from the token graph), `SearchV3View.controls.test.ts` (7 — the adoption contract and the
+  exception list). Every case fails before this slice: the mode control did not exist, the host
+  carried no `theme` attribute, and the nine controls were native buttons.
+- **Not verified live.** FE-only. A dev-stack pass — switch the app to light and read the window,
+  send at each mode, and re-measure F-06's pair — is left for the live leg, together with a fresh
+  `jseval ui-shot` of the composer in both themes.

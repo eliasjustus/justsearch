@@ -110,6 +110,59 @@ function ensureSystemThemeListener(): void {
   }
 }
 
+/**
+ * Tempdoc 852 S4 — the READ side of the light/dark decision, for a surface that carries its own
+ * host-scoped palette instead of reading `:root` (the Search v3 window's `sv3Tokens`).
+ *
+ * It lives HERE, beside {@link applyAppearance}, because this module is already "all theme-affecting
+ * DOM state in ONE function": a reader written at the consumer would be a second copy of the rule
+ * that `data-theme="light"` means light and everything else (including the attribute's absence, and
+ * the `system` resolution above) means dark — and a second copy is what drifts.
+ */
+export type AppearanceMode = 'light' | 'dark';
+
+const appearanceListeners = new Set<(mode: AppearanceMode) => void>();
+let appearanceObserver: MutationObserver | null = null;
+
+/**
+ * The app's CURRENT light/dark mode, read off the attribute this module writes. `system` is already
+ * resolved by the time it lands there (see {@link applyResolvedSystemTheme}), so there is no third
+ * state to represent, and the pre-paint inline script in `index.html` means the answer is right from
+ * the first frame rather than from the first settings fetch.
+ */
+export function getAppearanceMode(): AppearanceMode {
+  if (typeof document === 'undefined') return 'dark';
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+
+/**
+ * Subscribe to light/dark changes. Fires on every change, NOT immediately on subscribe — a consumer
+ * reads {@link getAppearanceMode} for the initial value, which keeps the first paint synchronous.
+ *
+ * Observes the attribute rather than hooking {@link applyAppearance}, for the same reason the OS
+ * listener above exists: the attribute has writers other than the settings path — the pre-paint
+ * inline script, and the OS-preference change while `system` is active — and the observer is the one
+ * place that sees all of them. ONE observer, fanned out (the "one matchMedia, fanned out" precedent).
+ */
+export function subscribeAppearanceMode(
+  listener: (mode: AppearanceMode) => void,
+): () => void {
+  appearanceListeners.add(listener);
+  if (appearanceObserver === null && typeof MutationObserver === 'function' && typeof document !== 'undefined') {
+    appearanceObserver = new MutationObserver(() => {
+      const mode = getAppearanceMode();
+      for (const each of [...appearanceListeners]) each(mode);
+    });
+    appearanceObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+  }
+  return () => {
+    appearanceListeners.delete(listener);
+  };
+}
+
 type Listener = (themeId: string | null) => void;
 
 /**

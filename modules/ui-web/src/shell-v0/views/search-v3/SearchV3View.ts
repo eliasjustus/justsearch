@@ -12,7 +12,9 @@
  *
  *  1. **The token sheet.** `sv3Tokens` is applied HERE, on the window host — never on `:root`. Custom
  *     properties inherit down through every nested shadow root, so one host-scoped declaration
- *     reaches the whole window while the shipped app's palette stays untouched.
+ *     reaches the whole window while the shipped app's palette stays untouched. WHICH of its two
+ *     sets is live is the app's decision, not this window's: the `theme` attribute mirrors the app's
+ *     appearance authority (852 S4, ledger row 14) and the sheet's light block keys off it.
  *  2. **The window grid.** A fixed `--sidebar-width` panel that does not flex, beside a main column
  *     of topbar → content surface → composer band.
  *  3. **The scroll policy.** The window region never scrolls: this host and the main column are
@@ -65,6 +67,7 @@ import {
   type Sv3ComposerStateRequest,
   type Sv3ComposerSubmit,
   type Sv3EffortChange,
+  type Sv3TierChange,
 } from './Sv3Composer.js';
 import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
 import {
@@ -245,6 +248,9 @@ import {
   projectSv3RunFeed,
   projectSv3RunPrompts,
   sv3PrimaryAction,
+  isSv3Tier,
+  SV3_TIER_DEFAULT,
+  type Sv3ComposerTier,
   sv3RunNeedsPresence,
   sv3RunOutcome,
   sv3RunPresenceStart,
@@ -271,6 +277,11 @@ import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiSta
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
+import {
+  getAppearanceMode,
+  subscribeAppearanceMode,
+  type AppearanceMode,
+} from '../../state/themeState.js';
 import { emitEphemeralToast } from '../../components/advisory/ephemeralToast.js';
 import { projectSv3Degradation, type Sv3Degradation } from './sv3-degradation.js';
 import {
@@ -341,8 +352,12 @@ const renamingRowInPath = (event: KeyboardEvent): boolean =>
  */
 const openControlMenuInPath = (event: KeyboardEvent): boolean =>
   event.composedPath().some((node) => {
-    const el = node as Element & { effortMenuOpen?: unknown };
-    return el.localName === 'jf-sv3-composer' && el.effortMenuOpen === true;
+    const el = node as Element & { effortMenuOpen?: unknown; tierMenuOpen?: unknown };
+    if (el.localName !== 'jf-sv3-composer') return false;
+    // EITHER control menu (852 S4 added the second). The ladder's rung is "a menu is open in the
+    // control row", not "the effort menu is open" — a mode menu that Escape closed by falling
+    // through to the window would take the composer back to hero with it.
+    return el.effortMenuOpen === true || el.tierMenuOpen === true;
   });
 
 export class SearchV3View extends JfElement {
@@ -507,6 +522,7 @@ export class SearchV3View extends JfElement {
 
   static properties = {
     composerState: { type: String, reflect: true, attribute: COMPOSER_STATE_ATTR },
+    theme: { type: String, reflect: true },
     apiBase: { type: String, attribute: 'api-base' },
     searchSnapshot: { state: true },
     asked: { state: true },
@@ -527,11 +543,24 @@ export class SearchV3View extends JfElement {
     historyLocked: { state: true },
     lockedRefusal: { state: true },
     effort: { state: true },
+    tier: { state: true },
     compacting: { state: true },
     conversations: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
+  /**
+   * The window's light/dark set (852 S4, ledger row 14). The token sheet has carried a COMPLETE
+   * authored light palette behind `:host([theme='light'])` since slice 1 (`sv3-tokens.css.ts:333`)
+   * and nothing ever set the attribute, so the window painted its dark set inside a light app — the
+   * polarity conflict the 2026-08-19 measured audit recorded as F-06.
+   *
+   * MIRRORED, NEVER OWNED: the value is the app's own appearance authority's (`themeState`), read at
+   * connect and re-read on every change, including an OS flip while the reader has chosen "Follow
+   * OS". This window has no theme control of its own and must not grow one — a second writer would
+   * be a surface disagreeing with the app about what mode it is in.
+   */
+  declare theme: AppearanceMode;
   /** Set by the shell on every render of a mounted surface (`chrome/Shell.ts:2945-2949`). */
   declare apiBase: string;
   /** The latest store emission. Null only until the subscription's first (immediate) call. */
@@ -622,6 +651,15 @@ export class SearchV3View extends JfElement {
    */
   declare effort: Sv3Effort;
   /**
+   * WHERE the next send goes (852 S4) — ask the local model, or delegate the draft to the agent.
+   *
+   * Held on exactly {@link effort}'s terms and for the same reasons: window-local, in-memory, not a
+   * persisted preference, and read at DISPATCH time so an in-flight run is never re-routed. The
+   * composer renders it and announces a change; the routing itself is decided here, in
+   * `onComposerSubmit`, which is the one place a send becomes a run.
+   */
+  declare tier: Sv3ComposerTier;
+  /**
    * A compaction is in flight (tempdoc 610 Phase D). WINDOW-level because it is one LLM call and the
    * menu that starts it must not offer a second while the first is running — the reference window's
    * own guard (`views/UnifiedChatView.ts:1658-1673`).
@@ -644,6 +682,7 @@ export class SearchV3View extends JfElement {
   private searchUnsubscribe: (() => void) | null = null;
   private aiUnsubscribe: (() => void) | null = null;
   private uiModeUnsubscribe: (() => void) | null = null;
+  private appearanceUnsubscribe: (() => void) | null = null;
   private agentUnsubscribe: (() => void) | null = null;
   private convListUnsubscribe: (() => void) | null = null;
   /** The in-flight record fetch, so a claim that supersedes another cannot land out of order. */
@@ -704,6 +743,10 @@ export class SearchV3View extends JfElement {
   constructor() {
     super();
     this.composerState = COMPOSER_STATE_DEFAULT;
+    // Read in the CONSTRUCTOR, not on connect: the attribute is reflected, so a value arriving one
+    // render late would paint the dark set for a frame in a light app — the flash the app's own
+    // pre-paint script exists to avoid.
+    this.theme = getAppearanceMode();
     this.apiBase = '';
     this.searchSnapshot = null;
     this.asked = false;
@@ -724,6 +767,7 @@ export class SearchV3View extends JfElement {
     this.historyLocked = false;
     this.lockedRefusal = false;
     this.effort = SV3_EFFORT_DEFAULT;
+    this.tier = SV3_TIER_DEFAULT;
     this.compacting = false;
     this.conversations = [];
     // Constructed HERE rather than on connect: a Lit controller added before connection still gets
@@ -763,6 +807,13 @@ export class SearchV3View extends JfElement {
     // every render site reads `isAdvancedMode()` live, so the subscription's only job is to ask for
     // a re-render when the reader changes the preference on another surface.
     this.uiModeUnsubscribe = subscribeUiMode(() => this.requestUpdate());
+    // Ledger row 14 — the app's light/dark decision, mirrored onto the host so the token sheet's
+    // authored light set activates. Re-read on connect as well as subscribed: a retained instance
+    // re-attaches into whatever mode the app is in now, not the one it was unmounted in.
+    this.theme = getAppearanceMode();
+    this.appearanceUnsubscribe = subscribeAppearanceMode((mode) => {
+      this.theme = mode;
+    });
     // Subscribing does NOT create a controller (the read below is a `peek`), so a window that never
     // delegates never starts the agent controller's polling as a side effect of being mounted.
     this.agentUnsubscribe = subscribeAgentSession(this.onAgentUpdate);
@@ -818,6 +869,8 @@ export class SearchV3View extends JfElement {
     this.aiUnsubscribe = null;
     this.uiModeUnsubscribe?.();
     this.uiModeUnsubscribe = null;
+    this.appearanceUnsubscribe?.();
+    this.appearanceUnsubscribe = null;
     // The RUN is not cancelled here. Unlike the ask stream (which this window owns), a delegated run
     // is hosted by the product-wide controller and may be watched from another surface; tearing it
     // down because this dev window unmounted would be this window deciding for the whole product.
@@ -2084,6 +2137,17 @@ export class SearchV3View extends JfElement {
     this.effort = effort;
   }
 
+  /**
+   * The composer announced a new send TIER (852 S4). Validated rather than trusted, exactly as the
+   * effort rung is: the event crosses a shadow boundary and an unknown tier would otherwise fall
+   * through to `runAsk` and silently ask when the reader chose to delegate.
+   */
+  private onTierChange(event: Event): void {
+    const tier = (event as CustomEvent<Sv3TierChange>).detail?.tier;
+    if (!isSv3Tier(tier)) return;
+    this.tier = tier;
+  }
+
   /** Halting is always the reader's; the turn settles `halted` through the sink's own terminal. */
   private abortAsk(): void {
     this.askAbort?.abort();
@@ -2422,7 +2486,11 @@ export class SearchV3View extends JfElement {
     const prompt = main?.shadowRoot?.querySelector<HTMLElement>('[data-testid="sv3-run-prompt"]');
     if (prompt === null || prompt === undefined) return;
     prompt.scrollIntoView({ block: 'nearest' });
-    prompt.querySelector('button')?.focus();
+    // Through the primitive's shadow root, because the decision controls are `jf-control`s (852 S4
+    // adoption) and `jf-control` does not delegate focus: focusing the HOST would move focus nowhere
+    // and leave the reader on a decision they were just taken to.
+    const decision = prompt.querySelector('jf-control');
+    decision?.shadowRoot?.querySelector('button')?.focus();
   }
 
   /**
@@ -2791,6 +2859,7 @@ export class SearchV3View extends JfElement {
         run?.phase === 'running' ||
         run?.phase === 'holding',
       followUp: turns.length > 0,
+      tier: this.tier,
     });
     // Relative timestamps are computed HERE, on render, and never ticked: a sidebar that re-renders
     // itself every second is continuous motion at rest, which the spec's duty-cycle law rules out.
@@ -2834,6 +2903,7 @@ export class SearchV3View extends JfElement {
         @sv3-composer-stop=${this.onComposerStop}
         @sv3-composer-answer=${this.onComposerAnswer}
         @sv3-effort-change=${this.onEffortChange}
+        @sv3-tier-change=${this.onTierChange}
         @sv3-run-decision=${this.onRunDecision}
         @sv3-palette-request=${this.onPaletteRequest}
         @sv3-remedy=${this.onRemedy}
@@ -2879,6 +2949,7 @@ export class SearchV3View extends JfElement {
           ?detailed=${isAdvancedMode()}
           .corpus=${projectSv3Corpus(this.aiSnapshot)}
           effort=${this.effort}
+          tier=${this.tier}
           model-label=${this.currentModelLabel ?? ''}
           data-testid="sv3-composer"
         ></jf-sv3-composer>
