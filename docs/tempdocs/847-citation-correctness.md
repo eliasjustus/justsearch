@@ -1,19 +1,26 @@
 # 847 — End-to-end citation correctness: the mark must land, survive reload, and never outrun its evidence
 
 ```
-status:  PARTIALLY IMPLEMENTED — charter A; rev 2, adversarial review incorporated
-         (APPROVE-WITH-AMENDMENTS; every amendment re-verified against source before adoption).
+status:  PARTIALLY IMPLEMENTED — charter A; rev 3. S0–S4 done, S5/S6 open.
+         rev 2 = adversarial review incorporated (APPROVE-WITH-AMENDMENTS, every amendment
+         re-verified against source). rev 3 = S0 measurement run (18 markdown shapes / 64 keys),
+         its findings integrated into the S4/S5 specs; `## S0-results` is the evidence record.
+         This file is rev 3; #488 landed the same doc at rev 2, and rev 3 supersedes it (it is
+         rev 2 plus the S0 integration, the §2.1c span guard and the S0-results appendix).
+         S0 = done (throwaway probe, not merged).
          S1 (one record→evidence authority, both halves gated), S2 (v3 live producer gate) and
-         S3 (v3 rehydration + recordId identity + panelSpeaks) are IMPLEMENTED by this PR.
-         S0, S4, S5, S6 remain PENDING (S4 still gated on 846 + S0).
-         Implementation deviation, S3 item 1: `coverage` / `sourceCoverage` are NOT projected onto
-         the restored turn. `Sv3TurnEvidence` carries no such fields and no v3 consumer reads them
-         (the live `sv3-ask.ts` path does not read them either), so projecting them would have added
-         unconsumed substrate rather than parity — live and restored already agree on this axis.
-         Adopted beyond the letter of §1.5b: `UnifiedChatView`'s LIVE `this.citations = p.matches`
-         assignment is gated too. Gating only the record path would have made a reloaded render
-         stricter than the live one in the shipped window — the 561 P-A divergence in a new place.
+         S3 (v3 rehydration + recordId identity + panelSpeaks) are IMPLEMENTED by #488.
+           - S3 deviation: `coverage` / `sourceCoverage` are NOT projected onto the restored turn.
+             `Sv3TurnEvidence` carries no such fields and no v3 consumer reads them (the live
+             `sv3-ask.ts` path does not either), so projecting them would have added unconsumed
+             substrate rather than parity — live and restored already agree on this axis.
+           - Adopted beyond the letter of §1.5b: `UnifiedChatView`'s LIVE `this.citations =
+             p.matches` assignment is gated too. Gating only the record path would have made a
+             reloaded render stricter than the live one — the 561 P-A divergence in a new place.
+         S4 (anchoring rewrite) is IMPLEMENTED on top of 846 — see "S4 — implementation record".
+         S5 (backend segmentation) and S6 (live validation) remain PENDING.
 created: 2026-08-19
+updated: 2026-08-19 (S4)
 related: 836 (literal-passage verification seam + the §4 producer gate — SHIPPED, #466/#473),
          839 (citation-mark presentation — shipped), 822 (the citation chain: F-047…F-050),
          561 P-A (evidence non-divergence: live and reloaded renders may not disagree),
@@ -61,6 +68,18 @@ in place rather than silently patched:
 And it settled §7 Q2 (the observed surface was Search v3, cold-loaded), which **refutes rev 1's
 suggestion that §1.5 could explain the symptom**: §1.5 is fail-open and can only add marks. §1.3
 alone explains it. See §7 Q2 for the corrected chain and what that implies for S4's priority.
+
+**Rev 3 — what the S0 measurement changed.** The probe (18 markdown shapes → 64 keys through
+production `splitSentences`, then §2.1 tier 1 computed exactly) settled §7 Q1 and corrected rev 2 in
+turn. It found the threshold question was **the wrong question**: fusion costs only 1–2 characters, so
+every ratio from 40 % to 80 % behaves identically, and rev 2's feared ~50 %-coverage case does not
+exist. The real defect heavy fusion produces is **extent** — a key that swallows a whole list matches
+at **100 %** coverage and would underline four blocks — which no threshold can see, so §2.1c's block
+clamp became a first-class S4 requirement rather than a rounding detail. It also refuted the DOM-side
+denominator rev 2 had floated (it inverts the signal), showed rev 2's blank-line rule for S5 is
+**insufficient** (single-newline lists never break at all), and found `sentencesTotal` is already
+~12.5 % junk today. All of it is folded into §2.1a–e and §2.2; the appendix is evidence, not
+instructions.
 
 ---
 
@@ -251,26 +270,6 @@ tier (incorrect — the gate never ran). Two surfaces of one evidence verdict, d
 worse than the current uniform-but-wrong state: it teaches the reader that the absence of marks means
 nothing. The gate must move with the data, not with one of its two consumers.
 
-**IMPLEMENTATION AMENDMENT (S1, 2026-08-19) — the arm list above was incomplete; two more were found
-while sweeping, and one of them is not closed.**
-
-- **Arm 5, FIXED in S1:** `UnifiedChatView.ts:6109` (live) — `this.citations = p.matches`, the live
-  twin of `matchesFromRecord`. Gating only the record path would have made a reloaded render
-  *stricter* than the live one in the same window: the 561 P-A divergence, introduced by the fix.
-- **Arm 6, FIXED in S1 (found by independent review of the S1-S3 PR):** `SummarizeView.ts:404` —
-  `this.citations = p.matches`, ungated, bound into the shared panel at `:276`, while the claims a
-  few lines below *were* gated. A third window with the identical defect, missed by the design's
-  four-site list.
-- **Arm 7, OPEN — a residual this PR does not close.** `UnifiedChatView.onRagCitationDelta`
-  (`:5995`) *appends* to `this.citations` from the **lexical** `rag.citation_delta` stream, with a
-  word-overlap ratio in the `similarity` field. Deltas can arrive after the matches event, so a
-  gated `this.citations` can be partially re-populated with lexical numbers that `sourceGrounding`
-  then reads as cross-encoder probabilities. S1's "one producer verdict" is therefore airtight for
-  the MATCHES producer and not yet for the delta producer. Fixing it is a different decision
-  (whether a lexical delta may reach the panel at all — 822 §3d says its score may never reach a
-  tier, which suggests it may not), so it is named here rather than fixed silently. Also logged to
-  the observations inbox.
-
 ### 1.6 D4 — index-keyed merge, and the id overwrite
 
 `applySv3Record` (`sv3-sessions.ts:652-672`) matches `recordTurns[index]` to `local[index]`
@@ -346,7 +345,9 @@ the bridge **independent of the markdown grammar** so no markdown shape can desy
 4. `startIndex` / `endIndex` are the char offsets of the run's first and last token (the end extended
    over immediately following non-whitespace punctuation, so the mark still lands after the period).
    The existing insert machinery (`:774-808`) is unchanged from there.
-5. **Advance rule (§2.1b).** Consume the matched DOM range; the next citation searches only from the
+5. **Clamp to one rendered block (§2.1c).** If the run's first and last text nodes have different
+   block-level ancestors, clamp the span to the first block and place the marker at the clamp.
+6. **Advance rule (§2.1d).** Consume the matched DOM range; the next citation searches only from the
    previous match's `endIndex` onward.
 
 Why this closes the class: bullets, ordinals, pipes, `#`, `>`, `*`, `_`, backticks and blockquote
@@ -374,15 +375,85 @@ authority ADR-0043 already commits the engine to, applied locale-invariantly (`u
 no per-language configuration, nothing to author or maintain per script). It segments CJK/Thai by
 dictionary rather than by spaces, so the token counts become comparable across scripts.
 
-**The acceptance floor is therefore expressed in characters, not tokens:** accept a run when the
-matched span covers **≥ 60 % of the key's word-like characters** (see §2.1c on re-deriving that
-number) *and* **≥ 4 word-like characters**, preserving today's short-sentence behaviour exactly. A
-token-count floor is not used at all.
+**Every floor is therefore expressed in word-like *characters*, never in tokens.** The measured rule
+(S0, 18 shapes / 64 keys — see §2.1b for why it has this shape):
+
+```
+eligible   ⟺  keyWordChars ≥ 4                       // unchanged; today's `norm.length < 4`
+accept run ⟺  matchedWordChars ≥ 2
+           ∧  (keyWordChars − matchedWordChars) ≤ max(4, 0.4 × keyWordChars)
+           ∧  [ if matchedWordChars < 4: the run is the only occurrence in the remaining window ]
+```
+
+The middle clause **is** "≥ 60 % of the key" for keys longer than 10 word-chars and degrades to a
+constant 4-character slack below that — one formula covering both regimes, no new lever. Measured: it
+accepts all 55 real keys and rejects only a fenced code block (which has no sentence to mark, so tier
+3 is the right outcome). The uniqueness clause fires on 1 of 56 keys.
+
+**The ≥ 4-character eligibility floor is load-bearing for CJK honesty, not a legacy carry-over.**
+Under CJK/Japanese the backend produces standalone ordinal keys (`"2."`), and such a key measures
+**100 % coverage against an arbitrary `[2]` token elsewhere in the answer** — a mark placed on
+unrelated prose. The character floor is the *only* thing excluding it (a `"2."` key has one
+word-char). It is also not airtight: a 4-char numeric key such as `"2026."` in a list clears it — which
+is the second reason for the uniqueness clause, and why that clause is not optional.
 
 *Environment note:* `Intl.Segmenter` requires a full-ICU runtime. Node 18+ ships full-icu by default,
 so vitest/happy-dom is fine; confirm in S4's first commit rather than assuming.
 
-#### 2.1b The advance rule (repeated sentences)
+#### 2.1b Why the rule has that shape, and the two alternatives it buries
+
+Measured (S0), and it reframes the problem rev 2 thought it had:
+
+- **The ratio is nearly inert.** `BreakIterator` fusion costs **1–2 word-like characters** per key —
+  the ordinal's digits — so 40 %, 50 %, 60 %, 70 % and 80 % all accept the same 54 of 56 eligible keys.
+  Rev 2's fear that heavy fusion pushes coverage to ~50 % **does not occur**.
+- **A ratio's one measured false reject is a short list item.** `key "No.\n13."` → `keyWordChars=4`,
+  matched `"No"`, coverage exactly 50 %. A fixed-size defect (2 digits) is half of a short sentence.
+  That is why the slack is `max(4, 0.4 × …)` rather than a pure ratio: the tax is absolute, so the
+  allowance must be too.
+- **Heavy fusion is invisible to every threshold.** When `BreakIterator` swallows a whole bullet list,
+  blockquote or table into one key (shapes E/F/I/K/N/R), that key matches the DOM **contiguously at
+  100 % coverage**. There is no ratio that can see it. It is an **extent** defect, and it is caught by
+  the span guard below — not by acceptance.
+
+**Rejected — the ratio over the DOM-side candidate span** (rev 2 floated this as possibly better than
+the key-side denominator). Measured and **refuted**: the distribution is `min 4.0 % · p10 4.0 % ·
+median 100 %`, where the 4 % tail is the junk ordinal keys the character floor already rejects, and
+the ratio is **≥ 1.0 for exactly the over-extent cases it was proposed to catch** (the run is larger
+than its block). It inverts the signal. The DOM side earns its place as a **structural guard**
+(block-crossing, below), never as a denominator.
+
+**Rejected — truncating the key at its first line break.** On paper better (mean coverage 98.2 %,
+block-crossings down to 1/56), but it under-marks 8 of 56 keys by 11–121 word-chars, including a
+legitimately soft-wrapped paragraph where the truncation destroys a real sentence's extent. It is a
+newline heuristic standing in for block structure; the same benefit belongs in **S5**, where real
+block structure is available.
+
+#### 2.1c The span guard (H4) — a first-class S4 requirement
+
+```
+the accepted run must not cross a rendered block boundary; if it does, clamp the
+.cite-sentence span to the FIRST block and place the marker at the clamp
+```
+
+**Measured need: 7 of 56 eligible runs (12.5 %) span 2–5 rendered blocks** — every bullet list, the
+blockquote, the GFM table, and the heading-into-list shape. Without the guard one citation underlines
+an entire 3-item list plus its lead-in paragraph (32 tokens across 4 blocks) *while reporting 100 %
+coverage*. This is not a polish item: it is the half of the anchoring defect that acceptance logic
+structurally cannot reach, and S4 is incomplete without it.
+
+Implementation note: compare the nearest **block-level ancestor** of the run's first and last text
+node. Do **not** use "a newline in the flattened text" as the block proxy — S0 used that as a
+modelling stand-in and it produces a false positive on soft-wrapped paragraphs. The ancestor
+comparison is both correct and cheaper.
+
+**Asymmetry to respect, not to generalise from.** Prefix matching is robust in one direction only:
+*trailing* foreign material costs ≤ 2 characters, but a single *leading* foreign token zeroes the
+match (a fence's `json` info-string is a class attribute in the DOM, not text → 0 % coverage). Tier 1
+is robust to the fusion the backend actually produces and brittle to anything markdown places at the
+**head** of a key. S4 must not assume prefix matching is robust beyond the trailing case.
+
+#### 2.1d The advance rule (repeated sentences)
 
 **Rev-2 addition (adversarial review).** Per-label dedupe alone has a failure mode worse than today's:
 if an answer repeats an identical sentence (common in list-shaped answers — "See above.", a repeated
@@ -395,7 +466,7 @@ Rule: matched DOM ranges are consumed. Citations are anchored in ascending `sent
 `endIndex`. This makes anchoring monotone in the answer's own sentence order, which is the fact the
 ordering actually derives from — not an incidental scan order.
 
-#### 2.1c Multi-source sentences
+#### 2.1e Multi-source sentences
 
 Two changes, both required (§1.2):
 
@@ -423,7 +494,7 @@ an accident of control flow.
 
 **Tier 3 — no mark.** The source still appears in the sources panel. Never invent a location.
 
-**Multi-source sentences.** See §2.1c — the fix is upstream in `claimsToCitations` plus the dedupe
+**Multi-source sentences.** See §2.1e — the fix is upstream in `claimsToCitations` plus the dedupe
 key, not the dedupe key alone.
 
 **Ordering against 846 (assert, do not assume).** 846 adds a `highlightCodeBlocks(root)` pass over
@@ -445,7 +516,9 @@ work. The anchoring pass stays one O(tokens) sweep per settled render.
   `this.citations` is the only input. Unchanged.
 - **H2** A mark's tier is `groundingClass(cite.similarity)`, the cross-encoder score. Unchanged.
 - **H3** A tier-2 mark carries no `.cite-sentence` underline.
-- **H4** A tier-1 `.cite-sentence` span covers only the matched token run, never a whole block.
+- **H4** A tier-1 `.cite-sentence` span never crosses a rendered block boundary: it covers the
+  matched run clamped to the run's first block (§2.1c). A mark may not underline text the
+  cross-encoder did not score as part of that sentence — and measured, 12.5 % of runs would.
 
 #### Rejected alternatives
 
@@ -481,14 +554,40 @@ Tier 1 tolerates the fused key, but the fusion is an independent defect with an 
 Worker hands the cross-encoder a "sentence" containing the next list item's ordinal, so a scored
 sentence is not the sentence, and the persisted evidence text is not what the reader will see marked.
 
-`CitationMatchOps.splitSentences` (`:475-490`) gets two changes: **a blank line is a hard sentence
-boundary**, and **leading block markers are stripped per line** (`- `, `* `, `+ `, `1. `, `#…`, `> `)
-before segmentation. Both strictly reduce noise in the scored text.
+**Rev-2 correction from S0: "a blank line is a hard sentence boundary" is INSUFFICIENT, and it was
+not even the load-bearing half.** Measured mechanism:
 
-This is sequenced last (§3, S5) and carries a known consequence: it **changes `sentencesTotal`**, the
-denominator of 836 §3.6's coverage-honesty line. That is a correctness improvement (fused sentences
-were undercounting), but the coverage tests move with it and must be updated in the same slice, not
-after.
+| input | segments |
+|---|---|
+| `Alpha one.\nBeta two.` | 2 |
+| `Alpha one.\n- Beta two.` (also `* `, `> `, `\| `, `## `) | **1 — no break at all** |
+| `Alpha one.\n\n- Beta two.` | **3 — `["Alpha one", ".", "- Beta two."]`** |
+| `Alpha one.\n2. Beta two.` | 2 (`"Alpha one.\n2."`, `"Beta two."`) |
+
+A terminal `.` followed by whitespace and a **marker + space** suppresses the boundary entirely — so
+single-newline bullet, blockquote and table blocks collapse **wholesale** (a whole list plus its
+lead-in becomes one key) regardless of any blank-line rule. Insert a blank line and the terminator
+instead splits off as an **orphan `.` segment**. The observed live example showed only the mild
+trailing-ordinal case; these are the pathological ones underneath it.
+
+So the **per-line marker strip is the load-bearing half**, not the blank-line rule.
+
+**Preferred implementation: segment per block node, not per regex.** `commonmark` is *already* a
+`worker-services` dependency (`LanguageUtils` parses with it), so S5 can walk block nodes and segment
+each independently — no hand-rolled marker regex to maintain. This is the same "grammar by
+construction, not by blacklist" argument §2.0 makes for the FE side, applied on the backend, and it
+subsumes both the marker strip and the blank-line rule.
+
+**Locale:** pass `Locale.ROOT` rather than the current hardcoded `Locale.ENGLISH`. S0 measured all 18
+shapes segmenting **identically** under `en`/`root`/`ja`/`zh`, so this is not a behaviour change — it
+is honesty about what the code actually depends on (and removes something that reads as a
+per-language lever under HI-6 while not being one).
+
+**Two reasons `sentencesTotal` moves, not one.** Beyond de-fusion, **8 of 64 measured segments
+(12.5 %) are junk today** — orphan `.` segments and standalone ordinal keys (`"1."`, `"2."`) that
+carry no sentence, are sent to the cross-encoder, and are counted in 836 §3.6's coverage denominator.
+S5 therefore *improves* that denominator's honesty as well as de-fusing it, and the coverage tests
+must account for both effects in the same slice, not after.
 
 ### 2.3 One record→evidence authority
 
@@ -520,20 +619,6 @@ Named orphans, deleted in this slice rather than left as wrappers: the private
    `claimsToCitations`, producing a real `Sv3TurnEvidence` (`sources` / `matches` / `marks` /
    `retrievalMode`). Also project `coverage` and `sourceCoverage` so v3's honesty frame reads the same
    facts live and restored. Delete the `:101-106` comment that justifies the discard.
-
-   **IMPLEMENTATION AMENDMENT (S3, 2026-08-19) — the `coverage` / `sourceCoverage` half was
-   deliberately NOT implemented, and the reason is narrower than "no consumer".** `Sv3TurnEvidence`
-   carries no such fields, and the LIVE path (`sv3-ask.ts`) does not read them off the payload
-   either — so live and restored already agree on this axis, and projecting them onto the restored
-   turn alone would have created the asymmetry the item exists to prevent, in the other direction.
-   The nuance, found by independent review and worth recording because it changes who should act:
-   the consumer is not missing, it is **unwired**. `<jf-citations-panel>` already accepts
-   `sourceCoverage` and already words the third state ("Retrieved · not examined",
-   `CitationsPanel.ts:66,80,554`); `Sv3Main.ts:1377-1386` simply never passes it. So v3 is one
-   binding — plus the two fields on the evidence record and the two reads in `sv3-ask.ts` — away
-   from the parity `UnifiedChatView` already has. That is a **pre-existing v3-vs-UCV gap this PR
-   neither creates nor closes**, and wiring it is an owner call (it changes what the v3 panel says
-   about budget-starved sources), not a silent extension of this slice.
 2. **"Never told" is preserved.** A record turn with no citation attributes still projects
    `evidence: null` — the distinction `sv3-honesty.ts` depends on (absent ≠ zero) is not collapsed.
 3. **`applySv3Record` matches by identity, not position.** `Sv3Turn` gains
@@ -578,18 +663,18 @@ divergence between the two handlers here is the 561 P-A divergence in a new plac
 
 | Slice | Scope | Primary targets | Blocked by |
 |---|---|---|---|
-| **S0** | Segmentation probe (§7 Q1) — a JUnit case printing `splitSentences` output for a bulleted/numbered answer | `CitationMatchOps.java:475-490` (read-only probe) | — |
+| **S0** | ~~Segmentation probe (§7 Q1)~~ — **DONE**, 18 shapes / 64 keys. Findings integrated into §2.1a/§2.1b/§2.1c (S4) and §2.2 (S5); full results in `## S0-results` | throwaway probe, **not merged** | — |
 | **S1** | One record→evidence authority, **gating both halves** | extract `claimsFromRecord` + `matchesFromRecord` from `UnifiedChatView.ts:5368-5431` → new shared module beside `components/chat/citationResolve.ts`; gate the match array (§1.5b); delete originals | — |
 | **S2** | v3 live producer gate | `sv3-ask.ts:349-364` (read `scorer`), `:352` (gate `matches`), `:256-266` (`claimsOf` stamps it), `:213-217` (sweep the stale comment); mirror `UnifiedChatView.ts:6116-6188` | — |
 | **S3** | v3 rehydration + identity | `sv3-record.ts:158,101-106,150-151`; `sv3-sessions.ts:652-672` (recordId merge), `:95` (+`recordId`), `:216-225`; `Sv3Main.ts:1345-1348` (`panelSpeaks`); rewrite `sv3-sessions.test.ts:833-840` | S1 |
-| **S4** | Anchoring rewrite | `MarkdownBlock.ts:728-810` (`Intl.Segmenter` + prefix match + advance rule), `:747/:760` (per-label dedupe), `:750` (char floor), `:915-917` (`stripMarkers` → link collapsing only); `citationResolve.ts:55-63` (per-ref emission) + delete dead `sourceRefs` (`MarkdownBlock.ts:48`); assert ordering vs 846's `highlightCodeBlocks` | **846 merged**; S0 (threshold, §2.1c) |
-| **S5** | Backend markdown-aware segmentation | `CitationMatchOps.java:475-490`; coverage-denominator test updates | S0, S4 (so anchoring regressions are already pinned) |
+| **S4** | Anchoring rewrite | `MarkdownBlock.ts:728-810` (`Intl.Segmenter` + prefix match + §2.1a acceptance rule + §2.1d advance rule + **§2.1c block-clamp**), `:747/:760` (per-label dedupe), `:750` (char floor), `:915-917` (`stripMarkers` → link collapsing only); `citationResolve.ts:55-63` (per-ref emission) + delete dead `sourceRefs` (`MarkdownBlock.ts:48`); assert ordering vs 846's `highlightCodeBlocks` | **846 merged** |
+| **S5** | Backend markdown-aware segmentation — **per-block-node via the existing `commonmark` dependency**, not a marker regex; `Locale.ROOT` | `CitationMatchOps.java:475-490`; coverage-denominator updates for de-fusion **and** junk removal | S4 (so anchoring regressions are already pinned) |
 | **S6** | Live validation | ui-shot step for a list-shaped grounded answer; L1–L3 (§4) | S1–S5 |
 
 **S1–S3 are cleared for immediate implementation** and are the whole of the reload-correctness fix;
-S1 and S2 are independent of each other and of S4/S5, so they can run in parallel. S0 is a
-minutes-scale probe that unblocks S4's threshold and S5's premise — run it first regardless of who
-takes S4.
+S1 and S2 are independent of each other and of S4/S5, so they can run in parallel. **S0 is complete**
+— its measurements are now part of the S4 and S5 specs above, so the S4 implementer needs §2.1 alone
+and should treat `## S0-results` as evidence, not as instructions.
 
 **S4 is the highest-priority *remaining* defect, not a tail item** (§7 Q2): S3 restores marks only at
 **tier-2 fidelity** (source-level, model-placed, no sentence underline, and nothing at all when the
@@ -609,9 +694,11 @@ today** — that is the acceptance criterion for the slice, not an afterthought.
 | # | Test | Catches |
 |---|---|---|
 | T1 ✗ | A citation whose `sentenceText` is `- **Foo**: bar baz qux [1].\n\n2. ` anchors a `.cite-ref` inside the rendered `<li>` | §1.1, both halves (blacklist + fusion) in one fixture |
-| T2 ✗ | Shape matrix, parameterized: unordered list, ordered list, table cell, blockquote, ATX heading, nested list, **and a CJK bulleted answer** | the *class*, not the observed case. The CJK case is the HI-6 guard: it fails under any token-count floor (§2.1a) and is the evidence P1 (§6) earns its keep |
+| T2 ✗ | **Shape matrix + coverage harness, parameterized over S0's 18 shapes** (prose, ordered/unordered lists, nested list, GFM table, blockquote, heading-into-list, fence-between-items, short items, 2-digit ordinals, bullets-with-inline-link, hard-wrapped prose, CJK numbered, CJK bullets, Japanese numbered, and the live-observed shape P). Resurrects S0's DOM-token/coverage harness, run against **real `marked` output** instead of the commonmark stand-in. Asserts, per shape: which keys anchor, coverage, and the accept/reject verdict | the *class*, not the observed case. The CJK cases are the HI-6 guard: they fail under any token-count floor (§2.1a). This matrix is the evidence P1 (§6) earns its keep, and re-running it on the real renderer closes S0's modelling-substitution gap |
+| T2b ✗ | **Span guard (H4/§2.1c):** for each of the 7 measured block-crossing shapes, the `.cite-sentence` span lies within **one** block — shape E does not underline the 3-item list plus its lead-in | the extent defect no coverage threshold can see. Would pass at 100 % coverage while being wrong |
+| T2c | **Acceptance rule boundary cases:** `"No.\n13."` (50 % coverage, 2-char tax) **accepts**; a fenced block with a leading info-string (0 % coverage) **rejects**; a `"2026."`-style 4-char numeric key with a matching `[n]` elsewhere **rejects** via the uniqueness clause | the `max(4, 0.4 × …)` slack in both regimes, and the CJK-honesty hole the floor alone does not close (§2.1a) |
 | T3 ✗ | A `Claim` with `verifiedRefs: [0, 2]` yields **two** `Citation`s from `claimsToCitations` (labels 1 and 3), and `MarkdownBlock` renders **two** marks at the boundary in ascending label order | §1.2 — **both** gates. Asserted at the resolver level *and* the render level, because the resolver half is what makes the render half reachable at all |
-| T3b ✗ | An answer containing the same sentence twice, each cited, marks **each occurrence once** — never two marks on occurrence 1 | §2.1b. Without the advance rule the per-label dedupe makes this *worse* than today |
+| T3b ✗ | An answer containing the same sentence twice, each cited, marks **each occurrence once** — never two marks on occurrence 1 | §2.1d. Without the advance rule the per-label dedupe makes this *worse* than today |
 | T3c | Short-sentence floor: a 3-token sentence `"It does not."` still anchors | §2.1a — the char-floor must not regress today's `norm.length < 4` behaviour |
 | T4 | An answer containing **no** literal `[n]` still anchors tier-1 marks | rejected-alternative A's failure mode; guards against a future "just use the tokens" regression |
 | T5 | Tier-1 miss + literal `[1]` present → marker upgraded **and** no `.cite-sentence` span on it | H3 |
@@ -636,7 +723,9 @@ today** — that is the acceptance criterion for the slice, not an afterthought.
 | T16 ✗ | A merge never changes an existing turn's `id`; `recordId` is stamped instead | §1.6b (`sv3-sessions.test.ts:833-840` is rewritten here) |
 | T17 ✗ | `panelSpeaks` is true for an `agent`-kind turn carrying evidence | §1.7 |
 | T17b | `panelSpeaks` under a **gated** producer: a turn whose `evidence.matches` is empty because the producer was not admitted does not open a panel asserting grounding | that §2.4(4)'s loosened gate did not open a path for §1.5b's contradiction to reappear on the restored path |
-| T18 ✗ | `CitationMatchOps.splitSentences` on a bulleted/numbered markdown answer emits one sentence per item, with no ordinal fused from the next | §2.2 |
+| T18 ✗ | **S0's shape matrix + fusion classification, promoted to a permanent test.** Over the 18 shapes, `splitSentences` emits one segment per sentence per block: no ordinal fused from the next item, **no whole-block collapse** (the single-newline bullet/blockquote/table cases, which are the ones a blank-line rule misses), and **no orphan `.` or standalone-ordinal segments**. Classification counters asserted, so a partial fix cannot pass | §2.2 — all three fusion classes plus the junk class, not just the mild ordinal case the live example showed |
+| T18b | `sentencesTotal` for the matrix drops by the measured junk count **and** changes by the measured de-fusion count, with 836 §3.6's coverage assertions updated in the same commit | that S5's denominator movement was accounted for deliberately, not absorbed |
+| T18c | Segmentation is identical under `Locale.ROOT` and `Locale.ENGLISH` for all 18 shapes | pins that the `Locale.ROOT` change is honesty, not behaviour (HI-6) |
 
 ### Live stack / browser — not substitutable by unit tests
 
@@ -714,15 +803,17 @@ and only because §1.1 requires it.
 
 ## 7. Open questions
 
-1. **Does `BreakIterator` really fuse across `\n\n`?** §1.1's mechanism is inferred from the observed
-   `sentenceText`, not measured. Probe: a JUnit case printing `splitSentences` output for a bulleted
-   answer. **Promoted to slice S0, ahead of S4** (rev 1 put it before S5 only). Two things depend on
-   it, not one: whether blank-line-as-boundary is S5's fix or a no-op, **and** §2.1c's 60 % coverage
-   threshold — a heavily fused key can push the matched prefix to roughly half the key's characters,
-   which would put a real sentence under the floor. Re-derive the threshold from the measured worst
-   fusion, and consider expressing the ratio over the **DOM-side candidate span** (how much of the
-   matched region the key accounts for) rather than over the key, since it is the key that carries the
-   foreign material.
+1. **~~Does `BreakIterator` really fuse across `\n\n`?~~ ANSWERED by S0 — and the question was too
+   narrow.** Fusion is confirmed and is *worse* than `\n\n`: a single newline before a `- `/`* `/`> `/
+   `| `/`## ` marker suppresses the sentence boundary **entirely**, collapsing a whole list,
+   blockquote or table into one key; a blank line instead splits the terminator into an orphan `.`
+   segment. Both were invisible in the observed live example. Consequences, all now folded into the
+   specs: the blank-line rule is insufficient and the per-line marker strip (better: per-block-node
+   segmentation via the existing `commonmark` dependency) is the load-bearing half (§2.2); the
+   acceptance threshold is nearly inert and is replaced by a measured absolute-slack rule (§2.1a);
+   rev 2's ~50 %-coverage worry does not occur, because heavy fusion matches at **100 %** and is an
+   **extent** defect instead (§2.1c's block clamp); and the DOM-side denominator rev 2 floated is
+   **refuted** — it inverts the signal (§2.1b).
 
 2. **~~Which surface produced the live "zero marks with 0.96 matches" observation?~~ ANSWERED —
    Search v3, deep-linked / cold-loaded** (orchestrator-confirmed). Rev 1 offered §1.5 as the
@@ -758,3 +849,324 @@ and only because §1.1 requires it.
 5. **`.cite-claimed`** — 839 §7 deferred it as "blocked on the literal-citation disposition". 836 has
    since shipped. If the class is still unminted, S4 is where it would be decided; this design does
    **not** mint it, so 839's deferral stands unless the orchestrator says otherwise.
+
+---
+
+## S0-results — measured segmentation fusion and anchoring coverage (2026-08-19)
+
+> **Standing: evidence record, not instructions.** Every conclusion below is already integrated into
+> the specs the implementer works from — §2.1a (acceptance rule + CJK floor), §2.1b (why that shape;
+> the two rejected alternatives), §2.1c (span guard + prefix asymmetry) and §2.2 (S5 segmentation).
+> Read this section to check *why* a rule is what it is, or to re-derive it if a premise changes.
+> Section references in the original probe write-up have been retargeted to the integrated numbering.
+
+Answers §7 Q1. **The threshold question is settled, and the answer is "not a threshold problem".**
+Measured, not inferred: `BreakIterator` fusion costs at most **2 word-like characters** per key, so
+any ratio floor between 40 % and 90 % accepts the same set. What a ratio *does* break is short list
+items, and what no ratio catches is the case that actually matters — a key that fuses a whole list.
+
+### Method and its honest limits
+
+Throwaway probe: `modules/worker-services/src/test/java/io/justsearch/indexerworker/services/CitationMatchOpsSegmentationProbeTest.java`
+(worktree `agent-a59444703522a5afc`, **not merged**). Raw output: `scratchpad/847-s0-probe-raw.txt`.
+Run: `./gradlew.bat :modules:worker-services:test --tests "*CitationMatchOpsSegmentationProbeTest*"`.
+
+18 markdown shapes × production `CitationMatchOps.splitSentences` → 64 keys. For each key the probe
+builds the **rendered-DOM token stream** and computes §2.1 tier 1 exactly: longest prefix of the key's
+word-like tokens matching a contiguous DOM run, coverage in word-like characters.
+
+Three modelling substitutions, each a known deviation from S4's real runtime:
+
+1. **DOM text** is `commonmark` render → tag-strip, standing in for `marked` → DOMPurify → text-node
+   walk. Block structure is identical for these shapes; GFM tables are hand-modelled (the tables
+   extension is not on this module's classpath).
+2. **Tokenizer** is `java.text.BreakIterator.getWordInstance(Locale.ROOT)`, standing in for
+   `Intl.Segmenter`. Cross-checked against naive `[\p{L}\p{N}]+`: **every coverage figure is identical
+   under both**, so the numbers are tokenizer-independent. Only *token counts* differ, and only for
+   CJK/JA (see HI-6 below).
+3. **"DOM block"** is a newline in the flattened text. That is a proxy: a soft-wrapped `<p>` keeps its
+   newline inside one block, so shape `S` is a proxy false positive. The real implementation must
+   compare the nearest block-level *ancestor* of the run's first and last text node — which is also
+   strictly better. Block-crossing counts below are given both ways (8 by proxy, 7 real).
+
+### Shape × fusion behaviour
+
+`sent` = segments `splitSentences` emitted. `min cov` = lowest key-coverage among that shape's
+eligible keys (≥ 4 word-like chars). `xblk` = the accepted run underlines more than one rendered block.
+
+| Shape | sent | Fusion behaviour | min cov | xblk |
+|---|---|---|---|---|
+| A prose baseline | 3 | none | 100 % | no |
+| B numbered + bold lead-in, loose | 4 | **trailing ordinal** on 3/4 keys | 96.2 % | no |
+| C numbered + bold lead-in, tight | 4 | trailing ordinal on 3/4 | 96.2 % | no |
+| D numbered, plain | 4 | trailing ordinal on 3/4 | 95.5 % | no |
+| **E bullet `- `** | **1** | **whole block: lead-in + all 3 items = one key** | 100 % | **yes (+27 tok)** |
+| **F bullet `* ` + bold** | **1** | whole block | 100 % | **yes (+21)** |
+| G nested list | 7 | trailing ordinal + **2 orphan `.` keys** | 96.2 % | no |
+| **H heading → list** | 3 | heading + para + heading + ordinal in one key | 97.8 % | **yes (+7)** |
+| **I GFM table** | **1** | **whole table = one key** | 100 % | **yes (+19)** |
+| J short items | 5 | trailing ordinal + 1 orphan `1.` key | 90.0 % | no |
+| **K blockquote** | **1** | whole quote = one key | 100 % | **yes (+15)** |
+| L fence between items | 4 | fence is its own key, **matches 0 %** | 0 % | no |
+| M CJK numbered | 6 | no fusion; **3 standalone ordinal keys** | 90.9 % | no |
+| **N CJK bullets** | 2 | whole block (lead-in + item 1) | 100 % | **yes (+2)** |
+| O Japanese numbered | 5 | no fusion; 2 standalone ordinal keys | 100 % | no |
+| **P live-observed shape** | 4 | **trailing ordinal on 3/4** — reproduces §1.1 verbatim | 97.1 % | no |
+| Q 2-digit ordinals, short items | 6 | trailing ordinal | **50.0 %** | no |
+| **R bullets + inline link** | **1** | whole block | 100 % | **yes (+16)** |
+| S hard-wrapped prose | 2 | none (3 physical lines, 1 sentence) | 100 % | proxy only |
+
+Classes over all 64 keys: `NONE 32 · MARKER_ONLY 23 · WHOLE_SIBLING 6 · PARTIAL_SIBLING 3`.
+
+### The numbers §2.1a asked for
+
+Eligible keys (n = 56, i.e. ≥ 4 word-like chars): `min 0.0 % · p10 90.0 % · median 100 % · mean 95.3 %`.
+**Unmatched word-like characters per eligible key** — the fusion tax in absolute terms:
+
+```
+0 × 31    1 × 21    2 × 4    25 × 1
+```
+
+The single 25 is shape L's fenced block (a total match failure, not fusion). **In every real case the
+fused foreign material is 1–2 characters: the ordinal's digits.** Acceptance counts confirm the ratio
+is inert — 40 %, 50 %, 60 %, 70 %, 80 % all accept 54/56; only ≥ 90 % starts cutting (51/56).
+
+So: **60 % of key holds, and it holds for a reason the design did not anticipate.** Rev 1's worry
+("a heavily fused key pushes the matched prefix to roughly half the key") does not occur — heavy
+fusion (E/F/I/K/N/R) yields **100 %** coverage, because the whole fused block matches contiguously in
+the DOM. Heavy fusion is invisible to *any* coverage threshold. It is an **extent** defect, not an
+acceptance defect.
+
+**But 60 % has one measured false reject**, and it is a shape a model really produces — Q s4:
+
+```
+key "No.\n13."   keyWordChars=4   matched="No" (2)   unmatched=2   cov = 50.0 %
+```
+
+A 2-character ordinal is half of a 4-character sentence. The ratio penalises short items for a
+fixed-size defect. That is the wrong shape of rule for the measured data.
+
+### Recommended rule (now integrated as §2.1a)
+
+Eligibility unchanged (`keyWordChars ≥ 4`, preserving today's `norm.length < 4`). Acceptance:
+
+```
+accept run  ⟺  matchedWordChars ≥ 2
+            ∧  (keyWordChars − matchedWordChars) ≤ max(4, 0.4 × keyWordChars)
+            ∧  [ if matchedWordChars < 4: the run is the only occurrence in the remaining window ]
+```
+
+The middle clause **is** "≥ 60 % of the key" for keys longer than 10 word-chars, and degrades to a
+constant 4-character slack below that — one formula, no new lever. Verified against the matrix: it
+accepts all 55 real keys (including Q s4) and rejects only shape L's fenced block. The uniqueness
+clause fires on 1/56 keys, so it costs nothing and closes the "a 2-char run lands anywhere" hole.
+
+**Plus a separate span guard, which is what §7 Q1's DOM-side intuition was actually reaching for
+(H4):**
+
+```
+the accepted run must not cross a rendered block boundary; if it does, clamp the
+.cite-sentence span to the first block and place the marker at the clamp
+```
+
+Measured need: **7/56 eligible runs (12.5 %)** span 2–5 rendered blocks — every bullet list, the
+blockquote, the table, and the heading shape. Without the guard, one citation underlines an entire
+3-item list plus its lead-in paragraph (shape E: 32 tokens across 4 blocks) while scoring 100 %
+coverage. No threshold can see this.
+
+### Rejected: the ratio over the DOM-side candidate span (§7 Q1's alternative)
+
+Measured and **refuted**. Over the containing DOM block the distribution is
+`min 4.0 % · p10 4.0 % · median 100 %`: the 4 % tail is the *junk ordinal keys* (a 1-char match inside
+a large block), which the character floor already rejects, and the ratio is **≥ 1.0 for exactly the
+over-extent cases we want to catch** (the run is larger than its block). It inverts the signal it was
+proposed to provide. The DOM side belongs in the design as a **structural** guard (block-crossing),
+not as a denominator.
+
+### Also measured and rejected: truncating the key at its first line break
+
+Tempting, and on paper better: eligible coverage `mean 98.2 %`, block-crossings `1/56` (vs `8/56` by
+the same proxy). But it under-marks 8/56 keys by 11–121 word-chars, and one of them (shape S) is a
+legitimate soft-wrapped paragraph where the truncation is a pure loss of a real sentence's extent. It
+is a newline heuristic standing in for block structure. **The same benefit belongs in S5**, where
+block structure is available for real.
+
+### Surprises worth acting on
+
+1. **`BreakIterator` does not merely fuse the next ordinal — for bullet/quote/table/heading blocks it
+   never breaks at all.** Mechanism, measured directly:
+
+   | input | segments |
+   |---|---|
+   | `Alpha one.\nBeta two.` | 2 |
+   | `Alpha one.\n- Beta two.` | **1** |
+   | `Alpha one.\n* Beta two.` / `\n> ` / `\n\| ` / `\n## ` | **1** |
+   | `Alpha one.\n\n- Beta two.` | **3 — `["Alpha one", ".", "- Beta two."]`** |
+   | `Alpha one.\n2. Beta two.` | 2 (`"Alpha one.\n2."`, `"Beta two."`) |
+
+   A terminal `.` followed by whitespace and a **marker + space** suppresses the boundary entirely;
+   insert a blank line and it instead splits the terminator into an **orphan `.` segment**. Both are
+   pathological, and both are invisible in the observed live example, which only showed the mild
+   ordinal case.
+
+2. **Consequence for S5: "a blank line is a hard sentence boundary" is not sufficient.** Shapes
+   E/F/K/N/R are single-newline lists and collapse wholesale regardless of blank-line handling; the
+   **per-line marker strip is the load-bearing half** of §2.2, not the blank-line rule. Stronger
+   suggestion: `commonmark` is *already* a `worker-services` dependency (`LanguageUtils` parses with
+   it) — segmenting per block node is available without a hand-rolled marker regex, which is the same
+   "grammar by construction, not by blacklist" argument §2.0 makes for the FE side.
+
+3. **`sentencesTotal` is already inflated with junk, today.** 8 of 64 segments (12.5 %) are orphan
+   `.` or standalone ordinal keys (`"1."`, `"2."`) that carry no sentence. They are scored by the
+   cross-encoder and counted in 836 §3.6's denominator. S5 will move that number for two reasons —
+   de-fusion *and* junk removal — and the coverage tests must account for both.
+
+4. **Prefix matching is asymmetric, and only one side is cheap.** Trailing fusion costs ≤ 2 chars; a
+   single *leading* foreign token zeroes the match (shape L: the fence's `json` info string is a class
+   attribute in the DOM, not text → 0 %). Tier 1 is robust to the fusion the backend produces and
+   brittle to anything markdown puts at the *head* of a key. Not a defect to fix now — shape L's key
+   is a code block with no sentence to mark, so tier 3 is the right outcome — but S4 should not
+   generalise "prefix matching is robust" beyond the trailing case measured here.
+
+### HI-6 — non-space-delimited scripts
+
+- **Locale is irrelevant to this defect.** All 18 shapes segment **identically** under `en`, `root`,
+  `ja` and `zh`. `splitSentences`'s hardcoded `Locale.ENGLISH` is not a per-language lever in
+  practice; S5 should still pass `Locale.ROOT`, as honesty about what the code depends on.
+- **CJK and Japanese fuse *less*, not more.** `。` always terminates, so the sentence keys come out
+  clean (M s1/s3/s5 and O s2/s4 all at **100 %** coverage — tier 1 reaches them). What they produce
+  instead is *junk*: the ordinal becomes its own standalone segment (`"2."`).
+- **Those junk keys would anchor at an arbitrary `[2]` token** — M s2 measures **100 %** coverage
+  against a `[2]` elsewhere in the answer. They are excluded **only** by the ≥ 4 word-like-character
+  eligibility floor (a `"2."` key has 1). That floor is therefore load-bearing for CJK *honesty*, not
+  a legacy carry-over. It is also not airtight: a 4-char numeric key (a year in a list, `"2026."`)
+  would clear it — the second reason for the uniqueness clause above.
+- **§2.1a's rev-2 correction is confirmed empirically.** Under naive `[\p{L}\p{N}]+`, shape O s0 (a
+  full 20-character Japanese clause) is **1 token**; O s2/s4 are 3; M s1/s3/s5 are 3–4. A ≥ 4-**token**
+  floor would make tier 1 structurally unreachable for those keys, exactly as §2.1a argues. The ICU
+  word iterator gives 9–13 tokens for the same clauses. Character-based floors are the only ones that
+  work across both.
+
+### Disposition of the probe
+
+Throwaway; do **not** merge from the S0 worktree. Two pieces are worth resurrecting as permanent
+tests in the slices that own them:
+
+- the shape matrix + fusion classification → **T18** (S5), as the pin that fusion is gone;
+- the DOM-token/coverage harness → the parameterised half of **T2** (S4), where it can run against
+  the real `marked` output instead of the commonmark stand-in.
+
+---
+
+## S4 — implementation record (2026-08-19)
+
+Implemented on top of 846 (#489). Frontend only; S5 (backend segmentation) and S6 (live
+validation) are untouched. S1–S3 (#488) landed while this slice was in flight and are merged in
+here — the code file sets are disjoint by design (`recordEvidence.ts` / `sv3-*` there,
+`MarkdownBlock.ts` / `citationResolve.ts` here), and the full suite is green over the union.
+
+### What shipped
+
+| § | Change | Site |
+|---|---|---|
+| §2.1 tier 1 | Word-sequence anchoring: `Intl.Segmenter(undefined, {granularity:'word'})` over BOTH sides, longest-prefix run, §2.1a acceptance rule, §2.1d consume-and-advance | `MarkdownBlock.ts` — `wordTokens` / `matchWordRun` / `decorateCitations` |
+| §2.1c (H4) | The span guard: nearest block-level ANCESTOR comparison, clamp to the first block, marker placed at the clamp | `MarkdownBlock.clampToBlock` + `blockAncestor` |
+| §2.1e | One `Citation` per verified ref; dedupe on `` `${endIndex}:${label}` ``; grouped marks emitted ascending by label in one split; dead `sourceRefs` deleted | `citationResolve.claimsToCitations`, `MarkdownBlock.Citation` |
+| §2.1 tier 2/3 (H3) | Unchanged in mechanism, named as an invariant and pinned: a tier-2 mark carries no `.cite-sentence` | `normalizeLiteralCitationTokens` doc + T5 |
+| §2.1 (846) | Ordering vs `highlightCodeBlocks` asserted, including the DEFERRED pass | `updated()` comment + T19 |
+| §2.1d (F1) | Citations sorted by `sentenceIndex` before the anchor loop — the order the advance rule assumes is established, not inherited from a persisted array | `decorateCitations` |
+| §2.0 | `stripMarkers` (the character blacklist) and `escapeRegex` deleted; only inline-link collapsing survives | `collapseInlineLinks` |
+
+### Deviations from the design, each deliberate
+
+1. **`Citation.sentenceIndex` was added, and is REQUIRED** (the design named no carrier). §2.1d's
+   advance rule and §2.1e's grouping need to tell "two sources of one sentence" from "one sentence
+   written twice", and `sentenceText` alone cannot: both cases produce identical text. The field is
+   a projection of `Claim.sentenceIndex`, which the producer already supplies — not a new fact.
+   It shipped OPTIONAL first, with "absent ⇒ groups with nothing" called the conservative reading;
+   independent review (F2) showed that is measurably wrong — two same-text citations without
+   ordinals anchor the second mark at the OTHER occurrence, a mark on prose that source did not
+   ground. All three producers set it, so the type now requires it (three test fixtures updated),
+   and the renderer keeps a per-position NEGATIVE fallback key for an untyped object arriving from
+   JS: it can collide with no real ordinal, so such a citation groups with nothing for real.
+2. **The uniqueness clause covers a single-token run as well as `matchedWordChars < 4`.** §2.1a's
+   own worked example (`"2026."`) does not fire the clause as literally specified — a 4-character
+   key matched whole gives `matchedWordChars = 4`. A one-token run carries no sequence evidence
+   about which occurrence it is, so the clause is applied there too. It rejects nothing S0 measured
+   as acceptable: the 18-shape matrix pins that, and it is what makes T2c's own case reject.
+3. **`groundingCoverage` now counts distinct sentences**, keyed on `sentenceIndex` with
+   `sentenceText` only as a fallback. Per-ref emission would otherwise inflate the "N of M
+   sentences" honesty line (two marks on one sentence read as two grounded sentences). Keying on
+   text alone — the first cut, corrected under review F3 — merged two DIFFERENT sentences that read
+   identically ("It does not." twice in a list answer) and under-reported "1 of 4" where the truth
+   was 2 of 4. A citation carrying neither field is counted individually, so no other caller moves.
+4. **A multi-source sentence's underline takes the STRONGEST tier**, while each mark keeps its own
+   source's tier (H2). The span answers "is this sentence grounded", which one strong source
+   settles; the weak source still reads weak where it is claimed, on its own numeral.
+5. **The agent path derives its sentence ordinal** by grouping consecutive identical `sentenceText`
+   (its payload carries no ordinal). Stated as an honest limit in the code: a repeated identical
+   sentence is read as the multi-source case there.
+6. **Anchoring order is established in the renderer, not assumed of the input** (review F1). §2.1d
+   is a claim about the ANSWER'S sentence order; two of the four construction paths sort, and the
+   two that project a persisted array inherit whatever order was stored. The citations are sorted
+   (stably, by `sentenceIndex`) before the anchor loop, so a single out-of-order pair can no longer
+   make the advance rule skip a sentence — which would reproduce the marks-vanish defect this slice
+   closes. The backend emits ascending today (`CitationScorer.java:136`,
+   `CitationMatchOps.java:297`) but nothing pins that as a contract, so the renderer does not rely
+   on it.
+7. **`insertedLabels` is scoped to markers actually inserted.** The pre-847 code added every
+   candidate label up front, so a label whose boundary node could not be split was treated as
+   rendered and its literal `[n]` was STRIPPED. It is now collected during insertion, so such a
+   label falls through to the tier-2 upgrade instead — strictly more correct, and a case the reader
+   would otherwise have lost silently.
+8. **`BLOCK_TAGS` lists the raw-HTML block containers** (`MAIN`/`NAV`/`HEADER`/`FOOTER`/`ADDRESS`/
+   `HGROUP`/`MENU`/`FORM`/`FIELDSET`/`LEGEND`) alongside what `marked` emits. They can only arrive
+   as literal HTML in a model answer, but two ADJACENT unlisted siblings would resolve to the same
+   (root) ancestor and read as one block — the guard's one under-clamp path, closed by construction
+   rather than by argument (review O3).
+
+Two asymmetries of prefix matching are named in the code rather than fixed, both failing CLOSED
+(a mark is lost, never misplaced): a foreign token at the key's HEAD zeroes the match (a fence's
+info string), and INTRAWORD emphasis (`**fast**est` → `fast`+`est` in the key, `fastest` in the DOM)
+makes a leading emphasized word unmatchable (review O2).
+
+### Tests, and what fails without the change
+
+`MarkdownBlock.anchoring.test.ts` (new) — the S0 matrix resurrected against the real `marked`
+output: 19 shapes, keys verbatim from `## S0-results`, T2 (which keys anchor) · T2b (H4, every span
+inside one block, plus the 7 measured block-crossers clamped and the soft-wrapped false positive NOT
+clamped) · T2c (acceptance boundaries in both regimes). `MarkdownBlock.test.ts` — T1, T3 (render
+half), T3b, T3c, T4, T5, T7, T19, restored-turn strip flip, two-key selection.
+`citationResolve.test.ts` — T3 (resolver half), per-ref emission, coverage counting.
+
+Reverting the three implementation files to `main` and re-running: **33 of the new/changed
+assertions fail** (26 in the matrix, 4 in `MarkdownBlock.test.ts`, 3 in `citationResolve.test.ts`).
+The shapes that pass pre-change are exactly the prose-only ones (A, O, S) — the pre-847 anchorer
+worked on prose and only on prose.
+
+The review round added four tests. Two fail against the pre-review implementation and are the
+regression pins for F1 and F3: out-of-order citations marking both sentences (without the sort, the
+earlier sentence's mark vanishes), and two identical-reading sentences counting as two. The other
+two PIN behaviour rather than fix a defect and pass either way: the untyped-citation fallback (it
+pins the negative per-position key, so a naive `?? position` cannot be reintroduced) and the
+single-token accept/reject boundary (review O1 — `"Correct."` unique marks, recurring does not;
+that rejection class is new with S4 and fails closed, and S0's matrix was silent on it rather than
+supportive).
+
+T6 is already covered by the pre-existing 687 R3a test (`[7]` with no matching citation stays inert
+text). T8 is the 822 §3d underline-density fixture, reused UNEDITED and green — the new anchorer
+bought no coverage by over-marking.
+
+Full ui-web suite: 420 files / 5277 tests green (over the union with #488's S1–S3); typecheck clean;
+ui-web gate set + kernel gates green apart from three reds pre-existing on `main`
+(`check-theme-token-closure`, `check-accent-as-text`, `strip-token-fallbacks` — all in
+`RecentsMenu.ts` / `ActionLedgerView.ts`, plus `check-controls-a11y`, confirmed red with this
+branch's only `UnifiedChatView` line reverted).
+
+### Still open after S4
+
+- **S5** — backend markdown-aware segmentation. S4 tolerates the fused key; it does not remove it,
+  and the junk keys (orphan `.`, standalone ordinals) still reach the cross-encoder and still count
+  in the coverage denominator.
+- **S6** — L1/L2/L3 live validation. Everything above is happy-dom; only the browser exercises the
+  real `marked` → DOMPurify → text-node path this anchoring targets.
