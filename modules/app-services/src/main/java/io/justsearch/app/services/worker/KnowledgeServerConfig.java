@@ -33,9 +33,29 @@ public record KnowledgeServerConfig(
         long pidValidationTimeoutMs,
         long stabilityWindowMs,
         int batchSize,
-        long healthCheckRetryBudgetMs) {
+        long healthCheckRetryBudgetMs,
+        int bootFaultInjectAttempts) {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgeServerConfig.class);
+
+    /**
+     * Tempdoc 825 §D4: the boot fault injector is a TEST affordance and must be unreachable in a
+     * shipped build. Enforced here, in the type, rather than at the one read site — a compact
+     * constructor cannot be forgotten by a future caller, and this record is already the allowlisted
+     * config surface ({@code AppServicesWorkerGuardrailsTest}), so the guard sits with the read.
+     */
+    public KnowledgeServerConfig {
+        if (isProduction && bootFaultInjectAttempts != 0) {
+            log.warn(
+                "Ignoring justsearch.worker.boot.faultInjectAttempts={} — the boot fault injector is"
+                    + " disabled in production builds",
+                bootFaultInjectAttempts);
+            bootFaultInjectAttempts = 0;
+        }
+        if (bootFaultInjectAttempts < 0) {
+            bootFaultInjectAttempts = 0;
+        }
+    }
 
     private static final long DEFAULT_DEADLINE_MS = 5000;
     private static final long DEFAULT_PORT_DISCOVERY_TIMEOUT_MS = 15_000;
@@ -117,6 +137,13 @@ public record KnowledgeServerConfig(
         long healthCheckRetryBudget = parseLong(
                 envOrProperty("JUSTSEARCH_WORKER_HEALTH_RETRY_BUDGET_MS", "justsearch.worker.health_retry_budget_ms"),
                 DEFAULT_HEALTH_CHECK_RETRY_BUDGET_MS);
+        // Tempdoc 825 §D4: countdown fault injector — the first N PID validations fail, then the
+        // injector stops, which is what makes boot-recovery CONVERGENCE reproducible (the existing
+        // pid_validation_timeout_ms knob fails EVERY attempt, so it can only prove the pin). The
+        // compact constructor zeroes it in production.
+        int bootFaultInjectAttempts = parseInt(
+                envOrProperty("JUSTSEARCH_WORKER_BOOT_FAULT_INJECT_ATTEMPTS", "justsearch.worker.boot.faultInjectAttempts"),
+                0);
 
         KnowledgeServerConfig config = new KnowledgeServerConfig(
                 isProd,
@@ -133,7 +160,8 @@ public record KnowledgeServerConfig(
                 pidValidationTimeout,
                 stabilityWindow,
                 batchSize,
-                healthCheckRetryBudget);
+                healthCheckRetryBudget,
+                bootFaultInjectAttempts);
 
         log.info("Loaded KnowledgeServerConfig: production={}, dataDir={}, workerLibDir={}",
                 isProd, dataDir, workerLibDir);

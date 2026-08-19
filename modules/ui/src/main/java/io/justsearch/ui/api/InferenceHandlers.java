@@ -37,6 +37,8 @@ final class InferenceHandlers {
 
   private final OnlineAiService onlineAiService;
   private volatile KnowledgeServerBootstrap knowledgeServer;
+  // Tempdoc 825: the recovery authority behind POST /api/worker/restart when no worker is bound.
+  private volatile io.justsearch.app.services.worker.WorkerRecoveryAuthority workerRecovery;
   // Tempdoc 374 alpha.27: VramDetector dependency removed; nvidia-smi availability
   // is read from gpuCapabilitiesService.snapshot().nvidiaSmi().available().
   private final GpuCapabilitiesService gpuCapabilitiesService;
@@ -76,6 +78,17 @@ final class InferenceHandlers {
   /** Late-binds the Knowledge Server after async Worker startup. */
   void setKnowledgeServer(KnowledgeServerBootstrap ks) {
     this.knowledgeServer = ks;
+  }
+
+  /**
+   * Tempdoc 825 §D5 decision 4: binds the ONE worker-recovery authority (the health monitor), so
+   * {@code POST /api/worker/restart} has an answer in the state where it used to 503 — the worker
+   * never started, so there is no spawner to restart. Nullable: test seams and standalone launchers
+   * that build the API without a monitor keep the old 503 behaviour.
+   */
+  void setWorkerRecovery(
+      io.justsearch.app.services.worker.WorkerRecoveryAuthority workerRecovery) {
+    this.workerRecovery = workerRecovery;
   }
 
   /**
@@ -607,10 +620,29 @@ final class InferenceHandlers {
    * without restarting the whole backend.
    */
   void handleRestartWorker(Context ctx) {
+    // Tempdoc 825 §D5 decision 4: both 503 arms below are reachable in EXACTLY the state an operator
+    // reaches for this endpoint — the worker never started, so there is neither a bootstrap bound
+    // here nor a spawner to restart. Route them through the one recovery authority instead of
+    // telling the operator that the thing they can see is broken is "not configured".
+    if (knowledgeServer == null || knowledgeServer.spawner() == null) {
+      if (routeToRecoveryAuthority(ctx)) {
+        return;
+      }
+    }
     if (knowledgeServer == null) {
+      // Live leg (run 3): a POST landing in the milliseconds between the bootstrap narrating its
+      // failure (inside tryStartKnowledgeServer) and connectWorker binding the recovery authority
+      // got "Knowledge Server not configured" — untruthful during startup, and the one message an
+      // operator watching /api/health flip to worker.spawn.failed is most likely to see. The state
+      // is genuinely "not wired up YET" and retrying does resolve it, so the class stays TRANSIENT
+      // and the sentence says which of the two it is.
       ctx.status(503)
           .json(
-              ApiErrorHandler.toResponse(ApiErrorCode.SERVICE_UNAVAILABLE, "Knowledge Server not configured", telemetry, ApiErrorHandler.routeOf(ctx)));
+              ApiErrorHandler.toResponse(
+                  ApiErrorCode.SERVICE_UNAVAILABLE,
+                  "Worker recovery is still initializing — retry shortly",
+                  telemetry,
+                  ApiErrorHandler.routeOf(ctx)));
       return;
     }
     if (knowledgeServer.spawner() == null) {
@@ -641,6 +673,66 @@ final class InferenceHandlers {
       }
       ctx.status(500).json(ApiErrorHandler.toResponse(ApiErrorCode.WORKER_RESTART_FAILED, msg, telemetry, ApiErrorHandler.routeOf(ctx)));
     }
+  }
+
+  /**
+   * Tempdoc 825: answers a restart request from the boot-recovery authority when no worker is bound.
+   * Returns true when it has written a response.
+   *
+   * <p>An accepted request is 202 with the verdict, not 200: the attempt is SCHEDULED (a worker boot
+   * takes tens of seconds — spawn, port discovery, health budget), and claiming 200/"restarted"
+   * would be the same over-claim this tempdoc exists to remove. A vetoed or exhausted request keeps
+   * 503, because it names a state that will not change by itself.
+   */
+  private boolean routeToRecoveryAuthority(Context ctx) {
+    var authority = this.workerRecovery;
+    if (authority == null) {
+      return false;
+    }
+    var verdict = authority.requestRecoveryNow();
+    switch (verdict) {
+      case ACCEPTED, ALREADY_RUNNING -> {
+        ctx.status(202).json(Map.of("success", true, "recovery", verdict.name()));
+        return true;
+      }
+      // Still supervised: a TEMPORARY refusal. Supervision owns the worker for now and this arm
+      // re-evaluates every tick, so retrying really can succeed — SERVICE_UNAVAILABLE (TRANSIENT,
+      // retryable) is the truth here.
+      case VETOED_SUPERVISION -> {
+        ctx.status(503)
+            .json(
+                ApiErrorHandler.toResponse(
+                    ApiErrorCode.SERVICE_UNAVAILABLE,
+                    "The knowledge server is being restarted by its supervisor — retry shortly",
+                    telemetry,
+                    ApiErrorHandler.routeOf(ctx)));
+        return true;
+      }
+      // Terminal: the budget is spent, or supervision itself gave up. The live leg (run 2) caught
+      // this answering `errorClass: TRANSIENT, retryable: true` for a state where the very next
+      // request provably returns the same thing until the application restarts — a retry hint the
+      // client cannot act on. PERMANENT (hence retryable=false, derived from the class) plus the
+      // one honest remedy. The HTTP status stays 503: the service genuinely is not serving, which a
+      // 500 would misreport as an internal fault.
+      case VETOED_RESTART_EXHAUSTED, EXHAUSTED -> {
+        ctx.status(503)
+            .json(
+                ApiErrorHandler.toResponse(
+                    ApiErrorCode.WORKER_RECOVERY_EXHAUSTED,
+                    "Worker recovery declined: "
+                        + verdict.name()
+                        + " — the recovery budget is spent; restart the application to retry",
+                    telemetry,
+                    ApiErrorHandler.routeOf(ctx)));
+        return true;
+      }
+      // A worker IS bound after all (it came up between the checks) — fall through to the ordinary
+      // spawner restart path rather than answering from the recovery authority.
+      case NOT_APPLICABLE -> {
+        return false;
+      }
+    }
+    return false;
   }
 
   /**

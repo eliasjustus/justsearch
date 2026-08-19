@@ -31,6 +31,10 @@ final class ReasonRetentionTest {
   private static final String SPAWN_FAILED = LifecycleReasonCode.WORKER_SPAWN_FAILED.code();
   private static final String LOST = LifecycleReasonCode.WORKER_LOST.code();
   private static final String CORRUPT = LifecycleReasonCode.WORKER_INDEX_CORRUPT.code();
+  private static final String RECOVERING_CODE = LifecycleReasonCode.WORKER_RECOVERING.code();
+  private static final String RESTART_EXHAUSTED = LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code();
+  private static final String RECOVERY_EXHAUSTED =
+      LifecycleReasonCode.WORKER_SPAWN_RECOVERY_EXHAUSTED.code();
   private static final String MODEL_NOT_FOUND = LifecycleReasonCode.INFERENCE_MODEL_NOT_FOUND.code();
   private static final String OFFLINE = LifecycleReasonCode.INFERENCE_OFFLINE.code();
   private static final String CRASHED = LifecycleReasonCode.INFERENCE_CRASHED.code();
@@ -173,6 +177,57 @@ final class ReasonRetentionTest {
     assertEquals(
         java.util.List.of(CapabilityHealth.DEGRADED), observed, "health changes always notify");
     assertEquals(CRASHED, cap.pendingReason(), "…while the reason is still retained");
+  }
+
+  @Test
+  @DisplayName("825: boot recovery supersedes the spawn-failed pin — and nothing else")
+  void recoverySupersedesOnlyTheSpawnFailedPin() {
+    // The ONE exception (tempdoc 825 §D2 mechanism 4). worker.recovering is TRANSIENT and
+    // worker.spawn.failed is a FAULT, so the general rule would drop this write — and pendingReason,
+    // published raw on the runtime manifest and the 503 body, would keep saying "failed to start"
+    // while the Head is actively re-attempting.
+    WorkerCapability recovering = new WorkerCapability();
+    recovering.transition(CapabilityHealth.DEGRADED, SPAWN_FAILED, "Start failed");
+    recovering.transition(CapabilityHealth.RECOVERING, RECOVERING_CODE, "attempt 1 of 4");
+    assertEquals(RECOVERING_CODE, recovering.pendingReason());
+    assertEquals("attempt 1 of 4", recovering.pendingDetail(), "its detail rides with it");
+
+    // …and the three neighbours it must NOT touch.
+    WorkerCapability supervisionGaveUp = new WorkerCapability();
+    supervisionGaveUp.transition(CapabilityHealth.DEGRADED, RESTART_EXHAUSTED, "budget spent");
+    supervisionGaveUp.transition(CapabilityHealth.RECOVERING, RECOVERING_CODE, "attempt 1 of 4");
+    assertEquals(
+        RESTART_EXHAUSTED,
+        supervisionGaveUp.pendingReason(),
+        "825 §D5 decision 2: supervision's terminal verdict is never superseded by boot recovery");
+
+    WorkerCapability corrupt = new WorkerCapability();
+    corrupt.transition(CapabilityHealth.DEGRADED, CORRUPT, "rebuild to recover");
+    corrupt.transition(CapabilityHealth.RECOVERING, RECOVERING_CODE, "attempt 1 of 4");
+    assertEquals(CORRUPT, corrupt.pendingReason(), "the unrepeatable cause still outranks everything");
+
+    WorkerCapability recoveryExhausted = new WorkerCapability();
+    recoveryExhausted.transition(CapabilityHealth.DEGRADED, RECOVERY_EXHAUSTED, "gave up");
+    recoveryExhausted.transition(CapabilityHealth.RECOVERING, RECOVERING_CODE, "attempt 1 of 4");
+    assertEquals(
+        RECOVERY_EXHAUSTED,
+        recoveryExhausted.pendingReason(),
+        "once we have stopped trying, a stray narration cannot claim we are trying again");
+  }
+
+  @Test
+  @DisplayName("825: the terminal recovery code lands over the in-flight narration it replaces")
+  void terminalRecoveryCodeOverwritesTheRecoveringNarration() {
+    WorkerCapability cap = new WorkerCapability();
+    cap.transition(CapabilityHealth.DEGRADED, SPAWN_FAILED, "Start failed");
+    cap.transition(CapabilityHealth.RECOVERING, RECOVERING_CODE, "attempt 4 of 4");
+
+    cap.transition(CapabilityHealth.DEGRADED, RECOVERY_EXHAUSTED, "4 attempts did not bring it up");
+
+    assertEquals(
+        RECOVERY_EXHAUSTED,
+        cap.pendingReason(),
+        "the give-up must reach the wire; a TRANSIENT hold never blocks an arriving FAULT");
   }
 
   @Test
