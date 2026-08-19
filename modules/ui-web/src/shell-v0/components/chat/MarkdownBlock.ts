@@ -18,6 +18,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { createMarkdownRenderer } from '../markdown/markdownRenderer.js';
 import { markdownCodeHighlight, markdownTypography } from '../markdown/markdownStyles.js';
 import { highlightCodeBlocks } from '../markdown/markdownHighlight.js';
+import { markScrollableRegions } from '../markdown/markdownScrollRegions.js';
 import type { CitationSelectDetail } from './citationTypes.js';
 import {
   getSelectedSource,
@@ -490,6 +491,13 @@ export class MarkdownBlock extends JfElement {
     // keeps the marks then is `markdownHighlight`'s children-length guard. A test covers that path.
     if (!this.isStreaming && this.format === 'markdown') {
       highlightCodeBlocks(this.renderRoot.querySelector('.md-content'));
+    }
+    // Tempdoc 853 (F-05) — the ramp's `pre`/`table` scroll containers get `tabindex` + a name, so
+    // the clipped half of a wide fence or table is keyboard-reachable. Unlike the highlight pass this
+    // does NOT wait for the stream to settle: it only sets attributes (no innerHTML rewrite, nothing
+    // for a later pass to discard), and a partially-streamed fence is already scrollable on screen.
+    if (this.format === 'markdown') {
+      markScrollableRegions(this.renderRoot.querySelector('.md-content'));
     }
     // Tempdoc 565 §3.C — weave inline citation marks into the freshly-rendered markdown. Citations
     // attach post-stream (the matcher runs at AgentDone), so only decorate the settled answer. Lit's
