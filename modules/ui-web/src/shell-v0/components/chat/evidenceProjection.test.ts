@@ -52,6 +52,8 @@ const FULL: RetrievalCitation = {
   endLine: 14,
   headingText: 'Configuration',
   headingLevel: 2,
+  contextInclusion: 'partial',
+  contextIncludedChars: 96,
 };
 
 describe('evidenceProjection — total projection of the evidence record', () => {
@@ -84,10 +86,20 @@ describe('evidenceProjection — total projection of the evidence record', () =>
       'startLine',
       'endLine',
       'headingText',
+      // Tempdoc 849 §5.1 — retrieved-vs-received, carried as EvidenceItem.inclusion.
+      'contextInclusion',
     ]);
     // Deliberately dropped — not needed by the citation card (chunk indexing +
     // heading depth are navigation-internal, not user-facing evidence).
-    const DROPPED = new Set(['chunkIndex', 'chunkTotal', 'headingLevel']);
+    // `contextIncludedChars` is record-only by decision (849 §9 Q6): "partially
+    // included" is the honest fact, and a char count invites false precision
+    // about a boundary the reader cannot see.
+    const DROPPED = new Set([
+      'chunkIndex',
+      'chunkTotal',
+      'headingLevel',
+      'contextIncludedChars',
+    ]);
     const allFields = Object.keys(FULL);
     for (const f of allFields) {
       expect(REPRESENTED.has(f) || DROPPED.has(f)).toBe(true);
@@ -96,6 +108,34 @@ describe('evidenceProjection — total projection of the evidence record', () =>
     for (const f of [...REPRESENTED, ...DROPPED]) {
       expect(allFields).toContain(f);
     }
+  });
+
+  // --- Tempdoc 849 §5.1: retrieved is not received, and absence is not "included".
+
+  it('849: a resolved inclusion state reaches the projection verbatim', () => {
+    expect(toEvidenceItem(FULL).inclusion).toBe('partial');
+    expect(toEvidenceItem({ ...FULL, contextInclusion: 'dropped' }).inclusion).toBe('dropped');
+  });
+
+  it('849: a citation that says nothing about inclusion projects null, never "included"', () => {
+    const silent = { ...FULL };
+    delete silent.contextInclusion;
+    // The load-bearing assertion: `null`, not `'included'`. Every conversation persisted before
+    // 849 is silent, and defaulting them to "the model saw it" is the fabrication the field exists
+    // to remove — a defaulting projection would pass a `toBeDefined()` check just as happily.
+    expect(toEvidenceItem(silent).inclusion).toBeNull();
+  });
+
+  it('849: an unrecognised inclusion value is absence, not a guess', () => {
+    // A vocabulary drift must not be coerced into one of the three known states — guessing which
+    // one it meant is how drift becomes a false claim about evidence.
+    expect(toEvidenceItem({ ...FULL, contextInclusion: 'sort-of' } as never).inclusion).toBeNull();
+  });
+
+  it('849: inclusion never feeds the score or its tier (budget-fact containment)', () => {
+    const dropped = toEvidenceItem({ ...FULL, contextInclusion: 'dropped' });
+    const included = toEvidenceItem({ ...FULL, contextInclusion: 'included' });
+    expect(dropped.score).toEqual(included.score);
   });
 
   it('the score carries a declared metric label — not a bare scalar', () => {

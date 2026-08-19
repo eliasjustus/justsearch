@@ -239,7 +239,8 @@ class McpProtocolHandlerTest {
 
   private static DocumentService.ContextCitation cite(String parentDocId) {
     return new DocumentService.ContextCitation(
-        parentDocId, 0, 1, 0, 0, 1.0f, "excerpt", 0, 0, "", 0);
+        parentDocId, 0, 1, 0, 0, 1.0f, "excerpt", 0, 0, "", 0,
+        DocumentService.ContextInclusion.ABSENT);
   }
 
   @Test

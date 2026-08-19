@@ -7,13 +7,17 @@ import io.justsearch.agent.api.conversation.InjectorResult;
 import io.justsearch.agent.api.conversation.SseEvent;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.DocumentService.ContextCitation;
+import io.justsearch.app.api.DocumentService.ContextInclusion;
 import io.justsearch.app.api.DocumentService.ContextResult;
+import io.justsearch.app.api.DocumentService.ContextSection;
 import io.justsearch.app.api.DocumentService.DocumentRecord;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.RetrieveContextParams;
 import io.justsearch.core.util.DocumentTypeDetector;
+import io.justsearch.core.util.Strings;
 import io.justsearch.core.util.TokenEstimation;
 import io.justsearch.core.util.TokenEstimation.TruncationResult;
+import io.justsearch.indexing.rag.ContextBudgeter;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -38,11 +42,31 @@ import org.slf4j.LoggerFactory;
  * {@link DocumentService#fetchBatch} when chunked retrieval is unavailable, applies token
  * truncation as a safety net, emits a {@code rag.meta} event (namespaced per §C3 plan), and
  * persists citations + chunks-used + docIds into {@link ConversationContext#attributes} for
- * {@code CitationMatcher} + {@code RAGDoneEnricher} to consume. After truncation, all RAG
- * citations are retained as-is (kept = every citation when chunk retrieval was used, none
- * otherwise) — citations are NOT filtered down to the sections the truncation actually kept.
- * Section-aware citation filtering is not implemented; it would require a section-boundary-aware
- * truncation redesign in {@link TokenEstimation}.
+ * {@code CitationMatcher} + {@code RAGDoneEnricher} to consume.
+ *
+ * <p><b>Retrieved is not received (tempdoc 849).</b> Every retrieved passage still gets a citation
+ * — suppressing the ones the budget cut would be a second, quieter dishonesty — but each citation
+ * now SAYS which of the two it is. The cut branches on what it is cutting:
+ *
+ * <ul>
+ *   <li><b>Sectioned</b> (the retrieval's own context, assembled by {@code ContextBudgeter}):
+ *       re-assembled section by section against the token budget, so the record is produced AT the
+ *       cut and every citation carries an {@link DocumentService.ContextInclusion} —
+ *       included / partial / dropped. Re-assembly also keeps the {@code [n] label} headers and
+ *       {@code SECTION_SEPARATOR}s intact, which the old structure-blind cut destroyed exactly when
+ *       the prompt was most crowded (and with them the ordinals {@code OnlineModeOps
+ *       .formatContextAsNumberedPassages} parses to keep {@code sources[n - 1]} resolvable).
+ *   <li><b>Whole-document fallback</b> (context replaced by {@code fetchBatchFallback}): keeps
+ *       {@link TokenEstimation#truncateIfNeeded}, because that branch has no sections to
+ *       re-assemble. It emits no citations at all, so it claims nothing about inclusion — absence,
+ *       not a guess. A sectioned retrieval that arrived WITHOUT sections degrades to this cut for
+ *       the same reason, and its citations stay absent rather than being given a state derived from
+ *       nothing.
+ * </ul>
+ *
+ * <p>Post-hoc classification is impossible by construction: the trimmed prompt string has no
+ * separators or headers left to parse, which is why the record is minted at the cut rather than
+ * recovered after it.
  *
  * <p>Missing {@code question} or {@code docIds} → {@link InjectorResult#terminalError} with
  * code {@code NO_QUESTION} / {@code NO_FILES}; engine aborts before LLM call.
@@ -327,6 +351,13 @@ public final class RAGContext implements ContextInjector {
       ctx.attributes().put(ATTR_QUALITY, qs);
     }
 
+    // Tempdoc 849 §5.2 (review D-1/D-7) — WHICH cut applies is decided by whether the branch below
+    // REPLACED `context` with whole-document text, never by `sections.isEmpty()` or `chunksUsed`.
+    // A predicate keyed on sections would mis-route RemoteDocumentService's FULLTEXT_FALLBACK,
+    // which returns sections > 0 WITH chunksUsed == 0 and no citations: it satisfies the condition
+    // below and has its context replaced, so its sections describe text that is no longer there.
+    boolean wholeDocumentFallback = false;
+
     // Fallback to whole-document fetch when chunks are unavailable or empty.
     if (context == null || context.isBlank() || chunksUsed == 0) {
       if ("FALLBACK_FAILED".equals(retrievalMode)) {
@@ -368,6 +399,7 @@ public final class RAGContext implements ContextInjector {
         return InjectorResult.terminalError(new SseEvent("error", err));
       }
       context = fallback;
+      wholeDocumentFallback = true;
       // chunksUsed already 0; chunksFound stays as-is; citations remain empty.
     }
 
@@ -375,7 +407,8 @@ public final class RAGContext implements ContextInjector {
     // request's real completion reserve, so it now actually fires when a turn would overflow
     // instead of waving through ~5990 tokens aimed at a 4096-token window.
     int budgetTokens = inputBudgetTokens(ctx);
-    TruncationResult truncation = TokenEstimation.truncateIfNeeded(context, budgetTokens);
+    List<ContextSection> sections = retrieval == null ? List.of() : retrieval.sections();
+    SectionCut cut = cutContext(context, sections, budgetTokens, wholeDocumentFallback);
 
     // Tempdoc 845 — an honest budget makes this safety net reachable, so the truncation flag must
     // stop being Worker-only. It previously reported ONLY retrieval.contextTruncated(), leaving a
@@ -383,13 +416,14 @@ public final class RAGContext implements ContextInjector {
     // otherwise have made routine. Note the trimmed string still carries every citation
     // (see the class javadoc): this flag is what keeps that limit visible rather than hidden.
     if (ragMeta != null) {
-      ragMeta.put("context_truncated", contextTruncated || truncation.truncated());
+      ragMeta.put("context_truncated", contextTruncated || cut.truncated());
       events.add(new SseEvent("rag.meta", ragMeta));
     }
 
     boolean usedRag = chunksUsed > 0;
-    // Citations correspond to chunks; if we used full-doc fallback, no citations.
-    List<ContextCitation> kept = usedRag ? citations : List.of();
+    // Citations correspond to chunks; if we used full-doc fallback, no citations. Tempdoc 849:
+    // each surviving citation is resolved to what the cut actually did with its passage.
+    List<ContextCitation> kept = usedRag ? resolveInclusion(citations, cut.inclusions()) : List.of();
     int keptCount = kept.size();
 
     // Stash for downstream consumers (StreamingCitationMatcher, RAGDoneEnricher).
@@ -414,6 +448,14 @@ public final class RAGContext implements ContextInjector {
         m.put("endLine", c.endLine());
         m.put("headingText", c.headingText());
         m.put("headingLevel", c.headingLevel());
+        // Tempdoc 849 §5.3a — sourced from the record component, so the live stream and the
+        // persisted record (RAGDoneEnricher.toCitationMap) cannot disagree. Absent emits NO key:
+        // a consumer that is told nothing must say nothing, never "included".
+        ContextInclusion inclusion = c.inclusion();
+        if (!inclusion.absent()) {
+          m.put("contextInclusion", inclusion.wireName());
+          m.put("contextIncludedChars", inclusion.includedChars());
+        }
         citationMaps.add(Map.copyOf(m));
       }
       events.add(new SseEvent("rag.citations", Map.of("citations", citationMaps)));
@@ -422,8 +464,193 @@ public final class RAGContext implements ContextInjector {
     Map<String, Object> message = new LinkedHashMap<>();
     message.put("role", "user");
     message.put(
-        "content", "Documents:\n" + truncation.content() + "\n\nQuestion: " + question);
+        "content", "Documents:\n" + cut.context() + "\n\nQuestion: " + question);
     return InjectorResult.of(List.of(message), events);
+  }
+
+  /**
+   * The result of fitting the retrieved context into the turn's input budget.
+   *
+   * @param context the text actually put in front of the model
+   * @param truncated true when anything was left out
+   * @param inclusions per-section inclusion states, index-aligned with the retrieval's sections;
+   *     EMPTY when the cut could not produce a per-passage record (the structure-blind branches)
+   */
+  private record SectionCut(
+      String context, boolean truncated, List<ContextInclusion> inclusions) {}
+
+  /**
+   * Tempdoc 849 §5.2 — the cut, branched on what it is cutting.
+   *
+   * <p>The whole-document fallback keeps the structure-blind {@link TokenEstimation#truncateIfNeeded}
+   * because it has no sections; deleting that call would leave a whole-document context entirely
+   * untruncated against a live 4096-token window, re-opening exactly the overcommit 845 closed.
+   * The same branch is taken when a sectioned retrieval arrived WITHOUT sections: there is nothing
+   * to re-assemble, and "no per-passage record" must degrade to an honest structure-blind trim, not
+   * to no trim at all.
+   *
+   * <p><b>The assembled whole is re-checked against the budget</b> (review F6). The section loop
+   * budgets the SUM of its parts, but {@link TokenEstimation#estimateTokens} is not additive: it
+   * takes {@code max(wordEstimate, charEstimate)} and switches {@code charEstimate} on the
+   * whitespace and non-ASCII RATIOS of the string it is handed, so a concatenation can cross a ratio
+   * threshold none of its parts crossed and estimate well above their sum. The per-part arithmetic
+   * is therefore necessary but not sufficient, and the guarantee this method owes its caller is
+   * about the string it returns, not about the parts it assembled. When the assembly overshoots, it
+   * falls back to the structure-blind trim and DROPS the per-section record — a record describing
+   * sections is not true of a string that was then cut blind, and saying nothing beats saying
+   * something false.
+   *
+   * <p>That fallback is then ENFORCED with {@link #fitToTokenBudget}, and the reason is measured,
+   * not defensive: {@link TokenEstimation#truncateIfNeeded} sizes its head and tail windows in
+   * WHITESPACE-DELIMITED WORDS, so on whitespace-poor text it has almost no words to drop and
+   * returns the input essentially whole (plus its marker). Whitespace-poor text is precisely what
+   * trips the ratio thresholds above, so the two conditions coincide: without this line the guard
+   * would fire on exactly the inputs its remedy cannot fix. Measured on the regression fixture:
+   * 549 tokens in, 571 out, against a 460-token cap.
+   */
+  private static SectionCut cutContext(
+      String context, List<ContextSection> sections, int budgetTokens, boolean wholeDocumentFallback) {
+    if (wholeDocumentFallback || sections.isEmpty()) {
+      TruncationResult truncation = TokenEstimation.truncateIfNeeded(context, budgetTokens);
+      return new SectionCut(truncation.content(), truncation.truncated(), List.of());
+    }
+    SectionCut sectioned = cutSections(sections, budgetTokens);
+    int cap = TokenEstimation.effectiveContextCap(budgetTokens);
+    if (TokenEstimation.estimateTokens(sectioned.context()) <= cap) {
+      return sectioned;
+    }
+    LOG.warn(
+        "RAGContext: section-aware assembly estimated over budget ({} > {}) though its parts fit;"
+            + " falling back to the structure-blind trim and dropping the per-section record",
+        TokenEstimation.estimateTokens(sectioned.context()),
+        cap);
+    TruncationResult truncation =
+        TokenEstimation.truncateIfNeeded(sectioned.context(), budgetTokens);
+    return new SectionCut(fitToTokenBudget(truncation.content(), cap), true, List.of());
+  }
+
+  /**
+   * Re-assembles the retrieval's own sections against the token budget, recording per section what
+   * the cut did with it.
+   *
+   * <p>Two arithmetic obligations, both inherited from {@code ContextBudgeter}'s contract that "the
+   * budget counts ALL output characters, including section separators and headers": the overhead is
+   * charged against the budget (budgeting only section CONTENT would overcommit by the header +
+   * separator total), and the {@link TokenEstimation#effectiveContextCap} floor is carried, so a
+   * zero budget means the same thing on both branches.
+   *
+   * <p>The kept set is always a PREFIX and each header keeps its ORIGINAL ordinal {@code i + 1}.
+   * Both matter for the same reason: the prompt asks the model to cite {@code [n]} and the FE
+   * resolves {@code sources[n - 1]} by POSITION, so a renumbered or non-prefix kept set would point
+   * the reader at a different passage than the model read.
+   */
+  private static SectionCut cutSections(List<ContextSection> sections, int budgetTokens) {
+    int cap = TokenEstimation.effectiveContextCap(budgetTokens);
+    StringBuilder sb = new StringBuilder();
+    List<ContextInclusion> inclusions = new ArrayList<>(sections.size());
+    int usedTokens = 0;
+    boolean truncated = false;
+
+    for (int i = 0; i < sections.size(); i++) {
+      ContextSection section = sections.get(i);
+      String content = section.content();
+      if (truncated || content.isEmpty()) {
+        inclusions.add(ContextInclusion.dropped());
+        continue;
+      }
+      String separator = sb.isEmpty() ? "" : ContextBudgeter.SECTION_SEPARATOR;
+      String header = ContextBudgeter.sectionHeader(i + 1, section.sourceLabel());
+      int overheadTokens = TokenEstimation.estimateTokens(separator + header);
+      int remaining = cap - usedTokens;
+      if (overheadTokens >= remaining) {
+        truncated = true;
+        inclusions.add(ContextInclusion.dropped());
+        continue;
+      }
+      int contentBudget = remaining - overheadTokens;
+      int contentTokens = TokenEstimation.estimateTokens(content);
+      if (contentTokens <= contentBudget) {
+        sb.append(separator).append(header).append(content);
+        usedTokens += overheadTokens + contentTokens;
+        // The Worker may already have cut this section's tail (ContextBudgeter.Section.truncated).
+        // Passing it through whole does not make it whole.
+        inclusions.add(
+            section.truncated()
+                ? ContextInclusion.partial(content.length())
+                : ContextInclusion.included(content.length()));
+        continue;
+      }
+      String fitted = fitToTokenBudget(content, contentBudget);
+      truncated = true;
+      if (fitted.isEmpty()) {
+        inclusions.add(ContextInclusion.dropped());
+        continue;
+      }
+      sb.append(separator).append(header).append(fitted);
+      usedTokens += overheadTokens + TokenEstimation.estimateTokens(fitted);
+      inclusions.add(ContextInclusion.partial(fitted.length()));
+    }
+    return new SectionCut(sb.toString(), truncated, List.copyOf(inclusions));
+  }
+
+  /**
+   * The longest code-point-safe prefix of {@code content} that fits {@code budgetTokens}.
+   *
+   * <p>{@link TokenEstimation#estimateTokens} is not strictly monotone in prefix length (its dense
+   * and CJK branches switch on whitespace/non-ASCII RATIOS), so the binary search's answer is
+   * verified and shrunk rather than trusted — an over-budget prefix is the failure mode this whole
+   * cut exists to prevent.
+   */
+  private static String fitToTokenBudget(String content, int budgetTokens) {
+    if (budgetTokens <= 0) {
+      return "";
+    }
+    int lo = 0;
+    int hi = content.length();
+    while (lo < hi) {
+      int mid = lo + (hi - lo + 1) / 2;
+      if (TokenEstimation.estimateTokens(Strings.codePointSafePrefix(content, mid)) <= budgetTokens) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    String fitted = Strings.codePointSafePrefix(content, lo);
+    while (!fitted.isEmpty() && TokenEstimation.estimateTokens(fitted) > budgetTokens) {
+      fitted = Strings.codePointSafePrefix(fitted, Math.max(0, (fitted.length() * 9 / 10) - 1));
+    }
+    return fitted;
+  }
+
+  /**
+   * Joins the per-section inclusion states onto the citations they describe (tempdoc 849 §5.3).
+   *
+   * <p>The join is positional, which is exactly the invariant {@code ContextBudgeter.sectionHeader}
+   * documents: the Worker's budget loop appends to the used-hit list and to {@code sections()} in
+   * ONE iteration. When the two lists nonetheless disagree in length the join is not trustworthy,
+   * and the honest answer is to say nothing at all — every citation stays ABSENT rather than being
+   * given a state derived from a suspect alignment.
+   */
+  private static List<ContextCitation> resolveInclusion(
+      List<ContextCitation> citations, List<ContextInclusion> inclusions) {
+    if (citations.isEmpty()) {
+      return List.of();
+    }
+    if (inclusions.size() != citations.size()) {
+      if (!inclusions.isEmpty()) {
+        LOG.warn(
+            "RAGContext: {} citations but {} context sections — inclusion left unresolved rather"
+                + " than joined across a length mismatch",
+            citations.size(),
+            inclusions.size());
+      }
+      return citations;
+    }
+    List<ContextCitation> resolved = new ArrayList<>(citations.size());
+    for (int i = 0; i < citations.size(); i++) {
+      resolved.add(citations.get(i).withInclusion(inclusions.get(i)));
+    }
+    return List.copyOf(resolved);
   }
 
   /**

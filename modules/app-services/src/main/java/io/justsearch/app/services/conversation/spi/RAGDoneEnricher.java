@@ -104,6 +104,14 @@ public final class RAGDoneEnricher implements StreamConsumer {
     m.put("endLine", c.endLine());
     m.put("headingText", c.headingText());
     m.put("headingLevel", c.headingLevel());
+    // Tempdoc 849 §5.4 — this is the PERSISTED copy, so the inclusion state has to ride the record
+    // here or a reloaded conversation would be honest live and silent on the record it is most
+    // likely inspected from. Absent emits no key: a pre-849 turn stays undescribed rather than
+    // being retroactively called "included".
+    if (!c.inclusion().absent()) {
+      m.put("contextInclusion", c.inclusion().wireName());
+      m.put("contextIncludedChars", c.inclusion().includedChars());
+    }
     return Map.copyOf(m);
   }
 }

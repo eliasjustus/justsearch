@@ -11,6 +11,7 @@ import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.DocumentService.CitationMatchEntry;
 import io.justsearch.app.api.DocumentService.CitationMatchResult;
 import io.justsearch.app.api.DocumentService.ContextCitation;
+import io.justsearch.app.api.DocumentService.ContextInclusion;
 import io.justsearch.app.api.DocumentService.DocumentRecord;
 import io.justsearch.app.api.DocumentService.ScorerKind;
 import io.justsearch.app.api.DocumentService.SourceCoverage;
@@ -153,8 +154,11 @@ final class StreamingCitationMatcherPayloadTest {
         Map.of(
             RAGContext.ATTR_CITATIONS,
             List.of(
-                new ContextCitation("doc-1", 0, 1, 0, 100, 1.0f, "excerpt", 0, 10, "", 0),
-                new ContextCitation("doc-2", 0, 1, 0, 100, 1.0f, "excerpt", 0, 10, "", 0))));
+                new ContextCitation(
+                    "doc-1", 0, 1, 0, 100, 1.0f, "excerpt", 0, 10, "", 0, ContextInclusion.ABSENT),
+                new ContextCitation(
+                    "doc-2", 0, 1, 0, 100, 1.0f, "excerpt", 0, 10, "", 0,
+                    ContextInclusion.ABSENT))));
   }
 
   private static DocumentService stubDocs(CitationMatchResult result) {

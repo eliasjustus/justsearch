@@ -349,6 +349,15 @@ public final class McpEvidenceProjection {
         m.put("headingText", c.headingText());
       }
       m.put("headingLevel", c.headingLevel());
+      // Tempdoc 849 §5.1 — retrieved is not received. Emitted ONLY when the head's cut resolved it;
+      // an absent state emits no key at all, because saying nothing is what absence means (saying
+      // "included" on the producer's behalf is the fabrication the record exists to remove).
+      if (!c.inclusion().absent()) {
+        Map<String, Object> inclusion = new LinkedHashMap<>();
+        inclusion.put("state", c.inclusion().wireName());
+        inclusion.put("includedChars", c.inclusion().includedChars());
+        m.put("inclusion", Map.copyOf(inclusion));
+      }
       citations.add(m);
     }
     out.put("citations", citations);

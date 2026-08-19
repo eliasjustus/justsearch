@@ -1699,23 +1699,45 @@ final class RagContextOps {
 
   // ==================== 385: Budget Loop Helper ====================
 
-  /** Tri-state result for the budgeter-agnostic append operation. */
-  private enum AppendOutcome { APPENDED, APPENDED_AND_STOPPED, SKIPPED }
+  /**
+   * Budgeter-agnostic append outcome.
+   *
+   * <p>Tempdoc 849 §2.3 — this used to be a TRI-state that folded {@code APPENDED_TRUNCATED} and
+   * {@code STOPPED_BUDGET} into one value. The two mean opposite things: the first says something
+   * WAS appended, the second says nothing was. Collapsing them made both consumers below
+   * {@code used.add(hit)} on a hit that contributed zero characters — a citation asserting the
+   * passage reached the model, plus a {@code chunksIncluded} count inflated by one (the count is
+   * {@code used.size()}). The virtual-chunk fallback in this same file already gets this right
+   * (it adds only on APPENDED/APPENDED_TRUNCATED and treats STOPPED_BUDGET as break-without-add);
+   * the four sites here are now in line with it.
+   */
+  enum AppendOutcome {
+    /** Appended in full; the caller may continue. */
+    APPENDED,
+    /** Appended with its tail cut; the caller must stop, but the hit DID contribute text. */
+    APPENDED_AND_STOPPED,
+    /** Nothing was appended — no budget left. The caller must stop AND must not count the hit. */
+    STOPPED_WITHOUT_APPEND,
+    /** Blank content; nothing changed and the caller may continue. */
+    SKIPPED
+  }
 
-  /** Maps {@link TokenAwareBudgeter.AppendResult} to the budgeter-agnostic tri-state. */
-  private static AppendOutcome mapAppendResult(TokenAwareBudgeter.AppendResult r) {
+  /** Maps {@link TokenAwareBudgeter.AppendResult} to the budgeter-agnostic outcome. */
+  static AppendOutcome mapAppendResult(TokenAwareBudgeter.AppendResult r) {
     return switch (r) {
       case APPENDED -> AppendOutcome.APPENDED;
-      case APPENDED_TRUNCATED, STOPPED_BUDGET -> AppendOutcome.APPENDED_AND_STOPPED;
+      case APPENDED_TRUNCATED -> AppendOutcome.APPENDED_AND_STOPPED;
+      case STOPPED_BUDGET -> AppendOutcome.STOPPED_WITHOUT_APPEND;
       case SKIPPED_EMPTY -> AppendOutcome.SKIPPED;
     };
   }
 
-  /** Maps {@link ContextBudgeter.AppendResult} to the budgeter-agnostic tri-state. */
-  private static AppendOutcome mapAppendResult(ContextBudgeter.AppendResult r) {
+  /** Maps {@link ContextBudgeter.AppendResult} to the budgeter-agnostic outcome. */
+  static AppendOutcome mapAppendResult(ContextBudgeter.AppendResult r) {
     return switch (r) {
       case APPENDED -> AppendOutcome.APPENDED;
-      case APPENDED_TRUNCATED, STOPPED_BUDGET -> AppendOutcome.APPENDED_AND_STOPPED;
+      case APPENDED_TRUNCATED -> AppendOutcome.APPENDED_AND_STOPPED;
+      case STOPPED_BUDGET -> AppendOutcome.STOPPED_WITHOUT_APPEND;
       case SKIPPED_EMPTY -> AppendOutcome.SKIPPED;
     };
   }
@@ -1727,9 +1749,14 @@ final class RagContextOps {
    * abstracts the budgeter type; the caller provides a lambda that calls the concrete budgeter's
    * {@code appendSection(label, content)} and maps the result via {@link #mapAppendResult}.
    *
+   * <p>Package-private for {@code RagContextOpsBudgetLoopTest}, which pins the tempdoc 849 §2.3
+   * invariant this loop owns: {@code used} and the budgeter's {@code sections()} must stay the same
+   * length, because section <i>i</i> ⇔ citation <i>i</i> ⇔ the FE's {@code sources[i]} is the
+   * contract {@link ContextBudgeter#sectionHeader} is written against.
+   *
    * @return true if the context was truncated (budget exhausted)
    */
-  private boolean runBudgetLoop(
+  boolean runBudgetLoop(
       List<LuceneRuntimeTypes.SearchHit> hits,
       List<LuceneRuntimeTypes.SearchHit> used,
       Map<String, Map<String, String>> parentMeta,
@@ -1754,11 +1781,15 @@ final class RagContextOps {
 
       String label = buildContextLabel(parentMeta.get(parentDocId), parentDocId);
       AppendOutcome outcome = appendFn.apply(label, chunkContent);
+      // Tempdoc 849 §2.3: a hit is "used" only when it actually contributed text. STOPPED_WITHOUT_
+      // APPEND stops the loop WITHOUT counting the hit — counting it fabricated an inclusion claim
+      // and inflated chunksIncluded (= used.size()).
       if (outcome == AppendOutcome.APPENDED || outcome == AppendOutcome.APPENDED_AND_STOPPED) {
         used.add(hit);
         if (parentDocId != null) chunksPerParent.merge(parentDocId, 1, Integer::sum);
       }
-      if (outcome == AppendOutcome.APPENDED_AND_STOPPED) {
+      if (outcome == AppendOutcome.APPENDED_AND_STOPPED
+          || outcome == AppendOutcome.STOPPED_WITHOUT_APPEND) {
         truncated = true;
         break;
       }
@@ -1774,10 +1805,12 @@ final class RagContextOps {
         if (chunkContent == null || chunkContent.isBlank()) continue;
         String label = buildContextLabel(parentMeta.get(parentDocId), parentDocId);
         AppendOutcome outcome = appendFn.apply(label, chunkContent);
+        // Tempdoc 849 §2.3 — same distinction as the primary pass above.
         if (outcome == AppendOutcome.APPENDED || outcome == AppendOutcome.APPENDED_AND_STOPPED) {
           used.add(hit);
         }
-        if (outcome == AppendOutcome.APPENDED_AND_STOPPED) {
+        if (outcome == AppendOutcome.APPENDED_AND_STOPPED
+            || outcome == AppendOutcome.STOPPED_WITHOUT_APPEND) {
           truncated = true;
           break;
         }

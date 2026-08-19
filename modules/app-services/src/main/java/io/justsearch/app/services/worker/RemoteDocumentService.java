@@ -443,7 +443,9 @@ public final class RemoteDocumentService implements DocumentService {
 
   private static ContextCitation toCitation(ContextChunk c) {
     if (c == null) {
-      return new ContextCitation("", 0, 1, 0, 0, 0.0f, "", 0, 0, "", 0);
+      return new ContextCitation(
+          "", 0, 1, 0, 0, 0.0f, "", 0, 0, "", 0,
+          DocumentService.ContextInclusion.ABSENT);
     }
     return new ContextCitation(
         c.getParentDocId(),
@@ -457,7 +459,9 @@ public final class RemoteDocumentService implements DocumentService {
         c.getStartLine(),
         c.getEndLine(),
         c.getHeadingText(),
-        c.getHeadingLevel());
+        c.getHeadingLevel(),
+        // Tempdoc 849 §5.3 — the Worker cannot know inclusion: the head's cut has not run yet.
+        DocumentService.ContextInclusion.ABSENT);
   }
 
   /**

@@ -20,7 +20,7 @@
       "definition": "modules/app-api/src/main/java/io/justsearch/app/api/DocumentService.java",
       "feMirror": "modules/ui-web/src/shell-v0/components/chat/CitationsPanel.ts (RetrievalCitation)",
       "feProjection": "modules/ui-web/src/shell-v0/components/chat/evidenceProjection.ts (EvidenceItem + a labeled EvidenceScore)",
-      "note": "RAG-retrieval evidence \u2014 the citations behind a generated answer (parentDocId, score, excerpt, startLine/endLine/headingText). The sibling of SearchTrace (559 Authority IV): a SECOND evidence record, NOT a SearchTrace projection (no shared field; the RAG ask flow emits no trace). Registered here so it cannot drift unregistered. PRODUCER-OWNED BOUNDARY (559 \u00a75, cross-process follow-up): the excerpt is a backend character window (startChar/endChar) that clips mid-word; the boundary-aware fields (startLine/endLine/headingText) already ride alongside and should drive a clean window at the Worker that mints the record \u2014 the FE never re-windows. Logged in docs/observations.md."
+      "note": "RAG-retrieval evidence \u2014 the citations behind a generated answer (parentDocId, score, excerpt, startLine/endLine/headingText). The sibling of SearchTrace (559 Authority IV): a SECOND evidence record, NOT a SearchTrace projection (no shared field; the RAG ask flow emits no trace). Registered here so it cannot drift unregistered. PRODUCER-OWNED BOUNDARY (559 \u00a75, cross-process follow-up): the excerpt is a backend character window (startChar/endChar) that clips mid-word; the boundary-aware fields (startLine/endLine/headingText) already ride alongside and should drive a clean window at the Worker that mints the record \u2014 the FE never re-windows. Logged in docs/observations.md. TEMPDOC 849 (retrieved-vs-received): the record gained an `inclusion` component (DocumentService.ContextInclusion \u2014 included/partial/dropped, plus ABSENT). It is DERIVED AT THE HEAD'S CUT from two inputs \u2014 ContextBudgeter.Section (which carries the worker's own `truncated` flag, and was built for exactly this: 'Phase 4: structured section tracking for citation filtering on truncation', never consumed for it) AND the head's own budget decision about how many of those sections the prompt could hold. Calling it 'a projection of Section' alone would be wrong: Section cannot know what the head's token budget did to it. What makes it a projection rather than a fork is that it adds no second POSITIONAL authority \u2014 it rides the existing citation record, deliberately not a parallel index-aligned list, which is the fork this register exists to prevent. Constructed ABSENT everywhere (the CHUNK_INDEX_ABSENT idiom: the Worker cannot know it, because the head's cut has not run) and resolved exactly once, at RAGContext's cut, via the immutable withInclusion(...). Absence discipline mirrors SourceExamination (836): an absent state emits NO key on any wire, so a consumer told nothing says nothing rather than assuming 'included'. Containment likewise: a budget fact never feeds a grounding tier, count, or score."
     },
     {
       "name": "EvidenceSpan",
@@ -202,7 +202,7 @@
       "lang": "ts",
       "path": "modules/ui-web/src/shell-v0/components/chat/citationTypes.ts",
       "guard": "exempt:opaque carrier \u2014 passes the record through, does not project it",
-      "note": "FE RetrievalCitation evidence type (sibling record; tempdoc 559 Authority IV). Extracted from CitationsPanel to break an import cycle; registered here during the 564 merge (was previously undeclared)."
+      "note": "FE RetrievalCitation evidence type (sibling record; tempdoc 559 Authority IV). Extracted from CitationsPanel to break an import cycle; registered here during the 564 merge (was previously undeclared). Tempdoc 849: mirrors the inclusion component as OPTIONAL `contextInclusion` ('included' | 'partial' | 'dropped') + `contextIncludedChars`. The Java ABSENT member has no mirror on purpose — absence is the field being missing, never a fourth string a consumer would have to interpret."
     },
     {
       "id": "evidence-fe-claim-resolver",
@@ -327,7 +327,7 @@
       "lang": "java",
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/RAGContext.java",
       "guard": "test:RAGContextTest",
-      "note": "559 Authority IV: assembles/carries ContextCitation into the RAG prompt context (the rag.citations envelope source)."
+      "note": "559 Authority IV: assembles/carries ContextCitation into the RAG prompt context (the rag.citations envelope source). Tempdoc 849: also the ONE site that RESOLVES ContextCitation.inclusion — the cut is where retrieved becomes received, so it is the only place the state can honestly be minted. The cut branches on whether the whole-document fallback replaced the context (never on sections.isEmpty(), which would mis-route RemoteDocumentService's FULLTEXT_FALLBACK): sectioned → section-aware re-assembly recording per-passage inclusion; unsectioned → the retained structure-blind truncateIfNeeded, which claims nothing."
     },
     {
       "id": "evidence-doc-access",
@@ -343,7 +343,7 @@
       "lang": "java",
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/RAGDoneEnricher.java",
       "guard": "exempt:consumer reads the canonical type; no projection law to mutate-guard",
-      "note": "559 Authority IV: enriches the done event with citation metadata."
+      "note": "559 Authority IV: enriches the done event with citation metadata. Tempdoc 849 §5.4: this is the PERSISTED copy, so ContextCitation.inclusion rides through toCitationMap into the conversation record — ragMeta is not persisted, so a meta-level inclusion list would have evaporated on reload."
     },
     {
       "id": "evidence-selection-context-injector",
@@ -369,7 +369,7 @@
       "guard": "test:evidenceProjection",
       "recordId": "ContextCitation",
       "guardKind": "reflective",
-      "note": "559 Authority IV: THE shared FE evidence view-model \u2014 projects RetrievalCitation (\u2190 ContextCitation) into EvidenceItem with a LABELED score (the bare '100%' fix). Conformance: evidenceProjection.test pins it as a total projection of the record."
+      "note": "559 Authority IV: THE shared FE evidence view-model \u2014 projects RetrievalCitation (\u2190 ContextCitation) into EvidenceItem with a LABELED score (the bare '100%' fix). Conformance: evidenceProjection.test pins it as a total projection of the record. Tempdoc 849: also owns `contextInclusionOf` and EvidenceItem.inclusion \u2014 `null` for an absent OR unrecognised state, never a guessed one, and pinned as never feeding the score or its tier (the same containment SourceExamination carries). Label/rendering of the state is Slice 3, and belongs here too, not in a view."
     },
     {
       "id": "evidence-fe-citations-panel",
@@ -418,7 +418,7 @@
       "lang": "java",
       "path": "modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpEvidenceProjection.java",
       "guard": "test:McpEvidenceProjectionTest",
-      "note": "Tempdoc 658: THE agent-surface projection \u2014 projects the canonical SearchTrace (justsearch_search) and the ContextCitation evidence sibling (justsearch_answer) onto the MCP structuredContent channel. The reverse-coverage instance the 553/559 registers had not yet closed: MCP carries the query/answer subject but historically dropped the evidence (context-without-evidence). A pure Map/List deriver that reads both canonical records (imports both, so this gate detects+guards it); it re-authors nothing. Guard McpEvidenceProjectionTest asserts totality over the UNION of the projection's declared tiers (tempdoc 770): half (a) asserts that with detail=true every field of every canonical evidence record is projected; half (b) asserts that the default tier is a declared subset omitting exactly {trace, legScores} and nothing else. So no canonical field can silently stop shipping in every tier, and no field can silently leave the default tier.",
+      "note": "Tempdoc 658: THE agent-surface projection \u2014 projects the canonical SearchTrace (justsearch_search) and the ContextCitation evidence sibling (justsearch_answer) onto the MCP structuredContent channel. The reverse-coverage instance the 553/559 registers had not yet closed: MCP carries the query/answer subject but historically dropped the evidence (context-without-evidence). A pure Map/List deriver that reads both canonical records (imports both, so this gate detects+guards it); it re-authors nothing. Guard McpEvidenceProjectionTest asserts totality over the UNION of the projection's declared tiers (tempdoc 770): half (a) asserts that with detail=true every field of every canonical evidence record is projected; half (b) asserts that the default tier is a declared subset omitting exactly {trace, legScores} and nothing else. So no canonical field can silently stop shipping in every tier, and no field can silently leave the default tier. TEMPDOC 849 — TWO VOCABULARIES FOR ONE FACT, DECLARED: this surface projects ContextCitation.inclusion as a NESTED object `inclusion: {state, includedChars}`, whereas the SSE (`rag.citations`) and persisted-record shape (RAGDoneEnricher.toCitationMap) use two FLAT keys `contextInclusion` (string) + `contextIncludedChars` (int). The divergence is deliberate, not drift: the reflective totality guard keys on record-component names, so the MCP map must carry a key literally named `inclusion`, while the FE mirror consumes the flat pair it already reads citations in. Both derive from the one record component and neither is authoritative over the other — but a reader comparing the two payloads will see different names for the same fact, so it is recorded here rather than left to be discovered. Absence is spelled the same way on both: the key is OMITTED, never emitted as a fourth state (pinned by McpEvidenceProjectionTest's ABSENT-fixture assertion, review F2).",
       "description": ". Tempdoc 735: this projection is the tier structured-preferring clients (e.g. Claude Code CLI, observed 2.1.209) deliver to their models verbatim; the product contract is tier equivalence with the text rendering, and delivery tier is captured per-cell as measurement identity."
     },
     {
