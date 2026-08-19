@@ -19,7 +19,7 @@ All scripts live under `scripts/agent-analytics/`. All data lives under `tmp/age
 > schedule, so an empty or stale store under `tmp/agent-telemetry/` is expected, not a fault. The
 > **HTML dashboard layer** (`generate-dashboard.mjs`, `dashboard.html`) is **retired** — deleted,
 > not deprecated. Do not infer that a layer is live because this doc documents it.
-
+>
 > **Removed (tempdoc 638):** the run-centric workflow-telemetry layer and its session-to-workflow attribution bridge (`scripts/lib/workflow-telemetry.mjs`, `scripts/bench/report-workflow-attribution.mjs`, the `tmp/workflow-telemetry/runs/` artifacts, and the workflow-telemetry contract) were deleted. The session-centric agent analytics pipeline described below is unaffected by that removal.
 
 The `hooks/export-session-env.mjs` `SessionStart` hook still writes `JUSTSEARCH_AGENT_SESSION_ID` into `CLAUDE_ENV_FILE` so that session attribution is available to downstream tooling.
