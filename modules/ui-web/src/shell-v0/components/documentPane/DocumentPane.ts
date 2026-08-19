@@ -46,6 +46,8 @@ import { html, css, nothing, type TemplateResult, type PropertyValues } from 'li
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { JfElement } from '../../primitives/JfElement.js';
 import { markdownBlockMap, type MarkdownBlockDescriptor } from './markdownBlockMap.js';
+import { markdownCodeHighlight, markdownTypography } from '../markdown/markdownStyles.js';
+import { highlightCodeBlocks } from '../markdown/markdownHighlight.js';
 import { formatDisplayPath, formatLocationBreadcrumb } from '../searchResults/resultRowPresentation.js';
 import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
 import { authorizedFetch } from '../../api/authorizedFetch.js';
@@ -123,6 +125,10 @@ export class DocumentPane extends JfElement {
     error: { state: true },
     // Search Thread Round-2 R1b — has the current highlightRange decayed to the quiet tier?
     highlightSettled: { state: true },
+    // Tempdoc 846 §2.3 — the shared ramp's prose variant, reflected so the shared sheet's
+    // `:host([prose])` rules reach this pane's rendered blocks. Default ON: a document IS
+    // headings, tables and rules, which is precisely what the variant exists to dress.
+    prose: { type: Boolean, reflect: true },
   };
 
   declare docPath: string | null;
@@ -138,6 +144,8 @@ export class DocumentPane extends JfElement {
   /** Round-2 R1b — false while the landed highlight is in its strong phase; true once decayed
    *  (or immediately, under prefers-reduced-motion) to the quiet tint + edge marker. */
   declare highlightSettled: boolean;
+  /** Tempdoc 846 §2.3 — wear the shared ramp's prose variant (headings, tables, rules, images). */
+  declare prose: boolean;
 
   private blocksCache: { content: string; blocks: MarkdownBlockDescriptor[] } | null = null;
   private scrollDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -160,6 +168,7 @@ export class DocumentPane extends JfElement {
     this.loading = false;
     this.error = null;
     this.highlightSettled = false;
+    this.prose = true;
   }
 
   static override transientState = {
@@ -268,6 +277,10 @@ export class DocumentPane extends JfElement {
     ) {
       this.scrollToHighlight();
     }
+    // Tempdoc 846 §2.4 — syntax-highlight the rendered document's fenced code. The container the
+    // blocks render into is passed (not a snapshot of its children), so a highlighter that is still
+    // loading writes into the live tree when it arrives. Idempotent; a no-op in Source mode.
+    highlightCodeBlocks(this.renderRoot.querySelector('.blocks'));
   }
 
   private async loadContent(path: string): Promise<void> {
@@ -429,7 +442,18 @@ export class DocumentPane extends JfElement {
     return parts.length > 0 ? parts.join(' · ') : null;
   }
 
-  static styles = css`
+  /**
+   * Tempdoc 846 §2.3 — the shared markdown ramp comes FIRST, so every rule below still has the last
+   * word. Before this, Rendered mode dressed a whole `.md` file in user-agent defaults (a 32px
+   * `h1`, browser list indents, an unstyled `<table>`, a `<pre>` with no surface) — the one surface
+   * whose entire job is reading a document was the one that did not dress documents.
+   *
+   * The shared sheet also carries `:host` typography (`font-size`, `line-height`, `word-wrap`); the
+   * pane's own `:host` rule below re-declares what it means to keep (`display`, `color`,
+   * `font-family`), and every chrome row — header, toggle, provenance — sets its own `font-size`,
+   * so what the ramp actually reaches is the document body it was moved here for.
+   */
+  static styles = [markdownTypography, markdownCodeHighlight, css`
     :host([overlay]) {
       /* 687 R5b — sized for the OverlayHost right-drawer slot (narrow viewports). */
       width: min(28rem, 92vw);
@@ -549,8 +573,13 @@ export class DocumentPane extends JfElement {
       outline: 2px solid var(--accent-tint);
       outline-offset: -2px;
     }
+    /* Tempdoc 846 §2.3 — the wrapper's rhythm now READS the shared vocabulary instead of restating
+       its literal (it was a private '0.25em'). The wrapper is load-bearing here and the ramp cannot
+       replace it: this pane renders one block per wrapper, so the ramp's own 'p:first-child' /
+       'p:last-child' zeroing fires on EVERY paragraph (each is both), which is exactly right — the
+       gap between blocks is the wrapper's, and nothing double-counts it. */
     .blocks .block {
-      margin: 0.25em 0;
+      margin: var(--md-block-gap) 0;
     }
     /* Round-2 R1b — the strong→quiet decay: both tiers share the same transitioned properties so
        swapping hl-strong for hl-weak (the JS class-flip in highlightTier) animates smoothly rather
@@ -609,7 +638,7 @@ export class DocumentPane extends JfElement {
         transition: none;
       }
     }
-  `;
+  `];
 
   private renderToggle(): TemplateResult {
     const isMd = this.docPath ? isMarkdownPath(this.docPath) : false;
@@ -662,7 +691,7 @@ export class DocumentPane extends JfElement {
       return html`<div class="empty">No renderable content.</div>`;
     }
     return html`
-      <div class="blocks">
+      <div class="blocks md-content">
         ${blocks.map((b) => {
           const tier = this.highlightTier(b.startLine, b.endLine);
           return html`<div

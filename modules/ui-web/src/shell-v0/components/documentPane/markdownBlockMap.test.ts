@@ -99,9 +99,14 @@ describe('markdownBlockMap — fixture (table-driven)', () => {
     expect(blocks[6]!.html).toContain('<td>2</td>');
   });
 
-  it('renders the blockquote block content joined by breaks', () => {
+  // Tempdoc 846 §2.2 — the block's two source lines are now FLOWED into one line of prose rather
+  // than separated by a hard `<br>`: rendered mode shows authored `.md` files, which are
+  // hard-wrapped by convention and which every standard markdown-file renderer reflows. The two
+  // lines still belong to this one block (that is the line-range contract, and it is unchanged).
+  it('renders the blockquote block content as one flowing quote, not hard-broken lines', () => {
     expect(blocks[7]!.html).toContain('Quote line one');
     expect(blocks[7]!.html).toContain('Quote line two');
+    expect(blocks[7]!.html).not.toContain('<br');
   });
 
   it('blocks are ordered and non-overlapping', () => {

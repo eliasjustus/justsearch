@@ -26,6 +26,19 @@ import {
 import { claimsToCitations } from './citationResolve.js';
 import type { Claim, RetrievalCitation } from './citationTypes.js';
 
+/**
+ * Tempdoc 846 §2.3 — `styles` is an ARRAY now (the shared typography ramp + the shared code theme +
+ * this component's own chat rules), so the assertions below read the flattened text rather than one
+ * `CSSResult`. Same string, one join wider: a rule that moved to the shared sheet is still found,
+ * which is the point — these assertions are about what the component RENDERS with, not about which
+ * file a rule is typed in.
+ */
+function markdownBlockCssText(): string {
+  const styles = MarkdownBlockClass.styles as unknown;
+  const sheets = Array.isArray(styles) ? styles : [styles];
+  return sheets.map((s) => (s as { cssText: string }).cssText).join('\n');
+}
+
 async function settle(el: Element): Promise<void> {
   await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
 }
@@ -524,7 +537,7 @@ describe('MarkdownBlock 822 §3c — the ungrounded mark has its own color', () 
    * no `cite-ungrounded` rule at all and the WEAKEST tier inherited the STRONGEST tier's blue.
    */
   it('declares a distinct color for each of the three mark tiers', () => {
-    const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
+    const cssText = markdownBlockCssText();
     const colorOf = (selector: string): string => {
       const m = new RegExp(`${selector.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`).exec(cssText);
       expect(m, `${selector} must declare a rule`).not.toBeNull();
@@ -558,7 +571,7 @@ describe('MarkdownBlock 822 §3c — the ungrounded mark has its own color', () 
   });
 
   it('keeps the mark palette and the sentence-body palette saying the same thing', () => {
-    const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
+    const cssText = markdownBlockCssText();
     // The body channel's weakest tier is already the warning role; the mark now agrees with it.
     expect(cssText).toContain('1px dotted var(--accent-warning)');
     expect(cssText).toMatch(
@@ -648,7 +661,7 @@ describe('822 F2 — a selected mark keeps its grounding tier', () => {
    * happy-dom resolves, so the equality still breaks on exactly the F2 regression.
    */
   const shippedInk = (selector: string): string => {
-    const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
+    const cssText = markdownBlockCssText();
     const rule = new RegExp(`${selector.replace(/\./g, '\\.')}\\s*\\{([^}]*)\\}`).exec(cssText);
     const decl = /color:\s*([^;]+);/.exec(rule?.[1] ?? '')?.[1];
     const names = [...(decl ?? '').matchAll(/var\((--[\w-]+)/g)].map((m) => m[1] as string);
@@ -697,7 +710,7 @@ describe('822 F2 — a selected mark keeps its grounding tier', () => {
   });
 
   it('keeps the hover underline on the selected mark (F8 — no text-decoration: none)', () => {
-    const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
+    const cssText = markdownBlockCssText();
     const rule = /\.cite-ref\.cite-selected\s*\{([^}]*)\}/.exec(cssText);
     expect(rule).not.toBeNull();
     expect(rule![1]).not.toMatch(/text-decoration/);
@@ -829,7 +842,7 @@ describe('822 §5.3 — selection highlights the sentences the source supports',
     expect(shippedRegion).not.toBeNull();
 
     // CONTAINMENT: no `--md-cite-region-*` set, so the region occupies exactly the glyphs — every
-    // shipped surface (search-v2, SummarizeView) is byte-identical to before.
+    // shipped surface (UnifiedChatView, SummarizeView) is byte-identical to before.
     const shippedCs = getComputedStyle(shippedRegion);
     expect(shippedCs.paddingLeft).toBe('0px');
     expect(shippedCs.paddingRight).toBe('0px');
@@ -870,7 +883,7 @@ describe('822 §5.3 — selection highlights the sentences the source supports',
   it('leaves box-decoration-break at slice (a wrapped sentence is one highlight, not pills)', () => {
     // `slice` rounds the start of the first line-fragment and the end of the last, giving one
     // continuous region; `clone` would repeat the full box per fragment.
-    const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
+    const cssText = markdownBlockCssText();
     const rule = /\.cite-sentence-selected\s*\{([^}]*)\}/.exec(cssText)![1]!;
     expect(rule).not.toMatch(/box-decoration-break/);
     expect(rule).toContain('padding: 0 var(--md-cite-region-pad-x, 0);');
@@ -902,7 +915,7 @@ describe('822 §5.2 — frozen defaults: the shipped window is unmoved (S4-style
     // Source-level, deliberately: a nested var() fallback is the one thing happy-dom does not
     // resolve, and the fill's default IS one. The live half of this proof is the browser (the
     // design's §7 live check), the same split the S4 containment test records.
-    const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
+    const cssText = markdownBlockCssText();
     const rule = /\.cite-ref\.cite-selected\s*\{([^}]*)\}/.exec(cssText)![1]!;
     expect(rule).toContain('background: var(--md-cite-selected-bg, var(--accent-tint));');
     expect(rule).toContain('padding: 0 var(--md-cite-pad-x, 0.25em);');
@@ -913,7 +926,7 @@ describe('822 §5.2 — frozen defaults: the shipped window is unmoved (S4-style
   });
 
   it('mints no ink override — an ink escape hatch is an F2 escape hatch', () => {
-    const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
+    const cssText = markdownBlockCssText();
     expect(cssText).not.toContain('--md-cite-selected-ink');
   });
 });

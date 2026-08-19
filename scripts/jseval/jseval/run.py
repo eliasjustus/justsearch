@@ -44,8 +44,23 @@ EXPECTED_COMPONENTS: dict[str, set[str]] = {
 # tempdoc 715 defect 1: SearchReasonCode names (modules/worker-services/.../SearchReasonCode.java)
 # that mark an engine-declared, corpus-shape chunk-merge skip -- SearchPlanner.java:265/267 emits
 # these when CorpusCapabilities.corpusSupportsChunks() is false (short corpus by median token
-# count) or the corpus has no chunk docs at all. Legitimate, not a degeneracy.
+# count) or the corpus has no chunk docs at all. Legitimate, not a degeneracy -- PROVIDED the
+# offline corpus shape actually agrees it's plausibly short (see
+# _CHUNK_MERGE_SHORT_CORPUS_RATE_MAX below; tempdoc 717/718 review).
 _CHUNK_MERGE_CORPUS_SHAPE_SKIP_REASONS = {"SKIPPED_SHORT_CORPUS", "SKIPPED_NO_CHUNK_DOCS"}
+
+# tempdoc 717/718 review: the corpus-shape waiver above must not be unconditional. A 717-class
+# regression (a healthy, chunked index whose chunk_merge leg is nonetheless skipped
+# SKIPPED_SHORT_CORPUS at query time due to the same corpus-shape misclassification 717 fixed)
+# produces EXACTLY the signature the waiver was built to excuse: chunks present + healthy,
+# leg skipped with a corpus-shape reason. Gate the waiver on the OFFLINE expectation agreeing
+# the corpus is plausibly short, mirroring the engine's own short-corpus rule
+# (`CorpusProfile.chunkRate() < 0.05`,
+# modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/CorpusProfile.java)
+# rather than an unscaled absolute `expected` count. Two anchor cases: miracl-de-2k
+# false-positive (~19 expected of 3103 docs, rate ~0.006 -- must stay WAIVED) and the
+# legal-clerc-200 regression shape (~194 expected of 198 docs, rate ~0.98 -- must STRIKE).
+_CHUNK_MERGE_SHORT_CORPUS_RATE_MAX = 0.05
 
 
 def _snapshot_models(base_url: str) -> dict | None:
@@ -591,6 +606,9 @@ def _compute_chunk_completeness(
     expected = chunk_completeness_mod.expected_chunk_docs(
         dataset_dir / "corpus.jsonl", threshold_chars
     )
+    # Denominator for the corpus-shape waiver's rate predicate below (0 for a BEIR dataset with
+    # no local corpus.jsonl -- same "nothing to expect" shape `expected` already returns).
+    corpus_total_docs = chunk_completeness_mod.corpus_doc_count(dataset_dir / "corpus.jsonl")
 
     # chunk_merge corroborator: only meaningful when `vector` mode actually ran this run (it's
     # a query-time signal from vector-mode retrieval). A run that only exercises e.g. `lexical`
@@ -607,15 +625,31 @@ def _compute_chunk_completeness(
             # / SKIPPED_NO_CHUNK_DOCS (CorpusCapabilities.corpusSupportsChunks()==false), which is
             # not a degeneracy (twice-observed false-positive on mixed/miracl-de-2k, 2026-07-16:
             # 3103 docs, ~19 reach the chunk threshold). When every skip this run carries one of
-            # those engine-declared corpus-shape reasons, the corroborator is not applicable here
-            # (never a strike on its own, per chunk_completeness.py's own docstring) -- but a
+            # those engine-declared corpus-shape reasons, the corroborator MAY be not applicable
+            # here (never a strike on its own, per chunk_completeness.py's own docstring) -- but a
             # skip with NO reason recorded, or a reason outside this set (e.g.
             # SKIPPED_VECTOR_BLOCKED -- a real failure), must still read as a strike.
+            #
+            # tempdoc 717/718 review: the engine's own SHORT_CORPUS classification is exactly what
+            # 717 proved can be WRONG (a healthy, chunked index misclassified as short at query
+            # time). Trusting the reason name alone would let a 717-class regression slip through
+            # silently -- it produces the identical signature this waiver excuses. So the waiver is
+            # conditional on the OFFLINE expectation (computed from the corpus TEXT, independent of
+            # any engine misclassification) agreeing the corpus is plausibly short: the
+            # chunk-eligible-doc RATE must be below _CHUNK_MERGE_SHORT_CORPUS_RATE_MAX, mirroring
+            # CorpusProfile.chunkRate() < 0.05. `corpus_total_docs <= 0` (no local corpus.jsonl --
+            # a BEIR run) keeps the prior unconditional-waiver behavior, since there is no offline
+            # shape to check against.
             skip_reasons = set(
                 (vector_mr.get("run_evidence") or {}).get("chunk_merge_skip_reason_counts") or {}
             )
             if skip_reasons and skip_reasons <= _CHUNK_MERGE_CORPUS_SHAPE_SKIP_REASONS:
-                chunk_merge_observed = True
+                plausibly_short_corpus = (
+                    corpus_total_docs <= 0
+                    or (expected / corpus_total_docs) < _CHUNK_MERGE_SHORT_CORPUS_RATE_MAX
+                )
+                if plausibly_short_corpus:
+                    chunk_merge_observed = True
     else:
         chunk_merge_observed = True
 

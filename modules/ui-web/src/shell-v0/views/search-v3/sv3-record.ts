@@ -9,10 +9,10 @@
  * the product already owns both halves of reading it: `views/unifiedThreadClient.ts`
  * (`fetchUnifiedThread` — schema, forward-tolerant per-event parsing, the EMPTY-on-failure contract)
  * and `views/unifiedThreadProjection.ts` (`projectUnifiedThread` — authoritative `occurredAt` order,
- * tool-lifecycle merge by `callId`, run segmentation). Both are consumed by the shipped window AND by
- * search-v2, which is what makes them shared authorities rather than one window's extraction; this
- * module imports the pair and adds ONLY the last mile — grouping the ordered items into the turns
- * this window renders.
+ * tool-lifecycle merge by `callId`, run segmentation). Both are consumed by the shipped window as
+ * well as by this one, which is what makes them shared authorities rather than one window's
+ * extraction; this module imports the pair and adds ONLY the last mile — grouping the ordered items
+ * into the turns this window renders.
  *
  * It authors no fetch, no schema and no ordering of its own, and it is pure: same items in, same
  * turns out. The record's interleaving is preserved exactly (561 P-A: chat turns and agent activity

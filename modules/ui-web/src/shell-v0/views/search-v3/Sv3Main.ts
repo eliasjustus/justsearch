@@ -1105,7 +1105,7 @@ export class Sv3Main extends JfElement {
     const empty = turn.answer === '';
     // The run this turn OPENED, if it is the one live — matched by id, never by "the last turn". An
     // ENDED run renders nothing here: its live feed was attention, and the receipt below is what
-    // survives it (the same record/attention split search-v2's L8 makes).
+    // survives it (the same record/attention split the retired search-v2 window's L8 made).
     const live = this.run;
     const run =
       turn.kind === 'agent' && live?.turnId === turn.id && live.phase !== 'ended' ? live : null;
@@ -1365,9 +1365,8 @@ export class Sv3Main extends JfElement {
   }
 
   /**
-   * The answer's evidence, in the product's ONE citations panel — the same component search-v2
-   * mounts on a landed answer (`views/search-v2/SearchV2View.ts:2220-2229`), with the DISCLOSURE
-   * moved out to the tail row above (Phase F11).
+   * The answer's evidence, in the product's ONE citations panel — the same component every window
+   * mounts on a landed answer, with the DISCLOSURE moved out to the tail row above (Phase F11).
    *
    * `externalDisclosure` is what makes the tail one line: without it the panel heads itself, on its
    * own row, in an uppercase dialect the window speaks nowhere else. The panel is mounted only while
@@ -1436,8 +1435,7 @@ export class Sv3Main extends JfElement {
   /**
    * The live run: its feed, then the decisions it is parked on. Prompts come LAST and outside the
    * feed's own flow, because a held decision must not be something the reader can scroll past — the
-   * same "incompressible occupant" rule search-v2 gives its run controls
-   * (`views/search-v2/SearchV2View.ts:2550-2554`).
+   * same "incompressible occupant" rule the retired search-v2 window gave its run controls.
    *
    * `dispatching` is the optimistic window: the reader's task left and the server has not answered.
    * It is a distinct STATE, not an empty feed, so the window never has to imply progress it cannot

@@ -5,8 +5,8 @@
  * Derived from a third-party design system (MIT) — see THIRD-PARTY-NOTICES.md in this directory.
  *
  * A from-scratch window rebuilt on a new design system: no presentation code is carried over
- * from `UnifiedChatView` or search-v2 — and no search client either, in the other direction: the
- * store this host subscribes to is the SHARED `state/searchState.ts` that both shipped windows read,
+ * from `UnifiedChatView` — and no search client either, in the other direction: the
+ * store this host subscribes to is the SHARED `state/searchState.ts` the shipped window reads,
  * which is what "from-scratch components, shared authorities" means in practice. This host owns six
  * things and delegates the rest:
  *
@@ -26,8 +26,8 @@
  *     through the morph rather than applied straight).
  *  5. **The one ask.** A send opens a turn and dispatches it through `sv3-ask.ts`, the window's ONE
  *     issuance site, holding the `AbortController` that Stop uses and settling the turn on whichever
- *     terminal the stream reports. Phase A1's SEARCH issuance (`setQuery` + `submitSearch`, the pair
- *     `views/search-v2/SearchV2View.ts:998-999` sends) is still here and still exactly one request,
+ *     terminal the stream reports. Phase A1's SEARCH issuance (`setQuery` + `submitSearch`) is
+ *     still here and still exactly one request,
  *     but it is the SECONDARY axis now: only the palette's "Search this text" reaches it.
  *  6. **The session list, as a PROJECTION of the product's record** (Phase A2; conversations since
  *     F1; on the record since F6). A session IS a conversation: its identity and its listing come
@@ -157,7 +157,7 @@ import {
 // The shared clipboard util — the export's destination, the same one the shipped window uses.
 import { copyToClipboard } from '../../utils/clipboardCopy.js';
 // The canonical thread RECORD (tempdoc 561 P-A; inventory D1) — the shared fetch, already consumed
-// by the shipped window AND by search-v2. The shared PROJECTOR is reached through 'sv3-record.ts',
+// by the shipped window. The shared PROJECTOR is reached through 'sv3-record.ts',
 // this window's registered run-projection site (governance/run-renderers.v1.json), never from here.
 import { fetchUnifiedThread } from '../unifiedThreadClient.js';
 // The shared per-raise step (565 run-control seam), so the button's label and the directive it
@@ -309,8 +309,8 @@ export class SearchV3View extends JfElement {
       /* THE GRIP (tempdoc 822 Phase F5). The spec's anatomy exactly: a w-4
          (16px) hit area straddling the boundary (-translate-x-1/2) with a 2px LINE drawn by ::after
          at its centre, invisible until hover. A native button rather than the spec's tabIndex={-1}
-         rail, so the keyboard half of the boundary exists at all — the same construction
-         views/search-v2/SearchV2View.ts:1937-1957 uses for the same job. */
+         rail, so the keyboard half of the boundary exists at all — the same construction the
+         retired search-v2 window used for the same job. */
       button.sidebar-grip {
         position: absolute;
         inset-block: 0;
@@ -1087,8 +1087,8 @@ export class SearchV3View extends JfElement {
 
   /**
    * The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. The spec
-   * has no equivalent (its rail is `tabIndex={-1}`); this is `views/search-v2`'s answer, and the
-   * a11y contract's: a boundary a pointer can move must be movable without one.
+   * has no equivalent (its rail is `tabIndex={-1}`); this is the retired search-v2 window's answer,
+   * and the a11y contract's: a boundary a pointer can move must be movable without one.
    */
   private onGripKeydown(event: KeyboardEvent): void {
     if (event.key === 'Home' || event.key === 'Escape') {

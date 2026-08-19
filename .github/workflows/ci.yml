@@ -238,6 +238,17 @@ jobs:
       - name: Readiness reason codes are worded and produced
         run: node scripts/ci/check-readiness-reason-codes.mjs
 
+      # Tempdoc 851 (owner decision 2026-08-19): search-v2 sat DEVELOPER/DEEPLINK for months behind
+      # an ACTIVE cutover tempdoc whose parity rows were never checked, and was deleted un-promoted.
+      # Nothing made that visible — a window parked "until the cutover" costs nothing to leave
+      # parked. This gate keeps the retirement (its directory must stay gone) and puts a dated
+      # deadline on the successor's promotion: WARN until 2026-09-30, FAIL after.
+      - name: Test the window-cutover gate
+        run: node scripts/ci/check-window-cutover.test.mjs
+
+      - name: Retired window stays retired; successor cutover meets its deadline
+        run: node scripts/ci/check-window-cutover.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 
