@@ -69,7 +69,10 @@ import {
   matchesFromRecord,
   readScorer,
 } from '../../components/chat/recordEvidence.js';
-import type { Sv3TurnEvidence } from './sv3-sessions.js';
+import type { Sv3ContextUsage, Sv3TurnEvidence } from './sv3-sessions.js';
+// Tempdoc 610 §E.4 — the ONE reading of the terminal's own occupancy report, next to the meter it
+// feeds rather than inlined in the handler table below.
+import { readSv3ContextUsage } from './sv3-context.js';
 
 /** The one shape this window's ask route dispatches. */
 export const SV3_ASK_SHAPE_ID = 'core.rag-ask';
@@ -200,7 +203,13 @@ export interface Sv3AskSink {
    * showing it back.
    */
   onRewrite(standalone: string): void;
-  onDone(): void;
+  /**
+   * The turn reached its terminal, carrying whatever the `done` payload said about the PROMPT it
+   * spent (tempdoc 610 §E.4 — `promptTokens` + the estimated `contextBreakdown`), or `null` when it
+   * reported none. Handed over rather than stored here: the occupancy belongs to the conversation,
+   * and this client owns no conversation.
+   */
+  onDone(usage: Sv3ContextUsage | null): void;
   /** The session lock refused this send (HTTP 423) — the ONLY 423 consumer in this window. */
   onRefused(): void;
   /** The reader pressed Stop. Whatever streamed so far is kept; the turn is halted, not failed. */
@@ -343,7 +352,17 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
       retrievalMode,
     });
 
+  /**
+   * What the terminal said about the prompt it spent. Captured from the `done` EVENT — the stream's
+   * own last frame — rather than assumed at the call below, which fires for a stream that ended
+   * without one too.
+   */
+  let usage: Sv3ContextUsage | null = null;
+
   const handlers: CoreRagAskHandlers = {
+    onDone(payload: unknown) {
+      usage = readSv3ContextUsage(payload);
+    },
     onReasoningChunk(payload: unknown) {
       sink.onReasoning(payload);
     },
@@ -457,5 +476,5 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
     return;
   }
 
-  sink.onDone();
+  sink.onDone(usage);
 }

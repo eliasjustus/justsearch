@@ -108,6 +108,7 @@ import {
   removeSession,
   restoreSessionTitle,
   sessionById,
+  setSessionContextUsage,
   setTurnEvidence,
   setTurnReasoning,
   setTurnRewrite,
@@ -118,8 +119,24 @@ import {
   sv3ShouldGenerateTitle,
   SV3_SESSIONS_EMPTY,
   type Sv3RunGate,
+  type Sv3Session,
   type Sv3SessionList,
 } from './sv3-sessions.js';
+// The effective-context set (tempdoc 610, ported by 852 S2) — the pure half. The WRITES are the five
+// shared store functions below; this module decides what each turn's frame and menu are, and what
+// the shared inspector renders.
+import {
+  projectSv3ContextInspector,
+  projectSv3TurnContexts,
+  sv3ContextMenuItems,
+  sv3ExcludedMessageIds,
+  sv3ExcludedTurnCount,
+  sv3TurnContextFor,
+  type Sv3ContextAction,
+  type Sv3ContextActionId,
+  type Sv3ContextMenuRequest,
+  type Sv3TurnContext,
+} from './sv3-context.js';
 // The window's honesty derivations (tempdoc 822 Phase F7): the lock, the corpus, and the ONE remedy
 // channel every region's fix-it control leaves through.
 import {
@@ -145,17 +162,34 @@ import {
 // conversation, so identity, existence, title and its markdown export come from here — this window
 // mints none of them.
 import {
+  clearContextFloor,
+  compactContext,
   createConversationId,
   deleteConversation,
+  editContextFloorSummary,
   exportConversationMarkdown,
   generateConversationTitle,
   loadConversations,
   resumeConversation,
   setActiveConversation,
+  setContextFloor,
   setConversationApiBase,
   setConversationTitle,
+  setMessageExcluded,
   subscribeConversationList,
 } from '../../state/conversationListStore.js';
+// Tempdoc 610 §K — the SHELL-mounted context inspector. The window pushes the projection and opens
+// the drawer; the drawer is the product's one "what did the assistant actually see" surface and is
+// not re-implemented here.
+import {
+  isContextInspectorOpen,
+  setContextInspectorView,
+  toggleContextInspector,
+} from '../../state/contextInspectorDrawer.js';
+import type { InspectorView } from '../../components/ContextInspectorPane.js';
+// The product's ONE overflow-menu primitive (slice 458). A window-local menu would be a second
+// keyboard model and a second dismiss rule for the same gesture.
+import { openContextMenu } from '../../components/ContextMenu.js';
 // The shared clipboard util — the export's destination, the same one the shipped window uses.
 import { copyToClipboard } from '../../utils/clipboardCopy.js';
 // The canonical thread RECORD (tempdoc 561 P-A; inventory D1) — the shared fetch, already consumed
@@ -215,6 +249,12 @@ import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
 import { emitEphemeralToast } from '../../components/advisory/ephemeralToast.js';
 import { projectSv3Degradation, type Sv3Degradation } from './sv3-degradation.js';
 import {
+  CONTEXT_COMPACT_FAILED,
+  CONTEXT_EXCLUDE_FAILED,
+  CONTEXT_FLOOR_FAILED,
+  CONTEXT_INCLUDE_FAILED,
+  CONTEXT_RESTORE_FAILED,
+  CONTEXT_SUMMARY_FAILED,
   PANE_LABEL,
   SV3_COMMAND_EXPORT_MARKDOWN,
   SV3_COMMAND_SEARCH_TEXT,
@@ -227,6 +267,7 @@ import type { Sv3Palette } from './Sv3Palette.js';
 import './Sv3Topbar.js';
 import './Sv3Sidebar.js';
 import './Sv3Main.js';
+import './Sv3ContextBar.js';
 import './Sv3Composer.js';
 import './Sv3Palette.js';
 // The window's citation-inspection region (tempdoc 822 Phase F8). It mounts the product's ONE reading
@@ -455,6 +496,7 @@ export class SearchV3View extends JfElement {
     historyLocked: { state: true },
     lockedRefusal: { state: true },
     effort: { state: true },
+    compacting: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
@@ -540,6 +582,12 @@ export class SearchV3View extends JfElement {
    * control describes THIS window's next send, which is exactly what it says.
    */
   declare effort: Sv3Effort;
+  /**
+   * A compaction is in flight (tempdoc 610 Phase D). WINDOW-level because it is one LLM call and the
+   * menu that starts it must not offer a second while the first is running — the reference window's
+   * own guard (`views/UnifiedChatView.ts:1658-1673`).
+   */
+  declare compacting: boolean;
 
   /** Watches the window box so the pane's presentation follows it (Phase F8). */
   private boxObserver: ResizeObserver | null = null;
@@ -620,6 +668,7 @@ export class SearchV3View extends JfElement {
     this.historyLocked = false;
     this.lockedRefusal = false;
     this.effort = SV3_EFFORT_DEFAULT;
+    this.compacting = false;
     // Constructed HERE rather than on connect: a Lit controller added before connection still gets
     // its `hostConnected`, and adding it inside `connectedCallback` would add a second one on every
     // re-attach of this retained instance.
@@ -770,6 +819,10 @@ export class SearchV3View extends JfElement {
         composer.draft = this.draftSeed;
       }
     }
+    // Tempdoc 610 §K — keep the OPEN inspector current. Its subject is "what the last turn sent", so
+    // a new turn, a moved floor or a hidden turn changes it; a drawer left showing the previous
+    // answer's prompt would be the stalest possible answer to the one question it exists to answer.
+    if (isContextInspectorOpen()) setContextInspectorView(this.buildContextInspectorView());
   }
 
   /* ── The conversation record (tempdoc 822 Phase F6) ───────────────────────────────────────── */
@@ -871,6 +924,213 @@ export class SearchV3View extends JfElement {
       excludedSourceIds: history.excludedSourceIds,
       locked: history.locked,
     });
+  }
+
+  /* ── The effective context (tempdoc 610, ported by 852 S2) ────────────────────────────────── */
+
+  /** The claimed conversation, or null when nothing is claimed. */
+  private get activeSession(): Sv3Session | null {
+    const id = this.sessions.activeId;
+    return id === null ? null : sessionById(this.sessions, id);
+  }
+
+  /**
+   * What the effective context does with each turn on screen. Computed ONCE per render and handed to
+   * both consumers (the transcript's frames, the bar's aggregate) plus every act below, so what the
+   * window renders and what it writes are derived from one reading of one record.
+   */
+  private turnContexts(): readonly Sv3TurnContext[] {
+    const session = this.activeSession;
+    if (session === null) return [];
+    return projectSv3TurnContexts(session.turns, session.history);
+  }
+
+  /**
+   * The reader asked for a turn's ⋯ menu. The entries come from the SAME pure derivation the region
+   * gated its trigger on, so a menu can never offer an act the turn cannot address; an empty list
+   * opens nothing at all rather than an empty menu.
+   */
+  private async onContextMenu(event: Event): Promise<void> {
+    const detail = (event as CustomEvent<Sv3ContextMenuRequest>).detail;
+    const session = this.activeSession;
+    if (detail === undefined || session === null) return;
+    const contexts = this.turnContexts();
+    const items = sv3ContextMenuItems(contexts, detail.turnId, {
+      compacting: this.compacting,
+      streaming: this.streaming,
+      contextFloor: session.history?.contextFloor ?? null,
+      hasSummary: (session.history?.contextFloorSummary ?? null) !== null,
+    });
+    if (items.length === 0) return;
+    const chosen = await openContextMenu({
+      actions: items.map((item) => ({
+        id: item.id,
+        label: item.label,
+        icon: 'history' as const,
+        category: 'ai' as const,
+        enabled: item.enabled,
+      })),
+      anchor: { x: detail.x, y: detail.y },
+    });
+    if (chosen === null) return;
+    await this.runContextAction({ action: chosen as Sv3ContextActionId, turnId: detail.turnId });
+  }
+
+  private onContextAction(event: Event): void {
+    const detail = (event as CustomEvent<Sv3ContextAction>).detail;
+    if (detail === undefined) return;
+    void this.runContextAction(detail);
+  }
+
+  /**
+   * The five acts of tempdoc 610, and the two reads beside them. Each write goes through the SHARED
+   * store function that owns its endpoint (this window mints no request), and — the obligation 852
+   * S1 recorded when it loaded `/history` without rendering it — **every write is followed by a
+   * re-load of that record**. The backend is the authority on the floor and the exclusions; a
+   * window that patched its own copy instead would keep rendering a floor a failed or partial write
+   * never established, and would drift from the other client the moment there is one.
+   */
+  private async runContextAction(detail: Sv3ContextAction): Promise<void> {
+    const session = this.activeSession;
+    if (session === null) return;
+    const sessionId = session.id;
+    if (detail.action === 'inspect') {
+      this.openContextInspector();
+      return;
+    }
+    const contexts = this.turnContexts();
+    const turn = detail.turnId === undefined ? null : sv3TurnContextFor(contexts, detail.turnId);
+    switch (detail.action) {
+      case 'floor': {
+        const messageId = turn?.floorMessageId ?? null;
+        if (messageId === null) return;
+        await this.settleContextWrite(
+          sessionId,
+          await setContextFloor(sessionId, messageId),
+          CONTEXT_FLOOR_FAILED,
+        );
+        return;
+      }
+      case 'restore':
+        await this.settleContextWrite(
+          sessionId,
+          await clearContextFloor(sessionId),
+          CONTEXT_RESTORE_FAILED,
+        );
+        return;
+      case 'compact': {
+        const messageId = turn?.floorMessageId ?? null;
+        if (messageId === null || this.compacting) return;
+        this.compacting = true;
+        try {
+          // The summary comes back on the response, and is then re-read from `/history` like every
+          // other field: one place decides what the floor currently says.
+          const summary = await compactContext(sessionId, messageId);
+          await this.settleContextWrite(sessionId, summary !== null, CONTEXT_COMPACT_FAILED);
+        } finally {
+          this.compacting = false;
+        }
+        return;
+      }
+      case 'summary':
+        if (detail.text === undefined) return;
+        await this.settleContextWrite(
+          sessionId,
+          await editContextFloorSummary(sessionId, detail.text),
+          CONTEXT_SUMMARY_FAILED,
+        );
+        return;
+      case 'exclude':
+      case 'include': {
+        const ids = turn?.messageIds ?? [];
+        if (ids.length === 0) return;
+        const excluded = detail.action === 'exclude';
+        // Both of a turn's messages, because the reader hid a TURN: leaving the question in the
+        // prompt while dropping the answer would send the model a question it never answered.
+        const ok = await this.excludeInTurn(sessionId, ids, excluded);
+        await this.settleContextWrite(
+          sessionId,
+          ok,
+          excluded ? CONTEXT_EXCLUDE_FAILED : CONTEXT_INCLUDE_FAILED,
+        );
+        return;
+      }
+      case 'include-all': {
+        const ids = sv3ExcludedMessageIds(contexts);
+        if (ids.length === 0) return;
+        const ok = await this.excludeInTurn(sessionId, ids, false);
+        await this.settleContextWrite(sessionId, ok, CONTEXT_INCLUDE_FAILED);
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /**
+   * Several exclusion toggles, ONE AT A TIME — never `Promise.all`.
+   *
+   * The endpoint's write is read-modify-write over a SHARED document and the store takes no lock:
+   * `FileConversationStore.toggleStringInMeta` reads `meta.json`, adds or removes the id, and calls
+   * `writeMetaAtomic` (`:503-527`). The write is atomic per file; the SEQUENCE is not, and each POST
+   * is served on its own HTTP thread. Two toggles in flight together therefore race on one snapshot,
+   * and the loser's id is silently dropped.
+   *
+   * What that costs here is specific and invisible: a turn's two ids go out together, one lands, and
+   * the turn is left HALF excluded — the prompt carries a question whose answer was dropped, while
+   * the transcript dims the turn either way (`hasExcluded` is true on one id as on two). Serializing
+   * removes the race rather than detecting it afterwards, and it is what the shipped window already
+   * does (`views/UnifiedChatView.ts:1767-1776`, a sequential `for`-await).
+   *
+   * Returns whether EVERY toggle landed; the caller reloads `/history` either way.
+   */
+  private async excludeInTurn(
+    sessionId: string,
+    ids: readonly string[],
+    excluded: boolean,
+  ): Promise<boolean> {
+    let ok = true;
+    for (const id of ids) {
+      if (!(await setMessageExcluded(sessionId, id, excluded))) ok = false;
+    }
+    return ok;
+  }
+
+  /**
+   * The tail every context write shares: RELOAD, then report a refusal. The reload runs whether or
+   * not the write landed — a partially-applied bulk exclusion is exactly the case where the window's
+   * own idea of the ledger is least trustworthy — and the toast names the act, because the remedies
+   * differ (a refused floor is the store; a compaction that returned nothing is usually the model).
+   */
+  private async settleContextWrite(
+    sessionId: string,
+    ok: boolean,
+    failure: string,
+  ): Promise<void> {
+    await this.refreshHistory(sessionId);
+    if (ok) return;
+    emitEphemeralToast({ message: failure, severity: 'warning' });
+  }
+
+  /**
+   * Tempdoc 610 §K — open the shared inspector on what the last completed turn actually sent. The
+   * projection is pushed rather than subscribed to, the same way the shipped window does it, and it
+   * is re-pushed on every update while the drawer is open so a new turn does not leave it stale.
+   */
+  private openContextInspector(): void {
+    setContextInspectorView(this.buildContextInspectorView());
+    toggleContextInspector();
+  }
+
+  private buildContextInspectorView(): InspectorView {
+    const session = this.activeSession;
+    return projectSv3ContextInspector(
+      session?.turns ?? [],
+      this.turnContexts(),
+      session?.history ?? null,
+      session?.contextUsage ?? null,
+      this.aiSnapshot?.runtime.contextWindow ?? null,
+    );
   }
 
   /**
@@ -1527,7 +1787,13 @@ export class SearchV3View extends JfElement {
         onRewrite: (standalone) => {
           this.sessions = setTurnRewrite(this.sessions, ref, standalone);
         },
-        onDone: () => {
+        onDone: (usage) => {
+          // Tempdoc 610 §E.4 — the occupancy this turn reported, recorded on the CONVERSATION that
+          // spent it (a terminal that reported none leaves the previous reading standing rather than
+          // replacing it with a zero the backend never sent).
+          if (usage !== null) {
+            this.sessions = setSessionContextUsage(this.sessions, ref.sessionId, usage);
+          }
           // The answer has arrived, so the thinking that preceded it is over — the shipped window
           // ends it on the first content chunk; ending it at the terminal is the same edge for a
           // window whose transcript renders the block beside the answer rather than instead of it.
@@ -2210,6 +2476,10 @@ export class SearchV3View extends JfElement {
       ...this.runGate(run),
       now: Date.now(),
     });
+    // ONE reading of the effective context per render, shared by the transcript's frames and the
+    // bar's aggregate — so the dimmed turns and the "N turns hidden" count cannot disagree.
+    const session = this.activeSession;
+    const contexts = this.turnContexts();
     return html`
       <jf-sv3-sidebar
         .groups=${sessionGroups}
@@ -2246,6 +2516,8 @@ export class SearchV3View extends JfElement {
         @sv3-palette-request=${this.onPaletteRequest}
         @sv3-remedy=${this.onRemedy}
         @sv3-citation-open=${this.onCitationOpen}
+        @sv3-context-menu=${this.onContextMenu}
+        @sv3-context-action=${this.onContextAction}
       >
         <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
         <jf-sv3-main
@@ -2260,8 +2532,17 @@ export class SearchV3View extends JfElement {
           .reasoningTurnId=${this.liveReasoningTurnId()}
           .currentModelLabel=${this.currentModelLabel}
           ?detailed=${isAdvancedMode()}
+          .turnContexts=${contexts}
+          .floorSummary=${session?.history?.contextFloorSummary ?? null}
+          ?streaming=${this.streaming}
           data-testid="sv3-main"
         ></jf-sv3-main>
+        <jf-sv3-context-bar
+          .usage=${session?.contextUsage ?? null}
+          .contextWindow=${this.aiSnapshot?.runtime.contextWindow ?? null}
+          hidden-turns=${sv3ExcludedTurnCount(contexts)}
+          data-testid="sv3-context-bar-host"
+        ></jf-sv3-context-bar>
         <jf-sv3-composer
           state=${this.composerState}
           slot-kind=${slot.kind}

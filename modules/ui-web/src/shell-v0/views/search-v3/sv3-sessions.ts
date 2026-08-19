@@ -226,6 +226,26 @@ export interface Sv3SessionHistory {
   readonly locked?: boolean;
 }
 
+/**
+ * How full the model's context window was on this conversation's LAST completed turn (tempdoc 610
+ * §E.4 / §I.2, ported in 852 S2). Reported by the dispatch's own `done` payload and kept per
+ * CONVERSATION, because that is what it describes: a meter carried on the window would follow the
+ * reader into a conversation whose prompt it never measured.
+ *
+ * `breakdown` is the per-phase attribution and is an ESTIMATE by the backend's own account
+ * (`promptTokens` is the authoritative total); `null` when the turn reported none.
+ */
+export interface Sv3ContextUsage {
+  /** The real occupancy of the last prompt, in tokens. */
+  readonly promptTokens: number;
+  /** The estimated split, or null when the terminal carried none. */
+  readonly breakdown: {
+    readonly system: number;
+    readonly conversation: number;
+    readonly retrieved: number;
+  } | null;
+}
+
 /** One conversation in this window: what it was opened with, and every turn it has taken. */
 export interface Sv3Session {
   readonly id: string;
@@ -270,6 +290,12 @@ export interface Sv3Session {
    * field must be able to tell that from a conversation that really is a root with no floor.
    */
   readonly history: Sv3SessionHistory | null;
+  /**
+   * What this conversation's last completed turn reported about its own prompt occupancy, or `null`
+   * while it has reported none (tempdoc 852 S2). `null` is "not measured", not "empty": the meter is
+   * omitted rather than shown at 0%, which is the same rule {@link Sv3SessionHistory} follows.
+   */
+  readonly contextUsage: Sv3ContextUsage | null;
   readonly createdAt: number;
   /** When the session last submitted; the resting row's timestamp. */
   readonly updatedAt: number;
@@ -347,6 +373,7 @@ function openSession(
     renamed: false,
     turns: [openTurn(id, 0, title, now, kind)],
     history: null,
+    contextUsage: null,
     createdAt: now,
     updatedAt: now,
     pinned: false,
@@ -680,6 +707,7 @@ export function mergeStoreConversations(
       renamed: c.titleSource === 'user',
       turns: [],
       history: null,
+      contextUsage: null,
       createdAt: c.createdAt,
       updatedAt: c.lastActiveAt,
       pinned: false,
@@ -885,6 +913,23 @@ export function applySv3History(
   return {
     ...list,
     sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, history } : s)),
+  };
+}
+
+/**
+ * What a terminal reported about the prompt it just spent (tempdoc 852 S2) — recorded on the
+ * conversation that spent it, never on the window, so claiming another conversation shows ITS
+ * occupancy or none at all rather than the last one the window happened to see.
+ */
+export function setSessionContextUsage(
+  list: Sv3SessionList,
+  sessionId: string,
+  contextUsage: Sv3ContextUsage,
+): Sv3SessionList {
+  if (sessionById(list, sessionId) === null) return list;
+  return {
+    ...list,
+    sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, contextUsage } : s)),
   };
 }
 
