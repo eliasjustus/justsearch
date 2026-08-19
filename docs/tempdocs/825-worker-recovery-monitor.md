@@ -1,7 +1,7 @@
 ---
 title: "825 — Worker recovery for the knowledgeServer==null state + worker.spawn.failed disambiguation"
 type: tempdocs
-status: "CHARTER (2026-08-14) — not started. The structural half of 821 §O.4: PR #439 made the boot-brick trigger ~3x rarer; this tempdoc makes the outcome recoverable."
+status: "IMPLEMENTED (2026-08-19) — owner approved the D5 recommendations 2026-08-19 (all five). Option B built, tested to the isolated-backend tier; the LIVE dev-stack leg is the one open item (see §I.7)."
 created: 2026-08-14
 author: agent session 776e10cd-eef9-4873-a027-1fc2887a334d (Fable orchestration)
 category: structural / lifecycle / state-truthfulness (821 class C1)
@@ -174,3 +174,197 @@ inside the existing 90s worker gate; fixture gains reason-code fail-fast in
    routing it through the recovery authority gives the manual path for free.
 5. Item 3's measured 240s-budget replacement stays gated on captured failure-log data
    (none found since 2026-08-13); independent of decisions 1-4.
+
+## IMPLEMENTATION LOG (2026-08-19 — owner approved all five D5 recommendations)
+
+Branch `worktree-825-impl`, built on the design branch merged with `main`. Line numbers are at the
+final commit of that branch.
+
+### I.1 Option B — one monitor authority (D2)
+
+| Design point | Where it landed |
+|---|---|
+| Stop discarding the failed bootstrap (was `HeadlessApp.java:957`) | `HeadlessApp.tryStartKnowledgeServer` holds the instance outside the `try` and returns it on failure — `HeadlessApp.java:1007` |
+| Always construct the monitor | `HeadlessApp.startHealthMonitor` (`:502`), called from BOTH the connected arm (`:436`) and the failed-boot arm (`:458`) |
+| `tick()` second guard arm | `KnowledgeServerHealthMonitor.java:150-152` — `!bootstrap.hasClient()` ⇒ `runBootRecoveryArm()`; the health arm is otherwise unchanged |
+| Bounded re-attempt | `attemptBootRecovery` (`:231`) calls `KnowledgeServerBootstrap.startForRecovery()` (`KnowledgeServerBootstrap.java:363`) — ONE start per cycle; the budget is the policy's, not `startWithRetry`'s |
+| One shutdown site | unchanged: `performOrderedShutdown(… healthMonitor …)` (`HeadlessApp.java:883` region) now also covers the failed-boot case, because the monitor exists there too |
+| Handover on success | `monitor.onRecoveryConnected(...)` (`HeadlessApp.java:505`) → `connectAndBind` (`:488`) = `HeadAssembly.connectKnowledgeServer` + `LocalApiServer.lateBindKnowledgeServer`, the same pair boot uses |
+
+The four load-bearing mechanisms:
+
+1. **Cross-cycle supervision veto** — `supervisionEngagedOnLastAttempt()` exposed
+   (`KnowledgeServerBootstrap.java:383`), read by the monitor into
+   `BootRecoveryDecision.Input.supervisionEngaged` (`KnowledgeServerHealthMonitor.java:214`) and
+   resolved to `GIVE_UP`/`Veto.SUPERVISION_ENGAGED` with NO narration
+   (`BootRecoveryDecision.java:116`, `KnowledgeServerHealthMonitor.narrateGiveUp:302`).
+   `worker.restart_exhausted` held on the capability is a second, higher-precedence veto
+   (`BootRecoveryDecision.java:113`).
+2. **Pure decision function** — `BootRecoveryDecision.decide(Input, BootRecoveryPolicy)`
+   (`modules/app-services/.../worker/BootRecoveryDecision.java`), with the declared policy in
+   `BootRecoveryPolicy.java` (defaults: 4 attempts, 10s doubling to a 60s ceiling) sitting next to
+   `SupervisionPolicy`. `governance/supervision-contract.v1.json`'s worker `partial-boot` row is
+   rewritten with the new detection/recovery/terminal state, a `recoveryAuthorityBoundary` clause,
+   and two resolving guards (`BootRecoveryDecisionTest`, `KnowledgeServerBootRecoveryTest`) —
+   `SupervisionContractTest` passes.
+3. **Cross-cycle flap suppression** — `retryPending` generalised to `narrationSuppressed()`
+   (`KnowledgeServerBootstrap.java:373`), which also covers `bootRecoveryInFlight`; applied at the
+   three narration sites (`start()` entry PENDING `:180`, `start()` catch `:300`,
+   `closeForUpgrade()` OFFLINE `:797`) and in `startWithRetry`'s final verdict (`:341`). The arc
+   therefore holds RECOVERING throughout and narrates 2 transitions total, not 4 per cycle.
+4. **ReasonRetention narration trap — resolved by an explicit, tightly-scoped arm** (not by
+   re-coding the narration). `ReasonRetention.recoverySupersedesSpawnFailure` (`:88`, consulted at
+   `:57`) admits exactly `held == worker.spawn.failed && incoming == worker.recovering`. Rejected
+   alternative: narrating with an admissible code — the only codes the general rule admits over a
+   held FAULT are FAULT/STICKY, and calling an in-flight recovery a fault is the dishonesty the
+   charter's "supersedes it honestly" clause forbids. **Which one we did is tested**:
+   `ReasonRetentionTest.recoverySupersedesOnlyTheSpawnFailedPin` pins the arm AND its three
+   non-neighbours (`restart_exhausted`, `index_corrupt`, `spawn_recovery_exhausted` all survive), and
+   `KnowledgeServerBootRecoveryTest.firstTickReAttemptsAndNarratesRecovering` proves the write is not
+   swallowed end-to-end.
+
+### I.2 `initGeneration` (D1 last bullet / charter item 4)
+
+Reset in `closeForUpgrade`'s `finally`, beside `started.set(false)` —
+`KnowledgeServerBootstrap.java:810`. Latent before this tempdoc, live under a recovery loop: the
+first successful start after any `close()` would have taken the generation>=1 branch and skipped
+`tryIngestHelpFiles` for the process lifetime. Guard:
+`KnowledgeServerBootRecoveryTest.closeResetsInitGeneration` (reflective read — the counter has no
+consumer that would justify a public accessor).
+
+### I.3 Reason-code + consumer inventory (D3) — wire-additive, one new code
+
+- `LifecycleReasonCode.WORKER_SPAWN_RECOVERY_EXHAUSTED("worker.spawn_recovery_exhausted")` (`:40`),
+  classified `FAULT` in the exhaustive retention switch (`:213`). No code renamed or removed.
+- `LifecycleSnapshotTap` MappingKey row → `index.start-error`/ERROR, reusing the spawn-failed
+  conditionId per the 837 precedent (`LifecycleSnapshotTap.java:140`).
+- `readinessNotice.ts` CAUSE_ROWS row (`:239`) + `RETRIEVAL_IMPAIRING_CODES` (`:493`).
+- `StatusLifecycleHandler` needed NO change — its DEGRADED arm already forwards `pendingReason()`.
+- `check-readiness-reason-codes` green (52 emittable codes, 48 worded rows; producer direction OK).
+- Tests: `StatusLifecycleWorkerReasonTest.bootRecoveryExhaustedPassesThrough`,
+  `LifecycleSnapshotTapTest.bootRecoveryExhaustedEmitsStartError`, two new `ReasonRetentionTest`
+  cases, one new `readinessNotice.test.ts` case (44 pass in that file; 5508 FE unit tests green).
+- **No new occurrence ID.** The arc transitions to RECOVERING, so the existing
+  `CapabilityHealthBridge` emits `worker.restart-attempted` / `worker.recovered` unchanged — hence no
+  `BootRecoveryEmitter` and no `HealthEventEmitCoverageTest` change (D3's conditional did not fire).
+  Its i18n message WAS reworded: "stopped responding and is being restarted" is false for a worker
+  that never started, so `health-events.en.properties:166` now says only what is true of both arcs.
+
+### I.4 Countdown fault injector (D4)
+
+`justsearch.worker.boot.faultInjectAttempts` / `JUSTSEARCH_WORKER_BOOT_FAULT_INJECT_ATTEMPTS`, read
+in `KnowledgeServerConfig.load()` (`:144`) — one of the two ArchUnit-allowlisted classes, so
+`AppServicesWorkerGuardrailsTest` stays green. The prod guard is in the record's compact constructor
+(`KnowledgeServerConfig.java:48`) rather than at the read site: a constructor cannot be forgotten by
+a future caller, and it also disables the injector for a directly-constructed prod config. The
+countdown itself is an instance `AtomicInteger` in the bootstrap, spent in `validateWorkerPid`
+(`KnowledgeServerBootstrap.java:476`) by throwing `PidValidationTimeoutException` — the exact 821
+§O.4 signature, transient-classified, so both the boot retry and the recovery arm engage.
+
+### I.5 Fixture fail-fast (charter item 3)
+
+`IsolatedBackendFixture.failFastOnTerminalWorkerReason` (`:412`), called from both
+`awaitWorkerReady` (`:356`) and `awaitHealthOk` (`:394`); `withSystemProperty` (`:125`) forwards
+`-D` flags to the spawned Head. Keyed on the TERMINAL code only —
+`IsolatedBackendFixtureFailFastTest` pins that `worker.spawn.failed` does **not** abort, which is the
+distinction 836 deliberately waited for. The 240s budget itself is **unchanged** (D5 decision 5).
+
+### I.6 `POST /api/worker/restart` through the same authority (D5 decision 4)
+
+`WorkerRecoveryAuthority` (new interface, implemented by the monitor:
+`KnowledgeServerHealthMonitor.requestRecoveryNow:346`) → `LocalApiServer.bindWorkerRecovery:842` →
+`InferenceHandlers.routeToRecoveryAuthority:677`, consulted from `handleRestartWorker:628` before
+either 503 arm. An accepted request answers **202**, not 200: the attempt is scheduled on the
+monitor's own single-threaded executor (so a manual request can never race a tick into two
+concurrent spawns) and a boot takes tens of seconds. The operator's request clears the backoff wait
+but not the budget and not the vetoes. Guard: `InferenceHandlersWorkerRestartTest` (4 cases).
+
+### I.7 Verification
+
+Fail-first evidence — each mechanism was mutated away and the matching test observed RED, then
+restored:
+
+| Mutation | Test that went RED |
+|---|---|
+| `recoverySupersedesSpawnFailure` disabled | `firstTickReAttemptsAndNarratesRecovering` (reason stayed `worker.spawn.failed`) + `arcDoesNotFlap` |
+| `narrationSuppressed()` → `retryPending` only | `arcDoesNotFlap` (`[RECOVERING, DEGRADED/spawn.failed, OFFLINE/spawn.failed, …]`) |
+| `restartExhaustedHeld` veto removed | `BootRecoveryDecisionTest` ×2 + `restartExhaustedIsNeverSuperseded` (arc narrated RECOVERING over supervision's verdict) |
+| `gaveUp` guard removed | `budgetIsBoundedAndTerminal` (GIVE_UP repeated instead of NONE) |
+| `initGeneration.set(0)` removed | `closeResetsInitGeneration` |
+
+A real defect was found this way rather than argued: `BootRecoveryDecision.backoffMs`'s
+overflow guard copied `SupervisionDecision`'s `scaled < 0` check, which misses `1000 << 62 == 0`
+(1000 = 8·125; the 125 shifts clean out of the word). Fixed by guarding on
+`Long.numberOfLeadingZeros(base)` (`BootRecoveryDecision.java:148`). The same latent bug remains in
+`SupervisionDecision.backoffMs:98-108` — unreachable there (cap 3) and out of scope, so it is logged
+to the observations inbox rather than fixed here.
+
+Commands run (all green unless noted):
+
+- `./gradlew.bat spotlessApply` then `./gradlew.bat build -x test` — BUILD SUCCESSFUL.
+- `./gradlew.bat :modules:app-services:test :modules:app-api:test` — SUCCESSFUL.
+  `KnowledgeServerHealthMonitorTest` needed a real update, not a workaround: its five health-arm
+  cases mocked the bootstrap, so `hasClient()` defaulted to false and they took the NEW arm. Each now
+  stubs `hasClient() == true` — the precondition that selects the health arm became explicit — and
+  four of them were previously passing for the wrong reason (never-verifications over an arm that
+  never ran).
+- `./gradlew.bat :modules:ui:test` — SUCCESSFUL.
+- `cd modules/ui-web && npm run test:unit:run` — 433 files / 5508 tests pass.
+  `npm run typecheck` — clean.
+- `node scripts/ci/check-readiness-reason-codes.mjs` — OK.
+- `./gradlew.bat :modules:system-tests:integrationTest --tests "*WorkerBootRecoveryE2ETest*"` —
+  SUCCESSFUL. **This is the convergence proof**: with 3 injected boot faults the Head exhausts its
+  whole boot retry, the recovery arm re-attempts, and the worker reaches READY 26s after spawn in the
+  same process. Oracle is the health-event occurrence stream, not the log (the fixture's
+  `runtime/backend.log` carries only pre-Logback stdout): the snapshot holds exactly one
+  `worker.restart-attempted` with `{"attempt":1,"faultKind":"boot","backoffMs":10000}` and one
+  `worker.recovered` with `{"recoveredAfterAttempts":1}` — convergence, right-reason, and no-flapping
+  in one assertion.
+- `node scripts/governance/run.mjs --gate hook-integrity` FAILS with 6 `unwired-hook` findings, all
+  pre-existing and unrelated (this worktree's gitignored `settings.local.json` predates six hooks).
+
+**Open item — the LIVE dev-stack leg is PENDING.** Everything above is unit / component /
+isolated-backend tier. The acceptance criterion's "live-verified on the dev stack, not just
+unit-tested" (`static-green ≠ live-working`) has NOT been run: it is out of the implementing agent's
+scope by instruction, and the orchestrator runs it supervised before merge. Suggested procedure:
+start the stack with `-Djustsearch.worker.boot.faultInjectAttempts=3`, watch `/api/health` go
+`worker.spawn.failed` → `worker.recovering` → READY, confirm ONE `worker.restart-attempted` in
+Recent Events, and separately POST `/api/worker/restart` in the pinned state to see the 202.
+
+### I.8 Deviations from the design, argued
+
+1. **The recovery arm re-attempts a NON-transient failure too.** `WorkerStartFailures.isTransient`
+   bounds the intra-call retry; the recovery arm calls `startWithRetry(1, 0)`, so the classification
+   never gates it. Deliberate: the arm's premise is that the terminal pin was wrong, the operator
+   escape hatch (§I.6) must work for a worker that never started for ANY reason, and the cost is
+   bounded by the same 4-attempt budget that ends in the terminal code. Retrying a genuinely
+   unstartable worker four times over ~2 minutes is the price of the state being recoverable at all.
+2. **`BootRecoveryDecision` is NOT registered in `governance/logic-seams.v1.json`.** It fits the
+   register (pure, budget/precedence law, sibling of the registered `worker-supervision` seam), but
+   registration also requires a floor in `gates/test-efficacy/strength-baseline.v1.json`, which needs
+   a measured PIT run this lane did not do; a guessed floor would either be vacuous or fail the
+   ratchet. Deferred deliberately, not overlooked — a follow-up should measure and register it.
+3. **`RuntimeManifestListenerWiring` needed a change the design did not name.** Its initial
+   worker-state publish branched on `knowledgeServer != null`, which after I.1 no longer implies
+   "connected" — a bricked boot would have published `worker.state=ready` with a null gRPC port. Now
+   branches on `hasClient()` (`RuntimeManifestListenerWiring.java:118`).
+4. **`health-events.en.properties` reworded** (see I.3). Not in the design's consumer inventory; the
+   shared occurrence would otherwise have told a user whose worker never started that it "stopped
+   responding".
+5. **The failed-boot arm in `connectWorker` no longer re-stamps `worker.spawn.failed`**
+   (`HeadlessApp.java:452` area). Found by the post-implementation critical-analysis pass, not by a
+   test: the bootstrap has already narrated its own verdict exactly once, and re-stamping the generic
+   code would overwrite a specific held one — `worker.restart_exhausted` and `worker.spawn.failed`
+   are both FAULT, so `ReasonRetention` does not defend the held code. That would have destroyed
+   supervision's terminal verdict AND silently disabled the new `restartExhaustedHeld` veto, which
+   reads that same slot. Pre-existing in the `knowledgeServer == null` branch; this tempdoc is what
+   made it load-bearing. The `null` branch (no instance at all, nothing narrated) keeps its
+   transition. The E2E stayed green after the removal, which confirms the bootstrap's own narration
+   is what the wire was reading all along.
+6. **`requestRecoveryNow` catches `RejectedExecutionException`** (`KnowledgeServerHealthMonitor.java`
+   `:346` region). Same pass: after `close()` the executor rejects, and an HTTP request must not
+   become a 500 because the process is shutting down.
+7. **No dedicated E2E for the give-up path.** An unrecoverable boot reaches the terminal code only
+   after the full backoff arc (~2.5 min), which is a poor CI trade for a state already pinned at the
+   component tier (`arcGivesUpOnceAfterTheBudget`) plus a fast in-process test of the fixture's
+   fail-fast (`IsolatedBackendFixtureFailFastTest`).
