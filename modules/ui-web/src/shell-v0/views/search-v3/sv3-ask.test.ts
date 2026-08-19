@@ -20,6 +20,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { RetrievalCitation } from '../../components/chat/citationTypes.js';
 import { sourceGrounding } from '../../components/chat/evidenceProjection.js';
+import { claimsFromRecord, matchesFromRecord } from '../../components/chat/recordEvidence.js';
+import { claimsToCitations } from '../../components/chat/citationResolve.js';
 import { sv3Ask } from './sv3-ask.js';
 import type { Sv3TurnEvidence } from './sv3-sessions.js';
 
@@ -199,5 +201,73 @@ describe('the search v3 ask path reads the producer off the payload (847 §1.5)'
     expect(absent.marks).toHaveLength(1);
     expect(absent.marks[0]?.similarity).toBe(crossEncoder.marks[0]?.similarity);
     expect(absent.matches).toHaveLength(1);
+  });
+});
+
+/**
+ * Tempdoc 847 F-12 — the live arm and the reload arm are ONE reader of one envelope.
+ *
+ * S2 shared the producer GATE between the two paths and left every other field to be read twice:
+ * `recordEvidence.ts` normalized a match's position, similarity and `parentDocId` for the reloaded
+ * conversation, while this window read the raw payload object for the live one. Two readers of one
+ * shape is the 561 P-A divergence with a smaller blast radius, not a different thing — so what is
+ * asserted below is EQUALITY of the two arms, not a fixed expectation on either.
+ *
+ * The legacy `chunkIndex` key below is LIVE-REACHABLE, and that was measured rather than assumed
+ * (847 §S6-live). `toCitationMatchPayload:326-355` writes `sourceIndex` on today's source, but the
+ * key travels on the wire from whatever build is actually serving: a backend one rename behind
+ * (822 §3b) emits `chunkIndex`, and a stack running such a build was observed emitting exactly that
+ * — `{sentenceText, sentenceIndex, parentDocId, similarity, chunkIndex}`, with no `scorer` at all.
+ * Against that frame the pre-fix live arm read `typeof m.sourceIndex === 'number'`, got `false`,
+ * resolved no ref and minted NO mark, while the reload arm's `readSourceIndex:48-52` fell back to
+ * `chunkIndex` and marked. That is the F-12 defect exactly: zero marks live, marks after a reload.
+ *
+ * So this is not a hypothetical shape. It is the one the shared reader has always handled and the
+ * live arm silently dropped, and pinning the two arms as EQUAL is what stops a third field from
+ * being normalized on one path and not the other.
+ */
+describe('the live arm reads the envelope through the SAME reader the reload does (847 F-12)', () => {
+  /** The same match, keyed by the pre-rename positional name a persisted record can still carry. */
+  const legacyPayload = (): Record<string, unknown> => ({
+    scorer: 'CROSS_ENCODER',
+    sentencesTotal: 1,
+    sentencesScored: 1,
+    matches: [
+      {
+        sentenceIndex: 0,
+        sentenceText: 'The lock held.',
+        chunkIndex: 0,
+        similarity: 0.94,
+        parentDocId: DOC,
+      },
+    ],
+  });
+
+  /** What the RELOAD arm makes of an envelope — the shared readers, over the same source list. */
+  const reloadArm = (
+    payload: Record<string, unknown>,
+  ): Pick<Sv3TurnEvidence, 'marks' | 'matches'> => ({
+    marks: claimsToCitations(claimsFromRecord(payload), [source()]),
+    matches: matchesFromRecord(payload),
+  });
+
+  it('resolves a legacy positional key live, exactly as the reloaded conversation does', async () => {
+    const live = await askWith(legacyPayload());
+    const reloaded = reloadArm(legacyPayload());
+    // The reload arm CAN mark this envelope — so an equality that held at zero would be the two arms
+    // agreeing on the defect, and this rules that reading out.
+    expect(reloaded.marks).toHaveLength(1);
+    expect(live.marks).toEqual(reloaded.marks);
+    expect(live.matches).toEqual(reloaded.matches);
+    // And the panel agrees with the marks, from the one normalized position (847 §2.3).
+    expect(sourceGrounding(0, [...live.matches], DOC).cited).toBe(true);
+  });
+
+  it('stays identical on the post-rename payload — the control for the case above', async () => {
+    const live = await askWith(matchPayload('CROSS_ENCODER'));
+    const reloaded = reloadArm(matchPayload('CROSS_ENCODER'));
+    expect(reloaded.marks).toHaveLength(1);
+    expect(live.marks).toEqual(reloaded.marks);
+    expect(live.matches).toEqual(reloaded.matches);
   });
 });

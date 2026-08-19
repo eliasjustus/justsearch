@@ -711,8 +711,13 @@ export async function consumeShapeStream(
         }
         try {
           onEvent(ev.event, payload);
-        } catch {
-          // Per-event handler errors are swallowed; they shouldn't abort the stream.
+        } catch (handlerError) {
+          // Per-event handler errors are swallowed; they shouldn't abort the stream. But swallowing
+          // them SILENTLY made a throwing evidence handler indistinguishable from an event that
+          // never arrived (tempdoc 847 F-12: a live turn rendering no citation marks looks exactly
+          // like a backend that sent none). The stream still survives — the throw is reported, not
+          // rethrown — so a future live-path failure is visible in the console instead of invisible.
+          console.warn(`[stream] handler for "${ev.event}" threw`, handlerError);
         }
       });
     }
