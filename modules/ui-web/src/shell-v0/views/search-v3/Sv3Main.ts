@@ -1343,7 +1343,13 @@ export class Sv3Main extends JfElement {
    * already showing (`CitationsPanel.render` returns nothing when both sets are empty).
    */
   private panelSpeaks(turn: Sv3Turn): boolean {
-    if (turn.kind !== 'ask' || turn.status === 'streaming' || turn.evidence === null) return false;
+    // Tempdoc 847 §2.4.4 — gated on the EVIDENCE, never on the turn's kind. `kind` is derived from
+    // whether the record shows activity (`sv3-record.ts`), so one progress note on an ordinary
+    // grounded ask flipped it to `agent` and hid the sources of the very turns most likely to have
+    // them. A fact must be gated on itself, not on a classification that merely correlates with it
+    // (the same shape 839 F2 fixed); `kind` still governs the activity feed, which is what it is
+    // about.
+    if (turn.status === 'streaming' || turn.evidence === null) return false;
     return turn.evidence.sources.length > 0 || turn.evidence.matches.length > 0;
   }
 

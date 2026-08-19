@@ -452,6 +452,119 @@ describe('the transcript projects from the canonical record (D1)', () => {
     expect(kinds).toEqual(['sv3-run-text', 'sv3-run-tool', 'sv3-run-text']);
   });
 
+  it('a COLD-LOADED grounded answer comes back WITH its sources, note or no note (847 §1.3/§1.7)', async () => {
+    // Two defects in one fixture, both end-to-end over the real `/api/thread/{id}` round trip:
+    // the window discarded the record's evidence entirely, and `panelSpeaks` then hid whatever
+    // survived behind `kind === 'ask'` — which the progress note below flips to `agent`.
+    backend.conversations = [conversationRow('uc-grounded', 'why did the renewal fail?')];
+    backend.threads['uc-grounded'] = {
+      conversationId: 'uc-grounded',
+      events: [
+        wireEvent('g1', 'USER_MESSAGE', 'why did the renewal fail?'),
+        wireEvent('g2', 'PROGRESS', 'Searching the lease folder'),
+        wireEvent('g3', 'ASSISTANT_MESSAGE', 'The lock held.', {
+          citations: [
+            {
+              parentDocId: 'docs/lease.md',
+              chunkIndex: 0,
+              chunkTotal: 1,
+              startChar: 0,
+              endChar: 40,
+              score: 0.9,
+              excerpt: 'The lock held past the renewal date.',
+              startLine: 1,
+              endLine: 2,
+              headingText: 'Renewal',
+              headingLevel: 2,
+            },
+          ],
+          claimMatches: {
+            scorer: 'CROSS_ENCODER',
+            sentencesTotal: 1,
+            sentencesScored: 1,
+            matches: [
+              {
+                sentenceIndex: 0,
+                sentenceText: 'The lock held.',
+                sourceIndex: 0,
+                similarity: 0.94,
+                parentDocId: 'docs/lease.md',
+              },
+            ],
+          },
+        }),
+      ],
+    };
+    const el = await mount();
+    const sidebar = await region(el, 'jf-sv3-sidebar');
+    const row = sidebar.shadowRoot?.querySelector('jf-sv3-session-row') as Updatable;
+    row.shadowRoot?.querySelector<HTMLElement>('[data-testid="sv3-session-row-button"]')?.click();
+    await settle(el);
+
+    const restored = el.sessions.sessions[0]?.turns[0];
+    expect(restored?.evidence?.sources).toHaveLength(1);
+    expect(restored?.evidence?.marks).toHaveLength(1);
+    const main = await region(el, 'jf-sv3-main');
+    // The turn really is `agent`-kind here, which is exactly why the disclosure must not be gated
+    // on kind: the fact on screen is the evidence, and the evidence is there.
+    expect(q(main, 'sv3-turn')?.dataset.kind).toBe('agent');
+    expect(q(main, 'sv3-turn-sources')).not.toBeNull();
+  });
+
+  /** A restored answer whose ONLY evidence is per-sentence matches from the named producer. */
+  const matchesOnlyRecord = (scorer: string): { conversationId: string; events: unknown[] } => ({
+    conversationId: 'uc-matched',
+    events: [
+      wireEvent('m1', 'USER_MESSAGE', 'why did the renewal fail?'),
+      wireEvent('m2', 'ASSISTANT_MESSAGE', 'The lock held.', {
+        claimMatches: {
+          scorer,
+          sentencesTotal: 1,
+          sentencesScored: 1,
+          matches: [
+            {
+              sentenceIndex: 0,
+              sentenceText: 'The lock held.',
+              sourceIndex: 0,
+              similarity: 0.94,
+              parentDocId: 'docs/lease.md',
+            },
+          ],
+        },
+      }),
+    ],
+  });
+
+  async function openTheOnlyConversation(el: Mounted): Promise<void> {
+    const sidebar = await region(el, 'jf-sv3-sidebar');
+    (sidebar.shadowRoot?.querySelector('jf-sv3-session-row') as Updatable | null)?.shadowRoot
+      ?.querySelector<HTMLElement>('[data-testid="sv3-session-row-button"]')
+      ?.click();
+    await settle(el);
+  }
+
+  it('opens NO grounding panel for a restored answer whose producer was not admitted (847 T17b)', async () => {
+    // The counterweight to the loosened `panelSpeaks`: a restored turn whose only evidence is a
+    // non-admitted producer's matches must not open a disclosure that asserts grounding. Its twin
+    // below proves the same fixture DOES open one when the producer is admitted, so this empty is
+    // the gate rather than an inert record.
+    backend.conversations = [conversationRow('uc-matched', 'why did the renewal fail?')];
+    backend.threads['uc-matched'] = matchesOnlyRecord('EMBEDDING_COSINE');
+    const el = await mount();
+    await openTheOnlyConversation(el);
+    expect(el.sessions.sessions[0]?.turns[0]?.evidence?.matches).toEqual([]);
+    expect(q(await region(el, 'jf-sv3-main'), 'sv3-turn-sources')).toBeNull();
+  });
+
+  it('opens one for the SAME record under the admitted producer (the T17b twin)', async () => {
+    backend.conversations = [conversationRow('uc-matched', 'why did the renewal fail?')];
+    backend.threads['uc-matched'] = matchesOnlyRecord('CROSS_ENCODER');
+    const el = await mount();
+    await openTheOnlyConversation(el);
+    expect(el.sessions.sessions[0]?.turns[0]?.evidence?.matches).toHaveLength(1);
+    expect(q(await region(el, 'jf-sv3-main'), 'sv3-turn-sources')).not.toBeNull();
+  });
+
   it('lets the LIVE turn stand while it streams, and yields to the record when it settles', async () => {
     const el = await mount();
     await send(el, 'why did the renewal fail?');
@@ -474,9 +587,12 @@ describe('the transcript projects from the canonical record (D1)', () => {
     stream.emit('done', {});
     stream.end();
     await settle(el);
-    // Settled: the record is the authority, and the turn takes the record's own id (A4).
+    // Settled: the record is the authority for the CONTENT, and its identity is stamped as
+    // `recordId` — the turn's own id is never rewritten (tempdoc 847 §1.6b: the live run's `turnId`,
+    // `expandedSources` and `copiedTurnId` are all keyed on it).
     expect(el.sessions.sessions[0]?.turns[0]?.answer).toBe('The record’s answer.');
-    expect(el.sessions.sessions[0]?.turns[0]?.id).toBe('r1');
+    expect(el.sessions.sessions[0]?.turns[0]?.id).not.toBe('r1');
+    expect(el.sessions.sessions[0]?.turns[0]?.recordId).toBe('r1');
   });
 
   it('says a failed refresh out loud, in words that are NOT the empty state’s (D2)', async () => {

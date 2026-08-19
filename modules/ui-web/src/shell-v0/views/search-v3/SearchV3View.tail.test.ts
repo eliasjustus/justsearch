@@ -68,6 +68,7 @@ const evidence = (over: Partial<Sv3TurnEvidence> = {}): Sv3TurnEvidence => ({
 
 const turn = (over: Partial<Sv3Turn> = {}): Sv3Turn => ({
   id: 't1',
+  recordId: null,
   kind: 'ask',
   question: 'why did the renewal fail?',
   answer: 'Because the lock held.',

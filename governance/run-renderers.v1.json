@@ -48,8 +48,12 @@
       "modules/ui-web/src/shell-v0/components/chat/citationResolve.ts",
       "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
       "modules/ui-web/src/shell-v0/views/SummarizeView.ts",
-      "modules/ui-web/src/shell-v0/views/search-v3/sv3-ask.ts"
-    ]
+      "modules/ui-web/src/shell-v0/views/search-v3/sv3-ask.ts",
+      "modules/ui-web/src/shell-v0/views/search-v3/sv3-record.ts"
+    ],
+    "weaveNotes": {
+      "modules/ui-web/src/shell-v0/views/search-v3/sv3-record.ts": "Tempdoc 847 §2.4 — the RESTORED half of the site already registered above (`sv3-ask.ts`, the live half). A reloaded search-v3 answer resolves its inline marks by CALLING the one authority over the persisted envelope's claims, exactly as the live stream's claims are resolved; it authors no mapping and mints no `Citation` of its own. Registering it is what keeps the live and restored renders from disagreeing (561 P-A) — the alternative, leaving the record path markless, is the defect 847 §1.3 exists to fix."
+    }
   },
   "groundingSemantics": {
     "rationale": "Tempdoc 565 §15.A/§15.D.1/§6 — ONE grounding-semantics authority. The score→tier→grounding-class/label mapping (the answer↔source similarity classification) lives ONLY in evidenceProjection.ts; the tier is a BRANDED GroundingTier (§15.D.1 typed seam) only `evidenceTier` can mint, and the grounding presentations (`groundingClass`/`groundingLabel`) + the grouping/CSS vocabulary (`tierGroup`/`tierClass`) derive from it. Before §15 this mapping was forked across FOUR sites with TWO threshold sets (MarkdownBlock/StreamingTextBlock `groundingStatus` 0.5/0.2; CitationHoverCard `scoreLabel` 0.5/0.2; this file 0.7/0.3) so one similarity classified DIFFERENTLY per surface. This realizes the §6 'evidence-surface gate' SCORER facet via two checks: (i) only registered consumer sites import the tier-classification symbols (a new importer = a new grounding classifier, forces review); (ii) NO file but the authority re-derives a grounding class from a numeric threshold (a `score >= 0.X ? 'grounded'` shape — the import-INVISIBLE fork the seam alone can't catch). Honest scope (§12.10): import-visible + literal-visible; a fully-obfuscated re-derivation (no recognizable threshold literal, no import) still slips — the same ceiling as the other run-renderer checks.",
