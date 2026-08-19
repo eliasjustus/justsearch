@@ -1,7 +1,7 @@
 ---
 title: "Dev agent-tool surface audit: what agents actually invoke on the justsearch-dev MCP server, what fails, what nobody has ever called, and the two structural reasons 81% of local-API traffic bypasses the surface entirely"
 type: tempdocs
-status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, independently re-verified against source (§5.6). Recommendation REVISED same day from RETIRE to FIX-THEN-SURFACE after owner challenge: the retire estimate did not survive re-examination and the value model (warm models across a code change, not a saved spawn) was never weighed — see §4.2. THEORIZED 2026-08-18 (§11): the endstate thesis is a single run registry as keystone, three tool classes with per-class middleware, and specialization into arbitration over transport; #845 reserved as the candidate registry lane. DIRECTION SET 2026-08-18 (12): the through-line is that the surface asserts what it has not verified (7 instances, 1 property); criterion = a dev tool must not report state it did not verify. 12.3 re-sequences 9 by that criterion and drops P3b (allowlist) + defers P8. IMPLEMENTED 2026-08-18 on branch worktree-844-dev-surface-honesty, NOT merged (see 13 As-built). Shipped: P1 prunes (tool set 16 -> 12), P2 start/preflight truth + DIST_NOT_BUILT, P3a projection honesty, P5 quick_health foreignRuns tri-state, P6 de-fork + check-dev-mcp-doc-sync gate + consult-register, P7 the standing reader. Dropped: P3b. ALL FOUR OWNER DECISIONS NOW LANDED (2026-08-19): D1 done incl. the gitignored main-checkout file; D2 = repair, hot reload made coherent (13.7); D3 = full, jseval registers its backend (13.8); D4 = option (b), the harness-vs-browser rule lives in the ui-check skill. Remaining: the 13.6 live validation pass, which needs the shared dev stack. Execution corrected this document three times - 3 was measured on a non-recursive glob that excluded subagents (379 -> 731 calls), 6.3 was a sync generator not a fork, and 5.2 s separator claim is retracted. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
+status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, independently re-verified against source (§5.6). Recommendation REVISED same day from RETIRE to FIX-THEN-SURFACE after owner challenge: the retire estimate did not survive re-examination and the value model (warm models across a code change, not a saved spawn) was never weighed — see §4.2. THEORIZED 2026-08-18 (§11): the endstate thesis is a single run registry as keystone, three tool classes with per-class middleware, and specialization into arbitration over transport; #845 reserved as the candidate registry lane. DIRECTION SET 2026-08-18 (12): the through-line is that the surface asserts what it has not verified (7 instances, 1 property); criterion = a dev tool must not report state it did not verify. 12.3 re-sequences 9 by that criterion and drops P3b (allowlist) + defers P8. IMPLEMENTED 2026-08-18 on branch worktree-844-dev-surface-honesty, NOT merged (see 13 As-built). Shipped: P1 prunes (tool set 16 -> 12), P2 start/preflight truth + DIST_NOT_BUILT, P3a projection honesty, P5 quick_health foreignRuns tri-state, P6 de-fork + check-dev-mcp-doc-sync gate + consult-register, P7 the standing reader. Dropped: P3b. ALL FOUR OWNER DECISIONS NOW LANDED (2026-08-19): D1 done incl. the gitignored main-checkout file; D2 = repair, hot reload made coherent (13.7); D3 = full, jseval registers its backend (13.8); D4 = option (b), the harness-vs-browser rule lives in the ui-check skill. LIVE-VALIDATED 2026-08-19 (13.9): P8 condition 1 is SATISFIED — bytecode pushed into a running Worker, pid unchanged across three reloads, encoders never unloaded, DevReloadManager reconstruction in 434ms. The live pass found four 12.2 violations in the repair itself (structural gate never fired; a failed push reported classes redefined; the identity refusal invented its cause; and start runs assemble, not installDist, so a Java edit never reaches the running Head) — all fixed as F1-F4. It also corrected 13.6 step 6, whose warmth assertion would have produced a false failure. Execution corrected this document three times - 3 was measured on a non-recursive glob that excluded subagents (379 -> 731 calls), 6.3 was a sync generator not a fork, and 5.2 s separator claim is retracted. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
 created: 2026-08-18
 author: agent session b73007cd (Opus 5, 1M context) — chartered by the owner after a session-opening question about the state of dev-related MCP capabilities
 category: agent-process / dev-tooling / mcp
@@ -1143,9 +1143,18 @@ models really stay warm across it.)
    - `worker.pid` is **identical** to step 2. The Worker JVM was never restarted, so nothing it had
      loaded was unloaded. A changed pid means a restart happened and the reload proved nothing.
    - `worker.health_check.embedding_ready` is still `true` immediately after the reload.
-   - `<dataDir>/logs/worker.log` after the reload shows the DevReloadManager reconstruction WITHOUT
-     an ONNX/encoder load sequence (`grep -i "loading\|onnx\|session" worker.log | tail -30`). Model
-     loads there would mean `ModelContext` was not carried across and the ~40s cost is back.
+   - `<dataDir>/logs/worker.log` shows the DevReloadManager reconstruction, and **no session that
+     existed before the reload is re-loaded after it**.
+
+     > **Compare session identity, not the presence of load lines.** The obvious form of this check
+     > — "no ONNX/loading lines after the reload timestamp" — is WRONG and produced a false failure
+     > on the first real run (§13.9). Sessions here are created lazily on first use, so a
+     > verification search legitimately initialises an encoder *after* the reload that was never
+     > loaded before it. The correct procedure: list every
+     > `OnnxSessionCache`/`NativeSessionHandle` line with timestamps, split at the reload, and
+     > confirm each **named** session appearing after it (`embed:`, `reranker:`, …) has no earlier
+     > init line. A *repeat* of a pre-reload session means `ModelContext` was not carried across and
+     > the ~40s cost is back; a *first* appearance means nothing.
    - A search still answers: `justsearch.dev.search_query { "query": "test", "limit": 3 }`.
 
 7. **Revert the edit**, `reload` again, and confirm `worker.health_check.version` returns to the
@@ -1286,3 +1295,80 @@ claim either way, and a test forbids the reader from upgrading it.
 path is mocked), and the `mainRepoRoot` join against the real `<main>/tmp/dev-runner/foreign` — the
 worker declined to write into the main checkout, which was correct. Both are covered by §13.6's
 live pass.
+
+### 13.9 Live validation RESULTS (2026-08-19) — P8 condition 1 satisfied
+
+Run from a fresh session (per §13.6's precondition), stack started from this worktree, lease held
+throughout, stopped cleanly afterwards. **The repair works. Four defects in it were found by doing
+this, none of which any unit test could have caught.**
+
+#### What passed
+
+| Step | Result |
+|---|---|
+| 1 — start + record | `distFrom: "844-dev-surface-honesty"` — a **bare worktree name** — resolved (B2's fix, live). `run.json` → `hotReload: {enabled:true, debugPort:5005, classesDir:<this worktree>, portSource:"scan"}` (R3) |
+| 2 — baseline | `version: "0.1.0-dev"`, `pid: 29616`, `embedding_ready: true` |
+| 4 — reload | `ok:true`, `REDEFINED`, `identityVerified:true`, 121 redefined / 157 not-loaded, `signalWritten:true`, `compiledFrom` = this worktree (**R1**) |
+| **5 — new bytecode live** | `version: "0.1.0-dev [HOTRELOAD-PROOF]"` — a string that was not in the JVM a minute earlier |
+| **6 — models stayed warm** | `pid: 29616` **unchanged**; `embedding_ready` still true; `DevReloadManager` reconstruction completed in **434 ms**; search answered normally |
+| 7 — revert | `version` back to `0.1.0-dev`, still `pid: 29616` — three reloads inside one JVM lifetime |
+| 8 — structural | refused, `signalWritten:false`, stack unchanged (the §5.6 #3 fix, live) |
+| 8 — opt-out | `HOT_RELOAD_NOT_ENABLED`, with the message explicitly correcting the old false claim (**R6**), and an ownership projection attached (**R2**) |
+
+`DevReloadManager` — the one thing §13.7 flagged as unproven — is now proven: reconstruction in
+434 ms against a warm restart's ~40 s, with the encoders never unloaded.
+
+#### The warmth assertion in §13.6 was wrong, and would have failed the run
+
+Step 6 as written said to `grep -i "loading\|onnx\|session" worker.log | tail -30` and treat model
+loads after the reload as failure. Applied literally, this run **fails**: at 13:17:01 — after the
+13:16:44 reload — the log shows `Loading pre-optimized CUDA-EP ONNX model` and
+`embed: GPU session initialized`.
+
+That would have been a false failure. The full session history:
+
+```
+13:16:15-13:16:22  4 CPU model loads + reranker: GPU session initialized   <- before the reload
+13:16:44.41        reload; reconstruction complete 434ms
+13:17:01-13:17:02  embed: GPU session initialized (1037ms)                 <- after
+```
+
+The post-reload load is the **`embed`** session, which has **no earlier init line anywhere in the
+log** — it was lazily created on first use by the verification search. Every session that existed
+*before* the reload (the four CPU models and the `reranker` GPU session) was **never re-loaded
+after it**. Nothing warm was lost.
+
+**The assertion must compare session identity, not the presence of load lines.** Corrected in
+§13.6. This is `interrogate-results` in the small: the log matched the failure pattern, and the
+cause was not the one the pattern implies.
+
+#### Four defects found, all §12.2 violations, all now fixed (F1-F4)
+
+1. **The structural-change gate never fired** (`wrong-gate`). The predicate matched `HotSwapPush`'s
+   own phrasing, `"added/removed methods or fields"`. The real JVM message is
+   `"HotSwap not supported by target VM: add method not implemented"`, so a genuine structural
+   change reported `structuralChangeDetected: false` and fell through to a generic
+   `HOTSWAP_FAILED` — discarding the "restart for this change" remedy that was sitting in its own
+   output. The gate existed, the symbol existed, and it did not fire in the target scenario.
+2. **A failed push reported classes as redefined.** `classesRedefined` was parsed from the output
+   regardless of exit code, so the refused structural push returned `ok:false` **with
+   `classesRedefined: 3`**. Root cause: `HotSwapPush` printed `REDEFINED n` before
+   `redefineClasses` had succeeded. This is the R5 defect class reappearing in the failure path.
+3. **The identity refusal misattributed its own cause.** It reported "the VM was NOT launched from
+   the tree this run record names… the cross-tree injection case". Live, that was false: all 183
+   of the VM's classpath entries were under this worktree. The real cause was a **stale Head
+   `installDist`** predating R4, so the classes dir was absent from an otherwise-correct
+   classpath. The refusal was right; the explanation was invented. Now split into
+   `HOT_RELOAD_CLASSPATH_ABSENT` (right tree, missing entry, remedy: rebuild the Head dist) versus
+   `TARGET_IDENTITY_MISMATCH` (genuinely another tree).
+4. **`start` claims to ensure the dist is up to date, and does not.** `dev-runner.cjs` logs
+   *"Ensuring distribution is up-to-date (assemble)"* and runs `assemble`, which does **not** run
+   `installDist` — but the Head launches from `modules/ui/build/install/ui`. Proven live: after
+   editing `WorkerSpawner.java`, `start` (no `skipBuild`) still launched the old classpath, and an
+   explicit `installDist` then executed real work and refreshed the installed jar. **This is not a
+   hot-reload defect** — it silently invalidates *any* live verification of a Java change, which is
+   a far broader false green than the one this lane set out to fix.
+
+Defect 4 is the most valuable thing the live pass produced, and it was found only because defect 3's
+refusal was loud. A quieter failure mode would have let the run "pass" against stale code — which is
+`static-green ≠ live-working` with the roles reversed: the *stack* was stale, not the test.
