@@ -7,7 +7,7 @@ description: "Canonical YAML/env/sysprop ownership and precedence map."
 
 # Runtime Config Ownership Matrix
 
-Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-07-30.
+Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-08-19.
 
 Precedence note:
 1. `YAML > sysprop > env > default` where a YAML key and env/sysprop fallback both exist.
@@ -32,6 +32,8 @@ Precedence note:
 | index.hybrid.branch_cc_zero_exclude | JUSTSEARCH_HYBRID_BRANCH_CC_ZERO_EXCLUDE | index.hybrid.branch_cc_zero_exclude | HYBRID_BRANCH_CC_ZERO_EXCLUDE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.branch_chunk_min_weight_multiplier | JUSTSEARCH_HYBRID_BRANCH_CHUNK_MIN_WEIGHT_MULTIPLIER | index.hybrid.branch_chunk_min_weight_multiplier | HYBRID_BRANCH_CHUNK_MIN_WEIGHT_MULTIPLIER | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.branch_fusion_strategy | JUSTSEARCH_HYBRID_BRANCH_FUSION_STRATEGY | index.hybrid.branch_fusion_strategy | HYBRID_BRANCH_FUSION_STRATEGY | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.branch_ramp.full_weight_max_tokens | JUSTSEARCH_HYBRID_BRANCH_RAMP_FULL_WEIGHT_MAX_TOKENS | index.hybrid.branch_ramp.full_weight_max_tokens | HYBRID_BRANCH_RAMP_FULL_WEIGHT_MAX_TOKENS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.branch_ramp.zero_weight_min_tokens | JUSTSEARCH_HYBRID_BRANCH_RAMP_ZERO_WEIGHT_MIN_TOKENS | index.hybrid.branch_ramp.zero_weight_min_tokens | HYBRID_BRANCH_RAMP_ZERO_WEIGHT_MIN_TOKENS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.candidate_limit_max | JUSTSEARCH_INDEX_HYBRID_CANDIDATE_LIMIT_MAX | index.hybrid.candidate_limit_max | HYBRID_CANDIDATE_LIMIT_MAX | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.cc_alpha | JUSTSEARCH_HYBRID_CC_ALPHA | index.hybrid.cc_alpha | HYBRID_CC_ALPHA | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.cc_weight_dense | JUSTSEARCH_HYBRID_CC_WEIGHT_DENSE | index.hybrid.cc_weight_dense | HYBRID_CC_WEIGHT_DENSE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
@@ -113,6 +115,7 @@ Precedence note:
 | justsearch.ai.host | JUSTSEARCH_AI_HOST | justsearch.ai.host | AI_HOST | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.ai.port | JUSTSEARCH_AI_PORT | justsearch.ai.port | AI_PORT | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_API_PORT | justsearch.api.port | API_PORT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_APP_VERSION | justsearch.app.version | APP_VERSION | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BACKFILL_BGE_M3_BATCH_SIZE | justsearch.backfill.bge_m3_batch_size | BACKFILL_BGE_M3_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE | justsearch.backfill.bge_m3_interleave_batch_size | BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BACKFILL_CHUNK_SLOTS_PER_BATCH | justsearch.backfill.chunk_slots_per_batch | BACKFILL_CHUNK_SLOTS_PER_BATCH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

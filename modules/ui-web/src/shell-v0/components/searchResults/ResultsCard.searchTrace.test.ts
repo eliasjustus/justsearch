@@ -107,6 +107,55 @@ describe('ResultsCard — retrieval-mode indicator (ported from SearchSurface.re
     expect(el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]')).toBeNull();
   });
 
+  // Register F-052 — a cross-encoder DROP reaches the user on the meta line. Before this the
+  // reason existed only inside the (unmounted) explain panel's collapsed stage list, so a rerank
+  // deadline miss delivered fusion order with no user-visible signal at all.
+  it('F-052: a cross-encoder deadline drop is stated on the meta line', async () => {
+    const el = await mount({
+      ...BASE,
+      results: [hit('a')],
+      searchTrace: {
+        version: 1,
+        effectiveMode: 'HYBRID',
+        stages: [{ id: 'cross-encoder', status: 'skipped', reason: 'DEADLINE_EXCEEDED' }],
+      },
+    });
+    const drop = el.shadowRoot?.querySelector('[data-testid="rerank-drop"]');
+    expect(drop?.getAttribute('data-reason')).toBe('DEADLINE_EXCEEDED');
+    expect(drop?.textContent).toContain('Relevance re-ranking ran out of time');
+    // The raw wire code never reaches the user.
+    const meta = el.shadowRoot?.querySelector('[data-testid="card-meta"]')?.textContent ?? '';
+    expect(meta).not.toContain('DEADLINE_EXCEEDED');
+  });
+
+  it('F-052: a by-design cross-encoder skip stays silent on the meta line', async () => {
+    for (const reason of ['DISABLED', 'FUSION_CONFIDENT', 'PIPELINE_NOT_ELIGIBLE']) {
+      const el = await mount({
+        ...BASE,
+        results: [hit('a')],
+        searchTrace: {
+          version: 1,
+          effectiveMode: 'HYBRID',
+          stages: [{ id: 'cross-encoder', status: 'skipped', reason }],
+        },
+      });
+      expect(el.shadowRoot?.querySelector('[data-testid="rerank-drop"]')).toBeNull();
+    }
+  });
+
+  it('F-052: an executed cross-encoder says nothing', async () => {
+    const el = await mount({
+      ...BASE,
+      results: [hit('a')],
+      searchTrace: {
+        version: 1,
+        effectiveMode: 'HYBRID',
+        stages: [{ id: 'cross-encoder', status: 'executed', ms: 8 }],
+      },
+    });
+    expect(el.shadowRoot?.querySelector('[data-testid="rerank-drop"]')).toBeNull();
+  });
+
   // Tempdoc 738 (C2) — the latency form: plain "found in Xs" in Simple, raw "Nms" in Detailed.
   it('Simple (default): renders a plain latency ("found in …s"), never raw ms', async () => {
     const el = await mount({ ...BASE, results: [hit('a')], processingTimeMs: 62 });
