@@ -204,17 +204,22 @@ export class SettingsNav extends JfElement {
       cursor: pointer;
       padding: 0.375rem 0.5rem;
     }
-    button.category-row:hover,
-    button.anchor-row:hover {
+    button.category-row:hover {
       color: var(--text-primary);
       background: var(--surface-hover);
+    }
+    /* Tempdoc 855 §13/§15.1 remediation — sub-anchors are plain text (Discord's own Appearance →
+       Theme/App Icon/… rows carry NO background pill, only a text-brightness change); only
+       CATEGORY rows keep the pill. Hover on an anchor is a subtle text-brightness change, no wash. */
+    button.anchor-row:hover {
+      color: var(--text-primary);
     }
     /* Discord-2025 measured spec (855 §2): a NEUTRAL translucent active pill, not the brand accent.
        Uses --surface-active (distinct from :hover's --surface-hover, tempdoc 855 §12 P3a) — sharing
        --surface-hover made the active row and a hovered-but-inactive row render identically, so
-       hovering elsewhere in the list visually "double-highlighted" two rows at once. */
-    button.category-row.active,
-    button.anchor-row.active {
+       hovering elsewhere in the list visually "double-highlighted" two rows at once. Categories only
+       — anchors get brighter text + aria-current, no background (855 §13/§15.1). */
+    button.category-row.active {
       color: var(--text-primary);
       background: var(--surface-active);
     }

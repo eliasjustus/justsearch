@@ -87,6 +87,72 @@ describe('validateThemeManifest', () => {
     });
     expect(r.ok).toBe(true);
   });
+
+  // Tempdoc 855 §15.3 — the declared theme-picker swatch (surface + accent).
+  describe('swatch field', () => {
+    it('accepts a well-formed swatch', () => {
+      const r = validateThemeManifest({
+        schemaVersion: 1,
+        themes: [
+          {
+            id: 'core.x',
+            displayName: 'X',
+            cssPath: '/themes/x.css',
+            swatch: { surface: '#2e3440', accent: '#88c0d0' },
+          },
+        ],
+      });
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.manifest.themes[0]!.swatch).toEqual({ surface: '#2e3440', accent: '#88c0d0' });
+      }
+    });
+
+    it('is absent-when-absent (no swatch field required)', () => {
+      const r = validateThemeManifest({
+        schemaVersion: 1,
+        themes: [{ id: 'core.x', displayName: 'X', cssPath: '/themes/x.css' }],
+      });
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.manifest.themes[0]!.swatch).toBeUndefined();
+    });
+
+    it('rejects a non-object swatch', () => {
+      const r = validateThemeManifest({
+        schemaVersion: 1,
+        themes: [{ id: 'core.x', displayName: 'X', cssPath: '/themes/x.css', swatch: 'blue' }],
+      });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.errors.some((e) => e.includes('swatch must be an object'))).toBe(true);
+    });
+
+    it('rejects a swatch missing accent', () => {
+      const r = validateThemeManifest({
+        schemaVersion: 1,
+        themes: [
+          { id: 'core.x', displayName: 'X', cssPath: '/themes/x.css', swatch: { surface: '#000' } },
+        ],
+      });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.errors.some((e) => e.includes('swatch.accent'))).toBe(true);
+    });
+
+    it('rejects a swatch with an empty surface string', () => {
+      const r = validateThemeManifest({
+        schemaVersion: 1,
+        themes: [
+          {
+            id: 'core.x',
+            displayName: 'X',
+            cssPath: '/themes/x.css',
+            swatch: { surface: '', accent: '#88c0d0' },
+          },
+        ],
+      });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.errors.some((e) => e.includes('swatch.surface'))).toBe(true);
+    });
+  });
 });
 
 describe('fetchThemeManifest', () => {

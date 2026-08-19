@@ -43,6 +43,38 @@ describe('<jf-option-button-group>', () => {
     expect(selected?.textContent?.trim()).toBe('Advanced');
   });
 
+  // Fix-round F1 — the declared-schema counterpart to plain-props swatch options. Before the fix,
+  // the schema branch hardcoded `swatches = {}`, so `x-enum-swatches` was silently ignored and a
+  // DECLARED theme picker (the default boot path) could never render swatch tiles at all.
+  it('renders swatch tiles from the schema `x-enum-swatches` extension (declared path)', async () => {
+    const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+    document.body.appendChild(el);
+    el.schema = {
+      type: 'string',
+      enum: ['system', 'dark', 'light'],
+      'x-enum-labels': { system: 'System', dark: 'Dark', light: 'Light' },
+      'x-enum-swatches': {
+        system: { split: ['#1a1a1e', '#f4f4f5'] },
+        dark: { fill: '#1a1a1e' },
+        light: { fill: '#f4f4f5' },
+      },
+    } as OptionButtonGroupRenderer['schema'];
+    el.uischema = { type: 'Control' };
+    el.data = 'dark';
+    el.enabled = true;
+    el.visible = true;
+    el.path = 'theme';
+    el.onChange = () => {};
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.option-group.swatch-group')).toBeTruthy();
+    const tiles = el.shadowRoot?.querySelectorAll('.option-swatch-tile');
+    expect(tiles?.length).toBe(3);
+    const darkFill = tiles?.[1]?.firstElementChild as HTMLElement;
+    expect(darkFill?.getAttribute('style')).toContain('background:#1a1a1e');
+    const selected = el.shadowRoot?.querySelector('button.option-btn.selected');
+    expect(selected?.querySelector('.option-swatch-check')).toBeTruthy();
+  });
+
   it('emits onChange(value, path) on click', async () => {
     const calls: Array<{ value: unknown; path: string }> = [];
     const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
@@ -209,6 +241,74 @@ describe('<jf-option-button-group>', () => {
       buttons()[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
       await el.updateComplete;
       expect(changeCalls).toEqual([{ value: 'advanced' }]);
+    });
+  });
+
+  // Tempdoc 855 §15.2 — the swatch option shape (the Appearance System/Dark/Light trio's mechanism):
+  // a per-option custom visual replacing the icon slot, reusing the SAME keyboard model + roving
+  // tabindex rather than forking a second radiogroup component.
+  // Fix-round F1 — `swatch` is the serializable `SwatchSpec` ({fill}|{split}), not a `TemplateResult`
+  // (a JsonForms schema is DATA and cannot carry a TemplateResult; this is the one vocabulary both
+  // the plain-props path and the declared `x-enum-swatches` schema extension consume).
+  describe('swatch option shape', () => {
+    const SWATCH_OPTIONS = [
+      { value: 'system', label: 'System', swatch: { split: ['#1a1a1e', '#f4f4f5'] as [string, string] } },
+      { value: 'dark', label: 'Dark', swatch: { fill: '#1a1a1e' } },
+      { value: 'light', label: 'Light', swatch: { fill: '#f4f4f5' } },
+    ];
+
+    it('renders the swatch fill instead of an icon, and marks the group swatch-group', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = SWATCH_OPTIONS;
+      el.value = 'dark';
+      await el.updateComplete;
+      expect(el.shadowRoot?.querySelector('.option-group.swatch-group')).toBeTruthy();
+      const tiles = el.shadowRoot?.querySelectorAll('.option-swatch-tile');
+      expect(tiles?.length).toBe(3);
+      // `dark` is a flat {fill} spec — the rendered fill span's background is the literal color.
+      const darkFill = tiles?.[1]?.firstElementChild as HTMLElement;
+      expect(darkFill?.getAttribute('style')).toContain('background:#1a1a1e');
+      // `system` is a {split} spec — rendered as a diagonal two-tone gradient.
+      const systemFill = tiles?.[0]?.firstElementChild as HTMLElement;
+      expect(systemFill?.getAttribute('style')).toContain('linear-gradient(135deg, #1a1a1e 50%, #f4f4f5 50%)');
+    });
+
+    it('applies the option-btn-swatch modifier class to every option', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = SWATCH_OPTIONS;
+      el.value = 'system';
+      await el.updateComplete;
+      const buttons = Array.from(el.shadowRoot?.querySelectorAll('button.option-btn') ?? []);
+      expect(buttons.every((b) => b.classList.contains('option-btn-swatch'))).toBe(true);
+    });
+
+    it('renders a check badge only on the selected swatch tile', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = SWATCH_OPTIONS;
+      el.value = 'light';
+      await el.updateComplete;
+      const buttons = Array.from(el.shadowRoot?.querySelectorAll('button.option-btn') ?? []);
+      const checks = buttons.map((b) => b.querySelector('.option-swatch-check'));
+      expect(checks.filter(Boolean).length).toBe(1);
+      const selectedBtn = el.shadowRoot?.querySelector('button.option-btn.selected');
+      expect(selectedBtn?.querySelector('.option-swatch-check')).toBeTruthy();
+    });
+
+    it('the swatch trio still emits change on click and drives the SAME keyboard model', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = SWATCH_OPTIONS;
+      el.value = 'system';
+      const changeCalls: Array<{ value: string }> = [];
+      el.addEventListener('change', (e) => changeCalls.push((e as CustomEvent<{ value: string }>).detail));
+      await el.updateComplete;
+      const buttons = () => Array.from(el.shadowRoot?.querySelectorAll('button.option-btn') ?? []) as HTMLButtonElement[];
+      buttons()[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      await el.updateComplete;
+      expect(changeCalls).toEqual([{ value: 'dark' }]);
     });
   });
 });

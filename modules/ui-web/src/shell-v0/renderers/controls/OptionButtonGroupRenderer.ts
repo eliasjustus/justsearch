@@ -10,7 +10,16 @@
  * x-ui-renderer dispatcher):
  *   { type:'string', enum:['simple','advanced'], 'x-ui-renderer':'option-button-group',
  *     'x-enum-labels': {simple:'Simple', advanced:'Advanced'},
- *     'x-enum-descriptions': {simple:'Standard view', advanced:'Full controls'} }
+ *     'x-enum-descriptions': {simple:'Standard view', advanced:'Full controls'},
+ *     'x-enum-swatches': {simple:{fill:'#111'}, advanced:{fill:'#222'}} }
+ *
+ * Tempdoc 855 fix-round F1 — `x-enum-swatches` mirrors the `x-enum-labels` convention (a
+ * value→spec record on the property schema) so the DECLARED schema path can render the same
+ * swatch-tile trio the plain-props path renders (previously the schema branch hardcoded
+ * `swatches = {}`, making the trio dead code on the default declared boot). A schema is DATA, not
+ * code, so the spec is the serializable {@link SwatchSpec} — never a `TemplateResult` — and BOTH
+ * the plain-props `option.swatch` field and this schema extension consume it through the one
+ * `renderSwatchFill()` below: one swatch vocabulary, not two.
  *
  * Each option is a native <button> in a role=radiogroup → keyboard-operable (controls-a11y gate).
  * Tempdoc 855 §15.2/§17 R2 — the WAI-ARIA radiogroup keyboard model (ArrowLeft/Up = previous+select,
@@ -39,6 +48,27 @@ interface EnumOptionSchema {
   readonly enum?: readonly unknown[];
   readonly 'x-enum-labels'?: Record<string, string>;
   readonly 'x-enum-descriptions'?: Record<string, string>;
+  /** Tempdoc 855 fix-round F1 — the declared-path swatch vocabulary; see the module doc. */
+  readonly 'x-enum-swatches'?: Record<string, SwatchSpec>;
+}
+
+/**
+ * Tempdoc 855 fix-round F1 — the ONE serializable swatch vocabulary, consumed by both the
+ * plain-props `OptionButtonGroupOption.swatch` field and the declared-path `x-enum-swatches`
+ * schema extension. `fill` is a flat color/gradient CSS value; `split` is the two-tone diagonal
+ * idiom (e.g. the Appearance "System" tile — half dark, half light). Serializable (no
+ * `TemplateResult`) because a JSON-Schema declaration is DATA, not code.
+ */
+export type SwatchSpec = { readonly fill: string } | { readonly split: readonly [string, string] };
+
+/** Renders a {@link SwatchSpec} into the `.option-swatch-tile` fill — the one rendering path both
+ *  the plain-props and declared-schema swatch sources go through. */
+function renderSwatchFill(spec: SwatchSpec): TemplateResult {
+  const background =
+    'split' in spec
+      ? `linear-gradient(135deg, ${spec.split[0]} 50%, ${spec.split[1]} 50%)`
+      : spec.fill;
+  return html`<span style="position:absolute;inset:0;background:${background}"></span>`;
 }
 
 /** Plain-props option shape (855 §17 R2 — the non-JsonForms usage path). */
@@ -47,6 +77,16 @@ export interface OptionButtonGroupOption {
   readonly label: string;
   readonly description?: string;
   readonly icon?: IconName;
+  /**
+   * Tempdoc 855 §15.2 — an optional custom visual (e.g. a painted swatch tile) that replaces the
+   * icon slot when present, and switches the button to the compact square "swatch" layout with a
+   * check badge on the selected option. Reuses the ONE radiogroup keyboard model instead of forking
+   * a second component for visually-rich option grids (e.g. the Appearance System/Dark/Light trio) —
+   * a consumer supplies the fill, this renderer owns the tile chrome + selection state + keyboard.
+   * Fix-round F1 — serializable {@link SwatchSpec}, not a `TemplateResult` (so the same shape also
+   * works as declared-schema DATA via `x-enum-swatches`).
+   */
+  readonly swatch?: SwatchSpec;
 }
 
 function titleCase(v: string): string {
@@ -115,6 +155,43 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
       color: var(--text-secondary);
       margin-top: 0.125rem;
     }
+    /* Tempdoc 855 §15.2 — the swatch variant: compact fixed-width square tiles (Discord's
+       "Default Themes" idiom), not the flex:1 label+desc card the default layout uses. */
+    .option-group.swatch-group {
+      gap: 0.75rem;
+    }
+    .option-btn.option-btn-swatch {
+      flex: 0 0 auto;
+      width: 4rem;
+      padding: 0;
+      border: none;
+      gap: 0.375rem;
+    }
+    .option-swatch-tile {
+      width: 2.75rem;
+      height: 2.75rem;
+      border-radius: 0.625rem;
+      border: 1px solid var(--border-subtle);
+      position: relative;
+      overflow: hidden;
+    }
+    .option-btn.option-btn-swatch.selected .option-swatch-tile {
+      outline: 2px solid var(--accent-tint);
+      outline-offset: 2px;
+    }
+    .option-swatch-check {
+      position: absolute;
+      bottom: -0.25rem;
+      right: -0.25rem;
+      display: flex;
+      border-radius: 50%;
+      background: var(--surface-primary);
+      color: var(--accent-tint);
+    }
+    .option-btn.option-btn-swatch .option-label {
+      margin-top: 0;
+      font-weight: 500;
+    }
   `;
 
   override render(): TemplateResult {
@@ -126,6 +203,7 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
     let labels: Record<string, string>;
     let descs: Record<string, string>;
     let icons: Record<string, IconName>;
+    let swatches: Record<string, SwatchSpec>;
     let current: string;
     if (plainMode) {
       values = this.options.map((o) => o.value);
@@ -140,6 +218,11 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
           .filter((o): o is OptionButtonGroupOption & { icon: IconName } => o.icon !== undefined)
           .map((o) => [o.value, o.icon]),
       );
+      swatches = Object.fromEntries(
+        this.options
+          .filter((o): o is OptionButtonGroupOption & { swatch: SwatchSpec } => o.swatch !== undefined)
+          .map((o) => [o.value, o.swatch]),
+      );
       current = this.value;
     } else {
       const schema = this.schema as EnumOptionSchema;
@@ -147,8 +230,13 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
       labels = schema['x-enum-labels'] ?? {};
       descs = schema['x-enum-descriptions'] ?? {};
       icons = {};
+      // Fix-round F1 — was hardcoded `{}`, making the declared theme picker's swatch trio dead
+      // code on the default declared path (production boot applies CORE_DECLARED). Threaded
+      // exactly like `x-enum-labels` above.
+      swatches = schema['x-enum-swatches'] ?? {};
       current = typeof this.data === 'string' ? this.data : '';
     }
+    const hasSwatches = Object.keys(swatches).length > 0;
     // Roving tabindex (WAI-ARIA radiogroup pattern): the selected option is the one tab stop; if
     // nothing matches `current`, the first option holds it so the group stays reachable.
     const currentIndex = values.indexOf(current);
@@ -198,25 +286,40 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
     };
 
     return html`
-      <div class="option-group" role="radiogroup">
-        ${values.map(
-          (v, i) => html`
+      <div class="option-group ${hasSwatches ? 'swatch-group' : ''}" role="radiogroup">
+        ${values.map((v, i) => {
+          const selected = current === v;
+          const swatch = swatches[v];
+          return html`
             <button
               type="button"
-              class="option-btn ${current === v ? 'selected' : ''}"
+              class="option-btn ${swatch ? 'option-btn-swatch' : ''} ${selected ? 'selected' : ''}"
               role="radio"
-              aria-checked=${current === v ? 'true' : 'false'}
+              aria-checked=${selected ? 'true' : 'false'}
               tabindex=${i === rovingIndex ? '0' : '-1'}
               ?disabled=${!this.enabled}
               @click=${() => select(v)}
               @keydown=${(e: KeyboardEvent) => onKeydown(e, i)}
             >
-              ${icons[v] ? icon({ name: icons[v], size: 18 }) : nothing}
+              ${swatch
+                ? html`
+                    <span class="option-swatch-tile">
+                      ${renderSwatchFill(swatch)}
+                      ${selected
+                        ? html`<span class="option-swatch-check" aria-hidden="true"
+                            >${icon({ name: 'check-circle-2', size: 14 })}</span
+                          >`
+                        : nothing}
+                    </span>
+                  `
+                : icons[v]
+                  ? icon({ name: icons[v], size: 18 })
+                  : nothing}
               <span class="option-label">${labels[v] ?? titleCase(v)}</span>
               ${descs[v] ? html`<span class="option-desc">${descs[v]}</span>` : nothing}
             </button>
-          `,
-        )}
+          `;
+        })}
       </div>
     `;
   }

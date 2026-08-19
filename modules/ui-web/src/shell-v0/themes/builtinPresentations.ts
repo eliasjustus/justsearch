@@ -16,16 +16,30 @@ import type { JsonSchema, UISchemaElement } from '@jsonforms/core';
 import type { SurfaceBodyDeclaration } from '../components/DeclaredSurface.js';
 import type { PresentationDeclaration } from './presentationDeclaration.js';
 import type { InteractionStatechart } from '../substrates/interaction/index.js';
+import type { SwatchSpec } from '../renderers/controls/OptionButtonGroupRenderer.js';
 
 /** The region id the Settings surface exposes for declaration-driving (Phase 1 keystone). */
 export const SETTINGS_INTERFACE_REGION = 'core.settings.interface';
+
+/**
+ * Tempdoc 855 fix-round F1 — the theme-variant trio's literal (non-token) MODE-concept colors,
+ * exported so BOTH the declared `theme.x-enum-swatches` below AND `SettingsSurface`'s hand-authored
+ * `renderVariantOptions()` fallback render off the SAME source, not two independently authored
+ * copies that could drift. System/Dark/Light depict the MODE concept, not a theme palette, so these
+ * intentionally do NOT read from theme tokens (which vary per active theme).
+ */
+export const THEME_VARIANT_DARK = '#1a1a1e';
+export const THEME_VARIANT_LIGHT = '#f4f4f5';
 
 /**
  * Data shape of the Settings Interface + Appearance region (a subset of UISettings). Each control
  * carries an `x-ui-renderer` hint (569 Fix 1) so the engine renders it through the bespoke-quality
  * renderers (option-button grid / switch) — matching the hand-authored look, which is what lets
  * this declaration be the DEFAULT render with no visual downgrade. The `x-enum-labels` /
- * `x-enum-descriptions` carry the human text the bespoke buttons showed (full parity).
+ * `x-enum-descriptions` carry the human text the bespoke buttons showed (full parity); fix-round F1
+ * adds `x-enum-swatches` on `theme` so the declared picker paints the same swatch trio the
+ * hand-authored path always had (previously the declared path rendered no swatches at all — the
+ * schema branch of `OptionButtonGroupRenderer` hardcoded an empty swatch map).
  *
  * `highContrast` is deliberately NOT declared here (tempdoc 855 §15.4/§17 R1). It used to be, which
  * made this region a SECOND render of the same toggle Appearance hand-authored — and the two of them
@@ -33,6 +47,11 @@ export const SETTINGS_INTERFACE_REGION = 'core.settings.interface';
  * Accessibility section and writes through `SettingsSurface.patch()`, so `APPEARANCE_FLOW`'s
  * `HC_ON`/`HC_OFF` edges below have exactly one producer again. Do not re-add it here.
  */
+const THEME_VARIANT_SWATCHES: Record<'system' | 'dark' | 'light', SwatchSpec> = {
+  system: { split: [THEME_VARIANT_DARK, THEME_VARIANT_LIGHT] },
+  dark: { fill: THEME_VARIANT_DARK },
+  light: { fill: THEME_VARIANT_LIGHT },
+};
 const SETTINGS_INTERFACE_SCHEMA = {
   type: 'object',
   properties: {
@@ -60,6 +79,9 @@ const SETTINGS_INTERFACE_SCHEMA = {
         dark: 'Default theme',
         light: 'Bright theme',
       },
+      // Fix-round F1 — paints the same swatch trio `SettingsSurface.renderVariantOptions()` paints
+      // on the hand fallback path; shared source (`THEME_VARIANT_SWATCHES` above), not a second copy.
+      'x-enum-swatches': THEME_VARIANT_SWATCHES,
     },
     vimMode: {
       type: 'boolean',

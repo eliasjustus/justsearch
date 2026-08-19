@@ -879,3 +879,26 @@ loop; refute-first reviews per round (opus for the contrast chunk).
   browser smoke (HC toggle click round-trip, migration seed, cross-link click)
   awaits a visible browser window — pinned by unit tests meanwhile; folds into
   R3's live pass.
+
+- **R3 (this commit)** — the visual round (§13's actual ask). Flat setting-row idiom
+  across all categories (SettingsSurface + SecuritySurface — one dialect in the
+  window); cards demoted to exactly the §15.1 composite whitelist; sub-anchors lose
+  the pill (text brightness + aria-current only). Control shapes: Density → new
+  `jf-discrete-slider` atom (3 labeled stops, aria-valuetext); Motion → "Reduce
+  motion" switch; theme variant → swatch trio; theme grid → token-painted two-tone
+  tiles (manifest gains a declared optional `swatch {surface, accent}` — authored
+  for all 6 built-ins from their own palette files, verified byte-for-byte by
+  review; custom themes derive from their token trees; prose demoted to title).
+  Review found 2 merge-blockers, fixed in-commit: (1) the swatch trio was dead on
+  the default declared path — the SAME class as R2's F1, one level deeper (the
+  option-group schema branch had no swatch hook): fixed with a serializable
+  `x-enum-swatches` extension consumed by BOTH paths (one swatch vocabulary) and a
+  test that walks the real declared-render chain (red-before-fix verified); the
+  gate gap enabling this class twice (mounts-the-engine vs content-parity) is
+  logged to observations; (2) Security's flat rule clobbered the shared
+  at-rest card and added a stray first divider — scoped to
+  `.section:not(.card):not(:first-child)` with an exact-value cascade test (the
+  worker caught and fixed its own vacuous-assertion trap). Live-verified: declared
+  variant trio renders swatches on a production boot; Data-Protection card chrome
+  restored; ui-shot settings/settings-light/security 0 NEW axe, no overflow. Full
+  ui-web suite 440 files / 5641 green.

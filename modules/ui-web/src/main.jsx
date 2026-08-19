@@ -421,6 +421,9 @@ async function bootstrap() {
         displayName: t.displayName,
         description: t.description ?? '',
         cssPath: t.cssPath,
+        // Tempdoc 855 §15.3 — thread the manifest's declared swatch through to the catalog entry
+        // the settings theme-picker grid reads (undefined when the manifest entry omits it).
+        ...(t.swatch !== undefined ? { swatch: t.swatch } : {}),
       })))
     }
   } catch {

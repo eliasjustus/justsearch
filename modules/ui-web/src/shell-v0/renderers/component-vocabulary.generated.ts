@@ -45,6 +45,7 @@ export type ComponentTag =
   | 'jf-corpus-picker'
   | 'jf-date-control'
   | 'jf-declared-surface'
+  | 'jf-discrete-slider'
   | 'jf-dispatch-source'
   | 'jf-document-pane'
   | 'jf-drag-overlay'
@@ -190,6 +191,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-corpus-picker',
   'jf-date-control',
   'jf-declared-surface',
+  'jf-discrete-slider',
   'jf-dispatch-source',
   'jf-document-pane',
   'jf-drag-overlay',
@@ -311,6 +313,7 @@ export function isComponentTag(tag: string): tag is ComponentTag {
  */
 export const ATOM_TAGS: readonly ComponentTag[] = [
   'jf-button',
+  'jf-discrete-slider',
   'jf-error-alert',
   'jf-filter-chip',
   'jf-status-badge',

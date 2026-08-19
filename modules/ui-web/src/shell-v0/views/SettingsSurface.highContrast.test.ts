@@ -17,6 +17,12 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import './SettingsSurface.js';
+// Fix-round F1 — the declared-path swatch tests below drill through the REAL nested renderer chain
+// (`jf-declared-surface` → `jf-vertical-layout` → `jf-x-ui-renderer-control` → the leaf control), so
+// the full default renderer set must be registered (production registers it via this barrel at boot
+// — SettingsSurface.ts itself imports only the specific renderers it references by name, not the
+// layout renderers `<jf-declared-surface>`'s generic engine dispatches to).
+import '../renderers/registry.js';
 import { createMockHostApi } from '../plugin-api/testHostApi.js';
 import { applyAppearance, __resetThemeStateForTest } from '../state/themeState.js';
 import { __resetUserConfigForTest } from '../state/userConfigState.js';
@@ -202,5 +208,84 @@ describe('SettingsSurface — the Appearance → Accessibility cross-link (§17 
     (el.shadowRoot!.querySelector('.link-row') as HTMLButtonElement).click();
     await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
     expect(scrolled).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Fix-round F1 — the theme-variant swatch trio was DEAD CODE on the default declared path: the
+ * declared `theme` field (`SETTINGS_INTERFACE_SCHEMA` in `builtinPresentations.ts`) supersedes the
+ * hand-authored `SettingsSurface.renderAppearance()` in every real boot (production applies
+ * `CORE_DECLARED` — see `beforeEach` above), and `OptionButtonGroupRenderer`'s JsonForms schema
+ * branch hardcoded `swatches = {}`, so the declared picker rendered plain unswatched buttons no
+ * matter what `renderVariantOptions()` (the never-reached hand path) authored. This test walks the
+ * REAL nested-shadow-root chain the declared path renders through (`jf-declared-surface` →
+ * `jf-vertical-layout` → `jf-x-ui-renderer-control` → `jf-option-button-group`), the same chain
+ * `SettingsSurface.highContrast.test.ts`'s other declared-path assertions above walk.
+ */
+describe('SettingsSurface — declared theme picker swatches (fix-round F1)', () => {
+  async function findThemeOptionGroup(el: HTMLElement): Promise<HTMLElement> {
+    // Each nested custom element (jf-declared-surface → jf-vertical-layout →
+    // jf-x-ui-renderer-control → jf-option-button-group) renders on its OWN microtask, so its
+    // shadow root content isn't guaranteed populated just because an ancestor's `updateComplete`
+    // resolved — await at every level, same pattern `toggleHighContrast` above uses.
+    const declared = el.shadowRoot!.querySelector(
+      'jf-declared-surface',
+    ) as (HTMLElement & { updateComplete: Promise<unknown> }) | null;
+    expect(declared, 'the declared Interface region must render (default CORE_DECLARED boot)').toBeTruthy();
+    await declared!.updateComplete;
+    const layout = declared!.shadowRoot!.querySelector('jf-vertical-layout') as
+      | (HTMLElement & { updateComplete: Promise<unknown> })
+      | null;
+    expect(layout, 'the Interface region body is a VerticalLayout').toBeTruthy();
+    await layout!.updateComplete;
+    const dispatchers = Array.from(
+      layout!.shadowRoot!.querySelectorAll('jf-x-ui-renderer-control'),
+    ) as Array<HTMLElement & { path?: string; updateComplete: Promise<unknown> }>;
+    const themeDispatcher = dispatchers.find((d) => d.path === 'theme');
+    expect(themeDispatcher, 'a theme x-ui-renderer-control must exist in the declared body').toBeTruthy();
+    await themeDispatcher!.updateComplete;
+    const group = themeDispatcher!.shadowRoot!.querySelector('jf-option-button-group') as
+      | (HTMLElement & { updateComplete: Promise<unknown> })
+      | null;
+    expect(group, 'the theme control dispatches to jf-option-button-group').toBeTruthy();
+    await group!.updateComplete;
+    return group as HTMLElement;
+  }
+
+  it('renders the swatch tile trio, not plain text buttons', async () => {
+    const el = await mountSettings();
+    const group = await findThemeOptionGroup(el);
+    expect(
+      group.shadowRoot!.querySelector('.option-group.swatch-group'),
+      'the schema x-enum-swatches must reach the renderer, marking the group swatch-group',
+    ).toBeTruthy();
+    const tiles = group.shadowRoot!.querySelectorAll('.option-swatch-tile');
+    expect(tiles.length).toBe(3);
+  });
+
+  it('paints the same fill colors the hand-authored fallback uses (one shared vocabulary)', async () => {
+    const el = await mountSettings();
+    const group = await findThemeOptionGroup(el);
+    const tiles = Array.from(group.shadowRoot!.querySelectorAll('.option-swatch-tile'));
+    const fills = tiles.map((t) => t.firstElementChild?.getAttribute('style') ?? '');
+    expect(fills[0]).toContain('linear-gradient(135deg, #1a1a1e 50%, #f4f4f5 50%)'); // system
+    expect(fills[1]).toContain('background:#1a1a1e'); // dark
+    expect(fills[2]).toContain('background:#f4f4f5'); // light
+  });
+
+  it('renders a check badge on the swatch tile matching the current theme value', async () => {
+    const el = await mountSettings();
+    // The settings-v2 fetch mock returns `{ui:{}}` (no persisted theme), so drive an explicit
+    // value the way `SettingsSurface.patch()` would — through the declared-surface `data` path,
+    // not the unrelated `?? 'system'` default that only the hand-authored fallback applies.
+    (el as unknown as { ui: { theme?: string } }).ui = { theme: 'light' };
+    (el as unknown as { requestUpdate: () => void }).requestUpdate();
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    const group = await findThemeOptionGroup(el);
+    const selectedBtn = group.shadowRoot!.querySelector('button.option-btn.selected');
+    expect(selectedBtn?.querySelector('.option-swatch-check')).toBeTruthy();
+    // It's specifically the "light" tile (index 2, the third swatch) that carries it.
+    const tiles = Array.from(group.shadowRoot!.querySelectorAll('.option-btn'));
+    expect(tiles[2]).toBe(selectedBtn);
   });
 });

@@ -173,11 +173,17 @@ describe('SettingsSurface — V1.5 Themes section', () => {
     vi.restoreAllMocks();
   });
 
+  // Tempdoc 855 §15.3 — the themes picker is now the swatch GRID: `.theme-tile` (was `.option-btn`)
+  // + `.theme-tile-label` (was `.option-label`), each wrapped in `.theme-tile-wrap` (was
+  // `.custom-theme` for custom entries only; the wrapper is now universal). `.custom-theme-del`
+  // is unchanged — every assertion below is the SAME behavior, ported to the new markup honestly
+  // (select theme → activeThemeId, delete-control gating, Default's selected state).
+
   it('renders Default + built-in theme options', async () => {
     const el = await mountSurface();
     const root = el.shadowRoot;
     expect(root).toBeTruthy();
-    const labels = Array.from(root!.querySelectorAll('.option-label'))
+    const labels = Array.from(root!.querySelectorAll('.theme-tile-label'))
       .map((n) => n.textContent?.trim())
       .filter(Boolean);
     expect(labels).toContain('Default');
@@ -203,12 +209,11 @@ describe('SettingsSurface — V1.5 Themes section', () => {
     const root = el.shadowRoot!;
     // Exactly one delete control — for the single custom theme; built-ins get none.
     expect(root.querySelectorAll('.custom-theme-del').length).toBe(1);
-    const customLabels = Array.from(root.querySelectorAll('.custom-theme .option-label')).map(
-      (n) => n.textContent?.trim(),
-    );
-    expect(customLabels).toEqual(['My Custom']);
+    const wraps = Array.from(root.querySelectorAll('.theme-tile-wrap'));
+    const customWrap = wraps.find((w) => w.querySelector('.custom-theme-del'));
+    expect(customWrap?.querySelector('.theme-tile-label')?.textContent?.trim()).toBe('My Custom');
     // Built-in themes still render (not wrapped with a delete control).
-    const allLabels = Array.from(root.querySelectorAll('.option-label')).map((n) =>
+    const allLabels = Array.from(root.querySelectorAll('.theme-tile-label')).map((n) =>
       n.textContent?.trim(),
     );
     expect(allLabels).toContain('Nord');
@@ -217,12 +222,12 @@ describe('SettingsSurface — V1.5 Themes section', () => {
   it('Default option is selected when no theme is active', async () => {
     const el = await mountSurface();
     const root = el.shadowRoot!;
-    // Find the Default button — it's the .option-btn whose label is "Default".
-    const buttons = Array.from(root.querySelectorAll('.option-btn'));
-    const defaultBtn = buttons.find(
-      (b) =>
-        b.querySelector('.option-label')?.textContent?.trim() === 'Default',
-    ) as HTMLButtonElement | undefined;
+    // Find the Default tile — it's the .theme-tile whose sibling label is "Default".
+    const wraps = Array.from(root.querySelectorAll('.theme-tile-wrap'));
+    const defaultWrap = wraps.find(
+      (w) => w.querySelector('.theme-tile-label')?.textContent?.trim() === 'Default',
+    );
+    const defaultBtn = defaultWrap?.querySelector('.theme-tile') as HTMLButtonElement | undefined;
     expect(defaultBtn).toBeTruthy();
     expect(defaultBtn!.classList.contains('selected')).toBe(true);
   });
@@ -233,14 +238,79 @@ describe('SettingsSurface — V1.5 Themes section', () => {
     // the clear path which doesn't fetch.)
     const el = await mountSurface();
     const root = el.shadowRoot!;
-    const buttons = Array.from(root.querySelectorAll('.option-btn'));
-    const defaultBtn = buttons.find(
-      (b) =>
-        b.querySelector('.option-label')?.textContent?.trim() === 'Default',
-    ) as HTMLButtonElement | undefined;
+    const wraps = Array.from(root.querySelectorAll('.theme-tile-wrap'));
+    const defaultWrap = wraps.find(
+      (w) => w.querySelector('.theme-tile-label')?.textContent?.trim() === 'Default',
+    );
+    const defaultBtn = defaultWrap?.querySelector('.theme-tile') as HTMLButtonElement | undefined;
     defaultBtn!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(getActiveThemeId()).toBeNull();
+  });
+
+  it('a built-in theme with a manifest-declared swatch paints two-tone tiles, not a neutral fallback', async () => {
+    const el = await mountSurface();
+    const root = el.shadowRoot!;
+    const wraps = Array.from(root.querySelectorAll('.theme-tile-wrap'));
+    const nordWrap = wraps.find(
+      (w) => w.querySelector('.theme-tile-label')?.textContent?.trim() === 'Nord',
+    );
+    const tile = nordWrap?.querySelector('.theme-tile');
+    expect(tile?.classList.contains('theme-tile-neutral')).toBe(false);
+    expect(tile?.querySelector('.theme-swatch')).toBeTruthy();
+  });
+
+  it('a custom theme with no swatch-bearing tokens renders the neutral fallback tile', async () => {
+    setCustomThemeEntries([
+      {
+        id: 'custom.y',
+        displayName: 'Seeds Only',
+        description: 'A seed-only user theme',
+        tokens: {
+          schemaVersion: 1,
+          id: 'custom.y',
+          displayName: 'Seeds Only',
+          tokens: { 'h-teal': '120' },
+        },
+      },
+    ]);
+    const el = await mountSurface();
+    const root = el.shadowRoot!;
+    const wraps = Array.from(root.querySelectorAll('.theme-tile-wrap'));
+    const customWrap = wraps.find(
+      (w) => w.querySelector('.theme-tile-label')?.textContent?.trim() === 'Seeds Only',
+    );
+    const tile = customWrap?.querySelector('.theme-tile');
+    expect(tile?.classList.contains('theme-tile-neutral')).toBe(true);
+    expect(tile?.querySelector('.theme-swatch')).toBeNull();
+  });
+
+  it('a custom theme carrying surface-primary/accent-tint tokens derives its swatch', async () => {
+    setCustomThemeEntries([
+      {
+        id: 'custom.z',
+        displayName: 'Painted',
+        description: 'A user theme with derivable swatch tokens',
+        tokens: {
+          schemaVersion: 1,
+          id: 'custom.z',
+          displayName: 'Painted',
+          tokens: { 'surface-primary': '#112233', 'accent-tint': '#44ff88' },
+        },
+      },
+    ]);
+    const el = await mountSurface();
+    const root = el.shadowRoot!;
+    const wraps = Array.from(root.querySelectorAll('.theme-tile-wrap'));
+    const customWrap = wraps.find(
+      (w) => w.querySelector('.theme-tile-label')?.textContent?.trim() === 'Painted',
+    );
+    const tile = customWrap?.querySelector('.theme-tile');
+    expect(tile?.classList.contains('theme-tile-neutral')).toBe(false);
+    const swatch = tile?.querySelector('.theme-swatch') as HTMLElement | null;
+    expect(swatch?.getAttribute('style')).toContain('#112233');
+    const accent = tile?.querySelector('.theme-swatch-accent') as HTMLElement | null;
+    expect(accent?.getAttribute('style')).toContain('#44ff88');
   });
 });
 

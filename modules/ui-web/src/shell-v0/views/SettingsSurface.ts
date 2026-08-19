@@ -45,6 +45,8 @@ import {
   SETTINGS_INTERFACE_REGION,
   APPEARANCE_FLOW,
   CONFIRM_CEREMONY,
+  THEME_VARIANT_DARK,
+  THEME_VARIANT_LIGHT,
 } from '../themes/builtinPresentations.js';
 // 569 §14 — run the appearance behaviour as a declared statechart (Move 8 operative).
 import { createMachine, type InteractionMachine } from '../substrates/interaction/index.js';
@@ -64,6 +66,9 @@ import '../components/ErrorAlert.js';
 // Tempdoc 855 §15.2/§17 R2 — the shared switch atom + the radiogroup renderer's plain-props path
 // (both consumed directly by hand-authored templates below, not through JsonForms).
 import '../components/Switch.js';
+// Tempdoc 855 §15.2 — the discrete-slider atom (Density's ordinal-scale control shape).
+import '../components/DiscreteSlider.js';
+import type { DiscreteSliderStep } from '../components/DiscreteSlider.js';
 import '../renderers/controls/OptionButtonGroupRenderer.js';
 import type { OptionButtonGroupOption } from '../renderers/controls/OptionButtonGroupRenderer.js';
 import type { FormChangeEventDetail } from '../components/Form.js';
@@ -420,39 +425,76 @@ export class SettingsSurface extends JfElement {
        is deleted. The base button{} + .option-btn/.card/.rail-arrow rules below stay for the
        bespoke selectable-option + card-picker affordances (a distinct pattern, not the action
        button base). */
+    /* Tempdoc 855 §15.1 — the flat row idiom (T1): sections sit on the page background, no card
+       chrome. .section is a plain container; a hairline divider separates one section from the
+       next (skipped for the FIRST section on the page — the pane's own padding is the top gap). */
     .section {
-      padding: 1rem;
-      background: var(--surface-secondary);
-      border: 1px solid var(--border-subtle);
-      border-radius: 0.5rem;
+      padding: 0;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+    }
+    .section:not(:first-child) {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .settings-content-inner > div:first-of-type > .section:first-child {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: none;
     }
     .section h3 {
-      margin: 0 0 0.5rem 0;
-      font-size: var(--font-size-xs);
-      font-weight: 600;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      color: var(--text-secondary);
+      margin: 0 0 0.75rem 0;
+      font-size: var(--font-size-md);
+      font-weight: 700;
+      letter-spacing: normal;
+      text-transform: none;
+      color: var(--text-primary);
       display: flex;
       align-items: center;
       gap: 0.4rem;
+    }
+    /* Composite-content exception (855 §15.1/§15.5): the handful of sections whose content is
+       genuinely composite (the theme swatch grid, the plugin list, delivered contributions,
+       workspace profiles, the declared Interface region) keep a LIGHTER contained panel instead of
+       going fully flat — a subtle background, not the pre-remediation card's border+radius+padding
+       combo. Everything else (toggle rows, pickers, the rail list, plugin permissions, …) is fully
+       flat like every other section. */
+    .section.section-composite {
+      padding: 0.875rem;
+      background: var(--surface-secondary);
+      border-radius: 0.5rem;
     }
     .row {
       display: flex;
       gap: 0.5rem;
       flex-wrap: wrap;
     }
+    /* Tempdoc 855 §15.1 — the settings-row idiom: bold label + muted description left, a compact
+       control (switch/select) inline-right; ~36px min row height, dividers between adjacent rows
+       within a section (the §2 measured-spec row rhythm). renderSettingRow() is the one render
+       helper that emits this markup; .column is the full-width-below variant for a radio-group /
+       slider / swatch grid control. Reuses the pre-855 .toggle-row name (many call sites already
+       matched this shape) rather than forking a second class for the identical CSS. */
     .toggle-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 1rem;
+      min-height: 2.25rem;
       padding: 0.5rem 0;
     }
     .toggle-row + .toggle-row {
       border-top: 1px solid var(--border-subtle);
     }
+    .toggle-row.column {
+      flex-direction: column;
+      align-items: stretch;
+    }
     .toggle-label {
-      font-size: var(--font-size-sm);
+      font-size: var(--font-size-md);
+      font-weight: 600;
     }
     .toggle-desc {
       font-size: var(--font-size-xs);
@@ -506,32 +548,88 @@ export class SettingsSurface extends JfElement {
       color: var(--text-secondary);
       margin-top: 0.125rem;
     }
-    .custom-theme {
-      flex: 1;
-      position: relative;
+    /* Tempdoc 855 §15.3 (T3) — the theme swatch grid: small two-tone tiles (Discord's Color Themes
+       idiom) replacing the old text-card list. .theme-composite is the section-composite exception
+       (a real grid of paint swatches is exactly the "composite content" the flat idiom carves out). */
+    .theme-grid {
       display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
     }
-    .custom-theme .option-btn {
-      flex: 1;
+    .theme-tile-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 4.5rem;
     }
-    /* 574 B1 — the delete control is a jf-button(ghost,icon); this class now only
-       overlay-positions it over the palette swatch (the skin is the atom's). */
-    .custom-theme-del {
+    .theme-tile {
+      width: 3.5rem;
+      height: 3.5rem;
+      padding: 0;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.75rem;
+      background: var(--surface-tertiary);
+      cursor: pointer;
+      position: relative;
+      overflow: visible;
+    }
+    .theme-tile:hover:not(:disabled) {
+      border-color: var(--border-strong, var(--border-subtle));
+    }
+    .theme-tile.selected {
+      outline: 2px solid var(--accent-tint);
+      outline-offset: 2px;
+    }
+    .theme-swatch {
       position: absolute;
-      top: 0.25rem;
-      right: 0.25rem;
+      inset: 0;
+      border-radius: inherit;
+      overflow: hidden;
     }
-    /* Tempdoc 567 §8 (deferred → built) — rename control sits just left of delete. */
-    .custom-theme-rename {
+    .theme-swatch-accent {
       position: absolute;
-      top: 0.25rem;
-      right: 1.75rem;
+      right: 0;
+      bottom: 0;
+      width: 62%;
+      height: 62%;
+      border-top-left-radius: 0.625rem;
     }
-    /* Inline-rename row replaces the swatch while a custom theme is being renamed. */
+    .theme-tile-neutral {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+    }
+    .theme-tile-check {
+      position: absolute;
+      bottom: -0.3rem;
+      right: -0.3rem;
+      display: flex;
+      border-radius: 50%;
+      background: var(--surface-primary);
+      color: var(--accent-tint);
+    }
+    .theme-tile-label {
+      margin-top: 0.375rem;
+      font-size: var(--font-size-xs);
+      text-align: center;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .theme-tile-actions {
+      display: flex;
+      gap: 0.125rem;
+      margin-top: 0.125rem;
+    }
+    /* Inline-rename row replaces the tile while a custom theme is being renamed. */
     .custom-theme-renaming {
+      display: flex;
       align-items: center;
       gap: 0.25rem;
-      padding: 0.5rem;
+      width: 100%;
+      padding: 0.375rem;
       border: 1px solid var(--border-subtle);
       border-radius: 0.375rem;
     }
@@ -1052,6 +1150,39 @@ export class SettingsSurface extends JfElement {
   }
 
   /**
+   * Tempdoc 855 §15.1 — the flat setting-row idiom: bold label + muted description, then a
+   * CONTROL either inline-right (a compact control — switch/select/small link) or full-width below
+   * (a radio-group/slider/swatch grid — pass `below: true`). One row shape backs every generic
+   * setting row in the window; composite sections (theme grid, plugin list, …) don't use it.
+   */
+  private renderSettingRow(
+    label: string,
+    desc: string | TemplateResult | typeof nothing,
+    control: TemplateResult,
+    opts: { below?: boolean; testid?: string } = {},
+  ): TemplateResult {
+    const testid = opts.testid ?? nothing;
+    if (opts.below) {
+      return html`
+        <div class="toggle-row column" data-testid=${testid}>
+          <div class="toggle-label">${label}</div>
+          ${desc === nothing ? nothing : html`<div class="toggle-desc">${desc}</div>`}
+          <div>${control}</div>
+        </div>
+      `;
+    }
+    return html`
+      <div class="toggle-row" data-testid=${testid}>
+        <div>
+          <div class="toggle-label">${label}</div>
+          ${desc === nothing ? nothing : html`<div class="toggle-desc">${desc}</div>`}
+        </div>
+        ${control}
+      </div>
+    `;
+  }
+
+  /**
    * 569 Move 1/3 (the keystone) — render the Interface + Appearance region from the ACTIVE
    * Presentation Declaration's body, through the projection engine (`<jf-declared-surface>`),
    * when one is applied; otherwise the built-in Lit render. An absent or quarantined body
@@ -1059,6 +1190,11 @@ export class SettingsSurface extends JfElement {
    * schema + uischema (composition over the renderer vocabulary); the engine co-projects the
    * accessible, operable, 558-contrast-safe controls the author never touches. Edits round-trip
    * through the SAME `patch()` the built-in render uses.
+   *
+   * Tempdoc 855 §15.1 — the declared body is a composite-content exception (a whole schema-driven
+   * region, opaque to the flat-row idiom): it keeps the lighter `.section-composite` panel. The
+   * cross-link row below it is an ordinary flat row, sitting at the branch join (see
+   * `renderRelatedSettingsRow`'s doc comment for why it can't live inside `renderAppearance()`).
    */
   private renderInterfaceRegion(): TemplateResult {
     const body = activeBodyFor(SETTINGS_INTERFACE_REGION);
@@ -1069,7 +1205,7 @@ export class SettingsSurface extends JfElement {
       `;
     }
     return html`
-      <div class="section">
+      <div class="section section-composite">
         <jf-declared-surface
           .declaration=${body}
           .data=${this.ui as Record<string, unknown>}
@@ -1093,21 +1229,45 @@ export class SettingsSurface extends JfElement {
     return html`
       <div class="section">
         <h3>${icon({ name: 'layers', size: 12 })} Interface</h3>
-        <div class="row">
-          <jf-option-button-group
-            .options=${options}
-            .value=${mode}
-            ?enabled=${!this.readOnly}
-            @change=${(e: CustomEvent<{ value: string }>) =>
-              void this.patch({ mode: e.detail.value as UISettings['mode'] })}
-          ></jf-option-button-group>
-        </div>
-        <p class="help">
-          Detailed mode shows technical detail and unlocks AI runtime configuration, GPU controls,
-          Lucene search syntax, and library management tools.
-        </p>
+        ${this.renderSettingRow(
+          'Mode',
+          'Detailed mode shows technical detail and unlocks AI runtime configuration, GPU controls, ' +
+            'Lucene search syntax, and library management tools.',
+          html`
+            <jf-option-button-group
+              .options=${options}
+              .value=${mode}
+              ?enabled=${!this.readOnly}
+              @change=${(e: CustomEvent<{ value: string }>) =>
+                void this.patch({ mode: e.detail.value as UISettings['mode'] })}
+            ></jf-option-button-group>
+          `,
+          { below: true },
+        )}
       </div>
     `;
+  }
+
+  /** Tempdoc 855 §15.2 — the theme-variant trio (System/Dark/Light) as three small square swatches
+   *  with a check badge on the active one (Discord's "Default Themes" row idiom), reusing the ONE
+   *  radiogroup keyboard model via `jf-option-button-group`'s swatch option shape rather than
+   *  forking a second component (§17 R2 judgment). System is a literal diagonal dark/light split;
+   *  Dark/Light are literal representative fills — these depict the MODE concept, not a theme
+   *  palette, so they intentionally do NOT read from theme tokens (which vary per active theme). */
+  private renderVariantOptions(): OptionButtonGroupOption[] {
+    // Fix-round F1 — `swatch` is the serializable `SwatchSpec`, sourced from the SAME
+    // `THEME_VARIANT_DARK`/`THEME_VARIANT_LIGHT` constants the declared `theme.x-enum-swatches`
+    // schema extension uses (`builtinPresentations.ts`), so this hand-authored fallback and the
+    // declared default path render the identical trio — one vocabulary, one color source, not two.
+    return [
+      {
+        value: 'system',
+        label: 'System',
+        swatch: { split: [THEME_VARIANT_DARK, THEME_VARIANT_LIGHT] },
+      },
+      { value: 'dark', label: 'Dark', swatch: { fill: THEME_VARIANT_DARK } },
+      { value: 'light', label: 'Light', swatch: { fill: THEME_VARIANT_LIGHT } },
+    ];
   }
 
   private renderAppearance(): TemplateResult {
@@ -1115,30 +1275,31 @@ export class SettingsSurface extends JfElement {
     return html`
       <div class="section">
         <h3>${icon({ name: 'palette', size: 12 })} Appearance</h3>
-        <div class="row" style="margin-bottom: 0.75rem">
-          <jf-option-button-group
-            .options=${[
-              { value: 'system', label: 'System', description: 'Follow OS', icon: 'monitor' },
-              { value: 'dark', label: 'Dark', description: 'Default theme', icon: 'moon' },
-              { value: 'light', label: 'Light', description: 'Bright theme', icon: 'sun' },
-            ] as OptionButtonGroupOption[]}
-            .value=${theme}
-            ?enabled=${!this.readOnly}
-            @change=${(e: CustomEvent<{ value: string }>) =>
-              void this.patch({ theme: e.detail.value as UISettings['theme'] })}
-          ></jf-option-button-group>
-        </div>
-        <div class="toggle-row">
-          <div>
-            <div class="toggle-label">Solid surfaces</div>
-            <div class="toggle-desc">Opaque panels, no glass blur</div>
-          </div>
-          <jf-switch
-            .checked=${this.surfaceMode === 'solid'}
-            label="Solid surfaces"
-            @change=${() => this.toggleSurfaceMode()}
-          ></jf-switch>
-        </div>
+        ${this.renderSettingRow(
+          'Theme variant',
+          'Follows your OS, or pin dark/light.',
+          html`
+            <jf-option-button-group
+              .options=${this.renderVariantOptions()}
+              .value=${theme}
+              ?enabled=${!this.readOnly}
+              @change=${(e: CustomEvent<{ value: string }>) =>
+                void this.patch({ theme: e.detail.value as UISettings['theme'] })}
+            ></jf-option-button-group>
+          `,
+          { below: true },
+        )}
+        ${this.renderSettingRow(
+          'Solid surfaces',
+          'Opaque panels, no glass blur',
+          html`
+            <jf-switch
+              .checked=${this.surfaceMode === 'solid'}
+              label="Solid surfaces"
+              @change=${() => this.toggleSurfaceMode()}
+            ></jf-switch>
+          `,
+        )}
       </div>
     `;
   }
@@ -1165,9 +1326,10 @@ export class SettingsSurface extends JfElement {
       .find((c) => c.id === categoryId)
       ?.sections?.find((s) => s.key === sectionKey);
     if (!section) return html``;
-    return html`
-      <div class="toggle-row">
-        <div class="toggle-label">${localizeResourceKey('settings.related.label')}</div>
+    return this.renderSettingRow(
+      localizeResourceKey('settings.related.label'),
+      nothing,
+      html`
         <button
           class="link-row"
           type="button"
@@ -1175,8 +1337,8 @@ export class SettingsSurface extends JfElement {
         >
           ${localizeResourceKey(section.labelKey)}${icon({ name: 'chevron-right', size: 14 })}
         </button>
-      </div>
-    `;
+      `,
+    );
   }
 
   /**
@@ -1200,55 +1362,64 @@ export class SettingsSurface extends JfElement {
    * `set-appearance` + the narrow `save-settings` POST). That leaves `themeState.applyAppearance` as
    * the single writer of the `high-contrast` root class.
    */
+  /** Tempdoc 855 §15.2 — Density's three stops, as the `<jf-discrete-slider>` step vocabulary. */
+  private static readonly DENSITY_STEPS: readonly DiscreteSliderStep[] = [
+    { value: 'compact', label: 'Compact' },
+    { value: 'comfortable', label: 'Comfortable' },
+    { value: 'spacious', label: 'Spacious' },
+  ];
+
   private renderAccessibility(): TemplateResult {
     const p = getAdaptationProfile();
     const density = p.density ?? 'comfortable';
     const motion = p.motion ?? 'full';
-    const densityOptions: OptionButtonGroupOption[] = [
-      { value: 'compact', label: 'Compact', description: 'More on screen' },
-      { value: 'comfortable', label: 'Comfortable', description: 'Default' },
-      { value: 'spacious', label: 'Spacious', description: 'Roomy' },
-    ];
-    const motionOptions: OptionButtonGroupOption[] = [
-      { value: 'full', label: 'Full', description: 'Animations on' },
-      { value: 'reduced', label: 'Calm', description: 'Reduced motion' },
-    ];
     return html`
       <div class="section" data-testid="settings-accessibility">
         <h3>${icon({ name: 'layers', size: 12 })} Accessibility</h3>
-        <div class="toggle-label" style="margin-bottom: 0.35rem">Density</div>
-        <div class="row" style="margin-bottom: 0.75rem">
-          <jf-option-button-group
-            .options=${densityOptions}
-            .value=${density}
-            ?enabled=${!this.readOnly}
-            @change=${(e: CustomEvent<{ value: string }>) =>
-              applyAdaptationProfile({ density: e.detail.value as 'compact' | 'comfortable' | 'spacious' })}
-          ></jf-option-button-group>
-        </div>
-        <div class="toggle-row" data-testid="settings-high-contrast">
-          <div>
-            <div class="toggle-label">High contrast</div>
-            <div class="toggle-desc">Guaranteed AA — better visibility</div>
-          </div>
-          <jf-switch
-            .checked=${this.ui.highContrast === true}
-            ?disabled=${this.readOnly}
-            label="High contrast"
-            @change=${(e: CustomEvent<{ checked: boolean }>) =>
-              void this.patch({ highContrast: e.detail.checked })}
-          ></jf-switch>
-        </div>
-        <div class="toggle-label" style="margin: 0.75rem 0 0.35rem">Motion</div>
-        <div class="row">
-          <jf-option-button-group
-            .options=${motionOptions}
-            .value=${motion}
-            ?enabled=${!this.readOnly}
-            @change=${(e: CustomEvent<{ value: string }>) =>
-              applyAdaptationProfile({ motion: e.detail.value as 'full' | 'reduced' })}
-          ></jf-option-button-group>
-        </div>
+        ${this.renderSettingRow(
+          'Density',
+          nothing,
+          html`
+            <jf-discrete-slider
+              .steps=${SettingsSurface.DENSITY_STEPS}
+              .value=${density}
+              label="Density"
+              ?disabled=${this.readOnly}
+              @change=${(e: CustomEvent<{ value: string }>) =>
+                applyAdaptationProfile({
+                  density: e.detail.value as 'compact' | 'comfortable' | 'spacious',
+                })}
+            ></jf-discrete-slider>
+          `,
+          { below: true },
+        )}
+        ${this.renderSettingRow(
+          'High contrast',
+          'Guaranteed AA — better visibility',
+          html`
+            <jf-switch
+              .checked=${this.ui.highContrast === true}
+              ?disabled=${this.readOnly}
+              label="High contrast"
+              @change=${(e: CustomEvent<{ checked: boolean }>) =>
+                void this.patch({ highContrast: e.detail.checked })}
+            ></jf-switch>
+          `,
+          { testid: 'settings-high-contrast' },
+        )}
+        ${this.renderSettingRow(
+          'Reduce motion',
+          'Turns off non-essential animations',
+          html`
+            <jf-switch
+              .checked=${motion === 'reduced'}
+              ?disabled=${this.readOnly}
+              label="Reduce motion"
+              @change=${(e: CustomEvent<{ checked: boolean }>) =>
+                applyAdaptationProfile({ motion: e.detail.checked ? 'reduced' : 'full' })}
+            ></jf-switch>
+          `,
+        )}
       </div>
     `;
   }
@@ -1286,26 +1457,21 @@ export class SettingsSurface extends JfElement {
     return html`
       <div class="section">
         <h3>${icon({ name: 'shield', size: 12 })} View tier</h3>
-        <div class="toggle-row" style="margin-bottom: 0.5rem">
-          <div>
-            <div class="toggle-label">View tier preference</div>
-            <div class="toggle-desc">
-              Controls which operations and surfaces the UI renders
-              for you. This is a view preference — it does not
-              restrict backend access. Leave on "User" for the
-              default experience; switch up for admin or debug
-              workflows.
-            </div>
-          </div>
-        </div>
-        <div class="row">
-          <jf-option-button-group
-            .options=${options}
-            .value=${audience}
-            ?enabled=${!this.readOnly}
-            @change=${(e: CustomEvent<{ value: string }>) => setViewerAudience(e.detail.value as Audience)}
-          ></jf-option-button-group>
-        </div>
+        ${this.renderSettingRow(
+          'View tier preference',
+          'Controls which operations and surfaces the UI renders for you. This is a view ' +
+            'preference — it does not restrict backend access. Leave on "User" for the default ' +
+            'experience; switch up for admin or debug workflows.',
+          html`
+            <jf-option-button-group
+              .options=${options}
+              .value=${audience}
+              ?enabled=${!this.readOnly}
+              @change=${(e: CustomEvent<{ value: string }>) => setViewerAudience(e.detail.value as Audience)}
+            ></jf-option-button-group>
+          `,
+          { below: true },
+        )}
       </div>
     `;
   }
@@ -1315,51 +1481,44 @@ export class SettingsSurface extends JfElement {
     return html`
       <div class="section">
         <h3>${icon({ name: 'keyboard', size: 12 })} Keyboard</h3>
-        <div class="toggle-row">
-          <div>
-            <div class="toggle-label">Enter action</div>
-            <div class="toggle-desc">Default action when pressing Enter on a result</div>
-          </div>
-          <!-- Tempdoc 543 §20.7 B1 — schema-driven form via the
-               x-ui-renderer dispatcher. The 'enter-action-select' hint
-               routes to EnterActionPickerRenderer (registered at boot
-               via shell-v0/renderers/registry.ts). -->
-          <jf-form
-            .schema=${{
-              type: 'object',
-              properties: {
-                defaultAction: {
-                  type: 'string',
-                  // 855 P1 (a11y fix riding along) — `title` is the schema-standard field
-                  // EnterActionPickerRenderer reads for the control's accessible name (axe
-                  // `select-name`, baselined in governance/ui-a11y-baseline.v1.json until this fix).
-                  title: 'Enter action',
-                  enum: ['open', 'reveal', 'preview'],
-                  'x-ui-renderer': 'enter-action-select',
+        ${this.renderSettingRow(
+          'Enter action',
+          'Default action when pressing Enter on a result',
+          html`
+            <!-- Tempdoc 543 §20.7 B1 — schema-driven form via the
+                 x-ui-renderer dispatcher. The 'enter-action-select' hint
+                 routes to EnterActionPickerRenderer (registered at boot
+                 via shell-v0/renderers/registry.ts). -->
+            <jf-form
+              .schema=${{
+                type: 'object',
+                properties: {
+                  defaultAction: {
+                    type: 'string',
+                    // 855 P1 (a11y fix riding along) — `title` is the schema-standard field
+                    // EnterActionPickerRenderer reads for the control's accessible name (axe
+                    // `select-name`, baselined in governance/ui-a11y-baseline.v1.json until this fix).
+                    title: 'Enter action',
+                    enum: ['open', 'reveal', 'preview'],
+                    'x-ui-renderer': 'enter-action-select',
+                  },
                 },
-              },
-            }}
-            .uischema=${{
-              type: 'Control',
-              scope: '#/properties/defaultAction',
-            }}
-            .data=${{ defaultAction: action }}
-            ?enabled=${!this.readOnly}
-            @form-change=${(e: CustomEvent<FormChangeEventDetail>) => {
-              const next = (e.detail.data as { defaultAction?: string })
-                .defaultAction;
-              if (
-                next === 'open' ||
-                next === 'reveal' ||
-                next === 'preview'
-              ) {
-                void this.patch({
-                  defaultAction: next as UISettings['defaultAction'],
-                });
-              }
-            }}
-          ></jf-form>
-        </div>
+              }}
+              .uischema=${{
+                type: 'Control',
+                scope: '#/properties/defaultAction',
+              }}
+              .data=${{ defaultAction: action }}
+              ?enabled=${!this.readOnly}
+              @form-change=${(e: CustomEvent<FormChangeEventDetail>) => {
+                const next = (e.detail.data as { defaultAction?: string }).defaultAction;
+                if (next === 'open' || next === 'reveal' || next === 'preview') {
+                  void this.patch({ defaultAction: next as UISettings['defaultAction'] });
+                }
+              }}
+            ></jf-form>
+          `,
+        )}
       </div>
     `;
   }
@@ -1371,23 +1530,19 @@ export class SettingsSurface extends JfElement {
    */
   private renderFeedbackCapture(): TemplateResult | typeof nothing {
     if (this.feedbackCaptureEnabled === null) return nothing;
-    return html`
-      <div class="toggle-row" style="margin-top: 0.75rem">
-        <div>
-          <div class="toggle-label">Improve ranking from your activity (local only)</div>
-          <div class="toggle-desc">
-            ${this.feedbackPrivacyNote ||
-            'Clicks, opens, and dwell time on results and chat citations are recorded on this ' +
-              'machine to improve ranking. Nothing is ever uploaded.'}
-          </div>
-        </div>
+    return this.renderSettingRow(
+      'Improve ranking from your activity (local only)',
+      this.feedbackPrivacyNote ||
+        'Clicks, opens, and dwell time on results and chat citations are recorded on this ' +
+          'machine to improve ranking. Nothing is ever uploaded.',
+      html`
         <jf-switch
           .checked=${!!this.feedbackCaptureEnabled}
           label="Improve ranking from your activity (local only)"
           @change=${() => void this.toggleFeedbackCapture()}
         ></jf-switch>
-      </div>
-    `;
+      `,
+    );
   }
 
   private renderDesktop(): TemplateResult | typeof nothing {
@@ -1397,17 +1552,17 @@ export class SettingsSurface extends JfElement {
     return html`
       <div class="section">
         <h3>${icon({ name: 'power', size: 12 })} Desktop</h3>
-        <div class="toggle-row">
-          <div>
-            <div class="toggle-label">Launch on startup</div>
-            <div class="toggle-desc">Start minimized in the system tray</div>
-          </div>
-          <jf-switch
-            .checked=${!!this.autostart}
-            label="Launch on startup"
-            @change=${() => void this.toggleAutostart()}
-          ></jf-switch>
-        </div>
+        ${this.renderSettingRow(
+          'Launch on startup',
+          'Start minimized in the system tray',
+          html`
+            <jf-switch
+              .checked=${!!this.autostart}
+              label="Launch on startup"
+              @change=${() => void this.toggleAutostart()}
+            ></jf-switch>
+          `,
+        )}
       </div>
     `;
   }
@@ -1421,30 +1576,85 @@ export class SettingsSurface extends JfElement {
    * the result. Persists across reloads via `themeState`'s
    * localStorage layer.
    */
+  /**
+   * Tempdoc 855 §15.3 (T3) — declare, don't parse: a built-in's swatch is authored on the manifest
+   * entry (`manifest.json`, threaded through `themesCatalog.ThemeCatalogEntry.swatch`). A custom
+   * theme has no authored swatch (only seed tokens are user-authorable, §8 #4), so it derives
+   * directly from whatever surface/accent tokens its own tree happens to carry — readable without
+   * applying (`designTokenTree.ts`). A theme with neither renders a neutral tile (never
+   * color-only — the name label beneath every tile is load-bearing regardless).
+   */
+  private themeSwatchFor(entry: ThemeCatalogEntry): { surface: string; accent: string } | null {
+    if (entry.swatch) return entry.swatch;
+    const t = entry.tokens?.tokens;
+    if (!t) return null;
+    const surface = t['surface-primary'] ?? t['surface-0'];
+    const accent = t['accent-tint'];
+    if (!surface || !accent) return null;
+    return { surface, accent };
+  }
+
+  /** One swatch tile: a two-tone square (surface ground + accent corner mark), a check badge when
+   *  active, or a neutral fallback tile when no swatch data is available. `id=null` is the "Default
+   *  tokens" option. The accessible name composes name + description (§15.3 — description demoted
+   *  from a visible text wall to the house `title`-attribute idiom, 15 other uses in this file). */
+  private renderThemeTile(params: {
+    id: string | null;
+    displayName: string;
+    description: string;
+    swatch: { surface: string; accent: string } | null;
+    onClick: () => void;
+  }): TemplateResult {
+    const selected = this.activeThemeId === params.id;
+    return html`
+      <button
+        type="button"
+        class="theme-tile ${params.swatch ? '' : 'theme-tile-neutral'} ${selected ? 'selected' : ''}"
+        @click=${params.onClick}
+        title=${params.description}
+        aria-label=${`${params.displayName}: ${params.description}`}
+        aria-pressed=${selected ? 'true' : 'false'}
+      >
+        ${params.swatch
+          ? html`
+              <span class="theme-swatch" style="background:${params.swatch.surface}">
+                <span class="theme-swatch-accent" style="background:${params.swatch.accent}"></span>
+              </span>
+            `
+          : icon({ name: 'circle', size: 18 })}
+        ${selected
+          ? html`<span class="theme-tile-check" aria-hidden="true"
+              >${icon({ name: 'check-circle-2', size: 14 })}</span
+            >`
+          : nothing}
+      </button>
+    `;
+  }
+
+  /**
+   * Slice 477 H1 — V1.5 Themes section.
+   *
+   * Lists built-in themes (`themesCatalog.BUILT_IN_THEMES`) with a
+   * "Default" option that clears the active theme. Selection writes
+   * to `themeState`, which fetches `/themes/<id>.css` and injects
+   * the result. Persists across reloads via `themeState`'s
+   * localStorage layer.
+   *
+   * Tempdoc 855 §15.3 — a swatch GRID (Discord's Color Themes idiom) replaces the old text-card
+   * list; `.theme-composite` keeps the section-composite exception (§15.5).
+   */
   private renderThemes(): TemplateResult {
     const themes = listAvailableThemes();
-    const active = this.activeThemeId;
-    const renderThemeButton = (entry: ThemeCatalogEntry): TemplateResult => {
+    const renderEntry = (entry: ThemeCatalogEntry): TemplateResult => {
       // Tempdoc 567 — a custom (user-authored) theme carries its token tree; built-ins carry cssPath.
       const isCustom = entry.tokens !== undefined;
-      const btn = html`
-        <button
-          class="option-btn ${active === entry.id ? 'selected' : ''}"
-          @click=${() => void this.selectTheme(entry.id)}
-          title=${entry.description}
-        >
-          ${icon({ name: 'palette', size: 18 })}
-          <div class="option-label">${entry.displayName}</div>
-          <div class="option-desc">${entry.description}</div>
-        </button>
-      `;
-      if (!isCustom) return btn;
       // Tempdoc 567 §8 #3 — custom themes are MANAGED in the host (Settings → Appearance), independent
-      // of the editor plugin's lifecycle: rename + delete controls overlay the palette button. While
-      // this theme is being renamed (§8 deferred → built), the button is replaced by an inline input.
-      if (this.renamingThemeId === entry.id) {
+      // of the editor plugin's lifecycle: rename + delete are SIBLING affordances below the tile (never
+      // nested inside its button). While this theme is being renamed (§8 deferred → built), the tile
+      // is replaced by an inline input.
+      if (isCustom && this.renamingThemeId === entry.id) {
         return html`
-          <div class="custom-theme custom-theme-renaming">
+          <div class="theme-tile-wrap custom-theme-renaming">
             <input
               class="theme-rename-input"
               .value=${this.renameDraft}
@@ -1455,71 +1665,87 @@ export class SettingsSurface extends JfElement {
                 else if (e.key === 'Escape') this.cancelRenameTheme();
               }}
             />
-            <jf-button
-              variant="ghost"
-              size="icon"
-              label="Save new name"
-              title="Save"
-              .onActivate=${() => this.commitRenameTheme(entry.id)}
-            >
-              ${icon({ name: 'check-circle-2', size: 14 })}
-            </jf-button>
-            <jf-button
-              variant="ghost"
-              size="icon"
-              label="Cancel rename"
-              title="Cancel"
-              .onActivate=${() => this.cancelRenameTheme()}
-            >
-              ${icon({ name: 'x', size: 14 })}
-            </jf-button>
+            <span class="theme-tile-actions">
+              <jf-button
+                variant="ghost"
+                size="icon"
+                label="Save new name"
+                title="Save"
+                .onActivate=${() => this.commitRenameTheme(entry.id)}
+              >
+                ${icon({ name: 'check-circle-2', size: 14 })}
+              </jf-button>
+              <jf-button
+                variant="ghost"
+                size="icon"
+                label="Cancel rename"
+                title="Cancel"
+                .onActivate=${() => this.cancelRenameTheme()}
+              >
+                ${icon({ name: 'x', size: 14 })}
+              </jf-button>
+            </span>
           </div>
         `;
       }
       return html`
-        <div class="custom-theme">
-          ${btn}
-          <jf-button
-            class="custom-theme-rename"
-            variant="ghost"
-            size="icon"
-            label=${`Rename custom theme ${entry.displayName}`}
-            title=${`Rename "${entry.displayName}"`}
-            .onActivate=${() => this.beginRenameTheme(entry)}
-          >
-            ${icon({ name: 'pencil', size: 13 })}
-          </jf-button>
-          <jf-button
-            class="custom-theme-del"
-            variant="ghost"
-            size="icon"
-            label=${`Delete custom theme ${entry.displayName}`}
-            title=${`Delete "${entry.displayName}"`}
-            .onActivate=${() => void this.deleteCustomTheme(entry)}
-          >
-            ${icon({ name: 'trash-2', size: 14 })}
-          </jf-button>
+        <div class="theme-tile-wrap">
+          ${this.renderThemeTile({
+            id: entry.id,
+            displayName: entry.displayName,
+            description: entry.description,
+            swatch: this.themeSwatchFor(entry),
+            onClick: () => void this.selectTheme(entry.id),
+          })}
+          <span class="theme-tile-label">${entry.displayName}</span>
+          ${isCustom
+            ? html`
+                <span class="theme-tile-actions">
+                  <jf-button
+                    class="custom-theme-rename"
+                    variant="ghost"
+                    size="icon"
+                    label=${`Rename custom theme ${entry.displayName}`}
+                    title=${`Rename "${entry.displayName}"`}
+                    .onActivate=${() => this.beginRenameTheme(entry)}
+                  >
+                    ${icon({ name: 'pencil', size: 12 })}
+                  </jf-button>
+                  <jf-button
+                    class="custom-theme-del"
+                    variant="ghost"
+                    size="icon"
+                    label=${`Delete custom theme ${entry.displayName}`}
+                    title=${`Delete "${entry.displayName}"`}
+                    .onActivate=${() => void this.deleteCustomTheme(entry)}
+                  >
+                    ${icon({ name: 'trash-2', size: 12 })}
+                  </jf-button>
+                </span>
+              `
+            : nothing}
         </div>
       `;
     };
     return html`
-      <div class="section">
+      <div class="section section-composite theme-composite" data-testid="settings-themes">
         <h3>${icon({ name: 'palette', size: 12 })} Theme</h3>
-        <p class="help" style="margin: 0 0 0.5rem 0">
+        <p class="help" style="margin: 0 0 0.75rem 0">
           Pick a full theme palette. Composes with the dark/light variant in
           Appearance above.
         </p>
-        <div class="row">
-          <button
-            class="option-btn ${active === null ? 'selected' : ''}"
-            @click=${() => void this.selectTheme(null)}
-            title="Default tokens — no theme override"
-          >
-            ${icon({ name: 'circle', size: 18 })}
-            <div class="option-label">Default</div>
-            <div class="option-desc">No override</div>
-          </button>
-          ${themes.map(renderThemeButton)}
+        <div class="theme-grid" role="group" aria-label="Theme">
+          <div class="theme-tile-wrap">
+            ${this.renderThemeTile({
+              id: null,
+              displayName: 'Default',
+              description: 'Default tokens — no theme override',
+              swatch: null,
+              onClick: () => void this.selectTheme(null),
+            })}
+            <span class="theme-tile-label">Default</span>
+          </div>
+          ${themes.map(renderEntry)}
         </div>
         ${this.renderThemeImport()}
       </div>
@@ -1596,17 +1822,18 @@ export class SettingsSurface extends JfElement {
     return html`
       <div class="section">
         <h3>${icon({ name: 'layers', size: 12 })} Token Editor</h3>
-        <p class="help" style="margin-top: 0">
-          Author custom theme tokens — colors, seeds, and roles — in the dedicated editor.
-        </p>
-        <div style="margin-top: 0.5rem">
-          <jf-button
-            variant="secondary"
-            .onActivate=${() =>
-              this.host_.navigation.navigate('vendor.token-editor.editor-surface')}
-            >Open Token Editor</jf-button
-          >
-        </div>
+        ${this.renderSettingRow(
+          'Custom theme tokens',
+          'Author colors, seeds, and roles in the dedicated editor.',
+          html`
+            <jf-button
+              variant="secondary"
+              .onActivate=${() =>
+                this.host_.navigation.navigate('vendor.token-editor.editor-surface')}
+              >Open Token Editor</jf-button
+            >
+          `,
+        )}
       </div>
     `;
   }
@@ -1742,7 +1969,7 @@ export class SettingsSurface extends JfElement {
 
   private renderPlugins(): TemplateResult {
     return html`
-      <div class="section">
+      <div class="section section-composite">
         <h3>${icon({ name: 'package', size: 12 })} Plugins</h3>
         ${this.plugins.length > 0
           ? html`
@@ -2589,7 +2816,7 @@ export class SettingsSurface extends JfElement {
 
   private renderDurableGrants(): TemplateResult {
     return html`
-      <div class="setting-group">
+      <div class="section" data-testid="settings-durable-grants">
         <h3>Durable grants</h3>
         <p class="help" style="margin: 0 0 0.5rem">
           "Allow always" approvals the trust gate honors without re-prompting — per operation, or for a
@@ -2665,7 +2892,7 @@ export class SettingsSurface extends JfElement {
   private renderWitness(): TemplateResult {
     const runtimeOnly = this.witnessEntries.filter((e) => !e.buildWitnessed).length;
     return html`
-      <div class="setting-group">
+      <div class="section section-composite" data-testid="settings-delivered-contributions">
         <h3>Delivered contributions</h3>
         <p class="help" style="margin: 0 0 0.5rem">
           The live composed registry: every <em>operation</em> from all sources (core, agent-tools,
@@ -2798,7 +3025,7 @@ export class SettingsSurface extends JfElement {
   private renderWorkspaceProfilesDeveloper(): TemplateResult | typeof nothing {
     if (this.viewerAudience !== 'DEVELOPER') return nothing;
     return html`
-      <div class="section">
+      <div class="section section-composite">
         <h3>${icon({ name: 'layers', size: 12 })} Workspace Profiles (developer)</h3>
         <p class="toggle-desc">
           Tempdoc 543 §13.6 substrate — snapshot the current Scope into
