@@ -276,7 +276,6 @@ describe('SurfaceCatalogClient', () => {
       ]);
       expect(listSurfacesByPlacement('HUD')).toEqual([]);
     });
-
   });
 
   describe('boot fetch', () => {
