@@ -9,7 +9,7 @@ charter: the analytics events lane has four products, not one — decide each on
 # 858 — Analytics lane: outcomes are a view, the dashboard retires, PHI stays open
 
 Opened from tempdoc 856 §10. The sketch asked one question — is the events lane alive? The
-design's first move is that this was the wrong unit. The lane holds **three products with
+design's first move is that this was the wrong unit. The lane holds **four products with
 different value and different failure modes**, and lumping them produced a question with no
 good answer.
 
@@ -24,7 +24,7 @@ What this can support: consumer analysis (mechanical), source-of-truth analysis 
 and one instrument's own documented self-assessment. What it cannot support: whether a
 human-facing report is read. That is asked, not inferred — §5.
 
-## 2. The three products
+## 2. The four products
 
 | Product | Instruments | Store | Verdict |
 |---|---|---|---|
@@ -228,8 +228,9 @@ Named here, not deferred to a cleanup sweep:
   list is a **capture**, a hand classification made against evidence that has since rotated, and a
   capture that no longer matches is not thereby wrong — it is inert. So it is marked as captured,
   its *reasoning* is recorded so a re-run can reproduce the judgement rather than the ids, and the
-  report now says "scope filter performed no exclusion — 0 of 31 listed ids matched here" instead
-  of asserting an exclusion it did not perform.
+  report now says "scope filter matched no session here — 0 of 31 listed ids" instead of asserting
+  an exclusion it did not perform. (Quoted verbatim from `lib/telemetry-io.mjs`; an earlier draft of this
+  line paraphrased the output, which is the `catalog-verbatim` shape in miniature.)
 - **Nothing PHI-related.** §4 is open, so `scores.ndjson`, `score-session.mjs` and
   `correlate-signals.mjs` are **not** orphaned by this tempdoc. An earlier draft listed them; that
   list was written when §4 read RETIRE and is void.

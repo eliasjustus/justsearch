@@ -31,8 +31,11 @@ in the code.
 produced. It is the join behind cost-per-merge (`baseline-economics.mjs`) and behind
 "did this session ship" (`outcome-session.mjs`).
 
-Measured this session (each number reproducible by the command named; the ledger and
-`git log` are the only inputs):
+Measured 2026-08-19 (each number reproducible by the command named; the ledger and `git log` are
+the only inputs). **These are moving-window counts and drift with every merge** — re-measured the
+same day, the squash-commit denominator had already moved 463 to 475 and the ledger 400 to 403.
+The ratios and the load-bearing figures hold; the absolutes are as-of. This is the same caution §7
+applies to the dollar figures, and it applies here for the same reason:
 
 | Fact | Value | How to reproduce |
 |---|---|---|
@@ -76,8 +79,8 @@ after a merge; a 22-day tail is manual backfill. Coverage swinging 15%–78% wee
 is not drift, it is a coin flip on whether the moment occurred.
 
 No amount of moving the capture point removes this. Moving it from teardown to `/publish`
-raises coverage — `/publish` is closer to the merge and always runs — but it is the same
-shape, and it fails the same way whenever the merge happens outside `/publish`.
+raises coverage — `/publish` is closer to the merge and runs on every publication that goes
+through it — but it is the same shape, and it records nothing whenever a merge happens outside it.
 
 ## 3. The design: the key belongs in the commit
 
@@ -182,7 +185,7 @@ already sitting in public history:
 git log --diff-filter=A --name-only -- docs/observations.d/
 ```
 
-Under the restrictions below this yields **66 links across 48 sessions**, 19 of which the
+Under the restrictions below this yields **66 links across 48 sessions**, of which 19 sessions the
 ledger has never seen. (An earlier draft of this doc said 117/38. That figure was the
 *unrestricted* novel count, taken before the single-shard rule was applied; it is corrected
 here rather than left standing. Reconciliation, all against the same 400-row ledger §7 cites:
@@ -305,7 +308,10 @@ Where it already applies in this repo:
   Opus-5 tokens at $0, and nothing about reading a row says it is stale.
 - **`friction-excluded-sessions.json`** — a side list of session ids that now excludes
   nothing, because every id in it has rotated away, while the report still prints
-  "0 excluded" as though that were an observation.
+  "0 excluded" as though that were an observation. **Fixed in the same PR by tempdoc 858** — the
+  list is now marked as a capture and four consumers report "scope filter matched no session here
+  — 0 of 31 listed ids" instead. Left in this list because it is the clearest instance of the
+  shape, not because it is still broken.
 - **`current-session-id`** — a side pointer whose correctness depends on which checkout
   wrote it last.
 
@@ -322,7 +328,8 @@ because a gap is legible.
 
 Already correct: `buildFact` → `unknown`. Already violated: `mergeFact` → `false`;
 `cost-session.mjs` pricing unknown models at $0 rather than refusing to price them;
-`friction-excluded-sessions.json` reporting an empty exclusion as a performed exclusion.
+`friction-excluded-sessions.json` reporting an empty exclusion as a performed exclusion (that
+  last one fixed by 858 in this same PR).
 Adjacent, unexamined: `docs/observations.md` carries 358 conditions with `probeable: 0`
 and no closed state, so "still open" and "fixed but never deleted" are indistinguishable.
 
@@ -374,7 +381,7 @@ Same shape, five places, observable today:
 | `costs.ndjson` | upsert at merge | 11 of 23 rows price billions of tokens at $0 |
 | `session-merges.ndjson` | record at teardown | ~50% met — this tempdoc |
 | observations conditions store | `fold --apply` | 358 conditions, `probeable: 0`, not converging |
-| `friction-excluded-sessions.json` | keep session ids current | every id rotated; excludes nothing, still reports "0 excluded" |
+| `friction-excluded-sessions.json` | keep session ids current | every id rotated; excluded nothing while reporting "0 excluded" — fixed by 858 in this PR |
 
 The last is sharpest: a maintained list that has silently become a no-op while printing a number
 that reads like an observation.
