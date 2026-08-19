@@ -794,6 +794,7 @@ export function registerShellActions(deps: ShellActionDeps): void {
   navigateAction('core.action.shell.go-to-library', 'Go to Library', 'core.library-surface');
   navigateAction('core.action.shell.go-to-settings', 'Go to Settings', 'core.settings-surface');
   navigateAction('core.action.shell.go-to-health', 'Go to System Health', 'core.health-surface');
+  navigateAction('core.action.shell.go-to-activity', 'Go to Activity', 'core.activity-surface');
   navigateAction('core.action.shell.go-to-chat', 'Go to Chat', 'core.unified-chat-surface');
   navigateAction('core.action.shell.go-to-browse', 'Go to Browse', 'core.browse-surface');
   // Round-14 F2 — the Brain surface had no plain navigation entry: the only palette routes to it

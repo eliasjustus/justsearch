@@ -585,6 +585,33 @@ describe('branching a conversation from a turn', () => {
   });
 });
 
+/* ── 857 D4 (drafted as 854) — the citation pane belongs to the conversation it was opened against ─ */
+
+describe('branching a conversation closes a citation pane open on the parent', () => {
+  it('closes the pane once "Branch" claims the child conversation (route #4 -> openBranch)', async () => {
+    twoTurnConversation();
+    const el = await mount();
+    await openConversation(el);
+
+    // The citation-OPEN mechanism is pane.test.ts's concern; here the pane's presence is set up
+    // directly on the same four fields `closePane()` nulls, so this case isolates the switch-guard
+    // in `openBranch` (shared by the version pager and every branch/retry/edit act) rather than
+    // re-proving the citation click already covered elsewhere.
+    el.paneDocPath = 'f:/docs/note.md';
+    el.paneCitation = { startChar: 0, endChar: 10, excerpt: 'x', sentenceText: null };
+    el.paneSource = { turnId: storedId(1), sourceIndex: 0 };
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).not.toBeNull(); // present BEFORE the branch
+
+    await chooseFromTurnMenu(el, 0, BRANCH_MENU_BRANCH);
+
+    // A REAL switch happened — same assertion the plain branch case above makes — so this is exactly
+    // route #4's leaking case, not a no-op branch.
+    expect(el.sessions.activeId).toBe('uc-branch-branch-1');
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).toBeNull(); // absent AFTER
+  });
+});
+
 /* ── The version pager ───────────────────────────────────────────────────────────────────────── */
 
 describe('the version pager', () => {
