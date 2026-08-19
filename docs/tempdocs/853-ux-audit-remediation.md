@@ -144,3 +144,30 @@ independent auditor (`ux-audit-closure`: the reviewer should not be the committe
 coverage gaps the audit already recorded still apply — `governance/ui-a11y-baseline.v1.json` has no
 surface entry for the search-v3 window, the `DocumentPane` reading surface, or the reasoning block,
 so `jseval ui-a11y-gate` structurally cannot see F-05 or F-08 either before or after this change.
+
+### Live structural confirmation of F-05 and F-08, 2026-08-19 (partial — NOT the audit)
+
+Run as a rider on the 849/852 live-confirmation round (dev stack, compact profile, real corpus,
+real streamed turns), by an agent who is neither the auditor nor the committer of this remediation.
+This confirms the fixes are **present and correct in the live DOM**; it is explicitly **not** the
+measured four-palette axe re-measure the paragraph above reserves for the next auditor.
+
+**F-05 — `scrollable-region-focusable`.** In the live reading pane, `DocumentPane`'s own
+`.scroll-region` carries `tabindex="0"`, `role="region"`, `aria-label="Document content"`. On a
+cited document containing tables, the markdown pass had marked **all 5** `<table>` elements with
+`tabindex="0"` and `aria-label="Table"`, and `role` left unset — which is `markScrollableRegions`'
+deliberate choice to let a table keep its own role. **3 of the 5 genuinely overflowed**
+horizontally at a 1500px viewport (`scrollWidth` 635/690/712 vs `clientWidth` 620/511/509), so the
+elements made focusable are real clipped scroll containers and not a vacuous pass on non-scrolling
+tables — the failure mode `scrollable-region-focusable` actually describes.
+
+**F-08 — `nested-interactive`.** The live reasoning block's disclosure is a real
+`<button>` (`tagName === 'BUTTON'`), the block contains **zero** `[role="button"]` shims, and the
+copy control is a SIBLING — `disclosure.contains(copy)` is `false` with 2 buttons in the block.
+That is the exact structural shape the fix claims, observed on a streamed reasoning turn rather
+than in a fixture.
+
+**Rider finding (tempdoc 848 regression, re-checked here because the same block is involved):** a
+reasoning turn survives a full window reload — after `page.goto` plus re-entry from the sidebar, the
+settled turn re-rendered its reasoning block (count 1, same real-button structure). The 848 fix
+holds live.

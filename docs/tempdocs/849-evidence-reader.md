@@ -1,7 +1,9 @@
 # 849 — The Search v3 pane is an evidence reader, not a file previewer
 
 ```
-status:  SLICES 1-2 IMPLEMENTED — Slice 3 PENDING
+status:  SLICES 1-3 IMPLEMENTED (merged) — live round run 2026-08-19 (§0.3):
+         overflow confirmed, `sv3-citation-dropped` now required=True.
+         Remaining: the measured four-palette ux-audit-closure pass.
 created: 2026-08-19
 updated: 2026-08-19
 related: 822 F8 (the pane's original charter), 845 (RAG budget honesty — IMPLEMENTING,
@@ -281,8 +283,9 @@ a turn, because `sv3-citation-selected`'s ask is chosen so the context FITS (tha
 grounded marks reliable) and this one needs an ask whose context provably does not. Its determinism
 is 845's arithmetic driven from the UI — the composer's THOROUGH rung sends `topK: 12` **and**
 `maxTokens: 3072` (`sv3-ask.ts:158-168`), so one control simultaneously maximises the retrieved set
-and shrinks, via the completion reserve, the budget it must fit in. **Its first live capture is not in
-this PR**: the definition ships now, the baseline folds into the program's next dev-stack session.
+and shrinks, via the completion reserve, the budget it must fit in. ~~**Its first live capture is not in
+this PR**: the definition ships now, the baseline folds into the program's next dev-stack session.~~
+**That capture ran 2026-08-19 — see §0.3.**
 
 **And it ships `required=False`, against §D-8's explicit "it must be `required=True`" (review
 LOW-6).** The deviation is recorded here rather than buried, because §D-8's instruction exists to stop
@@ -295,6 +298,10 @@ trigger is named in the step's own comment: at the first live capture, overflow 
 `required=True`; not confirmed → retune the ask (more documents, longer passages, a higher rung)
 until it overflows, then flip. It does not stay `False` by default, and "we never got round to the
 capture" is the predictable evasion this sentence exists to foreclose.
+
+> **SUPERSEDED 2026-08-19 — the trigger fired as written.** The live capture ran, overflow is
+> confirmed with measured numbers, and the step is now `required=True`. See **§0.3**. The paragraph
+> above is kept as the record of why it shipped `False` for one slice, not as current state.
 
 **One gate finding, and the fix moved twice (review MEDIUM-4).** `check-verdict-derivation` failed on
 `evidenceProjection.ts`: its predicate was the string `retrieval\s*[=!]==`, and the header's own
@@ -353,6 +360,58 @@ citation header — and the measured audit of both **in all four palettes**, plu
 (absent header, absent inclusion, S10 notice), folds into the next audit round. Recorded here rather
 than left implicit, since the honor-system gate was retired in 563 and nothing will fail the build
 for its absence.
+
+### 0.3 The live round, run 2026-08-19 — overflow CONFIRMED, `sv3-citation-dropped` now `required=True`
+
+Slice 3 shipped `sv3-citation-dropped` at `required=False` against §D-8's explicit instruction, with
+one named reversal trigger: **the first live capture**. That capture has now run, and this section
+is the record the trigger asked for.
+
+**Conditions.** Dev stack from this worktree's dist, compact chat profile, `contextWindow` 4096,
+corpus `docs/{explanation,reference,how-to}` = 111 documents / 1149 chunks, all four enrichment
+stages at 100%.
+
+**The measurement, and what it settles.** Review's objection was correct — `maxTokens: 3072` is the
+completion RESERVE, so the THOROUGH rung shrinking the input budget was *plausible but unproven*.
+Live, the reserve leaves roughly **1024 tokens of input budget against the 4096-token window**, and
+the THOROUGH turn's own context meter read **630 / 4096**. Read against the window that is 15% and
+looks like abundant headroom; read against what the reserve actually leaves it is ~60% — and it is
+the second number the budget enforces. Twelve retrieved passages do not fit in it.
+
+| Turn | Rung | Meter | Inclusion badges observed |
+|---|---|---|---|
+| "What does the JustSearch Worker do?" | default | 2474 / 4096 | 2 × `included`, **1 × `partial`** |
+| §D-8's broad five-area ask | THOROUGH | 630 / 4096 | **1 × `partial`** |
+
+**A non-included badge renders, so the step's assertion reaches its state.** Two consecutive
+`jseval ui-shot sv3-citation-dropped --ui-url http://127.0.0.1:5173` runs both reached it (the
+step's `wait_for_function` RAISES on timeout, so completing IS the assertion passing) — it is not a
+coin flip. Accordingly the step is flipped to **`required=True`**, and the Step() comment now
+carries these numbers instead of the reversal trigger.
+
+**Honest scope of the confirmation.** What was observed is `partial`, not `dropped`. The step
+accepts either, and `partial` is the same budget boundary seen from one passage in; but the
+strictly-flagship "retrieved and never sent at all" state was not the one this corpus produced, and
+saying otherwise would overclaim. Worth noting the default rung ALSO overflowed — at a 4096-token
+dev context the boundary is easy to reach, which is what makes the step deterministic here and is
+also a caution: on a larger production context window the same ask may stop overflowing, so the
+step's determinism is a property of the dev context, not of the ask alone.
+
+**The provenance header renders live**, resolved by the same join and carrying all four facts §7
+specifies:
+
+> `Cited in the answer to What does the JustSearch Worker do?` · `Passage 7 of 8` ·
+> `Sent to the model` · `Grounds 2 sentences` · `Claim match strong`
+
+and on the THOROUGH turn, `Passage 11 of 14` · `Partly sent to the model` · `Grounds 5 sentences` ·
+`Claim match strong`. **No number appears in the header** — the one score is a metric name plus a
+band word, which is §7 rule 1 holding in the live render. The inclusion badge's absence discipline
+also holds: every badge on screen corresponded to a real inclusion state, and no placeholder or
+"unknown" caveat was rendered anywhere.
+
+**Still NOT discharged:** the measured four-palette `ux-audit-closure` audit of the two new
+vocabularies, above. This round confirmed the states are REACHABLE and correct in one theme; it is
+not the independent measured audit, and does not stand in for it.
 
 ---
 
