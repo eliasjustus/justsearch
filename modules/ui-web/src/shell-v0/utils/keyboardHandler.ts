@@ -53,7 +53,7 @@ export function deepActiveElement(doc: Document = document): Element | null {
  * Tempdoc 854 PR-A — is this element one the reader types into? The UNION of the two copies that
  * existed before: `KeybindingRegistry.ts`'s modifier-less guard (which covered `SELECT`) and
  * `UnifiedChatView`'s inline J/K guard (which did not). The omission was a live bug — with the
- * workflow `<select>` focused (`views/UnifiedChatView.ts:3986`) a `j` press stole the element's
+ * workflow `<select>` focused (`views/UnifiedChatView.ts:3987`) a `j` press stole the element's
  * native type-ahead — so the union is a fix, not a widening for symmetry.
  *
  * Split from {@link deepActiveElement} so a caller that resolves its subject differently can reuse

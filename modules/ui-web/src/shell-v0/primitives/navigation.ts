@@ -295,8 +295,8 @@ export class NavigationController implements ReactiveController {
     //
     // This used to read "`.conversation` is a stable DOM node across renders → observe it ONCE
     // (guarded)". That is true of the FIRST adopter and false of the second: `Sv3Main` emits
-    // `.scroller` from four different render arms (`views/search-v3/Sv3Main.ts:1304, 1321, 1345,
-    // 2312`), each a distinct `html` template and therefore a distinct node. An unconditional
+    // `.scroller` from four different render arms (`views/search-v3/Sv3Main.ts:1420, 1437, 1461,
+    // 2460`), each a distinct `html` template and therefore a distinct node. An unconditional
     // early-return left the observer and all four listeners on a DETACHED node, so `measure()` read
     // a stale viewport while the reader looked at a different element. Compare identity instead:
     // an unchanged node takes exactly the old early return, a swapped one rebinds.

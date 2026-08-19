@@ -10,7 +10,7 @@
  * mis-stamped anchor yields zero landmarks and every J/K test still passes, since the retiree's own
  * tests (and `primitives/navigation.test.ts`) hand-assign `nav.landmarks` and never exercise
  * `measure()`. Compounding it, happy-dom lays nothing out, so `getBoundingClientRect()` returns
- * all-zero rects and `measure()` DROPS every zero-height element (`primitives/navigation.ts:301`) —
+ * all-zero rects and `measure()` DROPS every zero-height element (`primitives/navigation.ts:345`) —
  * a perfectly-stamped transcript would measure to nothing.
  *
  * So the rects are stubbed per case (the idiom, and the reason for it, are this directory's own:

@@ -24,7 +24,7 @@ import { JfElement } from '../../primitives/JfElement.js';
 // The product's ONE reading-position authority (tempdoc 565 §21), and this surface is its SECOND
 // adopter — 565 §21 deferred "the general multi-surface authority … to the 2nd adopter", so the
 // controller is consumed here rather than re-derived. Only its NAVIGATION half is used: `spineEl`
-// returns null, which the authority explicitly supports (`primitives/navigation.ts:288-289`), so
+// returns null, which the authority explicitly supports (`primitives/navigation.ts:332-333`), so
 // the minimap's measurements degrade to zero and the landmark/jump path is untouched.
 import { NavigationController } from '../../primitives/navigation.js';
 // The product's ONE "is the reader typing?" predicate (tempdoc 854 PR-A). A window-local copy is
@@ -1229,11 +1229,11 @@ export class Sv3Main extends JfElement {
    *
    *  1. **It is answerable BEFORE any measurement.** An `active()` derived from `nav.landmarks`
    *     deadlocks: landmarks populate only inside `measure()`, and `measure()` runs only when
-   *     `active()` is already true (`primitives/navigation.ts:128-133`), so zero landmarks would
+   *     `active()` is already true (`primitives/navigation.ts:131-135`), so zero landmarks would
    *     mean permanently inactive. Host state, always.
    *  2. **It is FALSE in every non-transcript arm** — hero, search rows, pending, unreachable,
    *     empty and locked. That is what tears the controller down when the arm changes
-   *     (`navigation.ts:131-133`), which is what makes it rebind to the NEW `.scroller` node on the
+   *     (`navigation.ts:134-135`), which is what makes it rebind to the NEW `.scroller` node on the
    *     way back in: this element emits `.scroller` from four different templates, so the node is
    *     not stable and a controller that stayed active across a swap would keep its observer and
    *     listeners on a detached element. A future `active()` that stays true across arms silently
@@ -1291,7 +1291,7 @@ export class Sv3Main extends JfElement {
 
   /**
    * J / K — step focus forward and back through the run's landmarks (tempdoc 854 PR-A, porting
-   * 565 §33 from `views/UnifiedChatView.ts:4802-4830`). The ONLY keyboard navigation the product has
+   * 565 §33 from `views/UnifiedChatView.ts:4803-4825`). The ONLY keyboard navigation the product has
    * for run steps, and the reason it is kept: `jumpTo` moves real DOM focus to the step, so a
    * keyboard or screen-reader reader lands on the content.
    *

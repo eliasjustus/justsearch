@@ -4809,7 +4809,7 @@ export class UnifiedChatView extends JfElement {
     // Tempdoc 854 PR-A — the descent and the predicate are the SHARED ones now
     // (`utils/keyboardHandler.ts`), so this window and Search v3 cannot disagree about what "typing"
     // is. The shared predicate's union also covers `SELECT`, which this inline copy omitted: with the
-    // workflow picker (`:3986`) focused, `j`/`k` used to steal its native type-ahead.
+    // workflow picker (`:3987`) focused, `j`/`k` used to steal its native type-ahead.
     if (isTypingTarget(deepActiveElement())) return;
     const landmarks = this.nav.landmarks ?? [];
     if (landmarks.length === 0) return;

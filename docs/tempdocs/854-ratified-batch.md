@@ -1092,7 +1092,7 @@ each test carries.
    (`views/search-v3/sv3-run.ts:190, 194`), and `projectSv3RunPrompts` forwards
    `feed.pendingApprovals` unchanged (`:274`). A bare `prompt.id` would put the same `data-item-id`
    on the tool card and on the hold — a duplicate landmark, and an unreachable hold, since `jumpTo`
-   resolves by first match (`primitives/navigation.ts:155`). The suffix is the design's own `:q`/`:a`
+   resolves by first match (`primitives/navigation.ts:190`). The suffix is the design's own `:q`/`:a`
    idiom applied to the same problem it was introduced for. Pinned by the duplicate-id test and by
    probe P5 below.
 2. **The J/K handler ignores modified chords**; the source does not. `Ctrl+J` and `⌘+K` belong to the
@@ -1140,7 +1140,7 @@ was restored after each.
 
 The wiring test is the acceptance gate the plan asked for: it stubs `getBoundingClientRect` per case
 (this directory's own idiom, `SearchV3View.pane.test.ts:58` / `sidebar.test.ts:43`) so `measure()`
-does not drop every element at `navigation.ts:301`, and asserts `nav.landmarks` equals the stamped id
+does not drop every element at `navigation.ts:345`, and asserts `nav.landmarks` equals the stamped id
 set in DOM order **read back from the element `scrollEl()` returns** — which is why P1 and P2 both
 fail it, and why a controller bound to a detached scroller would too.
 
