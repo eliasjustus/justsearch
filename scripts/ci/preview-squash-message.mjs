@@ -12,10 +12,27 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { resolveSessionId } from '../agent-analytics/note-observation.mjs';
+import { hasSessionIdLine, SESSION_ID_KEY } from '../agent-analytics/merge-links.mjs';
+
 const KIND = 'justsearch-squash-message-preview.v1';
 const BODY_PREVIEW_LINES = 12;
 const LONG_BODY_CHARS = 5000;
 const TEMPLATE_SECTIONS = ['Summary', 'Changes', 'Testing', 'Related Issues'];
+
+// Tempdoc 856 §3: the PR body becomes the squash commit message under
+// ADR-0045, so a `Session-Id:` line here lands in main permanently and makes
+// git itself the session→merge authority. ADVISORY ONLY — a warning, never a
+// failure: 856 §6 scopes this as advisory until coverage is proven, and a hard
+// gate here could block publishing outright.
+//
+// The line's POSITION does not matter. An earlier revision warned when it was
+// not in the final paragraph, on the theory that git's trailer parser had to
+// see it; that premise was refuted (GitHub appends its own `---------` /
+// `Co-authored-by:` paragraph on squash, so a trailing position is not
+// achievable anyway) and merge-links.mjs now scans the whole message. The
+// detection predicate is IMPORTED from that reader, so this preview cannot
+// promise something the reader would not find.
 
 function repoRootFromCwd() {
   for (let dir = process.cwd(); ; dir = path.dirname(dir)) {
@@ -181,7 +198,7 @@ function markdownFenceFor(lines) {
   return { open: `${fence}markdown`, close: fence };
 }
 
-export function buildSquashMessagePreview({ repoSlug = null, repo, pr }) {
+export function buildSquashMessagePreview({ repoSlug = null, repo, pr, sessionId = null }) {
   const pullRequest = normalizePullRequest(pr);
   const body = pullRequest.body;
   const lines = body === '' ? [] : body.split(/\r?\n/);
@@ -219,6 +236,16 @@ export function buildSquashMessagePreview({ repoSlug = null, repo, pr }) {
 
   if (body.trim() && !hasTestingSignal(lines)) {
     addWarning(warnings, 'missing-testing-signal', 'No clear testing or verification signal was found in the PR body.');
+  }
+
+  if (body.trim() && !hasSessionIdLine(body)) {
+    const suggestion = sessionId && sessionId !== 'unknown'
+      ? `${SESSION_ID_KEY}: ${sessionId}` : `${SESSION_ID_KEY}: <session-uuid>`;
+    addWarning(
+      warnings,
+      'missing-session-id-line',
+      `PR body has no ${SESSION_ID_KEY} line, so the squash commit will not carry its session→merge link (tempdoc 856 §3). Add a line of its own: "${suggestion}".`
+    );
   }
 
   const opening = [pullRequest.title, ...lines.slice(0, BODY_PREVIEW_LINES)].join('\n');
@@ -308,7 +335,11 @@ function main() {
     repoRootFromCwd();
     const repo = loadRepo(opts);
     const pr = loadPullRequest(opts);
-    const report = buildSquashMessagePreview({ repoSlug: opts.repo, repo, pr });
+    // Advisory only: a session id we cannot resolve degrades the warning's
+    // suggested text, never the preview itself.
+    let sessionId = null;
+    try { sessionId = resolveSessionId(); } catch { sessionId = null; }
+    const report = buildSquashMessagePreview({ repoSlug: opts.repo, repo, pr, sessionId });
     if (opts.json) console.log(JSON.stringify(report, null, 2));
     else if (opts.md) console.log(renderMarkdown(report));
     else process.stdout.write(renderText(report));

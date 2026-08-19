@@ -149,6 +149,14 @@ jobs:
       - name: Test dead-config scanner (config-surface gate)
         run: node scripts/ci/test-config-surface-dead-config.mjs
 
+      # Tempdoc 856. Same shape as the block below, found the same way: the squash-message
+      # preview has had tests since it shipped, and no workflow ever invoked them --
+      # run-all-tests.mjs only discovers scripts/agent-analytics/**. 856 added trailer checks
+      # to that script, which would have landed equally unrun. Wired here rather than left as
+      # a follow-up, per retire-with-a-sweep's evasion clause.
+      - name: Test squash-message preview (session-id trailer + title/body checks)
+        run: node scripts/ci/test-preview-squash-message.mjs
+
       # Tempdoc 799 Q. An adversarial review found the gate itself ran NOWHERE -- the step above
       # tests the scanner, but nothing invoked the gate on a PR. That is the same "shipped but
       # wired to nothing" shape L.1 documents for the always-loaded ratchet, reproduced in the
