@@ -61,6 +61,7 @@ org.apache.commons:commons-text:1.14.0=runtimeClasspath,testRuntimeClasspath
 org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath,testRuntimeClasspath
 org.checkerframework:checker-qual:3.49.5=annotationProcessor,testAnnotationProcessor
 org.codehaus.mojo:animal-sniffer-annotations:1.26=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0=dependencyAnalysisKotlinMetadataClasspath
 org.jspecify:jspecify:1.0.0=annotationProcessor,compileClasspath,runtimeClasspath,testAnnotationProcessor,testCompileClasspath,testRuntimeClasspath
 org.junit.jupiter:junit-jupiter-api:5.14.4=testCompileClasspath,testRuntimeClasspath
 org.junit.jupiter:junit-jupiter-engine:5.14.4=testRuntimeClasspath
