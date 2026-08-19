@@ -13,7 +13,7 @@ lane's upgrade-arrival leg (tempdoc 805 Part G.4, `-IncludeUpgradeArrival`).
   - Five model-package entries (`embedding`, `splade`, `reranker`, `ner`, `chat`)
     with fake (non-functional) `sha256` values and the real registry
     `targetDir`/`variantFilename`/`installedFiles` shapes for a GPU_FULL
-    install (`modules/ui/src/main/resources/ai/model-registry.v2.json`).
+    install (`modules/configuration/src/main/resources/ai/model-registry.v2.json`).
   - A `cuda-runtime` entry recorded `skipped: true, skipReason: "No variant"`
     with no `installedFiles` -- `cuda-runtime` ships `variants: []` in both the
     v0.1.0 and 0.2.0 registries, so `ModelPackage.selectVariant` returns null

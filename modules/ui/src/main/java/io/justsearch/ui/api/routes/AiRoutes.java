@@ -109,6 +109,17 @@ public final class AiRoutes {
     app.post("/api/ai/install/start", aiInstallController::handleStart);
     app.post("/api/ai/install/cancel", aiInstallController::handleCancel);
     app.post("/api/ai/install/repair", aiInstallController::handleRepair);
+    // Tempdoc 840 Phase 4 — pause/resume an in-flight run (NOT a cancel: the run keeps its op-lease
+    // and its place in the set), and per-component decline / re-enable. Every one of these answers
+    // with the post-call AiInstallStatus, like start/cancel/repair.
+    app.post("/api/ai/install/pause", aiInstallController::handlePause);
+    app.post("/api/ai/install/resume", aiInstallController::handleResume);
+    app.post(
+        "/api/ai/install/packages/{packageId}/decline",
+        aiInstallController::handleDeclinePackage);
+    app.delete(
+        "/api/ai/install/packages/{packageId}/decline",
+        aiInstallController::handleAcceptPackage);
 
     app.get("/api/ai/packs/status", aiPackController::handleGetStatus);
     app.get("/api/ai/packs/installed", aiPackController::handleGetInstalled);

@@ -53,7 +53,13 @@
   "shell-v0/views/LibrarySurface.ts": ["library", "library-light", "skeleton-library", "library-enriching"],
   "shell-v0/state/folderStatus.ts": ["library-enriching"],
   "shell-v0/views/BrainSurface.ts": [
-    "ai-brain", "ai-brain-advanced", "ai-brain-light", "ai-brain-advanced-light"
+    "ai-brain", "ai-brain-advanced", "ai-brain-light", "ai-brain-advanced-light",
+    "ai-brain-components", "ai-brain-consent",
+    "ai-brain-components-light", "ai-brain-consent-light"
+  ],
+  "shell-v0/state/installComponents.ts": [
+    "ai-brain-components", "ai-brain-consent",
+    "ai-brain-components-light", "ai-brain-consent-light"
   ],
   "shell-v0/views/SettingsSurface.ts": [
     "settings", "settings-light",

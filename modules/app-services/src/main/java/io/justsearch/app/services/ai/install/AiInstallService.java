@@ -29,6 +29,7 @@ import io.justsearch.configuration.model.ModelPackage;
 import io.justsearch.configuration.model.ModelRegistry;
 import io.justsearch.configuration.model.ModelRegistryLoader;
 import io.justsearch.configuration.model.ModelVariant;
+import io.justsearch.configuration.model.SkipCause;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.app.services.config.ConfigStoreRebuilder;
 import io.justsearch.app.api.EffectivePolicy;
@@ -44,12 +45,14 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,6 +101,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   // progress for longer than this is treated as a dead owner and reclaimed to terminal on read.
   private static final long STALE_RUNNING_MS = 5 * 60_000L; // 5 min
 
+  /** Whole budget for the post-install smoke-test answer, spent in cancellation-polling slices. */
+  private static final long SMOKE_TEST_TIMEOUT_MS = 60_000L; // 60 s
+
   private final Object lock = new Object();
   private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -122,6 +128,32 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   private final AtomicBoolean cancelFlag = new AtomicBoolean(false);
   private final AiInstallStatus status = new AiInstallStatus();
   private volatile DownloadExecutor downloadExecutor;
+
+  /**
+   * Halts the in-flight acquisition between items (tempdoc 840 Phase 3, task 5). Nothing exposes it
+   * over the wire yet — this is the mechanism, and the endpoint is a later phase.
+   */
+  private final AcquisitionPause pause = new AcquisitionPause(cancelFlag::get);
+
+  /**
+   * What a stage's op-lease claims its download will take, from the only evidence available before
+   * it runs: its bytes over an assumed throughput. Deliberately optimistic, per {@code
+   * OperationLeaseService#register}'s contract ("optimistic upper bound … should not be the
+   * worst-case timeout") — the service derives the expiry from it, doubling it and capping at an
+   * hour, so an over-generous estimate is what actually costs something.
+   */
+  private static final long LEASE_ESTIMATE_BYTES_PER_SEC = 2_000_000L; // ~16 Mbit/s
+
+  private static final long MIN_STAGE_LEASE_SEC = 60L;
+  private static final long MAX_STAGE_LEASE_SEC = 3600L;
+
+  /**
+   * The first stage's lease estimate, which necessarily predates the plan: it is registered on the
+   * CALLING thread (see {@link #startInstall}) so upgrade prepare can never observe no blocker while
+   * a download is starting, and the plan is only computed once the install thread runs. Every LATER
+   * stage's lease is sized from its own bytes.
+   */
+  private static final long PRE_PLAN_STAGE_LEASE_SEC = 900L;
 
   // Tempdoc 562: `installedFully` is session-ephemeral — only set true at the end of an install RUN, never
   // rehydrated — so after a restart a returning user with models already on disk reads a false "Not
@@ -172,6 +204,27 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
   /** Monotonic, so the TTL cannot be skewed by a wall-clock adjustment. */
   private volatile java.util.function.LongSupplier nanoClock = System::nanoTime;
+
+  /** Usable-space source for the per-stage disk precondition; swapped in tests (tempdoc 840 U2). */
+  private volatile FreeSpaceCheck.Probe freeSpaceProbe = FreeSpaceCheck.filesystemProbe();
+
+  /**
+   * The running stage's live rate estimator, or null when no acquisition is in flight.
+   *
+   * <p>Held rather than sampled because the estimate has to be derived AT READ TIME. {@link
+   * AcquisitionRate#estimate} decides "this transfer has stopped reporting" by comparing its newest
+   * sample against the clock, and the only previous caller asked for the estimate on the line after
+   * feeding it a sample — where that comparison is always ~0 ns and the stall arm could never fire.
+   * A genuinely stalled transfer therefore left its last measured rate standing on the wire for as
+   * long as it was stalled, which is the most confident lie the class is built to avoid. Same
+   * refreshed-on-read reasoning as the functional-status projection in {@link #getStatus}.
+   */
+  private volatile java.util.function.Supplier<AcquisitionRate.Estimate> liveRateSource;
+
+  /** Test seam: report a chosen amount of free space without needing a real full disk. */
+  void setFreeSpaceProbeForTest(FreeSpaceCheck.Probe probe) {
+    this.freeSpaceProbe = probe == null ? FreeSpaceCheck.filesystemProbe() : probe;
+  }
 
   /**
    * Late-binds the runtime's observed per-package capability status. Called by {@code ServicePhase}
@@ -291,16 +344,29 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   public AiInstallStatus getStatus() {
     maybeRecomputeInstalledFromDisk();
     Map<String, String> observed = observedFunctionalStatus();
+    Set<String> declined = declinedPackages();
     synchronized (lock) {
       reapIfStale();
+      refreshRateEstimateLocked();
       status.resumableBytes = resumableBytesOnDisk;
+      // Tempdoc 840 Phase 4 — the pause gate the run actually waits on is the authority; mirroring
+      // its bit here on read is what keeps a second copy from existing at all.
+      status.paused = pause.isPaused();
       // Tempdoc 824 §3.3c — refreshed on read, not on write: the capability comes up and goes down
       // independently of any install run, so a value stamped at completion would be stale for the
       // whole life of the status object (which outlives the run by design).
       for (var ps : status.packages) {
         ps.functionalStatus = observed.getOrDefault(ps.packageId, "unknown");
+        // Same read-time reasoning, for the same reason: a decline recorded between two polls must
+        // show on the next one, and the settings store is the one place it lives.
+        ps.declined = declined.contains(ps.packageId);
       }
-      return status;
+      // Deep copy INSIDE the lock: the caller (the HTTP handler) serializes with no lock held while
+      // the install thread keeps mutating the live object — including clearing and repopulating
+      // status.packages — so handing out the live reference made a ConcurrentModificationException
+      // reachable at the 1 Hz poll. The two writes above stay on the live object; only the copy
+      // leaves.
+      return status.snapshot();
     }
   }
 
@@ -341,7 +407,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     try {
       recordResumableBytes(
           InstallPlanner.plan(
-              getManifest(), buildHardwareProfile(), installIntent(), modelsDir, homeDir));
+              getManifest(),
+              buildHardwareProfile(),
+              installIntent(),
+              declinedPackages(),
+              modelsDir,
+              homeDir));
     } catch (Exception e) {
       log.debug("AiInstall resumable-bytes probe skipped (best-effort): {}", e.toString());
     }
@@ -363,7 +434,8 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     preview.downloadProfile = profile.name();
 
     // Reuse the PURE planner (no side effects) — tempdoc 381 §F "show the plan before download".
-    InstallPlan plan = InstallPlanner.plan(registry, hardware, intent, modelsDir, homeDir);
+    InstallPlan plan =
+        InstallPlanner.plan(registry, hardware, intent, declinedPackages(), modelsDir, homeDir);
     // What the download will actually COST: complete files are already excluded by the planner, and
     // `remainingBytes()` also drops the bytes an interrupted run left staged. Stating `totalBytes()`
     // here charged the user for bytes already on their disk (Sandbox round 8).
@@ -371,10 +443,13 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     preview.resumableBytes = plan.resumableBytes();
     recordResumableBytes(plan);
 
-    // Bytes still to download, per package id.
+    // Bytes still to download, per package id — RESUME-ADJUSTED, exactly like the headline
+    // `totalDownloadBytes` above, so the rows sum to the total instead of quietly re-introducing at
+    // component granularity the "charged the user for bytes already on their disk" defect the
+    // headline was fixed for (Sandbox round 8, per-component half in tempdoc 840 R3).
     Map<String, Long> downloadByPkg = new HashMap<>();
     for (var dl : plan.downloads()) {
-      downloadByPkg.merge(dl.packageId(), dl.sizeBytes(), Long::sum);
+      downloadByPkg.merge(dl.packageId(), dl.remainingBytes(), Long::sum);
     }
 
     // One estimate per tier, in canonical order.
@@ -388,7 +463,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
     for (ModelPackage pkg : registry.packages()) {
       CapabilityTier t = pkg.tier();
-      if (t == null) {
+      // A devOnly package (tempdoc 842) is never installed, so its bytes must never appear in a
+      // total the user consents to — the planner skips it, and this projection has to agree.
+      if (t == null || pkg.devOnly()) {
         continue;
       }
       var te = byTier.get(t);
@@ -401,6 +478,70 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       te.downloadBytes += downloadByPkg.getOrDefault(pkg.id(), 0L);
     }
     preview.tiers.addAll(byTier.values());
+
+    // Per-component rows. Every value is projected from the SAME plan the tier totals came from, so
+    // the list cannot disagree with what an install would actually do. Derived here rather than read
+    // off `status.packages`, which is run bookkeeping and is empty on an idle machine.
+    Set<String> installedIds = new HashSet<>(plan.alreadyInstalled());
+    Map<String, InstallPlan.SkippedPackage> skippedById = new HashMap<>();
+    for (var sk : plan.skipped()) {
+      skippedById.putIfAbsent(sk.packageId(), sk);
+    }
+    Set<String> declined = declinedPackages();
+    for (ModelPackage pkg : registry.packages()) {
+      // A devOnly package (tempdoc 842) is not a component the user has any decision about: it is
+      // never installed, never declinable, and listing it would offer a choice that does nothing.
+      if (pkg.devOnly()) {
+        continue;
+      }
+      var ce = new InstallPlanPreview.ComponentEstimate();
+      ce.id = pkg.id();
+      ce.label = pkg.label() == null ? pkg.id() : pkg.label();
+      ce.description = pkg.description() == null ? "" : pkg.description();
+      ce.tier = pkg.tier() == null ? "" : pkg.tier().id();
+      ce.necessity = pkg.necessity() == null ? "" : pkg.necessity().id();
+      ce.declinable = pkg.necessity() != null && pkg.necessity().userDeclinable();
+      ce.declined = declined.contains(pkg.id());
+
+      ModelVariant variant = pkg.selectVariant(profile);
+      long footprint = variant != null ? variant.sizeBytes() : 0L;
+      for (var sf : pkg.supportingFiles()) {
+        footprint += sf.sizeBytes();
+      }
+      ce.totalBytes = footprint;
+      ce.downloadBytes = downloadByPkg.getOrDefault(pkg.id(), 0L);
+
+      InstallPlan.SkippedPackage skipped = skippedById.get(pkg.id());
+      if (installedIds.contains(pkg.id())) {
+        ce.state = "installed";
+      } else if (skipped != null) {
+        // The planner already decided WHY, with a typed cause. Re-deriving it from the prose reason
+        // would be the classification-by-string defect this codebase removed elsewhere.
+        ce.state =
+            switch (skipped.cause() == null ? SkipCause.HARDWARE : skipped.cause()) {
+              case USER_DECLINED -> "declined";
+              case INTENT -> "not-in-mode";
+              case HARDWARE -> "unavailable";
+              // Not reachable today — devOnly packages are filtered out of this loop above. The arm
+              // exists so the switch stays exhaustive: if that filter is ever removed, a dev package
+              // reads as "this build does not install it" rather than as a hardware failure.
+              case DEV_ONLY -> "not-in-mode";
+            };
+        if ("unavailable".equals(ce.state)) {
+          ce.unavailableReason = skipped.reason() == null ? "" : skipped.reason();
+        }
+      } else if (downloadByPkg.containsKey(pkg.id())) {
+        // Keyed on the plan still LISTING files for this package, not on its byte cost: a file whose
+        // .partial already holds every one of its bytes costs nothing more to fetch and is still not
+        // installed — it has not been verified or promoted to its final path.
+        ce.state = "to-download";
+      } else {
+        // Wanted, not skipped, nothing left to fetch — every file is already on disk even though the
+        // planner did not list the package as fully installed (a partially-contracted package).
+        ce.state = "installed";
+      }
+      preview.components.add(ce);
+    }
     return preview;
   }
 
@@ -432,7 +573,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     try {
       ModelRegistry registry = getManifest();
       HardwareProfile hardware = buildHardwareProfile();
-      InstallPlan plan = InstallPlanner.plan(registry, hardware, installIntent(), modelsDir, homeDir);
+      InstallPlan plan =
+          InstallPlanner.plan(
+              registry, hardware, installIntent(), declinedPackages(), modelsDir, homeDir);
       // A successful plan is a DEFINITIVE answer (installed or not) — consume the one-shot now.
       diskRecomputeDone = true;
       // Same disk-is-the-authority reasoning, applied to the OTHER thing a restart forgets: bytes a
@@ -478,7 +621,8 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     // Tempdoc 805 G.3 — the decision moved into InstallCompleteness, at FILE granularity and aware of
     // the contract's entry kind (a skipped entry claims no files). The package-level `containsKey`
     // this replaces called round 11's skipped cuda-runtime entry a contracted gap.
-    InstallCompleteness completeness = InstallCompleteness.compute(plan, contract);
+    InstallCompleteness completeness =
+        InstallCompleteness.compute(plan, contract, declinedPackages());
     // repairNeeded is set even when the completeness claim is unchanged — it answers a different
     // question ("is a required file missing?") and must reach the UI on every recompute.
     synchronized (lock) {
@@ -555,21 +699,26 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           409, ApiErrorCode.INSTALL_ALREADY_RUNNING, "AI install is already running.");
     }
     cancelFlag.set(false);
+    pause.resume();
     // Registered on the CALLING thread, before the virtual thread starts: registering inside it
     // leaves a window where upgrade prepare sees no blocker while the download is about to begin.
-    // Same race-window closure as BulkReindexHandler.
-    OperationLeaseHandle lease =
-        operationLeases.register(
-            "ai.model-install",
-            OpCriticality.INTERRUPTIBLE_WITH_LOSS,
-            7200L,
-            Map.of("source", "ai.model-install"),
-            // Cancellation callback: upgrade prepare drains every active lease, so without this a
-            // consented update would sit behind a multi-hour download instead of asking it to
-            // stop. Safe to honour because a cancelled download resumes from its .partial rather
-            // than restarting (tempdoc 798). The lease still blocks until this actually returns —
-            // the request is an ask, not a release.
-            this::cancel);
+    // Same race-window closure as BulkReindexHandler. Tempdoc 840 Phase 3: the run now takes ONE
+    // LEASE PER STAGE instead of one blanket 7200 s lease, and this is the first stage's — the only
+    // one that cannot be sized from its bytes, because the plan does not exist yet on this thread.
+    // The staged loop releases it when the first stage ends and registers the next stage's itself.
+    StageLease lease =
+        new StageLease(
+            operationLeases.register(
+                InstallStage.first().leaseOpClass(),
+                OpCriticality.INTERRUPTIBLE_WITH_LOSS,
+                PRE_PLAN_STAGE_LEASE_SEC,
+                Map.of("source", "ai.model-install", "stage", InstallStage.first().id()),
+                // Cancellation callback: upgrade prepare drains every active lease, so without this
+                // a consented update would sit behind a multi-hour download instead of asking it to
+                // stop. Safe to honour because a cancelled download resumes from its .partial rather
+                // than restarting (tempdoc 798). The lease still blocks until this actually returns —
+                // the request is an ask, not a release.
+                this::cancel));
     try {
       Thread.ofVirtual()
           .name("ai-install-v2")
@@ -577,10 +726,14 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
               () -> {
                 boolean ok = false;
                 try {
-                  runInstallInternal();
+                  runInstallInternal(lease);
                   ok = true;
                 } finally {
                   running.set(false);
+                  // The pause gate outlives the run (it is a service field). A run cancelled while
+                  // paused leaves the flag set on purpose, so clearing it belongs to whichever run
+                  // ends — otherwise the next status read reports a terminated run as paused.
+                  pause.clear();
                   try {
                     // Every exit — completed, failed, cancelled — changes what is staged on disk,
                     // and a run that ends is exactly when a surface starts asking again. One
@@ -626,8 +779,120 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       touch();
     }
     cancelFlag.set(true);
+    // A run halted between items is waiting on the pause monitor, not on the transport, so the
+    // cancel flag alone would not be read until the wait's next slice. Wakes it without resuming it:
+    // a cancelled run must not look like a continued one.
+    pause.wakeForCancellation();
     DownloadExecutor exec = downloadExecutor;
     if (exec != null) exec.cancel();
+  }
+
+  /**
+   * Halts an in-flight install before its next file, keeping the run, its op-lease and its place in
+   * the set (tempdoc 840 Phase 3, reachable over HTTP since Phase 4). Distinct from {@link
+   * #cancel()}, which is terminal.
+   *
+   * <p>Refuses when nothing is running. The pause gate is a service field that outlives any one run,
+   * so arming it with no run in flight would halt the NEXT install before its first byte — a
+   * failure whose cause is invisible at the surface that caused it.
+   */
+  @Override
+  public void pauseInstall() {
+    requireRunInFlight("pause");
+    pause.pause();
+  }
+
+  /** Continues a paused install at its next file. Refuses when nothing is running. */
+  @Override
+  public void resumeInstall() {
+    requireRunInFlight("resume");
+    pause.resume();
+  }
+
+  private void requireRunInFlight(String verb) {
+    if (!running.get()) {
+      throw new AiInstallException(
+          409,
+          ApiErrorCode.INSTALL_NOT_RUNNING,
+          "No AI install is running, so there is nothing to " + verb + ".");
+    }
+  }
+
+  /**
+   * Records or withdraws the user's decision not to install one package (tempdoc 840 Phase 4).
+   *
+   * <p>Validation order is deliberate: an unknown id is a 404 before declinability is consulted, so
+   * a typo never reports "this component cannot be turned off" about a component that does not
+   * exist. Declinability itself is read from {@code Necessity.userDeclinable()} — the one authority —
+   * rather than a list of ids maintained here, and only the DECLINE direction is gated: withdrawing
+   * a decline can never be an invalid request, including for a package that was never declinable
+   * (where it is simply a no-op).
+   *
+   * <p>The preference is advisory at the planner, which honours it only for a declinable package;
+   * this check is what makes the refusal legible instead of silent.
+   */
+  @Override
+  public void setPackageDeclined(String packageId, boolean declined) {
+    String id = packageId == null ? "" : packageId.trim();
+    if (id.isEmpty()) {
+      throw new AiInstallException(
+          400, ApiErrorCode.INVALID_REQUEST, "A component id is required.");
+    }
+    ModelPackage pkg;
+    try {
+      pkg = getManifest().findPackage(id);
+    } catch (Exception e) {
+      throw new AiInstallException(
+          503, ApiErrorCode.MANIFEST_UNAVAILABLE, "Model registry unavailable: " + e.getMessage());
+    }
+    if (pkg == null) {
+      throw new AiInstallException(
+          404, ApiErrorCode.PACKAGE_NOT_FOUND, "No AI component with id '" + id + "'.");
+    }
+    if (declined && !pkg.necessity().userDeclinable()) {
+      throw new AiInstallException(
+          400,
+          ApiErrorCode.PACKAGE_NOT_DECLINABLE,
+          "'" + pkg.label() + "' is " + pkg.necessity().label().toLowerCase(java.util.Locale.ROOT)
+              + " and cannot be turned off.");
+    }
+    if (settingsStore == null) {
+      throw new AiInstallException(
+          503,
+          ApiErrorCode.SETTINGS_UNAVAILABLE,
+          "Settings are unavailable, so the choice cannot be remembered.");
+    }
+    // UiSettingsStore.save() is a silent no-op in IN_MEMORY mode, so without this the endpoint would
+    // answer 200 and forget the choice on the next read — the same class of lie as a fabricated 0.
+    if (!settingsStore.mode().isWritable()) {
+      throw new AiInstallException(
+          409,
+          ApiErrorCode.SETTINGS_READ_ONLY,
+          "Settings are read-only in this session, so the choice cannot be remembered.");
+    }
+    try {
+      UiSettings settings = settingsStore.load();
+      List<String> next = new ArrayList<>(settings.getDeclinedAiPackages());
+      boolean changed = declined ? (!next.contains(id) && next.add(id)) : next.remove(id);
+      if (!changed) {
+        return; // already in the requested state — writing settings again would be pure churn.
+      }
+      settings.setDeclinedAiPackages(next);
+      settingsStore.save(settings);
+      log.info("AI component '{}' {} by the user", id, declined ? "declined" : "re-enabled");
+    } catch (Exception e) {
+      // Unlike the read path (best-effort, defaults to "decline nothing"), a WRITE that silently
+      // failed would tell the user their choice was saved when it was not.
+      throw new AiInstallException(
+          500,
+          ApiErrorCode.AI_INSTALL_ERROR,
+          "Failed to save the component choice: " + e.getMessage());
+    }
+  }
+
+  /** Whether an install run is currently halted between files. */
+  public boolean isInstallPaused() {
+    return pause.isPaused();
   }
 
   public void repair(boolean acceptTerms) {
@@ -638,7 +903,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   // Core install flow
   // ---------------------------------------------------------------------------
 
-  private void runInstallInternal() {
+  /**
+   * @param firstStageLease the first stage's op-lease, already registered on the calling thread. The
+   *     staged loop takes it over for whichever stage it reaches first; this method's caller
+   *     releases it as a backstop on every path that never gets there (a release is once-only).
+   */
+  private void runInstallInternal(StageLease firstStageLease) {
     updateState("running", "preflight", "Starting AI install...");
     try {
       Files.createDirectories(homeDir);
@@ -669,7 +939,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
         hardware.gpuDetected(), hardware.cudaFunctional(), hardware.vramBytes(), profile);
 
     // Compute download plan
-    InstallPlan plan = InstallPlanner.plan(registry, hardware, installIntent(), modelsDir, homeDir);
+    InstallPlan plan =
+        InstallPlanner.plan(
+            registry, hardware, installIntent(), declinedPackages(), modelsDir, homeDir);
     log.info(
         "Install plan: profile={}, downloads={}, skipped={}, alreadyInstalled={}, totalBytes={}",
         plan.profile(),
@@ -704,7 +976,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       return;
     }
 
-    // Download files
+    // Reclaim BITS jobs an earlier crash left in the queue (tempdoc 840). Here rather than at app
+    // boot: the set of jobs a sidecar still claims is only knowable once the plan is, and a
+    // PowerShell spawn on every cold start buys no timeliness.
+    sweepOrphanedBitsJobsBestEffort(plan);
+
+    // ---- Stages 1-3, once per acquisition stage ------------------------------------------------
     downloadExecutor = new DownloadExecutor(cancelFlag);
     // Round 16: the environment reset ~40 % of new connections in bursts and the product answered
     // with two attempts ~7 s apart, so the "fallback" landed inside the same degraded window.
@@ -714,194 +991,459 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     // earlier passes learned. Loaded once per run; every mutation persists immediately, so a run
     // killed mid-flight still leaves the passes it completed on record.
     InstallAttemptMemory attempts = InstallAttemptMemory.load(homeDir);
-    long downloadedSoFar = 0;
-    // Per-package cumulative bytes from files that have already finished
-    // downloading. Without this, multi-file packages had bytesDownloaded
-    // overwritten with each individual file's progress (tempdoc 374
-    // sandbox round 2 finding #7).
-    Map<String, Long> packageCompletedBytes = new HashMap<>();
+    PlacementStage placement = new PlacementStage(modelsDir);
 
-    for (InstallPlan.PlannedDownload dl : plan.downloads()) {
+    List<InstallStage.Slice> slices =
+        InstallStage.partition(
+            plan.downloads(),
+            packageId -> {
+              ModelPackage pkg = registry.findPackage(packageId);
+              return pkg == null ? null : pkg.tier();
+            });
+    publishStagePlan(slices);
+
+    // ONE reconciler procedure for the whole install window (tempdoc 840 Phase 3). Staged
+    // acquisition churns the runtime several times where a monolithic run churned it once — a
+    // Worker restart per stage, plus the engine's runtime overrides when the chat model lands — and
+    // drift convergence must stay suppressed across all of it, not per burst. The engine returns to
+    // spec exactly once, at the end. INSTALL_SMOKE_TEST nests inside this; overlapping kinds are
+    // supported and only the LAST end re-arms convergence.
+    RuntimeReconciler reconciler = this.reconciler;
+    boolean acquisitionProcedure = false;
+    if (reconciler != null) {
+      reconciler.beginProcedure(
+          RuntimeStatus.ProcedureKind.INSTALL_ACQUISITION, "staged-model-acquisition");
+      acquisitionProcedure = true;
+    }
+    try {
+      if (!runStages(slices, plan, registry, placement, attempts, retryPolicy, firstStageLease)) {
+        return;
+      }
+
+      // Check for failures
+      long failedCount = countPackagesByState("failed");
+      long totalCount = status.packages.size();
+      if (failedCount > 0 && failedCount == totalCount) {
+        fail("ALL_DOWNLOADS_FAILED", "All packages failed to install.");
+        return;
+      }
+
+      // ---- The run's bill of materials -----------------------------------------------------
+      placement.writeContract(buildContract(plan, registry, hardware), homeDir);
+
+      // Cancellation checkpoints BETWEEN the tail's steps, never inside one: the tail used to run
+      // unchecked from here to applyCompletionState, so a user who cancelled during it (contract,
+      // config, worker restart, and a 60 s smoke test) was told the install COMPLETED — and the
+      // op-lease drain callback that stops an install for a pending app update was a no-op for the
+      // same window. A half-written contract is worse than a completed one, so no step is made
+      // interruptible mid-write.
       if (cancelFlag.get()) {
         cancelled();
         return;
       }
-      updateState("running", "download", "Downloading " + dl.targetPath() + "...");
-      updatePackageState(dl.packageId(), "downloading");
 
-      Path targetFile = modelsDir.resolve(dl.targetPath());
-      Path partialFile = InstallPlanner.partialPathFor(targetFile);
-      try {
-        Files.createDirectories(targetFile.getParent());
-      } catch (IOException e) {
-        failPackage(dl.packageId(), "Failed to prepare download directory: " + e.getMessage());
-        continue;
-      }
-
-      final long progressBase = downloadedSoFar;
-      final long packageBaseBytes = packageCompletedBytes.getOrDefault(dl.packageId(), 0L);
-      // Tempdoc 824 §3.4: pass n meets tier n. Computed here (not inside the transport) because
-      // the escalation is a property of this FILE's history across runs, which only the memory
-      // knows. §3.1's ladder retries WITHIN a pass from this rung; the memory is what makes the
-      // NEXT pass start somewhere else, which is the whole difference between round 16's four
-      // identical repairs and a converging one.
-      final int startTier = attempts.startTierFor(dl.targetPath());
-      final TransportRetryPolicy filePolicy = retryPolicy.withStartTier(startTier);
-      if (startTier > 0) {
-        log.info(
-            "Repair escalation for {}: starting at transport tier {} ({} earlier pass(es) failed it)",
-            dl.targetPath(),
-            startTier,
-            attempts.get(dl.targetPath()).failedPasses());
-      }
-      // A cancelled multi-GB install used to delete its .partial here and start over from zero.
-      // ResumableFetch decides instead whether the bytes on disk provably belong to THIS download
-      // (sidecar identity) and resumes them — always followed by the same SHA-256 verification a
-      // fresh download gets, with a discard-and-restart-once on mismatch.
-      ResumableFetch.Outcome outcome =
-          ResumableFetch.fetch(
-              new ResumableFetch.Request(
-                  partialFile, dl.url(), dl.sizeBytes(), dl.sha256(), dl.targetPath()),
-              downloadExecutor,
-              (bytes, total) -> {
-                synchronized (lock) {
-                  status.downloadedBytes = progressBase + bytes;
-                  // Report cumulative bytes for the package (prior completed
-                  // files + current in-flight). Pass 0 for total so existing
-                  // package-level total (set in populateStatusPackages) wins.
-                  updatePackageProgress(dl.packageId(), packageBaseBytes + bytes, 0);
-                  touch();
-                }
-              },
-              cancelFlag::get,
-              new ResumableFetch.Hooks(
-                  // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch files when
-                  // its download fails; they would otherwise accumulate across retries. Only on a
-                  // fresh start — a suspended BITS job we are about to resume still owns its
-                  // scratch file.
-                  () -> cleanupBitsTmpFiles(targetFile.getParent()),
-                  () -> updatePackageState(dl.packageId(), "verifying"),
-                  // A spaced retry can take ~40 s per file; without the attempt counter the UI
-                  // would look frozen exactly when it is doing the thing that saves the install.
-                  attempt ->
-                      updateState(
-                          "running",
-                          "download",
-                          "Downloading "
-                              + dl.targetPath()
-                              + "..."
-                              + (attempt > 1
-                                  ? " (attempt " + attempt + " of " + filePolicy.maxAttempts() + ")"
-                                  : ""))),
-              filePolicy);
-
-      // Project the resume verdict onto the package so the UI can say the earlier progress was
-      // kept. Sticky across a multi-file package: one resumed file makes the package resumed.
-      if (outcome.firstAction() == DownloadResume.Action.RESUME_RANGE
-          || outcome.firstAction() == DownloadResume.Action.RESUME_BITS) {
-        markPackageResumed(dl.packageId());
-      }
-
-      if (!outcome.ok()) {
-        if (outcome.cancelled() || cancelFlag.get()) {
-          cancelled();
-          return;
-        }
-        if (InstallAttemptMemory.isTransportFailure(outcome.error())) {
-          attempts.recordTransportFailure(
-              dl.targetPath(), dl.url(), outcome.transferAttempts(), outcome.error(), startTier);
-          if (attempts.isTerminal(dl.targetPath())) {
-            // Tempdoc 824 §3.4: three passes of transport failure is no longer a story about luck.
-            // Repair stays *needed* (a file IS missing) but stops being *offered* as the remedy —
-            // an affordance that cannot succeed must not be presented as one.
-            markPackageTerminal(
-                dl.packageId(),
-                "TRANSPORT_UNAVAILABLE",
-                attempts.get(dl.targetPath()).attempts(),
-                dl.url(),
-                targetFile.toString());
-          }
-        }
-        failPackage(dl.packageId(), outcome.error());
-        continue;
-      }
-      attempts.recordSuccess(dl.targetPath());
-
-      // Atomic move to final location
-      try {
-        DownloadExecutor.moveAtomicBestEffort(partialFile, targetFile);
-      } catch (IOException e) {
-        failPackage(dl.packageId(), "Failed to finalize: " + e.getMessage());
-        continue;
-      }
-
-      // Tempdoc 374 alpha.15 fix B: archive extraction. The cuda-runtime
-      // package ships its DLLs in a single zip (too large for the NSIS
-      // installer payload). After download + SHA verification the zip is
-      // expanded into the same directory; the archive itself stays on disk
-      // so the planner's isAlreadyInstalled check skips re-download next
-      // time.
-      if (dl.extract()) {
-        try {
-          extractZipInPlace(targetFile, targetFile.getParent());
-        } catch (IOException e) {
-          failPackage(
-              dl.packageId(),
-              "Failed to extract " + targetFile.getFileName() + ": " + e.getMessage());
-          continue;
-        }
-      }
-
-      downloadedSoFar += dl.sizeBytes();
-      packageCompletedBytes.merge(dl.packageId(), dl.sizeBytes(), Long::sum);
-      updatePackageState(dl.packageId(), "installed");
-    }
-
-    if (cancelFlag.get()) {
-      cancelled();
-      return;
-    }
-
-    // Check for failures
-    long failedCount = countPackagesByState("failed");
-    long totalCount = status.packages.size();
-    if (failedCount > 0 && failedCount == totalCount) {
-      fail("ALL_DOWNLOADS_FAILED", "All packages failed to install.");
-      return;
-    }
-
-    // Write install contract
-    InstallContract contract = buildContract(plan, registry, hardware);
-    InstallContractIO.write(contract, homeDir);
-    log.info("Install contract written to {}", homeDir.resolve(InstallContract.CONTRACT_FILENAME));
-
-    // Apply settings (LLM + ONNX feature paths so the Head's
-    // resolveOnnxFeatures() reports installed features as active rather than
-    // reason="not_found").
-    updateState("running", "apply", "Applying configuration...");
-    // Tempdoc 374 alpha.15: applyCudaServerExe BEFORE applySettings so the
-    // applyRuntimeOverrides call inside applySettings picks up the new
-    // cuda12 llama-server.exe via ConfigStore (otherwise chat would stay on
-    // the default CPU variant until the next app restart picks up the
-    // sysprop via maybeAutoSelectCuda12Variant at boot).
-    applyCudaServerExe();
-    applySettings(registry, plan);
-    applyOnnxSettings(registry, plan);
-    applyOrtNativePath();
-
-    // Restart worker
-    updateState("running", "restart_worker", "Restarting worker...");
-    tryRestartWorkerBestEffort();
-
-    // Smoke test (if online AI is allowed and GGUF was downloaded)
-    if (profile.includesGguf() && isPolicyOnlineAiAllowed()) {
-      updateState("running", "smoke_test", "Running smoke test...");
-      if (!smokeTestBestEffort()) {
+      // ---- Stage 4: validate ---------------------------------------------------------------
+      ValidationStage.Verdict verdict =
+          new ValidationStage(
+                  cancelFlag::get,
+                  this::cancelled,
+                  () -> updateState("running", "smoke_test", "Running smoke test..."),
+                  this::smokeTestBestEffort)
+              .run(profile.includesGguf() && isPolicyOnlineAiAllowed());
+      if (!verdict.allowsCompletion()) {
         return;
       }
+
+      applyCompletionState();
+    } finally {
+      if (acquisitionProcedure) {
+        reconciler.endProcedure(RuntimeStatus.ProcedureKind.INSTALL_ACQUISITION);
+      }
+    }
+  }
+
+  /**
+   * Binds {@link StagedAcquisition}'s four seams to their production implementations and projects
+   * its stage events onto {@link AiInstallStatus}. The sequencing itself lives in that class; this
+   * is what one stage's acquire / configure / lease is MADE OF, the same split {@link
+   * AcquisitionStage} has against {@link AcquisitionScheduler}.
+   *
+   * <p><b>Why the whole configuration list runs per stage instead of a per-stage selection.</b> The
+   * ORDER of {@code ConfigurationStage.forInstall}'s steps is load-bearing and lives in exactly one
+   * place; a per-stage subset would either re-declare that order or filter it, and a filtered view
+   * is a second place the order lives — the fork this package keeps closing. It is also unnecessary:
+   * every step already guards on ITS OWN inputs being on disk, which is a strictly better stage
+   * selector than a tier mapping could be, because it is disk truth rather than plan truth.
+   * {@code applySettings} falls out unless the chat GGUF is a regular file; {@code applyOrtNativePath}
+   * unless the cuda12 dir holds every CUDA runtime DLL; {@code applyCudaServerExe} unless the cuda12
+   * llama-server binary exists; {@code applyOnnxSettings} writes a path only for a package that is
+   * present and neither skipped nor failed. So the core stage applies the ORT native path (its
+   * RUNTIME tier just delivered the DLLs) and silently does not apply the chat settings, and the
+   * chat stage applies them. Re-running an already-applied step is a no-op by construction:
+   * {@code setSysPropIfBlank} is first-writer-wins, and the settings writes are the same absolute
+   * paths.
+   *
+   * <p>Only the Worker restart is stage-gated, because it is the one step whose input is not a file
+   * but the RUN: a restart is a user-visible search blip, so a stage that placed nothing must not
+   * pay for one.
+   *
+   * @return true to carry on with the rest of the run; false when a stage already put the run into a
+   *     terminal state
+   */
+  private boolean runStages(
+      List<InstallStage.Slice> slices,
+      InstallPlan plan,
+      ModelRegistry registry,
+      PlacementStage placement,
+      InstallAttemptMemory attempts,
+      TransportRetryPolicy retryPolicy,
+      StageLease firstStageLease) {
+
+    // The set-wide byte counter the surface reads, kept across stages: each stage's scheduler counts
+    // its OWN slice from zero, so without this base the progress bar would restart at every
+    // boundary. One number, banked once per stage from that stage's own summary.
+    java.util.concurrent.atomic.AtomicLong priorStageBytes = new java.util.concurrent.atomic.AtomicLong();
+    AcquisitionScheduler.Listener projection = acquisitionProjection(plan, priorStageBytes::get);
+
+    // Run-scoped, so they outlive one stage's configuration pass. These three write process-wide
+    // latches (a system property, the selected server binary, the engine's runtime overrides) whose
+    // work is done the first time it succeeds; applyOnnxSettings is deliberately NOT among them
+    // because its work is incremental — each stage that lands an encoder gives it one more path to
+    // write.
+    BooleanSupplier cudaServerExeOnce = StagedAcquisition.applyOncePerRun(this::applyCudaServerExe);
+    BooleanSupplier llmSettingsOnce =
+        StagedAcquisition.applyOncePerRun(() -> applySettings(registry, plan));
+    BooleanSupplier ortNativePathOnce = StagedAcquisition.applyOncePerRun(this::applyOrtNativePath);
+
+    boolean completed =
+        new StagedAcquisition(
+                slice ->
+                    acquireStage(
+                        new AcquisitionStage(
+                                modelsDir,
+                                downloadExecutor,
+                                retryPolicy,
+                                attempts,
+                                cancelFlag::get,
+                                nanoClock,
+                                placement,
+                                projection,
+                                pause)
+                            .scheduler(slice.downloads())),
+                (slice, acquired) ->
+                    ConfigurationStage.forInstall(
+                            cudaServerExeOnce,
+                            llmSettingsOnce,
+                            () -> applyOnnxSettings(registry, plan),
+                            ortNativePathOnce,
+                            StagedAcquisition.restartGate(acquired, this::tryRestartWorkerBestEffort),
+                            cancelFlag::get,
+                            (phase, message) -> updateState("running", phase, message))
+                        .apply(),
+                // The pass a run owes when no stage acquired anything (tempdoc 840 R1): same steps,
+                // same order, same once-per-run latches — and the Worker restart UNGATED, because a
+                // pre-staged models dir is new to the Worker even though this run fetched none of it.
+                () ->
+                    ConfigurationStage.forInstall(
+                            cudaServerExeOnce,
+                            llmSettingsOnce,
+                            () -> applyOnnxSettings(registry, plan),
+                            ortNativePathOnce,
+                            this::tryRestartWorkerBestEffort,
+                            cancelFlag::get,
+                            (phase, message) -> updateState("running", phase, message))
+                        .apply(),
+                this::registerStageLease,
+                new StagedAcquisition.Listener() {
+                  @Override
+                  public void onStageStarted(InstallStage stage) {
+                    setCurrentStage(stage);
+                  }
+
+                  @Override
+                  public void onStageBlocked(InstallStage stage, String reason) {
+                    recordStageBlocked(stage, reason);
+                  }
+
+                  @Override
+                  public void onStageAcquired(
+                      InstallStage stage, AcquisitionScheduler.Summary summary) {
+                    // Banked whatever happened: the bytes this stage PLACED are on disk, and the
+                    // next stage's progress continues from them even if this one ended badly.
+                    long placed = summary == null ? 0L : summary.acquiredBytes();
+                    long total = priorStageBytes.addAndGet(placed);
+                    // Settle both counters on the exact placed figure. In-flight progress reports
+                    // stop one placement short of it — the last file's bytes are credited when it
+                    // is promoted, and no progress event follows — so without this a finished stage
+                    // reads just under its own total.
+                    synchronized (lock) {
+                      status.downloadedBytes = total;
+                      var st = findStageStatus(stage.id());
+                      if (st != null) {
+                        st.downloadedBytes = placed;
+                      }
+                      touch();
+                    }
+                  }
+
+                  @Override
+                  public void onStageEnded(InstallStage stage, StagedAcquisition.StageState state) {
+                    markStage(stage, state.id());
+                  }
+                },
+                cancelFlag::get,
+                // Refuse a stage the disk cannot hold, BEFORE its first byte (tempdoc 840 U2).
+                // Per stage, not per run: a disk that fits the retrieval core but not the chat model
+                // still ends up with working search. Fail-open — an unmeasurable filesystem never
+                // blocks anything (see FreeSpaceCheck).
+                this::diskBlockedReason)
+            .run(slices, success -> firstStageLease.release(leaseOutcome(success)));
+
+    if (!completed) {
+      cancelled();
+      return false;
+    }
+    synchronized (lock) {
+      status.currentStage = "";
+      touch();
+    }
+    return true;
+  }
+
+  private static OpLeaseOutcome leaseOutcome(boolean success) {
+    return success ? OpLeaseOutcome.SUCCESS : OpLeaseOutcome.FAILURE;
+  }
+
+  /**
+   * Runs one stage's acquisition with its estimator published for the length of the transfer.
+   *
+   * <p>The publication is the point: {@link AcquisitionRate#estimate} decides "this transfer has
+   * stopped reporting" by comparing its newest sample against the clock, so it has to be asked WHEN
+   * THE ANSWER IS WANTED. Holding the live scheduler lets {@link #getStatus} do that; a projection
+   * that only saw the value handed to it alongside a sample could never observe a stall, because at
+   * that instant no time has passed since the sample.
+   *
+   * <p>Package-private so a test can drive exactly this — sample, let the clock run past the stall
+   * window, read the status — without staging a real multi-GB transfer.
+   */
+  AcquisitionScheduler.Summary acquireStage(AcquisitionScheduler scheduler) {
+    liveRateSource = scheduler::estimate;
+    try {
+      return scheduler.run();
+    } finally {
+      liveRateSource = null;
+    }
+  }
+
+  /**
+   * Why this stage's files will not fit, or null when they will (tempdoc 840 U2, corrected by R6).
+   *
+   * <p>Two things this asks that the first version of the check did not. It measures the
+   * filesystems the bytes ACTUALLY land on, derived from the slice's own target paths, rather than
+   * {@code modelsDir} alone: a package with an {@code installRoot} (today {@code cuda-runtime},
+   * essentially the whole CORE payload) is planned with an ABSOLUTE path under the AI home, so with
+   * {@code JUSTSEARCH_MODELS_DIR} pointed at another volume the old probe measured a disk receiving
+   * almost none of them — and the direction that hurts is the silent one, where a roomy models
+   * drive lets an install onto a nearly-full home drive proceed into the late IO error this check
+   * exists to pre-empt. And it demands only the bytes still OWED: a file with 5.5 GB already in its
+   * {@code .partial} needs room for the rest, not for a copy of itself, which is what makes the
+   * check compatible with resuming rather than a second reason a resumable download is refused.
+   *
+   * <p>Package-private so the decision is testable without a second physical volume.
+   */
+  String diskBlockedReason(InstallStage.Slice slice) {
+    Map<Path, Long> byDestination = new LinkedHashMap<>();
+    for (InstallPlan.PlannedDownload dl : slice.downloads()) {
+      // An installRoot package's targetPath is already absolute, and Path.resolve returns it
+      // unchanged in that case — so this one expression covers both planner shapes.
+      byDestination.merge(
+          modelsDir.resolve(dl.targetPath()), Math.max(0L, dl.remainingBytes()), Long::sum);
+    }
+    return FreeSpaceCheck.blockedReason(
+        slice.stage().label(), FreeSpaceCheck.groupByFilesystem(byDestination), freeSpaceProbe);
+  }
+
+  /**
+   * Registers one stage's op-lease, sized from the bytes that stage actually has to move.
+   *
+   * @throws io.justsearch.app.api.OperationAdmissionClosedException when an upgrade preparation owns
+   *     the admission barrier — the caller ends the run rather than downloading into a pending
+   *     update
+   */
+  private StagedAcquisition.Lease registerStageLease(InstallStage.Slice slice) {
+    // Sized from the bytes still OWED, not the file sizes: how long the stage holds the lease is a
+    // function of what it has to transfer, and a resumed stage that only needs its last 0.8 GB must
+    // not block an upgrade for as long as a stage fetching all 6.3 GB.
+    long estimateSec =
+        Math.max(
+            MIN_STAGE_LEASE_SEC,
+            Math.min(MAX_STAGE_LEASE_SEC, slice.remainingBytes() / LEASE_ESTIMATE_BYTES_PER_SEC));
+    StageLease lease =
+        new StageLease(
+            operationLeases.register(
+                slice.stage().leaseOpClass(),
+                OpCriticality.INTERRUPTIBLE_WITH_LOSS,
+                estimateSec,
+                Map.of(
+                    "source", "ai.model-install",
+                    "stage", slice.stage().id(),
+                    "bytes", slice.bytes()),
+                this::cancel));
+    return success -> lease.release(leaseOutcome(success));
+  }
+
+  /**
+   * An op-lease handle that releases at most once.
+   *
+   * <p>The first stage's lease has two potential releasers — the staged loop, when that stage ends,
+   * and {@link #startInstall}'s finally block, which is the backstop for every path that never
+   * reaches the loop. Both must be able to fire without the lease being released twice, which would
+   * publish a second release event for an op that only ended once.
+   */
+  private static final class StageLease {
+    private final OperationLeaseHandle handle;
+    private final AtomicBoolean released = new AtomicBoolean(false);
+
+    StageLease(OperationLeaseHandle handle) {
+      this.handle = handle;
     }
 
-    applyCompletionState();
+    void release(OpLeaseOutcome outcome) {
+      if (released.compareAndSet(false, true)) {
+        handle.release(outcome);
+      }
+    }
+  }
+
+  /**
+   * Projects an acquisition run onto {@link AiInstallStatus}.
+   *
+   * <p>{@link AcquisitionScheduler} deliberately does not know this type exists — it is the wire DTO
+   * the FE polls, and the FE keys off {@code phase}, so every surface-visible effect of the download
+   * set is gathered here rather than scattered through the loop that produces it.
+   *
+   * @param priorStageBytes bytes banked by the stages that already ran. Each stage's scheduler
+   *     counts its own slice from zero (it owns only that slice), so the set-wide counter is this
+   *     base plus the running stage's own number — one authority, read twice, rather than a second
+   *     accumulator that could disagree with it.
+   */
+  private AcquisitionScheduler.Listener acquisitionProjection(
+      InstallPlan plan, java.util.function.LongSupplier priorStageBytes) {
+    Map<String, InstallPlan.PlannedDownload> byTargetPath = new HashMap<>();
+    for (InstallPlan.PlannedDownload dl : plan.downloads()) {
+      byTargetPath.putIfAbsent(dl.targetPath(), dl);
+    }
+    return new AcquisitionScheduler.Listener() {
+      @Override
+      public void onItemStarted(AcquisitionScheduler.Item item) {
+        updateState("running", "download", "Downloading " + item.id() + "...");
+        updatePackageState(item.packageId(), "downloading");
+      }
+
+      @Override
+      public void onItemVerifying(AcquisitionScheduler.Item item) {
+        updatePackageState(item.packageId(), "verifying");
+      }
+
+      @Override
+      public void onAttempt(AcquisitionScheduler.Item item, int attempt, int maxAttempts) {
+        updateState(
+            "running",
+            "download",
+            "Downloading "
+                + item.id()
+                + "..."
+                + (attempt > 1 ? " (attempt " + attempt + " of " + maxAttempts + ")" : ""));
+      }
+
+      @Override
+      public void onProgress(
+          AcquisitionScheduler.Item item, long overallBytes, long packageBytes) {
+        synchronized (lock) {
+          status.downloadedBytes = priorStageBytes.getAsLong() + overallBytes;
+          AiInstallStatus.StageStatus stage = findStageStatus(status.currentStage);
+          if (stage != null) {
+            stage.downloadedBytes = overallBytes;
+          }
+          // Report cumulative bytes for the package (prior completed files + current in-flight).
+          // Pass 0 for total so the existing package-level total (set in populateStatusPackages)
+          // wins.
+          updatePackageProgress(item.packageId(), packageBytes, 0);
+          // The rate is deliberately NOT stamped here (tempdoc 840 R4). `estimate` is measured on
+          // the line after the sample that produced it, where the stall window it is supposed to
+          // enforce cannot have elapsed; a value written here would stand unchanged on the wire for
+          // as long as a stalled transfer stayed stalled. refreshRateEstimateLocked derives it from
+          // the same estimator when the status is READ instead.
+          touch();
+        }
+      }
+
+      @Override
+      public void onItemResumed(AcquisitionScheduler.Item item) {
+        // Project the resume verdict onto the package so the UI can say the earlier progress was
+        // kept. Sticky across a multi-file package: one resumed file makes the package resumed.
+        markPackageResumed(item.packageId());
+      }
+
+      @Override
+      public void onItemTerminal(AcquisitionScheduler.Item item, int attemptCount) {
+        // Tempdoc 824 §3.4: three passes of transport failure is no longer a story about luck.
+        // Repair stays *needed* (a file IS missing) but stops being *offered* as the remedy — an
+        // affordance that cannot succeed must not be presented as one.
+        InstallPlan.PlannedDownload dl = byTargetPath.get(item.id());
+        markPackageTerminal(
+            item.packageId(),
+            "TRANSPORT_UNAVAILABLE",
+            attemptCount,
+            dl == null ? null : dl.url(),
+            modelsDir.resolve(item.id()).toString());
+      }
+
+      @Override
+      public void onItemFailed(AcquisitionScheduler.Item item, String message) {
+        failPackage(item.packageId(), message);
+      }
+
+      @Override
+      public void onItemInstalled(AcquisitionScheduler.Item item, long packageBytes) {
+        // Settle the package counter on the exact placed figure BEFORE marking it installed
+        // (tempdoc 840 R7). In-flight progress reports stop one credit short — the item's bytes are
+        // banked at placement and no progress event follows it — so an installed 1.99 GB package
+        // used to sit at 99.97 % of itself for the rest of the run. The stage counter has had this
+        // settlement since Phase 3 (onStageAcquired); the per-package one never got it.
+        synchronized (lock) {
+          updatePackageProgress(item.packageId(), packageBytes, 0);
+          touch();
+        }
+        updatePackageState(item.packageId(), "installed");
+      }
+    };
+  }
+
+  /**
+   * Removes {@code JustSearch AI} BITS jobs that no planned download's resume sidecar claims — the
+   * jobs a crash or hard kill mid-transfer stranded in the queue for its 90-day default lifetime.
+   *
+   * <p>The claimed set is built BEFORE anything is removed, and from exactly the source the resume
+   * decision itself reads ({@link DownloadResume#read}). That is what makes the sweep safe rather than
+   * merely lucky: a sidecar this cannot read is a sidecar {@code ResumableFetch} cannot resume from
+   * either, so its job is genuinely unusable. Best-effort throughout — a failure here must never cost
+   * the install.
+   */
+  private void sweepOrphanedBitsJobsBestEffort(InstallPlan plan) {
+    try {
+      Set<String> claimed = new HashSet<>();
+      for (InstallPlan.PlannedDownload dl : plan.downloads()) {
+        Path partial = InstallPlanner.partialPathFor(modelsDir.resolve(dl.targetPath()));
+        DownloadResume.State recorded = DownloadResume.read(partial);
+        if (recorded == null) continue;
+        String jobId = recorded.bitsJobId();
+        if (jobId != null && !jobId.isBlank()) claimed.add(jobId);
+      }
+      DownloadExecutor.sweepOrphanedBitsJobs(claimed);
+    } catch (Exception e) {
+      log.debug("Orphaned-BITS-job sweep skipped (best-effort): {}", e.toString());
+    }
   }
 
   /**
@@ -924,8 +1466,14 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   private InstallCompleteness recomputeCompletenessFromDiskBestEffort() {
     try {
       InstallPlan plan =
-          InstallPlanner.plan(getManifest(), buildHardwareProfile(), installIntent(), modelsDir, homeDir);
-      return InstallCompleteness.compute(plan, readInstallContractBestEffort());
+          InstallPlanner.plan(
+              getManifest(),
+              buildHardwareProfile(),
+              installIntent(),
+              declinedPackages(),
+              modelsDir,
+              homeDir);
+      return InstallCompleteness.compute(plan, readInstallContractBestEffort(), declinedPackages());
     } catch (Exception e) {
       log.debug("AiInstall completion disk recompute skipped (best-effort): {}", e.toString());
       return null;
@@ -1052,6 +1600,32 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   }
 
   // ---------------------------------------------------------------------------
+  // Per-component intent (tempdoc 840 Phase 2)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The packages the user currently declines, read from {@link UiSettings}. This service is the ONLY
+   * place that reads the preference: {@code InstallPlanner.plan} and {@code
+   * InstallCompleteness.compute} take it as a parameter and stay pure functions, so both can be
+   * tested and previewed without a settings store existing at all.
+   *
+   * <p>Best-effort: an unavailable or throwing store yields the empty set, which means "decline
+   * nothing" — the conservative direction, because it can only over-install, never silently drop a
+   * component the user still wants.
+   */
+  public Set<String> declinedPackages() {
+    if (settingsStore == null) return Set.of();
+    try {
+      UiSettings s = settingsStore.load();
+      if (s == null) return Set.of();
+      return Set.copyOf(s.getDeclinedAiPackages());
+    } catch (Exception e) {
+      log.debug("AiInstall declined-package preference unavailable (best-effort): {}", e.toString());
+      return Set.of();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Runtime precondition (tempdoc 772 §Design "Design 1")
   // ---------------------------------------------------------------------------
 
@@ -1146,16 +1720,19 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
     for (ModelPackage pkg : registry.packages()) {
       // Check if skipped
-      boolean skipped =
-          plan.skipped().stream().anyMatch(s -> s.packageId().equals(pkg.id()));
-      if (skipped) {
-        String reason =
-            plan.skipped().stream()
-                .filter(s -> s.packageId().equals(pkg.id()))
-                .findFirst()
-                .map(InstallPlan.SkippedPackage::reason)
-                .orElse("Skipped");
-        models.put(pkg.id(), InstallContract.InstalledModel.skipped(pkg.id(), reason));
+      InstallPlan.SkippedPackage skip =
+          plan.skipped().stream()
+              .filter(s -> s.packageId().equals(pkg.id()))
+              .findFirst()
+              .orElse(null);
+      if (skip != null) {
+        // Tempdoc 840 Phase 2: the planner's typed cause is carried through verbatim. Re-deriving it
+        // here (from the reason prose, or by re-evaluating hardware/intent/declined) would be a
+        // second authority for a decision the planner already made, and would drift the first time
+        // a skip message is reworded.
+        String reason = skip.reason() != null ? skip.reason() : "Skipped";
+        models.put(
+            pkg.id(), InstallContract.InstalledModel.skipped(pkg.id(), skip.cause(), reason));
         continue;
       }
 
@@ -1212,17 +1789,18 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   // Settings application
   // ---------------------------------------------------------------------------
 
-  private void applySettings(ModelRegistry registry, InstallPlan plan) {
-    if (settingsStore == null) return;
-    if (!plan.profile().includesGguf()) return; // No chat model → nothing to configure
+  /** @return true when the chat model path was written; false on any guard that skipped the step */
+  private boolean applySettings(ModelRegistry registry, InstallPlan plan) {
+    if (settingsStore == null) return false;
+    if (!plan.profile().includesGguf()) return false; // No chat model → nothing to configure
 
     ModelPackage chat = registry.findPackage("chat");
-    if (chat == null) return;
+    if (chat == null) return false;
     ModelVariant chatVariant = chat.selectVariant(plan.profile());
-    if (chatVariant == null) return;
+    if (chatVariant == null) return false;
 
     Path chatModelPath = modelsDir.resolve(chat.targetDir()).resolve(chatVariant.filename());
-    if (!Files.isRegularFile(chatModelPath)) return;
+    if (!Files.isRegularFile(chatModelPath)) return false;
 
     UiSettings s = settingsStore.load();
     s.setLlmModelPath(chatModelPath.toAbsolutePath().toString());
@@ -1250,6 +1828,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           s.getGpuLayers(),
           OnlineAiRuntimeControl.RestartPolicy.RESTART_IF_ONLINE);
     }
+    return true;
   }
 
   /**
@@ -1261,9 +1840,11 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * <p>Only writes for packages that are present on disk after install (i.e.,
    * not skipped/failed). Each package's models live at
    * {@code modelsDir / pkg.targetDir()}.
+   *
+   * @return true when at least one feature path was written
    */
-  private void applyOnnxSettings(ModelRegistry registry, InstallPlan plan) {
-    if (settingsStore == null) return;
+  private boolean applyOnnxSettings(ModelRegistry registry, InstallPlan plan) {
+    if (settingsStore == null) return false;
 
     UiSettings s = settingsStore.load();
     boolean dirty = false;
@@ -1285,6 +1866,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       if (pkg == null) continue;
       // Skip if Install AI didn't actually install this package.
       if (isPackageSkippedOrFailed(pkg.id(), plan)) continue;
+      // …and skip one this run has not GOT to yet. This step runs once per acquisition stage now
+      // (tempdoc 840 Phase 3), so "not skipped and not failed" is no longer the same question as
+      // "installed": at the core stage, an enrichment package is merely pending. Writing its path
+      // then would latch a sysprop (setSysPropIfBlank is first-writer-wins) toward a directory an
+      // earlier interrupted run happened to create, for a package this run may still fail.
+      if (isPackageAwaitingItsStage(pkg.id())) continue;
 
       Path modelDir = modelsDir.resolve(pkg.targetDir());
       if (!Files.isDirectory(modelDir)) continue;
@@ -1299,6 +1886,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       settingsStore.save(s);
       ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), s);
     }
+    return dirty;
   }
 
   /**
@@ -1319,8 +1907,11 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * <p>Respects user overrides: if the server.exe sysprop is already set with
    * a non-{@code auto_selected_cuda12} source (env var, settings.json,
    * operator config), the explicit choice wins.
+   *
+   * @return true when the cuda12 server.exe was selected; false when the binary is absent or a user
+   *     override was respected
    */
-  private void applyCudaServerExe() {
+  private boolean applyCudaServerExe() {
     Path cuda12Exe =
         homeDir
             .resolve("native-bin/llama-server/variants/cuda12")
@@ -1330,7 +1921,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           "alpha.15: cuda12 llama-server.exe not at {} — skipping (cuda-runtime"
               + " package skipped, CPU-only profile, or extract failed)",
           cuda12Exe);
-      return;
+      return false;
     }
     // observations.md fix: migrated from raw sysprop reads to typed
     // EnvRegistry.SERVER_EXE / SERVER_EXE_SOURCE. Closes the alpha.17
@@ -1345,7 +1936,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           "alpha.15: {} already set (source={}); respecting user override",
           io.justsearch.configuration.EnvRegistry.SERVER_EXE.sysProp(),
           existingSrc);
-      return;
+      return false;
     }
     String absPath = cuda12Exe.toAbsolutePath().toString();
     System.setProperty(io.justsearch.configuration.EnvRegistry.SERVER_EXE.sysProp(), absPath);
@@ -1357,6 +1948,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     settingsStore.save(s);
     ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), s);
     log.info("alpha.15: server.exe set to cuda12 variant: {}", absPath);
+    return true;
   }
 
   /**
@@ -1386,9 +1978,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * the agent's round-5 experimental verification confirmed cuFFT is the
    * next blocker.
    */
-  private void applyOrtNativePath() {
+  private boolean applyOrtNativePath() {
     Path cuda12Dir = homeDir.resolve("native-bin/llama-server/variants/cuda12");
-    writeOrtNativePathSysprop(cuda12Dir, settingsStore::load);
+    return writeOrtNativePathSysprop(cuda12Dir, settingsStore::load);
   }
 
   /**
@@ -1441,6 +2033,23 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     return true;
   }
 
+  /**
+   * True when this run tracks the package but has not finished with it — its files are still
+   * pending, downloading or verifying.
+   *
+   * <p>Deliberately answers false for a package this run has no status entry for, so a package the
+   * plan never mentioned behaves exactly as it did before staging existed.
+   */
+  private boolean isPackageAwaitingItsStage(String pkgId) {
+    synchronized (lock) {
+      var ps = findPackageStatus(pkgId);
+      if (ps == null) return false;
+      return "pending".equals(ps.state)
+          || "downloading".equals(ps.state)
+          || "verifying".equals(ps.state);
+    }
+  }
+
   /** True if the package was in plan.skipped() OR a per-package status reports failed. */
   private boolean isPackageSkippedOrFailed(String pkgId, InstallPlan plan) {
     for (var sp : plan.skipped()) {
@@ -1454,8 +2063,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   // Worker restart and smoke test
   // ---------------------------------------------------------------------------
 
-  private void tryRestartWorkerBestEffort() {
-    if (knowledgeServer == null || knowledgeServer.spawner() == null) return;
+  /** @return true when the worker was actually restarted; false when absent or the restart threw */
+  private boolean tryRestartWorkerBestEffort() {
+    if (knowledgeServer == null || knowledgeServer.spawner() == null) return false;
     try {
       knowledgeServer.spawner().restart();
       long expectedPid = knowledgeServer.spawner().getWorkerPid();
@@ -1465,8 +2075,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       } catch (Exception e) {
         log.debug("Worker client reconnect failed (best-effort)", e);
       }
+      return true;
     } catch (Exception e) {
       log.warn("Worker restart failed (best-effort): {}", e.getMessage());
+      return false;
     }
   }
 
@@ -1482,6 +2094,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * with chat still disabled the engine converges DOWN, which is correct — <b>install is not
    * enable</b>. When no reconciler is wired (test / non-configured constructions) the legacy raw
    * {@code switchToOnlineMode()} path is kept.
+   *
+   * <p>The answer is waited for in {@link TransportRetryPolicy#CANCEL_POLL_SLICE_MS} slices with the
+   * cancel flag polled between them, for the reason that method's javadoc gives: {@link #cancel()}
+   * only raises a flag and never interrupts the install thread, so one blocking 60 s {@code get} made
+   * both the user's Cancel button and the op-lease drain callback a no-op for a whole minute at the
+   * very end of the run.
    */
   private boolean smokeTestBestEffort() {
     OnlineAiService onlineAi = this.onlineAi;
@@ -1496,7 +2114,31 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       } else {
         onlineAi.switchToOnlineMode(); // LEGACY-FALLBACK: no reconciler wired (test/non-configured)
       }
-      String result = onlineAi.askQuestion("Reply with exactly OK.", "OK").get(60, TimeUnit.SECONDS);
+      CompletableFuture<String> answer = onlineAi.askQuestion("Reply with exactly OK.", "OK");
+      long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SMOKE_TEST_TIMEOUT_MS);
+      String result;
+      while (true) {
+        if (cancelFlag.get()) {
+          // Stop the engine answering a question nobody wants any more.
+          answer.cancel(true);
+          cancelled();
+          return false;
+        }
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        if (remainingNanos <= 0L) {
+          throw new TimeoutException("no reply within " + SMOKE_TEST_TIMEOUT_MS + " ms");
+        }
+        long sliceMs =
+            Math.min(
+                TransportRetryPolicy.CANCEL_POLL_SLICE_MS,
+                TimeUnit.NANOSECONDS.toMillis(remainingNanos) + 1L);
+        try {
+          result = answer.get(sliceMs, TimeUnit.MILLISECONDS);
+          break;
+        } catch (TimeoutException sliceElapsed) {
+          // Budget not spent yet: re-check cancellation and wait another slice.
+        }
+      }
       if (result == null || result.isBlank()) {
         fail("SMOKE_TEST_FAILED", "Smoke test failed: empty response");
         return false;
@@ -1506,6 +2148,8 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       fail("SMOKE_TEST_FAILED", "Smoke test failed: " + e.getMessage());
       return false;
     } finally {
+      // Balanced on every exit — including the cancellation return above — so the reconciler always
+      // gets the engine back to spec.
       if (procedureBegun) {
         reconciler.endProcedure(RuntimeStatus.ProcedureKind.INSTALL_SMOKE_TEST);
       }
@@ -1557,14 +2201,85 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
   private void updateState(String newState, String newPhase, String msg) {
     synchronized (lock) {
+      boolean wasRunning = "running".equalsIgnoreCase(status.state);
       status.state = newState;
       status.phase = newPhase;
       status.message = msg == null ? "" : msg;
       if (status.startedAtEpochMs <= 0 && "running".equalsIgnoreCase(newState)) {
         status.startedAtEpochMs = System.currentTimeMillis();
       }
+      if (!"running".equalsIgnoreCase(newState)) {
+        clearRateEstimate();
+      } else if (!wasRunning) {
+        clearErrorStateLocked();
+      }
       touch();
     }
+  }
+
+  /**
+   * Drops the transfer-rate reading back to its unknown sentinel. Called on every exit from {@code
+   * running}: a rate measured by a run that has ended describes a transfer that is no longer
+   * happening, and leaving the last number in place would keep a completed install claiming a live
+   * download speed. Caller holds {@link #lock}.
+   */
+  private void clearRateEstimate() {
+    status.bytesPerSecond = -1d;
+    status.remainingSeconds = -1L;
+  }
+
+  /**
+   * Re-derives the published transfer rate from the running stage's estimator (tempdoc 840 R4).
+   *
+   * <p>Called on the READ path, which is the only place it can honestly be called: the stall arm of
+   * {@link AcquisitionRate#estimate} measures how long ago the newest sample arrived, so an estimate
+   * taken at sample time can never observe a stall, and one stamped then keeps describing a transfer
+   * that has since stopped. {@code estimate} measures the running STAGE's slice, so its own horizon
+   * answers "time left in this stage"; the run-level horizon is that same rate divided into the
+   * run's remainder — one estimator answering both questions instead of two that could disagree.
+   *
+   * <p>Only while the run is {@code running}: every other state already had {@link
+   * #clearRateEstimate} applied to it, and re-publishing a rate over that would undo it. Caller
+   * holds {@link #lock}.
+   */
+  private void refreshRateEstimateLocked() {
+    var source = liveRateSource;
+    if (source == null || !"running".equalsIgnoreCase(status.state)) {
+      return;
+    }
+    AcquisitionRate.Estimate stageEstimate;
+    try {
+      stageEstimate = source.get();
+    } catch (RuntimeException e) {
+      log.debug("AiInstall rate estimate unavailable (best-effort): {}", e.toString());
+      return;
+    }
+    if (stageEstimate == null) {
+      return;
+    }
+    long remainingBytes =
+        status.totalBytes > 0L ? Math.max(0L, status.totalBytes - status.downloadedBytes) : -1L;
+    AcquisitionRate.Estimate runWide = stageEstimate.reHorizon(remainingBytes);
+    // The UNKNOWN sentinel reaches the wire intact — never a 0 the surface would render as
+    // "0 B/s, 0s left" on a transfer that is merely young, or on one that has stopped reporting.
+    status.bytesPerSecond = runWide.rateKnown() ? runWide.bytesPerSecond() : -1d;
+    status.remainingSeconds = runWide.remainingKnown() ? runWide.remainingSeconds() : -1L;
+  }
+
+  /**
+   * Drops the previous run's terminal error on the transition INTO {@code running}, because a run
+   * that is starting has not failed. Caller holds {@link #lock}.
+   *
+   * <p>{@link #fail} is the only writer of these two fields and nothing ever cleared them, so the
+   * ordinary "press Install, hit a problem, fix it, press Install again" sequence finished {@code
+   * state=completed} while still publishing the earlier attempt's {@code errorCode} — a completed
+   * install reporting {@code RUNTIME_MISSING}. This is the exact counterpart of {@link
+   * #clearRateEstimate}, which sits on the opposite edge of the same transition for the same reason;
+   * it was simply never applied to the error fields.
+   */
+  private void clearErrorStateLocked() {
+    status.errorCode = "";
+    status.lastError = "";
   }
 
   private void fail(String errorCode, String message) {
@@ -1574,6 +2289,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       status.errorCode = errorCode;
       status.lastError = message;
       status.message = message;
+      // This path sets `state` directly rather than through updateState, so it has to drop the rate
+      // itself — a failed run must not keep publishing the speed it was moving at when it died.
+      clearRateEstimate();
       touch();
     }
   }
@@ -1597,7 +2315,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       var ps = new AiInstallStatus.PackageStatus();
       ps.packageId = dl.packageId();
       ps.label = pkg != null ? pkg.label() : dl.packageId();
+      describe(ps, pkg);
       ps.tier = tierId(pkg);
+      ps.stage = stageId(pkg);
       ps.state = "pending";
       ps.bytesTotal = plan.downloads().stream()
           .filter(d -> d.packageId().equals(dl.packageId()))
@@ -1611,7 +2331,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       var ps = new AiInstallStatus.PackageStatus();
       ps.packageId = id;
       ps.label = pkg != null ? pkg.label() : id;
+      describe(ps, pkg);
       ps.tier = tierId(pkg);
+      ps.stage = stageId(pkg);
       ps.state = "installed";
       status.packages.add(ps);
     }
@@ -1621,16 +2343,167 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       ps.packageId = sk.packageId();
       ModelPackage pkg = registry.findPackage(sk.packageId());
       ps.label = pkg != null ? pkg.label() : sk.packageId();
+      describe(ps, pkg);
       ps.tier = tierId(pkg);
+      ps.stage = stageId(pkg);
       ps.state = "skipped";
       ps.skipReason = sk.reason();
       status.packages.add(ps);
     }
   }
 
+  /**
+   * Projects the registry's standing description of a package onto its status row (tempdoc 840
+   * Phase 4): what it is for, how badly the product needs it, and whether that necessity leaves the
+   * user any choice.
+   *
+   * <p>All three are facts about the REGISTRY, so they are stamped when the row is built. The
+   * user's own decision is not — {@code declined} is a live preference and is refreshed on every
+   * status read instead (see {@link #getStatus()}).
+   */
+  private static void describe(AiInstallStatus.PackageStatus ps, ModelPackage pkg) {
+    if (pkg == null) {
+      return;
+    }
+    ps.description = pkg.description() == null ? "" : pkg.description();
+    // Never null: ModelPackage's compact constructor normalizes an unclassified package to REQUIRED.
+    ps.necessity = pkg.necessity().id();
+    ps.declinable = pkg.necessity().userDeclinable();
+  }
+
   /** The package's capability-tier id (tempdoc 657), or {@code null} if the package/tier is unknown. */
   private static String tierId(ModelPackage pkg) {
     return pkg != null && pkg.tier() != null ? pkg.tier().id() : null;
+  }
+
+  /**
+   * The acquisition stage that delivers this package — a projection of its tier through {@link
+   * InstallStage}, computed here so a package that is skipped or already installed (and therefore
+   * appears in no stage SLICE) still says which stage it belongs to.
+   */
+  private static String stageId(ModelPackage pkg) {
+    return InstallStage.forTier(pkg == null ? null : pkg.tier()).id();
+  }
+
+  /**
+   * Publishes the run's stage plan — the ordered stages, their capabilities and their byte shares —
+   * before the first stage starts. A projection of the partition, so nothing here is a second
+   * authority over what a stage contains.
+   */
+  private void publishStagePlan(List<InstallStage.Slice> slices) {
+    synchronized (lock) {
+      status.stages.clear();
+      status.readyCapabilities.clear();
+      status.currentStage = "";
+      for (InstallStage.Slice slice : slices) {
+        var st = new AiInstallStatus.StageStatus();
+        st.stage = slice.stage().id();
+        st.label = slice.stage().label();
+        st.state = "pending";
+        st.capabilities.addAll(slice.stage().tierIds());
+        st.totalBytes = slice.bytes();
+        status.stages.add(st);
+      }
+      touch();
+    }
+    log.info(
+        "Install staged into {}: {}",
+        slices.size(),
+        slices.stream()
+            .map(s -> s.stage().id() + "=" + s.downloads().size() + " file(s)/" + s.bytes() + "B")
+            .collect(java.util.stream.Collectors.joining(", ")));
+  }
+
+  private void setCurrentStage(InstallStage stage) {
+    synchronized (lock) {
+      status.currentStage = stage.id();
+      var st = findStageStatus(stage.id());
+      if (st != null) {
+        st.state = "running";
+      }
+      touch();
+    }
+  }
+
+  /**
+   * Records how one stage ended, and whether its capabilities are now usable.
+   *
+   * <p>Readiness takes TWO facts, because either alone can lie. The stage must have ended in a state
+   * whose configuration pass actually ran — a stage cancelled after its last file landed has the
+   * bytes on disk but never restarted the Worker onto them, so the capability is not live — and the
+   * stage must have DELIVERED, which {@link #stageDeliveredLocked} defines.
+   */
+  private void markStage(InstallStage stage, String state) {
+    boolean configurationRan =
+        StagedAcquisition.StageState.COMPLETED.id().equals(state)
+            || StagedAcquisition.StageState.SKIPPED.id().equals(state);
+    synchronized (lock) {
+      var st = findStageStatus(stage.id());
+      if (st != null) {
+        st.state = state;
+      }
+      if (configurationRan && stageDeliveredLocked(stage)) {
+        for (String capability : stage.tierIds()) {
+          if (!status.readyCapabilities.contains(capability)) {
+            status.readyCapabilities.add(capability);
+          }
+        }
+      }
+      touch();
+    }
+  }
+
+  /**
+   * Whether this stage's capabilities are actually on this machine: at least one of its packages
+   * reached {@code installed}, and none of them is in a state that says the stage is unfinished or
+   * broken. Caller holds the lock.
+   *
+   * <p><b>{@code skipped} is NEUTRAL</b> — it neither delivers nor blocks. A package the hardware
+   * cannot run, the install mode does not want, or the user declined is out of scope for the stage,
+   * not a failure to deliver it. Demanding that EVERY package of a stage reach {@code installed}
+   * made {@code retrieval-core} unreachable on every non-NVIDIA machine in existence: {@code
+   * cuda-runtime} declares {@code requiresCuda} and lives in the CORE stage, so it is
+   * hardware-skipped there, and the stage that delivered a perfectly working search silently never
+   * announced itself.
+   *
+   * <p>Everything else still fails closed. A {@code failed} package means the capability's model did
+   * not land; {@code pending} / {@code downloading} / {@code verifying} means the stage is not
+   * finished with it yet. Zero installed is not a delivery either — a stage whose every package was
+   * declined has nothing to announce.
+   */
+  private boolean stageDeliveredLocked(InstallStage stage) {
+    boolean anyInstalled = false;
+    for (var ps : status.packages) {
+      if (!stage.id().equals(ps.stage)) continue;
+      if ("installed".equals(ps.state)) {
+        anyInstalled = true;
+      } else if (!"skipped".equals(ps.state)) {
+        return false;
+      }
+    }
+    return anyInstalled;
+  }
+
+  /**
+   * Records that a stage was refused before it started, with the reason the user can act on
+   * (tempdoc 840 U2). Distinct from a failure: nothing was attempted.
+   */
+  private void recordStageBlocked(InstallStage stage, String reason) {
+    synchronized (lock) {
+      var st = findStageStatus(stage.id());
+      if (st != null) {
+        st.blockedReason = reason == null ? "" : reason;
+      }
+      touch();
+    }
+  }
+
+  private AiInstallStatus.StageStatus findStageStatus(String stageId) {
+    if (stageId == null || stageId.isEmpty()) return null;
+    for (var st : status.stages) {
+      if (stageId.equals(st.stage)) return st;
+    }
+    return null;
   }
 
   private void updatePackageState(String packageId, String state) {
@@ -1764,32 +2637,6 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
         extracted,
         zipFile.getFileName(),
         normalizedTarget);
-  }
-
-  /**
-   * Removes orphaned {@code *.tmp} files in a download target directory before
-   * starting a download. Catches BITS scratch files (named like {@code BIT411F.tmp})
-   * that BITS leaves behind when its job fails or is cancelled.
-   * Tempdoc 374 sandbox round 4 issue G.
-   */
-  private static void cleanupBitsTmpFiles(Path dir) {
-    if (dir == null || !Files.isDirectory(dir)) return;
-    try (var stream = Files.list(dir)) {
-      stream
-          .filter(Files::isRegularFile)
-          .filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".tmp"))
-          .forEach(
-              p -> {
-                try {
-                  Files.deleteIfExists(p);
-                  log.debug("Removed orphaned BITS tmp file: {}", p);
-                } catch (IOException ignored) {
-                  // best-effort
-                }
-              });
-    } catch (IOException ignored) {
-      // best-effort; the failure won't block the download itself
-    }
   }
 
   private long countPackagesByState(String state) {

@@ -53,6 +53,7 @@ export class Control extends JfElement {
     operationId: { type: String, attribute: 'operation-id' },
     disabled: { type: Boolean },
     availability: { attribute: false },
+    pressed: { attribute: false },
     busy: { state: true },
     showDelayMs: { attribute: 'show-delay-ms', type: Number },
     minVisibleMs: { attribute: 'min-visible-ms', type: Number },
@@ -72,6 +73,18 @@ export class Control extends JfElement {
    *   - `available`   → operable.
    */
   declare availability: Availability | undefined;
+  /**
+   * Tempdoc 840 — the TOGGLE-BUTTON arm of the primitive. OPTIONAL and TRI-STATE: left `undefined` the
+   * button emits no `aria-pressed` at all (every existing consumer renders byte-identically), and set
+   * it emits `true`/`false`.
+   *
+   * It exists because a switch whose state is carried by thumb position and fill — not by a changing
+   * label — has nothing an assistive technology can read; WAI-ARIA's toggle-button pattern says that
+   * state belongs in `aria-pressed`. The alternative (a name that changes with state, "Turn off X") is
+   * also sanctioned, but it makes the visual and the accessible representation disagree about what the
+   * control IS, so the state goes on the button where it can be observed either way.
+   */
+  declare pressed: boolean | undefined;
   /**
    * The action. A property (not an attribute) so callers pass a closure.
    *
@@ -130,6 +143,7 @@ export class Control extends JfElement {
     this.operationId = undefined;
     this.disabled = false;
     this.availability = undefined;
+    this.pressed = undefined;
     this.busy = false;
     this.showDelayMs = 200; // spin-delay: skip the spinner for sub-200ms commands (no flash)
     this.minVisibleMs = 500; // spin-delay: once shown, hold ≥500ms so it never flickers
@@ -563,6 +577,7 @@ export class Control extends JfElement {
         ?disabled=${hardDisabled}
         aria-disabled=${softReason !== null || this.busy ? 'true' : nothing}
         aria-busy=${this.busy ? 'true' : nothing}
+        aria-pressed=${this.pressed === undefined ? nothing : this.pressed ? 'true' : 'false'}
         aria-label=${name || nothing}
         aria-describedby=${reason !== null ? REASON_ID : nothing}
         @click=${this.activate}

@@ -9,6 +9,7 @@ import io.justsearch.configuration.model.DownloadProfile;
 import io.justsearch.configuration.model.InstallPlan;
 import io.justsearch.configuration.model.ModelPackage;
 import io.justsearch.configuration.model.ModelRegistry;
+import io.justsearch.configuration.model.Necessity;
 import io.justsearch.configuration.model.SupportingFile;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -118,7 +119,8 @@ final class AiInstallServiceRuntimePreconditionTest {
             "runtime-cpu-support", "CPU runtime libraries", "Always-required runtime payload",
             "cpu-rt", List.of(),
             List.of(new SupportingFile("runtime.zip", "GGGG", 50L, "https://example.com/rt", true)),
-            0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, false);
+            0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, false, false,
+            Necessity.INFRASTRUCTURE, List.of());
     return new ModelRegistry(2, "test", List.of(embedding(), runtimeCpuSupport));
   }
 
@@ -127,7 +129,8 @@ final class AiInstallServiceRuntimePreconditionTest {
         new ModelPackage(
             "cuda-runtime", "GPU runtime libraries", "CUDA DLLs", "cuda12", List.of(),
             List.of(new SupportingFile("cuda.zip", "FFFF", 50L, "https://example.com/cuda", true)),
-            0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true);
+            0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true, false,
+            Necessity.INFRASTRUCTURE, List.of());
     return new ModelRegistry(2, "test", List.of(embedding(), cudaRuntime));
   }
 }

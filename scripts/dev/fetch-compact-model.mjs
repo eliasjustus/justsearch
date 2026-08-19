@@ -35,7 +35,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..', '..');
 const dryRun = process.argv.includes('--dry-run');
 
-const REGISTRY_REL = ['modules', 'ui', 'src', 'main', 'resources', 'ai', 'model-registry.v2.json'];
+const REGISTRY_REL = ['modules', 'configuration', 'src', 'main', 'resources', 'ai', 'model-registry.v2.json'];
 const PACKAGE_ID = 'chat-compact';
 const MAX_REDIRECTS = 5;
 const DOWNLOAD_TIMEOUT_MS = 120_000;

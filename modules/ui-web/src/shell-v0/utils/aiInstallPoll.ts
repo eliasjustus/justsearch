@@ -11,87 +11,31 @@
  * "Connecting…" state, live-reproduced as an indefinite stuck panel (tempdoc 663 §O).
  *
  * This module fixes that structurally, mirroring `inferencePoll.ts`'s proven shape: ONE shared,
- * always-on poller (first fetch is eager, then every `INTERVAL_MS`), fanning out to every subscriber.
+ * always-on poller (first fetch is eager, then on an ADAPTIVE cadence — see `pollIntervalFor`),
+ * fanning out to every subscriber.
  * A failed tick retains the last-known-good value per field (never regresses a known field to
  * `null`) and simply tries again on the next tick — "stuck forever" becomes structurally impossible.
  */
 
 import { authorizedFetch } from '../api/authorizedFetch.js';
+import type { AiInstallStatus } from '../../api/generated/schema-types/ai-install-status.js';
+import type { InstallComponentEstimate } from '../state/installComponents.js';
 
-export interface InstallStatus {
-  state: string;
-  phase: string;
-  installedFully?: boolean;
-  /**
-   * Tempdoc 804 §B8 — package ids the CURRENT registry declares that the contract which recorded
-   * this installation never covered (a newer version's added artifact). A distinct state from
-   * "not installed": `installedFully` stays true and these are the extras on offer.
-   */
-  pendingRegistryAdditions?: string[];
-  /**
-   * Tempdoc 805 G.3 — ANY file the current registry requires for this profile is missing from disk,
-   * whether or not the install contract claimed it. Distinct from `installedFully` (a claim about
-   * install history): round 11's machine had `installedFully` true and an unusable GPU at once.
-   */
-  repairNeeded?: boolean;
-  /**
-   * Tempdoc 824 §3.3b — registry files this profile declares that are absent from disk and that no
-   * consumer requires (`"required": false`). Deliberately NOT folded into `repairNeeded`: round 16
-   * lost one 872-byte `splade/config.json` and the product said "a required component is missing"
-   * while SPLADE was serving 1 660 inferences on CUDA. Shown, never alarming.
-   */
-  optionalGaps?: Array<{ packageId?: string; fileName?: string }>;
-  message?: string;
-  errorCode?: string;
-  lastError?: string;
-  // `packageId`/`label`/`tier` are the real wire fields (backend `PackageStatus`); the legacy `id`
-  // is kept optional because older callers referenced it (it was never populated — tempdoc 657).
-  packages?: Array<{
-    packageId?: string;
-    label?: string;
-    tier?: string;
-    id?: string;
-    state?: string;
-    skipReason?: string;
-    /** Failure message for a `state: 'failed'` package (`AiInstallStatus.PackageStatus.error`). */
-    error?: string;
-    bytesDownloaded?: number;
-    bytesTotal?: number;
-    /** True when this package continued an earlier (e.g. cancelled) run's bytes instead of
-     *  restarting from zero — `AiInstallStatus.PackageStatus.resumed`. */
-    resumed?: boolean;
-    /**
-     * Tempdoc 824 §3.3c — what the RUNTIME observes about this package's capability
-     * (`'active' | 'inactive' | 'unknown'`), projected from the same derivation
-     * `/api/ai/runtime/status` publishes. Bookkeeping ("a file is missing") and consequence ("the
-     * capability is down") are different claims; the alarming copy needs both.
-     */
-    functionalStatus?: string;
-    /**
-     * Tempdoc 824 §3.4 — `'TRANSPORT_UNAVAILABLE'` once three consecutive repair passes failed the
-     * same file at transport. Repair stays *needed*; it stops being the *remedy*.
-     */
-    terminalReason?: string;
-    /** Transport attempts spent on the still-missing file, across repair passes. */
-    attempts?: number;
-    /** Direct URL of the file that will not transfer — the manual fallback's source. */
-    url?: string;
-    /** Where that file has to land — the manual fallback's destination. */
-    targetPath?: string;
-  }>;
-  downloadedBytes?: number;
-  totalBytes?: number;
-  /**
-   * Bytes an interrupted earlier run left staged in `.partial` files, which a resume keeps
-   * (`AiInstallStatus.resumableBytes`). Backend-derived from DISK via the planner, not from
-   * `state: 'cancelled'` — that state is session-ephemeral and reads `idle` again after a restart,
-   * so keying the paused UI on it would tell a returning user their GBs were discarded.
-   */
-  resumableBytes?: number;
-  startedAtEpochMs?: number;
-  updatedAtEpochMs?: number;
-  cancelRequested?: boolean;
-}
+/**
+ * The `GET /api/ai/install/status` wire shape.
+ *
+ * Tempdoc 840 Phase 4: this used to be a hand-written mirror of
+ * `modules/app-api/src/main/java/io/justsearch/app/api/AiInstallStatus.java`, and
+ * `api/domains/packs.ts` held a SECOND, older mirror that still modelled the retired v1 `assets[]`.
+ * Three hand-maintained copies of one shape, with nothing keeping them in sync — so the staged
+ * install's `stages`/`readyCapabilities` reached neither of them. The Java DTO is now projected to
+ * `SSOT/schemas/ai-install-status.v1.json` and generated into `schema-types/ai-install-status.ts`
+ * (type + Zod), which `check-wire-schema-types-regen` fails the build on drifting from.
+ *
+ * `InstallStatus` stays as the name this module's subscribers already import; it is an alias, not a
+ * fork — do not add fields here.
+ */
+export type InstallStatus = AiInstallStatus;
 
 /**
  * Side-effect-free per-tier weight preview (tempdoc 657), from `GET /api/ai/install/plan-preview`.
@@ -111,6 +55,13 @@ export interface InstallPlanPreview {
     totalBytes?: number;
     downloadBytes?: number;
   }>;
+  /**
+   * Tempdoc 840 Phase 4 follow-up — the STANDING per-component list (`ComponentEstimate`), complete
+   * before any install has ever run. It lives on the preview rather than on `status.packages`
+   * because it is a question about the PLAN; `status.packages` is run bookkeeping and is empty on an
+   * idle machine, so asking it "what components are there" would answer "none".
+   */
+  components?: InstallComponentEstimate[];
 }
 
 export interface AiRuntimeStatus {
@@ -173,13 +124,42 @@ type Listener = (snapshot: AiInstallSnapshot) => void;
 
 const listeners = new Set<Listener>();
 let timer: number | null = null;
+let running = false;
 let apiBase = '';
 let last: AiInstallSnapshot = { install: null, runtime: null, packs: null };
 
-// Matches the original per-operation pollers' cadence (1s) — this poller is always-on rather than
-// conditionally-armed, but that should not make download/activation progress feel less responsive
-// than it did before.
-const INTERVAL_MS = 1000;
+// Matches the original per-operation pollers' cadence (1s) while something is actually happening —
+// this poller is always-on rather than conditionally-armed, but that must not make download /
+// activation progress feel less responsive than it did before.
+const FAST_INTERVAL_MS = 1000;
+
+/**
+ * The idle cadence (tempdoc 840 Phase 5, Task 4). This poller is ALWAYS-ON by design — that is what
+ * makes it self-healing — but "always-on" was implemented as "1 Hz forever", so a machine with a
+ * finished install spent three HTTP requests per second, every second, for the life of the session,
+ * asking three endpoints whose answers do not change. 5s keeps a state CHANGE (an install someone
+ * starts from another surface, a runtime activation) visible within one blink while cutting the idle
+ * request rate by 80%, and the first tick after any change immediately re-arms the fast cadence.
+ */
+const SLOW_INTERVAL_MS = 5000;
+
+/**
+ * How long to wait before the next tick, given what the last one saw.
+ *
+ * FAST while anything is in flight — an install running or paused (a paused run is still a live
+ * subject: the user is looking at it and may resume), a runtime activation, a pack import — and also
+ * while the install status is still UNKNOWN, because "we have not heard yet" is precisely the window
+ * the self-healing retry exists for and slowing it would lengthen every first paint and every
+ * recovery from a transient failure.
+ */
+export function pollIntervalFor(snapshot: AiInstallSnapshot): number {
+  const install = snapshot.install;
+  if (install === null) return FAST_INTERVAL_MS;
+  if (install.state === 'running' || install.paused === true) return FAST_INTERVAL_MS;
+  if (snapshot.runtime?.activation?.state === 'running') return FAST_INTERVAL_MS;
+  if (snapshot.packs?.state === 'running') return FAST_INTERVAL_MS;
+  return SLOW_INTERVAL_MS;
+}
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   try {
@@ -208,15 +188,33 @@ async function fetchOnce(): Promise<void> {
   for (const l of listeners) l(last);
 }
 
+/**
+ * Self-rescheduling tick (a timeout chain, not a fixed interval) so each tick's cadence can be
+ * chosen from what the previous one saw. The retry behaviour is unchanged and unconditional: a
+ * failed tick retains last-known-good and schedules the next one exactly like a successful tick, so
+ * no code path can stop retrying because prior attempts failed (tempdoc 663 §O).
+ */
+async function tick(): Promise<void> {
+  timer = null;
+  await fetchOnce();
+  schedule();
+}
+
+function schedule(): void {
+  if (!running || timer !== null) return;
+  timer = window.setTimeout(() => void tick(), pollIntervalFor(last));
+}
+
 function ensureRunning(): void {
-  if (timer !== null) return;
-  void fetchOnce();
-  timer = window.setInterval(() => void fetchOnce(), INTERVAL_MS);
+  if (running) return;
+  running = true;
+  void tick();
 }
 
 function stop(): void {
+  running = false;
   if (timer !== null) {
-    window.clearInterval(timer);
+    window.clearTimeout(timer);
     timer = null;
   }
   last = { install: null, runtime: null, packs: null };
@@ -240,7 +238,7 @@ export function subscribeAiInstall(listener: Listener): () => void {
 export function setAiInstallApiBase(base: string): void {
   if (apiBase !== base) {
     apiBase = base;
-    if (timer !== null) {
+    if (running) {
       stop();
       ensureRunning();
     }

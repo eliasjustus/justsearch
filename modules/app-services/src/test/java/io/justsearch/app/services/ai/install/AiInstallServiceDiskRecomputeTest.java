@@ -72,8 +72,8 @@ final class AiInstallServiceDiskRecomputeTest {
   //    the plan rather than staging the registry's full file set, so it is deterministic. ──
 
   // A minimal registry — populateStatusPackages tolerates an unknown id (label falls back to the id), so the
-  // decision logic is testable without the bundled `ai/model-registry.v2.json` resource (absent on the
-  // app-services test classpath) and without staging real model files.
+  // decision logic is testable without loading the bundled `ai/model-registry.v2.json` resource (available on
+  // the app-services test classpath since tempdoc 840, but unnecessary here) and without staging real model files.
   private static final ModelRegistry MINIMAL_REGISTRY = new ModelRegistry(2, "test", List.of());
 
   @Test

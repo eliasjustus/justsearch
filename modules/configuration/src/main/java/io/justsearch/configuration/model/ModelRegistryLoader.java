@@ -30,8 +30,11 @@ public final class ModelRegistryLoader {
 
   /** Loads the registry from a classpath resource. */
   public static ModelRegistry loadFromClasspath(String resourcePath) {
-    try (InputStream is =
-        Thread.currentThread().getContextClassLoader().getResourceAsStream(resourcePath)) {
+    // Use this class's own loader, not the thread's context classloader: the registry JSON now
+    // ships as a resource inside this module (modules/configuration/src/main/resources/ai/), so
+    // it is guaranteed to be visible here regardless of which classloader happens to be current
+    // on the calling thread.
+    try (InputStream is = ModelRegistryLoader.class.getClassLoader().getResourceAsStream(resourcePath)) {
       if (is == null) {
         throw new IOException("Resource not found: " + resourcePath);
       }
@@ -104,6 +107,20 @@ public final class ModelRegistryLoader {
     // costs no error and instead puts the dev-only chat-compact package into every user's
     // install plan.
     boolean devOnly = rp.devOnly != null && rp.devOnly;
+    // necessity: optional field defaulting to REQUIRED — tempdoc 840 Phase 2, the same fail-closed
+    // rule as `required` above and for the same reason. Necessity.fromId returns null for an ABSENT,
+    // blank OR unrecognized value, and all three land on REQUIRED here: a package nobody classified
+    // (a pre-840 registry, a typo, a necessity name a newer registry uses and this build does not
+    // know) must stay mandatory rather than become silently switch-off-able by a user decline.
+    // Defaulting the other way would let a registry edit turn `embedding` into an optional extra.
+    Necessity necessity = Necessity.fromId(rp.necessity);
+    if (necessity == null) {
+      necessity = Necessity.REQUIRED;
+    }
+    // dependsOn: optional, absent ⇒ no declared dependency. Deliberately NOT fail-closed the other
+    // way (inventing an edge nobody declared would skip packages the registry wants installed); the
+    // H1 invariant it makes checkable is asserted against the shipped registry, not defaulted in.
+    List<String> dependsOn = rp.dependsOn == null ? List.of() : List.copyOf(rp.dependsOn);
     return new ModelPackage(
         rp.id,
         rp.label,
@@ -117,7 +134,9 @@ public final class ModelRegistryLoader {
         rp.license,
         CapabilityTier.fromId(rp.tier),
         requiresCuda,
-        devOnly);
+        devOnly,
+        necessity,
+        dependsOn);
   }
 
   // Raw deserialization types — match the JSON structure exactly.
@@ -138,7 +157,9 @@ public final class ModelRegistryLoader {
       String license,
       String tier,
       Boolean requiresCuda,
-      Boolean devOnly) {}
+      Boolean devOnly,
+      String necessity,
+      List<String> dependsOn) {}
 
   private record RawVariant(
       String filename,
