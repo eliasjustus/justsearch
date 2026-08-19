@@ -412,5 +412,12 @@ settled by asking than by inference.
 - **That measuring improves anything.** No link is established anywhere between an instrument
   existing and an outcome moving. `payback` asks that of tempdocs; nothing asks it of instruments.
 
-Carried to tempdoc 858 as a sketch rather than pursued here — the present problem is merge
-attribution, and §8 stays the scope of this work.
+Carried to tempdoc 858 rather than pursued here — the present problem is merge attribution, and
+§8 stays the scope of this work.
+
+**858 refines §10.2's principle and this doc defers to it.** Designing against "prefer
+recomputation over maintained derived state" found its boundary: governance SARIF is a single
+shared file that the next gate run overwrites, so it cannot be recomputed later and must be
+captured when observed. The usable form is *recompute what survives; capture only what time
+destroys — and record which you did*, which 858 §9.1 states with its evidence and retirement
+condition. Read that version, not this one.
