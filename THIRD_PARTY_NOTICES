@@ -165,6 +165,8 @@ Licenses of third-party components redistributed with JustSearch.
   org.codehaus.mojo:animal-sniffer-annotations 1.26 — MIT License
   org.codelibs:jhighlight 1.1.0 — CDDL-1.0
   org.commonmark:commonmark 0.27.1 — The 2-Clause BSD License
+  org.commonmark:commonmark-ext-gfm-tables 0.27.1 — The 2-Clause BSD License
+  org.commonmark:commonmark-ext-task-list-items 0.27.1 — The 2-Clause BSD License
   org.eclipse.angus:angus-activation 2.0.2 — The 3-Clause BSD License
   org.eclipse.jetty:jetty-http 11.0.25 — Eclipse Public License - v 2.0
   org.eclipse.jetty:jetty-io 11.0.25 — Eclipse Public License - v 2.0

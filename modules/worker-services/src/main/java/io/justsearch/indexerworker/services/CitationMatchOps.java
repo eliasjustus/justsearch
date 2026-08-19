@@ -18,7 +18,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
@@ -202,7 +201,7 @@ final class CitationMatchOps {
       return emptyResponse(startTime, "");
     }
 
-    List<String> sentenceList = splitSentences(answerText.trim());
+    List<String> sentenceList = AnswerSegmentation.splitSentences(answerText.trim());
     var csConfig = citationScorerConfig;
     long deadlineMs = csConfig != null ? csConfig.deadlineBudgetMs() : DEFAULT_DEADLINE_MS;
 
@@ -466,27 +465,6 @@ final class CitationMatchOps {
         .setTookMs(System.currentTimeMillis() - startTime)
         .setError(e.getMessage() == null ? "UNKNOWN" : e.getMessage())
         .build();
-  }
-
-  /**
-   * Splits text into sentences using {@link java.text.BreakIterator}.
-   * Better than regex for boundary detection but still imperfect on abbreviations (Dr., Mr.).
-   */
-  static List<String> splitSentences(String text) {
-    if (text == null || text.isBlank()) {
-      return List.of();
-    }
-    BreakIterator bi = BreakIterator.getSentenceInstance(Locale.ENGLISH);
-    bi.setText(text);
-    List<String> sentences = new ArrayList<>();
-    int start = bi.first();
-    for (int end = bi.next(); end != BreakIterator.DONE; start = end, end = bi.next()) {
-      String sentence = text.substring(start, end).trim();
-      if (!sentence.isEmpty()) {
-        sentences.add(sentence);
-      }
-    }
-    return sentences;
   }
 
   /**

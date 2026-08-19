@@ -16,6 +16,7 @@ import io.justsearch.aibackend.local.LocalIntentTranslatorConfig;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.configuration.JustSearchConfigurationLoader;
 import io.justsearch.indexing.SchemaFields;
+import io.justsearch.indexerworker.services.AnswerSegmentation;
 import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.reranker.CitationScorer;
 import io.justsearch.systemtests.aijudge.KeywordPresenceChecker;
@@ -31,7 +32,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -595,22 +595,14 @@ class RagQualityEvalTest {
     return (double) scoringResult.sentencesMatched() / scoringResult.sentencesTotal();
   }
 
-  /** Splits text into sentences using Java's BreakIterator (same approach as CitationMatchOps). */
+  /**
+   * The PRODUCTION splitter, not a copy of it (tempdoc 847 S5). The faithfulness ratio below is
+   * "how many of the answer's sentences a source supports", so it has to cut the answer into the
+   * same sentences production scores — a local copy measured a segmentation the product stopped
+   * using the moment either side changed.
+   */
   static List<String> splitSentences(String text) {
-    if (text == null || text.isBlank()) {
-      return List.of();
-    }
-    BreakIterator bi = BreakIterator.getSentenceInstance(Locale.ENGLISH);
-    bi.setText(text);
-    List<String> sentences = new ArrayList<>();
-    int start = bi.first();
-    for (int end = bi.next(); end != BreakIterator.DONE; start = end, end = bi.next()) {
-      String sentence = text.substring(start, end).trim();
-      if (!sentence.isEmpty()) {
-        sentences.add(sentence);
-      }
-    }
-    return sentences;
+    return AnswerSegmentation.splitSentences(text);
   }
 
   /** Extracts [N] citation markers from LLM output. Returns list of marker numbers. */
