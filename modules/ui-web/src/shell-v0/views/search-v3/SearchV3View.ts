@@ -1999,10 +1999,16 @@ export class SearchV3View extends JfElement {
   }
 
   /**
-   * The DELEGATE tier's own gate, from the same authority. It is a strict SUPERSET of the ask tier's:
-   * both need a live backend and a loaded model, but only the ask tier additionally needs an indexed
-   * document to ground an answer in. Reading one reason for both would therefore refuse a delegation
-   * the agent could have served — the two tiers get two projections rather than one shared guess.
+   * The DELEGATE tier's own gate, from the same authority. Its conditions are a strict SUBSET of the
+   * ask tier's — both need a live backend and a loaded model (`state/availability.ts:96-133`, shared
+   * by every affordance), and only ASK additionally needs an indexed document to ground an answer in
+   * (`:139-146`). Reading one reason for both would therefore refuse a delegation the agent could
+   * have served, which is why the two tiers get two projections rather than one shared guess.
+   *
+   * That containment is load-bearing beyond the wording (852 S4): while it holds, a Ctrl+Enter
+   * delegate from ask mode can never meet a closed delegate gate behind an open ask one. See the
+   * §S4 remainder note in `docs/tempdocs/852-sv3-promotion.md` for what breaks if `agent` ever
+   * grows a gate of its own.
    */
   private get delegateUnavailableReason(): string {
     const availability = projectAvailability('agent', this.aiSnapshot);

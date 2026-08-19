@@ -145,6 +145,12 @@ describe('the window wears the mode the app is in', () => {
 
     await applyAppearance({ theme: 'light' });
     await new Promise<void>((r) => setTimeout(r, 0));
+    // THE HALF THAT MAKES THE DISCONNECT CLEANUP FAIL-ABLE: a detached window must NOT have
+    // followed. The listener set is module-lifetime, so an unsubscribe that never ran leaks a
+    // reference to every window ever mounted — and the re-read below would hide it, because the
+    // leaked listener writes the same value the re-read does.
+    expect(el.getAttribute('theme')).toBe('dark');
+
     // A retained instance re-attaches into the mode the app is in NOW, not the one it left.
     document.body.appendChild(el);
     await el.updateComplete;

@@ -830,3 +830,43 @@ was a capability upgrade, not a gate fix — as the ledger says.
 - **Not verified live.** FE-only. A dev-stack pass — switch the app to light and read the window,
   send at each mode, and re-measure F-06's pair — is left for the live leg, together with a fresh
   `jseval ui-shot` of the composer in both themes.
+
+### S4 remainder — named limits carried out of the independent review (PR #509)
+
+Neither item is a defect this slice introduced; both are things the slice's own reading made legible,
+recorded here so the S4 remainder has them rather than a future reader rediscovering them.
+
+**R1 — the cross-tier silent refusal, and the containment it depends on.** `Sv3Composer.submit`
+refuses a send whose tier is gated by a bare `return` (`Sv3Composer.ts:1025-1028`, unchanged from
+`main`): the draft survives, but nothing is said. That is currently invisible in ONE direction only —
+Ctrl/⌘+Enter from ask mode forces `delegate`, and the notice on screen is ask's — and it is
+unreachable **today** purely because delegate's gate conditions are a strict SUBSET of ask's:
+`projectAvailability` applies the connecting / not-live / starting / `capabilities.chat` gates to
+every affordance (`state/availability.ts:96-133`) and adds the zero-documents gate for `documents`
+alone (`:139-146`). So a window whose ask tier is open cannot have a closed delegate gate, and the
+chord cannot hit the silent branch.
+
+**The dependency is undeclared and unenforced.** The moment `agent` grows a gate of its own — an
+agent-specific capability flag, a tool-permission precondition, a per-affordance budget — the chord
+from ask mode becomes a silent no-op: the reader presses it, the draft stays, and the only reason on
+screen is the *other* tier's (empty). Two fix shapes, either sufficient:
+
+1. **Assert the containment** where it is relied upon — a test (or a derivation) pinning that
+   `projectAvailability('agent', s)` is unavailable only when `projectAvailability('documents', s)`
+   is too, so a new `agent`-only gate fails a test instead of silently changing what a chord does.
+2. **Route the refusal through the one message channel** — surface the refusing tier's reason on the
+   ephemeral toast the way `jf-control` does for a blocked activation (`Control.ts:452-458`), which
+   makes the refusal legible regardless of which gate closed.
+
+The second is the better end state (it removes the dependency rather than watching it); the first is
+the cheaper guard and is what the containment argument above actually needs to stay true.
+
+**R2 — `jf-control` should delegate focus.** The adoption in this slice had to teach one caller to
+reach through the primitive's shadow root (`SearchV3View.onComposerAnswer`) because `Control` sets no
+`delegatesFocus` (`components/Control.ts`, `primitives/JfElement.ts` — neither declares
+`shadowRootOptions`). Every future adopter of a control that is a programmatic focus target inherits
+that coupling. The reviewer's recommendation, adopted as an S4-remainder item: a ~3-line
+`static shadowRootOptions = { ...super.shadowRootOptions, delegatesFocus: true }` (or an explicit
+`focus()` override) on the primitive deletes the reach-through for every consumer at once. It is
+**not** done here because it changes focus behaviour for ~30 existing `jf-control` call sites app-wide
+and belongs in a change whose blast radius is the primitive, not this window.

@@ -1436,6 +1436,16 @@ export class Sv3Composer extends JfElement {
   }
 
   /**
+   * The availability of the tier the reader has CHOSEN (852 S4). The two tiers are gated separately
+   * and deliberately — an agent task needs a live model but no indexed document, so the ask tier can
+   * be refused while delegate is fine — and the window hands down both, so the composer asks the one
+   * that is about to run rather than the one that used to be the only answer.
+   */
+  private get activeUnavailableReason(): string {
+    return this.tier === 'delegate' ? this.delegateUnavailableReason : this.unavailableReason;
+  }
+
+  /**
    * Which node in the ONE banner slot explains a refusal (inventory E1).
    *
    * The send's `aria-describedby` used to name the availability notice unconditionally, which would
@@ -1443,16 +1453,6 @@ export class Sv3Composer extends JfElement {
    * the slot, and nothing when the composer is not refusing — a dangling reference is read out as
    * silence, which is the one outcome the reachable-reason contract rules out.
    */
-  /**
-   * The availability of the tier the reader has CHOSEN (852 S4). The two tiers are gated separately
-   * and deliberately — delegate's gate is not a superset of ask's in this direction: an agent task
-   * needs a live model but no indexed document — so the window hands down both and the composer asks
-   * the one that is about to run.
-   */
-  private get activeUnavailableReason(): string {
-    return this.tier === 'delegate' ? this.delegateUnavailableReason : this.unavailableReason;
-  }
-
   private refusalDescribedBy(reason: string): string | null {
     if (this.activeUnavailableReason === '') return null;
     if (reason !== '') return 'sv3-composer-notice';
