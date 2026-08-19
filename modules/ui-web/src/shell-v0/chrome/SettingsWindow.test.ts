@@ -279,7 +279,7 @@ describe('jf-settings-window', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it('dismiss() (navigation-initiated close) does NOT restore focus to the pre-open invoker (855 §11.2 merge-blocker)', async () => {
+  it('dismiss() (navigation-initiated close) suppresses ModalityController\'s own restore-to-invoker (855 §11.2 merge-blocker)', async () => {
     __seedForTest(catalogOf(settingsSurface()));
     const trigger = document.createElement('button');
     trigger.textContent = 'open settings';
@@ -300,9 +300,14 @@ describe('jf-settings-window', () => {
     await el.updateComplete;
 
     expect(el.open).toBe(false);
-    // The address has already moved to a different stage surface (Shell's
-    // dismiss-on-realized-stage-navigation) — restoring focus to the rail-button invoker would be
-    // wrong for keyboard/SR users, so focus must NOT land back on `trigger`.
+    // This only verifies the CONTROLLER-level suppression: with `skipFocusRestore` set,
+    // `ModalityController.exit()` makes no `.focus()` call of its own, so happy-dom (which does not
+    // implement the native `<dialog>` auto-restore-focus-on-close behaviour) observes focus staying
+    // off `trigger`. It does NOT verify browser behavior end to end — a real browser's native
+    // `<dialog>.close()` (called just before this, inside `ModalController.close`) may still return
+    // focus to the invoker on its own regardless of this flag (audit-measured on the Back-dismissal
+    // path); that is judged benign for the dismissal cases this flag covers, not something this
+    // jsdom-based test can observe either way.
     expect(document.activeElement).not.toBe(trigger);
   });
 

@@ -86,6 +86,12 @@ export class SettingsNav extends JfElement {
       border-right: 1px solid var(--border-subtle);
       background: var(--surface-2, var(--surface-secondary));
     }
+    nav {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+    }
     .search-row {
       flex-shrink: 0;
       padding: 0.75rem 0.5rem 0.5rem;

@@ -1,7 +1,7 @@
 ---
 number: 855
 title: Settings window — Discord-2025 centered-modal pattern + rail slimming
-status: implementing (P0 + P1 shipped on worktree-855-settings-window, each independently reviewed + live-verified — see §12; P2 security absorption in progress; D1/Brain pending owner)
+status: implemented — P0-P4 + closure audit remediation shipped on worktree-855-settings-window (see §12); canonical docs updated; awaiting owner on D1 (Brain) and the PR/merge go-ahead; residuals listed in §12 closure entry
 created: 2026-08-19
 updated: 2026-08-19
 charter: replace the in-Stage settings page with a Discord-style categorized settings window, and decide which main-window chrome items relocate into it
@@ -573,3 +573,32 @@ mechanism).
   closes the window; i18n resolved; ui-shot settings/settings-light 0 new axe.
   With P4, the window exceeds the Discord reference on search (theirs shipped only
   in the 2025 redesign; ours queries the declared register).
+
+- **Closure (this commit)** — independent measured UX audit (auditor ≠ committer,
+  live, axe + contrast + geometry, per the presentation-authority rule) initially
+  returned **FAIL** with a blocker the entire unit-test pyramid could not see: the
+  nav's flex chain was broken at the shadow `<nav>`, so the category list never
+  scrolled — at 1280×720, Plugins/Desktop/Developer and the danger **Data** group
+  were mouse-unreachable. Fixed (one rule), live-verified scrollable with Data
+  reachable. Also from the audit: fixtures registry catalog now declares the
+  settings members so the member redirect works under `--fixtures` and
+  `jseval ui-a11y-gate` completes (final verdict: **clean, no NEW violations**,
+  exit 0); baseline notes' causal story corrected (the light-palette chrome
+  contrast defects reproduce on `home-light` with no modal — they are measured
+  because 855 registered these steps, not exposed by the modal); missing `security`
+  dark baseline entry added; `skipFocusRestore` claims softened to what the
+  mechanism actually does (suppresses the controller's own restore; the platform
+  dialog may still restore — benign, measured). Audit's measured PASSES: §2
+  geometry to the pixel (728px column centered, 241px nav, all hit areas ≥24px,
+  danger isolation), full keyboard journey incl. two-stage ESC, 68/68 contrast
+  pairings across 4 palettes, 0 modal-owned axe issues in any palette. Canonical
+  docs updated (frontend-kernel primitives: MODAL tier; ui-ux-design: settings
+  window + register; secondary-views: stale React-era SettingsView prose swept).
+  Full backend suite green; full ui-web suite green (5578).
+  **Accepted spec deltas:** nav footer is version-only, no click-to-copy, omitted
+  without a version source (§4 delta, deliberate); no per-category title strip
+  (§12 P1 deviation). **Residuals for a human/Tauri pass:** live HC-palette
+  screenshots of the window (token gate covers all 4 palettes; no HC ui-shot step
+  exists), Tauri-webview behavior (esp. window height < ~976px — nav now scrolls,
+  re-check), screen-reader walkthrough, reduced-motion scroll feel. Harness gap
+  (clipped-interactive-elements detection) logged to observations.

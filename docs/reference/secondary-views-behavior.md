@@ -2,7 +2,7 @@
 title: Secondary Views Behavioral Reference
 type: reference
 status: stable
-updated: 2026-06-13
+updated: 2026-08-19
 description: "Secondary view behavioral specification (Library, Brain, Health, Settings, Help)."
 ---
 
@@ -47,7 +47,7 @@ Six items, split into two groups by a thin horizontal divider:
 | 3 | `brain` | Brain | AI Brain | teal | Primary |
 | 4 | `health` | Activity | Health | emerald | Primary |
 | 5 | `help` | HelpCircle | Help | _(no tint property)_ | Secondary |
-| 6 | `settings` | Settings | Settings | purple | Secondary |
+| 6 | `settings` | Settings | Settings | purple | Secondary | _(tempdoc 855: fixed rail affordance, same pattern as Help — opens the Settings window as a `Placement.MODAL` overlay rather than navigating into Stage; see §5.)_
 
 ### Active state
 
@@ -363,6 +363,20 @@ Auto-refresh polls `/api/status` every 5 seconds (`pollInterval: autoRefresh ? 5
 ---
 
 ## 5. SettingsView
+
+> **Superseded placement (tempdoc 855, 2026-08-19):** Settings is no longer a
+> Stage-mounted secondary view — `core.settings-surface` flipped from `Placement.RAIL`
+> to `Placement.MODAL`. Navigating to it opens `<jf-settings-window>` (a chrome-level
+> overlay in `OverlayHost`'s `center` slot, mounted from `shell-v0/chrome/SettingsWindow.ts`)
+> over the unchanged Stage, instead of replacing the Stage's active surface. The section
+> body below (glass sections, `useSettings` hook, staggered entry) predates that change
+> and the Lit rewrite; it documents the pre-855 Stage-page layout for history, not the
+> current window. Current composition: one declared category register
+> (`shell-v0/views/settingsRegister.ts`) projects the window's grouped nav (accordion +
+> scroll-spy), category pages, deep-link targets, and in-window search — see
+> `docs/explanation/10-ui-ux-design.md` ("Settings window") for the current behavioral
+> description, and `docs/reference/ui/frontend-kernel/kernel/00-primitives.md` for the
+> `Placement.MODAL` routing contract.
 
 **Source:** `shell-v0/views/SettingsSurface.ts`
 

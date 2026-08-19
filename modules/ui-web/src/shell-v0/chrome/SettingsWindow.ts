@@ -64,8 +64,11 @@ export class SettingsWindow extends JfElement {
   private cancelIdle: (() => void) | null = null;
   // 855 §11.2 merge-blocker: set by `dismiss()` right before `open` flips false, consumed by the
   // `updated()` open→false path, then reset — so a navigation-initiated close (the address already
-  // moved to a different stage surface) skips the WAI-ARIA restore-to-invoker behaviour that
-  // `requestClose()` (ESC / X / backdrop) still gets. See `modality.ts` ModalityController.exit.
+  // moved to a different stage surface) adds no restore-to-invoker of ITS OWN, unlike `requestClose()`
+  // (ESC / X / backdrop). This only suppresses `ModalityController`'s restore (see `modality.ts`
+  // ModalityController.exit); the native `<dialog>.close()` called just before it may still return
+  // focus to the invoker in real browsers regardless (audit-measured on the Back-dismissal path) —
+  // judged benign for the dismissal cases this flag covers.
   private pendingCloseSkipsFocusRestore = false;
 
   constructor() {
@@ -207,10 +210,12 @@ export class SettingsWindow extends JfElement {
   /**
    * Close WITHOUT emitting the close event — for a navigation that has ALREADY moved the address (a
    * real browser Back, or any other realized stage navigation). `requestClose()` would ask the Shell
-   * to unwind a second time on top of the navigation that just happened. It also skips the
-   * WAI-ARIA restore-to-invoker behaviour (855 §11.2 merge-blocker): the navigation has already moved
-   * focus's rightful destination, so restoring to the pre-modal invoker (a rail button) would be
-   * wrong for keyboard/SR users.
+   * to unwind a second time on top of the navigation that just happened. It also adds no
+   * restore-to-invoker of its own (855 §11.2 merge-blocker): the navigation has already moved focus's
+   * rightful destination, so `ModalityController`'s OWN restore-to-invoker would be wrong here. This
+   * only suppresses that controller's restore, though — the native `<dialog>.close()` this still calls
+   * (via `ModalController.close`) may still return focus to the invoker in real browsers, which is
+   * acceptable for the dismissal cases this covers.
    */
   dismiss(): void {
     this.pendingCloseSkipsFocusRestore = true;

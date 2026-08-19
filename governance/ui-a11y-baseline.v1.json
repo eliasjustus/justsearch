@@ -32,6 +32,14 @@
       "knownRules": []
     },
     {
+      "surface": "security",
+      "uiShotStep": "security",
+      "e2eViews": [
+        "security"
+      ],
+      "knownRules": []
+    },
+    {
       "surface": "settings-light",
       "uiShotStep": "settings-light",
       "e2eViews": [
@@ -40,7 +48,7 @@
       "knownRules": [
         "color-contrast"
       ],
-      "note": "color-contrast: pre-existing light-palette defects in chat view/status deck/walkthrough card, newly VISIBLE behind the 855 settings modal (the old full-stage settings page hid them); owned by those surfaces, logged to observations 2026-08-19. (select-name fixed in 855 P1 — jf-enter-action-picker now carries a real accessible name.)"
+      "note": "color-contrast: pre-existing light-palette defects in chat view/status deck/walkthrough card, measured by these steps because 855 added their light variants to this register; reproducible on home-light with no modal open; owned by those surfaces, logged to observations 2026-08-19. (select-name fixed in 855 P1 — jf-enter-action-picker now carries a real accessible name.)"
     },
     {
       "surface": "security-light",
@@ -51,7 +59,7 @@
       "knownRules": [
         "color-contrast"
       ],
-      "note": "Same pre-existing light-palette chrome defects (chat view/status deck) as the settings-light entry, newly VISIBLE because the security step now opens the 855 settings modal over the stage; owned by those surfaces, logged to observations 2026-08-19."
+      "note": "color-contrast: pre-existing light-palette defects in chat view/status deck/walkthrough card, measured by these steps because 855 added their light variants to this register; reproducible on home-light with no modal open; owned by those surfaces, logged to observations 2026-08-19."
     },
     {
       "surface": "health",

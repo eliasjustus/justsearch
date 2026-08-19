@@ -284,6 +284,32 @@ references the primitives the surface depends on
 catalog validator at handshake time enforces that all referenced ids
 resolve.
 
+**`Placement.MODAL` is realized** (tempdoc 855): a MODAL-placement target
+opens as a chrome-level overlay window over an unchanged stage, instead of
+mounting into it. `NavigationHandler` (`router/navigationHandler.ts`)
+carries one placement-conditional branch, reached by every entry point
+(rail, command palette, URL boot) because they all funnel through the same
+handler: it skips `setActiveSurface` (the catalog-wide Stage fallback is
+not placement-filtered and would otherwise mount the surface standalone)
+and skips `activateProjection` (it unconditionally tears down the
+*current* surface's URL projection before its own schema check, which
+would kill the underlying stage surface's live URL sync for a
+schema-less MODAL target). It still runs `applyState` and dedupes the
+history push when the target address is already current, and reports to
+the opening callback whether a push actually happened — close is
+pushed-aware (`history.back()` only when this navigation added the entry;
+otherwise a forward navigation restores the stage surface, covering the
+boot-under-modal case). User-initiated close (ESC/X/backdrop) restores
+focus to the invoker per WAI-ARIA (`ModalityController`'s own restore); a
+navigation-initiated `dismiss()` (a realized stage navigation while the
+window is open) adds no restore of its own, because the navigation owns
+focus's destination — the platform dialog may still return focus to the
+invoker, which is acceptable for the dismissal cases. First and currently
+only realization: `core.settings-surface` (mounted as
+`<jf-settings-window>` in `chrome/SettingsWindow.ts`, in `OverlayHost`'s
+`center` slot — the same dock as the command palette — using
+`ModalController` over a native `<dialog>`, the `ConfirmDialog` idiom).
+
 **Audience composition rule** (slice 449 §0 D2; refined-but-retained-as-V1
 per slice 481 §D defect 1): the effective audience of a composed entry
 is the *maximum* of:
