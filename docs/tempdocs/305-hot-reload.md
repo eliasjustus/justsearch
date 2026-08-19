@@ -1,10 +1,22 @@
 ---
 title: "305: Hot-Reload for Dev Iteration"
 type: tempdoc
-status: done
+status: done — but the shipped capability was later found INCOHERENT; see tempdoc 844 §5.6/§13.7
 created: 2026-03-14
-updated: 2026-03-16
+updated: 2026-08-19
 ---
+
+> **Do not read this as current behaviour.** What 305 shipped stopped being coherent as the
+> environment moved underneath it. Tempdoc 844 §5.6 found `reload` resolved its *target* from the
+> global run record but its *bytecode* from the caller's frozen cwd, so under `distFrom` (125 of
+> 162 measured starts) it compiled in one tree and pushed into another, with no ownership check and
+> no target-identity check. 305's Phase 2 classloader was never built — `DEV_HOTRELOAD_CLASSES_DIR`
+> was written and read by nothing — and the MCP tool description claimed a degraded mode that could
+> not exist, because the same gate that skips the JDWP agent also skips everything else.
+>
+> 305's assumptions (one checkout, one stack, one agent, one JDK) were all true when it was written
+> and all false by mid-2026. The capability was repaired rather than retired in 844 §13.7 and
+> live-validated in §13.9. **Read 844 for how hot reload behaves now.**
 
 > NOTE: Noncanonical working tempdoc. Verify behavioral claims against canonical docs, code, and
 > tests before promotion.
