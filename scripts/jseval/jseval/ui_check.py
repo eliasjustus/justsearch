@@ -601,6 +601,16 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
                     await page.evaluate(
                         "(id) => { location.hash = `justsearch://surface/${id}`; }", surface_id
                     )
+                if surface_id == S.RAIL_SURFACE_SETTINGS:
+                    # tempdoc 855: Settings is MODAL — the affordance opens the <jf-settings-window>
+                    # dialog OVER the stage rather than swapping the stage surface, so wait on the
+                    # open dialog + its mounted content instead of a stage mount.
+                    await page.locator(S.CSS_SETTINGS_WINDOW_DIALOG).wait_for(
+                        state="visible", timeout=10_000
+                    )
+                    await page.locator(S.CSS_SETTINGS_WINDOW_CONTENT).first.wait_for(
+                        state="attached", timeout=10_000
+                    )
                 if cooldown_ms > 0:
                     await asyncio.sleep(cooldown_ms / 1000)
             if view_name == "ai-brain-advanced":

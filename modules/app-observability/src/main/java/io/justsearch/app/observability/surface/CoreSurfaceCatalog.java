@@ -573,13 +573,16 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
                               "/query", "ask", "query"),
                           new io.justsearch.agent.api.registry.StateBinding(
                               "/docIds", "ask", "docIds"))))),
+          // Tempdoc 855 §9.2 — Settings opens as a centered window over the stage
+          // (<jf-settings-window>), not as a rail surface; it keeps a fixed bottom rail affordance.
+          // The placement must stay in step with CorePlugin.ts (check-surface-composition LEG-2).
           new Surface(
               SETTINGS_SURFACE_ID,
               Presentation.of(
                   new I18nKey("registry-surface.settings-surface.label"),
                   new I18nKey("registry-surface.settings-surface.description")),
               Audience.USER,
-              Placement.RAIL,
+              Placement.MODAL,
               new SurfaceConsumes(
                   /* resources */ Set.of(),
                   /* operations */ Set.of(OP_RESET_SETTINGS),

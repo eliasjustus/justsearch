@@ -113,6 +113,7 @@ export type ComponentTag =
   | 'jf-selection-actions-menu'
   | 'jf-settings-surface'
   | 'jf-settings-view'
+  | 'jf-settings-window'
   | 'jf-shell'
   | 'jf-shortcuts-table'
   | 'jf-source-chips'
@@ -256,6 +257,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-selection-actions-menu',
   'jf-settings-surface',
   'jf-settings-view',
+  'jf-settings-window',
   'jf-shell',
   'jf-shortcuts-table',
   'jf-source-chips',

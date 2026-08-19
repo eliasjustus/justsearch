@@ -188,13 +188,17 @@ final class CoreSurfaceCatalogTest {
   }
 
   @Test
-  @DisplayName("Slice 454 phase 9: Settings surface entry shape (consumes core.reset-settings)")
+  @DisplayName(
+      "Slice 454 phase 9 / tempdoc 855: Settings surface entry shape (MODAL, consumes"
+          + " core.reset-settings)")
   void settingsSurfaceShape() {
     Surface entry =
         new CoreSurfaceCatalog().findById(CoreSurfaceCatalog.SETTINGS_SURFACE_ID).orElseThrow();
     assertEquals(new SurfaceRef("core.settings-surface"), entry.id());
     assertSame(Audience.USER, entry.audience());
-    assertSame(Placement.RAIL, entry.placement());
+    // Tempdoc 855 §11.1 — Settings is the first MODAL surface: it opens as the centered
+    // <jf-settings-window> over the current stage surface, never as a rail-mounted stage pane.
+    assertSame(Placement.MODAL, entry.placement());
     assertEquals("jf-settings-surface", entry.mountTag());
     // Tempdoc 571 §11 / 578 — Settings ⊇ Appearance: hosts the two theming surfaces as an Appearance tab group.
     assertEquals(

@@ -421,6 +421,17 @@ extend `NavigationHandlerConfig` with `getPlacement`, mirroring the existing
   modal with zero extra code.
 - `resolution.ts` / `recoveryPolicy.ts` / `catalogResolver.ts` need **no changes**
   (fully placement-agnostic; verified in full).
+- **Amendment (P0 implementation finding, 2026-08-19): dismiss ≠ close.** A *real*
+  browser Back while the window is open flows popstate → normal branch →
+  `setActiveSurface(prior)` with the dialog still open, and a later ESC would pop
+  history a second time. Contract addition: the window exposes `dismiss()` (close
+  WITHOUT touching history), and Shell's `setActiveSurface` callback dismisses an
+  open window on any realized stage navigation; `requestClose()` (X/ESC/backdrop)
+  remains the only path that calls `history.back()`.
+- **P1 look-item (P0 finding):** the §11.2 persistent mount moves SettingsSurface's
+  full `connectedCallback` cost (9 loads + 8 subs + chunk fetch) to shell boot —
+  consider mount-on-idle-after-catalog-resolve in P1 without giving up the
+  connected-before-first-open property member intents rely on.
 
 ### 11.2 Member intents reach a closed window (R2)
 

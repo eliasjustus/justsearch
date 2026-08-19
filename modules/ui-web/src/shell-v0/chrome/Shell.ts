@@ -246,6 +246,9 @@ import '../commands/CommandPalette.js';
 import type { CommandPalette } from '../commands/CommandPalette.js';
 // Tempdoc 508-followup §δ2 — hover-preview overlay element.
 import '../components/Peek.js';
+// Tempdoc 855 — the centered window hosting the MODAL settings surface.
+import './SettingsWindow.js';
+import type { SettingsWindow } from './SettingsWindow.js';
 type SurfaceCatalogEntry = Surface;
 import { icon } from '../components/Icon.js';
 import { copyToClipboard } from '../utils/clipboardCopy.js';
@@ -313,10 +316,13 @@ import { ensureSurfaceLoaded, isLazySurface } from '../views/lazySurfaceRegistry
 // See utils/surfaceIcons.ts for the mapping.
 
 // Tempdoc 578 §5.6 Phase 4 — Help is no longer a rail surface (DEEPLINK); it is reached via the
-// dedicated "?" affordance the rail renders in its bottom section. Settings stays bottom-pinned.
-const BOTTOM_RAIL_IDS = new Set(['core.settings-surface']);
+// dedicated "?" affordance the rail renders in its bottom section.
+// Tempdoc 855 §9.2 — Settings followed it off the catalog rail list (Placement.MODAL: it opens as a
+// window over the stage), so it too is a fixed bottom affordance rather than a bottom-pinned surface.
 /** Tempdoc 578 — the Help surface id the rail's "?" affordance deep-links to. */
 const HELP_SURFACE_ID = 'core.help-surface';
+/** Tempdoc 855 — the MODAL surface the rail's fixed Settings affordance opens. */
+const SETTINGS_SURFACE_ID = 'core.settings-surface';
 
 // Tempdoc 571 §6 — the one interaction window (561). TRUST surfaces home adjacent to it in the rail,
 // derived from altitude (see Rail.render). Mirrors the Java interaction-surface gate's canonicalSurface.
@@ -1491,8 +1497,32 @@ export class Shell extends JfElement {
           // working without the toast that used to be its only caller of this assignment.
           this.previousActiveId = prev;
         }
+        // Tempdoc 855 §11.1 — a REALIZED stage navigation reaches this callback only from the
+        // normal (non-MODAL) branch, so the address has moved off the settings window: dismiss it.
+        // `dismiss()` and not `requestClose()` — history ALREADY moved (this is exactly the real
+        // browser-Back path), and a second `history.back()` would navigate one entry too far.
+        const settingsWindow = this.shadowRoot?.querySelector(
+          'jf-settings-window',
+        ) as SettingsWindow | null;
+        if (settingsWindow?.open) settingsWindow.dismiss();
       },
       isKnownSurface,
+      // Tempdoc 855 §11.1 — the MODAL branch's injected placement lookup (ShellAddress carries no
+      // placement). A MODAL target opens as a window OVER the stage instead of replacing it.
+      getPlacement: (id) => getSurface(id)?.placement,
+      openModal: (id, _state, info) => {
+        // Phase 0 declares exactly one MODAL surface, and one window hosts it. Guarding on the id
+        // keeps a future second MODAL surface from silently opening the Settings window.
+        if (id !== SETTINGS_SURFACE_ID) return;
+        const win = this.shadowRoot?.querySelector('jf-settings-window') as SettingsWindow | null;
+        if (!win) return;
+        // Tempdoc 855 §11.1 D4 — remember whether THIS open-episode added a history entry. Only the
+        // opening navigation can, and a repeat navigation while the window is already open pushes
+        // nothing (the D3 duplicate skip), so the flag is captured on the closed→open transition and
+        // left alone afterwards.
+        if (!win.open) this.settingsOpenPushed = info.pushed;
+        win.open = true;
+      },
     });
     const invocationHandler = createInvocationHandler({
       client: operationClient,
@@ -1806,6 +1836,39 @@ export class Shell extends JfElement {
     document.title = label ? `${activityPrefix}${label} · JustSearch` : 'JustSearch';
   }
 
+  /**
+   * Tempdoc 855 §11.1 D4 — did the navigation that opened the settings window add a history entry?
+   * Set on the closed→open transition from `OpenModalInfo.pushed`; read once when the window asks to
+   * close. False for a boot / deep-link entry, where the settings address was already the location.
+   */
+  private settingsOpenPushed = false;
+
+  /**
+   * Move the address OFF the settings window (855 §11.1 D4). Two cases, and picking the wrong one
+   * is the defect this replaces:
+   *
+   *   - the opening navigation pushed an entry → `history.back()`. Popstate re-dispatches the prior
+   *     address through the normal branch, restoring URL + projection + stage in one shot.
+   *   - it did NOT (boot / deep-link straight onto the settings address) → there is no prior entry
+   *     to return to, and `history.back()` would leave the app. Navigate FORWARD to the stage
+   *     surface instead: that pushes the canonical stage address, re-runs `setActiveSurface`, and —
+   *     the actual bug — activates the stage surface's URL projection, which the MODAL branch never
+   *     does, so a boot-entered session was otherwise left with NO projection for its whole life.
+   */
+  private onSettingsWindowClose(): void {
+    if (this.settingsOpenPushed) {
+      this.settingsOpenPushed = false;
+      window.history.back();
+      return;
+    }
+    // Same default-pick as refreshSurfaces' boot landing: the one interaction window, else the
+    // first rail surface.
+    const fallback =
+      this.surfaces.find((s) => s.id === 'core.unified-chat-surface') ?? this.surfaces[0];
+    const target = this.activeId ?? fallback?.id ?? null;
+    if (target) this.activateSurface(target, {}, 'BUTTON');
+  }
+
   private goBack(): void {
     if (this.previousActiveId) {
       this.activateSurface(this.previousActiveId, {}, 'BUTTON');
@@ -2004,7 +2067,14 @@ export class Shell extends JfElement {
     // rail. Membership is the single home-authority — derived from the wire's `members`, never a
     // separately hand-set Placement (so "off-rail" and "routable" stop being two signals to sync).
     const memberIds = new Set(all.flatMap((s) => s.members ?? []));
-    let railSurfaces = all.filter((s) => s.placement === 'RAIL' && !memberIds.has(s.id));
+    // Tempdoc 855 §11 S1 — Settings is NEVER a rail/stage surface, whatever the catalog says. The
+    // wire declares MODAL, but a session running against a stale cached catalog (or a plugin catalog
+    // that re-declares it RAIL) would otherwise render a SECOND settings button next to the pinned
+    // affordance below AND let the Stage mount `jf-settings-surface` a second time, competing with
+    // the window's persistent mount (§11.2). The one MODAL surface is excluded unconditionally.
+    let railSurfaces = all.filter(
+      (s) => s.placement === 'RAIL' && !memberIds.has(s.id) && s.id !== SETTINGS_SURFACE_ID,
+    );
 
     // Tempdoc 507 §6 Phase 5 — layout zone composition: if the active
     // layout specifies which surfaces appear in the rail zone, filter to
@@ -2081,10 +2151,10 @@ export class Shell extends JfElement {
       // Tempdoc 577 Goal 3 §3.6 — Search is retired as a RAIL peer (DEEPLINK), so it is no longer in
       // `this.surfaces` (rail-only). The boot landing is the ONE interaction window
       // (core.unified-chat-surface), whose `retrieve` affordance is the search entry tier; fall back
-      // to the first non-bottom rail surface, then any surface.
+      // to the first rail surface. Tempdoc 855 §11.5 — the bottom-pinned exclusion is gone with
+      // `BOTTOM_RAIL_IDS`: Settings is MODAL now, so it is not in this RAIL-filtered list at all.
       const home = this.surfaces.find((s) => s.id === 'core.unified-chat-surface');
-      const first = this.surfaces.find((s) => !BOTTOM_RAIL_IDS.has(s.id));
-      this.activeId = (home ?? first ?? this.surfaces[0])?.id ?? null;
+      this.activeId = (home ?? this.surfaces[0])?.id ?? null;
       // Slice 489 T1/G3 — boot default path bypasses NavigationHandler
       // (URLSource only dispatches when the location actually encodes a
       // surface). The title hook still needs to fire so the initial tab
@@ -2349,6 +2419,14 @@ export class Shell extends JfElement {
         ></jf-drag-overlay>
         <jf-indexing-overlay-host slot="center" api-base=${this.apiBase}></jf-indexing-overlay-host>
         <jf-command-palette slot="center"></jf-command-palette>
+        ${/* Tempdoc 855 — the settings window. Declared once here (the palette pattern) and kept
+              mounted so the hosted surface stays connected while closed (§11.2). */ ''}
+        <jf-settings-window
+          slot="center"
+          api-base=${this.apiBase}
+          .host_=${this.hostApi_ ?? undefined}
+          @settings-window-close=${() => this.onSettingsWindowClose()}
+        ></jf-settings-window>
         <jf-elicit-host slot="center"></jf-elicit-host>
         <jf-authorization-host slot="center"></jf-authorization-host>
         <jf-macro-dry-run slot="center"></jf-macro-dry-run>
@@ -2654,9 +2732,35 @@ export class Rail extends JfElement {
     `;
   }
 
+  /**
+   * Tempdoc 855 §9.2 — the fixed Settings affordance. Settings is a MODAL surface now (it opens as
+   * a window over the stage), so it is no longer in the catalog-derived rail list; this keeps its
+   * bottom-pinned place and fires the same `rail-select` path, so every entry point stays one flow.
+   * `aria-haspopup="dialog"` is the honest semantic: the button opens a window, it does not make a
+   * page current (which is why the catalog button's `aria-current` has no counterpart here).
+   */
+  private renderSettingsButton(): TemplateResult {
+    const railName = railAccessibleName(
+      SETTINGS_SURFACE_ID,
+      present({ kind: 'surface', id: SETTINGS_SURFACE_ID }).label,
+    );
+    return html`
+      <button
+        title=${railName}
+        aria-label=${railName}
+        aria-haspopup="dialog"
+        data-surface-id=${SETTINGS_SURFACE_ID}
+        @click=${() => this.select(SETTINGS_SURFACE_ID)}
+      >
+        <span class="btn-wrap">
+          ${icon({ name: SURFACE_ICONS[SETTINGS_SURFACE_ID] ?? 'settings', size: 18 })}
+        </span>
+        ${this.expanded ? html`<span class="rail-label">${railName}</span>` : nothing}
+      </button>
+    `;
+  }
+
   override render(): TemplateResult {
-    const nonBottom = this.surfaces.filter((s) => !BOTTOM_RAIL_IDS.has(s.id));
-    const bottom = this.surfaces.filter((s) => BOTTOM_RAIL_IDS.has(s.id));
     // Tempdoc 571 §6 — homing is a projection of declared altitude (NOT catalog hand-placement):
     //  • DIAGNOSTIC surfaces (Logs, Health) band together below the product surfaces;
     //  • a TRUST surface (Activity) stays first-class in the product band AND homes adjacent to the
@@ -2664,8 +2768,8 @@ export class Rail extends JfElement {
     //    → [the rest], so Activity sits right after chat by construction (derived, not hand-reordered).
     // An absent altitude ⇒ PRODUCT (the benign default), so the split degrades safely.
     const altitudeOf = (s: SurfaceCatalogEntry): string => s.altitude ?? 'PRODUCT';
-    const diagnostics = nonBottom.filter((s) => altitudeOf(s) === 'DIAGNOSTIC');
-    const productAll = nonBottom.filter((s) => altitudeOf(s) !== 'DIAGNOSTIC');
+    const diagnostics = this.surfaces.filter((s) => altitudeOf(s) === 'DIAGNOSTIC');
+    const productAll = this.surfaces.filter((s) => altitudeOf(s) !== 'DIAGNOSTIC');
     const trust = productAll.filter((s) => altitudeOf(s) === 'TRUST');
     const rest = productAll.filter((s) => altitudeOf(s) !== 'TRUST');
     const anchor = rest.findIndex((s) => s.id === INTERACTION_SURFACE_ID);
@@ -2696,7 +2800,7 @@ export class Rail extends JfElement {
       <slot name="bottom-chrome"></slot>
       <div class="divider"></div>
       ${this.renderHelpButton()}
-      ${bottom.map((s) => this.renderButton(s))}
+      ${this.renderSettingsButton()}
       <div class="divider"></div>
       ${this.renderExpandToggle()}
     `;

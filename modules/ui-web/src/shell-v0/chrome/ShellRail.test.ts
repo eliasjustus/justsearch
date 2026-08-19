@@ -90,6 +90,16 @@ interface ShellElement extends HTMLElement {
   updateComplete: Promise<void>;
 }
 
+/** Every rail button that claims to navigate to `id` — the pinned affordance AND catalog slots. */
+async function railButtonsFor(shell: ShellElement, id: string): Promise<Element[]> {
+  const rail = shell.shadowRoot?.querySelector('jf-rail') as
+    | (HTMLElement & { updateComplete: Promise<void> })
+    | null;
+  if (!rail) return [];
+  await rail.updateComplete;
+  return [...(rail.shadowRoot?.querySelectorAll(`[data-surface-id="${id}"]`) ?? [])];
+}
+
 async function renderShell(): Promise<ShellElement> {
   const shell = document.createElement('jf-shell') as ShellElement;
   shell.apiBase = '';
@@ -125,7 +135,21 @@ describe('Shell — userConfig-driven rail (slice 472)', () => {
     expect(ids).toContain('core.library-surface');
     expect(ids).toContain('core.brain-surface');
     expect(ids).toContain('core.help-surface');
-    expect(ids).toContain('core.settings-surface');
+    // Tempdoc 855 §11 S1 — Settings is NEVER a catalog rail button, even when a (stale/hostile)
+    // catalog declares it RAIL as this fixture does: it is the one MODAL surface, reachable only
+    // through the pinned affordance that opens <jf-settings-window>. Without the unconditional
+    // exclusion this session would render TWO settings buttons and stage-mount the surface.
+    expect(ids).not.toContain('core.settings-surface');
+  });
+
+  it('renders exactly ONE settings button — the pinned affordance, never a catalog slot (855 S1)', async () => {
+    seedFiveCoreSurfaces();
+    const shell = await renderShell();
+    const buttons = await railButtonsFor(shell, 'core.settings-surface');
+    expect(buttons).toHaveLength(1);
+    // The survivor is the pinned MODAL affordance: it opens a window, so it declares
+    // aria-haspopup="dialog" — the catalog slot never does.
+    expect(buttons[0]!.getAttribute('aria-haspopup')).toBe('dialog');
   });
 
   it('surfaceVisibility=false hides a surface from the rail', async () => {
@@ -153,12 +177,8 @@ describe('Shell — userConfig-driven rail (slice 472)', () => {
     const ids = shell.surfaces.map((s) => s.id);
     expect(ids[0]).toBe('core.brain-surface');
     expect(ids[1]).toBe('core.search-surface');
-    // Library / Help / Settings follow in catalog order.
-    expect(ids.slice(2)).toEqual([
-      'core.library-surface',
-      'core.help-surface',
-      'core.settings-surface',
-    ]);
+    // Library / Help follow in catalog order (Settings is excluded unconditionally — 855 S1).
+    expect(ids.slice(2)).toEqual(['core.library-surface', 'core.help-surface']);
   });
 
   it('surfaceOrder ids that are not in the catalog are silently skipped', async () => {
@@ -216,7 +236,8 @@ describe('Shell — Simple/Advanced rail filter (tempdoc 586 F-2)', () => {
     expect(ids).toContain('core.brain-surface');
     expect(ids).toContain('core.library-surface');
     expect(ids).toContain('core.search-surface');
-    expect(ids).toContain('core.settings-surface');
+    // 855 S1 — and Settings is out of the rail set in BOTH modes, not a Simple-mode trim.
+    expect(ids).not.toContain('core.settings-surface');
   });
 
   it('Advanced mode restores System + Theme Editor', async () => {

@@ -134,12 +134,15 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
     splitPairing: { secondary: 'core.library-surface' },
   },
   {
+    // Tempdoc 855 §9.2 — Settings opens as a centered window over the stage (<jf-settings-window>),
+    // not as a rail surface. It keeps a fixed bottom rail affordance; the placement flip must stay in
+    // step with CoreSurfaceCatalog.java (the check-surface-composition LEG-2 parity gate).
     id: 'core.settings-surface',
     mountTag: 'jf-settings-surface',
     labelKey: 'registry-surface.settings-surface.label',
     descriptionKey: 'registry-surface.settings-surface.description',
     audience: 'USER',
-    placement: 'RAIL',
+    placement: 'MODAL',
   },
   {
     // Tempdoc 629 (remaining-work) — unified Security & Privacy surface (encryption control + at-rest

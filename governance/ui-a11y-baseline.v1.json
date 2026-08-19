@@ -34,6 +34,18 @@
       ]
     },
     {
+      "surface": "settings-light",
+      "uiShotStep": "settings-light",
+      "e2eViews": [
+        "settings"
+      ],
+      "knownRules": [
+        "select-name",
+        "color-contrast"
+      ],
+      "note": "select-name: same pre-existing jf-enter-action-picker defect as the dark settings entry (fix chartered in 855 P1). color-contrast: pre-existing light-palette defects in chat view/status deck/walkthrough card, newly VISIBLE behind the 855 settings modal (the old full-stage settings page hid them); owned by those surfaces, logged to observations 2026-08-19."
+    },
+    {
       "surface": "health",
       "uiShotStep": "health",
       "e2eViews": [
