@@ -4,11 +4,32 @@
  * semantic role tokens from tokens.css per theme and asserts every INTENDED pairing clears WCAG AA:
  *   - on-grade:        accent-on-<role> legible ON accent-<role>     (text/icon sitting on the fill)
  *   - text-on-surface: text-<role> legible ON the app surface        (the #3 amber-as-text bug-class)
- * in BOTH the dark (`:root`) and light (`[data-theme="light"]`) themes. The role tokens are direct
+ * in ALL FOUR shipped palettes. The role tokens are direct
  * `oklch()`/hex/rgb (hue via `var(--h-*)`, text base via `var(--p-text)`); `color-mix()` alpha-grades
  * are out of scope (not used by the role tokens). The oklch→sRGB transform is node-side here because
  * the FE resolves oklch via getComputedStyle (no pure-math need there), so there is no shared module
  * across the TS/MJS boundary — this gate owns the only place that needs the transform.
+ *
+ * Tempdoc 853 (remediation 2) — the gate used to parse `:root` and `[data-theme="light"]` ONLY, so the
+ * two high-contrast palette blocks were structurally invisible to it: a high-contrast pairing could
+ * not fail this gate no matter how bad it was, which is why the 2026-08-19 audit's F-07 (4.40:1 body
+ * text served to a user who explicitly asked for high contrast) had to be found by hand. The two HC
+ * blocks are now palettes in the matrix.
+ *
+ * The HC blocks INHERIT: each declares a handful of tokens and leaves the rest to the palette beneath
+ * it, so an effective value has to be resolved the way the cascade resolves it or the gate reports
+ * gaps that do not exist. The layering below reproduces the real cascade order — by specificity, then
+ * by source order — and is asserted in `check-contrast-matrix.test.mjs`:
+ *   hc-dark   = `:root` → `.high-contrast`
+ *   hc-light  = `:root` → `[data-theme="light"]` → `.high-contrast` → `[data-theme="light"].high-contrast`
+ * The third layer is the one that is easy to get wrong: `.high-contrast` (0,1,0) is declared AFTER
+ * `[data-theme="light"]` (0,1,0) and outside the `@layer core-theme` the theme blocks sit in, so in
+ * light+HC it wins for every token the light-specific HC block does not redeclare (`--text-ghost`,
+ * `--glass-border-strong`). Dropping it would resolve those to the light theme's values instead.
+ *
+ * Scope note: the achromatic text-grade ramp (`--text-primary/-secondary/-tertiary/-muted`) under HC
+ * is NOT re-checked here — it is owned by `modules/ui-web/src/shell-v0/themes/highContrastTextRoles.test.ts`,
+ * which holds it to the stricter AAA floor plus grade ordering. This gate owns the ROLE pairings.
  *
  * Exit 0 when every pairing clears AA; exit 1 (with the offending pairings) otherwise.
  */
@@ -119,63 +140,105 @@ function parseBlock(css, selectorRe) {
   return out;
 }
 
-const css = readFileSync(TOKENS_CSS, 'utf8');
-const root = parseBlock(css, /:root\s*\{/);
-const light = parseBlock(css, /\[data-theme="light"\]\s*\{/);
-const hues = {};
-for (const [k, v] of Object.entries(root)) if (k.startsWith('h-')) hues[k] = parseFloat(v);
-
-const THEMES = {
-  dark: { tokens: root, pText: root['p-text'] },
-  light: { tokens: { ...root, ...light }, pText: light['p-text'] ?? root['p-text'] },
+// The `.high-contrast` selectors are anchored at line start: the block above them is a long comment
+// that mentions `.high-contrast *` and `[data-theme="light"].high-contrast .zone-*` in prose.
+const SELECTORS = {
+  root: /^:root\s*\{/m,
+  light: /^\[data-theme="light"\]\s*\{/m,
+  hc: /^\.high-contrast\s*\{/m,
+  hcLight: /^\[data-theme="light"\]\.high-contrast\b/m,
 };
+
+/** The four shipped palettes, each resolved down its real cascade chain (see the header). */
+export function resolvePalettes(css) {
+  const root = parseBlock(css, SELECTORS.root);
+  const light = parseBlock(css, SELECTORS.light);
+  const hc = parseBlock(css, SELECTORS.hc);
+  const hcLight = parseBlock(css, SELECTORS.hcLight);
+  const hues = {};
+  for (const [k, v] of Object.entries(root)) if (k.startsWith('h-')) hues[k] = parseFloat(v);
+  const layer = (...blocks) => {
+    const tokens = Object.assign({}, ...blocks);
+    return { tokens, pText: tokens['p-text'], hues };
+  };
+  return {
+    dark: layer(root),
+    light: layer(root, light),
+    'hc-dark': layer(root, hc),
+    'hc-light': layer(root, light, hc, hcLight),
+  };
+}
+
+export const PALETTES = ['dark', 'light', 'hc-dark', 'hc-light'];
 // 577 Phase 7 — `highlight` + `link` joined the role catalog (themeRoles.ts).
-const ROLES = ['tint', 'command', 'chat', 'success', 'warning', 'danger', 'highlight', 'link'];
+export const ROLES = ['tint', 'command', 'chat', 'success', 'warning', 'danger', 'highlight', 'link'];
 
-const pairs = [];
-for (const theme of ['dark', 'light']) {
-  // on-grade: the foreground sitting ON the accent fill.
-  for (const r of ROLES) pairs.push({ theme, label: `on-${r}`, fg: `accent-on-${r}`, bg: `accent-${r}` });
-  // text-on-surface: every role's text-grade token legible on the app surface (the #3 amber bug-class —
-  // tempdoc 576 §6 rung-1). All roles now carry a `text-<role>` token.
-  for (const r of ROLES) pairs.push({ theme, label: `text-${r}-on-surface`, fg: `text-${r}`, bg: 'surface-1' });
-  // Tempdoc 596 §16.2 — the jf-control reason tooltip's OWN pairing: its text (`text-primary`) sits on the
-  // elevated popover background (`surface-3`), not `surface-1`. Folding it into the matrix proves the
-  // WCAG-1.4.13 reason surface clears AA in both themes (the §16.2 "fold the tooltip colours into the gate").
-  pairs.push({ theme, label: 'tooltip-text-on-surface-3', fg: 'text-primary', bg: 'surface-3' });
-}
-
-const failures = [];
-const apcaNotes = [];
-for (const p of pairs) {
-  const t = THEMES[p.theme];
-  const prims = { 'p-text': t.pText };
-  const fg = resolveColor(t.tokens[p.fg], hues, prims);
-  const bg = resolveColor(t.tokens[p.bg], hues, prims);
-  if (!fg || !bg) {
-    failures.push(`${p.theme}/${p.label}: could not resolve (${p.fg}=${t.tokens[p.fg]}, ${p.bg}=${t.tokens[p.bg]})`);
-    continue;
+export function buildPairs(palettes = PALETTES) {
+  const pairs = [];
+  for (const theme of palettes) {
+    // on-grade: the foreground sitting ON the accent fill.
+    for (const r of ROLES) pairs.push({ theme, label: `on-${r}`, fg: `accent-on-${r}`, bg: `accent-${r}` });
+    // text-on-surface: every role's text-grade token legible on the app surface (the #3 amber bug-class —
+    // tempdoc 576 §6 rung-1). All roles now carry a `text-<role>` token.
+    for (const r of ROLES) pairs.push({ theme, label: `text-${r}-on-surface`, fg: `text-${r}`, bg: 'surface-1' });
+    // Tempdoc 596 §16.2 — the jf-control reason tooltip's OWN pairing: its text (`text-primary`) sits on the
+    // elevated popover background (`surface-3`), not `surface-1`. Folding it into the matrix proves the
+    // WCAG-1.4.13 reason surface clears AA in every palette (the §16.2 "fold the tooltip colours into the gate").
+    pairs.push({ theme, label: 'tooltip-text-on-surface-3', fg: 'text-primary', bg: 'surface-3' });
   }
-  const ratio = contrast(fg, bg);
-  if (ratio < WCAG_AA) {
-    failures.push(`${p.theme}/${p.label}: ${ratio.toFixed(2)}:1 < AA ${WCAG_AA} (${p.fg} on ${p.bg})`);
-  }
-  // Additive APCA signal (never fails the gate).
-  const lc = Math.abs(apcaLc(fg, bg));
-  if (lc < APCA_SOFT) {
-    apcaNotes.push(`${p.theme}/${p.label}: APCA Lc ${lc.toFixed(0)} < ${APCA_SOFT} (clears AA ${ratio.toFixed(2)}:1, but APCA-soft)`);
-  }
+  return pairs;
 }
 
-// APCA is advisory — print the signal regardless of pass/fail, but it never changes the exit code.
-if (apcaNotes.length > 0) {
-  console.log(`check-contrast-matrix — ${apcaNotes.length} pairing(s) below the APCA Lc ${APCA_SOFT} advisory (signal only, not a floor):`);
-  for (const n of apcaNotes) console.log(`  · ${n}`);
+/** Resolve one pairing's two effective colours in its palette. Exported so tests can assert VALUES. */
+export function resolvePair(palette, pair) {
+  const prims = { 'p-text': palette.pText };
+  return {
+    fg: resolveColor(palette.tokens[pair.fg], palette.hues, prims),
+    bg: resolveColor(palette.tokens[pair.bg], palette.hues, prims),
+  };
 }
 
-if (failures.length > 0) {
-  console.error(`check-contrast-matrix FAIL — ${failures.length} role pairing(s) below WCAG AA (the hard floor):`);
-  for (const f of failures) console.error(`  ✗ ${f}`);
-  process.exit(1);
+export function evaluatePairs(palettesByName, pairs) {
+  const failures = [];
+  const apcaNotes = [];
+  for (const p of pairs) {
+    const t = palettesByName[p.theme];
+    const { fg, bg } = resolvePair(t, p);
+    if (!fg || !bg) {
+      failures.push(`${p.theme}/${p.label}: could not resolve (${p.fg}=${t.tokens[p.fg]}, ${p.bg}=${t.tokens[p.bg]})`);
+      continue;
+    }
+    const ratio = contrast(fg, bg);
+    if (ratio < WCAG_AA) {
+      failures.push(`${p.theme}/${p.label}: ${ratio.toFixed(2)}:1 < AA ${WCAG_AA} (${p.fg} on ${p.bg})`);
+    }
+    // Additive APCA signal (never fails the gate).
+    const lc = Math.abs(apcaLc(fg, bg));
+    if (lc < APCA_SOFT) {
+      apcaNotes.push(`${p.theme}/${p.label}: APCA Lc ${lc.toFixed(0)} < ${APCA_SOFT} (clears AA ${ratio.toFixed(2)}:1, but APCA-soft)`);
+    }
+  }
+  return { failures, apcaNotes };
 }
-console.log(`check-contrast-matrix OK — all ${pairs.length} role pairings clear WCAG AA (hard floor) in both themes; APCA Lc reported as an additive signal.`);
+
+function main() {
+  const css = readFileSync(TOKENS_CSS, 'utf8');
+  const palettes = resolvePalettes(css);
+  const pairs = buildPairs();
+  const { failures, apcaNotes } = evaluatePairs(palettes, pairs);
+
+  // APCA is advisory — print the signal regardless of pass/fail, but it never changes the exit code.
+  if (apcaNotes.length > 0) {
+    console.log(`check-contrast-matrix — ${apcaNotes.length} pairing(s) below the APCA Lc ${APCA_SOFT} advisory (signal only, not a floor):`);
+    for (const n of apcaNotes) console.log(`  · ${n}`);
+  }
+
+  if (failures.length > 0) {
+    console.error(`check-contrast-matrix FAIL — ${failures.length} role pairing(s) below WCAG AA (the hard floor):`);
+    for (const f of failures) console.error(`  ✗ ${f}`);
+    process.exit(1);
+  }
+  console.log(`check-contrast-matrix OK — all ${pairs.length} role pairings clear WCAG AA (hard floor) across ${PALETTES.length} palettes (${PALETTES.join(', ')}); APCA Lc reported as an additive signal.`);
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
