@@ -40,7 +40,7 @@ function resolveClaudeBin() {
 }
 const CLAUDE = resolveClaudeBin();
 import {
-  TELEMETRY_DIR, SESSIONS_DIR, SCORES_FILE,
+  TELEMETRY_DIR, SESSIONS_DIR,
   // tempdoc 622 §6.3: the LLM-judge is demoted to a RESIDUAL inference producer.
   // It writes the judge cache, NOT the fact-authoritative outcomes.ndjson (which
   // outcome-session.mjs owns, deriving hard facts from git/build/tempdoc/gates).
@@ -211,7 +211,6 @@ function condenseTranscript(transcriptPath, report) {
   const parts = [];
   let meaningfulLines = 0;
 
-  // Header — intentionally excludes process score to avoid anchoring the judge
   const duration = report?.duration_seconds
     ? round(report.duration_seconds / 3600, 1) + 'h'
     : 'unknown';
@@ -614,7 +613,7 @@ function makeRecord(sessionId, evaluation, model, costUsd, inputTokens) {
 // --- Session evaluation ---
 
 function evaluateSession(sessionId, sessionEvents, options) {
-  const { model, dryRun, report, score } = options;
+  const { model, dryRun, report } = options;
 
   // Find transcript — try events first, then directory scan fallback
   const transcriptPath = findTranscriptPath(sessionEvents)
@@ -684,7 +683,6 @@ function main() {
   console.error('Loading events...');
   const events = loadEvents();
   const sessions = groupBySession(events);
-  const scores = loadNdjsonMap(path.join(repoRoot, TELEMETRY_DIR, SCORES_FILE));
   const reports = loadSessionReports();
   console.error(`Found ${sessions.size} sessions from events, ${reports.size} session reports`);
 
@@ -698,7 +696,6 @@ function main() {
       model: args.model,
       dryRun: args.dryRun,
       report: reports.get(args.sessionId),
-      score: scores.get(args.sessionId),
     });
     upsertOutcome(result);
 
@@ -762,7 +759,6 @@ function main() {
       model: args.model,
       dryRun: args.dryRun,
       report: reports.get(sid),
-      score: scores.get(sid),
     });
     results.push(result);
   }

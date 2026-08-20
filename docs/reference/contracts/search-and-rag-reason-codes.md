@@ -47,7 +47,7 @@ Used when HYBRID cannot run as requested (may also appear for VECTOR when the co
 
 ### Cross-encoder skip reason codes (`CrossEncoderSkipReason`, Head-owned)
 
-The cross-encoder is orchestrated in the Head (`KnowledgeSearchEngine`), so its skip vocabulary is Head-owned — unlike the codes above, which the Worker emits. The code is carried by the `cross-encoder` stage of the unified `searchTrace` (`reason`, alongside `status: "skipped"`). Two of the members originate in the Worker's `RerankResponse.skip_reason` and are normalised in through `CrossEncoderSkipReason.fromWorkerSkipReason` — an unrecognised Worker string becomes `UNKNOWN` rather than passing through raw, so no unworded code can reach a user.
+The cross-encoder is orchestrated in the Head (`KnowledgeSearchEngine`), so its skip vocabulary is Head-owned — unlike the codes above, which the Worker emits. The code is carried by the `cross-encoder` stage of the unified `searchTrace` (`reason`, alongside `status: "skipped"`). Three of the members (`DEADLINE_EXCEEDED`, `MODEL_NOT_LOADED`, `INFERENCE_FAILED`) originate in the Worker's `RerankResponse.skip_reason` and are normalised in through `CrossEncoderSkipReason.fromWorkerSkipReason` — an unrecognised Worker string becomes `UNKNOWN` rather than passing through raw, so no unworded code can reach a user.
 
 `isDrop()` splits the vocabulary, and the split is what decides altitude:
 
@@ -63,10 +63,11 @@ The cross-encoder is orchestrated in the Head (`KnowledgeSearchEngine`), so its 
 
 **Drops** (`isDrop() == true`) — the relevance model was supposed to run and did not. Results are still returned, ranked by fusion/LambdaMART instead. These are degradations and are worded at the **user tier** by `CROSS_ENCODER_SKIP_WORDING` in `searchTraceExplain.ts`:
 
-- `DEADLINE_EXCEEDED`: the rerank RPC did not finish inside the latency budget
+- `DEADLINE_EXCEEDED`: a reranker budget **pre-check** declined to start inference — tokenization or tensor prep had already consumed the latency budget. Raising `justsearch.rerank.deadline_ms` is the knob that fixes this one.
 - `RPC_FAILED`: the rerank RPC threw — transport, Worker error, or circuit breaker
 - `MODEL_NOT_LOADED`: the Worker is configured for reranking but the model was not loaded when the RPC arrived
-- `UNKNOWN`: fall-through for an unrecognised Worker skip reason
+- `INFERENCE_FAILED`: inference was attempted and ONNX Runtime threw — memory-arena exhaustion, a dead session, a bad output shape. Register F-054 split this out of `DEADLINE_EXCEEDED`, which the Worker used to stamp on *any* reranker skip: a measured campaign found 199/200 "deadline misses" were BFCArena OOM, unfixable by any deadline value and fixed instantly by `JUSTSEARCH_RERANK_GPU_MEM_MB`. The Worker log names that remedy at the failure site.
+- `UNKNOWN`: fall-through for an unrecognised **or unstated** Worker skip reason (a blank `skip_reason` is `UNKNOWN`, not a guessed deadline)
 
 ## RAG retrieval (`SearchService.retrieveContext`)
 

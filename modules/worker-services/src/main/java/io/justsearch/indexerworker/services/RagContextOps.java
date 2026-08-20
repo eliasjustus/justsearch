@@ -1305,11 +1305,15 @@ final class RagContextOps {
       var rerankResult = reranker.rerank(question, chunkTexts, config.deadlineBudgetMs());
 
       if (rerankResult.skipped()) {
+        // Register F-054: name the cause the reranker actually reported. This line said
+        // "deadline exceeded" unconditionally, which was wrong for every inference failure.
         log.debug(
-            Markers.append("reason_code", "rerank_skipped_deadline")
+            Markers.append("reason_code", "rerank_skipped")
+                .and(Markers.append("skip_cause", rerankResult.skipCause().name()))
                 .and(Markers.append("latency_ms", rerankResult.latencyMs())),
-            "Chunk reranking skipped after {}ms (deadline exceeded)",
-            rerankResult.latencyMs());
+            "Chunk reranking skipped after {}ms ({})",
+            rerankResult.latencyMs(),
+            rerankResult.skipCause());
         return ChunkRerankResult.unchanged(hits);
       }
 

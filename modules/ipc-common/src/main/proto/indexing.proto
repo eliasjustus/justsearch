@@ -638,9 +638,15 @@ message RerankRequest {
 message RerankResponse {
   repeated int32 sorted_indices = 1;   // Indices into document_texts, sorted by descending CE score
   repeated float scores = 2;           // CE scores for each input document (indexed by original position)
-  bool skipped = 3;                    // True if reranking was skipped (deadline, error)
+  bool skipped = 3;                    // True if reranking was skipped (budget pre-check, inference failure, model absent)
   int64 elapsed_ms = 4;               // Wall-clock time for reranking
-  string skip_reason = 5;             // Reason code when skipped (DEADLINE_EXCEEDED, MODEL_NOT_LOADED, ERROR)
+  // Reason code when skipped, from the Head-owned CrossEncoderSkipReason vocabulary:
+  //   DEADLINE_EXCEEDED — a budget pre-check declined to start inference (raising the deadline helps)
+  //   INFERENCE_FAILED  — inference ran and ONNX Runtime threw, e.g. memory-arena exhaustion (register F-054; the deadline is irrelevant)
+  //   MODEL_NOT_LOADED  — no reranker was wired when the RPC arrived
+  // Additive by value, not by field: an unrecognised or empty string normalises to UNKNOWN head-side
+  // (CrossEncoderSkipReason.fromWorkerSkipReason), so a new value can never reach the FE unworded.
+  string skip_reason = 5;
 }
 
 // --- Ingest Service ---

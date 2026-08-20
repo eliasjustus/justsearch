@@ -124,5 +124,11 @@ class CrossEncoderRerankerIntegrationTest {
 
     // Either it completes very fast or it skips - both are acceptable
     assertTrue(result.latencyMs() < 5000, "Should not take more than 5 seconds");
+    // Register F-054: whichever branch ran, the cause must be honest. A deadline this tight can
+    // only produce a budget pre-check skip — never an inference failure, and never an unstated
+    // skip, which is what the single `skipped` boolean used to leave the caller with.
+    assertTrue(
+        result.skipCause() == RerankSkipCause.NONE || result.skipCause().isBudgetPrecheck(),
+        "1ms deadline must resolve to NONE or a budget pre-check, got " + result.skipCause());
   }
 }

@@ -3,9 +3,9 @@
 /**
  * Test suite for the agent analytics pipeline.
  *
- * Tests hook output format, scoring logic, signal extraction, boolean rules,
- * path sanitization, and trend analysis. Uses synthetic session reports
- * injected into the real sessions dir (cleaned up via try/finally).
+ * Tests hook output format, signal extraction, path sanitization, and trend
+ * analysis. Uses synthetic session reports injected into the real sessions dir
+ * (cleaned up via try/finally).
  *
  * Usage: node scripts/agent-analytics/test-pipeline.mjs
  */
@@ -13,7 +13,6 @@
 import { execSync, execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { computeScore, computeTypeCeilings, SIGNAL_CEILINGS, N_STABLE, percentile } from './score-session.mjs';
 
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname);
 const scriptDir = process.platform === 'win32'
@@ -199,17 +198,6 @@ function runSubagentGuide(input) {
   return result.stdout;
 }
 
-/** Score a session via CLI, return parsed JSON. */
-function scoreSession(sessionId, extraArgs = []) {
-  const out = execFileSync('node', [
-    path.join(scriptDir, 'score-session.mjs'),
-    '--session-id', sessionId,
-    '--json',
-    ...extraArgs,
-  ], { encoding: 'utf8', timeout: 10000 }).trim();
-  return JSON.parse(out);
-}
-
 /** Generate timestamps forming non-overlapping edit clusters. */
 function makeEditTimestamps(clusterCount, editsPerCluster = 3, spacingMs = 30_000) {
   const ts = [];
@@ -272,7 +260,7 @@ function writeTestReport(id, overrides = {}) {
   };
   fs.mkdirSync(tmpDir, { recursive: true });
   fs.writeFileSync(path.join(tmpDir, `${id}.json`), JSON.stringify(report), 'utf8');
-  // Also copy to sessions dir so score-session.mjs and analyze-trends.mjs can find it
+  // Also copy to sessions dir so analyze-trends.mjs can find it
   fs.mkdirSync(sessionsDir, { recursive: true });
   fs.copyFileSync(
     path.join(tmpDir, `${id}.json`),
@@ -318,22 +306,6 @@ function analyzeTestEvents(sessionId, events) {
 
   return report;
 }
-
-// Real session IDs with stable expected scores (captured 2026-02-18 from scores.ndjson).
-// If the scorer logic changes, some of these will drift outside ±5 — that's the point.
-// Recaptured 2026-03-13 after ceiling calibration (failed_build_pct=0.30, reedit_per_edit=0.35).
-const GOLDEN_SESSIONS = [
-  { id: '39c2b861-e2fa-4e05-9e75-a50b6e709f81', expected: 98 },
-  { id: '18352bc5-e003-4e16-a70b-b6bda567bfe8', expected: 89 },
-  { id: '01dcdc1e-e760-49be-8434-5700d8415e34', expected: 85 },
-  { id: '0d70435c-79ec-4ad4-a20c-5eda62c955c5', expected: 80 },
-  { id: '4937df03-bd3c-4766-b376-469144122211', expected: 74 },
-  { id: '8d69ba61-0513-4c33-8789-84b8e5c950c8', expected: 79 },
-  { id: '1613eee7-fe3d-4764-b6a6-d15112eb80f1', expected: 78 },
-  { id: 'c79a0488-bfa3-42d5-8cd8-ee5dd550b575', expected: 71 },
-  { id: '0ce68479-310e-4ace-a67e-b8b878abbc92', expected: 64 },
-  { id: 'a7eb9fce-8cc5-446a-a23d-e6e0a07201b8', expected: 61 },
-];
 
 try {
 
@@ -465,365 +437,6 @@ const out1h = runHook({
   tool_input: { file_path: '/tmp/x.txt' },
 });
 assert(out1h === '', '1h: No crash with missing session_id');
-
-console.log();
-
-// ============================================================
-// Test 2: Scoring logic (score-session.mjs)
-// ============================================================
-console.log('Test 2: Scoring logic');
-
-// 2a: Score a session with known signals
-writeTestReport('test-score-2a');
-
-const score2a = scoreSession('test-score-2a');
-
-// Verify signal extraction
-// unbounded_read_pct = (10 + 8) / (50 + 30) = 18/80 = 0.225 (uses unbounded_large_count)
-assertApprox(score2a.signals.unbounded_read_pct, 0.225, 0.001, '2a: unbounded_read_pct');
-
-// bash_fileop_pct = 10/20 = 0.5
-assertApprox(score2a.signals.bash_fileop_pct, 0.5, 0.001, '2a: bash_fileop_pct');
-
-// hot_file_concentration: a.txt (20+10=30), b.txt (15), c.txt (10) = 55; total reads = 80
-assertApprox(score2a.signals.hot_file_concentration, 55 / 80, 0.01, '2a: hot_file_concentration');
-
-// tool_failure_rate = 2/100 = 0.02
-assertApprox(score2a.signals.tool_failure_rate, 0.02, 0.001, '2a: tool_failure_rate');
-
-// subagent_density = 10 / 1 hour = 10
-assertApprox(score2a.signals.subagent_density, 10, 0.1, '2a: subagent_density');
-
-// Score should be 0-100
-assert(score2a.score >= 0 && score2a.score <= 100, '2a: score in [0, 100]');
-
-// 2b: WASTEFUL rule triggers (unbounded_read_pct > 0.10 AND bash_fileop_pct > 0.40)
-assert(score2a.flags.includes('WASTEFUL'), '2b: WASTEFUL flag present');
-
-// 2c: Score clamping at lower bound (extreme positive weight → score < 0 → clamped to 0)
-const clamp2c = scoreSession('test-score-2a', ['--weights', '{"unbounded_read_pct":10}']);
-assert(clamp2c.score === 0, '2c: Score clamped to 0 with extreme positive weight');
-
-// 2c2: Score clamping at upper bound (negative weight → score > 100 → clamped to 100)
-const clamp2c2 = scoreSession('test-score-2a', ['--weights', '{"unbounded_read_pct":-10}']);
-assert(clamp2c2.score === 100, '2c2: Score clamped to 100 with negative weight');
-
-// 2d: Perfect session — all signals at zero → score 100, no flags
-writeTestReport('test-score-2d', {
-  tool_calls: { total: 100, by_type: { Read: 50 }, failure_count: 0 },
-  file_reads: { total: 50, unique_files: 50, unbounded_count: 0, by_file: [] },
-  file_edits: { total: 0, by_file: [] },
-  subagents: { count: 0, by_type: {} },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 20, file_op_count: 0, build_count: 0, failed_build_count: 0 },
-  duration_seconds: 3600,
-});
-const perfect2d = scoreSession('test-score-2d');
-assert(perfect2d.score === 100, '2d: Perfect session scores 100');
-assert(perfect2d.flags.length === 0, '2d: Perfect session has no flags');
-
-// 2e: Upsert deduplication — scoring same session twice shouldn't duplicate
-const scoresPath = path.join(telemetryDir, 'scores.ndjson');
-const linesBefore = fs.readFileSync(scoresPath, 'utf8').split('\n').filter(l => l.trim()).length;
-scoreSession('test-score-2a');
-const linesAfter = fs.readFileSync(scoresPath, 'utf8').split('\n').filter(l => l.trim()).length;
-assert(linesBefore === linesAfter, '2e: Upsert does not increase line count');
-
-// 2f: THRASHING rule — rapid re-edit clusters + concentrated reads
-writeTestReport('test-score-thrash', {
-  tool_calls: { total: 100, by_type: { Read: 50, Edit: 50 }, failure_count: 0 },
-  file_reads: {
-    total: 100, unique_files: 2, unbounded_count: 0, by_file: [
-      { file: 'hot.txt', count: 90, unbounded: 0 },
-      { file: 'other.txt', count: 10, unbounded: 0 },
-    ],
-  },
-  file_edits: {
-    total: 33, by_file: [
-      { file: 'hot.txt', count: 33, timestamps: makeEditTimestamps(11, 3) },
-    ],
-  },
-  subagents: { count: 0, by_type: {} },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 10, file_op_count: 0, build_count: 0, failed_build_count: 0 },
-  duration_seconds: 3600,
-});
-const thrash = scoreSession('test-score-thrash');
-assert(thrash.signals.rapid_reedit_count === 11, `2f: rapid_reedit_count is 11 (got ${thrash.signals.rapid_reedit_count})`);
-assert(thrash.flags.includes('THRASHING'), '2f: THRASHING flag present');
-assert(!thrash.flags.includes('WASTEFUL'), '2f: WASTEFUL not triggered (rule independence)');
-
-// 2f2: Tempdoc edits excluded from rapid_reedit_count
-writeTestReport('test-score-thrash-tempdoc', {
-  tool_calls: { total: 100, by_type: { Read: 50, Edit: 50 }, failure_count: 0 },
-  file_reads: {
-    total: 100, unique_files: 2, unbounded_count: 0, by_file: [
-      { file: 'hot.txt', count: 90, unbounded: 0 },
-      { file: 'other.txt', count: 10, unbounded: 0 },
-    ],
-  },
-  file_edits: {
-    total: 66, by_file: [
-      { file: 'hot.txt', count: 33, timestamps: makeEditTimestamps(11, 3) },
-      { file: 'docs/tempdocs/123-investigation.md', count: 33, timestamps: makeEditTimestamps(11, 3) },
-    ],
-  },
-  subagents: { count: 0, by_type: {} },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 10, file_op_count: 0, build_count: 0, failed_build_count: 0 },
-  duration_seconds: 3600,
-});
-const thrashTd = scoreSession('test-score-thrash-tempdoc');
-assert(thrashTd.signals.rapid_reedit_count === 11, `2f2: rapid_reedit_count excludes tempdocs (got ${thrashTd.signals.rapid_reedit_count})`);
-assert(thrashTd.flags.includes('THRASHING'), '2f2: THRASHING still fires from code edits');
-
-// 2g: CONTEXT_PRESSURE rule was removed (zero predictive validity at N=123, delta=-0.8).
-// High subagent density alone should NOT produce any flags.
-writeTestReport('test-score-pressure', {
-  tool_calls: { total: 100, by_type: { Read: 50, Bash: 50 }, failure_count: 0 },
-  file_reads: {
-    total: 50, unique_files: 50, unbounded_count: 0, by_file: [],
-  },
-  file_edits: { total: 0, by_file: [] },
-  subagents: { count: 35, by_type: { Explore: 35 } },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 50, file_op_count: 0, build_count: 0, failed_build_count: 0 },
-  duration_seconds: 3600,
-});
-const pressure = scoreSession('test-score-pressure');
-assert(pressure.flags.length === 0, `2g: No flags for high subagent density alone (got ${pressure.flags})`);
-
-// 2g2: build_cycle_rate signal — normal case
-writeTestReport('test-score-build-cycle', {
-  tool_calls: { total: 100, by_type: { Read: 30, Edit: 40, Bash: 30 }, failure_count: 0 },
-  file_reads: { total: 30, unique_files: 10, unbounded_count: 0, by_file: [] },
-  file_edits: { total: 40, by_file: [] },
-  subagents: { count: 0, by_type: {} },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 80, file_op_count: 0, build_count: 50, failed_build_count: 50 },
-  duration_seconds: 3600,
-});
-const buildCycle = scoreSession('test-score-build-cycle');
-assertApprox(buildCycle.signals.build_cycle_rate, 1.25, 0.01, '2g2: build_cycle_rate = 50 failed/40 edits');
-
-// 2g3: build_cycle_rate — zero builds means rate 0
-writeTestReport('test-score-zero-builds', {
-  tool_calls: { total: 50, by_type: { Edit: 50 }, failure_count: 0 },
-  file_reads: { total: 0, unique_files: 0, unbounded_count: 0, by_file: [] },
-  file_edits: { total: 30, by_file: [] },
-  subagents: { count: 0, by_type: {} },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 0, file_op_count: 0, build_count: 0, failed_build_count: 0 },
-  duration_seconds: 3600,
-});
-const zeroBuilds = scoreSession('test-score-zero-builds');
-assertApprox(zeroBuilds.signals.build_cycle_rate, 0, 0.01, '2g3: build_cycle_rate with 0 builds = 0');
-
-// 2g4: build_cycle_rate — zero edits with builds means rate 0 (no cycling without edits)
-writeTestReport('test-score-zero-edits', {
-  tool_calls: { total: 50, by_type: { Bash: 50 }, failure_count: 0 },
-  file_reads: { total: 0, unique_files: 0, unbounded_count: 0, by_file: [] },
-  file_edits: { total: 0, by_file: [] },
-  subagents: { count: 0, by_type: {} },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 20, file_op_count: 0, build_count: 10, failed_build_count: 5 },
-  duration_seconds: 3600,
-});
-const zeroEdits = scoreSession('test-score-zero-edits');
-assertApprox(zeroEdits.signals.build_cycle_rate, 0, 0.01, '2g4: build_cycle_rate with 0 edits = 0 (even with failed builds)');
-
-// 2g5: build_cycle_rate — all builds succeed (verification only, no cycling)
-writeTestReport('test-score-verify-only', {
-  tool_calls: { total: 60, by_type: { Read: 10, Edit: 20, Bash: 30 }, failure_count: 0 },
-  file_reads: { total: 10, unique_files: 5, unbounded_count: 0, by_file: [] },
-  file_edits: { total: 20, by_file: [] },
-  subagents: { count: 0, by_type: {} },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 30, file_op_count: 0, build_count: 15, failed_build_count: 0 },
-  duration_seconds: 3600,
-});
-const verifyOnly = scoreSession('test-score-verify-only');
-assertApprox(verifyOnly.signals.build_cycle_rate, 0, 0.01, '2g5: build_cycle_rate = 0 when all builds succeed');
-
-// 2g6: failed_build_pct — normal case (3 failed out of 10 builds)
-writeTestReport('test-score-failed-build-pct', {
-  tool_calls: { total: 50, by_type: { Edit: 20, Bash: 30 }, failure_count: 0 },
-  file_reads: { total: 10, unique_files: 5, unbounded_count: 0, by_file: [] },
-  file_edits: { total: 20, by_file: [] },
-  subagents: { count: 0, by_type: {} },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 30, file_op_count: 0, build_count: 10, failed_build_count: 3 },
-  duration_seconds: 3600,
-});
-const fbp = scoreSession('test-score-failed-build-pct');
-assertApprox(fbp.signals.failed_build_pct, 0.3, 0.01, '2g6: failed_build_pct = 3/10 = 0.3');
-
-// 2g7: failed_build_pct — zero builds → 0
-assertApprox(zeroBuilds.signals.failed_build_pct, 0, 0.01, '2g7: failed_build_pct = 0 when no builds');
-
-// 2g8: failed_build_pct — all builds failed → 1.0
-writeTestReport('test-score-all-builds-fail', {
-  tool_calls: { total: 50, by_type: { Edit: 20, Bash: 30 }, failure_count: 0 },
-  file_reads: { total: 10, unique_files: 5, unbounded_count: 0, by_file: [] },
-  file_edits: { total: 20, by_file: [] },
-  subagents: { count: 0, by_type: {} },
-  subagent_tool_calls: { total: 0, by_type: {}, file_reads: { total: 0, unbounded_count: 0, by_file: [] }, transcripts_found: 0, transcripts_missing: 0, transcript_coverage: null },
-  bash_commands: { total: 20, file_op_count: 0, build_count: 8, failed_build_count: 8 },
-  duration_seconds: 3600,
-});
-const allFail = scoreSession('test-score-all-builds-fail');
-assertApprox(allFail.signals.failed_build_pct, 1.0, 0.01, '2g8: failed_build_pct = 1.0 when all builds fail');
-
-// 2g9: reedit_per_edit — 11 clusters in 33 edits
-assertApprox(thrash.signals.reedit_per_edit, 11 / 33, 0.01, '2g9: reedit_per_edit = 11/33 ≈ 0.333');
-
-// 2g10: reedit_per_edit — 0 edits → 0
-assertApprox(zeroEdits.signals.reedit_per_edit, 0, 0.01, '2g10: reedit_per_edit = 0 when no edits');
-
-// 2g11: subagent_failure_rate — no outcomes data → 0 (backward compat)
-assertApprox(fbp.signals.subagent_failure_rate, 0, 0.01, '2g11: subagent_failure_rate = 0 without outcomes data');
-
-// 2g12: subagent_failure_rate — with outcomes data
-writeTestReport('test-score-subagent-outcomes', {
-  tool_calls: { total: 50, by_type: { Read: 20, Bash: 30 }, failure_count: 0 },
-  file_reads: { total: 20, unique_files: 10, unbounded_count: 0, by_file: [] },
-  file_edits: { total: 0, by_file: [] },
-  subagents: { count: 5, by_type: { Explore: 5 } },
-  subagent_tool_calls: {
-    total: 30, by_type: { Read: 20, Bash: 10 },
-    file_reads: { total: 10, unbounded_count: 0, by_file: [] },
-    transcripts_found: 5, transcripts_missing: 0, transcript_coverage: 1.0,
-    outcomes: { success: 3, failure: 1, partial: 1 },
-  },
-  bash_commands: { total: 30, file_op_count: 0, build_count: 0, failed_build_count: 0 },
-  duration_seconds: 3600,
-});
-const subOutcome = scoreSession('test-score-subagent-outcomes');
-assertApprox(subOutcome.signals.subagent_failure_rate, 0.2, 0.01, '2g12: subagent_failure_rate = 1/5 = 0.2');
-
-// 2h: Scoring with missing subagent_tool_calls — should not crash
-writeTestReport('test-score-nosub', {
-  subagent_tool_calls: undefined,
-  subagents: { count: 0, by_type: {} },
-});
-// Remove the key entirely from JSON (spread undefined doesn't remove, so rewrite)
-const nosubPath = path.join(sessionsDir, 'test-score-nosub.json');
-const nosubReport = JSON.parse(fs.readFileSync(nosubPath, 'utf8'));
-delete nosubReport.subagent_tool_calls;
-fs.writeFileSync(nosubPath, JSON.stringify(nosubReport), 'utf8');
-const nosub = scoreSession('test-score-nosub');
-assert(typeof nosub.score === 'number' && nosub.score >= 0, '2h: Valid score without subagent_tool_calls');
-
-// 2i: Scoring with missing file_reads — should not crash
-writeTestReport('test-score-noreads', {
-  file_reads: undefined,
-});
-const noreadsPath = path.join(sessionsDir, 'test-score-noreads.json');
-const noreadsReport = JSON.parse(fs.readFileSync(noreadsPath, 'utf8'));
-delete noreadsReport.file_reads;
-fs.writeFileSync(noreadsPath, JSON.stringify(noreadsReport), 'utf8');
-const noreads = scoreSession('test-score-noreads');
-assert(typeof noreads.score === 'number' && noreads.score >= 0, '2i: Valid score without file_reads');
-
-// 2j: Shrinkage formula correctness (computeTypeCeilings — direct import)
-{
-  const invSignals = {
-    unbounded_read_pct: 0.10, bash_fileop_pct: 0.20, rapid_reedit_count: 5,
-    hot_file_concentration: 0.30, tool_failure_rate: 0.02, subagent_density: 8, build_cycle_rate: 0.05,
-    failed_build_pct: 0.10, reedit_per_edit: 0.05, subagent_failure_rate: 0,
-  };
-  const featSignals = {
-    unbounded_read_pct: 0.20, bash_fileop_pct: 0.40, rapid_reedit_count: 15,
-    hot_file_concentration: 0.50, tool_failure_rate: 0.05, subagent_density: 20, build_cycle_rate: 0.10,
-    failed_build_pct: 0.20, reedit_per_edit: 0.15, subagent_failure_rate: 0.10,
-  };
-  const docsSignals = {
-    unbounded_read_pct: 0.50, bash_fileop_pct: 0.70, rapid_reedit_count: 30,
-    hot_file_concentration: 0.90, tool_failure_rate: 0.08, subagent_density: 40, build_cycle_rate: 0.20,
-    failed_build_pct: 0.30, reedit_per_edit: 0.25, subagent_failure_rate: 0.20,
-  };
-  const entries2j = [
-    // 20 investigation → shrinkage=1.0 (fully type-specific)
-    ...Array(20).fill(null).map(() => ({ signals: invSignals, taskType: 'investigation' })),
-    // 10 feature → shrinkage=0.5 (halfway to global)
-    ...Array(10).fill(null).map(() => ({ signals: featSignals, taskType: 'feature' })),
-    // 1 docs → shrinkage=0.05 (~global)
-    { signals: docsSignals, taskType: 'docs' },
-  ];
-  const ceilingsMap = computeTypeCeilings(entries2j);
-
-  assert(ceilingsMap.has('investigation'), '2j: investigation type present');
-  assert(ceilingsMap.has('feature'), '2j: feature type present');
-  assert(ceilingsMap.has('docs'), '2j: docs type present');
-
-  // investigation: N=20=N_STABLE → shrinkage=1.0 → ceiling = observed p75
-  // All values identical → p75 = the value itself
-  assertApprox(ceilingsMap.get('investigation').unbounded_read_pct, 0.10, 0.001, '2j: investigation ceiling = observed p75 at N=20');
-
-  // feature: N=10 → shrinkage=0.5 → type_ceiling = global + (p75 - global) * 0.5
-  // = 0.30 + (0.20 - 0.30) * 0.5 = 0.30 - 0.05 = 0.25
-  assertApprox(ceilingsMap.get('feature').unbounded_read_pct, 0.25, 0.001, '2j: feature ceiling shrunk 50% toward global');
-
-  // docs: N=1 → shrinkage=0.05 → type_ceiling = 0.30 + (0.50 - 0.30) * 0.05 = 0.31
-  assertApprox(ceilingsMap.get('docs').unbounded_read_pct, 0.31, 0.001, '2j: docs ceiling ~global at N=1');
-}
-
-// 2k: Custom ceilings change scores (computeScore with ceilings param)
-{
-  const testSignals = {
-    unbounded_read_pct: 0.15, bash_fileop_pct: 0.30, rapid_reedit_count: 10,
-    hot_file_concentration: 0.40, tool_failure_rate: 0.03, subagent_density: 12, build_cycle_rate: 0.08,
-    failed_build_pct: 0.10, reedit_per_edit: 0.05, subagent_failure_rate: 0,
-  };
-  const globalScore = computeScore(testSignals);
-
-  // Tighter ceilings (half of global) → higher normalized values → lower scores
-  const tightCeilings = {};
-  for (const [k, v] of Object.entries(SIGNAL_CEILINGS)) tightCeilings[k] = v / 2;
-  const tightScore = computeScore(testSignals, null, tightCeilings);
-  assert(tightScore < globalScore, `2k: tighter ceilings produce lower score (${tightScore} < ${globalScore})`);
-
-  // Looser ceilings (double global) → lower normalized values → higher scores
-  const looseCeilings = {};
-  for (const [k, v] of Object.entries(SIGNAL_CEILINGS)) looseCeilings[k] = v * 2;
-  const looseScore = computeScore(testSignals, null, looseCeilings);
-  assert(looseScore > globalScore, `2k: looser ceilings produce higher score (${looseScore} > ${globalScore})`);
-}
-
-// 2l: Null ceilings backward compat — same result as no ceilings param
-{
-  const testSignals = {
-    unbounded_read_pct: 0.15, bash_fileop_pct: 0.30, rapid_reedit_count: 10,
-    hot_file_concentration: 0.40, tool_failure_rate: 0.03, subagent_density: 12, build_cycle_rate: 0.08,
-    failed_build_pct: 0.10, reedit_per_edit: 0.05, subagent_failure_rate: 0,
-  };
-  const scoreWithNull = computeScore(testSignals, null, null);
-  const scoreDefault = computeScore(testSignals);
-  assert(scoreWithNull === scoreDefault, `2l: null ceilings equals default (${scoreWithNull} === ${scoreDefault})`);
-}
-
-// 2m: Empty entries → empty map
-{
-  const emptyCeilings = computeTypeCeilings([]);
-  assert(emptyCeilings.size === 0, '2m: empty entries → empty map');
-}
-
-// 2n: Null taskType entries ignored
-{
-  const mixedEntries = [
-    { signals: { unbounded_read_pct: 0.20, bash_fileop_pct: 0.30, rapid_reedit_count: 5,
-                 hot_file_concentration: 0.40, tool_failure_rate: 0.03, subagent_density: 10, build_cycle_rate: 0.05,
-                 failed_build_pct: 0.10, reedit_per_edit: 0.05, subagent_failure_rate: 0 },
-      taskType: null },
-    { signals: { unbounded_read_pct: 0.10, bash_fileop_pct: 0.20, rapid_reedit_count: 3,
-                 hot_file_concentration: 0.30, tool_failure_rate: 0.02, subagent_density: 8, build_cycle_rate: 0.03,
-                 failed_build_pct: 0.05, reedit_per_edit: 0.03, subagent_failure_rate: 0 },
-      taskType: 'refactor' },
-  ];
-  const mixedCeilings = computeTypeCeilings(mixedEntries);
-  assert(mixedCeilings.size === 1, '2n: only typed entries create ceilings');
-  assert(mixedCeilings.has('refactor'), '2n: refactor ceiling present');
-}
 
 console.log();
 
@@ -1267,7 +880,7 @@ writeTestReport('test-b3-metric', {
   duration_seconds: 3600,
 });
 
-// Read the report back (written by writeTestReport via scoring)
+// Read the report back (written by writeTestReport)
 const b3ReportPath = path.join(sessionsDir, 'test-b3-metric.json');
 const b3Report = JSON.parse(fs.readFileSync(b3ReportPath, 'utf8'));
 
@@ -1277,10 +890,6 @@ assert(b3Report.file_reads?.unbounded_large_count != null || b3Report.file_reads
 
 // 9b: Existing unbounded_count still works
 assert(typeof b3Report.file_reads?.unbounded_count === 'number', '9b: unbounded_count still present');
-
-// 9c: Score the session — should not crash with the new field
-const score9c = scoreSession('test-b3-metric');
-assert(typeof score9c.score === 'number', '9c: Scoring works with unbounded_large_count');
 
 console.log();
 
@@ -1778,73 +1387,6 @@ fs.writeFileSync(testTranscriptPath, syntheticTranscript, 'utf8');
 console.log();
 
 // ============================================================
-// Test 17: Z-score anomaly detection
-// ============================================================
-console.log('Test 17: Z-score anomaly detection');
-
-// 17a: 5 similar sessions with low/normal signals → 0 anomalies among them
-{
-  const ids = [];
-  for (let i = 0; i < 5; i++) {
-    const id = `test-anomaly-17a-${i}`;
-    ids.push(id);
-    // Use low signal values that cannot be outliers in any population
-    writeTestReport(id, {
-      file_reads: { total: 100, unique_files: 50, unbounded_count: 5, by_file: [] },
-      tool_calls: { total: 100, by_type: {}, failure_count: 1 },
-      subagents: { count: 2, by_type: {} },
-      file_edits: { total: 40, by_file: [] },
-      bash_commands: { total: 20, file_op_count: 1, build_count: 0, failed_build_count: 0 },
-    });
-  }
-
-  const output = execFileSync('node', [
-    path.join(scriptDir, 'score-session.mjs'), '--all', '--json',
-  ], { encoding: 'utf8', timeout: 15000 }).trim();
-
-  const results = JSON.parse(output);
-  const testResults = results.filter(r => r.session_id.startsWith('test-anomaly-17a'));
-  const totalAnomalies = testResults.reduce((s, r) => s + (r.anomalies?.length ?? 0), 0);
-  assert(totalAnomalies === 0, '17a: no anomalies among similar low-signal sessions');
-}
-
-// 17b: 1 outlier among 5 → detected
-{
-  const ids = [];
-  for (let i = 0; i < 4; i++) {
-    const id = `test-anomaly-17b-${i}`;
-    ids.push(id);
-    writeTestReport(id, {
-      file_reads: { total: 50, unique_files: 10, unbounded_count: 20, by_file: [] },
-      tool_calls: { total: 100, by_type: {}, failure_count: 2 },
-      subagents: { count: 5, by_type: {} },
-      file_edits: { total: 20, by_file: [] },
-      bash_commands: { total: 20, file_op_count: 2, build_count: 0, failed_build_count: 0 },
-    });
-  }
-  // Outlier: extreme unbounded reads and subagent density
-  const outlierId = 'test-anomaly-17b-outlier';
-  ids.push(outlierId);
-  writeTestReport(outlierId, {
-    file_reads: { total: 100, unique_files: 10, unbounded_count: 95, by_file: [] },
-    tool_calls: { total: 200, by_type: {}, failure_count: 20 },
-    subagents: { count: 100, by_type: {} },
-    file_edits: { total: 20, by_file: [] },
-    bash_commands: { total: 50, file_op_count: 40, build_count: 0, failed_build_count: 0 },
-  });
-
-  const output = execFileSync('node', [
-    path.join(scriptDir, 'score-session.mjs'), '--all', '--json',
-  ], { encoding: 'utf8', timeout: 15000 }).trim();
-
-  const results = JSON.parse(output);
-  const outlierResult = results.find(r => r.session_id === outlierId);
-  assert(outlierResult.anomalies?.length > 0, '17b: outlier has anomalies');
-}
-
-console.log();
-
-// ============================================================
 // Test 18: Session index
 // ============================================================
 console.log('Test 18: Session index');
@@ -1871,16 +1413,17 @@ console.log('Test 18: Session index');
   const index = JSON.parse(output);
   const entry = index.entries[0];
   assert(typeof entry.session_id === 'string', '18b: session_id is string');
-  assert('score' in entry, '18b: has score field');
   assert('cost_usd' in entry, '18b: has cost_usd field');
   assert('duration_hours' in entry, '18b: has duration_hours field');
 }
 
 console.log();
 
-// Test 19 (dashboard generation) was removed with `generate-dashboard.mjs`
-// (tempdoc 858 D1). Group numbers below are labels, not indices — the gap is
-// deliberate so 20-25 keep the ids they are referred to by.
+// Group numbers here are labels, not indices, and the gaps are deliberate so the
+// surviving groups keep the ids they are referred to by. Removed with their
+// subjects: 19 (dashboard generation) with `generate-dashboard.mjs` (tempdoc 858
+// D1); 2 (scoring logic), 17 (Z-score anomaly detection) and 21 (golden score
+// dataset) with `score-session.mjs` (tempdoc 858 §7).
 
 // ============================================================
 // Test 20: LLM-as-judge evaluation (evaluate-session.mjs)
@@ -2157,27 +1700,6 @@ fs.writeFileSync(evalTranscriptPath, evalTranscript, 'utf8');
   const evalSource = fs.readFileSync(path.join(scriptDir, 'evaluate-session.mjs'), 'utf8');
   assert(evalSource.includes('Auto-corrected from "partial"'), '20i: bias correction rule exists');
   assert(evalSource.includes('build_passed === false'), '20i: correction checks build_passed');
-}
-
-console.log();
-
-// ============================================================
-// Test 21: Golden dataset regression
-// ============================================================
-console.log('Test 21: Golden dataset regression');
-{
-  for (const { id, expected } of GOLDEN_SESSIONS) {
-    try {
-      const result = scoreSession(id);
-      assertApprox(result.score, expected, 5, `golden/${id.slice(0, 8)}: score`);
-    } catch (e) {
-      if (e.message?.includes('Session report not found') || e.status === 1) {
-        console.warn(`  SKIP: golden/${id.slice(0, 8)}: session file not found`);
-      } else {
-        throw e;
-      }
-    }
-  }
 }
 
 console.log();

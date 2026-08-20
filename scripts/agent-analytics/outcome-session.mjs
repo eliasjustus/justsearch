@@ -160,7 +160,7 @@ export function buildFact(sessionId, file, nowMs = Date.now()) {
 /**
  * CAPTURED. The touched-tempdoc SET is read off session events, and BOTH event lanes
  * destroy their own history:
- *   - the ndjson lane keeps exactly ONE generation — `lib/event-writer.mjs:8-11,21-28`
+ *   - the ndjson lane keeps exactly ONE generation — `lib/event-writer.mjs:8-14,24-33`
  *     renames `events.ndjson` onto `.prev`, overwriting the previous `.prev`, and
  *     `lib/telemetry-io.mjs:138` reads only those two files;
  *   - the OTLP `logs` stream — the events source, `telemetry-io.mjs:241` — is pruned to
