@@ -26,6 +26,19 @@ public final class HybridFusionUtils {
   private static final long SPLADE_ZERO_WEIGHT_MIN_TOKENS =
       Long.getLong("justsearch.splade.zero_weight_min_tokens", 4096L);
 
+  /**
+   * Tempdoc 854 W1 (F-036 §K wrong-gate fix) — default bounds for the Stage-3B whole-vs-chunk
+   * branch ramp, used only when a caller does not supply resolved config bounds (e.g. tests /
+   * call sites without a {@code ResolvedConfig.HybridSearch}). These match the SPLADE bounds'
+   * defaults above so byte-identical behavior at defaults holds regardless of which overload is
+   * called. Production call sites (SearchExecutor) always pass the resolved
+   * {@code branchRampFullWeightMaxTokens} / {@code branchRampZeroWeightMinTokens} explicitly —
+   * this class never reads those keys itself (adapters-lucene stays free of env/sysprop reads).
+   */
+  private static final long BRANCH_RAMP_FULL_WEIGHT_MAX_TOKENS_DEFAULT = 1024L;
+
+  private static final long BRANCH_RAMP_ZERO_WEIGHT_MIN_TOKENS_DEFAULT = 4096L;
+
   private HybridFusionUtils() {
     // Utility class - no instantiation
   }
@@ -417,6 +430,10 @@ public final class HybridFusionUtils {
    * both branches already produced parent-level candidates. The second branch can be modulated by
    * parent length so short documents trust the whole-doc branch more and long documents trust the
    * chunk branch more.
+   *
+   * <p>Overload retained for callers (and existing tests) that do not supply explicit branch-ramp
+   * bounds; it delegates to the bounds-aware overload using the Stage-3B defaults (tempdoc 854 W1),
+   * which numerically equal the pre-split shared-constant defaults.
    */
   public static SearchResult fuseWithCCNamed(
       SearchResult result1,
@@ -432,6 +449,49 @@ public final class HybridFusionUtils {
       String result2Label,
       boolean applyResult2ParentLengthModulation,
       double result2MinWeightMultiplier) {
+    return fuseWithCCNamed(
+        result1,
+        result2,
+        limit,
+        weights,
+        debug,
+        zeroExclude,
+        result1Key,
+        result2Key,
+        fusedKeyPrefix,
+        result1Label,
+        result2Label,
+        applyResult2ParentLengthModulation,
+        result2MinWeightMultiplier,
+        BRANCH_RAMP_FULL_WEIGHT_MAX_TOKENS_DEFAULT,
+        BRANCH_RAMP_ZERO_WEIGHT_MIN_TOKENS_DEFAULT);
+  }
+
+  /**
+   * Bounds-aware overload of {@link #fuseWithCCNamed(SearchResult, SearchResult, int, double[],
+   * boolean, boolean, String, String, String, String, String, boolean, double)}. {@code
+   * result2FullWeightMaxTokens} / {@code result2ZeroWeightMinTokens} are the Stage-3B branch
+   * ramp's OWN parent-token bounds (tempdoc 854 W1, F-036 §K wrong-gate fix) — previously this
+   * ramp read the Stage-3A SPLADE parent-length-fade bounds, so tuning the SPLADE knob silently
+   * retuned branch balance too. Production callers pass the resolved {@code
+   * ResolvedConfig.HybridSearch} values; this class performs no env/sysprop reads itself.
+   */
+  public static SearchResult fuseWithCCNamed(
+      SearchResult result1,
+      SearchResult result2,
+      int limit,
+      double[] weights,
+      boolean debug,
+      boolean zeroExclude,
+      String result1Key,
+      String result2Key,
+      String fusedKeyPrefix,
+      String result1Label,
+      String result2Label,
+      boolean applyResult2ParentLengthModulation,
+      double result2MinWeightMultiplier,
+      long result2FullWeightMaxTokens,
+      long result2ZeroWeightMinTokens) {
 
     Map<String, Float> result1Scores = new HashMap<>();
     Map<String, Float> result1Ranks = new HashMap<>();
@@ -487,7 +547,11 @@ public final class HybridFusionUtils {
       double result1Modifier = 1.0;
       double result2Modifier =
           applyResult2ParentLengthModulation
-              ? chunkBranchParentLengthMultiplier(fields, result2MinWeightMultiplier)
+              ? chunkBranchParentLengthMultiplier(
+                  fields,
+                  result2MinWeightMultiplier,
+                  result2FullWeightMaxTokens,
+                  result2ZeroWeightMinTokens)
               : 1.0;
 
       double rawResult1Weight = baseResult1Weight * result1Modifier;
@@ -805,9 +869,32 @@ public final class HybridFusionUtils {
         parentTokenCount, SPLADE_FULL_WEIGHT_MAX_TOKENS, SPLADE_ZERO_WEIGHT_MIN_TOKENS, 1.0, 0.0);
   }
 
-  /** Returns the Stage 3B chunk-branch multiplier for a stored parent-token-count field map. */
+  /**
+   * Returns the Stage 3B chunk-branch multiplier for a stored parent-token-count field map, using
+   * the Stage-3B branch-ramp default bounds (tempdoc 854 W1). Retained for callers/tests that do
+   * not supply explicit bounds; numerically identical to the pre-split shared-constant behavior.
+   */
   public static double chunkBranchParentLengthMultiplier(
       Map<String, String> fields, double minMultiplier) {
+    return chunkBranchParentLengthMultiplier(
+        fields,
+        minMultiplier,
+        BRANCH_RAMP_FULL_WEIGHT_MAX_TOKENS_DEFAULT,
+        BRANCH_RAMP_ZERO_WEIGHT_MIN_TOKENS_DEFAULT);
+  }
+
+  /**
+   * Returns the Stage 3B chunk-branch multiplier for a stored parent-token-count field map, using
+   * caller-supplied branch-ramp bounds (tempdoc 854 W1 — separated from the Stage-3A SPLADE
+   * parent-length-fade bounds; see {@link #fuseWithCCNamed(SearchResult, SearchResult, int,
+   * double[], boolean, boolean, String, String, String, String, String, boolean, double, long,
+   * long)}).
+   */
+  public static double chunkBranchParentLengthMultiplier(
+      Map<String, String> fields,
+      double minMultiplier,
+      long fullWeightMaxTokens,
+      long zeroWeightMinTokens) {
     if (fields == null) {
       return 1.0;
     }
@@ -816,21 +903,37 @@ public final class HybridFusionUtils {
       return 1.0;
     }
     try {
-      return chunkBranchParentLengthMultiplier(Long.parseLong(raw), minMultiplier);
+      return chunkBranchParentLengthMultiplier(
+          Long.parseLong(raw), minMultiplier, fullWeightMaxTokens, zeroWeightMinTokens);
     } catch (NumberFormatException ignored) {
       return 1.0;
     }
   }
 
-  /** Returns the Stage 3B chunk-branch multiplier for a parent token count. */
-  public static double chunkBranchParentLengthMultiplier(
-      long parentTokenCount, double minMultiplier) {
-    return linearInterpolationByParentLength(
+  /**
+   * Returns the Stage 3B chunk-branch multiplier for a parent token count, using the Stage-3B
+   * branch-ramp default bounds (tempdoc 854 W1). Retained for callers/tests that do not supply
+   * explicit bounds; numerically identical to the pre-split shared-constant behavior.
+   */
+  public static double chunkBranchParentLengthMultiplier(long parentTokenCount, double minMultiplier) {
+    return chunkBranchParentLengthMultiplier(
         parentTokenCount,
-        SPLADE_FULL_WEIGHT_MAX_TOKENS,
-        SPLADE_ZERO_WEIGHT_MIN_TOKENS,
         minMultiplier,
-        1.0);
+        BRANCH_RAMP_FULL_WEIGHT_MAX_TOKENS_DEFAULT,
+        BRANCH_RAMP_ZERO_WEIGHT_MIN_TOKENS_DEFAULT);
+  }
+
+  /**
+   * Returns the Stage 3B chunk-branch multiplier for a parent token count, using caller-supplied
+   * branch-ramp bounds (tempdoc 854 W1 — the F-036 §K wrong-gate fix: this ramp used to read
+   * {@code justsearch.splade.full_weight_max_tokens} / {@code .zero_weight_min_tokens}, the SAME
+   * static constants as the unrelated Stage-3A SPLADE parent-length fade, so tuning one silently
+   * retuned the other).
+   */
+  public static double chunkBranchParentLengthMultiplier(
+      long parentTokenCount, double minMultiplier, long fullWeightMaxTokens, long zeroWeightMinTokens) {
+    return linearInterpolationByParentLength(
+        parentTokenCount, fullWeightMaxTokens, zeroWeightMinTokens, minMultiplier, 1.0);
   }
 
   private static String key(String prefix, String suffix) {

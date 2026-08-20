@@ -119,6 +119,7 @@ final class KnowledgeServerBootstrapEvalModeTest {
         /* pidValidationTimeoutMs */ 5_000L,
         /* stabilityWindowMs */ 300_000L,
         /* batchSize */ 100,
-        /* healthCheckRetryBudgetMs */ 0L);
+        /* healthCheckRetryBudgetMs */ 0L,
+        /* bootFaultInjectAttempts */ 0);
   }
 }

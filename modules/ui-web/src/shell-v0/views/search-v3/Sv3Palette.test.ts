@@ -150,20 +150,45 @@ describe('Ctrl+K is scoped to the window, and the shipped binding is left alone'
     expect(palette.open).toBe(false);
   });
 
-  it('registers NO global key listener, so the shipped dispatcher is untouched', async () => {
-    const onWindow = vi.spyOn(window, 'addEventListener');
+  it('registers no global CHORD dispatcher, so the shipped Ctrl+K is untouched', async () => {
+    // Tempdoc 857 PR-A narrowed this case to the contract it names in the file header — "the chord is
+    // scoped to the window host (so the shipped shell's own Ctrl+K keeps working outside it)".
+    //
+    // It used to assert the PROXY for that: zero global keydown listeners anywhere in the window. That
+    // proxy stopped matching its subject when the run spine's J/K navigation was ported here: J/K is
+    // deliberately window-scoped (a reader must be able to step the transcript while focus sits in the
+    // sidebar, and this window's other host-capture listener is on the wrong element to reach the
+    // transcript's landmark index), and it ignores every modified chord, so the shipped dispatcher is
+    // as untouched as it ever was. Asserted as a mechanism rather than as a count, plus the two things
+    // the old count could not see: WHICH listener, and whether it leaks.
     const onDocument = vi.spyOn(document, 'addEventListener');
+    const onWindow = vi.spyOn(window, 'addEventListener');
     const el = await mount();
+    expect(
+      onDocument.mock.calls.filter(([type]) => type === 'keydown'),
+      'the window surface attached a document keydown listener',
+    ).toHaveLength(0);
+    // Exactly one, and it is the transcript region's — a second would mean an undeclared global
+    // dispatcher had appeared.
     const keyOnWindow = onWindow.mock.calls.filter(([type]) => type === 'keydown');
-    const keyOnDocument = onDocument.mock.calls.filter(([type]) => type === 'keydown');
-    expect(keyOnWindow, 'the window surface attached a global keydown listener').toHaveLength(0);
-    expect(keyOnDocument, 'the window surface attached a document keydown listener').toHaveLength(0);
+    expect(keyOnWindow, 'more global keydown listeners than the transcript’s J/K navigation').toHaveLength(1);
 
-    // Nor does teardown remove anything global — a removal would silently disarm the shipped chord.
+    // The mechanism: a chord dispatched at `window` reaches that listener and is left entirely alone —
+    // not consumed, not prevented — so the shipped capture-phase dispatcher's event is unaltered.
+    const raised = chord();
+    window.dispatchEvent(raised);
+    expect(raised.defaultPrevented, 'the window surface consumed the shipped chord').toBe(false);
+    const palette = paletteOf(el);
+    await palette.updateComplete;
+    expect(palette.open).toBe(false);
+
+    // …and it is removed on teardown, symmetrically. The old "zero removals" assertion could only say
+    // that nothing global was detached; this says the one listener that exists does not outlive the
+    // element that owns it.
     const offWindow = vi.spyOn(window, 'removeEventListener');
     const offDocument = vi.spyOn(document, 'removeEventListener');
     el.remove();
-    expect(offWindow.mock.calls.filter(([type]) => type === 'keydown')).toHaveLength(0);
+    expect(offWindow.mock.calls.filter(([type]) => type === 'keydown')).toHaveLength(1);
     expect(offDocument.mock.calls.filter(([type]) => type === 'keydown')).toHaveLength(0);
   });
 

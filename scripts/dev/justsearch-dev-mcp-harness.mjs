@@ -1,15 +1,23 @@
 #!/usr/bin/env node
 /**
- * Small local harness to sanity-check the MCP stdio server.
+ * STARTS A REAL DEV STACK. Running this file boots the backend (preflight -> start -> quick_health
+ * -> stop) on the shared, one-at-a-time dev stack — it takes the lease, spends about a minute, and
+ * can collide with another agent's run. Do NOT run it to "check the tool inventory": that is what
+ * `node scripts/ci/check-dev-mcp-doc-sync.mjs` is for, and it needs no stack. Two sessions have
+ * broken an explicit no-dev-stack prohibition by reading the old headline ("small local harness to
+ * sanity-check the MCP stdio server") as a static check.
  *
- * What it checks:
+ * What it checks (by actually doing it):
  * - stdio framing works (newline-delimited JSON-RPC; no stray stdout)
- * - initialize + tools/list works (14 tools, no dropped tools)
- * - preflight -> start (with integrated wait_ready) -> quick_health -> status -> stop (auto-resolve)
+ * - initialize + tools/list works (12 tools, no dropped tools)
+ * - preflight -> start (with integrated wait_ready) -> quick_health (summary + full) -> stop (auto-resolve)
+ *
+ * The tool-name expectations here are a smoke test, not the inventory authority: the doc-sync gate
+ * (scripts/ci/check-dev-mcp-doc-sync.mjs) is what holds the registered set and the reference doc
+ * together, and it runs without a dev stack.
  */
 
 import { spawn } from 'node:child_process';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,27 +58,6 @@ function createLineParser(onMessage) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-async function writeJson(filePath, obj) {
-  await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  await fsp.writeFile(filePath, JSON.stringify(obj, null, 2) + '\n', 'utf8');
-}
-
-const UNSAFE_KEY_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
-
-function setDeep(obj, dottedPath, value) {
-  const parts = dottedPath.split('.');
-  if (parts.some((p) => UNSAFE_KEY_SEGMENTS.has(p))) {
-    throw new Error(`setDeep: refusing unsafe path segment in "${dottedPath}"`);
-  }
-  let cur = obj;
-  for (let i = 0; i < parts.length - 1; i += 1) {
-    const p = parts[i];
-    if (!cur[p] || typeof cur[p] !== 'object') cur[p] = {};
-    cur = cur[p];
-  }
-  cur[parts[parts.length - 1]] = value;
 }
 
 async function main() {
@@ -159,26 +146,35 @@ async function main() {
     const toolNames = (listRes.result?.tools || []).map((t) => t.name);
     for (const name of [
       'justsearch.dev.start',
-      'justsearch.dev.status',
       'justsearch.dev.preflight',
       'justsearch.dev.quick_health',
+      'justsearch.dev.acquire_when_free',
       'justsearch.dev.tail_log',
       'justsearch.dev.fetch_api_json',
       'justsearch.dev.api_call',
       'justsearch.dev.search_query',
       'justsearch.dev.ingest',
-      'justsearch.dev.validate_evidence',
-      'justsearch.dev.capture_evidence',
       'justsearch.dev.stop',
-      'justsearch.dev.agent_chat',
       'justsearch.dev.ai_activate',
+      'justsearch.dev.reload',
     ]) {
       if (!toolNames.includes(name)) throw new Error(`Missing tool: ${name}. Got: ${toolNames.join(', ')}`);
     }
-    if (toolNames.length !== 14) {
-      throw new Error(`Expected 14 tools, got ${toolNames.length}: ${toolNames.join(', ')}`);
+    if (toolNames.length !== 12) {
+      throw new Error(`Expected 12 tools, got ${toolNames.length}: ${toolNames.join(', ')}`);
     }
-    for (const dropped of ['justsearch.dev.list_runs', 'justsearch.dev.wait_ready', 'justsearch.dev.suggest', 'justsearch.dev.cleanup']) {
+    for (const dropped of [
+      'justsearch.dev.list_runs',
+      'justsearch.dev.wait_ready',
+      'justsearch.dev.suggest',
+      'justsearch.dev.cleanup',
+      // Tempdoc 844 P1 prunes — status folded into quick_health { detail: "full" }; the other
+      // three were never invoked in six weeks of transcripts.
+      'justsearch.dev.status',
+      'justsearch.dev.agent_chat',
+      'justsearch.dev.capture_evidence',
+      'justsearch.dev.validate_evidence',
+    ]) {
       if (toolNames.includes(dropped)) throw new Error(`Dropped tool still present: ${dropped}`);
     }
 
@@ -243,21 +239,29 @@ async function main() {
     }
     process.stderr.write(`[mcp-harness] quick_health: running=${healthRunning} httpReady=${healthRes.result?.structuredContent?.httpReady}\n`);
 
-    // 4.2) status (by runId)
-    const statusRes = await request(
+    // 4.2) quick_health { detail: "full" } — the dev-runner status projection (tempdoc 844 P1:
+    // this replaced the retired justsearch.dev.status tool).
+    const detailRes = await request(
       'tools/call',
-      { name: 'justsearch.dev.status', arguments: { runId } },
-      20_000,
+      { name: 'justsearch.dev.quick_health', arguments: { detail: 'full' } },
+      25_000,
     );
-    if (isToolError(statusRes)) {
+    if (isToolError(detailRes)) {
       throw new Error(
-        `tools/call(status) failed: ${statusRes.error ? JSON.stringify(statusRes.error) : toolErrorText(statusRes)}`,
+        `tools/call(quick_health detail=full) failed: ${detailRes.error ? JSON.stringify(detailRes.error) : toolErrorText(detailRes)}`,
       );
     }
-    const statusOk = !!statusRes.result?.structuredContent?.ok;
-    if (!statusOk) {
-      throw new Error(`status returned ok:false. result=${JSON.stringify(statusRes.result)?.slice(0, 1200)}`);
+    const detail = detailRes.result?.structuredContent?.detail;
+    if (!detail) {
+      throw new Error(`quick_health(detail=full) returned no detail block. result=${JSON.stringify(detailRes.result)?.slice(0, 1200)}`);
     }
+    if (!detail.ok) {
+      throw new Error(`quick_health(detail=full).detail returned ok:false. detail=${JSON.stringify(detail)?.slice(0, 1200)}`);
+    }
+    if (detail.runId !== runId) {
+      throw new Error(`quick_health(detail=full).detail runId mismatch. expected=${runId} got=${detail.runId}`);
+    }
+    process.stderr.write(`[mcp-harness] quick_health(detail=full): ports=${JSON.stringify(detail.ports)}\n`);
 
     // 4.3) fetch_api_json (effective_config)
     const fetchRes = await request(
@@ -311,154 +315,6 @@ async function main() {
     const tailOk = !!tailRes.result?.structuredContent?.ok;
     if (!tailOk) {
       throw new Error(`tail_log returned ok:false. result=${JSON.stringify(tailRes.result)?.slice(0, 1200)}`);
-    }
-
-    // Negative test: validate_evidence should reject paths outside tmp/agent-evidence/**.
-    const badValidateRes = await request(
-      'tools/call',
-      { name: 'justsearch.dev.validate_evidence', arguments: { bundleDir: 'tmp' } },
-      20_000,
-    );
-    if (!isToolError(badValidateRes)) {
-      throw new Error(`Expected validate_evidence(bundleDir=tmp) to error. got=${JSON.stringify(badValidateRes)?.slice(0, 1200)}`);
-    }
-    process.stderr.write(`[mcp-harness] validate_evidence(bundleDir=tmp) rejected: ${toolErrorText(badValidateRes) || 'unknown'}\n`);
-
-    const shouldCapture = (() => {
-      const v = String(process.env.MCP_TEST_CAPTURE || '').trim().toLowerCase();
-      return v === '1' || v === 'true' || v === 'yes';
-    })();
-
-    if (shouldCapture) {
-      // Retention pre-seed: create >20 fake bundles that are old, so pruning should delete them first.
-      const retentionRoot = path.join(repoRoot, 'tmp', 'agent-evidence', 'retention-test');
-      const oldTs = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
-      for (let i = 0; i < 25; i += 1) {
-        const bundle = path.join(retentionRoot, String(i).padStart(2, '0'));
-        const runMetaPath = path.join(bundle, 'run-metadata.json');
-        // Minimal file to be detected as a bundle root for pruning purposes.
-        await writeJson(runMetaPath, { schema: 'run-metadata.v1', evidence_bundle_version: 'EvidenceBundle/v1' });
-        await fsp.utimes(runMetaPath, oldTs, oldTs).catch(() => {});
-      }
-
-      // Negative test: outRoot traversal / escape should be rejected by the server.
-      const badOutRootRes = await request(
-        'tools/call',
-        { name: 'justsearch.dev.capture_evidence', arguments: { runId, scenario: 'mcp_capture_test', outRoot: '..' } },
-        20_000,
-      );
-      if (!isToolError(badOutRootRes)) {
-        throw new Error(`Expected capture_evidence(outRoot=..) to error. got=${JSON.stringify(badOutRootRes)?.slice(0, 1200)}`);
-      }
-      process.stderr.write(`[mcp-harness] capture_evidence(outRoot=..) rejected: ${toolErrorText(badOutRootRes) || 'unknown'}\n`);
-
-      // Negative test: attachment for a different runId should be rejected.
-      const otherRunId = '00000000-0000-0000-0000-000000000000';
-      const badAttachmentRes = await request(
-        'tools/call',
-        {
-          name: 'justsearch.dev.capture_evidence',
-          arguments: {
-            runId,
-            scenario: 'mcp_capture_test',
-            attachments: [`tmp/dev-runner/runs/${otherRunId}/logs/backend.stdout.log`],
-          },
-        },
-        20_000,
-      );
-      if (!isToolError(badAttachmentRes)) {
-        throw new Error(
-          `Expected capture_evidence(attachments other run) to error. got=${JSON.stringify(badAttachmentRes)?.slice(0, 1200)}`,
-        );
-      }
-      process.stderr.write(`[mcp-harness] capture_evidence(attachments other run) rejected: ${toolErrorText(badAttachmentRes) || 'unknown'}\n`);
-
-      // Positive test: end-to-end capture (bounded by timeoutMs; wrapper adds overhead).
-      const capRes = await request(
-        'tools/call',
-        {
-          name: 'justsearch.dev.capture_evidence',
-          arguments: { runId, scenario: 'mcp_capture_smoke', include: ['effective_config', 'ui_ready'], timeoutMs: 90_000 },
-        },
-        180_000,
-      );
-      if (isToolError(capRes)) {
-        throw new Error(
-          `tools/call(capture_evidence) failed: ${capRes.error ? JSON.stringify(capRes.error) : toolErrorText(capRes)}`,
-        );
-      }
-
-      const capOk = !!capRes.result?.structuredContent?.ok;
-      if (!capOk) {
-        throw new Error(`capture_evidence returned ok:false. result=${JSON.stringify(capRes.result)?.slice(0, 1600)}`);
-      }
-      const bundleDir = capRes.result?.structuredContent?.bundleDir;
-      const retention = capRes.result?.structuredContent?.retention;
-      if (!retention || retention.keepLastN !== 20) {
-        throw new Error(`capture_evidence missing/invalid retention receipt. got=${JSON.stringify(retention)}`);
-      }
-      if (!Number.isFinite(retention.deleted) || retention.deleted < 1) {
-        throw new Error(`Expected retention.deleted >= 1 (pruning should run). got=${JSON.stringify(retention)}`);
-      }
-      process.stderr.write(`[mcp-harness] capture_evidence OK bundleDir=${bundleDir}\n`);
-
-      // Validate baseline bundle in gate mode (should pass when determinism is healthy).
-      const valGateRes0 = await request(
-        'tools/call',
-        { name: 'justsearch.dev.validate_evidence', arguments: { bundleDir, timeoutMs: 60_000, enforceDeterminism: true } },
-        90_000,
-      );
-      if (isToolError(valGateRes0)) {
-        throw new Error(
-          `tools/call(validate_evidence gate) failed: ${valGateRes0.error ? JSON.stringify(valGateRes0.error) : toolErrorText(valGateRes0)}`,
-        );
-      }
-      const valGateOk0 = !!valGateRes0.result?.structuredContent?.ok;
-      if (!valGateOk0) {
-        throw new Error(`validate_evidence(enforceDeterminism=true) returned ok:false. result=${JSON.stringify(valGateRes0.result)?.slice(0, 2000)}`);
-      }
-
-      // Force a determinism-budget failure by editing run-metadata.json (safe: EBv1 validator does not hash run-metadata.json).
-      const runMetaPath = path.join(bundleDir, 'run-metadata.json');
-      const meta = JSON.parse(await fsp.readFile(runMetaPath, 'utf8'));
-      const allowed = Number(meta?.determinism_budget?.budget?.['sleep.fixed.count'] ?? 0);
-      setDeep(meta, 'determinism_budget.usage.sleep.fixed.count', Math.max(allowed + 1, 1));
-      await fsp.writeFile(runMetaPath, JSON.stringify(meta, null, 2) + '\n', 'utf8');
-
-      // Warn-only mode should remain ok:true even though determinism fails.
-      const valWarnRes = await request(
-        'tools/call',
-        { name: 'justsearch.dev.validate_evidence', arguments: { bundleDir, timeoutMs: 60_000, enforceDeterminism: false } },
-        90_000,
-      );
-      if (isToolError(valWarnRes)) {
-        throw new Error(
-          `tools/call(validate_evidence warn) failed: ${valWarnRes.error ? JSON.stringify(valWarnRes.error) : toolErrorText(valWarnRes)}`,
-        );
-      }
-      const warnOk = !!valWarnRes.result?.structuredContent?.ok;
-      const detOk = !!valWarnRes.result?.structuredContent?.determinismBudget?.ok;
-      if (!warnOk || detOk) {
-        throw new Error(`validate_evidence(warn-only) unexpected result. expected ok:true + determinismBudget.ok:false. got=${JSON.stringify(valWarnRes.result)?.slice(0, 2000)}`);
-      }
-
-      // Gate mode should now fail overall.
-      const valGateRes = await request(
-        'tools/call',
-        { name: 'justsearch.dev.validate_evidence', arguments: { bundleDir, timeoutMs: 60_000, enforceDeterminism: true } },
-        90_000,
-      );
-      if (isToolError(valGateRes)) {
-        throw new Error(
-          `tools/call(validate_evidence gate) failed: ${valGateRes.error ? JSON.stringify(valGateRes.error) : toolErrorText(valGateRes)}`,
-        );
-      }
-      const gateOk = !!valGateRes.result?.structuredContent?.ok;
-      if (gateOk) {
-        throw new Error(`Expected validate_evidence(enforceDeterminism=true) to fail after modification. got=${JSON.stringify(valGateRes.result)?.slice(0, 2000)}`);
-      }
-
-      process.stderr.write(`[mcp-harness] validate_evidence warn-vs-gate OK\n`);
     }
 
     // Negative tests (schema-level):

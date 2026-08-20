@@ -168,6 +168,28 @@
       ]
     },
     {
+      "id": "dev-mcp-surface",
+      "pathIncludes": [
+        "scripts/dev/justsearch-dev-mcp/",
+        "scripts/dev/justsearch-dev-mcp.mjs"
+      ],
+      "region": "the justsearch-dev MCP surface (the agent-facing dev tools)",
+      "maintain": true,
+      "docs": [
+        {
+          "path": "docs/reference/contributing/mcp-dev-tools.md",
+          "why": "the canonical inventory of this surface — tool list, fetch_api_json endpoint keys, api_call allowlist. Tempdoc 844 §6.3 found the same inventory stated in four places and wrong in all four, because nothing compared the doc to the server. Update this page in the SAME change as the tool registration."
+        }
+      ],
+      "recipe": [
+        "Adding, removing or renaming a tool / an endpoint key / an allowlist entry: update docs/reference/contributing/mcp-dev-tools.md in the same change (the tool table AND the `exposes exactly these **N** tools` count).",
+        "Then run `node scripts/ci/check-dev-mcp-doc-sync.mjs` — it spawns the server, calls tools/list, and compares all three inventories in both directions. It needs no dev stack.",
+        "If you changed the gate itself, run its co-located test too: `node scripts/ci/check-dev-mcp-doc-sync.test.mjs`.",
+        "Changing tool BEHAVIOUR (projection, probes, error codes, dist resolution): run `node scripts/dev/test-dev-mcp-surface-honesty.mjs` (pure units) and `node scripts/dev/test-dev-mcp-projection-live.mjs` (real handlers over stdio against a throwaway loopback backend). Neither needs a dev stack.",
+        "Tempdoc 844 §12.2 is the standing criterion for this surface: a dev tool must not report state it did not verify, and must not report success it did not confirm — an explicit unknown (`null`) beats a confident default (`[]`, `false`, `OK`)."
+      ]
+    },
+    {
       "id": "dev-stack-stale-jar",
       "pathIncludes": ["modules/app-services/", "modules/app-agent-api/"],
       "region": "Java on the head-process classpath (dev-stack freshness)",

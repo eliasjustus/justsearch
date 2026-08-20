@@ -1,8 +1,10 @@
 """Eval-time cross-encoder-coverage validity guard (register F-052).
 
 The hole this closes: ``justsearch.rerank.deadline_ms`` defaults to 200 ms, and when the rerank
-RPC misses that budget ``KnowledgeSearchEngine`` keeps the fusion order and carries on
-(``KnowledgeSearchEngine.java:1078-1083`` — ``crossEncoderSkipReason = "DEADLINE_EXCEEDED"``).
+RPC reports a skip ``KnowledgeSearchEngine`` keeps the fusion order and carries on
+(``KnowledgeSearchEngine.java:1078-1083`` — ``crossEncoderSkipReason`` from the worker's
+``skip_reason``; register F-054 split that reason into ``DEADLINE_EXCEEDED`` for a budget
+pre-check and ``INFERENCE_FAILED`` for an ORT failure, both silent drops here).
 NOTHING a gate reads changes: ``comparable`` stays ``true`` with empty
 ``comparability_reasons``, ``ann_proof`` stays ``PASS``, ``error_count`` stays ``0``, and
 ``cross_encoder`` stays in ``pipeline_tracking.observed`` because *some* queries did rerank. The
@@ -59,8 +61,15 @@ CE_NOT_IN_PLAY_REASONS = frozenset({
 # classification is fail-closed, so ANY reason outside the two sets above counts as a silent drop
 # whether or not it appears here.
 NONDETERMINISTIC_SKIP_REASONS = frozenset({
-    "DEADLINE_EXCEEDED",  # GrpcSearchService.java:487 / KnowledgeSearchEngine.java:1079
+    "DEADLINE_EXCEEDED",  # GrpcSearchService.wireSkipReason — a reranker budget PRE-CHECK only
+    "INFERENCE_FAILED",   # register F-054 — inference ran and ORT threw (arena exhaustion, dead
+                          # session). Split out of DEADLINE_EXCEEDED, which used to be stamped on
+                          # every reranker skip: a measured campaign's 199/200 "deadline misses"
+                          # were BFCArena OOM, fixed by JUSTSEARCH_RERANK_GPU_MEM_MB and by no
+                          # deadline value. Listed explicitly so it is classified deliberately
+                          # rather than by the fail-closed fallback.
     "RPC_FAILED",         # KnowledgeSearchEngine.java:1002
+    "UNKNOWN",            # the head's normalisation of an unstated/unrecognised worker reason
 })
 
 # Placeholder reason for a CE-less query the engine recorded no reason for at all. Not an engine

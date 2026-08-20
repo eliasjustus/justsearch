@@ -93,13 +93,25 @@ export const StartInputSchema = z
     dataDir: z.string().min(1).optional(),
     clean: CleanModeSchema.optional(),
     waitLevel: ReadyLevelSchema.optional().describe('Readiness level to wait for after start (default: ready_worker)'),
-    skipBuild: z.boolean().optional().describe('Skip Gradle assemble step — launch from existing dist (default: false)'),
+    skipBuild: z.boolean().optional().describe('Skip the Gradle build step and launch from the '
+      + 'artifacts already on disk (default: false). Two consequences, both from tempdoc 844: the '
+      + 'step that is skipped is `assemble + :modules:ui:installDist + :modules:indexer-worker:'
+      + 'installDist` (F4 — `assemble` alone left the launched dist untouched), so a Java edit you '
+      + 'have not installed will NOT be in the running stack; and hot reload needs the '
+      + 'worker-services classes dir to be paired with those jars, which skipping the build cannot '
+      + 'establish. When they are not paired the dev-runner turns hot reload OFF for the run and '
+      + 'records why in run.json, rather than putting a half-new classes dir on a half-old '
+      + 'classpath (M3).'),
     startTimeoutMs: z.number().int().positive().optional().describe('Timeout for dev-runner start subprocess (default: 600000)'),
     waitTimeoutMs: z.number().int().positive().optional().describe('Timeout for readiness polling after start (default: 60000)'),
     takeover: z.enum(['deny', 'warn', 'force']).optional()
       .describe('Takeover policy if another agent owns the backend (default: deny)'),
     hotReload: z.boolean().optional()
-      .describe('Enable hot-reload: JDWP agent + DevReloadManager on Worker (default: false). Use with reload tool after code changes.'),
+      .describe('Enable hot-reload: JDWP agent + DevReloadManager on Worker, and the per-run JDWP '
+        + 'port the reload tool pushes to. DEFAULT TRUE (tempdoc 844 §4.2 condition 3 — it was '
+        + 'opt-in on 1 of 162 measured starts, so nobody could reach the capability, or its bugs). '
+        + 'Pass false to opt out: the Worker then has no JDWP listener at all and reload will '
+        + 'refuse with HOT_RELOAD_NOT_ENABLED rather than pretend.'),
     leaseDurationSec: z.number().int().optional()
       .describe('Tempdoc 735 G6: campaign-length ownership hold, in seconds — clamped server-side to '
         + '[30, 7200] (default: 30, i.e. current behavior). Declare this at start for a long measurement '
@@ -238,13 +250,6 @@ export const DevRunnerCleanupJsonSchema = z
       .passthrough(),
   ]);
 
-export const StatusInputSchema = z
-  .object({
-    runId: z.string().meta({ format: 'uuid' }).optional(),
-    sessionId: z.string().optional(),
-  })
-  .strict();
-
 export const DevRunnerStatusJsonSchema = z.union([
   z
     .object({
@@ -297,38 +302,9 @@ export const DevRunnerStatusJsonSchema = z.union([
     .passthrough(),
 ]);
 
+/** Tempdoc 844 P1: the dev-runner `status` projection, now reached through
+ *  `quick_health { detail: "full" }` rather than a second orientation tool. */
 export const StatusOutputSchema = DevRunnerStatusJsonSchema;
-
-export const CaptureIncludeSchema = z.enum(['debug', 'policy', 'inference', 'gpu', 'ui_ready', 'effective_config']);
-
-export const CaptureEvidenceInputSchema = z
-  .object({
-    runId: z.string().meta({ format: 'uuid' }).optional().describe('Run ID (omit to use active run)'),
-    scenario: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/).optional(),
-    outRoot: z.string().min(1).optional(),
-    include: z.array(CaptureIncludeSchema).optional(),
-    trace: z.boolean().optional(),
-    timeoutMs: z.number().int().positive().optional(),
-    /**
-     * Repo-relative attachment paths. The server enforces an allowlist for the given runId.
-     * This exists (instead of raw paths) so we can deterministically reject traversal attempts.
-     */
-    attachments: z.array(z.string().min(1)).optional(),
-    sessionId: z.string().optional(),
-  })
-  .strict();
-
-export const CaptureEvidenceOutputSchema = z
-  .object({
-    ok: z.boolean(),
-    runId: z.string().meta({ format: 'uuid' }),
-    bundleDir: z.string().min(1),
-    exitCode: z.number().int(),
-    outRoot: z.string().min(1),
-    attachments: z.array(z.string().min(1)),
-    stderrTail: z.string().optional(),
-  })
-  .passthrough();
 
 export const TailLogKindSchema = z.enum([
   'backend_stdout',
@@ -384,18 +360,55 @@ export const FetchApiEndpointSchema = z.enum([
   'ai_runtime_status',
 ]);
 
+/**
+ * Tempdoc 844 B4b — `maxBytes` is a READ budget, not an output budget. Agents lowered it to shrink
+ * the returned payload and got `response_too_large` instead; it now truncates with an explicit
+ * notice, and the description says which knob actually shrinks output.
+ */
+const MAX_BYTES_DESCRIPTION =
+  'Maximum bytes to READ from the backend response (default 2000000). Exceeding it truncates the '
+  + 'body and returns an explicit RESPONSE_TRUNCATED notice — a truncated body does not parse as '
+  + 'JSON, so this cannot be used to shrink a large response. To shrink OUTPUT use jsonPath, '
+  + 'outputMode:"compact", or summaryOnly.';
+
+/** Tempdoc 844 B4a/B4c — one description for the one projection implementation (two callers). */
+const JSON_PATH_DESCRIPTION =
+  'Dot-path projecting a subtree of the response, with array indices — e.g. "llm.model_path" or '
+  + '"results[0].fields.path". On a miss the tool returns the available keys at the deepest level '
+  + 'that did resolve and withholds the body, so a typo costs a hint, not the whole payload.';
+
 export const FetchApiJsonInputSchema = z
   .object({
     runId: z.string().meta({ format: 'uuid' }).optional().describe('Run ID (omit to use active run)'),
     apiPort: z.number().int().positive().optional().describe('API port (alternative to runId for untracked instances)'),
     endpoint: FetchApiEndpointSchema,
-    jsonPath: z.string().optional().describe('Dot-path to extract a subtree from the response (e.g., "llm.model_path")'),
+    jsonPath: z.string().optional().describe(JSON_PATH_DESCRIPTION),
     outputMode: OutputModeSchema.optional().describe('Output detail level (default: compact)'),
     timeoutMs: z.number().int().positive().optional(),
-    maxBytes: z.number().int().positive().max(5_000_000).optional(),
+    maxBytes: z.number().int().positive().max(5_000_000).optional().describe(MAX_BYTES_DESCRIPTION),
     sessionId: z.string().optional(),
   })
   .strict();
+
+// Tempdoc 844 B4a/B4b: the fields that make a partial answer legible. Declared rather than left to
+// passthrough (the 842 §2.7 lesson — an undeclared field is an undocumented field).
+const TruncationFields = {
+  truncated: z.boolean().optional(),
+  bytesRead: z.number().int().min(0).optional(),
+  maxBytesLimit: z.number().int().positive().optional(),
+};
+const JsonPathAvailableField = {
+  jsonPathAvailable: z
+    .object({
+      kind: z.string(),
+      keys: z.array(z.string()).optional(),
+      keysTotal: z.number().int().optional(),
+      length: z.number().int().optional(),
+      hint: z.string().optional(),
+    })
+    .passthrough()
+    .optional(),
+};
 
 export const FetchApiJsonOutputSchema = z.union([
   z
@@ -407,6 +420,7 @@ export const FetchApiJsonOutputSchema = z.union([
       statusCode: z.number().int().nullable(),
       json: z.any().optional(),
       textTail: z.string().optional(),
+      ...TruncationFields,
     })
     .passthrough(),
   z
@@ -418,6 +432,8 @@ export const FetchApiJsonOutputSchema = z.union([
       statusCode: z.number().int().nullable(),
       json: z.any().optional(),
       textTail: z.string().optional(),
+      ...TruncationFields,
+      ...JsonPathAvailableField,
       error: ToolErrorSchema,
     })
     .passthrough(),
@@ -436,7 +452,7 @@ export const SearchQueryInputSchema = z
     summaryOnly: z.boolean().optional().describe('Return only totalHits and tookMs, omitting result details'),
     outputMode: OutputModeSchema.optional().describe('Output detail level (default: compact)'),
     timeoutMs: z.number().int().positive().max(60_000).optional(),
-    maxBytes: z.number().int().positive().max(5_000_000).optional(),
+    maxBytes: z.number().int().positive().max(5_000_000).optional().describe(MAX_BYTES_DESCRIPTION),
     sessionId: z.string().optional(),
   })
   .strict();
@@ -464,6 +480,7 @@ export const SearchQueryOutputSchema = z.union([
       query: z.string(),
       url: z.string().min(1).optional(),
       statusCode: z.number().int().nullable(),
+      ...TruncationFields,
       error: ToolErrorSchema,
     })
     .passthrough(),
@@ -475,7 +492,7 @@ export const IngestInputSchema = z
     apiPort: z.number().int().positive().optional().describe('API port (alternative to runId for untracked instances)'),
     paths: z.array(z.string().min(1)).min(1),
     timeoutMs: z.number().int().positive().max(120_000).optional(),
-    maxBytes: z.number().int().positive().max(5_000_000).optional(),
+    maxBytes: z.number().int().positive().max(5_000_000).optional().describe(MAX_BYTES_DESCRIPTION),
     sessionId: z.string().optional(),
   })
   .strict();
@@ -497,6 +514,7 @@ export const IngestOutputSchema = z.union([
       runId: z.string().meta({ format: 'uuid' }),
       url: z.string().min(1).optional(),
       statusCode: z.number().int().nullable(),
+      ...TruncationFields,
       error: ToolErrorSchema,
     })
     .passthrough(),
@@ -513,168 +531,14 @@ export const ApiCallInputSchema = z
     method: ApiCallMethodSchema.default('GET'),
     path: z.string().min(1),
     body: z.any().optional(),
+    // Tempdoc 844 B4c: shares fetch_api_json's projection implementation.
+    jsonPath: z.string().optional().describe(JSON_PATH_DESCRIPTION),
     outputMode: OutputModeSchema.optional().describe('Output detail level (default: compact)'),
     timeoutMs: z.number().int().positive().max(60_000).optional(),
-    maxBytes: z.number().int().positive().max(5_000_000).optional(),
+    maxBytes: z.number().int().positive().max(5_000_000).optional().describe(MAX_BYTES_DESCRIPTION),
     sessionId: z.string().optional(),
   })
   .strict();
-
-export const ValidateEvidenceInputSchema = z
-  .object({
-    bundleDir: z.string().min(1),
-    timeoutMs: z.number().int().positive().optional(),
-    strictReasons: z.boolean().optional(),
-    allowReasons: z.array(z.string().min(1)).optional(),
-    enforceDeterminism: z.boolean().optional(),
-    sessionId: z.string().optional(),
-  })
-  .strict();
-
-export const ValidateEvidenceSubResultSchema = z
-  .object({
-    ok: z.boolean(),
-    exitCode: z.number().int(),
-    stdoutTail: z.string(),
-    stderrTail: z.string(),
-    errors: z.array(z.string()).optional(),
-  })
-  .passthrough();
-
-export const ValidateEvidenceOutputSchema = z
-  .object({
-    ok: z.boolean(),
-    bundleDir: z.string().min(1),
-    evidenceBundle: ValidateEvidenceSubResultSchema,
-    determinismBudget: ValidateEvidenceSubResultSchema,
-    errors: z.array(z.string()).optional(),
-    warnings: z.array(z.string()).optional(),
-  })
-  .passthrough();
-
-// --- Agent Chat ---
-
-export const AgentChatInputSchema = z
-  .object({
-    runId: z.string().meta({ format: 'uuid' }).optional().describe('Run ID (omit to use active run)'),
-    apiPort: z.number().int().positive().optional().describe('API port (alternative to runId for untracked instances)'),
-    prompt: z.string().min(1),
-    maxIterations: z.number().int().positive().max(20).default(10),
-    autoApprove: z.boolean().default(true),
-    timeoutMs: z.number().int().positive().max(600_000).default(120_000)
-      .describe('Socket inactivity timeout in ms — resets on each SSE chunk'),
-    totalTimeoutMs: z.number().int().positive().max(600_000).optional()
-      .describe('Total elapsed time limit in ms (default: none — only inactivity timeout applies)'),
-    maxBytes: z.number().int().positive().max(5_000_000).default(2_000_000),
-    verbose: z.boolean().default(false),
-    sessionId: z.string().optional(),
-  })
-  .strict();
-
-const AgentToolCallSchema = z
-  .object({
-    callId: z.string(),
-    toolName: z.string(),
-    arguments: z.string(),
-    risk: z.enum(['low', 'medium', 'high']).optional(),
-    approved: z.boolean(),
-    success: z.boolean().nullable(),
-    output: z.string().nullable(),
-    iteration: z.number().optional(),
-    trace: z
-      .object({
-        runId: z.string().optional(),
-        stepId: z.string().optional(),
-        spanId: z.string().optional(),
-        parentSpanId: z.string().optional(),
-        agentId: z.string().optional(),
-        toolCallId: z.string().optional(),
-        iteration: z.number().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-/** Per-iteration detail (only included in verbose mode). */
-const AgentIterationSchema = z
-  .object({
-    iteration: z.number(),
-    phase: z.string(),
-    textBefore: z.string(),
-    toolCallIds: z.array(z.string()),
-    trace: z
-      .object({
-        runId: z.string().optional(),
-        stepId: z.string().optional(),
-        spanId: z.string().optional(),
-        parentSpanId: z.string().optional(),
-        agentId: z.string().optional(),
-        toolCallId: z.string().optional(),
-        iteration: z.number().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-const AgentBudgetUpdateSchema = z
-  .object({
-    phase: z.string(),
-    tokensConsumed: z.number(),
-    tokensRemaining: z.number(),
-    trace: z
-      .object({
-        runId: z.string().optional(),
-        stepId: z.string().optional(),
-        spanId: z.string().optional(),
-        parentSpanId: z.string().optional(),
-        agentId: z.string().optional(),
-        toolCallId: z.string().optional(),
-        iteration: z.number().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-export const AgentChatOutputSchema = z.union([
-  z
-    .object({
-      ok: z.literal(true),
-      runId: z.string().meta({ format: 'uuid' }),
-      prompt: z.string(),
-      sessionId: z.string().nullable(),
-      toolCalls: z.array(AgentToolCallSchema),
-      finalResponse: z.string(),
-      iterationsUsed: z.number().nullable(),
-      toolCallsExecuted: z.number().nullable(),
-      totalTokensUsed: z.number().nullable(),
-      durationMs: z.number(),
-      iterations: z.array(AgentIterationSchema).optional(),
-      budgetUpdates: z.array(AgentBudgetUpdateSchema).optional(),
-      // Tempdoc 842 §2.7 D2: set true when agent_chat found AI offline and activated the
-      // compact profile itself before running the chat, instead of failing with AI_OFFLINE.
-      autoActivated: z.boolean().optional(),
-    })
-    .passthrough(),
-  z
-    .object({
-      ok: z.literal(false),
-      runId: z.string().meta({ format: 'uuid' }),
-      prompt: z.string(),
-      sessionId: z.string().nullable(),
-      toolCalls: z.array(AgentToolCallSchema).optional(),
-      finalResponse: z.string().optional(),
-      totalTokensUsed: z.number().nullable().optional(),
-      durationMs: z.number().optional(),
-      error: ToolErrorSchema,
-      iterations: z.array(AgentIterationSchema).optional(),
-      budgetUpdates: z.array(AgentBudgetUpdateSchema).optional(),
-      autoActivated: z.boolean().optional(),
-    })
-    .passthrough(),
-]);
 
 // ─── AI Runtime Activate ───────────────────────────────────
 
@@ -728,6 +592,11 @@ export const AiActivateOutputSchema = z.union([
 export const QuickHealthInputSchema = z
   .object({
     probe: z.boolean().optional().describe('HTTP-probe running backend (default: true)'),
+    // Tempdoc 844 P1: the former justsearch.dev.status tool, folded in as a detail level.
+    detail: z.enum(['summary', 'full']).optional()
+      .describe('"summary" (default) reads run state from disk + optional HTTP probes. "full" additionally '
+        + 'spawns the dev-runner status subprocess and returns its process/port/readiness payload under '
+        + '`detail` — the projection the retired justsearch.dev.status tool returned.'),
     sessionId: z.string().optional(),
   })
   .strict();
@@ -763,6 +632,29 @@ const QuickHealthModelSchema = z
   })
   .passthrough();
 
+// Tempdoc 844 B3: one observed-but-unowned listener. `attribution` is itself a tri-state —
+// "unowned" (provably not the active run) vs "unknown" (could not be attributed), never merged.
+//
+// Tempdoc 844 D3 adds `source`, which says HOW this entry is known, and `state`, which says what
+// was actually verified about a declared one. The pairing is the honesty contract:
+//   source:'observed'   — a port answered; nothing else is known (the P5 fallback).
+//   source:'registered' — a producer (`jseval`) declared it in tmp/dev-runner/foreign; `state` is
+//                         then 'live' (port answered), 'unreachable' (port silent, pid alive),
+//                         'stale' (port silent, pid gone — a record its producer never retired) or
+//                         'unreadable' (the record file could not be parsed). A registered record
+//                         is NEVER reported as live on the strength of the record alone.
+// `port`/`probePath` are nullable only for 'unreadable', where there is no trustworthy port to name.
+const ForeignRunSchema = z
+  .object({
+    port: z.number().int().positive().nullable(),
+    kind: z.enum(['backend', 'inference']),
+    probePath: z.string().nullable(),
+    attribution: z.enum(['unowned', 'unknown']),
+    source: z.enum(['observed', 'registered']),
+    state: z.enum(['live', 'unreachable', 'stale', 'unreadable']).optional(),
+  })
+  .passthrough();
+
 export const QuickHealthOutputSchema = z
   .object({
     running: z.boolean(),
@@ -772,10 +664,18 @@ export const QuickHealthOutputSchema = z
     httpReady: z.boolean().nullable(),
     workerReady: z.boolean().nullable(),
     aiActive: z.boolean().nullable(),
+    // Tempdoc 844 B3: backends observed but NOT owned by this dev-runner. The tri-state is
+    // load-bearing — `null` = probing was off or the probe failed (I did not look), `[]` = I looked
+    // and found nothing, a non-empty array = these are running and none of them is my run.
+    foreignRuns: z.array(ForeignRunSchema).nullable(),
+    foreignRunsNotice: z.string().optional(),
     inferenceOrphan: z.boolean().optional(),
     ownership: OwnershipProjectionSchema.optional(),
     freshness: FreshnessSchema.optional(),
     model: QuickHealthModelSchema.optional(),
+    // Tempdoc 844 P1: present only for detail:"full". Either the dev-runner status projection or an
+    // explicit ok:false carrying why it could not be read — never silently absent on request.
+    detail: StatusOutputSchema.optional(),
   })
   .passthrough();
 
@@ -783,17 +683,35 @@ export const QuickHealthOutputSchema = z
 
 export const ReloadInputSchema = z.object({
   module: z.string().optional()
-    .describe('Gradle module to compile (default: worker-services)'),
+    .describe('Gradle module to compile. Defaults to — and tempdoc 844 M5 now restricts it to — the '
+      + 'one module the run recorded as its hot-reload classes dir (worker-services). Any other '
+      + 'value is refused: the identity check only ever sees the recorded dir, so pushing a '
+      + 'different module reported success while that module kept loading from its stale jar.'),
   debugPort: z.number().int().positive().optional()
-    .describe('JDWP debug port for HotSwapPush (default: 5005)'),
+    .describe('Tempdoc 844 R3: override the JDWP port recorded in the run record. Diagnostics '
+      + 'only — the port normally comes from run.json (the dev-runner picks it per run), and the '
+      + 'target VM must still prove its identity, so an override cannot be used to push into '
+      + 'another tree\'s stack.'),
   skipCompile: z.boolean().optional()
     .describe('Skip Gradle compile, only push + signal (default: false)'),
+  takeover: z.enum(['deny', 'warn', 'force']).optional()
+    .describe('Tempdoc 844 R2: reload MUTATES a run, so it is ownership-gated like start/stop. '
+      + 'Default "deny" refuses with OWNER_CONFLICT when another agent owns the stack. This '
+      + 'authorizes the push; it does NOT transfer the lease.'),
   sessionId: z.string().optional(),
 }).strict();
 
 // ─── Preflight ─────────────────────────────────────────────
 
-export const PreflightInputSchema = z.object({ sessionId: z.string().optional() }).strict();
+export const PreflightInputSchema = z.object({
+  // Tempdoc 844 B1: preflight used to check the INVOKING checkout's dists while start launched from
+  // distFrom's — preflight passed, start then failed. Same value, same resolver as start.
+  distFrom: z.string().optional()
+    .describe('Check the dists in the checkout `start` will launch from: the main repo, a path to a '
+      + 'sibling worktree under .claude/worktrees, or a bare worktree name (resolved against '
+      + '.claude/worktrees/<name>). Omit to check the invoking checkout, as before.'),
+  sessionId: z.string().optional(),
+}).strict();
 
 export const PreflightOutputSchema = z
   .object({
@@ -807,6 +725,11 @@ export const PreflightOutputSchema = z
       // Tempdoc 618 §3: is the llama-server runtime resolvable for `ai_activate`?
       llamaVariantResolvable: z.boolean(),
     }),
+    // Tempdoc 844 B1: which checkout the dist checks actually looked at, so the answer is
+    // self-describing rather than implicitly "wherever this server happens to run".
+    distCheckedRoot: z.string().optional(),
+    distFrom: z.string().nullable().optional(),
+    distFromResolvedVia: z.string().optional(),
     details: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();

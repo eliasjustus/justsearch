@@ -182,7 +182,7 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
     mountTag: 'jf-health-surface',
     labelKey: 'registry-surface.health-surface.label',
     descriptionKey: 'registry-surface.health-surface.description',
-    audience: 'OPERATOR',
+    audience: 'USER',
     placement: 'DEEPLINK',
     // Tempdoc 571 — altitude (DIAGNOSTIC) flows from the single authority (the wire / Java catalog) and
     // is preserved through mergePluginSurfaceContributions; not re-declared here (no second authority).
@@ -224,7 +224,7 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
     mountTag: 'jf-activity-surface',
     labelKey: 'registry-surface.activity-surface.label',
     descriptionKey: 'registry-surface.activity-surface.description',
-    audience: 'OPERATOR',
+    audience: 'USER',
     placement: 'DEEPLINK',
     // Tempdoc 571 — altitude (TRUST) flows from the wire authority; preserved through the merge.
   },

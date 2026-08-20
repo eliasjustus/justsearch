@@ -187,6 +187,7 @@ class RichDocumentIntegrationTest {
                 5000L, // pidValidationTimeoutMs
                 1000L, // stabilityWindowMs
                 5000, // batchSize
-                30_000L); // healthCheckRetryBudgetMs (alpha.23 R13-A)
+                30_000L, // healthCheckRetryBudgetMs (alpha.23 R13-A)
+                0); // bootFaultInjectAttempts (tempdoc 825)
     }
 }

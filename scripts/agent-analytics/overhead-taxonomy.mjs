@@ -47,7 +47,10 @@ import {
   discoverProjectDirs, listSubagentPaths, DEFAULT_PROJECTS_ROOT,
 } from './lib/transcript-store.mjs';
 import { parseTranscriptTokens } from './lib/transcript-cost.mjs';
-import { TELEMETRY_DIR, repoRoot } from './lib/telemetry-io.mjs';
+import {
+  TELEMETRY_DIR, repoRoot,
+  loadExclusionKeys, makeExclusionMatcher, fmtScopeExclusion,
+} from './lib/telemetry-io.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 // tmp/agent-telemetry (gitignored, existing convention for every other
@@ -108,22 +111,6 @@ const BUILTIN_COMMAND_EXCLUDE = new Set([
 ]);
 
 // --- Discovery (ADAPTED to lib/transcript-store.mjs — see header note) ---
-
-/**
- * Build a session-id matcher from friction-excluded-sessions.json's shape:
- * `{ excluded: { "<id-or-8char-prefix>": "reason" } }`. Ported verbatim from
- * baseline-economics.mjs (discovery-adjacent, not taxonomy/threshold logic).
- */
-function loadExclusionMatcher(filePath) {
-  let keys = [];
-  try {
-    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    keys = Object.keys(data.excluded || {});
-  } catch {
-    keys = [];
-  }
-  return (sessionId) => keys.some((k) => sessionId.startsWith(k));
-}
 
 /**
  * Stream a transcript just far enough to find the first parseable line
@@ -450,13 +437,14 @@ function sumTok(r) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   console.error(`overhead-taxonomy: discovering sessions ${opts.since}..${opts.until}...`);
-  const isExcluded = loadExclusionMatcher(EXCLUDED_PATH);
+  const exclusionKeys = loadExclusionKeys(EXCLUDED_PATH);
+  const isExcluded = makeExclusionMatcher(exclusionKeys);
   const sinceMs = new Date(opts.since).getTime();
   const untilMs = new Date(opts.until).getTime();
   const { sessions, excludedCount } = await discoverSessions({
     projectsRoot: opts.projectsRoot, sinceMs, untilMs, isExcluded,
   });
-  console.error(`overhead-taxonomy: ${sessions.length} sessions in window (${excludedCount} excluded by scope filter)`);
+  console.error(`overhead-taxonomy: ${sessions.length} sessions in window (${fmtScopeExclusion({ excluded: excludedCount, listed: exclusionKeys.length })})`);
 
   const sessionRows = [];
   let windowTotalTokens = 0;
@@ -574,6 +562,8 @@ async function main() {
     generated_at: new Date().toISOString(),
     sessions_in_window: sessions.length,
     sessions_excluded_by_scope: excludedCount,
+    // The denominator: 0-of-N is an inert filter, not a clean window (858 §7).
+    scope_filter_ids_listed: exclusionKeys.length,
     window_total_tokens: windowTotalTokens,
     category_table: categoryTable,
     waiting_detail: agg.waiting,
@@ -613,7 +603,7 @@ async function main() {
 
   // --- Console summary --------------------------------------------------
   console.log('\n=== WINDOW ===');
-  console.log(`sessions_in_window=${sessions.length}  excluded_by_scope=${excludedCount}`);
+  console.log(`sessions_in_window=${sessions.length}  ${fmtScopeExclusion({ excluded: excludedCount, listed: exclusionKeys.length })}`);
   console.log(`window_total_tokens=${windowTotalTokens.toLocaleString()} (~${(windowTotalTokens / 1e9).toFixed(2)}B)`);
 
   console.log('\n=== CATEGORY TABLE ===');

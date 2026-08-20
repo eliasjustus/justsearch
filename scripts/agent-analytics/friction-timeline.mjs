@@ -15,6 +15,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { loadExclusionKeys, makeExclusionMatcher, fmtScopeExclusion } from './lib/telemetry-io.mjs';
 
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const repoRoot = path.resolve(SCRIPT_DIR, '..', '..');
@@ -76,23 +77,13 @@ function bucketKey(isoDate, bucket) {
 const costWeight = { low: 1, medium: 2, high: 3 };
 const EXCLUSIONS_FILE = path.join(SCRIPT_DIR, 'friction-excluded-sessions.json');
 
-function loadExclusions() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(EXCLUSIONS_FILE, 'utf8'));
-    return Object.keys(raw.excluded ?? {});
-  } catch {
-    return [];
-  }
-}
-
-function isExcluded(sessionId, exclusionPrefixes) {
-  return exclusionPrefixes.some(prefix => sessionId.startsWith(prefix) || prefix.startsWith(sessionId));
-}
-
 function main() {
   const opts = parseArgs();
   const includeExcluded = process.argv.includes('--include-excluded');
-  const exclusionPrefixes = includeExcluded ? [] : loadExclusions();
+  // Keys are loaded even when the filter is off, so the report can state the
+  // denominator rather than an unexplained zero (tempdoc 858 §7).
+  const exclusionKeys = loadExclusionKeys(EXCLUSIONS_FILE);
+  const isExcluded = includeExcluded ? () => false : makeExclusionMatcher(exclusionKeys);
   const files = fs.readdirSync(RESULTS_DIR).filter(f => f.endsWith('.json'));
 
   const byBucket = new Map(); // bucketKey -> { sessions, sessionsWithFriction, categories: Map }
@@ -100,7 +91,7 @@ function main() {
 
   for (const f of files) {
     const j = JSON.parse(fs.readFileSync(path.join(RESULTS_DIR, f), 'utf8'));
-    if (isExcluded(j.sessionId, exclusionPrefixes)) { excluded++; continue; }
+    if (isExcluded(j.sessionId)) { excluded++; continue; }
     if (j.tooSmall || j.error || !j.evaluation) continue;
 
     const transcriptPath = path.join(opts.projectDir, `${j.sessionId}.jsonl`);
@@ -123,7 +114,7 @@ function main() {
   }
 
   const buckets = [...byBucket.keys()].sort();
-  console.log(`Buckets (${opts.bucket}): ${buckets.length}, sessions with a resolved timestamp: ${[...byBucket.values()].reduce((a, r) => a + r.sessions, 0)}, missing timestamp: ${missingTimestamp}, excluded: ${excluded}${includeExcluded ? ' [filter disabled]' : ''}`);
+  console.log(`Buckets (${opts.bucket}): ${buckets.length}, sessions with a resolved timestamp: ${[...byBucket.values()].reduce((a, r) => a + r.sessions, 0)}, missing timestamp: ${missingTimestamp}, ${fmtScopeExclusion({ excluded, listed: exclusionKeys.length, disabled: includeExcluded })}`);
   console.log('');
   console.log('date       | sessions | %fric | top categories (weight)');
   console.log('-----------|----------|-------|-------------------------');

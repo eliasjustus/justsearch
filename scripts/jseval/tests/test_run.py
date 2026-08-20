@@ -173,6 +173,100 @@ def test_execute_run_qrels_filter(
 
 
 # ---------------------------------------------------------------------------
+# Q-020 / F-046: query_syntax threading + provenance
+# ---------------------------------------------------------------------------
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_forwards_query_syntax_to_retriever(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+
+    execute_run("scifact", "http://localhost:8080", ["hybrid"], query_syntax="lucene")
+
+    _, kwargs = mock_retriever.retrieve.call_args
+    assert kwargs["query_syntax"] == "lucene"
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_default_query_syntax_forwards_none(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    """Default (no --query-syntax) forwards `query_syntax=None` to the retriever, which
+    is what makes the wire request byte-identical to a pre-Q-020 call (test_retriever.py
+    pins that `_build_request(..., query_syntax=None)` omits the field)."""
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+
+    execute_run("scifact", "http://localhost:8080", ["hybrid"])
+
+    _, kwargs = mock_retriever.retrieve.call_args
+    assert kwargs["query_syntax"] is None
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_records_query_syntax_in_summary_provenance(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+
+    summary = execute_run("scifact", "http://localhost:8080", ["hybrid"], query_syntax="lucene")
+    assert summary["query_syntax"] == "lucene"
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_default_query_syntax_recorded_as_simple(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    """Run provenance is self-documenting even on the default path: absent `query_syntax`
+    is recorded as "simple" (the Head's own documented server-side default), not omitted
+    or left null, per api-contract-map.md."""
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+
+    summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
+    assert summary["query_syntax"] == "simple"
+
+
+# ---------------------------------------------------------------------------
 # Unit tests for helper functions
 # ---------------------------------------------------------------------------
 

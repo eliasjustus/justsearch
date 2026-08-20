@@ -13,6 +13,13 @@ import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.services.lifecycle.WorkerCapability;
 import org.junit.jupiter.api.Test;
 
+/**
+ * The monitor's HEALTH arm. Every case stubs {@code hasClient() == true}: tempdoc 825 gave the
+ * monitor a second arm, and a bound client is the precondition that selects this one — without the
+ * stub these cases would exercise the boot-recovery arm and the never-verifications would pass for
+ * the wrong reason. The boot-recovery arm has its own suite ({@code KnowledgeServerBootRecoveryTest},
+ * over a real bootstrap rather than a mock).
+ */
 final class KnowledgeServerHealthMonitorTest {
 
   @Test
@@ -20,6 +27,7 @@ final class KnowledgeServerHealthMonitorTest {
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     WorkerCapability cap = new WorkerCapability();
     cap.transition(CapabilityHealth.DEGRADED, "error");
+    when(bootstrap.hasClient()).thenReturn(true);
     when(bootstrap.workerCapability()).thenReturn(cap);
     when(bootstrap.checkHealth())
         .thenAnswer(
@@ -39,6 +47,7 @@ final class KnowledgeServerHealthMonitorTest {
   void tickTriggersInitializationOnPendingToReadyTransition() {
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     WorkerCapability cap = new WorkerCapability();
+    when(bootstrap.hasClient()).thenReturn(true);
     when(bootstrap.workerCapability()).thenReturn(cap);
     when(bootstrap.checkHealth())
         .thenAnswer(
@@ -58,6 +67,7 @@ final class KnowledgeServerHealthMonitorTest {
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     WorkerCapability cap = new WorkerCapability();
     cap.transition(CapabilityHealth.READY, null);
+    when(bootstrap.hasClient()).thenReturn(true);
     when(bootstrap.workerCapability()).thenReturn(cap);
     when(bootstrap.checkHealth()).thenReturn(true);
 
@@ -72,6 +82,7 @@ final class KnowledgeServerHealthMonitorTest {
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     WorkerCapability cap = new WorkerCapability();
     cap.transition(CapabilityHealth.DEGRADED, "error");
+    when(bootstrap.hasClient()).thenReturn(true);
     when(bootstrap.workerCapability()).thenReturn(cap);
     when(bootstrap.checkHealth()).thenReturn(false);
 
@@ -85,6 +96,7 @@ final class KnowledgeServerHealthMonitorTest {
   void tickSwallowsExceptionsSoExecutorSurvives() {
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     WorkerCapability cap = new WorkerCapability();
+    when(bootstrap.hasClient()).thenReturn(true);
     when(bootstrap.workerCapability()).thenReturn(cap);
     doThrow(new RuntimeException("transient gRPC failure")).when(bootstrap).checkHealth();
 
@@ -101,6 +113,7 @@ final class KnowledgeServerHealthMonitorTest {
   void firstTickSeedsClockAndDoesNotReValidate() {
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    when(bootstrap.hasClient()).thenReturn(true);
     when(bootstrap.workerCapability()).thenReturn(new WorkerCapability());
     when(bootstrap.checkHealth()).thenReturn(true);
 
@@ -118,6 +131,7 @@ final class KnowledgeServerHealthMonitorTest {
   void normalCadenceTickDoesNotReValidate() {
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    when(bootstrap.hasClient()).thenReturn(true);
     when(bootstrap.workerCapability()).thenReturn(new WorkerCapability());
     when(bootstrap.checkHealth()).thenReturn(true);
 
@@ -137,6 +151,7 @@ final class KnowledgeServerHealthMonitorTest {
   void largeGapTriggersEagerReconnectAndReconcile() {
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    when(bootstrap.hasClient()).thenReturn(true);
     when(bootstrap.workerCapability()).thenReturn(new WorkerCapability());
     when(bootstrap.checkHealth()).thenReturn(true);
     when(bootstrap.client()).thenReturn(client);
@@ -154,11 +169,15 @@ final class KnowledgeServerHealthMonitorTest {
 
   @Test
   void resumeReValidationSurvivesUnavailableClient() {
-    // A resume while the worker client is not yet available (client() throws) must not abort the
-    // tick or flip the capability to DEGRADED.
+    // A resume while the worker client is not available (client() throws) must not abort the tick or
+    // flip the capability to DEGRADED. Post-825 this is the narrow race rather than the steady state:
+    // hasClient() and client() are two reads of the same volatile field, so a concurrent
+    // closeForUpgrade can null it between them. The steady "no client at all" state is the
+    // boot-recovery arm's, tested over a real bootstrap.
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     WorkerCapability cap = new WorkerCapability();
     cap.transition(CapabilityHealth.READY, null);
+    when(bootstrap.hasClient()).thenReturn(true);
     when(bootstrap.workerCapability()).thenReturn(cap);
     when(bootstrap.checkHealth()).thenReturn(true);
     when(bootstrap.client()).thenThrow(new IllegalStateException("Knowledge Server not started"));

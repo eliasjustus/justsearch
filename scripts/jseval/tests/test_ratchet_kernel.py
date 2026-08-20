@@ -268,3 +268,53 @@ def test_assert_ce_coverage_env_var_override_passes_with_warning(tmp_path, monke
     monkeypatch.setenv("JUSTSEARCH_ALLOW_CE_DEGRADATION", "1")
     rk.assert_ce_coverage(rd)  # no raise -- env var alone is enough
     assert "overridden" in capsys.readouterr().err
+
+
+# --- resolve_run_dir dataset filtering (wrong-dataset-resolution fix) --------
+
+def _eval_results_run(data_dir, run_name, dataset):
+    rd = data_dir / "eval-results" / run_name
+    rd.mkdir(parents=True)
+    (rd / "summary.json").write_text(json.dumps({"dataset": dataset}), encoding="utf-8")
+    return rd
+
+
+def test_resolve_run_dir_two_dataset_dir_resolves_the_requested_datasets_run(tmp_path):
+    """The reported bug: eval-results/ holds runs for two different datasets. The
+    alphabetically-latest run overall (run-2, mixed/enron-qa) must NOT be returned when the
+    caller asked for beir/scifact -- resolve_run_dir must pick beir/scifact's own latest run
+    (run-1) instead of silently comparing against the wrong corpus."""
+    scifact_run = _eval_results_run(tmp_path, "run-1-scifact", "scifact")  # -> beir/scifact
+    _eval_results_run(tmp_path, "run-2-enron", "mixed/enron-qa")  # sorts later by name
+    rd = rk.resolve_run_dir(None, tmp_path, dataset="beir/scifact")
+    assert rd == scifact_run
+
+
+def test_resolve_run_dir_matches_on_canonical_slug(tmp_path):
+    # jseval run --dataset scifact records the short BEIR key; the gate is asked with the
+    # canonical beir/scifact slug -- these must be recognized as the same dataset.
+    scifact_run = _eval_results_run(tmp_path, "run-1", "scifact")
+    rd = rk.resolve_run_dir(None, tmp_path, dataset="beir/scifact")
+    assert rd == scifact_run
+
+
+def test_resolve_run_dir_no_match_hard_errors_not_silent_latest(tmp_path):
+    """No run for the requested dataset exists (only other datasets do) -> hard error
+    (exit 2), never a silent fallback to the overall-latest (wrong-corpus) run."""
+    _eval_results_run(tmp_path, "run-1-scifact", "scifact")
+    with pytest.raises(SystemExit) as exc:
+        rk.resolve_run_dir(None, tmp_path, dataset="mixed/enron-qa")
+    assert exc.value.code == 2
+
+
+def test_resolve_run_dir_no_dataset_filter_is_backward_compatible(tmp_path):
+    # dataset=None (unset) preserves the pre-existing "latest run overall" behavior.
+    _eval_results_run(tmp_path, "run-1", "scifact")
+    latest = _eval_results_run(tmp_path, "run-2", "mixed/enron-qa")
+    assert rk.resolve_run_dir(None, tmp_path) == latest
+
+
+def test_resolve_run_dir_explicit_run_dir_bypasses_dataset_filter(tmp_path):
+    # An explicit --run-dir is trusted as-is, even against an unrelated --dataset.
+    explicit = _eval_results_run(tmp_path, "run-1-scifact", "scifact")
+    assert rk.resolve_run_dir(str(explicit), tmp_path, dataset="mixed/enron-qa") == explicit

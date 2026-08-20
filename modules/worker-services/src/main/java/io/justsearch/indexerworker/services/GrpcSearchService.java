@@ -484,7 +484,7 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
             .setElapsedMs(result.latencyMs());
 
         if (result.skipped()) {
-          resp.setSkipReason("DEADLINE_EXCEEDED");
+          resp.setSkipReason(wireSkipReason(result.skipCause()));
         } else {
           for (int idx : result.sortedIndices()) {
             resp.addSortedIndices(idx);
@@ -503,6 +503,24 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
                 .asException());
       }
     }
+  }
+
+  /**
+   * Maps the reranker's local skip cause onto the Head-owned {@code CrossEncoderSkipReason} wire
+   * vocabulary carried by {@code RerankResponse.skip_reason} (register F-054).
+   *
+   * <p>Only a budget pre-check is a genuine deadline miss. An inference failure used to be stamped
+   * {@code DEADLINE_EXCEEDED} too, which named a knob that cannot fix it — a measured campaign
+   * found 199/200 "deadline misses" were ONNX Runtime arena exhaustion. {@code NONE} is
+   * unreachable here (the caller only asks on the skipped branch) and resolves to the empty string,
+   * which the Head normalises to {@code UNKNOWN} rather than guessing a cause.
+   */
+  private static String wireSkipReason(io.justsearch.reranker.RerankSkipCause cause) {
+    return switch (cause) {
+      case TOKENIZE_BUDGET_EXCEEDED, PREP_BUDGET_EXCEEDED -> "DEADLINE_EXCEEDED";
+      case INFERENCE_FAILED -> "INFERENCE_FAILED";
+      case NONE -> "";
+    };
   }
 
   @Override

@@ -1,17 +1,26 @@
 ---
 title: Agent Analytics Pipeline
 type: explanation
-status: stable
-description: "Behavioral tracking pipeline: hooks, event capture, session analysis, scoring, and LLM-as-judge evaluation."
+status: in-progress
+description: "Behavioral tracking pipeline: hooks, event capture, session analysis, cost estimation, scoring, and LLM-as-judge evaluation. The HTML dashboard layer is retired."
 ---
 
 # Agent Analytics Pipeline
 
 The agent analytics pipeline tracks behavioral patterns — how agents use tools, which files they re-read, when they make rapid re-edits, and how often they misuse Bash for file operations. It also estimates per-session costs from transcript token data and optionally evaluates task outcomes via LLM-as-judge.
 
-All scripts live under `scripts/agent-analytics/`. All data lives under `tmp/agent-telemetry/` (gitignored). Investigation findings and validity analysis are recorded in noncanonical tempdoc 118.
+All scripts live under `scripts/agent-analytics/`. All data lives under `tmp/agent-telemetry/` (gitignored). The scoring recalibration and outcome-aware validation findings are recorded in noncanonical tempdoc 277.
 
-> **Removed (tempdoc 638):** the run-centric workflow-telemetry layer and its session-to-workflow attribution bridge (`scripts/lib/workflow-telemetry.mjs`, `scripts/bench/report-workflow-attribution.mjs`, the `tmp/workflow-telemetry/runs/` artifacts, and the workflow-telemetry contract) were deleted. The session-centric agent analytics pipeline described below is unaffected and remains live.
+> **Liveness is per-layer, not per-pipeline.** This doc describes several layers with different
+> health. The **hook layer** (`hooks/`, `lib/`) is wired in `.claude/settings.json` and fires on
+> every session — verify with `governance/agent-hooks.v1.json` and the `hook-integrity` gate. The
+> **analysis scripts** (`analyze-session`, `cost-session`, `baseline-economics`,
+> `cache-efficiency`, …) are maintainer CLI tools run on demand; nothing invokes them on a
+> schedule, so an empty or stale store under `tmp/agent-telemetry/` is expected, not a fault. The
+> **HTML dashboard layer** (`generate-dashboard.mjs`, `dashboard.html`) is **retired** — deleted,
+> not deprecated. Do not infer that a layer is live because this doc documents it.
+>
+> **Removed (tempdoc 638):** the run-centric workflow-telemetry layer and its session-to-workflow attribution bridge (`scripts/lib/workflow-telemetry.mjs`, `scripts/bench/report-workflow-attribution.mjs`, the `tmp/workflow-telemetry/runs/` artifacts, and the workflow-telemetry contract) were deleted. The session-centric agent analytics pipeline described below is unaffected by that removal.
 
 The `hooks/export-session-env.mjs` `SessionStart` hook still writes `JUSTSEARCH_AGENT_SESSION_ID` into `CLAUDE_ENV_FILE` so that session attribution is available to downstream tooling.
 
@@ -31,9 +40,9 @@ tmp/agent-telemetry/
   events.ndjson                       # Append-only hook event stream
   scores.ndjson                       # Wide events — one line per scored session
   costs.ndjson                        # Per-session cost estimates from transcript tokens
-  outcomes.ndjson                     # LLM-as-judge outcome evaluations (optional)
+  outcomes.ndjson                     # Opt-in REPORT of the outcome JOIN (outcome-session.mjs --write) — not maintained state
+  judge-outcomes.ndjson               # LLM-as-judge outcome evaluations (evaluate-session.mjs, optional)
   session-index.json                  # Aggregated session index (scores + costs + reports)
-  dashboard.html                      # Self-contained HTML dashboard with Chart.js
   read-counts-{sessionId}.json        # Per-session read count cache (for compact-save.mjs)
   edit-counts-{sessionId}.json        # Per-session edit count cache (for compact-save.mjs)
   turn-count-{sessionId}.txt          # Per-session tool-call counter (dispatch.mjs, cleaned on session end)
@@ -175,9 +184,9 @@ Key findings across real sessions (N=41): tool outputs consume 80–85% of conte
 | `cache-efficiency.mjs` | Prompt-cache **efficiency** across the corpus, as opposed to the cost totals `cost-session`/`baseline-economics` produce. Answers *why* a cache write was paid: classifies each into extension / invalidation / cold start, attributes invalidations (compaction, model switch, TTL expiry, or an honest `in-ttl-undetermined` residual), reports the TTL tier by agent kind, delegation economics, and pricing coverage. Exports its classifiers (`classifyWrite`, `invalidationCause`) for test. CLI: `--since <ISO>`, `--json`. |
 | `context-attribution.mjs` | Context window attribution: classifies transcript content blocks by category (tool outputs by tool name, assistant text, thinking, user messages, system). Chars/4 ≈ tokens. CLI: `--session-id`, `--all`, `--json`, `--top N`. |
 | `generate-index.mjs` | Aggregates session reports + scores + costs into `session-index.json`. |
-| `generate-dashboard.mjs` | Self-contained HTML dashboard with Chart.js flag trend (primary), signal heatmap, process hygiene index (demoted), sortable session table. |
-| `evaluate-session.mjs` | LLM-as-judge outcome evaluation. Condenses transcripts, sends to `claude` CLI. CLI: `--session-id`, `--all`, `--force`, `--dry-run`, `--model`, `--json`. |
-| `test-pipeline.mjs` | 305+ assertions across 25 groups. Synthetic data, try/finally cleanup, spawnSync crash detection. |
+| `evaluate-session.mjs` | LLM-as-judge outcome evaluation, written to `judge-outcomes.ndjson`. Condenses transcripts, sends to `claude` CLI. CLI: `--session-id`, `--all`, `--force`, `--dry-run`, `--model`, `--json`. |
+| `outcome-session.mjs` | Per-session outcome JOIN over canonical owners (git merge link, build counter, tempdoc frontmatter, governance SARIF), **computed on demand and printed**. The judge's verdict is carried as a residual `inference` block and never overwrites a fact. `--write` emits `outcomes.ndjson` as a timestamped report, not an authority. |
+| `test-pipeline.mjs` | Legacy standalone assertion script. **Not wired to anything** — `run-all-tests.mjs` discovers `*.test.mjs` only, so this file runs solely when invoked by hand, and it has known stale failures (see `docs/observations.md`). Treat it as historical coverage, not as a gate. |
 
 ### Hook Configuration
 
@@ -198,7 +207,7 @@ dispatch.mjs (async) → bash-guard.mjs → build-counter.mjs → repeat-guard.m
 If a sync hook exits 2 (block), subsequent hooks likely do not fire (short-circuit).
 
 For `SessionStart`, the chain is:
-export-session-env.mjs â†’ dispatch.mjs (async) â†’ compact-restore.mjs.
+export-session-env.mjs → dispatch.mjs (async) → compact-restore.mjs.
 
 Subagent attribution in phase 1 is parent-owned. `subagent-guide.mjs` includes the parent
 `session_id` and instructs subagents to pass `--session-id <parent-session-id>` when invoking
@@ -248,11 +257,20 @@ overhead. This is small relative to LLM inference time (seconds per turn).
 
 - **Self-monitoring paradox.** The agent exhibiting waste is also the one reading pipeline output. Mitigated by `.claude/rules/` (loaded at session start) rather than requiring mid-session analytics reads.
 - **intervene.mjs effectiveness is untestable.** Analytics capture pre-intervention state. We know the hook fires but can't directly measure context savings.
-- **Process score does not predict task outcomes.** LLM-as-judge evaluation confirmed a 2.8-point gap between complete and partial sessions. The score measures process compliance, not work quality. See tempdoc 118.
+- **Process score does not predict task outcomes.** Outcome-aware validation at N=116 (73 complete, 38 partial) put the composite score's point-biserial correlation with task completion at r=0.064, Cohen's d=0.13, with no individual signal exceeding |r|>0.20 globally. The score measures process compliance, not work quality. See tempdoc 277 C4 — the same citation `score-session.mjs` carries.
 
 ## Test Suite
 
-305+ assertions across 25 groups. Run: `node scripts/agent-analytics/test-pipeline.mjs`
+The wired entry point is `node scripts/agent-analytics/run-all-tests.mjs`, which discovers and runs
+every `*.test.mjs` under `scripts/agent-analytics/` and exits non-zero if any file fails. That is
+the suite to run and the one CI runs.
+
+`test-pipeline.mjs` is a separate legacy script that **`run-all-tests.mjs` does not discover** (it
+is not a `*.test.mjs` file), so nothing invokes it and it has accumulated stale failures — see the
+`obs:test-pipeline` condition in `docs/observations.md`. Its group table below is retained as a
+map of what that historical coverage aimed at; do not read it as a passing suite, and do not cite
+an assertion count from it. Group 19 (dashboard generation) was deleted with the dashboard, so the
+group numbering has a deliberate gap.
 
 | Group | Key Assertions |
 |-------|---------------|
@@ -267,7 +285,6 @@ overhead. This is small relative to LLM inference time (seconds per turn).
 | Cost estimation (16) | Per-turn pricing, missing transcript handling |
 | Z-score anomaly (17) | MAD-based detection, outlier identification |
 | Session index (18) | Schema validation |
-| Dashboard (19) | HTML generation, Chart.js, embedded data |
 | LLM-as-judge (20) | Dry-run validation, condensation, upsert dedup |
 | Repeat guard (22) | Consecutive blocking, break-and-resume, multi-tool fingerprinting, build exclusion, MCP/internal tools |
 | Build counter (23) | Threshold blocking, one-shot advisory, dispatch state tracking, SessionEnd cleanup |

@@ -14,11 +14,35 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const TELEMETRY_DIR = 'tmp/agent-telemetry';
 const SESSIONS_DIR = 'sessions';
 const REPORTS_DIR = 'reports';
 const MIN_TOOL_CALLS = 10; // Skip ephemeral sessions
+
+/**
+ * Sessions needed before this report may state a CROSS-SESSION verdict
+ * (tempdoc 858 §6), modelled on check-agent-quality-trend.mjs:53,70,76,103 —
+ * an `insufficient` boolean from the window size, surfaced prominently, gating
+ * the conclusion while every count and mean still prints.
+ *
+ * Derived from what the report claims rather than chosen: every verdict here is
+ * of the form "agents do X", generalised from a pattern holding across the
+ * window. Under a symmetric null, a pattern holding in all N sessions is
+ * attributable to chance with probability 2^-N, which first falls below 0.05 at
+ * N = 5 (2^-4 = 0.063; 2^-5 = 0.031). Below that the report describes the
+ * sessions it read and nothing beyond them.
+ *
+ * MIN_TOOL_CALLS above is the same idea one level down — it gates a session as
+ * too small to describe, this gates a window as too small to generalise from.
+ * The lane's other cross-session instrument independently landed on the same
+ * floor (`min_sessions: 5` in scripts/ci/agent-quality-baselines.v1.json).
+ *
+ * Applies per ARM in --cutoff mode: each arm is its own computeTrends call, and
+ * a delta between two arms is not a measurement if either side is below it.
+ */
+const MIN_TREND_SESSIONS = 5;
 
 // Resolve repo root
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname);
@@ -300,6 +324,8 @@ function computeTrends(reports, sessionsSkipped = 0) {
     generated_at: new Date().toISOString(),
     sessions_analyzed: reports.length,
     sessions_skipped: sessionsSkipped,
+    min_sessions: MIN_TREND_SESSIONS,
+    insufficient: reports.length < MIN_TREND_SESSIONS,
 
     hot_files: detectHotFiles(reports),
     unbounded_read_rate: detectUnboundedRate(reports),
@@ -319,6 +345,12 @@ function formatMarkdown(trends) {
   line();
   line(`Generated: ${trends.generated_at}`);
   line(`Sessions analyzed: ${trends.sessions_analyzed}`);
+  if (trends.insufficient) {
+    line();
+    line(`> ⚠️ Insufficient sessions (${trends.sessions_analyzed} < ${trends.min_sessions});`
+      + ` the counts and means below describe these sessions only — no cross-session`
+      + ` verdict is drawn from them.`);
+  }
   line();
 
   // Hot files
@@ -347,7 +379,7 @@ function formatMarkdown(trends) {
     line(`- **Mean (main only):** ${pct(ur.main_only.mean)}`);
   }
   line(`- **Samples:** ${ur.samples} sessions`);
-  if (ur.mean > 0.3) {
+  if (ur.mean > 0.3 && !trends.insufficient) {
     line();
     line(`⚠ Mean exceeds 30% threshold. Many reads are loading entire files.`);
   }
@@ -376,7 +408,7 @@ function formatMarkdown(trends) {
   line(`- **Mean:** ${pct(bf.mean)}`);
   line(`- **Range:** ${pct(bf.min)} – ${pct(bf.max)}`);
   line(`- **Samples:** ${bf.samples} sessions`);
-  if (bf.mean > 0.4) {
+  if (bf.mean > 0.4 && !trends.insufficient) {
     line();
     line(`⚠ Mean exceeds 40% threshold. Agents frequently use Bash for file operations.`);
   }
@@ -430,6 +462,15 @@ function formatComparisonMarkdown(before, after, cutoffDate) {
   line();
   line(`Cutoff: ${cutoffDate}`);
   line(`Before: ${before.sessions_analyzed} sessions | After: ${after.sessions_analyzed} sessions`);
+  if (before.insufficient || after.insufficient) {
+    line();
+    const starved = [
+      before.insufficient ? `before=${before.sessions_analyzed}` : null,
+      after.insufficient ? `after=${after.sessions_analyzed}` : null,
+    ].filter(Boolean).join(', ');
+    line(`> ⚠️ Insufficient sessions in an arm (${starved}; need ≥ ${before.min_sessions} each).`
+      + ` The deltas below are arithmetic between two small samples, not a measured change.`);
+  }
   line();
 
   // Unbounded read rate
@@ -637,4 +678,7 @@ function main() {
   console.log(markdown);
 }
 
-main();
+const __filename = fileURLToPath(import.meta.url);
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) main();
+
+export { computeTrends, formatMarkdown, formatComparisonMarkdown, MIN_TREND_SESSIONS };

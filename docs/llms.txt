@@ -43,7 +43,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Adapters-Lucene Deep Dive](explanation/18-adapters-lucene-deep-dive.md): HNSW search, SPLADE learned sparse retrieval, hybrid fusion, commit metadata system.
 - [Module Architecture & Dependency Governance](explanation/19-module-architecture.md): Gradle multi-project structure, dependency layers, and governance rules.
 - [Benchmarking Architecture (Claims + Competitor Suite)](explanation/20-benchmarking-architecture.md): Claims vs lanes, bench harness schemas, competitor suite logic.
-- [Agent Analytics Pipeline](explanation/21-agent-analytics-pipeline.md): Behavioral tracking pipeline: hooks, event capture, session analysis, scoring, and LLM-as-judge evaluation.
+- [Agent Analytics Pipeline](explanation/21-agent-analytics-pipeline.md): Behavioral tracking pipeline: hooks, event capture, session analysis, cost estimation, scoring, and LLM-as-judge evaluation. The HTML dashboard layer is retired.
 - [Agent System Architecture](explanation/22-agent-system-architecture.md): Agent loop, operation-substrate tool dispatch, token budget, durability, and MCP tool surface.
 - [23-runtime-manifest](explanation/23-runtime-manifest.md): Producer-published runtime manifest at <dataDir>/runtime/manifest.json (filesystem) and GET /api/runtime/manifest (HTTP). Canonical answer for "how does a non-JVM consumer find the running JustSearch instance?" — tempdoc 501 §6 closure rule.
 - [Search Pipeline Overview](explanation/23-search-pipeline-overview.md): End-to-end search pipeline: ingestion stages, query-time retrieval legs, fusion, correction, reranking, and response assembly.

@@ -11,6 +11,14 @@
  *   node scripts/agent-analytics/record-merge.mjs                       # links HEAD merge
  *   node scripts/agent-analytics/record-merge.mjs <commit>              # links a specific commit
  *   node scripts/agent-analytics/record-merge.mjs <commit> --session-id <id>  # escape hatch
+ *   node scripts/agent-analytics/record-merge.mjs <commit> --source publish    # provenance
+ *
+ * Tempdoc 856 §3.1: every row carries `source` (which writer observed the link)
+ * and `kind` ('fact' for anything observed, 'inference' for shard-derived
+ * recovery). `--source` defaults to 'teardown', so remove-worktree.cjs's
+ * existing invocation is unchanged. Rows written before 856 have neither field
+ * and mean exactly that default — readers backfill via normalizeMergeLinkRow;
+ * the ledger is never rewritten.
  *
  * Session id resolution is shared with note-observation.mjs's resolveSessionId
  * (tempdoc 684): env-first (CLAUDE_CODE_SESSION_ID / JUSTSEARCH_AGENT_SESSION_ID),
@@ -25,12 +33,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { TELEMETRY_DIR, COSTS_FILE, repoRoot } from './lib/telemetry-io.mjs';
+import {
+  TELEMETRY_DIR, COSTS_FILE, SESSION_MERGES_FILE, repoRoot,
+  MERGE_LINK_SOURCES, DEFAULT_MERGE_LINK_SOURCE, buildMergeLinkRow,
+} from './lib/telemetry-io.mjs';
 import { atomicWriteFileSync } from './lib/hook-base.mjs';
 import { resolveSessionId } from './note-observation.mjs';
 import { findSessionTranscript, computeSessionCost, DEFAULT_PROJECTS_ROOT } from './baseline-economics.mjs';
 
-const MERGES_FILE = 'session-merges.ndjson';
+const MERGES_FILE = SESSION_MERGES_FILE;
+const VALID_SOURCES = new Set(Object.values(MERGE_LINK_SOURCES));
 
 /**
  * Adapt a computeSessionCost() record (baseline-economics.mjs) to the
@@ -118,25 +130,54 @@ function git(args) {
   return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   let commitArg = null;
   let sessionIdArg = null;
+  let sourceArg = null;
+  // A flag whose value is missing (or is the next flag) must ERROR rather than
+  // fall through to the default: `--source` with a typo'd value silently
+  // recording 'teardown' is a mislabelled provenance row, which is worse than
+  // a failed command.
+  const valueFor = (flag, raw) => {
+    if (raw === undefined || String(raw).startsWith('--')) throw new Error(`${flag} needs a value`);
+    return raw;
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--session-id') {
-      sessionIdArg = argv[i + 1];
+      sessionIdArg = valueFor('--session-id', argv[i + 1]);
       i += 1;
     } else if (arg.startsWith('--session-id=')) {
-      sessionIdArg = arg.slice('--session-id='.length);
+      sessionIdArg = valueFor('--session-id', arg.slice('--session-id='.length) || undefined);
+    } else if (arg === '--source') {
+      sourceArg = valueFor('--source', argv[i + 1]);
+      i += 1;
+    } else if (arg.startsWith('--source=')) {
+      sourceArg = valueFor('--source', arg.slice('--source='.length) || undefined);
     } else if (commitArg === null) {
       commitArg = arg;
     }
   }
-  return { commitArg: commitArg || 'HEAD', sessionIdArg };
+  return {
+    commitArg: commitArg || 'HEAD',
+    sessionIdArg,
+    source: sourceArg ? sourceArg.trim() : DEFAULT_MERGE_LINK_SOURCE,
+  };
 }
 
 function main() {
-  const { commitArg, sessionIdArg } = parseArgs(process.argv.slice(2));
+  let parsed;
+  try {
+    parsed = parseArgs(process.argv.slice(2));
+  } catch (e) {
+    console.error(`record-merge: ${e.message}`);
+    process.exit(2);
+  }
+  const { commitArg, sessionIdArg, source } = parsed;
+  if (!VALID_SOURCES.has(source)) {
+    console.error(`record-merge: unknown --source '${source}' (expected one of ${[...VALID_SOURCES].join(', ')})`);
+    process.exit(2);
+  }
   let hash, subject;
   try {
     hash = git(['rev-parse', commitArg]);
@@ -152,16 +193,11 @@ function main() {
     process.exit(0); // non-fatal: never block a merge over telemetry
   }
 
-  const record = {
-    session_id: sessionId,
-    merge_commit: hash,
-    subject,
-    ts: new Date().toISOString(),
-  };
+  const record = buildMergeLinkRow({ sessionId, mergeCommit: hash, subject, source });
   const file = path.join(repoRoot, TELEMETRY_DIR, MERGES_FILE);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, JSON.stringify(record) + '\n', 'utf8');
-  console.log(`record-merge: linked session ${sessionId.slice(0, 8)} -> ${hash.slice(0, 8)} (${subject.slice(0, 60)})`);
+  console.log(`record-merge: linked session ${sessionId.slice(0, 8)} -> ${hash.slice(0, 8)} [${record.source}/${record.kind}] (${subject.slice(0, 60)})`);
 
   // Best-effort cost upsert (tempdoc 743 survival requirement: re-run at a workflow
   // moment, not a one-off audit). Never allowed to fail the merge recording above.

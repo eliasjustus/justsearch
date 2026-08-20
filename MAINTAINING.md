@@ -39,12 +39,14 @@ the apparatus is visible and documented, never forced on a contributor.
   # then set per-machine permissions/env (e.g. JUSTSEARCH_MODELS_DIR) in the copied file
 
   cp .mcp.json.example .mcp.json
-  # then set GITHUB_PERSONAL_ACCESS_TOKEN (the justsearch-dev dev-tooling server needs no secret)
+  # no secret required — the justsearch-dev dev-tooling server is the only entry
   ```
 
   `.mcp.json` registers the `justsearch-dev` dev-tooling MCP server (the dev-stack lifecycle/health
-  tools, which `mcp-session-inject` targets) plus your `github` server; it is gitignored because it
-  carries a personal access token.
+  tools, which `mcp-session-inject` targets); it is gitignored so a maintainer can add machine-local
+  servers without committing them. GitHub work goes through the `gh` CLI (`scripts/dev/run-gh.mjs`),
+  not an MCP server — the `github` entry was removed in tempdoc 844 P1 (one invocation in six weeks,
+  and it errored: the committed PAT was the literal placeholder).
 
   The seed (regenerate with `node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-local-example`)
   carries the **full** hook set — including the four founder-analytics hooks the public

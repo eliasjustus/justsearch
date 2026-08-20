@@ -45,6 +45,30 @@ Used when HYBRID cannot run as requested (may also appear for VECTOR when the co
 - `EMBEDDING_GENERATION_FAILED`: query embedding returned null/empty
 - `EMBEDDING_EXCEPTION`: query embedding threw an exception
 
+### Cross-encoder skip reason codes (`CrossEncoderSkipReason`, Head-owned)
+
+The cross-encoder is orchestrated in the Head (`KnowledgeSearchEngine`), so its skip vocabulary is Head-owned — unlike the codes above, which the Worker emits. The code is carried by the `cross-encoder` stage of the unified `searchTrace` (`reason`, alongside `status: "skipped"`). Three of the members (`DEADLINE_EXCEEDED`, `MODEL_NOT_LOADED`, `INFERENCE_FAILED`) originate in the Worker's `RerankResponse.skip_reason` and are normalised in through `CrossEncoderSkipReason.fromWorkerSkipReason` — an unrecognised Worker string becomes `UNKNOWN` rather than passing through raw, so no unworded code can reach a user.
+
+`isDrop()` splits the vocabulary, and the split is what decides altitude:
+
+**By-design skips** (`isDrop() == false`) — the pipeline chose not to rerank. Nothing degraded; diagnostic tier only:
+
+- `NAVIGATIONAL_QUERY`: the query classified as navigational
+- `DISABLED`: reranking switched off in configuration
+- `BELOW_MIN_THRESHOLD`: fewer candidates than the configured minimum
+- `DOCS_TOO_LONG`: average document length exceeds the configured cross-encoder ceiling
+- `PIPELINE_NOT_ELIGIBLE`: the active preset has no cross-encoder stage
+- `MODEL_NOT_CONFIGURED`: no reranker model configured on this host (an install/capability state, owned by the readiness-notice channel)
+- `FUSION_CONFIDENT`: tempdoc 643 perf-shortcut — leg agreement alone was decisive, so the RPC was deliberately not paid
+
+**Drops** (`isDrop() == true`) — the relevance model was supposed to run and did not. Results are still returned, ranked by fusion/LambdaMART instead. These are degradations and are worded at the **user tier** by `CROSS_ENCODER_SKIP_WORDING` in `searchTraceExplain.ts`:
+
+- `DEADLINE_EXCEEDED`: a reranker budget **pre-check** declined to start inference — tokenization or tensor prep had already consumed the latency budget. Raising `justsearch.rerank.deadline_ms` is the knob that fixes this one.
+- `RPC_FAILED`: the rerank RPC threw — transport, Worker error, or circuit breaker
+- `MODEL_NOT_LOADED`: the Worker is configured for reranking but the model was not loaded when the RPC arrived
+- `INFERENCE_FAILED`: inference was attempted and ONNX Runtime threw — memory-arena exhaustion, a dead session, a bad output shape. Register F-054 split this out of `DEADLINE_EXCEEDED`, which the Worker used to stamp on *any* reranker skip: a measured campaign found 199/200 "deadline misses" were BFCArena OOM, unfixable by any deadline value and fixed instantly by `JUSTSEARCH_RERANK_GPU_MEM_MB`. The Worker log names that remedy at the failure site.
+- `UNKNOWN`: fall-through for an unrecognised **or unstated** Worker skip reason (a blank `skip_reason` is `UNKNOWN`, not a guessed deadline)
+
 ## RAG retrieval (`SearchService.retrieveContext`)
 
 Degradation fields on `RetrieveContextResponse` (`modules/ipc-common/src/main/proto/indexing.proto`):
@@ -96,7 +120,7 @@ Payload shape:
 
 ## Reason-code governance
 
-Reason codes are validated by the CI checks `scripts/ci/check-readiness-reason-codes.mjs` (lifecycle / readiness reason codes) and `scripts/ci/check-search-degradation-reason-codes.mjs` (search-degradation reason codes), which cross-check the Java enums (`LifecycleReasonCode.java`, `SearchReasonCode.java`) against their FE consumers.
+Reason codes are validated by the CI checks `scripts/ci/check-readiness-reason-codes.mjs` (lifecycle / readiness reason codes) and `scripts/ci/check-search-degradation-reason-codes.mjs` (search-degradation reason codes), which cross-check the Java enums (`LifecycleReasonCode.java`; `SearchReasonCode.java` and `CrossEncoderSkipReason.java`) against their FE consumers. `check-search-degradation-reason-codes.mjs` iterates the `vocabularies` list in `governance/search-degradation-reason-codes.v1.json`, one producer enum ↔ one FE wording table per entry.
 
 `check-readiness-reason-codes.mjs` additionally enforces a **producer direction** (tempdoc 837): every `LifecycleReasonCode` member must be referenced by at least one `modules/**/src/main` Java source outside the enum's own file — by enum name or quoted code string, matched after comment-stripping. A code nothing can emit is a phantom: its wording row is unreachable UI and the vocabulary claims a state the system cannot report. The direction runs with no exemption list; adding a code with no emit site fails the build. Honest limit: a *reference* is not an *emission*, so the check catches the zero-reference class rather than proving every code is reachable.
 

@@ -3,9 +3,7 @@
     "baseRef": "head"
   },
   "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": [
-    "github"
-  ],
+  "enabledMcpjsonServers": [],
   "enabledPlugins": {
     "jdtls-lsp@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true

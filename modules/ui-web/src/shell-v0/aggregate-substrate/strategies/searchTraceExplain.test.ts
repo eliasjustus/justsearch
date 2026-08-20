@@ -26,6 +26,7 @@ import {
   TRACE_FACETS,
   TRACE_FACET_ALTITUDE,
   DEGRADATION_REASON_WORDING,
+  CROSS_ENCODER_SKIP_WORDING,
 } from './searchTraceExplain.js';
 import type { SearchTrace } from '../../../api/generated/index.js';
 // Tempdoc 564 Phase 3: SearchTrace is the generated Zod projection; build instances via parse().
@@ -185,6 +186,90 @@ describe('searchTraceExplain strategy (549 D1 + 577 Phase 3 altitude cut)', () =
   it('602 R6 — DEGRADATION_REASON_WORDING covers the user-tier reason vocabulary exactly', () => {
     expect(Object.keys(DEGRADATION_REASON_WORDING).sort()).toEqual(
       [...DEGRADATION_WORDED_CODES].sort(),
+    );
+  });
+
+  // Register F-052 (production side) — a cross-encoder deadline miss or RPC drop used to reach
+  // the wire ONLY as the cross-encoder stage's raw reason, and the stage list is a diagnostic-tier
+  // facet inside the collapsed disclosure. Results came back fusion-ordered with no user-tier
+  // signal at all. The drop class is now worded at the user tier, like the expansion timeout.
+  it('F-052 — a cross-encoder deadline miss is worded in the user line', () => {
+    const trace: SearchTrace = searchTraceSchema.parse({
+      version: 1,
+      decisionKind: 'multi_leg',
+      effectiveMode: 'HYBRID',
+      stages: [{ id: 'cross-encoder', status: 'skipped', reason: 'DEADLINE_EXCEEDED' }],
+    });
+    const parts = userSummaryParts(trace);
+    expect(parts).toContain('Relevance re-ranking ran out of time — results are ranked without it');
+    // The raw wire code never reaches the user line.
+    expect(parts.join(' · ')).not.toContain('DEADLINE_EXCEEDED');
+    const user = renderToHost(trace).querySelector('[data-testid="search-explain-user"]');
+    expect(user?.textContent).toContain('Relevance re-ranking ran out of time');
+  });
+
+  it('F-052 — an RPC drop is worded, and a by-design skip stays diagnostic-only', () => {
+    const dropped: SearchTrace = searchTraceSchema.parse({
+      version: 1,
+      effectiveMode: 'HYBRID',
+      stages: [{ id: 'cross-encoder', status: 'skipped', reason: 'RPC_FAILED' }],
+    });
+    expect(userSummaryParts(dropped)).toContain(
+      'Relevance re-ranking was unavailable — results are ranked without it',
+    );
+
+    // A deterministic, by-design skip is NOT a degradation — it must not nag the user line.
+    // (These codes are declared `noWordingExempt` in the gate register.)
+    for (const reason of [
+      'NAVIGATIONAL_QUERY',
+      'DISABLED',
+      'BELOW_MIN_THRESHOLD',
+      'DOCS_TOO_LONG',
+      'PIPELINE_NOT_ELIGIBLE',
+      'MODEL_NOT_CONFIGURED',
+      'FUSION_CONFIDENT',
+    ]) {
+      const byDesign: SearchTrace = searchTraceSchema.parse({
+        version: 1,
+        effectiveMode: 'HYBRID',
+        stages: [{ id: 'cross-encoder', status: 'skipped', reason }],
+      });
+      const line = userSummaryParts(byDesign).join(' · ');
+      expect(line).not.toContain('Relevance re-ranking');
+      expect(line).not.toContain(reason);
+    }
+  });
+
+  // Register F-054 — an inference failure (measured: ONNX Runtime arena exhaustion on 199/200 of a
+  // campaign's "deadline misses") used to reach the user as "ran out of time", which is both false
+  // and points at a knob that cannot fix it. It is now its own worded drop.
+  it('F-054 — an inference failure is worded as a failure, never as running out of time', () => {
+    const trace: SearchTrace = searchTraceSchema.parse({
+      version: 1,
+      effectiveMode: 'HYBRID',
+      stages: [{ id: 'cross-encoder', status: 'skipped', reason: 'INFERENCE_FAILED' }],
+    });
+    const parts = userSummaryParts(trace);
+    expect(parts).toContain('Relevance re-ranking failed to run — results are ranked without it');
+    const line = parts.join(' · ');
+    expect(line).not.toContain('ran out of time');
+    expect(line).not.toContain('INFERENCE_FAILED');
+  });
+
+  // The FE half of the cross-encoder vocabulary correspondence. The Java producer is
+  // `CrossEncoderSkipReason`; the gate (check-search-degradation-reason-codes) enforces that
+  // every non-exempt member is worded here and that no worded key is dead.
+  const CROSS_ENCODER_WORDED_CODES = [
+    'DEADLINE_EXCEEDED',
+    'RPC_FAILED',
+    'MODEL_NOT_LOADED',
+    'INFERENCE_FAILED',
+    'UNKNOWN',
+  ];
+
+  it('F-052 — CROSS_ENCODER_SKIP_WORDING covers the drop-class vocabulary exactly', () => {
+    expect(Object.keys(CROSS_ENCODER_SKIP_WORDING).sort()).toEqual(
+      [...CROSS_ENCODER_WORDED_CODES].sort(),
     );
   });
 });
