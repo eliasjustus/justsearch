@@ -105,6 +105,29 @@ describe('859 §B — the dock floats over the transcript', () => {
     expect(ruleIn(own(Sv3ContextBar), '.bar {')).toContain('pointer-events: auto');
   });
 
+  it("gives the context bar its own surface, off the composer's ONE multiplier", () => {
+    // In the flow the bar sat on the window's own --background and its contrast was a fixed,
+    // checkable pair. Floating, it sits over arbitrary scrolling content, so bare text on
+    // transparency has no contrast floor at all. The material is deliberately the composer's recipe
+    // rather than a second one: blur and fill-translucency both come off --glass-blur-scale, so
+    // solid mode and reduced-transparency degrade the strip and the composer identically.
+    const bar = ruleIn(own(Sv3ContextBar), '.bar {');
+    expect(bar).toContain(
+      'var(--composer-glass-surface)\n            calc(100% - (100% - var(--glass-opacity)) * var(--glass-blur-scale))',
+    );
+    expect(bar).toContain(
+      'backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale)))',
+    );
+    // The mandatory opaque companion — a translucent surface with nothing blurred behind it is
+    // unreadable, not subtle.
+    const styles = own(Sv3ContextBar);
+    const at = styles.indexOf('@supports not ((-webkit-backdrop-filter: blur(1px))');
+    expect(at, 'the context bar glass has no no-blur fallback').toBeGreaterThan(-1);
+    expect(styles.slice(at, at + 300)).toContain('background: var(--composer-glass-surface)');
+    // No second source for the multiplier anywhere in this component.
+    expect(styles).not.toMatch(/blur\(var\(--glass-blur\)\)/);
+  });
+
   it('floats only in DOCKED, at the sticky rung, anchored to the bottom', () => {
     // State-gated on purpose: the hero composer is `position: absolute` against the nearest
     // positioned ancestor, so a dock positioned in hero too would steal hero's containing block
@@ -115,6 +138,28 @@ describe('859 §B — the dock floats over the transcript', () => {
     expect(rule).toContain('inset-inline: 0');
     // Below the overlay rung, which the hero composer, the overlaid pane and the palette share.
     expect(rule).toContain('z-index: var(--z-sticky)');
+  });
+
+  it('keeps the UNCONDITIONAL .dock rule free of any containing-block creator', () => {
+    // The state gate is load-bearing, and until this case nothing pinned it: an independent review
+    // added `position: absolute` to the bare rule and all 773 sv3 tests stayed green. The hero
+    // composer resolves `position: absolute` against the nearest positioned ancestor, so anything
+    // here that establishes a containing block (or a stacking context) silently steals hero's
+    // geometry from `.column` and collapses the centred landing into a bottom strip — a defect
+    // happy-dom cannot render and therefore cannot catch any other way.
+    const bare = ruleIn(own(SearchV3View), '.dock {');
+    for (const creator of [
+      'position:',
+      'transform:',
+      'perspective:',
+      'filter:',
+      'backdrop-filter:',
+      'contain:',
+      'will-change:',
+      'container-type:',
+    ]) {
+      expect(bare, `the unconditional .dock rule declares ${creator}`).not.toContain(creator);
+    }
   });
 
   it('D11 — both resize grips move one rung UP, so DOM order cannot decide who covers whom', () => {
@@ -166,15 +211,25 @@ describe('859 §B — the scroller reads the band', () => {
     expect(rule).toContain('scroll-padding-block-end: var(--sv3-composer-occlusion)');
   });
 
-  it('declares a NON-ZERO default, because a zero default is the silent trap', () => {
-    // Without a ResizeObserver nothing ever writes the variable. A `0` default would restore
-    // exactly the clipping this slice removes — silently, and only on that platform.
+  it('declares a NON-ZERO default IN px, because both readers parse the same string', () => {
+    // Two separate traps, one assertion each.
+    //
+    // NON-ZERO: without a ResizeObserver nothing ever writes the variable, so a `0` default would
+    // restore exactly the clipping this slice removes — silently, and only on that platform.
+    //
+    // px: this is an UNREGISTERED custom property (there is no `@property` or
+    // `CSS.registerProperty` anywhere in this codebase — grep it), so its computed value is the raw
+    // token stream and a length unit is NOT resolved. CSS copes; `Sv3Main.occludedEndPx` does not —
+    // it `parseFloat`s that same computed value to feed the reading window, FOCUS and `nudge()`,
+    // so a `7rem` default hands CSS 112px and JS 7. The two halves would disagree by ~105px in
+    // precisely the branch the default exists for. happy-dom cannot see this (its getComputedStyle
+    // does not inherit custom properties at all), so the browser-side proof is live-only — but the
+    // DECISION is pinned right here, and a future edit back to a relative unit fails.
     const tokens = (sv3Tokens as unknown as { cssText: string }).cssText;
     const match = /--sv3-composer-occlusion:\s*([^;]+);/.exec(tokens);
     expect(match, 'the band token is not declared in the sheet').toBeTruthy();
     const value = match?.[1]?.trim() ?? '0';
-    expect(value).not.toBe('0');
-    expect(value).not.toBe('0px');
+    expect(value).toMatch(/^\d+(\.\d+)?px$/);
     expect(Number.parseFloat(value)).toBeGreaterThan(0);
   });
 });

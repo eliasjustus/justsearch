@@ -268,8 +268,18 @@ export const sv3Tokens = css`
        resting height. A '0' default is the trap: on a platform with no 'ResizeObserver' nothing
        would ever write the variable, and the transcript would be clipped by exactly the band this
        slice exists to un-clip — silently, and only there. An estimate that is a little large costs
-       a little extra bottom padding; a zero costs the feature. */
-    --sv3-composer-occlusion: 7rem;
+       a little extra bottom padding; a zero costs the feature.
+
+       AND IT MUST STAY IN px. This is an UNREGISTERED custom property (no @property anywhere in
+       this codebase), so its computed value is the raw token stream — 'rem' is NOT resolved. CSS
+       reads it fine either way, but 'Sv3Main.occludedEndPx' parseFloat-s the same computed value to
+       feed the reading window, FOCUS derivation and nudge(): a '7rem' default gives CSS 112px and
+       JS 7, a silent ~105px error in exactly the branch this default exists for (no
+       ResizeObserver, or the docked no-measurement branch that clears the inline value). The
+       observer writes px anyway, so px here means nothing scales differently in normal operation —
+       it only removes a unit the JS half cannot see. 112px = the 7rem this replaces at a 16px root.
+       Pinned by 'sv3-occlusion.test.ts'. */
+    --sv3-composer-occlusion: 112px;
 
     /* ── Radius ladder — one knob, additive ────────────────────────────────
        --radius shifts the whole window's roundness while the 4px differences between tiers

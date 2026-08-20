@@ -1256,6 +1256,12 @@ export class Sv3Main extends JfElement {
    * `--sv3-composer-occlusion` on its own host; custom properties inherit through shadow roots, so
    * the scroller resolves the same number the padding and scroll-padding above it resolve — one
    * measurement, three readers, no way for them to disagree.
+   *
+   * THE VALUE MUST BE AUTHORED IN px, and this `parseFloat` is why. `--sv3-composer-occlusion` is
+   * an UNREGISTERED custom property, so its computed value is the raw token stream with variables
+   * substituted — a length unit is never resolved. CSS handles `7rem` and `112px` identically;
+   * this line does not, and would silently read 7. The observer writes px, and the token sheet's
+   * default is pinned to px by `sv3-occlusion.test.ts` for exactly this reason.
    */
   private occludedEndPx(): number {
     const el = this.scroller;

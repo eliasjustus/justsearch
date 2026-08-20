@@ -50,7 +50,19 @@ export class Sv3ContextBar extends JfElement {
       /* Tempdoc 859 §B — the bar rides the window's floating '.dock', which is click-through so the
          transcript stays wheel-scrollable beneath it. This row carries real controls (the context
          meter, the hidden-turn act), so it takes pointer events back for exactly its own box — the
-         same division the composer's '.band' makes, at the same measure. */
+         same division the composer's '.band' makes, at the same measure.
+
+         AND IT NEEDS ITS OWN SURFACE. In the flow it sat on the window's own '--background' and its
+         contrast was a fixed, checkable pair. Floating, it sits over ARBITRARY SCROLLING CONTENT,
+         so a bare '--secondary-label' on transparency has no contrast floor at all — the text is
+         legible or not depending on which line of the transcript happens to be passing underneath.
+
+         The material is the composer's glass recipe, not a second one: the same
+         '--glass-blur-scale' multiplier drives the blur AND the fill's translucency, so
+         '[data-surface-mode=\"solid\"]' and 'prefers-reduced-transparency' degrade this strip and the
+         composer identically, from one source. Kept visually light — a small radius and a shallow
+         inset, because this is a meter strip, not a panel; it is the composer's box one notch down,
+         not a second kind of chrome. */
       .bar {
         pointer-events: auto;
         display: flex;
@@ -59,9 +71,29 @@ export class Sv3ContextBar extends JfElement {
         gap: var(--space-2);
         max-inline-size: 48rem;
         margin-inline: auto;
+        padding: var(--space-1) var(--space-3);
+        border-radius: var(--radius-lg);
+        background: color-mix(
+          in srgb,
+          var(--composer-glass-surface)
+            calc(100% - (100% - var(--glass-opacity)) * var(--glass-blur-scale)),
+          transparent
+        );
+        -webkit-backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale)))
+          saturate(var(--glass-saturation));
+        backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale)))
+          saturate(var(--glass-saturation));
         color: var(--secondary-label);
         font-size: var(--font-size-sv3-xs);
         font-variant-numeric: tabular-nums;
+      }
+      /* The mandatory companion to any glass surface in this window: where blur is unsupported the
+         fill goes opaque, because a translucent surface with nothing blurred behind it is
+         unreadable, not subtle. */
+      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+        .bar {
+          background: var(--composer-glass-surface);
+        }
       }
       .meter {
         display: flex;
