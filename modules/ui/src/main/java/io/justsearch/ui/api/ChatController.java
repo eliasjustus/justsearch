@@ -272,7 +272,9 @@ public final class ChatController {
    *       synthesized rows ENTIRELY rather than silently including them.
    *   <li><b>A conversation that exists in both records is listed ONCE</b>, as its store row: a mixed
    *       conversation (chat turns plus a delegate run) is store-backed, and its row keeps the full
-   *       action set.
+   *       action set. Membership is resolved against the STORE ({@link #hasStoreSession}), never
+   *       against the limited window this method just fetched — see that method for why the window is
+   *       the wrong authority.
    *   <li><b>{@code storeBacked: false}</b> on a synthesized row — a conditional key, like
    *       {@code title} / {@code parentSessionId} below, so absence keeps meaning what it always did.
    *       Every per-row action this list's consumers offer except discard (rename, branch,
@@ -338,14 +340,14 @@ public final class ChatController {
     if (agent == null) {
       return List.of();
     }
-    java.util.Set<Object> alreadyListed = new java.util.HashSet<>();
+    java.util.Set<Object> inThisWindow = new java.util.HashSet<>();
     for (Map<String, Object> row : storeRows) {
-      alreadyListed.add(row.get("sessionId"));
+      inThisWindow.add(row.get("sessionId"));
     }
     List<Map<String, Object>> rows = new ArrayList<>();
     for (Map<String, Object> run : agent.conversationSummaries(limit)) {
       Object conversationId = run.get("conversationId");
-      if (!(conversationId instanceof String id) || id.isBlank() || alreadyListed.contains(id)) {
+      if (!(conversationId instanceof String id) || id.isBlank() || hasStoreSession(id, inThisWindow)) {
         continue;
       }
       Map<String, Object> m = new LinkedHashMap<>();
@@ -359,6 +361,37 @@ public final class ChatController {
       rows.add(m);
     }
     return rows;
+  }
+
+  /**
+   * Does a {@code ConversationStore} session exist for {@code conversationId}? Asked of the STORE,
+   * not of the window {@link #handleListSessions} just fetched.
+   *
+   * <p>The window is the wrong authority and the difference is a real defect: a MIXED conversation —
+   * chat turns plus a delegate run — has a store row whose {@code lastActiveAtMs} froze at its last
+   * chat turn, so once the store holds more than {@code limit} conversations it can fall outside the
+   * window while its runs are the freshest thing on disk. Deduplicating against the window would then
+   * miss it, re-synthesize it as {@code storeBacked:false} carrying the RUN's timestamp — which sorts
+   * it to the top and past the re-limit — and the FE's known-row adoption would downgrade an open,
+   * renameable conversation to one that offers no rename. One direct lookup per candidate (at most
+   * {@code limit} of them) is what makes "listed once, as its store row" true for every conversation
+   * rather than only for the ones the window happened to include.
+   *
+   * <p>While the conversation store is sealed + locked this lookup RAISES rather than answering
+   * ({@code FileConversationStore.getSessionMeta} propagates {@code KeyLockedException} — the
+   * documented asymmetry with {@code listSessions}, which must keep listing). The list must not 423,
+   * so a locked store falls back to the window: renaming is impossible while locked anyway, and a
+   * degraded dedup is the honest answer when the store will not say what it holds.
+   */
+  private boolean hasStoreSession(String conversationId, java.util.Set<Object> inThisWindow) {
+    if (inThisWindow.contains(conversationId)) {
+      return true;
+    }
+    try {
+      return conversationStore.getSessionMeta(conversationId).isPresent();
+    } catch (io.justsearch.agent.api.encryption.KeyLockedException locked) {
+      return false;
+    }
   }
 
   private static long asMillis(Object value) {

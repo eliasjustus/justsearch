@@ -371,16 +371,17 @@ public final class AgentRunStore {
    *
    * <p>Runs are grouped by their persisted parent {@code conversationId} (the same join key
    * {@link #listRunIdsByConversation} uses), so N runs of one conversation are ONE row. The scan is
-   * lazy in the same sense {@link #listSessions} is: directories are visited newest-mtime first and
-   * the walk stops as soon as {@code limit} DISTINCT conversations have been seen, so a sidebar
-   * refresh reads on the order of {@code limit} metas rather than every run on disk.
+   * bounded the way {@link #listSessions} is: directories are visited newest-mtime first and the walk
+   * stops as soon as a {@code limit + 1}-th DISTINCT conversation is reached. The cost is therefore
+   * the RUNS in that window, not {@code limit} metas — a conversation with many runs makes the window
+   * wider — but it is still bounded by recency rather than by everything on disk.
    *
    * <p>Each row is {@code {conversationId, createdAtMs, lastActiveAtMs, firstUserMessage, runCount}}.
    * {@code createdAtMs} / {@code firstUserMessage} come from the OLDEST run seen for the conversation
    * (the request that opened it) and {@code lastActiveAtMs} from the newest — both bounded by the
    * scanned window, which is the same bound the row itself is under. There is deliberately no message
    * count: counting a conversation's turns means projecting its whole event stream per row, per list
-   * request, which would defeat the lazy limit this method is built around.
+   * request, which would defeat the recency bound this method is built around.
    *
    * <p>Sealed + locked ({@link #readMeta} returns null) lists NOTHING rather than failing — the same
    * documented degradation the rest of this store's read surface has (629).
@@ -482,6 +483,13 @@ public final class AgentRunStore {
    * list synthesizes from this store has no {@code ConversationStore} session to delete, so without
    * this the list would only ever grow. It is a real capability rather than a shim precisely because
    * this store owns those directories.
+   *
+   * <p><b>Every run of the conversation goes, whatever its shape</b> — agent runs, workflow runs,
+   * search events. That is deliberately BROADER than {@link #listConversations}, which lists agent
+   * runs only: deleting a conversation means destroying the conversation, and {@code GET
+   * /api/thread/{id}} projects EVERY shape joined on this {@code conversationId}. Filtering to the
+   * agent shape here would leave the thread endpoint serving content for a conversation the reader
+   * deleted and the list no longer shows — a deleted conversation that is still readable.
    *
    * <p>Fails CLOSED while sealed + locked: {@link #listRunIdsByConversation} reads each run's meta to
    * find the join key, and a locked store returns none — so nothing is deleted rather than

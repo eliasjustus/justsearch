@@ -95,6 +95,47 @@ final class ChatControllerConversationJoinTest {
   }
 
   @Test
+  @DisplayName("a mixed conversation OUTSIDE the store's window is still its store row, not a synthesized one")
+  void mixedConversationOutsideTheWindowIsNotDowngraded() {
+    // The dedup's authority is the STORE, not the window the list just fetched. A mixed conversation
+    // (chat turns + a delegate run) has a store row frozen at its last CHAT turn, so with more
+    // conversations than `limit` it falls out of the window while its runs are the freshest thing on
+    // disk. Deduplicating against the window would re-synthesize it storeBacked:false carrying the
+    // run's timestamp — which sorts it to the top, survives the re-limit, and makes the FE's
+    // known-row adoption downgrade an open, renameable conversation.
+    FakeStore store = new FakeStore();
+    store.create("uc-recent-1", 10L, 900L);
+    store.create("uc-recent-2", 10L, 800L);
+    store.create("uc-mixed", 10L, 5L); // real, but old: outside a limit-2 window
+    AgentService agent = agentWith(run("uc-mixed", 10L, 999L, "the delegate's prompt"));
+
+    JsonNode rows = list(store, agent, null, "2");
+
+    assertEquals(List.of("uc-recent-1", "uc-recent-2"), idsOf(rows));
+    assertFalse(
+        idsOf(rows).contains("uc-mixed"),
+        "and it certainly is not listed TWICE, nor at the top wearing the run's timestamp");
+    // The lookup is what makes that true: the window never held it.
+    assertTrue(store.metaLookups.contains("uc-mixed"), "membership was asked of the store");
+  }
+
+  @Test
+  @DisplayName("a locked store still lists rather than 423ing, degrading the dedup to the window")
+  void lockedStoreStillLists() {
+    // FileConversationStore.getSessionMeta propagates KeyLockedException while sealed+locked (the
+    // documented asymmetry with listSessions, which must keep listing). The list must not become a
+    // 423 because a delegate conversation exists.
+    FakeStore store = new FakeStore();
+    store.create("uc-1", 10L, 200L);
+    store.locked = true;
+    AgentService agent = agentWith(run("conv-delegate", 10L, 300L, "delegate"));
+
+    JsonNode rows = list(store, agent, null, null);
+
+    assertEquals(List.of("conv-delegate", "uc-1"), idsOf(rows));
+  }
+
+  @Test
   @DisplayName("limit applies per store, and the merged list is re-limited so the response respects it")
   void limitAppliesPerStoreAndTheMergeIsReLimited() {
     FakeStore store = new FakeStore();
@@ -271,8 +312,12 @@ final class ChatControllerConversationJoinTest {
   private static final class FakeStore implements ConversationStore {
     final List<SessionSummary> rows = new ArrayList<>();
     final List<String> deleted = new ArrayList<>();
+    /** Every id the controller asked the STORE about, so a test can prove the window was not used. */
+    final List<String> metaLookups = new ArrayList<>();
     String lastShapeId;
     int lastLimit;
+    /** Sealed + locked: getSessionMeta raises, listSessions keeps listing (FileConversationStore). */
+    boolean locked;
 
     void create(String sessionId, long createdAtMs, long lastActiveAtMs) {
       rows.add(
@@ -302,6 +347,8 @@ final class ChatControllerConversationJoinTest {
 
     @Override
     public Optional<SessionSummary> getSessionMeta(String sessionId) {
+      metaLookups.add(sessionId);
+      if (locked) throw new io.justsearch.agent.api.encryption.KeyLockedException();
       return rows.stream().filter(s -> s.sessionId().equals(sessionId)).findFirst();
     }
 
