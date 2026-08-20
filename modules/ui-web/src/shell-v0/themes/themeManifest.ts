@@ -29,6 +29,16 @@ export interface ThemeManifestEntry {
   readonly cssPath: string;
   readonly author?: string;
   readonly version?: string;
+  /**
+   * Tempdoc 855 §15.3 — optional declared swatch colors for the settings theme-picker grid.
+   * Presentation metadata belongs in the artifact's own declaration (the `labelKey`/`present()`
+   * philosophy), NOT derived at runtime by fetching + regexing the theme's CSS. Authored to match
+   * the theme's own surface/accent tokens; a theme without this field renders a neutral tile.
+   */
+  readonly swatch?: {
+    readonly surface: string;
+    readonly accent: string;
+  };
 }
 
 export interface ThemeManifest {
@@ -117,6 +127,20 @@ export function validateThemeManifest(
     }
     if (e['version'] !== undefined && typeof e['version'] !== 'string') {
       errors.push(`${path}.version must be a string when present`);
+    }
+    if (e['swatch'] !== undefined) {
+      const sw = e['swatch'];
+      if (sw === null || typeof sw !== 'object') {
+        errors.push(`${path}.swatch must be an object when present`);
+      } else {
+        const s = sw as Record<string, unknown>;
+        if (typeof s['surface'] !== 'string' || s['surface'].length === 0) {
+          errors.push(`${path}.swatch.surface must be a non-empty string`);
+        }
+        if (typeof s['accent'] !== 'string' || s['accent'].length === 0) {
+          errors.push(`${path}.swatch.accent must be a non-empty string`);
+        }
+      }
     }
   });
 

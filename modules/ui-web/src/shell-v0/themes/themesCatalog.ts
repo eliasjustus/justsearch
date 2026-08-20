@@ -41,6 +41,16 @@ export interface ThemeCatalogEntry {
    * exclusive with `cssPath`.
    */
   readonly tokens?: DesignTokenTree;
+  /**
+   * Tempdoc 855 §15.3 — optional declared swatch colors for the settings theme-picker grid
+   * (mirrors `ThemeManifestEntry.swatch`; threaded through by the manifest→catalog mapping in
+   * `main.jsx`). A built-in without this, or a custom theme, renders a neutral tile / derives from
+   * its own token tree (see `SettingsSurface.themeSwatchFor`).
+   */
+  readonly swatch?: {
+    readonly surface: string;
+    readonly accent: string;
+  };
 }
 
 /**
@@ -54,12 +64,14 @@ export const BUILT_IN_THEMES: readonly ThemeCatalogEntry[] = [
     displayName: 'Nord',
     description: 'Cool blues and grays inspired by the Nord palette',
     cssPath: '/themes/core.nord.css',
+    swatch: { surface: '#2e3440', accent: '#88c0d0' },
   },
   {
     id: 'core.sepia-focus',
     displayName: 'Sepia Focus',
     description: 'Warm sepia tones for low-contrast reading',
     cssPath: '/themes/core.sepia-focus.css',
+    swatch: { surface: '#f5ead8', accent: '#b88a3e' },
   },
 ];
 

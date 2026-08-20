@@ -421,6 +421,9 @@ async function bootstrap() {
         displayName: t.displayName,
         description: t.description ?? '',
         cssPath: t.cssPath,
+        // Tempdoc 855 §15.3 — thread the manifest's declared swatch through to the catalog entry
+        // the settings theme-picker grid reads (undefined when the manifest entry omits it).
+        ...(t.swatch !== undefined ? { swatch: t.swatch } : {}),
       })))
     }
   } catch {
@@ -437,10 +440,17 @@ async function bootstrap() {
     // the single appearance writer, so they survive a reload even if the
     // Settings surface never mounts.
     await restoreAppearanceOnBoot()
-    // 569 §19 Seam 4 — re-project the persisted adaptation profile (contrast/motion) AFTER the legacy
-    // appearance, so an explicitly-set axis wins. Density already threads via userConfig.
-    const { restoreAdaptationProfileOnBoot } = await import('./shell-v0/state/adaptationProfile.ts')
+    // 569 §19 Seam 4 — re-project the persisted adaptation profile (motion) AFTER the appearance.
+    // Density already threads via userConfig.
+    const { restoreAdaptationProfileOnBoot, migrateLegacyContrastPreference } = await import(
+      './shell-v0/state/adaptationProfile.ts'
+    )
     restoreAdaptationProfileOnBoot()
+    // Tempdoc 855 §17 R1 — contrast is no longer a profile axis; hand a pre-existing FE-local
+    // preference to the canonical backend field ONCE. Runs here because both values are known and
+    // restoreAppearanceOnBoot has already applied the canonical one (which this may overturn).
+    // No-ops without a network call once migrated.
+    await migrateLegacyContrastPreference()
   } catch {
     // ignore — theme restoration is best-effort
   }

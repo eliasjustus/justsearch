@@ -299,4 +299,56 @@ describe('resourceCatalog', () => {
       expect(mod.localizeResourceKey('legacy.key')).toBe('legacy.key');
     });
   });
+
+  // Tempdoc 855 fix-round F2 (S2) — the subscription API a mounted consumer (SettingsNav,
+  // SettingsSurface) uses to re-render once a late-arriving catalog fetch resolves a key that was
+  // still rendering the raw fallback at mount time.
+  describe('onCatalogUpdated (855 fix-round F2 S2)', () => {
+    it('notifies a subscriber after __seedForTest merges new keys', async () => {
+      const mod = await import('./resourceCatalog');
+      mod.__resetForTest();
+      const calls: number[] = [];
+      const unsubscribe = mod.onCatalogUpdated(() => calls.push(1));
+      mod.__seedForTest({ 'a.label': 'A' });
+      expect(calls.length).toBe(1);
+      unsubscribe();
+    });
+
+    it('unsubscribe stops further notifications', async () => {
+      const mod = await import('./resourceCatalog');
+      mod.__resetForTest();
+      const calls: number[] = [];
+      const unsubscribe = mod.onCatalogUpdated(() => calls.push(1));
+      unsubscribe();
+      mod.__seedForTest({ 'a.label': 'A' });
+      expect(calls.length).toBe(0);
+    });
+
+    it('notifies after a bootMessageCatalog-family fetch merges (e.g. bootWorkflowCatalog)', async () => {
+      const mod = await import('./resourceCatalog');
+      mod.__resetForTest();
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ messages: { 'registry-workflow.demo.label': 'Demo' } }),
+      }) as unknown as typeof fetch;
+      const calls: number[] = [];
+      const unsubscribe = mod.onCatalogUpdated(() => calls.push(1));
+      await mod.bootWorkflowCatalog('http://localhost:1234');
+      expect(calls.length).toBe(1);
+      expect(mod.localizeResourceKey('registry-workflow.demo.label')).toBe('Demo');
+      unsubscribe();
+    });
+
+    it('a failed fetch does not notify', async () => {
+      const mod = await import('./resourceCatalog');
+      mod.__resetForTest();
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 }) as unknown as typeof fetch;
+      const calls: number[] = [];
+      const unsubscribe = mod.onCatalogUpdated(() => calls.push(1));
+      await mod.bootWorkflowCatalog('http://localhost:1234');
+      expect(calls.length).toBe(0);
+      unsubscribe();
+    });
+  });
 });

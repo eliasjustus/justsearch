@@ -26,8 +26,10 @@ import { deriveForeground, formatRatio, WCAG_AAA, apcaLc, APCA_SOFT } from '../.
 
 /**
  * The host API, captured in `register()` and read by the element instances (the browser constructs
- * <token-editor-panel> later, on rail navigation, with no constructor args — this module-level binding
- * is how the panel reaches the capability). `register()` runs at boot, before any surface mounts.
+ * <token-editor-panel> later, on deep-link/settings-link navigation (855 P3a moved this off the rail —
+ * placement RAIL→DEEPLINK, launched from the Appearance sub-anchor's link), with no constructor args —
+ * this module-level binding is how the panel reaches the capability). `register()` runs at boot, before
+ * any surface mounts.
  */
 let host: PluginHostApi | null = null;
 
@@ -455,7 +457,9 @@ class TokenEditorPanel extends HTMLElement {
   }
 }
 
-/** The plugin's single RAIL surface. Reused by `capabilities.surfaces` + the register contribution. */
+/** The plugin's single surface — DEEPLINK, not RAIL (tempdoc 855 §5 item 2: a design tool, not a
+ *  daily destination; reachable via the *General → Appearance* settings link + command palette).
+ *  Reused by `capabilities.surfaces` + the register contribution. */
 const SURFACE: PluginSurfaceContribution = {
   // Surface ids must be `vendor.<x>.<y>` (or `core.<y>`) to satisfy the router's SurfaceRef id regex
   // (`^(core|vendor\.[a-z][a-z0-9-]*)\.[a-z][a-z0-9-]*$`) — otherwise the surface is admitted but not
@@ -465,7 +469,7 @@ const SURFACE: PluginSurfaceContribution = {
   labelKey: 'surface.token-editor.label',
   descriptionKey: 'surface.token-editor.description',
   audience: 'USER',
-  placement: 'RAIL',
+  placement: 'DEEPLINK',
 };
 
 export const TOKEN_EDITOR_PLUGIN_ID = 'token-editor';

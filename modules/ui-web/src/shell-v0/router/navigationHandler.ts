@@ -48,7 +48,7 @@ import { coerceAndValidate } from './stateValidator.js';
 import { getSurfaceStateSchema, resolveSurfaceStateSchema } from './surfaceSchemas.js';
 import type { StoreAdapter } from './storeRegistry.js';
 import type { ShellAddressNavigation, StateSnapshot } from './types.js';
-import { activateProjection, pushAddress } from './URLProjector.js';
+import { activateProjection, currentAddress, pushAddress } from './URLProjector.js';
 
 /** Callback the Shell exposes for setting its active surface. */
 export type SetActiveSurfaceFn = (surfaceId: string) => void;
@@ -56,12 +56,42 @@ export type SetActiveSurfaceFn = (surfaceId: string) => void;
 /** Callback the Shell exposes for checking whether a surfaceId is in the active rail set. */
 export type IsKnownSurfaceFn = (surfaceId: string) => boolean;
 
+/**
+ * Callback the Shell exposes for looking up a target's declared placement.
+ * `ShellAddress` carries no placement (types.ts), so the handler receives the
+ * lookup by injection — the same shape as {@link IsKnownSurfaceFn}.
+ */
+export type GetPlacementFn = (surfaceId: string) => string | undefined;
+
+/**
+ * Report of what the MODAL branch did to history before opening the window.
+ *
+ * `pushed` is the load-bearing bit: the window's close routine can only unwind with
+ * `history.back()` when this navigation actually ADDED an entry. A boot/deep-link entry (the URL
+ * already IS the settings address) and a repeat navigation while the window is open both push
+ * nothing, so closing must move FORWARD to the stage address instead (tempdoc 855 §11.1 D3/D4).
+ */
+export interface OpenModalInfo {
+  readonly pushed: boolean;
+}
+
+/** Callback the Shell exposes for opening a MODAL-placement target as a window. */
+export type OpenModalFn = (
+  surfaceId: string,
+  state: Record<string, unknown> | undefined,
+  info: OpenModalInfo,
+) => void;
+
 /** Unknown-surface recovery handler. */
 export type OnUnknownSurfaceFn = (surfaceId: string) => void;
 
 export interface NavigationHandlerConfig {
   setActiveSurface: SetActiveSurfaceFn;
   isKnownSurface: IsKnownSurfaceFn;
+  /** Optional — absent lookup means every target takes the normal (stage-mounting) path. */
+  getPlacement?: GetPlacementFn;
+  /** Optional — absent opener means a MODAL target still pushes its URL but shows nothing. */
+  openModal?: OpenModalFn;
   /** Optional — defaults to a console.warn. */
   onUnknownSurface?: OnUnknownSurfaceFn;
 }
@@ -98,6 +128,44 @@ export function createNavigationHandler(config: NavigationHandlerConfig): Naviga
     ): Promise<void> {
       if (!config.isKnownSurface(addr.target)) {
         onUnknown(addr.target);
+        return;
+      }
+
+      // 0. MODAL placement (tempdoc 855 §11.1) — the target opens as a window
+      //    OVER the current stage surface instead of replacing it. Two skips
+      //    below are load-bearing, not stylistic:
+      //
+      //      • setActiveSurface — Shell.render()'s catalog-wide surface fallback
+      //        is NOT placement-filtered, so a changed activeId would ALSO mount
+      //        the surface standalone into the Stage.
+      //      • activateProjection — it tears the CURRENT surface's URL projection
+      //        down BEFORE its own schema check (URLProjector), so calling it for
+      //        a schema-less MODAL target would silently kill the underlying
+      //        stage surface's live URL sync. The projector's single-slot design
+      //        assumes one URL-owning surface; MODAL targets stay outside it.
+      //
+      //    applyState still runs (forward-safe: a no-op while the target has no
+      //    schema) and pushAddress still runs when it would ADD an entry, so the
+      //    window's URL is bookmarkable and Back is meaningful. Whether an entry
+      //    was added is reported to the opener as `info.pushed` — the Shell needs
+      //    it because `history.back()` is only a valid close when this navigation
+      //    is what put the settings address on the stack (855 §11.1 D3/D4).
+      if (config.getPlacement?.(addr.target) === 'MODAL') {
+        applyState(addr.target, addr.state);
+        // Tempdoc 855 §11.1 D3 — never stack a SECOND entry for the address we are already on.
+        // Re-navigating to Settings (rail affordance pressed twice, a command-palette repeat) would
+        // otherwise push a duplicate entry, and the window's `history.back()` would land back on the
+        // settings address — i.e. Escape would appear to re-open the window.
+        const alreadyHere = currentAddress()?.target === addr.target;
+        const pushed = options?.push !== false && !alreadyHere;
+        if (pushed) {
+          pushAddress({
+            kind: 'navigate',
+            target: addr.target,
+            state: addr.state,
+          });
+        }
+        config.openModal?.(addr.target, addr.state, { pushed });
         return;
       }
 
