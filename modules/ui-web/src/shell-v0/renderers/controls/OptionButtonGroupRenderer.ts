@@ -197,7 +197,7 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
       display: flex;
       border-radius: 50%;
       background: var(--surface-primary);
-      color: var(--accent-tint);
+      color: var(--text-tint);
     }
     .option-btn.option-btn-swatch .option-label {
       margin-top: 0;

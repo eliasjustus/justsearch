@@ -607,7 +607,7 @@ export class SettingsSurface extends JfElement {
       display: flex;
       border-radius: 50%;
       background: var(--surface-primary);
-      color: var(--accent-tint);
+      color: var(--text-tint);
     }
     .theme-tile-label {
       margin-top: 0.375rem;
