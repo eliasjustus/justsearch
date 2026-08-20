@@ -1,7 +1,7 @@
 ---
 number: 855
 title: Settings window — Discord-2025 centered-modal pattern + rail slimming
-status: implemented — P0-P4 + closure remediation (§12) + owner-feedback content remediation R1-R3 + final fix round (§13-§18) shipped on worktree-855-settings-window; canonical docs updated; awaiting owner on D1 (Brain) and the PR/merge go-ahead; residuals in §12 and §18 final entries
+status: merged — shipped to main 2026-08-20 as PR #527 (squash dbe3314d), public CI green; D1 (Brain absorption) remains OPEN for the owner; residuals and follow-ups in §12/§18 and the observations inbox
 created: 2026-08-19
 updated: 2026-08-19
 charter: replace the in-Stage settings page with a Discord-style categorized settings window, and decide which main-window chrome items relocate into it
