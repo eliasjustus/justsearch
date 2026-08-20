@@ -23,9 +23,25 @@ export interface Conversation {
   titleSource: ConversationTitleSource | null;
   createdAt: number;
   lastActiveAt: number;
-  messageCount: number;
+  /**
+   * Tempdoc 859 slice C PR-2 — OPTIONAL, because the endpoint now lists conversations from two
+   * records and only one of them can count messages cheaply. A run-backed (delegate) conversation
+   * omits the field: deriving a count for it means projecting its whole event stream per row per
+   * request. `undefined` is "not told" and renders as no count — never as zero, which would be a
+   * claim that the conversation is empty.
+   */
+  messageCount?: number;
   firstUserMessage: string;
   shapeId: string;
+  /**
+   * Tempdoc 859 slice C PR-2 — does a `ConversationStore` session back this row? Absent on the wire
+   * means yes (the conditional-key idiom `title` / `parentSessionId` already use), so every row that
+   * predates the two-store join keeps its meaning. `false` marks a conversation that exists only as
+   * agent runs: its id is real and its transcript is served by `GET /api/thread/{id}`, but every
+   * per-row action that writes to a store session — rename, branch, context-floor, compact, exclude —
+   * has nothing to write to. Delete DOES work: the endpoint deletes the conversation's runs.
+   */
+  storeBacked: boolean;
   // Slice 513 — branching: when this conversation was forked from another,
   // parentSessionId points at the source and branchPointMessageId records
   // the last message included from the parent. Both omitted on root sessions.
@@ -181,9 +197,12 @@ export async function loadConversations(): Promise<void> {
         titleSource: readTitleSource(s),
         createdAt: s.createdAtMs as number,
         lastActiveAt: s.lastActiveAtMs as number,
-        messageCount: s.messageCount as number,
+        messageCount: typeof s.messageCount === 'number' ? s.messageCount : undefined,
         firstUserMessage: s.firstUserMessage as string,
         shapeId: s.shapeId as string,
+        // Absent means store-backed: only a row the endpoint SYNTHESISED from the agent-run record
+        // carries the key, and it carries it as `false`.
+        storeBacked: s.storeBacked !== false,
         parentSessionId: typeof s.parentSessionId === 'string'
           ? (s.parentSessionId as string)
           : undefined,

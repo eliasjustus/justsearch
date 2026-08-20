@@ -731,6 +731,11 @@ public final class AgentLoopService implements AgentService {
   }
 
   @Override
+  public List<Map<String, Object>> conversationSummaries(int limit) {
+    return queries.conversationSummaries(limit);
+  }
+
+  @Override
   public Map<String, Object> sessionSnapshot(String sessionId) {
     return queries.sessionSnapshot(sessionId);
   }
@@ -774,6 +779,11 @@ public final class AgentLoopService implements AgentService {
   @Override
   public String appendSearchEvent(String conversationId, Map<String, Object> attributes) {
     return runStore.appendSearchEvent(conversationId, attributes);
+  }
+
+  @Override
+  public int deleteConversationRuns(String conversationId) {
+    return runStore.deleteConversationRuns(conversationId);
   }
 
   @Override

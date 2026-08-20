@@ -37,6 +37,7 @@ function conv(id: string, opts: Partial<Conversation> = {}): Conversation {
     messageCount: 0,
     firstUserMessage: '',
     shapeId: 'core.rag-ask',
+    storeBacked: true,
     ...opts,
   };
 }
@@ -612,5 +613,50 @@ describe('tempdoc 835 §10f — auto-title generation is plumbing, not an answer
     const dispatch = calls.find((c) => c.url.includes('/api/chat/dispatch'));
     expect(dispatch).toBeDefined();
     expect(JSON.parse(dispatch!.body).enableThinking).toBe(false);
+  });
+});
+
+describe('tempdoc 859 slice C PR-2 — the list joins a second record, so a row can be run-backed', () => {
+  beforeEach(() => {
+    __resetConversationListForTest();
+    setConversationApiBase('');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reads a synthesized delegate row without inventing a message count', async () => {
+    mockFetch(() =>
+      jsonResponse({
+        sessions: [
+          {
+            sessionId: 'conv-delegate',
+            shapeId: 'core.agent-run',
+            createdAtMs: 5,
+            lastActiveAtMs: 9,
+            firstUserMessage: 'summarise the renewal folder',
+            storeBacked: false,
+          },
+        ],
+      }),
+    );
+    await loadConversations();
+
+    const c = getConversationListState().conversations[0];
+    expect(c?.id).toBe('conv-delegate');
+    expect(c?.storeBacked).toBe(false);
+    // Absent, not zero: "0 messages" on a conversation with a full transcript would be a claim, and
+    // a wrong one. The row renders no count at all.
+    expect(c?.messageCount).toBeUndefined();
+  });
+
+  it('treats a row with no storeBacked key as store-backed, so every existing row is unchanged', async () => {
+    mockFetch(() => jsonResponse({ sessions: [wireRow('uc-a')] }));
+    await loadConversations();
+
+    const c = getConversationListState().conversations[0];
+    expect(c?.storeBacked).toBe(true);
+    expect(c?.messageCount).toBe(2);
   });
 });
