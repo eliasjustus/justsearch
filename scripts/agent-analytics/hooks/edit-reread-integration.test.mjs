@@ -53,6 +53,10 @@ fs.writeFileSync(fileB, '# copy under root B\n');
 
 const sessionId = `edit-reread-e2e-${process.pid}-${Date.now()}`;
 const cacheFile = path.join(telemetryDir, `read-counts-${sessionId}.json`);
+// The real intervene.mjs subprocess below creates telemetryDir as a side effect of its
+// production write path — don't leave an empty dir behind for a fresh checkout/worktree
+// that never had one.
+const telemetryDirPreexisted = fs.existsSync(telemetryDir);
 
 try {
   run('real Read of file A through the actual intervene.mjs subprocess succeeds', () => {
@@ -120,6 +124,9 @@ try {
   fs.rmSync(cacheFile, { force: true });
   fs.rmSync(rootA, { recursive: true, force: true });
   fs.rmSync(rootB, { recursive: true, force: true });
+  if (!telemetryDirPreexisted) {
+    try { fs.rmdirSync(telemetryDir); } catch { /* not empty — another writer landed there first, leave it */ }
+  }
 }
 
 // --- Report ---

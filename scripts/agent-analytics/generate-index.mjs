@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Generate a session index — aggregate session reports, scores, and costs
- * into a sortable summary JSON.
+ * Generate a session index — aggregate session reports and costs into a
+ * sortable summary JSON.
  *
  * Usage:
  *   node generate-index.mjs             # Generate session-index.json
@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  TELEMETRY_DIR, SESSIONS_DIR, SCORES_FILE, COSTS_FILE,
+  TELEMETRY_DIR, SESSIONS_DIR, COSTS_FILE,
   repoRoot, loadNdjsonMap, round,
 } from './lib/telemetry-io.mjs';
 
@@ -20,7 +20,6 @@ const INDEX_FILE = 'session-index.json';
 
 function buildIndex() {
   const sessionsDir = path.join(repoRoot, TELEMETRY_DIR, SESSIONS_DIR);
-  const scores = loadNdjsonMap(path.join(repoRoot, TELEMETRY_DIR, SCORES_FILE));
   const costs = loadNdjsonMap(path.join(repoRoot, TELEMETRY_DIR, COSTS_FILE));
 
   const entries = [];
@@ -38,7 +37,6 @@ function buildIndex() {
       if (report.schema !== 'agent-session-report.v1') continue;
 
       const sid = report.session_id;
-      const score = scores.get(sid);
       const cost = costs.get(sid);
 
       entries.push({
@@ -50,9 +48,6 @@ function buildIndex() {
         failure_count: report.tool_calls?.failure_count ?? 0,
         compactions: report.compactions?.count ?? 0,
         subagents: report.subagents?.count ?? 0,
-        score: score?.score ?? null,
-        flags: score?.flags ?? [],
-        anomalies_count: score?.anomalies?.length ?? 0,
         cost_usd: cost?.total_cost_usd ?? null,
         compaction_rereads: report.compaction_rereads?.total_rereads ?? null,
         failure_cascades: report.failure_cascades?.count ?? null,
@@ -99,11 +94,8 @@ function main() {
   console.log(`Session Index: ${entries.length} sessions\n`);
   for (const e of entries) {
     const sid = e.session_id.substring(0, 8);
-    const score = e.score != null ? `${e.score}/100` : 'N/A';
     const cost = e.cost_usd != null ? `$${e.cost_usd.toFixed(2)}` : '';
-    const flags = e.flags.length > 0 ? ` [${e.flags.join(', ')}]` : '';
-    const anomalies = e.anomalies_count > 0 ? ` {${e.anomalies_count}a}` : '';
-    console.log(`  ${sid}  ${score}  ${e.duration_hours}h  ${cost}${flags}${anomalies}`);
+    console.log(`  ${sid}  ${e.duration_hours}h  ${cost}`);
   }
 
   console.log(`\nWritten to ${path.join(TELEMETRY_DIR, INDEX_FILE)}`);

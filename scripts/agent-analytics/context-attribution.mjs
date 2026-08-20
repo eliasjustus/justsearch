@@ -25,14 +25,13 @@ import {
 const DEFAULT_TOP = 10;
 
 // --- Sufficiency floors (tempdoc 858 §6) -----------------------------------
-// Modelled on scripts/ci/check-agent-quality-trend.mjs: an `insufficient`
-// boolean computed from the window, surfaced prominently, and a CONCLUSION that
-// requires !insufficient while the underlying counts stay visible. Declared as
-// constants rather than in a data file because — unlike that check's
-// `min_sessions`, which travels with recalibratable baselines and tolerances —
-// these are fixed properties of the estimator and do not move as the population
-// grows. In-lane precedent for a declared floor: `MIN_TOOL_CALLS` and
-// `detectAnomalies`' own `MIN_SESSIONS`, both in score-session.mjs.
+// An `insufficient` boolean computed from the window, surfaced prominently, and
+// a CONCLUSION that requires !insufficient while the underlying counts stay
+// visible. Declared as constants rather than in a data file because these are
+// fixed properties of the estimator and do not move as the population grows —
+// unlike a recalibratable baseline with tolerances, which is what the retired
+// `check-agent-quality-trend.mjs` carried its own floor in (tempdoc 858 §4.5).
+// In-lane precedent for a declared floor: `MIN_TOOL_CALLS` in analyze-trends.mjs.
 
 /**
  * Aggregate mode summarises each category as a median with a [P25–P75] band.
