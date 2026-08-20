@@ -12,6 +12,18 @@ Two kinds of thing live here:
 [`/MAINTAINING.md`](../../MAINTAINING.md)). The analytics tooling is maintainer-only and is not
 wired to run on a fresh clone; telemetry capture is local-only and never leaves the machine.
 
+## Retired: process-hygiene scoring (PHI)
+
+`score-session.mjs`, `correlate-signals.mjs`, `scores.ndjson` and
+`scripts/ci/check-agent-quality-trend.mjs` are **gone** (tempdoc 858 §7). Session *reports* stay —
+only the composite score on top of them retired. **Read
+[`docs/explanation/21-agent-analytics-pipeline.md` § Retired: process-hygiene
+scoring](../../docs/explanation/21-agent-analytics-pipeline.md#retired-process-hygiene-scoring)
+before proposing a new per-session quality score**: it carries what the old one measured
+(composite r = 0.064 at N = 116, tempdoc 277 §C4, against real per-type signal-level effects),
+why the composite is the part that failed, and the caveat that the signal definitions drifted
+afterwards so those numbers no longer describe a runnable metric.
+
 ## Signature census (743 P-L)
 
 `mine-friction.mjs`/`analyze-session.mjs` (the alive 727 friction-mining pass) judge whole

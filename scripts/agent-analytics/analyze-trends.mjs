@@ -23,9 +23,11 @@ const MIN_TOOL_CALLS = 10; // Skip ephemeral sessions
 
 /**
  * Sessions needed before this report may state a CROSS-SESSION verdict
- * (tempdoc 858 §6), modelled on check-agent-quality-trend.mjs:53,70,76,103 —
- * an `insufficient` boolean from the window size, surfaced prominently, gating
- * the conclusion while every count and mean still prints.
+ * (tempdoc 858 §6): an `insufficient` boolean computed from the window size,
+ * surfaced prominently, gating the CONCLUSION while every count and mean still
+ * prints. Refusing to run throws away readable data; refusing to conclude does
+ * not. (The shape was taken from `check-agent-quality-trend.mjs`, retired with
+ * process-hygiene scoring in tempdoc 858 §4.5 — the shape outlived its origin.)
  *
  * Derived from what the report claims rather than chosen: every verdict here is
  * of the form "agents do X", generalised from a pattern holding across the
@@ -36,8 +38,6 @@ const MIN_TOOL_CALLS = 10; // Skip ephemeral sessions
  *
  * MIN_TOOL_CALLS above is the same idea one level down — it gates a session as
  * too small to describe, this gates a window as too small to generalise from.
- * The lane's other cross-session instrument independently landed on the same
- * floor (`min_sessions: 5` in scripts/ci/agent-quality-baselines.v1.json).
  *
  * Applies per ARM in --cutoff mode: each arm is its own computeTrends call, and
  * a delta between two arms is not a measurement if either side is below it.

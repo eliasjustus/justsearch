@@ -3,8 +3,9 @@
 /**
  * Session analyzer for agent telemetry data.
  *
- * Reads events from tmp/agent-telemetry/events.ndjson and generates
- * per-session reports matching the schema in tempdoc-118.
+ * Reads events from tmp/agent-telemetry/events.ndjson and generates per-session
+ * reports. The emitted shape is documented in
+ * `docs/explanation/21-agent-analytics-pipeline.md` § Session Report Schema (v1).
  *
  * Usage:
  *   node analyze-session.mjs --list              # List available sessions
@@ -325,7 +326,7 @@ function estimateDataCompleteness(sessionId, events, hookToolCallCount) {
   }
 }
 
-// --- Task-type classification (Tier 2b #16 from tempdoc 118) ---
+// --- Task-type classification ---
 
 /**
  * Classify session task type from git commits within the session time window.
@@ -333,7 +334,7 @@ function estimateDataCompleteness(sessionId, events, hookToolCallCount) {
  * a 60% dominance threshold. Returns structured object with type, count, and
  * prefix breakdown for future within-type normalization.
  */
-// --- Phase 1 enrichment functions (Items 2, 3, 7, 8 from tempdoc 118) ---
+// --- Phase 1 enrichment functions ---
 
 /**
  * Detect files re-read after compaction events (context loss measurement).
@@ -393,8 +394,7 @@ function analyzeCompactionRereads(events) {
 
 /**
  * Detect tool failure cascades — sequences of 3+ failures within 60 seconds.
- * Excludes user interrupts. Non-overlapping cascades (same pattern as
- * rapid-reedit detection in score-session.mjs).
+ * Excludes user interrupts. Non-overlapping cascades.
  */
 function detectFailureCascades(events) {
   const CASCADE_WINDOW_MS = 60_000;
@@ -912,7 +912,7 @@ function analyzeSession(sessionId, events) {
     // First user prompt excerpt for classification (tempdoc 276 G2)
     first_prompt: events.find(e => e.event === 'user_prompt_submit' && e.prompt_excerpt)?.prompt_excerpt ?? null,
 
-    // Phase 1 enrichments (tempdoc 118 roadmap)
+    // Phase 1 enrichments
     compaction_rereads: analyzeCompactionRereads(events),
     failure_cascades: detectFailureCascades(events),
     context_efficiency: analyzeContextEfficiency(events, fileEditMap),
