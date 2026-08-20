@@ -173,6 +173,10 @@ export const CROSS_ENCODER_SKIP_WORDING: Record<string, string> = {
   DEADLINE_EXCEEDED: 'Relevance re-ranking ran out of time — results are ranked without it',
   RPC_FAILED: 'Relevance re-ranking was unavailable — results are ranked without it',
   MODEL_NOT_LOADED: 'Relevance re-ranking model was not loaded — results are ranked without it',
+  // Register F-054: split out of DEADLINE_EXCEEDED. The model was reached and failed (an ONNX
+  // Runtime out-of-memory, a dead session) — saying "ran out of time" pointed at a knob that
+  // cannot fix it, and pointed the user at their own patience instead of a real fault.
+  INFERENCE_FAILED: 'Relevance re-ranking failed to run — results are ranked without it',
   UNKNOWN: 'Relevance re-ranking was skipped — results are ranked without it',
 };
 

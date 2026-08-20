@@ -61,7 +61,24 @@ pool"; charter the levers below.
    behavior is byte-identical), + a regression test pinning byte-identical fusion at
    defaults. No baseline can move (defaults unchanged); the point is that the next
    experiment can turn one knob without turning two.
-2. **W2 — depth levers, measured before designed.** The candidate levers for the F-051
+2. **W2 — depth levers, measured before designed. ✦ (a)+(b) MEASURED 2026-08-19 — BOTH
+   PARKED per the pre-registered rule; full record in register F-055.** (a) pool `top_n` is
+   structurally unraisable as shipped: it is splice-coupled to the shared `limit`
+   (`spliceRecallComplete`'s `keepFused = max(0, limit − missing)`), so 10→20 DISCARDS the
+   fused prefix (legal −0.263, enron −0.421, leak 4-11× with legs unchanged) — a coupling
+   defect, not a tuning result. (b) window 20→50 wins enron/scifact ≈2σ but regresses legal
+   −0.030 at +158-169% CE p50 — fails the no-regression rule; and `JUSTSEARCH_RERANK_TOP_K`
+   is an impure knob (also moves worker `searchLimit` for every mode). **New W2-fix items
+   this measurement charters:** (i) guard or decouple the `top_n`/`limit` splice coupling
+   (fail-fast or independent bound — same wrong-gate class as W1); (ii) jseval support for
+   `PipelineConfig.crossEncoderWindow` so the clean window lever is measurable; (iii) only
+   after (i)+(ii): the pool-20-at-window-50 headroom arm (side-evidence ≈neutral). (c)
+   pool-aware arbitration tightening remains unmeasured. Bonus live datapoint recorded in
+   F-055: fusion-order delivery beats the CE on legal by +0.10-0.13 in-engine — feeds the
+   F-053 upgrade decision toward per-query CE confidence gating (F-026's floor). Deadline
+   half of the campaign: register F-054 (the "deadline" is a pre-check; miss rate 0-2% CPU
+   jitter; DEADLINE_EXCEEDED mislabel chartered for a fix). Original W2 text follows:**
+   The candidate levers for the F-051
    leak class, each a config-only A/B on the corrected harness (shared-index method, F-052
    discipline incl. ce_coverage): (a) recall-complete `top_n` 10 → deeper (cost: CE window
    growth — the CE is ~82% of query latency, so pair every quality delta with the perf-gate
