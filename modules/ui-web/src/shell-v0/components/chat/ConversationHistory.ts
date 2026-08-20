@@ -252,7 +252,9 @@ export class ConversationHistory extends JfElement {
       <div class="item-row">
         <button class="item" @click=${() => this.onSelect(c)}>
           <div class="item-title">${branchMark}${title}</div>
-          <div class="item-meta">${c.messageCount} messages · ${relativeTime(c.lastActiveAt)}</div>
+          <div class="item-meta">
+            ${c.messageCount === undefined ? nothing : `${c.messageCount} messages · `}${relativeTime(c.lastActiveAt)}
+          </div>
         </button>
         <button class="item-delete" title="Delete conversation" @click=${(e: Event) => this.onDelete(c, e)}>×</button>
       </div>

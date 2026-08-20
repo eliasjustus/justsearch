@@ -468,6 +468,7 @@ describe('the empty states are one pattern in two regions', () => {
             pinned: false,
             unread: false,
             live: false,
+            storeBacked: true,
           },
         ],
       },

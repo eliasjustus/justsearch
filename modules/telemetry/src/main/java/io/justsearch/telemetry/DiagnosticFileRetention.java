@@ -71,7 +71,7 @@ public final class DiagnosticFileRetention {
         try {
           BasicFileAttributes attrs = Files.readAttributes(dir, BasicFileAttributes.class);
           if (attrs.lastModifiedTime().toInstant().isBefore(cutoff)) {
-            deleteRecursively(dir);
+            deleteDirectoryTree(dir);
             deleted++;
           }
         } catch (IOException ignored) {
@@ -84,7 +84,13 @@ public final class DiagnosticFileRetention {
     return deleted;
   }
 
-  private static void deleteRecursively(Path root) throws IOException {
+  /**
+   * Delete one directory tree. Exposed (tempdoc 859 slice C PR-2) so a caller that deletes a run
+   * directory by IDENTITY rather than by age — {@code AgentRunStore.deleteConversationRuns}, the
+   * capability behind a synthesized sidebar row's discard — removes it through the SAME walk this
+   * class's age-based prune uses, instead of minting a third copy of the delete-a-tree loop.
+   */
+  public static void deleteDirectoryTree(Path root) throws IOException {
     Files.walkFileTree(
         root,
         new SimpleFileVisitor<>() {

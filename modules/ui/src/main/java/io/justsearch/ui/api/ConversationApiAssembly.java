@@ -418,7 +418,10 @@ final class ConversationApiAssembly {
             telemetry,
             conversationStore,
             // Tempdoc 610 Phase D — the one-shot summarizer for compaction.
-            onlineAiSupplier);
+            onlineAiSupplier,
+            // Tempdoc 859 slice C PR-2 — the SECOND conversation record: a delegate run persists a
+            // whole conversation here and no ConversationStore row, so the list joins both.
+            agentSupplier);
     // Tempdoc 834 §1.6 / §15.1.3 — the run-stream family. It dispatches THROUGH ChatController's
     // sink-taking entry point rather than around it, so a mid-run failure reaches every observer of
     // the run instead of only the socket that started it.
