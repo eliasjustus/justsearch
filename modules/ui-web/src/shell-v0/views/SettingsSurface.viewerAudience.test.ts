@@ -33,6 +33,8 @@ const EMPTY_RAIL: SurfaceCatalog = {
 async function mountSurface(): Promise<HTMLElement> {
   const el = document.createElement('jf-settings-surface') as HTMLElement & {
     host_?: unknown;
+    activeCategory: string;
+    updateComplete: Promise<unknown>;
   };
   // Surface now reads tauri-runtime via host_.platform.capabilities; inject a
   // mock host before connectedCallback runs.
@@ -42,14 +44,25 @@ async function mountSurface(): Promise<HTMLElement> {
   );
   document.body.appendChild(el);
   await new Promise((resolve) => setTimeout(resolve, 0));
+  // Tempdoc 855 P1 — View tier is a sub-anchor of the "developer" category (register-driven
+  // paging); the default active category ("appearance") would not render it.
+  el.activeCategory = 'developer';
+  await el.updateComplete;
   return el;
 }
 
+// Tempdoc 855 §15.2/§17 R2 — the View tier picker is now `<jf-option-button-group>` (the shared
+// radiogroup renderer, plain-props path); its `.option-btn` buttons render inside THAT element's
+// own shadow root, a separate tree from SettingsSurface's (shadow DOM does not compose across
+// nested custom elements for querySelector/querySelectorAll — verified empirically, not assumed).
+// The class contract (`button.option-btn` / `.option-label` / `.selected`) is unchanged; only the
+// traversal needed a second hop through the nested component's shadow root.
 function audienceButtonByLabel(
   root: ShadowRoot,
   label: 'User' | 'Operator' | 'Developer',
 ): HTMLButtonElement | undefined {
-  const buttons = Array.from(root.querySelectorAll('.option-btn'));
+  const group = root.querySelector('jf-option-button-group');
+  const buttons = Array.from(group?.shadowRoot?.querySelectorAll('.option-btn') ?? []);
   return buttons.find(
     (b) => b.querySelector('.option-label')?.textContent?.trim() === label,
   ) as HTMLButtonElement | undefined;

@@ -2,7 +2,7 @@
 title: Secondary Views Behavioral Reference
 type: reference
 status: stable
-updated: 2026-06-13
+updated: 2026-08-19
 description: "Secondary view behavioral specification (Library, Brain, Health, Settings, Help)."
 ---
 
@@ -47,7 +47,7 @@ Six items, split into two groups by a thin horizontal divider:
 | 3 | `brain` | Brain | AI Brain | teal | Primary |
 | 4 | `health` | Activity | Health | emerald | Primary |
 | 5 | `help` | HelpCircle | Help | _(no tint property)_ | Secondary |
-| 6 | `settings` | Settings | Settings | purple | Secondary |
+| 6 | `settings` | Settings | Settings | purple | Secondary | _(tempdoc 855: fixed rail affordance, same pattern as Help — opens the Settings window as a `Placement.MODAL` overlay rather than navigating into Stage; see §5.)_
 
 ### Active state
 
@@ -364,6 +364,20 @@ Auto-refresh polls `/api/status` every 5 seconds (`pollInterval: autoRefresh ? 5
 
 ## 5. SettingsView
 
+> **Superseded placement (tempdoc 855, 2026-08-19):** Settings is no longer a
+> Stage-mounted secondary view — `core.settings-surface` flipped from `Placement.RAIL`
+> to `Placement.MODAL`. Navigating to it opens `<jf-settings-window>` (a chrome-level
+> overlay in `OverlayHost`'s `center` slot, mounted from `shell-v0/chrome/SettingsWindow.ts`)
+> over the unchanged Stage, instead of replacing the Stage's active surface. The section
+> body below (glass sections, `useSettings` hook, staggered entry) predates that change
+> and the Lit rewrite; it documents the pre-855 Stage-page layout for history, not the
+> current window. Current composition: one declared category register
+> (`shell-v0/views/settingsRegister.ts`) projects the window's grouped nav (accordion +
+> scroll-spy), category pages, deep-link targets, and in-window search — see
+> `docs/explanation/10-ui-ux-design.md` ("Settings window") for the current behavioral
+> description, and `docs/reference/ui/frontend-kernel/kernel/00-primitives.md` for the
+> `Placement.MODAL` routing contract.
+
 **Source:** `shell-v0/views/SettingsSurface.ts`
 
 User preferences panel with 6 glass sections that animate in with staggered entry.
@@ -395,6 +409,15 @@ Theme selection:
 
 High Contrast toggle — syncs to both settings store and the `onHighContrastChange` prop (which applies the `.high-contrast` class to the shell).
 
+> **Superseded (tempdoc 855 §17 R1, 2026-08-19):** the React-era `onHighContrastChange` prop is
+> gone. High contrast is now the ONE control, in the Accessibility section (`jf-switch`,
+> `data-testid="settings-high-contrast"`), writing through `SettingsSurface.patch()` to the
+> canonical `UISettings.highContrast` field — the same backend-persisted path every other setting
+> uses. It reaches the `.high-contrast` root class via the APPEARANCE_FLOW statechart's
+> `set-appearance` effect, applied by `Shell.ts`'s `jf-set-appearance` listener (`themeState.applyAppearance`).
+> The Appearance section (this one) now renders a cross-link row pointing at Accessibility instead
+> of its own duplicate toggle.
+
 #### 3. Keyboard (Keyboard icon)
 
 - **Vim Mode** toggle — "j/k navigation, / for search". `vimMode` is a persisted backend field (added to `UISettings` type, `UiSettingsV2Schema`, and the backend `UiSettingsV2` DTO as `vimMode: Boolean`). The setting round-trips correctly through `POST /api/settings/v2` and survives backend restarts. Previously this was localStorage-only.
@@ -413,7 +436,12 @@ Read-only reference grid (2 columns on md+):
 | ↑↓ | Navigate |
 | Enter | Open file |
 | Esc | Clear / close |
-| Cmd+Shift+H | High contrast |
+
+> **Correction (tempdoc 855 fix round, 2026-08-19):** this grid previously listed `Cmd+Shift+H` →
+> "High contrast" — no such shortcut binding exists in code (`git grep` for a Shift+H handler
+> across `modules/ui-web/src` turns up nothing). High contrast is toggled via the Accessibility
+> section's switch only (see the §2 Appearance supersession note above); the row is removed rather
+> than corrected because no shortcut replaces it.
 
 #### 6. Data (Database icon)
 

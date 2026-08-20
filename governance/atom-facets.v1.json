@@ -26,6 +26,11 @@
       "tag": "jf-filter-chip",
       "authorityFile": "modules/ui-web/src/shell-v0/components/FilterChip.ts",
       "forkClasses": []
+    },
+    {
+      "tag": "jf-switch",
+      "authorityFile": "modules/ui-web/src/shell-v0/components/Switch.ts",
+      "forkClasses": ["switch"]
     }
   ],
   "ahaDistinct": [

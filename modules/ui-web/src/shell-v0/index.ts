@@ -233,12 +233,10 @@ export {
 // Plugin API (V1 contract scaffold)
 export * from './plugin-api/index.js';
 
-// Settings surface (slice 3a-2-b)
-export { SettingsLitView } from './views/SettingsLitView.js';
-export type {
-  SettingsLitViewData,
-  SettingsChangeEventDetail,
-} from './views/SettingsLitView.js';
+// Settings surface: `<jf-settings-surface>` self-registers from views/SettingsSurface.ts (no
+// barrel export needed — mounted via the catalog like any other surface). `SettingsLitView`
+// (slice 3a-2-b, the old React-coexistence path) was deleted in tempdoc 855 P1's orphan sweep:
+// zero consumers beyond its own test + this export.
 
 // Ledger surface — slice 3a-2-d Ledger half DELETED in slice 3a.1.9
 // Phase 7. Mount via <jf-resource-view resource-id="core.operation-history">

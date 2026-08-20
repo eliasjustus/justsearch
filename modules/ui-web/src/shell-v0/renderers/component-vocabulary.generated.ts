@@ -45,6 +45,7 @@ export type ComponentTag =
   | 'jf-corpus-picker'
   | 'jf-date-control'
   | 'jf-declared-surface'
+  | 'jf-discrete-slider'
   | 'jf-dispatch-source'
   | 'jf-document-pane'
   | 'jf-drag-overlay'
@@ -111,8 +112,9 @@ export type ComponentTag =
   | 'jf-search-trace'
   | 'jf-security-surface'
   | 'jf-selection-actions-menu'
+  | 'jf-settings-nav'
   | 'jf-settings-surface'
-  | 'jf-settings-view'
+  | 'jf-settings-window'
   | 'jf-shell'
   | 'jf-shortcuts-table'
   | 'jf-source-chips'
@@ -135,6 +137,7 @@ export type ComponentTag =
   | 'jf-sv3-sidebar'
   | 'jf-sv3-topbar'
   | 'jf-sv3-window'
+  | 'jf-switch'
   | 'jf-system-notice'
   | 'jf-system-self-view'
   | 'jf-system-surface'
@@ -188,6 +191,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-corpus-picker',
   'jf-date-control',
   'jf-declared-surface',
+  'jf-discrete-slider',
   'jf-dispatch-source',
   'jf-document-pane',
   'jf-drag-overlay',
@@ -254,8 +258,9 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-search-trace',
   'jf-security-surface',
   'jf-selection-actions-menu',
+  'jf-settings-nav',
   'jf-settings-surface',
-  'jf-settings-view',
+  'jf-settings-window',
   'jf-shell',
   'jf-shortcuts-table',
   'jf-source-chips',
@@ -278,6 +283,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-sv3-sidebar',
   'jf-sv3-topbar',
   'jf-sv3-window',
+  'jf-switch',
   'jf-system-notice',
   'jf-system-self-view',
   'jf-system-surface',
@@ -307,10 +313,12 @@ export function isComponentTag(tag: string): tag is ComponentTag {
  */
 export const ATOM_TAGS: readonly ComponentTag[] = [
   'jf-button',
+  'jf-discrete-slider',
   'jf-error-alert',
   'jf-filter-chip',
   'jf-status-badge',
   'jf-status-dot',
+  'jf-switch',
 ];
 
 /** Is `tag` a registered visual atom (574 Move 3)? */

@@ -54,6 +54,24 @@
         "version": {
           "type": "string",
           "description": "Optional theme version (semver-like). Forward-compat for V1.5.2's update flow."
+        },
+        "swatch": {
+          "type": "object",
+          "description": "Tempdoc 855 §15.3 — optional declared preview colors for the settings theme-picker swatch grid. Authored to match the theme's own surface/accent tokens; a theme without this renders a neutral tile.",
+          "required": ["surface", "accent"],
+          "additionalProperties": false,
+          "properties": {
+            "surface": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The theme's base surface color (e.g. its surface-0 token value)."
+            },
+            "accent": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The theme's primary accent color (e.g. its accent-tint token value)."
+            }
+          }
         }
       }
     }

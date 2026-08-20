@@ -44,6 +44,21 @@ describe('ModalityController (574 Move 4)', () => {
     m.exit();
     expect(document.activeElement).toBe(invoker);
   });
+
+  it('exit({ skipFocusRestore: true }) releases the scroll-lock but leaves focus alone (855 §11.2 merge-blocker)', () => {
+    const invoker = document.createElement('button');
+    document.body.appendChild(invoker);
+    invoker.focus();
+    const m = ctrl();
+    m.enter();
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    field.focus();
+    expect(document.activeElement).toBe(field);
+    m.exit({ skipFocusRestore: true });
+    expect(document.documentElement.style.overflow).toBe(''); // scroll-lock still releases
+    expect(document.activeElement).toBe(field); // focus NOT restored to invoker
+  });
 });
 
 describe('transientLayerArbiter (574 Move 4)', () => {

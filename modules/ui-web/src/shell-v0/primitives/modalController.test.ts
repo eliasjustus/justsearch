@@ -67,6 +67,22 @@ describe('ModalController (574 §22.G — the full modal contract by constructio
     m.close();
   });
 
+  it('close({ skipFocusRestore: true }) passes through to ModalityController.exit (855 §11.2 merge-blocker)', () => {
+    const dlg = new FakeDialog();
+    const invoker = document.createElement('button');
+    document.body.appendChild(invoker);
+    invoker.focus();
+    const m = make(dlg);
+    m.open();
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    field.focus();
+    m.close({ skipFocusRestore: true });
+    expect(dlg.close).toHaveBeenCalledTimes(1);
+    expect(document.documentElement.style.overflow).toBe(''); // scroll-lock still releases
+    expect(document.activeElement).toBe(field); // focus NOT restored to invoker
+  });
+
   it('captureFocus() arms the scroll-lock without opening; a following open() does not re-lock', () => {
     const dlg = new FakeDialog();
     const m = make(dlg);

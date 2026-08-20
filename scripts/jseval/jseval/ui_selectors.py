@@ -54,6 +54,18 @@ CSS_SEARCH_RESULT_ROW = f'[data-testid="{TID_SEARCH_RESULT_ROW}"]'
 # (components/chat/MarkdownBlock.ts). Selection is a row click, so there is no per-row select checkbox.
 CSS_INSPECTOR_PANE = 'jf-inspector-pane'
 CSS_CITATION_HIGHLIGHT = '.cite-ref, [data-cite-key]'
+# tempdoc 855: Settings is a MODAL surface — the rail affordance opens the `<jf-settings-window>`
+# dialog over the stage instead of mounting the surface into it. `dialog[open]` is the readiness
+# signal (the window element itself is always in the DOM, so its content stays connected while
+# closed); the mounted `<jf-settings-surface>` is the content signal.
+CSS_SETTINGS_WINDOW = 'jf-settings-window'
+CSS_SETTINGS_WINDOW_DIALOG = 'jf-settings-window dialog[open]'
+CSS_SETTINGS_WINDOW_CONTENT = 'jf-settings-window jf-settings-surface'
+# Tempdoc 855 §5 item 1 — Security absorbed into Settings as a member category (off the rail). Its
+# deep-link redirects onto the settings window (member→host alias), which mounts the member surface
+# INSIDE the persistent `<jf-settings-surface>` — this is the readiness signal that the Security
+# category (not just Settings generally) is the one active/rendered.
+CSS_SETTINGS_WINDOW_SECURITY_CONTENT = 'jf-settings-window jf-settings-surface jf-security-surface'
 # Tempdoc 697 activation — LIVE-VERIFIED (headless Playwright probe against this worktree's
 # auto-served Vite, --fixtures) working locator for the ONE composer textarea. `SEARCH_INPUT`
 # / `TID_SEARCH_INPUT` / `CSS_SEARCH_INPUT_TEXTAREA` (above) are STALE: tempdoc 687 ("the Search
