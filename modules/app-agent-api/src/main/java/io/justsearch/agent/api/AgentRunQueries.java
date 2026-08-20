@@ -64,6 +64,18 @@ public interface AgentRunQueries {
   }
 
   /**
+   * Tempdoc 859 slice C PR-2 — the CONVERSATIONS the agent-run record backs, newest first: the
+   * run-side half of the two-store join {@code GET /api/chat/conversations} performs, so a delegate
+   * conversation (which mints no {@code ConversationStore} row) is listable at all. Rows are
+   * {@code {conversationId, createdAtMs, lastActiveAtMs, firstUserMessage, runCount}} — deliberately
+   * NO message count: deriving one means projecting each conversation's whole event stream per row,
+   * per request. Default empty for the unavailable service + test mocks.
+   */
+  default List<Map<String, Object>> conversationSummaries(int limit) {
+    return List.of();
+  }
+
+  /**
    * Returns the full persisted snapshot for a specific session, or {@code null} if none exists.
    * Tempdoc 415 follow-up (C20). Mirrors {@link #lastSessionSnapshot()} but addressed by id.
    */

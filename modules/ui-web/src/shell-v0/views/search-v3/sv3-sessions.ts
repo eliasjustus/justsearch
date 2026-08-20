@@ -299,6 +299,19 @@ export interface Sv3Session {
   readonly createdAt: number;
   /** When the session last submitted; the resting row's timestamp. */
   readonly updatedAt: number;
+  /**
+   * Is there a `ConversationStore` session behind this conversation (tempdoc 859 slice C PR-2)?
+   *
+   * A DELEGATE conversation is persisted as agent runs and nothing else — the shape-driven dispatch
+   * appends no messages — so the list endpoint synthesises its row from the run record and reports
+   * `storeBacked: false`. Its id is real and its transcript is the record's; what it lacks is the
+   * store session every per-row WRITE this window offers except discard needs (rename above all).
+   *
+   * The window cannot derive this: only the endpoint knows which record a row came from. So it is
+   * taken from the store row at merge time, for new rows AND known ones — a session this window
+   * opened locally has no way of knowing that the conversation it opened never got a store row.
+   */
+  readonly storeBacked: boolean;
 }
 
 /** Addresses one turn inside one session, so a stream can only ever write to the turn it opened. */
@@ -379,6 +392,9 @@ function openSession(
     pinned: false,
     completedAt: null,
     lastVisitedAt: visitedAt,
+    // Optimistic, and corrected by the list: a conversation opened here usually gets a store session
+    // (an ask appends messages), and a delegate one does not. The merge takes the endpoint's answer.
+    storeBacked: true,
   };
 }
 
@@ -660,6 +676,13 @@ export interface Sv3StoreConversation {
   readonly firstUserMessage: string;
   readonly createdAt: number;
   readonly lastActiveAt: number;
+  /**
+   * Tempdoc 859 slice C PR-2 — false for a row the endpoint synthesised from the AGENT-RUN record (a
+   * delegate conversation, which has no `ConversationStore` session). Optional for the same reason
+   * `titleSource` is: a row this window synthesises for a conversation it has just opened is not
+   * reporting the endpoint's answer, and `undefined` there means "not told" rather than "not backed".
+   */
+  readonly storeBacked?: boolean;
 }
 
 /**
@@ -670,11 +693,20 @@ export interface Sv3StoreConversation {
  * Two rules, both the never-reorder law applied to a merge:
  *
  *  - **A known conversation is never re-created and never moved.** It is matched by id, and only its
- *    TITLE is taken from the store (the authority a rename writes through to). Its turns, pin and
- *    unread bit — the parts the store has no field for — are left exactly as they were.
+ *    TITLE and its {@link Sv3Session.storeBacked} capability are taken from the store — the two facts
+ *    the endpoint is the authority for. Its turns, pin and unread bit — the parts the store has no
+ *    field for — are left exactly as they were.
  *  - **A new conversation is APPENDED, not prepended.** A conversation this window did not open is
  *    not its news; putting it at the top would move every row the reader was looking at. On a cold
  *    mount that appends into an empty list, so the store's own newest-first order is the render order.
+ *
+ * The append is the ORDERING CONTRACT, stated because tempdoc 859 slice C found its cost: a delegate
+ * conversation that reaches this window from the list rather than from its own submit lands BELOW
+ * every row already on screen, however recent it is. The newcomers are therefore sorted among
+ * THEMSELVES newest-first here, so the freshest of an incoming batch is the first of them; what is
+ * deliberately NOT done is interleaving them by timestamp with the rows the reader is looking at,
+ * which would be the reorder both rules above exist to refuse (and which {@link projectSv3Sessions}
+ * refuses again downstream — a shelf move is never a reorder either).
  *
  * A store row arrives with no turns: the TRANSCRIPT is the canonical record's ({@link applySv3Record}),
  * fetched when the conversation is claimed, not carried on the list row.
@@ -690,13 +722,18 @@ export function mergeStoreConversations(
     const row = byId.get(session.id);
     if (row === undefined) return session;
     const title = titleFor(row, session.title);
-    if (title === session.title) return session;
+    // The endpoint is the only authority for whether a store session backs this conversation, so a
+    // row that came off the wire corrects what this window assumed when it opened one locally.
+    const storeBacked = row.storeBacked ?? session.storeBacked;
+    if (title === session.title && storeBacked === session.storeBacked) return session;
     changed = true;
-    return { ...session, title };
+    return { ...session, title, storeBacked };
   });
   const known = new Set(list.sessions.map((s) => s.id));
   const added = conversations
     .filter((c) => !known.has(c.id))
+    .slice()
+    .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
     .map<Sv3Session>((c) => ({
       id: c.id,
       title: titleFor(c, ''),
@@ -713,6 +750,9 @@ export function mergeStoreConversations(
       pinned: false,
       completedAt: null,
       lastVisitedAt: 0,
+      // Not told is store-backed: every row that predates the two-store join is one, and only a
+      // synthesised (agent-run-only) row says otherwise.
+      storeBacked: c.storeBacked !== false,
     }));
   if (!changed && added.length === 0) return list;
   return { ...list, sessions: [...sessions, ...added] };
@@ -1230,6 +1270,14 @@ export interface Sv3SessionRowView {
    * colour, so the affordance and the list's own refusal read the same fact.
    */
   readonly live: boolean;
+  /**
+   * A `ConversationStore` session backs this conversation (tempdoc 859 slice C PR-2). Carried on the
+   * row for the same reason `live` is: the row WITHHOLDS the actions that need one — rename, and the
+   * two gestures that reach it — so a row that offers no rename and an endpoint that would refuse one
+   * are saying the same thing. Discard is unaffected: deleting the conversation deletes its agent
+   * runs, which is the whole record a run-backed conversation has.
+   */
+  readonly storeBacked: boolean;
 }
 
 export interface Sv3SessionGroup {
@@ -1311,6 +1359,7 @@ export function projectSv3Sessions(
       meta: live ? '' : sv3RelativeTime(session.updatedAt, now),
       live,
       active,
+      storeBacked: session.storeBacked,
       pinned: session.pinned,
       // Unread is a comparison, not a flag anything sets: something finished after the last visit.
       unread: session.completedAt !== null && session.completedAt > session.lastVisitedAt,
