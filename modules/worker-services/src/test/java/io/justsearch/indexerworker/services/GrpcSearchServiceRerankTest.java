@@ -19,6 +19,7 @@ import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.ipc.RerankRequest;
 import io.justsearch.ipc.RerankResponse;
 import io.justsearch.reranker.CrossEncoderReranker;
+import io.justsearch.reranker.RerankSkipCause;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -120,7 +121,7 @@ class GrpcSearchServiceRerankTest {
       when(mockReranker.rerank(anyString(), anyList(), anyLong()))
           .thenReturn(
               new CrossEncoderReranker.RerankedResult(
-                  List.of(1, 0, 2), List.of(0.3f, 0.9f, 0.1f), false, 42));
+                  List.of(1, 0, 2), List.of(0.3f, 0.9f, 0.1f), RerankSkipCause.NONE, 42));
       service.setSearchReranker(mockReranker);
     }
 
@@ -145,23 +146,46 @@ class GrpcSearchServiceRerankTest {
   @DisplayName("with skipping reranker")
   class WithSkippingReranker {
 
-    @BeforeEach
-    void wireSkippingReranker() {
+    private void wireSkip(RerankSkipCause cause) {
       CrossEncoderReranker mockReranker = mock(CrossEncoderReranker.class);
       when(mockReranker.rerank(anyString(), anyList(), anyLong()))
           .thenReturn(
-              new CrossEncoderReranker.RerankedResult(List.of(0, 1), List.of(), true, 150));
+              new CrossEncoderReranker.RerankedResult(List.of(0, 1), List.of(), cause, 150));
       service.setSearchReranker(mockReranker);
     }
 
     @Test
-    @DisplayName("returns skipped=true with DEADLINE_EXCEEDED")
-    void returnsDeadlineExceeded() {
-      RerankResponse resp =
-          callRerank(service, "test", List.of("doc A", "doc B"), 200);
+    @DisplayName("a tokenize-budget pre-check is DEADLINE_EXCEEDED")
+    void tokenizeBudgetIsDeadlineExceeded() {
+      wireSkip(RerankSkipCause.TOKENIZE_BUDGET_EXCEEDED);
+      RerankResponse resp = callRerank(service, "test", List.of("doc A", "doc B"), 200);
 
       assertTrue(resp.getSkipped());
       assertEquals("DEADLINE_EXCEEDED", resp.getSkipReason());
+      assertEquals(150, resp.getElapsedMs());
+      assertEquals(0, resp.getSortedIndicesCount());
+    }
+
+    @Test
+    @DisplayName("a prep-budget pre-check is DEADLINE_EXCEEDED")
+    void prepBudgetIsDeadlineExceeded() {
+      wireSkip(RerankSkipCause.PREP_BUDGET_EXCEEDED);
+      assertEquals(
+          "DEADLINE_EXCEEDED",
+          callRerank(service, "test", List.of("doc A", "doc B"), 200).getSkipReason());
+    }
+
+    // Register F-054, the defect this splits: the handler stamped DEADLINE_EXCEEDED on ANY
+    // reranker skip, so an ONNX Runtime failure (measured: 199/200 of a campaign's "deadline
+    // misses" were BFCArena OOM) told every reader to raise a deadline that cannot fix it.
+    @Test
+    @DisplayName("an inference failure is INFERENCE_FAILED, NOT DEADLINE_EXCEEDED")
+    void inferenceFailureIsNotDeadlineExceeded() {
+      wireSkip(RerankSkipCause.INFERENCE_FAILED);
+      RerankResponse resp = callRerank(service, "test", List.of("doc A", "doc B"), 200);
+
+      assertTrue(resp.getSkipped());
+      assertEquals("INFERENCE_FAILED", resp.getSkipReason());
       assertEquals(150, resp.getElapsedMs());
       assertEquals(0, resp.getSortedIndicesCount());
     }

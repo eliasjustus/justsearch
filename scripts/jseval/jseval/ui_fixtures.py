@@ -161,6 +161,70 @@ def _indexed_roots_body(variant: str) -> str:
     })
 
 
+def _surface_entry(
+    surface_id: str, mount_tag: str, placement: str, members: list[str] | None = None,
+) -> dict:
+    """One minimal Surface catalog entry (types/surface.ts `Surface`). The FE client
+    (`SurfaceCatalogClient.tryFetchAndPopulate`) does NOT Zod-validate this envelope — it only
+    checks `Array.isArray(body.entries)` and casts the rest — so this is schema-SHAPED filler, not
+    a byte-exact wire capture; only `id`/`placement`/`members`/`mountTag` are load-bearing for the
+    consumers below."""
+    entry: dict = {
+        "id": surface_id,
+        "presentation": {
+            "labelKey": f"registry-surface.{surface_id.split('.', 1)[1]}.label",
+            "descriptionKey": f"registry-surface.{surface_id.split('.', 1)[1]}.description",
+        },
+        "audience": "USER",
+        "placement": placement,
+        "consumes": {"resources": [], "operations": [], "prompts": [], "diagnosticChannels": []},
+        "mountTag": mount_tag,
+        "provenance": {"tier": "CORE", "contributorId": "core", "version": "1.0"},
+    }
+    if members:
+        entry["members"] = members
+    return entry
+
+
+def _surfaces_catalog_body() -> str:
+    """The `/api/registry/surfaces` catalog (855 F2 closure fix). Fixtures mode previously fell
+    through to the generic empty-object body (unmapped in `_ROUTES`), so `listSurfaces()` stayed
+    empty and `memberHostAliases()` (catalogResolver.ts) — built by scanning every host's declared
+    `members` — never produced the core.security-surface -> core.settings-surface redirect. The
+    `security`/`security-light` ui-shot steps navigate to the (now off-rail, member-only)
+    core.security-surface expecting that redirect to open the settings window, and timed out
+    waiting for the modal with an empty catalog.
+
+    Ids/placements/membership mirror CorePlugin.ts + CoreSurfaceCatalog.java exactly: settings-surface
+    is MODAL and hosts [presentation-gallery, presentation-editor, security] as members;
+    security-surface (and the two presentation surfaces) are DEEPLINK — the minimal composition
+    shape `resolveSurface`/`memberHostAliases` need to redirect correctly."""
+    entries = [
+        _surface_entry(
+            "core.settings-surface", "jf-settings-surface", "MODAL",
+            members=[
+                "core.presentation-gallery-surface",
+                "core.presentation-editor-surface",
+                "core.security-surface",
+            ],
+        ),
+        _surface_entry("core.security-surface", "jf-security-surface", "DEEPLINK"),
+        _surface_entry(
+            "core.presentation-gallery-surface", "jf-presentation-gallery-surface", "DEEPLINK",
+        ),
+        _surface_entry(
+            "core.presentation-editor-surface", "jf-presentation-editor-surface", "DEEPLINK",
+        ),
+    ]
+    return json.dumps({
+        "schemaVersion": "1.0.0",
+        "catalogVersion": 1,
+        "namespace": "core",
+        "primitive": "Surface",
+        "entries": entries,
+    })
+
+
 # Path substring -> fixture body. First match wins. `/api/status`, `/api/knowledge/search`,
 # `/api/inference/status`, and `/api/settings` are NOT here — all four have a per-variant
 # transform and are dispatched explicitly in `fixture_body()` before this table is consulted.
@@ -170,6 +234,7 @@ def _indexed_roots_body(variant: str) -> str:
 # non-`enriching` variant still serves.
 _ROUTES: tuple[tuple[str, str], ...] = (
     ("/api/indexing-roots/substrate", _BODY_INDEXED_ROOTS),
+    ("/api/registry/surfaces", _surfaces_catalog_body()),
     ("/api/registry/operations", _empty_catalog("Operation")),
     ("/api/registry/resources", _empty_catalog("Resource")),
     ("/api/registry/diagnostic-channels", _empty_catalog("DiagnosticChannel")),

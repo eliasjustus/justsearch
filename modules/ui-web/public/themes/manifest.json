@@ -8,7 +8,8 @@
       "description": "Cool blues and grays inspired by the Nord palette",
       "cssPath": "/themes/core.nord.css",
       "author": "core",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "swatch": { "surface": "#2e3440", "accent": "#88c0d0" }
     },
     {
       "id": "core.sepia-focus",
@@ -16,7 +17,8 @@
       "description": "Warm sepia tones for low-contrast reading",
       "cssPath": "/themes/core.sepia-focus.css",
       "author": "core",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "swatch": { "surface": "#f5ead8", "accent": "#b88a3e" }
     },
     {
       "id": "core.high-vis",
@@ -24,7 +26,8 @@
       "description": "High-contrast palette for visibility-focused workflows.",
       "cssPath": "/themes/core.high-vis.json",
       "author": "core",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "swatch": { "surface": "rgb(8, 8, 12)", "accent": "oklch(85% 0.20 200)" }
     },
     {
       "id": "core.registrars-ledger",
@@ -32,7 +35,8 @@
       "description": "Light. Ledger paper and iron-gall ink. Green marks evidence: citations, quoted spans, confirmed records. Sealing-wax brown marks risk: locks, stale results, failures.",
       "cssPath": "/themes/core.registrars-ledger.css",
       "author": "core",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "swatch": { "surface": "#fbfcf6", "accent": "#175d43" }
     },
     {
       "id": "core.night-registry",
@@ -40,7 +44,8 @@
       "description": "Dark. A reading room after hours: green-black surfaces, index-card cream text. Lamp green marks evidence; ember marks risk. Headings set in a serif, machine facts in mono.",
       "cssPath": "/themes/core.night-registry.css",
       "author": "core",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "swatch": { "surface": "#0d100c", "accent": "#57c489" }
     },
     {
       "id": "core.cyanotype",
@@ -48,7 +53,8 @@
       "description": "Dark and cold, on a Prussian-blue ground rather than a grey one. Cyan marks what the index reached; rust marks what is stale or locked. Labels set in a drafting typeface.",
       "cssPath": "/themes/core.cyanotype.css",
       "author": "core",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "swatch": { "surface": "#0e2133", "accent": "#6ecfe8" }
     }
   ]
 }

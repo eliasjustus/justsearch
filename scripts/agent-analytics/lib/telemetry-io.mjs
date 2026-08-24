@@ -11,7 +11,6 @@ import path from 'node:path';
 export const TELEMETRY_DIR = 'tmp/agent-telemetry';
 export const EVENTS_FILE = 'events.ndjson';
 export const SESSIONS_DIR = 'sessions';
-export const SCORES_FILE = 'scores.ndjson';
 export const COSTS_FILE = 'costs.ndjson';
 export const OUTCOMES_FILE = 'outcomes.ndjson';
 // Residual LLM-judge cache (tempdoc 622 §6.3): the judge fills only inference

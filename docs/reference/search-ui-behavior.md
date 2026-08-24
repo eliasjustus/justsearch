@@ -539,7 +539,12 @@ This ensures the eye is drawn to title matches first during scanning.
 | Group by | localStorage via useLayoutStore | Adds section headers and collapse behavior |
 | Query syntax | localStorage via useSearchStore | Switches between simple and Lucene syntax |
 | Theme | localStorage | Switches all colors between dark and light palettes |
-| High contrast | localStorage | Increases contrast for accessibility |
+| High contrast | Backend `/api/settings/v2` (`ui.highContrast`) | Increases contrast for accessibility |
+
+**Correction (tempdoc 855, 2026-08-19):** High contrast is not a `localStorage`-only preference like
+the rows above — it is the canonical, backend-persisted `UISettings.highContrast` field, round-tripped
+through `POST /api/settings/v2` like theme (see `secondary-views-behavior.md` §5 Settings persistence
+and its §2 Appearance supersession note).
 
 These are display preferences only — they do not affect the search API query or ranking.
 

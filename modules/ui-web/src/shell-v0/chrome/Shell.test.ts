@@ -34,12 +34,14 @@ import {
 import { __resetBootstrapForTest } from '../router/bootstrap.js';
 import { __resetUserConfigForTest } from '../state/userConfigState.js';
 import { setUiMode, getUiMode, __resetUiModeForTest } from '../state/uiModeState.js';
-import { deactivateProjection } from '../router/URLProjector.js';
+import { __activeSurfaceIdForTest, deactivateProjection } from '../router/URLProjector.js';
+import { subscribeMemberTab } from '../router/memberTabIntent.js';
 import {
   restoreSearch,
   serializeSearch,
 } from '../state/searchState.js';
 import { getInspectorState, resetInspectorState } from '../state/inspectorState.js';
+import type { SettingsWindow } from './SettingsWindow.js';
 import type { Surface, SurfaceCatalog } from '../../api/types/surface.js';
 import type { StateSnapshot } from '../router/types.js';
 import type { TransportTag } from '../router/transports.js';
@@ -318,5 +320,374 @@ describe('Shell — Search Thread S6 citation-select rework', () => {
   it('never mounts the retired jf-inspector-pane', async () => {
     const shell = await renderShell();
     expect(shell.shadowRoot?.querySelector('jf-inspector-pane')).toBeNull();
+  });
+});
+
+// Tempdoc 855 §11.1 — the MODAL settings window lives OVER the stage, so the two navigation
+// branches must agree about who owns the address. Opening goes through the MODAL branch (no
+// setActiveSurface); anything that REALIZES a stage navigation — a real browser Back included,
+// since popstate re-enters through the normal branch — must take the window down with it, and
+// must not fire the `history.back()` that the window's own close routine would.
+describe('Shell — settings window vs. stage navigation (tempdoc 855)', () => {
+  const SETTINGS_ID = 'core.settings-surface';
+
+  /** MODAL settings entry with a non-lazy, undefined mountTag: the window renders its empty state. */
+  const SETTINGS_MODAL: Surface = {
+    ...makeRailSurface(SETTINGS_ID, 'jf-test-settings-mount'),
+    placement: 'MODAL',
+  };
+
+  beforeEach(() => {
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.location.hash = '';
+    seedSurfaceCatalog({
+      schemaVersion: '1.0.0',
+      catalogVersion: 1,
+      namespace: 'core',
+      primitive: 'Surface',
+      entries: [SEARCH, LIBRARY, SETTINGS_MODAL],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ entries: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    document.querySelectorAll('jf-shell').forEach((el) => el.remove());
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.location.hash = '';
+    vi.unstubAllGlobals();
+  });
+
+  it('a realized stage navigation DISMISSES the open window — and fires no history.back()', async () => {
+    const shell = await renderShell();
+    const win = shell.shadowRoot?.querySelector('jf-settings-window') as SettingsWindow | null;
+    expect(win).not.toBeNull();
+
+    // MODAL branch: the window opens and the stage keeps its surface.
+    shell.activateSurface(SETTINGS_ID, {}, 'RAIL');
+    await new Promise((r) => setTimeout(r, 10));
+    await win!.updateComplete;
+    expect(win!.open).toBe(true);
+    expect(shell.activeId).not.toBe(SETTINGS_ID);
+
+    // Normal branch (the shape a real browser Back takes: popstate → URLSource → this path).
+    // history has ALREADY moved, so the dismissal must not add its own back().
+    const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    shell.activateSurface('core.library-surface', {}, 'RAIL');
+    await new Promise((r) => setTimeout(r, 10));
+    await win!.updateComplete;
+
+    expect(shell.activeId).toBe('core.library-surface');
+    expect(win!.open).toBe(false);
+    expect(win!.shadowRoot?.querySelector('dialog')?.open).toBe(false);
+    expect(backSpy).not.toHaveBeenCalled();
+    backSpy.mockRestore();
+  });
+
+  it('a stage navigation while the window is CLOSED touches nothing (no stray dismiss path)', async () => {
+    const shell = await renderShell();
+    const win = shell.shadowRoot?.querySelector('jf-settings-window') as SettingsWindow | null;
+    expect(win!.open).toBe(false);
+
+    const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    shell.activateSurface('core.library-surface', {}, 'RAIL');
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(shell.activeId).toBe('core.library-surface');
+    expect(win!.open).toBe(false);
+    expect(backSpy).not.toHaveBeenCalled();
+    backSpy.mockRestore();
+  });
+});
+
+// Tempdoc 855 §11.1 D3/D4 — the CLOSE contract. The window emits `settings-window-close` and makes
+// no history assumption of its own; the Shell unwinds, and which unwind is correct depends on
+// whether the OPENING navigation pushed an entry. Getting that wrong is the pair of defects this
+// block pins: a duplicate entry (Escape appears to re-open) and a boot entry left with no URL
+// projection for the rest of the session.
+describe('Shell — settings window close semantics (tempdoc 855 §11.1 D3/D4)', () => {
+  const SETTINGS_ID = 'core.settings-surface';
+  const MEMBER_ID = 'core.security-surface';
+  const STAGE_ID = 'core.search-surface';
+
+  const SETTINGS_MODAL: Surface = {
+    ...makeRailSurface(SETTINGS_ID, 'jf-test-settings-mount'),
+    placement: 'MODAL',
+    members: [MEMBER_ID],
+  };
+  const MEMBER: Surface = {
+    ...makeRailSurface(MEMBER_ID, 'jf-test-member-mount'),
+    placement: 'DEEPLINK',
+  };
+
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 15));
+
+  function windowOf(shell: ShellElement): SettingsWindow {
+    return shell.shadowRoot?.querySelector('jf-settings-window') as SettingsWindow;
+  }
+
+  /** Escape on a native <dialog> arrives as a cancelable `cancel` event. */
+  function pressEscape(win: SettingsWindow): void {
+    win.shadowRoot
+      ?.querySelector('dialog')
+      ?.dispatchEvent(new Event('cancel', { cancelable: true }));
+  }
+
+  beforeEach(() => {
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.history.replaceState(null, '', '/');
+    seedSurfaceCatalog({
+      schemaVersion: '1.0.0',
+      catalogVersion: 1,
+      namespace: 'core',
+      primitive: 'Surface',
+      entries: [SEARCH, LIBRARY, SETTINGS_MODAL, MEMBER],
+    });
+    // The stage surfaces declare a (trivial) state schema so `activateProjection` actually takes
+    // ownership — without one the projector is a no-op and clause (d) could not distinguish
+    // "projection restored" from "projector never engaged".
+    for (const id of [STAGE_ID, 'core.library-surface']) {
+      registerSurfaceStateSchema(id, {
+        schema: JSON.stringify({ type: 'object', properties: {} }),
+        bindings: [],
+      });
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ entries: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    document.querySelectorAll('jf-shell').forEach((el) => el.remove());
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.history.replaceState(null, '', '/');
+    vi.unstubAllGlobals();
+  });
+
+  it('(a) an in-app open pushes ONE entry, and Escape unwinds it with exactly one history.back()', async () => {
+    const shell = await renderShell();
+    const win = windowOf(shell);
+
+    shell.activateSurface('core.library-surface', {}, 'RAIL');
+    await settle();
+    const priorHash = window.location.hash;
+    expect(priorHash).toContain('core.library-surface');
+
+    shell.activateSurface(SETTINGS_ID, {}, 'RAIL');
+    await settle();
+    expect(win.open).toBe(true);
+    expect(window.location.hash).toContain(SETTINGS_ID);
+
+    // `back` is spied but NOT stubbed: the real navigation runs, so the assertion below is about
+    // the address the user actually lands on, not just the call count.
+    const backSpy = vi.spyOn(window.history, 'back');
+    pressEscape(win);
+    await settle();
+
+    expect(backSpy).toHaveBeenCalledTimes(1);
+    expect(win.open).toBe(false);
+    expect(window.location.hash).toBe(priorHash);
+    backSpy.mockRestore();
+  });
+
+  it('(b) a boot entry pushes NOTHING, so Escape navigates forward to the stage surface instead of Back', async () => {
+    window.history.replaceState(null, '', `/#justsearch://surface/${SETTINGS_ID}`);
+    const shell = await renderShell();
+    const win = windowOf(shell);
+    await settle();
+    expect(win.open).toBe(true);
+
+    // There is no prior entry to return to — `history.back()` here would leave the app.
+    const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    pressEscape(win);
+    await settle();
+
+    expect(backSpy).not.toHaveBeenCalled();
+    expect(win.open).toBe(false);
+    expect(shell.activeId).toBe(STAGE_ID);
+    expect(window.location.hash).toContain(STAGE_ID);
+    backSpy.mockRestore();
+  });
+
+  it('(d) after a boot-entry close, the stage surface OWNS the URL projection again', async () => {
+    window.history.replaceState(null, '', `/#justsearch://surface/${SETTINGS_ID}`);
+    const shell = await renderShell();
+    const win = windowOf(shell);
+    await settle();
+
+    // The defect: the MODAL branch deliberately skips activateProjection, and a boot straight onto
+    // the settings address never ran the normal branch for anything — so NO surface owns the URL.
+    expect(win.open).toBe(true);
+    expect(__activeSurfaceIdForTest()).toBeNull();
+
+    const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
+    pressEscape(win);
+    await settle();
+
+    expect(__activeSurfaceIdForTest()).toBe(STAGE_ID);
+    backSpy.mockRestore();
+  });
+
+  it('(c) a repeat navigation while the window is open stacks no entry — Escape still closes in one step', async () => {
+    const shell = await renderShell();
+    const win = windowOf(shell);
+
+    shell.activateSurface('core.library-surface', {}, 'RAIL');
+    await settle();
+    const priorHash = window.location.hash;
+
+    shell.activateSurface(SETTINGS_ID, {}, 'RAIL');
+    await settle();
+    expect(win.open).toBe(true);
+
+    const pushSpy = vi.spyOn(window.history, 'pushState');
+    shell.activateSurface(SETTINGS_ID, {}, 'RAIL');
+    await settle();
+    expect(pushSpy).not.toHaveBeenCalled();
+    expect(win.open).toBe(true);
+    pushSpy.mockRestore();
+
+    const backSpy = vi.spyOn(window.history, 'back');
+    pressEscape(win);
+    await settle();
+
+    expect(backSpy).toHaveBeenCalledTimes(1);
+    expect(win.open).toBe(false);
+    expect(window.location.hash).toBe(priorHash);
+    backSpy.mockRestore();
+  });
+
+  // Composition: a member of the MODAL host (Settings ⊇ Security) deep-links to its HOST, which now
+  // opens as a window. Both halves must survive the MODAL branch — the window opens AND the
+  // member-tab intent reaches the persistently-mounted surface (§11.2).
+  it('a member deep-link opens the window AND delivers the member intent (window closed)', async () => {
+    const shell = await renderShell();
+    const win = windowOf(shell);
+    const seen: Array<[string, string]> = [];
+    const unsubscribe = subscribeMemberTab((hostId, memberId) => {
+      seen.push([hostId, memberId]);
+      return true;
+    });
+
+    // BUTTON transport: the auto-correct path is transport-independent, and BUTTON keeps the
+    // unrelated URL_BAR resolution-toast machinery out of this assertion.
+    shell.activateSurface(MEMBER_ID, {}, 'BUTTON');
+    await settle();
+
+    expect(win.open).toBe(true);
+    expect(shell.activeId).not.toBe(SETTINGS_ID);
+    expect(seen).toEqual([[SETTINGS_ID, MEMBER_ID]]);
+    unsubscribe();
+  });
+
+  it('a member deep-link delivers the member intent while the window is ALREADY open', async () => {
+    const shell = await renderShell();
+    const win = windowOf(shell);
+
+    shell.activateSurface(SETTINGS_ID, {}, 'RAIL');
+    await settle();
+    expect(win.open).toBe(true);
+
+    const seen: Array<[string, string]> = [];
+    const unsubscribe = subscribeMemberTab((hostId, memberId) => {
+      seen.push([hostId, memberId]);
+      return true;
+    });
+
+    shell.activateSurface(MEMBER_ID, {}, 'BUTTON');
+    await settle();
+
+    expect(seen).toEqual([[SETTINGS_ID, MEMBER_ID]]);
+    // Re-entering the host it is already showing must not stack an entry (D3) or close the window.
+    expect(win.open).toBe(true);
+    unsubscribe();
+  });
+});
+
+// Fix-round F2 (tempdoc 855) — pins the Shell listener seam. `SettingsSurface.highContrast.test.ts`
+// covers the whole chain from the Accessibility switch click through to the `high-contrast` root
+// class, but binds its OWN two-line adapter onto `applyAppearance` rather than exercising Shell's
+// real `document.addEventListener('jf-set-appearance', this.setAppearanceListener)` registration
+// (Shell.ts:1091) — that seam had zero coverage. This is the sole remaining HC set-site (the
+// Appearance card's duplicate toggle was pruned, §17 R1), so pinning its OWN registration here
+// closes the gap: mount the real Shell, dispatch the SAME event a real caller (SettingsSurface via
+// `patch()` → the appearance statechart's `set-appearance` effect) would dispatch, and assert the
+// class Shell's listener is responsible for applying.
+describe('Shell — appearance listener seam (tempdoc 855 fix round F2)', () => {
+  beforeEach(() => {
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.location.hash = '';
+    seedTwoSurfaces();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ entries: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    document.querySelectorAll('jf-shell').forEach((el) => el.remove());
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.location.hash = '';
+    vi.unstubAllGlobals();
+    document.documentElement.classList.remove('high-contrast');
+  });
+
+  it('registers the jf-set-appearance listener that applies the high-contrast root class', async () => {
+    await renderShell();
+    expect(document.documentElement.classList.contains('high-contrast')).toBe(false);
+
+    document.dispatchEvent(
+      new CustomEvent('jf-set-appearance', { detail: { highContrast: true } }),
+    );
+
+    expect(document.documentElement.classList.contains('high-contrast')).toBe(true);
   });
 });

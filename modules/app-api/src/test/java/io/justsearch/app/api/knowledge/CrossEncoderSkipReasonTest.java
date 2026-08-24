@@ -2,6 +2,7 @@
 package io.justsearch.app.api.knowledge;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.DisplayName;
@@ -18,15 +19,14 @@ import org.junit.jupiter.api.Test;
 @DisplayName("CrossEncoderSkipReason: closed vocabulary for the cross-encoder trace stage")
 class CrossEncoderSkipReasonTest {
 
+  // Register F-054: an unstated cause is UNKNOWN, not a guessed deadline. The Worker now names
+  // every skip it reports, so blank means "the Worker could not say" — and guessing "deadline" is
+  // the same mislabel, one layer up, that F-054 removes from the Worker.
   @Test
-  @DisplayName("an empty Worker skip reason is the deadline drop (the Worker's only skip path)")
-  void blankWorkerReasonIsDeadline() {
-    assertEquals(
-        CrossEncoderSkipReason.DEADLINE_EXCEEDED,
-        CrossEncoderSkipReason.fromWorkerSkipReason(""));
-    assertEquals(
-        CrossEncoderSkipReason.DEADLINE_EXCEEDED,
-        CrossEncoderSkipReason.fromWorkerSkipReason(null));
+  @DisplayName("an empty Worker skip reason is UNKNOWN, not a guessed deadline")
+  void blankWorkerReasonIsUnknown() {
+    assertEquals(CrossEncoderSkipReason.UNKNOWN, CrossEncoderSkipReason.fromWorkerSkipReason(""));
+    assertEquals(CrossEncoderSkipReason.UNKNOWN, CrossEncoderSkipReason.fromWorkerSkipReason(null));
   }
 
   @Test
@@ -38,6 +38,19 @@ class CrossEncoderSkipReasonTest {
     assertEquals(
         CrossEncoderSkipReason.MODEL_NOT_LOADED,
         CrossEncoderSkipReason.fromWorkerSkipReason("MODEL_NOT_LOADED"));
+    assertEquals(
+        CrossEncoderSkipReason.INFERENCE_FAILED,
+        CrossEncoderSkipReason.fromWorkerSkipReason("INFERENCE_FAILED"));
+  }
+
+  @Test
+  @DisplayName("F-054: an inference failure is a drop, and is not the deadline code")
+  void inferenceFailureIsItsOwnDrop() {
+    CrossEncoderSkipReason reason =
+        CrossEncoderSkipReason.fromWorkerSkipReason("INFERENCE_FAILED");
+    assertTrue(reason.isDrop());
+    assertNotEquals(CrossEncoderSkipReason.DEADLINE_EXCEEDED, reason);
+    assertEquals("INFERENCE_FAILED", reason.wire());
   }
 
   @Test
@@ -54,7 +67,11 @@ class CrossEncoderSkipReasonTest {
     for (CrossEncoderSkipReason r : CrossEncoderSkipReason.values()) {
       boolean expectedDrop =
           switch (r) {
-            case DEADLINE_EXCEEDED, RPC_FAILED, MODEL_NOT_LOADED, UNKNOWN -> true;
+            case DEADLINE_EXCEEDED,
+                RPC_FAILED,
+                MODEL_NOT_LOADED,
+                INFERENCE_FAILED,
+                UNKNOWN -> true;
             case NAVIGATIONAL_QUERY,
                 DISABLED,
                 BELOW_MIN_THRESHOLD,

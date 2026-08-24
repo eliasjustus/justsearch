@@ -155,7 +155,7 @@ public final class CrossEncoderReranker implements Closeable {
     long startNanos = System.nanoTime();
 
     if (documents.isEmpty()) {
-      return new RerankedResult(List.of(), List.of(), false, 0);
+      return new RerankedResult(List.of(), List.of(), RerankSkipCause.NONE, 0);
     }
 
     // Tempdoc 400 §22 Issue D / LR2-e.2 (Phase 6 / 6.8): wrap the full
@@ -250,7 +250,11 @@ public final class CrossEncoderReranker implements Closeable {
             "Rerank skipped: tokenization took {}ms (budget={}ms)",
             tokenizeMs,
             deadlineMs);
-        return new RerankedResult(originalOrder(documents.size()), List.of(), true, tokenizeMs);
+        return new RerankedResult(
+            originalOrder(documents.size()),
+            List.of(),
+            RerankSkipCause.TOKENIZE_BUDGET_EXCEEDED,
+            tokenizeMs);
       }
 
       // Prepare ONNX tensors — pad batch to bucket boundary to limit ORT plan recompilation (D4)
@@ -289,7 +293,10 @@ public final class CrossEncoderReranker implements Closeable {
               "Rerank skipped: prep took {}ms, insufficient budget for inference",
               preInferenceMs);
           return new RerankedResult(
-              originalOrder(documents.size()), List.of(), true, preInferenceMs);
+              originalOrder(documents.size()),
+              List.of(),
+              RerankSkipCause.PREP_BUDGET_EXCEEDED,
+              preInferenceMs);
         }
 
         // Run inference (select GPU or CPU session based on availability and arbitration)
@@ -311,26 +318,50 @@ public final class CrossEncoderReranker implements Closeable {
 
             long totalMs = (System.nanoTime() - startNanos) / 1_000_000;
             log.debug("Rerank completed: {} docs in {}ms", actualBatchSize, totalMs);
-            return new RerankedResult(sortedIndices, scores, false, totalMs);
+            return new RerankedResult(sortedIndices, scores, RerankSkipCause.NONE, totalMs);
           }
         }
       }
     } catch (OrtException e) {
-      log.error("Rerank inference failed", e);
+      boolean arenaExhausted = io.justsearch.ort.NativeSessionHandle.isBfcArenaFailure(e);
+      // Register F-054: an arena exhaustion has one actionable remedy and the campaign that found
+      // it had to discover the knob by hand — name it at the failure site, where the ORT message
+      // that proves the diagnosis is still in hand.
+      log.error(
+          Markers.append("reason_code", "rerank_inference_failed")
+              .and(Markers.append("arena_exhausted", arenaExhausted)),
+          inferenceFailureMessage(arenaExhausted),
+          e);
       // D9: report CPU session failure so the manager recreates it on next call,
       // releasing dead BFCArena allocations. Only fire when the CPU session was used —
       // GPU inference failures don't corrupt the CPU session (tempdoc 397 §14.5 W6).
       // Tempdoc 414 A3: classify the cause so ort.session.recovery_total{cause} is meaningful.
       if (wasCpu) {
         io.justsearch.ort.telemetry.CpuRecreateCause cause =
-            io.justsearch.ort.NativeSessionHandle.isBfcArenaFailure(e)
+            arenaExhausted
                 ? io.justsearch.ort.telemetry.CpuRecreateCause.BFC_ARENA_FAILURE
                 : io.justsearch.ort.telemetry.CpuRecreateCause.REPORTED_FAILURE;
         sessions.reportCpuSessionFailure(cause);
       }
       long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
-      return new RerankedResult(originalOrder(documents.size()), List.of(), true, elapsedMs);
+      return new RerankedResult(
+          originalOrder(documents.size()), List.of(), RerankSkipCause.INFERENCE_FAILED, elapsedMs);
     }
+  }
+
+  /**
+   * The log line for an inference failure. Register F-054: an ONNX Runtime arena exhaustion is the
+   * one inference failure with a single known remedy, and it is invisible from the deadline-shaped
+   * signals the caller sees — so the knob is named here, at the only place that holds the ORT
+   * message proving the diagnosis. Package-private and pure so the wording is pinned by a test
+   * rather than by reading the log.
+   */
+  static String inferenceFailureMessage(boolean arenaExhausted) {
+    return arenaExhausted
+        ? "Rerank inference failed: the ONNX Runtime memory arena could not satisfy an allocation."
+            + " This is NOT a deadline miss — no rerank deadline value fixes it. Raise the arena"
+            + " size via JUSTSEARCH_RERANK_GPU_MEM_MB (justsearch.rerank.gpu_mem_mb)."
+        : "Rerank inference failed";
   }
 
   private List<Float> extractScores(OrtSession.Result result, int actualBatchSize)
@@ -416,11 +447,28 @@ public final class CrossEncoderReranker implements Closeable {
   /**
    * Result of reranking operation.
    *
+   * <p>Register F-054: {@code skipped} is derived from {@code skipCause}, not stored beside it —
+   * one authority for "did the cross-encoder score these documents", so a caller can never read a
+   * skip whose cause disagrees with it.
+   *
    * @param sortedIndices indices sorted by relevance score (highest first)
    * @param scores relevance scores for each document (original order)
-   * @param skipped true if reranking was skipped (deadline or error)
+   * @param skipCause why the cross-encoder did not score (never null; {@link RerankSkipCause#NONE}
+   *     when it did)
    * @param latencyMs time taken in milliseconds
    */
   public record RerankedResult(
-      List<Integer> sortedIndices, List<Float> scores, boolean skipped, long latencyMs) {}
+      List<Integer> sortedIndices, List<Float> scores, RerankSkipCause skipCause, long latencyMs) {
+
+    public RerankedResult {
+      if (skipCause == null) {
+        throw new IllegalArgumentException("skipCause must not be null (use RerankSkipCause.NONE)");
+      }
+    }
+
+    /** True if reranking was skipped — a budget pre-check or an inference failure. */
+    public boolean skipped() {
+      return skipCause.isSkip();
+    }
+  }
 }

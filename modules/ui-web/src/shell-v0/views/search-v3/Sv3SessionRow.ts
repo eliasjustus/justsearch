@@ -28,6 +28,14 @@
  * discard is WITHHELD, not disabled, while work is in flight — a control that is present but inert
  * asks the reader to find out by pressing it.
  *
+ * The RENAME is withheld the same way, on the same grounds, when no store session backs the
+ * conversation (tempdoc 859 slice C PR-2, `store-backed`): a delegate conversation is persisted as
+ * agent runs, and the rename endpoint writes to a `ConversationStore` session it has none of — so the
+ * control would 404 rather than rename. Both gestures that reach the rename (double-click, F2) are
+ * withheld with it: an affordance removed from the trailing slot and still reachable by keyboard
+ * would be the same broken write behind a less visible door. The pin is LOCAL to this window and the
+ * discard deletes the conversation's runs, so both stay.
+ *
  * Side-effect registers <jf-sv3-session-row>.
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
@@ -83,8 +91,13 @@ export class Sv3SessionRow extends JfElement {
            Host-scoped, like every other measure this window authors. */
         --sv3-row-actions-inline: calc(3 * var(--space-6));
       }
-      :host([live]) {
+      :host([live]),
+      :host(:not([store-backed])) {
         --sv3-row-actions-inline: calc(2 * var(--space-6));
+      }
+      /* Both withheld: the pin is the only action left (tempdoc 859 slice C PR-2). */
+      :host([live]:not([store-backed])) {
+        --sv3-row-actions-inline: var(--space-6);
       }
 
       button.row {
@@ -472,6 +485,7 @@ export class Sv3SessionRow extends JfElement {
     inflight: { type: Boolean, reflect: true },
     pinned: { type: Boolean, reflect: true },
     live: { type: Boolean, reflect: true },
+    storeBacked: { type: Boolean, reflect: true, attribute: 'store-backed' },
     compact: { type: Boolean, reflect: true },
     renaming: { type: Boolean, reflect: true },
   };
@@ -492,6 +506,14 @@ export class Sv3SessionRow extends JfElement {
    * saying the same thing.
    */
   declare live: boolean;
+  /**
+   * A `ConversationStore` session backs this conversation (tempdoc 859 slice C PR-2). Defaults TRUE:
+   * every conversation this window could show before the list joined a second record had one, so the
+   * default keeps every existing row's action set exactly as it was. The window projects it
+   * ({@link file://./sv3-sessions.ts} `Sv3SessionRowView.storeBacked`) from what the list endpoint
+   * reported; the row never guesses it.
+   */
+  declare storeBacked: boolean;
   /** The sidebar is on its collapsed icon rail; the row is a 32px square. */
   declare compact: boolean;
   /** The reader is editing this row's title (tempdoc 822 Phase F5). */
@@ -509,6 +531,7 @@ export class Sv3SessionRow extends JfElement {
     this.inflight = false;
     this.pinned = false;
     this.live = false;
+    this.storeBacked = true;
     this.compact = false;
     this.renaming = false;
   }
@@ -549,7 +572,8 @@ export class Sv3SessionRow extends JfElement {
    * control inside the row belongs to that control.
    */
   private onRowDoubleClick(event: MouseEvent): void {
-    if (this.renaming || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (!this.storeBacked || this.renaming) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if ((event.target as HTMLElement | null)?.closest('.actions') !== null) return;
     event.preventDefault();
     this.dispatchEvent(
@@ -563,7 +587,7 @@ export class Sv3SessionRow extends JfElement {
    * renaming the focused item, and the only way a pointerless reader gets to the affordance at all.
    */
   private onRowKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'F2' || this.renaming) return;
+    if (event.key !== 'F2' || this.renaming || !this.storeBacked) return;
     event.preventDefault();
     this.dispatchEvent(
       new CustomEvent(SV3_SESSION_RENAME_START, { bubbles: true, composed: true }),
@@ -712,16 +736,20 @@ export class Sv3SessionRow extends JfElement {
         </span>
       </button>
       <div class="actions" data-testid="sv3-session-row-actions">
-        <button
-          type="button"
-          class="act rename"
-          aria-label=${this.named('Rename')}
-          title="Rename"
-          data-testid="sv3-session-row-rename"
-          @click=${this.startRename}
-        >
-          ${icon({ name: 'pencil', size: ACTION_GLYPH_SIZE })}
-        </button>
+        ${this.storeBacked
+          ? html`
+              <button
+                type="button"
+                class="act rename"
+                aria-label=${this.named('Rename')}
+                title="Rename"
+                data-testid="sv3-session-row-rename"
+                @click=${this.startRename}
+              >
+                ${icon({ name: 'pencil', size: ACTION_GLYPH_SIZE })}
+              </button>
+            `
+          : nothing}
         <button
           type="button"
           class="act pin"

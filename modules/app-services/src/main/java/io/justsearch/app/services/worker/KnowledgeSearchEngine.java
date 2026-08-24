@@ -1088,10 +1088,20 @@ final class KnowledgeSearchEngine {
         // gets is fusion/LambdaMART order. That is a degradation, so it logs at WARN; a by-design
         // skip stays at DEBUG.
         if (crossEncoderSkipReason.isDrop()) {
+          // Register F-054: INFERENCE_FAILED is not a latency problem, so the WARN must not send
+          // the reader to the deadline knob. The Worker log at the failure site names the exact
+          // remedy; the one that a measured campaign had to find by hand is repeated here.
+          String remedy =
+              crossEncoderSkipReason == CrossEncoderSkipReason.INFERENCE_FAILED
+                  ? " — the relevance model failed to run (not a deadline miss); if the Worker log"
+                      + " shows an ONNX Runtime arena allocation failure, raise"
+                      + " JUSTSEARCH_RERANK_GPU_MEM_MB"
+                  : "";
           log.warn(
-              "Cross-encoder dropped: {} after {}ms — results keep their fusion order",
+              "Cross-encoder dropped: {} after {}ms — results keep their fusion order{}",
               crossEncoderSkipReason,
-              reranked.getElapsedMs());
+              reranked.getElapsedMs(),
+              remedy);
         } else {
           log.debug("Rerank skipped: {} ({}ms)", crossEncoderSkipReason, reranked.getElapsedMs());
         }

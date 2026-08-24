@@ -52,7 +52,39 @@ graph TD
     *   **Library:** Manage indexed folders.
     *   **Brain:** AI Model Configuration & VRAM Monitoring (also surfaces index schema mismatch / reindex-required state).
     *   **System:** System diagnostics and telemetry (hosts Health / Logs / Activity).
-    *   **Settings:** General application preferences.
+    *   **Settings:** General application preferences. Placement `MODAL` (tempdoc 855): the
+        rail keeps a fixed bottom affordance (same pattern as Help), but pressing it opens
+        Settings as a centered overlay window over the unchanged Stage rather than
+        navigating into it — see "Settings window" below.
+
+### Settings window
+
+`core.settings-surface` is the first realization of `Placement.MODAL` (declared but
+previously unused in both the FE `Placement` union and the Java `Surface` placement
+enum). Navigating to it — from the rail, the command palette, or a deep-link URL —
+opens `<jf-settings-window>` (`shell-v0/chrome/SettingsWindow.ts`), a chrome-level
+element in `OverlayHost`'s `center` slot (the same dock as the command palette),
+instead of mounting into the Stage; the Stage's active surface is untouched
+underneath. Its dialog behavior follows the `ConfirmDialog` idiom: a native
+`<dialog>` driven by `ModalController` supplies focus-trap, `inert`, and Top Layer;
+ESC, backdrop-click, and an X button close it. Closing is history-aware — it either
+navigates back (if opening the window pushed the current address) or forward-navigates
+to the underlying stage surface (covering the case where Settings was the boot/deep-link
+entry) — so Back is always meaningful and never doubles up with a real browser Back.
+
+Inside the window, one category tree — declared once in
+`shell-v0/views/settingsRegister.ts` as `{group → category → entry}`, where an entry
+is either a native section or a member surface id — drives the vertical grouped nav
+(accordion + scroll-spy), the category pages, deep-link targets, and in-window search;
+none of these are hand-maintained separately, so they cannot drift from each other.
+Two categories are member surfaces mounted through the same catalog composition
+machinery as Settings' presentation gallery/editor tabs: `core.security-surface`
+(absorbed as the Privacy & Trust category; placement `DEEPLINK`) and the Appearance
+category's presentation members. The Token Editor (`placement: 'DEEPLINK'`, formerly a
+rail surface) is reached from Appearance via a launch link, not embedded, per the
+plugin-presentation boundary (ADR-0035). A member surface's own id stays
+deep-linkable unchanged — e.g. a link to `core.security-surface` opens the settings
+window at the Security category via the existing member→host alias redirect.
 
 ### Zone A: Global Command (Hybrid Input)
 *   **Location:** Top horizontal bar.

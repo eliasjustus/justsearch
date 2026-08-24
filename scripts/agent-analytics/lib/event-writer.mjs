@@ -6,8 +6,11 @@ const EVENTS_FILE = 'events.ndjson';
 const ERRORS_FILE = 'errors.log';
 
 // Rotate when events.ndjson exceeds 10 MB. Previous file is kept as .prev
-// (one generation only — simple and bounded). Increased from 5 MB to reduce
-// data loss from rotation (score instability root cause, see tempdoc 118).
+// (one generation only — simple and bounded). Raised from 5 MB because rotation
+// drops history a report was built from: readers see current + `.prev`
+// (`telemetry-io.mjs` loadEvents), so the second rotation overwrites `.prev` and
+// those sessions can no longer be recomputed. The limit buys retention horizon
+// with disk; it does not change that the horizon is finite.
 const MAX_EVENTS_BYTES = 10 * 1024 * 1024;
 
 function ensureDir(dirPath) {

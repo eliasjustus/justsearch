@@ -52,6 +52,7 @@ describe('SettingsSurface app updates', () => {
   it('shows an authenticated available release and requires an explicit install action', async () => {
     const element = document.createElement('jf-settings-surface') as HTMLElement & {
       host_: unknown;
+      activeCategory: string;
       updateComplete: Promise<unknown>;
     };
     element.host_ = createMockHostApi({
@@ -59,6 +60,9 @@ describe('SettingsSurface app updates', () => {
     });
     document.body.appendChild(element);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    // Tempdoc 855 P1 — App updates is a sub-anchor of the "desktop" category (register-driven
+    // paging); the default active category ("appearance") would not render it.
+    element.activeCategory = 'desktop';
     await element.updateComplete;
 
     const section = element.shadowRoot?.querySelector('[data-testid="settings-app-updates"]');
@@ -71,6 +75,7 @@ describe('SettingsSurface app updates', () => {
   it('invokes installation only after the user activates the install control', async () => {
     const element = document.createElement('jf-settings-surface') as HTMLElement & {
       host_: unknown;
+      activeCategory: string;
       updateComplete: Promise<unknown>;
     };
     element.host_ = createMockHostApi({
@@ -78,6 +83,7 @@ describe('SettingsSurface app updates', () => {
     });
     document.body.appendChild(element);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    element.activeCategory = 'desktop';
     await element.updateComplete;
 
     const install = element.shadowRoot?.querySelector(

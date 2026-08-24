@@ -25,6 +25,7 @@ interface RowProps {
   readonly status?: Sv3RowStatus;
   readonly live?: boolean;
   readonly pinned?: boolean;
+  readonly storeBacked?: boolean;
 }
 
 async function mountRow(props: RowProps = {}): Promise<Sv3SessionRow> {
@@ -33,6 +34,7 @@ async function mountRow(props: RowProps = {}): Promise<Sv3SessionRow> {
   row.status = props.status ?? 'resting';
   row.live = props.live ?? false;
   row.pinned = props.pinned ?? false;
+  row.storeBacked = props.storeBacked ?? true;
   document.body.appendChild(row);
   await row.updateComplete;
   return row;
@@ -90,6 +92,50 @@ describe('the row offers exactly the actions its session really supports', () =>
     row.status = 'resting';
     await row.updateComplete;
     expect(action(row, 'remove')).not.toBeNull();
+  });
+
+  it('WITHHOLDS the rename on a conversation no store session backs', async () => {
+    // Tempdoc 859 slice C PR-2: a delegate conversation is persisted as agent runs alone, and the
+    // rename endpoint writes to a ConversationStore session it has none of — so the control would
+    // 404 rather than rename. Pin is local to the window and discard deletes the conversation's
+    // runs, so both stay: the row withholds exactly what is broken, not everything.
+    const row = await mountRow({ storeBacked: false });
+    expect(actionTestIds(row)).toEqual(['sv3-session-row-pin', 'sv3-session-row-remove']);
+    expect(action(row, 'rename')).toBeNull();
+    expect(row.shadowRoot?.querySelector('[disabled]')).toBeNull();
+    // The state REFLECTS, because the action set's reserved width is a host-scoped token keyed on
+    // this attribute — a property that never reached the host would leave a gap where the withheld
+    // control used to be.
+    expect(row.hasAttribute('store-backed')).toBe(false);
+    expect((await mountRow()).hasAttribute('store-backed')).toBe(true);
+  });
+
+  it('withholds BOTH gestures that reach the rename, not just the button', async () => {
+    // An affordance removed from the trailing slot and still reachable by double-click or F2 would
+    // be the same broken write behind a less visible door.
+    const row = await mountRow({ storeBacked: false });
+    let starts = 0;
+    row.addEventListener(SV3_SESSION_RENAME_START, () => (starts += 1));
+    const claim = row.shadowRoot?.querySelector<HTMLButtonElement>('button.row');
+    claim?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    claim?.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }));
+    await row.updateComplete;
+    expect(starts).toBe(0);
+    // ...and the same two gestures on a store-backed row DO start it, so the zero above is the
+    // withholding rather than a listener that never fires.
+    const backed = await mountRow();
+    let backedStarts = 0;
+    backed.addEventListener(SV3_SESSION_RENAME_START, () => (backedStarts += 1));
+    const backedClaim = backed.shadowRoot?.querySelector<HTMLButtonElement>('button.row');
+    backedClaim?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    backedClaim?.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }));
+    await backed.updateComplete;
+    expect(backedStarts).toBe(2);
+  });
+
+  it('leaves the pin alone when a run-backed conversation is also live', async () => {
+    const row = await mountRow({ storeBacked: false, live: true, status: 'in-motion' });
+    expect(actionTestIds(row)).toEqual(['sv3-session-row-pin']);
   });
 
   it('offers its full set on the two statuses that never yield', async () => {
