@@ -106,7 +106,11 @@ export interface ConversationEntry {
     | 'handoff'
     | 'run-node'
     // Tempdoc 565 §30 — a human STEERING directive acknowledged mid-run (the DIRECTION authority).
-    | 'steer-directive';
+    | 'steer-directive'
+    // Tempdoc 859 §A §1.1 — a CLOSED reasoning region, in the position it was produced. Reasoning
+    // used to live only in a side-channel that never entered this array, which is why it could be
+    // rendered only as a stack above the run rather than interleaved with the steps it produced.
+    | 'reasoning';
   content: string;
   callIds?: string[];
   errorCode?: string;
@@ -126,8 +130,26 @@ export interface ConversationEntry {
   nodeId?: string;
   nodeKind?: string;
   nodeLabel?: string;
+  /** Tempdoc 859 §A — a `reasoning` entry's measured duration (first token → first output). */
+  durationMs?: number;
   timestamp: number;
 }
+
+/**
+ * Tempdoc 859 §A §1.2 — event names that do NOT close an open reasoning region.
+ *
+ * `heartbeat` is unmapped and carries no run content; the three primers describe the run (or open
+ * it) rather than advance it, and all three arrive before any reasoning could exist. EVERY other
+ * name — mapped or not, present or future — cuts, which is what keeps the live cut set from drifting
+ * away from the record fold's (`AgentInteractionMapper.fromRunEvents`). A name in neither this set
+ * nor the cut set is a test failure, not a silent pass (`AgentSessionController.test.ts`, C-6).
+ */
+export const REASONING_BOUNDARY_EXEMPT: ReadonlySet<string> = new Set([
+  'heartbeat',
+  'state_snapshot',
+  'session_started',
+  RUN_STARTED_EVENT,
+]);
 
 // Tempdoc 565 §3.A / §13.8 — AgentSource + AgentSentenceCite are now the single-authority shared
 // shape-leaf types (the generated `done` event references them by name); imported for local use and
@@ -335,6 +357,11 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   conversation: ConversationEntry[] = [];
   toolCalls: Record<string, ToolCall> = {};
   streamingText = '';
+  /**
+   * Tempdoc 859 §A — the prose this run last COMMITTED out of {@link streamingText}. Read only by
+   * `onDone`'s duplicate-answer guard; per-run, cleared with the rest of the run state.
+   */
+  private lastStreamedAnswer = '';
   isStreaming = false;
   // Tempdoc 565 §33 — WHICH kind of run is live (null = idle). Only an `agent` run is steerable (§30
   // interject) — a `workflow` run goes through WorkflowShapeRunner (no drain) and a `background` run is
@@ -716,6 +743,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.conversation = [];
     this.toolCalls = {};
     this.streamingText = '';
+    this.lastStreamedAnswer = '';
     this.isStreaming = false;
     this.iterationsUsed = 0;
     this.toolCallsExecuted = 0;
@@ -810,7 +838,9 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   }
 
   onChunk(payload: CoreAgentRunChunkPayload): void {
-    this.reasoning.endThinking();
+    // Tempdoc 859 §A §1.2 — the `endThinking()` that used to live here is now the chokepoint's
+    // `markOutput()`. It was the ONLY text-side region close, and closing on the first prose token
+    // is also why reasoning that resumed after a tool call never got a block of its own.
     this.streamingText = this.streamingText + (payload.text ?? '');
     this.notify();
   }
@@ -1059,7 +1089,12 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.reasoning.finalize();
     // F2: the run is complete — the turn's proposed batch is no longer pending.
     this.currentToolBatch = [];
-    const streamedSoFar = this.streamingText.trim();
+    // Tempdoc 859 §A — what this run has ALREADY shown as prose, whether it is still buffered or was
+    // committed at an earlier boundary. Reading only the live buffer was safe while the buffer
+    // survived until `done`; a reasoning cut now commits it mid-run, and a `done` that compared
+    // against an empty buffer would append the whole answer a second time under the first copy.
+    const streamedSoFar = this.streamingText.trim() || this.lastStreamedAnswer.trim();
+    this.lastStreamedAnswer = '';
     this.commitStreamingText();
     const finalResp = payload.finalResponse;
     if (finalResp?.trim() && finalResp.trim() !== streamedSoFar) {
@@ -1422,7 +1457,56 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     if (this.isStreaming && this.runKind === 'agent') {
       this.liveWatchdog.kick();
     }
-    const map: Record<string, ((p: unknown) => void) | undefined> = {
+    // Tempdoc 859 §A §1.2 — THE reasoning-region boundary rule, applied at the ONE site that has the
+    // event NAME in hand, in the same vocabulary the journal uses (`AgentEventPayloads.name`). A
+    // per-handler enumeration is what let the live cut set drift to a single member (the first text
+    // chunk) while the record fold cut on every step; here there is no list to get wrong, so a
+    // handler added tomorrow cuts by construction.
+    this.applyReasoningBoundary(event);
+    this.handlerMap()[event]?.(payload);
+  }
+
+  /**
+   * MARK OUTPUT on anything that is not more reasoning; CUT on anything that is not reasoning or
+   * text. `chunk` is deliberately transparent so that reasoning separated only by prose coalesces
+   * into ONE block — the same rule `AgentInteractionMapper.fromRunEvents` applies to the journal, so
+   * a run the reader watched and a run they came back to produce the same blocks.
+   */
+  private applyReasoningBoundary(event: string): void {
+    if (event === 'reasoning_chunk' || REASONING_BOUNDARY_EXEMPT.has(event)) return;
+    this.reasoning.markOutput();
+    if (event === 'chunk') return;
+    this.closeReasoningRegion();
+  }
+
+  /**
+   * Tempdoc 859 §A §1.1 — the closed region joins the ordered stream it was produced in, as its own
+   * entry, instead of accumulating in a side-channel the feed never sees.
+   *
+   * Any in-flight prose is committed FIRST: the honest order at a boundary is `[text][reasoning]`,
+   * because the region either began after that prose or coalesced across it, and in both readings
+   * the prose was on screen before the thought that closed here was finished.
+   */
+  private closeReasoningRegion(): void {
+    const block = this.reasoning.closeRegion();
+    if (block === null) return;
+    this.commitStreamingText();
+    this.conversation = [
+      ...this.conversation,
+      {
+        id: this.nextEntryId(),
+        type: 'reasoning',
+        content: block.text,
+        durationMs: block.durationMs,
+        timestamp: Date.now(),
+      },
+    ];
+    this.notify();
+  }
+
+  /** The dispatch vocabulary and its handlers. Walked by {@link eventNames} (859 §A, test C-6). */
+  private handlerMap(): Record<string, ((p: unknown) => void) | undefined> {
+    return {
       session_started: (p) => this.onSessionStarted(p as CoreAgentRunSessionStartedPayload),
       // Tempdoc 834 §1.6 — the managed run stream's identity frame; `session_started` above stays a
       // dual-read for the legacy/workflow producers and the persisted ledger (see onSessionStarted).
@@ -1475,7 +1559,16 @@ export class AgentSessionController implements CoreAgentRunHandlers {
       // Tempdoc 565 §30 — the DIRECTION authority acknowledged a human mid-run steering directive.
       directive_acknowledged: (p) => this.onDirectiveAcknowledged(p),
     };
-    map[event]?.(payload);
+  }
+
+  /**
+   * Tempdoc 859 §A §1.2 — the dispatch vocabulary, exposed so the boundary rule can be WALKED. The
+   * defect this closes was invisible at build time precisely because "which events cut a reasoning
+   * region" was an implicit consequence of where `endThinking()` happened to be called; a walkable
+   * key set makes an unclassified name a test failure instead.
+   */
+  eventNames(): readonly string[] {
+    return Object.keys(this.handlerMap());
   }
 
   /**
@@ -1575,6 +1668,8 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     const updated = [...this.conversation];
     if (text) {
       updated.push({ id: this.nextEntryId(), type: 'assistant-text', content: this.streamingText, timestamp: Date.now() });
+      // Tempdoc 859 §A — remembered for `onDone`'s duplicate-answer guard; see the read there.
+      this.lastStreamedAnswer = this.streamingText;
       this.streamingText = '';
     }
     if (opts?.groupCallId) {
@@ -1609,6 +1704,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.isStreaming = true;
     this.runKind = 'agent'; // §33 — a `send` run is the steerable agent loop
     this.streamingText = '';
+    this.lastStreamedAnswer = '';
     this.reasoning.reset();
     this.iterationsUsed = 0;
     this.toolCallsExecuted = 0;
