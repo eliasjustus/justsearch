@@ -131,4 +131,44 @@ class AgentLlmCallerTest {
     assertTrue(rt.recovered().isEmpty());
     assertEquals(answer, rt.text());
   }
+
+  /**
+   * Tempdoc 859 §D §2.6 layer 1 / §3.3 T5 — the budget-edge finalize instruction.
+   *
+   * <p><b>What this pins, and what it deliberately does NOT.</b> It pins the SEAM: that the message
+   * the loop appends before the finalize call actually carries the cut-short obligation, so a future
+   * edit cannot quietly revert to "provide your best answer" — the wording that produced 859 §7's
+   * confident, content-free non-answer.
+   *
+   * <p>It does <b>not</b> pin that the ANSWER is honest. No prompt-level assertion can: the model is
+   * free to ignore every line of this. Nobody should read a green here as evidence the decline arm
+   * is fixed. The fail-closed guarantee is the disposition on the wire ({@code AgentDone.disposition}),
+   * asserted by {@code AgentLoopServiceTest#budgetEdgeFinalizeDeclaresItsDisposition} — which passes
+   * even when the model's text says nothing at all.
+   */
+  @Test
+  void budgetEdgeFinalizeInstructionCarriesTheCutShortObligation() {
+    String instruction = AgentLlmCaller.BUDGET_EDGE_FINALIZE_INSTRUCTION;
+
+    assertTrue(
+        instruction.contains("cut short"),
+        "the model must be told, in words, that the run stopped before it finished");
+    assertTrue(
+        instruction.contains("partial"),
+        "and given explicit PERMISSION to be partial — the absence of which is what a compact model"
+            + " resolves by declining");
+    assertTrue(
+        instruction.contains("do not decline"),
+        "stated as a prohibition too, because permission alone was what the old wording implied");
+    assertTrue(
+        instruction.contains("what you had gathered") && instruction.contains("had not"),
+        "and required to partition gathered from not-gathered rather than blurring the two");
+    assertTrue(
+        instruction.contains("lack access"),
+        "the specific observed falsehood — claiming no access to files already in the transcript —"
+            + " is forbidden by name");
+    assertTrue(
+        instruction.contains("Do not call any more tools."),
+        "the original no-tools constraint survives the rewrite (the finalize call passes no tools)");
+  }
 }

@@ -24,6 +24,7 @@ import type {
   AgentSessionController,
   ConversationEntry,
 } from '../../controllers/AgentSessionController.js';
+import type { BudgetUpdate } from '../../controllers/AgentSessionController.js';
 import type {
   AgentSentenceCite,
   AgentSource,
@@ -65,6 +66,8 @@ interface FakeCtrl {
   conversationId: string | null;
   sessionId: string | null;
   iterationsUsed: number;
+  toolCallsExecuted: number;
+  budgetUpdates: BudgetUpdate[];
   budgetGate: null;
   contextGate: null;
   runPark: null;
@@ -72,6 +75,8 @@ interface FakeCtrl {
   answerCitations: AgentSentenceCite[];
   answerEvidenceRunId: string | null;
   answerCitationScorer: string | null;
+  /** Tempdoc 859 §D §2.6 — the run’s terminal disposition, as the wire reports it. */
+  terminalDisposition: string | null;
   send: ReturnType<typeof vi.fn>;
   cancelSession: ReturnType<typeof vi.fn>;
   reattachActiveRunOnLoad: ReturnType<typeof vi.fn>;
@@ -88,6 +93,8 @@ function makeCtrl(): FakeCtrl {
     conversationId: null,
     sessionId: null,
     iterationsUsed: 0,
+    toolCallsExecuted: 0,
+    budgetUpdates: [],
     budgetGate: null,
     contextGate: null,
     runPark: null,
@@ -95,6 +102,7 @@ function makeCtrl(): FakeCtrl {
     answerCitations: [],
     answerEvidenceRunId: null,
     answerCitationScorer: null,
+    terminalDisposition: null,
     send: vi.fn(async () => {}),
     cancelSession: vi.fn(async () => {}),
     reattachActiveRunOnLoad: vi.fn(async () => {}),
@@ -198,6 +206,9 @@ async function region(el: Mounted, tag: string): Promise<Mounted> {
 const all = (host: Mounted, testid: string): HTMLElement[] => [
   ...(host.shadowRoot?.querySelectorAll<HTMLElement>(`[data-testid="${testid}"]`) ?? []),
 ];
+
+const q = (host: Mounted, testid: string): HTMLElement | null =>
+  host.shadowRoot?.querySelector(`[data-testid="${testid}"]`) ?? null;
 
 async function frame(el: Mounted, patch: Partial<FakeCtrl>): Promise<void> {
   Object.assign(ctrl, patch);
@@ -516,5 +527,139 @@ describe('T7 — live and record produce the SAME evidence from the same bytes',
     expect(after.sources).toHaveLength(2);
     expect(after.matches).toHaveLength(1);
     expect(after.marks).toHaveLength(1);
+  });
+});
+
+/* ── Tempdoc 859 §D §2.6 / §3.3 T11 — the cut-short disclosure ─────────────────────── */
+
+describe('T11 — a truncated run says so, whatever its answer says', () => {
+  /** The answer a cut-short run actually produced in the live audit: confident, and silent about it. */
+  const CONFIDENT = 'The retry succeeded.';
+
+  it('renders the cut-short line and badge from the DISPOSITION, not from the answer text', async () => {
+    const el = await mount();
+    await runWithTwoTexts(el, 'why did it retry?');
+    await frame(el, {
+      terminalDisposition: 'BUDGET_EDGE_FINALIZE',
+      answerEvidenceRunId: 'run-1',
+      runInFlight: false,
+      isStreaming: false,
+      runKind: null,
+    });
+    await settle(el);
+
+    const main = await region(el, 'jf-sv3-main');
+    expect(q(main, 'sv3-turn-cut-short'), 'the settled turn discloses the truncation').not.toBeNull();
+    // THE fail-closed property: the model's own text says nothing about being cut short, and the
+    // disclosure fires anyway. 859 §7 watched exactly this answer shape hide a truncated run.
+    // The answer this run produced, read from the controller that holds it. It is confident and it
+    // says nothing about being cut short — and the disclosure above fired regardless. That is the
+    // whole property: a model cannot suppress it by writing well.
+    const prose = ctrl.conversation
+      .filter((entry) => entry.type === 'assistant-text')
+      .map((entry) => entry.content)
+      .join(' ');
+    expect(prose, 'the run really did produce a confident-sounding answer').toContain(CONFIDENT);
+    expect(prose.toLowerCase(), 'and it said nothing at all about being cut short').not.toContain(
+      'cut short',
+    );
+    expect(q(main, 'sv3-turn-cut-short')?.textContent?.toLowerCase()).toContain('cut short');
+    // And the receipt tail carries the compact badge beside the outcome.
+    expect(q(main, 'sv3-run-receipt')?.getAttribute('data-cut-short')).toBe('true');
+    expect(q(main, 'sv3-run-receipt')?.textContent).toContain('cut short');
+  });
+
+  it('discloses the ITERATION ceiling too — the terminal the model cannot disclose at all', async () => {
+    // MAX_ITERATIONS produces no answer text, so there is nowhere for a model to say it even if it
+    // wanted to. Closing both truncating dispositions in one change is the point; leaving one
+    // unstamped would be the same hole under a different name.
+    const el = await mount();
+    await runWithTwoTexts(el, 'why did it retry?');
+    await frame(el, {
+      terminalDisposition: 'MAX_ITERATIONS',
+      answerEvidenceRunId: 'run-1',
+      runInFlight: false,
+      isStreaming: false,
+      runKind: null,
+    });
+    await settle(el);
+    expect(q(await region(el, 'jf-sv3-main'), 'sv3-turn-cut-short')).not.toBeNull();
+  });
+
+  it('says NOTHING for a run that completed, or for one that never stated a disposition', async () => {
+    // An unknown disposition discloses nothing rather than claiming success — and a COMPLETED run
+    // must not wear a badge, or the badge stops meaning anything.
+    for (const disposition of ['COMPLETED', null]) {
+      const el = await mount();
+      await runWithTwoTexts(el, 'why did it retry?');
+      await frame(el, {
+        terminalDisposition: disposition,
+        answerEvidenceRunId: 'run-1',
+        runInFlight: false,
+        isStreaming: false,
+        runKind: null,
+      });
+      await settle(el);
+      const main = await region(el, 'jf-sv3-main');
+      expect(q(main, 'sv3-turn-cut-short'), String(disposition)).toBeNull();
+      expect(q(main, 'sv3-run-receipt')?.getAttribute('data-cut-short')).toBe('false');
+      for (const child of [...document.body.children]) child.remove();
+    }
+  });
+
+  it('SURVIVES A RELOAD — the record carries it, so the disclosure does not expire', async () => {
+    // An honesty fact that shows live and vanishes after a reload is worse than one never made: the
+    // reader has already learned to trust it, so its absence then reads as 'this one was fine'.
+    const conversationId = 'uc-cutshort';
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const href = String(url);
+      if (href.includes('/api/thread/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            conversationId,
+            events: [
+              {
+                id: 'c1',
+                occurredAt: '2026-08-13T10:00:00.500Z',
+                kind: 'TOOL_ACTIVITY',
+                originator: 'agent',
+                content: 'core_search',
+                attributes: { callId: 'c1', toolName: 'core_search' },
+              },
+              {
+                id: 'a2',
+                occurredAt: '2026-08-13T10:00:02.000Z',
+                kind: 'ASSISTANT_MESSAGE',
+                originator: 'agent',
+                content: CONFIDENT,
+                // Persisted by AgentInteractionMapper beside the answer it qualifies.
+                attributes: { disposition: 'BUDGET_EDGE_FINALIZE' },
+              },
+            ],
+          }),
+        };
+      }
+      if (href.includes('/api/chat/runs/live')) {
+        return { ok: true, status: 200, json: async () => ({ runs: [] }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ sessions: [], results: [] }), body: null };
+    });
+
+    const el = await mount();
+    await runWithTwoTexts(el, 'why did it retry?');
+    // NO live disposition on the controller — this run is being read from the record, exactly as a
+    // reloaded tab reads it. The badge must come from the record leg and from nothing else.
+    await frame(el, {
+      answerEvidenceRunId: 'run-1',
+      runInFlight: false,
+      isStreaming: false,
+      runKind: null,
+    });
+    await settle(el);
+
+    expect(el.sessions.sessions[0]!.turns[0]!.disposition).toBe('BUDGET_EDGE_FINALIZE');
+    expect(q(await region(el, 'jf-sv3-main'), 'sv3-turn-cut-short')).not.toBeNull();
   });
 });

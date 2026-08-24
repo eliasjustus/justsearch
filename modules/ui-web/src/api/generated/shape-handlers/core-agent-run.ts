@@ -105,6 +105,7 @@ export interface CoreAgentRunDonePayload {
   sources?: AgentSource[];
   citations?: AgentSentenceCite[];
   citationScorer?: string;
+  disposition?: string;
   trace?: TracePayload;
 }
 

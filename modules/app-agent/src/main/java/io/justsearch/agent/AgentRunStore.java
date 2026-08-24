@@ -156,6 +156,19 @@ public final class AgentRunStore {
       meta.put("resumeNote", "");
       meta.put("selectedToolNames", request.selectedToolNames());
       meta.put("maxIterations", request.maxIterations());
+      // Tempdoc 859 §D §2.1 — the run's EFFORT rung, persisted beside `maxIterations` and for the
+      // same reason: both are dispatch-time inputs that a RESUME or a FORK has to reconstruct. Without
+      // it, resuming a Thorough run silently re-sized it to Standard — 15x to 5x, with nothing
+      // anywhere saying so, because the backend's absent-rung fallback IS Standard.
+      //
+      // `initialBudget` above cannot stand in for it: that is the resolved TOKEN COUNT for the model
+      // this run happened to start on, and a resume may bind a different model with a different n_ctx.
+      // The rung is the durable intent; the count is derived from it.
+      //
+      // Absence stays meaningful and needs no schema bump: a record written before this field is a
+      // pre-859 record, and reading it as Standard is exactly the documented fallback rather than a
+      // guess. An upcaster inserting `effort: null` would say the same thing more loudly.
+      meta.put("effort", request.effort());
       meta.put("initialBudget", initialBudget);
       meta.put("iterationsUsed", 0);
       meta.put("toolCallsExecuted", 0);

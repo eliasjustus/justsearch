@@ -143,6 +143,13 @@ public final class AgentEventPayloads {
         // describes, so the FE's 836 §4 gate reads "which scale is this number on" from the event
         // that carried the number rather than assuming.
         donePayload.put("citationScorer", e.citationScorer());
+        // Tempdoc 859 §D §2.6 — the terminal DISPOSITION, so the FE can disclose a truncated run
+        // without asking the model's own text whether it was truncated. Omitted when the emitter did
+        // not say (the ungrounded legacy overloads), which the descriptor declares optional: an
+        // ABSENT key means "not stated", never "COMPLETED".
+        if (e.disposition() != null && !e.disposition().isBlank()) {
+          donePayload.put("disposition", e.disposition());
+        }
         yield donePayload;
       }
       case AgentEvent.AgentError e -> {

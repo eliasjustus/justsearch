@@ -256,17 +256,38 @@ final class AgentStepRunner {
             budgetExhausted = tokens >= budgetSnapshot;
           }
 
+          // Tempdoc 859 §D §3.2(7) — a raise that landed MID-RUN (no gate held, so the raise
+          // endpoint's resolveBudgetGate was a no-op) is announced here, at the first step boundary
+          // that can see it, right after the numbers it explains. Without this the note fired only
+          // for the gate-parked raise and the manual one stayed as silent as it has always been —
+          // half of the narration D7 asks for. Drained, so it cannot also fire at the gate below.
+          narrateBudgetRaise(session, sink, iteration, request.maxIterations());
+
           // Tempdoc 577 §2.14 Root II (#14) — the CONTEXT-pressure gate (the cognitive sibling of the
           // budget gate below). When the next prompt approaches the model's context window (n_ctx),
           // park the run as a HELD decision OFFERING compaction (summarize older turns) — the option
-          // the budget gate lacks — before the hard budget wall. Fires at most once per run, only
+          // the budget gate lacks — before the hard budget wall. ASKS at most once per run, only
           // interactive runs with a known n_ctx; a watcherless/undecided gate falls back to CONTINUE
           // (no surprise park). Compaction emits a first-class ContextCompacted narratable event.
           int contextWindow = session.contextWindow();
-          if (contextWindow > 0
-              && !session.contextGateFired()
-              && !session.isBackground()
-              && tokens >= (int) (contextWindow * CONTEXT_PRESSURE_THRESHOLD)) {
+          // Tempdoc 859 §D §2.7(c) — the TRIGGER quantity. `tokens` is countPromptTokens, which is
+          // schema-blind and measured ~40% low (577), so on its own the trigger can fire only after
+          // the real prompt already exceeds n_ctx. The provider-REPORTED prompt is the honest figure
+          // but is one tool-result stale. Taking the larger uses the reported prompt without ever
+          // triggering later than the projection alone would have.
+          int pressureTokens = Math.max(tokens, session.lastReportedPromptTokens());
+          boolean underContextPressure =
+              contextWindow > 0
+                  && !session.isBackground()
+                  && pressureTokens >= (int) (contextWindow * CONTEXT_PRESSURE_THRESHOLD);
+          // Tempdoc 859 §D §2.7 — a later crossing COMPACTS instead of asking again. At the effort
+          // multipliers a second crossing is reachable (the budget no longer dies first), and doing
+          // nothing would let the prompt grow past n_ctx — voiding the structural bound the Thorough
+          // rung is justified by (AgentBudgetPolicy). CONTINUE at the first gate means "don't stop",
+          // not "never compact": the reader accepted ONE large prompt, not an overflowing one.
+          boolean compactNow = false;
+          boolean reappliedWithoutAsking = false;
+          if (underContextPressure && !session.contextGateFired()) {
             var contextGateFuture = session.createContextGate();
             sink.accept(
                 new AgentEvent.AgentProgress(
@@ -302,28 +323,47 @@ final class AgentStepRunner {
               checkpointer.checkpoint(sessionId, session, "CANCELLED", "Stopped at context gate");
               return IterationOutcome.terminated(false);
             }
-            if (ctxDecision == AgentSession.ContextGateDecision.SUMMARIZE) {
-              int dropped = session.compactOlderTurns(CONTEXT_COMPACT_KEEP_RECENT);
-              if (dropped > 0) {
-                sink.accept(new AgentEvent.ContextCompacted(dropped));
+            compactNow = ctxDecision == AgentSession.ContextGateDecision.SUMMARIZE;
+            // CONTINUE (or post-SUMMARIZE): fall through and proceed with the current prompt.
+          } else if (underContextPressure) {
+            // Tempdoc 859 §D §2.7 — the gate already asked once this run. RE-APPLY the remedy
+            // rather than either re-parking (the thing 577 was right to avoid) or silently doing
+            // nothing (which is what would let the prompt overflow).
+            compactNow = true;
+            reappliedWithoutAsking = true;
+          }
+
+          if (compactNow) {
+            int dropped = session.compactOlderTurns(CONTEXT_COMPACT_KEEP_RECENT);
+            if (dropped > 0) {
+              // Bounded autonomy: the run says WHEN it acted on a decision nobody re-confirmed —
+              // and only when it actually acted. A note about a compaction that dropped nothing
+              // would be the run narrating an event that did not happen.
+              if (reappliedWithoutAsking) {
                 sink.accept(
                     new AgentEvent.AgentProgress(
-                        "context_compacted",
-                        "Compacted earlier turns to stay within the model's memory",
+                        "context_gate_reapplied",
+                        "Context filling up again — compacting without asking again",
                         iteration + 1,
                         request.maxIterations()));
-                // Proceed THIS iteration with the compacted (smaller) prompt; recompute the budget
-                // check below against the now-shorter message history so it reflects reality.
-                var recomputed = onlineAiService.countPromptTokens(session.messages());
-                if (recomputed.isPresent()) {
-                  tokens = recomputed.get();
-                  synchronized (session) {
-                    budgetExhausted = tokens >= session.budgetRemaining();
-                  }
+              }
+              sink.accept(new AgentEvent.ContextCompacted(dropped));
+              sink.accept(
+                  new AgentEvent.AgentProgress(
+                      "context_compacted",
+                      "Compacted earlier turns to stay within the model's memory",
+                      iteration + 1,
+                      request.maxIterations()));
+              // Proceed THIS iteration with the compacted (smaller) prompt; recompute the budget
+              // check below against the now-shorter message history so it reflects reality.
+              var recomputed = onlineAiService.countPromptTokens(session.messages());
+              if (recomputed.isPresent()) {
+                tokens = recomputed.get();
+                synchronized (session) {
+                  budgetExhausted = tokens >= session.budgetRemaining();
                 }
               }
             }
-            // CONTINUE (or post-SUMMARIZE): fall through and proceed with the current prompt.
           }
 
           // Tempdoc 561 P-A3: this IS the preventative over-budget gate (§9) — it terminates the
@@ -394,6 +434,12 @@ final class AgentStepRunner {
             if (decision == AgentSession.BudgetGateDecision.CONTINUE) {
               // Budget raised — resume the loop at this boundary and proceed with the iteration.
               LOG.info("Budget gate resolved CONTINUE — budget raised, resuming the loop");
+              // Tempdoc 859 §D §3.2(7) — NARRATE the raise. The manual raise has always been silent:
+              // the run simply carried on, with nothing in the feed saying more room had been
+              // granted or how much. That silence is what would turn per-run auto-continue into
+              // standing autonomy, so the note is the guard rail, not decoration. The `progress`
+              // descriptor already exists (AgentRunShape) ⇒ no schema change.
+              narrateBudgetRaise(session, sink, iteration, request.maxIterations());
               checkpointer.checkpoint(
                   sessionId, session, "READY_FOR_LLM", "Budget raised — continuing");
             } else {
@@ -411,7 +457,9 @@ final class AgentStepRunner {
                         "finalizing", "Wrapping up", iteration + 1, request.maxIterations()));
                 String finalizeResponse = llmCaller.attemptBudgetEdgeFinalize(session, sink);
                 if (finalizeResponse != null && !finalizeResponse.isBlank()) {
-                  sink.accept(groundedDone(session, finalizeResponse));
+                  sink.accept(
+                      groundedDone(
+                          session, finalizeResponse, TerminalDisposition.BUDGET_EDGE_FINALIZE));
                   // F1: state-first, durability-second.
                   session.markTerminated(TerminalDisposition.BUDGET_EDGE_FINALIZE, null, null);
                   checkpointer.checkpoint(
@@ -529,7 +577,8 @@ final class AgentStepRunner {
           }
 
           // Model responded with text only — done
-          sink.accept(groundedDone(session, result.textContent()));
+          sink.accept(
+              groundedDone(session, result.textContent(), TerminalDisposition.COMPLETED));
           // F1: state-first, durability-second.
           session.markTerminated(TerminalDisposition.COMPLETED, null, null);
           checkpointer.checkpoint(sessionId, session, "DONE", "");
@@ -889,7 +938,33 @@ final class AgentStepRunner {
    * resolved by the answer↔source matcher ({@link AgentCitationResolver}) when a document service is
    * available; without one the sources stand alone (the answer still cites verifiable passages).
    */
-  private AgentEvent.AgentDone groundedDone(AgentSession session, String response) {
+  /**
+   * Tempdoc 859 §D §3.2(7) — announce any un-narrated budget grant, naming the amount.
+   *
+   * <p>The raise has always been silent: the run simply carried on, with nothing in the feed saying
+   * more room had been granted or how much. That silence is what would turn per-run auto-continue
+   * into standing autonomy, so the note is the guard rail rather than decoration. The {@code
+   * progress} descriptor already exists (AgentRunShape) ⇒ no schema change.
+   *
+   * <p>Called from both sites that can observe a grant; the session's counter is DRAINED, so each
+   * grant produces exactly one note whichever site gets there first.
+   */
+  private static void narrateBudgetRaise(
+      AgentSession session, Consumer<AgentEvent> sink, int iteration, int maxIterations) {
+    int raised = session.drainPendingRaiseNarration();
+    if (raised <= 0) {
+      return;
+    }
+    sink.accept(
+        new AgentEvent.AgentProgress(
+            "budget_raised",
+            String.format("+%,d tokens — continuing", raised),
+            iteration + 1,
+            maxIterations));
+  }
+
+  private AgentEvent.AgentDone groundedDone(
+      AgentSession session, String response, TerminalDisposition disposition) {
     List<AgentEvent.AgentSource> sources = session.collectGroundingSources();
     // Tempdoc 859 §4 — the cites and the producer that scored them arrive together, so the emitted
     // `done` declares which scale its similarities are on. No resolver ⇒ NONE, which fails the FE's
@@ -905,7 +980,12 @@ final class AgentStepRunner {
         session.totalTokens(),
         sources,
         resolved.cites(),
-        resolved.scorer().name());
+        resolved.scorer().name(),
+        // Tempdoc 859 §D §2.6 — the disposition rides the SAME emission the answer does, and is
+        // decided by the CALL SITE (which terminal this is), never read back from the model's text.
+        // markTerminated still records it independently; these two agree because both are told, not
+        // because either inspects the other.
+        disposition.name());
   }
 
   /**

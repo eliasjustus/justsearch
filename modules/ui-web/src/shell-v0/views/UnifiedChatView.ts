@@ -22,7 +22,6 @@ import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
 import {
   buildRequestBody,
   SHAPE_LABELS,
-  RAISE_BUDGET_STEP_TOKENS,
   EMPTY_PREFIX_SENTINEL,
   CONVERSATION_ZONES,
   type ShapeId,
@@ -107,6 +106,7 @@ import {
   type ThreadLifecycle,
 } from './unifiedThreadClient.js';
 import {
+  budgetContinueSteps,
   projectBudget,
   projectContextHorizon,
   type BudgetInput,
@@ -3722,9 +3722,17 @@ export class UnifiedChatView extends JfElement {
                 )} left</span
               >
               <span class="budget-actions">
-                <button class="budget-action" @click=${() => this.onRaiseBudget()}>
-                  Add ${RAISE_BUDGET_STEP_TOKENS} tokens
-                </button>
+                ${/* Tempdoc 859 §D §2.5 (review F6) — the amount is computed ONCE here and both
+                      printed and dispatched from that one value. Reading it again inside the click
+                      handler would re-derive it from `budgetUpdates`, which the live run keeps
+                      changing, so the button could spend a different number than the one the reader
+                      read off it. */ ''}
+                ${(() => {
+                  const step = this.raiseStepTokens();
+                  return html`<button class="budget-action" @click=${() => this.onRaiseBudget(step)}>
+                    Add ${step.toLocaleString()} tokens
+                  </button>`;
+                })()}
                 <button class="budget-action" @click=${() => this.onBudgetDecision('finalize')}>
                   Finish with what it has
                 </button>
@@ -3781,12 +3789,16 @@ export class UnifiedChatView extends JfElement {
                           live-validation finding, the 404 case). */ ''}
                     ${this.agentCtrl?.runInFlight
                       ? html`<span class="budget-actions">
-                          <button
-                            class="budget-action"
-                            @click=${() => this.onRaiseBudget()}
-                          >
-                            Add ${RAISE_BUDGET_STEP_TOKENS} tokens
-                          </button>
+                          ${(() => {
+                            // Snapshot at render — see the gate row above (859 §D review F6).
+                            const step = this.raiseStepTokens();
+                            return html`<button
+                              class="budget-action"
+                              @click=${() => this.onRaiseBudget(step)}
+                            >
+                              Add ${step.toLocaleString()} tokens
+                            </button>`;
+                          })()}
                           <button class="budget-action" @click=${() => this.onHaltRun()}>
                             Stop run
                           </button>
@@ -3822,14 +3834,45 @@ export class UnifiedChatView extends JfElement {
     `;
   }
 
-  /** Tempdoc 577 Ext III — the raise-budget remedy, dispatched through the one control seam. */
-  private onRaiseBudget(): void {
+  /**
+   * Tempdoc 859 §D §2.5 — the raise amount, from the SHARED ladder rather than a fixed constant.
+   *
+   * This window offers ONE arm, so it takes the ladder's middle rung ("as much again"). What it
+   * gains by deriving instead of hardcoding is the FLOOR: the retired `RAISE_BUDGET_STEP_TOKENS`
+   * (4,096) could be smaller than the gate's own shortfall, in which case the button resumed the
+   * loop straight into an immediate re-gate — a click that visibly did nothing.
+   *
+   * Outside a held gate (the over-budget row, where the run is still moving) there is no
+   * `tokensNeeded` to clear, so the last reported prompt stands in for it: it is the best available
+   * estimate of what the next call will cost, and it is the same figure the floor's headroom uses.
+   */
+  private raiseStepTokens(): number {
     const ctrl = this.agentCtrl;
-    if (!ctrl) return;
-    void dispatchRunControl(ctrl, {
-      kind: 'raise-budget',
-      addTokens: RAISE_BUDGET_STEP_TOKENS,
+    const gate = ctrl?.budgetGate ?? null;
+    const latest = ctrl?.budgetUpdates.at(-1) ?? null;
+    const steps = budgetContinueSteps({
+      totalTokensConsumed: gate?.totalTokensConsumed ?? latest?.totalTokensConsumed ?? 0,
+      tokensNeeded: gate?.tokensNeeded ?? latest?.promptTokens ?? 0,
+      // RAW: `projectBudget` clamps a negative remaining for DISPLAY, and borrowing that clamp here
+      // would under-fund an over-budget raise by exactly the overrun (859 §D P4).
+      tokensRemaining: gate?.tokensRemaining ?? latest?.tokensRemaining ?? 0,
+      promptTokens: latest?.promptTokens,
     });
+    // The ladder always returns three rungs; the middle one is "as much again".
+    return steps[1]?.addTokens ?? 0;
+  }
+
+  /**
+   * Tempdoc 577 Ext III — the raise-budget remedy, dispatched through the one control seam.
+   *
+   * @param addTokens the amount the button PRINTED, captured at render (859 §D review F6). Passed in
+   *     rather than recomputed so the label and the directive cannot disagree — the same property
+   *     the Search v3 side gets structurally from {@code BudgetContinueStep}.
+   */
+  private onRaiseBudget(addTokens: number): void {
+    const ctrl = this.agentCtrl;
+    if (!ctrl || addTokens <= 0) return;
+    void dispatchRunControl(ctrl, { kind: 'raise-budget', addTokens });
   }
 
   /** Tempdoc 577 Ext III — the halt remedy on the over-budget row (the existing seam directive). */

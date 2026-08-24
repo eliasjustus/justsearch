@@ -70,6 +70,9 @@ final class AgentEventPayloadConformanceTest {
               // Tempdoc 859 §4 — the producer stamp is a payload key like any other, so the
               // conformance sweep must see a populated one.
               "CROSS_ENCODER",
+              // Tempdoc 859 §D §2.6 — the terminal disposition is a payload key like any other, so
+              // the conformance sweep must see a populated one.
+              "BUDGET_EDGE_FINALIZE",
               NO_TRACE),
           // all error fields populated → errorClass/retryAction/retryAttempt/i18nKey emitted.
           new AgentEvent.AgentError("err", "CODE", "CLASS", "ACTION", 1, NO_TRACE),

@@ -72,7 +72,6 @@ import { icon } from '../../components/Icon.js';
 // worded here (tempdoc 629 #3 — the locked-chat gate speaks the same words as every other cause).
 import { reasonFor } from '../../state/readinessNotice.js';
 import type { Availability } from '../../state/availability.js';
-import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 import {
   BRANCH_EDIT_CANCEL,
   BRANCH_EDIT_INPUT_LABEL,
@@ -135,9 +134,12 @@ import {
 } from './sv3-branch.js';
 import {
   projectSv3AnswerFrame,
+  sv3ReceiptTail,
   sv3SourcesTrigger,
   sv3SourcesTriggerCount,
   sv3SourcesTriggerLabel,
+  sv3WasCutShort,
+  SV3_CUT_SHORT_NOTICE,
   SV3_REMEDY,
   type Sv3RemedyDetail,
 } from './sv3-honesty.js';
@@ -178,7 +180,20 @@ export interface Sv3CitationOpen {
 }
 
 export type Sv3RunDecision =
-  | { readonly kind: 'budget'; readonly decision: 'raise' | 'finalize' | 'stop' }
+  /**
+   * Tempdoc 859 §D §2.5 — a raise now carries the AMOUNT it chose. The single "Add 4,096 tokens"
+   * arm is retired: a fixed step could not clear the gate it was answering, so a click could
+   * visibly do nothing (resume the loop straight into an immediate re-gate).
+   *
+   * `autoContinue` is the reader's "don't ask again for this run", travelling with the amount it
+   * applies to — the two are one decision and must not be able to arrive separately.
+   */
+  | {
+      readonly kind: 'budget';
+      readonly decision: 'raise' | 'finalize' | 'stop';
+      readonly addTokens?: number;
+      readonly autoContinue?: boolean;
+    }
   | { readonly kind: 'context'; readonly decision: 'continue' | 'summarize' | 'stop' };
 
 /** Enough bars to fill the region's first screen without claiming a result count it cannot know. */
@@ -1068,6 +1083,59 @@ export class Sv3Main extends JfElement {
       .run-prompt jf-control::part(control):hover {
         background: var(--muted);
       }
+      /* Tempdoc 859 §D §2.4 — the gate's fact panel. Its own row, above the arms: the reader reads
+         what happened, then chooses. Definition list because that is what it is — labelled facts,
+         not a table of comparable rows. */
+      .run-prompt-facts {
+        flex: 1 1 100%;
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-1) var(--space-4);
+        margin: 0;
+        font-size: var(--font-size-sv3-xs);
+      }
+      .run-prompt-facts div {
+        display: flex;
+        gap: var(--space-1);
+      }
+      .run-prompt-facts dt {
+        color: var(--secondary-label);
+      }
+      .run-prompt-facts dd {
+        margin: 0;
+        font-variant-numeric: tabular-nums;
+      }
+      /* The token figure is FINE PRINT: the reader chooses an amount of work, and the number is
+         there to be checkable, not to be the choice (tempdoc 859 §D §2.5). */
+      .run-prompt-fine {
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+        font-variant-numeric: tabular-nums;
+      }
+      p.run-prompt-fine {
+        flex: 1 1 100%;
+        margin: 0;
+      }
+      .run-prompt jf-control::part(control) .run-prompt-fine {
+        margin-left: var(--space-1);
+      }
+      /* Tempdoc 859 §D §2.6 — an honesty note, not a warning. It uses the same quiet secondary
+         colour the other tail facts do: the answer above is still the answer, and shouting would
+         mis-describe a partial result as a failure. */
+      .cut-short {
+        margin: var(--space-2) 0 0;
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-sm);
+      }
+      .run-prompt-auto {
+        flex: 1 1 100%;
+        display: flex;
+        align-items: center;
+        gap: var(--space-1);
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+        cursor: pointer;
+      }
 
       /* The store's own failure text, kept at diagnostic altitude: the state is said in words above
          it, and this is the detail that makes the words checkable. */
@@ -1130,6 +1198,7 @@ export class Sv3Main extends JfElement {
     floorSummaryDraft: { state: true },
     editingTurnId: { state: true },
     editingDraft: { state: true },
+    budgetAutoContinue: { state: true },
   };
 
   declare state: Sv3ComposerState;
@@ -1227,6 +1296,24 @@ export class Sv3Main extends JfElement {
    */
   declare editingTurnId: string | null;
   declare editingDraft: string;
+  /**
+   * Tempdoc 859 §D §2.5 — the gate's "don't ask again for this run" checkbox, read at CLICK time so
+   * the toggle and the arm leave as ONE decision.
+   *
+   * <p>It is PRE-CLICK INTENT and nothing more: the durable fact is
+   * {@link ../SearchV3View.Sv3RunLocal.autoContinueTokens}, written only when an arm is actually
+   * pressed. This flag exists because the reader ticks the box before choosing an amount, and the
+   * amount is what makes the choice real.
+   *
+   * <p>Its LIFETIME is pinned to the run by {@link settleBudgetAutoContinue}. Without that it was a
+   * plain region field that outlived the run its own doc-comment said it died with — so run 2's gate
+   * rendered pre-ticked because run 1's reader had ticked it, offering a decision the window would
+   * not honour.
+   */
+  declare budgetAutoContinue: boolean;
+
+  /** The run whose gate the {@link budgetAutoContinue} tick belongs to; null before any run. */
+  private budgetAutoContinueTurnId: string | null = null;
 
   /**
    * The design spec's two scroll modes as one flag: armed = `following-end` (the reader is at the end, so
@@ -1364,6 +1451,7 @@ export class Sv3Main extends JfElement {
     this.floorSummaryDraft = '';
     this.editingTurnId = null;
     this.editingDraft = '';
+    this.budgetAutoContinue = false;
   }
 
   override connectedCallback(): void {
@@ -1450,6 +1538,7 @@ export class Sv3Main extends JfElement {
   protected override updated(changed: Map<string, unknown>): void {
     this.settleFloorSummaryEditor(changed);
     this.settleQuestionEditor();
+    this.settleBudgetAutoContinue();
     const el = this.scroller;
     if (el === null) return;
     if (el !== this.lastScrolledEl) {
@@ -1718,9 +1807,26 @@ export class Sv3Main extends JfElement {
                     ></jf-markdown-block>`}
               </div>
             `}
-        ${this.tail(turn)}${this.citations(turn)}
+        ${this.cutShortNotice(turn)}${this.tail(turn)}${this.citations(turn)}
       </div>
     `;
+  }
+
+  /**
+   * Tempdoc 859 §D §2.6 — the run stopped before it finished, said in a full sentence rather than
+   * left to a badge the reader has to decode.
+   *
+   * It sits ABOVE the tail, immediately under the answer it qualifies: the reader learns the answer
+   * is partial while they are still reading it, not after they have finished and gone looking for a
+   * footnote. And it is derived from the DISPOSITION, never from the answer's own text — 859 §7
+   * watched a cut-short run write a confident, complete-sounding non-answer that disclosed nothing,
+   * so a disclosure that depended on the model saying it would be no disclosure at all.
+   */
+  private cutShortNotice(turn: Sv3Turn): TemplateResult | typeof nothing {
+    if (!sv3WasCutShort(turn.disposition)) return nothing;
+    return html`<p class="cut-short" role="note" data-testid="sv3-turn-cut-short">
+      ${SV3_CUT_SHORT_NOTICE}
+    </p>`;
   }
 
   /**
@@ -1966,6 +2072,25 @@ export class Sv3Main extends JfElement {
     return html`<div class="tail" data-testid="sv3-turn-tail">
       ${facts}${note}${sources}${versions}${copy}${context}
     </div>`;
+  }
+
+  /**
+   * Tempdoc 859 §D §2.5 (review F2) — the auto-continue tick dies with the run it was made for.
+   *
+   * <p>The durable authority is `Sv3RunLocal.autoContinueTokens`, which a new dispatch replaces
+   * along with the whole run object. This keeps the pre-click checkbox honest about the same
+   * boundary: a tick that survived into the next run would render a gate pre-answered when the
+   * window has no such decision recorded — the control saying one thing while the window does
+   * another, which is the state this gate may not have.
+   *
+   * <p>Keyed on the run's turnId because that is the identity everything else in the run spine is
+   * addressed by, and it changes exactly when the run does.
+   */
+  private settleBudgetAutoContinue(): void {
+    const turnId = this.run?.turnId ?? null;
+    if (turnId === this.budgetAutoContinueTurnId) return;
+    this.budgetAutoContinueTurnId = turnId;
+    this.budgetAutoContinue = false;
   }
 
   /**
@@ -2500,17 +2625,68 @@ export class Sv3Main extends JfElement {
             The run needs ${prompt.tokensNeeded.toLocaleString()} more tokens;
             ${prompt.tokensRemaining.toLocaleString()} remain.
           </p>
+          <!-- Tempdoc 859 §D §2.4 — WHAT THIS RUN HAS DONE, so the reader is answering "is this
+               worth more?" from the work rather than from a token count on its own. Every figure is
+               already-reported: the panel adds no wire field. Absent facts are OMITTED, never
+               rendered as zero — "0 tool calls" would be a claim, and this is the moment a reader
+               is deciding whether to spend more. -->
+          <dl class="run-prompt-facts" data-testid="sv3-run-budget-facts">
+            <div><dt>Tokens used</dt><dd>${prompt.facts.tokensUsed.toLocaleString()}</dd></div>
+            <div><dt>Tool calls</dt><dd>${prompt.facts.toolCalls.toLocaleString()}</dd></div>
+            <div><dt>Steps</dt><dd>${prompt.facts.steps.toLocaleString()}</dd></div>
+            ${prompt.facts.elapsedMs === null
+              ? nothing
+              : html`<div>
+                  <dt>Elapsed</dt>
+                  <dd>${sv3ReceiptTail(prompt.facts.elapsedMs, null)}</dd>
+                </div>`}
+            ${prompt.facts.lastAction === null
+              ? nothing
+              : html`<div><dt>Last action</dt><dd>${prompt.facts.lastAction}</dd></div>`}
+          </dl>
           <!-- B8 — the REMEDY comes first (tempdoc 577 Ext III, views/UnifiedChatView.ts:3648): the
                other two arms both give something up, and offering them before the one that does not
-               would put the concession where the reader looks first. The step is the shared
-               RAISE_BUDGET_STEP_TOKENS, so the label cannot promise a different number than the
-               directive spends. -->
-          <jf-control
-            data-testid="sv3-run-budget-raise"
-            label=${`Add ${RAISE_BUDGET_STEP_TOKENS.toLocaleString()} tokens`}
-            .onActivate=${() => this.decide({ kind: 'budget', decision: 'raise' })}
-            >Add ${RAISE_BUDGET_STEP_TOKENS.toLocaleString()} tokens</jf-control
-          >
+               would put the concession where the reader looks first.
+
+               Tempdoc 859 §D §2.5 — THREE sized continues, denominated in this run's own burn, with
+               the token figure as fine print. Each step amount is what the directive actually
+               spends AND what the fine print quotes, so a label can never promise a different
+               number than the click delivers — and each is floored to clear THIS gate, so no arm
+               can resume the loop straight back into it. -->
+          ${prompt.steps.map(
+            (step) => html`
+              <jf-control
+                data-testid=${`sv3-run-budget-raise-${step.id}`}
+                label=${`${step.label} (about ${step.addTokens.toLocaleString()} tokens)`}
+                .onActivate=${() =>
+                  this.decide({
+                    kind: 'budget',
+                    decision: 'raise',
+                    addTokens: step.addTokens,
+                    autoContinue: this.budgetAutoContinue,
+                  })}
+                >${step.label}
+                <span class="run-prompt-fine">≈ +${step.addTokens.toLocaleString()} tokens</span>
+              </jf-control>
+            `,
+          )}
+          <p class="run-prompt-fine" data-testid="sv3-run-budget-spent">
+            This run has used ${prompt.facts.tokensUsed.toLocaleString()} tokens.
+          </p>
+          <!-- Tempdoc 859 §D §2.5 — bounded, per-run, and NARRATED. It resets with the run (it
+               lives on the window's run object), it stops after three gates rather than becoming
+               standing autonomy, and every silent continue leaves a budget-raised note in the
+               feed. Read at CLICK time, above, so the toggle and the arm are one decision. -->
+          <label class="run-prompt-auto" data-testid="sv3-run-budget-auto">
+            <input
+              type="checkbox"
+              .checked=${this.budgetAutoContinue}
+              @change=${(e: Event) => {
+                this.budgetAutoContinue = (e.target as HTMLInputElement).checked;
+              }}
+            />
+            Don't ask again for this run
+          </label>
           <jf-control
             data-testid="sv3-run-budget-finalize"
             label="Finish with what it has"
@@ -2594,7 +2770,8 @@ export class Sv3Main extends JfElement {
         data-testid="sv3-run-receipt"
         data-outcome=${turn.status}
         data-broken=${String(broken)}
-        >${sv3RunReceiptLabel(turn.toolCalls, turn.status)}</span
+        data-cut-short=${String(sv3WasCutShort(turn.disposition))}
+        >${sv3RunReceiptLabel(turn.toolCalls, turn.status, turn.disposition)}</span
       >`;
     }
     const sources = sv3TurnSourceCount(turn);

@@ -188,6 +188,20 @@ export interface Sv3Turn {
    * whatever is loaded now; recording it once is the same fact without the drift.
    */
   readonly modelLabel: string | null;
+  /**
+   * Tempdoc 859 §D §2.6 — the run's terminal DISPOSITION (`TerminalDisposition`'s wire name), or
+   * `null` when nothing said. A second, ORTHOGONAL fact to {@link status}: the turn really did
+   * `complete`, and the four terminals' distinctions (halt vs failure vs refusal) stay intact —
+   * this says under what circumstances the answer above was produced.
+   *
+   * <p>It is deliberately NOT folded into the evidence `answerFrame`: that authority answers "how
+   * grounded", and completeness is a TERMINATION axis. Folding them would mint a frame value no
+   * grounding input can produce.
+   *
+   * <p>`null` never means COMPLETED. {@link sv3CutShortNotice} discloses only for the two
+   * TRUNCATING values, so an unstated disposition says nothing rather than claiming success.
+   */
+  readonly disposition: string | null;
 }
 
 /**
@@ -367,6 +381,7 @@ const openTurn = (
   reasoning: [],
   durationMs: null,
   modelLabel: null,
+  disposition: null,
 });
 
 /**
@@ -603,8 +618,18 @@ export const settleAgentTurn = (
   toolCalls: number,
   now: number,
   detail = '',
+  // Tempdoc 859 §D §2.6 — the terminal disposition is stamped in the SAME write as the receipt,
+  // for the same reason `toolCalls` is: both describe the run that just ended, and a disclosure
+  // that could arrive separately from the answer it qualifies is a disclosure that can go missing.
+  disposition: string | null = null,
 ): Sv3SessionList =>
-  settleWith(list, ref, now, status, (turn) => ({ ...turn, status, detail, toolCalls }));
+  settleWith(list, ref, now, status, (turn) => ({
+    ...turn,
+    status,
+    detail,
+    toolCalls,
+    disposition,
+  }));
 
 /**
  * A run this window did NOT dispatch, given a session so it can be seen (tempdoc 822 Phase F3).
@@ -921,6 +946,11 @@ export function applySv3Record(
       reasoning: prior.reasoning.length > 0 ? prior.reasoning : recorded.reasoning,
       durationMs: prior.durationMs ?? recorded.durationMs,
       modelLabel: prior.modelLabel ?? recorded.modelLabel,
+      // Tempdoc 859 §D §2.6 — unlike the three above, BOTH sides can genuinely carry this one, so
+      // it is `prior ?? recorded` rather than "prefer the live turn": whichever side has the fact
+      // supplies it, and neither can erase the other's. The two never disagree — they are the same
+      // string, one off the stream and one off the record.
+      disposition: prior.disposition ?? recorded.disposition,
     };
   };
   recordTurns.forEach((recorded, recordIndex) => {
