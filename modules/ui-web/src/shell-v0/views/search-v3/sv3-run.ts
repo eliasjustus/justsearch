@@ -43,6 +43,19 @@ import type {
   ToolRisk,
 } from '../../controllers/AgentSessionController.js';
 import type { Sv3TurnStatus } from './sv3-sessions.js';
+// Tempdoc 859 §D §2.6 — the ONE cut-short authority. Imported, never re-derived: a second copy of
+// "which dispositions count as truncated" could disagree with the notice line's copy, which is the
+// divergence the shared authority exists to prevent.
+import { sv3WasCutShort, SV3_CUT_SHORT_BADGE } from './sv3-honesty.js';
+// Tempdoc 859 §D §2.4/§2.5 — the SHARED budget-readout authority, already the source of both
+// windows' budget bar and context horizon. The gate's facts and its ladder are derivations of the
+// same numbers, so they belong beside those and not in a second module that could disagree.
+import {
+  budgetContinueSteps,
+  projectBudgetGateFacts,
+  type BudgetContinueStep,
+  type BudgetGateFacts,
+} from '../budgetProjection.js';
 
 /**
  * The fields of the shared controller this window reads. A structural type rather than the class, so
@@ -63,6 +76,10 @@ export type Sv3RunSource = Pick<
   // The two gate fields above are announced by frames the replay ring can evict; this one is not.
   | 'runPark'
   | 'iterationsUsed'
+  // Tempdoc 859 §D §2.4 — the budget gate's fact panel: what this run has already spent, and on
+  // what. Both are figures the run already reported; the panel adds no wire field.
+  | 'toolCallsExecuted'
+  | 'budgetUpdates'
 >;
 
 /* ── Axis 1: the session ─────────────────────────────────────────────────────────────────────── */
@@ -223,6 +240,19 @@ export interface Sv3RunPromptBudget {
   readonly id: 'run-budget-gate';
   readonly tokensNeeded: number;
   readonly tokensRemaining: number;
+  /**
+   * Tempdoc 859 §D §2.4 — what the run has spent so far, so the reader can answer "is this worth
+   * more?" from what actually happened rather than from a token count alone. Carried on the prompt
+   * VALUE so the render site stays a renderer: a surface that computed these itself would be a
+   * second answer to "what did this run do".
+   */
+  readonly facts: BudgetGateFacts;
+  /**
+   * Tempdoc 859 §D §2.5 — the three sized continues, each already floored to clear THIS gate.
+   * The `addTokens` on each is what the directive spends, so a label can never promise a different
+   * number than the click delivers.
+   */
+  readonly steps: readonly BudgetContinueStep[];
 }
 
 export interface Sv3RunPromptContext {
@@ -251,15 +281,44 @@ export type Sv3RunPrompt = Sv3RunPromptBudget | Sv3RunPromptContext | Sv3RunProm
  * Every decision the run is currently parked on. Order is fixed and structural — economic gate, then
  * cognitive gate, then the held calls — so a prompt cannot move under the pointer as another arrives.
  */
-export function projectSv3RunPrompts(source: Sv3RunSource, feed: Sv3RunFeed): readonly Sv3RunPrompt[] {
+export function projectSv3RunPrompts(
+  source: Sv3RunSource,
+  feed: Sv3RunFeed,
+  // Tempdoc 859 §D §2.4 — the two facts the CONTROLLER cannot know: when this window's turn was
+  // asked, and what time it is now. `askedAt` rides the turn (and the record), so the elapsed
+  // figure survives a reload; `now` is passed in because a pure projection has no clock.
+  gateContext: { readonly askedAt: number | null; readonly now: number } = {
+    askedAt: null,
+    now: 0,
+  },
+): readonly Sv3RunPrompt[] {
   const prompts: Sv3RunPrompt[] = [];
   const budget = source.budgetGate;
   if (budget) {
+    const lastUpdate = source.budgetUpdates.at(-1) ?? null;
+    const lastTool = [...feed.items].reverse().find((item) => item.kind === 'tool');
     prompts.push({
       kind: 'budget',
       id: 'run-budget-gate',
       tokensNeeded: budget.tokensNeeded,
       tokensRemaining: budget.tokensRemaining,
+      facts: projectBudgetGateFacts({
+        totalTokensConsumed: budget.totalTokensConsumed,
+        toolCallsExecuted: source.toolCallsExecuted,
+        iterationsUsed: source.iterationsUsed,
+        askedAt: gateContext.askedAt,
+        now: gateContext.now,
+        // Genuinely absent before the first tool call — omitted, never rendered as "none".
+        lastAction: lastTool !== undefined && lastTool.kind === 'tool' ? lastTool.call.toolName : null,
+      }),
+      steps: budgetContinueSteps({
+        totalTokensConsumed: budget.totalTokensConsumed,
+        tokensNeeded: budget.tokensNeeded,
+        // RAW: the display clamp lives in `projectBudget`, and borrowing it here would under-fund
+        // every over-budget gate by exactly the overrun (859 §D P4).
+        tokensRemaining: budget.tokensRemaining,
+        promptTokens: lastUpdate?.promptTokens,
+      }),
     });
   }
   const context = source.contextGate;
@@ -334,6 +393,29 @@ export interface Sv3RunLocal {
    * IS live, instead of dropping the reader's decision on the floor or firing it every frame.
    */
   haltDispatched: boolean;
+  /**
+   * Tempdoc 859 §D §2.5 — the reader said "don't ask me again for this run", and the amount they
+   * chose when they said it. PER RUN by construction (it lives on this object, which a new dispatch
+   * replaces), so it can never become standing autonomy across runs.
+   */
+  autoContinueTokens: number | null;
+  /**
+   * How many gates this run has auto-answered. Bounded by {@link AUTO_CONTINUE_LIMIT}, after which
+   * the gate asks again rather than stopping — the reader's decision is re-applied, not surrendered
+   * to, and the run narrates every re-application (the backend's `budget_raised` note).
+   */
+  autoContinuesUsed: number;
+}
+
+/** Tempdoc 859 §D §2.5 — how many gates one run may auto-answer before it asks again. */
+export const AUTO_CONTINUE_LIMIT = 3;
+
+/**
+ * Should this gate be answered without asking? True only while the reader has an active per-run
+ * choice AND the run has not already spent its allowance of silent continues.
+ */
+export function shouldAutoContinue(local: Sv3RunLocal): boolean {
+  return local.autoContinueTokens !== null && local.autoContinuesUsed < AUTO_CONTINUE_LIMIT;
 }
 
 /**
@@ -450,7 +532,14 @@ export function sv3RunOutcome(feed: Sv3RunFeed, haltRequested: boolean): Sv3RunO
  * position: the reader ended the run on purpose, and a receipt that hedged about it ("incomplete",
  * "interrupted") would be describing their decision as a malfunction.
  */
-export function sv3RunReceiptLabel(toolCalls: number, status: Sv3TurnStatus): string {
+export function sv3RunReceiptLabel(
+  toolCalls: number,
+  status: Sv3TurnStatus,
+  // Tempdoc 859 §D §2.6 — the run's terminal disposition. A delegate turn's receipt IS its tail
+  // (`projectSv3AnswerFrame` refuses anything but an ask), so this is where the cut-short badge has
+  // to land for the runs that can actually BE cut short.
+  disposition: string | null = null,
+): string {
   const calls = `${toolCalls} tool ${toolCalls === 1 ? 'call' : 'calls'}`;
   const ending =
     status === 'halted'
@@ -462,7 +551,10 @@ export function sv3RunReceiptLabel(toolCalls: number, status: Sv3TurnStatus): st
           : status === 'streaming'
             ? 'running'
             : 'finished';
-  return `${calls} · ${ending}`;
+  const receipt = `${calls} · ${ending}`;
+  // The run "finished" AND was cut short — two orthogonal facts, both true, neither replacing the
+  // other. The status stays what it was: a truncated run really did complete its terminal.
+  return sv3WasCutShort(disposition) ? `${receipt} · ${SV3_CUT_SHORT_BADGE}` : receipt;
 }
 
 /* ── The primary-action slot (pattern 3) ─────────────────────────────────────────────────────── */

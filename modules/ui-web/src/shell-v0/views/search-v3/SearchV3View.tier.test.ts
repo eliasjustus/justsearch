@@ -23,6 +23,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentSessionController } from '../../controllers/AgentSessionController.js';
+import type { BudgetUpdate } from '../../controllers/AgentSessionController.js';
 
 interface FakeCtrl {
   conversation: unknown[];
@@ -34,6 +35,8 @@ interface FakeCtrl {
   conversationId: string | null;
   sessionId: string | null;
   iterationsUsed: number;
+  toolCallsExecuted: number;
+  budgetUpdates: BudgetUpdate[];
   budgetGate: null;
   contextGate: null;
   runPark: null;
@@ -58,6 +61,8 @@ function makeCtrl(): FakeCtrl {
     conversationId: null,
     sessionId: null,
     iterationsUsed: 0,
+    toolCallsExecuted: 0,
+    budgetUpdates: [],
     budgetGate: null,
     contextGate: null,
     runPark: null,

@@ -177,6 +177,15 @@ interface Building {
    * run event's id displace the real message's on a turn that has both.
    */
   assistantId: string | null;
+  /**
+   * Tempdoc 859 §D §2.6 — the terminal DISPOSITION persisted on the assistant message
+   * (`AgentInteractionMapper`), last-wins like {@link evidence} and for the same reason.
+   *
+   * The record leg is not optional. A cut-short badge that shows while the run is on screen and
+   * vanishes after a reload is worse than one that was never made: the reader has already learned
+   * to trust it, so its absence then reads as "this one was fine".
+   */
+  disposition: string | null;
   /** The record opened this turn on a `user` item, rather than on whatever arrived first. */
   openedByUser: boolean;
 }
@@ -197,6 +206,7 @@ const open = (
   errored: false,
   reasoning: [],
   evidence: null,
+  disposition: null,
   assistantId: null,
 });
 
@@ -256,6 +266,10 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       if (isSv3StoreMessageId(item.id)) turn.assistantId = item.id;
       const evidence = recordEvidenceOf(item);
       if (evidence !== null) turn.evidence = evidence;
+      // Tempdoc 859 §D §2.6 — the terminal disposition rides the same assistant message the answer
+      // does, so a reloaded turn discloses the truncation it disclosed live.
+      const disposition = item.attributes.disposition;
+      if (typeof disposition === 'string' && disposition !== '') turn.disposition = disposition;
       continue;
     }
     if (item.kind === 'tool-activity') {
@@ -314,6 +328,10 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       reasoning: turn.reasoning,
       durationMs: null,
       modelLabel: null,
+      // Tempdoc 859 §D §2.6 — carried, not seeded empty. Unlike the rewrite note and the receipt
+      // (which the record genuinely does not hold), this one IS persisted, so leaving it null would
+      // be discarding a fact the record has.
+      disposition: turn.disposition,
     } satisfies Sv3Turn;
   });
 }

@@ -59,6 +59,8 @@ const source = (over: Partial<Sv3RunSource> = {}): Sv3RunSource => ({
   contextGate: null,
   runPark: null,
   iterationsUsed: 0,
+  toolCallsExecuted: 0,
+  budgetUpdates: [],
   ...over,
 });
 
@@ -70,6 +72,8 @@ const local = (over: Partial<Sv3RunLocal> = {}): Sv3RunLocal => ({
   acknowledged: false,
   haltRequested: false,
   haltDispatched: false,
+  autoContinueTokens: null,
+  autoContinuesUsed: 0,
   ...over,
 });
 

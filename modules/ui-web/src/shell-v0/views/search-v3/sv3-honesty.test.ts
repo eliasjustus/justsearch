@@ -157,6 +157,7 @@ describe('the answer frame is derived from the shared authority, never worded he
     reasoning: [],
     durationMs: 45_700,
     modelLabel: 'Qwen3',
+    disposition: null,
     ...over,
   });
 

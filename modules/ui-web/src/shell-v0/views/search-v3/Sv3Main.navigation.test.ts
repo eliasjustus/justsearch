@@ -26,11 +26,33 @@ import type { NavigationController } from '../../primitives/navigation.js';
 import type { Sv3Turn } from './sv3-sessions.js';
 import type { Sv3RunFeedItem, Sv3RunPrompt, Sv3RunView } from './sv3-run.js';
 import type { ToolCall } from '../../controllers/AgentSessionController.js';
+import { budgetContinueSteps, projectBudgetGateFacts } from '../budgetProjection.js';
 
 type Mounted = Sv3Main & { updateComplete: Promise<unknown>; requestUpdate: () => void };
 
 const navOf = (el: Mounted): NavigationController =>
   (el as unknown as { nav: NavigationController }).nav;
+
+/**
+ * Tempdoc 859 §D §2.4/§2.5 — a held budget gate, built through the REAL projections rather than
+ * hand-written. These cases are about anchor stamping, not about the panel; deriving the fact panel
+ * and the ladder here keeps the fixture from becoming a second, drifting answer to what a gate is.
+ */
+const budgetPrompt = (tokensNeeded: number, tokensRemaining: number): Sv3RunPrompt => ({
+  kind: 'budget',
+  id: 'run-budget-gate',
+  tokensNeeded,
+  tokensRemaining,
+  facts: projectBudgetGateFacts({
+    totalTokensConsumed: 90,
+    toolCallsExecuted: 1,
+    iterationsUsed: 2,
+    askedAt: null,
+    now: 0,
+    lastAction: null,
+  }),
+  steps: budgetContinueSteps({ totalTokensConsumed: 90, tokensNeeded, tokensRemaining }),
+});
 
 const turn = (over: Partial<Sv3Turn> & { id: string }): Sv3Turn => ({
   recordId: null,
@@ -49,6 +71,7 @@ const turn = (over: Partial<Sv3Turn> & { id: string }): Sv3Turn => ({
   reasoning: [],
   durationMs: null,
   modelLabel: null,
+  disposition: null,
   ...over,
 });
 
@@ -217,7 +240,7 @@ describe('857 PR-A — the anchor id space', () => {
         turnId: 'c',
         items: [{ kind: 'tool', id: 'live-1', call: toolCall('live-1') }],
         prompts: [
-          { kind: 'budget', id: 'run-budget-gate', tokensNeeded: 10, tokensRemaining: 2 },
+          budgetPrompt(10, 2),
           { kind: 'approval', id: 'live-1', toolName: 'grep', risk: 'LOW' },
         ],
       }),
@@ -297,7 +320,7 @@ describe('857 PR-A — J/K stepping', () => {
       run: runView({
         turnId: 'm2',
         items: [{ kind: 'text', id: 'p1', text: 'thinking' }],
-        prompts: [{ kind: 'budget', id: 'run-budget-gate', tokensNeeded: 9, tokensRemaining: 1 }],
+        prompts: [budgetPrompt(9, 1)],
       }),
     });
     await layOut(el);

@@ -20,10 +20,6 @@ import type { CoreInteractionShapeId } from '../plugin-api/coreInteractionShapes
 // interaction-surface discipline gate.
 export type ShapeId = CoreInteractionShapeId;
 
-// Tempdoc 577 Ext III — the raise-budget remedy's grant size (tokens). One step per click keeps the
-// remedy deliberate; the figure is visible on the button so the action is self-describing.
-export const RAISE_BUDGET_STEP_TOKENS = 4096;
-
 // Tempdoc 610 Phase A — reserved branch-point marking an empty-prefix branch (inherit
 // nothing). Used to edit/retry the FIRST turn, where there is no preceding message.
 // MUST match ConversationStore.EMPTY_PREFIX_SENTINEL (Java) — same cross-language

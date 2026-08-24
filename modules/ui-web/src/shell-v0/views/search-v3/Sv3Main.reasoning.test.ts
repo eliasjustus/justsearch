@@ -41,6 +41,7 @@ const turn = (over: Partial<Sv3Turn> & { id: string }): Sv3Turn => ({
   reasoning: [],
   durationMs: null,
   modelLabel: null,
+  disposition: null,
   ...over,
 });
 

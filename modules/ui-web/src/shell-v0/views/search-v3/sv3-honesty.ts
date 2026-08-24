@@ -105,13 +105,57 @@ export function projectSv3Corpus(snapshot: AiState | null): Sv3Corpus {
  * arguments are nullable rather than defaulted. A negative duration (a clock that moved backwards) is
  * dropped for the same reason.
  */
-export function sv3ReceiptTail(durationMs: number | null, modelLabel: string | null): string {
+export function sv3ReceiptTail(
+  durationMs: number | null,
+  modelLabel: string | null,
+  // Tempdoc 859 §D §2.6 — the run's terminal disposition, so the tail can carry the cut-short badge
+  // beside the duration it qualifies. Defaulted so every existing caller keeps its meaning.
+  disposition: string | null = null,
+): string {
   const parts: string[] = [];
   if (durationMs !== null && durationMs >= 0) {
     parts.push(durationMs >= 1000 ? `${(durationMs / 1000).toFixed(1)} s` : `${durationMs} ms`);
   }
   if (modelLabel !== null && modelLabel !== '') parts.push(modelLabel);
+  if (sv3WasCutShort(disposition)) parts.push(SV3_CUT_SHORT_BADGE);
   return parts.join(' · ');
+}
+
+/* ── Cut short (tempdoc 859 §D §2.6) ─────────────────────────────────────────────────────────── */
+
+/**
+ * The two TRUNCATING dispositions — a run that stopped before finishing its work.
+ *
+ * `BUDGET_EDGE_FINALIZE`: the budget ran out and the model was given one last call to synthesise
+ * whatever it had. `MAX_ITERATIONS`: the loop hit its step ceiling, which produces no answer text at
+ * all — so the model cannot disclose that one even in principle.
+ *
+ * The other three (`COMPLETED`, `ERRORED`, `CANCELLED`) are not truncations: the first finished, and
+ * the other two already have their own honest surfaces (the error text, the halt receipt).
+ */
+const SV3_TRUNCATING_DISPOSITIONS: ReadonlySet<string> = new Set([
+  'BUDGET_EDGE_FINALIZE',
+  'MAX_ITERATIONS',
+]);
+
+/** The compact badge on the receipt tail, beside the duration. */
+export const SV3_CUT_SHORT_BADGE = 'cut short';
+
+/** The full line on the settled turn — what the badge means, in the reader's terms. */
+export const SV3_CUT_SHORT_NOTICE =
+  'Cut short at the budget limit — this answer is based on what the run had gathered by then';
+
+/**
+ * Whether the run behind this answer was truncated.
+ *
+ * <p>WHY THIS IS NOT DERIVED FROM THE ANSWER'S TEXT: 859 §7 watched a cut-short run produce a
+ * confidently formatted, content-free non-answer that disclosed nothing. The backend writes the
+ * disposition AFTER and INDEPENDENTLY of the finalize text, so a model cannot talk its way out of
+ * this badge — which is the entire point. An unknown or absent disposition discloses NOTHING; it is
+ * never read as "completed".
+ */
+export function sv3WasCutShort(disposition: string | null | undefined): boolean {
+  return disposition != null && SV3_TRUNCATING_DISPOSITIONS.has(disposition);
 }
 
 /**

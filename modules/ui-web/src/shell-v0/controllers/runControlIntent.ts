@@ -21,7 +21,12 @@ import type { AgentSessionController } from './AgentSessionController.js';
 
 /** One per-run human directive — the DIRECTION authority's control-intent value (§30). */
 export type RunDirective =
-  | { readonly kind: 'initiate'; readonly prompt: string }
+  /**
+   * Tempdoc 859 §D §2.1 — `effort` is the run's rung NAME (`quick|standard|thorough`), not a token
+   * count: the backend owns sizing because only it can see the model's `n_ctx`. Optional, and an
+   * omitted rung is Standard by backend policy, not by an FE-side default written here.
+   */
+  | { readonly kind: 'initiate'; readonly prompt: string; readonly effort?: string }
   | { readonly kind: 'interject'; readonly text: string }
   | { readonly kind: 'halt' }
   /** Tempdoc 577 Ext III — the over-budget remedy: grant the live run more tokens. A per-run
@@ -91,7 +96,7 @@ export function dispatchRunControl(
   }
   switch (directive.kind) {
     case 'initiate':
-      return ctrl.send(directive.prompt);
+      return ctrl.send(directive.prompt, directive.effort);
     case 'interject':
       return ctrl.steer(directive.text);
     case 'halt':

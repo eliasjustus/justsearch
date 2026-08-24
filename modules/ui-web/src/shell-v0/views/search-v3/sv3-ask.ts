@@ -121,23 +121,41 @@ export interface Sv3EffortOption {
 /** The menu's group label (one per descriptor). */
 export const SV3_EFFORT_MENU_LABEL = 'Effort';
 
+/**
+ * Tempdoc 859 §D §2.3 — ONE description set per rung, naming BOTH quantities the rung governs.
+ *
+ * The rung means two different things depending on where the send goes: how long an ASK's answer is
+ * ({@link sv3EffortParams}), and how much room a DELEGATED run gets (`AgentBudgetPolicy`). The
+ * obvious design is to switch the copy by tier — and it is unshippable, because `Sv3Composer`
+ * dispatches `delegate` on Ctrl/Cmd+Enter REGARDLESS of the tier control (852 kept the accelerator
+ * deliberately). A reader in ask mode, looking at ask copy, can delegate: the menu would have just
+ * told them the rung means answer length at the moment it is about to mean run budget. Copy and act
+ * disagreeing is the one state this control may not have.
+ *
+ * So each line names both, and is true in both modes. This is a deliberate divergence from a
+ * literal reading of 859 §4 ("say which meaning is active"): with the chord in place, neither
+ * meaning is reliably the active one at read time, so naming both is the honest form of that
+ * requirement rather than a weaker version of it.
+ */
 export const SV3_EFFORT_OPTIONS: readonly Sv3EffortOption[] = [
   {
     id: 'quick',
     label: 'Quick',
-    description: 'Skips the thinking step and keeps the answer short.',
+    // Never worded as a limiter: every rung RAISES a delegated run's old allowance (859 §D §2.2).
+    // Quick is the smallest raise, and the leash is between rungs, not against today's behaviour.
+    description: 'Short answer; a couple of steps when delegated.',
     isDefault: false,
   },
   {
     id: 'standard',
     label: 'Standard',
-    description: 'Leaves every setting to the model.',
+    description: 'Leaves the settings to the model; room for a handful of steps.',
     isDefault: true,
   },
   {
     id: 'thorough',
     label: 'Thorough',
-    description: 'Thinks first, allows a longer answer, and retrieves more passages.',
+    description: 'Thinks first and answers at length; room to work through many steps.',
     isDefault: false,
   },
 ];
