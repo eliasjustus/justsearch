@@ -77,8 +77,10 @@ final class AgentSession {
   // `llm_response` budget event carries), which the context-pressure trigger reads instead of the
   // schema-blind projection. 0 until the first LLM response reports usage.
   private final AtomicInteger lastReportedPromptTokens = new AtomicInteger(0);
-  // Tempdoc 859 §D §3.2(7) — the most recent raise amount, so the loop can narrate what it resumed on.
-  private final AtomicInteger lastBudgetRaise = new AtomicInteger(0);
+  // Tempdoc 859 §D §3.2(7) — tokens granted but NOT YET NARRATED. Accumulates (two grants between
+  // step boundaries produce one note for the total) and is drained by whichever site observes it
+  // first; see drainPendingRaiseNarration.
+  private final AtomicInteger pendingRaiseNarration = new AtomicInteger(0);
 
   // Tempdoc 577 §2.14 Root II (#14) — the model's context window (n_ctx), the cognitive-headroom
   // denominator. Set once at run start by AgentLoopService (the one site that resolves it from the
@@ -570,9 +572,6 @@ final class AgentSession {
     while (dropEnd < size && "tool".equals(messages.get(dropEnd).get("role"))) {
       dropEnd++;
     }
-    if (dropEnd <= start) {
-      return 0;
-    }
     int dropped = dropEnd - start;
     messages.subList(start, dropEnd).clear();
     return dropped;
@@ -766,17 +765,25 @@ final class AgentSession {
   void addBudget(int tokens) {
     if (tokens > 0) {
       budgetRemaining.addAndGet(tokens);
-      // Tempdoc 859 §D §3.2(7) — remember HOW MUCH, so the loop can narrate the raise it is
-      // resuming on ("+N — continuing") instead of resuming silently. Today's manual raise is silent
-      // too; this narrates both, and it is the note the per-run auto-continue depends on to stay
-      // visible rather than becoming standing autonomy.
-      lastBudgetRaise.set(tokens);
+      // Tempdoc 859 §D §3.2(7) — queue the grant for narration. The loop drains it, so a raise is
+      // announced whether it resolved a held gate or landed mid-run; without this the mid-run raise
+      // stayed silent, which is the half of D7 the first pass missed.
+      pendingRaiseNarration.addAndGet(tokens);
     }
   }
 
-  /** Tempdoc 859 §D §3.2(7) — the most recent raise amount; 0 when this run was never raised. */
-  int lastBudgetRaise() {
-    return lastBudgetRaise.get();
+  /**
+   * Tempdoc 859 §D §3.2(7) — take the un-narrated grant total, zeroing it. Returns 0 when there is
+   * nothing to announce.
+   *
+   * <p>DRAIN, not read: it is called from two sites — the budget gate's CONTINUE branch (which
+   * narrates immediately, because the run visibly resumes there) and the next iteration_start
+   * boundary (which catches a raise that landed while no gate was held). One counter drained by
+   * both is what makes "exactly one note per grant" structural rather than a coordination rule
+   * between two sites that could drift.
+   */
+  int drainPendingRaiseNarration() {
+    return pendingRaiseNarration.getAndSet(0);
   }
 
   /**

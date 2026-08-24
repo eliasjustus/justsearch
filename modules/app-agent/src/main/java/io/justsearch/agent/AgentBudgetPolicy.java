@@ -66,6 +66,21 @@ final class AgentBudgetPolicy {
    */
   static final int BACKGROUND_MULTIPLIER = 1;
 
+  /**
+   * The pre-859 safety margin, retained for BACKGROUND runs only.
+   *
+   * <p>"Pinned at today's behaviour" has to be literally true, or the sentence is doing rhetorical
+   * work the code does not. Today's behaviour was {@code n_ctx - 256}, not {@code n_ctx}: dropping
+   * the margin here would have quietly granted every unsupervised run 256 tokens more than it has
+   * now — small, but in the one place the design explicitly refuses to change spend.
+   *
+   * <p>The FOREGROUND rungs delete the margin, because there it was standing in for "leave room for
+   * the response" and the between-step gate does that job properly by projecting the real next
+   * prompt. A background run reaches the same gate, so the margin is not load-bearing for it either
+   * — it is kept because "unchanged" is the claim being made.
+   */
+  static final int BACKGROUND_SAFETY_MARGIN = 256;
+
   /** The wire tokens the FE's {@code Sv3Effort} union sends. Pinned FE-side by its own test. */
   private static final String QUICK = "quick";
 
@@ -106,6 +121,10 @@ final class AgentBudgetPolicy {
    */
   static int initialBudget(String effort, int contextWindow, boolean background) {
     long window = Math.max(0, contextWindow);
+    if (background) {
+      // Byte-for-byte today's formula — see BACKGROUND_SAFETY_MARGIN.
+      return (int) Math.max(0, window - BACKGROUND_SAFETY_MARGIN);
+    }
     long budget = window * multiplier(effort, background);
     return (int) Math.min(Integer.MAX_VALUE, budget);
   }

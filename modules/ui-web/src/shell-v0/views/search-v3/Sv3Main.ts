@@ -1298,11 +1298,22 @@ export class Sv3Main extends JfElement {
   declare editingDraft: string;
   /**
    * Tempdoc 859 §D §2.5 — the gate's "don't ask again for this run" checkbox, read at CLICK time so
-   * the toggle and the arm leave as ONE decision. Region-local because it is a control's own state;
-   * the WINDOW is what remembers it per run (`Sv3RunLocal.autoContinueTokens`), so nothing here
-   * outlives the run that set it.
+   * the toggle and the arm leave as ONE decision.
+   *
+   * <p>It is PRE-CLICK INTENT and nothing more: the durable fact is
+   * {@link ../SearchV3View.Sv3RunLocal.autoContinueTokens}, written only when an arm is actually
+   * pressed. This flag exists because the reader ticks the box before choosing an amount, and the
+   * amount is what makes the choice real.
+   *
+   * <p>Its LIFETIME is pinned to the run by {@link settleBudgetAutoContinue}. Without that it was a
+   * plain region field that outlived the run its own doc-comment said it died with — so run 2's gate
+   * rendered pre-ticked because run 1's reader had ticked it, offering a decision the window would
+   * not honour.
    */
   declare budgetAutoContinue: boolean;
+
+  /** The run whose gate the {@link budgetAutoContinue} tick belongs to; null before any run. */
+  private budgetAutoContinueTurnId: string | null = null;
 
   /**
    * The design spec's two scroll modes as one flag: armed = `following-end` (the reader is at the end, so
@@ -1527,6 +1538,7 @@ export class Sv3Main extends JfElement {
   protected override updated(changed: Map<string, unknown>): void {
     this.settleFloorSummaryEditor(changed);
     this.settleQuestionEditor();
+    this.settleBudgetAutoContinue();
     const el = this.scroller;
     if (el === null) return;
     if (el !== this.lastScrolledEl) {
@@ -2060,6 +2072,25 @@ export class Sv3Main extends JfElement {
     return html`<div class="tail" data-testid="sv3-turn-tail">
       ${facts}${note}${sources}${versions}${copy}${context}
     </div>`;
+  }
+
+  /**
+   * Tempdoc 859 §D §2.5 (review F2) — the auto-continue tick dies with the run it was made for.
+   *
+   * <p>The durable authority is `Sv3RunLocal.autoContinueTokens`, which a new dispatch replaces
+   * along with the whole run object. This keeps the pre-click checkbox honest about the same
+   * boundary: a tick that survived into the next run would render a gate pre-answered when the
+   * window has no such decision recorded — the control saying one thing while the window does
+   * another, which is the state this gate may not have.
+   *
+   * <p>Keyed on the run's turnId because that is the identity everything else in the run spine is
+   * addressed by, and it changes exactly when the run does.
+   */
+  private settleBudgetAutoContinue(): void {
+    const turnId = this.run?.turnId ?? null;
+    if (turnId === this.budgetAutoContinueTurnId) return;
+    this.budgetAutoContinueTurnId = turnId;
+    this.budgetAutoContinue = false;
   }
 
   /**

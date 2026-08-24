@@ -226,17 +226,31 @@ final class AgentSessionBudgetTest {
   // --- The raise narration input (tempdoc 859 §D §3.2(7)) ---
 
   @Test
-  @DisplayName("859 §D — addBudget remembers the amount so the loop can narrate the raise")
-  void addBudgetRecordsTheRaiseAmountForNarration() {
+  @DisplayName("859 §D — a grant is queued for narration exactly once, then drained")
+  void addBudgetQueuesTheRaiseForNarrationExactlyOnce() {
     var s = session(1000);
-    assertEquals(0, s.lastBudgetRaise(), "a run nobody raised has nothing to narrate");
+    assertEquals(0, s.drainPendingRaiseNarration(), "a run nobody raised has nothing to narrate");
     s.addBudget(10_000);
-    assertEquals(10_000, s.lastBudgetRaise());
     s.addBudget(0);
     s.addBudget(-5);
-    assertEquals(10_000, s.lastBudgetRaise(), "a rejected grant must not rewrite the last real one");
+    assertEquals(
+        10_000, s.drainPendingRaiseNarration(), "rejected grants add nothing to announce");
+    assertEquals(
+        0,
+        s.drainPendingRaiseNarration(),
+        "DRAINED — the second observer of the same grant must not announce it again, which is what"
+            + " lets the gate branch and the step boundary both call this safely");
+  }
+
+  @Test
+  @DisplayName("859 §D — two grants between step boundaries narrate ONCE, for the total")
+  void grantsAccumulateBetweenNarrations() {
+    // The mid-run raise is announced at the next iteration_start. A reader who clicks twice before
+    // the loop reaches that boundary granted 30,000 tokens once, not two separate things.
+    var s = session(1000);
+    s.addBudget(10_000);
     s.addBudget(20_000);
-    assertEquals(20_000, s.lastBudgetRaise(), "the LATEST raise is what the next note describes");
+    assertEquals(30_000, s.drainPendingRaiseNarration());
   }
 
   @Test

@@ -957,4 +957,36 @@ describe('a decision made once is RE-APPLIED, not re-asked (859 §D P3)', () => 
     expect(ctrl.raiseBudget).not.toHaveBeenCalled();
     expect(q(await region(el, 'jf-sv3-main'), 'sv3-run-budget-raise-again')).not.toBeNull();
   });
+
+  it('a NEW run’s gate renders UNTICKED, even though the prior run’s reader ticked it', async () => {
+    // Tempdoc 859 §D review F2 — the OFFER, not the raise. The test above proves the window does not
+    // ACT on the stale choice; this proves it does not SHOW one either. The checkbox is pre-click
+    // intent held on the region, and it used to be a plain field that outlived the run its own
+    // doc-comment said it died with — so run 2's gate rendered pre-ticked, offering a decision the
+    // window would not honour. Control and window saying different things is the one state this gate
+    // may not have.
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'first task', []);
+    await frame(el, { budgetGate: GATE });
+    const first = await region(el, 'jf-sv3-main');
+    const firstBox = q(first, 'sv3-run-budget-auto')?.querySelector('input') as HTMLInputElement;
+    firstBox.checked = true;
+    firstBox.dispatchEvent(new Event('change'));
+    await settle(el);
+    expect(
+      (q(first, 'sv3-run-budget-auto')?.querySelector('input') as HTMLInputElement).checked,
+      'the tick registered on the run that made it',
+    ).toBe(true);
+    await frame(el, { budgetGate: null, runInFlight: false, isStreaming: false, runKind: null });
+
+    await delegateWithCalls(el, 'second task', []);
+    await frame(el, { budgetGate: GATE });
+    const second = await region(el, 'jf-sv3-main');
+    const secondBox = q(second, 'sv3-run-budget-auto')?.querySelector('input') as HTMLInputElement;
+    expect(secondBox, 'the new run offers the choice').toBeTruthy();
+    expect(secondBox.checked, 'and offers it UNTICKED — the prior run’s tick died with it').toBe(
+      false,
+    );
+  });
 });

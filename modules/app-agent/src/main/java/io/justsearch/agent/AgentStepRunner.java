@@ -256,6 +256,13 @@ final class AgentStepRunner {
             budgetExhausted = tokens >= budgetSnapshot;
           }
 
+          // Tempdoc 859 §D §3.2(7) — a raise that landed MID-RUN (no gate held, so the raise
+          // endpoint's resolveBudgetGate was a no-op) is announced here, at the first step boundary
+          // that can see it, right after the numbers it explains. Without this the note fired only
+          // for the gate-parked raise and the manual one stayed as silent as it has always been —
+          // half of the narration D7 asks for. Drained, so it cannot also fire at the gate below.
+          narrateBudgetRaise(session, sink, iteration, request.maxIterations());
+
           // Tempdoc 577 §2.14 Root II (#14) — the CONTEXT-pressure gate (the cognitive sibling of the
           // budget gate below). When the next prompt approaches the model's context window (n_ctx),
           // park the run as a HELD decision OFFERING compaction (summarize older turns) — the option
@@ -432,15 +439,7 @@ final class AgentStepRunner {
               // granted or how much. That silence is what would turn per-run auto-continue into
               // standing autonomy, so the note is the guard rail, not decoration. The `progress`
               // descriptor already exists (AgentRunShape) ⇒ no schema change.
-              int raised = session.lastBudgetRaise();
-              sink.accept(
-                  new AgentEvent.AgentProgress(
-                      "budget_raised",
-                      raised > 0
-                          ? String.format("+%,d tokens — continuing", raised)
-                          : "Budget raised — continuing",
-                      iteration + 1,
-                      request.maxIterations()));
+              narrateBudgetRaise(session, sink, iteration, request.maxIterations());
               checkpointer.checkpoint(
                   sessionId, session, "READY_FOR_LLM", "Budget raised — continuing");
             } else {
@@ -939,6 +938,31 @@ final class AgentStepRunner {
    * resolved by the answer↔source matcher ({@link AgentCitationResolver}) when a document service is
    * available; without one the sources stand alone (the answer still cites verifiable passages).
    */
+  /**
+   * Tempdoc 859 §D §3.2(7) — announce any un-narrated budget grant, naming the amount.
+   *
+   * <p>The raise has always been silent: the run simply carried on, with nothing in the feed saying
+   * more room had been granted or how much. That silence is what would turn per-run auto-continue
+   * into standing autonomy, so the note is the guard rail rather than decoration. The {@code
+   * progress} descriptor already exists (AgentRunShape) ⇒ no schema change.
+   *
+   * <p>Called from both sites that can observe a grant; the session's counter is DRAINED, so each
+   * grant produces exactly one note whichever site gets there first.
+   */
+  private static void narrateBudgetRaise(
+      AgentSession session, Consumer<AgentEvent> sink, int iteration, int maxIterations) {
+    int raised = session.drainPendingRaiseNarration();
+    if (raised <= 0) {
+      return;
+    }
+    sink.accept(
+        new AgentEvent.AgentProgress(
+            "budget_raised",
+            String.format("+%,d tokens — continuing", raised),
+            iteration + 1,
+            maxIterations));
+  }
+
   private AgentEvent.AgentDone groundedDone(
       AgentSession session, String response, TerminalDisposition disposition) {
     List<AgentEvent.AgentSource> sources = session.collectGroundingSources();

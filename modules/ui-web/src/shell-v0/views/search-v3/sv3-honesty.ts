@@ -105,19 +105,12 @@ export function projectSv3Corpus(snapshot: AiState | null): Sv3Corpus {
  * arguments are nullable rather than defaulted. A negative duration (a clock that moved backwards) is
  * dropped for the same reason.
  */
-export function sv3ReceiptTail(
-  durationMs: number | null,
-  modelLabel: string | null,
-  // Tempdoc 859 §D §2.6 — the run's terminal disposition, so the tail can carry the cut-short badge
-  // beside the duration it qualifies. Defaulted so every existing caller keeps its meaning.
-  disposition: string | null = null,
-): string {
+export function sv3ReceiptTail(durationMs: number | null, modelLabel: string | null): string {
   const parts: string[] = [];
   if (durationMs !== null && durationMs >= 0) {
     parts.push(durationMs >= 1000 ? `${(durationMs / 1000).toFixed(1)} s` : `${durationMs} ms`);
   }
   if (modelLabel !== null && modelLabel !== '') parts.push(modelLabel);
-  if (sv3WasCutShort(disposition)) parts.push(SV3_CUT_SHORT_BADGE);
   return parts.join(' · ');
 }
 
@@ -138,7 +131,14 @@ const SV3_TRUNCATING_DISPOSITIONS: ReadonlySet<string> = new Set([
   'MAX_ITERATIONS',
 ]);
 
-/** The compact badge on the receipt tail, beside the duration. */
+/**
+ * The compact badge on a DELEGATE turn's receipt, beside its outcome.
+ *
+ * <p>It lives on {@link ../sv3-run.sv3RunReceiptLabel}, not on {@link sv3ReceiptTail}: the tail is
+ * built by {@link projectSv3AnswerFrame}, which refuses anything but an `ask` turn — so an ask turn
+ * can never carry a disposition and a delegate turn never reaches the tail. Threading the parameter
+ * through both would have added a branch nothing could reach.
+ */
 export const SV3_CUT_SHORT_BADGE = 'cut short';
 
 /** The full line on the settled turn — what the badge means, in the reader's terms. */

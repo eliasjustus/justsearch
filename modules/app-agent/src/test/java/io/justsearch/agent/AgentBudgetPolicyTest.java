@@ -200,4 +200,22 @@ final class AgentBudgetPolicyTest {
         "while the SAME rung in the foreground does not gate — so the pin is what made the"
             + " difference, not the rung being ignored everywhere");
   }
+
+  @Test
+  @DisplayName("a BACKGROUND run keeps the OLD safety margin too — 'unchanged' has to be literal")
+  void backgroundRunsKeepThePre859SafetyMargin() {
+    // The foreground rungs delete the 256-token margin (the between-step gate does that job
+    // properly). A background run must not quietly gain those 256 tokens: §2.9's claim is that its
+    // behaviour is UNCHANGED, and the one place the design refuses to move spend is the one place
+    // nobody can supervise. This discriminates the margin — a 1x multiplier alone would pass a
+    // `budget < foreground` check while being 256 tokens more than today.
+    for (int nCtx : new int[] {2048, COMPACT_N_CTX, LARGE_N_CTX}) {
+      assertEquals(
+          nCtx - 256,
+          AgentBudgetPolicy.initialBudget("thorough", nCtx, true),
+          "background at n_ctx " + nCtx + " must be exactly the pre-859 `n_ctx - 256`");
+    }
+    // And it never goes negative on a pathologically small window.
+    assertEquals(0, AgentBudgetPolicy.initialBudget(null, 100, true));
+  }
 }

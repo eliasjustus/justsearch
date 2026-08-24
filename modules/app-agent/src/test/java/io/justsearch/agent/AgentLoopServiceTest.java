@@ -2143,6 +2143,82 @@ class AgentLoopServiceTest {
         "the persisted ceiling and the streamed ceiling are the same fact, not two");
   }
 
+  /**
+   * Tempdoc 859 §D §2.1 (review F1) — persist a run at {@code effort}, then reconstruct it through
+   * {@code reconstruct} and report the budget the reconstructed run was given.
+   */
+  private int budgetAfterReconstruction(
+      String sessionId,
+      String effort,
+      java.util.function.BiConsumer<AgentLoopService, Consumer<AgentEvent>> reconstruct) {
+    var runStore = new AgentRunStore(tempDir.resolve("agent-runs-" + sessionId));
+    var request =
+        new AgentRequest(
+            userMessage("do the thing"), List.of(), 3, List.of(), null, null, null, null,
+            List.of(), effort);
+    runStore.startRun(sessionId, request, request.messages(), 1234);
+    runStore.updateCheckpoint(sessionId, "READY_FOR_LLM", request.messages(), 0, 0, 0, "");
+
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("answered")));
+    var searchTool = new StubTool("search", RiskTier.LOW, "r");
+    var service =
+        observed(
+            new AgentLoopService(
+                smallContextAi(ai, 400),
+                stubCatalog(searchTool),
+                stubExecutor(searchTool),
+                stubEmitter(),
+                null,
+                null,
+                runStore,
+                null));
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    reconstruct.accept(service, events::add);
+    return initialBudgetFrom(events);
+  }
+
+  @Test
+  @DisplayName("859 §D F1 — a RESUMED run keeps the rung it was dispatched with")
+  void resumedRunKeepsItsEffortRung() {
+    // The defect: resume rebuilt a fresh AgentRequest through the short constructor, which carries
+    // no rung — and an absent rung IS Standard by design, so a Thorough run silently re-sized from
+    // 15x to 5x with nothing anywhere saying so. Asserted as a CONSEQUENCE (the budget the resumed
+    // run actually got), not by reading the meta key back.
+    int thorough = budgetAfterReconstruction("resume_thorough", "thorough",
+        (service, sink) -> service.resumeSession("resume_thorough", sink));
+    int standard = budgetAfterReconstruction("resume_standard", "standard",
+        (service, sink) -> service.resumeSession("resume_standard", sink));
+    assertTrue(
+        thorough > standard,
+        "a resumed Thorough run must still be Thorough (got " + thorough + " vs Standard's "
+            + standard + ")");
+    assertEquals(
+        AgentBudgetPolicy.initialBudget("thorough", 400, false),
+        thorough,
+        "and it must be sized by the SAME policy a fresh dispatch uses");
+  }
+
+  @Test
+  @DisplayName("859 §D F1 — a FORKED run keeps the rung too (the second reconstruction site)")
+  void forkedRunKeepsItsEffortRung() {
+    // Two sites drifted apart by one caller forgetting a field, so both are pinned. A fork rewinds
+    // to the last user turn and re-runs — same durable intent, same rung.
+    int thorough = budgetAfterReconstruction("fork_thorough", "thorough",
+        (service, sink) -> service.forkSession("fork_thorough", "", sink));
+    assertEquals(AgentBudgetPolicy.initialBudget("thorough", 400, false), thorough);
+  }
+
+  @Test
+  @DisplayName("859 §D F1 — a PRE-859 record carries no rung, and reads as Standard")
+  void reconstructedRunWithoutAPersistedRungIsStandard() {
+    // Absence stays meaningful: a record written before the field existed is not corrupt, it simply
+    // predates the rung, and the documented fallback is exactly the right reading of it. This is why
+    // the persistence change needs no schema bump.
+    int absent = budgetAfterReconstruction("resume_legacy", null,
+        (service, sink) -> service.resumeSession("resume_legacy", sink));
+    assertEquals(AgentBudgetPolicy.initialBudget(null, 400, false), absent);
+  }
+
   // ---------------------------------------------------------------------------
   // The SIZED raise and its narration (tempdoc 859 §D §2.5 / §3.3 T3)
   // ---------------------------------------------------------------------------
@@ -2220,6 +2296,62 @@ class AgentLoopServiceTest {
     } finally {
       restoreProperty("justsearch.agent.budgetGateTimeoutSec", prev);
     }
+  }
+
+  @Test
+  @DisplayName("859 §D F5 — a MID-RUN raise (no gate held) is narrated at the next step boundary")
+  void midRunRaiseIsNarratedToo() throws Exception {
+    // The half of D7 the first pass missed: raising the budget while the run is NOT parked makes
+    // `resolveBudgetGate` a no-op, so the gate's CONTINUE branch never fires and the grant landed in
+    // total silence — the run just kept going with more room and nothing said so. That silence is
+    // exactly what the narration exists to remove.
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(20, 10),
+                ScriptedResponse.toolCall("call_2", "core_search", "{}").withUsage(20, 10),
+                ScriptedResponse.textOnly("Done").withUsage(20, 10)));
+    var service = buildServiceWithSmallBudget(ai, 4000); // Standard ⇒ 20,000; never exhausted
+
+    var events = new java.util.concurrent.CopyOnWriteArrayList<AgentEvent>();
+    var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+    var raised = new java.util.concurrent.atomic.AtomicBoolean(false);
+    var finished = new CompletableFuture<Boolean>();
+    Consumer<AgentEvent> sink =
+        e -> {
+          events.add(e);
+          if (e instanceof AgentEvent.SessionStarted s) {
+            sessionId.set(s.sessionId());
+          }
+          // Raise ONCE, from inside the stream, while the run is healthy and unparked — the exact
+          // condition under which the old code said nothing.
+          if (e instanceof AgentEvent.ToolExecutionCompleted && raised.compareAndSet(false, true)) {
+            service.raiseSessionBudget(sessionId.get(), 12_345);
+          }
+          if (e instanceof AgentEvent.AgentDone || e instanceof AgentEvent.AgentError) {
+            finished.complete(true);
+          }
+        };
+    var loopThread =
+        new Thread(() -> service.runAgent(new AgentRequest(userMessage("search"), List.of(), 5), sink));
+    loopThread.setDaemon(true);
+    loopThread.start();
+    assertTrue(finished.get(8, java.util.concurrent.TimeUnit.SECONDS), "the run completes");
+    loopThread.join(4000);
+
+    assertTrue(raised.get(), "the test really did raise the budget mid-run");
+    var notes =
+        eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+            .filter(p -> "budget_raised".equals(p.phase()))
+            .toList();
+    assertEquals(1, notes.size(), "exactly one note per grant — drained, never announced twice");
+    assertTrue(
+        notes.get(0).message().contains("12,345"),
+        "and it names the amount granted, got: " + notes.get(0).message());
+    // No gate was involved: this is the mid-run path, not the parked one.
+    assertTrue(
+        eventsOfType(events, AgentEvent.BudgetGatePending.class).isEmpty(),
+        "the run was never parked — so the gate's CONTINUE branch cannot be what narrated this");
   }
 
   // ---------------------------------------------------------------------------

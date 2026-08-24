@@ -3722,9 +3722,17 @@ export class UnifiedChatView extends JfElement {
                 )} left</span
               >
               <span class="budget-actions">
-                <button class="budget-action" @click=${() => this.onRaiseBudget()}>
-                  Add ${this.raiseStepTokens().toLocaleString()} tokens
-                </button>
+                ${/* Tempdoc 859 §D §2.5 (review F6) — the amount is computed ONCE here and both
+                      printed and dispatched from that one value. Reading it again inside the click
+                      handler would re-derive it from `budgetUpdates`, which the live run keeps
+                      changing, so the button could spend a different number than the one the reader
+                      read off it. */ ''}
+                ${(() => {
+                  const step = this.raiseStepTokens();
+                  return html`<button class="budget-action" @click=${() => this.onRaiseBudget(step)}>
+                    Add ${step.toLocaleString()} tokens
+                  </button>`;
+                })()}
                 <button class="budget-action" @click=${() => this.onBudgetDecision('finalize')}>
                   Finish with what it has
                 </button>
@@ -3781,12 +3789,16 @@ export class UnifiedChatView extends JfElement {
                           live-validation finding, the 404 case). */ ''}
                     ${this.agentCtrl?.runInFlight
                       ? html`<span class="budget-actions">
-                          <button
-                            class="budget-action"
-                            @click=${() => this.onRaiseBudget()}
-                          >
-                            Add ${this.raiseStepTokens().toLocaleString()} tokens
-                          </button>
+                          ${(() => {
+                            // Snapshot at render — see the gate row above (859 §D review F6).
+                            const step = this.raiseStepTokens();
+                            return html`<button
+                              class="budget-action"
+                              @click=${() => this.onRaiseBudget(step)}
+                            >
+                              Add ${step.toLocaleString()} tokens
+                            </button>`;
+                          })()}
                           <button class="budget-action" @click=${() => this.onHaltRun()}>
                             Stop run
                           </button>
@@ -3850,11 +3862,17 @@ export class UnifiedChatView extends JfElement {
     return steps[1]?.addTokens ?? 0;
   }
 
-  /** Tempdoc 577 Ext III — the raise-budget remedy, dispatched through the one control seam. */
-  private onRaiseBudget(): void {
+  /**
+   * Tempdoc 577 Ext III — the raise-budget remedy, dispatched through the one control seam.
+   *
+   * @param addTokens the amount the button PRINTED, captured at render (859 §D review F6). Passed in
+   *     rather than recomputed so the label and the directive cannot disagree — the same property
+   *     the Search v3 side gets structurally from {@code BudgetContinueStep}.
+   */
+  private onRaiseBudget(addTokens: number): void {
     const ctrl = this.agentCtrl;
-    if (!ctrl) return;
-    void dispatchRunControl(ctrl, { kind: 'raise-budget', addTokens: this.raiseStepTokens() });
+    if (!ctrl || addTokens <= 0) return;
+    void dispatchRunControl(ctrl, { kind: 'raise-budget', addTokens });
   }
 
   /** Tempdoc 577 Ext III — the halt remedy on the over-budget row (the existing seam directive). */

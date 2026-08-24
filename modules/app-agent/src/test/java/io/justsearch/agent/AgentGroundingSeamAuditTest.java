@@ -25,26 +25,40 @@ import org.junit.jupiter.api.Test;
  * that emits a grounded {@link AgentEvent.AgentDone} fails this test, so the "second grounding
  * authority" the tempdoc forbids cannot land silently.
  *
- * <p><b>Mechanism.</b> {@code AgentDone} has two grounding-carrying constructors (the 7-arg {@code
- * (String,int,int,int,List,List,String)} and the canonical 8-arg {@code
- * (…,List,List,String,TraceContext)} — tempdoc 859 §4 added the {@code citationScorer} stamp to
- * both) and two ungrounded ones (4-arg, 5-arg-with-trace). A grounding-carrying constructor is
- * identified by
- * a {@code java.util.List} parameter in its signature — the {@code sources}/{@code citations}
- * lists. The rule walks compiled bytecode (regex-free, rename-proof — the slice-execution
- * test-precision discipline) and forbids constructing a grounding-carrying {@code AgentDone}
- * anywhere except the three legitimate sites:
+ * <p><b>Mechanism.</b> {@code AgentDone} has THREE grounding-carrying constructors — the 7-arg
+ * {@code (String,int,int,int,List,List,String)}, the 8-arg {@code (…,List,List,String,String)} that
+ * tempdoc 859 §D added for the terminal disposition, and the canonical 9-arg {@code
+ * (…,List,List,String,String,TraceContext)} — and two ungrounded ones (4-arg, 5-arg-with-trace).
+ * A grounding-carrying constructor is identified by a {@code java.util.List} parameter in its
+ * signature: the {@code sources}/{@code citations} lists. The rule walks compiled bytecode
+ * (regex-free, rename-proof — the slice-execution test-precision discipline) and forbids
+ * constructing a grounding-carrying {@code AgentDone} anywhere except the three legitimate sites:
  *
  * <ol>
  *   <li><b>{@code AgentStepRunner.groundedDone}</b> — THE attach seam (computes sources from the
  *       session, resolves inline citations via {@code AgentCitationResolver}).
  *   <li><b>{@code AgentEvent.AgentDone} itself</b> — the record's own convenience-constructor
- *       delegations (4/5/7-arg → canonical 8-arg); intra-record shims, not attach sites.
+ *       delegations (4/5/7/8-arg → canonical 9-arg) AND the {@code ofDisposition} static factory
+ *       (859 §D), which builds an UNGROUNDED terminal — {@code List.of()} sources and citations,
+ *       {@code SCORER_NONE} — for the max-iterations ceiling. It attaches nothing; it exists because
+ *       that ceiling has to declare its disposition, and routing it through the canonical
+ *       constructor from {@code AgentLoopService} would trip this rule for a reason that has nothing
+ *       to do with grounding.
  *   <li><b>{@code AgentEventTracing}</b> — the uniform trace-decoration pass-through, which
  *       reconstructs every event type with a {@code TraceContext} added; it <em>copies</em> the
  *       source event's already-attached {@code sources()}/{@code citations()}, it does not attach
  *       new grounding.
  * </ol>
+ *
+ * <p><b>Second honest limit, from the {@code ofDisposition} route (859 §D review).</b> This rule is
+ * {@code callConstructorWhere}: it sees CONSTRUCTOR calls. A static factory on the record is
+ * therefore invisible to it twice over — the factory's own call to the canonical constructor is
+ * exempted by the {@code AGENT_DONE} origin check, and the factory's CALLERS are not constructor
+ * calls at all, so they are never examined. That is correct today, because {@code ofDisposition}
+ * hardcodes empty grounding and cannot be handed any. It stops being correct the moment a factory on
+ * this record accepts sources or citations as parameters: such a factory would be a second attach
+ * site that this rule cannot see. If one is ever added, extend the predicate to method calls
+ * targeting {@code AgentDone}'s grounding-bearing static factories.
  *
  * <p><b>Honest scope (the seam, not the runtime property).</b> This pins "no second site ATTACHES
  * grounding" — it does not assert the runtime property "every answer that had search hits IS
@@ -79,7 +93,7 @@ final class AgentGroundingSeamAuditTest {
   /**
    * The three sites permitted to construct a grounding-carrying {@code AgentDone} (see class
    * javadoc): the attach seam {@code AgentStepRunner.groundedDone}, the record's own ctor
-   * delegations, and the trace-decoration pass-through.
+   * delegations and {@code ofDisposition} factory, and the trace-decoration pass-through.
    */
   private static boolean isPermittedGroundingCtorCaller(JavaConstructorCall call) {
     String origin = call.getOriginOwner().getName();
@@ -88,7 +102,8 @@ final class AgentGroundingSeamAuditTest {
     if (origin.equals(AgentStepRunner.class.getName()) && method.equals("groundedDone")) {
       return true;
     }
-    // 2. AgentDone's own convenience-constructor delegations (4/5/7-arg -> canonical 8-arg).
+    // 2. AgentDone's own delegations: the convenience constructors (4/5/7/8-arg -> canonical 9-arg)
+    // and the ungrounded `ofDisposition` factory. Both are intra-record shims, not attach sites.
     if (origin.equals(AGENT_DONE)) {
       return true;
     }

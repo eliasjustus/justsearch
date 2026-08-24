@@ -2674,12 +2674,16 @@ export class SearchV3View extends JfElement {
     // apply, and the reason it is not `runInFlight`/`isStreaming` (both local optimism, set inside
     // `send()` before the server answers).
     const ctrl = this.agentController();
-    if (
+    // Tempdoc 859 §D §2.6 (review F9) — ONE predicate, named, read by both the evidence write below
+    // and the disposition write further down. They were two hand-copied condition lists that had
+    // already drifted apart by one clause; a shared name is what makes "the same guard" checkable
+    // rather than a claim in a comment.
+    const terminalBelongsToThisRun =
       ctrl !== null &&
       local.acknowledged &&
       ctrl.answerEvidenceRunId !== null &&
-      ctrl.answerEvidenceRunId === ctrl.sessionId
-    ) {
+      ctrl.answerEvidenceRunId === ctrl.sessionId;
+    if (terminalBelongsToThisRun) {
       const evidence = agentAnswerEvidence(
         ctrl.answerSources,
         ctrl.answerCitations,
@@ -2698,13 +2702,12 @@ export class SearchV3View extends JfElement {
       feed.toolCallCount,
       Date.now(),
       '',
-      // Tempdoc 859 §D §2.6 — the terminal DISPOSITION, guarded by the same two conditions the
-      // evidence above is and for the same reason: `concludeRun` fires on every terminal, including
-      // the ones that emit no `done`, and only `onDone` writes the controller's disposition. Without
-      // the guard a failed run N would settle wearing run N-1's cut-short badge.
-      ctrl !== null && local.acknowledged && ctrl.answerEvidenceRunId === ctrl.sessionId
-        ? ctrl.terminalDisposition
-        : null,
+      // Tempdoc 859 §D §2.6 — the terminal DISPOSITION, guarded by the SAME predicate the evidence
+      // above is (literally the same expression now) and for the same reason: `concludeRun` fires on
+      // every terminal, including the ones that emit no `done`, and only `onDone` writes the
+      // controller's disposition. Without the guard a failed run N would settle wearing run N-1's
+      // cut-short badge.
+      terminalBelongsToThisRun && ctrl !== null ? ctrl.terminalDisposition : null,
     );
     // The live feed was ATTENTION; the record is what survives it. Refreshing at the terminal is what
     // makes the yield happen (inventory D1): the settled turn re-renders from the canonical record's
