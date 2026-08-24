@@ -25,9 +25,11 @@ import org.junit.jupiter.api.Test;
  * that emits a grounded {@link AgentEvent.AgentDone} fails this test, so the "second grounding
  * authority" the tempdoc forbids cannot land silently.
  *
- * <p><b>Mechanism.</b> {@code AgentDone} has two grounding-carrying constructors (the 6-arg {@code
- * (String,int,int,int,List,List)} and the canonical 7-arg {@code (…,List,List,TraceContext)}) and
- * two ungrounded ones (4-arg, 5-arg-with-trace). A grounding-carrying constructor is identified by
+ * <p><b>Mechanism.</b> {@code AgentDone} has two grounding-carrying constructors (the 7-arg {@code
+ * (String,int,int,int,List,List,String)} and the canonical 8-arg {@code
+ * (…,List,List,String,TraceContext)} — tempdoc 859 §4 added the {@code citationScorer} stamp to
+ * both) and two ungrounded ones (4-arg, 5-arg-with-trace). A grounding-carrying constructor is
+ * identified by
  * a {@code java.util.List} parameter in its signature — the {@code sources}/{@code citations}
  * lists. The rule walks compiled bytecode (regex-free, rename-proof — the slice-execution
  * test-precision discipline) and forbids constructing a grounding-carrying {@code AgentDone}
@@ -37,7 +39,7 @@ import org.junit.jupiter.api.Test;
  *   <li><b>{@code AgentStepRunner.groundedDone}</b> — THE attach seam (computes sources from the
  *       session, resolves inline citations via {@code AgentCitationResolver}).
  *   <li><b>{@code AgentEvent.AgentDone} itself</b> — the record's own convenience-constructor
- *       delegations (4/5/6-arg → canonical 7-arg); intra-record shims, not attach sites.
+ *       delegations (4/5/7-arg → canonical 8-arg); intra-record shims, not attach sites.
  *   <li><b>{@code AgentEventTracing}</b> — the uniform trace-decoration pass-through, which
  *       reconstructs every event type with a {@code TraceContext} added; it <em>copies</em> the
  *       source event's already-attached {@code sources()}/{@code citations()}, it does not attach
@@ -56,7 +58,7 @@ final class AgentGroundingSeamAuditTest {
 
   /**
    * A grounding-carrying {@code AgentDone} constructor — one whose signature takes the {@code
-   * sources}/{@code citations} lists (the 6-arg and 7-arg overloads). The ungrounded 4-arg / 5-arg
+   * sources}/{@code citations} lists (the 7-arg and 8-arg overloads). The ungrounded 4-arg / 5-arg
    * overloads carry no {@code java.util.List} parameter. Matched on the target's full signature
    * ({@code …AgentDone.<init>(java.lang.String, int, int, int, java.util.List, …)}), so it is
    * agnostic to argument ORDER.
@@ -86,7 +88,7 @@ final class AgentGroundingSeamAuditTest {
     if (origin.equals(AgentStepRunner.class.getName()) && method.equals("groundedDone")) {
       return true;
     }
-    // 2. AgentDone's own convenience-constructor delegations (4/5/6-arg -> canonical 7-arg).
+    // 2. AgentDone's own convenience-constructor delegations (4/5/7-arg -> canonical 8-arg).
     if (origin.equals(AGENT_DONE)) {
       return true;
     }
