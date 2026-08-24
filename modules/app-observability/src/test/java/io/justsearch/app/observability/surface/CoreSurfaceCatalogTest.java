@@ -32,6 +32,8 @@ final class CoreSurfaceCatalogTest {
     // Tempdoc 576 §15 added core.governance-surface (DEEPLINK governance dashboard): 16 → 17.
     // Tempdoc 583 §D.3b added core.api-explorer-surface (DEEPLINK route-manifest dashboard): 17 → 18.
     // Tempdoc 629 added core.security-surface (RAIL — encryption control + at-rest status): 18 → 19.
+    // Tempdoc 855 §5 item 1 absorbed core.security-surface into Settings as a member (RAIL →
+    // DEEPLINK) — no count change, still 19 at this point.
     // Search Thread S5b RETIRED core.search-surface (folded into core.unified-chat-surface): 19 → 18.
     assertEquals(18, catalog.definitions().size());
   }
@@ -188,19 +190,27 @@ final class CoreSurfaceCatalogTest {
   }
 
   @Test
-  @DisplayName("Slice 454 phase 9: Settings surface entry shape (consumes core.reset-settings)")
+  @DisplayName(
+      "Slice 454 phase 9 / tempdoc 855: Settings surface entry shape (MODAL, consumes"
+          + " core.reset-settings)")
   void settingsSurfaceShape() {
     Surface entry =
         new CoreSurfaceCatalog().findById(CoreSurfaceCatalog.SETTINGS_SURFACE_ID).orElseThrow();
     assertEquals(new SurfaceRef("core.settings-surface"), entry.id());
     assertSame(Audience.USER, entry.audience());
-    assertSame(Placement.RAIL, entry.placement());
+    // Tempdoc 855 §11.1 — Settings is the first MODAL surface: it opens as the centered
+    // <jf-settings-window> over the current stage surface, never as a rail-mounted stage pane.
+    assertSame(Placement.MODAL, entry.placement());
     assertEquals("jf-settings-surface", entry.mountTag());
     // Tempdoc 571 §11 / 578 — Settings ⊇ Appearance: hosts the two theming surfaces as an Appearance tab group.
+    // Tempdoc 855 §5 item 1 / §9.3 — Settings ⊇ Security & Privacy: hosts core.security-surface as a
+    // member category under Privacy & Trust (absorbed off the rail; deep-links keep working via the
+    // member→host alias redirect).
     assertEquals(
         List.of(
             new SurfaceRef("core.presentation-gallery-surface"),
-            new SurfaceRef("core.presentation-editor-surface")),
+            new SurfaceRef("core.presentation-editor-surface"),
+            new SurfaceRef("core.security-surface")),
         entry.members());
     assertEquals(
         java.util.Set.of(new OperationRef("core.reset-settings")),
@@ -222,6 +232,24 @@ final class CoreSurfaceCatalogTest {
     assertSame(Placement.DEEPLINK, entry.placement());
     assertEquals("jf-browse-surface", entry.mountTag());
     // Browse uses /api/knowledge/folders + /api/knowledge/folder-files REST.
+    assertTrue(entry.consumes().operations().isEmpty());
+    assertTrue(entry.consumes().resources().isEmpty());
+    assertTrue(entry.consumes().prompts().isEmpty());
+    assertTrue(entry.consumes().diagnosticChannels().isEmpty());
+  }
+
+  @Test
+  @DisplayName("Tempdoc 855 §5 item 1: Security surface entry shape (DEEPLINK, member of Settings)")
+  void securitySurfaceShape() {
+    Surface entry =
+        new CoreSurfaceCatalog().findById(CoreSurfaceCatalog.SECURITY_SURFACE_ID).orElseThrow();
+    assertEquals(new SurfaceRef("core.security-surface"), entry.id());
+    assertSame(Audience.USER, entry.audience());
+    // Tempdoc 855 §5 item 1 / §9.3 — Security is a MEMBER of Settings (its "Security & Privacy"
+    // category under Privacy & Trust), so its home is its host: DEEPLINK (off the rail, still
+    // URL-routable via the member→host alias redirect) rather than RAIL (was 629's placement).
+    assertSame(Placement.DEEPLINK, entry.placement());
+    assertEquals("jf-security-surface", entry.mountTag());
     assertTrue(entry.consumes().operations().isEmpty());
     assertTrue(entry.consumes().resources().isEmpty());
     assertTrue(entry.consumes().prompts().isEmpty());

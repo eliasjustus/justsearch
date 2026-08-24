@@ -236,8 +236,39 @@ Per `retire-with-a-sweep`, named here rather than deferred:
 - **`recordMergeLink()` in `scripts/dev/remove-worktree.cjs`** — a *tombstone candidate*,
   not a deletion yet. It is the only writer for merges that bypass `/publish`, so it stays
   until the commit-message key demonstrably covers the path. **Retirement condition: coverage
-  ≥95% of squash PRs over 30 consecutive days, measured by the same `git log` scan that
-  builds the cache.** If that holds, delete it and its `gh pr list` call in the same PR.
+  ≥95% of *in-scope* squash PRs over 30 consecutive days, across a denominator of at least 20
+  in-scope PRs, measured by the same `git log` scan that builds the cache.** If that holds,
+  delete it and its `gh pr list` call in the same PR.
+
+  > **Correction 2026-08-20 — this condition as first written could never fire.** It said "≥95%
+  > of squash PRs" over a rolling window, and the reader counted every squash PR in that window.
+  > But PRs that merged *before* the mechanism existed could not have declared an id, so they sat
+  > permanently in the denominator. Measured the morning after this tempdoc merged: **1 of 110
+  > (0.9%)**, of which 109 predated the mechanism — a number that reads as total adoption failure
+  > and means nothing at all. Against a ≥95% bar, the metric was unable to fire regardless of how
+  > complete adoption became, so the tombstone it gates could never be collected.
+  >
+  > Fixed by excluding PRs merged before the mechanism landed (`MECHANISM_LANDED`, the instant of
+  > this tempdoc's own squash commit), compared as full timestamps rather than dates — same-day
+  > PRs that merged *earlier* that day were equally out of scope, and date granularity had left 35
+  > of them in. The excluded count is **reported, not silently dropped**: a denominator that hides
+  > its own narrowing is the failure this lane keeps finding elsewhere. Corrected reading on the
+  > same data: **1 of 1 (100%)**, with 109 named as out of scope.
+  >
+  > The lesson generalises past this metric: a ratio whose denominator spans a period when the
+  > numerator was impossible is not a measurement of adoption, it is a measurement of history.
+  >
+  > **A second correction, from the review of the first.** Fixing the window left the metric with
+  > no *floor*, so it immediately read **1/1 = 100%** — already "satisfying" a ≥95% bar that gates
+  > deleting a fallback writer. The same body of work had just added `insufficient` floors to two
+  > other instruments and retired a third that carried a derived 44-pair floor; the floor was the
+  > one thing not ported. It now requires **at least 20 in-scope PRs**, derived rather than chosen:
+  > 95% is only expressible with one tolerated failure from 20 up (19/20 = 95.0%; 18/19 = 94.7%).
+  > Below that the rate is either a perfect score one miss destroys or an unreachable bar. The
+  > percentage is still printed — only the verdict is withheld.
+  >
+  > **The real adoption evidence is still n=1** — one merge has happened since the mechanism
+  > landed, and that one was mine. Nothing here settles whether other sessions will comply.
 
 Two entries in `docs/observations.md` are stale as of this design and should be resolved
 rather than left to accrue `seen` counts: the `remove-worktree` HEAD-guessing entries

@@ -19,6 +19,7 @@ import {
   parseCommitLog,
   readSessionIdLinks,
   summarizeCoverage,
+  MIN_COVERAGE_DENOMINATOR,
   isSquashPrSubject,
   isPlausibleSessionId,
   hasSessionIdLine,
@@ -46,6 +47,13 @@ function run(label, fn) {
 const REC = String.fromCharCode(0x00);
 const FIELD = String.fromCharCode(0x1f);
 const DEFAULT_DATE = '2026-08-01T12:00:00Z';
+
+// The counting tests below pass this as `mechanismLanded` so they exercise HOW
+// coverage is counted without depending on WHEN the real mechanism landed. Pinning
+// them to the production constant would make a fixture date silently decide whether
+// a counting assertion runs at all — which is exactly what happened when the scope
+// cutoff was introduced: every fixture predated it and three tests went null.
+const EPOCH = '1970-01-01T00:00:00Z';
 const SID = '1568032c-aff9-459c-9afd-7adb22e80473';
 
 /** Compose one `git log --format=%x00%H%x1f%s%x1f%cI%x1f%B` record. */
@@ -298,7 +306,7 @@ run('summarizeCoverage counts coverage over squash PR commits only', () => {
     + logRecord('b'.repeat(40), 'feat: y (#11)', 'nothing')
     + logRecord('c'.repeat(40), 'feat: z (#12)', 'nothing')
     + logRecord('d'.repeat(40), 'Merge branch main', `${SESSION_ID_KEY}: sess-bbbb`); // not a PR commit
-  const cov = summarizeCoverage(parseCommitLog(raw));
+  const cov = summarizeCoverage(parseCommitLog(raw), { mechanismLanded: EPOCH });
   assert.equal(cov.commitsScanned, 4);
   assert.equal(cov.squashPrCommits, 3);
   assert.equal(cov.squashPrWithSessionId, 1);
@@ -309,7 +317,7 @@ run('summarizeCoverage counts coverage over squash PR commits only', () => {
 });
 
 run('summarizeCoverage reports null (not 0%) coverage when there are no PR commits', () => {
-  const cov = summarizeCoverage(parseCommitLog(logRecord('a'.repeat(40), 'local commit', 'x')));
+  const cov = summarizeCoverage(parseCommitLog(logRecord('a'.repeat(40), 'local commit', 'x')), { mechanismLanded: EPOCH });
   assert.equal(cov.squashPrCommits, 0);
   assert.equal(cov.coveragePct, null); // unknown, never a manufactured zero
 });
@@ -317,7 +325,7 @@ run('summarizeCoverage reports null (not 0%) coverage when there are no PR commi
 run('summarizeCoverage reaches 100% when every PR commit declares a session', () => {
   const raw = logRecord('a'.repeat(40), 'feat: x (#10)', `${SESSION_ID_KEY}: sess-aaaa`)
     + logRecord('b'.repeat(40), 'feat: y (#11)', `${SESSION_ID_KEY}: sess-bbbb`);
-  assert.equal(summarizeCoverage(parseCommitLog(raw)).coveragePct, 100);
+  assert.equal(summarizeCoverage(parseCommitLog(raw), { mechanismLanded: EPOCH }).coveragePct, 100);
 });
 
 // --- provenance vocabulary (856 §3.1) -------------------------------------
@@ -404,6 +412,91 @@ run('buildMergeLinkRow defaults to teardown/fact and rejects an unknown source',
 
 run('SESSION_ID_KEY is the exact key /publish writes and preview-squash-message checks', () => {
   assert.equal(SESSION_ID_KEY, 'Session-Id');
+});
+
+// --- scope cutoff: PRs that predate the mechanism (856 §6 correction) --------
+
+run('summarizeCoverage EXCLUDES squash PRs that merged before the mechanism landed', () => {
+  const raw = logRecord('a'.repeat(40), 'feat: old (#10)', 'nothing', '2026-08-19T10:00:00Z')
+    + logRecord('b'.repeat(40), 'feat: new (#11)', `${SESSION_ID_KEY}: sess-aaaa`, '2026-08-20T10:00:00Z');
+  const cov = summarizeCoverage(parseCommitLog(raw), { mechanismLanded: '2026-08-19T20:30:51Z' });
+  // The pre-mechanism PR could not have declared an id, so counting it would
+  // report 50% adoption for a period when adoption was impossible.
+  assert.equal(cov.squashPrCommits, 1, 'only the in-scope PR is in the denominator');
+  assert.equal(cov.squashPrPreMechanism, 1, 'the excluded one is COUNTED, not silently dropped');
+  assert.equal(cov.coveragePct, 100);
+});
+
+run('the excluded count is reported, so a narrowed denominator cannot hide its narrowing', () => {
+  const raw = logRecord('a'.repeat(40), 'feat: a (#10)', 'nothing', '2026-07-01T10:00:00Z')
+    + logRecord('b'.repeat(40), 'feat: b (#11)', 'nothing', '2026-07-02T10:00:00Z')
+    + logRecord('c'.repeat(40), 'feat: c (#12)', 'nothing', '2026-08-20T10:00:00Z');
+  const cov = summarizeCoverage(parseCommitLog(raw), { mechanismLanded: '2026-08-19T20:30:51Z' });
+  assert.equal(cov.squashPrPreMechanism, 2);
+  assert.equal(cov.squashPrCommits, 1);
+  assert.equal(cov.coveragePct, 0, 'an in-scope PR with no id is a real zero, unlike a pre-scope one');
+});
+
+run('the cutoff compares INSTANTS, not dates — same-day-but-earlier is out of scope', () => {
+  // 856 landed at 20:30Z. A PR merged at 10:00 the same day was equally unable to
+  // declare an id; date-granularity had left 35 such commits in the denominator.
+  const raw = logRecord('a'.repeat(40), 'feat: earlier same day (#10)', 'nothing', '2026-08-19T10:00:00Z');
+  const cov = summarizeCoverage(parseCommitLog(raw), { mechanismLanded: '2026-08-19T20:30:51Z' });
+  assert.equal(cov.squashPrPreMechanism, 1);
+  assert.equal(cov.squashPrCommits, 0);
+  assert.equal(cov.coveragePct, null, 'no in-scope PRs is unknown, never a manufactured zero');
+});
+
+run('an UNDATED commit stays countable rather than being ruled out of scope', () => {
+  // committedAt null means we cannot place it; excluding it would silently shrink
+  // the denominator on missing data, which is the opposite of reporting the gap.
+  const raw = logRecord('a'.repeat(40), 'feat: undated (#10)', `${SESSION_ID_KEY}: sess-aaaa`, '');
+  const cov = summarizeCoverage(parseCommitLog(raw), { mechanismLanded: '2026-08-19T20:30:51Z' });
+  assert.equal(cov.squashPrCommits, 1);
+  assert.equal(cov.squashPrPreMechanism, 0);
+});
+
+
+// --- the denominator floor (856 §6, review finding F4) ----------------------
+
+run('coverage below the floor is marked insufficient, and the pct is STILL shown', () => {
+  const raw = logRecord('a'.repeat(40), 'feat: x (#10)', `${SESSION_ID_KEY}: sess-aaaa`, '2026-08-20T10:00:00Z');
+  const cov = summarizeCoverage(parseCommitLog(raw), { mechanismLanded: '2026-08-19T20:30:51Z' });
+  assert.equal(cov.coveragePct, 100, 'the number stays visible — only the conclusion is withheld');
+  assert.equal(cov.insufficient, true, 'n=1 cannot support a >=95% verdict');
+  assert.equal(cov.minDenominator, MIN_COVERAGE_DENOMINATOR);
+});
+
+run('at the floor exactly, the verdict becomes assessable', () => {
+  let raw = '';
+  for (let i = 0; i < MIN_COVERAGE_DENOMINATOR; i += 1) {
+    raw += logRecord(String(i).padStart(40, '0'), `feat: x (#${i + 100})`,
+      `${SESSION_ID_KEY}: sess-${i}`, '2026-08-20T10:00:00Z');
+  }
+  const cov = summarizeCoverage(parseCommitLog(raw), { mechanismLanded: '2026-08-19T20:30:51Z' });
+  assert.equal(cov.squashPrCommits, MIN_COVERAGE_DENOMINATOR);
+  assert.equal(cov.insufficient, false, 'the boundary is inclusive — 20 is enough, not 21');
+  assert.equal(cov.coveragePct, 100);
+});
+
+run('one miss below the floor does not read as a real failure either', () => {
+  // The floor is symmetric: it withholds the verdict in BOTH directions, so a
+  // small sample cannot manufacture a pass or a fail.
+  const raw = logRecord('a'.repeat(40), 'feat: x (#10)', 'no id', '2026-08-20T10:00:00Z');
+  const cov = summarizeCoverage(parseCommitLog(raw), { mechanismLanded: '2026-08-19T20:30:51Z' });
+  assert.equal(cov.coveragePct, 0);
+  assert.equal(cov.insufficient, true, '0% from one PR is as unassessable as 100% from one');
+});
+
+run('19 of 20 is exactly 95% — the derivation the floor rests on', () => {
+  let raw = '';
+  for (let i = 0; i < 20; i += 1) {
+    const body = i === 0 ? 'no id' : `${SESSION_ID_KEY}: sess-${i}`;
+    raw += logRecord(String(i).padStart(40, '0'), `feat: x (#${i + 100})`, body, '2026-08-20T10:00:00Z');
+  }
+  const cov = summarizeCoverage(parseCommitLog(raw), { mechanismLanded: '2026-08-19T20:30:51Z' });
+  assert.equal(cov.coveragePct, 95, 'one tolerated failure at n=20 is why 20 is the floor');
+  assert.equal(cov.insufficient, false);
 });
 
 if (failures.length) {

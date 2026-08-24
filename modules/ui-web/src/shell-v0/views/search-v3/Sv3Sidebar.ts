@@ -440,6 +440,7 @@ export class Sv3Sidebar extends JfElement {
                             ?pinned=${row.pinned}
                             ?unread=${row.unread}
                             ?live=${row.live}
+                            .storeBacked=${row.storeBacked}
                             ?compact=${this.collapsed}
                             ?renaming=${this.renamingId === row.id}
                             @click=${() => this.select(row.id)}

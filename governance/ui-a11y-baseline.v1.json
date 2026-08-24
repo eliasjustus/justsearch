@@ -29,9 +29,37 @@
       "e2eViews": [
         "settings"
       ],
+      "knownRules": []
+    },
+    {
+      "surface": "security",
+      "uiShotStep": "security",
+      "e2eViews": [
+        "security"
+      ],
+      "knownRules": []
+    },
+    {
+      "surface": "settings-light",
+      "uiShotStep": "settings-light",
+      "e2eViews": [
+        "settings"
+      ],
       "knownRules": [
-        "select-name"
-      ]
+        "color-contrast"
+      ],
+      "note": "color-contrast: pre-existing light-palette defects in chat view/status deck/walkthrough card, measured by these steps because 855 added their light variants to this register; reproducible on home-light with no modal open; owned by those surfaces, logged to observations 2026-08-19. (select-name fixed in 855 P1 — jf-enter-action-picker now carries a real accessible name.)"
+    },
+    {
+      "surface": "security-light",
+      "uiShotStep": "security-light",
+      "e2eViews": [
+        "security"
+      ],
+      "knownRules": [
+        "color-contrast"
+      ],
+      "note": "color-contrast: pre-existing light-palette defects in chat view/status deck/walkthrough card, measured by these steps because 855 added their light variants to this register; reproducible on home-light with no modal open; owned by those surfaces, logged to observations 2026-08-19."
     },
     {
       "surface": "health",

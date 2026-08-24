@@ -216,23 +216,82 @@ export function readSessionIdLinks({ range = 'HEAD', since = null, root = repoRo
 }
 
 /**
- * Session-Id coverage over squash PR commits — the §6 retirement condition.
- * Non-PR commits (direct pushes, local merge commits) are excluded from the
- * denominator: /publish declares the id in a PR body, so a commit that never
- * went through a PR was never in scope for it.
+ * The commit that introduced the `Session-Id:` line and the /publish instruction
+ * to write it (tempdoc 856, merged 2026-08-19 as c2645ef1). A PR that merged
+ * before this could not have declared an id, so it is not evidence about
+ * adoption — see summarizeCoverage.
  */
-export function summarizeCoverage(commits) {
-  const prCommits = commits.filter((c) => isSquashPrSubject(c.subject));
+export const MECHANISM_LANDED = '2026-08-19T20:30:51Z';
+
+/**
+ * Smallest in-scope denominator at which the ≥95% retirement condition means
+ * anything. Derived, not chosen: 95% is only *expressible* with one tolerated
+ * failure from 20 PRs up (19/20 = 95.0%; 18/19 = 94.7% fails, and 19/19 = 100%
+ * tolerates none). Below 20 the ratio is either a perfect score that one future
+ * miss destroys, or an unreachable bar — neither is evidence about adoption.
+ *
+ * This floor exists because the metric shipped without one and immediately read
+ * **1/1 = 100%**, i.e. already "satisfying" a condition that gates deleting a
+ * fallback writer. The same effort added `insufficient` floors to analyze-trends
+ * and context-attribution, and the instrument it retired carried a derived
+ * 44-pair floor — the floor was the one thing not ported. Reporting a conclusion
+ * from n=1 is the failure this lane keeps finding elsewhere.
+ */
+export const MIN_COVERAGE_DENOMINATOR = 20;
+
+/**
+ * Session-Id coverage over squash PR commits — the §6 retirement condition.
+ *
+ * TWO exclusions from the denominator, for the same reason: a commit that was
+ * never in scope for the mechanism cannot be evidence about whether the
+ * mechanism is adopted.
+ *
+ *  1. Non-PR commits (direct pushes, local merge commits). /publish declares the
+ *     id in a PR body, so a commit that never went through a PR was never in scope.
+ *  2. **PRs that merged before MECHANISM_LANDED.** This was the original defect
+ *     (856 §6, fixed 2026-08-20): a rolling window over all history counts PRs
+ *     that predate the mechanism, so the ratio reads near-zero no matter how
+ *     complete adoption becomes. Measured the morning after 856 merged: 1/110
+ *     over 7 days, of which 109 predated the mechanism — a number that looks
+ *     like failure and means nothing. With the retirement condition set at >=95%,
+ *     the uncorrected metric could never fire, so the tombstone it gates could
+ *     never be collected.
+ *
+ * Pre-mechanism PRs are REPORTED, not silently dropped — a narrowed denominator
+ * that hides its own narrowing is the failure this lane keeps finding elsewhere.
+ */
+export function summarizeCoverage(commits, {
+  mechanismLanded = MECHANISM_LANDED,
+  minDenominator = MIN_COVERAGE_DENOMINATOR,
+} = {}) {
+  const allPrCommits = commits.filter((c) => isSquashPrSubject(c.subject));
+  // Compared as full instants, not dates: 856 landed at 20:30Z, and PRs merged earlier the
+  // SAME day were equally out of scope. Date granularity put 35 of them in the denominator.
+  const landedMs = Date.parse(mechanismLanded);
+  const inScope = (c) => {
+    if (!c.committedAt) return true; // undated: cannot rule it out, so leave it countable
+    const t = Date.parse(c.committedAt);
+    return Number.isNaN(t) ? true : t >= landedMs;
+  };
+  const prCommits = allPrCommits.filter(inScope);
+  const preMechanism = allPrCommits.length - prCommits.length;
   const declared = prCommits.filter((c) => c.sessionIds.length > 0);
   const sessions = new Set();
   for (const c of commits) for (const s of c.sessionIds) sessions.add(s);
   return {
     commitsScanned: commits.length,
+    mechanismLanded,
     squashPrCommits: prCommits.length,
+    squashPrPreMechanism: preMechanism,
     squashPrWithSessionId: declared.length,
     squashPrWithoutSessionId: prCommits.length - declared.length,
     coveragePct: prCommits.length === 0 ? null
       : Math.round((declared.length / prCommits.length) * 1000) / 10,
+    minDenominator,
+    // The percentage is still reported when insufficient — the numbers stay
+    // visible, only the CONCLUSION is withheld. Same shape as analyze-trends and
+    // context-attribution: refusing to draw a verdict is not refusing to show data.
+    insufficient: prCommits.length < minDenominator,
     distinctSessions: sessions.size,
     nonPrCommitsWithSessionId: commits.filter((c) => !isSquashPrSubject(c.subject) && c.sessionIds.length > 0).length,
   };
@@ -290,8 +349,19 @@ function main() {
 
   const pct = coverage.coveragePct == null ? 'n/a' : `${coverage.coveragePct}%`;
   console.log(`merge-links: ${SESSION_ID_KEY} coverage ${coverage.squashPrWithSessionId}/${coverage.squashPrCommits} squash PR commits (${pct})`);
-  console.log('  retirement condition (856 §6): >=95% over 30 consecutive days -> then delete recordMergeLink() in scripts/dev/remove-worktree.cjs');
+  if (coverage.insufficient) {
+    console.log(`  ⚠️ INSUFFICIENT: ${coverage.squashPrCommits} in-scope PR(s) < ${coverage.minDenominator} needed to read a >=95% rate.`);
+    console.log('    The percentage above is shown, but the retirement condition is NOT met and');
+    console.log('    cannot be assessed yet — 95% is only expressible from 20 PRs up (19/20).');
+  }
+  console.log('  retirement condition (856 §6): >=95% over 30 consecutive days AND a denominator of');
+  console.log(`    at least ${coverage.minDenominator} in-scope PRs -> then delete recordMergeLink() in scripts/dev/remove-worktree.cjs`);
   console.log(`  scanned ${coverage.commitsScanned} commits on ${opts.range}${opts.since ? ` since ${opts.since}` : ''}`);
+  if (coverage.squashPrPreMechanism > 0) {
+    console.log(`  ${coverage.squashPrPreMechanism} squash PR commit(s) merged before the mechanism landed (${coverage.mechanismLanded}) and are`);
+    console.log('    OUTSIDE the denominator — they could not have declared an id, so they are not');
+    console.log('    evidence about adoption. Counting them is what made this metric unable to fire.');
+  }
   console.log(`  links derived: ${links.length} across ${coverage.distinctSessions} distinct sessions`);
   if (coverage.nonPrCommitsWithSessionId > 0) {
     console.log(`  ${coverage.nonPrCommitsWithSessionId} declaring commit(s) are not squash PR commits (outside the coverage denominator)`);

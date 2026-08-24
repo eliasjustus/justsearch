@@ -79,53 +79,58 @@ function runHook(command, sessionId) {
   });
 }
 
+const AGENT_TELEMETRY_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tmp', 'agent-telemetry');
+// The real exec-substrate-hint.mjs subprocess below creates this dir as a side effect of its
+// production dedup-marker write path — don't leave an empty dir behind for a fresh
+// checkout/worktree that never had one.
+const agentTelemetryDirPreexisted = fs.existsSync(AGENT_TELEMETRY_DIR);
+
 const TEST_SESSION = `exec-substrate-hint-test-${process.pid}`;
-const markerFile = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  '..', '..', '..', 'tmp', 'agent-telemetry', `exec-substrate-nudged-${TEST_SESSION}.json`,
-);
+const markerFile = resolve(AGENT_TELEMETRY_DIR, `exec-substrate-nudged-${TEST_SESSION}.json`);
 try { fs.unlinkSync(markerFile); } catch { /* none yet */ }
 
-run('call-operator match emits a PreToolUse additionalContext JSON (advisory, never blocks)', () => {
-  const out = runHook('& "F:\\scoop\\apps\\gh\\2.90.0\\bin\\gh.exe" pr list', TEST_SESSION);
-  const parsed = JSON.parse(out);
-  assert.equal(parsed.hookSpecificOutput.hookEventName, 'PreToolUse');
-  assert.ok(parsed.hookSpecificOutput.additionalContext.includes('run-gh.mjs'));
-  assert.equal(parsed.hookSpecificOutput.permissionDecision, undefined);
-});
-run('non-Bash tool emits nothing', () => {
-  const out = execFileSync('node', [HOOK], {
-    input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: 'x' } }),
-    encoding: 'utf8',
+try {
+  run('call-operator match emits a PreToolUse additionalContext JSON (advisory, never blocks)', () => {
+    const out = runHook('& "F:\\scoop\\apps\\gh\\2.90.0\\bin\\gh.exe" pr list', TEST_SESSION);
+    const parsed = JSON.parse(out);
+    assert.equal(parsed.hookSpecificOutput.hookEventName, 'PreToolUse');
+    assert.ok(parsed.hookSpecificOutput.additionalContext.includes('run-gh.mjs'));
+    assert.equal(parsed.hookSpecificOutput.permissionDecision, undefined);
   });
-  assert.equal(out.trim(), '');
-});
-run('negative command emits nothing', () => {
-  assert.equal(runHook('gh pr view 42', TEST_SESSION).trim(), '');
-});
-run('same class does not re-fire twice in one session (per-class dedup)', () => {
-  const session = `exec-substrate-hint-test-dedup-${process.pid}`;
-  const marker = resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    '..', '..', '..', 'tmp', 'agent-telemetry', `exec-substrate-nudged-${session}.json`,
-  );
-  try { fs.unlinkSync(marker); } catch { /* none yet */ }
-  const first = runHook('gh run watch 1 &', session);
-  const second = runHook('gh run watch 2 &', session);
-  assert.ok(JSON.parse(first).hookSpecificOutput.additionalContext.length > 0);
-  assert.equal(second.trim(), '', 'second wait-shaped command in the same session must stay silent');
-  try { fs.unlinkSync(marker); } catch { /* cleanup */ }
-});
-run('JUSTSEARCH_DISABLE_HOOKS=1 silences the hook', () => {
-  const out = execFileSync('node', [HOOK], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'gh run watch 3 &' } }),
-    encoding: 'utf8',
-    env: { ...process.env, JUSTSEARCH_DISABLE_HOOKS: '1' },
+  run('non-Bash tool emits nothing', () => {
+    const out = execFileSync('node', [HOOK], {
+      input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: 'x' } }),
+      encoding: 'utf8',
+    });
+    assert.equal(out.trim(), '');
   });
-  assert.equal(out.trim(), '');
-});
-
-try { fs.unlinkSync(markerFile); } catch { /* cleanup */ }
+  run('negative command emits nothing', () => {
+    assert.equal(runHook('gh pr view 42', TEST_SESSION).trim(), '');
+  });
+  run('same class does not re-fire twice in one session (per-class dedup)', () => {
+    const session = `exec-substrate-hint-test-dedup-${process.pid}`;
+    const marker = resolve(AGENT_TELEMETRY_DIR, `exec-substrate-nudged-${session}.json`);
+    try { fs.unlinkSync(marker); } catch { /* none yet */ }
+    const first = runHook('gh run watch 1 &', session);
+    const second = runHook('gh run watch 2 &', session);
+    assert.ok(JSON.parse(first).hookSpecificOutput.additionalContext.length > 0);
+    assert.equal(second.trim(), '', 'second wait-shaped command in the same session must stay silent');
+    try { fs.unlinkSync(marker); } catch { /* cleanup */ }
+  });
+  run('JUSTSEARCH_DISABLE_HOOKS=1 silences the hook', () => {
+    const out = execFileSync('node', [HOOK], {
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'gh run watch 3 &' } }),
+      encoding: 'utf8',
+      env: { ...process.env, JUSTSEARCH_DISABLE_HOOKS: '1' },
+    });
+    assert.equal(out.trim(), '');
+  });
+} finally {
+  try { fs.unlinkSync(markerFile); } catch { /* cleanup */ }
+  if (!agentTelemetryDirPreexisted) {
+    try { fs.rmdirSync(AGENT_TELEMETRY_DIR); } catch { /* not empty — another writer landed there first, leave it */ }
+  }
+}
 
 // --- Report ---
 if (failures.length > 0) {

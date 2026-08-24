@@ -158,10 +158,18 @@ export const sv3Tokens = css`
        (40% → 51%, 80% → 84%, 100% → 100%) so a menu stays legible over busy content even at its most
        transparent. The technique and its reason are the spec's; the comment is kept because the
        number 18 is meaningless without it. No saturate() here, unlike the composer's own glass. */
+       Tempdoc 859 §B (D2): the nested opacity is derived from '--glass-blur-scale' for the same
+       reason the composer's glass is — one multiplier drives blur AND translucency, so a menu can
+       never end up see-through with nothing blurred behind it. Scale 1 keeps 80%; scale 0 gives
+       100%, and the outer 18% tint over an opaque base is then simply opaque. */
     --dropdown-surface: color-mix(
       in srgb,
       var(--popover) 18%,
-      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
+      color-mix(
+        in srgb,
+        var(--popover) calc(100% - (100% - var(--glass-opacity)) * var(--glass-blur-scale)),
+        transparent
+      )
     );
     --dropdown-border: color-mix(in srgb, var(--foreground) 10%, transparent);
     --dropdown-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
@@ -249,6 +257,29 @@ export const sv3Tokens = css`
     --app-scrollbar-width: 6px;
     --app-scrollbar-thumb: rgb(255 255 255 / 8%);
     --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+
+    /* ── The occluded band (tempdoc 859 §B) ────────────────────────────────
+       What the FLOATING dock (context bar + composer) takes out of the bottom of the transcript
+       scroller's client box. The scroller pads and scroll-pads by it, so content stays reachable
+       and every browser-driven scroll lands where the reader can see; 'SearchV3View' overwrites it
+       with the dock's MEASURED height on every resize, in the docked state only.
+
+       The default is deliberately NON-ZERO and deliberately a static estimate of the docked dock's
+       resting height. A '0' default is the trap: on a platform with no 'ResizeObserver' nothing
+       would ever write the variable, and the transcript would be clipped by exactly the band this
+       slice exists to un-clip — silently, and only there. An estimate that is a little large costs
+       a little extra bottom padding; a zero costs the feature.
+
+       AND IT MUST STAY IN px. This is an UNREGISTERED custom property (no @property anywhere in
+       this codebase), so its computed value is the raw token stream — 'rem' is NOT resolved. CSS
+       reads it fine either way, but 'Sv3Main.occludedEndPx' parseFloat-s the same computed value to
+       feed the reading window, FOCUS derivation and nudge(): a '7rem' default gives CSS 112px and
+       JS 7, a silent ~105px error in exactly the branch this default exists for (no
+       ResizeObserver, or the docked no-measurement branch that clears the inline value). The
+       observer writes px anyway, so px here means nothing scales differently in normal operation —
+       it only removes a unit the JS half cannot see. 112px = the 7rem this replaces at a 16px root.
+       Pinned by 'sv3-occlusion.test.ts'. */
+    --sv3-composer-occlusion: 112px;
 
     /* ── Radius ladder — one knob, additive ────────────────────────────────
        --radius shifts the whole window's roundness while the 4px differences between tiers

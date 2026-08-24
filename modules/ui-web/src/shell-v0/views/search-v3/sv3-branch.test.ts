@@ -84,6 +84,7 @@ const row = (over: Partial<Conversation> & { id: string }): Conversation => ({
   messageCount: 2,
   firstUserMessage: '',
   shapeId: 'core.rag-ask',
+  storeBacked: true,
   ...over,
 });
 

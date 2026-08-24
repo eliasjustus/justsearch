@@ -161,6 +161,70 @@ def _indexed_roots_body(variant: str) -> str:
     })
 
 
+def _surface_entry(
+    surface_id: str, mount_tag: str, placement: str, members: list[str] | None = None,
+) -> dict:
+    """One minimal Surface catalog entry (types/surface.ts `Surface`). The FE client
+    (`SurfaceCatalogClient.tryFetchAndPopulate`) does NOT Zod-validate this envelope — it only
+    checks `Array.isArray(body.entries)` and casts the rest — so this is schema-SHAPED filler, not
+    a byte-exact wire capture; only `id`/`placement`/`members`/`mountTag` are load-bearing for the
+    consumers below."""
+    entry: dict = {
+        "id": surface_id,
+        "presentation": {
+            "labelKey": f"registry-surface.{surface_id.split('.', 1)[1]}.label",
+            "descriptionKey": f"registry-surface.{surface_id.split('.', 1)[1]}.description",
+        },
+        "audience": "USER",
+        "placement": placement,
+        "consumes": {"resources": [], "operations": [], "prompts": [], "diagnosticChannels": []},
+        "mountTag": mount_tag,
+        "provenance": {"tier": "CORE", "contributorId": "core", "version": "1.0"},
+    }
+    if members:
+        entry["members"] = members
+    return entry
+
+
+def _surfaces_catalog_body() -> str:
+    """The `/api/registry/surfaces` catalog (855 F2 closure fix). Fixtures mode previously fell
+    through to the generic empty-object body (unmapped in `_ROUTES`), so `listSurfaces()` stayed
+    empty and `memberHostAliases()` (catalogResolver.ts) — built by scanning every host's declared
+    `members` — never produced the core.security-surface -> core.settings-surface redirect. The
+    `security`/`security-light` ui-shot steps navigate to the (now off-rail, member-only)
+    core.security-surface expecting that redirect to open the settings window, and timed out
+    waiting for the modal with an empty catalog.
+
+    Ids/placements/membership mirror CorePlugin.ts + CoreSurfaceCatalog.java exactly: settings-surface
+    is MODAL and hosts [presentation-gallery, presentation-editor, security] as members;
+    security-surface (and the two presentation surfaces) are DEEPLINK — the minimal composition
+    shape `resolveSurface`/`memberHostAliases` need to redirect correctly."""
+    entries = [
+        _surface_entry(
+            "core.settings-surface", "jf-settings-surface", "MODAL",
+            members=[
+                "core.presentation-gallery-surface",
+                "core.presentation-editor-surface",
+                "core.security-surface",
+            ],
+        ),
+        _surface_entry("core.security-surface", "jf-security-surface", "DEEPLINK"),
+        _surface_entry(
+            "core.presentation-gallery-surface", "jf-presentation-gallery-surface", "DEEPLINK",
+        ),
+        _surface_entry(
+            "core.presentation-editor-surface", "jf-presentation-editor-surface", "DEEPLINK",
+        ),
+    ]
+    return json.dumps({
+        "schemaVersion": "1.0.0",
+        "catalogVersion": 1,
+        "namespace": "core",
+        "primitive": "Surface",
+        "entries": entries,
+    })
+
+
 # Path substring -> fixture body. First match wins. `/api/status`, `/api/knowledge/search`,
 # `/api/inference/status`, and `/api/settings` are NOT here — all four have a per-variant
 # transform and are dispatched explicitly in `fixture_body()` before this table is consulted.
@@ -170,6 +234,7 @@ def _indexed_roots_body(variant: str) -> str:
 # non-`enriching` variant still serves.
 _ROUTES: tuple[tuple[str, str], ...] = (
     ("/api/indexing-roots/substrate", _BODY_INDEXED_ROOTS),
+    ("/api/registry/surfaces", _surfaces_catalog_body()),
     ("/api/registry/operations", _empty_catalog("Operation")),
     ("/api/registry/resources", _empty_catalog("Resource")),
     ("/api/registry/diagnostic-channels", _empty_catalog("DiagnosticChannel")),
@@ -225,9 +290,20 @@ VARIANTS = ("default", "empty")
 # It is the only variant under which a fixture-driven agent RUN completes.
 _DEGRADED_VARIANTS = frozenset({"degraded", "degraded-detailed", "degraded-thread", "agent-run"})
 
+# `sv3-sources` (tempdoc 859 §B, the `sv3-composer-occlusion` step) is the record path WITHOUT the
+# degraded knobs: a thread whose last answer carries populated `attributes.citations`, which is what
+# the Search v3 window projects into a turn's evidence (`views/search-v3/sv3-record.ts`'s
+# `recordEvidenceOf`). `agent-run` already emits `citations: []` there, and `panelSpeaks`
+# (`Sv3Main`) gates on LENGTH — so the sv3 Sources panel was never fixture-unreachable, only one
+# populated array away. The answers are deliberately long so the transcript OVERFLOWS a pinned
+# viewport; a capture where nothing scrolls satisfies an occlusion assertion vacuously.
+#
+# It is a SEPARATE variant rather than a change to `agent-run` so that variant's bytes are
+# untouched and `chat-evidence-rail` / `chat-activity-rail-open` keep their baselines.
+
 # The variants that serve a `/api/thread/{id}` RECORD (and therefore seed the per-tab
 # lastViewedConversation pointer so a cold chat surface auto-restores it).
-_THREAD_RECORD_VARIANTS = frozenset({"degraded-thread", "agent-run"})
+_THREAD_RECORD_VARIANTS = frozenset({"degraded-thread", "agent-run", "sv3-sources"})
 
 # The per-tab pointer UnifiedChatView reads on connect (`readLastViewedConversation`,
 # controllers/lastViewedConversation.ts KEY) — seeding it is what makes a COLD chat surface
@@ -282,6 +358,72 @@ _AGENT_RUN_SOURCES: tuple[dict, ...] = (
     },
 )
 
+# Tempdoc 859 §B — the RETRIEVAL citations the `sv3-sources` variant hangs on its last assistant
+# message. Shape: `components/chat/citationTypes.ts`'s `RetrievalCitation` (the wire key is
+# `attributes.citations`, distinct from `attributes.sources` above, which is the AgentSource rail
+# feed). `sv3-record.ts`'s `recordEvidenceOf` reads exactly this array into a v3 turn's
+# `evidence.sources`, which is what mounts `jf-citations-panel` behind the turn's Sources
+# disclosure. THREE rows so the panel has real height to occlude with.
+_SV3_RETRIEVAL_CITATIONS: tuple[dict, ...] = (
+    {
+        "parentDocId": "doc-indexing-pipeline",
+        "chunkIndex": 3,
+        "chunkTotal": 12,
+        "startChar": 1180,
+        "endChar": 1460,
+        "score": 0.91,
+        "excerpt": "The worker enriches each document before the head projects the result set.",
+        "startLine": 41,
+        "endLine": 48,
+        "headingText": "Enrichment stages",
+        "headingLevel": 2,
+    },
+    {
+        "parentDocId": "doc-system-overview",
+        "chunkIndex": 7,
+        "chunkTotal": 20,
+        "startChar": 320,
+        "endChar": 610,
+        "score": 0.84,
+        "excerpt": "Head, Body and Brain are separate processes; only the Body owns the index.",
+        "startLine": 12,
+        "endLine": 19,
+        "headingText": "Process model",
+        "headingLevel": 2,
+    },
+    {
+        "parentDocId": "doc-retrieval-contract",
+        "chunkIndex": 1,
+        "chunkTotal": 9,
+        "startChar": 44,
+        "endChar": 300,
+        "score": 0.77,
+        "excerpt": "Retrieval results reach the head over gRPC and are projected onto the surface.",
+        "startLine": 88,
+        "endLine": 95,
+        "headingText": "Knowledge search",
+        "headingLevel": 3,
+    },
+)
+
+# Tempdoc 859 §B — long enough that the transcript overflows the step's pinned viewport, which is
+# what makes `minScrollableRegions: 1` and the max-scroll occlusion assertion non-vacuous.
+_SV3_LONG_ANSWER = (
+    "The worker enriches each document, then the head projects the result set. "
+    "Enrichment runs in stages: the extractor normalises the document body, the chunker splits it "
+    "on structural boundaries, and the encoder produces the dense and sparse representations the "
+    "index stores side by side. None of that work happens in the head process, which never touches "
+    "the index directly and reaches the worker over gRPC instead.\n\n"
+    "When a query arrives the head fans it out to both retrieval arms, fuses the two ranked lists, "
+    "and reranks the survivors before any of it reaches the surface. The passages that come back "
+    "carry their own provenance — the parent document, the chunk offsets and the heading they were "
+    "written under — which is what lets an answer point at the exact lines it was grounded in "
+    "rather than at a document as a whole.\n\n"
+    "Everything the reader sees below the answer is that provenance, rendered. Opening the Sources "
+    "disclosure mounts the shared citations panel for this turn, which is the same component every "
+    "other window in the product mounts on a landed answer."
+)
+
 # Tempdoc 814 §D8.1 — the typed loop object the rail's lifecycle row reads (`unifiedLifecycles`,
 # validated by `unifiedThreadClient.ts`'s `lifecycleSchema`). `state: "DONE"` is load-bearing
 # twice: it is the row's own text, and `runCompleted` (UnifiedChatView) reads it to render a
@@ -323,6 +465,14 @@ def _thread_body(variant: str = "degraded-thread") -> str:
     `.evidence-rail`) and a DONE `lifecycles[]` entry (which the activity rail's
     `.activity-lifecycle` row reads). Neither needs a stream; that is §D8.1's whole claim."""
     with_evidence = variant == "agent-run"
+    # Tempdoc 859 §B — the sv3 arm. Deliberately a SEPARATE branch from `with_evidence`: touching
+    # `agent-run`'s bytes would move the `chat-evidence-rail` / `chat-activity-rail-open` baselines.
+    with_citations = variant == "sv3-sources"
+    last_attributes = None
+    if with_evidence:
+        last_attributes = {"sources": list(_AGENT_RUN_SOURCES), "citations": []}
+    elif with_citations:
+        last_attributes = {"citations": list(_SV3_RETRIEVAL_CITATIONS)}
 
     def _event(idx: int, kind: str, originator: str, content: str,
                attributes: dict | None = None) -> dict:
@@ -341,11 +491,13 @@ def _thread_body(variant: str = "degraded-thread") -> str:
         "events": [
             _event(1, "USER_MESSAGE", "user", "What is this file about?"),
             _event(2, "ASSISTANT_MESSAGE", "assistant",
-                   "It describes how the indexing pipeline hands results to the head process."),
+                   _SV3_LONG_ANSWER if with_citations
+                   else "It describes how the indexing pipeline hands results to the head process."),
             _event(3, "USER_MESSAGE", "user", "And how does indexing reach it?"),
             _event(4, "ASSISTANT_MESSAGE", "assistant",
-                   "The worker enriches each document, then the head projects the result set.",
-                   {"sources": list(_AGENT_RUN_SOURCES), "citations": []} if with_evidence else None),
+                   _SV3_LONG_ANSWER if with_citations
+                   else "The worker enriches each document, then the head projects the result set.",
+                   last_attributes),
         ],
         "lifecycles": [_AGENT_RUN_LIFECYCLE] if with_evidence else [],
     })

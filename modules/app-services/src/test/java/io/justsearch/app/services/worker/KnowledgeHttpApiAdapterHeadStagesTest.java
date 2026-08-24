@@ -56,6 +56,9 @@ final class KnowledgeHttpApiAdapterHeadStagesTest {
             CrossEncoderSkipReason.DEADLINE_EXCEEDED,
             CrossEncoderSkipReason.RPC_FAILED,
             CrossEncoderSkipReason.MODEL_NOT_LOADED,
+            // F-054: the inference-failure drop must reach the stage under its own wire string,
+            // not folded back into DEADLINE_EXCEEDED.
+            CrossEncoderSkipReason.INFERENCE_FAILED,
             CrossEncoderSkipReason.UNKNOWN)) {
       SearchTrace.TraceStage ce =
           SearchTraceMapper.buildHeadStages(

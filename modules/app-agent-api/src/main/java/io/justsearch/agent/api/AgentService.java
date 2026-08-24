@@ -182,6 +182,18 @@ public interface AgentService extends AgentRunQueries {
     return null;
   }
 
+  /**
+   * Tempdoc 859 slice C PR-2 — delete every persisted agent run belonging to {@code conversationId},
+   * returning how many were removed. The write half of the two-store list join: a conversation the
+   * list synthesizes from the run record has no {@code ConversationStore} session to delete, so
+   * without this a delegate conversation would be listable and undeletable and the sidebar would only
+   * ever grow. Irreversible (the runs' metas and event logs go with them) and fails CLOSED while the
+   * run store is sealed + locked. Default 0 so unavailable services and test mocks compile unchanged.
+   */
+  default int deleteConversationRuns(String conversationId) {
+    return 0;
+  }
+
   // Tempdoc 584 §B.4: the READ-TIME query/projection surface (availableOperations, undoOperation,
   // operationHistory/Detail, lastSessionSnapshot, listSessions, sessionSnapshot, resume*,
   // sessionEvents, threadEvents, lifecycles, presenceSince) moved to the AgentRunQueries

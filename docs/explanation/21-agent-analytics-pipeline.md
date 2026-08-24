@@ -2,14 +2,14 @@
 title: Agent Analytics Pipeline
 type: explanation
 status: in-progress
-description: "Behavioral tracking pipeline: hooks, event capture, session analysis, cost estimation, scoring, and LLM-as-judge evaluation. The HTML dashboard layer is retired."
+description: "Behavioral tracking pipeline: hooks, event capture, session analysis, cost estimation, and LLM-as-judge evaluation. The HTML dashboard and process-hygiene scoring layers are retired."
 ---
 
 # Agent Analytics Pipeline
 
 The agent analytics pipeline tracks behavioral patterns — how agents use tools, which files they re-read, when they make rapid re-edits, and how often they misuse Bash for file operations. It also estimates per-session costs from transcript token data and optionally evaluates task outcomes via LLM-as-judge.
 
-All scripts live under `scripts/agent-analytics/`. All data lives under `tmp/agent-telemetry/` (gitignored). The scoring recalibration and outcome-aware validation findings are recorded in noncanonical tempdoc 277.
+All scripts live under `scripts/agent-analytics/`. All data lives under `tmp/agent-telemetry/` (gitignored). The composite process-hygiene score that once sat on top of the session reports is retired — what it measured, and why it cannot be re-measured, is recorded below under [Retired: process-hygiene scoring](#retired-process-hygiene-scoring).
 
 > **Liveness is per-layer, not per-pipeline.** This doc describes several layers with different
 > health. The **hook layer** (`hooks/`, `lib/`) is wired in `.claude/settings.json` and fires on
@@ -17,8 +17,10 @@ All scripts live under `scripts/agent-analytics/`. All data lives under `tmp/age
 > **analysis scripts** (`analyze-session`, `cost-session`, `baseline-economics`,
 > `cache-efficiency`, …) are maintainer CLI tools run on demand; nothing invokes them on a
 > schedule, so an empty or stale store under `tmp/agent-telemetry/` is expected, not a fault. The
-> **HTML dashboard layer** (`generate-dashboard.mjs`, `dashboard.html`) is **retired** — deleted,
-> not deprecated. Do not infer that a layer is live because this doc documents it.
+> **HTML dashboard layer** (`generate-dashboard.mjs`, `dashboard.html`) and the **process-hygiene
+> scoring layer** (`score-session.mjs`, `correlate-signals.mjs`, `scores.ndjson`,
+> `scripts/ci/check-agent-quality-trend.mjs`) are **retired** — deleted, not deprecated. Do not
+> infer that a layer is live because this doc documents it.
 >
 > **Removed (tempdoc 638):** the run-centric workflow-telemetry layer and its session-to-workflow attribution bridge (`scripts/lib/workflow-telemetry.mjs`, `scripts/bench/report-workflow-attribution.mjs`, the `tmp/workflow-telemetry/runs/` artifacts, and the workflow-telemetry contract) were deleted. The session-centric agent analytics pipeline described below is unaffected by that removal.
 
@@ -29,7 +31,6 @@ The `hooks/export-session-env.mjs` `SessionStart` hook still writes `JUSTSEARCH_
 ```text
 Claude Code hooks ──> NDJSON event stream ──> Session reports ──> Trend reports
                       (append-only)           (per session)       (on demand)
-                                                    ├──> Session scores (wide events)
                                                     └──> Outcome evaluations (LLM-as-judge, optional)
 ```
 
@@ -38,11 +39,10 @@ Claude Code hooks ──> NDJSON event stream ──> Session reports ──> Tr
 ```text
 tmp/agent-telemetry/
   events.ndjson                       # Append-only hook event stream
-  scores.ndjson                       # Wide events — one line per scored session
   costs.ndjson                        # Per-session cost estimates from transcript tokens
   outcomes.ndjson                     # Opt-in REPORT of the outcome JOIN (outcome-session.mjs --write) — not maintained state
   judge-outcomes.ndjson               # LLM-as-judge outcome evaluations (evaluate-session.mjs, optional)
-  session-index.json                  # Aggregated session index (scores + costs + reports)
+  session-index.json                  # Aggregated session index (costs + reports)
   read-counts-{sessionId}.json        # Per-session read count cache (for compact-save.mjs)
   edit-counts-{sessionId}.json        # Per-session edit count cache (for compact-save.mjs)
   turn-count-{sessionId}.txt          # Per-session tool-call counter (dispatch.mjs, cleaned on session end)
@@ -120,41 +120,65 @@ Content is never stored. Tool inputs are summarized to analytics-relevant fields
 }
 ```
 
-`subagent_tool_calls` is populated by parsing SubagentStop `agent_transcript_path` JSONL files (~50% coverage due to transcript cleanup). `data_completeness` compares hook event count against time-windowed transcript tool calls. The last 4 fields (`compaction_rereads`, `failure_cascades`, `context_efficiency`, `read_redundancy`) are informational enrichments, not used in scoring.
+`subagent_tool_calls` is populated by parsing SubagentStop `agent_transcript_path` JSONL files (~50% coverage due to transcript cleanup). `data_completeness` compares hook event count against time-windowed transcript tool calls. The last 4 fields (`compaction_rereads`, `failure_cascades`, `context_efficiency`, `read_redundancy`) are informational enrichments.
 
-## Scoring Model
+## Retired: process-hygiene scoring
 
-Extracts signals from each session report. Score = `round(100 * (1 - weighted_sum_of_normalized_signals))`, clamped to [0, 100].
+A composite 0–100 **Process Hygiene Index** (PHI) once sat on top of the session reports:
+`score-session.mjs` normalised ten behavioural signals into a weighted score, applied two boolean
+classification rules (WASTEFUL, THRASHING) with per-task-type suppressions, and flagged MAD-based
+outliers; `correlate-signals.mjs` correlated those signals against judged outcomes;
+`scripts/ci/check-agent-quality-trend.mjs` watched a trend baseline over `scores.ndjson`. All of it
+was deleted in tempdoc 858 §7, along with `scores.ndjson`, the `score` / `flags` / `anomalies_count`
+fields of `session-index.json`, and the score `evaluate-session.mjs` loaded and handed to the
+judge — which that script had deliberately kept out of the judge's prompt anyway, to avoid
+anchoring it, so removing it changes no verdict. The judge, the session reports and every report
+built on them are unaffected.
 
-| Signal | Ceiling | Weight | Description |
-|--------|---------|--------|-------------|
-| `unbounded_read_pct` | 0.30 | 0.16 | Fraction of Read calls on large files (>12KB) without offset/limit |
-| `rapid_reedit_count` | 40 | 0.16 | Rapid re-edit clusters on code files (>=3 edits/file/120s, tempdocs excluded) |
-| `bash_fileop_pct` | 0.6 | 0.12 | Fraction of Bash commands that are file operations (first pipeline segment) |
-| `tool_failure_rate` | 0.10 | 0.12 | Failed tool calls / total tool calls |
-| `subagent_density` | 50 | 0.08 | Subagents per hour |
-| `subagent_failure_rate` | 0.50 | 0.08 | Fraction of subagents with zero tool calls (transcript-inferred) |
-| `build_cycle_rate` | 0.25 | 0.07 | Failed builds per code edit |
-| `hot_file_concentration` | 0.8 | 0.07 | Top-3 files' share of total reads |
-| `failed_build_pct` | 0.30 | 0.07 | Failed builds / total builds (build success rate) |
-| `reedit_per_edit` | 0.35 | 0.07 | Rapid re-edit clusters / total code edits (normalized re-edit intensity) |
+**The grounds are that it could not be scored, not that it scored badly.** Each of these is
+individually sufficient:
 
-Weights rebalanced for 10 signals (Mar 2026, tempdoc 285). `tool_failure_rate` weight increased (most consistent predictor, r=-0.19 to -0.43 across task types). `subagent_density` reduced (no outcome signal, all |r|<0.12). Three new signals added: `failed_build_pct` (build success rate independent of edit count), `reedit_per_edit` (normalized rapid re-edit rate — per Nagappan & Ball 2005, relative measures predict better than absolute), `subagent_failure_rate` (transcript-based subagent outcome inference). The score is best interpreted as a **process hygiene index** — it measures context waste and tool discipline, not work quality. See tempdoc 277 for outcome-aware validation (r=0.064 with completion, N=116).
+- **Nothing consumed it.** The HTML dashboard was deleted the day before (tempdoc 858 D1), and
+  `check-agent-quality-trend.mjs` was wired to no workflow.
+- **Its own calibration was inert.** Both per-type suppressions read a field that moved in the
+  tempdoc 622 refactor, so neither fired for months; the path was fixed 2026-08-19 and the metric
+  still ran uncalibrated because `task_type` originates in the LLM-judge cache, which had scored
+  almost nothing.
+- **Re-measuring is not possible at this corpus size.** A Pearson correlation at this
+  instrument's own `|r| > 0.30` threshold needs 44 joined pairs before an `r` is distinguishable
+  from zero at α = 0.05. The events store held 10 distinct sessions and the judge cache 2.
 
-### Boolean Classification Rules
+### The finding, and why the numbers no longer describe anything runnable
 
-| Rule | Condition |
-|------|-----------|
-| **WASTEFUL** | `unbounded_read_pct > 0.10` AND `bash_fileop_pct > 0.30` |
-| **THRASHING** | `rapid_reedit_count > 10` AND `hot_file_concentration > 0.20` |
+Recorded here because the machinery is gone and the measurement is the part worth keeping
+(tempdoc 844 §4.3). Source: **tempdoc 277 §C4** — not tempdoc 118, which several retired files
+cited and which is unresolvable for a reader of this repo.
 
-Both rules support per-type suppression (tempdoc 277): WASTEFUL suppressed for `feature` tasks, THRASHING suppressed for `implementation` tasks.
+| Result | Value |
+|---|---|
+| Composite score vs. task completion | r = 0.064, Cohen's d = 0.13, N = 116 (73 complete / 38 partial) |
+| No individual signal, globally | \|r\| > 0.20 |
+| `bash_fileop_pct` on **feature** sessions | r = +0.51, d = +1.11 — positively associated with completion |
+| THRASHING rule on **implementation** sessions | fired on 33% of completed, 0% of partial — inverted |
 
-### Anomaly Detection
+So the composite was non-predictive while two components carried signal in the opposite direction
+to the rule that used them, which is why 277's response was per-type suppression rather than
+abandonment.
 
-MAD-based modified Z-score replaces IQR-based detection (tempdoc 285). For each signal across all sessions, computes the median and MAD (Median Absolute Deviation). Sessions with |Z| > 3 on any signal are flagged as anomalous, where Z = 0.6745 × (value − median) / MAD. MAD has a 50% breakdown point (robust to outliers) vs. 25% for IQR.
+**Caveat, and it is the load-bearing part: these numbers describe a metric that no longer exists in
+that form.** Between the measurement and the retirement the signal set went from 7 to 10, weights
+and normalisation ceilings were re-derived, per-type hierarchical pooling was added, anomaly
+detection moved from IQR to MAD, and `bash_fileop_pct` — the r = +0.51 headline — was **redefined
+with no record in any tempdoc**. A fresh measurement would not re-test 277; it would measure a
+different metric that happens to share the names.
 
-### Context Attribution
+**If you are about to propose a process-hygiene score, this is what to take from it.** The
+composite is the part that failed: aggregating signals into one number destroyed the per-type
+structure that carried the actual effect. The signal-level results survive as hypotheses worth
+re-testing, not as findings to build on — re-derive them against your own definitions, and
+declare a sufficiency floor from what you intend to conclude before you collect anything.
+
+## Context Attribution
 
 `context-attribution.mjs` classifies every content block in Claude Code transcript JSONL files by category: tool outputs (broken down by tool name), assistant text, thinking, user messages, and system messages. Uses chars/4 as a token estimate — sufficient for proportional analysis without a tokenizer.
 
@@ -179,11 +203,10 @@ Key findings across real sessions (N=41): tool outputs consume 80–85% of conte
 | `lib/telemetry-io.mjs` | Shared I/O utilities: `loadEvents`, `groupBySession`, `loadNdjsonArray`, `loadNdjsonMap`, `loadSessionReports`, `round`. |
 | `analyze-session.mjs` | Aggregates events into session reports. Enrichments: compaction rereads, failure cascades, context efficiency, read redundancy. CLI: `--list`, `--session-id`, `--all`. |
 | `analyze-trends.mjs` | Cross-session trend analysis with 6 detectors. `--cutoff` for before/after comparison. |
-| `score-session.mjs` | Per-session composite scoring. Per-type ceilings via hierarchical partial pooling in `--all` mode. MAD-based anomaly detection. CLI: `--session-id`, `--all`, `--json`, `--weights`. |
 | `cost-session.mjs` | Per-session cost estimation from transcript JSONL. Per-turn pricing by actual model. CLI: `--session-id`, `--all`, `--json`. |
 | `cache-efficiency.mjs` | Prompt-cache **efficiency** across the corpus, as opposed to the cost totals `cost-session`/`baseline-economics` produce. Answers *why* a cache write was paid: classifies each into extension / invalidation / cold start, attributes invalidations (compaction, model switch, TTL expiry, or an honest `in-ttl-undetermined` residual), reports the TTL tier by agent kind, delegation economics, and pricing coverage. Exports its classifiers (`classifyWrite`, `invalidationCause`) for test. CLI: `--since <ISO>`, `--json`. |
 | `context-attribution.mjs` | Context window attribution: classifies transcript content blocks by category (tool outputs by tool name, assistant text, thinking, user messages, system). Chars/4 ≈ tokens. CLI: `--session-id`, `--all`, `--json`, `--top N`. |
-| `generate-index.mjs` | Aggregates session reports + scores + costs into `session-index.json`. |
+| `generate-index.mjs` | Aggregates session reports + costs into `session-index.json`. |
 | `evaluate-session.mjs` | LLM-as-judge outcome evaluation, written to `judge-outcomes.ndjson`. Condenses transcripts, sends to `claude` CLI. CLI: `--session-id`, `--all`, `--force`, `--dry-run`, `--model`, `--json`. |
 | `outcome-session.mjs` | Per-session outcome JOIN over canonical owners (git merge link, build counter, tempdoc frontmatter, governance SARIF), **computed on demand and printed**. The judge's verdict is carried as a residual `inference` block and never overwrites a fact. `--write` emits `outcomes.ndjson` as a timestamped report, not an authority. |
 | `test-pipeline.mjs` | Legacy standalone assertion script. **Not wired to anything** — `run-all-tests.mjs` discovers `*.test.mjs` only, so this file runs solely when invoked by hand, and it has known stale failures (see `docs/observations.md`). Treat it as historical coverage, not as a gate. |
@@ -250,14 +273,14 @@ overhead. This is small relative to LLM inference time (seconds per turn).
 | SessionStart hooks break stdin on Windows ([#23083](https://github.com/anthropics/claude-code/issues/23083)) | Medium | Monitor |
 | 100% CPU hang with parallel instances + hooks ([#22172](https://github.com/anthropics/claude-code/issues/22172)) | Medium | Avoid parallel Claude Code instances |
 | `intervene.mjs` Node startup adds latency (30-80ms per Read) | Low | Acceptable; scoped via matcher |
-| Event rotation causes score instability | Medium | Skip-if-degraded guard in `writeReport()`; rotation limit 10 MB |
+| Event rotation drops history a report was built from | Medium | Skip-if-degraded guard in `writeReport()`; rotation limit 10 MB |
 | Memory pressure from large session analysis | Low | Fine at 50+ sessions; may need streaming at 100+ |
 
 ## Known Limitations
 
 - **Self-monitoring paradox.** The agent exhibiting waste is also the one reading pipeline output. Mitigated by `.claude/rules/` (loaded at session start) rather than requiring mid-session analytics reads.
 - **intervene.mjs effectiveness is untestable.** Analytics capture pre-intervention state. We know the hook fires but can't directly measure context savings.
-- **Process score does not predict task outcomes.** Outcome-aware validation at N=116 (73 complete, 38 partial) put the composite score's point-biserial correlation with task completion at r=0.064, Cohen's d=0.13, with no individual signal exceeding |r|>0.20 globally. The score measures process compliance, not work quality. See tempdoc 277 C4 — the same citation `score-session.mjs` carries.
+- **There is no composite quality number for a session.** The process-hygiene score that used to supply one is retired; the reasoning and its measurement are in [Retired: process-hygiene scoring](#retired-process-hygiene-scoring). Do not reintroduce one without reading that section first.
 
 ## Test Suite
 
@@ -269,13 +292,13 @@ the suite to run and the one CI runs.
 is not a `*.test.mjs` file), so nothing invokes it and it has accumulated stale failures — see the
 `obs:test-pipeline` condition in `docs/observations.md`. Its group table below is retained as a
 map of what that historical coverage aimed at; do not read it as a passing suite, and do not cite
-an assertion count from it. Group 19 (dashboard generation) was deleted with the dashboard, so the
-group numbering has a deliberate gap.
+an assertion count from it. The group numbering has deliberate gaps where a group was deleted with
+its subject: 19 (dashboard generation) with the dashboard, and 2 (scoring logic), 17 (Z-score
+anomaly detection) and 21 (golden score dataset) with process-hygiene scoring.
 
 | Group | Key Assertions |
 |-------|---------------|
 | Hook output (1) | Large-file `limit:200` injection, skip when limit present, edit tracking, hot-file read cap |
-| Scoring logic (2) | 10 signal calculations, 2 boolean rules, tempdoc exclusion, score clamping |
 | Trend analysis (3) | Path sanitization, subagent merging, tempdoc exclusion |
 | Tests 4-11 | File size limiting, edit tracking, bash blocking, compact save/restore, subagent guidance |
 | Compaction rereads (12) | Boundary detection, chained segments |
@@ -283,7 +306,6 @@ group numbering has a deliberate gap.
 | Context efficiency (14) | First-read scoring, edit-proximity weighting |
 | Read redundancy (15) | Structural vs wasteful classification |
 | Cost estimation (16) | Per-turn pricing, missing transcript handling |
-| Z-score anomaly (17) | MAD-based detection, outlier identification |
 | Session index (18) | Schema validation |
 | LLM-as-judge (20) | Dry-run validation, condensation, upsert dedup |
 | Repeat guard (22) | Consecutive blocking, break-and-resume, multi-tool fingerprinting, build exclusion, MCP/internal tools |

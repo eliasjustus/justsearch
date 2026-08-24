@@ -31,7 +31,7 @@
     },
     {
       "id": "cross-encoder-skip",
-      "why": "Register F-052 (production side). A rerank deadline miss or RPC drop delivered fusion order with NO user-visible signal: the reason existed only as the `cross-encoder` trace stage's raw code, and the stage list is a diagnostic-tier facet inside the collapsed disclosure. The head-owned `CrossEncoderSkipReason` enum closes that vocabulary (it also normalises the worker's RerankResponse.skip_reason, so an unrecognised worker string becomes UNKNOWN instead of an unworded pass-through) and the FE `CROSS_ENCODER_SKIP_WORDING` map words the DROP class into the user-tier summary line.",
+      "why": "Register F-052 (production side). A rerank deadline miss or RPC drop delivered fusion order with NO user-visible signal: the reason existed only as the `cross-encoder` trace stage's raw code, and the stage list is a diagnostic-tier facet inside the collapsed disclosure. The head-owned `CrossEncoderSkipReason` enum closes that vocabulary (it also normalises the worker's RerankResponse.skip_reason, so an unrecognised worker string becomes UNKNOWN instead of an unworded pass-through) and the FE `CROSS_ENCODER_SKIP_WORDING` map words the DROP class into the user-tier summary line. Register F-054 extended the drop class with INFERENCE_FAILED: the worker stamped DEADLINE_EXCEEDED on ANY reranker skip, so an ONNX Runtime memory-arena exhaustion — measured at 199/200 of a campaign's 'deadline misses', unfixable by any deadline value — reached the user as 'ran out of time'. DEADLINE_EXCEEDED now means only a budget pre-check.",
       "producer": {
         "file": "modules/app-api/src/main/java/io/justsearch/app/api/knowledge/CrossEncoderSkipReason.java",
         "symbol": "CrossEncoderSkipReason",

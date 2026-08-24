@@ -1,12 +1,12 @@
 ---
-status: design + implementing (three verdicts settled; PHI open pending evidence, §4.3)
+status: design + implemented (all four verdicts settled; PHI RETIRED 2026-08-20, §4.5)
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-08-20
 author: agent session (Opus 5, 1M context)
 charter: the analytics events lane has four products, not one — decide each on its own merits
 ---
 
-# 858 — Analytics lane: outcomes are a view, the dashboard retires, PHI stays open
+# 858 — Analytics lane: outcomes are a view, the dashboard and PHI retire
 
 Opened from tempdoc 856 §10. The sketch asked one question — is the events lane alive? The
 design's first move is that this was the wrong unit. The lane holds **four products with
@@ -29,7 +29,7 @@ human-facing report is read. That is asked, not inferred — §5.
 | Product | Instruments | Store | Verdict |
 |---|---|---|---|
 | The outcome JOIN | `outcome-session` | `outcomes.ndjson` | **KEEP — convert store to view** (§3) |
-| Process-hygiene scoring | `score-session`, `correlate-signals` | `scores.ndjson` | **UNDECIDED — evidence unobtainable today** (§4) |
+| Process-hygiene scoring | `score-session`, `correlate-signals` | `scores.ndjson` | **RETIRE — cannot be evaluated** (§4.5) |
 | The LLM judge | `evaluate-session` | `judge-outcomes.ndjson` | **KEEP — owner, §5** |
 | The dashboard | `generate-dashboard` | `dashboard.html` | **RETIRE — owner, §5** |
 
@@ -37,9 +37,9 @@ Consumer analysis, mechanical — **and an earlier draft of this paragraph was w
 nothing outside `scripts/agent-analytics/` reads these stores. In fact
 `scripts/ci/check-agent-quality-trend.mjs` and `scripts/ci/agent-quality-baselines.v1.json` read
 `scores.ndjson` (622 Layer C), and `generate-index.mjs` fills `session-index.json`'s `score` field
-from it. None of the three is wired to CI, but all three widen the PHI blast radius beyond what §4
-first listed — which is part of why that verdict is now open rather than settled. The dashboard's
-consumer is a person, which is why it was never a mechanical call.
+from it. None of the three is wired to CI, but all three widened the PHI blast radius beyond what
+§4 first listed — and all three retire with it (§4.5, §7). The dashboard was never a mechanical
+call at all: its consumer is a person, which is why it went to the owner.
 
 ## 3. KEEP the outcome JOIN, and make it a view
 
@@ -90,11 +90,19 @@ and a reader could still mistake the answer for a session-time observation, so t
 The rule's third clause ("record which you did") is what makes that distinction expressible at
 all; without it, "derived" would have silently covered both cases.
 
-## 4. Process-hygiene scoring — UNDECIDED, and the blocker is named
+## 4. Process-hygiene scoring — RETIRED (2026-08-20), on grounds the first attempt did not have
 
-**This section previously read "RETIRE — its own header answers it".** The owner declined that
-basis, and the derisk pass then found two reasons the retirement argument was weaker than it
-looked. Both are recorded here rather than quietly dropped.
+This section has held three verdicts in two days, and the sequence is the point.
+
+1. **RETIRE**, on the composite's own r=0.064 header. The owner **declined** that basis: a dated
+   finding is not a reason to delete a live thing.
+2. **UNDECIDED**, pending a fresh measurement. Correct at the time.
+3. **RETIRE**, on evidence the derisk pass produced while scoping the measurement — which found
+   that the measurement cannot be taken, and could not be compared to anything if it were.
+
+The final verdict is **not** the first one re-argued. §4.1 and §4.2 below are preserved as written,
+because the case they make for *keeping* PHI was sound on what was known then and is the reason
+the retirement had to be earned rather than assumed. §4.4 is the evidence that earned it.
 
 ### 4.1 The argument as it stood
 
@@ -158,13 +166,52 @@ Two routes to evidence, neither belonging to this tempdoc:
   856 made for the merge key, and it would serve 856's falsifier too — which is why it deserves
   its own tempdoc rather than riding along here.
 
-**Status: PHI stays. Not endorsed — undecided, with its evidence gap stated.** The distinction
-matters: a metric kept because nobody measured it is not the same as a metric kept because it
-passed. Anyone reading `scores.ndjson` as validated should read this section first.
+### 4.4 Why the measurement cannot settle it — the evidence that decided the verdict
 
-**Predictable evasion, named inline:** "the derisk found the retirement argument was weak, so keep
-it and move on." That converts *undecided* into *settled* without evidence, in the direction that
-requires no work. The verdict is open, and it stays open until measured.
+A derisk pass scoped the re-base named above and found four things. Together they mean the
+question is not "does PHI predict outcomes" but "can PHI be evaluated at all".
+
+**The baseline is already unreachable, independent of any re-base.** Comparing tempdoc 277 §C4
+against `extractSignals` today: the signal count went 7 → 10; `unbounded_read_pct`'s numerator
+changed from `unbounded_count` to `unbounded_large_count`; the reads population changed from main
+to main+subagent; the weights changed; global ceilings were revised and per-type hierarchical
+pooling added; anomaly detection went IQR → MAD. And `bash_fileop_pct` — the r=+0.51 signal §4.2
+leans on — was redefined to first-pipeline-segment-only with `git`-prefixed commands excluded,
+recorded in **no tempdoc at all**. A fresh number would not re-test 277; it would be a first
+measurement of a different metric, placed beside an old number as though they matched.
+
+**The two lanes count different populations, so no re-based score is comparable to a stored one.**
+Measured on one session: hook `pre_tool_use` = 5,900; the main transcript = 1,117 tool-use blocks;
+main plus its 177 subagent transcripts = 22,985. The hook lane is a lossy subset that already folds
+subagent calls into the parent's counters — and `extractSignals` then *adds* main and subagent
+totals on top. A live report records `data_completeness.capture_rate = 13.187` about itself.
+
+**The re-base is a rewrite, not a re-point.** `score-session` is untouched by it (it reads report
+fields), but every derivation in `analyze-session` is written against hook-event shapes. That is
+`analyzeSession` plus five helpers — effectively the whole file below `relPath` — and it would also
+have to re-base the task-type join, or §4.2's just-fixed defect returns through a different door.
+
+**Even after all that, the correlation still cannot run.** Pairs need a score *and* a judge
+outcome. The judge cache holds **2 sessions**; `correlate-signals`' own derived floor is **44
+pairs**. Closing that gap is a paid judge pass over the corpus.
+
+### 4.5 Verdict
+
+**RETIRE.** Not because it scored badly — because it cannot be scored, and nothing is waiting on
+the answer. The composite measured r=0.064 once; its baseline no longer exists in a comparable
+form; its per-type calibration was inert for months; its consumers are gone (the dashboard was
+deleted in this same tempdoc, and `check-agent-quality-trend` is wired to no workflow); and
+re-establishing any of it costs a rewrite plus a paid measurement whose result would compare to
+nothing.
+
+Per 844 §4.3 the machinery goes and the **finding stays** — r=0.064 at N=116, and the signal-level
+results — relocated to the reference layer with the caveat that those numbers describe signal
+definitions that have since drifted. A future agent proposing a process-hygiene score should find
+the result *and* the reason it cannot simply be re-run.
+
+**Predictable evasion, named inline:** "keep it, deleting costs more than leaving it." Leaving it
+costs the next agent an orientation pass over a metric with no consumers, no valid baseline, and a
+store nothing writes — which is the cost this tempdoc was opened to stop paying.
 
 ## 5. Owner decisions
 
@@ -185,8 +232,15 @@ unrelated thing that generates governance state. The sweep is path-qualified for
 **D2 — the LLM judge: KEEP.** The residual question it answers — did this satisfy intent — is the
 point, and it is the one thing no canonical source owns. It keeps its cache legitimately under
 §3.1: a paid derivation is not the same as a free recomputation, and caching it is correct rather
-than a refresh obligation nobody meets. Note it reads `SCORES_FILE` (`evaluate-session.mjs:683`),
-which couples it to §4's open verdict — the two were filed as independent and are not.
+than a refresh obligation nobody meets.
+
+> **Correction 2026-08-20.** This paragraph warned that the judge reads `SCORES_FILE`, "which
+> couples it to §4's open verdict — the two were filed as independent and are not." That was
+> wrong, and the retirement sweep found it: the score was loaded, threaded through two call sites
+> and destructured — and **never read**. `evaluate-session.mjs:214` says why, in a comment older
+> than this tempdoc: *"Header — intentionally excludes process score to avoid anchoring the
+> judge."* So retiring PHI removes a dead parameter and cannot change any judge verdict. D2 and
+> §4 really were independent; I asserted a coupling from an import rather than from a use.
 
 ## 6. One cross-cutting change, adopted not invented
 
@@ -231,9 +285,15 @@ Named here, not deferred to a cleanup sweep:
   report now says "scope filter matched no session here — 0 of 31 listed ids" instead of asserting
   an exclusion it did not perform. (Quoted verbatim from `lib/telemetry-io.mjs`; an earlier draft of this
   line paraphrased the output, which is the `catalog-verbatim` shape in miniature.)
-- **Nothing PHI-related.** §4 is open, so `scores.ndjson`, `score-session.mjs` and
-  `correlate-signals.mjs` are **not** orphaned by this tempdoc. An earlier draft listed them; that
-  list was written when §4 read RETIRE and is void.
+- **The PHI scoring product**, orphaned by §4.5: `score-session.mjs`, `correlate-signals.mjs`,
+  `scores.ndjson` and its `SCORES_FILE` constant, `scripts/ci/check-agent-quality-trend.mjs` and
+  `agent-quality-baselines.v1.json`, **three** fields of `session-index.json` (`score`, `flags`
+  and `anomalies_count` — all read the same score record, so removing only the first would have
+  left two hardcoded to `[]` and `0`), and the score input `evaluate-session` passed to the judge
+  (a dead parameter — see the correction in §5). The session **reports** stay — `analyze-trends`,
+  `context-attribution`, `cost-session` and the judge all read them, and only the scoring layer on
+  top is retiring. This list moved twice: it first read RETIRE, was voided when §4 reopened, and
+  is restored now on different evidence (§4.4).
 
 The r=0.064 finding therefore stays in `docs/explanation/21-agent-analytics-pipeline.md` rather
 than relocating — relocating a finding is part of retiring the thing it justifies, and that

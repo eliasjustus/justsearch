@@ -49,6 +49,34 @@ const pluginCatalogs = new Map<string, Record<string, string>>();
 let bootAttempted = false;
 let missingKeyLogged = new Set<string>();
 
+/**
+ * Tempdoc 855 fix-round F2 (S2) — `localizeResourceKey` is synchronous and, on a cold deep-link
+ * boot, resolves BEFORE the async catalog fetch below completes: the raw key renders, and nothing
+ * previously told a mounted consumer to re-render once the real label arrived (the raw key stuck
+ * around forever, not just until the fetch settled). This is a tiny fan-out so a consumer that
+ * renders localized labels — `SettingsNav`, `SettingsSurface` — can subscribe once (typically in
+ * `connectedCallback`, calling `requestUpdate()`) and unsubscribe on disconnect, rather than every
+ * future consumer needing its own polling/re-fetch workaround.
+ */
+type CatalogListener = () => void;
+const catalogListeners = new Set<CatalogListener>();
+
+/** Subscribe to catalog updates. Returns an unsubscribe function. */
+export function onCatalogUpdated(listener: CatalogListener): () => void {
+  catalogListeners.add(listener);
+  return () => {
+    catalogListeners.delete(listener);
+  };
+}
+
+/** Notified after every merge into `coreCatalog` (both boot paths below), and by `__seedForTest`
+ *  so a test can simulate a late-arriving catalog without a real fetch. */
+function notifyCatalogUpdated(): void {
+  for (const listener of catalogListeners) {
+    listener();
+  }
+}
+
 const STORAGE_KEY_BODY = 'justsearch.resourceCatalog.en.body';
 const STORAGE_KEY_ETAG = 'justsearch.resourceCatalog.en.etag';
 
@@ -113,6 +141,7 @@ export async function bootResourceCatalog(baseUrl: string): Promise<void> {
     // `coreCatalog = …` here would wipe a sibling catalog that merged first on a
     // cold boot (the §28 workflow-label clobber). Keep all writers merge-only.
     Object.assign(coreCatalog, cached.body);
+    notifyCatalogUpdated();
   }
 
   if (!baseUrl) {
@@ -144,6 +173,7 @@ export async function bootResourceCatalog(baseUrl: string): Promise<void> {
       // §28 — merge, never replace (see the cache-seed note above): a cold-boot 200 here
       // must not clobber a sibling catalog (workflow/surface/operation) that already merged.
       Object.assign(coreCatalog, body.messages);
+      notifyCatalogUpdated();
       const etag = response.headers.get('ETag');
       if (etag) {
         saveToStorage(body.messages, etag);
@@ -176,6 +206,7 @@ async function bootMessageCatalog(baseUrl: string, namespace: string): Promise<v
     const body = (await response.json()) as ResourceCatalogResponse;
     if (body?.messages && typeof body.messages === 'object') {
       Object.assign(coreCatalog, body.messages);
+      notifyCatalogUpdated();
     }
   } catch {
     // best-effort — affected labels fall back to their upstream id-derived default
@@ -339,8 +370,10 @@ export function __resetForTest(): void {
   }
 }
 
-/** Test-only: seed the catalog directly without an HTTP call. */
+/** Test-only: seed the catalog directly without an HTTP call. Notifies subscribers — a test can
+ *  use this AFTER mounting a consumer to simulate a late-arriving catalog boot (S2). */
 export function __seedForTest(messages: Record<string, string>): void {
   coreCatalog = { ...messages };
   bootAttempted = true;
+  notifyCatalogUpdated();
 }

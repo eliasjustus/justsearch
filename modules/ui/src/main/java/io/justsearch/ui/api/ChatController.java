@@ -2,6 +2,7 @@
 package io.justsearch.ui.api;
 
 import io.javalin.http.Context;
+import io.justsearch.agent.api.AgentService;
 import io.justsearch.agent.api.conversation.BranchesPreventDeletionException;
 import io.justsearch.agent.api.conversation.ConversationStore;
 import io.justsearch.agent.api.conversation.SseEvent;
@@ -9,6 +10,7 @@ import io.justsearch.agent.api.registry.Audience;
 import io.justsearch.agent.api.registry.ConversationShapeRef;
 import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.services.conversation.AgentRunShape;
 import io.justsearch.app.services.conversation.ConversationEngine;
 import io.justsearch.telemetry.Telemetry;
 import java.util.ArrayList;
@@ -65,6 +67,28 @@ public final class ChatController {
   // tolerates the runtime being unavailable / hot-swapped, mirroring the
   // assembly's onlineAiSupplier.
   private final Supplier<OnlineAiService> onlineAi;
+  /**
+   * Tempdoc 859 slice C PR-2 — the SECOND record the conversation list reads. A delegate run persists
+   * a complete conversation into the agent-run store and no {@code ConversationStore} row at all, so a
+   * list that reads one store lists half the conversations. Supplied (not held) for the same reason
+   * {@code onlineAi} is: the agent capability is constructed lazily and may be unavailable.
+   */
+  private final Supplier<AgentService> agentService;
+
+  public ChatController(
+      ConversationEngine engine,
+      SseWriter sseWriter,
+      Telemetry telemetry,
+      ConversationStore conversationStore,
+      Supplier<OnlineAiService> onlineAi,
+      Supplier<AgentService> agentService) {
+    this.engine = engine;
+    this.sseWriter = sseWriter;
+    this.telemetry = telemetry;
+    this.conversationStore = conversationStore;
+    this.onlineAi = onlineAi;
+    this.agentService = agentService;
+  }
 
   public ChatController(
       ConversationEngine engine,
@@ -72,11 +96,7 @@ public final class ChatController {
       Telemetry telemetry,
       ConversationStore conversationStore,
       Supplier<OnlineAiService> onlineAi) {
-    this.engine = engine;
-    this.sseWriter = sseWriter;
-    this.telemetry = telemetry;
-    this.conversationStore = conversationStore;
-    this.onlineAi = onlineAi;
+    this(engine, sseWriter, telemetry, conversationStore, onlineAi, AgentService::unavailable);
   }
 
   public ChatController(
@@ -226,13 +246,56 @@ public final class ChatController {
   }
 
 
+  /**
+   * {@code GET /api/chat/conversations} — the conversation list, joined across the TWO records that
+   * hold conversations (tempdoc 859 slice C PR-2).
+   *
+   * <p>Before this join the endpoint read {@code ConversationStore} alone, which lists exactly the
+   * conversations whose turns were APPENDED as messages. A delegate run is
+   * {@code SHAPE_DRIVEN} — {@code ConversationEngine.dispatchShapeDriven} never calls
+   * {@code appendMessage} — so an agent conversation has a complete, disk-backed record in the
+   * agent-run store, is served in full by {@code GET /api/thread/{id}} (which already merges both
+   * planes), and had no index entry anywhere: an intact record with no door to it.
+   *
+   * <p>Rejected alternative: having agent runs mint a {@code ConversationStore} row. The decisive
+   * argument is the DOUBLE-RENDER — {@code InteractionThreadController} already merges both planes,
+   * so agent-authored store messages would render every delegate turn twice.
+   *
+   * <p>The contract this join commits to:
+   *
+   * <ul>
+   *   <li><b>{@code limit} applies PER STORE</b>, and the merged list is re-sorted by last activity
+   *       and re-limited — so the response never exceeds {@code limit} while neither store can starve
+   *       the other out of the window.
+   *   <li><b>{@code shapeId} filters both sides.</b> The store side filters as it always has; the run
+   *       side matches only {@link AgentRunShape#ID}, so a query naming any other shape excludes
+   *       synthesized rows ENTIRELY rather than silently including them.
+   *   <li><b>A conversation that exists in both records is listed ONCE</b>, as its store row: a mixed
+   *       conversation (chat turns plus a delegate run) is store-backed, and its row keeps the full
+   *       action set. Membership is resolved against the STORE ({@link #hasStoreSession}), never
+   *       against the limited window this method just fetched — see that method for why the window is
+   *       the wrong authority.
+   *   <li><b>{@code storeBacked: false}</b> on a synthesized row — a conditional key, like
+   *       {@code title} / {@code parentSessionId} below, so absence keeps meaning what it always did.
+   *       Every per-row action this list's consumers offer except discard (rename, branch,
+   *       context-floor, compact, exclude) writes to a {@code ConversationStore} session; the row says
+   *       so instead of offering an action that would 404. The conversation id is REAL — only the
+   *       capability claim is corrected.
+   *   <li><b>No {@code messageCount} on a synthesized row</b> — honestly absent. Deriving one means
+   *       running the {@code /api/thread} projection per row per request, turning a sidebar refresh
+   *       into O(runs x events) and defeating the run store's lazy limit. Absent = not told.
+   * </ul>
+   *
+   * <p>{@link #handleLoadHistory} deliberately does NOT join: Search v3's transcript already comes
+   * from {@code GET /api/thread/{id}}, and a second join here would give one transcript two sources.
+   */
   public void handleListSessions(Context ctx) {
     String shapeId = ctx.queryParam("shapeId");
     String limitParam = ctx.queryParam("limit");
     int limit = Math.min(limitParam != null ? Integer.parseInt(limitParam) : 20, 100);
     List<ConversationStore.SessionSummary> sessions =
         conversationStore.listSessions(shapeId, limit);
-    List<Map<String, Object>> result = sessions.stream().map(s -> {
+    List<Map<String, Object>> storeRows = sessions.stream().map(s -> {
       Map<String, Object> m = new LinkedHashMap<>();
       m.put("sessionId", s.sessionId());
       m.put("shapeId", s.shapeId());
@@ -254,9 +317,97 @@ public final class ChatController {
       }
       return m;
     }).toList();
-    ctx.json(Map.of("sessions", result));
+    List<Map<String, Object>> result = new ArrayList<>(storeRows);
+    result.addAll(runBackedRows(shapeId, limit, storeRows));
+    // One order for both records. The store side already sorts by last activity, so a STABLE sort on
+    // the same key leaves it untouched and only decides where the synthesized rows land.
+    result.sort((a, b) -> Long.compare(asMillis(b.get("lastActiveAtMs")), asMillis(a.get("lastActiveAtMs"))));
+    ctx.json(Map.of("sessions", result.size() <= limit ? result : result.subList(0, limit)));
   }
 
+  /**
+   * The run-backed half of {@link #handleListSessions}: conversations that live ONLY in the agent-run
+   * record. Empty when {@code shapeId} names a non-agent shape, when the agent capability is
+   * unavailable, and when its store is sealed + locked (which lists nothing rather than failing).
+   */
+  private List<Map<String, Object>> runBackedRows(
+      String shapeId, int limit, List<Map<String, Object>> storeRows) {
+    String agentShapeId = AgentRunShape.ID.value();
+    if (shapeId != null && !shapeId.isBlank() && !agentShapeId.equals(shapeId)) {
+      return List.of();
+    }
+    AgentService agent = agentService.get();
+    if (agent == null) {
+      return List.of();
+    }
+    java.util.Set<Object> inThisWindow = new java.util.HashSet<>();
+    for (Map<String, Object> row : storeRows) {
+      inThisWindow.add(row.get("sessionId"));
+    }
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (Map<String, Object> run : agent.conversationSummaries(limit)) {
+      Object conversationId = run.get("conversationId");
+      if (!(conversationId instanceof String id) || id.isBlank() || hasStoreSession(id, inThisWindow)) {
+        continue;
+      }
+      Map<String, Object> m = new LinkedHashMap<>();
+      m.put("sessionId", id);
+      m.put("shapeId", agentShapeId);
+      m.put("createdAtMs", asMillis(run.get("createdAtMs")));
+      m.put("lastActiveAtMs", asMillis(run.get("lastActiveAtMs")));
+      // No messageCount: see the contract on handleListSessions. Absent = not told.
+      m.put("firstUserMessage", run.get("firstUserMessage") instanceof String p ? p : "");
+      m.put("storeBacked", false);
+      rows.add(m);
+    }
+    return rows;
+  }
+
+  /**
+   * Does a {@code ConversationStore} session exist for {@code conversationId}? Asked of the STORE,
+   * not of the window {@link #handleListSessions} just fetched.
+   *
+   * <p>The window is the wrong authority and the difference is a real defect: a MIXED conversation —
+   * chat turns plus a delegate run — has a store row whose {@code lastActiveAtMs} froze at its last
+   * chat turn, so once the store holds more than {@code limit} conversations it can fall outside the
+   * window while its runs are the freshest thing on disk. Deduplicating against the window would then
+   * miss it, re-synthesize it as {@code storeBacked:false} carrying the RUN's timestamp — which sorts
+   * it to the top and past the re-limit — and the FE's known-row adoption would downgrade an open,
+   * renameable conversation to one that offers no rename. One direct lookup per candidate (at most
+   * {@code limit} of them) is what makes "listed once, as its store row" true for every conversation
+   * rather than only for the ones the window happened to include.
+   *
+   * <p>While the conversation store is sealed + locked this lookup RAISES rather than answering
+   * ({@code FileConversationStore.getSessionMeta} propagates {@code KeyLockedException} — the
+   * documented asymmetry with {@code listSessions}, which must keep listing). The list must not 423,
+   * so a locked store falls back to the window: renaming is impossible while locked anyway, and a
+   * degraded dedup is the honest answer when the store will not say what it holds.
+   */
+  private boolean hasStoreSession(String conversationId, java.util.Set<Object> inThisWindow) {
+    if (inThisWindow.contains(conversationId)) {
+      return true;
+    }
+    try {
+      return conversationStore.getSessionMeta(conversationId).isPresent();
+    } catch (io.justsearch.agent.api.encryption.KeyLockedException locked) {
+      return false;
+    }
+  }
+
+  private static long asMillis(Object value) {
+    return value instanceof Number n ? n.longValue() : 0L;
+  }
+
+  /**
+   * {@code GET /api/chat/conversations/{sessionId}/history} — the store's messages, and deliberately
+   * ONLY the store's (tempdoc 859 slice C PR-2).
+   *
+   * <p>This endpoint does NOT perform the two-store join {@link #handleListSessions} does. The
+   * unified transcript already has one authority — {@code GET /api/thread/{id}}, which merges the
+   * answer plane and the action plane — and joining the agent runs in here as well would give one
+   * transcript two sources that must then be kept in agreement. A run-backed conversation therefore
+   * answers here with an empty message list, which is the true thing: it has no store messages.
+   */
   public void handleLoadHistory(Context ctx) {
     String sessionId = ctx.pathParam("sessionId");
     List<Map<String, Object>> messages = conversationStore.loadHistory(sessionId);
@@ -584,11 +735,26 @@ public final class ChatController {
     ctx.json(Map.of("ok", true, "sourceId", sourceId, "excluded", excluded));
   }
 
+  /**
+   * {@code DELETE /api/chat/conversations/{sessionId}} — deletes the conversation from BOTH records
+   * it can live in (tempdoc 859 slice C PR-2).
+   *
+   * <p>The store session goes as it always did; the conversation's agent runs go with it. Without the
+   * second half a run-backed row would be listable (the join above) and undeletable, so the sidebar
+   * would only ever grow — the completing capability for the row's action set, not a shim: the run
+   * store owns those directories.
+   *
+   * <p>Order matters: the store deletion runs FIRST, so a branches-prevent-deletion refusal aborts
+   * before any run is destroyed. Runs are deleted for a conversation with no store session at all,
+   * which is exactly the synthesized-row case.
+   */
   public void handleDeleteConversation(Context ctx) {
     String sessionId = ctx.pathParam("sessionId");
     try {
       conversationStore.deleteSession(sessionId);
-      ctx.json(Map.of("ok", true));
+      AgentService agent = agentService.get();
+      int runsDeleted = agent == null ? 0 : agent.deleteConversationRuns(sessionId);
+      ctx.json(Map.of("ok", true, "agentRunsDeleted", runsDeleted));
     } catch (BranchesPreventDeletionException blocked) {
       // Slice 515 FIX-3 — 409 Conflict with the child session ids so the
       // FE can offer a cascade-delete UX (out of scope here).

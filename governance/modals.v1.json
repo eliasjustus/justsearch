@@ -10,6 +10,7 @@
     "modules/ui-web/src/shell-v0/components/ElicitHost.ts",
     "modules/ui-web/src/shell-v0/components/MacroDryRun.ts",
     "modules/ui-web/src/shell-v0/components/EffectAuditLog.ts",
-    "modules/ui-web/src/shell-v0/components/AuthorizationHost.ts"
+    "modules/ui-web/src/shell-v0/components/AuthorizationHost.ts",
+    "modules/ui-web/src/shell-v0/chrome/SettingsWindow.ts"
   ]
 }

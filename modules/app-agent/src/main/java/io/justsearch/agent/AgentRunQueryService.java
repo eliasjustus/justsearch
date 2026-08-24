@@ -115,6 +115,11 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
   }
 
   @Override
+  public List<Map<String, Object>> conversationSummaries(int limit) {
+    return runStore.listConversations(Math.max(1, Math.min(limit, 100)));
+  }
+
+  @Override
   public Map<String, Object> sessionSnapshot(String sessionId) {
     return runStore.readSnapshot(sessionId);
   }

@@ -734,6 +734,50 @@ describe('the app-wide conversation store, folded in (tempdoc 822 Phase F6 / inv
     expect(mergeStoreConversations(mine, [row({ id: 'uc-mine' })])).toBe(mine);
   });
 
+  it('carries the endpoint\'s storeBacked answer, and treats "not told" as backed (859 C PR-2)', () => {
+    const list = mergeStoreConversations(SV3_SESSIONS_EMPTY, [
+      row({ id: 'uc-chat', firstUserMessage: 'an ask' }),
+      row({ id: 'conv-delegate', firstUserMessage: 'a delegate run', storeBacked: false }),
+    ]);
+    expect(list.sessions.map((s) => [s.id, s.storeBacked])).toEqual([
+      ['uc-chat', true],
+      ['conv-delegate', false],
+    ]);
+    // ...and it reaches the ROW, which is what decides whether the rename is offered.
+    expect(flatRows(projectSv3Sessions(list, rest)).map((r) => r.storeBacked)).toEqual([true, false]);
+  });
+
+  it('CORRECTS a locally-opened session the endpoint reports as run-backed', () => {
+    // The window cannot know this: it opens a delegate conversation optimistically as store-backed
+    // (an ask in the same shape would be), and only the list endpoint knows which record the
+    // conversation ended up in. Without this the row would keep offering a rename that 404s.
+    const mine = submitInSession(SV3_SESSIONS_EMPTY, 'delegate this', T0, 'agent', 'uc-mine');
+    expect(mine.sessions[0]?.storeBacked).toBe(true);
+    const merged = mergeStoreConversations(mine, [row({ id: 'uc-mine', storeBacked: false })]);
+    expect(merged.sessions[0]?.storeBacked).toBe(false);
+    // ...and nothing else about the known row moved.
+    expect(merged.sessions[0]?.turns).toHaveLength(1);
+    expect(merged.activeId).toBe('uc-mine');
+  });
+
+  it('orders the NEWCOMERS newest-first without moving the rows already on screen', () => {
+    // The append is the ordering contract (859 C PR-2): a conversation this window did not open
+    // still lands below what the reader is looking at, because interleaving by timestamp would move
+    // their rows. What the fresh delegate conversation must NOT do is land under older newcomers.
+    const mine = submitInSession(SV3_SESSIONS_EMPTY, 'my question', T0, 'ask', 'uc-mine');
+    const merged = mergeStoreConversations(mine, [
+      row({ id: 'conv-stale', lastActiveAt: T0 - HOUR }),
+      row({ id: 'conv-fresh', lastActiveAt: T0 + HOUR }),
+      row({ id: 'conv-middle', lastActiveAt: T0 }),
+    ]);
+    expect(merged.sessions.map((s) => s.id)).toEqual([
+      'uc-mine',
+      'conv-fresh',
+      'conv-middle',
+      'conv-stale',
+    ]);
+  });
+
   it('seeds `renamed` from the wire, so a reader\'s name survives a reload (tempdoc 838)', () => {
     // The defect this closes: `renamed` used to be hard-coded false on a merged-in row, because the
     // provenance was not on the wire — so the next ask after a reload auto-titled over the name the
@@ -1157,6 +1201,7 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
           contextUsage: null,
           createdAt: T0,
           updatedAt: T0,
+          storeBacked: true,
           turns: [
             recordTurn({ id: 'local-P', recordId: 'evt-2', question: 'P', answer: 'P' }),
             recordTurn({ id: 'local-U', recordId: null, question: 'U', answer: 'U' }),

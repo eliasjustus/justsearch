@@ -105,6 +105,9 @@ try {
 {
   const sessionId = `intervene-test-${process.pid}-${Date.now()}`;
   const cacheFile = path.join(telemetryDir, `read-counts-${sessionId}.json`);
+  // telemetryDir is real per-session hook state, not an injectable path — don't leave an
+  // empty dir behind for a fresh checkout/worktree that never had one.
+  const telemetryDirPreexisted = fs.existsSync(telemetryDir);
   fs.mkdirSync(telemetryDir, { recursive: true });
   try {
     const synthetic = {
@@ -130,6 +133,9 @@ try {
     });
   } finally {
     fs.rmSync(cacheFile, { force: true });
+    if (!telemetryDirPreexisted) {
+      try { fs.rmdirSync(telemetryDir); } catch { /* not empty — another writer landed there first, leave it */ }
+    }
   }
 }
 

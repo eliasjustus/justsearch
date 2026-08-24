@@ -32,7 +32,10 @@ import {
   SV3_SIDEBAR_DEFAULT_PX,
   SV3_SIDEBAR_MIN_PX,
 } from './sv3-boundaries.js';
-import { __resetConversationListForTest } from '../../state/conversationListStore.js';
+import {
+  loadConversations,
+  __resetConversationListForTest,
+} from '../../state/conversationListStore.js';
 import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
 import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
 
@@ -482,6 +485,52 @@ describe('renaming a conversation from its row', () => {
     expect(rows(el).some((row) => row.renaming)).toBe(false);
     // And the title is untouched: navigating away is not a commit.
     expect(el.sessions.sessions[0]?.title).toBe('renewal option');
+  });
+
+  it('shows a DELEGATE conversation on a cold load, and withholds its rename', async () => {
+    // Tempdoc 859 slice C PR-2, end to end through the real path: the list endpoint's synthesized
+    // row → the store → the merge → the projection → the rendered row. Before the two-store join
+    // this conversation had a complete durable record and no row anywhere, so the sidebar could not
+    // reach it; and the row it gets must not offer the one action its record cannot support.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve(
+              String(url).includes('/api/chat/conversations')
+                ? {
+                    sessions: [
+                      {
+                        sessionId: 'conv-delegate',
+                        shapeId: 'core.agent-run',
+                        createdAtMs: Date.parse('2026-08-13T09:00:00Z'),
+                        lastActiveAtMs: Date.parse('2026-08-13T09:30:00Z'),
+                        firstUserMessage: 'summarise the renewal folder',
+                        storeBacked: false,
+                      },
+                    ],
+                  }
+                : { results: [] },
+            ),
+        }),
+      ),
+    );
+    const el = await mount();
+    await loadConversations();
+    await el.updateComplete;
+    await sidebar(el).updateComplete;
+    for (const row of rows(el)) await row.updateComplete;
+
+    expect(el.sessions.sessions.map((s) => s.id)).toEqual(['conv-delegate']);
+    const row = rows(el)[0] as Sv3SessionRow;
+    expect(row.label).toBe('summarise the renewal folder');
+    expect(row.storeBacked).toBe(false);
+    expect(row.shadowRoot?.querySelector('[data-testid="sv3-session-row-rename"]')).toBeNull();
+    // The discard IS offered: deleting the conversation deletes its runs, which is its whole record.
+    expect(row.shadowRoot?.querySelector('[data-testid="sv3-session-row-remove"]')).not.toBeNull();
   });
 
   it('keeps the chosen title when the conversation takes another turn', async () => {

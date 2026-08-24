@@ -87,7 +87,7 @@ export class OverlayHost extends JfElement {
        from the viewport's bottom-left corner, which is exactly where the rail parks its bottom
        controls: Settings (button[data-surface-id="core.settings-surface"]) and the Help
        affordance ([data-help-affordance]), both pinned to the bottom of the rail column
-       (Shell.ts renderHelpButton / BOTTOM_RAIL_IDS). At left:1rem a docked panel started INSIDE
+       (Shell.ts renderHelpButton / renderSettingsButton). At left:1rem a docked panel started INSIDE
        that column and covered them outright — the same occlusion class round 7 measured for the
        top-right toast stack, and the reason 813 §5's aggregate card alone would not have been
        enough (a shorter panel still lands on the same two buttons).

@@ -363,6 +363,155 @@ public final class AgentRunStore {
   }
 
   /**
+   * Tempdoc 859 slice C PR-2 — the CONVERSATIONS this store backs, newest first: the run-side half of
+   * the two-store join {@code GET /api/chat/conversations} performs. A delegate run writes no
+   * {@code ConversationStore} row ({@code ConversationEngine.dispatchShapeDriven} never appends a
+   * message), so without this projection an agent-only conversation has a complete durable record and
+   * no index entry — the record exists and the sidebar has no door to it.
+   *
+   * <p>Runs are grouped by their persisted parent {@code conversationId} (the same join key
+   * {@link #listRunIdsByConversation} uses), so N runs of one conversation are ONE row. The scan is
+   * bounded the way {@link #listSessions} is: directories are visited newest-mtime first and the walk
+   * stops as soon as a {@code limit + 1}-th DISTINCT conversation is reached. The cost is therefore
+   * the RUNS in that window, not {@code limit} metas — a conversation with many runs makes the window
+   * wider — but it is still bounded by recency rather than by everything on disk.
+   *
+   * <p>Each row is {@code {conversationId, createdAtMs, lastActiveAtMs, firstUserMessage, runCount}}.
+   * {@code createdAtMs} / {@code firstUserMessage} come from the OLDEST run seen for the conversation
+   * (the request that opened it) and {@code lastActiveAtMs} from the newest — both bounded by the
+   * scanned window, which is the same bound the row itself is under. There is deliberately no message
+   * count: counting a conversation's turns means projecting its whole event stream per row, per list
+   * request, which would defeat the recency bound this method is built around.
+   *
+   * <p>Sealed + locked ({@link #readMeta} returns null) lists NOTHING rather than failing — the same
+   * documented degradation the rest of this store's read surface has (629).
+   */
+  public synchronized List<Map<String, Object>> listConversations(int limit) {
+    if (!isEnabled()) {
+      return List.of();
+    }
+    int safeLimit = Math.max(1, limit);
+    var byConversation = new LinkedHashMap<String, Map<String, Object>>();
+    try (var stream = Files.list(rootDir)) {
+      List<Path> dirs =
+          stream
+              .filter(Files::isDirectory)
+              .sorted(
+                  java.util.Comparator.<Path, java.nio.file.attribute.FileTime>comparing(
+                          p -> {
+                            try {
+                              return Files.getLastModifiedTime(p);
+                            } catch (IOException e) {
+                              return java.nio.file.attribute.FileTime.fromMillis(0);
+                            }
+                          })
+                      .reversed())
+              .toList();
+      for (Path dir : dirs) {
+        Map<String, Object> meta = readMeta(dir.getFileName().toString());
+        if (meta == null || !isAgentRun(meta)) {
+          continue;
+        }
+        if (!(meta.get("conversationId") instanceof String conversationId)
+            || conversationId.isBlank()) {
+          continue; // a standalone run is its own thread; it is not a conversation of the sidebar's
+        }
+        Map<String, Object> row = byConversation.get(conversationId);
+        if (row == null) {
+          if (byConversation.size() >= safeLimit) {
+            break; // the limit is reached and this is a NEW conversation: stop reading metas
+          }
+          byConversation.put(conversationId, newConversationRow(conversationId, meta));
+        } else {
+          foldRunIntoConversation(row, meta);
+        }
+      }
+    } catch (IOException e) {
+      LOG.warn("Failed to list run-backed conversations in {}", rootDir, e);
+      return List.of();
+    }
+    return List.copyOf(byConversation.values());
+  }
+
+  private static Map<String, Object> newConversationRow(
+      String conversationId, Map<String, Object> meta) {
+    var row = new LinkedHashMap<String, Object>();
+    row.put("conversationId", conversationId);
+    row.put("createdAtMs", epochMillis(meta.get("startedAt")));
+    row.put("lastActiveAtMs", epochMillis(meta.get("updatedAt")));
+    row.put("firstUserMessage", derivePreview(meta));
+    row.put("runCount", 1);
+    return row;
+  }
+
+  /**
+   * Fold a SECOND run of an already-seen conversation into its row: the conversation started when its
+   * earliest run did and was last active when its latest run was. The preview follows the earliest
+   * run, because the conversation's label is the request that OPENED it, not its most recent one.
+   */
+  private static void foldRunIntoConversation(Map<String, Object> row, Map<String, Object> meta) {
+    long started = epochMillis(meta.get("startedAt"));
+    long updated = epochMillis(meta.get("updatedAt"));
+    long knownStart = (Long) row.get("createdAtMs");
+    if (started > 0 && (knownStart == 0 || started < knownStart)) {
+      row.put("createdAtMs", started);
+      row.put("firstUserMessage", derivePreview(meta));
+    }
+    if (updated > (Long) row.get("lastActiveAtMs")) {
+      row.put("lastActiveAtMs", updated);
+    }
+    row.put("runCount", (Integer) row.get("runCount") + 1);
+  }
+
+  /** An ISO-8601 run timestamp as epoch millis, or {@code 0} when it is absent or unparseable. */
+  private static long epochMillis(Object isoTimestamp) {
+    if (!(isoTimestamp instanceof String s) || s.isBlank()) {
+      return 0L;
+    }
+    try {
+      return Instant.parse(s).toEpochMilli();
+    } catch (java.time.format.DateTimeParseException e) {
+      return 0L;
+    }
+  }
+
+  /**
+   * Tempdoc 859 slice C PR-2 — delete every run directory belonging to {@code conversationId}, and
+   * return how many were removed.
+   *
+   * <p>This is the capability that makes a run-backed sidebar row's action set COMPLETE. A row the
+   * list synthesizes from this store has no {@code ConversationStore} session to delete, so without
+   * this the list would only ever grow. It is a real capability rather than a shim precisely because
+   * this store owns those directories.
+   *
+   * <p><b>Every run of the conversation goes, whatever its shape</b> — agent runs, workflow runs,
+   * search events. That is deliberately BROADER than {@link #listConversations}, which lists agent
+   * runs only: deleting a conversation means destroying the conversation, and {@code GET
+   * /api/thread/{id}} projects EVERY shape joined on this {@code conversationId}. Filtering to the
+   * agent shape here would leave the thread endpoint serving content for a conversation the reader
+   * deleted and the list no longer shows — a deleted conversation that is still readable.
+   *
+   * <p>Fails CLOSED while sealed + locked: {@link #listRunIdsByConversation} reads each run's meta to
+   * find the join key, and a locked store returns none — so nothing is deleted rather than
+   * everything. Irreversible: the run's meta AND its event log go with the directory.
+   */
+  public synchronized int deleteConversationRuns(String conversationId) {
+    if (!isEnabled() || conversationId == null || conversationId.isBlank()) {
+      return 0;
+    }
+    int deleted = 0;
+    for (String runId : listRunIdsByConversation(conversationId)) {
+      try {
+        DiagnosticFileRetention.deleteDirectoryTree(runDir(runId));
+        deleted++;
+      } catch (IOException e) {
+        LOG.warn("Failed to delete run {} of conversation {}", runId, conversationId, e);
+      }
+    }
+    return deleted;
+  }
+
+  /**
    * Tempdoc 561 P-D2 — mark a run as a BACKGROUND (non-interactive) run, so the presence axis can
    * distinguish work that proceeded without a watcher (the render-on-return inbox source). Patches the
    * one durable record; {@link #updateCheckpoint} reads-then-writes so it preserves this flag, and a

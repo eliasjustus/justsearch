@@ -576,19 +576,34 @@ export class SecuritySurface extends JfElement {
         font-size: var(--font-size-sm);
         color: var(--text-secondary);
       }
-      .section {
-        padding: 1rem;
-        background: var(--surface-secondary);
-        border: 1px solid var(--border-subtle);
-        border-radius: 0.5rem;
+      /* Tempdoc 855 §15.1 — the flat row idiom (T1), matching SettingsSurface's restyle so the
+         window ships one visual dialect (this section now renders INSIDE the settings window).
+         Fix-round F2 — renderAtRestCard() (atRestCard.ts) renders <div class="card section">:
+         a card SHARED with HealthSurface (atRestCardStyles' .card rule gives it full chrome).
+         An unqualified .section here comes later in this element's static styles array than
+         atRestCardStyles, so at equal specificity it WINS the cascade and clobbers that chrome —
+         and since the at-rest card is the FIRST child of .body, an unconditional divider also
+         drew a spurious top border above the very first section. :not(.card) excludes the shared
+         card from Security's OWN flat treatment; :not(:first-child) (mirroring SettingsSurface's
+         .section:not(:first-child) above) keeps the divider off whichever section renders first. */
+      .section:not(.card) {
+        padding: 0;
+        background: transparent;
+        border: none;
+        border-radius: 0;
+      }
+      .section:not(.card):not(:first-child) {
+        margin-top: 1.5rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid var(--border-subtle);
       }
       .section h3 {
-        margin: 0 0 0.5rem 0;
-        font-size: var(--font-size-xs);
-        font-weight: 600;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-        color: var(--text-secondary);
+        margin: 0 0 0.75rem 0;
+        font-size: var(--font-size-md);
+        font-weight: 700;
+        letter-spacing: normal;
+        text-transform: none;
+        color: var(--text-primary);
         display: flex;
         align-items: center;
         gap: 0.4rem;

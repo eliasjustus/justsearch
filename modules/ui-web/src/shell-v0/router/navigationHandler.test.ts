@@ -387,3 +387,239 @@ describe('NavigationHandler — handler-tier invariants', () => {
     },
   );
 });
+
+describe('NavigationHandler — MODAL placement (tempdoc 855 §11.1)', () => {
+  const MODAL_ID = 'core.settings-surface';
+  const STAGE_ID = 'core.search-surface';
+
+  /** Placement lookup with exactly one MODAL target — everything else takes the normal path. */
+  const placementOf = (id: string): string => (id === MODAL_ID ? 'MODAL' : 'RAIL');
+
+  it('does NOT call setActiveSurface for a MODAL target (the Stage must not mount it)', async () => {
+    const setActive = vi.fn();
+    const handler = createNavigationHandler({
+      setActiveSurface: setActive,
+      isKnownSurface: () => true,
+      getPlacement: placementOf,
+      openModal: () => undefined,
+    });
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: {} });
+
+    expect(setActive).not.toHaveBeenCalled();
+  });
+
+  it(
+    'does NOT activate the projector — the CURRENT surface keeps its URL projection ' +
+      '(the activateProjection teardown trap)',
+    async () => {
+      registerSurfaceStateSchema(STAGE_ID, {
+        schema: JSON.stringify({ type: 'object', properties: {} }),
+        bindings: [],
+      });
+      const handler = createNavigationHandler({
+        setActiveSurface: () => undefined,
+        isKnownSurface: () => true,
+        getPlacement: placementOf,
+        openModal: () => undefined,
+      });
+
+      // The stage surface owns the projector...
+      await handler.handle({ kind: 'navigate', target: STAGE_ID, state: {} });
+      expect(__activeSurfaceIdForTest()).toBe(STAGE_ID);
+
+      // ...and opening the MODAL surface must leave it owning it. activateProjection tears the
+      // current projection down BEFORE its own schema check, so calling it here would reset this
+      // to null and silently kill the stage surface's live URL sync.
+      await handler.handle({ kind: 'navigate', target: MODAL_ID, state: {} });
+      expect(__activeSurfaceIdForTest()).toBe(STAGE_ID);
+    },
+  );
+
+  it('still pushes the address (the window URL is bookmarkable; Back is meaningful)', async () => {
+    const pushSpy = vi.spyOn(window.history, 'pushState');
+    const handler = createNavigationHandler({
+      setActiveSurface: () => undefined,
+      isKnownSurface: () => true,
+      getPlacement: placementOf,
+      openModal: () => undefined,
+    });
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: {} });
+
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+    expect(pushSpy.mock.calls[0]![2]).toContain(`justsearch://surface/${MODAL_ID}`);
+    pushSpy.mockRestore();
+  });
+
+  it('honors push:false for a MODAL target (the popstate flow must not grow history)', async () => {
+    const pushSpy = vi.spyOn(window.history, 'pushState');
+    const openModal = vi.fn();
+    const handler = createNavigationHandler({
+      setActiveSurface: () => undefined,
+      isKnownSurface: () => true,
+      getPlacement: placementOf,
+      openModal,
+    });
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: {} }, { push: false });
+
+    expect(pushSpy).not.toHaveBeenCalled();
+    // 855 §11.1 D4 — nothing was pushed, so the opener is told so: closing must NOT history.back().
+    expect(openModal).toHaveBeenCalledWith(MODAL_ID, {}, { pushed: false });
+    pushSpy.mockRestore();
+  });
+
+  it('opens the window with the target id, its state, and pushed:true', async () => {
+    const openModal = vi.fn();
+    const handler = createNavigationHandler({
+      setActiveSurface: () => undefined,
+      isKnownSurface: () => true,
+      getPlacement: placementOf,
+      openModal,
+    });
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: { category: 'privacy' } });
+
+    expect(openModal).toHaveBeenCalledWith(MODAL_ID, { category: 'privacy' }, { pushed: true });
+  });
+
+  // D3 — the duplicate-entry defect: a repeat navigation to the address we are already on used to
+  // stack a SECOND settings entry, so the window's history.back() landed on the settings address
+  // again and Escape appeared to re-open the window.
+  it('does NOT push a duplicate entry when the current address already targets the MODAL surface', async () => {
+    const openModal = vi.fn();
+    const handler = createNavigationHandler({
+      setActiveSurface: () => undefined,
+      isKnownSurface: () => true,
+      getPlacement: placementOf,
+      openModal,
+    });
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: {} });
+    const pushSpy = vi.spyOn(window.history, 'pushState');
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: {} });
+
+    expect(pushSpy).not.toHaveBeenCalled();
+    expect(openModal).toHaveBeenCalledTimes(2);
+    expect(openModal.mock.calls[0]![2]).toEqual({ pushed: true });
+    expect(openModal.mock.calls[1]![2]).toEqual({ pushed: false });
+    pushSpy.mockRestore();
+  });
+
+  it('reports pushed:false for a boot/deep-link entry (the location ALREADY is the MODAL address)', async () => {
+    window.history.replaceState(null, '', `/#justsearch://surface/${MODAL_ID}`);
+    const pushSpy = vi.spyOn(window.history, 'pushState');
+    const openModal = vi.fn();
+    const handler = createNavigationHandler({
+      setActiveSurface: () => undefined,
+      isKnownSurface: () => true,
+      getPlacement: placementOf,
+      openModal,
+    });
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: {} });
+
+    expect(pushSpy).not.toHaveBeenCalled();
+    expect(openModal).toHaveBeenCalledWith(MODAL_ID, {}, { pushed: false });
+    pushSpy.mockRestore();
+  });
+
+  it('DOES push when the current address targets a DIFFERENT surface', async () => {
+    const openModal = vi.fn();
+    const handler = createNavigationHandler({
+      setActiveSurface: () => undefined,
+      isKnownSurface: () => true,
+      getPlacement: placementOf,
+      openModal,
+    });
+
+    await handler.handle({ kind: 'navigate', target: STAGE_ID, state: {} });
+    const pushSpy = vi.spyOn(window.history, 'pushState');
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: {} });
+
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+    expect(openModal).toHaveBeenCalledWith(MODAL_ID, {}, { pushed: true });
+    pushSpy.mockRestore();
+  });
+
+  it('still distributes state for a MODAL target that declares a schema (forward-safety)', async () => {
+    const { adapter, restored } = buildAdapter('settings');
+    registerStore(adapter);
+    registerSurfaceStateSchema(MODAL_ID, {
+      schema: JSON.stringify({
+        type: 'object',
+        properties: { category: { type: 'string' } },
+      }),
+      bindings: [{ schemaPath: '/category', storeId: 'settings', storeKey: 'category' }],
+    });
+    const handler = createNavigationHandler({
+      setActiveSurface: () => undefined,
+      isKnownSurface: () => true,
+      getPlacement: placementOf,
+      openModal: () => undefined,
+    });
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: { category: 'privacy' } });
+
+    expect(restored).toEqual([{ category: 'privacy' }]);
+  });
+
+  it('skips the MODAL branch for an unknown target (recovery still wins)', async () => {
+    const openModal = vi.fn();
+    const unknownSpy = vi.fn();
+    const handler = createNavigationHandler({
+      setActiveSurface: () => undefined,
+      isKnownSurface: () => false,
+      getPlacement: () => 'MODAL',
+      openModal,
+      onUnknownSurface: unknownSpy,
+    });
+
+    await handler.handle({ kind: 'navigate', target: 'core.ghost-surface', state: {} });
+
+    expect(openModal).not.toHaveBeenCalled();
+    expect(unknownSpy).toHaveBeenCalledWith('core.ghost-surface');
+  });
+
+  it('REGRESSION: a non-MODAL target keeps the full normal path', async () => {
+    registerSurfaceStateSchema(STAGE_ID, {
+      schema: JSON.stringify({ type: 'object', properties: {} }),
+      bindings: [],
+    });
+    const setActive = vi.fn();
+    const openModal = vi.fn();
+    const pushSpy = vi.spyOn(window.history, 'pushState');
+    const handler = createNavigationHandler({
+      setActiveSurface: setActive,
+      isKnownSurface: () => true,
+      getPlacement: placementOf,
+      openModal,
+    });
+
+    await handler.handle({ kind: 'navigate', target: STAGE_ID, state: {} });
+
+    expect(setActive).toHaveBeenCalledWith(STAGE_ID);
+    expect(__activeSurfaceIdForTest()).toBe(STAGE_ID);
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+    expect(openModal).not.toHaveBeenCalled();
+    pushSpy.mockRestore();
+  });
+
+  it('REGRESSION: an absent getPlacement leaves every target on the normal path', async () => {
+    const setActive = vi.fn();
+    const openModal = vi.fn();
+    const handler = createNavigationHandler({
+      setActiveSurface: setActive,
+      isKnownSurface: () => true,
+      openModal,
+    });
+
+    await handler.handle({ kind: 'navigate', target: MODAL_ID, state: {} });
+
+    expect(setActive).toHaveBeenCalledWith(MODAL_ID);
+    expect(openModal).not.toHaveBeenCalled();
+  });
+});
