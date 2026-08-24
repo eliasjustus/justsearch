@@ -82,6 +82,24 @@ export function recordToolCall(item: UnifiedTurnItem): ToolCall {
 }
 
 /**
+ * Tempdoc 859 §A §1.8 — a record reasoning item's J/K landmark id, derived from the carrier's STABLE
+ * identity: `callId` for a tool row, the item's own id for everything else. That is `recordToolCall`'s
+ * own idiom (`a.callId ?? item.id`), and reusing it is the point — a tool item's `id` is the id of the
+ * LATEST lifecycle event the projection merged, so it changes as `proposed → started → completed`
+ * arrive. `concludeRun` refreshes the record at every run terminal, so an id derived from the merged
+ * item would move the active landmark out from under J/K exactly when a run ends. `callId` does not
+ * move.
+ *
+ * The `:think:` suffix is load-bearing for the same reason `:q` / `:a` / `:hold` are: the block rides
+ * on another event's identity and `jumpTo` resolves by FIRST match, so a duplicate id makes one of the
+ * two unreachable.
+ */
+function recordReasoningItemId(item: UnifiedTurnItem, index: number): string {
+  const callId = typeof item.attributes.callId === 'string' ? item.attributes.callId : item.id;
+  return `${callId}:think:${index}`;
+}
+
+/**
  * Tempdoc 847 §2.4 — a persisted assistant message's evidence, projected into the window's ONE
  * evidence record.
  *
@@ -259,7 +277,23 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
     // silently dropped if only the assistant arm looked. (Contrast `evidence`, deliberately
     // last-wins: the terminal message's retrieval is what the reader is looking at, whereas every
     // step's thinking really happened.)
-    turn.reasoning.push(...reasoningBlocksFromRecord(item.attributes.reasoning));
+    //
+    // Tempdoc 859 §A §1.3 — the SAME blocks also become ordered items, emitted HERE, before the item
+    // that carries them: the fold attaches a block to the next event that projects, so the block was
+    // produced before that event and belongs above it. Both collections are filled on every item and
+    // exactly one of them is kept at the end (below) — an agent turn renders the interleaved items,
+    // an ask turn the stack it has always rendered.
+    const blocks = reasoningBlocksFromRecord(item.attributes.reasoning);
+    turn.reasoning.push(...blocks);
+    blocks.forEach((block, index) => {
+      turn.activity.push({
+        kind: 'reasoning',
+        id: recordReasoningItemId(item, index),
+        text: block.text,
+        durationMs: block.durationMs,
+        streaming: false,
+      });
+    });
     if (item.kind === 'assistant') {
       turn.answers.push(item.content);
       turn.activity.push({ kind: 'text', id: item.id, text: item.content });
@@ -289,7 +323,13 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
 
   return built.map((turn) => {
     // A turn is "an agent run" exactly when the record shows it doing something other than talking.
-    const agent = turn.activity.some((entry) => entry.kind !== 'text');
+    //
+    // Tempdoc 859 §A §3.5 — stated as the ALLOW-list it always meant, not as "not text". Reasoning is
+    // now an activity item and an ordinary grounded ask turn records plenty of it, so `!== 'text'`
+    // would flip every thinking ask turn to `agent` — which drops its activity list, swaps its render
+    // arm and hides its sources. That is the same class 847 §2.4.4 already fixed once for
+    // `panelSpeaks`: a fact must be gated on itself, not on a classification that merely correlates.
+    const agent = turn.activity.some((entry) => entry.kind === 'tool' || entry.kind === 'note');
     return {
       id: turn.id,
       // Tempdoc 847 §2.4.3 — the RECORD's own id for this turn, carried as its own field. It is the
@@ -325,7 +365,11 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       // observed — so a cold-loaded turn shows no frame line instead of one built from invented
       // numbers.
       standaloneQuestion: '',
-      reasoning: turn.reasoning,
+      // Tempdoc 859 §A §1.9 — ROUTED, not both. An agent turn's thinking is in `activity`, in the
+      // position it was produced; rendering the stack as well would put every block on screen twice
+      // and put the wall back above the feed that replaced it. An ask turn has one thought and one
+      // answer — no chronology to lose — so it keeps the stack it has always had.
+      reasoning: agent ? [] : turn.reasoning,
       durationMs: null,
       modelLabel: null,
       // Tempdoc 859 §D §2.6 — carried, not seeded empty. Unlike the rewrite note and the receipt

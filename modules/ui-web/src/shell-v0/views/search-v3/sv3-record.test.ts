@@ -157,6 +157,11 @@ describe('a record becomes turns, bracketed by the user messages', () => {
   it('keeps the thinking a FAILED run recorded on its terminal error event (848 D-7)', () => {
     // The agent fold attaches a halted/errored run's trailing blocks to its ERROR event. Reading
     // reasoning only off assistant items would drop exactly the case where the thinking matters most.
+    //
+    // Tempdoc 859 §A §1.9 — the turn is an AGENT turn (an error is activity), so its thinking is
+    // routed into `activity` as an ordered item and `reasoning` is empty: one authority per turn
+    // kind, never both. The block still survives, which is what D-7 was about — it survives IN
+    // POSITION now, immediately above the error it preceded.
     clock = 0;
     const [turn] = project([
       event('e1', 'USER_MESSAGE', 'do the thing'),
@@ -165,7 +170,109 @@ describe('a record becomes turns, bracketed by the user messages', () => {
       }),
     ]);
     expect(turn?.status).toBe('failed');
-    expect(turn?.reasoning).toEqual([{ text: 'got as far as the lock table', durationMs: 700 }]);
+    expect(turn?.kind).toBe('agent');
+    expect(turn?.reasoning).toEqual([]);
+    expect(turn?.activity.map((item) => item.kind)).toEqual(['reasoning', 'note']);
+    const [think] = turn!.activity;
+    expect(think).toMatchObject({
+      kind: 'reasoning',
+      text: 'got as far as the lock table',
+      durationMs: 700,
+      streaming: false,
+    });
+  });
+
+  it('R-1: an agent turn’s thinking becomes ORDERED ITEMS, and the stack is emptied', () => {
+    // The A1 fix, at the record end: the block rides the carrier the fold attached it to, so it
+    // renders immediately above the step it produced instead of in a wall above the whole run.
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'index the vendor folder'),
+      event('e2', 'TOOL_ACTIVITY', '', {
+        callId: 'c1',
+        toolName: 'core_search',
+        status: 'completed',
+        reasoning: [{ text: 'search first', durationMs: 900 }],
+      }),
+      event('e3', 'ASSISTANT_MESSAGE', 'Indexed.', {
+        reasoning: [{ text: 'that is enough to answer', durationMs: 400 }],
+      }),
+    ]);
+    expect(turn?.kind).toBe('agent');
+    expect(turn?.activity.map((i) => i.kind)).toEqual(['reasoning', 'tool', 'reasoning', 'text']);
+    // Routed, never both: the stack would draw every block a second time above the feed.
+    expect(turn?.reasoning).toEqual([]);
+  });
+
+  it('R-2: a reasoning item does NOT flip an ASK turn into an agent turn', () => {
+    // The highest-value right-reason guard in the set. The kind derivation used to read "activity
+    // has something that is not text", and an ordinary grounded ask turn records plenty of
+    // thinking — so a thinking ask turn would have swapped render arms and hidden its sources. Same
+    // class 847 §2.4.4 fixed once already for `panelSpeaks`.
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'why did the renewal fail?'),
+      event('e2', 'ASSISTANT_MESSAGE', 'It expired.', {
+        reasoning: [{ text: 'check the renewal log', durationMs: 700 }],
+      }),
+    ]);
+    expect(turn?.kind).toBe('ask');
+    expect(turn?.reasoning).toEqual([{ text: 'check the renewal log', durationMs: 700 }]);
+    expect(turn?.activity).toEqual([]);
+  });
+
+  it('R-3: a record reasoning id is STABLE across a refresh (D-2a)', () => {
+    // `concludeRun` refreshes the record at every run terminal, and the merged tool item's `id` is
+    // the LATEST lifecycle event's — so an id derived from it would move the active J/K landmark
+    // out from under the reader exactly when a run ends. `callId` does not move.
+    const proposedOnly: ThreadEvent[] = [
+      event('e1', 'USER_MESSAGE', 'q'),
+      event('c1:proposed', 'TOOL_ACTIVITY', '', {
+        callId: 'c1',
+        toolName: 'core_search',
+        status: 'proposed',
+        reasoning: [{ text: 'search first', durationMs: 900 }],
+      }),
+    ];
+    clock = 0;
+    const before = project(proposedOnly);
+    clock = 0;
+    const after = project([
+      ...proposedOnly.map((e) => ({ ...e })),
+      event('c1:started', 'TOOL_ACTIVITY', '', { callId: 'c1', status: 'executing' }),
+      event('c1:completed', 'TOOL_ACTIVITY', '', { callId: 'c1', status: 'completed', success: true }),
+    ]);
+    const idOf = (turns: readonly { activity: readonly { kind: string; id: string }[] }[]): string =>
+      turns[0]!.activity.find((i) => i.kind === 'reasoning')!.id;
+    expect(idOf(before)).toBe('c1:think:0');
+    expect(idOf(after)).toBe(idOf(before));
+    // …and the block itself survived the merge, which is the other half of the same refresh.
+    expect(after[0]?.activity.filter((i) => i.kind === 'reasoning')).toHaveLength(1);
+  });
+
+  it('R-3b: two blocks on two lifecycle events of ONE call both survive the merge (M-7)', () => {
+    // The FE half of the collision: the tool merge is a later-wins attribute union, so without an
+    // explicit array-union for `reasoning` the earlier block is silently dropped.
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'q'),
+      event('c1:proposed', 'TOOL_ACTIVITY', '', {
+        callId: 'c1',
+        toolName: 'core_search',
+        status: 'proposed',
+        reasoning: [{ text: 'I should search', durationMs: 100 }],
+      }),
+      event('c1:completed', 'TOOL_ACTIVITY', '', {
+        callId: 'c1',
+        status: 'completed',
+        success: true,
+        reasoning: [{ text: 'and I should widen it', durationMs: 200 }],
+      }),
+    ]);
+    const texts = turn!.activity
+      .filter((i) => i.kind === 'reasoning')
+      .map((i) => (i as { text: string }).text);
+    expect(texts).toEqual(['I should search', 'and I should widen it']);
   });
 
   it('drops a malformed reasoning payload rather than rendering half a block', () => {

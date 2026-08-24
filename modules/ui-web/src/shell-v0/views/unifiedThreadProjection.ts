@@ -272,9 +272,21 @@ export function projectUnifiedThread(events: ReadonlyArray<ThreadEvent>): Unifie
         mergedToolByCall.set(callId, { ...e, attributes: { ...e.attributes } });
       } else {
         const base = toMillis(e.occurredAt) >= toMillis(prior.occurredAt) ? e : prior;
+        // Tempdoc 859 §A §1.3 — `reasoning` is UNIONED, not overwritten. The attribute merge is
+        // later-wins, which is right for `status` and wrong for this: the record fold can attach a
+        // block to two different lifecycle events of the SAME callId (a region cut before `proposed`
+        // and another cut before `completed`), and later-wins would silently drop the earlier one.
+        const reasoning = [
+          ...(Array.isArray(prior.attributes.reasoning) ? prior.attributes.reasoning : []),
+          ...(Array.isArray(e.attributes.reasoning) ? e.attributes.reasoning : []),
+        ];
         mergedToolByCall.set(callId, {
           ...base,
-          attributes: { ...prior.attributes, ...e.attributes },
+          attributes: {
+            ...prior.attributes,
+            ...e.attributes,
+            ...(reasoning.length > 0 ? { reasoning } : {}),
+          },
         });
       }
     } else {
@@ -359,7 +371,12 @@ export interface LiveConversationEntry {
     // the controller on a `directive_acknowledged` event. A POINT human-origin run event (not a span,
     // so NOT a RunSegmentRef origin): it projects to a `progress`/`originator:'user'` item the spine
     // shows as a human landmark and the body renders as a "Your direction: …" chip.
-    | 'steer-directive';
+    | 'steer-directive'
+    // Tempdoc 859 §A §1.1 — a closed reasoning region. Declared here because `ConversationEntry` must
+    // stay structurally assignable to this type (see the doc above) and the switch below has no
+    // exhaustiveness guard, so omitting it would break `typecheck` at every call site rather than
+    // failing legibly here — and the deliberate skip below would read as an oversight.
+    | 'reasoning';
   readonly content: string;
   readonly callIds?: readonly string[];
   readonly errorCode?: string;
@@ -374,6 +391,8 @@ export interface LiveConversationEntry {
   readonly nodeId?: string;
   readonly nodeKind?: string;
   readonly nodeLabel?: string;
+  /** Tempdoc 859 §A — a `reasoning` entry's measured duration (see `ConversationEntry.durationMs`). */
+  readonly durationMs?: number;
   // Tempdoc 585 §D Phase 2 (D2) — multi-agent handoff identity, projected into the handoff item's
   // attributes so <jf-handoff-card> renders the structured "from → to" row (was flat text).
   readonly fromAgentId?: string;
@@ -522,6 +541,14 @@ export function projectLiveAgentActivity(
             label: e.nodeLabel,
           },
         });
+        break;
+      case 'reasoning':
+        // Tempdoc 859 §A §1.9 — DELIBERATELY SKIPPED, and named as a limit rather than left implicit.
+        // This window's LIVE reasoning render is controller-bound (`UnifiedChatView`'s streaming
+        // arm), so emitting a second, item-shaped copy here would draw the same thinking twice while
+        // a run streams. Widening the legacy window's live path is out of slice A's scope; its
+        // RECORD path does carry these blocks (they ride `attributes.reasoning` on the projected
+        // items, which `renderUnifiedItem` now reads above its kind switch).
         break;
     }
   }

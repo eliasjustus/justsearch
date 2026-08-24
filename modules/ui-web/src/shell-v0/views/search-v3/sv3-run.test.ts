@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The Search v3 run model's semantics (tempdoc 822 Phase F2).
  *
@@ -32,6 +33,7 @@ import {
   type Sv3RunSource,
 } from './sv3-run.js';
 import type { ConversationEntry, ToolCall } from '../../controllers/AgentSessionController.js';
+import { ReasoningController } from '../../controllers/ReasoningController.js';
 
 const entry = (over: Partial<ConversationEntry> & Pick<ConversationEntry, 'type'>): ConversationEntry => ({
   id: `e-${Math.random().toString(36).slice(2)}`,
@@ -61,6 +63,10 @@ const source = (over: Partial<Sv3RunSource> = {}): Sv3RunSource => ({
   iterationsUsed: 0,
   toolCallsExecuted: 0,
   budgetUpdates: [],
+  // Tempdoc 859 §A — a real controller, not a stub: the trailing live-region item is derived from
+  // its actual state machine, and a hand-rolled `{isThinking:true}` would let the projection pass
+  // against a shape the controller can no longer produce.
+  reasoning: new ReasoningController(() => {}),
   ...over,
 });
 
@@ -286,6 +292,80 @@ describe('the feed is ONE projection the receipt counts', () => {
       'context',
       'approval',
     ]);
+  });
+
+  it('F-1: reasoning is INTERLEAVED, in conversation order, not lifted into a lane', () => {
+    const feed = projectSv3RunFeed(
+      source({
+        conversation: [
+          entry({ type: 'user', content: 'find the renewals' }),
+          entry({ type: 'reasoning', content: 'search first', durationMs: 900 }),
+          entry({ type: 'tool-call-group', callIds: ['c1'] }),
+          entry({ type: 'reasoning', content: 'now read it', durationMs: 400 }),
+          entry({ type: 'assistant-text', content: 'It expired.' }),
+        ],
+        toolCalls: { c1: call({ callId: 'c1' }) },
+      }),
+      0,
+    );
+    // The SEQUENCE, not the membership: a projection that appended both thoughts at the end would
+    // pass a membership assertion and still draw the wall this slice removes.
+    expect(feed.items.map((i) => i.kind)).toEqual(['reasoning', 'tool', 'reasoning', 'text']);
+    expect(feed.items[0]).toMatchObject({ text: 'search first', durationMs: 900, streaming: false });
+  });
+
+  it('F-2: only the OPEN region is streaming — every closed one is settled (the A3 regression)', () => {
+    const live = new ReasoningController(() => {});
+    live.handleReasoningChunk({ text: 'still working' });
+    const feed = projectSv3RunFeed(
+      source({
+        conversation: [
+          entry({ type: 'reasoning', content: 'a finished thought', durationMs: 3000 }),
+          entry({ type: 'tool-call-group', callIds: ['c1'] }),
+        ],
+        toolCalls: { c1: call({ callId: 'c1' }) },
+        reasoning: live,
+      }),
+      0,
+    );
+    const reasoning = feed.items.filter((i) => i.kind === 'reasoning');
+    expect(reasoning.map((i) => i.kind === 'reasoning' && i.streaming)).toEqual([false, true]);
+    // The open region is LAST — it is by definition the newest thing the run has produced, which is
+    // what makes "only the newest can be live" true by construction rather than by suppression.
+    expect(feed.items.at(-1)).toMatchObject({ kind: 'reasoning', streaming: true, text: 'still working' });
+  });
+
+  it('F-2b: a region that has produced output is still shown, but no longer as live', () => {
+    const live = new ReasoningController(() => {});
+    live.handleReasoningChunk({ text: 'mid-coalesce' });
+    live.markOutput();
+    const feed = projectSv3RunFeed(source({ reasoning: live }), 0);
+    expect(feed.items).toHaveLength(1);
+    expect(feed.items[0]).toMatchObject({ kind: 'reasoning', streaming: false });
+  });
+
+  it('F-3: toolCallCount ignores reasoning items', () => {
+    const feed = projectSv3RunFeed(
+      source({
+        conversation: [
+          entry({ type: 'reasoning', content: 'thinking', durationMs: 1 }),
+          entry({ type: 'tool-call-group', callIds: ['c1'] }),
+        ],
+        toolCalls: { c1: call({ callId: 'c1' }) },
+      }),
+      0,
+    );
+    expect(feed.toolCallCount).toBe(1);
+  });
+
+  it('F-4: a reasoning entry is NOT a note — it must not fall through to "Step"', () => {
+    const feed = projectSv3RunFeed(
+      source({ conversation: [entry({ type: 'reasoning', content: 'a thought', durationMs: 5 })] }),
+      0,
+    );
+    expect(feed.items).toHaveLength(1);
+    expect(feed.items[0]?.kind).toBe('reasoning');
+    expect(feed.items.some((i) => i.kind === 'note')).toBe(false);
   });
 
   it('says a run receipt in words, with stopped-by-you as an OUTCOME and not an error', () => {

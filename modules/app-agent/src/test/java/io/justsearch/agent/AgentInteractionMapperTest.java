@@ -248,36 +248,204 @@ final class AgentInteractionMapperTest {
         "reasoning is folded onto a turn, never emitted per chunk");
   }
 
+  private static InteractionEvent onlyOfKind(
+      List<InteractionEvent> events, InteractionEventKind kind) {
+    return events.stream().filter(e -> e.kind() == kind).findFirst().orElseThrow();
+  }
+
+  private static InteractionEvent byId(List<InteractionEvent> events, String id) {
+    return events.stream().filter(e -> e.id().equals(id)).findFirst().orElseThrow();
+  }
+
+  private static List<String> blockTexts(InteractionEvent event) {
+    return blocksOf(event).stream().map(b -> String.valueOf(b.get("text"))).toList();
+  }
+
   @Test
-  @DisplayName("848 §2.4: a step boundary CUTS a block; the fold attaches both to the answer turn")
-  void reasoningFoldsIntoPerStepBlocks() {
+  @DisplayName(
+      "859 §A M-1: a budget_update between the reasoning and the tool cannot swallow the block —"
+          + " it flushes onto the TOOL, not the answer")
+  void blockFlushesOntoTheNextEventThatProjects() {
+    // THE case the superseded rule could not express (D-1). `budget_update` is emitted the instant
+    // each LLM stream ends — i.e. between the reasoning and the tool call it produced — and this
+    // projection DROPS it (`fromRunEvent` has no case for it). So "attach the block to the event that
+    // cut it" names a carrier that does not exist downstream, and the rule this replaces
+    // ("re-target onto the next ASSISTANT_MESSAGE") piled every block onto the terminal answer.
+    //
+    // This test replaces `reasoningFoldsIntoPerStepBlocks` (848 §2.4): SAME fold, SAME durations,
+    // new carrier. Its old assertion — both blocks on the answer — is the defect, not the contract.
     List<InteractionEvent> events =
         AgentInteractionMapper.fromRunEvents(
             List.of(
                 reasoningAt("2026-01-01T00:00:01Z", "first "),
                 reasoningAt("2026-01-01T00:00:02Z", "thought"),
-                at("2026-01-01T00:00:04Z", "tool_exec_completed", Map.of("callId", "c1", "success", true)),
-                reasoningAt("2026-01-01T00:00:06Z", "second thought"),
+                at("2026-01-01T00:00:04Z", "budget_update", Map.of("phase", "llm_response")),
+                at("2026-01-01T00:00:05Z", "tool_call_proposed",
+                    Map.of("callId", "c1", "toolName", "core_search")),
+                at("2026-01-01T00:00:06Z", "tool_exec_completed",
+                    Map.of("callId", "c1", "success", true)),
+                reasoningAt("2026-01-01T00:00:07Z", "second thought"),
+                at("2026-01-01T00:00:08Z", "budget_update", Map.of("phase", "llm_response")),
                 at("2026-01-01T00:00:09Z", "done", Map.of("finalResponse", "the answer"))),
             CONV);
 
-    InteractionEvent answer =
-        events.stream()
-            .filter(e -> e.kind() == InteractionEventKind.ASSISTANT_MESSAGE)
-            .findFirst()
-            .orElseThrow();
-    List<Map<String, Object>> blocks = blocksOf(answer);
-    assertEquals(2, blocks.size(), "the tool step cut the first block from the second");
-    assertEquals("first thought", blocks.get(0).get("text"));
-    assertEquals("second thought", blocks.get(1).get("text"));
+    InteractionEvent tool = byId(events, "c1:proposed");
+    assertEquals(List.of("first thought"), blockTexts(tool), "block 1 rides the step it produced");
+    InteractionEvent answer = onlyOfKind(events, InteractionEventKind.ASSISTANT_MESSAGE);
+    assertEquals(
+        List.of("second thought"),
+        blockTexts(answer),
+        "and ONLY the block that preceded the answer is on the answer");
     // §2.1's ONE duration semantic: first reasoning token → first NON-reasoning output that follows.
-    // Measured to the tool event (3000ms), NOT to the block's own last chunk (which would say 1000ms,
-    // and 0ms for any single-chunk block).
-    assertEquals(3000L, ((Number) blocks.get(0).get("durationMs")).longValue());
-    assertEquals(3000L, ((Number) blocks.get(1).get("durationMs")).longValue());
+    // Measured to the budget_update (3000ms), NOT to the block's own last chunk (1000ms) and NOT to
+    // the carrier it ends up on.
+    assertEquals(3000L, ((Number) blocksOf(tool).get(0).get("durationMs")).longValue());
+    assertEquals(1000L, ((Number) blocksOf(answer).get(0).get("durationMs")).longValue());
     // A-3: the attributes were reconstructed, not mutated — `InteractionEvent` copies them
     // immutably, so a `put` on the delegate's map would have thrown before reaching this line.
     assertEquals("the answer", answer.content());
+  }
+
+  @Test
+  @DisplayName("859 §A M-2: a mid-run progress event cuts the block and cannot carry it — it is held")
+  void blockCutByANonProjectingProgressEventIsNotDropped() {
+    // The second shape with no carrier: `progress` cuts (it is a genuine step boundary) and projects
+    // nothing on the agent plane. Under the superseded rule the block had nowhere to go at the cut;
+    // if an implementation attached it there instead of holding it, this run would render no
+    // thinking at all.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "half a plan"),
+                at("2026-01-01T00:00:02Z", "progress", Map.of("phase", "llm_call")),
+                at("2026-01-01T00:00:03Z", "chunk", Map.of("text", "the ")),
+                at("2026-01-01T00:00:04Z", "done", Map.of("finalResponse", "the answer"))),
+            CONV);
+
+    assertEquals(1, events.size(), "progress and chunk are both transient");
+    assertEquals(List.of("half a plan"), blockTexts(events.get(0)));
+  }
+
+  @Test
+  @DisplayName("859 §A M-3: chunk transparency survives a non-projecting cut — exactly ONE block")
+  void chunkTransparencyAcrossANonProjectingCut() {
+    // 848's measured five-region shape, with the real journal's `budget_update` in it. `== 1`, not
+    // `>= 1`: a fold that shattered the step into two would also pass a `>=` assertion.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "part one "),
+                at("2026-01-01T00:00:02Z", "chunk", Map.of("text", "VISIBLE ANSWER TEXT")),
+                reasoningAt("2026-01-01T00:00:03Z", "part two"),
+                at("2026-01-01T00:00:04Z", "budget_update", Map.of("phase", "llm_response")),
+                at("2026-01-01T00:00:05Z", "tool_call_proposed",
+                    Map.of("callId", "c1", "toolName", "grep"))),
+            CONV);
+
+    InteractionEvent tool = byId(events, "c1:proposed");
+    assertEquals(1, blocksOf(tool).size(), "one LLM step, one block");
+    assertEquals("part one part two", blocksOf(tool).get(0).get("text"), "visible text excluded");
+  }
+
+  @Test
+  @DisplayName("859 §A M-5: a journal whose LAST record is a reasoning_chunk still keeps the block")
+  void truncatedJournalKeepsItsTrailingBlock() {
+    // The only shape that reaches the trailing rule now — every other run flushes on the way past.
+    // A terminal-ERROR run no longer proves anything here, because the ordinary flush carries it.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                at("2026-01-01T00:00:01Z", "tool_call_proposed",
+                    Map.of("callId", "c1", "toolName", "grep")),
+                reasoningAt("2026-01-01T00:00:03Z", "the process died here")),
+            CONV);
+
+    assertEquals(1, events.size());
+    assertEquals(List.of("the process died here"), blockTexts(events.get(0)));
+  }
+
+  @Test
+  @DisplayName("859 §A M-5b: a trailing block APPENDS to a carrier that already carries one")
+  void trailingBlockAppendsRatherThanReplaces() {
+    // Reachable because the flush rule writes carriers far more often than the retarget rule did:
+    // the tool takes block 1 on the way past, and the trailing rule then targets the same (last)
+    // event with block 2. A `put` would silently drop the first.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "before the tool"),
+                at("2026-01-01T00:00:02Z", "tool_call_proposed",
+                    Map.of("callId", "c1", "toolName", "grep")),
+                reasoningAt("2026-01-01T00:00:03Z", "after the tool")),
+            CONV);
+
+    assertEquals(1, events.size());
+    assertEquals(List.of("before the tool", "after the tool"), blockTexts(events.get(0)));
+  }
+
+  @Test
+  @DisplayName("859 §A M-6: three tools, three regions — three separate carriers, never accumulated")
+  void everyStepCarriesItsOwnThinking() {
+    List<Map<String, Object>> records = new java.util.ArrayList<>();
+    for (int i = 1; i <= 3; i++) {
+      records.add(reasoningAt("2026-01-01T00:00:0" + (i * 2 - 1) + "Z", "thought " + i));
+      records.add(at("2026-01-01T00:00:0" + (i * 2) + "Z", "budget_update",
+          Map.of("phase", "llm_response")));
+      records.add(at("2026-01-01T00:00:0" + (i * 2) + "Z", "tool_call_proposed",
+          Map.of("callId", "c" + i, "toolName", "grep")));
+    }
+    records.add(at("2026-01-01T00:00:09Z", "done", Map.of("finalResponse", "the answer")));
+
+    List<InteractionEvent> events = AgentInteractionMapper.fromRunEvents(records, CONV);
+    for (int i = 1; i <= 3; i++) {
+      assertEquals(List.of("thought " + i), blockTexts(byId(events, "c" + i + ":proposed")));
+    }
+    assertTrue(
+        !onlyOfKind(events, InteractionEventKind.ASSISTANT_MESSAGE)
+            .attributes()
+            .containsKey("reasoning"),
+        "nothing accumulated onto the terminal answer");
+  }
+
+  @Test
+  @DisplayName("859 §A: handoff_proposed cuts on the PRODUCING agent's side of the boundary")
+  void handoffCutsOnTheProducingSide() {
+    // `handoff_proposed` projects nothing; `handoff_executed` does. So the outgoing agent's last
+    // thought lands on the HANDOFF line, which is the honest reading: the reader sees what the agent
+    // that was working thought, above the line saying the task moved.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "this needs the researcher"),
+                at("2026-01-01T00:00:02Z", "handoff_proposed",
+                    Map.of("fromAgentId", "primary", "toAgentId", "researcher", "reason", "scope")),
+                at("2026-01-01T00:00:03Z", "handoff_executed",
+                    Map.of("fromAgentId", "primary", "toAgentId", "researcher"))),
+            CONV);
+
+    InteractionEvent handoff = onlyOfKind(events, InteractionEventKind.HANDOFF);
+    assertEquals(List.of("this needs the researcher"), blockTexts(handoff));
+  }
+
+  @Test
+  @DisplayName("859 §A: a two-lifecycle-event tool call can carry a block on EACH (the FE unions them)")
+  void twoLifecycleEventsOfOneCallEachCarryABlock() {
+    // The producer half of M-7. The FE merges a call's lifecycle events by `callId` with a
+    // later-wins attribute union, so both halves have to exist before the union can be shown to
+    // preserve them (`unifiedThreadProjection.test.ts` asserts the other half).
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "I should search"),
+                at("2026-01-01T00:00:02Z", "tool_call_proposed",
+                    Map.of("callId", "c1", "toolName", "core_search")),
+                reasoningAt("2026-01-01T00:00:03Z", "and I should widen it"),
+                at("2026-01-01T00:00:04Z", "tool_exec_completed",
+                    Map.of("callId", "c1", "success", true))),
+            CONV);
+
+    assertEquals(List.of("I should search"), blockTexts(byId(events, "c1:proposed")));
+    assertEquals(List.of("and I should widen it"), blockTexts(byId(events, "c1:completed")));
   }
 
   @Test
@@ -303,6 +471,26 @@ final class AgentInteractionMapperTest {
                 .orElseThrow());
     assertEquals(1, blocks.size(), "one step, one block");
     assertEquals("part one part two", blocks.get(0).get("text"), "the visible text is excluded");
+  }
+
+  @Test
+  @DisplayName("859 §A M-4: durationMs still ends at the first output of ANY kind, not at the cut")
+  void durationEndsAtTheFirstOutputNotAtTheCut() {
+    // The 848 semantic is unchanged by the new carry rule, and it is worth pinning precisely because
+    // the block now travels: a fold that measured to the CARRIER would report 8s of thinking for a
+    // step that thought for 1s and then spent 7s streaming prose.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "a thought"),
+                at("2026-01-01T00:00:02Z", "chunk", Map.of("text", "prose")),
+                at("2026-01-01T00:00:09Z", "done", Map.of("finalResponse", "the answer"))),
+            CONV);
+
+    assertEquals(
+        1000L,
+        ((Number) blocksOf(events.get(0)).get(0).get("durationMs")).longValue(),
+        "measured to the first chunk, not to the terminal that carries the block");
   }
 
   @Test
