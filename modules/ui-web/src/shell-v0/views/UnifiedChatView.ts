@@ -5179,7 +5179,52 @@ export class UnifiedChatView extends JfElement {
     </div>`;
   }
 
+  /**
+   * Tempdoc 565 §3.A — the AGENT answer plane, discriminated on `sources`: the key present on
+   * exactly one of the two planes a persisted assistant message can belong to. Named once because
+   * TWO decisions read it (which assistant body to render, and — via
+   * {@link rendersReasoningItself} — where that item's thinking comes from), and a second inline
+   * copy of the test could disagree with this one.
+   */
+  private static isAgentAnswerRecord(it: UnifiedTurnItem): boolean {
+    return Array.isArray(it.attributes.sources) && it.attributes.sources.length > 0;
+  }
+
+  /**
+   * Tempdoc 859 §A §1.9 (D-2b) — does this item render THROUGH a {@link ThreadMessage}? Those items
+   * go to `renderMessage`, which draws the message's own `reasoning` field; prefixing the record's
+   * copy as well would put one turn's thinking on screen twice.
+   */
+  private static rendersReasoningItself(it: UnifiedTurnItem): boolean {
+    if (it.attributes.live !== undefined) return true;
+    return it.kind === 'assistant' && !UnifiedChatView.isAgentAnswerRecord(it);
+  }
+
+  /**
+   * Tempdoc 859 §A §1.9 (D-2b) — the record's reasoning is read ONCE, ABOVE the kind switch, so
+   * EVERY item kind carries the thinking that preceded it.
+   *
+   * This window used to read `attributes.reasoning` on the `assistant` and `error` arms alone. That
+   * was sound while the fold retargeted every block onto the terminal answer; it stops being sound
+   * the moment blocks flush onto the next event that projects, because most of those carriers are
+   * tool-activity, handoff and progress items — arms that read nothing. Left as it was, this PR
+   * would have silently DELETED a delegate run's reasoning from a shipped window.
+   */
   private renderUnifiedItem(it: UnifiedTurnItem, turnStartedAtMs: number | null = null): TemplateResult {
+    const body = this.renderUnifiedItemBody(it, turnStartedAtMs);
+    if (UnifiedChatView.rendersReasoningItself(it)) return body;
+    const blocks = reasoningBlocksFromRecord(it.attributes.reasoning);
+    if (blocks.length === 0) return body;
+    return html`${blocks.map(
+      (block) => html`<jf-reasoning-block
+        data-testid="chat-turn-reasoning"
+        .text=${block.text}
+        .durationMs=${block.durationMs}
+      ></jf-reasoning-block>`,
+    )}${body}`;
+  }
+
+  private renderUnifiedItemBody(it: UnifiedTurnItem, turnStartedAtMs: number | null): TemplateResult {
     switch (it.kind) {
       case 'user': {
         // Tempdoc 610 — the transcript controls (edit-in-place, the per-turn ⋯ menu, the version pager,
@@ -5217,7 +5262,7 @@ export class UnifiedChatView extends JfElement {
         // (AgentSentenceCite); render it as markdown with inline [n] marks FROM the record, so a
         // reloaded thread matches the live render (the reload-durability case). Distinguished from the
         // RAG record (RetrievalCitation under `citations` + `claimMatches`) by the `sources` key.
-        if (Array.isArray(it.attributes.sources) && it.attributes.sources.length > 0) {
+        if (UnifiedChatView.isAgentAnswerRecord(it)) {
           const cites = Array.isArray(it.attributes.citations)
             ? (it.attributes.citations as AgentSentenceCite[])
             : [];
@@ -5243,7 +5288,7 @@ export class UnifiedChatView extends JfElement {
             // `ctrl.streamingText`, not this branch), so a zero-cite chunk-precise answer frames `sourced`.
             true,
           );
-          const degraded = groundingDegraded(this.currentShapeId(), it.attributes.sources.length);
+          const degraded = groundingDegraded(this.currentShapeId(), agentSources.length);
           const partsA = this.recordFloorParts(it.id);
           // Search Thread S7 (tempdoc decision 6) — the receipt tail: duration best-effort from the
           // nearest preceding user item's ts (no persisted per-turn timing yet); model name read live
@@ -5264,16 +5309,10 @@ export class UnifiedChatView extends JfElement {
                 answer. Exactly one of the two ever renders for a given turn — the ONE authority, split
                 by call site, never a second simultaneous line. */ ''}
             ${frame === 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
-            ${/* Tempdoc 848 §2.6 — the agent run's thinking, folded from the run journal onto this
-                answer event by `AgentInteractionMapper.fromRunEvents`. Same position as the chat
-                path: before the answer body. */ ''}
-            ${reasoningBlocksFromRecord(it.attributes.reasoning).map(
-              (block) => html`<jf-reasoning-block
-                data-testid="chat-turn-reasoning"
-                .text=${block.text}
-                .durationMs=${block.durationMs}
-              ></jf-reasoning-block>`,
-            )}
+            ${/* Tempdoc 859 §A §1.9 — the run's thinking used to be read HERE. It is read once above
+                the kind switch now, for every item kind, because the fold no longer guarantees this
+                answer is the carrier. Position is unchanged for the reader: still immediately before
+                the body it belongs to. */ ''}
             <jf-markdown-block .text=${it.content} .citations=${marks} frame=${frame}></jf-markdown-block>
             ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
             ${this.renderGroundingBadge(
@@ -5351,19 +5390,12 @@ export class UnifiedChatView extends JfElement {
       case 'error': {
         // Tempdoc 565 §12 Phase 2 — carry the error code (live + record render identically now).
         const code = typeof it.attributes.errorCode === 'string' ? it.attributes.errorCode : '';
-        // Tempdoc 848 §2.4 (D-7) — a run that failed or was halted still THOUGHT, and the agent fold
-        // attaches those trailing blocks to its terminal ERROR event. Rendering them here is what
-        // makes the record's honesty visible: what the model worked out before it broke is the most
-        // useful thing on a failed turn, and dropping it would leave the fold writing to nothing.
-        const failedReasoning = reasoningBlocksFromRecord(it.attributes.reasoning);
-        return html`<div class="error">${code ? html`[${code}] ` : nothing}${it.content}</div>
-          ${failedReasoning.map(
-            (block) => html`<jf-reasoning-block
-              data-testid="chat-turn-reasoning"
-              .text=${block.text}
-              .durationMs=${block.durationMs}
-            ></jf-reasoning-block>`,
-          )}`;
+        // Tempdoc 848 §2.4 (D-7) — a run that failed or was halted still THOUGHT, and the fold's
+        // trailing rule attaches those blocks to its terminal ERROR event. They still render; the
+        // read moved above the kind switch (859 §A §1.9), which is also why they now sit BEFORE the
+        // error line rather than after it — the same "the thought preceded the event" order every
+        // other carrier gets.
+        return html`<div class="error">${code ? html`[${code}] ` : nothing}${it.content}</div>`;
       }
       case 'progress':
         // Search Thread S4-final (item 3) — a restored SEARCH event. `unifiedThreadProjection.ts`

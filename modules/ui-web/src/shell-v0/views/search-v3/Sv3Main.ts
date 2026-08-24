@@ -1782,12 +1782,11 @@ export class Sv3Main extends JfElement {
       >
         ${this.question(turn)}
         ${turn.kind === 'agent'
-          ? html`${/* Tempdoc 848 §2.7 — an agent turn shows its thinking too. Leaving one turn kind
-                      reasoning-less would rebuild, inside this window, the same live/record
-                      asymmetry the persistence work exists to remove. */ ''}
-              ${this.reasoningBlocks(turn, streaming)}${run === null
-                ? this.recordedActivity(turn)
-                : this.runBody(run, turn)}`
+          ? html`${/* Tempdoc 859 §A §1.9 — the reasoning STACK is gone from the agent arm. An agent
+                      turn's thinking is inside the feed now, one thought above the step it produced,
+                      which is what a run timeline is; stacking every block above the feed was A1's
+                      "wall of seven bars". `reasoningBlocks` survives for the ask arm below. */ ''}
+              ${run === null ? this.recordedActivity(turn) : this.runBody(run, turn)}`
           : html`
               ${this.rewriteNote(turn)}${this.reasoningBlocks(turn, streaming)}
               <div class="answer" data-testid="sv3-turn-answer" data-item-id=${`${turn.id}:a`}>
@@ -2581,6 +2580,20 @@ export class Sv3Main extends JfElement {
         .toolCall=${item.call}
         .stepPresentation=${null}
       ></jf-tool-call-card>`;
+    }
+    if (item.kind === 'reasoning') {
+      // Tempdoc 859 §A — its OWN testid, deliberately not `sv3-turn-reasoning`: that name belongs to
+      // the ask arm's stack sites, and reusing it would make every existing query ambiguous the
+      // moment one turn had both. The `data-item-id` makes the row a J/K landmark for free, in true
+      // order (857's named side benefit, bought with one attribute).
+      return html`<jf-reasoning-block
+        inline
+        data-testid="sv3-run-reasoning"
+        data-item-id=${item.id}
+        .text=${item.text}
+        .durationMs=${item.durationMs}
+        .streaming=${item.streaming}
+      ></jf-reasoning-block>`;
     }
     return html`<p
       class="run-note"

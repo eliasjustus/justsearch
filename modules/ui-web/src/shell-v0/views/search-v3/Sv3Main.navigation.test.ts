@@ -344,6 +344,44 @@ describe('857 PR-A — J/K stepping', () => {
     expect(nav.activeId).toBe(order[0]);
   });
 
+  it('S-2 (859 §A §1.8): J walks reasoning and tools in TRUE run order', async () => {
+    // 857's named side benefit, bought with one attribute: an inline reasoning row carries a
+    // `data-item-id`, so it becomes a landmark for free — and the walk is the run's real chronology
+    // rather than "the tools, then whatever the stack above them was".
+    const el = await mount({
+      turns: [
+        turn({
+          id: 'r1',
+          kind: 'agent',
+          question: 'index the vendor folder',
+          activity: [
+            { kind: 'reasoning', id: 'c1:think:0', text: 'search first', durationMs: 900, streaming: false },
+            { kind: 'tool', id: 'c1', call: { callId: 'c1', toolName: 'core_search', arguments: '{}', risk: 'LOW', status: 'completed' } },
+            { kind: 'reasoning', id: 'c2:think:0', text: 'now read it', durationMs: 400, streaming: false },
+            { kind: 'tool', id: 'c2', call: { callId: 'c2', toolName: 'core_read', arguments: '{}', risk: 'LOW', status: 'completed' } },
+          ],
+        }),
+      ],
+      run: null,
+    });
+    await layOut(el);
+    const nav = navOf(el);
+    const order = ['r1:q', 'c1:think:0', 'c1', 'c2:think:0', 'c2'];
+    // The landmark list IS the walk order (`navigation.ts` collects `[data-item-id]` in DOM order),
+    // so this is the claim: a thought is reachable, and it is reachable BEFORE the step it produced.
+    expect(nav.landmarks.map((l) => l.id)).toEqual(order);
+
+    // The real jumpTo cannot be walked here: it moves DOM focus onto the landmark, and every row in
+    // this fixture is a shadow HOST, which happy-dom's `ShadowRoot.activeElement` cannot resolve.
+    // The forward-walk property itself is pinned on non-host landmarks by the mixed-transcript case
+    // above; what is new here is the ORDER, asserted directly, plus that j resolves into this list.
+    const jumpTo = vi.spyOn(nav, 'jumpTo').mockImplementation(() => {});
+    press('j');
+    expect(jumpTo).toHaveBeenLastCalledWith(order[0]);
+    press('k');
+    expect(jumpTo).toHaveBeenLastCalledWith(order[order.length - 1]);
+  });
+
   it('clamps at both ends — no wrap', async () => {
     const el = await transcript();
     const nav = navOf(el);
