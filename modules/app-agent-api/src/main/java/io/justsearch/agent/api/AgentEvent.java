@@ -193,6 +193,25 @@ public sealed interface AgentEvent {
        * record persisted before this field existed" and keeps the pre-stamp allowance.
        */
       String citationScorer,
+      /**
+       * Tempdoc 859 §D §2.6 — the wire name of the run's {@code TerminalDisposition}: the
+       * STRUCTURAL half of the cut-short honesty fix.
+       *
+       * <p>The disposition is written by the loop AFTER and INDEPENDENTLY of the finalize text, so a
+       * model that writes a confident, complete-sounding answer at the budget edge cannot suppress
+       * it. Before this field it was set, persisted, observed as a metric tag — and then dropped at
+       * the wire, which left the run's honesty depending entirely on the model choosing to disclose.
+       * That is the exact dependency an honesty fix has to remove.
+       *
+       * <p>Carried as a {@code String}, not the enum: {@code TerminalDisposition} is package-private
+       * in {@code app-agent} while this record lives in {@code app-agent-api}, so it crosses the
+       * module boundary as {@code .name()}. That makes it a PROJECTION of the one existing
+       * authority, not a parallel enum free to drift from it.
+       *
+       * <p>Null/absent is legitimate and means "this emitter did not say" — the ungrounded legacy
+       * overloads, and records persisted before the field existed.
+       */
+      String disposition,
       TraceContext trace)
       implements AgentEvent {
     /**
@@ -214,7 +233,7 @@ public sealed interface AgentEvent {
 
     public AgentDone(
         String finalResponse, int iterationsUsed, int toolCallsExecuted, int totalTokensUsed) {
-      this(finalResponse, iterationsUsed, toolCallsExecuted, totalTokensUsed, List.of(), List.of(), SCORER_NONE, TraceContext.none());
+      this(finalResponse, iterationsUsed, toolCallsExecuted, totalTokensUsed, List.of(), List.of(), SCORER_NONE, null, TraceContext.none());
     }
 
     public AgentDone(
@@ -223,7 +242,7 @@ public sealed interface AgentEvent {
         int toolCallsExecuted,
         int totalTokensUsed,
         TraceContext trace) {
-      this(finalResponse, iterationsUsed, toolCallsExecuted, totalTokensUsed, List.of(), List.of(), SCORER_NONE, trace);
+      this(finalResponse, iterationsUsed, toolCallsExecuted, totalTokensUsed, List.of(), List.of(), SCORER_NONE, null, trace);
     }
 
     /** Tempdoc 565 §3.A — finished with grounding evidence attached. */
@@ -235,7 +254,52 @@ public sealed interface AgentEvent {
         List<AgentSource> sources,
         List<AgentSentenceCite> citations,
         String citationScorer) {
-      this(finalResponse, iterationsUsed, toolCallsExecuted, totalTokensUsed, sources, citations, citationScorer, TraceContext.none());
+      this(finalResponse, iterationsUsed, toolCallsExecuted, totalTokensUsed, sources, citations, citationScorer, null, TraceContext.none());
+    }
+
+    /** Tempdoc 859 §D §2.6 — grounded, and declaring the disposition it terminated under. */
+    public AgentDone(
+        String finalResponse,
+        int iterationsUsed,
+        int toolCallsExecuted,
+        int totalTokensUsed,
+        List<AgentSource> sources,
+        List<AgentSentenceCite> citations,
+        String citationScorer,
+        String disposition) {
+      this(finalResponse, iterationsUsed, toolCallsExecuted, totalTokensUsed, sources, citations, citationScorer, disposition, TraceContext.none());
+    }
+
+    /**
+     * Tempdoc 859 §D §2.6 — an UNGROUNDED terminal that still declares its disposition: the
+     * max-iterations ceiling, which produces no answer text and therefore no grounding, but is one
+     * of the two TRUNCATING dispositions the FE must be able to disclose.
+     *
+     * <p>A static factory rather than a fifth constructor overload for two reasons.
+     * {@code (String,int,int,int,String)} beside the existing
+     * {@code (String,int,int,int,TraceContext)} is an ambiguous pair at any {@code null} call site.
+     * And the canonical constructor takes the {@code sources}/{@code citations} lists, so calling it
+     * from outside this record would trip {@code AgentGroundingSeamAuditTest} — whose discriminator
+     * is a {@code java.util.List} SIGNATURE SUBSTRING (its own javadoc names this limit) — for a
+     * reason that has nothing to do with grounding. Constructed here, the record's own delegation
+     * exemption applies and the audit keeps meaning what it says.
+     */
+    public static AgentDone ofDisposition(
+        String finalResponse,
+        int iterationsUsed,
+        int toolCallsExecuted,
+        int totalTokensUsed,
+        String disposition) {
+      return new AgentDone(
+          finalResponse,
+          iterationsUsed,
+          toolCallsExecuted,
+          totalTokensUsed,
+          List.of(),
+          List.of(),
+          SCORER_NONE,
+          disposition,
+          TraceContext.none());
     }
   }
 

@@ -43,6 +43,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -1596,10 +1597,12 @@ class AgentLoopServiceTest {
         ScriptedResponse.toolCall("call_3", "core_search", "{}").withUsage(50, 30),
         ScriptedResponse.textOnly("Done").withUsage(10, 5)));
 
-    // Override to provide very small context window
-    // Context = 120, budget = 120 - 256 = -136 (becomes 0 due to Math.max)
-    // So we use a context window that gives us a tiny budget
-    var service = buildServiceWithSmallBudget(ai, 100);
+    // Tempdoc 859 §D §2.1 — the budget is now `n_ctx * effortMultiplier` (Standard 5x), not
+    // `n_ctx - 256`. A zero context window is what yields the zero budget this scenario needs: the
+    // very first projection already exceeds it, so the run gates before any LLM call. (0 also
+    // disables the context-pressure gate by its own `contextWindow > 0` guard, which keeps this test
+    // on the one axis it is about.)
+    var service = buildServiceWithSmallBudget(ai, 0);
 
     var events = run(service, userMessage("search"), 10);
 
@@ -1939,18 +1942,25 @@ class AgentLoopServiceTest {
     var ai =
         new ScriptedAiService(
             List.of(
-                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 50),
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
                 ScriptedResponse.textOnly("Synthesized answer from search results")));
 
-    // Budget math (buildServiceWithSmallBudget uses contextWindow, safetyMargin=256):
-    //   initialBudget = contextWindow - safetyMargin = 400 - 256 = 144
+    // Budget math (tempdoc 859 §D §2.1 — initialBudget = contextWindow * effortMultiplier, and the
+    // 256-token safety margin is gone; this run names no rung, so it is Standard = 5x):
+    //   initialBudget = 400 * 5 = 2000
     // Iteration 1:
     //   countPromptTokens = messages.size() * 10 = 2 * 10 = 20 (ScriptedAiService simulation)
-    //   20 < 144 → budget OK → LLM call proceeds
-    //   withUsage(100, 50) → consumed 150 tokens → budgetRemaining = 144 - 150 = -6
+    //   20 < 2000 → budget OK → LLM call proceeds
+    //   withUsage(100, 2000) → consumed 2100 tokens → budgetRemaining = 2000 - 2100 = -100
     // Iteration 2:
     //   countPromptTokens = 4 messages * 10 = 40 (system+user+assistant+tool)
-    //   40 >= -6 → budget exhausted → attemptBudgetEdgeFinalize triggered
+    //   40 >= -100 → budget exhausted → attemptBudgetEdgeFinalize triggered
+    //
+    // The spend sits on the COMPLETION axis on purpose. Exhausting a 5x budget in one call means
+    // spending ~5 windows, and a REPORTED PROMPT that large would legitimately trip the
+    // context-pressure gate too (859 §D §2.7(c) now reads the reported prompt) — which would leave
+    // this test straddling two mechanisms. recordUsage decrements identically for either axis, so
+    // the budget arithmetic under test is unchanged and the context axis stays quiet.
     var service = buildServiceWithSmallBudget(ai, 400);
 
     var events = run(service, userMessage("search"), 5);
@@ -1978,7 +1988,7 @@ class AgentLoopServiceTest {
     var ai =
         new ScriptedAiService(
             List.of(
-                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 50),
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
                 ScriptedResponse.textOnly("Synthesized answer from search results")));
     var service = buildServiceWithSmallBudget(ai, 400);
 
@@ -1997,10 +2007,13 @@ class AgentLoopServiceTest {
   // 577 Move 2 — a BACKGROUND budget-exhausted run never parks (no watcher to decide).
   @Test
   void budgetGate_backgroundRun_neverParks() throws Exception {
+    // Tempdoc 859 §D §2.9 — a background run is pinned at 1x (400 here, not Standard's 2000), which
+    // this fixture over-spends several times over, so the assertion below still fails for the RIGHT
+    // reason: the run really did exhaust its budget and still did not park.
     var ai =
         new ScriptedAiService(
             List.of(
-                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 50),
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
                 ScriptedResponse.textOnly("Synthesized answer from search results")));
     var service = buildServiceWithSmallBudget(ai, 400);
 
@@ -2033,7 +2046,7 @@ class AgentLoopServiceTest {
     var ai =
         new ScriptedAiService(
             List.of(
-                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 50),
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
                 ScriptedResponse.empty()));
 
     var service = buildServiceWithSmallBudget(ai, 400);
@@ -2044,6 +2057,306 @@ class AgentLoopServiceTest {
     var error = lastEventOfType(events, AgentEvent.AgentError.class);
     assertNotNull(error, "Should emit BUDGET_EXHAUSTED when finalize fails");
     assertEquals("BUDGET_EXHAUSTED", error.errorCode());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Effort-mapped initial budgets (tempdoc 859 §D §2.1 / §3.3 T2)
+  // ---------------------------------------------------------------------------
+
+  /** The initial budget a run was dispatched with, read off its FIRST budget event. */
+  private static int initialBudgetFrom(List<AgentEvent> events) {
+    var first = eventsOfType(events, AgentEvent.AgentBudgetUpdate.class);
+    assertFalse(first.isEmpty(), "every run emits an iteration_start budget event");
+    // The first update fires BEFORE any usage is charged, so `tokensRemaining` is the ceiling.
+    return first.get(0).tokensRemaining();
+  }
+
+  private static List<AgentEvent> runWithEffort(
+      AgentLoopService service, String effort, AgentRunStore runStore) {
+    var request =
+        new AgentRequest(
+            userMessage("do the thing"), List.of(), 1, List.of(), null, null, null, null,
+            List.of(), effort);
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.runAgent(request, events::add);
+    return events;
+  }
+
+  @Test
+  @DisplayName("859 §D T2 — the EFFORT rung reaches the sizing policy and sets the run's budget")
+  void effortRungReachesTheBudgetPolicy() {
+    // The threading assertion, not the sizing one (T1 in AgentBudgetPolicyTest owns sizing): does
+    // the rung the FE names actually arrive at AgentLoopService, or is it dropped at some boundary
+    // and silently defaulted? Dropped-at-the-boundary is exactly how 561 P-D's autonomy level was
+    // lost, so it is the failure this checks for.
+    int contextWindow = 400;
+    var quick = runWithEffort(freshBudgetService(contextWindow), "quick", null);
+    var standard = runWithEffort(freshBudgetService(contextWindow), "standard", null);
+    var thorough = runWithEffort(freshBudgetService(contextWindow), "thorough", null);
+    var absent = runWithEffort(freshBudgetService(contextWindow), null, null);
+
+    int quickBudget = initialBudgetFrom(quick);
+    int standardBudget = initialBudgetFrom(standard);
+    int thoroughBudget = initialBudgetFrom(thorough);
+
+    assertTrue(
+        quickBudget < standardBudget && standardBudget < thoroughBudget,
+        "each rung must buy strictly more room: " + quickBudget + " / " + standardBudget + " / "
+            + thoroughBudget);
+    assertEquals(
+        standardBudget,
+        initialBudgetFrom(absent),
+        "a caller that names no rung gets Standard — the deliberate default (859 §D §2.9)");
+    assertTrue(
+        quickBudget > contextWindow - 256,
+        "even the smallest rung raises the pre-859 `n_ctx - 256` allowance (859 §D §2.2)");
+  }
+
+  @Test
+  @DisplayName("859 §D T2 — the dispatched budget is what the run RECORD persists as initialBudget")
+  void effortRungIsPersistedAsTheRunsInitialBudget() {
+    // The wire figure and the persisted figure must be the same number: the FE reads one and the
+    // lifecycle projection (AgentLifecycleProjection) reads the other.
+    var runStore = new AgentRunStore(tempDir.resolve("agent-runs-effort"));
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("answered")));
+    var searchTool = new StubTool("search", RiskTier.LOW, "r");
+    var service =
+        observed(
+            new AgentLoopService(
+                smallContextAi(ai, 400),
+                stubCatalog(searchTool),
+                stubExecutor(searchTool),
+                stubEmitter(),
+                null,
+                null,
+                runStore,
+                null));
+    var events = runWithEffort(service, "quick", runStore);
+    var started = lastEventOfType(events, AgentEvent.SessionStarted.class);
+    assertNotNull(started, "the run announced its session");
+
+    var meta = runStore.readSnapshot(started.sessionId());
+    assertNotNull(meta, "the run was persisted");
+    assertEquals(
+        initialBudgetFrom(events),
+        ((Number) meta.get("initialBudget")).intValue(),
+        "the persisted ceiling and the streamed ceiling are the same fact, not two");
+  }
+
+  // ---------------------------------------------------------------------------
+  // The SIZED raise and its narration (tempdoc 859 §D §2.5 / §3.3 T3)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  @DisplayName("859 §D T3 — a sized raise adds exactly N, resolves CONTINUE, and is NARRATED")
+  void sizedRaiseResolvesTheGateAndEmitsABudgetRaisedNote() throws Exception {
+    // The raise endpoint has always been amount-bearing; what it never did was SAY anything. A run
+    // that quietly acquires more room is the shape that turns per-run auto-continue into standing
+    // autonomy, so the note is the guard rail (859 §D P3), not decoration.
+    String prev = System.getProperty("justsearch.agent.budgetGateTimeoutSec");
+    System.setProperty("justsearch.agent.budgetGateTimeoutSec", "10"); // the gate must HOLD
+    try {
+      var ai =
+          new ScriptedAiService(
+              List.of(
+                  ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
+                  ScriptedResponse.textOnly("Answer after the raise").withUsage(50, 20)));
+      var service = buildServiceWithSmallBudget(ai, 400); // Standard ⇒ 2000, over-spent to -100
+
+      var events = new CopyOnWriteArrayList<AgentEvent>();
+      var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+      var parked = new CompletableFuture<AgentEvent.BudgetGatePending>();
+      Consumer<AgentEvent> sink =
+          e -> {
+            events.add(e);
+            if (e instanceof AgentEvent.SessionStarted s) {
+              sessionId.set(s.sessionId());
+            }
+            if (e instanceof AgentEvent.BudgetGatePending p) {
+              parked.complete(p);
+            }
+          };
+      var loopThread =
+          new Thread(() -> service.runAgent(new AgentRequest(userMessage("search"), List.of(), 5), sink));
+      loopThread.setDaemon(true);
+      loopThread.start();
+
+      var gate = parked.get(8, java.util.concurrent.TimeUnit.SECONDS);
+      int remainingAtGate = gate.tokensRemaining();
+      final int raise = 17_500;
+      assertTrue(service.raiseSessionBudget(sessionId.get(), raise), "the raise reached the session");
+      loopThread.join(8000);
+
+      // 1. The raise ADDED EXACTLY N — read from a wire event, not from an accessor. The resumed
+      // iteration proceeds without a fresh iteration_start (CONTINUE falls through INTO the same
+      // iteration), so the next figure the run publishes is the post-call llm_response one.
+      var afterGate =
+          eventsOfType(events, AgentEvent.AgentBudgetUpdate.class).stream()
+              .filter(u -> "llm_response".equals(u.phase()))
+              .toList();
+      var resumed = afterGate.get(afterGate.size() - 1);
+      final int finalizeCallSpend = 50 + 20; // the scripted usage of the post-raise call
+      assertEquals(
+          remainingAtGate + raise - finalizeCallSpend,
+          resumed.tokensRemaining(),
+          "the resumed call must see exactly the granted amount more than the gate did — no more"
+              + " (a re-derived ceiling) and no less (a silently clamped grant)");
+
+      // 2. The gate resolved CONTINUE — the run carried on and answered rather than finalizing.
+      var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+      assertNotNull(done);
+      assertEquals("Answer after the raise", done.finalResponse());
+
+      // 3. And it SAID SO, naming the amount.
+      var note =
+          eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+              .filter(p -> "budget_raised".equals(p.phase()))
+              .findFirst()
+              .orElse(null);
+      assertNotNull(note, "a resumed run must narrate the raise it resumed on");
+      assertTrue(
+          note.message().contains("17,500") || note.message().contains("17500"),
+          "the note must name the amount it granted, got: " + note.message());
+    } finally {
+      restoreProperty("justsearch.agent.budgetGateTimeoutSec", prev);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Terminal disposition on the wire (tempdoc 859 §D §2.6 / §3.3 T4)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  @DisplayName("859 §D T4 — a normal completion declares COMPLETED")
+  void normalCompletionDeclaresItsDisposition() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("A complete answer.")));
+    var events = run(buildService(ai, new StubTool("search", RiskTier.LOW, "r")), userMessage("hi"), 3);
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done);
+    assertEquals("COMPLETED", done.disposition());
+  }
+
+  @Test
+  @DisplayName("859 §D T4 — a budget-edge finalize declares BUDGET_EDGE_FINALIZE, whatever it wrote")
+  void budgetEdgeFinalizeDeclaresItsDisposition() {
+    // THE fail-closed guarantee. The scripted answer below is deliberately confident and
+    // complete-sounding and says nothing about being cut short — exactly the 859 §7 failure. The
+    // badge fires anyway, because the disposition is written by the loop after and independently of
+    // the model's text. A model cannot talk its way out of this.
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
+                ScriptedResponse.textOnly("Here is the complete and thorough answer to your question.")));
+    var events = run(buildServiceWithSmallBudget(ai, 400), userMessage("search"), 5);
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done);
+    assertEquals(
+        "BUDGET_EDGE_FINALIZE",
+        done.disposition(),
+        "the truncation is declared structurally, not left to the answer's own wording");
+    assertFalse(
+        done.finalResponse().toLowerCase(java.util.Locale.ROOT).contains("cut short"),
+        "and the guarantee must not be resting on the model having said it");
+  }
+
+  @Test
+  @DisplayName("859 §D T4 — hitting the iteration ceiling declares MAX_ITERATIONS")
+  void iterationCeilingDeclaresItsDisposition() {
+    // The other truncating terminal, and the one where the model CANNOT disclose even in principle:
+    // it produces no answer text at all. Closing this in the same PR is the point — the FE derives
+    // cut-short from both values, so leaving one unstamped would leave the same hole under a
+    // different name.
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("c1", "core_search", "{}"),
+                ScriptedResponse.toolCall("c2", "core_search", "{}")));
+    var events = run(buildService(ai, new StubTool("search", RiskTier.LOW, "r")), userMessage("loop"), 2);
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "the ceiling terminal still emits a done");
+    assertEquals("MAX_ITERATIONS", done.disposition());
+    assertEquals("", done.finalResponse(), "with no answer text for the model to disclose in");
+  }
+
+  // ---------------------------------------------------------------------------
+  // The context gate RE-ARMS (tempdoc 859 §D §2.7 / §3.3 T6)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  @DisplayName("859 §D T6 — a SECOND context crossing auto-compacts, narrated, with no second park")
+  void contextGateReArmsAsAutoCompactionRatherThanASecondPark() {
+    // At 1x this was unreachable: the budget wall always arrived first, which is what the retired
+    // rationale on AgentSession.contextGateFired asserted. At the effort multipliers it is
+    // reachable, and doing nothing would let the prompt grow past n_ctx — voiding the structural
+    // bound Thorough is justified by. The gate still ASKS once; later crossings are re-applied.
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("c1", "core_search", "{}").withUsage(20, 10),
+                ScriptedResponse.toolCall("c2", "core_search", "{}").withUsage(20, 10),
+                ScriptedResponse.toolCall("c3", "core_search", "{}").withUsage(20, 10),
+                ScriptedResponse.toolCall("c4", "core_search", "{}").withUsage(20, 10),
+                ScriptedResponse.toolCall("c5", "core_search", "{}").withUsage(20, 10),
+                ScriptedResponse.toolCall("c6", "core_search", "{}").withUsage(20, 10),
+                ScriptedResponse.toolCall("c7", "core_search", "{}").withUsage(20, 10)));
+    // n_ctx 50 ⇒ pressure threshold 40, and countPromptTokens = messages.size() * 10, so every
+    // iteration from the 4-message mark onward crosses. Each tool round adds 2 messages, and
+    // CONTEXT_COMPACT_KEEP_RECENT is 6, so a compaction only has something to drop from the
+    // 10-message mark — hence seven rounds rather than three. Thorough ⇒ budget 750, which the ~210
+    // total spend never reaches: the CONTEXT axis is the only one that can act here.
+    var service = buildServiceWithSmallBudget(ai, 50);
+    var request =
+        new AgentRequest(
+            userMessage("search"), List.of(), 7, List.of(), null, null, null, null, List.of(),
+            "thorough");
+    var events = runWithRequest(service, request);
+
+    assertEquals(
+        1,
+        eventsOfType(events, AgentEvent.ContextGatePending.class).size(),
+        "the gate ASKS exactly once per run — re-parking is what 577 was right to avoid");
+    assertTrue(
+        eventsOfType(events, AgentEvent.ContextCompacted.class).size() >= 2,
+        "but every later crossing must still be ACTED on: "
+            + eventsOfType(events, AgentEvent.ContextCompacted.class).size() + " compactions");
+    assertTrue(
+        eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+            .anyMatch(p -> "context_gate_reapplied".equals(p.phase())),
+        "and the run must SAY it re-applied the decision — bounded autonomy, never silent");
+  }
+
+  @Test
+  @DisplayName("859 §D T6(c) — the trigger reads the REPORTED prompt, not just the projection")
+  void contextPressureTriggerUsesTheReportedPromptSize() {
+    // countPromptTokens is schema-blind and ~40% low (577). Here the projection stays well under
+    // the threshold while the provider-reported prompt is far over it — the exact case where the
+    // old trigger fired only after the real prompt had already exceeded the window, i.e. after the
+    // damage. Projection = messages.size() * 10 = 20..40; threshold = 0.8 * 200 = 160.
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("c1", "core_search", "{}").withUsage(190, 10),
+                ScriptedResponse.textOnly("Done")));
+    var service = buildServiceWithSmallBudget(ai, 200); // thorough ⇒ budget 3000, never binding
+    var request =
+        new AgentRequest(
+            userMessage("search"), List.of(), 3, List.of(), null, null, null, null, List.of(),
+            "thorough");
+    var events = runWithRequest(service, request);
+
+    assertFalse(
+        eventsOfType(events, AgentEvent.ContextGatePending.class).isEmpty(),
+        "a reported prompt of 190 against a 200-token window IS context pressure, even though the"
+            + " projection (max 40) never sees it");
+  }
+
+  private static void restoreProperty(String key, String previous) {
+    if (previous == null) {
+      System.clearProperty(key);
+    } else {
+      System.setProperty(key, previous);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2062,13 +2375,15 @@ class AgentLoopServiceTest {
     var ai = new ScriptedAiService(
         // PRIMARY: handoff_to_organizer, consuming enough tokens to exhaust budget
         ScriptedResponse.toolCall("hc-1", "handoff_to_organizer", "{\"reason\":\"doc.md\"}")
-            .withUsage(35, 5), // 40 tokens → remaining = 34 - 40 = -6
+            .withUsage(35, 1450), // 1485 tokens → remaining = 1450 - 1485 = -35
         // Organizer E0a: ingest_files (should be called, NOT replaced by finalize)
         ScriptedResponse.toolCall("ic-1", "core_ingest_files", "{\"paths\":[\"doc.md\"]}"),
         // Organizer done
         ScriptedResponse.textOnly("Ingested doc.md."));
-    // contextWindow=290 → budget = 290 - 256 = 34. PRIMARY consumes 40 → remaining = -6.
-    // Organizer's iteration_start: projected = messages.size() * 10 = some positive value >= -6
+    // Tempdoc 859 §D §2.1 — contextWindow=290, no rung named ⇒ Standard 5x ⇒ budget = 1450.
+    // PRIMARY consumes 1485 → remaining = -35 (the spend rides the completion axis so the
+    // context-pressure gate stays out of this test; see budgetEdgeFinalize_synthesizesFromToolResults).
+    // Organizer's iteration_start: projected = messages.size() * 10 = some positive value >= -35
     // → budgetExhausted=true, but shouldForceToolCall=true → bypass → Organizer LLM call fires.
     var service = buildServiceWithSmallBudgetAndProfiles(ai, 290, profiles);
     var request = new AgentRequest(
@@ -2379,9 +2694,32 @@ class AgentLoopServiceTest {
 
   private static AgentLoopService buildServiceWithSmallBudget(
       ScriptedAiService baseAi, int contextWindow) {
+    var searchTool = new StubTool("search", RiskTier.LOW, "results");
+    return observed(new AgentLoopService(
+        smallContextAi(baseAi, contextWindow),
+        stubCatalog(searchTool),
+        stubExecutor(searchTool),
+        stubEmitter(),
+        null,
+        null,
+        null,
+        null));
+  }
+
+  /**
+   * Tempdoc 859 §D T2 — a throwaway service at a given context window, one per rung, so the four
+   * dispatches in {@code effortRungReachesTheBudgetPolicy} cannot contaminate each other.
+   */
+  private static AgentLoopService freshBudgetService(int contextWindow) {
+    return buildServiceWithSmallBudget(
+        new ScriptedAiService(List.of(ScriptedResponse.textOnly("answered"))), contextWindow);
+  }
+
+  /** The {@link OnlineAiService} wrapper: delegates everything, but pins the context window. */
+  private static OnlineAiService smallContextAi(ScriptedAiService baseAi, int contextWindow) {
     // Create wrapper that delegates to baseAi but overrides context window methods.
     // Tempdoc 491 §C5: streamSummary + streamAnswer overrides removed.
-    var aiWithSmallContext = new OnlineAiService() {
+    return new OnlineAiService() {
       @Override
       public CompletableFuture<String> summarize(String content) {
         return baseAi.summarize(content);
@@ -2428,16 +2766,6 @@ class AgentLoopServiceTest {
         return contextWindow;
       }
     };
-    var searchTool = new StubTool("search", RiskTier.LOW, "results");
-    return observed(new AgentLoopService(
-        aiWithSmallContext,
-        stubCatalog(searchTool),
-        stubExecutor(searchTool),
-        stubEmitter(),
-        null,
-        null,
-        null,
-        null));
   }
 
   private static List<AgentEvent> run(

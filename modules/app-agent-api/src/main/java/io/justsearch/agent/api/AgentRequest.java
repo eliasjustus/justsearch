@@ -28,6 +28,10 @@ import java.util.Objects;
  *     filtered to just these paths, regardless of what the LLM's own tool-call arguments say
  *     ({@code AgentToolDispatcher.scopeToolCall} merges it into the search call's arguments;
  *     {@code SearchTool} threads it into {@code KnowledgeSearchRequest.Filters.docIds}).
+ * @param effort tempdoc 859 §D §2.1 — the run's EFFORT rung as a wire token ({@code
+ *     "quick"|"standard"|"thorough"}); null/unknown → Standard. It is the rung NAME, never a token
+ *     count: sizing is a backend policy ({@code AgentBudgetPolicy}) because only the backend can see
+ *     the model's {@code n_ctx}, and an FE-authored count would be a second sizing authority.
  */
 public record AgentRequest(
     List<Map<String, Object>> messages,
@@ -38,7 +42,8 @@ public record AgentRequest(
     Integer maxHandoffs,
     String conversationId,
     String autonomyLevel,
-    List<String> docIds) {
+    List<String> docIds,
+    String effort) {
 
   public AgentRequest {
     Objects.requireNonNull(messages, "messages");
@@ -48,7 +53,32 @@ public record AgentRequest(
     }
     agentProfiles = agentProfiles == null ? List.of() : List.copyOf(agentProfiles);
     docIds = docIds == null ? List.of() : List.copyOf(docIds);
-    // initialAgentId, maxHandoffs, conversationId, autonomyLevel null are valid — defaulted at runtime
+    // initialAgentId, maxHandoffs, conversationId, autonomyLevel, effort null are valid —
+    // defaulted at runtime (effort's default is the Standard rung, AgentBudgetPolicy).
+  }
+
+  /** Back-compat constructor (pre-859 §D, no effort) — delegates with effort null ⇒ Standard. */
+  public AgentRequest(
+      List<Map<String, Object>> messages,
+      List<String> selectedToolNames,
+      int maxIterations,
+      List<AgentProfile> agentProfiles,
+      String initialAgentId,
+      Integer maxHandoffs,
+      String conversationId,
+      String autonomyLevel,
+      List<String> docIds) {
+    this(
+        messages,
+        selectedToolNames,
+        maxIterations,
+        agentProfiles,
+        initialAgentId,
+        maxHandoffs,
+        conversationId,
+        autonomyLevel,
+        docIds,
+        null);
   }
 
   /** Back-compat constructor (pre-S7, no docIds) — delegates with docIds empty (unscoped). */

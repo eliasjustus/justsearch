@@ -288,6 +288,11 @@ public final class ToolIteratingShapeRunner implements ShapeRunner {
     // is filtered to just these paths (mirrors RAGContext#extractDocIds's body.get("docIds") shape
     // for the core.rag-ask path — same wire key, same list-of-strings convention).
     List<String> docIds = extractDocIds(body);
+    // Tempdoc 859 §D §2.1 — the FE sends the EFFORT RUNG NAME, never a token count: only the backend
+    // can see the model's n_ctx, so AgentBudgetPolicy owns the sizing. Absent/unknown ⇒ Standard,
+    // which is what every caller that predates the rung (the legacy window, seam adopters, a resumed
+    // run) deliberately gets.
+    String effort = body.get("effort") == null ? null : body.get("effort").toString();
 
     return new AgentRequest(
         messages,
@@ -298,7 +303,8 @@ public final class ToolIteratingShapeRunner implements ShapeRunner {
         maxHandoffs,
         conversationId,
         autonomyLevel,
-        docIds);
+        docIds,
+        effort);
   }
 
   /** Tempdoc S7 — parse the body's optional {@code docIds} array; absent/malformed = empty (unscoped). */

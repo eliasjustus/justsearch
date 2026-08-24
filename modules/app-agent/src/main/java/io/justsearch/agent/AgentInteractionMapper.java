@@ -76,6 +76,13 @@ public final class AgentInteractionMapper {
         if (payload.get("citationScorer") instanceof String scorer && !scorer.isBlank()) {
           attributes.put("citationScorer", scorer);
         }
+        // Tempdoc 859 §D §2.6 — the terminal DISPOSITION travels onto the persisted assistant
+        // message beside the answer it describes. Without it, a run that was cut short would say so
+        // while it was on screen and stop saying so after a reload — an honesty fact that expires is
+        // worse than one that was never made, because the reader has already learned to trust it.
+        if (payload.get("disposition") instanceof String disposition && !disposition.isBlank()) {
+          attributes.put("disposition", disposition);
+        }
         yield Optional.of(
             new InteractionEvent(
                 conversationId + ":assistant:" + stamp,
