@@ -125,6 +125,14 @@ describe('sv3SourceIndex — the followed-citation join (859 §5c)', () => {
     // Char spans are for HIGHLIGHTING, a different question from identity (§5c). A delegate mark
     // reports none, and the honest answer is no highlight rather than a fabricated span.
     const turn = agentTurn(TWO_PASSAGES_OF_ONE_DOC);
+    // Tempdoc 859 §5b (F2) — the mark's detail must carry NO span at all. This assertion is what
+    // distinguishes the two ways the anchor could come back null: absence (correct) versus a
+    // zero-filled `(0, 0)` that merely fails the `endChar <= startChar` refusal downstream. The
+    // second reads as a real claim about the document's opening characters everywhere else it is
+    // consumed, so the refusal below is not evidence the span is honest — this is.
+    expect(detailOf(turn, 0).startChar).toBeUndefined();
+    expect(detailOf(turn, 0).endChar).toBeUndefined();
+    expect('startChar' in detailOf(turn, 0)).toBe(false);
     expect(sv3CitationAnchor(detailOf(turn, 0), null)).toBeNull();
     expect(
       sv3CitationAnchor({ parentDocId: 'd', startLine: 1, endLine: 2, excerpt: '' }, null),

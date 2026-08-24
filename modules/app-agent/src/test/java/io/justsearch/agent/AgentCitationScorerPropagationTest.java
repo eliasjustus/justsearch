@@ -109,10 +109,16 @@ final class AgentCitationScorerPropagationTest {
     // The ungrounded terminal AgentLoopService emits when max iterations are reached: no matcher
     // ran, so there is nothing to mark, and NONE fails the FE gate closed rather than being read as
     // a record older than the field.
-    assertEquals("NONE", new AgentEvent.AgentDone("", 3, 0, 0).citationScorer());
-    assertEquals("NONE", AgentEvent.AgentDone.SCORER_NONE);
+    // The literal PINNED to the enum it mirrors, not to itself. `app-agent-api` is annotation-light
+    // and cannot depend on `app-api`, so `SCORER_NONE` has to be a string constant; asserting
+    // `"NONE".equals("NONE")` would leave the two free to drift the moment `ScorerKind` is renamed,
+    // which is exactly the coupling this constant's javadoc claims to hold.
+    assertEquals(DocumentService.ScorerKind.NONE.name(), AgentEvent.AgentDone.SCORER_NONE);
     assertEquals(
-        "NONE",
+        DocumentService.ScorerKind.NONE.name(),
+        new AgentEvent.AgentDone("", 3, 0, 0).citationScorer());
+    assertEquals(
+        DocumentService.ScorerKind.NONE.name(),
         AgentEventPayloads.base(new AgentEvent.AgentDone("", 3, 0, 0)).get("citationScorer"));
   }
 

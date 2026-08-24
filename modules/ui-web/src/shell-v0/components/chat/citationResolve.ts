@@ -153,12 +153,17 @@ export function resolveAnswerCitations(
       similarity: c.similarity,
       sentenceIndex,
       label: c.sourceIndex + 1,
+      // Tempdoc 859 §5b — `startChar`/`endChar` are OMITTED, not zero-filled. Neither `AgentSource`
+      // nor `AgentSentenceCite` carries a character span, and `(0, 0)` is not "unknown": it is a
+      // claim about the document's opening characters, which is the same fabrication the supertype's
+      // own contract forbids ("Never zero-filled") and which the sibling `claimsToCitations` avoids
+      // by passing the producer's real values through. `sv3CitationAnchor` already answers absence —
+      // the pane opens the document and highlights nothing — so this loses no behaviour; it stops
+      // the mark from ASSERTING a span nobody reported.
       detail: {
         parentDocId: s.parentDocId,
         startLine: s.startLine,
         endLine: s.endLine,
-        startChar: 0,
-        endChar: 0,
         excerpt: s.excerpt,
       },
       hover: { excerpt: s.excerpt, title: s.title, headingText: s.headingText },

@@ -135,25 +135,55 @@ describe('agentAnswerEvidence — matches (T8, §3a)', () => {
 });
 
 describe('agentAnswerEvidence — the producer gate (§4)', () => {
-  it('T3 — a cosine-scored run mints NO marks, and its sources still stand', () => {
+  it('T3 — a cosine-scored run mints NO marks AND no matches, and its sources still stand', () => {
     const { sources, matches, marks } = agentAnswerEvidence(SOURCES, CITES, 'EMBEDDING_COSINE');
     expect(marks).toEqual([]);
+    // Tempdoc 847 S1 — the matches are gated by the SAME producer verdict, because gating only the
+    // marks is not gating the number. `sourceGrounding` reads `match.similarity` straight into
+    // `evidenceTier` (thresholds anchored on the cross-encoder cutoff) and the panel groups its
+    // cards by that tier — so an ungated match list paints a verification tier beside the source
+    // from the very number that was just judged unfit to mint a mark.
+    expect(matches).toEqual([]);
     // Sources-without-marks is `AgentCitationResolver`'s documented degradation (565 §10) — the
-    // evidence is still shown, only the per-sentence grading is withheld.
+    // evidence is still shown, only the grading is withheld.
     expect(sources).toHaveLength(2);
+  });
+
+  it('T3b — the panel therefore grades a cosine run at NO tier, on either surface', () => {
+    // The consequence, asserted where the reader meets it. Without the match gate this source reads
+    // "Grounds 2 sentences" with a tier computed from a cosine score.
+    const { sources, matches } = agentAnswerEvidence(SOURCES, CITES, 'EMBEDDING_COSINE');
+    const g = sourceGrounding(1, matches, sources[1]!.parentDocId);
+    expect(g.cited).toBe(false);
+    expect(g.groundedSentences).toBe(0);
+    expect(sourceGroundingLabel(g)).toBe('Retrieved · not cited');
+  });
+
+  it('T3c — a CROSS_ENCODER run keeps BOTH surfaces: the gate withholds, it does not blank', () => {
+    // The discriminator for T3/T3b: if `admittedMatches` dropped everything unconditionally, those
+    // two would pass for entirely the wrong reason and the panel would be permanently ungraded.
+    const { sources, matches, marks } = agentAnswerEvidence(SOURCES, CITES, 'CROSS_ENCODER');
     expect(matches).toHaveLength(3);
+    expect(marks).toHaveLength(3);
+    const g = sourceGrounding(1, matches, sources[1]!.parentDocId);
+    expect(sourceGroundingLabel(g)).toBe('Grounds 2 sentences');
   });
 
-  it('T4 — an ABSENT stamp still marks: the pre-stamp allowance, not an empty payload', () => {
-    // The discriminator for T3: if T3 passed because the payload was empty rather than because the
-    // gate fired, this case would pass too and prove nothing. Same sources, same cites, no stamp.
-    expect(agentAnswerEvidence(SOURCES, CITES, null).marks).toHaveLength(3);
-    expect(agentAnswerEvidence(SOURCES, CITES, undefined).marks).toHaveLength(3);
-    expect(agentAnswerEvidence(SOURCES, CITES, 'CROSS_ENCODER').marks).toHaveLength(3);
+  it('T4 — an ABSENT stamp still marks and still matches: the pre-stamp allowance', () => {
+    // If T3 passed because the payload was empty rather than because the gate fired, this case
+    // would pass too and prove nothing. Same sources, same cites, no stamp.
+    for (const scorer of [null, undefined]) {
+      const { matches, marks } = agentAnswerEvidence(SOURCES, CITES, scorer);
+      expect(marks).toHaveLength(3);
+      expect(matches).toHaveLength(3);
+    }
   });
 
-  it('an unrecognised producer fails CLOSED — an unknown scorer is not a verified one', () => {
-    expect(agentAnswerEvidence(SOURCES, CITES, 'SOMETHING_NEW').marks).toEqual([]);
-    expect(agentAnswerEvidence(SOURCES, CITES, 'NONE').marks).toEqual([]);
+  it('an unrecognised producer fails CLOSED on both surfaces — unknown is not verified', () => {
+    for (const scorer of ['SOMETHING_NEW', 'NONE']) {
+      const { matches, marks } = agentAnswerEvidence(SOURCES, CITES, scorer);
+      expect(marks).toEqual([]);
+      expect(matches).toEqual([]);
+    }
   });
 });
