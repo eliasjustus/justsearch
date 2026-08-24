@@ -362,6 +362,7 @@ describe('859 §B / D1 — the transcript follows CONTENT GROWTH, not every rend
     reasoning: [],
     durationMs: null,
     modelLabel: null,
+    disposition: null,
     ...over,
   });
 

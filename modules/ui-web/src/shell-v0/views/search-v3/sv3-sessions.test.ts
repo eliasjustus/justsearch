@@ -933,6 +933,7 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     reasoning: [],
     durationMs: null,
     modelLabel: null,
+    disposition: null,
     ...over,
     // A record-projected turn carries the record's own id as its `recordId` (tempdoc 847 §2.4.3),
     // exactly as `sv3-record.ts` mints it — that is the identity the merge reconciles on.

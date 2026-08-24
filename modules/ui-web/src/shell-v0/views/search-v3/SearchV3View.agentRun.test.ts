@@ -28,6 +28,7 @@ import type {
   ConversationEntry,
   ToolCall,
 } from '../../controllers/AgentSessionController.js';
+import type { BudgetUpdate } from '../../controllers/AgentSessionController.js';
 
 /** The observable surface the window projects, plus the spies the seam should reach. */
 interface FakeCtrl {
@@ -40,6 +41,8 @@ interface FakeCtrl {
   conversationId: string | null;
   sessionId: string | null;
   iterationsUsed: number;
+  toolCallsExecuted: number;
+  budgetUpdates: BudgetUpdate[];
   budgetGate: { tokensNeeded: number; tokensRemaining: number; totalTokensConsumed: number } | null;
   contextGate: { promptTokens: number; contextWindow: number } | null;
   /** Tempdoc 834 §6.2 — why the run is stopped, when it is; the window reads it as `holding`. */
@@ -66,6 +69,8 @@ function makeCtrl(): FakeCtrl {
     conversationId: null,
     sessionId: null,
     iterationsUsed: 0,
+    toolCallsExecuted: 0,
+    budgetUpdates: [],
     budgetGate: null,
     contextGate: null,
     runPark: null,
@@ -105,7 +110,6 @@ import { resetSearchState } from '../../state/searchState.js';
 import { __feedContactForTest, __feedForTest, __resetAiStateForTest } from '../../state/aiStateStore.js';
 import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import { RUN_DISPATCHING } from './fixtures.js';
-import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 import { __resetConversationListForTest } from '../../state/conversationListStore.js';
 import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
 import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
@@ -283,7 +287,11 @@ describe('the composer routes by KEY, and each key reaches exactly one tier', ()
     await press(el, { ctrlKey: true });
 
     expect(ctrl.send).toHaveBeenCalledTimes(1);
-    expect(ctrl.send).toHaveBeenCalledWith('clean up the vendor folder');
+    // Tempdoc 859 §D §2.1 / §3.3 T14 — the EFFORT rung travels with the dispatch, from the CHORD
+    // path specifically. Ctrl+Enter delegates regardless of the tier control (852 kept the
+    // accelerator), so this is the path where a rung dropped at the boundary would be least
+    // noticeable — and a dropped rung fails silently, because the backend defaults it to Standard.
+    expect(ctrl.send).toHaveBeenCalledWith('clean up the vendor folder', 'standard');
     // The delegated turn is stamped with THIS window's conversation, not with whatever ran last —
     // and the conversation is the app-wide store's, not a window-local counter (Phase F6).
     expect(ctrl.conversationId).toBe(el.sessions.sessions[0]?.id);
@@ -370,7 +378,7 @@ describe('the primary slot is a strict-priority state machine in the DOM', () =>
     const main = await region(el, 'jf-sv3-main');
     // The prompt's FIRST control, which since Phase F7 (inventory B8) is the raise remedy rather
     // than a concession — landing the reader on "give something up" would be the wrong default.
-    expect(main.shadowRoot?.activeElement).toBe(q(main, 'sv3-run-budget-raise'));
+    expect(main.shadowRoot?.activeElement).toBe(q(main, 'sv3-run-budget-raise-little'));
     expect(ctrl.resolveBudgetGate).not.toHaveBeenCalled();
   });
 
@@ -433,16 +441,32 @@ describe('a typed prompt is resolved by its OWN command, never by chat text', ()
       budgetGate: { tokensNeeded: 500, tokensRemaining: 10, totalTokensConsumed: 90 },
     });
     const main = await region(el, 'jf-sv3-main');
-    const raise = q(main, 'sv3-run-budget-raise') as HTMLButtonElement | null;
-    // The label states the step the directive actually spends — read from the SHARED constant, so a
-    // button that promised one number and dispatched another would fail here.
-    expect(raise?.textContent).toContain(RAISE_BUDGET_STEP_TOKENS.toLocaleString());
+    // Tempdoc 859 §D §2.5 — THREE sized arms now, not one fixed step. Each dispatches its OWN
+    // amount, and each amount must clear this gate: `tokensNeeded` 500 against `tokensRemaining` 10
+    // is a shortfall of 490, so an arm that offered less would resume the loop into an immediate
+    // re-gate. That is the property the retired 4,096-token constant could not guarantee.
+    const shortfall = 500 - 10;
+    const spends: number[] = [];
+    for (const rung of ['little', 'again', 'plenty']) {
+      const arm = q(main, `sv3-run-budget-raise-${rung}`) as HTMLButtonElement | null;
+      expect(arm, `the ${rung} arm renders`).not.toBeNull();
+      // The label states the amount the directive actually spends, so a button that promised one
+      // number and dispatched another fails here.
+      const promised = Number((arm?.textContent ?? '').replace(/[^0-9]/g, ''));
+      expect(promised).toBeGreaterThanOrEqual(shortfall);
+      spends.push(promised);
+    }
+    // Strictly ascending: three labels that spend the same amount would be three lies.
+    expect(spends[1]).toBeGreaterThan(spends[0]!);
+    expect(spends[2]).toBeGreaterThan(spends[1]!);
+
+    const raise = q(main, 'sv3-run-budget-raise-again') as HTMLButtonElement | null;
     await pressControl(raise);
     await settle(el);
 
     // Through the seam's own `raise-budget` directive, not by resolving the gate: raising is not a
     // decision about the gate, it is more allowance (`controllers/runControlIntent.ts:34-36`).
-    expect(ctrl.raiseBudget).toHaveBeenCalledWith(RAISE_BUDGET_STEP_TOKENS);
+    expect(ctrl.raiseBudget).toHaveBeenCalledWith(spends[1]);
     expect(ctrl.resolveBudgetGate).not.toHaveBeenCalled();
     expect(ctrl.cancelSession).not.toHaveBeenCalled();
   });
@@ -458,7 +482,7 @@ describe('a typed prompt is resolved by its OWN command, never by chat text', ()
     // The backend evicts finished sessions, so a raise on one is the 404 class tempdoc 577 Ext III
     // made structural. The window dispatches; the SEAM refuses.
     await frame(el, { runInFlight: false, isStreaming: false });
-    await pressControl(q(main, 'sv3-run-budget-raise'));
+    await pressControl(q(main, 'sv3-run-budget-raise-little'));
     await settle(el);
     expect(ctrl.raiseBudget).not.toHaveBeenCalled();
   });
@@ -842,5 +866,127 @@ describe('the window hosts the run — it does not re-implement one', () => {
       .filter(([, src]) => DIRECT.test(src))
       .map(([name]) => name);
     expect(offenders).toEqual([]);
+  });
+});
+
+/* ── Tempdoc 859 §D §2.5 / §3.3 T10 — per-run auto-continue ───────────────────────── */
+
+describe('a decision made once is RE-APPLIED, not re-asked (859 §D P3)', () => {
+  const GATE = { tokensNeeded: 4000, tokensRemaining: 500, totalTokensConsumed: 20000 };
+
+  /** Park the run at a budget gate, then clear it — one full gate cycle. */
+  async function gateCycle(el: Mounted): Promise<void> {
+    await frame(el, { budgetGate: GATE });
+    await frame(el, { budgetGate: null });
+  }
+
+  it('takes the SAME amount at the next gate, without asking, and stops after three', async () => {
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'do the thing', []);
+
+    // Gate 1: the reader ticks 'don't ask again' and chooses an arm. The toggle and the arm leave
+    // as ONE decision — the checkbox is read at click time, not stored separately.
+    await frame(el, { budgetGate: GATE });
+    const main = await region(el, 'jf-sv3-main');
+    const toggle = q(main, 'sv3-run-budget-auto')?.querySelector('input') as HTMLInputElement;
+    expect(toggle, 'the gate offers the per-run choice').toBeTruthy();
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    await settle(el);
+    const arm = q(main, 'sv3-run-budget-raise-again') as HTMLElement | null;
+    const chosen = Number((arm?.textContent ?? '').replace(/[^0-9]/g, ''));
+    await pressControl(arm);
+    await settle(el);
+    expect(ctrl.raiseBudget).toHaveBeenCalledTimes(1);
+    await frame(el, { budgetGate: null });
+
+    // Gates 2, 3 and 4 are answered silently — with the SAME amount, not a freshly derived one.
+    for (let n = 0; n < 3; n += 1) await gateCycle(el);
+    expect(ctrl.raiseBudget).toHaveBeenCalledTimes(4);
+    for (const call of ctrl.raiseBudget.mock.calls) expect(call[0]).toBe(chosen);
+
+    // Gate 5 ASKS AGAIN. Bounded, not surrendered: three silent continues is the cap, and the
+    // window returns the decision to the reader rather than continuing forever or stopping.
+    await frame(el, { budgetGate: GATE });
+    expect(ctrl.raiseBudget).toHaveBeenCalledTimes(4);
+    expect(q(await region(el, 'jf-sv3-main'), 'sv3-run-budget-raise-again')).not.toBeNull();
+  });
+
+  it('answers a held gate ONCE, however many frames the controller sends', async () => {
+    // The controller notifies on every frame and the gate stays held until the raise lands, so
+    // without the per-gate latch one gate would fire a raise per frame.
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'do the thing', []);
+    await frame(el, { budgetGate: GATE });
+    const main = await region(el, 'jf-sv3-main');
+    const toggle = q(main, 'sv3-run-budget-auto')?.querySelector('input') as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    await settle(el);
+    await pressControl(q(main, 'sv3-run-budget-raise-again'));
+    await settle(el);
+    await frame(el, { budgetGate: null });
+
+    await frame(el, { budgetGate: GATE });
+    await frame(el, { budgetGate: GATE });
+    await frame(el, { budgetGate: GATE });
+    expect(ctrl.raiseBudget).toHaveBeenCalledTimes(2);
+  });
+
+  it('a NEW run asks again — the choice is scoped to the run it was made about', async () => {
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'first task', []);
+    await frame(el, { budgetGate: GATE });
+    const main = await region(el, 'jf-sv3-main');
+    const toggle = q(main, 'sv3-run-budget-auto')?.querySelector('input') as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    await settle(el);
+    await pressControl(q(main, 'sv3-run-budget-raise-again'));
+    await settle(el);
+    await frame(el, { budgetGate: null, runInFlight: false, isStreaming: false, runKind: null });
+    ctrl.raiseBudget.mockClear();
+
+    // A second delegate replaces the window's run object, and the choice dies with it. Carrying it
+    // over would be exactly the standing autonomy the per-run scope exists to refuse.
+    await delegateWithCalls(el, 'second task', []);
+    await frame(el, { budgetGate: GATE });
+    expect(ctrl.raiseBudget).not.toHaveBeenCalled();
+    expect(q(await region(el, 'jf-sv3-main'), 'sv3-run-budget-raise-again')).not.toBeNull();
+  });
+
+  it('a NEW run’s gate renders UNTICKED, even though the prior run’s reader ticked it', async () => {
+    // Tempdoc 859 §D review F2 — the OFFER, not the raise. The test above proves the window does not
+    // ACT on the stale choice; this proves it does not SHOW one either. The checkbox is pre-click
+    // intent held on the region, and it used to be a plain field that outlived the run its own
+    // doc-comment said it died with — so run 2's gate rendered pre-ticked, offering a decision the
+    // window would not honour. Control and window saying different things is the one state this gate
+    // may not have.
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'first task', []);
+    await frame(el, { budgetGate: GATE });
+    const first = await region(el, 'jf-sv3-main');
+    const firstBox = q(first, 'sv3-run-budget-auto')?.querySelector('input') as HTMLInputElement;
+    firstBox.checked = true;
+    firstBox.dispatchEvent(new Event('change'));
+    await settle(el);
+    expect(
+      (q(first, 'sv3-run-budget-auto')?.querySelector('input') as HTMLInputElement).checked,
+      'the tick registered on the run that made it',
+    ).toBe(true);
+    await frame(el, { budgetGate: null, runInFlight: false, isStreaming: false, runKind: null });
+
+    await delegateWithCalls(el, 'second task', []);
+    await frame(el, { budgetGate: GATE });
+    const second = await region(el, 'jf-sv3-main');
+    const secondBox = q(second, 'sv3-run-budget-auto')?.querySelector('input') as HTMLInputElement;
+    expect(secondBox, 'the new run offers the choice').toBeTruthy();
+    expect(secondBox.checked, 'and offers it UNTICKED — the prior run’s tick died with it').toBe(
+      false,
+    );
   });
 });

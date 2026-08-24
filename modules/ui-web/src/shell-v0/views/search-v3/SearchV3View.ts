@@ -218,7 +218,6 @@ import { copyToClipboard } from '../../utils/clipboardCopy.js';
 import { fetchUnifiedThread } from '../unifiedThreadClient.js';
 // The shared per-raise step (565 run-control seam), so the button's label and the directive it
 // dispatches cannot promise different numbers.
-import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 // Tempdoc 609 Phase 3 — the ONE per-tab pointer (sessionStorage): a reload restores the thread THIS
 // tab was reading, not the globally-most-recent one.
 import {
@@ -258,6 +257,7 @@ import {
   sv3RunSessionStatus,
   SV3_RUN_FEED_EMPTY,
   type Sv3RunFeed,
+  shouldAutoContinue,
   type Sv3RunLocal,
   type Sv3RunTurnState,
   type Sv3RunView,
@@ -2451,10 +2451,22 @@ export class SearchV3View extends JfElement {
       acknowledged: false,
       haltRequested: false,
       haltDispatched: false,
+      // Tempdoc 859 §D §2.5 — a fresh run starts asking again. The reader's "don't ask again" is
+      // scoped to the run they said it about, and this object IS that scope.
+      autoContinueTokens: null,
+      autoContinuesUsed: 0,
     };
+    // Cleared here as well as on the first gate-free frame: a run that ended WHILE a gate was held
+    // leaves the latch set, and the reset would then depend on the new run producing a gate-free
+    // frame before its first gate. It does today; relying on that ordering would be the stale-flag
+    // short-circuit this window has been bitten by before.
+    this.budgetGateHandled = false;
     this.runLive = false;
     this.requestUpdate();
-    void dispatchRunControl(ctrl, { kind: 'initiate', prompt: text });
+    // Tempdoc 859 §D §2.1 — the composer's rung travels with the dispatch, as a NAME. It reaches
+    // `AgentBudgetPolicy`, which is the only place that can see the model's `n_ctx` and therefore
+    // the only place that may turn a rung into a token count.
+    void dispatchRunControl(ctrl, { kind: 'initiate', prompt: text, effort: this.effort });
   }
 
   /**
@@ -2564,7 +2576,13 @@ export class SearchV3View extends JfElement {
       acknowledged: true,
       haltRequested: false,
       haltDispatched: false,
+      // An ADOPTED run is one this window did not dispatch: nobody here made an auto-continue
+      // choice about it, so its gates ask. Inheriting a choice made for a different run would be
+      // exactly the standing autonomy the per-run scope exists to prevent.
+      autoContinueTokens: null,
+      autoContinuesUsed: 0,
     };
+    this.budgetGateHandled = false;
     // Observed live at adoption, so the run's terminal is an EDGE for this window too and the
     // adopted turn gets its one receipt instead of streaming forever.
     this.runLive = true;
@@ -2591,6 +2609,7 @@ export class SearchV3View extends JfElement {
       if (status === 'live' || status === 'holding') {
         this.runLive = true;
         if (local.haltRequested) this.deliverHalt();
+        this.maybeAutoContinue(ctrl, local);
       } else if (this.runLive) {
         this.runLive = false;
         this.concludeRun(local, feed);
@@ -2598,6 +2617,37 @@ export class SearchV3View extends JfElement {
     }
     this.requestUpdate();
   };
+
+  /**
+   * Tempdoc 859 §D §2.5 / P3 — a decision made once is RE-APPLIED, not re-asked.
+   *
+   * The reader ticked "don't ask again for this run" and chose an amount; the next gate takes that
+   * same amount without stopping them. Three guard rails keep this from becoming standing autonomy:
+   * it is scoped to ONE run (the state lives on {@link Sv3RunLocal}, which a new dispatch replaces),
+   * it is BOUNDED (after {@link AUTO_CONTINUE_LIMIT} the gate asks again rather than continuing
+   * forever), and every silent continue is NARRATED — the backend emits a `budget_raised` progress
+   * note, which the feed renders like any other step.
+   *
+   * `budgetGateHandled` is the idempotence latch: the controller notifies on every frame, and the
+   * gate stays held until the raise lands, so without it one gate would fire a raise per frame.
+   */
+  private maybeAutoContinue(ctrl: AgentSessionController, local: Sv3RunLocal): void {
+    if (ctrl.budgetGate === null) {
+      // The gate cleared — re-arm for the NEXT one.
+      this.budgetGateHandled = false;
+      return;
+    }
+    if (this.budgetGateHandled) return;
+    if (!shouldAutoContinue(local)) return;
+    const addTokens = local.autoContinueTokens;
+    if (addTokens === null || addTokens <= 0) return;
+    this.budgetGateHandled = true;
+    local.autoContinuesUsed += 1;
+    void dispatchRunControl(ctrl, { kind: 'raise-budget', addTokens });
+  }
+
+  /** One raise per held gate — see {@link maybeAutoContinue}. */
+  private budgetGateHandled = false;
 
   /**
    * The run's terminal: exactly ONE receipt, written to the turn the dispatch opened. The count comes
@@ -2624,12 +2674,16 @@ export class SearchV3View extends JfElement {
     // apply, and the reason it is not `runInFlight`/`isStreaming` (both local optimism, set inside
     // `send()` before the server answers).
     const ctrl = this.agentController();
-    if (
+    // Tempdoc 859 §D §2.6 (review F9) — ONE predicate, named, read by both the evidence write below
+    // and the disposition write further down. They were two hand-copied condition lists that had
+    // already drifted apart by one clause; a shared name is what makes "the same guard" checkable
+    // rather than a claim in a comment.
+    const terminalBelongsToThisRun =
       ctrl !== null &&
       local.acknowledged &&
       ctrl.answerEvidenceRunId !== null &&
-      ctrl.answerEvidenceRunId === ctrl.sessionId
-    ) {
+      ctrl.answerEvidenceRunId === ctrl.sessionId;
+    if (terminalBelongsToThisRun) {
       const evidence = agentAnswerEvidence(
         ctrl.answerSources,
         ctrl.answerCitations,
@@ -2647,6 +2701,13 @@ export class SearchV3View extends JfElement {
       sv3RunOutcome(feed, local.haltRequested),
       feed.toolCallCount,
       Date.now(),
+      '',
+      // Tempdoc 859 §D §2.6 — the terminal DISPOSITION, guarded by the SAME predicate the evidence
+      // above is (literally the same expression now) and for the same reason: `concludeRun` fires on
+      // every terminal, including the ones that emit no `done`, and only `onDone` writes the
+      // controller's disposition. Without the guard a failed run N would settle wearing run N-1's
+      // cut-short badge.
+      terminalBelongsToThisRun && ctrl !== null ? ctrl.terminalDisposition : null,
     );
     // The live feed was ATTENTION; the record is what survives it. Refreshing at the terminal is what
     // makes the yield happen (inventory D1): the settled turn re-renders from the canonical record's
@@ -2665,10 +2726,17 @@ export class SearchV3View extends JfElement {
       // clear itself (tempdoc 577 Ext III, `views/UnifiedChatView.ts:3748-3755`). Same seam either
       // way — `dispatchRunControl` is the only way a directive leaves this window.
       if (detail.decision === 'raise') {
-        void dispatchRunControl(ctrl, {
-          kind: 'raise-budget',
-          addTokens: RAISE_BUDGET_STEP_TOKENS,
-        });
+        // Tempdoc 859 §D §2.5 — the arm carries its OWN amount, already floored to clear this gate.
+        // The fixed 4,096-token step it replaced could be smaller than the shortfall, in which case
+        // the click resumed the loop straight into an immediate re-gate — visibly doing nothing.
+        const addTokens = detail.addTokens ?? 0;
+        if (addTokens <= 0) return;
+        if (detail.autoContinue === true && this.run !== null) {
+          // Remembered on the RUN, with the amount it applies to: one decision, one object, and it
+          // dies with the run rather than becoming a standing preference.
+          this.run.autoContinueTokens = addTokens;
+        }
+        void dispatchRunControl(ctrl, { kind: 'raise-budget', addTokens });
         return;
       }
       if (detail.decision === 'stop') this.markHaltRequested();
@@ -3005,10 +3073,16 @@ export class SearchV3View extends JfElement {
     if (local === null) return null;
     const ctrl = this.agentController();
     const feed = ctrl === null ? SV3_RUN_FEED_EMPTY : projectSv3RunFeed(ctrl, local.entryStart);
-    const prompts = ctrl === null ? [] : projectSv3RunPrompts(ctrl, feed);
     const turn = sessionById(this.sessions, local.sessionId)?.turns.find(
       (t) => t.id === local.turnId,
     );
+    const prompts =
+      ctrl === null
+        ? []
+        : // Tempdoc 859 §D §2.4 — elapsed comes from the TURN's own `askedAt`, which the record
+          // carries too, so a gate met after a reload still says how long the run has been going.
+          // The clock is read HERE and passed in; the projection stays pure.
+          projectSv3RunPrompts(ctrl, feed, { askedAt: turn?.askedAt ?? null, now: Date.now() });
     const turnState: Sv3RunTurnState =
       turn === undefined || turn.status !== 'streaming'
         ? 'settled'

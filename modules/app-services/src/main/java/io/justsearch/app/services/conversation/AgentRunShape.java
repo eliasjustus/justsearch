@@ -118,7 +118,12 @@ public final class AgentRunShape {
               // name). Optional because ABSENT is load-bearing on the READ side: a record persisted
               // before this field is a pre-stamp record, which the 836 §4 gate admits, whereas a
               // known non-cross-encoder producer fails closed. Every live emitter stamps it.
-              EventField.string("citationScorer").asOptional()),
+              EventField.string("citationScorer").asOptional(),
+              // Tempdoc 859 §D §2.6 — the run's terminal disposition (the `TerminalDisposition` wire
+              // name), so a truncated answer discloses that structurally instead of depending on the
+              // model to say so. Optional because ABSENT means "this emitter did not state one" —
+              // never "COMPLETED"; the FE derives cut-short only from the two TRUNCATING values.
+              EventField.string("disposition").asOptional()),
           EventDescriptor.ofTraced(
               "error",
               EventField.string("error"),

@@ -25,6 +25,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentSessionController } from '../../controllers/AgentSessionController.js';
+import type { BudgetUpdate } from '../../controllers/AgentSessionController.js';
 
 interface FakeCtrl {
   conversation: unknown[];
@@ -36,6 +37,8 @@ interface FakeCtrl {
   conversationId: string | null;
   sessionId: string | null;
   iterationsUsed: number;
+  toolCallsExecuted: number;
+  budgetUpdates: BudgetUpdate[];
   budgetGate: { tokensNeeded: number; tokensRemaining: number; totalTokensConsumed: number } | null;
   contextGate: { promptTokens: number; contextWindow: number } | null;
   runPark: null;
@@ -60,6 +63,8 @@ function makeCtrl(): FakeCtrl {
     conversationId: null,
     sessionId: null,
     iterationsUsed: 0,
+    toolCallsExecuted: 0,
+    budgetUpdates: [],
     budgetGate: null,
     contextGate: null,
     runPark: null,
@@ -105,7 +110,6 @@ import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import { __resetConversationListForTest } from '../../state/conversationListStore.js';
 import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
 import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
-import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 import { NAVIGATE_TO_SURFACE_EVENT } from '../../controllers/navigateRequest.js';
 import { CORPUS_REMEDY_TARGET } from './fixtures.js';
 
@@ -235,14 +239,24 @@ describe('the run decisions are born on the operability primitive', () => {
     expect(ctrl.resolveBudgetGate).toHaveBeenCalledWith('finalize');
   });
 
-  it('raises the budget through the primitive, by the shared step', async () => {
+  it('raises the budget through the primitive, by the arm\'s OWN sized step', async () => {
+    // Tempdoc 859 §D §2.5 — this used to assert the shared 4,096-token constant. The constant is
+    // retired (a fixed step could be smaller than the gate's shortfall, so the click resumed the
+    // loop straight into an immediate re-gate), and the assertion is REWRITTEN rather than deleted:
+    // it is the regression guard for "the label and the directive spend the same number", which is
+    // the property the ladder must not lose.
     aiOnline();
     const el = await mount();
     const main = await delegateWithGate(el, 'budget');
 
-    await activate(q(main, 'sv3-run-budget-raise'));
+    const arm = q(main, 'sv3-run-budget-raise-again');
+    const promised = Number(
+      (arm?.textContent ?? '').replace(/[^0-9]/g, ''),
+    );
+    expect(promised).toBeGreaterThan(0);
+    await activate(arm);
     await settle(el);
-    expect(ctrl.raiseBudget).toHaveBeenCalledWith(RAISE_BUDGET_STEP_TOKENS);
+    expect(ctrl.raiseBudget).toHaveBeenCalledWith(promised);
     // Raising is not a third value of the gate's decision — the gate is left to clear itself.
     expect(ctrl.resolveBudgetGate).not.toHaveBeenCalled();
   });
@@ -261,7 +275,15 @@ describe('the run decisions are born on the operability primitive', () => {
     aiOnline();
     const el = await mount();
     const budget = await delegateWithGate(el, 'budget');
-    for (const testid of ['sv3-run-budget-raise', 'sv3-run-budget-finalize', 'sv3-run-budget-stop']) {
+    // Tempdoc 859 §D §2.5 — the single fixed raise arm became THREE sized ones; each must still be
+    // born on the primitive and carry its own name.
+    for (const testid of [
+      'sv3-run-budget-raise-little',
+      'sv3-run-budget-raise-again',
+      'sv3-run-budget-raise-plenty',
+      'sv3-run-budget-finalize',
+      'sv3-run-budget-stop',
+    ]) {
       const control = q(budget, testid);
       expect(control?.localName, testid).toBe('jf-control');
       expect((control?.getAttribute('label') ?? '').trim(), testid).not.toBe('');
@@ -294,9 +316,9 @@ describe('adoption kept every control identifiable and named', () => {
     const main = await delegateWithGate(el, 'budget');
     // The testid stayed on the element the DOM search reaches; only the BUTTON moved inward. This is
     // the property that makes the ui-shot step registry and every suite selector survive adoption.
-    expect(q(main, 'sv3-run-budget-raise')).not.toBeNull();
+    expect(q(main, 'sv3-run-budget-raise-again')).not.toBeNull();
     expect(
-      q(main, 'sv3-run-budget-raise')?.shadowRoot?.querySelector('button'),
+      q(main, 'sv3-run-budget-raise-again')?.shadowRoot?.querySelector('button'),
     ).not.toBeNull();
   });
 

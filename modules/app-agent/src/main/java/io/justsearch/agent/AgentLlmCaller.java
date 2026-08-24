@@ -63,6 +63,31 @@ final class AgentLlmCaller {
   }
 
   /**
+   * Tempdoc 859 §D §2.6 layer 1 — the budget-edge finalize instruction.
+   *
+   * <p>The instruction this replaced asked for "your best answer based on the information gathered
+   * so far" and never gave the model permission — let alone an obligation — to be PARTIAL. A compact
+   * model resolves that by declining: 859 §7 observed a confidently formatted, content-free
+   * non-answer that also claimed no access to files already sitting in its own transcript.
+   *
+   * <p>So this names the situation, requires the disclosure, requires the partition into gathered vs
+   * not-gathered, and forbids the specific false claim that was observed. It is BEST-EFFORT by
+   * construction — a model can ignore any of it. The fail-closed guarantee is the disposition on the
+   * wire ({@code AgentEvent.AgentDone#disposition}), which is written independently of this text.
+   */
+  static final String BUDGET_EDGE_FINALIZE_INSTRUCTION =
+      "This run has reached its token budget and is stopping now, before you finished working."
+          + " Write your answer from what you already gathered, and follow all four rules:\n"
+          + "1. Say plainly, in your first sentence, that the run was cut short before it finished"
+          + " and that this answer is partial.\n"
+          + "2. Give whatever partial findings you do have. A partial answer is the goal here — do"
+          + " not decline, and do not withhold what you found because it is incomplete.\n"
+          + "3. Name what you had gathered and what you had not gotten to yet.\n"
+          + "4. Do not say you lack access to anything already present in this conversation. Tool"
+          + " results above are yours to use.\n"
+          + "Do not call any more tools.";
+
+  /**
    * Budget-edge finalize: compress history, ask the model for its best answer with no tools, and
    * return that text (or {@code null} if it returns nothing or the call fails).
    */
@@ -70,14 +95,7 @@ final class AgentLlmCaller {
     try {
       // Compress tool messages to maximize context space for the finalize call
       compressor.compressToolMessages(session.messages());
-      session.appendMessage(
-          Map.of(
-              "role",
-              "user",
-              "content",
-              "You are running low on context budget. Please provide your best"
-                  + " answer based on the information gathered so far. Do not call any more"
-                  + " tools."));
+      session.appendMessage(Map.of("role", "user", "content", BUDGET_EDGE_FINALIZE_INSTRUCTION));
       LlmCallResult result = callLlmWithTools(session, List.of(), sink);
       String text = result.textContent();
       boolean success = text != null && !text.isBlank();

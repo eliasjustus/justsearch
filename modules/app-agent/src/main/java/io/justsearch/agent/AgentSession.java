@@ -73,6 +73,14 @@ final class AgentSession {
   private final AtomicInteger budgetRemaining;
   private final AtomicInteger promptTokensConsumed;
   private final AtomicInteger completionTokensConsumed;
+  // Tempdoc 859 §D §2.7(c) — the provider-REPORTED size of the latest prompt (the same figure the
+  // `llm_response` budget event carries), which the context-pressure trigger reads instead of the
+  // schema-blind projection. 0 until the first LLM response reports usage.
+  private final AtomicInteger lastReportedPromptTokens = new AtomicInteger(0);
+  // Tempdoc 859 §D §3.2(7) — tokens granted but NOT YET NARRATED. Accumulates (two grants between
+  // step boundaries produce one note for the total) and is drained by whichever site observes it
+  // first; see drainPendingRaiseNarration.
+  private final AtomicInteger pendingRaiseNarration = new AtomicInteger(0);
 
   // Tempdoc 577 §2.14 Root II (#14) — the model's context window (n_ctx), the cognitive-headroom
   // denominator. Set once at run start by AgentLoopService (the one site that resolves it from the
@@ -466,9 +474,19 @@ final class AgentSession {
   private volatile CompletableFuture<ContextGateDecision> contextGate;
   // Tempdoc 834 §6.2 — the context park's start, mirroring budgetGateSinceEpochMs.
   private volatile long contextGateSinceEpochMs;
-  // The context gate fires AT MOST ONCE per run: once the user decides (continue/summarize), the run
-  // is not re-parked every iteration. A renewed pressure spike after a summarize is covered by the
-  // hard budget gate. Loop-thread-only, so a plain boolean suffices.
+  // The context gate ASKS at most once per run: once the user decides (continue/summarize), the run
+  // is not re-parked every iteration.
+  //
+  // Tempdoc 859 §D §2.7 — this flag's ORIGINAL rationale ("a renewed pressure spike after a
+  // summarize is covered by the hard budget gate") is RETIRED, not merely reworded. It was true only
+  // while the budget was one context window: the budget wall always arrived first, so a second
+  // crossing was unreachable. At the effort multipliers (up to 15x) the budget no longer arrives
+  // first, and a second crossing with no response would let the prompt grow past n_ctx — which would
+  // void the very structural bound the Thorough rung is justified by (AgentBudgetPolicy).
+  //
+  // What the flag means NOW: ask once, then AUTO-COMPACT on every later crossing (AgentStepRunner).
+  // The decision is re-applied, not re-asked — and the run says so each time it re-applies it.
+  // Loop-thread-only, so a plain boolean suffices.
   private boolean contextGateFired = false;
 
   /**
@@ -512,19 +530,47 @@ final class AgentSession {
   }
 
   /**
-   * Tempdoc 577 §2.14 Root II — compact older conversation turns to free context headroom (the
-   * SUMMARIZE decision). Structurally: drop the OLDEST non-system, non-final messages, preserving the
-   * system prompt (index 0 when present) and the most recent {@code keepRecent} messages (the live
-   * working set). Returns the number of messages dropped, so the caller can narrate the compaction
-   * honestly. Loop-thread-only (called between iterations); no concurrent mutation.
+   * Tempdoc 577 §2.14 Root II — compact older conversation turns to free context headroom.
+   * Structurally: drop the OLDEST messages, preserving an anchor at the head and the most recent
+   * {@code keepRecent} messages (the live working set). Returns the number of messages dropped, so
+   * the caller can narrate the compaction honestly. Loop-thread-only (called between iterations); no
+   * concurrent mutation.
+   *
+   * <p><b>Named honestly (859 §D §2.7):</b> this DELETES messages. It does not summarize them. The
+   * SUMMARIZE gate decision is the user's word for the remedy, not a description of the mechanism.
+   *
+   * <p><b>Two amendments (859 §D §2.7 a/b),</b> each closing a hazard that one compaction could
+   * already cause and that repeated compaction — now reachable, since the gate re-arms — multiplies:
+   *
+   * <ol>
+   *   <li><b>The task anchor survives.</b> The opening user message is the run's TASK, and it sat at
+   *       index 1, inside the drop range. An agent that forgets what it was asked, mid-run, is worse
+   *       than one that stops.
+   *   <li><b>Whole assistant+tool groups, never a severed one.</b> A {@code role:"tool"} message
+   *       whose parent assistant {@code tool_calls} message was dropped is an orphan — a malformed
+   *       conversation for the provider. The drop boundary is pushed forward past any leading tool
+   *       messages so a group leaves together.
+   * </ol>
    */
   synchronized int compactOlderTurns(int keepRecent) {
     int size = messages.size();
     // Preserve a leading system message (role=system at index 0) as an anchor.
     int start = (size > 0 && "system".equals(messages.get(0).get("role"))) ? 1 : 0;
+    // (a) Preserve the TASK anchor: the opening user message, wherever the system message left it.
+    if (start < size && "user".equals(messages.get(start).get("role"))) {
+      start++;
+    }
     int dropEnd = size - Math.max(0, keepRecent);
     if (dropEnd <= start) {
       return 0; // nothing compactable (the working set already fits the keep-window)
+    }
+    // (b) Never sever a tool result from the assistant call it answers. Messages are dropped as a
+    // PREFIX, so a dropped tool message's parent is always dropped with it; the exposure is the
+    // other end — a KEPT tool message whose parent falls inside the drop range. Push the boundary
+    // forward over those, which drops the whole group instead of orphaning its tail. Bounded by one
+    // assistant turn's tool-call count.
+    while (dropEnd < size && "tool".equals(messages.get(dropEnd).get("role"))) {
+      dropEnd++;
     }
     int dropped = dropEnd - start;
     messages.subList(start, dropEnd).clear();
@@ -719,7 +765,34 @@ final class AgentSession {
   void addBudget(int tokens) {
     if (tokens > 0) {
       budgetRemaining.addAndGet(tokens);
+      // Tempdoc 859 §D §3.2(7) — queue the grant for narration. The loop drains it, so a raise is
+      // announced whether it resolved a held gate or landed mid-run; without this the mid-run raise
+      // stayed silent, which is the half of D7 the first pass missed.
+      pendingRaiseNarration.addAndGet(tokens);
     }
+  }
+
+  /**
+   * Tempdoc 859 §D §3.2(7) — take the un-narrated grant total, zeroing it. Returns 0 when there is
+   * nothing to announce.
+   *
+   * <p>DRAIN, not read: it is called from two sites — the budget gate's CONTINUE branch (which
+   * narrates immediately, because the run visibly resumes there) and the next iteration_start
+   * boundary (which catches a raise that landed while no gate was held). One counter drained by
+   * both is what makes "exactly one note per grant" structural rather than a coordination rule
+   * between two sites that could drift.
+   */
+  int drainPendingRaiseNarration() {
+    return pendingRaiseNarration.getAndSet(0);
+  }
+
+  /**
+   * Tempdoc 859 §D §2.7(c) — the PROVIDER-REPORTED size of the most recent prompt, or 0 before the
+   * first LLM response. Unlike {@code countPromptTokens} this includes what the projection cannot
+   * see (tool schemas), which is why the context-pressure trigger reads it.
+   */
+  int lastReportedPromptTokens() {
+    return lastReportedPromptTokens.get();
   }
 
   /** Returns the total tokens consumed (prompt + completion). Thread-safe atomic snapshot. */
@@ -816,6 +889,11 @@ final class AgentSession {
     if (promptTokens != null) {
       this.promptTokensConsumed.addAndGet(promptTokens);
       this.budgetRemaining.addAndGet(-promptTokens);
+      // Tempdoc 859 §D §2.7(c) — remember the PROVIDER-REPORTED prompt size. The context-pressure
+      // trigger used only `countPromptTokens`, which is schema-blind and measured ~40% low (577), so
+      // it could fire after the real prompt already exceeded n_ctx. This is the same figure the
+      // `budget_update` phase `llm_response` puts on the wire, kept for the trigger to read.
+      this.lastReportedPromptTokens.set(promptTokens);
     }
     if (completionTokens != null) {
       this.completionTokensConsumed.addAndGet(completionTokens);

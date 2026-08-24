@@ -35,6 +35,8 @@ const ctrl = {
   conversationId: null as string | null,
   sessionId: null as string | null,
   iterationsUsed: 0,
+  toolCallsExecuted: 0,
+  budgetUpdates: [],
   budgetGate: null,
   contextGate: null,
   reattachActiveRunOnLoad: reattach,

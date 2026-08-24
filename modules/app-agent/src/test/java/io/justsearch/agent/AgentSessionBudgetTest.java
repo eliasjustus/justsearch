@@ -121,7 +121,12 @@ final class AgentSessionBudgetTest {
     assertFalse(s.contextGateFired());
     var gate = s.createContextGate();
     assertTrue(s.contextGateHeld(), "parked once created");
-    assertTrue(s.contextGateFired(), "fired-once flag set so the loop never re-parks");
+    // Tempdoc 859 §D §2.7 — this flag's MEANING narrowed and the old wording became inaccurate.
+    // It has always pinned only that the gate ASKS at most once, and that is still exactly true.
+    // What changed is the loop's response to a LATER crossing: it now auto-compacts (and narrates
+    // it) instead of doing nothing. "never re-parks" stays right; "nothing happens again" never was
+    // what this asserted, and at the effort multipliers it would be a hole, not a contract.
+    assertTrue(s.contextGateFired(), "asked-once flag set so the loop never re-PARKS the run");
     assertFalse(gate.isDone());
   }
 
@@ -140,7 +145,7 @@ final class AgentSessionBudgetTest {
   }
 
   @Test
-  @DisplayName("compactOlderTurns drops the oldest non-system turns, preserving the system anchor + recent window")
+  @DisplayName("compactOlderTurns drops the oldest turns, preserving the system anchor + recent window")
   void compactOlderTurnsKeepsSystemAndRecent() {
     var msgs = new java.util.ArrayList<Map<String, Object>>();
     msgs.add(Map.of("role", "system", "content", "you are an agent"));
@@ -149,10 +154,119 @@ final class AgentSessionBudgetTest {
     }
     var s = sessionWith(msgs);
     int dropped = s.compactOlderTurns(3); // keep the 3 most-recent
-    assertEquals(7, dropped, "11 messages, keep system + 3 recent ⇒ drop 7");
-    assertEquals(4, s.messages().size());
+    // Tempdoc 859 §D §2.7(a) — the counts changed BECAUSE the contract did: the opening user
+    // message is now preserved as the run's TASK anchor alongside the system message.
+    assertEquals(6, dropped, "11 messages, keep system + opening task + 3 recent ⇒ drop 6");
+    assertEquals(5, s.messages().size());
     assertEquals("system", s.messages().get(0).get("role"), "the system anchor is preserved");
-    assertEquals("turn 9", s.messages().get(3).get("content"), "the newest turn is kept");
+    assertEquals("turn 0", s.messages().get(1).get("content"), "the TASK anchor is preserved");
+    assertEquals("turn 9", s.messages().get(4).get("content"), "the newest turn is kept");
+  }
+
+  // --- Compaction amendments (tempdoc 859 §D §2.7 a/b) ---
+
+  @Test
+  @DisplayName("859 §D §2.7(a) — the opening user message survives compaction (the run's TASK)")
+  void compactionPreservesTheTaskAnchor() {
+    // The hazard this closes: the task sat at index 1, INSIDE the drop range. An agent that forgets
+    // what it was asked, mid-run, is worse than one that stops — and repeated compaction (now
+    // reachable, since the gate re-arms) made it the likely outcome rather than an edge case.
+    var msgs = new java.util.ArrayList<Map<String, Object>>();
+    msgs.add(Map.of("role", "system", "content", "you are an agent"));
+    msgs.add(Map.of("role", "user", "content", "READ THE THREE FILES AND SUMMARISE THEM"));
+    for (int i = 0; i < 12; i++) {
+      msgs.add(Map.of("role", "assistant", "content", "step " + i));
+    }
+    var s = sessionWith(msgs);
+    // Compact TWICE — the re-arm case, which is what makes this amendment load-bearing.
+    s.compactOlderTurns(4);
+    s.compactOlderTurns(2);
+    assertTrue(
+        s.messages().stream()
+            .anyMatch(m -> "READ THE THREE FILES AND SUMMARISE THEM".equals(m.get("content"))),
+        "the task must survive every compaction, not just the first");
+    assertEquals("system", s.messages().get(0).get("role"));
+    assertEquals("user", s.messages().get(1).get("role"), "the task anchor sits right after system");
+  }
+
+  @Test
+  @DisplayName("859 §D §2.7(b) — no `tool` message is left without the assistant call it answers")
+  void compactionNeverOrphansAToolResult() {
+    // A role:"tool" message whose parent assistant tool_calls message was dropped is a malformed
+    // conversation for the provider. The keep-window boundary lands wherever it lands, so without
+    // this the orphan is a matter of luck.
+    var msgs = new java.util.ArrayList<Map<String, Object>>();
+    msgs.add(Map.of("role", "system", "content", "sys"));
+    msgs.add(Map.of("role", "user", "content", "task"));
+    for (int i = 0; i < 4; i++) {
+      msgs.add(Map.of("role", "assistant", "content", "calls " + i, "tool_calls", "yes"));
+      msgs.add(Map.of("role", "tool", "content", "result " + i));
+      msgs.add(Map.of("role", "tool", "content", "result " + i + "b"));
+    }
+    var s = sessionWith(msgs);
+    // keepRecent = 5 would slice mid-group: [.. tool, tool, assistant, tool, tool] leaves the first
+    // two tool messages parentless. The boundary must move forward past them instead.
+    s.compactOlderTurns(5);
+    var kept = s.messages();
+    boolean seenAssistantSinceHead = false;
+    for (int i = 0; i < kept.size(); i++) {
+      String role = String.valueOf(kept.get(i).get("role"));
+      if ("assistant".equals(role)) {
+        seenAssistantSinceHead = true;
+      } else if ("tool".equals(role)) {
+        assertTrue(
+            seenAssistantSinceHead,
+            "tool message at index " + i + " has no assistant call above it: " + kept);
+      }
+    }
+    assertEquals("system", kept.get(0).get("role"));
+    assertEquals("task", kept.get(1).get("content"), "and the task anchor still survives");
+  }
+
+  // --- The raise narration input (tempdoc 859 §D §3.2(7)) ---
+
+  @Test
+  @DisplayName("859 §D — a grant is queued for narration exactly once, then drained")
+  void addBudgetQueuesTheRaiseForNarrationExactlyOnce() {
+    var s = session(1000);
+    assertEquals(0, s.drainPendingRaiseNarration(), "a run nobody raised has nothing to narrate");
+    s.addBudget(10_000);
+    s.addBudget(0);
+    s.addBudget(-5);
+    assertEquals(
+        10_000, s.drainPendingRaiseNarration(), "rejected grants add nothing to announce");
+    assertEquals(
+        0,
+        s.drainPendingRaiseNarration(),
+        "DRAINED — the second observer of the same grant must not announce it again, which is what"
+            + " lets the gate branch and the step boundary both call this safely");
+  }
+
+  @Test
+  @DisplayName("859 §D — two grants between step boundaries narrate ONCE, for the total")
+  void grantsAccumulateBetweenNarrations() {
+    // The mid-run raise is announced at the next iteration_start. A reader who clicks twice before
+    // the loop reaches that boundary granted 30,000 tokens once, not two separate things.
+    var s = session(1000);
+    s.addBudget(10_000);
+    s.addBudget(20_000);
+    assertEquals(30_000, s.drainPendingRaiseNarration());
+  }
+
+  @Test
+  @DisplayName("859 §D §2.7(c) — the session remembers the provider-REPORTED prompt size")
+  void recordUsageRemembersTheReportedPromptSize() {
+    // The context-pressure trigger reads this instead of countPromptTokens, which is schema-blind
+    // and ~40% low (577) — low enough that the trigger could fire only after the real prompt had
+    // already exceeded n_ctx, i.e. after the damage.
+    var s = session(50_000);
+    assertEquals(0, s.lastReportedPromptTokens(), "nothing reported before the first response");
+    s.recordUsage(3200, 150);
+    assertEquals(3200, s.lastReportedPromptTokens());
+    s.recordUsage(4100, 150);
+    assertEquals(4100, s.lastReportedPromptTokens(), "the LATEST prompt is the occupancy figure");
+    s.recordUsage(null, 90);
+    assertEquals(4100, s.lastReportedPromptTokens(), "a usage report without a prompt tells us nothing new");
   }
 
   // --- The zero-observer policy (tempdoc 577 §2.14 Root I #13) ---

@@ -447,8 +447,13 @@ public final class AgentLoopService implements AgentService {
         onlineAiService.llmContextTokens() != null
             ? onlineAiService.llmContextTokens()
             : onlineAiService.configuredContextTokens();
-    int safetyMargin = 256; // Reserve for response generation
-    int initialBudget = Math.max(0, contextWindow - safetyMargin);
+    // Tempdoc 859 §D §2.1 — the run's ECONOMIC budget is the context window times the EFFORT rung's
+    // multiplier, not one context window. The former `safetyMargin = 256` is gone: it was standing in
+    // for "leave room for the response", a job the between-step gate already does properly by
+    // projecting the real next prompt against the remaining budget (AgentStepRunner).
+    boolean background = Boolean.TRUE.equals(backgroundRun.get());
+    int initialBudget =
+        AgentBudgetPolicy.initialBudget(request.effort(), contextWindow, background);
 
     // Resolve effective initial agent ID: explicit > first profile > "primary"
     String effectiveAgentId = request.initialAgentId();
@@ -467,7 +472,7 @@ public final class AgentLoopService implements AgentService {
     // reads it off the session to filter every search-tool call in this run. Empty = unscoped
     // (unchanged behavior).
     session.setDocIdsScope(request.docIds());
-    if (Boolean.TRUE.equals(backgroundRun.get())) {
+    if (background) {
       session.markBackground(); // Tempdoc 561 P-D: safe-by-default safety gate for unwatched runs
     }
     sessionRegistry.register(sessionId, session);
@@ -564,9 +569,18 @@ public final class AgentLoopService implements AgentService {
 
       // Max iterations reached
       agentSuccess = true;
+      // Tempdoc 859 §D §2.6 — the OTHER truncating terminal. It produces no answer text at all, so
+      // the model cannot disclose the truncation even in principle; the disposition on the wire is
+      // the only thing that can. Emitted through the ungrounded factory (see AgentDone.ofDisposition)
+      // rather than the canonical constructor, which the grounding seam audit reserves for
+      // AgentStepRunner.groundedDone.
       sink.accept(
-          new AgentEvent.AgentDone(
-              "", session.iterationsUsed(), session.toolCallsExecuted(), session.totalTokens()));
+          AgentEvent.AgentDone.ofDisposition(
+              "",
+              session.iterationsUsed(),
+              session.toolCallsExecuted(),
+              session.totalTokens(),
+              TerminalDisposition.MAX_ITERATIONS.name()));
       // F1: state-first, durability-second.
       session.markTerminated(TerminalDisposition.MAX_ITERATIONS, null, null);
       checkpoint(sessionId, session, LifecycleState.DONE.name(), "Max iterations reached");

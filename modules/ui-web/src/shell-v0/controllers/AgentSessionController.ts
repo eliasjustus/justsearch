@@ -377,6 +377,15 @@ export class AgentSessionController implements CoreAgentRunHandlers {
    * whose record predates the field.
    */
   answerCitationScorer: string | null = null;
+  /**
+   * Tempdoc 859 §D §2.6 — the run's terminal DISPOSITION (`TerminalDisposition`'s wire name), the
+   * structural half of the cut-short disclosure.
+   *
+   * <p>`null` means the emitter said nothing — a legacy record, or an emitter that predates the
+   * field. It never means COMPLETED: the FE derives "cut short" only from the two TRUNCATING
+   * values, so an unknown disposition discloses nothing rather than quietly claiming success.
+   */
+  terminalDisposition: string | null = null;
   // Tempdoc 550 N1: the tool calls the agent proposed for the CURRENT turn, announced as one
   // batch (tool_batch_proposed) before any per-call gate — lets a surface preview the whole
   // turn's plan ("the agent wants to do X, Y, Z") ahead of the first approval. Per-call approval
@@ -714,6 +723,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.answerCitations = [];
     this.answerEvidenceRunId = null;
     this.answerCitationScorer = null;
+    this.terminalDisposition = null;
     this.currentToolBatch = [];
     this.totalTokensUsed = null;
     this.budgetUpdates = [];
@@ -1070,6 +1080,10 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     // carried the evidence, so neither can be read off a different run or a different scorer.
     this.answerEvidenceRunId = this.sessionId;
     this.answerCitationScorer = payload.citationScorer ?? null;
+    // Tempdoc 859 §D §2.6 — captured from the SAME payload that carried the answer, so the two
+    // cannot be read off different runs. Written by the loop after and independently of the
+    // finalize text, which is what makes it survive a model that says nothing about truncation.
+    this.terminalDisposition = payload.disposition ?? null;
     this.isStreaming = false;
     this.runKind = null; // §33 — run terminal: idle again
     this.runPark = null; // Tempdoc 834 §6.2 — a run that ended is not parked.
@@ -1582,7 +1596,12 @@ export class AgentSessionController implements CoreAgentRunHandlers {
 
   // --- HTTP dispatch ---
 
-  async send(message: string): Promise<void> {
+  /**
+   * @param effort tempdoc 859 §D §2.1 — the run's EFFORT rung name (`quick|standard|thorough`).
+   *     Omitted is not "no policy": the backend resolves an absent rung to Standard, which keeps
+   *     the sizing decision in the one place that can see the model's `n_ctx`.
+   */
+  async send(message: string, effort?: string): Promise<void> {
     this.conversation = [
       ...this.conversation,
       { id: this.nextEntryId(), type: 'user', content: message, timestamp: Date.now() },
@@ -1636,6 +1655,10 @@ export class AgentSessionController implements CoreAgentRunHandlers {
           ...(this.conversationId ? { conversationId: this.conversationId } : {}),
           // Tempdoc 561 P-D: send the autonomy dial so the backend issuance policy decides gating.
           autonomyLevel: getAutonomyLevel(),
+          // Tempdoc 859 §D §2.1: the composer's effort rung, as a NAME. AgentBudgetPolicy turns it
+          // into a budget; sending a token count from here would be a second sizing authority that
+          // cannot see `n_ctx`. Omitted when the caller named no rung — the backend defaults it.
+          ...(effort ? { effort } : {}),
         },
         onEvent: (event, payload) => this.dispatchEvent(event, payload),
         signal: this.abortController.signal,

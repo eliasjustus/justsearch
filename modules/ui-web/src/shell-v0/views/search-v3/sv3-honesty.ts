@@ -114,6 +114,50 @@ export function sv3ReceiptTail(durationMs: number | null, modelLabel: string | n
   return parts.join(' · ');
 }
 
+/* ── Cut short (tempdoc 859 §D §2.6) ─────────────────────────────────────────────────────────── */
+
+/**
+ * The two TRUNCATING dispositions — a run that stopped before finishing its work.
+ *
+ * `BUDGET_EDGE_FINALIZE`: the budget ran out and the model was given one last call to synthesise
+ * whatever it had. `MAX_ITERATIONS`: the loop hit its step ceiling, which produces no answer text at
+ * all — so the model cannot disclose that one even in principle.
+ *
+ * The other three (`COMPLETED`, `ERRORED`, `CANCELLED`) are not truncations: the first finished, and
+ * the other two already have their own honest surfaces (the error text, the halt receipt).
+ */
+const SV3_TRUNCATING_DISPOSITIONS: ReadonlySet<string> = new Set([
+  'BUDGET_EDGE_FINALIZE',
+  'MAX_ITERATIONS',
+]);
+
+/**
+ * The compact badge on a DELEGATE turn's receipt, beside its outcome.
+ *
+ * <p>It lives on {@link ../sv3-run.sv3RunReceiptLabel}, not on {@link sv3ReceiptTail}: the tail is
+ * built by {@link projectSv3AnswerFrame}, which refuses anything but an `ask` turn — so an ask turn
+ * can never carry a disposition and a delegate turn never reaches the tail. Threading the parameter
+ * through both would have added a branch nothing could reach.
+ */
+export const SV3_CUT_SHORT_BADGE = 'cut short';
+
+/** The full line on the settled turn — what the badge means, in the reader's terms. */
+export const SV3_CUT_SHORT_NOTICE =
+  'Cut short at the budget limit — this answer is based on what the run had gathered by then';
+
+/**
+ * Whether the run behind this answer was truncated.
+ *
+ * <p>WHY THIS IS NOT DERIVED FROM THE ANSWER'S TEXT: 859 §7 watched a cut-short run produce a
+ * confidently formatted, content-free non-answer that disclosed nothing. The backend writes the
+ * disposition AFTER and INDEPENDENTLY of the finalize text, so a model cannot talk its way out of
+ * this badge — which is the entire point. An unknown or absent disposition discloses NOTHING; it is
+ * never read as "completed".
+ */
+export function sv3WasCutShort(disposition: string | null | undefined): boolean {
+  return disposition != null && SV3_TRUNCATING_DISPOSITIONS.has(disposition);
+}
+
 /**
  * The answer's honest frame line: what it is based on, how long it took, which model wrote it.
  *

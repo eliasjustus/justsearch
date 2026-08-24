@@ -225,8 +225,37 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
     // Resume from the agent that was active at interruption, not the original initialAgentId
     String resumeAgentId = snapshot.get("activeAgentId") instanceof String s ? s : null;
 
-    sessionRunner.run(new AgentRequest(resumeMessages, selectedTools, maxIterations,
-        agentProfiles, resumeAgentId), eventConsumer);
+    sessionRunner.run(
+        resumedRequest(snapshot, resumeMessages, selectedTools, maxIterations, agentProfiles,
+            resumeAgentId),
+        eventConsumer);
+  }
+
+  /**
+   * Tempdoc 859 §D §2.1 — rebuild an {@link AgentRequest} from a persisted snapshot, carrying the
+   * EFFORT rung the run was dispatched with.
+   *
+   * <p>Both reconstruction paths (resume and fork) go through here, because the defect this closes is
+   * one of OMISSION and the two sites drifted apart exactly by one caller forgetting a field. A
+   * Thorough run resumed through the short constructor silently became Standard — 15x to 5x — and
+   * nothing said so, because an absent rung IS Standard by design.
+   *
+   * <p>The other four fields stay at the short constructor's values (no conversationId, no autonomy
+   * level, unscoped docIds): that is today's resume behaviour, unchanged and out of this slice's
+   * scope. Only the rung moves.
+   */
+  private static AgentRequest resumedRequest(
+      Map<String, Object> snapshot,
+      List<Map<String, Object>> messages,
+      List<String> selectedTools,
+      int maxIterations,
+      List<AgentProfile> agentProfiles,
+      String agentId) {
+    // Absent on a pre-859 record, which reads as Standard — the documented fallback, not a guess.
+    String effort = snapshot.get("effort") instanceof String s && !s.isBlank() ? s : null;
+    return new AgentRequest(
+        messages, selectedTools, maxIterations, agentProfiles, agentId, null, null, null,
+        List.of(), effort);
   }
 
   /**
@@ -283,7 +312,8 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
     List<AgentProfile> agentProfiles = rawProfiles.stream().map(AgentProfile::fromMap).toList();
     String agentId = snapshot.get("activeAgentId") instanceof String s ? s : null;
     sessionRunner.run(
-        new AgentRequest(forked, selectedTools, maxIterations, agentProfiles, agentId), eventConsumer);
+        resumedRequest(snapshot, forked, selectedTools, maxIterations, agentProfiles, agentId),
+        eventConsumer);
   }
 
   /**
