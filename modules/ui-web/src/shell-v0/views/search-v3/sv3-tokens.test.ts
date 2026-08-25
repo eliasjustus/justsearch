@@ -1177,3 +1177,46 @@ describe('the shared sheet carries what tokens cannot', () => {
     }
   });
 });
+
+/**
+ * The budget gate's measured a11y defects (live audit 2026-08-25, D1 + D2).
+ *
+ * Both were found by a LIVE, measured pass — axe for the contrast, a pixel measurement for the hit
+ * area — because neither is visible to a static gate: `check-contrast-matrix` reads
+ * `styles/tokens.css` and cannot see this window's own palette, and no gate measures target size at
+ * all. So the pins here are the DECLARATIONS (happy-dom lays out no shadow content, so there is no
+ * honest computed box or composited colour to read), each scoped to its own rule body so a stray
+ * match elsewhere in the sheet cannot satisfy it. The measured proof stays with the next live audit.
+ */
+describe('the budget gate clears the a11y floors the live audit measured', () => {
+  const ruleBodyOf = (styles: string, selector: string): string => {
+    const m = new RegExp(`${selector}\\s*\\{([^}]*)\\}`).exec(styles);
+    if (m === null) throw new Error(`Sv3Main.styles has no \`${selector}\` rule`);
+    return m[1] as string;
+  };
+
+  it('D1: the facts-row labels wear the LABEL role, not the quiet tier that failed AA on the wash', () => {
+    const dt = ruleBodyOf(styleTextOf(Sv3Main), '\\.run-prompt-facts dt');
+    // --secondary-label measured 4.38:1 against this surface (an 8% --success wash over the light
+    // background) — seven serious axe color-contrast nodes, light palette only. --foreground is the
+    // role `.run-note-label` already uses for a label in this same family, and measures 13.51:1.
+    expect(dt).toMatch(/color:\s*var\(--foreground\)/);
+    expect(dt).not.toMatch(/--secondary-label/);
+    // The label/value distinction the quiet ink used to carry now rides on weight, so the panel is
+    // still a list of labelled facts rather than one run of undifferentiated text.
+    expect(dt).toMatch(/font-weight:\s*500/);
+  });
+
+  it('D2: the auto-continue control clears the 24px target floor in both axes', () => {
+    const styles = styleTextOf(Sv3Main);
+    // The checkbox measured 13 x 13. The label IS the target (it activates the control it wraps), so
+    // the row carries the block axis...
+    expect(ruleBodyOf(styles, '\\.run-prompt-auto')).toMatch(/min-height:\s*24px/);
+    // ...and a hit box around the glyph carries a pointer aimed at the checkbox itself. inline-flex +
+    // centring grows the box WITHOUT resizing the native control inside it.
+    const hit = ruleBodyOf(styles, '\\.run-prompt-auto-hit');
+    expect(hit).toMatch(/min-width:\s*24px/);
+    expect(hit).toMatch(/min-height:\s*24px/);
+    expect(hit).toMatch(/display:\s*inline-flex/);
+  });
+});

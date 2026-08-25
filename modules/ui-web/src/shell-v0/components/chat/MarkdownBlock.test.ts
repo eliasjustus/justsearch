@@ -595,6 +595,33 @@ describe('MarkdownBlock 822 §3c — the ungrounded mark has its own color', () 
       /\.cite-ref\.cite-ungrounded\s*\{\s*color:\s*var\(--md-cite-ungrounded-color, var\(--text-warning\)\);/,
     );
   });
+
+  it('gives the mark a >=24px hit area WITHOUT resizing the glyph (2.5.8; live audit D4)', () => {
+    const cssText = markdownBlockCssText();
+    const ruleBody = (selector: string): string => {
+      const m = new RegExp(`${selector}\\s*\\{([^}]*)\\}`).exec(cssText);
+      expect(m, `${selector} must declare a rule`).not.toBeNull();
+      return m![1] as string;
+    };
+    // Measured 13 x 16 CSS px, under the WCAG 2.2 2.5.8 floor in both axes. The floor is carried by
+    // an overlay centred on the glyph, scoped to its own rule body so a `24px` elsewhere in the
+    // sheet cannot satisfy this.
+    const after = ruleBody('\\.cite-ref::after');
+    expect(after).toMatch(/width:\s*24px/);
+    expect(after).toMatch(/height:\s*24px/);
+    expect(after).toMatch(/position:\s*absolute/);
+    expect(after).toMatch(/transform:\s*translate\(-50%, ?-50%\)/);
+    // …anchored by the mark, which needs a containing block and nothing else: `position: relative`
+    // on an inline box moves no pixel.
+    expect(ruleBody('\\.cite-ref')).toMatch(/position:\s*relative/);
+    // The GLYPH is untouched. A padding or min-size fix would have grown the superscript, and a
+    // mark's species (a verified `.cite-ref` vs an inert `.pseudo-cite`) is read off its size and
+    // ink — so growing the ink would change what the mark CLAIMS, not just how big it is.
+    expect(ruleBody('\\.cite-ref')).not.toMatch(/min-width|min-height/);
+    expect(ruleBody('\\.cite-ref')).toMatch(/font-size:\s*var\(--font-size-xs\)/);
+    // The overlay is invisible: it must not paint over the selected mark's own wash.
+    expect(after).not.toMatch(/background|box-shadow|border(?!-)/);
+  });
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════

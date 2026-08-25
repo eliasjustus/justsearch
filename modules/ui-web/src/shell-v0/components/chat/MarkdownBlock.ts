@@ -646,6 +646,27 @@ export class MarkdownBlock extends JfElement {
       user-select: none;
       padding: 0 var(--md-cite-pad-x-rest, 0);
       border-radius: var(--md-cite-radius, 0.25em);
+      /* Live audit 2026-08-25 (D4) — WCAG 2.2 2.5.8 (Target Size, Minimum). The mark measured
+         13 x 16 CSS px. The extension below is what carries the floor; this only establishes the
+         containing block for it, and position:relative on an inline box moves nothing. */
+      position: relative;
+    }
+    /* The hit area, extended WITHOUT touching the mark's rendering: an overlay centred on the glyph,
+       not padding or a min-size, because either of those would resize the superscript — and the mark
+       SPECIES (a verified mark vs an inert .pseudo-cite) is read off its size and ink, so growing the
+       ink is a change to what the mark claims, not just to how big it is. The pseudo-element is not
+       an event target of its own, so a pointer landing on it reports the .cite-ref span exactly as a
+       pointer landing on the glyph does — the existing click/hover handlers are untouched. 24px is
+       written as the literal the criterion names (the tempdoc 853 F-09 precedent), not a spacing
+       token a later scale re-tune could drop back under the floor. */
+    .cite-ref::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 24px;
+      height: 24px;
+      transform: translate(-50%, -50%);
     }
     .cite-ref:hover {
       text-decoration: underline;

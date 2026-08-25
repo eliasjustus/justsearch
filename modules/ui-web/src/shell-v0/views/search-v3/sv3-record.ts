@@ -40,6 +40,7 @@ import type {
   AgentSource,
 } from '../../../api/generated/shape-handlers/shared.js';
 import type { Sv3RunFeedItem } from './sv3-run.js';
+import { sv3WasHalted } from './sv3-honesty.js';
 import { isSv3StoreMessageId, type Sv3Turn, type Sv3TurnEvidence } from './sv3-sessions.js';
 
 /**
@@ -432,7 +433,15 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       kind: agent ? 'agent' : 'ask',
       question: turn.question,
       answer: turn.answers.join('\n\n'),
-      status: turn.errored ? 'failed' : 'complete',
+      // Live audit 2026-08-25 (D3) — ONE vocabulary for one run. A cancelled run logs an error entry
+      // on its way down, so deriving the status from `errored` alone made the record call it `failed`
+      // while the live tail called it `stopped by you` — the same run telling the reader two stories,
+      // and the record's one describing their own decision as a malfunction. The precedence is
+      // `sv3RunOutcome`'s, restated on this plane rather than re-decided: HALT WINS OVER AN ERROR
+      // ENTRY. `applySv3Record` already carried a live `halted` across a refresh (`sv3-sessions.ts`
+      // `status: prior.status === 'halted' ? …`), which is exactly why the divergence only showed on
+      // a COLD load, where there is no prior turn to carry.
+      status: sv3WasHalted(turn.disposition) ? 'halted' : turn.errored ? 'failed' : 'complete',
       evidence,
       detail: '',
       toolCalls: turn.tools,
