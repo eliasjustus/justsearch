@@ -126,4 +126,81 @@ describe('one run, two paths, one timeline (859 §A §2.2)', () => {
       ['text', 'the answer'],
     ]);
   });
+
+  /**
+   * F4 — the ONE shape where the parity invariant does not hold, named and pinned rather than left
+   * to be rediscovered.
+   *
+   * It is reachable, but only through the TRAILING rule (848 §2.4 D-7), which this slice preserved
+   * deliberately: a run cut off mid-thought has a region with no following event to flush onto, so
+   * the fold attaches it to the run's LAST event. When that event is a lifecycle event of a call
+   * whose earlier lifecycle event already carries a block, the merge collapses both onto one tool
+   * ROW — and `sv3-record` draws reasoning ABOVE its carrier, which is right for a flushed block and
+   * wrong for a trailing one.
+   *
+   * It is NOT reachable by interleaving: `ReasoningChunk` is emitted inside the LLM stream
+   * (`AgentLlmCaller.java:212`) and the tool calls parsed out of it are dispatched only after it
+   * closes (`AgentStepRunner`), so reasoning never falls between two lifecycle events of one call
+   * on a healthy run. The Java half is pinned by
+   * `AgentInteractionMapperTest.twoLifecycleEventsOfOneCallEachCarryABlock`.
+   *
+   * The LIVE ordering is the chronologically correct one. Making the record match would need the
+   * block to carry a "this one trails" marker — a wire-visible change to every persisted reasoning
+   * element and to both windows' readers, for a shape that only an interrupted run produces. That is
+   * a bigger change than slice A, so the limit is recorded here instead of papered over.
+   */
+  it('F4: a TRUNCATED run is the one shape where the two orderings differ — by design, pinned', () => {
+    ctrl.loadReplayFromExport({
+      meta: { sessionId: 'run-truncated' },
+      events: [
+        { eventType: 'reasoning_chunk', payload: { text: 'search first' } },
+        { eventType: 'budget_update', payload: { phase: 'llm_response' } },
+        { eventType: 'tool_call_proposed', payload: { callId: 'c1', toolName: 'core_search', risk: 'low' } },
+        { eventType: 'tool_exec_started', payload: { callId: 'c1', toolName: 'core_search' } },
+        { eventType: 'tool_exec_completed', payload: { callId: 'c1', success: true } },
+        // The process died here, mid-thought.
+        { eventType: 'reasoning_chunk', payload: { text: 'the results are thin' } },
+      ],
+    });
+    const liveShape = shapeOf(projectSv3RunFeed(ctrl, 0).items);
+
+    // What the Java fold produces for that journal: block 1 flushed onto `proposed` on the way past,
+    // block 2 attached to the run's last event by the trailing rule — the same call, so the FE merge
+    // unions them onto one row.
+    const truncatedRecord: readonly ThreadEvent[] = [
+      { id: 'e0', occurredAt: iso(0), kind: 'USER_MESSAGE', originator: 'user', content: 'find the renewals', attributes: {} },
+      {
+        id: 'c1:proposed', occurredAt: iso(1), kind: 'TOOL_ACTIVITY', originator: 'agent', content: '',
+        attributes: {
+          callId: 'c1', toolName: 'core_search', status: 'proposed', risk: 'low',
+          reasoning: [{ text: 'search first', durationMs: 1000 }],
+        },
+      },
+      { id: 'c1:started', occurredAt: iso(2), kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', status: 'executing' } },
+      {
+        id: 'c1:completed', occurredAt: iso(3), kind: 'TOOL_ACTIVITY', originator: 'agent', content: '',
+        attributes: {
+          callId: 'c1', status: 'completed', success: true,
+          reasoning: [{ text: 'the results are thin', durationMs: 1000 }],
+        },
+      },
+    ];
+    const [recordTurn] = projectSv3RecordTurns(truncatedRecord);
+    const recordShape = shapeOf(recordTurn!.activity);
+
+    // Live: the trailing thought is where it happened — after the call, still open.
+    expect(liveShape).toEqual([
+      ['reasoning', 'search first'],
+      ['tool', 'c1'],
+      ['reasoning', 'the results are thin'],
+    ]);
+    // Record: both blocks ride the one merged tool row, so both draw above it.
+    expect(recordShape).toEqual([
+      ['reasoning', 'search first'],
+      ['reasoning', 'the results are thin'],
+      ['tool', 'c1'],
+    ]);
+    // The invariant that DOES survive, and the one the union fix exists for: no thought is lost.
+    expect(new Set(liveShape.map(([, v]) => v))).toEqual(new Set(recordShape.map(([, v]) => v)));
+  });
 });

@@ -1821,6 +1821,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.isStreaming = true;
     this.runKind = 'workflow'; // §33 — a workflow run is NOT steerable (WorkflowShapeRunner, no drain)
     this.streamingText = '';
+    this.lastStreamedAnswer = '';
     this.reasoning.reset();
     this.errorHandledDuringStream = false;
     this.notify();
@@ -1950,6 +1951,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
 
   async resumeSession(sessionId: string): Promise<void> {
     this.streamingText = '';
+    this.lastStreamedAnswer = '';
     this.isStreaming = true;
     this.runKind = 'agent'; // §33 — resuming a prior agent run (an AgentLoopService session) is steerable
     this.errorHandledDuringStream = false;
@@ -1988,6 +1990,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   async forkRun(sessionId: string, editedMessage: string): Promise<void> {
     this.exitReplay();
     this.streamingText = '';
+    this.lastStreamedAnswer = '';
     this.isStreaming = true;
     this.runKind = 'agent';
     this.errorHandledDuringStream = false;
@@ -2039,6 +2042,10 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   async attachToRun(sessionId: string): Promise<void> {
     this.sessionId = sessionId;
     this.streamingText = '';
+    // Tempdoc 859 §A — `lastStreamedAnswer` is deliberately KEPT here, unlike at every other
+    // run-start site: an attach re-joins a run that is already in flight, so prose it committed
+    // before this tab started watching is still THIS run's prose, and `done`'s duplicate-answer
+    // guard has to be able to see it. Clearing it would make a reattached run re-print its answer.
     this.isStreaming = true;
     this.runKind = 'agent'; // an attached live run is steerable like the run that started it
     this.errorHandledDuringStream = false;

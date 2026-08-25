@@ -274,8 +274,17 @@ export function projectUnifiedThread(events: ReadonlyArray<ThreadEvent>): Unifie
         const base = toMillis(e.occurredAt) >= toMillis(prior.occurredAt) ? e : prior;
         // Tempdoc 859 §A §1.3 — `reasoning` is UNIONED, not overwritten. The attribute merge is
         // later-wins, which is right for `status` and wrong for this: the record fold can attach a
-        // block to two different lifecycle events of the SAME callId (a region cut before `proposed`
-        // and another cut before `completed`), and later-wins would silently drop the earlier one.
+        // block to two different lifecycle events of the SAME callId, and later-wins would silently
+        // drop the earlier one.
+        //
+        // LOAD-BEARING, not defensive, and reachable through exactly one shape (859 §A F4): a run cut
+        // off mid-thought. Reasoning never falls BETWEEN a call's lifecycle events on a healthy run —
+        // it is emitted inside the LLM stream and the tool calls parsed out of that stream are
+        // dispatched only after it closes — but the fold's trailing rule attaches a still-open region
+        // to the run's LAST event, which can be a later lifecycle event of the call an earlier block
+        // already rode. Both blocks then land on this one row. The known cost is ordering: the
+        // trailing block draws above the row rather than after it, which is the one place the live
+        // and record timelines disagree; it is pinned in `sv3-timeline-parity.test.ts`.
         const reasoning = [
           ...(Array.isArray(prior.attributes.reasoning) ? prior.attributes.reasoning : []),
           ...(Array.isArray(e.attributes.reasoning) ? e.attributes.reasoning : []),

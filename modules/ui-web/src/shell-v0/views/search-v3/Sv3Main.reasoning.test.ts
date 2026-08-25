@@ -21,6 +21,9 @@ import './Sv3Main.js';
 import type { Sv3Main } from './Sv3Main.js';
 import type { Sv3Turn } from './sv3-sessions.js';
 import { ReasoningController } from '../../controllers/ReasoningController.js';
+// Tempdoc 859 §A — the live item's id comes from the authority that mints it, never retyped: a
+// literal here would keep passing after the projection started minting a different one.
+import { SV3_LIVE_REASONING_ITEM_ID } from './sv3-run.js';
 
 type Mounted = Sv3Main & { updateComplete: Promise<unknown> };
 
@@ -114,14 +117,14 @@ describe('an agent turn’s thinking is INSIDE the run feed, in order (859 §A A
       agentTurn([
         { kind: 'reasoning', id: 'r1', text: 'finished thought', durationMs: 3000, streaming: false },
         { kind: 'tool', id: 'c1', call: { callId: 'c1', toolName: 'core_search', arguments: '{}', risk: 'LOW', status: 'completed' } },
-        { kind: 'reasoning', id: 'run-reasoning-live', text: 'still thinking', durationMs: 2000, streaming: true },
+        { kind: 'reasoning', id: SV3_LIVE_REASONING_ITEM_ID, text: 'still thinking', durationMs: 2000, streaming: true },
       ]),
     ]);
     const rows = feedBlocks(el);
     expect(rows).toHaveLength(2);
     const pulsing = rows.filter((r) => r.shadowRoot?.querySelector('jf-pulse-dots') !== null);
     expect(pulsing).toHaveLength(1);
-    expect(pulsing[0]?.getAttribute('data-item-id')).toBe('run-reasoning-live');
+    expect(pulsing[0]?.getAttribute('data-item-id')).toBe(SV3_LIVE_REASONING_ITEM_ID);
     // The finished one says what it was, in the past tense — the leak's visible symptom was the
     // opposite: a settled thought reading "Thinking (Ns)" with dots, for the rest of the run.
     expect(rows[0]?.shadowRoot?.querySelector('.label')?.textContent).toBe('Thought for 3s');

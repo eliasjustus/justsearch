@@ -284,7 +284,10 @@ export function projectSv3RunFeed(source: Sv3RunSource, from: number): Sv3RunFee
       kind: 'reasoning',
       id: SV3_LIVE_REASONING_ITEM_ID,
       text: live.reasoningText,
-      durationMs: live.elapsedSeconds * 1000,
+      // The controller's own answer, not a second derivation from its clock: once output has been
+      // seen the duration is already settled, and re-deriving it here would make the row's figure
+      // snap back the moment the region was cut.
+      durationMs: live.openRegionDurationMs,
       streaming: live.isThinking,
     });
   }

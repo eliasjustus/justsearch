@@ -142,6 +142,19 @@ export class ReasoningController {
     this.stopTimer();
   }
 
+  /**
+   * Tempdoc 859 §A — how long the OPEN region has taken, in ms, for the run timeline's trailing
+   * item.
+   *
+   * The FROZEN value once output has been seen: that is the measurement, and it is the same number
+   * {@link closeRegion} will put on the block. Reading the live clock instead lets the item's
+   * duration SNAP BACK at the cut — a region that thought for 9s and then streamed prose for 30s
+   * would read "39s" while it was on screen and "9s" the moment it settled, for one thought.
+   */
+  get openRegionDurationMs(): number {
+    return this.frozenDurationMs ?? this.elapsedSeconds * 1000;
+  }
+
   get elapsedSeconds(): number {
     if (this.thinkingStartedAt === null) return 0;
     return Math.max(1, Math.round((Date.now() - this.thinkingStartedAt) / 1000));

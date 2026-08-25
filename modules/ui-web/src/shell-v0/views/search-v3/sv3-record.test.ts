@@ -253,6 +253,14 @@ describe('a record becomes turns, bracketed by the user messages', () => {
   it('R-3b: two blocks on two lifecycle events of ONE call both survive the merge (M-7)', () => {
     // The FE half of the collision: the tool merge is a later-wins attribute union, so without an
     // explicit array-union for `reasoning` the earlier block is silently dropped.
+    //
+    // 859 §A F4 — the shape is REACHABLE, through exactly one route: a run cut off mid-thought,
+    // where the fold's trailing rule attaches the still-open region to the run's last event and that
+    // event turns out to be a later lifecycle event of a call an earlier block already rode. (It is
+    // NOT reachable by interleaving — reasoning is emitted inside the LLM stream, and the tool calls
+    // parsed out of it are dispatched only after it closes.) So this guards a real dropped block,
+    // not a hypothetical one; the ordering cost that comes with it is pinned in
+    // `sv3-timeline-parity.test.ts`.
     clock = 0;
     const [turn] = project([
       event('e1', 'USER_MESSAGE', 'q'),

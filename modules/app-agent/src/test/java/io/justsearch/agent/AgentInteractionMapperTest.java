@@ -428,24 +428,36 @@ final class AgentInteractionMapperTest {
   }
 
   @Test
-  @DisplayName("859 §A: a two-lifecycle-event tool call can carry a block on EACH (the FE unions them)")
+  @DisplayName("859 §A: a TRUNCATED run puts a block on two lifecycle events of ONE call (the FE unions them)")
   void twoLifecycleEventsOfOneCallEachCarryABlock() {
-    // The producer half of M-7. The FE merges a call's lifecycle events by `callId` with a
-    // later-wins attribute union, so both halves have to exist before the union can be shown to
-    // preserve them (`unifiedThreadProjection.test.ts` asserts the other half).
+    // The producer half of M-7, in the ONE shape that actually reaches it.
+    //
+    // Reasoning cannot be emitted BETWEEN two lifecycle events of a call: `ReasoningChunk` is
+    // emitted from inside the LLM stream (`AgentLlmCaller.java:212`) and the tool calls parsed out
+    // of that stream are not dispatched until it closes (`AgentStepRunner`), so the two phases never
+    // interleave. What DOES reach it is a run that is cut off mid-thought: block 1 flushes onto
+    // `c1:proposed` on the way past, and the region still open when the journal ends is attached by
+    // the trailing rule to the run's last event — `c1:completed`, the same call.
+    //
+    // So the FE's array-union of `reasoning` is LOAD-BEARING, not defensive: the merge is
+    // later-wins, and without it block 1 is dropped outright.
     List<InteractionEvent> events =
         AgentInteractionMapper.fromRunEvents(
             List.of(
                 reasoningAt("2026-01-01T00:00:01Z", "I should search"),
-                at("2026-01-01T00:00:02Z", "tool_call_proposed",
+                at("2026-01-01T00:00:02Z", "budget_update", Map.of("phase", "llm_response")),
+                at("2026-01-01T00:00:03Z", "tool_call_proposed",
                     Map.of("callId", "c1", "toolName", "core_search")),
-                reasoningAt("2026-01-01T00:00:03Z", "and I should widen it"),
                 at("2026-01-01T00:00:04Z", "tool_exec_completed",
-                    Map.of("callId", "c1", "success", true))),
+                    Map.of("callId", "c1", "success", true)),
+                // The process died here, mid-thought.
+                reasoningAt("2026-01-01T00:00:05Z", "the results are thin, I should widen")),
             CONV);
 
     assertEquals(List.of("I should search"), blockTexts(byId(events, "c1:proposed")));
-    assertEquals(List.of("and I should widen it"), blockTexts(byId(events, "c1:completed")));
+    assertEquals(
+        List.of("the results are thin, I should widen"),
+        blockTexts(byId(events, "c1:completed")));
   }
 
   @Test

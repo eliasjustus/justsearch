@@ -6095,10 +6095,15 @@ describe('Tempdoc 848 — the turn keeps its thinking after done, and after a re
     view.requestUpdate();
     await view.updateComplete;
 
-    const block = view.shadowRoot!.querySelector('[data-testid="chat-turn-reasoning"]');
-    expect(block, 'a reloaded turn renders its thinking FROM the record').not.toBeNull();
-    expect((block as unknown as { text: string }).text).toBe('recorded thinking');
-    expect((block as unknown as { durationMs: number }).durationMs).toBe(1840);
+    // Tempdoc 859 §A §3.5 — ONCE, counted. This is the ordinary assistant-with-thinking shape, and
+    // it is the one that goes THROUGH `renderMessage` (which draws `ThreadMessage.reasoning`), so it
+    // is the real double-render path: it is the shape that renders twice if the lifted read above
+    // the kind switch stops excluding the arms that already draw their own. A `querySelector` here
+    // could not see that — it would find the first of two and pass.
+    const blocks = [...view.shadowRoot!.querySelectorAll('[data-testid="chat-turn-reasoning"]')];
+    expect(blocks, 'a reloaded turn renders its thinking FROM the record, exactly once').toHaveLength(1);
+    expect((blocks[0] as unknown as { text: string }).text).toBe('recorded thinking');
+    expect((blocks[0] as unknown as { durationMs: number }).durationMs).toBe(1840);
     view.remove();
   });
 

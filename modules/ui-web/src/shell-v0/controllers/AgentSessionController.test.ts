@@ -17,6 +17,8 @@ import {
   interruptedRunNotice,
   interruptedRunPresentation,
   sessionLabel,
+  // Tempdoc 859 §A §1.2 — the REGISTER, imported rather than retyped. See C-6.
+  REASONING_BOUNDARY_EXEMPT,
 } from './AgentSessionController.js';
 // §32 unify — auto-approval is now driven by the autonomy dial level.
 import {
@@ -1594,25 +1596,55 @@ describe('the reasoning-region boundary rule (859 §A)', () => {
     expect(ctrl.conversation[1]?.content).toBe('part one part two');
   });
 
-  it('C-6: every dispatch name is classified — cut, transparent, or deliberately exempt', () => {
-    // The drift guard. "Which events cut a region" used to be an implicit consequence of where
+  it('C-6: the exempt set is EXACTLY these four names — every other event cuts', () => {
+    // The register itself, pinned. Asserted against the PRODUCTION set, imported: a test that
+    // retyped the four names would be a fork of the very register it guards, and a fifth name added
+    // to production would pass silently — which is precisely the live/record cut-set drift this rule
+    // exists to make impossible. Membership is exact, not a superset, so widening the exemption is a
+    // decision that has to be made here too.
+    expect([...REASONING_BOUNDARY_EXEMPT].sort()).toEqual([
+      // Unmapped, and pure proof-of-life: it carries no run content at all.
+      'heartbeat',
+      // The three primers. They describe the run, or open it; none advances it, and all three arrive
+      // before any reasoning could exist.
+      'run_started',
+      'session_started',
+      'state_snapshot',
+    ]);
+  });
+
+  it('C-6b: every dispatch name is classified — cut, transparent, or deliberately exempt', () => {
+    // The vocabulary walk. "Which events cut a region" used to be an implicit consequence of where
     // `endThinking()` happened to be called, which is how the live cut set came to have exactly one
     // member while the record fold cut on every step. An unclassified name fails HERE.
-    const exempt = new Set(['heartbeat', 'state_snapshot', 'session_started', 'run_started']);
     const unclassified = ctrl
       .eventNames()
-      .filter((name) => name !== 'reasoning_chunk' && name !== 'chunk' && !exempt.has(name));
-    // Everything left is in the CUT set by construction — the rule has no per-handler list, so the
-    // assertion is that the four exempt names are the only exceptions and each really is a name the
-    // dispatcher knows (or, for `heartbeat`, the documented unmapped one).
+      .filter(
+        (name) =>
+          name !== 'reasoning_chunk' && name !== 'chunk' && !REASONING_BOUNDARY_EXEMPT.has(name),
+      );
+    // Everything left is in the CUT set by construction — the rule has no per-handler list. Naming
+    // the real steps keeps this from passing on an empty or accidentally-gutted dispatch map.
     expect(unclassified.length).toBeGreaterThan(0);
-    for (const name of ['tool_call_pending', 'done', 'error', 'progress', 'budget_update', 'handoff_proposed']) {
+    for (const name of [
+      'tool_call_pending',
+      'tool_batch_proposed',
+      'context_compacted',
+      'done',
+      'error',
+      'progress',
+      'budget_update',
+      'handoff_proposed',
+    ]) {
       expect(unclassified).toContain(name);
     }
+    // Every exempt name is one the dispatcher actually knows — except `heartbeat`, which is exempt
+    // BECAUSE it is unmapped, and would otherwise look like a typo nobody could see.
     const known = new Set(ctrl.eventNames());
-    for (const name of exempt) {
+    for (const name of REASONING_BOUNDARY_EXEMPT) {
       expect(name === 'heartbeat' || known.has(name)).toBe(true);
     }
+    expect(known.has('heartbeat')).toBe(false);
   });
 
   it('C-7: budget_update CUTS the region — the highest-frequency real cut in a journal', () => {
@@ -1667,6 +1699,46 @@ describe('the reasoning-region boundary rule (859 §A)', () => {
     ]);
     expect(types()).toEqual(['assistant-text', 'reasoning']);
     expect(ctrl.conversation.filter((e) => e.type === 'assistant-text')).toHaveLength(1);
+  });
+
+  const doneWith = (finalResponse: string): void => {
+    ctrl.onDone({ finalResponse, iterationsUsed: 1, toolCallsExecuted: 0, totalTokensUsed: 0 });
+  };
+
+  it('F3: a NEW run does not inherit the previous run’s committed prose', () => {
+    // `lastStreamedAnswer` is `onDone`'s duplicate-answer guard, and it is PER RUN. A run that ends
+    // without `done` — an error, a halt, a transport drop — never reaches the read that clears it,
+    // so a run-start that forgets to clear inherits it. The reachable failure is a re-roll that
+    // streams no chunks and returns the SAME final response: its answer is suppressed entirely,
+    // and the reader is left looking at the previous run's text believing it is the new one's.
+    ctrl.streamingText = 'the answer';
+    ctrl.commitStreamingText();
+    ctrl.onError({ error: 'transport drop' });
+
+    // The clear is synchronous, ahead of the stream — no network is needed to observe it.
+    void ctrl.resumeSession('run-2');
+    doneWith('the answer');
+
+    const answers = ctrl.conversation.filter(
+      (e) => e.type === 'assistant-text' && e.content === 'the answer',
+    );
+    expect(answers, 'the resumed run printed its own answer').toHaveLength(2);
+  });
+
+  it('F3b: a FORK re-roll returning the same text still prints its answer', () => {
+    ctrl.streamingText = 'the answer';
+    ctrl.commitStreamingText();
+    ctrl.onError({ error: 'transport drop' });
+
+    // A fork rewinds the whole run (`exitReplay` → `resetRunState`), so the conversation starts
+    // empty; the assertion is that the re-roll's identical answer is NOT swallowed as a duplicate
+    // of the run it forked from.
+    void ctrl.forkRun('run-1', '');
+    doneWith('the answer');
+
+    expect(
+      ctrl.conversation.filter((e) => e.type === 'assistant-text' && e.content === 'the answer'),
+    ).toHaveLength(1);
   });
 
   it('an empty region produces no entry — a blank thought is not a thought', () => {

@@ -14,7 +14,7 @@
  *    locally-set flags) — a predicate that ignored that would be true before the request left;
  *  - the receipt count is the feed's own item count, so it cannot be produced by a second counter.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   deriveSv3RunPhase,
   hasServerAcknowledgedLocalDispatch,
@@ -335,13 +335,33 @@ describe('the feed is ONE projection the receipt counts', () => {
     expect(feed.items.at(-1)).toMatchObject({ kind: 'reasoning', streaming: true, text: 'still working' });
   });
 
-  it('F-2b: a region that has produced output is still shown, but no longer as live', () => {
-    const live = new ReasoningController(() => {});
-    live.handleReasoningChunk({ text: 'mid-coalesce' });
-    live.markOutput();
-    const feed = projectSv3RunFeed(source({ reasoning: live }), 0);
-    expect(feed.items).toHaveLength(1);
-    expect(feed.items[0]).toMatchObject({ kind: 'reasoning', streaming: false });
+  it('F-2b: a region that produced output is still shown, no longer live, and does not snap back', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(0));
+      const live = new ReasoningController(() => {});
+      live.handleReasoningChunk({ text: 'mid-coalesce' });
+
+      vi.setSystemTime(new Date(2_000));
+      live.markOutput();
+      // 30 further seconds of PROSE. The thought took 2s; the clock has moved 32.
+      vi.setSystemTime(new Date(32_000));
+
+      const feed = projectSv3RunFeed(source({ reasoning: live }), 0);
+      expect(feed.items).toHaveLength(1);
+      expect(feed.items[0]).toMatchObject({
+        kind: 'reasoning',
+        streaming: false,
+        durationMs: 2_000,
+      });
+
+      // …and the row that REPLACES it at the cut carries the identical number, which is the whole
+      // point: the reader must not watch a settled thought's duration jump when it settles.
+      const block = live.closeRegion();
+      expect(block?.durationMs).toBe(2_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('F-3: toolCallCount ignores reasoning items', () => {
