@@ -41,6 +41,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { PROCESS_TABLE_PS_COMMAND } = require('./lib/process-identity.cjs');
+const { consultAgentSpawnsForTeardown, describeEntry } = require('./lib/agent-spawn-sweep.cjs');
 
 function fail(msg) {
   console.error(`[remove-worktree] ERROR: ${msg}`);
@@ -332,7 +333,7 @@ function recordMergeLink({ repoRoot, abs, mergeCommitArg, sessionIdArg }) {
   }
 }
 
-function main() {
+async function main() {
   const target = process.argv[2];
   const deleteBranch = process.argv.includes('--delete-branch');
   const mergeCommitArg = flagValue(process.argv, 'merge-commit');
@@ -373,6 +374,34 @@ function main() {
   recordMergeLink({ repoRoot, abs, mergeCommitArg, sessionIdArg });
 
   if (fs.existsSync(abs)) {
+    // Tempdoc 861 §6.4 `worktree-teardown` occasion: consult the `agent-spawns/` register
+    // BEFORE unlinking junctions. Reaps what it is authorized to (this session's own spawns,
+    // or another session's lapsed-and-stale one); refuses to proceed while an unreapable
+    // holder remains, rather than proceeding into the half-deleted, `.git`-less worktree shell
+    // §2-bis (c) documents. The OBSERVED-tier fallback below (`reportHolders`, driven by
+    // `filterHolders`'s own command-line scan) is UNCHANGED — it still runs regardless, for
+    // whatever this registry does not cover (no-regression constraint, 861 §7.1 Phase 5).
+    let consult;
+    try {
+      consult = await consultAgentSpawnsForTeardown({ mainRepoRoot: repoRoot, targetPath: abs, callerSessionId: sessionIdArg });
+    } catch (err) {
+      console.error(`[remove-worktree] WARN agent-spawns register consult failed (proceeding on the observed-tier fallback only): ${err && err.message ? err.message : err}`);
+      consult = null;
+    }
+    if (consult && consult.buckets.all.length > 0) {
+      console.error(`[remove-worktree] agent-spawns register: ${consult.buckets.all.length} record(s) hold a path under ${abs}:`);
+      for (const e of consult.buckets.all) {
+        console.error(`[remove-worktree]   ${describeEntry(e).replace(/\n/g, '\n[remove-worktree]   ')}`);
+      }
+    }
+    if (consult && consult.buckets.blocksProceed) {
+      fail(
+        `refusing to remove ${abs}: a registered agent-spawn holder could not be reaped (see the ` +
+          `agent-spawns register lines above) — clear it (or wait for it to become reapable), then retry. ` +
+          `This refusal is the fix for the half-deleted, .git-less worktree shell a proceed-anyway would leave.`,
+      );
+    }
+
     removeJunctions(abs);
     if (!deleteTree(abs)) fail(`failed to delete ${abs}`);
     console.error(`[remove-worktree] deleted ${abs}`);
@@ -400,7 +429,10 @@ function main() {
 }
 
 if (require.main === module) {
-  main();
+  main().catch((err) => {
+    console.error(`[remove-worktree] ERROR: ${err && err.message ? err.message : err}`);
+    process.exit(1);
+  });
 }
 
 module.exports = {
