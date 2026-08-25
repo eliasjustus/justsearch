@@ -1093,6 +1093,24 @@ running total, so a long run does not re-send its whole evidence set every step.
 successful results are stamped, matching `withLineage`'s existing guard
 (`AgentStepRunner.java:859`); a failed tool establishes nothing.
 
+**Rev 3 (implementation, PR-1) — the success guard was NOT implemented, deliberately.**
+The sentence above sets up a conflict with this same section's "the rule itself — which
+this design does not touch — is unchanged": `collectGroundingSources` iterated EVERY
+executed call regardless of success, so adding a success guard to the mint would have
+been a change to the rule, and adding one to the STAMP alone would have been worse — a
+failed result that established a source would sit in the accumulator and in no delta,
+breaking the terminal equivalence three paragraphs down. Both branches were bad, so the
+premise was checked instead of chosen between: `searchResults` has exactly one producer
+(`SearchTool.java:281`) and it is the `OperationResult.success(...)` arm, and neither
+`OperationResult.failure` overload carries a `structuredData` channel at all (the typed
+one carries `errorDetails`, a different field). A failed tool therefore CANNOT establish
+anything, which makes the guard inert rather than protective — and an inert guard whose
+only reachable effect is to break an invariant is not worth having. Implemented with no
+guard; the premise is pinned by `AgentLoopServiceTest
+.failureResultsCannotCarryStructuredData` (review F-5), so if a failure factory ever
+gains a structured payload the question reopens as a red test rather than as a silent
+divergence.
+
 Three properties this must have, and they are the design, not implementation detail:
 
 - **Terminal equivalence.** The sources the terminal reports must be exactly the
@@ -1648,6 +1666,16 @@ projection, not the switch.
    evidence adds no case. Reviewers should be able to diff this hunk and see zero
    behaviour change.
 
+   **Rev 3 (implementation) — DEFERRED TO PR-3, and this is a routing decision, not
+   a discovery.** It did not ship in PR-1 (#551). It is the one item here with no
+   behavioural coupling to the mint: evidence adds no case to that switch, so the
+   hunk neither enables nor is enabled by anything else in PR-1, and its whole
+   value is legibility — making "everything unlisted is silently dropped" read as
+   "this vocabulary is complete". Recorded rather than left to be noticed: a
+   zero-behaviour-change teardown that slips out of the PR it was planned for is
+   exactly the residue `retire-with-a-sweep` warns about, and naming its new home
+   is what stops "a follow-up will clean it up" from being the end of the story.
+
 **Frontend**
 
 7. `AgentSessionController` — accumulate the delta off `tool_exec_completed`'s
@@ -1761,6 +1789,19 @@ artifact invalidates automation evidence for anything rAF-gated.
 - **L-5:** independent measured whole-screen UX audit (axe/contrast oracle,
   auditor ≠ committer) — presentation-authority closure per `slice-execution.md`.
   **Applies to PR-0 and PR-1** (§7.3 marks both as presentation-authority).
+
+  **Rev 3 (implementation) — OPEN after PR-1 (#551), pooled for the next dev-stack
+  window.** PR-1 shipped with no live tier at all: no stack was leased for it, so
+  L-1..L-4 and L-5 are all unrun, and every claim in that PR is compile-, unit- and
+  gate-tier. That is worth stating plainly because this slice changes what the
+  SOURCES pane says about a source — "Retrieved · not examined" and "Retrieved ·
+  grounding check did not complete" are new words a reader will act on, and no one
+  has yet seen either rendered. The audit covers PR-0 and PR-1 together (both
+  presentation-authority, both touching the same `sourceGrounding` states), which is
+  why pooling them into one window is the right shape rather than a way of putting
+  it off. **This is not a substitute trigger and does not license closing 865 without
+  it** — `slice-execution.md`'s `ux-audit-closure` is honor-system since 563, and an
+  unrun honor-system gate is the one that most needs its absence written down.
 
 ### 8.8 Delegation
 

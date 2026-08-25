@@ -272,7 +272,7 @@ import {
   type CitationHeader,
 } from '../../components/chat/evidenceProjection.js';
 // Tempdoc 859 §3 — the ONE delegate-plane evidence projection, shared with the record reader.
-import { agentAnswerEvidence } from '../../components/chat/agentEvidence.js';
+import { agentAnswerEvidence, agentDeltaEvidence } from '../../components/chat/agentEvidence.js';
 import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
 import {
   sv3CitationHeader,
@@ -2729,7 +2729,26 @@ export class SearchV3View extends JfElement {
       local.acknowledged &&
       ctrl.answerEvidenceRunId !== null &&
       ctrl.answerEvidenceRunId === ctrl.sessionId;
-    if (terminalBelongsToThisRun) {
+    // Tempdoc 865 §7.1 / §7.9 A9 — PLANE AUTHORITY. The terminal is authoritative when it MADE A
+    // GROUNDING CLAIM; the per-call deltas fill the gap when it did not. A run that ends without a
+    // grounded terminal — cancelled, errored, MAX_ITERATIONS — establishes real evidence and then
+    // has nothing to report it, which is exactly why the mint moved onto the tool events. The deltas
+    // are never ADDED to a terminal that spoke: they are the same set, so accumulating both would
+    // double every source and break the positional index the inline marks resolve through.
+    //
+    // OWNERSHIP IS NOT A CLAIM, and separating the two is the whole correctness of this gate.
+    // `terminalBelongsToThisRun` answers "whose evidence is this" — it stays exactly as it was, and
+    // the disposition write below still reads it, because a MAX_ITERATIONS run must keep saying it
+    // was cut short. But `AgentDone.ofDisposition` DOES emit a `done`, its payload always carries a
+    // `sources` key (`AgentEventPayloads` puts it unconditionally), and `onDone` writes
+    // `answerEvidenceRunId` unconditionally — so ownership alone is TRUE for the very terminals that
+    // report nothing, and an empty terminal would win over the deltas that hold the run's real
+    // evidence. The extra clause is the record plane's own rule, mirrored: `AgentInteractionMapper`
+    // attaches `sources` only `&& !srcs.isEmpty()`. Two planes, one test for "this terminal said
+    // something about grounding".
+    const terminalMadeAGroundingClaim =
+      terminalBelongsToThisRun && ctrl !== null && ctrl.answerSources.length > 0;
+    if (terminalMadeAGroundingClaim) {
       const evidence = agentAnswerEvidence(
         ctrl.answerSources,
         ctrl.answerCitations,
@@ -2739,6 +2758,18 @@ export class SearchV3View extends JfElement {
         this.sessions,
         { sessionId: local.sessionId, turnId: local.turnId },
         { ...evidence, retrievalMode: '' },
+      );
+    } else if (
+      ctrl !== null &&
+      local.acknowledged &&
+      ctrl.groundingDeltasRunId !== null &&
+      ctrl.groundingDeltasRunId === ctrl.sessionId &&
+      ctrl.groundingDeltas.length > 0
+    ) {
+      this.sessions = setTurnEvidence(
+        this.sessions,
+        { sessionId: local.sessionId, turnId: local.turnId },
+        { ...agentDeltaEvidence(ctrl.groundingDeltas), retrievalMode: '' },
       );
     }
     this.sessions = settleAgentTurn(

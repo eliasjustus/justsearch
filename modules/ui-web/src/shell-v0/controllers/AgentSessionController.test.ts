@@ -471,6 +471,72 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
     expect(ctrl.toolCalls['c6b']?.executionId).toBe('ex-2');
   });
 
+  // ===== Tempdoc 865 §7.1: the per-call grounding delta =====
+  const deltaSource = (parentDocId: string) => ({
+    parentDocId,
+    chunkIndex: 0,
+    path: `f:/${parentDocId}`,
+    title: parentDocId,
+    excerpt: 'a passage',
+    startLine: 1,
+    endLine: 5,
+    headingText: '',
+  });
+
+  it('accumulates each call\u2019s grounding delta, in call order, without deduping', () => {
+    // The backend already applied the run-wide dedup before splitting the set into deltas, so this
+    // side only concatenates — re-deduping here would be a second mint free to disagree about ORDER,
+    // which is what AgentSentenceCite.sourceIndex resolves through.
+    ctrl.sessionId = 'run-1';
+    ctrl.onToolCallPending({ callId: 'g1', toolName: 'core_search_index', arguments: '{}', risk: 'LOW' });
+    ctrl.onToolExecCompleted({
+      callId: 'g1',
+      result: {
+        success: true,
+        output: 'ok',
+        structuredData: { grounding: [deltaSource('docs/a.md'), deltaSource('docs/b.md')] },
+      },
+    });
+    ctrl.onToolCallPending({ callId: 'g2', toolName: 'core_search_index', arguments: '{}', risk: 'LOW' });
+    ctrl.onToolExecCompleted({
+      callId: 'g2',
+      result: { success: true, output: 'ok', structuredData: { grounding: [deltaSource('docs/c.md')] } },
+    });
+
+    expect(ctrl.groundingDeltas.map((s) => s.parentDocId)).toEqual([
+      'docs/a.md',
+      'docs/b.md',
+      'docs/c.md',
+    ]);
+    expect(ctrl.groundingDeltasRunId).toBe('run-1');
+  });
+
+  it('a call with no grounding key adds nothing — absent means "established nothing"', () => {
+    ctrl.sessionId = 'run-1';
+    ctrl.onToolCallPending({ callId: 'g3', toolName: 'core_file_read', arguments: '{}', risk: 'LOW' });
+    ctrl.onToolExecCompleted({ callId: 'g3', result: { success: true, output: 'ok' } });
+    expect(ctrl.groundingDeltas).toEqual([]);
+    // Never stamped, so no run owns an empty set — the reader compares the stamp, not truthiness.
+    expect(ctrl.groundingDeltasRunId).toBeNull();
+  });
+
+  it('a delta from a NEW run starts the set over rather than appending to the previous run\u2019s', () => {
+    ctrl.sessionId = 'run-1';
+    ctrl.onToolCallPending({ callId: 'g4', toolName: 'core_search_index', arguments: '{}', risk: 'LOW' });
+    ctrl.onToolExecCompleted({
+      callId: 'g4',
+      result: { success: true, output: 'ok', structuredData: { grounding: [deltaSource('docs/a.md')] } },
+    });
+    ctrl.sessionId = 'run-2';
+    ctrl.onToolCallPending({ callId: 'g5', toolName: 'core_search_index', arguments: '{}', risk: 'LOW' });
+    ctrl.onToolExecCompleted({
+      callId: 'g5',
+      result: { success: true, output: 'ok', structuredData: { grounding: [deltaSource('docs/z.md')] } },
+    });
+    expect(ctrl.groundingDeltas.map((s) => s.parentDocId)).toEqual(['docs/z.md']);
+    expect(ctrl.groundingDeltasRunId).toBe('run-2');
+  });
+
   // ===== 543-fwd idea #0: agent→journal bridge =====
   it('journals a successful tool-call as an originator:agent invoke-operation entry + wires undo via executionId', () => {
     ctrl.onToolCallPending({ callId: 'b1', toolName: 'core_search_index', arguments: '{"query":"x"}', risk: 'LOW' });

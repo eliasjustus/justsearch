@@ -56,6 +56,11 @@ import {
 // Tempdoc 847 §1.3 — the cold-load case merges the REAL record projection, not a hand-built turn:
 // the evidence defect lived in that projection, so a fixture that bypassed it would prove nothing.
 import { projectSv3RecordTurns } from './sv3-record.js';
+// Tempdoc 865 PR-1 (F-1) — the delta reconstruction and the panel's grounding read, both the REAL
+// ones: the end-state a reader sees is exactly what these two produce over a merged turn.
+import { agentDeltaEvidence } from '../../components/chat/agentEvidence.js';
+import { sourceGrounding, sourceGroundingLabel } from '../../components/chat/evidenceProjection.js';
+import type { AgentSource } from '../../../api/generated/shape-handlers/shared.js';
 import type { Citation } from '../../components/chat/MarkdownBlock.js';
 import type { ThreadEvent } from '../unifiedThreadProjection.js';
 
@@ -66,6 +71,34 @@ import type { ThreadEvent } from '../unifiedThreadProjection.js';
  */
 let mintCount = 0;
 const nextConversationId = (): string => `sv3-session-${++mintCount}`;
+
+/**
+ * Tempdoc 865 PR-1 — one chunk-precise source and one DOCUMENT-LEVEL source (the 603 D-3 sentinel),
+ * as the per-call grounding deltas carry them. The pair matters: the doc-level one is the only source
+ * that mints a coverage fact, so a merge that dropped coverage would still look fine on the other.
+ */
+const AGENT_DELTA_SOURCES: AgentSource[] = [
+  {
+    parentDocId: 'docs/runbook.md',
+    chunkIndex: 7,
+    path: 'f:/docs/runbook.md',
+    title: 'Runbook',
+    excerpt: 'the chunk-precise passage',
+    startLine: 3,
+    endLine: 9,
+    headingText: 'Setup',
+  },
+  {
+    parentDocId: 'f:/docs/whole.md',
+    chunkIndex: -1,
+    path: 'f:/docs/whole.md',
+    title: 'Whole',
+    excerpt: 'document-level provenance',
+    startLine: -1,
+    endLine: -1,
+    headingText: '',
+  },
+];
 const submit = (
   list: Sv3SessionList,
   question: string,
@@ -1180,6 +1213,97 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
       [recordTurn({ id: 'evt-1', evidence: evidence(2) })],
     ).sessions[0]?.turns[0] as Sv3Turn;
     expect(silent.evidence?.groundingIncomplete).toBeUndefined();
+  });
+
+  it('SURVIVES the refresh: a source no matcher could read stays unexaminable after the record lands (865 PR-1)', () => {
+    // Tempdoc 865 PR-1 (F1) — the same survival property, for the per-source fact. `reconcileEvidence`
+    // rebuilds the evidence FIELD BY FIELD, so a field it does not name is silently gone on the next
+    // refresh and the pane goes back to "Retrieved · not cited" over a source nothing examined.
+    const coverage = [{ sourceIndex: 1, windowsConsidered: 0, windowsScored: 0 }];
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'agent', 'uc-cov');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    const merged = applySv3Record(
+      settleTurn(
+        setTurnEvidence(list, ref, { ...evidence(2), sourceCoverage: coverage }),
+        ref,
+        'complete',
+        T0 + MINUTE,
+      ),
+      'uc-cov',
+      [recordTurn({ id: 'evt-1', evidence: { ...evidence(2), sourceCoverage: coverage } })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+    expect(merged.evidence?.sourceCoverage).toEqual(coverage);
+
+    // An EMPTY list is a stated observation ("this producer reported no unexaminable source"), not
+    // "never told" — so it wins over the record, exactly as `false` does for the pass-level flag.
+    const emptyList = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'agent', 'uc-cov2');
+    const emptyRef = latestTurnRef(emptyList) as Sv3TurnRef;
+    const kept = applySv3Record(
+      settleTurn(
+        setTurnEvidence(emptyList, emptyRef, { ...evidence(2), sourceCoverage: [] }),
+        emptyRef,
+        'complete',
+        T0 + MINUTE,
+      ),
+      'uc-cov2',
+      [recordTurn({ id: 'evt-1', evidence: { ...evidence(2), sourceCoverage: coverage } })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+    expect(kept.evidence?.sourceCoverage).toEqual([]);
+
+    // A turn neither side reported keeps its silence — the merge mints no value for it.
+    const silentList = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'ask', 'uc-cov3');
+    const silentRef = latestTurnRef(silentList) as Sv3TurnRef;
+    const silent = applySv3Record(
+      settleTurn(setTurnEvidence(silentList, silentRef, evidence(2)), silentRef, 'complete', T0 + MINUTE),
+      'uc-cov3',
+      [recordTurn({ id: 'evt-1', evidence: evidence(2) })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+    expect(silent.evidence?.sourceCoverage).toBeUndefined();
+  });
+
+  it('F-1 END STATE: a MAX_ITERATIONS turn reconciles onto ONE coherent record, not a mixed pair', () => {
+    // The second half of the F-1 defect, at the merge. When the LIVE turn held an empty terminal's
+    // evidence (sources: [], sourceCoverage: []) and the RECORD supplied delta-reconstructed
+    // sources, the absence-based rule kept the live `sourceCoverage: []` BESIDE the record's
+    // sources — a source set and a coverage list minted by two different producers, for the same
+    // turn. With the live gate fixed both planes carry the same delta evidence, so the merge is
+    // idempotent: whichever plane answered first, the reader sees one state.
+    const delta = agentDeltaEvidence(AGENT_DELTA_SOURCES);
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'agent', 'uc-f1');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    const merged = applySv3Record(
+      settleTurn(
+        setTurnEvidence(list, ref, { ...delta, retrievalMode: '' }),
+        ref,
+        'complete',
+        T0 + MINUTE,
+      ),
+      'uc-f1',
+      [recordTurn({ id: 'evt-1', evidence: { ...delta, retrievalMode: '' } })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+
+    const evidence = merged.evidence!;
+    expect(evidence.sources).toHaveLength(2);
+    expect(evidence.groundingIncomplete).toBe(true);
+    // The doc-level source's coverage survives the merge WITH the sources it describes.
+    expect(evidence.sourceCoverage).toEqual([
+      { sourceIndex: 1, windowsConsidered: 0, windowsScored: 0 },
+    ]);
+
+    // THE END-STATE LABEL, on both sources. A matcher that never ran may not deliver
+    // "Retrieved · not cited" — that is PR-0's verdict-without-a-pass, and it is exactly what the
+    // divergence would have put back on screen for a delta-reconstructed run.
+    for (const i of [0, 1]) {
+      const g = sourceGrounding(
+        i,
+        evidence.matches,
+        evidence.sources[i]!.parentDocId,
+        evidence.sourceCoverage?.find((c) => c.sourceIndex === i) ?? null,
+        evidence.groundingIncomplete,
+      );
+      expect(sourceGroundingLabel(g)).toBe('Retrieved · grounding check did not complete');
+      expect(sourceGroundingLabel(g)).not.toBe('Retrieved · not cited');
+    }
   });
 
   it('takes the RECORD’s thinking on a cold load, and keeps the LIVE blocks in session (848)', () => {

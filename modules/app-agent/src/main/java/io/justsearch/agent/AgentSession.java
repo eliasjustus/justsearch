@@ -57,6 +57,25 @@ final class AgentSession {
   private final Map<String, CompletableFuture<VirtualToolResult>> virtualToolFutures =
       new ConcurrentHashMap<>();
   private final List<ExecutedToolCall> executedTools = new ArrayList<>();
+  /**
+   * Tempdoc 865 §7.1 — the run's grounding accumulator, and the ONE place the mint rule runs.
+   *
+   * <p>It used to be two locals inside {@code collectGroundingSources}, rebuilt from scratch at the
+   * terminal. Terminal-time minting is why cancelling a run destroyed its evidence: the sources
+   * existed only on the paths that reported. They are session state now, fed once per executed tool
+   * call by {@link #recordExecution}, so what a call established is durable the moment it is
+   * established — before any terminal decides whether to speak.
+   *
+   * <p>{@code groundingSeen} is the dedup key set (chunk identity across the WHOLE run, which is why
+   * it cannot live per call), {@code groundingSources} the ordered emitted list, and {@code
+   * groundingSearchHits} the denominator the never-addressable WARN below needs.
+   */
+  private final LinkedHashSet<String> groundingSeen = new LinkedHashSet<>();
+
+  private final List<AgentEvent.AgentSource> groundingSources = new ArrayList<>();
+
+  private int groundingSearchHits;
+
   private volatile boolean cancelled;
   private int iterationsUsed;
   private String lastCallSignature;
@@ -233,10 +252,91 @@ final class AgentSession {
   static final int DOC_LEVEL_SENTINEL = -1;
 
   /**
-   * Tempdoc 565 §3.A + 603 D-3 — collect the answer's grounding sources from this run's tool results.
-   * Reads the structured search evidence ({@code searchResults}, from {@code SearchTool
-   * .buildSearchEvidence}), preserving first-seen order. These become the clickable local-passage
-   * citations on {@link AgentEvent.AgentDone}.
+   * Tempdoc 865 §7.1 — the MINT: what THIS tool result newly established, added to the run's
+   * accumulator and returned as the delta. Called once per executed tool call by {@link
+   * #recordExecution}; {@link #collectGroundingSources} drains what these calls built.
+   *
+   * <p>The rule is 565 §3.A + 603 D-3 verbatim — the two identity arms, the run-wide dedup, the
+   * document-level sentinel, the identity-less skip — moved, not changed. See {@link
+   * #collectGroundingSources} for what each arm means and why.
+   *
+   * <p>The delta is "documents this call added", not "documents this call returned": the dedup key
+   * set spans the RUN, so a document already established by an earlier call contributes nothing here.
+   * That is what makes the concatenated deltas equal the terminal list exactly once each, in order —
+   * the property {@code AgentSentenceCite.sourceIndex} depends on, since it is a POSITION into that
+   * list and a divergence would silently point every inline mark at the wrong document.
+   *
+   * <p>No success guard, deliberately. {@code searchResults} rides only a successful result ({@code
+   * SearchTool.java:281} is its one producer, and it is the {@code OperationResult.success} arm), so
+   * a guard here would be inert — while a guard that ever DID bite would break the equality above by
+   * dropping from the deltas something the accumulator kept.
+   */
+  private List<AgentEvent.AgentSource> contributeGroundingSources(OperationResult result) {
+    Map<String, Object> data = result == null ? Map.of() : result.structuredData();
+    if (!(data.get("searchResults") instanceof List<?> results)) {
+      return List.of();
+    }
+    groundingSearchHits += results.size();
+    var delta = new ArrayList<AgentEvent.AgentSource>();
+    for (Object o : results) {
+      if (!(o instanceof Map<?, ?> m)) {
+        continue;
+      }
+      String path = asString(m.get("path"));
+      boolean chunkPrecise = m.get("parentDocId") instanceof String pd && !pd.isBlank();
+      if (chunkPrecise) {
+        String parentDocId = (String) m.get("parentDocId");
+        int chunkIndex = m.get("chunkIndex") instanceof Number n ? n.intValue() : 0;
+        if (!groundingSeen.add(parentDocId + "#" + chunkIndex)) {
+          continue; // dedup repeated sources across turns
+        }
+        delta.add(
+            new AgentEvent.AgentSource(
+                parentDocId,
+                chunkIndex,
+                path,
+                asString(m.get("title")),
+                asString(m.get("excerpt")),
+                asInt(m.get("startLine")),
+                asInt(m.get("endLine")),
+                asString(m.get("headingText"))));
+      } else if (!path.isBlank()) {
+        // 603 D-3 — document-level provenance: identity is the path, chunk ordinal + lines are the
+        // sentinel (no precise location). The whole document IS the source the answer drew on.
+        if (!groundingSeen.add("doc#" + path)) {
+          continue; // dedup the same document across hits/turns
+        }
+        delta.add(
+            new AgentEvent.AgentSource(
+                path,
+                DOC_LEVEL_SENTINEL,
+                path,
+                asString(m.get("title")),
+                asString(m.get("excerpt")),
+                DOC_LEVEL_SENTINEL,
+                DOC_LEVEL_SENTINEL,
+                asString(m.get("headingText"))));
+      }
+      // else: neither chunk identity nor a path — not addressable as a source; skipped.
+    }
+    groundingSources.addAll(delta);
+    return List.copyOf(delta);
+  }
+
+  /**
+   * Tempdoc 565 §3.A + 603 D-3 — the answer's grounding sources: the clickable local-passage
+   * citations on {@link AgentEvent.AgentDone}. Read from the structured search evidence ({@code
+   * searchResults}, from {@code SearchTool.buildSearchEvidence}), in first-seen order.
+   *
+   * <p><b>Tempdoc 865 §7.1 — this DRAINS an accumulator; it no longer computes one.</b> The mint
+   * runs incrementally in {@link #contributeGroundingSources}, once per executed tool call, and each
+   * call's delta is stamped onto its own {@code tool_exec_completed} event at the dispatch seam. So
+   * "the run's evidence is what the terminal computed" is a RETIRED model: a cancelled, errored or
+   * iteration-exhausted run keeps everything it established even though it reaches no grounded
+   * terminal and calls this method never. This method's remaining job is to report, at the two
+   * {@code groundedDone} terminals, the same ordered list the deltas already delivered.
+   *
+   * <p>The RULE — the two identity arms below — is unchanged by that move:
    *
    * <p><b>Provenance vs precision (603 D-3).</b> A grounding source's IDENTITY is the DOCUMENT it came
    * from; chunk identity ({@code parentDocId}+{@code chunkIndex}) is OPTIONAL ENRICHMENT that upgrades a
@@ -257,70 +357,18 @@ final class AgentSession {
    * parentDocId} nor a {@code path}.
    */
   List<AgentEvent.AgentSource> collectGroundingSources() {
-    var seen = new LinkedHashSet<String>();
-    var out = new ArrayList<AgentEvent.AgentSource>();
-    int totalSearchHits = 0;
-    for (ExecutedToolCall ex : executedTools) {
-      Map<String, Object> data = ex.result() == null ? Map.of() : ex.result().structuredData();
-      if (!(data.get("searchResults") instanceof List<?> results)) {
-        continue;
-      }
-      totalSearchHits += results.size();
-      for (Object o : results) {
-        if (!(o instanceof Map<?, ?> m)) {
-          continue;
-        }
-        String path = asString(m.get("path"));
-        boolean chunkPrecise =
-            m.get("parentDocId") instanceof String pd && !pd.isBlank();
-        if (chunkPrecise) {
-          String parentDocId = (String) m.get("parentDocId");
-          int chunkIndex = m.get("chunkIndex") instanceof Number n ? n.intValue() : 0;
-          if (!seen.add(parentDocId + "#" + chunkIndex)) {
-            continue; // dedup repeated sources across turns
-          }
-          out.add(
-              new AgentEvent.AgentSource(
-                  parentDocId,
-                  chunkIndex,
-                  path,
-                  asString(m.get("title")),
-                  asString(m.get("excerpt")),
-                  asInt(m.get("startLine")),
-                  asInt(m.get("endLine")),
-                  asString(m.get("headingText"))));
-        } else if (!path.isBlank()) {
-          // 603 D-3 — document-level provenance: identity is the path, chunk ordinal + lines are the
-          // sentinel (no precise location). The whole document IS the source the answer drew on.
-          if (!seen.add("doc#" + path)) {
-            continue; // dedup the same document across hits/turns
-          }
-          out.add(
-              new AgentEvent.AgentSource(
-                  path,
-                  DOC_LEVEL_SENTINEL,
-                  path,
-                  asString(m.get("title")),
-                  asString(m.get("excerpt")),
-                  DOC_LEVEL_SENTINEL,
-                  DOC_LEVEL_SENTINEL,
-                  asString(m.get("headingText"))));
-        }
-        // else: neither chunk identity nor a path — not addressable as a source; skipped.
-      }
-    }
     // Tempdoc 565 §3.A follow-up / 603 D-3 — observability for the now-narrow truly-uncitable case:
     // the run searched (hits exist) but NO hit carried even a path (no chunk identity AND no document
     // identity). With D-3 a path-bearing hit always yields a document-level source, so this WARN no
     // longer fires for the common BLOCKED_LEGACY whole-doc case — only for a genuinely identity-less
     // result (a malformed/stale Worker payload).
-    if (totalSearchHits > 0 && out.isEmpty()) {
+    if (groundingSearchHits > 0 && groundingSources.isEmpty()) {
       LOG.warn(
           "Grounding empty: {} search hit(s) but none were addressable (no parentDocId AND no path);"
               + " the answer will lack source citations — check the search payload or a stale Worker build",
-          totalSearchHits);
+          groundingSearchHits);
     }
-    return out;
+    return List.copyOf(groundingSources);
   }
 
   private static String asString(Object value) {
@@ -618,9 +666,25 @@ final class AgentSession {
     }
   }
 
-  /** Record a tool execution and track consecutive identical calls. */
-  void recordExecution(ToolCallRequest call, OperationResult result) {
+  /**
+   * Record a tool execution and track consecutive identical calls.
+   *
+   * @return tempdoc 865 §7.1 — the grounding sources THIS call newly established (empty when it
+   *     established none). Returned rather than left to a separate call on purpose: recording an
+   *     execution and contributing what it established are one act, so a future call site cannot
+   *     record a result whose evidence the accumulator never saw.
+   *     <p><b>THE CALLER'S OBLIGATION, and the property that actually matters (review F-2): every
+   *     returned delta must be stamped onto the event that call emits.</b> Returning it is only half
+   *     — a caller that records and discards puts the source in the terminal list and in NO delta, so
+   *     the concatenated deltas stop equalling the terminal list and every position after the gap
+   *     shifts. Since {@code AgentSentenceCite.sourceIndex} is a position into that list, the visible
+   *     result is inline marks pointing at the wrong documents, with nothing failing. The
+   *     grounding-seam audit cannot see this shape (it forbids stamping outside the seam, not
+   *     recording without stamping), so it is pinned by test instead.
+   */
+  List<AgentEvent.AgentSource> recordExecution(ToolCallRequest call, OperationResult result) {
     executedTools.add(new ExecutedToolCall(call, result));
+    List<AgentEvent.AgentSource> delta = contributeGroundingSources(result);
     String signature = call.toolName() + ":" + normalizeArgs(call.arguments());
     if (signature.equals(lastCallSignature)) {
       consecutiveIdenticalCalls++;
@@ -628,6 +692,7 @@ final class AgentSession {
       lastCallSignature = signature;
       consecutiveIdenticalCalls = 1;
     }
+    return delta;
   }
 
   /** Returns how many times the same (tool, args) pair has been called consecutively. */
