@@ -940,6 +940,12 @@ export class SearchV3View extends JfElement {
     // the palette's own field cannot swallow the chord before the window sees it.
     this.addEventListener('keydown', this.onHostKeydown, true);
     this.addEventListener('focusout', this.onHostFocusOut);
+    // Tempdoc 864 Layer 1(c2), PR B — Ctrl+L / '/' dispatch `jf-focus-composer` on `window`
+    // (`chrome/Shell.ts`, `shell.focus-composer`); `UnifiedChatView` is the only other listener
+    // (`views/UnifiedChatView.ts` connectedCallback). Routed through the SAME `focusComposer()` as
+    // every other entry path below, not a second focus mechanism — its refusal set (renaming,
+    // palette open, already typing elsewhere) applies here exactly as it does on mount.
+    window.addEventListener('jf-focus-composer', this.onFocusComposerEvent);
     // Tempdoc 864 Layer 1(a) — ARRIVING AT THIS WINDOW PUTS THE READER IN THE COMPOSER. Activation is
     // an entry path like the other two ({@link onSessionSelect}, {@link onSessionNew}), and it is the
     // one that covers both a fresh hero and the restored record `restoreLastViewed` just claimed:
@@ -1028,6 +1034,7 @@ export class SearchV3View extends JfElement {
     this.observedDock = null;
     this.removeEventListener('keydown', this.onHostKeydown, true);
     this.removeEventListener('focusout', this.onHostFocusOut);
+    window.removeEventListener('jf-focus-composer', this.onFocusComposerEvent);
   }
 
   /**
@@ -2151,6 +2158,16 @@ export class SearchV3View extends JfElement {
     if (palette === null || !palette.open) return;
     if (this.ownsNode(event.relatedTarget as Node | null)) return;
     palette.dismiss();
+  };
+
+  /**
+   * Tempdoc 864 Layer 1(c2), PR B — the `jf-focus-composer` window event (Ctrl+L / '/', dispatched
+   * by `shell.focus-composer`) reaches this window. Delegates straight to {@link focusComposer}: no
+   * second focus path, so the same three refusals (renaming, palette open, already typing elsewhere)
+   * govern an explicit keypress exactly as they govern an entry path.
+   */
+  private readonly onFocusComposerEvent = (): void => {
+    void this.focusComposer();
   };
 
   /**

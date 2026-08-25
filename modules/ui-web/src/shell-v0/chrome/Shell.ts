@@ -966,13 +966,13 @@ export class Shell extends JfElement {
     // the two named here are the surfaces that OWN a composer. Enforced by
     // `scripts/ci/check-printable-keybinding-policy.mjs`.
     //
-    // What that does and does NOT buy today, stated exactly (864 review F4): on
+    // What that does and does NOT buy today, stated exactly (864 review F4, closed by PR B): on
     // `core.unified-chat-surface` the key works — `UnifiedChatView` listens for the dispatched
-    // `jf-focus-composer` (`views/UnifiedChatView.ts` connectedCallback). On
-    // `core.search-v3-surface` it does NOT: sv3 registers no listener, so `/` still matches,
-    // `preventDefault()`s and dispatches into silence, exactly as on `main`. The clause is not the
-    // fix for that — it stops `/` being swallowed on every OTHER surface. Making it reach sv3's
-    // composer is tempdoc 864 Layer 1(c2), PR B; this scope is already correct for when it lands.
+    // `jf-focus-composer` (`views/UnifiedChatView.ts` connectedCallback). `core.search-v3-surface`
+    // now listens too (`views/search-v3/SearchV3View.ts` connectedCallback, tempdoc 864 Layer
+    // 1(c2)), routed through the same `focusComposer()` every other entry path uses. Both named
+    // surfaces have a live listener; the clause's job is unchanged — it stops `/` being swallowed on
+    // every OTHER surface.
     registerKeybindingEntry({
       key: '/',
       commandId: 'shell.focus-composer',
