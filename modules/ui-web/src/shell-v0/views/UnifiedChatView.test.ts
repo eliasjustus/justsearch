@@ -552,9 +552,11 @@ describe('UnifiedChatView header controls are rung-invariant (round-14 finding 1
 });
 
 // Tempdoc 821 §4 — New chat used to be hidden ENTIRELY on a fresh/empty chat (thread.length > 0
-// gate), leaving no visible entry point. It now always renders, disabled when there is nothing to
-// reset (empty thread) and enabled once the thread has content — the .ver-nav disabled idiom.
-describe('UnifiedChatView "New chat" control (tempdoc 821 §4)', () => {
+// gate), leaving no visible entry point. It now always renders, aria-disabled (typed availability,
+// 596 face 1.1) when there is nothing to reset (empty thread) and operable once the thread has
+// content — the .ver-nav disabled idiom, with the reason reachable via aria-describedby instead of
+// a `title` a browser hides on a disabled control.
+describe('UnifiedChatView "New chat" control (tempdoc 821 §4, typed availability 596)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetUnifiedChatState();
@@ -562,25 +564,36 @@ describe('UnifiedChatView "New chat" control (tempdoc 821 §4)', () => {
     __resetUiModeForTest();
   });
 
-  function newChatButton(view: UnifiedChatView): HTMLButtonElement | null {
+  function newChatControl(view: UnifiedChatView): Element | null {
     return [...view.shadowRoot!.querySelectorAll('.header .new-chat-btn')].find(
       (b) => (b.textContent ?? '').trim() === 'New chat',
-    ) as HTMLButtonElement | null;
+    ) ?? null;
   }
 
-  it('renders New chat DISABLED (not hidden) when the thread is empty', async () => {
+  async function innerButton(control: Element): Promise<HTMLButtonElement> {
+    await (control as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    return control.shadowRoot!.querySelector('[part="control"]') as HTMLButtonElement;
+  }
+
+  it('renders New chat aria-disabled with a REACHABLE reason (not a suppressed title) when the thread is empty', async () => {
     const view = mountView();
     await view.updateComplete;
     (view as unknown as { thread: unknown[] }).thread = [];
     view.requestUpdate();
     await view.updateComplete;
-    const btn = newChatButton(view);
-    expect(btn).not.toBeNull();
-    expect(btn!.disabled).toBe(true);
-    expect(btn!.title).toBe('Already a new chat');
+    const control = newChatControl(view);
+    expect(control).not.toBeNull();
+    const btn = await innerButton(control!);
+    expect(btn.getAttribute('aria-disabled')).toBe('true');
+    // The whole point of the fix: the reason is reachable via aria-describedby, not a `title` a
+    // browser never renders on a disabled control.
+    const describedBy = btn.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const reasonEl = control!.shadowRoot!.getElementById(describedBy as string);
+    expect(reasonEl?.textContent).toBe('Already a new chat');
   });
 
-  it('renders New chat ENABLED once the thread has content', async () => {
+  it('renders New chat operable (no aria-disabled) once the thread has content', async () => {
     const view = mountView();
     await view.updateComplete;
     (view as unknown as { thread: unknown[] }).thread = [
@@ -589,10 +602,43 @@ describe('UnifiedChatView "New chat" control (tempdoc 821 §4)', () => {
     ];
     view.requestUpdate();
     await view.updateComplete;
-    const btn = newChatButton(view);
-    expect(btn).not.toBeNull();
-    expect(btn!.disabled).toBe(false);
-    expect(btn!.title).toBe('');
+    const control = newChatControl(view);
+    expect(control).not.toBeNull();
+    const btn = await innerButton(control!);
+    expect(btn.getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  // Precision guard for the two tests above. Both are satisfied by a control that renders the right
+  // ARIA and does NOTHING — which is exactly what a jf-control conversion that dropped the action
+  // wiring would look like. So assert the conversion at the seam that actually matters: activating
+  // it resets the thread, and activating it while unavailable does not.
+  it('activating the operable control starts a new conversation; activating it while unavailable does not', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { thread: unknown[] }).thread = [
+      { role: 'user', content: 'q', shapeId: 'core.free-chat' },
+      { role: 'assistant', content: 'a', shapeId: 'core.free-chat' },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    (await innerButton(newChatControl(view)!)).click();
+    await view.updateComplete;
+    expect((view as unknown as { thread: unknown[] }).thread).toEqual([]);
+
+    // Now empty, so the control is unavailable: a soft-unavailable jf-control must BLOCK, not
+    // silently run the action behind an aria-disabled that only looks like a guard.
+    (view as unknown as { thread: unknown[] }).thread = [
+      { role: 'user', content: 'kept', shapeId: 'core.free-chat' },
+    ];
+    const stale = newChatControl(view)!;
+    await view.updateComplete;
+    (view as unknown as { thread: unknown[] }).thread = [];
+    view.requestUpdate();
+    await view.updateComplete;
+    (view as unknown as { inputDraft: string }).inputDraft = 'not cleared';
+    (await innerButton(stale)).click();
+    await view.updateComplete;
+    expect((view as unknown as { inputDraft: string }).inputDraft).toBe('not cleared');
   });
 });
 

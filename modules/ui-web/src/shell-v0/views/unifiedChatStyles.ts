@@ -1550,7 +1550,8 @@ export const unifiedChatBodyStyles = css`
     .dismiss-btn:hover {
       color: var(--text-primary);
     }
-    .new-chat-btn {
+    .new-chat-btn,
+    jf-control.new-chat-btn::part(control) {
       all: unset;
       font-size: var(--font-size-xs);
       color: var(--text-muted);
@@ -1560,11 +1561,15 @@ export const unifiedChatBodyStyles = css`
       border-radius: 0.25rem;
       margin-left: 0.5rem;
     }
-    .new-chat-btn:hover:not(:disabled) {
+    .new-chat-btn:hover:not(:disabled),
+    jf-control.new-chat-btn::part(control):hover:not([aria-disabled='true']) {
       color: var(--text-primary);
       border-color: var(--accent-tint);
     }
-    .new-chat-btn:disabled {
+    /* The composed jf-control's unavailable state is aria-disabled, not native [disabled]
+       (596 typed availability) — dim both forms. */
+    .new-chat-btn:disabled,
+    jf-control.new-chat-btn::part(control)[aria-disabled='true'] {
       opacity: 0.35;
       cursor: default;
     }

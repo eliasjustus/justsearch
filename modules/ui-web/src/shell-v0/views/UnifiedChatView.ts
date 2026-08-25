@@ -2377,16 +2377,20 @@ export class UnifiedChatView extends JfElement {
                 every rung, so it cannot make the set differ between them. */ ''}
           ${/* Tempdoc 821 §4 — `thread.length > 0` still hid New chat ENTIRELY on a fresh/empty chat,
                 leaving no visible entry point for a control that is exactly the affordance a user
-                reaches for on a fresh surface. New chat now always renders and is disabled (not
+                reaches for on a fresh surface. New chat now always renders and is aria-disabled (not
                 removed) when there is nothing to reset, matching the .ver-nav disabled idiom. Export
                 stays gated on thread state — with an empty thread there is genuinely nothing to
                 export, unlike New chat which is meaningful UI chrome regardless of state. */ ''}
-          <button
+          ${/* 596 face 1.1 — typed availability, not a suppressed title-on-disabled. A browser does not
+                render `title` on a disabled control, so the authored reason was unreachable in exactly
+                the state it describes. The reason is REACHABLE (aria-disabled + focus/hover tooltip) on
+                the composed jf-control instead. */ ''}
+          <jf-control
             class="new-chat-btn"
-            ?disabled=${this.thread.length === 0}
-            title=${this.thread.length === 0 ? 'Already a new chat' : nothing}
-            @click=${() => this.newConversation()}
-          >New chat</button>
+            label="New chat"
+            .availability=${this.thread.length === 0 ? unavailableBecause('Already a new chat') : undefined}
+            .onActivate=${() => this.newConversation()}
+          >New chat</jf-control>
           ${this.thread.length > 0
             ? html`<button class="new-chat-btn" @click=${() => this.exportMarkdown()}>Export</button>`
             : nothing}
