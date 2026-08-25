@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/justsearch-app/justsearch/blob/main/governance/ui-a11y-baseline.schema.json",
+  "title": "Shared a11y known-violation baseline — tempdoc 615 §13 Move 2",
+  "description": "Schema for governance/ui-a11y-baseline.v1.json. Registers, per captured surface, the axe rules ACCEPTED as known debt in the deterministic route-mock capture state. Both consumers read this one file — the Python ui-shot measurement (scripts/jseval/jseval/ui_a11y_gate.py, which flags NEW-vs-known) and the TS e2e accessibility audit — so the tiers cannot silently disagree about what 'passing' means. The register's v1.json carried a $schema pointer at this path from the day it landed, but the file itself was never written, so nothing validated it; ui-proportion-baseline.schema.json even documents itself as mirroring a shape that did not exist. This file closes that, and scripts/ci/check-ui-baseline-schemas.mjs makes the pointer load-bearing instead of decorative.",
+  "type": "object",
+  "required": ["version", "surfaces"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "description": { "type": "string" },
+    "captureState": {
+      "type": "string",
+      "description": "Prose record of the capture state these rules were accepted against. A baseline is only meaningful relative to a state, so a row measured under a different fixture set is not comparable."
+    },
+    "surfaces": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One row per captured surface state. `uiShotStep` is the identity here, NOT `surface` — several rows legitimately share a surface name because the same surface is captured in several states (chat has eight; library has two). Draft-07 cannot express 'unique by uiShotStep', so that uniqueness is asserted by scripts/ci/check-ui-baseline-schemas.mjs instead.",
+      "items": {
+        "type": "object",
+        "required": ["surface", "uiShotStep", "e2eViews", "knownRules"],
+        "additionalProperties": false,
+        "$comment": "The if/then below makes `note` REQUIRED on any row that accepts debt. Accepted debt with no recorded reason is the residue this register exists to prevent: nobody can tell later whether the violation was judged and tolerated or simply never looked at, so it survives forever by default.",
+        "if": {
+          "required": ["knownRules"],
+          "properties": { "knownRules": { "minItems": 1 } }
+        },
+        "then": { "required": ["note"] },
+        "properties": {
+          "surface": {
+            "type": "string",
+            "description": "The surface this capture belongs to (e.g. 'chat', 'library'). A label for grouping and reporting — not a key; see the array description."
+          },
+          "uiShotStep": {
+            "type": "string",
+            "description": "The `jseval ui-shot` step name this row is captured under. The row's identity, and the join to governance/ui-proportion-baseline.v1.json's step registrations."
+          },
+          "e2eViews": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "The TS e2e accessibility-audit view names that read this row's knownRules. EMPTY is valid and meaningful: the step is measured by the Python ui-shot tier only, with no e2e counterpart — which is why this is required rather than optional (an omitted list and a deliberately empty one must not look the same)."
+          },
+          "knownRules": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "axe rule ids ACCEPTED as debt in this capture state (e.g. 'color-contrast'). A violation NOT listed here is NEW and must be investigated, so this list is the whole authority — the shrinking-ratchet contract this register shares with the other UI baselines. An empty list means the capture is clean and any violation is a regression. Regenerate deliberately via scripts/jseval/experiments/regen_a11y_baseline.py.",
+            "uniqueItems": true
+          },
+          "note": {
+            "type": "string",
+            "description": "Why this row's debt is accepted, who owns it, and what would retire it — the reasoning that would otherwise live only in a commit message. Expected on any row whose knownRules is non-empty."
+          }
+        }
+      }
+    }
+  }
+}

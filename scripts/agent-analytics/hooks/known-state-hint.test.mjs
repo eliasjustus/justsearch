@@ -75,10 +75,20 @@ run('real expected-state.v1.json parses and all match regexes compile', () => {
     for (const p of e.match) new RegExp(p, 'i');
   }
 });
-run('real baseline: typecheck + gate commands each match exactly one entry', () => {
+run('real baseline: every entry is reachable by its own exitProbe, and unambiguously so', () => {
+  // Derived from the live entries rather than naming specific pins. Naming them made this test
+  // fail the moment a pin was legitimately RETIRED (its red got fixed) — a green-blocking tripwire
+  // on exactly the outcome the pins exist to reach. The property that actually matters survives
+  // retirement: a pin whose own exitProbe does not route back to it can never fire for the command
+  // it describes, and two pins matching one command means the hint reports an ambiguous claim.
   const { entries } = JSON.parse(fs.readFileSync(path.join(repoRoot, EXPECTED_STATE_FILE), 'utf8'));
-  assert.equal(matchExpectedState('npm run typecheck', entries).length, 1);
-  assert.equal(matchExpectedState('node scripts/ci/check-accent-as-text.mjs', entries).length, 1);
+  assert.ok(entries.length > 0, 'baseline has no entries — this test would assert nothing');
+  for (const e of entries) {
+    if (!e.exitProbe) continue; // reviewBy-only pins have no command to route
+    const probe = e.exitProbe.replace(/^slow:\s*/, '');
+    const hits = matchExpectedState(probe, entries);
+    assert.deepEqual(hits.map((h) => h.id), [e.id], `exitProbe for ${e.id} must match exactly ${e.id}`);
+  }
   assert.equal(matchExpectedState('git commit -m x', entries).length, 0);
 });
 
