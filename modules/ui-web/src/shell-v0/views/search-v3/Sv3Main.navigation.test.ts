@@ -344,6 +344,52 @@ describe('857 PR-A — J/K stepping', () => {
     expect(nav.activeId).toBe(order[0]);
   });
 
+  it('859 live-leg: four presses that ORIGINATE on the focused step advance four landmarks', async () => {
+    // THE DEFECT THIS FILE COULD NOT SEE. Every other case here dispatches at `window`, so the press
+    // never traverses the scroller — and the scroller is where the authority listens for the gesture
+    // that releases a pin. In a browser the second press onward originates on the landmark `jumpTo`
+    // just focused (that focus move is the feature's whole accessibility payload), bubbles through
+    // the scroller's `keydown` listener FIRST, and released the pin before this window's handler read
+    // `activeId`. Every press then resolved from the scroll-derived position instead of from the last
+    // jump, and the live walk oscillated between two adjacent landmarks instead of stepping the run.
+    //
+    // happy-dom lays nothing out, so the scroll never actually moves and the derived position is
+    // always the head of the list: the defect degrades here from an oscillation into a STALL on
+    // landmark 1, which is the same claim — four presses, four landmarks, in order.
+    const el = await mount({
+      turns: [turn({ id: 'w1' }), turn({ id: 'w2', kind: 'agent', question: 'keep going' })],
+      run: runView({
+        turnId: 'w2',
+        items: [{ kind: 'text', id: 's1', text: 'thinking' }],
+        prompts: [budgetPrompt(9, 1)],
+      }),
+    });
+    await layOut(el);
+    const nav = navOf(el);
+    const order = ['w1:q', 'w1:a', 'w2:q', 's1', 'run-budget-gate:hold'];
+    expect(nav.landmarks.map((l) => l.id)).toEqual(order);
+
+    // `composed: true` so the press escapes this element's shadow root and still reaches the window
+    // listener — the real path of a keypress made while a step inside the transcript has focus.
+    const pressFromFocus = (key: string): void => {
+      const target: EventTarget = (el.shadowRoot?.activeElement as HTMLElement | null) ?? window;
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, composed: true, cancelable: true }),
+      );
+    };
+
+    const visited: string[] = [];
+    for (let i = 0; i < order.length; i++) {
+      pressFromFocus('j');
+      visited.push(nav.activeId);
+    }
+    expect(visited).toEqual(order);
+
+    // …and the same path backwards, so the fix is not a forward-only accident.
+    for (let i = 1; i < order.length; i++) pressFromFocus('k');
+    expect(nav.activeId).toBe(order[0]);
+  });
+
   it('S-2 (859 §A §1.8): J walks reasoning and tools in TRUE run order', async () => {
     // 857's named side benefit, bought with one attribute: an inline reasoning row carries a
     // `data-item-id`, so it becomes a landmark for free — and the walk is the run's real chronology

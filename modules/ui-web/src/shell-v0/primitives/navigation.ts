@@ -100,6 +100,23 @@ export interface NavigationOptions {
   readonly occludedEndPx?: () => number;
 }
 
+/**
+ * The keys that scroll a scroll container natively — see {@link NavigationController.onScrollKey}.
+ * `' '` is Space (and `'Spacebar'` its legacy spelling), which pages a scroller the same way.
+ */
+const SCROLL_KEYS: ReadonlySet<string> = new Set([
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'PageUp',
+  'PageDown',
+  'Home',
+  'End',
+  ' ',
+  'Spacebar',
+]);
+
 const raf =
   typeof requestAnimationFrame !== 'undefined'
     ? requestAnimationFrame
@@ -264,6 +281,29 @@ export class NavigationController implements ReactiveController {
     this.host.requestUpdate();
   };
 
+  /**
+   * Tempdoc 859 live-leg — the KEYBOARD half of "a genuine user scroll gesture", narrowed to the keys
+   * that actually scroll a scroll container.
+   *
+   * This listener used to be `onUserScroll` itself, on every `keydown` the scroller saw, and that
+   * silently broke the ONE keyboard navigation the run feed has. {@link jumpTo} moves real DOM focus
+   * INTO the scroller (that is its accessibility payload), so from the second press onward a J/K
+   * keydown originates on a landmark INSIDE `conv` and bubbles through this listener BEFORE it reaches
+   * the host's window-level handler. The pin the previous press just set was therefore released before
+   * `activeId` was read, so every press re-derived "where am I" from the scroll position instead of
+   * advancing from the last jump — the walk oscillated between two adjacent landmarks instead of
+   * stepping the run in order. (The unit suites never saw it because they dispatch the press at
+   * `window`, which never traverses the scroller.)
+   *
+   * The fix is at the release site, not at the navigation site: `j` is not a scroll gesture, so it has
+   * no business claiming to be one. The set is the keys a browser scrolls a container with — arrows,
+   * paging, the ends, and Space — which is exactly what {@link nudge} drives by hand from the thumb.
+   */
+  private readonly onScrollKey = (event: Event): void => {
+    if (!SCROLL_KEYS.has((event as KeyboardEvent).key)) return;
+    this.onUserScroll();
+  };
+
   // §21 AFFORDANCE — drag state for the minimap-as-scrollbar (the thumb maps Δy → scrollTop, Spike A's
   // exact inverse of viewportWindow).
   private dragStartY = 0;
@@ -371,7 +411,7 @@ export class NavigationController implements ReactiveController {
     conv.addEventListener('scroll', this.onScroll, { passive: true });
     conv.addEventListener('wheel', this.onUserScroll, { passive: true });
     conv.addEventListener('touchstart', this.onUserScroll, { passive: true });
-    conv.addEventListener('keydown', this.onUserScroll, { passive: true });
+    conv.addEventListener('keydown', this.onScrollKey, { passive: true });
     this.scrollEl = conv;
   }
 
@@ -444,7 +484,7 @@ export class NavigationController implements ReactiveController {
     this.scrollEl?.removeEventListener('scroll', this.onScroll);
     this.scrollEl?.removeEventListener('wheel', this.onUserScroll);
     this.scrollEl?.removeEventListener('touchstart', this.onUserScroll);
-    this.scrollEl?.removeEventListener('keydown', this.onUserScroll);
+    this.scrollEl?.removeEventListener('keydown', this.onScrollKey);
     this.scrollEl = null;
     this.intent = { mode: 'live', pinnedId: null };
     this.viewport = null;

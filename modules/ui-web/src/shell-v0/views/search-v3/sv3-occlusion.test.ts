@@ -128,6 +128,39 @@ describe('859 §B — the dock floats over the transcript', () => {
     expect(styles).not.toMatch(/blur\(var\(--glass-blur\)\)/);
   });
 
+  it('859 live-leg — the composer banners float too, so they carry the SAME glass recipe', () => {
+    // The measured live audit found `#sv3-composer-notice` over the transcript with fill
+    // `rgba(255,255,255,0.04)` (bare `--muted`) and `backdrop-filter: none` in ALL THREE surface
+    // modes: 18.16:1 over an empty column, 3.34:1 over transcript body text, 1.00:1 over a heading.
+    // A banner with no material is not a banner; and because it carried no blur to lose,
+    // `prefers-reduced-transparency` (active on the reporting machine) changed nothing — the strip
+    // was equally unreadable in every mode. The box is the composer's recipe now, from the same one
+    // multiplier, so solid mode and reduced-transparency degrade it with the rest of the dock.
+    const banner = ruleIn(own(Sv3Composer), '.notice,\n      .degradation {');
+    expect(banner).toContain(
+      'var(--composer-glass-surface)\n            calc(100% - (100% - var(--glass-opacity)) * var(--glass-blur-scale))',
+    );
+    expect(banner).toContain(
+      'backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale)))',
+    );
+    // ONE rule for both banners: the availability reason and the degradation strip share a slot, so
+    // a material applied to only one of them is the drift this merge exists to make unrepresentable.
+    const styles = own(Sv3Composer);
+    expect(styles, 'the notice must not reopen a box rule of its own').not.toContain('.notice {');
+    for (const opened of styles.matchAll(/\.degradation \{/g)) {
+      expect(
+        styles.slice(0, opened.index).trimEnd().endsWith('.notice,'),
+        'a `.degradation` box rule that does not also select `.notice` is the drift',
+      ).toBe(true);
+    }
+    // The mandatory opaque companion, on the same shared selector.
+    const at = styles.indexOf(
+      '@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {\n        .notice,',
+    );
+    expect(at, 'the banner glass has no no-blur fallback').toBeGreaterThan(-1);
+    expect(styles.slice(at, at + 300)).toContain('background: var(--composer-glass-surface)');
+  });
+
   it('floats only in DOCKED, at the sticky rung, anchored to the bottom', () => {
     // State-gated on purpose: the hero composer is `position: absolute` against the nearest
     // positioned ancestor, so a dock positioned in hero too would steal hero's containing block
