@@ -1,8 +1,8 @@
 ---
-status: in progress, rev 2 — Phases 1/2/3/4/5 landed or in review; Phases 6/7 outstanding
+status: rev 2 — all seven phases implemented (Phases 1-5 merged, Phases 6+7 in PR #TBD); closure record at §9
 created: 2026-08-25
 updated: 2026-08-25
-revision: rev 2 — 15 review findings folded in; §6.2/§6.3/§6.4 corrected as text before any worker brief; Phase 5's own review (F-1..F-8) folded into §7.1
+revision: rev 2 — 15 review findings folded in; §6.2/§6.3/§6.4 corrected as text before any worker brief; Phase 5's own review (F-1..F-8) folded into §7.1; Phases 6+7 as-landed + closure outcome record added by W6
 author: agent session (Opus 5, 1M context)
 charter: agent-spawned background processes outlive their spawner with no adjudicable ownership claim — and the one reaper that existed was never wired
 phases:
@@ -11,7 +11,7 @@ phases:
   - "Phase 3 (W3) — producers (ui_shot.py, serve-worktree-fe.cjs, otlp-sink-ensure.mjs): MERGED #554"
   - "Phase 4 (W4) — the reaper and the §6.3 matrix: MERGED #552 (scripts/dev/lib/agent-spawn-reaper.cjs)"
   - "Phase 5 (W5) — reap occasions and hook bodies: PR #558, independent review APPROVE-WITH-FIXES (F-1..F-8), fixes folded in — see §7.1 as-landed"
-  - "Phases 6+7 (W6) — the file->manifest gate and the ui-shot-cleanup teardown sweep: outstanding, must land together"
+  - "Phases 6+7 (W6) — the file->manifest gate and the ui-shot-cleanup teardown sweep: PR #TBD, landed together per the interlock — see §7.1 Phase 6+7 as-landed and §9's closure record"
 ---
 
 # 861 — Agent-spawned process ownership and reaping
@@ -1363,3 +1363,81 @@ not safety: a spawn born before its producer's session id resolved is swept only
 `session-start`/`session-closeout` occasions, never by its own session's `session-end`. Not
 addressed this phase — the fix (if one is warranted) belongs with Phase 3's producers, which own
 the write site this limit originates from.
+
+### 7.1 Phase 6+7 — as landed (PR #TBD)
+
+Both phases land in one PR, as §7.1's ordering requires (the gate's own first run must not go red
+on the file its sibling phase deletes).
+
+**Phase 6 — the gate.** `enforceHookIntegrity` (`scripts/governance/gates/hook-integrity/enforcer.mjs`)
+gains a sixth phase after tier-register sync: `readdirSync` on the manifest's `hookDir`, excluding
+only `*.test.mjs` siblings, and a new verdict `verdictForOrphanHookFile` (`truth-table.mjs`) fails
+when a file on disk has no `manifest.hooks` entry. [A12] is implemented as specified: the
+`"wiring": "opt-in"` escape is not consulted here at all — an opt-in hook (`taskcreate-guard`) is
+still in the catalog, so it is correctly never flagged, without any exemption branch existing for
+this check to leak through.
+
+**First-act evidence, on the real tree, not only a fixture.** Before deleting the file, the manifest
+(`governance/agent-hooks.v1.json`) was already confirmed to have no `ui-shot-cleanup` entry (checked
+directly, not inferred). Running `node scripts/governance/run.mjs --gate hook-integrity --mode gate`
+against the real repo tree with `ui-shot-cleanup.mjs` still present produced exactly one finding:
+
+```
+hook-integrity/orphan-hook-file | hook file 'ui-shot-cleanup.mjs' exists on disk but is absent from
+manifest.hooks, so it can never be wired or gate-checked. Add a catalog entry in
+governance/agent-hooks.v1.json, or delete the file if it is dead code.
+```
+
+`governance: 1 gate evaluated, 1 fail, 1 findings` — the gate's first real act catches exactly the
+defect that motivated it, with zero other hook files misflagged. After the Phase 7 deletion, the
+same command against the same tree returns `governance: 1 gate evaluated, 0 fail, 0 findings`. Both
+directions are also pinned as a permanent regression: `scripts/agent-analytics/861-w6-hook-integrity-orphan.test.mjs`
+reproduces the pre-sweep shape as a fixture (a catalogued file, an orphan, and a `*.test.mjs` sibling
+that must stay excluded) and a clean-tree fixture, asserting the fail/pass split and that the
+`*.test.mjs` exclusion holds. It is sited under `scripts/agent-analytics/` rather than the gate's own
+test directory specifically so `run-all-tests.mjs` auto-discovery puts it in CI — closing, for this
+one test, the §7.6 finding that the gate's own `enforcer.test.mjs`/`truth-table.test.mjs` run in CI
+nowhere (that broader gap is unchanged; §7.6's decision between the two options remains open and is
+not re-litigated here). `truth-table.test.mjs` also gained direct unit coverage of
+`verdictForOrphanHookFile`. `node scripts/agent-analytics/run-all-tests.mjs` is green (53/53 files)
+and the full governance kernel (`node scripts/governance/run.mjs --mode gate`) shows `hook-integrity:
+pass`; the run's other 7 failing gates (`npm-audit`, `ts-any`, `module-deps`, `dead-code`,
+`dead-code-jvm`, `contract-projection`, `config-surface`) were checked against their SARIF output and
+none reference any file this PR touches — they are pre-existing generated-input gaps
+(`tmp/npm-audit-report.json missing`, `tmp/dead-code-jvm-report.json missing`, etc.) and unrelated
+`ts-any`/`contract-projection` findings in `modules/ui-web` files this PR never opens.
+
+**Phase 7 — the teardown sweep.** Disposition against §6.6's table:
+
+| Artifact | Disposition |
+|---|---|
+| `scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` | **Deleted.** |
+| `.claude/rules/hooks-reference.md:46` (`ui-shot-cleanup` in "Transparent") | **Corrected** — the name is removed from the list; the always-loaded-budget ratchet argues against replacing it with an explanatory comment (that story lives here and in the PR body instead). |
+| `.claude/skills/ui-check/SKILL.md` §Worktree auto-serve (~:126) and the Key-files table row (~:169) | **Already corrected before this phase** (landed with Phase 3/#554 — verified by `git log`), and now additionally accurate again: the paragraph is reworded from "is dead code that has never actually run" to "was deleted in 861 Phase 7" (the file no longer exists at all, so "dead code" would itself be stale), and the Key-files table row naming the now-nonexistent file is removed rather than re-labeled. [A11] is therefore satisfied both by Phase 3's earlier correction and by this phase's touch-up. |
+| `ui_shot.py`'s `_SERVER_INFO_PATH` single-slot record and its dual-write with the `agent-spawns` register | **Kept, as an honest limit — not the disposition §6.6 originally specified.** §6.6 called for deleting `tmp/ui-shot-server.json` outright; Phase 3 (already merged, #554) instead chose to keep writing it and layer the register write alongside (`_register_agent_spawn`, `ui_shot.py:74-112`). Grepped before touching anything: `_start_vite_server`'s reuse gate (`ui_shot.py:376-385`) and `_resolve_ui_url` (`ui_shot.py:500-507`) both still read `_SERVER_INFO_PATH` to decide `_is_server_alive` before renewing the register lease — the reuse path's liveness check has no register-only equivalent today. Removing the write in this phase would break server reuse, which is out of this phase's authorized scope (Phase 3 is merged; re-opening its producer logic is not part of "the gate direction and the retirement sweep"). Left in place, named here rather than silently dropped, per Phase 7's own "honest limits" framing (§6.9's pattern) — a future pass migrating the reuse gate onto the register alone (dropping the second write and the stale-file convention for good) is the natural follow-up, not a silent scope-narrowing of this one. |
+| `docs/observations.md`'s `obs:ui-shot-cleanup` (seen 3) | **Deletion proposed in the PR body**, per the store's own rule that "deletion is always a human act; automation only proposes" (`docs/observations.md:56-59`) — this tempdoc does not edit `observations.md` directly. The PR body names the landing commit for the owner's triage. |
+| Repo-wide `git grep -n "ui-shot-server\\|ui-shot-cleanup"` | Run and every hit classified (full list in the PR body): the manifest/gate/test files above (intended, this phase's own work); `.claude/skills/ui-check/SKILL.md` and `docs/observations.md`/`docs/observations.d/**` (handled above); `gates/prose-tier-register/.changesets/861-agent-spawn-session-end-reap-rule.md`, `scripts/dev/lib/agent-spawn-reaper.cjs`, and `docs/tempdocs/{365,520,721,821}-*.md` (dated history / already-landed design rationale describing the past defect in past tense — left as-is per `tempdocs-are-dated-history`, since editing merged changesets and superseded tempdocs would rewrite history rather than retire a live artifact). No hit was left unclassified. |
+
+## 9. Outcome record — the recurrence ledger this tempdoc set out to close
+
+§2-bis's ledger named two conditions this charter exists to close. Recording their shard-level story
+here (the conditions store itself folds separately — this is not an edit to `docs/observations.md`):
+
+- **`obs:ui-shot-cleanup` (seen 3, 2026-06-16 → 2026-07-16).** Root-caused in §3c: the reaper was
+  never in the hook manifest, so it never fired. Closed at the mechanism, not just the symptom — the
+  file is deleted (Phase 7) *and* the hook-integrity gate now fails the build if any future hook file
+  ships without a manifest row (Phase 6), so this specific false-authority shape (a file on disk, a
+  rules file describing it as live, nothing wiring it) cannot recur silently for a *different* hook
+  the way it did for this one. Deletion proposed in the PR body per the store's own human-act rule.
+- **`obs:remove-worktree` (seen 14, 2026-06-21 → 2026-08-07).** Not this phase's mechanism —
+  addressed upstream by Phases 2-5 (identity verification, the reaper's matrix, and
+  `remove-worktree.cjs`'s pre-junction-unlink consult-and-refuse, landed in PRs #549/#552/#558).
+  Phases 6+7 contribute only indirectly: the gate stops the *next* unwired reaper from joining this
+  ledger the way `ui-shot-cleanup` did. Whether `obs:remove-worktree`'s count actually stops growing
+  is an empirical claim about seasons of real worktree teardowns, not something this PR can prove by
+  itself — §6.10's own retirement condition already names the right falsifier (do registered-tier
+  reaps catch something a plain signature scan would not?) and the right instrument (the store's own
+  `seen:`/`last:` fields), and that check is for a later pass, not for this closeout.
+
+Both conditions are proposed for deletion/re-evaluation in the PR body rather than edited here;
+per the store's rule, that determination is the owner's at triage, not an agent's to make unilaterally.
