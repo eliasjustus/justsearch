@@ -1098,8 +1098,17 @@ export class Sv3Main extends JfElement {
         display: flex;
         gap: var(--space-1);
       }
+      /* Live audit 2026-08-25 (D1) — these labels wore --secondary-label, which is the palette's
+         quiet tier and clears AA on the WINDOW background (4.72:1 light) but not on this one: the
+         act-now surface is an 8% --success wash, and a wash sits BEHIND TEXT, so the same ink
+         measured 4.38:1 here — seven serious axe color-contrast nodes, light palette only (dark was
+         clean, which is what identified the light token choice as the defect rather than the wash).
+         A LABEL in this window is --foreground, not the quiet tier — .run-note-label above is the
+         same role in the same family — so the fix is the role token this file already has, and the
+         label/value distinction moves onto weight (13.51:1 on the wash). */
       .run-prompt-facts dt {
-        color: var(--secondary-label);
+        color: var(--foreground);
+        font-weight: 500;
       }
       .run-prompt-facts dd {
         margin: 0;
@@ -1127,14 +1136,32 @@ export class Sv3Main extends JfElement {
         color: var(--secondary-label);
         font-size: var(--font-size-sv3-sm);
       }
+      /* Live audit 2026-08-25 (D2) — WCAG 2.2 2.5.8 (Target Size, Minimum). The checkbox measured
+         13 x 13 CSS px. The TARGET here is the whole label (a label activates the control it wraps),
+         so the floor is pinned in two places: this row's block axis, and a hit box around the glyph
+         itself for a pointer aimed at the checkbox rather than at the words. 24px is written as the
+         literal the criterion names rather than routed through a spacing token that a later scale
+         re-tune could drop back under the floor — the .copy-btn / .disclosure precedent from
+         tempdoc 853 (F-09). */
       .run-prompt-auto {
         flex: 1 1 100%;
         display: flex;
         align-items: center;
         gap: var(--space-1);
+        min-height: 24px;
         color: var(--secondary-label);
         font-size: var(--font-size-sv3-xs);
         cursor: pointer;
+      }
+      /* Grows the box AROUND the native checkbox without moving or resizing it: sizing the input
+         itself would scale the rendered control, and the glyph is proportionate to the xs label
+         beside it. */
+      .run-prompt-auto-hit {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 24px;
+        min-height: 24px;
       }
 
       /* The store's own failure text, kept at diagnostic altitude: the state is said in words above
@@ -2717,13 +2744,15 @@ export class Sv3Main extends JfElement {
                standing autonomy, and every silent continue leaves a budget-raised note in the
                feed. Read at CLICK time, above, so the toggle and the arm are one decision. -->
           <label class="run-prompt-auto" data-testid="sv3-run-budget-auto">
-            <input
-              type="checkbox"
-              .checked=${this.budgetAutoContinue}
-              @change=${(e: Event) => {
-                this.budgetAutoContinue = (e.target as HTMLInputElement).checked;
-              }}
-            />
+            <span class="run-prompt-auto-hit" data-testid="sv3-run-budget-auto-hit">
+              <input
+                type="checkbox"
+                .checked=${this.budgetAutoContinue}
+                @change=${(e: Event) => {
+                  this.budgetAutoContinue = (e.target as HTMLInputElement).checked;
+                }}
+              />
+            </span>
             Don't ask again for this run
           </label>
           <jf-control

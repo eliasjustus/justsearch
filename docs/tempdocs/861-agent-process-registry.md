@@ -1,10 +1,17 @@
 ---
-status: planned, rev 2 (adversarial review APPROVE-WITH-AMENDMENTS; A1-A6 amended into text)
+status: in progress, rev 2 — Phases 1/2/4 landed or in review; Phases 3/5/6/7 outstanding
 created: 2026-08-25
 updated: 2026-08-25
 revision: rev 2 — 15 review findings folded in; §6.2/§6.3/§6.4 corrected as text before any worker brief
 author: agent session (Opus 5, 1M context)
 charter: agent-spawned background processes outlive their spawner with no adjudicable ownership claim — and the one reaper that existed was never wired
+phases:
+  - "Phase 1 (W1) — shared grammar + reader: MERGED (scripts/dev/lib/process-record.cjs)"
+  - "Phase 2 (W2) — record shape, identity verification, pruning: MERGED #549 (agent-spawn-record.cjs, process-identity.cjs)"
+  - "Phase 3 (W3) — producers (ui_shot.py, serve-worktree-fe.cjs, otlp-sink-ensure.mjs): outstanding"
+  - "Phase 4 (W4) — the reaper and the §6.3 matrix: PR #552 in review (scripts/dev/lib/agent-spawn-reaper.cjs)"
+  - "Phase 5 (W5) — reap occasions and hook bodies: outstanding; wires by OCCASION NAME from the reaper's frozen OCCASIONS map, never by hand-picked capability (Phase 4 review F2)"
+  - "Phases 6+7 (W6) — the file->manifest gate and the ui-shot-cleanup teardown sweep: outstanding, must land together"
 ---
 
 # 861 — Agent-spawned process ownership and reaping
@@ -1050,6 +1057,31 @@ observed tier never killed, only reported with a ready-to-run kill line.
 never-reaped assertions for the dev-runner's own active run and the OTel sink. This is the riskiest
 code in the change — the two existing precedents are both reapers that became incidents (§3c-bis,
 tempdoc 746 item 5).
+
+**Phase 4 as landed (PR #552) — what Phase 5 must know.** The independent review returned
+APPROVE-WITH-FIXES; two of its findings changed the API Phase 5 consumes, so they belong here
+rather than only in the PR:
+
+- **Occasions are named, and capability is not a caller argument** (review F2). The reaper exports a
+  frozen `OCCASIONS` map binding each of §6.4's six occasions to its capability, and
+  `reapEligible({occasion: 'before-a-build', …})` derives the rest. [A4] was previously only
+  half-enforced: `occasion` and `capability` were independent arguments, so
+  `{occasion: CONFLICT, capability: EXECUTE}` handed the before-a-build surface a kill list — the
+  exact pairing [A4] forbids, reachable by a Phase 5 author picking the pair that looked right.
+  **Phase 5 wires by occasion name; an unknown name throws rather than defaulting.**
+- **The sweep carries the marking obligation** (review F7). §6.3's identity-failure cell says
+  "refuse; retain record, mark failed-verify" in *both* columns, but a projection refusal never
+  reaches `executeReap`, which is what marks on the kill path. So refusals carry `markPending` and
+  the result exposes a `markPending` bucket; the sweep, orientation and before-a-build occasions
+  discharge it with one `markRefusals(buckets.markPending, {dir})` call. Skipping it loses the
+  diagnostic trail exactly where the matrix promised one.
+
+Three smaller corrections landed with them: a positively-gone holder (identity `MISMATCH`) no longer
+blocks a teardown for the 7-day prune window, while an *unreadable* verdict still does (F3); the
+no-declared-hold grace window is reported as `grace-window` rather than mislabelled `declared-hold`
+with a claim of intent nobody expressed (F5); and a phantom `record.devRunnerRunId` arm — read by the
+never-reap guard, written nowhere, unexpressible by W2's validator — was dropped in favour of the
+verified pid-list arm (F4, the `slice-execution` phantom-ID class).
 
 **Phase 5 — Reap occasions.** Each is small; together they are the deliverable.
 - SessionStart sweep (async) — reaps the previous dead session's leaks.
