@@ -1,5 +1,6 @@
 /**
- * Tempdoc 618 Seam C — unit tests for note-observation.mjs (per-session shard write).
+ * Tempdoc 618 Seam C + tempdoc 862 — unit tests for note-observation.mjs
+ * (per-writer shard write: keyed by session AND writing tree).
  *
  * Run with: `node scripts/agent-analytics/note-observation.test.mjs`
  * Exits non-zero on any failure.
@@ -13,6 +14,7 @@ import {
   resolveSessionId,
   formatEntry,
   shardPathFor,
+  resolveWriterSuffix,
   appendObservation,
   SHARD_DIR,
 } from './note-observation.mjs';
@@ -105,6 +107,49 @@ try {
     assert.ok(fs.existsSync(shardPathFor('sessA', root)));
     assert.ok(fs.existsSync(shardPathFor('sessB', root)));
     assert.notEqual(shardPathFor('sessA', root), shardPathFor('sessB', root));
+  });
+
+  // --- writer discriminator (tempdoc 862) ---
+  // The defect 862 repairs: a subagent inherits the parent's session id, so one
+  // session wrote one shard path from many worktrees (nine writers, one file, 859
+  // wave). The shard is now keyed by the tree that merges, not by the actor.
+  run('shardPathFor: no writer → the bare <sid>.md (D.6.2, no shard in flight is renamed)', () => {
+    const root = freshRoot();
+    assert.equal(path.basename(shardPathFor('sess1', root, '')), 'sess1.md');
+  });
+  run('shardPathFor: a writer → <sid>.<writer>.md', () => {
+    const root = freshRoot();
+    assert.equal(path.basename(shardPathFor('sess1', root, 'agent-a5ec1173')), 'sess1.agent-a5ec1173.md');
+  });
+  // The strip in recover-merge-links.mjs takes the LAST dot-segment, so exactly
+  // one dot in the name is a load-bearing invariant, not tidiness (862 §D.4).
+  run('shardPathFor: a dotted writer is flattened, so the name holds exactly one dot', () => {
+    const root = freshRoot();
+    const name = path.basename(shardPathFor('sess1', root, 'weird.tree.name'));
+    assert.equal(name, 'sess1.weird_tree_name.md');
+    assert.equal((name.match(/\./g) || []).length, 2); // the writer dot + `.md`
+  });
+  run('resolveWriterSuffix: indeterminate (non-git) root fails OPEN to the bare name', () => {
+    const root = freshRoot();
+    assert.equal(resolveWriterSuffix({ root }), '');
+    assert.equal(path.basename(shardPathFor('sess1', root)), 'sess1.md');
+  });
+  // The invariant 618 claimed and 862 restores: two writers, never the same bytes.
+  run('appendObservation: two trees sharing ONE session id write two distinct shards', () => {
+    const root = freshRoot();
+    const a = appendObservation({ description: 'from the orchestrator', root, sessionId: 'sessX', writer: '', date: '2026-08-25' });
+    const b = appendObservation({ description: 'from the worker', root, sessionId: 'sessX', writer: 'agent-af06f4a5', date: '2026-08-25' });
+    assert.notEqual(a, b);
+    assert.equal(path.basename(a), 'sessX.md');
+    assert.equal(path.basename(b), 'sessX.agent-af06f4a5.md');
+    // Independent, not interleaved: each file holds exactly its own writer's entry.
+    const textA = fs.readFileSync(a, 'utf8');
+    const textB = fs.readFileSync(b, 'utf8');
+    assert.match(textA, /from the orchestrator/);
+    assert.doesNotMatch(textA, /from the worker/);
+    assert.match(textB, /from the worker/);
+    assert.doesNotMatch(textB, /from the orchestrator/);
+    assert.match(textB, /tree agent-af06f4a5/); // attribution stays legible in the file
   });
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });

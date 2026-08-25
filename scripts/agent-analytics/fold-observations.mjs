@@ -5,8 +5,10 @@
  * (tempdoc 618 Seam C write path + tempdoc 680 identity-at-the-fold).
  *
  * Writers stay blind and flat: note-observation.mjs appends one-liners to a
- * per-session shard under docs/observations.d/ — contention-free by construction,
- * unchanged. This tool resolves IDENTITY at the store: each shard entry either
+ * per-writer shard under docs/observations.d/ (keyed by session AND writing tree
+ * since tempdoc 862) — contention-free by construction, unchanged. The fold needs
+ * no knowledge of that key: listShards GLOBS the directory and never parses a
+ * shard's name. This tool resolves IDENTITY at the store: each shard entry either
  * merges into an existing condition in docs/observations.md `## Conditions`
  * (occurrence appended, `seen` incremented — recurrence is the ranking signal,
  * not a rule violation) or opens a new condition with a PROPOSED kind

@@ -1,19 +1,29 @@
 #!/usr/bin/env node
 
 /**
- * Append an out-of-scope finding to THIS session's observations shard
- * (tempdoc 618 Seam C — shared-agent-state isolation).
+ * Append an out-of-scope finding to THIS session's observations shard for THIS
+ * tree (tempdoc 618 Seam C — shared-agent-state isolation; tempdoc 862 — the
+ * shard key).
  *
  * The `## Inbox` of docs/observations.md is a single shared file that every
  * parallel agent used to `echo >>`. On a contended multi-agent `main` a
  * neighbour's commit/reset silently wiped an un-committed append (618 §4/§9/§12,
  * reproduced as data loss 3×). This helper conforms the inbox to the repo's
- * existing per-session-shard pattern (governance `.changesets/`, agent-telemetry
- * session files): each session writes ONLY its own file under docs/observations.d/,
- * so two writers never touch the same bytes — clobber is impossible by
- * construction. fold-observations.mjs reconciles shards into the curated
- * `## Inbox` at a boundary; correctness does not depend on the fold firing,
+ * existing per-shard pattern (governance `.changesets/`, agent-telemetry
+ * session files): no two writers ever touch the same bytes — clobber is
+ * impossible by construction. fold-observations.mjs reconciles shards into the
+ * curated store at a boundary; correctness does not depend on the fold firing,
  * because the shard is committed in the agent's own worktree.
+ *
+ * The shard is keyed by session AND writing tree (tempdoc 862). 618 keyed it by
+ * session alone, on the invariant "one session = one writer". The delegate model
+ * broke that: a subagent inherits its parent's CLAUDE_CODE_SESSION_ID (see
+ * resolveSessionId below), so an orchestrator and every worker it spawns resolved
+ * the SAME shard path in DIFFERENT worktrees — nine writers on one file in the 859
+ * wave, and a hand-resolved conflict on every catch-up pull. Contention is not a
+ * property of the actor, it is a property of the tree that merges: session is the
+ * right ATTRIBUTION key (kept, inside the file and in the name) and the wrong
+ * ISOLATION key. See resolveWriterSuffix.
  *
  *   node scripts/agent-analytics/note-observation.mjs "<description>"
  *   node scripts/agent-analytics/note-observation.mjs "<description> — `file:line`"
@@ -82,24 +92,82 @@ export function formatEntry(description, date = today()) {
   return `- [ ] ${text} (${date})`;
 }
 
-export function shardPathFor(sessionId, root = repoRoot) {
-  return path.join(root, SHARD_DIR, `${sanitizeId(sessionId)}.md`);
+/**
+ * Make a writer discriminator safe as a filename component. Deliberately
+ * STRICTER than sanitizeId: dots are stripped too, because the shard name is
+ * `<sessionId>.<writer>` and recover-merge-links.mjs recovers the session id by
+ * removing the LAST dot-segment (tempdoc 862 §D.4). A dot inside the writer half
+ * would make that strip ambiguous and feed a session id that never existed into
+ * the measurement ledger. Exactly one dot in the name is the invariant.
+ */
+function sanitizeWriter(name) {
+  return String(name).trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40);
+}
+
+/**
+ * Resolve the WRITER discriminator for the shard name — the tree these bytes are
+ * written in (tempdoc 862 §D.1).
+ *
+ *   - home checkout (`--git-dir` === `--git-common-dir`) → `''`, i.e. the bare
+ *     `<sessionId>.md` this has always written. No shard in flight is renamed.
+ *   - linked worktree (`--git-dir` !== `--git-common-dir`) → the sanitized
+ *     basename of the worktree toplevel (`agent-af06f4a…`), the name git already
+ *     gives the tree, so a worker's finding is self-labelling.
+ *   - indeterminate (no git, tmp roots, the unit tests) → `''`. Fail open to
+ *     today's behaviour; a note is never dropped for lack of an identity, matching
+ *     resolveSessionId's fallback discipline above.
+ *
+ * `--git-common-dir` is not a new probe: resolveDefaultMergesPath
+ * (baseline-economics.mjs:80-91) already distinguishes main checkout from worktree
+ * exactly this way. This conforms to that seam rather than inventing a second test.
+ */
+export function resolveWriterSuffix({ root = repoRoot } = {}) {
+  try {
+    // stderr ignored: "not a git repository" is an EXPECTED outcome here (tmp
+    // roots, the unit tests), not an error to report — it is the indeterminate
+    // branch. execFileSync would otherwise echo it to the caller's stderr.
+    const quiet = { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] };
+    const [gitDir, commonDir] = execFileSync(
+      'git', ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], quiet,
+    ).trim().split(/\r?\n/).map((s) => s.trim());
+    if (!gitDir || !commonDir) return '';
+    if (path.resolve(gitDir) === path.resolve(commonDir)) return '';
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], quiet).trim();
+    return top ? sanitizeWriter(path.basename(top)) : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The ONE place a shard path is composed (tempdoc 862 §D.3). Every consumer —
+ * appendObservation, hooks/observation-shard-hint.mjs — imports this rather than
+ * building the name itself, so the writer discriminator lands in all of them by
+ * construction. `writer` is injectable only so the tests can drive both branches
+ * without a git fixture, mirroring resolveSessionId's `{ root, env }`.
+ */
+export function shardPathFor(sessionId, root = repoRoot, writer = resolveWriterSuffix({ root })) {
+  const sid = sanitizeId(sessionId);
+  const w = writer ? sanitizeWriter(writer) : '';
+  return path.join(root, SHARD_DIR, `${w ? `${sid}.${w}` : sid}.md`);
 }
 
 /**
  * Append one observation entry to the session's shard, creating the shard with
  * a header if absent. Append-only; returns the shard path.
  */
-export function appendObservation({ description, root = repoRoot, sessionId, date } = {}) {
+export function appendObservation({ description, root = repoRoot, sessionId, date, writer } = {}) {
   const sid = sessionId ?? resolveSessionId({ root });
-  const shard = shardPathFor(sid, root);
+  const w = writer ?? resolveWriterSuffix({ root });
+  const shard = shardPathFor(sid, root, w);
   fs.mkdirSync(path.dirname(shard), { recursive: true });
   if (!fs.existsSync(shard)) {
     fs.writeFileSync(
       shard,
-      `# Observations shard — session ${sid}\n\n` +
-        `> Per-session inbox shard (tempdoc 618 Seam C). Append-only; do not share with\n` +
-        `> other sessions. Folded into docs/observations.md \`## Inbox\` by\n` +
+      `# Observations shard — session ${sid}${w ? ` (tree ${w})` : ''}\n\n` +
+        `> Per-session-per-tree inbox shard (tempdoc 618 Seam C, keyed by the writing\n` +
+        `> tree per tempdoc 862). Append-only; one writer, one file — do not append to\n` +
+        `> another tree's or session's shard. Folded into docs/observations.md by\n` +
         `> \`node scripts/agent-analytics/fold-observations.mjs\`.\n\n`,
       'utf8',
     );
@@ -114,8 +182,11 @@ function main() {
     console.error('usage: node scripts/agent-analytics/note-observation.mjs "<description>"');
     process.exit(2);
   }
-  const shard = appendObservation({ description });
-  const sid = path.basename(shard, '.md');
+  // The session id comes from the resolver, never from the shard basename: that
+  // basename now carries a writer suffix, and parsing it back is the exact
+  // mis-attribution tempdoc 862 §D.4 removes from recover-merge-links.mjs.
+  const sid = resolveSessionId();
+  const shard = appendObservation({ description, sessionId: sid });
   console.log(`note-observation: logged to ${path.relative(repoRoot, shard)} (session ${sid.slice(0, 12)})`);
 }
 
