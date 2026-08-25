@@ -23,6 +23,7 @@ import type { UnifiedChatView } from './UnifiedChatView.js';
 import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendingForceShape, takePendingSelection } from '../utils/compose.js';
 import { SHAPE_LABELS, type ShapeId } from './unifiedChatRequest.js';
 import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
+import { Control } from '../components/Control.js';
 // Search Thread Round-2 R2 — namespace import so `compose` can be spied on directly (the shift-held
 // Ask AI staging test asserts the view calls the SAME compose() seam the pre-round-2 behavior used).
 import * as composeModule from '../utils/compose.js';
@@ -639,6 +640,62 @@ describe('UnifiedChatView "New chat" control (tempdoc 821 §4, typed availabilit
     (await innerButton(stale)).click();
     await view.updateComplete;
     expect((view as unknown as { inputDraft: string }).inputDraft).toBe('not cleared');
+  });
+});
+
+// Typed availability makes the unavailable control FOCUSABLE (aria-disabled, not native [disabled]),
+// which only helps if the focus ring survives. The outer-tree `::part(control)` rules are the one
+// thing that can silently blank it: a ::part declaration from the consuming tree beats the
+// primitive's own inner-tree rule regardless of specificity, so a stray `all:` or `outline:` there
+// reaches into jf-control and neutralises `button:focus-visible` (Control.ts). jsdom resolves
+// neither ::part nor adopted-stylesheet cascade, so this is pinned as style TEXT.
+describe('UnifiedChatView .new-chat-btn ::part styling does not blank the primitive focus ring', () => {
+  /** `[selectorList, declarationBlock]` for every top-level rule in a Lit stylesheet. */
+  function rulesOf(cssText: string): Array<[string, string]> {
+    const stripped = cssText.replace(/\/\*[\s\S]*?\*\//g, '');
+    return [...stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(
+      (m) => [(m[1] as string).trim(), (m[2] as string).trim()] as [string, string],
+    );
+  }
+  const declaredProps = (block: string): string[] =>
+    [...block.matchAll(/(^|;)\s*([\w-]+)\s*:/g)].map((m) => (m[2] as string).toLowerCase());
+
+  const partRules = rulesOf(unifiedChatBodyStyles.cssText).filter(([sel]) =>
+    sel.includes('jf-control.new-chat-btn::part(control)'),
+  );
+
+  it('styles the composed control through ::part at all (anti-vacuity for the rules below)', () => {
+    expect(partRules.length).toBeGreaterThan(0);
+  });
+
+  it.each(['all', 'outline', 'outline-style', 'outline-width', 'outline-color'])(
+    'no ::part(control) rule declares `%s`',
+    (prop) => {
+      const offenders = partRules.filter(([, block]) => declaredProps(block).includes(prop));
+      expect(offenders.map(([sel]) => sel)).toEqual([]);
+    },
+  );
+
+  it('the native <button> form keeps its own `all: unset`, which is what the ::part rule must not share', () => {
+    // Precision guard: the rules above would also pass if `all: unset` had simply been deleted
+    // outright, which would leave the native Activity/Export buttons wearing UA chrome.
+    const nativeReset = rulesOf(unifiedChatBodyStyles.cssText).filter(
+      ([sel, block]) =>
+        sel.includes('button.new-chat-btn') &&
+        !sel.includes('::part') &&
+        declaredProps(block).includes('all'),
+    );
+    expect(nativeReset.length).toBeGreaterThan(0);
+  });
+
+  it('the primitive still supplies the focus ring the rules above are protecting', () => {
+    // The other half of the invariant: if Control.ts stopped drawing a ring, the assertions above
+    // would keep passing while the composed control lost focus indication entirely.
+    const sheets = Array.isArray(Control.styles) ? Control.styles : [Control.styles];
+    const css = sheets.map((s) => (s as { cssText: string }).cssText).join('\n');
+    const focusRule = rulesOf(css).find(([sel]) => sel.includes('button:focus-visible'));
+    expect(focusRule, 'Control.ts declares no button:focus-visible rule').toBeDefined();
+    expect(declaredProps((focusRule as [string, string])[1])).toContain('outline');
   });
 });
 
