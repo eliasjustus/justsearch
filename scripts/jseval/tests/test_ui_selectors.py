@@ -3,11 +3,20 @@
 The failure mode is a brittle step: a testid rename breaks resolution even though the
 element is unchanged by accessible role+name. These pin the resolution ORDER (role+name
 wins when present; testid is the fallback) without a browser.
+
+Also covers the cite-key selector builders in `ui_check`, whose failure mode is the
+mirror image: a selector that is never wrong about WHICH element it wants but cannot
+name it, because the key is a Windows path and CSS reads a backslash as an escape.
 """
 from __future__ import annotations
 
 import asyncio
 
+from jseval.ui_check import (
+    _cite_card_selected_selector,
+    _cite_card_selector,
+    _css_escaped,
+)
 from jseval.ui_selectors import Selector
 
 
@@ -67,3 +76,105 @@ def test_no_testid_returns_role_locator():
     page = _FakePage(role_count=0)
     loc = _locate(Selector("searchbox", "Search files", testid=None), page)
     assert loc.tag == "role"
+
+
+# ---------------------------------------------------------------------------
+# Cite-key selectors — a `data-cite-key` is a source PATH
+# ---------------------------------------------------------------------------
+# The regression: `sv3-citation-selected` interpolated the picked key raw into
+# `[data-cite-key="…"]`. On Windows the key carries backslashes, and a backslash in a CSS
+# selector introduces an escape in string context too — so `…\598-…` parses as U+0598
+# followed by `-` and the selector matches nothing on a page that is rendering correctly.
+
+# A Windows key wearing every character class the escape rules care about: a drive colon,
+# separators, a dot, a fragment marker, and the `\5` sequence that reproduced the defect.
+_WIN_KEY = r"F:\repo\docs\598-x.md#c3"
+
+
+def _css_escape(value: str) -> str:
+    """Test double for the page's `CSS.escape`.
+
+    Covers the subset these keys exercise (ASCII punctuation gets a backslash;
+    alphanumerics, `-`, `_` and non-ASCII pass through). The leading-digit and
+    leading-hyphen hex-escape branches of the real algorithm are deliberately not
+    modelled — no cite key reaches them, and the assertions below never depend on them.
+    """
+    return "".join(
+        ch if (ch.isalnum() or ch in "-_" or ord(ch) > 0x7F) else "\\" + ch for ch in value
+    )
+
+
+def _css_unescape(value: str) -> str:
+    """What a CSS parser reads out of a quoted attribute value: `\\X` is the character X."""
+    out: list[str] = []
+    i = 0
+    while i < len(value):
+        if value[i] == "\\" and i + 1 < len(value):
+            out.append(value[i + 1])
+            i += 2
+        else:
+            out.append(value[i])
+            i += 1
+    return "".join(out)
+
+
+def _attr_value(selector: str) -> str:
+    return selector.split('[data-cite-key="', 1)[1].split('"]', 1)[0]
+
+
+class _FakeEvalPage:
+    def __init__(self):
+        self.evaluated: list[tuple[str, str]] = []
+
+    async def evaluate(self, expr, arg=None):
+        self.evaluated.append((expr, arg))
+        return _css_escape(arg)
+
+
+def test_css_escaped_ships_the_raw_key_into_the_page():
+    # The escaping authority is the browser's own CSS.escape, not a Python re-implementation,
+    # so the key must arrive at the page untouched.
+    page = _FakeEvalPage()
+    escaped = asyncio.run(_css_escaped(page, _WIN_KEY))
+    assert page.evaluated == [("(v) => CSS.escape(v)", _WIN_KEY)]
+    assert escaped == _css_escape(_WIN_KEY)
+
+
+def test_card_selector_names_the_key_a_css_parser_would_read():
+    escaped = _css_escape(_WIN_KEY)
+    sel = _cite_card_selector(escaped)
+    assert sel == (
+        '[data-testid="sv3-turn-citations"] button.source'
+        f'[data-cite-key="{escaped}"]'
+    )
+    assert sel.startswith('[data-testid="sv3-turn-citations"] button.source')
+    assert _css_unescape(_attr_value(sel)) == _WIN_KEY
+
+
+def test_selected_card_selector_names_the_key_a_css_parser_would_read():
+    escaped = _css_escape(_WIN_KEY)
+    sel = _cite_card_selected_selector(escaped)
+    assert sel == (
+        f'button.source[data-cite-key="{escaped}"][data-selected][aria-current="true"]'
+    )
+    # `data-selected` is the styling hook; `aria-current` is the announcement the step exists
+    # to prove — both stay on the selector.
+    assert sel.endswith('[data-selected][aria-current="true"]')
+    assert _css_unescape(_attr_value(sel)) == _WIN_KEY
+
+
+def test_the_raw_interpolation_would_have_named_something_else():
+    # Pins the DEFECT, not just the repair: dropping the escape step yields a selector whose
+    # attribute value a CSS parser reads as a different string — hence the step that could
+    # never pass on Windows.
+    raw = f'[data-cite-key="{_WIN_KEY}"]'
+    assert _css_unescape(_attr_value(raw)) != _WIN_KEY
+    assert _cite_card_selector(_WIN_KEY) != _cite_card_selector(_css_escape(_WIN_KEY))
+
+
+def test_a_key_needing_no_escaping_is_left_alone():
+    # A POSIX-shaped key round-trips unchanged, so the fix costs nothing off Windows.
+    plain = "doc-42"
+    assert _cite_card_selector(_css_escape(plain)) == (
+        '[data-testid="sv3-turn-citations"] button.source[data-cite-key="doc-42"]'
+    )

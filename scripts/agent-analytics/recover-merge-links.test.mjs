@@ -20,6 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   parseShardAddLog,
+  sessionIdFromShardName,
   classifyShardCommits,
   planRecovery,
   applyRecovery,
@@ -28,6 +29,7 @@ import {
   SHARD_PREFIX,
   MEASURED,
 } from './recover-merge-links.mjs';
+import { isPlausibleSessionId } from './merge-links.mjs';
 import { TELEMETRY_DIR, SESSION_MERGES_FILE, buildMergeLinkRow, repoRoot } from './lib/telemetry-io.mjs';
 import { resolveDefaultMergesPath } from './baseline-economics.mjs';
 
@@ -89,6 +91,65 @@ try {
       ['docs/observations.md', 'scripts/agent-analytics/foo.mjs', 'docs/observations.d/README.txt']);
     const [rec] = parseShardAddLog(raw);
     assert.deepEqual(rec.shards, [SESS.a]);
+  });
+
+  // --- writer-suffixed shard names (tempdoc 862 §D.4) ---------------------
+  // Shards are `<sessionId>[.<writer>].md` since 862. The strip is load-bearing:
+  // isPlausibleSessionId's alphabet (merge-links.mjs:107) ADMITS dots, so an
+  // unstripped `<uuid>.<writer>` is not rejected — it is accepted and written into
+  // the ledger as a session that never existed. These cases prove the strip runs,
+  // not merely that nothing crashes.
+  run('sessionIdFromShardName strips the writer suffix', () => {
+    assert.equal(sessionIdFromShardName(`${SESS.a}.agent-af06f4a5`), SESS.a);
+  });
+  run('sessionIdFromShardName leaves a legacy undotted name unchanged', () => {
+    assert.equal(sessionIdFromShardName(SESS.a), SESS.a);
+    assert.equal(sessionIdFromShardName('wt-0a1b2c3d4e5f'), 'wt-0a1b2c3d4e5f');
+  });
+  run('parseShardAddLog yields the PARENT session id from a writer-suffixed shard', () => {
+    const raw = logRecord('e'.repeat(40), 'feat: worker work (#528)', '2026-08-25T10:00:00Z',
+      [`${SESS.a}.agent-af06f4a5`]);
+    const [rec] = parseShardAddLog(raw);
+    assert.deepEqual(rec.shards, [SESS.a]); // the accountable session, per 856 §216
+  });
+  // Without the strip this row would ENTER the ledger (dots pass SESSION_ID_RE),
+  // silently keyed to a session id that never existed — the failure 856 exists to
+  // remove, reintroduced by the 862 rename. Assert on the value, not just the count.
+  run('a writer-suffixed shard does NOT enter the ledger unstripped', () => {
+    const commits = parseShardAddLog(
+      logRecord('f'.repeat(40), 'feat: worker work (#529)', '2026-08-25T10:00:00Z', [`${SESS.b}.859-sv3-live`]));
+    const { candidates, rejected } = classifyShardCommits(commits);
+    assert.equal(rejected.length, 0);
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].sessionId, SESS.b);
+    assert.ok(!candidates[0].sessionId.includes('859-sv3-live'));
+    assert.ok(isPlausibleSessionId(`${SESS.b}.859-sv3-live`)); // the reject path would NOT have caught it
+  });
+  // Consequence of stripping BEFORE the existing dedupe, asserted deliberately
+  // rather than discovered later: two trees of the SAME session in one commit
+  // collapse to one id, so the commit qualifies instead of being a multi-shard
+  // reject. That is the right call and does not loosen 856's measured restriction
+  // — the 55.6% figure is about a commit sweeping in OTHER sessions' shards, where
+  // attribution is genuinely ambiguous. Here both files name one session, so there
+  // is nothing to be ambiguous about. A commit spanning two DISTINCT sessions is
+  // still rejected (next case).
+  run('two trees of ONE session in one commit collapse to a single candidate', () => {
+    const commits = parseShardAddLog(
+      logRecord('a'.repeat(40), 'feat: fold (#530)', '2026-08-25T10:00:00Z',
+        [`${SESS.a}.tree-one`, `${SESS.a}.tree-two`]));
+    assert.deepEqual(commits[0].shards, [SESS.a]);
+    const { candidates, rejected } = classifyShardCommits(commits);
+    assert.equal(rejected.length, 0);
+    assert.equal(candidates[0].sessionId, SESS.a);
+  });
+  run('two DISTINCT sessions in one commit are still a multi-shard reject after stripping', () => {
+    const commits = parseShardAddLog(
+      logRecord('b'.repeat(40), 'chore(observations): fold (#531)', '2026-08-25T10:00:00Z',
+        [`${SESS.a}.tree-one`, `${SESS.b}.tree-two`]));
+    assert.deepEqual(commits[0].shards, [SESS.a, SESS.b]);
+    const { candidates, rejected } = classifyShardCommits(commits);
+    assert.equal(candidates.length, 0);
+    assert.match(rejected[0].reason, /^multi-shard \(2\)/);
   });
 
   // --- classifyShardCommits: the restrictions -----------------------------
