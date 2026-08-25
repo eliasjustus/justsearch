@@ -24,6 +24,7 @@ import type {
   AgentSessionController,
   ConversationEntry,
 } from '../../controllers/AgentSessionController.js';
+import { ReasoningController } from '../../controllers/ReasoningController.js';
 import type { BudgetUpdate } from '../../controllers/AgentSessionController.js';
 import type {
   AgentSentenceCite,
@@ -68,6 +69,7 @@ interface FakeCtrl {
   iterationsUsed: number;
   toolCallsExecuted: number;
   budgetUpdates: BudgetUpdate[];
+  reasoning: ReasoningController;
   budgetGate: null;
   contextGate: null;
   runPark: null;
@@ -95,6 +97,8 @@ function makeCtrl(): FakeCtrl {
     iterationsUsed: 0,
     toolCallsExecuted: 0,
     budgetUpdates: [],
+    // Tempdoc 859 §A — the live run feed derives its open-region item from the real controller.
+    reasoning: new ReasoningController(() => {}),
     budgetGate: null,
     contextGate: null,
     runPark: null,

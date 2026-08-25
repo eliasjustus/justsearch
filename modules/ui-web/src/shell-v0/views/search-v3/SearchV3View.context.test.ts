@@ -24,6 +24,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentSessionController } from '../../controllers/AgentSessionController.js';
+import { ReasoningController } from '../../controllers/ReasoningController.js';
 
 let ctrlExists = false;
 const ctrl = {
@@ -38,6 +39,8 @@ const ctrl = {
   iterationsUsed: 0,
   toolCallsExecuted: 0,
   budgetUpdates: [],
+  // Tempdoc 859 §A — the live run feed derives its open-region item from the real controller.
+  reasoning: new ReasoningController(() => {}),
   budgetGate: null,
   contextGate: null,
   reattachActiveRunOnLoad: vi.fn(async () => {}),

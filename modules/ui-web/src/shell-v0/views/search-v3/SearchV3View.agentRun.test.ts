@@ -28,6 +28,7 @@ import type {
   ConversationEntry,
   ToolCall,
 } from '../../controllers/AgentSessionController.js';
+import { ReasoningController } from '../../controllers/ReasoningController.js';
 import type { BudgetUpdate } from '../../controllers/AgentSessionController.js';
 
 /** The observable surface the window projects, plus the spies the seam should reach. */
@@ -43,6 +44,7 @@ interface FakeCtrl {
   iterationsUsed: number;
   toolCallsExecuted: number;
   budgetUpdates: BudgetUpdate[];
+  reasoning: ReasoningController;
   budgetGate: { tokensNeeded: number; tokensRemaining: number; totalTokensConsumed: number } | null;
   contextGate: { promptTokens: number; contextWindow: number } | null;
   /** Tempdoc 834 §6.2 — why the run is stopped, when it is; the window reads it as `holding`. */
@@ -71,6 +73,8 @@ function makeCtrl(): FakeCtrl {
     iterationsUsed: 0,
     toolCallsExecuted: 0,
     budgetUpdates: [],
+    // Tempdoc 859 §A — the live run feed derives its open-region item from the real controller.
+    reasoning: new ReasoningController(() => {}),
     budgetGate: null,
     contextGate: null,
     runPark: null,

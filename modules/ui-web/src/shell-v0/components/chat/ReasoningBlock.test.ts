@@ -159,9 +159,11 @@ describe('ReasoningBlock — F-09 copy-control name and target size', () => {
     // name AT announces.
     expect(copy?.getAttribute('aria-label')).toBe('Copy reasoning');
     // …and the glyph is out of the a11y tree entirely, so there is no content left to compute from.
+    // Tempdoc 859 §A §1.7 (A4) — the glyph is the product's `clipboard-copy` <svg> now, not a raw
+    // emoji codepoint, so "there is a glyph" is asserted as the element rather than as text content.
     const glyph = copy?.firstElementChild;
     expect(glyph?.getAttribute('aria-hidden')).toBe('true');
-    expect(glyph?.textContent?.trim().length).toBeGreaterThan(0);
+    expect(glyph?.querySelector('svg')).not.toBeNull();
     // The pointer affordance is unchanged — this is a name fix, not a tooltip removal.
     expect(copy?.getAttribute('title')).toBe('Copy reasoning');
     el.remove();
@@ -179,6 +181,65 @@ describe('ReasoningBlock — F-09 copy-control name and target size', () => {
     expect(copy).toMatch(/display:\s*inline-flex/);
     // The disclosure is wide by layout (flex: 1); only its block axis was short.
     expect(ruleBody('\\.disclosure')).toMatch(/min-height:\s*24px/);
+  });
+});
+
+describe('ReasoningBlock — the run-timeline form (859 §A)', () => {
+  it('B-1 (D-5): `streaming` drives the affordance with NO controller, and the label says the item’s own N', () => {
+    // The run timeline renders each region as a VALUE, so the live one has no controller to ask for
+    // an elapsed figure. Asserting the LABEL TEXT, not the presence of the dots, is the point: the
+    // `?? 0` this replaces left a live, ticking thought reading "Thinking (0s)" for the whole run,
+    // and every dots-presence assertion would have passed over it.
+    return (async () => {
+      const el = document.createElement('jf-reasoning-block') as ReasoningBlock;
+      el.text = 'still working on it';
+      el.durationMs = 4000;
+      el.streaming = true;
+      document.body.appendChild(el);
+      await settle(el);
+
+      expect(el.shadowRoot?.querySelector('jf-pulse-dots')).not.toBeNull();
+      expect(el.shadowRoot?.querySelector('.label')?.textContent).toBe('Thinking (4s)');
+      // A live region has nothing final to copy yet.
+      expect(el.shadowRoot?.querySelector('.copy-btn')).toBeNull();
+      el.remove();
+    })();
+  });
+
+  it('B-1b: a settled item is past-tense and offers the copy control', async () => {
+    const el = await mount({ text: 'a finished thought', durationMs: 3000 });
+    expect(el.shadowRoot?.querySelector('jf-pulse-dots')).toBeNull();
+    expect(el.shadowRoot?.querySelector('.label')?.textContent).toBe('Thought for 3s');
+    expect(el.shadowRoot?.querySelector('.copy-btn')).not.toBeNull();
+    el.remove();
+  });
+
+  it('B-2 (A4): the copy control is the product’s <svg> glyph, and no U+1F4CB survives anywhere', async () => {
+    const el = await mount();
+    expect(el.shadowRoot?.querySelector('.copy-btn svg')).not.toBeNull();
+    expect(el.shadowRoot?.innerHTML.includes('\u{1F4CB}')).toBe(false);
+    el.remove();
+  });
+
+  it('A2: the IN-FEED form drops the card, keeps the rule, and pins the 24px floor', async () => {
+    // A tool card is an action; a thought is subordinate to it. The hairline left rule is what says
+    // "aside" — the filled box and the radius were what made the row read as a competing card.
+    const inFeed = ruleBody(':host\\(\\[inline\\]\\) \\.container');
+    expect(inFeed).toMatch(/background:\s*none/);
+    expect(inFeed).toMatch(/border-radius:\s*0/);
+    // Vertical rhythm belongs to `.run-feed`'s gap — ONE spacing authority — so the block declares
+    // padding only, and no margin.
+    expect(inFeed).not.toMatch(/margin/);
+    // The base rule still carries the rule and the grade the a11y work pinned (F-07).
+    const base = ruleBody('\\.container');
+    expect(base).toMatch(/border-left:\s*3px solid var\(--border-muted\)/);
+    expect(base).toMatch(/color:\s*var\(--text-secondary\)/);
+
+    const el = await mount();
+    el.inline = true;
+    await settle(el);
+    expect(el.hasAttribute('inline')).toBe(true);
+    el.remove();
   });
 });
 

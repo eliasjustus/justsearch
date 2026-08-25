@@ -3,6 +3,9 @@ import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { copyToClipboard } from '../../utils/clipboardCopy.js';
 import type { ReasoningController } from '../../controllers/ReasoningController.js';
+// Tempdoc 859 §A §1.7 (A4) — the product's ONE icon set. The clipboard glyph this replaces was a raw
+// emoji codepoint, which each platform draws in its own colour and metrics.
+import { icon } from '../Icon.js';
 
 import './MarkdownBlock.js';
 
@@ -11,11 +14,25 @@ export class ReasoningBlock extends JfElement {
     controller: { attribute: false },
     text: { type: String },
     durationMs: { type: Number },
+    streaming: { type: Boolean },
+    inline: { type: Boolean, reflect: true },
   };
 
   declare controller: ReasoningController | null;
   declare text: string;
   declare durationMs: number;
+  /**
+   * Tempdoc 859 §A — the LIVE flag for a controller-less block. The run timeline renders each region
+   * as a value (text + duration + this), and at most one of them — the run's open region, always the
+   * newest — is ever true, so a finished thought has no path to the live affordance at all.
+   */
+  declare streaming: boolean;
+  /**
+   * Tempdoc 859 §A §1.6 (A2) — the IN-FEED placement: an annotation on the step below it, not a card
+   * competing with one. Declared as a mode on the component rather than as host CSS reaching into the
+   * shadow tree, so the two placements are a stated choice and not a selector accident.
+   */
+  declare inline: boolean;
 
   private collapsed = true;
   private wasStreaming = false;
@@ -25,6 +42,8 @@ export class ReasoningBlock extends JfElement {
     this.controller = null;
     this.text = '';
     this.durationMs = 0;
+    this.streaming = false;
+    this.inline = false;
   }
 
   private get effectiveText(): string {
@@ -37,7 +56,7 @@ export class ReasoningBlock extends JfElement {
   }
 
   private get effectiveIsStreaming(): boolean {
-    return this.controller?.isThinking ?? false;
+    return this.controller?.isThinking ?? this.streaming;
   }
 
   private get effectiveDurationMs(): number {
@@ -75,6 +94,18 @@ export class ReasoningBlock extends JfElement {
          HC gap is fixed in 'styles/tokens.css' for every other consumer; this block does not need to
          be the dimmest grade to read as an aside — the rule and the surface already say that. */
       color: var(--text-secondary);
+    }
+    /* Tempdoc 859 §A §1.6 (A2) — the IN-FEED form. A tool card is an ACTION; a thought is subordinate
+       to the action it produced, so in the run timeline the block keeps the hairline left rule (which
+       is what says "aside") and drops the filled box and the radius that made it read as a competing
+       card. Vertical rhythm comes from '.run-feed''s gap — ONE spacing authority — so the block
+       contributes padding only: 0.25rem above and below the 24px WCAG target floor puts the collapsed
+       row at 32px. The floor itself (F-09) and the '--text-secondary' grade (F-07) are untouched. */
+    :host([inline]) .container {
+      background: none;
+      border-radius: 0;
+      padding-block: 0.25rem;
+      padding-inline: 0.75rem 0;
     }
     .header {
       display: flex;
@@ -189,8 +220,11 @@ export class ReasoningBlock extends JfElement {
     const durationMs = this.effectiveDurationMs;
     const showContent = !this.collapsed && text.length > 0;
     const seconds = Math.max(1, Math.round(durationMs / 1000));
+    // Tempdoc 859 §A §3.1.8 (D-5) — the elapsed figure falls back to the ITEM's own duration. A
+    // controller-less streaming block (the run timeline's open region) has no controller to ask, and
+    // the `?? 0` this replaces rendered a live, ticking thought as "Thinking (0s)" forever.
     const label = streaming
-      ? `Thinking (${this.controller?.elapsedSeconds ?? 0}s)`
+      ? `Thinking (${this.controller?.elapsedSeconds ?? seconds}s)`
       : `Thought for ${seconds}s`;
 
     return html`
@@ -220,7 +254,7 @@ export class ReasoningBlock extends JfElement {
                 @click=${() => void this.copyText()}
                 title="Copy reasoning"
                 aria-label="Copy reasoning"
-              ><span aria-hidden="true">&#x1F4CB;</span></button>`
+              ><span aria-hidden="true">${icon({ name: 'clipboard-copy', size: 14 })}</span></button>`
             : nothing}
         </div>
         <div class="content ${showContent ? '' : 'hidden'}">

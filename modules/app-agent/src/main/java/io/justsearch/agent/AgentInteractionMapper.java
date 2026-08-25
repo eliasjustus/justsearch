@@ -274,6 +274,15 @@ public final class AgentInteractionMapper {
    * <p>{@code durationMs} carries the SAME semantic as the answer plane and the live controller:
    * from the block's first reasoning token to the first non-reasoning output that follows it.
    *
+   * <p>Tempdoc 859 §A §1.3 — a cut block is held in {@code pending} and flushed onto the NEXT event
+   * that actually projects, whatever kind it is: the tool row, the handoff, the answer. It is NOT
+   * attached to the event that cut it, because most cutting events are invisible downstream — a
+   * projection must name a carrier that exists in the PROJECTED stream, not one that exists in the
+   * source journal. Nor is it retargeted onto the next {@code ASSISTANT_MESSAGE}, the rule this
+   * replaces: on an agent run the only assistant message is the terminal {@code done}, so every
+   * block in a multi-step run landed on it and the reader got a wall of thoughts detached from the
+   * steps that produced them.
+   *
    * <p>Blocks left unflushed at the end of the walk attach to the run's terminal event (its
    * {@code ERROR} if it produced one, else its last event): what the model thought before a run was
    * halted or failed was really produced, and the ask WINDOW records exactly that at all four of its
@@ -318,7 +327,15 @@ public final class AgentInteractionMapper {
         continue;
       }
       InteractionEvent event = projected.get();
-      if (event.kind() == InteractionEventKind.ASSISTANT_MESSAGE && !pending.isEmpty()) {
+      // Tempdoc 859 §A §1.3 — flush onto the next event that ACTUALLY PROJECTS, of ANY kind. The
+      // event that CUTS a region is very often one this projection drops (`budget_update` is emitted
+      // the instant each LLM stream ends, and `progress` / `handoff_proposed` / the gates project
+      // nothing either), so a rule keyed on the cutting event names a carrier that does not exist
+      // downstream. Retargeting onto the next ASSISTANT_MESSAGE — the rule this replaces — is why a
+      // seven-step run's seven blocks all landed on its single terminal answer and drew as a wall.
+      // Chronologically this is exact: the block was produced BEFORE the cutting event, the cutting
+      // event renders nothing, so the block renders immediately before the next thing that does.
+      if (!pending.isEmpty()) {
         out.add(withReasoning(event, pending));
         pending = new ArrayList<>();
       } else {
@@ -370,7 +387,15 @@ public final class AgentInteractionMapper {
   private static InteractionEvent withReasoning(
       InteractionEvent event, List<Map<String, Object>> blocks) {
     Map<String, Object> merged = new LinkedHashMap<>(event.attributes());
-    merged.put("reasoning", List.copyOf(blocks));
+    // Tempdoc 859 §A — APPEND, never replace. Under the flush rule a carrier can be written twice:
+    // once by the ordinary flush and once by the trailing rule below, when a journal's last records
+    // reason with no projecting event after them. Overwriting would silently drop the first set.
+    List<Object> all = new ArrayList<>();
+    if (event.attributes().get("reasoning") instanceof List<?> existing) {
+      all.addAll(existing);
+    }
+    all.addAll(blocks);
+    merged.put("reasoning", List.copyOf(all));
     return new InteractionEvent(
         event.id(),
         event.conversationId(),
