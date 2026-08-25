@@ -4,7 +4,13 @@
  *
  * Derived from a third-party design system (MIT) — see THIRD-PARTY-NOTICES.md in this directory.
  *
- * Everything here is PURE and reads the shared `AgentSessionController` as a source, never as a place
+ * Everything here is PURE — with ONE stated exception (tempdoc 859 §A §1.3): the live feed's TRAILING
+ * reasoning item reads `ReasoningController.elapsedSeconds`, which reads `Date.now()`. That is the
+ * same clock the reasoning block already renders its label from, and the controller's 1 s tick is what
+ * re-derives the item; but "same input, same output" no longer holds unqualified for that one item,
+ * and saying so is cheaper than a purity claim the code does not keep.
+ *
+ * It reads the shared `AgentSessionController` as a source, never as a place
  * to write: the run itself is hosted by that one controller (the 818 slice-3 finding that it is
  * framework-agnostic), and every directive the reader issues leaves through the ONE
  * `dispatchRunControl` seam in the window. This module exists so the window's RENDERING decisions are
@@ -80,6 +86,10 @@ export type Sv3RunSource = Pick<
   // what. Both are figures the run already reported; the panel adds no wire field.
   | 'toolCallsExecuted'
   | 'budgetUpdates'
+  // Tempdoc 859 §A §1.3 — the OPEN region, which has no conversation entry yet because it has not
+  // been cut. Every CLOSED region is already an ordered `conversation` entry; this is the one item
+  // the array cannot hold, and it is the only item that may wear the live affordance.
+  | 'reasoning'
 >;
 
 /* ── Axis 1: the session ─────────────────────────────────────────────────────────────────────── */
@@ -146,7 +156,35 @@ export interface Sv3RunFeedNote {
   readonly text: string;
 }
 
-export type Sv3RunFeedItem = Sv3RunFeedText | Sv3RunFeedTool | Sv3RunFeedNote;
+/**
+ * Tempdoc 859 §A §1.1 — one closed region of the model's thinking, IN THE POSITION IT WAS PRODUCED.
+ *
+ * A fourth variant of the item union rather than a fourth accumulator: there was already ONE ordered
+ * timeline shape rendered by ONE renderer, and it was simply missing reasoning. `streaming` is true
+ * for at most one item — the run's open region, which is always the newest — so a finished thought
+ * has no path at all to the live affordance (the A3 leak, closed by construction rather than by a
+ * render-time suppression).
+ */
+export interface Sv3RunFeedReasoning {
+  readonly kind: 'reasoning';
+  readonly id: string;
+  readonly text: string;
+  readonly durationMs: number;
+  readonly streaming: boolean;
+}
+
+export type Sv3RunFeedItem =
+  | Sv3RunFeedText
+  | Sv3RunFeedTool
+  | Sv3RunFeedNote
+  | Sv3RunFeedReasoning;
+
+/**
+ * The id of the live feed's trailing (still-open) reasoning item. A constant, because there is at
+ * most one at a time and it has no controller entry to take an id from; it is replaced by the
+ * entry-id-bearing closed item the moment the region is cut.
+ */
+export const SV3_LIVE_REASONING_ITEM_ID = 'run-reasoning-live';
 
 export interface Sv3RunFeed {
   readonly items: readonly Sv3RunFeedItem[];
@@ -216,12 +254,41 @@ export function projectSv3RunFeed(source: Sv3RunSource, from: number): Sv3RunFee
       }
       continue;
     }
+    // Tempdoc 859 §A §1.1 — a CLOSED region, in position. Branched BEFORE the note fallback: left to
+    // it, a thought would have been labelled "Step" and drawn as a one-line progress note.
+    if (entry.type === 'reasoning') {
+      items.push({
+        kind: 'reasoning',
+        id: entry.id,
+        text: entry.content,
+        durationMs: entry.durationMs ?? 0,
+        streaming: false,
+      });
+      continue;
+    }
     if (entry.type === 'error') errored = true;
     items.push({
       kind: 'note',
       id: entry.id,
       label: RUN_NOTE_LABEL[entry.type] ?? 'Step',
       text: entry.content,
+    });
+  }
+
+  // Tempdoc 859 §A §1.3 — the region that is still open, appended LAST because it is by definition
+  // the newest thing the run has produced. It is the only item that can be `streaming`, which is what
+  // makes the false-liveness leak unreachable rather than merely suppressed.
+  const live = source.reasoning;
+  if (live.reasoningText !== '') {
+    items.push({
+      kind: 'reasoning',
+      id: SV3_LIVE_REASONING_ITEM_ID,
+      text: live.reasoningText,
+      // The controller's own answer, not a second derivation from its clock: once output has been
+      // seen the duration is already settled, and re-deriving it here would make the row's figure
+      // snap back the moment the region was cut.
+      durationMs: live.openRegionDurationMs,
+      streaming: live.isThinking,
     });
   }
 

@@ -2387,22 +2387,21 @@ export class SearchV3View extends JfElement {
   }
 
   /**
-   * The live thinking, whichever tier is producing it (tempdoc 848 §2.8). The ask stream's own
-   * controller while an ask streams; otherwise the SHARED agent controller's, which has been
-   * accumulating a delegated run's reasoning all along with nothing reading it — a run showed no
-   * thinking live while a settled one now shows it from the record, which is the same asymmetry
-   * inverted. One reasoning surface, both tiers.
+   * The live thinking on the ASK tier, and only that (tempdoc 859 §A §1.9, superseding 848 §2.8).
+   *
+   * The delegate tier's fallback that used to live here — hand the transcript the shared agent
+   * controller so the stack above the turn could render a run's live reasoning — is deleted. A
+   * delegate run's thinking now arrives through the run feed, in the position it was produced
+   * (`projectSv3RunFeed`'s trailing open-region item), so keeping the fallback would draw the same
+   * live thought twice: once in the stack and once in the timeline.
    */
   private liveReasoning(): ReasoningController | null {
-    if (this.streaming) return this.askReasoning;
-    if (this.run === null) return null;
-    return this.agentController()?.reasoning ?? null;
+    return this.streaming ? this.askReasoning : null;
   }
 
   /** The turn that owns {@link liveReasoning}'s controller — the id the transcript binds it to. */
   private liveReasoningTurnId(): string | null {
-    if (this.streaming) return this.askReasoningTurnId;
-    return this.run?.turnId ?? null;
+    return this.streaming ? this.askReasoningTurnId : null;
   }
 
   /**

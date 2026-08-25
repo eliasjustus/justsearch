@@ -108,6 +108,10 @@ vi.mock('../../api/streams.js', () => ({
       new Promise<void>(() => { /* never resolves */ }),
   ),
   dispatchShapeEventToHandlers: vi.fn(),
+  // Tempdoc 859 §A — the run-identity event NAME. Real value, not a stand-in: it is read at module
+  // scope by `AgentSessionController`'s reasoning-boundary exempt set (a name that must never cut a
+  // region), and a mock that omitted it left the whole module unloadable.
+  RUN_STARTED_EVENT: 'run_started',
 }));
 
 // Tempdoc 577 Goal 3 — control the retrieve base tier's search store. The view subscribes in
@@ -6091,10 +6095,79 @@ describe('Tempdoc 848 — the turn keeps its thinking after done, and after a re
     view.requestUpdate();
     await view.updateComplete;
 
-    const block = view.shadowRoot!.querySelector('[data-testid="chat-turn-reasoning"]');
-    expect(block, 'a reloaded turn renders its thinking FROM the record').not.toBeNull();
-    expect((block as unknown as { text: string }).text).toBe('recorded thinking');
-    expect((block as unknown as { durationMs: number }).durationMs).toBe(1840);
+    // Tempdoc 859 §A §3.5 — ONCE, counted. This is the ordinary assistant-with-thinking shape, and
+    // it is the one that goes THROUGH `renderMessage` (which draws `ThreadMessage.reasoning`), so it
+    // is the real double-render path: it is the shape that renders twice if the lifted read above
+    // the kind switch stops excluding the arms that already draw their own. A `querySelector` here
+    // could not see that — it would find the first of two and pass.
+    const blocks = [...view.shadowRoot!.querySelectorAll('[data-testid="chat-turn-reasoning"]')];
+    expect(blocks, 'a reloaded turn renders its thinking FROM the record, exactly once').toHaveLength(1);
+    expect((blocks[0] as unknown as { text: string }).text).toBe('recorded thinking');
+    expect((blocks[0] as unknown as { durationMs: number }).durationMs).toBe(1840);
     view.remove();
+  });
+
+  it('U-1 (859 §A D-2b): reasoning riding a TOOL-ACTIVITY carrier renders here too', async () => {
+    // Fails on the shipped read, which looked at `assistant` and `error` only. Once the record fold
+    // flushes a block onto the next event that PROJECTS, most carriers are tool-activity, handoff or
+    // progress items — so leaving the per-arm read in place would have silently DELETED a delegate
+    // run's reasoning from this window while the new window gained it.
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'documents';
+    await view.updateComplete;
+    const v = view as unknown as { unifiedEvents: unknown[]; thread: unknown[] };
+    v.unifiedEvents = [
+      {
+        id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE',
+        originator: 'user', content: 'index the vendor folder', attributes: {},
+      },
+      {
+        id: 'c1:proposed', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY',
+        originator: 'agent', content: '',
+        attributes: {
+          callId: 'c1', toolName: 'core_search', status: 'completed', risk: 'low',
+          reasoning: [{ text: 'search before reading', durationMs: 900 }],
+        },
+      },
+    ];
+    v.thread = [];
+    view.requestUpdate();
+    await view.updateComplete;
+
+    const blocks = [...view.shadowRoot!.querySelectorAll('[data-testid="chat-turn-reasoning"]')];
+    expect(blocks, 'the tool step’s own thinking is on screen').toHaveLength(1);
+    expect((blocks[0] as unknown as { text: string }).text).toBe('search before reading');
+    view.remove();
+  });
+
+  it('U-1b: a turn’s thinking is never drawn TWICE — one read, above the switch', async () => {
+    // The other half of the lift: with the per-arm reads still in place beside the lifted one, every
+    // reloaded answer would render its blocks once from each.
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'documents';
+    await view.updateComplete;
+    const v = view as unknown as { unifiedEvents: unknown[]; thread: unknown[] };
+    v.unifiedEvents = [
+      {
+        id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE',
+        originator: 'user', content: 'Q', attributes: {},
+      },
+      {
+        id: 'a1', occurredAt: '2026-01-01T00:00:02Z', kind: 'ASSISTANT_MESSAGE',
+        originator: 'agent', content: 'The answer.',
+        attributes: {
+          sources: [{ parentDocId: 'f:/docs/x.md', startLine: 1, endLine: 3, excerpt: 'x' }],
+          citations: [],
+          reasoning: [{ text: 'exactly one copy', durationMs: 500 }],
+        },
+      },
+    ];
+    v.thread = [];
+    view.requestUpdate();
+    await view.updateComplete;
+
+    expect(view.shadowRoot!.querySelectorAll('[data-testid="chat-turn-reasoning"]')).toHaveLength(1);
   });
 });
