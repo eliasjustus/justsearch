@@ -1,29 +1,32 @@
 /**
- * Tempdoc 861 W2 [A2] — process identity: the three ADVERSE tests, plus the happy path.
+ * Tempdoc 861 W2 [A2] — process identity: the adverse tests, plus the happy path.
  *
  * Phase 2's acceptance is not "identity verification works". It is that identity verification
  * REFUSES in every state where the evidence does not support a kill (`green-masked-destructive`:
- * a happy-path-only suite does not close this phase). The three required branches:
+ * a happy-path-only suite does not close this phase). The required branches:
  *
- *   (i)   recycled pid          — pid alive, creation time differs  -> MISMATCH (not MATCH)
- *   (ii)  unreadable creation   — field absent or unparseable       -> REFUSE   (not MISMATCH, not MATCH)
- *   (iii) table unavailable     — enumeration failed, returns []    -> REFUSE   (an empty table is
- *                                                                    NO evidence, not exculpatory
- *                                                                    evidence — `getProcessTable`
- *                                                                    fails silently to `[]` by
- *                                                                    design, remove-worktree.cjs:125-131)
+ *   (i)   recycled pid          — pid alive, creation time differs -> MISMATCH (not MATCH)
+ *   (ii)  unreadable creation   — field absent or unparseable      -> REFUSE   (not MISMATCH)
+ *   (iii) table unavailable     — enumeration failed, returns []   -> REFUSE   (an empty table is
+ *                                                                   NO evidence, not exculpatory
+ *                                                                   evidence — `getProcessTable`
+ *                                                                   fails silently to `[]` by
+ *                                                                   design, remove-worktree.cjs:125-131)
+ *   (iv)  STALE table           — a snapshot past the freshness bound -> REFUSE. Added by review:
+ *                                 all three conjuncts match a stale row even after the pid has been
+ *                                 recycled, so no mutation to the conjunction can catch this. A
+ *                                 caller that hoists one `readProcessTable` out of a sweep loop is
+ *                                 the realistic way in.
  *
- * Each of the three was proven DISCRIMINATING by mutation: with the corresponding guard removed
- * from `process-identity.cjs`, the test fails; restored, it passes. The mutations are recorded in
- * the PR body rather than left as an unverified claim here.
+ * Each branch was proven DISCRIMINATING by mutation: with the corresponding guard removed from
+ * `process-identity.cjs`, the test fails; restored, it passes.
  *
  * These tests are sited under `scripts/agent-analytics/` deliberately: that directory is
  * auto-discovered by `run-all-tests.mjs:31-40` and run as a CI job step, while `scripts/dev/*.test.mjs`
  * runs in CI nowhere (861 §7.6). The MODULE lives in `scripts/dev/lib/`; test location and module
  * location need not match, and for the safety-critical branch of a kill path, CI coverage wins.
  *
- * Sited fixtures only — no process is signalled, and the one live probe is Windows-guarded and
- * read-only.
+ * Fixtures only — no process is signalled, and the live probes are Windows-guarded and read-only.
  *
  * Run with: `node scripts/agent-analytics/861-w2-process-identity.test.mjs`
  */
@@ -35,6 +38,7 @@ const require = createRequire(import.meta.url);
 const {
   PROCESS_TABLE_PS_COMMAND,
   IDENTITY,
+  DEFAULT_MAX_TABLE_AGE_MS,
   normalizeCreationTime,
   readProcessTable,
   coerceProcessTable,
@@ -79,10 +83,13 @@ const ROW = (over = {}) => ({
 
 const NOISE = { ProcessId: 100, ParentProcessId: 1, Name: 'cmd.exe', CommandLine: 'cmd.exe /d /s /c npx.cmd vite', CreationFileTimeUtc: T_ORIGINAL };
 
+/** A just-read snapshot, the shape `readProcessTable` returns. Bare arrays now REFUSE by design. */
+const fresh = (rows) => ({ ok: true, table: rows, readAt: Date.now() });
+
 /* ── Happy path ───────────────────────────────────────────────────────────────────────────── */
 
-check('happy path: pid AND creation time AND fingerprint all agree -> MATCH', () => {
-  const r = verifyProcessIdentity({ record: RECORD(), table: [NOISE, ROW()] });
+check('happy path: pid AND creation time AND fingerprint all agree, on a fresh table -> MATCH', () => {
+  const r = verifyProcessIdentity({ record: RECORD(), table: fresh([NOISE, ROW()]) });
   assert.equal(r.verdict, IDENTITY.MATCH);
   assert.deepEqual(r.matched, { pid: true, creationTime: true, fingerprint: true });
   assert.equal(isVerifiedMatch(r), true);
@@ -91,7 +98,7 @@ check('happy path: pid AND creation time AND fingerprint all agree -> MATCH', ()
 /* ── (i) recycled pid ─────────────────────────────────────────────────────────────────────── */
 
 check('(i) recycled pid: same pid, DIFFERENT creation time -> MISMATCH, never MATCH', () => {
-  const r = verifyProcessIdentity({ record: RECORD(), table: [ROW({ CreationFileTimeUtc: T_RECYCLED })] });
+  const r = verifyProcessIdentity({ record: RECORD(), table: fresh([ROW({ CreationFileTimeUtc: T_RECYCLED })]) });
   assert.equal(r.verdict, IDENTITY.MISMATCH);
   assert.equal(isVerifiedMatch(r), false);
   assert.equal(r.matched.creationTime, false);
@@ -106,7 +113,7 @@ check('(i) the recycled process shares the fingerprint too: the conjunction stil
   // same substring. Fingerprint alone would say yes; only the creation-time term catches it — which
   // is why 861 §6.2 calls the substring fingerprint safe ONLY inside the conjunction.
   const row = ROW({ CreationFileTimeUtc: T_RECYCLED, CommandLine: 'node vite.js vite --port 5173' });
-  const r = verifyProcessIdentity({ record: RECORD(), table: [row] });
+  const r = verifyProcessIdentity({ record: RECORD(), table: fresh([row]) });
   assert.equal(r.verdict, IDENTITY.MISMATCH);
 });
 
@@ -115,12 +122,12 @@ check('(i) exact equality, no tolerance window: a 100ns difference is still a MI
   // Number('134320479841300350') === Number('134320479841300351') is TRUE in Node, so these two
   // instants would collapse and the recycled-pid branch would silently stop discriminating.
   assert.equal(Number(T_ORIGINAL) === Number('134320479841300351'), true);
-  const r = verifyProcessIdentity({ record: RECORD(), table: [ROW({ CreationFileTimeUtc: '134320479841300351' })] });
+  const r = verifyProcessIdentity({ record: RECORD(), table: fresh([ROW({ CreationFileTimeUtc: '134320479841300351' })]) });
   assert.equal(r.verdict, IDENTITY.MISMATCH);
 });
 
 check('a pid absent from a successfully-read table is a read NEGATIVE, not an absent one', () => {
-  const r = verifyProcessIdentity({ record: RECORD(), table: [NOISE] });
+  const r = verifyProcessIdentity({ record: RECORD(), table: fresh([NOISE]) });
   assert.equal(r.verdict, IDENTITY.MISMATCH);
   assert.equal(r.matched.pid, false);
 });
@@ -129,7 +136,7 @@ check('a pid absent from a successfully-read table is a read NEGATIVE, not an ab
 
 check('(ii) record creation time ABSENT -> REFUSE (not MISMATCH, not MATCH)', () => {
   const record = { ...RECORD(), creationFileTimeUtc: undefined };
-  const r = verifyProcessIdentity({ record, table: [ROW()] });
+  const r = verifyProcessIdentity({ record, table: fresh([ROW()]) });
   assert.equal(r.verdict, IDENTITY.REFUSE);
   assert.notEqual(r.verdict, IDENTITY.MISMATCH);
   assert.equal(isVerifiedMatch(r), false);
@@ -137,26 +144,29 @@ check('(ii) record creation time ABSENT -> REFUSE (not MISMATCH, not MATCH)', ()
 
 check('(ii) record creation time UNPARSEABLE -> REFUSE', () => {
   for (const bad of ['', '  ', 'not-a-time', '20260825T101112Z', '-1', '0', {}, [], true]) {
-    const r = verifyProcessIdentity({ record: { ...RECORD(), creationFileTimeUtc: bad }, table: [ROW()] });
+    const r = verifyProcessIdentity({ record: { ...RECORD(), creationFileTimeUtc: bad }, table: fresh([ROW()]) });
     assert.equal(r.verdict, IDENTITY.REFUSE, `expected REFUSE for ${JSON.stringify(bad)}, got ${r.verdict}`);
   }
 });
 
 check('(ii) LIVE row creation time absent/unparseable -> REFUSE (pid reuse cannot be ruled out)', () => {
   for (const bad of [null, undefined, 'garbage', '']) {
-    const r = verifyProcessIdentity({ record: RECORD(), table: [ROW({ CreationFileTimeUtc: bad })] });
+    const r = verifyProcessIdentity({ record: RECORD(), table: fresh([ROW({ CreationFileTimeUtc: bad })]) });
     assert.equal(r.verdict, IDENTITY.REFUSE, `expected REFUSE for live-row ${JSON.stringify(bad)}, got ${r.verdict}`);
     assert.equal(r.matched.pid, true);
     assert.equal(r.matched.creationTime, null); // not evaluated — not "false"
   }
 });
 
-check('(ii) an unsafe-integer NUMBER creation time is unreadable evidence, not a rounded compare', () => {
-  // A producer that wrote the FILETIME as a JSON number rather than a string. Comparing the rounded
-  // double would satisfy "exact equality" in the source while violating it in fact, so it REFUSES.
+check('(ii) a JSON NUMBER creation time is unreadable evidence, never a rounded compare', () => {
+  // Every number is refused, not merely the unsafe ones: a FILETIME small enough to be a safe
+  // integer would date the process before 1629, so the safe-integer branch could only ever admit
+  // a value that is not a creation time at all.
   assert.equal(Number.isSafeInteger(Number(T_ORIGINAL)), false);
   assert.equal(normalizeCreationTime(Number(T_ORIGINAL)), null);
-  const r = verifyProcessIdentity({ record: { ...RECORD(), creationFileTimeUtc: Number(T_ORIGINAL) }, table: [ROW()] });
+  assert.equal(normalizeCreationTime(12345), null);
+  assert.equal(normalizeCreationTime(0), null);
+  const r = verifyProcessIdentity({ record: { ...RECORD(), creationFileTimeUtc: Number(T_ORIGINAL) }, table: fresh([ROW()]) });
   assert.equal(r.verdict, IDENTITY.REFUSE);
 });
 
@@ -166,72 +176,106 @@ check('normalizeCreationTime canonicalizes without loss, and refuses non-evidenc
   assert.equal(normalizeCreationTime('0134320479841300350'), T_ORIGINAL); // leading zeros canonicalize
   assert.equal(normalizeCreationTime(null), null);
   assert.equal(normalizeCreationTime(NaN), null);
-  assert.equal(normalizeCreationTime(12345), '12345'); // a safe integer is readable evidence
+  assert.equal(normalizeCreationTime('99999999999999999999999'), null); // past the digit bound
 });
 
 /* ── (iii) process table unavailable ──────────────────────────────────────────────────────── */
 
 check('(iii) EMPTY table -> REFUSE: no evidence is not exculpatory evidence', () => {
-  const r = verifyProcessIdentity({ record: RECORD(), table: [] });
+  assert.equal(verifyProcessIdentity({ record: RECORD(), table: [] }).verdict, IDENTITY.REFUSE);
+  const r = verifyProcessIdentity({ record: RECORD(), table: { ok: true, table: [], readAt: Date.now() } });
   assert.equal(r.verdict, IDENTITY.REFUSE);
-  assert.notEqual(r.verdict, IDENTITY.MISMATCH);
   assert.match(r.reason, /NO evidence/);
 });
 
 check('(iii) missing / null / failed-tri-state table -> REFUSE in every form', () => {
-  for (const table of [undefined, null, { ok: false, reason: 'powershell exited 1' }, { ok: true, table: [] }, 'nonsense', 42]) {
+  for (const table of [undefined, null, { ok: false, reason: 'powershell exited 1' }, { ok: true, table: [], readAt: Date.now() }, 'nonsense', 42, { ok: true, readAt: Date.now() }]) {
     const r = verifyProcessIdentity({ record: RECORD(), table });
     assert.equal(r.verdict, IDENTITY.REFUSE, `expected REFUSE for table=${JSON.stringify(table)}, got ${r.verdict}`);
   }
 });
 
-check('(iii) a SUCCESSFUL tri-state table is unwrapped and used', () => {
-  const r = verifyProcessIdentity({ record: RECORD(), table: { ok: true, table: [ROW()] } });
-  assert.equal(r.verdict, IDENTITY.MATCH);
+check('(iii) readProcessTable never degrades to [] — it reports the failure, and stamps success', () => {
+  const failing = () => ({ status: 1, stdout: '', stderr: 'boom' });
+  assert.equal(readProcessTable({ platform: 'win32', exec: failing }).ok, false);
+  assert.equal(readProcessTable({ platform: 'win32', exec: () => ({ status: 0, stdout: '[]' }) }).ok, false, 'a zero-row enumeration on a running host is a failed query');
+  assert.equal(readProcessTable({ platform: 'win32', exec: () => ({ status: 0, stdout: 'not json' }) }).ok, false);
+  assert.equal(readProcessTable({ platform: 'linux' }).ok, false);
+  assert.equal(readProcessTable({ platform: 'win32', exec: () => { throw new Error('spawn EPERM'); } }).ok, false);
+  const single = readProcessTable({ platform: 'win32', exec: () => ({ status: 0, stdout: JSON.stringify(ROW()) }), now: () => 1234 });
+  assert.equal(single.ok, true, 'a single-object CIM result is wrapped into a one-row table');
+  assert.equal(single.table.length, 1);
+  assert.equal(single.readAt, 1234, 'a successful read must carry its own timestamp');
 });
 
-check('(iii) readProcessTable never degrades to [] — it reports the failure', () => {
-  const failing = () => ({ status: 1, stdout: '', stderr: 'boom' });
-  const r1 = readProcessTable({ platform: 'win32', exec: failing });
-  assert.equal(r1.ok, false);
-  const r2 = readProcessTable({ platform: 'win32', exec: () => ({ status: 0, stdout: '[]' }) });
-  assert.equal(r2.ok, false, 'a zero-row enumeration on a running host is a failed query');
-  const r3 = readProcessTable({ platform: 'win32', exec: () => ({ status: 0, stdout: 'not json' }) });
-  assert.equal(r3.ok, false);
-  const r4 = readProcessTable({ platform: 'linux' });
-  assert.equal(r4.ok, false);
-  const r5 = readProcessTable({ platform: 'win32', exec: () => { throw new Error('spawn EPERM'); } });
-  assert.equal(r5.ok, false);
-  const r6 = readProcessTable({ platform: 'win32', exec: () => ({ status: 0, stdout: JSON.stringify(ROW()) }) });
-  assert.equal(r6.ok, true, 'a single-object CIM result is wrapped into a one-row table');
-  assert.equal(r6.table.length, 1);
+/* ── (iv) STALE table — the branch the conjunction cannot see ─────────────────────────────── */
+
+check('(iv) a STALE snapshot -> REFUSE even though all three conjuncts match', () => {
+  const now = 1_000_000;
+  const stale = { ok: true, table: [ROW()], readAt: now - (DEFAULT_MAX_TABLE_AGE_MS + 1) };
+  const r = verifyProcessIdentity({ record: RECORD(), table: stale, now });
+  assert.equal(r.verdict, IDENTITY.REFUSE);
+  assert.match(r.reason, /freshness bound/);
+  // Precision: the SAME rows inside the bound produce a MATCH, so the refusal is caused by the age
+  // and nothing else.
+  const bounded = { ok: true, table: [ROW()], readAt: now - (DEFAULT_MAX_TABLE_AGE_MS - 1) };
+  assert.equal(verifyProcessIdentity({ record: RECORD(), table: bounded, now }).verdict, IDENTITY.MATCH);
+});
+
+check('(iv) the bound is caller-tunable, and a future-dated stamp is refused too', () => {
+  const now = 1_000_000;
+  const snapshot = { ok: true, table: [ROW()], readAt: now - 30_000 };
+  assert.equal(verifyProcessIdentity({ record: RECORD(), table: snapshot, now }).verdict, IDENTITY.REFUSE);
+  assert.equal(verifyProcessIdentity({ record: RECORD(), table: snapshot, now, maxTableAgeMs: 60_000 }).verdict, IDENTITY.MATCH);
+  const future = { ok: true, table: [ROW()], readAt: now + 60_000 };
+  assert.equal(verifyProcessIdentity({ record: RECORD(), table: future, now }).verdict, IDENTITY.REFUSE);
+});
+
+check('(iv) a bare unstamped array REFUSES unless the caller names the waiver', () => {
+  const bare = [ROW()];
+  const refused = verifyProcessIdentity({ record: RECORD(), table: bare });
+  assert.equal(refused.verdict, IDENTITY.REFUSE, 'an unstamped array must not be trusted by default');
+  assert.match(refused.reason, /readAt/);
+  // The waiver has to be spelled out, and only then does the normal verdict follow.
+  assert.equal(verifyProcessIdentity({ record: RECORD(), table: bare, acceptUnstampedTable: true }).verdict, IDENTITY.MATCH);
+  // A stamp-less tri-state result is the same situation and gets the same treatment.
+  assert.equal(verifyProcessIdentity({ record: RECORD(), table: { ok: true, table: bare } }).verdict, IDENTITY.REFUSE);
+  assert.equal(verifyProcessIdentity({ record: RECORD(), table: { ok: true, table: bare }, acceptUnstampedTable: true }).verdict, IDENTITY.MATCH);
+  // The waiver does NOT reach the other refusals — it waives the age bound only.
+  assert.equal(verifyProcessIdentity({ record: RECORD(), table: [], acceptUnstampedTable: true }).verdict, IDENTITY.REFUSE);
 });
 
 check('coerceProcessTable maps every unusable shape onto ok:false', () => {
+  const now = 1_000_000;
   assert.equal(coerceProcessTable([]).ok, false);
   assert.equal(coerceProcessTable(null).ok, false);
-  assert.equal(coerceProcessTable({ ok: true, table: [] }).ok, false);
-  assert.equal(coerceProcessTable([ROW()]).ok, true);
+  assert.equal(coerceProcessTable([ROW()]).ok, false, 'bare array without the waiver');
+  assert.equal(coerceProcessTable([ROW()], { acceptUnstampedTable: true }).ok, true);
+  assert.equal(coerceProcessTable({ ok: true, table: [], readAt: now }, { now }).ok, false);
+  const good = coerceProcessTable({ ok: true, table: [ROW()], readAt: now - 500 }, { now });
+  assert.equal(good.ok, true);
+  assert.equal(good.ageMs, 500);
 });
 
 /* ── The conjunction, and the shape of the verdict ────────────────────────────────────────── */
 
 check('fingerprint is the third conjunct: pid + creation time alone do NOT license a match', () => {
-  const r = verifyProcessIdentity({ record: RECORD(), table: [ROW({ CommandLine: 'node some-other-server.js' })] });
+  const r = verifyProcessIdentity({ record: RECORD(), table: fresh([ROW({ CommandLine: 'node some-other-server.js' })]) });
   assert.equal(r.verdict, IDENTITY.MISMATCH);
   assert.deepEqual(r.matched, { pid: true, creationTime: true, fingerprint: false });
 });
 
 check('an unavailable CommandLine cannot be read as a passing fingerprint -> REFUSE', () => {
-  const r = verifyProcessIdentity({ record: RECORD(), table: [ROW({ CommandLine: null })] });
+  const r = verifyProcessIdentity({ record: RECORD(), table: fresh([ROW({ CommandLine: null })]) });
   assert.equal(r.verdict, IDENTITY.REFUSE);
   assert.equal(r.matched.fingerprint, null);
 });
 
 check('a record missing pid or fingerprint refuses rather than falling through', () => {
-  assert.equal(verifyProcessIdentity({ record: { ...RECORD(), pid: 0 }, table: [ROW()] }).verdict, IDENTITY.REFUSE);
-  assert.equal(verifyProcessIdentity({ record: { ...RECORD(), pid: '4242' }, table: [ROW()] }).verdict, IDENTITY.REFUSE);
-  assert.equal(verifyProcessIdentity({ record: { ...RECORD(), cmdlineFingerprint: '  ' }, table: [ROW()] }).verdict, IDENTITY.REFUSE);
+  assert.equal(verifyProcessIdentity({ record: { ...RECORD(), pid: 0 }, table: fresh([ROW()]) }).verdict, IDENTITY.REFUSE);
+  assert.equal(verifyProcessIdentity({ record: { ...RECORD(), pid: '4242' }, table: fresh([ROW()]) }).verdict, IDENTITY.REFUSE);
+  assert.equal(verifyProcessIdentity({ record: { ...RECORD(), cmdlineFingerprint: '  ' }, table: fresh([ROW()]) }).verdict, IDENTITY.REFUSE);
+  assert.equal(verifyProcessIdentity({ record: { ...RECORD(), cmdlineFingerprint: '' }, table: fresh([ROW()]) }).verdict, IDENTITY.REFUSE);
   assert.equal(verifyProcessIdentity({}).verdict, IDENTITY.REFUSE);
 });
 
@@ -241,11 +285,10 @@ check('REFUSE is a THIRD value, not false — the classifyActivity precedent', (
   // spelling the check `verdict !== MISMATCH` must not thereby get permission.
   assert.equal(IDENTITY.REFUSE === false, false);
   assert.equal(IDENTITY.REFUSE === IDENTITY.MISMATCH, false);
-  const refused = verifyProcessIdentity({ record: RECORD(), table: [] });
+  const refused = verifyProcessIdentity({ record: RECORD(), table: fresh([]) });
   assert.equal(typeof refused.verdict, 'string');
   assert.notEqual(refused.verdict, IDENTITY.MISMATCH);
   assert.equal(isVerifiedMatch(refused), false);
-  // Only MATCH is a licence.
   for (const v of [IDENTITY.REFUSE, IDENTITY.MISMATCH]) assert.equal(isVerifiedMatch({ verdict: v }), false);
   assert.equal(isVerifiedMatch({ verdict: IDENTITY.MATCH }), true);
 });
@@ -260,12 +303,13 @@ check('[A2] the CIM projection adds the creation time and keeps every column its
   assert.ok(PROCESS_TABLE_PS_COMMAND.includes('ToFileTimeUtc'), 'creation time must be normalized in PowerShell, not compared as a locale-dependent CIM datetime string');
 });
 
-/* ── Windows-guarded live probe (read-only) ───────────────────────────────────────────────── */
+/* ── Windows-guarded live probes (read-only) ──────────────────────────────────────────────── */
 
 if (process.platform === 'win32') {
   check('[win32] readProcessTable really enumerates, and this process verifies against its own row', () => {
     const result = readProcessTable();
     assert.equal(result.ok, true, `live enumeration failed: ${result.reason}`);
+    assert.ok(Number.isFinite(result.readAt), 'a live read must carry a readAt stamp');
     const self = result.table.find((r) => Number(r.ProcessId) === process.pid);
     assert.ok(self, 'this process is missing from its own process table');
     const t = normalizeCreationTime(self.CreationFileTimeUtc);
@@ -278,6 +322,9 @@ if (process.platform === 'win32') {
     // Same live row, one tick earlier: the recycled-pid branch against real evidence.
     const shifted = (BigInt(t) - 1n).toString();
     assert.equal(verifyProcessIdentity({ record: { ...record, creationFileTimeUtc: shifted }, table: result }).verdict, IDENTITY.MISMATCH);
+    // And the same real snapshot, aged past the bound: REFUSE.
+    const aged = { ...result, readAt: result.readAt - 60_000 };
+    assert.equal(verifyProcessIdentity({ record, table: aged }).verdict, IDENTITY.REFUSE);
   });
 
   check('[win32] remove-worktree getProcessTable now carries the creation time', () => {

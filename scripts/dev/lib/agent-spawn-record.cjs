@@ -181,8 +181,8 @@ function validateAgentSpawnRecord(record) {
   if (!probe || !PROBE_KINDS.includes(probe.kind)) {
     return { ok: false, reason: `record declares unknown probe kind ${JSON.stringify(probe?.kind)} (this reader understands ${PROBE_KINDS.join(', ')})` };
   }
-  if (probe.kind === 'port' && (!Number.isInteger(probe.port) || probe.port <= 0)) {
-    return { ok: false, reason: `port probe declares no usable port (${JSON.stringify(probe?.port)})` };
+  if (probe.kind === 'port' && (!Number.isInteger(probe.port) || probe.port <= 0 || probe.port > 65535)) {
+    return { ok: false, reason: `port probe declares no usable port (${JSON.stringify(probe?.port)}); expected an integer in 1..65535` };
   }
   const lease = validateLease(record.lease);
   if (!lease.ok) return lease;
@@ -231,10 +231,12 @@ function makeLease({ durationSec, now = Date.now() }) {
  * @param {string} [args.ownership]           defaults to `session-owned`.
  * @param {string} [args.sessionId]
  * @param {string} [args.repoRoot]
- * @param {object} [args.resourceRoots]       `{ worktreeRoot, nodeModulesRealPath }`, both RESOLVED through junctions.
+ * @param {object} [args.resourceRoots]       `{ worktreeRoot, nodeModulesRealPath }` — resolved
+ *   through junctions HERE, so a producer that hands over the junction side still gets a record
+ *   that matches. ASYNC for that reason.
  * @param {number} [args.now]
  */
-function buildAgentSpawnRecord({
+async function buildAgentSpawnRecord({
   recordId,
   producer,
   pid,
@@ -263,7 +265,7 @@ function buildAgentSpawnRecord({
     lease: makeLease({ durationSec: leaseDurationSec, now }),
     ...(sessionId ? { sessionId } : {}),
     ...(repoRoot ? { repoRoot } : {}),
-    ...(resourceRoots ? { resourceRoots: normalizeResourceRoots(resourceRoots) } : {}),
+    ...(resourceRoots ? { resourceRoots: await normalizeResourceRoots(resourceRoots) } : {}),
   };
   const verdict = validateAgentSpawnRecord(record);
   if (!verdict.ok) throw new Error(`refusing to build an invalid agent-spawn record: ${verdict.reason}`);
@@ -312,7 +314,14 @@ async function renewAgentSpawnLease({ dir, recordId, durationSec, now = Date.now
     return { renewed: false, reason: 'no usable lease duration on the record or in the call' };
   }
   const next = { ...record, lease: makeLease({ durationSec: effective, now }) };
-  await writeAgentSpawnRecord({ dir, record: next });
+  try {
+    await writeAgentSpawnRecord({ dir, record: next });
+  } catch (err) {
+    // One failure shape for the whole function. Without this, a record that is present but invalid
+    // THROWS while a record that is absent RETURNS — so a caller written against the returned shape
+    // would crash on precisely the malformed record it most needs to report.
+    return { renewed: false, reason: String(err?.message || err).slice(0, 200) };
+  }
   return { renewed: true, record: next };
 }
 
@@ -366,10 +375,43 @@ function normalizePathForCompare(p) {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
-function normalizeResourceRoots(roots) {
+/**
+ * Resolve `p` through junctions/symlinks, tolerating a path that does not exist yet.
+ *
+ * A lexical comparison is not enough for this field's whole purpose: the paths a build error names
+ * are usually the JUNCTION side (a worktree's `node_modules/...`), while the record stores the
+ * junction's target, so a lexical match returns false for the very file whose lock is being
+ * diagnosed. And the query path frequently does NOT exist — "what will hold this path once the
+ * build writes it" is a legitimate question — so this walks up to the deepest existing ancestor,
+ * resolves THAT, and re-appends the remainder. A path with no existing ancestor at all falls back
+ * to its lexical form, which is the most that can be said about it.
+ */
+async function realpathNearest(p) {
+  const abs = path.resolve(p);
+  let head = abs;
+  const tail = [];
+  for (;;) {
+    try {
+      const real = await fsp.realpath(head);
+      return tail.length > 0 ? path.join(real, ...tail) : real;
+    } catch {
+      const parent = path.dirname(head);
+      if (parent === head) return abs;
+      tail.unshift(path.basename(head));
+      head = parent;
+    }
+  }
+}
+
+/**
+ * Resolve the roots a producer declares, at normalize time. A producer that passes the junction
+ * side rather than its target is corrected HERE rather than writing a record that silently never
+ * matches anything — the mirror defect of the lexical lookup, and just as invisible.
+ */
+async function normalizeResourceRoots(roots) {
   const out = {};
   for (const key of ['worktreeRoot', 'nodeModulesRealPath']) {
-    if (isNonEmptyString(roots?.[key])) out[key] = path.resolve(roots[key]);
+    if (isNonEmptyString(roots?.[key])) out[key] = await realpathNearest(roots[key]);
   }
   return out;
 }
@@ -382,14 +424,21 @@ function normalizeResourceRoots(roots) {
  * `lightningcss-win32-x64-msvc/*.node`" from a process-table hunt into a lookup — and it is the
  * only way a path-based holder scan can find a main-checkout holder spawned by a worktree session.
  *
+ * ASYNC, and deliberately so: BOTH sides are resolved through junctions before comparison. The
+ * query side because callers hand it whatever path a build error printed (usually the junction);
+ * the record side because a record may predate `normalizeResourceRoots` resolving its roots, and a
+ * lookup that answers "no" for a stale record is the same silent miss in a different place.
+ *
  * True when `absPath` is at or under any root this record declares.
  */
-function recordHoldsPath(record, absPath) {
-  const target = normalizePathForCompare(absPath);
+async function recordHoldsPath(record, absPath) {
+  if (!isNonEmptyString(absPath)) return false;
+  const target = normalizePathForCompare(await realpathNearest(absPath));
   if (!target) return false;
   const roots = record?.resourceRoots || {};
   for (const key of ['worktreeRoot', 'nodeModulesRealPath']) {
-    const root = normalizePathForCompare(roots[key]);
+    if (!isNonEmptyString(roots[key])) continue;
+    const root = normalizePathForCompare(await realpathNearest(roots[key]));
     if (!root) continue;
     if (target === root || target.startsWith(`${root}/`)) return true;
   }
@@ -429,7 +478,12 @@ async function resolveNodeModulesRealPath(root) {
  * claim to honour. A failed-verify record is likewise pruned by AGE ALONE (its lease lapses like
  * any other's); the marker buys diagnostic time, not immortality.
  *
- * Never deletes through a symlink, never touches a non-`.json` file, never signals a process.
+ * Also sweeps orphaned `*.tmp` files past the same age. `writeRecordAtomic` leaves one behind only
+ * when a producer dies mid-write, and nothing else in this scope ever looks at them — an unswept
+ * temp file is invisible to every reader here, which makes it exactly the kind of residue that
+ * accumulates unnoticed.
+ *
+ * Never deletes through a symlink, never touches any other file, never signals a process.
  */
 async function pruneAgentSpawnRecords({
   dir,
@@ -437,13 +491,17 @@ async function pruneAgentSpawnRecords({
   now = Date.now(),
   dryRun = false,
 } = {}) {
-  if (!dir) return { found: 0, deleted: 0, retained: 0, deletedIds: [] };
+  const empty = { found: 0, deleted: 0, retained: 0, deletedIds: [], deletedTmp: 0 };
+  if (!dir) return empty;
   let names;
+  let tmpNames;
   try {
     const entries = await fsp.readdir(dir, { withFileTypes: true });
-    names = entries.filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => e.name).sort();
+    const files = entries.filter((e) => e.isFile());
+    names = files.filter((e) => e.name.endsWith('.json')).map((e) => e.name).sort();
+    tmpNames = files.filter((e) => e.name.endsWith('.tmp')).map((e) => e.name).sort();
   } catch (err) {
-    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return { found: 0, deleted: 0, retained: 0, deletedIds: [] };
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return empty;
     throw err;
   }
 
@@ -484,11 +542,29 @@ async function pruneAgentSpawnRecords({
     }
   }
 
+  let deletedTmp = 0;
+  for (const name of tmpNames) {
+    const abs = path.join(dir, name);
+    try {
+      const st = await fsp.lstat(abs);
+      if (st.isSymbolicLink()) {
+        warnings.push(`${name}: temp file is a symlink; refusing to delete through it`);
+        continue;
+      }
+      if (now - st.mtimeMs <= maxAgeMs) continue;
+      if (!dryRun) await fsp.rm(abs, { force: true });
+      deletedTmp += 1;
+    } catch (err) {
+      warnings.push(`${name}: ${String(err?.message || err).slice(0, 200)}`);
+    }
+  }
+
   return {
     found: names.length,
     deleted: deletedIds.length,
     retained,
     deletedIds,
+    deletedTmp,
     ...(dryRun ? { dryRun: true } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
@@ -514,6 +590,8 @@ module.exports = {
   renewAgentSpawnLease,
   markAgentSpawnRecordFailedVerify,
   leaseState,
+  realpathNearest,
+  normalizeResourceRoots,
   recordHoldsPath,
   resolveNodeModulesRealPath,
   pruneAgentSpawnRecords,

@@ -33,8 +33,19 @@
  * Number('134320479841300351')` is `true` in Node. Two creation times 100 ns apart therefore
  * COLLAPSE under a double, which is precisely the "exact equality" rule 2 forbids weakening. So
  * PowerShell emits `.ToFileTimeUtc().ToString()`, and `normalizeCreationTime` canonicalizes via
- * `BigInt`. A creation time arriving as an unsafe JSON *number* is treated as unreadable evidence
- * (REFUSE) rather than compared as a rounded double.
+ * `BigInt`. A creation time arriving as a JSON *number* is unreadable evidence (REFUSE) — ALL of
+ * them, not merely the unsafe ones: a FILETIME small enough to be a safe integer would place the
+ * process's creation before 1629, so the "safe integer" branch could only ever admit a value that
+ * is not a real creation time in the first place.
+ *
+ * **Rule 4, added by review: the evidence must be FRESH.** The three conjuncts all hold against a
+ * STALE process-table row: a row captured before the process exited still names the same pid,
+ * creation time, and command line, so a caller that hoists one `readProcessTable` out of a sweep
+ * loop can verify against evidence describing a process that has since died and had its pid
+ * recycled — and no mutation to the conjunction would catch it. So a table carries a `readAt`
+ * stamp, `verifyProcessIdentity` REFUSES past `maxTableAgeMs`, and a bare unstamped array REFUSES
+ * outright unless the caller names the waiver. Same standard as `isVerifiedMatch`: the unsafe
+ * spelling is the one that must be unwritable.
  *
  * Nothing in this module kills, signals, or writes anything. It answers one question.
  */
@@ -85,13 +96,11 @@ const IDENTITY = Object.freeze({
  */
 function normalizeCreationTime(value) {
   if (value === null || value === undefined) return null;
-  if (typeof value === 'number') {
-    // A real FILETIME never fits a double (see the header note). Refusing here is deliberate: a
-    // silently rounded comparison would satisfy "exact equality" in the source and violate it in
-    // fact.
-    if (!Number.isSafeInteger(value) || value <= 0) return null;
-    return BigInt(value).toString();
-  }
+  // EVERY JSON number is refused, not merely the unsafe ones. A real FILETIME never fits a double,
+  // and one small enough to fit would date the process before 1629 — so the "safe integer" branch
+  // could only ever admit a value that is not a creation time at all. Admitting it would be
+  // permissiveness with no reachable legitimate input.
+  if (typeof value === 'number') return null;
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!/^[0-9]{1,20}$/.test(trimmed)) return null;
@@ -105,17 +114,28 @@ function normalizeCreationTime(value) {
   return big.toString();
 }
 
+/** How old a process-table snapshot may be and still support a kill decision (rule 4). */
+const DEFAULT_MAX_TABLE_AGE_MS = 2000;
+
+const EMPTY_TABLE_REASON =
+  'empty process table is NO evidence, not exculpatory evidence (getProcessTable fails silently to [] by design — remove-worktree.cjs:125-131)';
+
 /**
- * Read the local process table as a TRI-STATE: `{ ok: true, table }` or `{ ok: false, reason }`.
+ * Read the local process table as a TRI-STATE: `{ ok: true, table, readAt }` or
+ * `{ ok: false, reason }`.
  *
  * Deliberately NOT `getProcessTable`'s `[]`-on-failure contract. That contract is right for a
  * best-effort holder *report* (it degrades to "no holder found" instead of throwing mid-teardown)
  * and wrong for an identity check, where `[]` would read as "nothing contradicts you".
  *
- * `exec` and `platform` are injectable so every branch is unit-testable without spawning
+ * `readAt` is part of the result, not an optional extra: it is the only thing that lets a consumer
+ * distinguish a snapshot taken moments ago from one hoisted out of a loop minutes earlier, and the
+ * three identity conjuncts cannot make that distinction themselves (rule 4).
+ *
+ * `exec`, `platform`, and `now` are injectable so every branch is unit-testable without spawning
  * PowerShell.
  */
-function readProcessTable({ platform = process.platform, exec = spawnSync } = {}) {
+function readProcessTable({ platform = process.platform, exec = spawnSync, now = Date.now } = {}) {
   if (platform !== 'win32') {
     return { ok: false, reason: `process-table enumeration is implemented for win32 only (platform=${platform})` };
   }
@@ -142,29 +162,54 @@ function readProcessTable({ platform = process.platform, exec = spawnSync } = {}
   if (table.length === 0) {
     return { ok: false, reason: 'process-table enumeration returned no rows; a running host always has processes, so this is a failed query, not an empty machine' };
   }
-  return { ok: true, table };
+  return { ok: true, table, readAt: now() };
 }
 
 /**
- * Accept a tri-state result, a raw array, or nothing at all, and collapse it to the tri-state —
- * with the empty array landing on the REFUSE side, which is the branch that matters.
+ * Accept a `readProcessTable` result, a raw array, or nothing at all, and collapse it to the
+ * tri-state — with the empty array, the STALE snapshot, and the unstamped array all landing on the
+ * REFUSE side, which are the branches that matter.
+ *
+ * `acceptUnstampedTable` is the deliberately verbose waiver for a caller that produced rows some
+ * other way and has bounded their age itself. It has to be named, because the default has to be
+ * the safe one: a bare array is the shape a hoisted-out-of-the-loop snapshot arrives in.
  */
-function coerceProcessTable(table) {
+function coerceProcessTable(table, { now = Date.now(), maxTableAgeMs = DEFAULT_MAX_TABLE_AGE_MS, acceptUnstampedTable = false } = {}) {
   if (table === null || table === undefined) {
     return { ok: false, reason: 'no process table supplied' };
   }
   if (Array.isArray(table)) {
-    if (table.length === 0) {
+    if (table.length === 0) return { ok: false, reason: EMPTY_TABLE_REASON };
+    if (!acceptUnstampedTable) {
       return {
         ok: false,
-        reason: 'empty process table is NO evidence, not exculpatory evidence (getProcessTable fails silently to [] by design — remove-worktree.cjs:125-131)',
+        reason: 'process table is a bare array with no readAt stamp, so its age cannot be bounded; pass a readProcessTable() result, or acceptUnstampedTable:true if the caller has bounded its age itself',
       };
     }
     return { ok: true, table };
   }
   if (typeof table === 'object' && typeof table.ok === 'boolean') {
     if (!table.ok) return { ok: false, reason: table.reason || 'process table unavailable' };
-    return coerceProcessTable(table.table);
+    const rows = table.table;
+    if (!Array.isArray(rows)) return { ok: false, reason: 'process table result carries no rows array' };
+    if (rows.length === 0) return { ok: false, reason: EMPTY_TABLE_REASON };
+    const readAt = table.readAt;
+    if (!Number.isFinite(readAt)) {
+      if (!acceptUnstampedTable) {
+        return { ok: false, reason: `process table carries no usable readAt stamp (${JSON.stringify(readAt)}), so its age cannot be bounded` };
+      }
+      return { ok: true, table: rows };
+    }
+    const ageMs = now - readAt;
+    if (ageMs > maxTableAgeMs) {
+      // The branch the three conjuncts cannot see: a stale row still matches pid, creation time,
+      // and fingerprint while the process it describes has exited and had its pid recycled.
+      return { ok: false, reason: `process table was read ${ageMs}ms ago, beyond the ${maxTableAgeMs}ms freshness bound; a stale row matches all three conjuncts even after the pid has been recycled` };
+    }
+    if (ageMs < -maxTableAgeMs) {
+      return { ok: false, reason: `process table readAt is ${-ageMs}ms in the future; the stamp cannot be trusted to bound its age` };
+    }
+    return { ok: true, table: rows, ageMs };
   }
   return { ok: false, reason: `unrecognized process-table shape (${typeof table})` };
 }
@@ -184,9 +229,12 @@ function verdict(kind, reason, extra = {}) {
  * @param {object} args
  * @param {object} args.record - a record carrying `pid`, `creationFileTimeUtc`, `cmdlineFingerprint`.
  * @param {object|Array|null} args.table - a `readProcessTable` result, a raw row array, or nothing.
+ * @param {number} [args.maxTableAgeMs] - freshness bound on the snapshot (rule 4).
+ * @param {boolean} [args.acceptUnstampedTable] - the named waiver for an unstamped table.
+ * @param {number} [args.now]
  * @returns {{verdict: 'match'|'mismatch'|'refuse', reason: string, matched: object, pid?: number}}
  */
-function verifyProcessIdentity({ record, table } = {}) {
+function verifyProcessIdentity({ record, table, maxTableAgeMs = DEFAULT_MAX_TABLE_AGE_MS, acceptUnstampedTable = false, now = Date.now() } = {}) {
   const pid = record?.pid;
   if (!Number.isInteger(pid) || pid <= 0) {
     return verdict(IDENTITY.REFUSE, `record declares no usable pid (${JSON.stringify(record?.pid)})`);
@@ -204,9 +252,9 @@ function verifyProcessIdentity({ record, table } = {}) {
     return verdict(IDENTITY.REFUSE, 'record declares no cmdlineFingerprint; the third conjunct cannot be evaluated', { pid });
   }
 
-  const resolved = coerceProcessTable(table);
+  const resolved = coerceProcessTable(table, { now, maxTableAgeMs, acceptUnstampedTable });
   if (!resolved.ok) {
-    return verdict(IDENTITY.REFUSE, `process table unavailable: ${resolved.reason}`, { pid });
+    return verdict(IDENTITY.REFUSE, `process table unusable: ${resolved.reason}`, { pid });
   }
 
   const row = resolved.table.find((r) => Number(r?.ProcessId) === pid);
@@ -269,6 +317,7 @@ function isVerifiedMatch(result) {
 module.exports = {
   PROCESS_TABLE_PS_COMMAND,
   IDENTITY,
+  DEFAULT_MAX_TABLE_AGE_MS,
   normalizeCreationTime,
   readProcessTable,
   coerceProcessTable,
