@@ -122,8 +122,8 @@ have a covering view step or a declared exemption. Run it after editing `shell-v
 ## Worktree auto-serve
 In a worktree, `ui-shot` auto-starts its own Vite on :5174 (a `node_modules` junction to the main checkout),
 persisted in `tmp/ui-shot-server.json` and recorded in the tempdoc-861 agent-spawn registry
-(`tmp/dev-runner/agent-spawns/`) — that registry is the reaping authority going forward, **not** a
-SessionEnd hook: `ui-shot-cleanup.mjs` is dead code that has never actually run (tempdoc 861 §3). That
+(`tmp/dev-runner/agent-spawns/`) — that registry is the reaping authority, **not** a SessionEnd hook:
+the never-wired `ui-shot-cleanup.mjs` (tempdoc 861 §3) was deleted in 861 Phase 7. That
 auto-served Vite has **no backend** (data steps will show 502s) — to drive a running dev stack instead, pass
 `--ui-url http://127.0.0.1:5173` (a non-`localhost:5173` string bypasses the auto-serve).
 
@@ -166,7 +166,6 @@ excerpt; the highest-fan-out entries are:
 | `scripts/jseval/jseval/ui_step_index.json` | file→step map (gated) |
 | `scripts/ci/check-ui-step-coverage.mjs` + `governance/ui-step-coverage.v1.json` | coverage/freshness gate |
 | `scripts/agent-analytics/hooks/ui-shot-hint.mjs` | edit-hint hook |
-| `scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` | dead code — never wired to fire (tempdoc 861 §3); reaping goes through the agent-spawn registry instead |
 
 ## Known limitations
 - **No mock-data mode** — data/AI steps need the live dev stack (+ `ai_activate` for AI).

@@ -33,4 +33,8 @@ export const HOOK_INTEGRITY_RULE_DESCRIPTIONS = {
   'hook-integrity/tier-register-hook-unresolved':
     'A `hook:` marker in docs/reference/contributing/tier-register.md does not resolve to a manifest.hooks entry.',
   'hook-integrity/tier-register-hook-resolves': 'A tier-register hook marker resolves (pass).',
+  'hook-integrity/orphan-hook-file':
+    'A hook file exists on disk (scripts/agent-analytics/hooks/) but is absent from the manifest catalog, ' +
+    'so it can never be wired or gate-checked — the ui-shot-cleanup.mjs defect (tempdoc 861 §3c).',
+  'hook-integrity/hook-file-in-catalog': 'A hook file on disk is present in the manifest catalog (pass).',
 };
