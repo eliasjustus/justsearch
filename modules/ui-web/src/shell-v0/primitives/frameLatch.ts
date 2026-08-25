@@ -56,6 +56,13 @@ const browserScheduler: FrameScheduler = {
 export class FrameLatch {
   private frame: number | null = null;
   private fallback: number | null = null;
+  /**
+   * Which acquisition the armed handles belong to. A callback from a cancelled acquisition can still
+   * arrive — `cancelAnimationFrame` is absent in some hosts, and an injected scheduler need not
+   * withdraw anything — and without this it would clear the CURRENT acquisition's handles and run a
+   * stale pass. The counter makes a superseded callback inert by construction rather than by luck.
+   */
+  private acquisition = 0;
   private readonly scheduler: FrameScheduler;
 
   constructor(scheduler: FrameScheduler = browserScheduler) {
@@ -74,9 +81,10 @@ export class FrameLatch {
    */
   request(run: () => void): boolean {
     if (this.latched) return false;
+    const acquisition = ++this.acquisition;
     let released = false;
     const release = (): void => {
-      if (released) return;
+      if (released || this.acquisition !== acquisition) return;
       released = true;
       // Clear BEFORE running: the clock that lost the race is withdrawn here (the `released` guard
       // makes the pass single-shot; this keeps the loser from sitting armed for a second of wall
@@ -94,6 +102,7 @@ export class FrameLatch {
 
   /** Drop a scheduled pass and release the latch — for teardown, and for a gesture that ends. */
   cancel(): void {
+    this.acquisition++;
     if (this.frame !== null) {
       this.scheduler.cancelFrame(this.frame);
       this.frame = null;

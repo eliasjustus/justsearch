@@ -61,6 +61,7 @@ describe('FrameLatch — the coalescing half', () => {
       expect(passes).toBe(1);
       expect(latch.latched, 'and the latch is open again for the next frame').toBe(false);
       expect(latch.request(run)).toBe(true);
+      latch.cancel(); // this case runs on the REAL clock — don't leave a 1s timer armed behind it
     } finally {
       frames.restore();
     }
@@ -168,6 +169,81 @@ describe('FrameLatch — the wedge release (860 §6.4)', () => {
     } finally {
       frames.restore();
     }
+  });
+});
+
+describe('FrameLatch — hosts and callbacks the frame clock cannot be trusted in', () => {
+  it('releases through the fallback in a host with NO requestAnimationFrame at all', () => {
+    // The `typeof requestAnimationFrame === 'function'` false branch: every other case replaces rAF
+    // with a stub, so this is the only one where the guard is actually taken. Without a case here
+    // it is a refusal path nothing exercises (`unreachable-seed-green`), and the retired per-site
+    // `typeof` guards used to be exactly that.
+    vi.useFakeTimers();
+    const realRequest = globalThis.requestAnimationFrame;
+    const realCancel = globalThis.cancelAnimationFrame;
+    delete (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+    delete (globalThis as { cancelAnimationFrame?: unknown }).cancelAnimationFrame;
+    try {
+      const latch = new FrameLatch();
+      let passes = 0;
+      expect(
+        latch.request(() => {
+          passes++;
+        }),
+        'the acquisition succeeds on the fallback alone',
+      ).toBe(true);
+      expect(latch.latched, 'and it IS latched — a frameless host still coalesces').toBe(true);
+
+      vi.advanceTimersByTime(FRAME_LATCH_FALLBACK_MS);
+      expect(passes).toBe(1);
+      expect(latch.latched).toBe(false);
+
+      // …and cancel is safe with no cancelAnimationFrame to call.
+      latch.request(() => passes++);
+      latch.cancel();
+      vi.advanceTimersByTime(FRAME_LATCH_FALLBACK_MS * 3);
+      expect(passes).toBe(1);
+    } finally {
+      globalThis.requestAnimationFrame = realRequest;
+      globalThis.cancelAnimationFrame = realCancel;
+    }
+  });
+
+  it('makes a callback from a SUPERSEDED acquisition inert', () => {
+    // A host whose frame cancellation does nothing (no `cancelAnimationFrame`, or an injected
+    // scheduler that only records) can still deliver the callback of an acquisition that was
+    // cancelled. Without the acquisition counter that stale release would clear the CURRENT
+    // acquisition's handles and run its own pass.
+    const queued: Array<() => void> = [];
+    const scheduler: FrameScheduler = {
+      requestFrame: (run) => {
+        queued.push(run);
+        return queued.length;
+      },
+      cancelFrame: () => {}, // deliberately inert
+      requestFallback: () => 0,
+      cancelFallback: () => {},
+    };
+    const latch = new FrameLatch(scheduler);
+    let stalePasses = 0;
+    let livePasses = 0;
+    latch.request(() => {
+      stalePasses++;
+    });
+    latch.cancel();
+    latch.request(() => {
+      livePasses++;
+    });
+
+    const stale = queued[0];
+    stale?.();
+    expect(stalePasses, 'the superseded pass never runs').toBe(0);
+    expect(latch.latched, 'and the live acquisition still holds its latch').toBe(true);
+
+    const live = queued[1];
+    live?.();
+    expect(livePasses).toBe(1);
+    expect(latch.latched).toBe(false);
   });
 });
 

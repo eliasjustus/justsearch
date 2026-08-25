@@ -6,7 +6,8 @@
  * `marked` + `DOMPurify` configured in ONE place, with this consumer's `breaks` answer stated at the
  * call site). During streaming, applies a mend pass to auto-close unclosed syntax (code fences,
  * bold, inline code) on a copy before parsing, preventing visual glitches. Renders are throttled to
- * requestAnimationFrame during streaming.
+ * requestAnimationFrame during streaming — through the shared {@link FrameLatch}, so a page that
+ * stops delivering frames releases on its time fallback instead of freezing the stream (860 §6.4).
  *
  * Typography is the shared ramp (846 §2.3), worn by this block and by `DocumentPane` alike; what
  * this file styles is what belongs to chat alone — the cursor and the citation vocabulary.
