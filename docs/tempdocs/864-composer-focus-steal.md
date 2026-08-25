@@ -1395,3 +1395,17 @@ Full ui-web gate set green (23 scripts + 6 kernel gates); full FE suite 6032/603
 **Owed:** §4.4's measured UX audit (axe + a contrast oracle, live, auditor ≠ committer) — the
 procedure is written into #561's body for the pooled window, with the verdict to be recorded here. Nothing in this PR discharges it: every
 assertion above is style TEXT, which is exactly the tier the audit exists to outrank.
+
+Two asks the first draft of that procedure missed, added after #561's independent review:
+
+- **Confirm the re-keyed ring PAINTS.** In Chrome, with the caret in the field, verify
+  `.glass:has(textarea:focus-visible)::after` draws a visible ring. Item (d) replaced rules that were
+  silently dead for this surface's whole life, and the replacement is pinned only at the tier that
+  failed to notice the original — a style-text pin cannot tell a painted rule from a parsed one.
+- **Point the contrast oracle at the resting composer's BOUNDARY, not only its text.** WCAG 1.4.11
+  asks 3:1 of a component's boundary against its surround. The measured **pre-existing** baseline on
+  `main` is already below that (dark, composer edge over the page: **1.21:1**), and the resting state
+  aggravates it theme-asymmetrically — the reviewer measured **1.06:1** in dark, where the fill and
+  the frame lose their separation together. Record a NUMBER for the resting boundary in dark over an
+  empty region, and judge it as a **delta against the 1.21:1 baseline**, not as a floor this PR
+  introduced. Logged as a standing pre-existing condition in the observations inbox.

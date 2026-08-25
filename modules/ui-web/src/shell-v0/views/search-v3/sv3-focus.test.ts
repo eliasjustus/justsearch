@@ -488,12 +488,22 @@ describe('tempdoc 864 Layer 1(d) — the resting composer says it is not focused
     // The half that makes the measured contrast audit answerable in advance: no rule that reads the
     // knob may also set ink or opacity. A resting treatment that dimmed the placeholder would put
     // --muted-foreground (zinc-500 on the light page, already near the AA floor) under it.
+    // Read per DECLARATION, not per block: `.glass` legitimately carries a `backdrop-filter` that
+    // reads the BLUR multiplier, and a block-level scan would either fail on it or have to exempt
+    // the property outright. What is banned is a declaration whose VALUE spends this knob on one of
+    // the ink-bearing properties — `color` and `opacity` are the obvious two, and `filter`,
+    // `backdrop-filter` and `-webkit-text-fill-color` are the ones that would dim text without
+    // naming a colour, which is how a later edit slips past a list that stopped at the obvious two.
+    const INK = ['color', 'opacity', 'filter', 'backdrop-filter', '-webkit-text-fill-color'];
     for (const [selector, block] of rulesOf(composerSheet())) {
-      if (!/var\(--composer-rest\)/.test(block)) continue;
-      expect(block, `${selector} spends the resting knob on ink`).not.toMatch(/(^|;)\s*color\s*:/);
-      expect(block, `${selector} spends the resting knob on opacity`).not.toMatch(
-        /(^|;)\s*opacity\s*:/,
-      );
+      for (const declaration of block.split(';')) {
+        const at = declaration.indexOf(':');
+        if (at < 0) continue;
+        const property = declaration.slice(0, at).trim().toLowerCase();
+        const value = declaration.slice(at + 1);
+        if (!value.includes('var(--composer-rest)')) continue;
+        expect(INK, `${selector} spends the resting knob on ${property}`).not.toContain(property);
+      }
     }
     const placeholder = rulesOf(composerSheet()).find(([s]) => s === '.placeholder')?.[1] ?? '';
     expect(placeholder).toContain('color: var(--placeholder)');

@@ -1050,7 +1050,10 @@ export class SearchV3View extends JfElement {
    * The discriminator is the TASK, not a timer: Lit removes and re-inserts the node inside one
    * synchronous update, so a re-parent's `connectedCallback` runs before any microtask queued by the
    * `disconnectedCallback` that preceded it, while a real re-entry needs a user event and is a later
-   * task by construction. Failing the other way is harmless: an unrecognised move focuses the
+   * task by construction. The coupling this rests on is lit-html's own: a changed template shape
+   * CLEARS the old part's DOM and INSERTS the new instance within one `commit`, both synchronous —
+   * if a future lit-html ever deferred the insert past a microtask, this would stop recognising the
+   * move and simply focus the composer, i.e. degrade to today's behaviour rather than break. Failing the other way is harmless: an unrecognised move focuses the
    * composer, which is exactly the behaviour this narrows.
    */
   private movedRatherThanEntered = false;
