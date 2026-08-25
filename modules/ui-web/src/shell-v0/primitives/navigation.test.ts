@@ -515,12 +515,42 @@ describe('navigation — a measurement is stale once the content height moves (8
   }
 
   it('re-measures on a read when the content grew, and records the height so the read settles', () => {
-    // The column is NOT scrollable in either state (clientHeight ≥ scrollHeight) and the row grows in
-    // exact proportion, so the extents, the landmark count, the track height and the reading window
-    // are all identical before and after: the moved CONTENT HEIGHT is the only thing that changed.
-    // That is what makes this case discriminate — drop `contentH !== this.measuredScrollHeight` from
-    // measure()'s changed-check and the commit never happens, the recorded height stays behind, and
-    // every subsequent read re-measures forever instead of settling.
+    // Browser-faithful geometry: the column OVERFLOWS in both states (clientHeight below both content
+    // heights), which is the only regime in which `scrollHeight` can move at all — a scroller whose
+    // content fits reports `scrollHeight === clientHeight` by spec and this net is structurally blind
+    // there. That regime is the content-wrapper observer's, covered by its own case below.
+    const { conv, grow, measures } = growable(200, 300);
+    let rowHeight = 100;
+    row(conv, 'a', () => ({ top: 0, height: rowHeight }));
+    row(conv, 'late', () => ({ top: 100, height: rowHeight === 100 ? 0 : 200 }));
+    const nav = new NavigationController(fakeHost(), {
+      scrollEl: () => conv,
+      spineEl: () => null,
+      active: () => true,
+    });
+    nav.hostUpdated();
+    expect(nav.landmarks.map((l) => l.id), 'the late row measured zero and was skipped').toEqual(['a']);
+    const afterFirst = measures();
+
+    grow(600);
+    rowHeight = 200;
+    expect(nav.landmarks.map((l) => l.id), 'the read re-measures the grown column').toEqual(['a', 'late']);
+    expect(measures()).toBe(afterFirst + 1);
+
+    void nav.landmarks;
+    void nav.activeId;
+    expect(measures(), 'and the recorded height settles it — no re-measure per read').toBe(afterFirst + 1);
+    conv.remove();
+  });
+
+  it('records the height even when the measurement changed nothing (SYNTHETIC isolation)', () => {
+    // SYNTHETIC — this geometry is not one a browser produces. The column is non-overflowing in both
+    // states while `scrollHeight` still moves, which no real scroller does (it would pin scrollHeight
+    // to clientHeight), and the row grows in exact proportion so extents, count, track and reading
+    // window are all identical. The point is to isolate ONE claim that the browser-faithful case
+    // above cannot separate out: `measuredScrollHeight` is recorded at every LOOK, not only at every
+    // commit. Move the assignment inside measure()'s `if (changed)` block and this goes red, because
+    // the baseline stays behind and every subsequent read re-measures forever instead of settling.
     const { conv, grow, measures } = growable(800, 300);
     let rowHeight = 150;
     row(conv, 'a', () => ({ top: 0, height: rowHeight }));
@@ -535,12 +565,11 @@ describe('navigation — a measurement is stale once the content height moves (8
 
     grow(600);
     rowHeight = 300;
-    expect(nav.landmarks.map((l) => l.extent)).toEqual([{ topFrac: 0, botFrac: 0.5 }]);
-    expect(measures(), 'the grown column is re-measured on the read').toBe(afterFirst + 1);
-
+    void nav.landmarks;
+    expect(measures()).toBe(afterFirst + 1);
     void nav.landmarks;
     void nav.activeId;
-    expect(measures(), 'and the recorded height settles it — no re-measure per read').toBe(afterFirst + 1);
+    expect(measures(), 'nothing committed, but the look was still recorded').toBe(afterFirst + 1);
     conv.remove();
   });
 
@@ -562,6 +591,138 @@ describe('navigation — a measurement is stale once the content height moves (8
     grow(1400); // a sibling laid out and the column grew — the read re-measures
     expect(nav.landmarks.map((l) => l.id)).toEqual(['open']);
     conv.remove();
+  });
+
+  /**
+   * Swap in a ResizeObserver that records what it observes and can be fired on demand. happy-dom
+   * DEFINES the class but never fires it (`views/search-v3/sv3-occlusion.test.ts:329`), so the
+   * observation path is otherwise untestable — and it is the ONLY net that covers the regime the
+   * defect was actually measured in.
+   */
+  function captureResizeObserver(): {
+    observed: () => Element[];
+    fireFor: (el: Element) => void;
+    restore: () => void;
+  } {
+    const saved = (globalThis as Record<string, unknown>).ResizeObserver;
+    const instances: Array<{ cb: () => void; els: Set<Element> }> = [];
+    class Fake {
+      private readonly rec: { cb: () => void; els: Set<Element> };
+      constructor(cb: () => void) {
+        this.rec = { cb, els: new Set() };
+        instances.push(this.rec);
+      }
+      observe(el: Element): void {
+        this.rec.els.add(el);
+      }
+      disconnect(): void {
+        this.rec.els.clear();
+      }
+      unobserve(el: Element): void {
+        this.rec.els.delete(el);
+      }
+    }
+    (globalThis as Record<string, unknown>).ResizeObserver = Fake;
+    return {
+      observed: () => instances.flatMap((i) => [...i.els]),
+      // Faithful to the real thing: an element that is not observed delivers nothing. That is what
+      // makes a case built on this discriminate rather than merely poke the callback.
+      fireFor: (el) => {
+        for (const i of instances) if (i.els.has(el)) i.cb();
+      },
+      restore: () => {
+        (globalThis as Record<string, unknown>).ResizeObserver = saved;
+      },
+    };
+  }
+
+  it('THE DEFECT REGIME — content fits the viewport, so only the wrapper’s box can report the growth', async () => {
+    // The regime the live probe measured: `scrollHeight === clientHeight === 825`. A non-overflowing
+    // scroller pins scrollHeight to clientHeight, so when the rows upgrade from height 0 the content
+    // height does not move by a single pixel — the freshen-on-read net is structurally blind here,
+    // and so is an observer watching only the scroller (a flex track whose box is fixed). What moves
+    // is the CONTENT WRAPPER's box, which is why it is observed.
+    const ro = captureResizeObserver();
+    try {
+      const { conv } = growable(825, 825); // fits exactly — and stays that way throughout
+      const content = document.createElement('div');
+      conv.appendChild(content);
+      let laidOut = false;
+      row(content, 'early', () => ({ top: 0, height: 100 }));
+      row(content, 'late-a', () => ({ top: 100, height: laidOut ? 300 : 0 }));
+      row(content, 'late-b', () => ({ top: 400, height: laidOut ? 300 : 0 }));
+      const nav = new NavigationController(fakeHost(), {
+        scrollEl: () => conv,
+        contentEl: () => content,
+        spineEl: () => null,
+        active: () => true,
+      });
+      nav.hostUpdated();
+      expect(ro.observed(), 'the wrapper is observed alongside the scroller').toEqual([conv, content]);
+      expect(nav.landmarks.map((l) => l.id)).toEqual(['early']);
+      await new Promise((r) => setTimeout(r, 0)); // close the coalescer's frame
+
+      // The rows lay out. Nothing renders, nothing scrolls, and the content height is unchanged.
+      laidOut = true;
+      expect(conv.scrollHeight, 'the premise: the content height did NOT move').toBe(825);
+      expect(nav.landmarks.map((l) => l.id), 'no other signal can see this').toEqual(['early']);
+
+      // Asserted with no await, so the delivery is the only thing that can have refreshed the list.
+      ro.fireFor(content);
+      expect(nav.landmarks.map((l) => l.id)).toEqual(['early', 'late-a', 'late-b']);
+      conv.remove();
+    } finally {
+      ro.restore();
+    }
+  });
+
+  it('rebinds when the content wrapper swaps, so it is never left observed on a detached node', () => {
+    // The wrapper is emitted by the same swapping render arms as the scroller (857 A2), so its
+    // identity has to join the rebind guard — an unchanged pair takes the old early return.
+    const ro = captureResizeObserver();
+    try {
+      const { conv } = growable(825, 825);
+      const first = document.createElement('div');
+      const second = document.createElement('div');
+      conv.appendChild(first);
+      let current = first;
+      const nav = new NavigationController(fakeHost(), {
+        scrollEl: () => conv,
+        contentEl: () => current,
+        spineEl: () => null,
+        active: () => true,
+      });
+      nav.hostUpdated();
+      expect(ro.observed()).toEqual([conv, first]);
+
+      nav.hostUpdated();
+      expect(ro.observed(), 'an unchanged pair does not re-observe').toEqual([conv, first]);
+
+      conv.replaceChild(second, first);
+      current = second;
+      nav.hostUpdated();
+      expect(ro.observed(), 'a swapped wrapper rebinds').toEqual([conv, second]);
+      conv.remove();
+    } finally {
+      ro.restore();
+    }
+  });
+
+  it('observes only the scroller for a host that has no content wrapper (the other adopter)', () => {
+    const ro = captureResizeObserver();
+    try {
+      const { conv } = growable(200, 1000);
+      const nav = new NavigationController(fakeHost(), {
+        scrollEl: () => conv,
+        spineEl: () => null,
+        active: () => true,
+      });
+      nav.hostUpdated();
+      expect(ro.observed()).toEqual([conv]);
+      conv.remove();
+    } finally {
+      ro.restore();
+    }
   });
 
   it('does not force a measurement before the render path has taken one', () => {

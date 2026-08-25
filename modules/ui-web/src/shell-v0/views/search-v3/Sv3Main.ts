@@ -1349,6 +1349,7 @@ export class Sv3Main extends JfElement {
    */
   private readonly nav = new NavigationController(this, {
     scrollEl: () => this.scroller,
+    contentEl: () => this.transcriptContent,
     spineEl: () => null,
     active: () => this.transcriptArmRendered,
     occludedEndPx: () => this.occludedEndPx(),
@@ -1526,6 +1527,23 @@ export class Sv3Main extends JfElement {
 
   private get scroller(): HTMLElement | null {
     return this.shadowRoot?.querySelector('.scroller') ?? null;
+  }
+
+  /**
+   * 859 follow-up (F2) — the transcript wrapper the reading-position authority watches for growth.
+   *
+   * The rows this window renders are custom elements that lay out AFTER the render that created
+   * them, and on a transcript that fits the viewport neither of the authority's other signals can
+   * see that: the scroller is a flex track whose box does not move, and a non-overflowing scroller
+   * reports `scrollHeight === clientHeight` (measured on the defect record: 825 === 825). This
+   * element's box is what actually grows, so it is what the observer needs.
+   *
+   * Rendered ONLY by the transcript arm, which is the arm the authority is active in — the other
+   * three `.scroller` arms have no `.transcript`, and this returning null there is correct rather
+   * than incidental.
+   */
+  private get transcriptContent(): HTMLElement | null {
+    return this.shadowRoot?.querySelector('.transcript') ?? null;
   }
 
   /** Re-arm/disarm on the reader's own scrolling — never on a scroll this element caused itself. */

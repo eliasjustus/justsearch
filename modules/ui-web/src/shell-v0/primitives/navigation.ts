@@ -98,6 +98,22 @@ export interface NavigationOptions {
    * this parameter is inlined into the sv3 call site and deleted.
    */
   readonly occludedEndPx?: () => number;
+  /**
+   * Tempdoc 859 follow-up (F2) — the scroller's CONTENT wrapper: the element INSIDE
+   * {@link scrollEl} whose own box grows when the transcript's rows finish laying out.
+   *
+   * This exists because `scrollHeight` is not a growth signal when the content FITS the viewport.
+   * A non-overflowing scroller has `scrollHeight === clientHeight` by spec, and the record this
+   * defect was measured on reported exactly that (`825 === 825`): the rows upgrading from height 0
+   * moved neither the scroller's own box (it is a flex track) nor its scroll height, so BOTH the
+   * scroller-resize signal and the content-height signal are structurally blind there. The wrapper's
+   * box is the one thing that does move, which is why it has to be observed directly.
+   *
+   * Optional because it is a property of the host's markup, not of every scroller:
+   * {@link UnifiedChatView}'s `.conversation` has no single content wrapper — its children are
+   * sibling blocks — so it passes nothing and keeps exactly its current observation set.
+   */
+  readonly contentEl?: () => HTMLElement | null;
 }
 
 /**
@@ -150,11 +166,10 @@ export class NavigationController implements ReactiveController {
 
   private landmarkExtents: Landmark[] = [];
   /**
-   * The `scrollHeight` the committed measurement was taken against; 0 = nothing measured yet.
+   * The `scrollHeight` seen at the last {@link measure}; 0 = nothing has been measured yet.
    *
-   * Part of the measured state, exactly like {@link landmarks} / {@link fractions} / {@link viewport}
-   * — every extent above is a fraction OF this number, so a measurement and the content height it was
-   * normalised by are one fact, not two. It is also the STALENESS signal {@link freshenIfStale} reads.
+   * The staleness baseline {@link freshenIfStale} compares against, and deliberately updated on every
+   * measure rather than on every commit — see the note at its assignment.
    */
   private measuredScrollHeight = 0;
 
@@ -166,6 +181,8 @@ export class NavigationController implements ReactiveController {
   private intent: { mode: 'live' | 'pinned'; pinnedId: string | null } = { mode: 'live', pinnedId: null };
   private resizeObserver: ResizeObserver | null = null;
   private scrollEl: HTMLElement | null = null;
+  /** The content wrapper currently observed (859 F2); part of the rebind identity, like {@link scrollEl}. */
+  private contentNode: HTMLElement | null = null;
   private scrollRaf = false;
   /** A9 — a measure has already run in this frame; further renders coalesce into one trailing pass. */
   private measureFrame = false;
@@ -189,7 +206,18 @@ export class NavigationController implements ReactiveController {
   }
 
   /**
-   * Tempdoc 857 PR-A / A9 — at most ONE measure per animation frame, leading edge.
+   * Tempdoc 857 PR-A / A9 — at most one measure per animation frame for every measure routed THROUGH
+   * here (renders, the resize observer, `remeasure`), leading edge.
+   *
+   * 859 follow-up (F1) — that is no longer the whole story, and the exception is deliberate:
+   * {@link freshenIfStale} calls {@link measure} DIRECTLY, bypassing this coalescer. It has to. Its
+   * whole contract is that the value the caller is about to read is current, and a measurement
+   * deferred to a trailing frame is a stale answer returned now. The cost is real and worth naming:
+   * {@link UnifiedChatView}'s spine render reads `activeId` then `fractions` then `viewport`, so in a
+   * frame where the content height has moved, that render is a write→read→write forced layout, and a
+   * probe measured ten passes in one frame against zero-plus-one before the freshen existed. What
+   * bounds it is that the freshen re-measures only while the recorded height differs from the live
+   * one, and the first pass records it — so the burst is one frame long, not a per-frame tax.
    *
    * `measure()` is a `querySelectorAll` plus a `getBoundingClientRect` per landmark, and it ran on
    * EVERY render. The first adopter could afford that because its whole navigation was gated behind
@@ -268,20 +296,25 @@ export class NavigationController implements ReactiveController {
    * the terminal paragraph — while the `jf-reasoning-block` / `jf-tool-call-card` rows had not
    * upgraded yet, measured `rect.height === 0`, and were skipped by {@link measure}'s collapsed-row
    * rule. Nothing then re-ran the measurement: those rows growing changes the scroller's
-   * `scrollHeight` but NOT the scroller's own box, so {@link setupResize}'s observer is blind to it
+   * `scrollHeight` but NOT the scroller's own box, so {@link setupResize}'s observer was blind to it
    * (the same blindness class as the floating composer in 859 §B / D5), and no further render
    * followed a finished load. A reader who pressed J at that moment walked a two-item list over a
    * seven-row run — with no gesture of theirs able to fix it, because the scroll path only re-measures
    * once a scroll actually happens.
    *
-   * The staleness has its OWN signal — the content height — so this needs no component-upgrade
-   * enumeration, no timer and no speculative rAF retry: {@link measure} records the `scrollHeight` it
-   * normalised against, and every entry point that resolves "where am I" compares it against the live
-   * one first. Deliberately NOT a `requestUpdate()`: the caller reads the freshened values from this
-   * same synchronous call, and the render / scroll / resize paths already own re-rendering.
+   * This is the SECOND of the two nets, and it covers only the SCROLLABLE regime. `scrollHeight` is
+   * pinned to `clientHeight` on a scroller whose content fits, so on a short transcript it cannot
+   * move at all no matter how much the rows grow — the record this defect was measured on reported
+   * `scrollHeight === clientHeight === 825`. The regime where the rows genuinely overflow is what
+   * this catches, plus the case where a pinned {@link jumpTo} opens a collapsed trace and reveals
+   * steps that were not landmarks a moment ago. The net that covers the FITS regime is the content
+   * wrapper's own box, observed in {@link setupResize} ({@link NavigationOptions.contentEl}).
    *
-   * A zero baseline means no measurement has been committed yet, which is not staleness — there is
-   * nothing to be stale against, and the first pass belongs to the render path.
+   * Deliberately NOT a `requestUpdate()`: the caller reads the freshened values from this same
+   * synchronous call, and the render / scroll / resize paths already own re-rendering.
+   *
+   * A zero baseline means nothing has been measured yet, which is not staleness — there is nothing to
+   * be stale against, and the first pass belongs to the render path.
    */
   private freshenIfStale(): void {
     if (this.measuredScrollHeight === 0) return;
@@ -464,17 +497,24 @@ export class NavigationController implements ReactiveController {
     // early-return left the observer and all four listeners on a DETACHED node, so `measure()` read
     // a stale viewport while the reader looked at a different element. Compare identity instead:
     // an unchanged node takes exactly the old early return, a swapped one rebinds.
-    if (this.resizeObserver && this.scrollEl === conv) return;
+    //
+    // 859 follow-up (F2) — the CONTENT wrapper is observed alongside the scroller, and its identity
+    // joins the guard: it is emitted by the same swapping render arms, so a wrapper compared only
+    // through `conv` would be left observed on a detached node exactly as the scroller once was.
+    const content = this.opts.contentEl?.() ?? null;
+    if (this.resizeObserver && this.scrollEl === conv && this.contentNode === content) return;
     if (this.resizeObserver) this.teardown();
-    this.resizeObserver = new ResizeObserver(() => {
-      if (this.measure()) this.host.requestUpdate();
-    });
+    // Coalesced, not a bare `measure()`: a transcript's rows finish laying out in a burst, and one
+    // frame of that burst would otherwise be one full re-measure of the column PER row.
+    this.resizeObserver = new ResizeObserver(() => this.measureCoalesced());
     this.resizeObserver.observe(conv);
+    if (content) this.resizeObserver.observe(content);
     conv.addEventListener('scroll', this.onScroll, { passive: true });
     conv.addEventListener('wheel', this.onUserScroll, { passive: true });
     conv.addEventListener('touchstart', this.onUserScroll, { passive: true });
     conv.addEventListener('keydown', this.onScrollKey, { passive: true });
     this.scrollEl = conv;
+    this.contentNode = content;
   }
 
   /** Whether the reading-window has moved enough to redraw the viewport box / re-derive focus. */
@@ -519,13 +559,12 @@ export class NavigationController implements ReactiveController {
     // 814 §D4 — the marker fractions are the landmarks' TOP edges ({@link anchorFractions}); one
     // derivation from the one measured extent, so position and focus can never disagree.
     const nextFractions = anchorFractions(nextLandmarks);
-    // 859 follow-up — a moved content height is a CHANGE in its own right, and not a redundant one:
-    // every extent above is a fraction of `contentH`, so a commit that skipped this term would leave
-    // the committed extents normalised by one number while `measuredScrollHeight` claimed another —
-    // and {@link freshenIfStale}, which reads exactly that claim, would re-measure on every read
-    // forever instead of settling. The height the content grew to is the fact that must be recorded.
+    // 859 follow-up — record the height at every LOOK, not only at every commit, because that is the
+    // question {@link freshenIfStale} asks ("has the content moved since I last looked?"). Recording
+    // it inside the commit below would leave it behind whenever a measure changed nothing, and the
+    // freshen would then re-measure on every single read instead of settling.
+    this.measuredScrollHeight = contentH;
     let changed =
-      contentH !== this.measuredScrollHeight ||
       nextFractions.size !== this.fractions.size ||
       Math.abs(trackPx - this.trackPx) > 1 ||
       this.viewportChanged(vp);
@@ -543,7 +582,6 @@ export class NavigationController implements ReactiveController {
       this.landmarkExtents = nextLandmarks;
       this.trackPx = trackPx;
       this.viewport = vp;
-      this.measuredScrollHeight = contentH;
     }
     return changed;
   }
@@ -556,6 +594,7 @@ export class NavigationController implements ReactiveController {
     this.scrollEl?.removeEventListener('touchstart', this.onUserScroll);
     this.scrollEl?.removeEventListener('keydown', this.onScrollKey);
     this.scrollEl = null;
+    this.contentNode = null;
     this.intent = { mode: 'live', pinnedId: null };
     this.viewport = null;
   }

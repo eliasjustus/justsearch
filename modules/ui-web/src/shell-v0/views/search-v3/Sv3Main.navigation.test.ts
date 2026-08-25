@@ -485,6 +485,124 @@ describe('857 PR-A — J/K stepping', () => {
     expect(nav.activeId).toBe(order[0]);
   });
 
+  it('859 follow-up: J walks a transcript that FITS the viewport, where scrollHeight never moves', async () => {
+    // THE REGIME THE DEFECT WAS ACTUALLY MEASURED IN. The live probe on the failing record read
+    // `scrollHeight === clientHeight === 825`: the transcript fits, so by spec the scroll height is
+    // pinned to the client height and does not move by a pixel when the rows lay out. Neither the
+    // scroller-resize signal (a flex track with a fixed box) nor the content-height signal can see
+    // that. The content WRAPPER's box is what grows, so the authority observes it — and this case
+    // fails outright if that observation is dropped.
+    //
+    // happy-dom defines ResizeObserver but never fires it, so the callback is captured and fired by
+    // hand; everything else here is the real component.
+    const savedRO = (globalThis as Record<string, unknown>).ResizeObserver;
+    const roInstances: Array<{ cb: () => void; els: Set<Element> }> = [];
+    class CapturingResizeObserver {
+      private readonly rec: { cb: () => void; els: Set<Element> };
+      constructor(cb: () => void) {
+        this.rec = { cb, els: new Set() };
+        roInstances.push(this.rec);
+      }
+      observe(el: Element): void {
+        this.rec.els.add(el);
+      }
+      disconnect(): void {
+        this.rec.els.clear();
+      }
+      unobserve(el: Element): void {
+        this.rec.els.delete(el);
+      }
+    }
+    // Faithful on the point that matters: an element nobody observes delivers nothing, so dropping
+    // the wrapper observation makes the WALK below fail, not merely a wiring assertion.
+    const fireResizeFor = (el: Element): void => {
+      for (const i of roInstances) if (i.els.has(el)) i.cb();
+    };
+    (globalThis as Record<string, unknown>).ResizeObserver = CapturingResizeObserver;
+    try {
+      const el = await mount({
+        turns: [
+          turn({ id: 'F1' }),
+          turn({
+            id: 'F2',
+            kind: 'agent',
+            question: 'keep going',
+            activity: [
+              { kind: 'text', id: 'f-s1', text: 'reading the log' },
+              { kind: 'note', id: 'f-s2', label: 'Progress', text: 'two files left' },
+            ],
+          }),
+        ],
+        run: null,
+      });
+      const conv = scrollerOf(el);
+      if (conv === null) throw new Error('no .scroller rendered — the transcript arm was not taken');
+      const wrapper = el.shadowRoot?.querySelector('.transcript') as HTMLElement | null;
+      if (wrapper === null) throw new Error('no .transcript wrapper rendered');
+
+      // The scroller FITS its content and stays that way: both heights are pinned to 825 for the
+      // whole case, so no growth signal can come from either of them.
+      conv.getBoundingClientRect = () =>
+        ({ top: 0, left: 0, right: 800, bottom: 825, width: 800, height: 825, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      Object.defineProperty(conv, 'clientHeight', { configurable: true, value: 825 });
+      Object.defineProperty(conv, 'scrollHeight', { configurable: true, value: 825 });
+
+      let laidOut = false;
+      const late = new Set(['f-s1', 'f-s2']);
+      let y = 0;
+      for (const node of conv.querySelectorAll('[data-item-id]')) {
+        const id = node.getAttribute('data-item-id') ?? '';
+        const top = y;
+        y += 60;
+        (node as HTMLElement).getBoundingClientRect = () => {
+          const height = late.has(id) && !laidOut ? 0 : 60;
+          return { top, left: 0, right: 800, bottom: top + height, width: 800, height, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
+        };
+      }
+
+      const nav = navOf(el);
+      for (let i = 0; i < 4 && nav.landmarks.length === 0; i++) {
+        el.requestUpdate();
+        await el.updateComplete;
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      expect(nav.landmarks.map((l) => l.id)).toEqual(['F1:q', 'F1:a', 'F2:q']);
+      expect(
+        roInstances.flatMap((i) => [...i.els]),
+        'the wrapper is observed, not only the scroller',
+      ).toContain(wrapper);
+
+      // Drain every OTHER measure source first — a queued render or a coalescer's trailing frame
+      // would re-measure for a reason that is not the one under test, and this case passed under a
+      // dropped-observation mutant until that window was closed.
+      await el.updateComplete;
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+
+      // The rows lay out. Nothing renders; the content height is byte-for-byte what it was.
+      laidOut = true;
+      expect(conv.scrollHeight).toBe(conv.clientHeight);
+      expect(nav.landmarks.map((l) => l.id), 'no height signal exists to see this').toEqual(['F1:q', 'F1:a', 'F2:q']);
+
+      // …and the wrapper's box grows, which is the signal that does exist. Asserted with no await,
+      // so nothing but this delivery can be what refreshed the list.
+      fireResizeFor(wrapper);
+      expect(nav.landmarks.map((l) => l.id)).toEqual(['F1:q', 'F1:a', 'F2:q', 'f-s1', 'f-s2']);
+
+      const order = ['F1:q', 'F1:a', 'F2:q', 'f-s1', 'f-s2'];
+      const visited: string[] = [];
+      for (let i = 0; i < order.length; i++) {
+        press('j');
+        visited.push(nav.activeId);
+      }
+      // The column is not scrollable, so FOCUS derives to the topmost landmark and the first press
+      // advances from it; the walk then steps one landmark per press and clamps on the last.
+      expect(visited).toEqual(['F1:a', 'F2:q', 'f-s1', 'f-s2', 'f-s2']);
+    } finally {
+      (globalThis as Record<string, unknown>).ResizeObserver = savedRO;
+    }
+  });
+
   it('S-2 (859 §A §1.8): J walks reasoning and tools in TRUE run order', async () => {
     // 857's named side benefit, bought with one attribute: an inline reasoning row carries a
     // `data-item-id`, so it becomes a landmark for free — and the walk is the run's real chronology
