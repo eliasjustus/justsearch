@@ -4,8 +4,8 @@
  * Stop hint hook — reminds an agent to commit its own observation shard
  * (tempdoc 665, closing a durability gap left open by tempdoc 618 Seam C).
  *
- * `note-observation.mjs` writes a finding to a per-session shard file under
- * `docs/observations.d/<session>.md`. Tempdoc 618's durability argument was
+ * `note-observation.mjs` writes a finding to a per-writer shard file under
+ * `docs/observations.d/<session>[.<worktree>].md`. Tempdoc 618's durability argument was
  * that the shard "rides the agent's own commit" — but nothing enforces that,
  * and `branch-safety.md` separately tells agents to stage files explicitly
  * (not `git add -A`), so a shard is easy to leave out of a commit entirely. A
@@ -22,9 +22,12 @@
  * (a once-per-session, non-blocking nudge via `Stop` + a per-session marker
  * file), and this hook follows the same pattern.
  *
- * Scope: only ever checks the CURRENT session's own shard (via the same
- * `resolveSessionId` `note-observation.mjs` uses), never another session's —
- * consistent with the rule against touching files another agent created.
+ * Scope: only ever checks THIS session's own shard IN THIS TREE (via the same
+ * `resolveSessionId` + `shardPathFor` `note-observation.mjs` uses), never another
+ * writer's — consistent with the rule against touching files another agent
+ * created. No code change was needed for the tempdoc-862 per-writer key: the
+ * discriminator lives inside `shardPathFor`, which this hook already imports, so
+ * it nudges on the exact file that was written.
  *
  * Advisory only: never blocks (no `decision: 'block'`) — an informal,
  * noncanonical inbox note is low-stakes compared to the governed-region case
