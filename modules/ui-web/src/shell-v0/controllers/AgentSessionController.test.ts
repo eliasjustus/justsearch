@@ -192,6 +192,72 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
     expect(ctrl.runPark).toEqual({ kind: 'budget', sinceEpochMs: 111, detail: 'needs 500 more' });
   });
 
+  // ===== 1d. 859 D live-defect D1 — the run's step count, MID-RUN =====
+  describe('859 D1 — the gate facts are known WHILE the run is running', () => {
+    it('starts as NOT-REPORTED, so nothing can render a step count as a confident zero', () => {
+      // The defect in one line: the field was `0` and `onDone` was its only writer, so every
+      // mid-run reader — the budget gate's fact panel above all — was told "0 steps" by a
+      // controller that had simply never been told. `null` is what "not told" has to look like.
+      expect(ctrl.iterationsUsed).toBeNull();
+    });
+
+    it('learns the step count from the run\'s own progress frames, before any terminal', () => {
+      // `iteration` on a progress frame IS `AgentSession.iterationsUsed()` at that moment
+      // (AgentStepRunner increments once per pass and stamps `iteration + 1` on every note), and
+      // BOTH gates announce themselves with one of these immediately before the gate event — so a
+      // gate is structurally never reached with an unknown count.
+      ctrl.onProgress({ phase: 'llm_call', message: 'Thinking', iteration: 1, maxIterations: 10 });
+      expect(ctrl.iterationsUsed).toBe(1);
+      ctrl.onProgress({ phase: 'llm_call', message: 'Thinking', iteration: 5, maxIterations: 10 });
+      ctrl.onProgress({
+        phase: 'budget_gate_held',
+        message: 'Waiting on budget',
+        iteration: 5,
+        maxIterations: 10,
+      });
+      expect(ctrl.iterationsUsed).toBe(5);
+    });
+
+    it('never walks the count backwards, and never invents one from a malformed frame', () => {
+      ctrl.onProgress({ phase: 'llm_call', message: '', iteration: 4, maxIterations: 10 });
+      // Frames can arrive out of order (a replay behind a live stream); a run does not un-take a step.
+      ctrl.onProgress({ phase: 'llm_call', message: '', iteration: 2, maxIterations: 10 });
+      expect(ctrl.iterationsUsed).toBe(4);
+      // And a frame that says nothing usable leaves the field exactly as it was.
+      ctrl.onProgress({ phase: 'llm_call', message: '' });
+      ctrl.onProgress({ phase: 'llm_call', message: '', iteration: 'lots' });
+      expect(ctrl.iterationsUsed).toBe(4);
+    });
+
+    it('a REATTACHING tab reads the step count off the primer, whose frames the ring may have evicted', () => {
+      // The ring carries narrative only and evicts, so a long run parked at a gate can have every
+      // progress frame gone while the gate is still open and answerable. The snapshot is then the
+      // only authority left, and it comes straight off `AgentSession`.
+      ctrl.onStateSnapshot({
+        iteration: 7,
+        budgetRemaining: 10,
+        toolCallsExecuted: 4,
+        messageCount: 12,
+        activeAgentId: 'primary',
+      });
+      expect(ctrl.iterationsUsed).toBe(7);
+    });
+
+    it('a fresh dispatch forgets the previous run\'s counts rather than carrying them over', () => {
+      ctrl.onProgress({ phase: 'llm_call', message: '', iteration: 6, maxIterations: 10 });
+      ctrl.onDone({
+        finalResponse: 'done',
+        iterationsUsed: 6,
+        toolCallsExecuted: 3,
+        totalTokensUsed: 900,
+      });
+      expect(ctrl.iterationsUsed).toBe(6);
+      // `exitReplay` is the public door onto the same reset the next dispatch performs.
+      ctrl.exitReplay();
+      expect(ctrl.iterationsUsed).toBeNull();
+    });
+  });
+
   it('a snapshot-carried held call is renderable AND answerable after the ring evicted its frame', async () => {
     // The reattach case the ring cannot serve: no `tool_call_pending` frame ever arrives, so before
     // 834 §6.1 the gate existed on the backend and nowhere on screen.
@@ -471,7 +537,6 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
     const assistantTexts = ctrl.conversation.filter(e => e.type === 'assistant-text');
     expect(assistantTexts.map(e => e.content)).toEqual(['partial stream', 'final canonical response']);
     expect(ctrl.iterationsUsed).toBe(3);
-    expect(ctrl.toolCallsExecuted).toBe(1);
     expect(ctrl.totalTokensUsed).toBe(1234);
     expect(ctrl.isStreaming).toBe(false);
   });

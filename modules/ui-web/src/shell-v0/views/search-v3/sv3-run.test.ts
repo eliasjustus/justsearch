@@ -60,8 +60,9 @@ const source = (over: Partial<Sv3RunSource> = {}): Sv3RunSource => ({
   budgetGate: null,
   contextGate: null,
   runPark: null,
-  iterationsUsed: 0,
-  toolCallsExecuted: 0,
+  // 859 D live-defect D1 — `null` is the controller's own starting value: "nothing has reported a
+  // step yet", which the gate panel omits rather than rendering as 0.
+  iterationsUsed: null,
   budgetUpdates: [],
   // Tempdoc 859 §A — a real controller, not a stub: the trailing live-region item is derived from
   // its actual state machine, and a hand-rolled `{isThinking:true}` would let the projection pass

@@ -329,6 +329,13 @@ export interface BudgetGateState {
  * older turns / stop.
  */
 export interface ContextGateState {
+  /**
+   * CONTEXT USED, despite the name — 859 D live-defect D3. The wire field is still `promptTokens`
+   * (a value change, not a schema change), but since D3 the backend puts the PRESSURE quantity in
+   * it: `max(projection, lastReportedPrompt)`, the figure the gate actually fired on. It shipped the
+   * raw projection before, which is why a live gate read 2463/4096 (60%) while the run had crossed
+   * 82%. Renderers must word it as context used, never as "the prompt".
+   */
   promptTokens: number;
   contextWindow: number;
 }
@@ -352,6 +359,20 @@ const DEFAULT_MAX_ITERATIONS = 10;
 const SESSIONS_LIMIT = 50;
 const HISTORY_LIMIT = 100;
 
+/**
+ * 859 D live-defect D1 — fold a reported count into a tri-state counter, monotonically.
+ *
+ * Three properties, each load-bearing: a value that is not a finite non-negative number is NOT
+ * REPORTED and leaves the counter exactly as it was (so a malformed frame cannot invent a zero); a
+ * reported value never lowers a known one (frames can arrive out of order, and a run does not
+ * un-take a step); and the first report replaces `null` rather than being maxed against an implied
+ * zero (so "not told" and "told zero" stay distinguishable).
+ */
+function maxKnown(current: number | null, reported: unknown): number | null {
+  if (typeof reported !== 'number' || !Number.isFinite(reported) || reported < 0) return current;
+  return current === null ? reported : Math.max(current, reported);
+}
+
 export class AgentSessionController implements CoreAgentRunHandlers {
   // --- Observable state ---
   conversation: ConversationEntry[] = [];
@@ -372,8 +393,27 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   // UnifiedChatView so the run's thread events land under the SAME interaction record as the chat
   // turns (one unified thread). Null = the run is its own thread (backend falls back to the run id).
   conversationId: string | null = null;
-  iterationsUsed = 0;
-  toolCallsExecuted = 0;
+  /**
+   * How many STEPS the run has taken, or `null` when nothing has said.
+   *
+   * <p>859 D live-defect D1 — this used to be a `0` that only `onDone` ever wrote, so it was
+   * structurally zero at every MID-RUN read. The budget gate's fact panel reads it, and every live
+   * gate in the audit therefore rendered "Steps 0" beside a correct "Last action" — inventing a fact
+   * at the exact moment the reader is deciding whether to spend more on this run, and breaking the
+   * panel's own rule that absent facts are OMITTED rather than shown as zero.
+   *
+   * <p>It is now written from the run's OWN authority while the run is live: every `progress` frame
+   * carries the loop's `iteration`, which is `AgentSession.iterationsUsed()` at that moment
+   * (`AgentStepRunner` increments once per pass and stamps `iteration + 1` on every note it emits),
+   * and both gates announce themselves with a progress frame immediately before the gate event — so
+   * a gate is never reached with a stale count. `state_snapshot` supplies it to a REATTACHING tab,
+   * whose progress frames the replay ring may have evicted.
+   *
+   * <p>`null` is the honest reading of "no authority has reported a step yet", and is not the same
+   * as a run that has taken none.
+   */
+  iterationsUsed: number | null = null;
+
   // Tempdoc 565 §3.A — the grounding behind the latest answer: the clickable local-passage sources
   // and (when the matcher ran) the per-sentence inline citations. Read by the sources pane.
   answerSources: AgentSource[] = [];
@@ -745,8 +785,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.streamingText = '';
     this.lastStreamedAnswer = '';
     this.isStreaming = false;
-    this.iterationsUsed = 0;
-    this.toolCallsExecuted = 0;
+    this.iterationsUsed = null;
     this.answerSources = [];
     this.answerCitations = [];
     this.answerEvidenceRunId = null;
@@ -1103,8 +1142,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
         { id: this.nextEntryId(), type: 'assistant-text', content: finalResp, timestamp: Date.now() },
       ];
     }
-    this.iterationsUsed = payload.iterationsUsed ?? 0;
-    this.toolCallsExecuted = payload.toolCallsExecuted ?? 0;
+    this.iterationsUsed = payload.iterationsUsed ?? null;
     this.totalTokensUsed = payload.totalTokensUsed ?? null;
     // Tempdoc 565 §3.A — capture the answer's grounding (clickable local-passage citations).
     // The generated `done` payload now types `sources`/`citations` (§13.8 schema-drift fix) — no
@@ -1269,6 +1307,11 @@ export class AgentSessionController implements CoreAgentRunHandlers {
 
   onProgress(payload: unknown): void {
     const data = payload as Record<string, unknown>;
+    // 859 D live-defect D1 — the run's step count, from the run's own authority, WHILE IT IS
+    // RUNNING. `iteration` is the loop's `iterationsUsed` at the moment the note was emitted, and
+    // both gates announce themselves with one of these frames immediately before the gate event.
+    // MONOTONE: a late-arriving frame from earlier in the run must not walk the count backwards.
+    this.iterationsUsed = maxKnown(this.iterationsUsed, data.iteration);
     this.conversation = [
       ...this.conversation,
       {
@@ -1331,6 +1374,11 @@ export class AgentSessionController implements CoreAgentRunHandlers {
    */
   onStateSnapshot(payload: CoreAgentRunStateSnapshotPayload): void {
     if (this.replayMode) return;
+    // 859 D live-defect D1 — the primer is how a REATTACHING tab learns what the run has done: the
+    // ring carries narrative only and EVICTS, so the `progress` frames that would otherwise supply
+    // the step count may be long gone while the gate they announced is still open and answerable.
+    // Both counts come straight off `AgentSession` (`AgentLoopService`'s snapshot supplier).
+    this.iterationsUsed = maxKnown(this.iterationsUsed, payload.iteration);
     if (payload.activeAgentId) {
       this.activeAgentId = payload.activeAgentId;
     }
@@ -1706,8 +1754,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.streamingText = '';
     this.lastStreamedAnswer = '';
     this.reasoning.reset();
-    this.iterationsUsed = 0;
-    this.toolCallsExecuted = 0;
+    this.iterationsUsed = null;
     this.totalTokensUsed = null;
     this.budgetUpdates = [];
     this.budgetGate = null;
@@ -2338,8 +2385,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.streamingText = '';
     this.isStreaming = false;
     this.sessionId = null;
-    this.iterationsUsed = 0;
-    this.toolCallsExecuted = 0;
+    this.iterationsUsed = null;
     this.totalTokensUsed = null;
     this.budgetUpdates = [];
     this.budgetGate = null;

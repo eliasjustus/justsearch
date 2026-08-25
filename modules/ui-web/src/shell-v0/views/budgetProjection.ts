@@ -123,8 +123,14 @@ export function projectContextHorizon(
 export interface BudgetGateFactsInput {
   /** Run-cumulative spend, from the gate event's `totalTokensConsumed`. */
   readonly totalTokensConsumed: number;
+  /** Tool calls the run has made, as the window's own feed counts them. */
   readonly toolCallsExecuted: number;
-  readonly iterationsUsed: number;
+  /**
+   * Steps the run has taken, or `null` when NOTHING HAS SAID (859 D live-defect D1). It was a plain
+   * number whose only writer was the run's terminal, so every mid-run gate rendered a structural
+   * zero; the tri-state is what keeps "we were not told" out of the fact panel.
+   */
+  readonly iterationsUsed: number | null;
   /** The turn's `askedAt` (epoch ms); `null` only if the window never stamped one. */
   readonly askedAt: number | null;
   /** Read at render time by the caller, never by this module — a pure projection has no clock. */
@@ -136,7 +142,8 @@ export interface BudgetGateFactsInput {
 export interface BudgetGateFacts {
   readonly tokensUsed: number;
   readonly toolCalls: number;
-  readonly steps: number;
+  /** `null` when no authority has reported a step count — omitted, never rendered as 0. */
+  readonly steps: number | null;
   /** `null` when the turn carries no start time — omitted, never rendered as 0 s. */
   readonly elapsedMs: number | null;
   /** `null` before the first tool call — omitted, never rendered as "none". */
@@ -146,10 +153,15 @@ export interface BudgetGateFacts {
 /**
  * Project the gate's fact panel.
  *
- * Tri-state discipline applies where a value is GENUINELY absent — no tool call has happened yet,
- * or the turn carries no start time. It does not apply to the other three, which the run always
- * knows. A panel that showed "0 tool calls" for "we were not told" would be inventing a fact at the
- * exact moment the reader is deciding whether to spend more money on this run.
+ * Tri-state discipline applies wherever a value is GENUINELY absent: no tool call has happened yet,
+ * the turn carries no start time, or — 859 D live-defect D1 — nothing has yet reported how many
+ * steps the run has taken. A panel that showed "0 steps" for "we were not told" would be inventing a
+ * fact at the exact moment the reader is deciding whether to spend more money on this run, which is
+ * precisely what the live audit caught it doing beside a correct "Last action".
+ *
+ * `tokensUsed` and `toolCalls` stay plain numbers because both are things the WINDOW knows by
+ * construction: the spend rides the gate event itself, and the tool-call count is the feed's own
+ * (see `sv3-run.projectSv3RunPrompts`), so a zero there is a counted zero.
  */
 export function projectBudgetGateFacts(input: BudgetGateFactsInput): BudgetGateFacts {
   const elapsed =
@@ -161,7 +173,7 @@ export function projectBudgetGateFacts(input: BudgetGateFactsInput): BudgetGateF
   return {
     tokensUsed: Math.max(0, input.totalTokensConsumed),
     toolCalls: Math.max(0, input.toolCallsExecuted),
-    steps: Math.max(0, input.iterationsUsed),
+    steps: input.iterationsUsed === null ? null : Math.max(0, input.iterationsUsed),
     elapsedMs: elapsed,
     lastAction,
   };

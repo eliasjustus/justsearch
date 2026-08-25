@@ -30,6 +30,12 @@ import type {
   AgentSentenceCite,
   AgentSource,
 } from '../../../api/generated/shape-handlers/shared.js';
+// 859 D live-defect D5 — the two per-disposition sentences, named rather than spelled out, so this
+// pin cannot pass against copy that has since drifted.
+import {
+  SV3_CUT_SHORT_BUDGET_NOTICE,
+  SV3_CUT_SHORT_STEPS_NOTICE,
+} from './sv3-honesty.js';
 
 const SOURCES: AgentSource[] = [
   {
@@ -66,8 +72,8 @@ interface FakeCtrl {
   runKind: 'agent' | 'workflow' | 'background' | null;
   conversationId: string | null;
   sessionId: string | null;
-  iterationsUsed: number;
-  toolCallsExecuted: number;
+  /** 859 D live-defect D1 — tri-state: `null` is "no authority has reported a step yet". */
+  iterationsUsed: number | null;
   budgetUpdates: BudgetUpdate[];
   reasoning: ReasoningController;
   budgetGate: null;
@@ -94,8 +100,7 @@ function makeCtrl(): FakeCtrl {
     runKind: null,
     conversationId: null,
     sessionId: null,
-    iterationsUsed: 0,
-    toolCallsExecuted: 0,
+    iterationsUsed: null,
     budgetUpdates: [],
     // Tempdoc 859 §A — the live run feed derives its open-region item from the real controller.
     reasoning: new ReasoningController(() => {}),
@@ -567,16 +572,24 @@ describe('T11 — a truncated run says so, whatever its answer says', () => {
     expect(prose.toLowerCase(), 'and it said nothing at all about being cut short').not.toContain(
       'cut short',
     );
-    expect(q(main, 'sv3-turn-cut-short')?.textContent?.toLowerCase()).toContain('cut short');
+    // 859 D live-defect D5 — and it names the limit that ACTUALLY fired. Asserted against the
+    // exported constant, not a literal, so the copy and the pin cannot drift apart.
+    expect(q(main, 'sv3-turn-cut-short')?.textContent?.trim()).toBe(SV3_CUT_SHORT_BUDGET_NOTICE);
+    expect(SV3_CUT_SHORT_BUDGET_NOTICE.toLowerCase()).toContain('budget');
     // And the receipt tail carries the compact badge beside the outcome.
     expect(q(main, 'sv3-run-receipt')?.getAttribute('data-cut-short')).toBe('true');
     expect(q(main, 'sv3-run-receipt')?.textContent).toContain('cut short');
   });
 
-  it('discloses the ITERATION ceiling too — the terminal the model cannot disclose at all', async () => {
+  it('discloses the ITERATION ceiling too — and blames the STEP limit, not the budget', async () => {
     // MAX_ITERATIONS produces no answer text, so there is nowhere for a model to say it even if it
     // wanted to. Closing both truncating dispositions in one change is the point; leaving one
     // unstamped would be the same hole under a different name.
+    //
+    // 859 D live-defect D5: one shared sentence used to serve BOTH terminals, so this run — which
+    // the live audit watched end with 59% of its budget UNSPENT — told the reader that tokens had
+    // stopped it. The two limits have different remedies (more budget fixes nothing here), so a
+    // wrong attribution is not a wording nit; it points the reader at the wrong lever.
     const el = await mount();
     await runWithTwoTexts(el, 'why did it retry?');
     await frame(el, {
@@ -587,7 +600,17 @@ describe('T11 — a truncated run says so, whatever its answer says', () => {
       runKind: null,
     });
     await settle(el);
-    expect(q(await region(el, 'jf-sv3-main'), 'sv3-turn-cut-short')).not.toBeNull();
+    const notice = q(await region(el, 'jf-sv3-main'), 'sv3-turn-cut-short');
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent?.trim()).toBe(SV3_CUT_SHORT_STEPS_NOTICE);
+    expect(SV3_CUT_SHORT_STEPS_NOTICE.toLowerCase()).toContain('step');
+    expect(
+      SV3_CUT_SHORT_STEPS_NOTICE.toLowerCase(),
+      'a step-ceiling run must not be told the budget stopped it',
+    ).not.toContain('budget');
+    // The two sentences are genuinely different — a split that produced one string twice would
+    // satisfy every assertion above and fix nothing.
+    expect(SV3_CUT_SHORT_STEPS_NOTICE).not.toBe(SV3_CUT_SHORT_BUDGET_NOTICE);
   });
 
   it('says NOTHING for a run that completed, or for one that never stated a disposition', async () => {

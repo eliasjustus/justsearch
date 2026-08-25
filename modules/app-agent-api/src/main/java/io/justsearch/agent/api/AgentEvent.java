@@ -391,6 +391,20 @@ public sealed interface AgentEvent {
      */
     public static final String PHASE_CONTEXT_COMPACTED = "context_compacted";
 
+    /**
+     * Tempdoc 859 D live-defect D4 — the run compacted DESPITE the reader answering CONTINUE,
+     * because the next prompt would not have fit the model's window.
+     *
+     * <p>This is the sharpest accountability phase of the set: the others narrate a decision nobody
+     * made, while this one narrates the loop DEPARTING from a decision the reader did make. It sits
+     * beside {@link #PHASE_CONTEXT_COMPACTED} in the same emit block, so leaving it a literal would
+     * have made it the one note that vanishes on reload while its neighbour survives — the reader
+     * would come back to a compaction with its justification silently removed.
+     *
+     * @see #PHASE_BUDGET_RAISED
+     */
+    public static final String PHASE_CONTEXT_COMPACTED_TO_FIT = "context_compacted_to_fit";
+
     /** Routine progress (default {@link #INFO} severity, no trace). */
     public AgentProgress(String phase, String message, int iteration, int maxIterations) {
       this(phase, message, iteration, maxIterations, INFO, TraceContext.none());

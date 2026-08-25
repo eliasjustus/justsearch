@@ -108,6 +108,9 @@ class UnreferencedCodeTest {
           // (IndexingLoopTest direct; AdversarialCorpusIngestionTest via reflection on
           // getWriter/getExtractor).
           Map.entry("AgentController.isHeartbeatSchedulerShutdown", "AgentControllerShutdownTest (638 PE)"),
+          // 859 D live-defect D2 — ChatController acquired the same heartbeat scheduler, so it has
+          // the same test accessor asserting the same start/stop symmetry.
+          Map.entry("ChatController.isHeartbeatSchedulerShutdown", "ChatControllerHeartbeatTest (859 D2)"),
           Map.entry("IndexingLoop.getJournal", "IndexingLoopTest + AdversarialCorpusIngestionTest"),
           Map.entry("IndexingLoop.getEmbeddingLifecycle", "IndexingLoopTest (516 Slice 4c)"),
           Map.entry("IndexingLoop.getWriter", "IndexingLoopTest + AdversarialCorpusIngestionTest (516 W5.1)"),

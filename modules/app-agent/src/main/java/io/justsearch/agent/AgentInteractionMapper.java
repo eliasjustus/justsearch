@@ -42,7 +42,12 @@ public final class AgentInteractionMapper {
           AgentEvent.AgentProgress.PHASE_BUDGET_RAISED,
           AgentEvent.AgentProgress.PHASE_CONTEXT_GATE_UNANSWERED,
           AgentEvent.AgentProgress.PHASE_CONTEXT_GATE_REAPPLIED,
-          AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED);
+          AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED,
+          // 859 D live-defect D4 — the run overriding the reader's own CONTINUE. If any phase in this
+          // set has to survive a reload it is this one: it is the justification for a compaction the
+          // reader did not ask for, and it is emitted two lines above PHASE_CONTEXT_COMPACTED, which
+          // does survive.
+          AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED_TO_FIT);
 
   private AgentInteractionMapper() {}
 
