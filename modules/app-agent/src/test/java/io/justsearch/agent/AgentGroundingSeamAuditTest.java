@@ -75,7 +75,7 @@ import org.junit.jupiter.api.Test;
  * had moved outside its reach: a green gate claiming a property it had stopped covering. The
  * discriminator is therefore widened to BOTH grounding-carrying records, and the stamp gets two
  * rules rather than one — uniqueness ({@link #groundingDeltaIsStampedOnlyAtTheDispatchSeam}) and
- * EXISTENCE ({@link #theDispatchSeamStillStampsTheGroundingDelta}). Uniqueness alone would be
+ * EXISTENCE ({@link #everyDispatchSeamStillStampsTheGroundingDelta}). Uniqueness alone would be
  * decorative: deleting the stamp entirely satisfies "no second site" perfectly.
  */
 final class AgentGroundingSeamAuditTest {
