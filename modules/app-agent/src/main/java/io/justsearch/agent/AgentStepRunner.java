@@ -252,7 +252,18 @@ final class AgentStepRunner {
             budgetSnapshot = session.budgetRemaining();
             sink.accept(
                 new AgentEvent.AgentBudgetUpdate(
-                    "iteration_start", tokens, budgetSnapshot, session.totalTokens()));
+                    "iteration_start",
+                    tokens,
+                    budgetSnapshot,
+                    session.totalTokens(),
+                    // Tempdoc 859 D live-defect (minor) — `promptTokens` stays 0 HONESTLY: this
+                    // phase has no provider-reported prompt, and putting the schema-blind projection
+                    // in the field documented as "the latest LLM call's prompt size" would make the
+                    // context meter read a number no call ever had. The WINDOW, though, is known
+                    // here exactly as it is on `llm_response`, and shipping 0 for it made two frames
+                    // of one run disagree about the model they were describing.
+                    0,
+                    session.contextWindow()));
             budgetExhausted = tokens >= budgetSnapshot;
           }
 
@@ -287,6 +298,15 @@ final class AgentStepRunner {
           // not "never compact": the reader accepted ONE large prompt, not an overflowing one.
           boolean compactNow = false;
           boolean reappliedWithoutAsking = false;
+          // Tempdoc 859 D live-defect D4 — is the next prompt already unservable? The provider
+          // rejects a prompt that does not fit its window outright ("request (4172 tokens) exceeds
+          // the available context size"), and it needs room for the completion on top, so "servable"
+          // is not "<= n_ctx". Computed here so BOTH the gate arm and the re-apply arm read one
+          // condition.
+          boolean nextPromptUnservable =
+              contextWindow > 0
+                  && pressureTokens >= (int) (contextWindow * CONTEXT_UNSERVABLE_THRESHOLD);
+          boolean compactedToFit = false;
           if (underContextPressure && !session.contextGateFired()) {
             var contextGateFuture = session.createContextGate();
             sink.accept(
@@ -295,7 +315,11 @@ final class AgentStepRunner {
                     "Context filling up",
                     iteration + 1,
                     request.maxIterations()));
-            sink.accept(new AgentEvent.ContextGatePending(tokens, contextWindow));
+            // Tempdoc 859 D live-defect D3 — the gate SHOWS the quantity it TRIGGERED on. Shipping
+            // the raw projection put a number on screen that did not justify the park: the live gate
+            // rendered 2463/4096 (60%) while the reported prompt was 3361 (82%), i.e. a reader was
+            // asked to act on a figure well below the 80% threshold the run had actually crossed.
+            sink.accept(new AgentEvent.ContextGatePending(pressureTokens, contextWindow));
             checkpointer.checkpoint(
                 sessionId, session, "WAITING_CONTEXT", "Context pressure — awaiting decision");
             AgentSession.ContextGateDecision ctxDecision =
@@ -325,6 +349,19 @@ final class AgentStepRunner {
             }
             compactNow = ctxDecision == AgentSession.ContextGateDecision.SUMMARIZE;
             // CONTINUE (or post-SUMMARIZE): fall through and proceed with the current prompt.
+            //
+            // Tempdoc 859 D live-defect D4 — EXCEPT when "the current prompt" is one the provider
+            // will refuse. The live run took CONTINUE at a crossing whose next prompt was 4172 on a
+            // 4096 window; the loop proceeded, llama-server 400'd three times, and the run ERRORED —
+            // so the auto-compact second crossing (§2.7) never got its chance. CONTINUE means "don't
+            // stop", and continuing into a guaranteed rejection is not continuing; compacting first
+            // honours the decision instead of executing it into a wall. This deliberately softens
+            // "CONTINUE means no compaction" for exactly the unservable case, and says so in the
+            // feed rather than acting silently.
+            if (!compactNow && nextPromptUnservable) {
+              compactNow = true;
+              compactedToFit = true;
+            }
           } else if (underContextPressure) {
             // Tempdoc 859 §D §2.7 — the gate already asked once this run. RE-APPLY the remedy
             // rather than either re-parking (the thing 577 was right to avoid) or silently doing
@@ -344,6 +381,19 @@ final class AgentStepRunner {
                     new AgentEvent.AgentProgress(
                         "context_gate_reapplied",
                         "Context filling up again — compacting without asking again",
+                        iteration + 1,
+                        request.maxIterations()));
+              }
+              // Tempdoc 859 D live-defect D4 — the reader chose CONTINUE and the run compacted
+              // anyway; that is a departure from what they clicked, so it is NARRATED, in the same
+              // note mechanism the re-apply uses. Silence here would be the run overruling a
+              // decision without saying so.
+              if (compactedToFit) {
+                sink.accept(
+                    new AgentEvent.AgentProgress(
+                        "context_compacted_to_fit",
+                        "Compacted to fit before continuing — the next prompt did not fit the"
+                            + " model's memory",
                         iteration + 1,
                         request.maxIterations()));
               }
@@ -470,6 +520,7 @@ final class AgentStepRunner {
 
               String earlyTerminationMsg =
                   String.format(
+                      java.util.Locale.ROOT,
                       "Reached token budget limit (%d tokens consumed, %d projected for next"
                           + " iteration). Consider increasing context window or simplifying your"
                           + " query.",
@@ -958,7 +1009,9 @@ final class AgentStepRunner {
     sink.accept(
         new AgentEvent.AgentProgress(
             "budget_raised",
-            String.format("+%,d tokens — continuing", raised),
+            // Locale.ROOT — the grouping separator is part of a WIRE string the FE renders verbatim,
+            // so a German JVM must not turn "+7,777" into "+7.777" (which reads as 7.777 tokens).
+            String.format(java.util.Locale.ROOT, "+%,d tokens — continuing", raised),
             iteration + 1,
             maxIterations));
   }
@@ -1017,6 +1070,15 @@ final class AgentStepRunner {
   // reaches this fraction of the model's context window (n_ctx). Below the hard budget wall
   // (budget = n_ctx − margin ≈ 99%), so compaction is offered PROACTIVELY before the wall.
   private static final double CONTEXT_PRESSURE_THRESHOLD = 0.8;
+
+  /**
+   * Tempdoc 859 D live-defect D4 — the fraction of {@code n_ctx} at which the next prompt is treated
+   * as UNSERVABLE: the provider rejects a prompt that does not fit its window, and the call also
+   * needs room for its completion, so the line sits just below the window rather than at it. It is a
+   * FRACTION, not a fixed reserve, so it stays meaningful at every window size (a fixed 256 would go
+   * negative on a small test/profile window and make every crossing "unservable").
+   */
+  private static final double CONTEXT_UNSERVABLE_THRESHOLD = 0.95;
   // How many of the most-recent messages the SUMMARIZE decision keeps as the live working set when
   // compacting older turns (the system prompt is preserved separately as an anchor).
   private static final int CONTEXT_COMPACT_KEEP_RECENT = 6;

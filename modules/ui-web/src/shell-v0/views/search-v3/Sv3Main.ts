@@ -138,8 +138,8 @@ import {
   sv3SourcesTrigger,
   sv3SourcesTriggerCount,
   sv3SourcesTriggerLabel,
+  sv3CutShortNotice,
   sv3WasCutShort,
-  SV3_CUT_SHORT_NOTICE,
   SV3_REMEDY,
   type Sv3RemedyDetail,
 } from './sv3-honesty.js';
@@ -1838,12 +1838,16 @@ export class Sv3Main extends JfElement {
    * footnote. And it is derived from the DISPOSITION, never from the answer's own text — 859 §7
    * watched a cut-short run write a confident, complete-sounding non-answer that disclosed nothing,
    * so a disclosure that depended on the model saying it would be no disclosure at all.
+   *
+   * <p>859 D live-defect D5 — the LINE comes from the disposition too, not just the decision to show
+   * one. Both truncating terminals shared a "cut short at the budget limit" sentence, so a run
+   * stopped by the step ceiling with most of its budget unspent named the wrong limit — and the two
+   * limits have different remedies.
    */
   private cutShortNotice(turn: Sv3Turn): TemplateResult | typeof nothing {
-    if (!sv3WasCutShort(turn.disposition)) return nothing;
-    return html`<p class="cut-short" role="note" data-testid="sv3-turn-cut-short">
-      ${SV3_CUT_SHORT_NOTICE}
-    </p>`;
+    const notice = sv3CutShortNotice(turn.disposition);
+    if (notice === null) return nothing;
+    return html`<p class="cut-short" role="note" data-testid="sv3-turn-cut-short">${notice}</p>`;
   }
 
   /**
@@ -2664,7 +2668,9 @@ export class Sv3Main extends JfElement {
           <dl class="run-prompt-facts" data-testid="sv3-run-budget-facts">
             <div><dt>Tokens used</dt><dd>${prompt.facts.tokensUsed.toLocaleString()}</dd></div>
             <div><dt>Tool calls</dt><dd>${prompt.facts.toolCalls.toLocaleString()}</dd></div>
-            <div><dt>Steps</dt><dd>${prompt.facts.steps.toLocaleString()}</dd></div>
+            ${prompt.facts.steps === null
+              ? nothing
+              : html`<div><dt>Steps</dt><dd>${prompt.facts.steps.toLocaleString()}</dd></div>`}
             ${prompt.facts.elapsedMs === null
               ? nothing
               : html`<div>
@@ -2736,8 +2742,13 @@ export class Sv3Main extends JfElement {
     if (prompt.kind === 'context') {
       return html`
         <div class="run-prompt" role="group" aria-label="Context decision" data-testid="sv3-run-prompt" data-item-id=${this.runPromptAnchorId(prompt)} data-kind="context">
+          <!-- 859 D live-defect D3 — the figure is the CONTEXT USED, which is what the gate fired
+               on: the larger of the loop's projection and the provider's reported prompt. It used to
+               be worded as "the prompt" and carried the projection alone, so the live gate said
+               2,463 of 4,096 (60%) while the run had actually crossed 82% — a number that did not
+               justify the question it was attached to. -->
           <p class="run-prompt-text">
-            The prompt is ${prompt.promptTokens.toLocaleString()} of
+            Context used: ${prompt.promptTokens.toLocaleString()} of
             ${prompt.contextWindow.toLocaleString()} tokens.
           </p>
           <jf-control

@@ -23,10 +23,14 @@ import org.junit.jupiter.api.Test;
  * <p>Two traces are used.
  *
  * <ul>
- *   <li>The <b>measured burn</b> — {@code prompt(i) = B + (i-1)R}, {@code B} 900, {@code R} 1100,
+ *   <li>The <b>fitted burn</b> — {@code prompt(i) = B + (i-1)R}, {@code B} 900, {@code R} 1100,
  *       {@code C} 150 — fitted in 859 §1 to the one live datapoint (859 §7: a 3840-token budget
  *       exhausted after two tool calls on a read-three-files task at {@code n_ctx} 4096). It stands
- *       in for a realistic run; it is NOT measured fact beyond that single run.
+ *       in for a short realistic run; it is NOT measured fact beyond that single run.
+ *   <li>The <b>measured burn</b> ({@link #MEASURED_BURN_2026_08_25}) — the per-iteration spend of a
+ *       real 10-iteration delegate run, recorded by live leg L1 on the compact profile. This is the
+ *       trace {@link AgentBudgetPolicy#STANDARD_MULTIPLIER} is now sized against, and the one that
+ *       fails at the pre-L1 value of 5.
  *   <li>The <b>structural maximum</b> — every call charges the most it possibly can, {@code n_ctx +
  *       maxTokens}. Nothing can burn faster, whatever the burn shape, so a rung that survives this
  *       survives everything.
@@ -54,6 +58,27 @@ final class AgentBudgetPolicyTest {
 
   private static final IntUnaryOperator MEASURED_BURN =
       i -> BURN_BASE_PROMPT + (i - 1) * BURN_PER_TOOL_RESULT;
+
+  /* ── The measured 10-iteration burn (live leg L1, 2026-08-25) ─────────────────────────────── */
+
+  /**
+   * What a real delegate run actually spent, iteration by iteration, on the compact chat profile
+   * ({@code n_ctx} 4096). Recorded live on 2026-08-25 — not fitted, not extrapolated. It totals
+   * {@code 32,192} tokens, i.e. {@code 7.9x n_ctx}, which is the number Standard is sized against.
+   */
+  private static final int[] MEASURED_BURN_2026_08_25 = {
+    1785, 2905, 3219, 3334, 3446, 3566, 3657, 3273, 3584, 3423
+  };
+
+  /**
+   * The same gate model as {@link #gateIteration}, driven by the recorded per-iteration TOTAL spend
+   * (prompt + completion, as the provider reported it). The loop gates when the next prompt meets or
+   * exceeds what is left; the recorded figure is charged in full when the call goes ahead.
+   */
+  private static int gateOnMeasuredRun(int budget) {
+    return gateIteration(
+        budget, i -> MEASURED_BURN_2026_08_25[i - 1], 0, MEASURED_BURN_2026_08_25.length);
+  }
 
   /**
    * A model of the loop's between-step budget check ({@code AgentStepRunner}): before each call the
@@ -134,6 +159,34 @@ final class AgentBudgetPolicyTest {
         NO_GATE,
         gateIteration(budgetFor("standard", COMPACT_N_CTX), MEASURED_BURN, BURN_COMPLETION, 5),
         "Standard must not gate on the task the live audit watched it fail");
+  }
+
+  @Test
+  @DisplayName("Standard — the MEASURED 10-iteration run (L1, 2026-08-25) completes with no gate")
+  void standardFundsTheMeasuredTenIterationRun() {
+    // THE L1 RESIZE, asserted by consequence. The pre-L1 value of 5 gave 20,480 tokens against a
+    // recorded 32,192, and the live Standard run duly hit the gate at 102.6% after 8 tool calls
+    // with no answer at all. Standard's promise is that a run of ordinary length FINISHES; a rung
+    // whose default outcome is "cut short at the budget" is not a default, it is a trap.
+    assertEquals(
+        NO_GATE,
+        gateOnMeasuredRun(budgetFor("standard", COMPACT_N_CTX)),
+        "Standard must fund the whole measured run — total spend "
+            + java.util.Arrays.stream(MEASURED_BURN_2026_08_25).sum()
+            + " against a budget of "
+            + budgetFor("standard", COMPACT_N_CTX));
+  }
+
+  @Test
+  @DisplayName("the measured run is NOT free either — Quick still gates part-way through it")
+  void quickDoesNotFundTheMeasuredTenIterationRun() {
+    // Without this, the assertion above would pass for any large multiplier and would say nothing
+    // about 8 in particular. The ladder must stay ordered by CONSEQUENCE on the same trace.
+    int quick = gateOnMeasuredRun(budgetFor("quick", COMPACT_N_CTX));
+    assertTrue(quick != NO_GATE, "Quick cannot fund a full 10-iteration run — it is a couple of steps");
+    assertTrue(
+        quick < MEASURED_BURN_2026_08_25.length,
+        "and it must gate strictly before the run's last iteration (got " + quick + ")");
   }
 
   @Test

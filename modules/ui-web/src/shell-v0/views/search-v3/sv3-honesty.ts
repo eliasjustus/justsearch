@@ -117,18 +117,32 @@ export function sv3ReceiptTail(durationMs: number | null, modelLabel: string | n
 /* ── Cut short (tempdoc 859 §D §2.6) ─────────────────────────────────────────────────────────── */
 
 /**
- * The two TRUNCATING dispositions — a run that stopped before finishing its work.
+ * The two TRUNCATING dispositions — a run that stopped before finishing its work — each with the
+ * line that says WHAT stopped it.
  *
  * `BUDGET_EDGE_FINALIZE`: the budget ran out and the model was given one last call to synthesise
  * whatever it had. `MAX_ITERATIONS`: the loop hit its step ceiling, which produces no answer text at
  * all — so the model cannot disclose that one even in principle.
  *
+ * ONE STRING PER DISPOSITION, not one for both (859 D live-defect D5). A single "Cut short at the
+ * budget limit" line served both, so a `MAX_ITERATIONS` run — which the live audit watched end with
+ * 59% of its budget UNSPENT — told the reader that tokens had stopped it. That is a specific false
+ * statement about why the answer is partial, made at the exact moment the reader is deciding what to
+ * do next: raising the budget would have changed nothing. The two limits have different remedies, so
+ * they get different sentences.
+ *
  * The other three (`COMPLETED`, `ERRORED`, `CANCELLED`) are not truncations: the first finished, and
  * the other two already have their own honest surfaces (the error text, the halt receipt).
  */
-const SV3_TRUNCATING_DISPOSITIONS: ReadonlySet<string> = new Set([
-  'BUDGET_EDGE_FINALIZE',
-  'MAX_ITERATIONS',
+const SV3_TRUNCATION_NOTICES: ReadonlyMap<string, string> = new Map([
+  [
+    'BUDGET_EDGE_FINALIZE',
+    'Cut short at the budget limit — this answer is based on what the run had gathered by then',
+  ],
+  [
+    'MAX_ITERATIONS',
+    'Cut short at the step limit — the run used all its steps before reaching an answer',
+  ],
 ]);
 
 /**
@@ -141,9 +155,20 @@ const SV3_TRUNCATING_DISPOSITIONS: ReadonlySet<string> = new Set([
  */
 export const SV3_CUT_SHORT_BADGE = 'cut short';
 
-/** The full line on the settled turn — what the badge means, in the reader's terms. */
-export const SV3_CUT_SHORT_NOTICE =
-  'Cut short at the budget limit — this answer is based on what the run had gathered by then';
+/**
+ * The full line on the settled turn — what the badge means, in the reader's terms, FOR THE LIMIT
+ * THAT ACTUALLY FIRED. `null` for anything that was not a truncation, so a render site branches on
+ * the value rather than re-deriving the set.
+ */
+export function sv3CutShortNotice(disposition: string | null | undefined): string | null {
+  return disposition == null ? null : (SV3_TRUNCATION_NOTICES.get(disposition) ?? null);
+}
+
+/** The budget arm of {@link sv3CutShortNotice}, exported so a test can name it without a literal. */
+export const SV3_CUT_SHORT_BUDGET_NOTICE = SV3_TRUNCATION_NOTICES.get('BUDGET_EDGE_FINALIZE')!;
+
+/** The step-ceiling arm — the one a single shared string used to mis-attribute to the budget. */
+export const SV3_CUT_SHORT_STEPS_NOTICE = SV3_TRUNCATION_NOTICES.get('MAX_ITERATIONS')!;
 
 /**
  * Whether the run behind this answer was truncated.
@@ -155,7 +180,7 @@ export const SV3_CUT_SHORT_NOTICE =
  * never read as "completed".
  */
 export function sv3WasCutShort(disposition: string | null | undefined): boolean {
-  return disposition != null && SV3_TRUNCATING_DISPOSITIONS.has(disposition);
+  return sv3CutShortNotice(disposition) !== null;
 }
 
 /**

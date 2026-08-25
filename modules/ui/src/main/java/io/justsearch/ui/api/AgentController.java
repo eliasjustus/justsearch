@@ -16,10 +16,6 @@ import io.justsearch.telemetry.Telemetry;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -81,16 +77,13 @@ final class AgentController {
   /**
    * Tempdoc 604 — the agent SSE streams (live run / attach / resume / fork) are event-only and emit
    * NOTHING while a run is parked at an approval gate, so the FE cannot tell a parked-alive run from
-   * a transport-hung one. This scheduler beats an out-of-band {@code heartbeat} frame on every open
-   * agent stream at the generated cadence, the positive-liveness signal the FE watchdog resets on.
+   * a transport-hung one. Beats an out-of-band {@code heartbeat} frame on every open agent stream at
+   * the generated cadence, the positive-liveness signal the FE watchdog resets on. The mechanism
+   * lives in {@link SseHeartbeat} because {@code POST /api/chat/dispatch} needs the same one (859 D
+   * live-defect D2).
    */
-  private final ScheduledExecutorService heartbeatScheduler =
-      Executors.newSingleThreadScheduledExecutor(
-          r -> {
-            Thread t = new Thread(r, "agent-stream-heartbeat");
-            t.setDaemon(true);
-            return t;
-          });
+  private final SseHeartbeat heartbeat;
+
   // Tempdoc 560 Phase 2: pending-gate registry for workflow runs (nullable; set post-construction
   // once the WorkflowShapeRunner is wired). The workflow approve/reject endpoints complete its
   // futures out-of-band, unblocking the runner thread.
@@ -105,6 +98,14 @@ final class AgentController {
     this.engine = engine;
     this.sseWriter = sseWriter;
     this.telemetry = telemetry;
+    // A LAMBDA, not `sseWriter::writeEvent`: a method reference binds (and null-checks) its receiver
+    // at construction, and this controller is legitimately constructed with a null writer in the
+    // lifecycle tests that only exercise shutdown. Deferring the dereference to the beat itself
+    // keeps construction as total as it was before the heartbeat moved out of this class.
+    this.heartbeat =
+        new SseHeartbeat(
+            (ctx, event, payload) -> sseWriter.writeEvent(ctx, event, payload),
+            "agent-stream-heartbeat");
   }
 
   /** Resolves the live agent service. Always re-fetches so late-bound updates surface. */
@@ -112,48 +113,19 @@ final class AgentController {
     return agentServiceSupplier.get();
   }
 
-  /** A streaming body that blocks the handler thread until the run terminates; may throw. */
-  @FunctionalInterface
-  private interface StreamBody {
-    void run() throws Exception;
-  }
-
-  /**
-   * Tempdoc 604 — run a blocking agent stream with an out-of-band liveness heartbeat. Schedules a
-   * {@code heartbeat} frame every {@link StreamLivenessWindows#STREAM_HEARTBEAT_INTERVAL_SECONDS} for
-   * the life of the stream, then cancels it when the body returns/throws. The heartbeat is written
-   * via {@link AgentSseWriter#writeEvent} (per-context synchronized, so it interleaves safely with
-   * the run-observer event writes), carries no trace span (so it never enters the replay buffer nor
-   * advances {@code Last-Event-ID}), and is not an {@code AgentEvent} (so it does not touch the closed
-   * event-vocabulary contract). The FE ignores it as an unmapped event and resets its liveness
-   * watchdog on it.
-   */
-  private void withHeartbeat(Context ctx, StreamBody body) throws Exception {
-    ScheduledFuture<?> heartbeat =
-        heartbeatScheduler.scheduleAtFixedRate(
-            () -> {
-              Map<String, Object> beat = new LinkedHashMap<>();
-              beat.put("ts", System.currentTimeMillis());
-              sseWriter.writeEvent(ctx, "heartbeat", beat);
-            },
-            StreamLivenessWindows.STREAM_HEARTBEAT_INTERVAL_SECONDS,
-            StreamLivenessWindows.STREAM_HEARTBEAT_INTERVAL_SECONDS,
-            TimeUnit.SECONDS);
-    try {
-      body.run();
-    } finally {
-      heartbeat.cancel(false);
-    }
+  /** Tempdoc 604 — run a blocking agent stream with an out-of-band liveness heartbeat. */
+  private void withHeartbeat(Context ctx, SseHeartbeat.StreamBody body) throws Exception {
+    heartbeat.around(ctx, body);
   }
 
   /** Stops the heartbeat scheduler. Call on shutdown. */
   void shutdown() {
-    heartbeatScheduler.shutdownNow();
+    heartbeat.shutdown();
   }
 
   /** Test-only (tempdoc 638 PE): whether {@link #shutdown()} has stopped the heartbeat scheduler. */
   boolean isHeartbeatSchedulerShutdown() {
-    return heartbeatScheduler.isShutdown();
+    return heartbeat.isShutdown();
   }
 
   /**

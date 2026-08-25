@@ -37,10 +37,15 @@ import java.util.Locale;
  * ask-once-then-auto-compact behaviour ({@link AgentStepRunner}) guarantees. The two ship together
  * or the bound is unproven.
  *
- * <p><b>Honest limit.</b> {@link #STANDARD_MULTIPLIER} is the one taste call: its value is fitted to
- * a single measured run (859 §7 — 3840 exhausted after two tool calls on a read-three-files task at
- * {@code n_ctx} 4096) and rests on that datapoint until the live leg L1 measures it. Quick and
- * Thorough are argued structurally; Standard is not.
+ * <p><b>Why {@link #STANDARD_MULTIPLIER} is 8 — the MEASURED per-iteration burn.</b> Live leg L1
+ * (2026-08-25, compact chat profile, {@code n_ctx} 4096) recorded the per-iteration burn of a
+ * delegate run as {@code 1785, 2905, 3219, 3334, 3446, 3566, 3657, 3273, 3584, 3423} — about 3,200
+ * tokens an iteration, {@code 32,192} for a full 10-iteration run, i.e. {@code 7.9x n_ctx}. The
+ * pre-L1 value of 5 was fitted to a single earlier datapoint and under-funded that by a third: the
+ * live Standard run hit the budget gate at 102.6% ({@code 21,013 / 20,480}) after 8 tool calls and
+ * never answered. 8x funds the measured run with modest headroom and still sits UNDER the structural
+ * bound above (12.5x @ 4096), so Standard remains a rung where tokens genuinely can stop a run —
+ * which is what distinguishes it from Thorough.
  *
  * <p><b>No rung reduces today's allowance.</b> {@code 2 * n_ctx > n_ctx - 256} for every
  * {@code n_ctx}, so the leash is only INTER-rung: Quick is the smallest raise, never a restriction.
@@ -52,8 +57,11 @@ final class AgentBudgetPolicy {
   /** The smallest raise — a couple of steps' worth of room. Not a limiter (see class javadoc). */
   static final int QUICK_MULTIPLIER = 2;
 
-  /** The default rung, and what an absent or unrecognized rung resolves to. */
-  static final int STANDARD_MULTIPLIER = 5;
+  /**
+   * The default rung, and what an absent or unrecognized rung resolves to. Sized to the MEASURED
+   * 10-iteration burn (see the class javadoc — L1, 2026-08-25).
+   */
+  static final int STANDARD_MULTIPLIER = 8;
 
   /** Clears the structural per-run spend bound, so the iteration cap is what stops the run. */
   static final int THOROUGH_MULTIPLIER = 15;

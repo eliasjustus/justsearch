@@ -41,8 +41,9 @@ interface FakeCtrl {
   runKind: 'agent' | 'workflow' | 'background' | null;
   conversationId: string | null;
   sessionId: string | null;
-  iterationsUsed: number;
-  toolCallsExecuted: number;
+  /** 859 D live-defect D1 — tri-state: `null` is "no authority has reported a step yet". */
+  iterationsUsed: number | null;
+  toolCallsExecuted: number | null;
   budgetUpdates: BudgetUpdate[];
   reasoning: ReasoningController;
   budgetGate: { tokensNeeded: number; tokensRemaining: number; totalTokensConsumed: number } | null;
@@ -70,8 +71,8 @@ function makeCtrl(): FakeCtrl {
     runKind: null,
     conversationId: null,
     sessionId: null,
-    iterationsUsed: 0,
-    toolCallsExecuted: 0,
+    iterationsUsed: null,
+    toolCallsExecuted: null,
     budgetUpdates: [],
     // Tempdoc 859 §A — the live run feed derives its open-region item from the real controller.
     reasoning: new ReasoningController(() => {}),
@@ -422,6 +423,60 @@ describe('a typed prompt is resolved by its OWN command, never by chat text', ()
     expect(dispatches()).toHaveLength(0);
     const main = await region(el, 'jf-sv3-main');
     expect(q(main, 'sv3-run-prompt')?.dataset.kind).toBe('budget');
+  });
+
+  /* ── 859 D live-defect D1 — the gate's fact panel states the work, not two structural zeros ── */
+
+  /** The rows the fact panel rendered, as `label → value`, so a MISSING row is legible as missing. */
+  const factRows = (main: Mounted): Record<string, string> => {
+    const dl = q(main, 'sv3-run-budget-facts');
+    const rows: Record<string, string> = {};
+    for (const div of dl?.querySelectorAll('div') ?? []) {
+      const label = div.querySelector('dt')?.textContent?.trim() ?? '';
+      rows[label] = div.querySelector('dd')?.textContent?.trim() ?? '';
+    }
+    return rows;
+  };
+
+  it('states the tool calls and steps this run has ACTUALLY made, mid-run', async () => {
+    // THE LIVE DEFECT. Every gate in the 2026-08-25 audit rendered "Tool calls 0 · Steps 0" beside a
+    // correct "Last action" while the backend was five iterations and four tool calls in. Both
+    // fields were initialised to 0 with `onDone` as their only writer, so at a gate — which happens
+    // by definition BEFORE the terminal — they were structurally zero. That is a fabricated fact at
+    // the exact moment the reader is deciding whether to spend more money on the run, and it broke
+    // the panel's own rule that absent facts are omitted rather than shown as zero.
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'do the thing', ['c1', 'c2', 'c3']);
+    await frame(el, {
+      // What the run's `progress` frames have reported by the time the gate lands.
+      iterationsUsed: 5,
+      budgetGate: { tokensNeeded: 500, tokensRemaining: 10, totalTokensConsumed: 90 },
+    });
+    const rows = factRows(await region(el, 'jf-sv3-main'));
+    // The tool-call figure is the FEED's own count — the same number the receipt shows — so the
+    // panel and the receipt can never describe different runs.
+    expect(rows['Tool calls']).toBe('3');
+    expect(rows['Steps']).toBe('5');
+    expect(rows['Last action']).toBe('core_search');
+  });
+
+  it('OMITS the step count entirely when nothing has reported one', async () => {
+    // The other half of the rule: the fix must not simply move the fabricated zero somewhere else.
+    // A window that has been told no step count says nothing, exactly as it already does for the
+    // elapsed time and the last action.
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'do the thing', ['c1']);
+    await frame(el, {
+      iterationsUsed: null,
+      budgetGate: { tokensNeeded: 500, tokensRemaining: 10, totalTokensConsumed: 90 },
+    });
+    const rows = factRows(await region(el, 'jf-sv3-main'));
+    expect(Object.keys(rows)).not.toContain('Steps');
+    // And the facts it DOES have still render — omission is per-fact, not a blanked panel.
+    expect(rows['Tool calls']).toBe('1');
+    expect(rows['Tokens used']).toBe('90');
   });
 
   it('resolves the budget gate through the dedicated control, via the seam', async () => {

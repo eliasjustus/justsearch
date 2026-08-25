@@ -81,10 +81,11 @@ export type Sv3RunSource = Pick<
   // Tempdoc 834 §6.2 — the run's own answer to "why am I stopped", carried on the reattach primer.
   // The two gate fields above are announced by frames the replay ring can evict; this one is not.
   | 'runPark'
-  | 'iterationsUsed'
   // Tempdoc 859 §D §2.4 — the budget gate's fact panel: what this run has already spent, and on
-  // what. Both are figures the run already reported; the panel adds no wire field.
-  | 'toolCallsExecuted'
+  // what. A figure the run already reported; the panel adds no wire field. `toolCallsExecuted` is
+  // NOT read here — 859 D live-defect D1 moved the panel's tool-call count onto the feed, which is
+  // the same number the receipt shows and is not blind until the run's terminal.
+  | 'iterationsUsed'
   | 'budgetUpdates'
   // Tempdoc 859 §A §1.3 — the OPEN region, which has no conversation entry yet because it has not
   // been cut. Every CLOSED region is already an ordered `conversation` entry; this is the one item
@@ -371,7 +372,13 @@ export function projectSv3RunPrompts(
       tokensRemaining: budget.tokensRemaining,
       facts: projectBudgetGateFacts({
         totalTokensConsumed: budget.totalTokensConsumed,
-        toolCallsExecuted: source.toolCallsExecuted,
+        // 859 D live-defect D1 — the FEED's own count, not a controller counter written only at the
+        // run's terminal (which was therefore structurally 0 at every mid-run gate). It is also the
+        // number the receipt uses, so the panel and the receipt cannot describe different runs — the
+        // single-authority rule {@link Sv3RunFeed.toolCallCount} already states for this window.
+        toolCallsExecuted: feed.toolCallCount,
+        // Live from the run's `progress` frames (and the reattach primer); `null` while nothing has
+        // said, which the panel OMITS rather than rendering as zero.
         iterationsUsed: source.iterationsUsed,
         askedAt: gateContext.askedAt,
         now: gateContext.now,

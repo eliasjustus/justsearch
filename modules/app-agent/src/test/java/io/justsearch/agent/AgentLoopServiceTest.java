@@ -1946,8 +1946,9 @@ class AgentLoopServiceTest {
                 ScriptedResponse.textOnly("Synthesized answer from search results")));
 
     // Budget math (tempdoc 859 §D §2.1 — initialBudget = contextWindow * effortMultiplier, and the
-    // 256-token safety margin is gone; this run names no rung, so it is Standard = 5x):
-    //   initialBudget = 400 * 5 = 2000
+    // 256-token safety margin is gone; this run names no rung, so it is Standard, resized to 8x by
+    // live leg L1 on 2026-08-25 — hence the window below, chosen to keep this fixture's arithmetic):
+    //   initialBudget = 250 * 8 = 2000
     // Iteration 1:
     //   countPromptTokens = messages.size() * 10 = 2 * 10 = 20 (ScriptedAiService simulation)
     //   20 < 2000 → budget OK → LLM call proceeds
@@ -1961,7 +1962,7 @@ class AgentLoopServiceTest {
     // context-pressure gate too (859 §D §2.7(c) now reads the reported prompt) — which would leave
     // this test straddling two mechanisms. recordUsage decrements identically for either axis, so
     // the budget arithmetic under test is unchanged and the context axis stays quiet.
-    var service = buildServiceWithSmallBudget(ai, 400);
+    var service = buildServiceWithSmallBudget(ai, 250);
 
     var events = run(service, userMessage("search"), 5);
 
@@ -1990,7 +1991,7 @@ class AgentLoopServiceTest {
             List.of(
                 ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
                 ScriptedResponse.textOnly("Synthesized answer from search results")));
-    var service = buildServiceWithSmallBudget(ai, 400);
+    var service = buildServiceWithSmallBudget(ai, 250);
 
     var events = run(service, userMessage("search"), 5);
 
@@ -2049,7 +2050,7 @@ class AgentLoopServiceTest {
                 ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
                 ScriptedResponse.empty()));
 
-    var service = buildServiceWithSmallBudget(ai, 400);
+    var service = buildServiceWithSmallBudget(ai, 250);
 
     var events = run(service, userMessage("search"), 5);
 
@@ -2237,7 +2238,7 @@ class AgentLoopServiceTest {
               List.of(
                   ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
                   ScriptedResponse.textOnly("Answer after the raise").withUsage(50, 20)));
-      var service = buildServiceWithSmallBudget(ai, 400); // Standard ⇒ 2000, over-spent to -100
+      var service = buildServiceWithSmallBudget(ai, 250); // Standard (8x) ⇒ 2000, over-spent to -100
 
       var events = new CopyOnWriteArrayList<AgentEvent>();
       var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
@@ -2311,7 +2312,7 @@ class AgentLoopServiceTest {
                 ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(20, 10),
                 ScriptedResponse.toolCall("call_2", "core_search", "{}").withUsage(20, 10),
                 ScriptedResponse.textOnly("Done").withUsage(20, 10)));
-    var service = buildServiceWithSmallBudget(ai, 4000); // Standard ⇒ 20,000; never exhausted
+    var service = buildServiceWithSmallBudget(ai, 4000); // Standard (8x) ⇒ 32,000; never exhausted
 
     var events = new java.util.concurrent.CopyOnWriteArrayList<AgentEvent>();
     var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
@@ -2380,7 +2381,7 @@ class AgentLoopServiceTest {
             List.of(
                 ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
                 ScriptedResponse.textOnly("Here is the complete and thorough answer to your question.")));
-    var events = run(buildServiceWithSmallBudget(ai, 400), userMessage("search"), 5);
+    var events = run(buildServiceWithSmallBudget(ai, 250), userMessage("search"), 5);
     var done = lastEventOfType(events, AgentEvent.AgentDone.class);
     assertNotNull(done);
     assertEquals(
@@ -2481,6 +2482,69 @@ class AgentLoopServiceTest {
         eventsOfType(events, AgentEvent.ContextGatePending.class).isEmpty(),
         "a reported prompt of 190 against a 200-token window IS context pressure, even though the"
             + " projection (max 40) never sees it");
+  }
+
+  @Test
+  @DisplayName("859 D4 — CONTINUE into an UNSERVABLE prompt compacts first, and says so")
+  void continueAtAnUnservableCrossingCompactsBeforeCallingTheModel() {
+    // THE LIVE DEFECT (2026-08-25, L5 attempt 1). A run with a large opening message crossed the
+    // context gate; the reader's CONTINUE was honoured literally, the loop called the provider with
+    // a prompt of 4172 against a 4096 window, llama-server 400'd three times, and the run ERRORED —
+    // so §2.7's auto-compacting SECOND crossing never got its chance. CONTINUE means "don't stop";
+    // continuing into a guaranteed rejection is not continuing.
+    //
+    // The fixture reproduces the mechanism, not the numbers: `countPromptTokens` under-counts (577),
+    // so the loop can hold a projection it believes is fine while the REAL prompt is already over.
+    //   window 120 ⇒ pressure at 96, unservable at 114
+    //   projection = messages * 10, real (and reported) = messages * 15
+    //   iterations reach the model at 2, 4, 6, 8 messages (real 30/60/90/120 — all servable),
+    //   and the 5th sees pressure 120 (the REPORTED prompt) ⇒ gate ⇒ CONTINUE (0 s test timeout)
+    //   ⇒ without the fix the call goes out at 10 messages = real 150 > 120 and is REFUSED.
+    var ai =
+        new WindowBoundAiService(
+            120,
+            List.of(
+                ScriptedResponse.toolCall("c1", "core_search", "{}"),
+                ScriptedResponse.toolCall("c2", "core_search", "{}"),
+                ScriptedResponse.toolCall("c3", "core_search", "{}"),
+                ScriptedResponse.toolCall("c4", "core_search", "{}"),
+                ScriptedResponse.textOnly("Answered after compacting to fit")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "results"));
+    var request =
+        new AgentRequest(
+            userMessage("a large opening task"), List.of(), 6, List.of(), null, null, null, null,
+            List.of(), "thorough");
+    var events = runWithRequest(service, request);
+
+    // 1. The gate DID fire — otherwise this test would be passing without exercising the path.
+    var gate = lastEventOfType(events, AgentEvent.ContextGatePending.class);
+    assertNotNull(gate, "the run must actually reach the context gate for this test to mean anything");
+    // 859 D3, same event: the gate SHOWS the quantity it triggered on (the reported prompt), not the
+    // projection that would have read 100 against a 120 window and justified nothing.
+    assertEquals(
+        120,
+        gate.promptTokens(),
+        "the gate must publish the pressure figure it fired on, not the schema-blind projection");
+
+    // 2. It compacted rather than calling into the refusal, and SAID so — the reader chose CONTINUE,
+    // so a departure from that has to be narrated, not silently substituted.
+    assertFalse(
+        eventsOfType(events, AgentEvent.ContextCompacted.class).isEmpty(),
+        "an unservable CONTINUE must compact before the call");
+    assertTrue(
+        eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+            .anyMatch(p -> "context_compacted_to_fit".equals(p.phase())),
+        "and it must say it compacted to fit — bounded autonomy, never silent");
+
+    // 3. THE OUTCOME THAT MATTERS: no 400, and a real answer.
+    assertTrue(
+        ai.refusals.isEmpty(),
+        "the provider must never have been handed a prompt it would refuse, got: " + ai.refusals);
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNull(error, "the run must not error — it errored live, three refusals deep");
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "the run completes");
+    assertEquals("Answered after compacting to fit", done.finalResponse());
   }
 
   private static void restoreProperty(String key, String previous) {
@@ -3875,6 +3939,105 @@ class AgentLoopServiceTest {
     @Override
     public Integer configuredContextTokens() {
       return 4096; // Match llmContextTokens for testing
+    }
+  }
+
+  /**
+   * Tempdoc 859 D live-defect D4 — a provider that REFUSES a prompt bigger than its window, the way
+   * llama-server does ("request (N tokens) exceeds the available context size"), paired with a
+   * projection that UNDER-COUNTS it, the way {@code countPromptTokens} does (577: schema-blind,
+   * measured ~40% low).
+   *
+   * <p>The gap between the two IS the defect: the loop can hold a projection it believes is servable
+   * while the real prompt is already over the window. A fixture where the two agree could not
+   * reproduce it, and would pass whether or not the fix existed.
+   */
+  private static final class WindowBoundAiService implements OnlineAiService {
+    /** What the loop's projection sees per message — the under-count. */
+    private static final int PROJECTED_PER_MESSAGE = 10;
+
+    /** What the message actually costs the provider (and what usage reports back). */
+    private static final int REAL_PER_MESSAGE = 15;
+
+    private final int contextWindow;
+    private final List<ScriptedResponse> responses;
+
+    /** Every prompt the provider was handed that it had to refuse. Empty is the passing state. */
+    final List<Integer> refusals = new ArrayList<>();
+
+    private int callIndex;
+
+    WindowBoundAiService(int contextWindow, List<ScriptedResponse> responses) {
+      this.contextWindow = contextWindow;
+      this.responses = new ArrayList<>(responses);
+    }
+
+    @Override
+    public CompletableFuture<String> summarize(String content) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CompletableFuture<String> askQuestion(String question, String context) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isAvailable() {
+      return true;
+    }
+
+    @Override
+    public boolean isStartingUp() {
+      return false;
+    }
+
+    @Override
+    public void streamChatWithTools(
+        List<Map<String, Object>> messages,
+        List<Map<String, Object>> tools,
+        int maxTokens,
+        StreamCallbacks callbacks,
+        SamplingParams sampling) {
+      int realPrompt = messages.size() * REAL_PER_MESSAGE;
+      if (realPrompt > contextWindow) {
+        refusals.add(realPrompt);
+        callbacks
+            .onError()
+            .accept(
+                new IllegalStateException(
+                    "request (" + realPrompt + " tokens) exceeds the available context size"));
+        return;
+      }
+      if (callIndex >= responses.size()) {
+        callbacks.onError().accept(new IllegalStateException("No more scripted responses"));
+        return;
+      }
+      ScriptedResponse response = responses.get(callIndex++);
+      if (response.text != null && !response.text.isEmpty()) {
+        callbacks.onChunk().accept(response.text);
+      }
+      for (String deltaJson : response.toolCallDeltas) {
+        callbacks.onToolCallDelta().accept(deltaJson);
+      }
+      // The provider reports the REAL prompt — which is what the context-pressure trigger reads.
+      callbacks.onUsage().accept(new OnlineAiService.AiUsage(realPrompt, 5, realPrompt + 5));
+      callbacks.onComplete().accept(null);
+    }
+
+    @Override
+    public java.util.Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
+      return java.util.Optional.of(messages.size() * PROJECTED_PER_MESSAGE);
+    }
+
+    @Override
+    public Integer llmContextTokens() {
+      return contextWindow;
+    }
+
+    @Override
+    public Integer configuredContextTokens() {
+      return contextWindow;
     }
   }
 

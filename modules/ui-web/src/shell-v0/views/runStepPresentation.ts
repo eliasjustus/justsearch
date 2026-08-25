@@ -84,6 +84,10 @@ const PROGRESS_PHASE_LABELS: Readonly<Record<string, string>> = {
   // Tempdoc 577 §2.14 Root II — the context-management narration (the one growing phase vocabulary).
   context_gate_held: 'Context filling up',
   context_compacted: 'Compacted earlier turns to stay within the model’s memory',
+  // 859 D live-defect D4 — the run compacted DESPITE a CONTINUE, because the next prompt would not
+  // have fit. That is a departure from what the reader clicked, so it gets its own line rather than
+  // hiding inside the generic compaction one.
+  context_compacted_to_fit: 'Compacted to fit before continuing',
   // Tempdoc 577 §2.14 Root I — a Watch run paused because its only watcher left (zero-observer park).
   run_unobserved_parked: 'Paused — no one is watching',
 };
