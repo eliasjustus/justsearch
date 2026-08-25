@@ -9,6 +9,7 @@ reason. No real Vite/browser — these are pure-unit (mocked Popen / fake page).
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import socket
 import subprocess
@@ -67,9 +68,18 @@ def test_start_vite_server_honors_contract(tmp_path, monkeypatch):
 
     ui_web = tmp_path / "modules" / "ui-web"
     ui_web.mkdir(parents=True)
+    (ui_web / "node_modules").mkdir()
     info_path = tmp_path / "server.json"
 
     vite_entry = tmp_path / "vite" / "bin" / "vite.js"
+
+    # Tempdoc 861 W3 — isolate the agent-spawns register so this test can never write into the
+    # real main checkout's `tmp/dev-runner/agent-spawns/`, regardless of whether the fake pid
+    # happens to collide with a real process on the test machine.
+    monkeypatch.setenv("JUSTSEARCH_DEV_RUNNER_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        ui_shot.agent_spawn_register, "process_creation_file_time_utc", lambda _pid: "134320479841300350",
+    )
 
     monkeypatch.setattr(ui_shot, "_find_ui_web_dir", lambda: ui_web)
     monkeypatch.setattr(ui_shot, "_ensure_node_modules_junction", lambda _u: True)
@@ -97,6 +107,68 @@ def test_start_vite_server_honors_contract(tmp_path, monkeypatch):
     assert info["port"] == 5191
     assert info["stderr_log"].endswith("ui-shot-vite-5191.log")
     assert info["provenance"] == {"branch": "x", "head": "abc"}
+
+    # Tempdoc 861 W3 — the SAME start also wrote a real agent-spawns register record.
+    rec_path = ui_shot.agent_spawn_register.register_dir() / "ui-shot-5191.json"
+    rec = json.loads(rec_path.read_text(encoding="utf-8"))
+    assert rec["producer"] == "ui-shot"
+    assert rec["pid"] == 4321
+    assert rec["creationFileTimeUtc"] == "134320479841300350"
+    assert rec["cmdlineFingerprint"] == "--port 5191"
+    assert rec["ownership"] == "session-owned"
+    assert rec["probe"] == {"kind": "port", "port": 5191}
+    assert rec["lease"]["durationSec"] == ui_shot._AGENT_SPAWN_LEASE_DURATION_SEC
+
+
+# --- tempdoc 861 W3: lease-on-use renewed on the REUSE path, both call sites -------------------
+
+def test_start_vite_server_reuse_renews_agent_spawn_lease(tmp_path, monkeypatch):
+    monkeypatch.setenv("JUSTSEARCH_DEV_RUNNER_STATE_ROOT", str(tmp_path / "state"))
+    info_path = tmp_path / "server.json"
+    info_path.write_text(json.dumps({"port": 5192, "pid": 4321, "root": None}), encoding="utf-8")
+
+    # Pre-seed a record with a lease that has already lapsed.
+    stale = ui_shot.agent_spawn_register.build_record(
+        record_id="ui-shot-5192", producer="ui-shot", pid=4321,
+        creation_file_time_utc="134320479841300350", cmdline_fingerprint="--port 5192",
+        port=5192, lease_duration_sec=1,
+        now=datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc),
+    )
+    ui_shot.agent_spawn_register.write_record(stale)
+
+    monkeypatch.setattr(ui_shot, "_SERVER_INFO_PATH", info_path)
+    monkeypatch.setattr(ui_shot, "_is_server_alive", lambda _info: True)
+
+    url = ui_shot._start_vite_server()
+    assert url == "http://localhost:5192"
+
+    rec_path = ui_shot.agent_spawn_register.register_dir() / "ui-shot-5192.json"
+    renewed = json.loads(rec_path.read_text(encoding="utf-8"))
+    assert renewed["lease"]["expiresAt"] > stale["lease"]["expiresAt"]
+
+
+def test_resolve_ui_url_reuse_renews_agent_spawn_lease(tmp_path, monkeypatch):
+    monkeypatch.setenv("JUSTSEARCH_DEV_RUNNER_STATE_ROOT", str(tmp_path / "state"))
+    info_path = tmp_path / "server.json"
+    info_path.write_text(json.dumps({"port": 5193, "pid": 4321, "root": None}), encoding="utf-8")
+
+    stale = ui_shot.agent_spawn_register.build_record(
+        record_id="ui-shot-5193", producer="ui-shot", pid=4321,
+        creation_file_time_utc="134320479841300350", cmdline_fingerprint="--port 5193",
+        port=5193, lease_duration_sec=1,
+        now=datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc),
+    )
+    ui_shot.agent_spawn_register.write_record(stale)
+
+    monkeypatch.setattr(ui_shot, "_SERVER_INFO_PATH", info_path)
+    monkeypatch.setattr(ui_shot, "_is_server_alive", lambda _info: True)
+
+    url = ui_shot._resolve_ui_url("http://localhost:5173")
+    assert url == "http://localhost:5193"
+
+    rec_path = ui_shot.agent_spawn_register.register_dir() / "ui-shot-5193.json"
+    renewed = json.loads(rec_path.read_text(encoding="utf-8"))
+    assert renewed["lease"]["expiresAt"] > stale["lease"]["expiresAt"]
 
 
 # --- vite-entry resolution + actionable broken-install reason (615 §30) ------
