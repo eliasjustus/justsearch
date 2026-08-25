@@ -169,6 +169,27 @@ const EFFORT_GLYPH = 'zap';
  */
 const TIER_GLYPH = 'arrow-right-left';
 
+/**
+ * What a press inside the glass box must be left alone for (tempdoc 864 Layer 1(b)). Everything else
+ * in there is a DEAD ZONE that reads as the field, so its press belongs to the field.
+ *
+ * Matched with `closest()` from the press's deepest origin rather than tested on that origin
+ * directly: the stop control's glyph is an `<svg><rect>`, so the innermost element under a press on
+ * the primary action is not the `<button>` it belongs to.
+ *
+ * Three entries are here for what this box may become, not only for what it holds today, because the
+ * failure they prevent is silent — a press this list misses is EATEN (`preventDefault`), so the
+ * control under it stops working rather than looking wrong. `jf-control` is the product's operability
+ * primitive and its host padding retargets no further up (the `closest()` walk from the host finds no
+ * `<button>`); `[role="button"]` and `[tabindex]` are the standalone-affordance triad's own marks.
+ *
+ * `[data-selectable]` is the opposite case and just as silent: real text inside the box that a reader
+ * may want to select, which a suppressed default would make undraggable.
+ */
+const BAND_INTERACTIVE =
+  'button, a[href], input, textarea, select, jf-control, [role="button"], [tabindex], ' +
+  '[contenteditable="true"], [data-selectable]';
+
 export class Sv3Composer extends JfElement {
   static styles = [
     sv3Shared,
@@ -1058,6 +1079,50 @@ export class Sv3Composer extends JfElement {
   }
 
   /**
+   * Tempdoc 864 Layer 1(a) — PUT THE CARET IN THE FIELD. The composer owns its own focus, exactly as
+   * it owns its own draft: the window says "the reader is at a ready composer now" and this decides
+   * what that means.
+   *
+   * It MUST reach the `<textarea>` through the shadow root. A `.focus()` on the HOST would silently
+   * no-op — `delegatesFocus` is used in zero places app-wide (§2.9(d)), so the host is not focusable
+   * and the platform does not forward the call. `preventScroll` because focus is being MOVED FOR the
+   * reader rather than by them: the entry paths that call this also settle a transcript, and a
+   * scroll-into-view here would yank the reading position on arrival.
+   */
+  focusField(): void {
+    this.shadowRoot?.querySelector('textarea')?.focus({ preventScroll: true });
+  }
+
+  /**
+   * Tempdoc 864 Layer 1(b) — THE WHOLE GLASS BOX IS THE FIELD. `.field`'s padding, the footer row's
+   * empty space and the `.glass::after` ring all read as part of one input and none of them were
+   * click-to-focus (§2.9(b)): a press there landed on a non-focusable div, moved focus to `<body>`,
+   * and left a box that looks primed with nothing listening.
+   *
+   * SCOPED TO `.glass`, which is the box the ring draws. The hero landing, the degradation banner and
+   * the availability notice are SIBLINGS of it in the band and are not in scope — they carry text a
+   * reader may want to read and select, and nothing about them reads as the input.
+   *
+   * The press is only claimed for a DEAD zone. Everything in {@link BAND_INTERACTIVE} keeps its own
+   * press — the send/stop control, the two menu triggers, the `<textarea>` itself, and the model
+   * label's selectable text — so caret placement and drag-selection are untouched. On a dead zone the
+   * default IS suppressed, because the press's default action is precisely the focus move this
+   * method exists to prevent.
+   *
+   * The `data-focus-forward` marker on the element is the claim this makes to `check-controls-a11y`:
+   * a press handler that only moves the caret into the element's own field adds no affordance to
+   * reach by keyboard. A real `<label>` is the platform's word for it and cannot be used here — it
+   * would also wrap the footer's controls, which is not what a field's label may contain.
+   */
+  private onGlassPointerDown(event: Event): void {
+    const origin = event.composedPath()[0];
+    if (!(origin instanceof Element)) return;
+    if (origin.closest(BAND_INTERACTIVE) !== null) return;
+    event.preventDefault();
+    this.focusField();
+  }
+
+  /**
    * The ONE origin of a send, whichever affordance asked. An empty draft is not a send.
    *
    * Three refusals, each returning WITHOUT TOUCHING THE DRAFT. The reason is already on screen (the
@@ -1126,7 +1191,12 @@ export class Sv3Composer extends JfElement {
           : html`<p class="notice" id="sv3-composer-notice" role="status" data-testid="sv3-composer-notice">
               ${reason}
             </p>`}
-        <div class="glass" data-testid="sv3-composer-shell">
+        <div
+          class="glass"
+          data-testid="sv3-composer-shell"
+          data-focus-forward
+          @pointerdown=${this.onGlassPointerDown}
+        >
           <div class="field">
             <div class="editor">
               <textarea
@@ -1249,10 +1319,18 @@ export class Sv3Composer extends JfElement {
    * 14px/500, not focusable, not a button, no invented role. And it does NOT adopt the effort
    * control's evaporate-on-dock treatment (`:host([state='docked']) .control-label`): docked is the
    * transcript-reading state, which is exactly when "which model wrote this" is being asked.
+   *
+   * `data-selectable` because it is the one piece of REAL TEXT sitting in the glass box's dead zone
+   * (tempdoc 864 Layer 1(b)): a model name is exactly the kind of fact a reader copies, and the
+   * focus-forwarding press would otherwise suppress the drag that selects it.
    */
   private modelLabelFact(): TemplateResult | typeof nothing {
     if (this.modelLabel === '') return nothing;
-    return html`<span class="model-label" data-testid="sv3-composer-model" title=${this.modelLabel}
+    return html`<span
+      class="model-label"
+      data-selectable
+      data-testid="sv3-composer-model"
+      title=${this.modelLabel}
       >${this.modelLabel}</span
     >`;
   }

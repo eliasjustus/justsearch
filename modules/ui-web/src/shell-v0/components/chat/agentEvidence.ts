@@ -37,6 +37,40 @@ export interface AgentAnswerEvidence {
   readonly sources: readonly AnswerEvidenceSource[];
   readonly matches: readonly CitationMatch[];
   readonly marks: readonly Citation[];
+  /**
+   * Tempdoc 865 §7.3 — did this run's grounding pass fail to complete? The fact that tells an empty
+   * match list apart from a verdict, at the ONE place the verdict is minted.
+   *
+   * <p>Three different runs land an empty `matches`, and only the third may not be described as
+   * "not cited": the matcher ran and cited nothing (`CROSS_ENCODER` + no cites); a known
+   * non-cross-encoder producer scored them and {@link admittedMatches} refused its numbers; and the
+   * matcher never produced a verdict at all. This flag isolates the third.
+   */
+  readonly groundingIncomplete: boolean;
+}
+
+/**
+ * The wire name {@code AgentEvent.AgentDone.SCORER_NONE} stamps when NO producer scored the answer
+ * (`AgentStepRunner.groundedDone` → `AgentCitationResolver.Resolved.none()`, which is what the
+ * `MATCH_TIMEOUT_MS` timeout and every other failure degrade to — `AgentCitationResolver.java:117-123`).
+ *
+ * <p>It is the discriminator this module needs and it is ALREADY on the wire: the Worker stamps a
+ * real producer name on every response its matcher actually produced (`CitationMatchOps.execute`
+ * sets `CROSS_ENCODER`/`EMBEDDING_COSINE`), and leaves the field empty — which
+ * `ScorerKind.fromWire` maps to `NONE` — on exactly the paths where nothing scored.
+ */
+const SCORER_NONE = 'NONE';
+
+/**
+ * Tempdoc 865 §7.3 — did the grounding pass fail to complete, as the producer reported it?
+ *
+ * <p>ABSENT (`null`/`undefined`) is `false`, and that is the precedent, not an oversight: an absent
+ * stamp means a record persisted BEFORE the field existed (the same narrow allowance
+ * {@link isVerifiedProducer} makes), and a producer that says nothing about its pass does not get
+ * "it did not complete" asserted on its behalf.
+ */
+function groundingIncompleteFor(scorer: string | null | undefined): boolean {
+  return scorer === SCORER_NONE;
 }
 
 /**
@@ -121,5 +155,9 @@ export function agentAnswerEvidence(
     // source. One producer verdict, two surfaces, one outcome.
     matches: admittedMatches(toCitationMatches(sources, cites), scorer),
     marks: resolveAnswerCitations(sources, cites, scorer),
+    // Tempdoc 865 §7.3 — minted HERE, beside the two surfaces it qualifies, because this is where an
+    // empty match list is produced and therefore the only place that still knows WHY it is empty.
+    // Downstream, `[]` is `[]`.
+    groundingIncomplete: groundingIncompleteFor(scorer),
   };
 }

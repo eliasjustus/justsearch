@@ -187,3 +187,54 @@ describe('agentAnswerEvidence — the producer gate (§4)', () => {
     }
   });
 });
+
+/**
+ * Tempdoc 865 §7.3 — the DISCRIMINATOR, at the one site that still knows why the match list is empty.
+ *
+ * Three different runs hand the panel `matches: []`, and only one of them is a missing verdict. The
+ * distinction is already on the wire — `AgentStepRunner.groundedDone` stamps `resolved.scorer().name()`,
+ * which is `NONE` for every `AgentCitationResolver.Resolved.none()` (the `MATCH_TIMEOUT_MS` timeout
+ * included), while the Worker stamps a real producer name on every response its matcher produced
+ * (`CitationMatchOps.execute`). Nothing new crosses the wire for this; the fact was being dropped at
+ * the read site, which is where it is now read.
+ */
+describe('agentAnswerEvidence — telling three empty match lists apart (865 PR-0)', () => {
+  it('NONE is the only stamp that means "no producer judged these"', () => {
+    // The matcher never produced a verdict — the timeout shape.
+    expect(agentAnswerEvidence(SOURCES, [], 'NONE').groundingIncomplete).toBe(true);
+    // A rejected producer DID judge them; 836 §4 refuses its numbers, which is a different fact.
+    expect(agentAnswerEvidence(SOURCES, CITES, 'EMBEDDING_COSINE').groundingIncomplete).toBe(false);
+    // The matcher ran and cited nothing — an empty list with a producer behind it.
+    expect(agentAnswerEvidence(SOURCES, [], 'CROSS_ENCODER').groundingIncomplete).toBe(false);
+    // All three collapse to the same match list, which is exactly why the flag has to exist.
+    expect(agentAnswerEvidence(SOURCES, [], 'NONE').matches).toEqual([]);
+    expect(agentAnswerEvidence(SOURCES, CITES, 'EMBEDDING_COSINE').matches).toEqual([]);
+    expect(agentAnswerEvidence(SOURCES, [], 'CROSS_ENCODER').matches).toEqual([]);
+  });
+
+  it('an ABSENT stamp asserts NOTHING about the pass — the coverage precedent, verbatim', () => {
+    // `sourceGrounding`'s own rule: absent ⇒ the established binary stands. A record persisted
+    // before the stamp existed must not be retroactively described as a failed pass.
+    for (const scorer of [null, undefined]) {
+      expect(agentAnswerEvidence(SOURCES, [], scorer).groundingIncomplete).toBe(false);
+    }
+  });
+
+  it('an UNRECOGNISED stamp is not the missing-verdict case either', () => {
+    // `NONE` is a name the emitter writes, not a catch-all for "we could not read this". A future
+    // producer name fails the mark gate closed (the case above) without claiming the pass broke.
+    expect(agentAnswerEvidence(SOURCES, CITES, 'SOMETHING_NEW').groundingIncomplete).toBe(false);
+  });
+
+  it('the flag reaches the per-source state and the words the reader sees', () => {
+    const { sources, matches, groundingIncomplete } = agentAnswerEvidence(SOURCES, [], 'NONE');
+    const g = sourceGrounding(0, matches, sources[0]!.parentDocId, null, groundingIncomplete);
+    expect(g.state).toBe('grounding-incomplete');
+    expect(sourceGroundingLabel(g)).toBe('Retrieved · grounding check did not complete');
+    // §7.3's tier decision, made explicit: a tier is minted from a similarity and there is none, so
+    // the source carries no tier at all rather than `evidenceTier(0)`'s "low" verdict.
+    expect(g.tier).toBeNull();
+    expect(g.similarity).toBe(0);
+    expect(g.groundedSentences).toBe(0);
+  });
+});

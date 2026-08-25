@@ -2494,6 +2494,7 @@ export class Sv3Main extends JfElement {
       .citations=${[...turn.evidence.matches]}
       .sources=${[...turn.evidence.sources]}
       .retrievalMode=${turn.evidence.retrievalMode}
+      .groundingIncomplete=${turn.evidence.groundingIncomplete ?? false}
       @citation-select=${this.onCitationSelect}
     ></jf-citations-panel>`;
   }
