@@ -10,7 +10,8 @@
 import { describe, it, expect } from 'vitest';
 import type { ThreadEvent } from '../unifiedThreadProjection.js';
 import { projectSv3RecordTurns } from './sv3-record.js';
-import type { Sv3RunFeedTool } from './sv3-run.js';
+import { sv3RunReceiptLabel, type Sv3RunFeedTool } from './sv3-run.js';
+import { sv3WasCutShort } from './sv3-honesty.js';
 import type { RetrievalCitation } from '../../components/chat/citationTypes.js';
 import { claimsFromRecord } from '../../components/chat/recordEvidence.js';
 import { claimsToCitations } from '../../components/chat/citationResolve.js';
@@ -303,6 +304,76 @@ describe('a record becomes turns, bracketed by the user messages', () => {
 
   it('is empty for an empty record, so nothing can read "no record" as "nothing happened"', () => {
     expect(project([])).toEqual([]);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * ONE RUN, ONE STORY (live audit 2026-08-25, D3).
+ *
+ * The audit watched a delegate run the reader cancelled read "stopped by you" LIVE and "failed" from
+ * the RECORD after a reload. The live tail was right: `sv3RunOutcome` returns `halted` on the halt
+ * request, and `sv3RunReceiptLabel` words that as the reader's own act rather than as a malfunction.
+ * The record path had no `halted` arm at all — it derived the status from the error entry a cancelled
+ * run logs on its way down — even though the CANCELLED disposition was already on the record, read
+ * two lines away for the cut-short badge.
+ *
+ * `applySv3Record` carries a live `halted` across a refresh, so the divergence appeared only on a
+ * COLD load, where there is no prior turn to carry — which is exactly the reload these cases run.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+describe('a cancelled run comes back from the record in the live vocabulary', () => {
+  // The wire shape the backend really writes: `AgentStepRunner` marks the session terminated with
+  // `TerminalDisposition.CANCELLED`, `AgentEventPayloads` puts that on the `done` payload, and
+  // `AgentInteractionMapper`'s `done` case copies it onto the persisted assistant message.
+  const cancelledRecord = (): readonly ThreadEvent[] => [
+    event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+    event('e2', 'TOOL_ACTIVITY', 'core_search', {
+      callId: 'c1',
+      toolName: 'core_search',
+      arguments: '{"q":"lease"}',
+      risk: 'low',
+      status: 'completed',
+      output: '30 hits',
+    }),
+    event('e3', 'ASSISTANT_MESSAGE', 'Stopped before I finished reading.', {
+      disposition: 'CANCELLED',
+    }),
+    // The entry the run logs on its way down — the one the old derivation read as a failure.
+    event('e4', 'ERROR', 'run cancelled', { errorCode: 'CANCELLED' }),
+  ];
+
+  it('reads the reader’s own halt off the disposition, not the error entry', () => {
+    clock = 0;
+    const [turn] = project(cancelledRecord());
+    // The whole defect in one assertion: this was 'failed'.
+    expect(turn?.status).toBe('halted');
+    expect(turn?.disposition).toBe('CANCELLED');
+    // The run really was a delegate run — a case that projected an `ask` turn would reach the halt
+    // arm through a different render path and prove nothing about the receipt below.
+    expect(turn?.kind).toBe('agent');
+  });
+
+  it('so the reloaded receipt says what the live tail said — "stopped by you"', () => {
+    clock = 0;
+    const [turn] = project(cancelledRecord());
+    // The receipt the delegate turn renders (`Sv3Main.turnNote`), built from the projected status.
+    expect(sv3RunReceiptLabel(turn!.toolCalls, turn!.status, turn!.disposition)).toBe(
+      '1 tool call · stopped by you',
+    );
+    // CANCELLED is not a truncation — the halt receipt is its honest surface, so no "cut short"
+    // badge is added on top of it (`sv3-honesty.ts` names exactly the two truncating dispositions).
+    expect(sv3WasCutShort(turn!.disposition)).toBe(false);
+  });
+
+  it('does NOT swallow a real failure: an errored run with no cancel disposition still says failed', () => {
+    clock = 0;
+    // The twin that must stay red — without it the case above would pass for a fixture that could
+    // never have said 'failed' in the first place.
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      event('e2', 'ASSISTANT_MESSAGE', 'I could not finish.', { disposition: 'ERRORED' }),
+      event('e3', 'ERROR', 'the model returned no candidate', { errorCode: 'PROVIDER_ERROR' }),
+    ]);
+    expect(turn?.status).toBe('failed');
   });
 });
 
