@@ -41,6 +41,11 @@ const JOURNAL: ReadonlyArray<{ eventType: string; payload: Record<string, unknow
   { eventType: 'handoff_proposed', payload: { fromAgentId: 'primary', toAgentId: 'researcher', reason: 'scope' } },
   { eventType: 'handoff_executed', payload: { fromAgentId: 'primary', toAgentId: 'researcher' } },
   { eventType: 'reasoning_chunk', payload: { text: 'now answer' } },
+  // Tempdoc 859 §D F6 — the ACCOUNTABILITY progress note. It projects on BOTH paths, so it is inside
+  // the compared shape: the record must witness a budget the reader never approved being spent.
+  { eventType: 'progress', payload: { phase: 'budget_raised', message: '+12,000 tokens — continuing' } },
+  // …and a LIVENESS one, which is live-only by classification. Kept in the journal on purpose: it is
+  // what makes the excluded-set assertion below a real statement rather than an empty filter.
   { eventType: 'progress', payload: { phase: 'llm_call', message: 'Calling LLM' } },
   { eventType: 'done', payload: { finalResponse: 'the answer' } },
 ];
@@ -65,9 +70,20 @@ const RECORD: readonly ThreadEvent[] = [
       reasoning: [{ text: 'hand this to the researcher', durationMs: 1000 }],
     },
   },
+  // Tempdoc 859 §D F6 — the accountability note the fold now projects, carrying the block the raise
+  // cut. The LIVENESS `llm_call` progress that follows it in the journal projects nothing, so there
+  // is no second note here.
   {
-    id: 'conv:assistant:5', occurredAt: iso(5), kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'the answer',
-    attributes: { reasoning: [{ text: 'now answer', durationMs: 1000 }] },
+    id: 'conv:progress:budget_raised:5', occurredAt: iso(5), kind: 'PROGRESS', originator: 'agent',
+    content: '+12,000 tokens — continuing',
+    attributes: {
+      phase: 'budget_raised',
+      reasoning: [{ text: 'now answer', durationMs: 1000 }],
+    },
+  },
+  {
+    id: 'conv:assistant:6', occurredAt: iso(6), kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'the answer',
+    attributes: {},
   },
 ];
 
@@ -87,6 +103,25 @@ const shapeOf = (items: readonly Sv3RunFeedItem[]): Shape =>
     }
   });
 
+/**
+ * Every progress note's TEXT, in order. The note label is `Progress` for both classes (859 §D F6), so
+ * the text is the only thing that names WHICH note survived where.
+ */
+const progressNoteTexts = (items: readonly Sv3RunFeedItem[]): readonly string[] =>
+  items.flatMap((item) => (item.kind === 'note' && item.label === 'Progress' ? [item.text] : []));
+
+/**
+ * The live-only class, removed from the compared shape: a LIVENESS progress note. Named by its text
+ * rather than by "any Progress note", so the accountability note stays inside the parity invariant.
+ */
+const LIVENESS_PROGRESS_TEXTS: ReadonlySet<string> = new Set(['Calling LLM']);
+
+const comparableItems = (items: readonly Sv3RunFeedItem[]): readonly Sv3RunFeedItem[] =>
+  items.filter(
+    (item) =>
+      !(item.kind === 'note' && item.label === 'Progress' && LIVENESS_PROGRESS_TEXTS.has(item.text)),
+  );
+
 describe('one run, two paths, one timeline (859 §A §2.2)', () => {
   let ctrl: AgentSessionController;
 
@@ -99,30 +134,36 @@ describe('one run, two paths, one timeline (859 §A §2.2)', () => {
 
   it('R-4: the live feed and the record produce the SAME ordered (kind, text) sequence', () => {
     ctrl.loadReplayFromExport({ meta: { sessionId: 'run-parity' }, events: [...JOURNAL] });
-    const liveShape = shapeOf(projectSv3RunFeed(ctrl, 0).items);
+    const liveItems = projectSv3RunFeed(ctrl, 0).items;
     const [recordTurn] = projectSv3RecordTurns(RECORD);
-    const recordShape = shapeOf(recordTurn!.activity);
+    const recordItems = recordTurn!.activity;
 
-    // The ONE known divergence, and it predates this slice: an agent `progress` event appends a live
-    // note and projects NOTHING on the record (`AgentInteractionMapper.fromRunEvent` has no case for
-    // it). Excluded explicitly and asserted on both sides, so it is a stated limit rather than a
-    // silently-passing filter — and so a future change that made progress durable fails here.
-    expect(liveShape.filter(([kind, label]) => kind === 'note' && label === 'Progress')).toEqual([
-      ['note', 'Progress'],
-    ]);
-    expect(recordShape.filter(([kind, label]) => kind === 'note' && label === 'Progress')).toEqual([]);
+    // Tempdoc 859 §D F6 — progress durability, asserted BY NAME on both sides. This replaces the
+    // stated asymmetry that stood here (progress projected nothing on the record, so the guard rail's
+    // "every silent continue is NARRATED" expired on reload). The split is now a CLASSIFICATION, not
+    // an absence: the accountability note survives, the liveness spinner does not.
+    //
+    // Compared on TEXT, not on the note label: both notes carry the label `Progress`, so a
+    // label-only assertion could not tell the durable one from the ephemeral one and would pass with
+    // the wrong note surviving.
+    expect(progressNoteTexts(liveItems)).toEqual(['+12,000 tokens — continuing', 'Calling LLM']);
+    expect(progressNoteTexts(recordItems)).toEqual(['+12,000 tokens — continuing']);
 
-    const comparable = (shape: Shape): Shape =>
-      shape.filter(([kind, label]) => !(kind === 'note' && label === 'Progress'));
+    // …so only the LIVENESS note is excluded from the compared shape. The durable one stays IN it,
+    // which is what makes its position — after the thinking it cut, before the answer — part of the
+    // parity invariant rather than a fact asserted off to the side.
+    const liveShape = shapeOf(comparableItems(liveItems));
+    const recordShape = shapeOf(comparableItems(recordItems));
 
-    expect(comparable(liveShape)).toEqual(comparable(recordShape));
+    expect(liveShape).toEqual(recordShape);
     // …and the shape is the run's real chronology, not an empty agreement between two empty lists.
-    expect(comparable(liveShape)).toEqual([
+    expect(liveShape).toEqual([
       ['reasoning', 'plan the search'],
       ['tool', 'c1'],
       ['reasoning', 'hand this to the researcher'],
       ['note', 'Handoff'],
       ['reasoning', 'now answer'],
+      ['note', 'Progress'],
       ['text', 'the answer'],
     ]);
   });

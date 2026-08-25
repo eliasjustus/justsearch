@@ -342,7 +342,7 @@ final class AgentStepRunner {
               if (reappliedWithoutAsking) {
                 sink.accept(
                     new AgentEvent.AgentProgress(
-                        "context_gate_reapplied",
+                        AgentEvent.AgentProgress.PHASE_CONTEXT_GATE_REAPPLIED,
                         "Context filling up again — compacting without asking again",
                         iteration + 1,
                         request.maxIterations()));
@@ -350,7 +350,7 @@ final class AgentStepRunner {
               sink.accept(new AgentEvent.ContextCompacted(dropped));
               sink.accept(
                   new AgentEvent.AgentProgress(
-                      "context_compacted",
+                      AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED,
                       "Compacted earlier turns to stay within the model's memory",
                       iteration + 1,
                       request.maxIterations()));
@@ -957,7 +957,7 @@ final class AgentStepRunner {
     }
     sink.accept(
         new AgentEvent.AgentProgress(
-            "budget_raised",
+            AgentEvent.AgentProgress.PHASE_BUDGET_RAISED,
             String.format("+%,d tokens — continuing", raised),
             iteration + 1,
             maxIterations));
