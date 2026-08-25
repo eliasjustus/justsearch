@@ -14,8 +14,17 @@
  * boundary so an expression like `selectionKind == search-hit &&
  * selectionCount > 0` evaluates straight against this snapshot.
  */
-/** Where the user's keyboard focus lives. */
-export type FocusKind = 'input' | 'result' | 'tab' | 'palette' | 'none';
+/**
+ * Tempdoc 864 §2.4 / §3.2(c) — `focusKind` and `paletteOpen` used to be declared here and were
+ * NEVER written: no `updateShellContext` call site ever set either, for the whole life of the app.
+ * A `when` clause over an unwritten slot is a compile-time constant whose polarity depends on how it
+ * is phrased (`focusKind != input` is constantly TRUE against the `'none'` default, `== input`
+ * constantly false), so both read as maintained guards while guarding nothing. They are removed
+ * rather than back-filled because the guard that needed them — "a modal owns the keyboard" — is
+ * answered by the modality authority that already knows (`primitives/modality.ts`
+ * {@link modalOwnsFocus}), and a `when` clause could not reach the raw window/document listeners
+ * where the defect lived anyway (§3.4). Do not re-declare a slot here without its writer.
+ */
 
 /**
  * Selection kind discriminator (§13.2 trim — demand-driven kinds only).
@@ -47,8 +56,6 @@ export interface ShellContext {
   readonly activeSurface: string | null;
   /** Active profile id. Defaults to "default" until Profiles V2 lands. */
   readonly activeProfile: string;
-  /** Where the user's focus is. */
-  readonly focusKind: FocusKind;
   /** Selection summary (flat-key shape). */
   readonly selectionKind: SelectionKind;
   readonly selectionCount: number;
@@ -70,8 +77,6 @@ export interface ShellContext {
   readonly inspectorTab: string | null;
   /** Platform capabilities — comma-joined for `in`-membership. */
   readonly platformCapabilities: string;
-  /** Palette open state (for keybindings that should only fire when palette is closed). */
-  readonly paletteOpen: boolean;
   // ── Tempdoc 543 §3.B Scope — named-but-deferred slots ──
   //
   // Each slot is a contract: when the domain ships its state module
@@ -99,7 +104,6 @@ export interface ShellContext {
 const DEFAULT_CONTEXT: ShellContext = {
   activeSurface: null,
   activeProfile: 'default',
-  focusKind: 'none',
   selectionKind: 'none',
   selectionCount: 0,
   selectionCapabilities: '',
@@ -109,7 +113,6 @@ const DEFAULT_CONTEXT: ShellContext = {
   inspectorOpen: false,
   inspectorTab: null,
   platformCapabilities: '',
-  paletteOpen: false,
   // Tempdoc 543 §3.B — deferred slots default to null/'' (predicates
   // referencing them evaluate false silently per §12.3 #4).
   activeCorpusId: null,
@@ -147,13 +150,12 @@ export function subscribeShellContext(listener: (ctx: ShellContext) => void): ()
 export function updateShellContext(patch: Partial<ShellContext>): void {
   const next: ShellContext = { ...current, ...patch };
   // Cheap structural equality — if every field matches, skip the
-  // notify pass. Mostly for the high-frequency cases (focusKind
+  // notify pass. Mostly for the high-frequency cases (a selection
   // changing on tab/click) where consumers don't want spurious
   // re-renders.
   if (
     next.activeSurface === current.activeSurface &&
     next.activeProfile === current.activeProfile &&
-    next.focusKind === current.focusKind &&
     next.selectionKind === current.selectionKind &&
     next.selectionCount === current.selectionCount &&
     next.selectionCapabilities === current.selectionCapabilities &&
@@ -163,7 +165,6 @@ export function updateShellContext(patch: Partial<ShellContext>): void {
     next.inspectorOpen === current.inspectorOpen &&
     next.inspectorTab === current.inspectorTab &&
     next.platformCapabilities === current.platformCapabilities &&
-    next.paletteOpen === current.paletteOpen &&
     // Tempdoc 543 §3.B — deferred slots + audience must participate
     // in the change-detection equality check; otherwise Scope's
     // restoreScope() can silently swallow updates.

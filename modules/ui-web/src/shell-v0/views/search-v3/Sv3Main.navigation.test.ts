@@ -21,7 +21,11 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './Sv3Main.js';
+import './Sv3Palette.js';
 import type { Sv3Main } from './Sv3Main.js';
+import type { Sv3Palette } from './Sv3Palette.js';
+import { __resetModalityForTest } from '../../primitives/modality.js';
+import { deepActiveElement, isTypingTarget } from '../../utils/keyboardHandler.js';
 import type { NavigationController } from '../../primitives/navigation.js';
 import type { Sv3Turn } from './sv3-sessions.js';
 import type { Sv3RunFeedItem, Sv3RunPrompt, Sv3RunView } from './sv3-run.js';
@@ -148,6 +152,9 @@ const press = (key: string, init: KeyboardEventInit = {}): void => {
 
 afterEach(() => {
   document.body.innerHTML = '';
+  // 864 Layer 2(d) — modality depth is module state and outlives the DOM: a case that left a modal
+  // entered would make every LATER case's global keys silently inert.
+  __resetModalityForTest();
 });
 
 describe('857 PR-A — the stamped transcript becomes the controller’s landmarks (the wiring)', () => {
@@ -789,6 +796,57 @@ describe('857 PR-A — the guards', () => {
     press('j', { altKey: true });
     press('j', { shiftKey: true });
     expect(jumpTo).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Tempdoc 864 Layer 2(b) — IME composition and auto-repeat, through the ONE shared helper. Both
+   * are asserted beside a press that still navigates, so a guard that simply swallowed every key
+   * would fail the second half.
+   */
+  it('864: ignores an IME-composing press and an auto-repeat press', async () => {
+    const { nav } = await transcript();
+    const jumpTo = vi.spyOn(nav, 'jumpTo').mockImplementation(() => {});
+    press('j', { isComposing: true });
+    expect(jumpTo, 'a keystroke feeding an IME candidate window is not a shortcut').not.toHaveBeenCalled();
+    press('j', { repeat: true });
+    expect(jumpTo, 'a held key is one intent, not N').not.toHaveBeenCalled();
+    press('j');
+    expect(jumpTo).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Tempdoc 864 Layer 2(d) — THE L10 defect, reproduced against the REAL palette (2026-08-25 live
+   * session: palette open, focus on a control inside the popup, `j` scrolled the transcript
+   * underneath it from 624 to 0). Focus is deliberately parked on a NON-editable element, because
+   * that is the whole point: every pre-existing guard passes there — the press is unclaimed, it
+   * carries no modifier, and a `role="option"` row is not a typing target — so only a guard that
+   * asks "does a modal own the keyboard?" can stop it. The same press after `hide()` navigates, so
+   * this is the modal guard and not a dead listener.
+   */
+  it('864 L10: stands down while the command palette is open, wherever focus sits', async () => {
+    const { nav } = await transcript();
+    const palette = document.createElement('jf-sv3-palette') as Sv3Palette;
+    document.body.appendChild(palette);
+    await palette.show();
+
+    const row = palette.shadowRoot?.querySelector<HTMLElement>('[data-testid="sv3-palette-item"]');
+    if (!row) throw new Error('no palette row rendered — the case cannot park focus inside the popup');
+    row.tabIndex = -1;
+    row.focus();
+    expect(isTypingTarget(deepActiveElement()), 'the pre-existing typing guard does NOT cover this').toBe(
+      false,
+    );
+
+    const jumpTo = vi.spyOn(nav, 'jumpTo').mockImplementation(() => {});
+    const underAModal = new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true });
+    window.dispatchEvent(underAModal);
+    expect(jumpTo, 'j reached the transcript under an open palette').not.toHaveBeenCalled();
+    expect(underAModal.defaultPrevented, 'the key belongs to the modal, unswallowed').toBe(false);
+
+    palette.hide();
+    press('j');
+    expect(jumpTo, 'the guard released with the modal').toHaveBeenCalledTimes(1);
+    palette.remove();
   });
 });
 

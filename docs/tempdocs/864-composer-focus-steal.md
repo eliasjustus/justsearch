@@ -703,6 +703,17 @@ of the descent that already omits `SELECT`, and it guards the app's most powerfu
 the whole of (a).** `ConfirmDialog` is owned by an in-flight PR (§2.2) and is deliberately excluded
 so two branches do not edit the same lines.
 
+> **DONE — amendment A6 (2026-08-25, verified from source at PR D time, not from a changelog).** Both
+> halves of (a) have landed and neither is in PR D's scope:
+>
+> - `ConfirmDialog`'s retargeted `e.target` guard — **#541**. `components/ConfirmDialog.ts` no longer
+>   carries the fourth fork.
+> - `Shell.isInputFocused`'s `SELECT` omission — **#546**. `Shell.handleGlobalKey` now opens with
+>   `if (isTypingTarget(deepActiveElement())) return;` and the private descent is gone
+>   (`chrome/Shell.ts`, comment "864 Layer 2(a) — THE shared typing guard"); the regression case is
+>   `chrome/Shell.globalKeys.test.ts`. §4.3 tests 6 and the `SELECT` case are therefore closed, and
+>   PR D **struck them from its own scope** rather than re-doing them.
+
 The *subject* asymmetry stays: `KeybindingRegistry` asking about the event's origin and `Sv3Main`
 asking where focus is are genuinely different questions, and `KeybindingRegistry.ts:164-167` argues
 it correctly. **Unify the predicate; leave the subject to each caller.**
@@ -731,6 +742,27 @@ Related and in the same family, small and real: `Sv3Composer.onKeydown` (`:1031-
 `Escape` **before** it tests `isComposing` — so an `Escape` dismissing an IME candidate window also
 flips the composer to hero. Fix in the same PR.
 
+> **DONE — amendment A7 (PR D).** (b2) is implemented: `shouldIgnoreKeyEvent(e)` lives beside
+> `isTypingTarget` in `utils/keyboardHandler.ts` and covers `isComposing` + `repeat`. Adopted at all
+> three named sites in the one PR — `KeybindingRegistry`'s dispatcher, `Shell.handleGlobalKey`,
+> `Sv3Main.onWindowKeydown` — **and at a fourth global site the design's census missed**:
+> `UnifiedChatView.onConversationKeydown` is a live `window` `j`/`k` listener with the identical
+> shape (`views/UnifiedChatView.ts`, registered at `:956`), so it takes the same helper rather than
+> becoming the one handler that still leaks. Four ADOPTERS of one helper, not a fourth fork —
+> `grep -c` for the two old inline shapes returns zero. One case per site pins it (§4.3 test 7).
+>
+> **(b1) — one dispatcher — remains the better end state and is NOT done.** It is deferred, with its
+> reason unchanged (it entangles this fix with `Alt+←/→`'s history semantics) and its second
+> motivation now explicit: (b1) is also what would make Layer 4's policy fully gate-enforceable
+> (§3.4). It needs its own charter.
+>
+> `Sv3Composer.onKeydown`'s `Escape`-before-`isComposing` ordering is **fixed in PR D**, as this
+> section asked: the handler now tests `event.isComposing` first, so an `Escape` dismissing an IME
+> candidate window no longer flips the window to hero mid-draft. It takes the raw property rather
+> than the shared helper deliberately — `shouldIgnoreKeyEvent` also swallows `repeat`, and a held
+> `Enter`/`Escape` in a text field is a legitimate composer gesture. The shared helper is for GLOBAL
+> handlers; this is the field's own.
+
 **(c) Populate `focusKind` and `paletteOpen`, or delete them.** Per §2.11, a `when`-based guard over
 an unwritten slot passes silently forever. If the design uses either field, the same change must add
 its writer; if not, they should go, so the next author does not reach for them. Either resolution is
@@ -738,6 +770,42 @@ acceptable — **carrying them forward unwritten is not.**
 
 **(d) Modal-owns-focus guard** on `Sv3Main.onWindowKeydown` (`docs/observations.d/…:23`,
 `Sv3Main.ts:1322`). Note this is only meaningful once (c) gives it something true to read.
+
+> **DONE — amendment A8-adjacent, PR D. (c) resolved by DELETION; (d) does not depend on it.**
+>
+> **(c): both fields are gone** from `state/shellContextState.ts` — the type `FocusKind`, the two
+> declarations, the two defaults, and the two lines in the equality check — plus the four residue
+> mentions in `substrates/scope/index.ts` and the two test files. A comment in their place names the
+> rule and its evasion ("do not re-declare a slot here without its writer"). Deletion rather than
+> back-fill, because the alternative was a SECOND authority for a fact the app already tracks.
+>
+> **(d): the guard's shape is `modalOwnsFocus()`** — a predicate exported from the app's existing
+> modality authority, `primitives/modality.ts`, reading the same reference count `ModalityController`
+> already keeps for the background scroll-lock (one counter, two consumers). Adopted by
+> `Sv3Main.onWindowKeydown` (the L10 fix), `UnifiedChatView.onConversationKeydown`,
+> `Shell.handleGlobalKey`, and — for modifier-less bindings ONLY — the registry dispatcher. Chorded
+> bindings are deliberately still dispatched under a modal: `mod+k` is how the palette is toggled,
+> and blocking it would trap the reader inside what they opened.
+>
+> **The design's "(d) is only meaningful once (c) lands" is superseded, and the correction matters.**
+> It assumed the guard would read a `when`-clause slot. It cannot: a `when` clause only binds
+> registered bindings, and every listener the L10 defect runs through is a raw `window`/`document`
+> listener (§3.4's own finding, one paragraph later). So the guard reads the modality authority
+> instead, which needed no new writer — and (d) is therefore **independent of (c)**, not gated on it.
+>
+> `Sv3Palette` had to join that authority to be seen: it is a modal (`role="dialog"`,
+> `aria-modal="true"`, a click-swallowing backdrop) that the platform does not know about, because it
+> is window-scoped rather than a native `<dialog>` (the header's deliberate choice). It now composes
+> `ModalityController` — entering on `show()`, exiting on both `hide()` and `dismiss()` — which also
+> gives it the background scroll-lock it never had. Focus-restore stays the component's own
+> (`skipFocusRestore` on both exits): `hide()` returns focus to the invoker and `dismiss()`
+> deliberately does not, a distinction the controller's saved-focus cannot make.
+>
+> **`trapTab` was fixed in the same PR** (§2.9(e)'s second half). It used to hand `Tab` back to the
+> platform whenever focus was not already on an edge stop — and the rows are `role="option"`, driven
+> by `aria-activedescendant` and deliberately not tab stops, so focus resting on one let the next
+> `Tab` walk out to `<body>` (the live session's second symptom). It now consumes every `Tab` reaching
+> an open palette and lands focus on a stop by construction, wrapping in the asked-for direction.
 
 ### 3.3 Layer 3 — make the swap survivable (the safety net)
 
@@ -806,6 +874,34 @@ Consequences to accept honestly:
 - Non-printable keys (`Escape`, `Enter`, arrows, `F2`) are out of scope. They have their own
   ordering problem — `SearchV3View`'s Escape ladder (`:1993-2024`) is careful and good, and nothing
   here should disturb it.
+
+> **DONE (the enforceable half) — amendment A8, shipped in PR D rather than PR B.** The §4.2 table
+> assigned Layer 4 to PR B; the policy's *gate* half moved to PR D because it is a keyboard-guard
+> change and belongs with the rest of them. PR B keeps Layer 1(c2) — giving `shell.focus-composer` a
+> real target — which is the behavioural half and is untouched here.
+>
+> **The gate**: `scripts/ci/check-printable-keybinding-policy.mjs`, wired into the `ui-web-gates`
+> recipe in `governance/consult-register.v1.json` (the authority CLAUDE.md's pre-merge row points at;
+> `check-premerge-table` validates the reference). It brace-matches every
+> `registerKeybinding(Entry)?({…})` literal under `modules/ui-web/src`, classifies the `key`, and
+> fails the build on a modifier-less printable with no `when`. Verified to BITE on a fixture (a bare
+> `'j'` registration fails; `'mod+j'` and a `when`-scoped `'?'` pass), not merely to be green.
+>
+> **`/` gained its `when`** as this policy's own consequence, and the scope is the honest one:
+> `activeSurface == 'core.unified-chat-surface' || activeSurface == 'core.search-v3-surface'`. Note a
+> correction to §2.6 while scoping it — `/` is **not** globally inert. `UnifiedChatView` still listens
+> for `jf-focus-composer` (`views/UnifiedChatView.ts:956`, a live surface reachable by `Ctrl+Shift+A`),
+> so `/` works there today and only sv3 is deaf. Scoping it to both surfaces preserves the working
+> case and makes the dead one legible instead of silent.
+>
+> **The exemptions are stated in the gate's own header**, where an author meets them:
+> - **raw `window`/`document` listeners — review tier (~70%)**, exactly as this section says. sv3's
+>   and `UnifiedChatView`'s `j`/`k` are not registered bindings, so no `when` reaches them and no gate
+>   sees them. What governs them is review plus Layer 2's runtime guards (typing target, IME/repeat,
+>   modal ownership). (b1) is what closes this exemption.
+> - **dynamically-keyed registrations** — `Shell.ts`'s plugin bridge passes a runtime `key`
+>   (`chrome/Shell.ts:1317`), which no source scan can classify. Same review tier. This one the
+>   design had not named; it is named now rather than left as a silent hole in the gate's coverage.
 
 ## 4. Plan
 
@@ -907,9 +1003,9 @@ Explicit constraint for PR A's implementer: `focusField()` **must** reach the te
 | PR | Content | Gates / checks |
 |---|---|---|
 | **A** | Layer 1(a)(b) + Layer 2(a) — `focusField()`, entry-path focus, glass-box `@pointerdown`, `Shell.isInputFocused` unification. **Ungated; proceeds now.** | ui-web gate set; tests 2-3, 6 below |
-| **B** | Layer 1(c2) + Layer 4 — real target for `shell.focus-composer`, `when`-scope `/`, policy documented | ui-web gates; `check-premerge-table` n/a |
+| **B** | Layer 1(c2) — real target for `shell.focus-composer`. ~~Layer 4~~ moved to D (A8), and `/` already carries its `when` | ui-web gates; `check-premerge-table` n/a |
 | **C** | Layer 3(a) — project sv3 conversation identity to the URL | router tests; back/forward live leg |
-| **D** | Layer 2 — predicate unification, `isComposing`/`repeat`, `focusKind`/`paletteOpen` resolution, modal guard | ui-web gates |
+| **D** | Layer 2 — ~~predicate unification~~ (#546), `isComposing`/`repeat`, `focusKind`/`paletteOpen` resolution, modal guard, `trapTab` containment, **+ Layer 4's gate half** | ui-web gates |
 | **E** | Layer 1(d) + Layer 3(c)(i) — resting-state affordance, row focus indicator | **UX audit, see §4.4** |
 
 > **Amended when PR A shipped (2026-08-25).** Row A originally also listed Layer 1(d)'s
@@ -926,7 +1022,7 @@ Explicit constraint for PR A's implementer: `focusField()` **must** reach the te
 > and belongs with E's other focus-presentation work.
 
 `ConfirmDialog.ts:206-207` (§3.2(a)) is **not** in this sequence — it is a live destructive-action
-bug on an unrelated component. Ship it on its own, ahead of everything.
+bug on an unrelated component. Ship it on its own, ahead of everything. **It did: #541 (A6).**
 
 Per the ui-web gate row in `CLAUDE.md`, every PR touching `modules/ui-web/src/**` runs the
 `ui-web-gates` recipe from `governance/consult-register.v1.json` — that is the authority, not a
@@ -956,17 +1052,38 @@ claim it makes is a hypothesis until a test exercises it.
 3. **Dead-zone focus** (PR A) — a `pointerdown` on `.field` padding and on `.glass` focuses the
    textarea; a `pointerdown` on a footer control does **not**.
 4. **`/` and `Ctrl+L` reach sv3's composer** (PR B) — and a surface with no composer does not throw.
-5. **Policy test** (PR B) — a modifier-less printable binding registered without a `when` clause
-   fails a check. Prefer a gate over a unit test if the registration site is enumerable.
-6. **Predicate unification** (**PR A**, with Layer 2(a)) — a focused `<select>` must not trigger
-   `Shell.handleGlobalKey`'s chords (the `SELECT` omission). **`ConfirmDialog` is excluded** — its
-   fix belongs to the in-flight PR that owns it (§2.2), and duplicating the test here would give two
-   branches a claim on the same file.
+5. **Policy test** (~~PR B~~ → **PR D, done as a gate** — see 8c) — a modifier-less printable binding
+   registered without a `when` clause fails a check. Prefer a gate over a unit test if the
+   registration site is enumerable. It was, so it is a gate.
+6. ~~**Predicate unification** (**PR A**, with Layer 2(a)) — a focused `<select>` must not trigger
+   `Shell.handleGlobalKey`'s chords (the `SELECT` omission).~~ **GREEN — #546**
+   (`chrome/Shell.globalKeys.test.ts`, "leaves a chord alone while a `<select>` has focus"). The
+   `ConfirmDialog` exclusion is moot: #541 shipped it with its own coverage.
 7. **Guard-helper adoption** (PR D) — `isComposing` and `repeat` are honoured at **all three**
    global sites, not just the registry (§3.2(b)); one case per site, or the fifth fork is reborn.
-8. **Slot writers** (PR D) — if `focusKind`/`paletteOpen` are kept, assert they actually change. Per
-   §2.4 the failure is a *constant-valued* predicate, so the test must assert the value moves — not
-   merely that a `when` clause evaluates.
+   **GREEN, at four sites:** `KeybindingRegistry.editableGuard.test.ts` ("864: an IME-composing press
+   and an auto-repeat press dispatch nothing"), `Shell.globalKeys.test.ts` ("864: ignores an
+   IME-composing chord and an auto-repeat chord"), `Sv3Main.navigation.test.ts` ("864: ignores an
+   IME-composing press and an auto-repeat press"), `UnifiedChatView.test.ts` ("864: stands down for
+   IME composition, auto-repeat, and an open modal"). The helper itself is pinned in
+   `utils/keyboardHandler.test.ts`. Each case asserts a press that STILL fires beside the ignored
+   ones, so a guard that swallowed everything would fail.
+8. ~~**Slot writers** (PR D) — if `focusKind`/`paletteOpen` are kept, assert they actually change.~~
+   **Moot by resolution (PR D): both slots were deleted**, so there is nothing to assert a movement
+   of. What replaces it is the modal guard's own coverage — `modality.test.ts`
+   ("modalOwnsFocus (864 Layer 2(d))", including the stacked-modal case where an inner modal closing
+   must not report the keyboard free) plus the L10 case below.
+8a. **The L10 modal guard** (PR D) — **RED before, GREEN after**, against the REAL palette: with
+   `jf-sv3-palette` open and focus parked on a `role="option"` row, a window `j` must not call
+   `nav.jumpTo` and must not be `preventDefault`ed; the same press after `hide()` must navigate.
+   `Sv3Main.navigation.test.ts` "864 L10: stands down while the command palette is open, wherever
+   focus sits". Verified red on the pre-fix behaviour (`jumpTo` called once with `g1:q`).
+8b. **`trapTab` containment** (PR D) — a `Tab` pressed with focus on a palette ROW is consumed and
+   lands focus back on a stop (`Sv3Palette.test.ts` "864: contains Tab even when focus is on a row
+   rather than on a stop"); also verified red against the old early-return.
+8c. **Layer 4 policy** (PR D, was test 5 for PR B) — the gate, not a unit test, per §4.3's own
+   preference. `check-printable-keybinding-policy` passes on the tree and was verified to fail on a
+   fixture carrying an unscoped bare `'j'`.
 9. **Back undoes a conversation swap** (PR C) — **the incident's regression test.**
 
 Test-infra caveat, already recorded: happy-dom's `ShadowRoot.activeElement` throws inside
@@ -992,7 +1109,9 @@ will meet this — budget for it rather than discovering it mid-PR.
 (`AdvisoryToastHost.ts:245`), and `AdvisoryInboxDrawer.ts:379`'s missing `stopPropagation` are all
 in the inbox. The drawer one is deliberate: `Sv3Main.ts:1483-1494` documents the downstream
 `defaultPrevented` guard it forced, so changing it now would edit a load-bearing comment's premise
-for no gain in this tempdoc.
+for no gain in this tempdoc. **Re-checked at PR D and left logged**, on the same reasoning: the
+`defaultPrevented` guard is still the first thing `onWindowKeydown` reads, and PR D adds guards
+after it rather than replacing it.
 
 Two findings from the F3 hunt are logged and deliberately **not** in the PR sequence — both are real,
 both are bigger than this tempdoc, and folding either in would blur what PR-0 is testing:

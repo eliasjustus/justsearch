@@ -606,6 +606,32 @@ describe('Escape closes the pane FIRST', () => {
     await el.updateComplete;
     expect(el.composerState).toBe('hero');
   });
+
+  /**
+   * Tempdoc 864 §3.2(b) — an `Escape` dismissing an IME candidate window is the IME's key, not the
+   * composer's. The handler used to test `Escape` BEFORE `isComposing`, so a Japanese or Chinese
+   * reader cancelling a candidate list also threw the window back to hero mid-draft. Asserted beside
+   * the non-composing Escape above, which must still collapse.
+   */
+  it('864: an Escape that is dismissing an IME candidate window does not flip to hero', async () => {
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const field = composer.shadowRoot?.querySelector<HTMLTextAreaElement>(
+      '[data-testid="sv3-composer-input"]',
+    );
+    field!.value = 'note';
+    field!.dispatchEvent(new Event('input'));
+    await composer.updateComplete;
+    q<HTMLButtonElement>(composer, 'sv3-composer-send')?.click();
+    await settle(el);
+    expect(el.composerState).toBe('docked');
+
+    field!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true, composed: true }),
+    );
+    await el.updateComplete;
+    expect(el.composerState, 'the IME’s Escape collapsed the composer').toBe('docked');
+  });
 });
 
 /* ── 4. Geometry: the boundary, both open ────────────────────────────────────────────────────── */

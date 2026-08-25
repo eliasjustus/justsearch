@@ -16,30 +16,67 @@
  * controller deliberately owns only the two facets the platform does NOT: scroll-lock + focus-restore
  * (the residue-#5 fix). Non-dialog hosts that need inert/trap should move to native `<dialog>` (the
  * structural fix that also drops their hand-picked z-index — S4), not re-hand-roll it here.
+ *
+ * Tempdoc 864 Layer 2(d) — the same depth count is ALSO the app's answer to "does a modal own the
+ * screen right now?" ({@link modalOwnsFocus}). It was already the only thing in the app that knew,
+ * and a global-key handler that asked a second source would be the fork §2.2 is about.
  */
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
 
-let scrollLockCount = 0;
+/**
+ * How many modals are currently entered. ONE counter, two consumers: the background scroll-lock
+ * (release on the 1→0 edge, so stacked modals do not unlock early) and {@link modalOwnsFocus}.
+ * Counted independently of `document` so a DOM-less environment still reports modality honestly.
+ */
+let openModalCount = 0;
 let savedHtmlOverflow: string | null = null;
 
 /** Lock background scroll (reference-counted across stacked modals). */
 function acquireScrollLock(): void {
-  if (typeof document === 'undefined') return;
-  if (scrollLockCount === 0) {
+  if (openModalCount === 0 && typeof document !== 'undefined') {
     savedHtmlOverflow = document.documentElement.style.overflow;
     document.documentElement.style.overflow = 'hidden';
   }
-  scrollLockCount++;
+  openModalCount++;
 }
 
 /** Release one scroll-lock reference; restore overflow when the last modal closes. */
 function releaseScrollLock(): void {
-  if (typeof document === 'undefined' || scrollLockCount === 0) return;
-  scrollLockCount--;
-  if (scrollLockCount === 0) {
+  if (openModalCount === 0) return;
+  openModalCount--;
+  if (openModalCount === 0 && typeof document !== 'undefined') {
     document.documentElement.style.overflow = savedHtmlOverflow ?? '';
     savedHtmlOverflow = null;
   }
+}
+
+/**
+ * Tempdoc 864 Layer 2(d) — **the modal-owns-focus predicate**: is a modal currently entered?
+ *
+ * The guard every global key handler owes an open modal, and the one the guard set did NOT have
+ * (§2.3). The live 2026-08-25 repro (leg L10): with the command palette open and focus on a control
+ * inside it, a bare `j` fell through to `Sv3Main`'s window listener — which passed every guard it
+ * has, because a non-editable control is not a typing target — and pulled real focus into the
+ * transcript *underneath* the open palette, scrolling it to the top. Focus was then outside the
+ * popup, so the palette's own Tab trap never saw the next `Tab` and focus walked out to `<body>`.
+ *
+ * Deliberately a state predicate rather than a DOM scan: walking every shadow root for
+ * `[aria-modal]` on each keystroke is both expensive and a second answer to a question this module
+ * already owns. Non-blocking dialogs (`ModalController.open({ nonBlocking: true })`) never enter, so
+ * they do not claim the keyboard — which is what "non-blocking" means.
+ */
+export function modalOwnsFocus(): boolean {
+  return openModalCount > 0;
+}
+
+/**
+ * Test seam: drop every entered modality. Module state outlives a test's DOM, so a case that leaves
+ * a modal open would otherwise make the NEXT case's global keys silently inert.
+ */
+export function __resetModalityForTest(): void {
+  openModalCount = 0;
+  savedHtmlOverflow = null;
+  if (typeof document !== 'undefined') document.documentElement.style.overflow = '';
 }
 
 export class ModalityController implements ReactiveController {

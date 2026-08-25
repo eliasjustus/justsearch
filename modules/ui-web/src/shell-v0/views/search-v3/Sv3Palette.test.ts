@@ -24,6 +24,7 @@ import { SV3_PALETTE_RUN } from './Sv3Palette.js';
 import { SV3_PALETTE_REQUEST } from './Sv3Topbar.js';
 import { COMMANDS, COMMAND_GROUPS, SIDEBAR_EMPTY } from './fixtures.js';
 import { COMPONENT_TAGS } from '../../renderers/component-vocabulary.generated.js';
+import { modalOwnsFocus, __resetModalityForTest } from '../../primitives/modality.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -78,6 +79,9 @@ const chord = (): KeyboardEvent =>
 afterEach(() => {
   for (const child of [...document.body.children]) child.remove();
   vi.restoreAllMocks();
+  // 864 Layer 2(d) — modality depth is module state; a case that leaves the palette open would
+  // otherwise leak "a modal is open" into every later case in the run.
+  __resetModalityForTest();
 });
 
 describe('the palette is a window-scoped overlay, never a document one', () => {
@@ -305,6 +309,48 @@ describe('the open palette keeps the keyboard, and hands it back on close', () =
     input?.dispatchEvent(back);
     expect(back.defaultPrevented, 'Shift+Tab escaped the palette').toBe(true);
     expect(palette.shadowRoot?.activeElement).toBe(input);
+  });
+
+  /**
+   * Tempdoc 864 §2.9(e) — the trap's actual hole, and the reason `Tab` escaped onto `<body>` in the
+   * 2026-08-25 live session. The rows are `role="option"` and deliberately not tab stops, so focus
+   * resting on one (or anywhere else inside the popup that is not a stop) took the early return and
+   * handed the press back to the platform. Containment must not depend on focus already being on a
+   * stop.
+   */
+  it('864: contains Tab even when focus is on a row rather than on a stop', async () => {
+    const el = await mount();
+    const { palette } = await openViaTopbar(el);
+    const input = palette.shadowRoot?.querySelector('input');
+    const row = palette.shadowRoot?.querySelector<HTMLElement>('[data-testid="sv3-palette-item"]');
+    if (!row) throw new Error('no palette row rendered');
+    row.tabIndex = -1;
+    row.focus();
+    expect(palette.shadowRoot?.activeElement, 'the case needs focus off the stop').toBe(row);
+
+    const forward = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    row.dispatchEvent(forward);
+    expect(forward.defaultPrevented, 'Tab walked out of the popup').toBe(true);
+    expect(palette.shadowRoot?.activeElement, 'focus was not pulled back to a stop').toBe(input);
+  });
+
+  /**
+   * Tempdoc 864 Layer 2(d) — the palette is a modal the platform does not know about (window-scoped,
+   * not a native `<dialog>`), so it must enter the app's ONE modality authority itself. That entry is
+   * what every global key handler reads to stand down; `Sv3Main.navigation.test.ts` asserts the
+   * consuming half (`j` under an open palette).
+   */
+  it('864: owns modality while open, and releases it on both exits', async () => {
+    const el = await mount();
+    const { palette } = await openViaTopbar(el);
+    expect(modalOwnsFocus(), 'an open palette does not claim the keyboard').toBe(true);
+    palette.hide();
+    expect(modalOwnsFocus(), 'hide() left modality entered').toBe(false);
+
+    await palette.show(null);
+    expect(modalOwnsFocus()).toBe(true);
+    palette.dismiss();
+    expect(modalOwnsFocus(), 'dismiss() left modality entered').toBe(false);
   });
 });
 

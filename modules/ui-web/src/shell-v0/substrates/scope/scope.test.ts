@@ -45,20 +45,16 @@ describe('ScopeSnapshot serialize/restore (§3.B)', () => {
       expect(snap.audience).toBe('DEVELOPER');
     });
 
-    it('omits ephemeral fields (selection/focus/inspector/palette)', () => {
+    it('omits ephemeral fields (selection/inspector)', () => {
       updateShellContext({
-        focusKind: 'input',
         selectionKind: 'search-hit',
         selectionCount: 3,
         inspectorOpen: true,
-        paletteOpen: true,
       });
       const snap = serializeScope() as Record<string, unknown>;
-      expect(snap.focusKind).toBeUndefined();
       expect(snap.selectionKind).toBeUndefined();
       expect(snap.selectionCount).toBeUndefined();
       expect(snap.inspectorOpen).toBeUndefined();
-      expect(snap.paletteOpen).toBeUndefined();
     });
   });
 

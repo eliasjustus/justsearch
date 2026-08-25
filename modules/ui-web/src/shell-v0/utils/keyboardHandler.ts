@@ -61,6 +61,26 @@ export function deepActiveElement(doc: Document = document): Element | null {
  * (`composedPath()[0]`), which is a different question from where focus IS, and is deliberately not
  * re-pointed at the descent.
  */
+/**
+ * Tempdoc 864 Layer 2(b) — the two guards EVERY global key handler owes the reader, in ONE place.
+ *
+ * - `isComposing` — a keystroke that is feeding an IME candidate window belongs to the IME, not to a
+ *   shortcut. The typing guard alone does not cover it: composition can be driven from a control the
+ *   predicate correctly reports as non-editable.
+ * - `repeat` — an auto-repeating key is one intent held down, not N intents. A global command fired
+ *   per repeat flaps state (`Ctrl+D` bookmark on/off/on) or floods navigation.
+ *
+ * A SHARED helper rather than three copies (b2, the design's chosen half): `/` and the four `mod+…`
+ * chords go through `KeybindingRegistry`, but `Shell.handleGlobalKey` is a raw `document`-capture
+ * listener and `Sv3Main.onWindowKeydown`/`UnifiedChatView.onConversationKeydown` are raw `window`
+ * listeners — adding the checks to the dispatcher alone would have created a FIFTH fork of the guard
+ * set, which is the exact defect §2.2 is about. Routing every global chord through one dispatcher
+ * (b1) is the better end state and is deferred, not done: see §3.2(b).
+ */
+export function shouldIgnoreKeyEvent(e: KeyboardEvent): boolean {
+  return e.isComposing === true || e.repeat === true;
+}
+
 export function isTypingTarget(el: Element | null): boolean {
   if (el === null || el === undefined) return false;
   const tag = el.tagName;

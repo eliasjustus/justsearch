@@ -11,7 +11,8 @@
 import { getDocument, mutateDocument } from '../state/UserStateDocument.js';
 import { getShellContext } from '../state/shellContextState.js';
 import { evaluateWhen } from './whenExpression.js';
-import { isTypingTarget } from '../utils/keyboardHandler.js';
+import { isTypingTarget, shouldIgnoreKeyEvent } from '../utils/keyboardHandler.js';
+import { modalOwnsFocus } from '../primitives/modality.js';
 import { makeCoreProvenance } from '../primitives/provenance.js';
 import type { Provenance } from '../primitives/provenance.js';
 
@@ -149,6 +150,9 @@ export function attachKeybindingDispatcher(invoke: (commandId: string) => void):
   attached = true;
   keydownHandler = (e: KeyboardEvent) => {
     if (!invokeHandler) return;
+    // Tempdoc 864 Layer 2(b) — IME composition and auto-repeat, by the app's ONE definition, shared
+    // verbatim with the two raw window/document listeners that are NOT registered bindings.
+    if (shouldIgnoreKeyEvent(e)) return;
     // Priority order: user > plugin > default. Iterate in reverse so user wins.
     const entries = Array.from(bindings.values()).sort((a, b) => {
       const order = { user: 0, plugin: 1, default: 2 };
@@ -168,10 +172,16 @@ export function attachKeybindingDispatcher(invoke: (commandId: string) => void):
     const path = e.composedPath();
     const origin = (path.length > 0 ? path[0] : e.target) as HTMLElement | null;
     const inEditable = isTypingTarget(origin);
+    // Tempdoc 864 Layer 2(d) — while a modal is open, a modifier-less printable belongs to the
+    // modal's own content, not to a global command. Chorded bindings are deliberately NOT blocked:
+    // `mod+k` is how the palette itself is toggled, and blocking it would trap the reader inside.
+    const modalOpen = modalOwnsFocus();
     for (const entry of entries) {
       const parsed = parseKey(entry.key);
       if (!matchesEvent(parsed, e)) continue;
-      if (inEditable && !parsed.mod && !parsed.ctrl && !parsed.meta && !parsed.alt) continue;
+      const modifierless = !parsed.mod && !parsed.ctrl && !parsed.meta && !parsed.alt;
+      if (inEditable && modifierless) continue;
+      if (modalOpen && modifierless) continue;
       if (!evaluateWhen(entry.when, ctx)) continue;
       e.preventDefault();
       invokeHandler(entry.commandId);
