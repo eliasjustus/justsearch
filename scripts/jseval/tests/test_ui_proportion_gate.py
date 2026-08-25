@@ -9,7 +9,30 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from jseval import ui_proportion_gate
+
+# Bound before the hermetic fixture below can patch it, so the two live-register tests at the end of
+# this file can still reach the SHIPPED roles block.
+_REAL_LOAD_ROLES = ui_proportion_gate.load_roles
+_REAL_LOAD_REGISTER_STEPS = ui_proportion_gate.load_register_steps
+
+
+@pytest.fixture(autouse=True)
+def _no_roles(monkeypatch):
+    """Hermetic register: no `roles` block unless a test declares one.
+
+    Tempdoc 816 gave `evaluate()` a register-level `roleTokenEquality` loop that runs BEFORE any
+    capture and prepends one row per token-bearing role — a fact about two REPO authorities
+    (`governance/ui-proportion-baseline.v1.json` + `modules/ui-web/src/styles/tokens.css`), not about
+    the capture these tests inject. Without this fixture every `rows[0]` assertion below silently
+    indexes whichever roles the shipped register happens to declare, so an unrelated register edit
+    reads as a gate regression. The role paths get their own coverage in `TestRoleTokenEquality` /
+    `TestInlineSizeRole` (which patch `load_roles` themselves), and the shipped register's own
+    agreement with `tokens.css` is pinned by `TestShippedRolesMatchTheRenderedTokens`.
+    """
+    monkeypatch.setattr(ui_proportion_gate, "load_roles", lambda: {})
 
 
 def _measure_file(tmp_path, elements: dict[str, int]):
@@ -562,3 +585,285 @@ class TestNonScrollableSelectors:
 
         sels = ui_measure._find_proportion_baseline().get("chat-evidence-rail") or []
         assert ".evidence-rail" in sels
+
+
+def _role_measure_file(tmp_path, elements: dict[str, dict]):
+    """A `<step>.measure.json` carrying each element's rect PLUS its own `chPx` / `fontSize` —
+    the per-element font facts tempdoc 816's role bounds resolve `ch` against."""
+    p = tmp_path / "role.measure.json"
+    p.write_text(
+        json.dumps({"geometry": {"elements": elements}}), encoding="utf-8",
+    )
+    return str(p)
+
+
+class TestMaxWidthCeiling:
+    """Tempdoc 816 — `minWidthPx`'s symmetric ceiling, for an element whose function-derived bound
+    is its CONTAINER rather than a line length (a chip row's `fit-content`, which no `ch` number can
+    express). Physical family on purpose: the step pins its viewport."""
+
+    def test_clean_when_within_the_ceiling(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".control-row", "maxWidthPx": 800}], tolerance_px=2)
+        mf = _rect_measure_file(tmp_path, {".control-row": {"x": 0, "y": 0, "w": 640, "h": 32}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        assert report["rows"][0]["constraint"] == "maxWidthPx"
+        assert report["rows"][0]["status"] == "ok"
+
+    def test_clean_at_the_tolerance_edge(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".control-row", "maxWidthPx": 800}], tolerance_px=2)
+        mf = _rect_measure_file(tmp_path, {".control-row": {"x": 0, "y": 0, "w": 802, "h": 32}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+
+    def test_sprawling_past_the_ceiling_is_a_violation(self, monkeypatch, tmp_path):
+        # The 816 defect shape: the chip strip stretched to the window instead of the reading column.
+        _register(monkeypatch, [{"selector": ".control-row", "maxWidthPx": 800}], tolerance_px=2)
+        mf = _rect_measure_file(tmp_path, {".control-row": {"x": 0, "y": 0, "w": 1748, "h": 32}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "SPRAWLED"
+        assert report["rows"][0]["measuredWidth"] == 1748
+        assert report["rows"][0]["maxWidthPx"] == 800
+
+    def test_max_width_alone_is_a_valid_constraint(self, monkeypatch, tmp_path):
+        # A row declaring ONLY the ceiling must not report "declares no constraint".
+        _register(monkeypatch, [{"selector": ".control-row", "maxWidthPx": 800}])
+        mf = _rect_measure_file(tmp_path, {".control-row": {"x": 0, "y": 0, "w": 1748, "h": 32}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["constraint"] == "maxWidthPx"
+
+    def test_missing_width_is_exit_2(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".control-row", "maxWidthPx": 800}])
+        mf = _measure_file(tmp_path, {".control-row": 32})  # height only — no rect.w
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+
+
+class TestInlineSizeRole:
+    """Tempdoc 816 §4a.2 — the ROLE indirection. Width is handed out top-down, so the unconsidered
+    default is greedy 100%; the invariant is a per-element bound in CONTENT units, resolved against
+    the element's OWN captured `chPx` so a role means the same number of characters on 11px chrome
+    and on a 16px banner."""
+
+    PROSE = {"prose": {"minInlineSizeCh": 30, "maxInlineSizeCh": 88}}
+
+    def _roles(self, monkeypatch, roles):
+        monkeypatch.setattr(ui_proportion_gate, "load_roles", lambda: roles)
+
+    def test_within_the_measure_is_clean(self, monkeypatch, tmp_path):
+        self._roles(monkeypatch, self.PROSE)
+        _register(monkeypatch, [{"selector": ".conversation", "inlineSizeRole": "prose"}])
+        # 7px per char * 88ch = 616px ceiling; 600px sits inside it and above the 30ch floor.
+        mf = _role_measure_file(tmp_path, {".conversation": {"rect": {"w": 600}, "chPx": 7}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        assert report["rows"][0]["constraint"] == "inlineSizeRole"
+        assert report["rows"][0]["status"] == "ok"
+        assert report["rows"][0]["measuredCh"] == 85.7
+
+    def test_over_measure_is_a_violation(self, monkeypatch, tmp_path):
+        # The owner's live 816 finding, as a test: the textarea measured 1748px ~ 218 characters.
+        self._roles(monkeypatch, self.PROSE)
+        _register(monkeypatch, [{"selector": ".composer", "inlineSizeRole": "prose"}])
+        mf = _role_measure_file(tmp_path, {".composer": {"rect": {"w": 1748}, "chPx": 8}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "OVER_MEASURE"
+        assert report["rows"][0]["measuredCh"] == 218.5
+        assert report["rows"][0]["maxInlineSizeCh"] == 88
+
+    def test_under_measure_is_a_violation(self, monkeypatch, tmp_path):
+        # The floor's own defect: a reading column starved below its functional minimum.
+        self._roles(monkeypatch, self.PROSE)
+        _register(monkeypatch, [{"selector": ".conversation", "inlineSizeRole": "prose"}])
+        mf = _role_measure_file(tmp_path, {".conversation": {"rect": {"w": 102}, "chPx": 7}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "UNDER_MEASURE"
+        assert report["rows"][0]["minInlineSizeCh"] == 30
+
+    def test_the_same_ch_bound_scales_with_the_elements_own_font(self, monkeypatch, tmp_path):
+        # The point of resolving `ch` at measure time: 600px is INSIDE 88ch at 7px/char and OUTSIDE
+        # it at 6px/char. One register number, two correct verdicts.
+        self._roles(monkeypatch, self.PROSE)
+        _register(monkeypatch, [{"selector": ".conversation", "inlineSizeRole": "prose"}])
+        wide = _role_measure_file(tmp_path, {".conversation": {"rect": {"w": 600}, "chPx": 6}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(wide))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "OVER_MEASURE"
+
+    def test_unknown_role_is_exit_2(self, monkeypatch, tmp_path):
+        self._roles(monkeypatch, self.PROSE)
+        _register(monkeypatch, [{"selector": ".conversation", "inlineSizeRole": "headline"}])
+        mf = _role_measure_file(tmp_path, {".conversation": {"rect": {"w": 600}, "chPx": 7}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+        assert "unknown role" in report["rows"][0]["error"]
+
+    def test_documentational_role_cannot_be_bound(self, monkeypatch, tmp_path):
+        # A role declared for vocabulary completeness resolves no bound, so binding a row to it
+        # would assert nothing — a dangling guard, which this register always calls an ERROR.
+        self._roles(monkeypatch, {"pane": {"documentational": True}})
+        _register(monkeypatch, [{"selector": ".pane", "inlineSizeRole": "pane"}])
+        mf = _role_measure_file(tmp_path, {".pane": {"rect": {"w": 600}, "chPx": 7}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert "documentational" in report["rows"][0]["error"]
+
+    def test_role_with_no_bounds_is_exit_2(self, monkeypatch, tmp_path):
+        self._roles(monkeypatch, {"prose": {"why": "declared but never bounded"}})
+        _register(monkeypatch, [{"selector": ".conversation", "inlineSizeRole": "prose"}])
+        mf = _role_measure_file(tmp_path, {".conversation": {"rect": {"w": 600}, "chPx": 7}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert "neither" in report["rows"][0]["error"]
+
+    def test_ceiling_only_role_without_a_row_floor_is_exit_2(self, monkeypatch, tmp_path):
+        # The register's anti-vacuity doctrine applied to roles: a ceiling ALONE is satisfied by an
+        # element that rendered at 0 width — precisely the regression a width bound exists to catch.
+        self._roles(monkeypatch, {"prose": {"maxInlineSizeCh": 88}})
+        _register(monkeypatch, [{"selector": ".conversation", "inlineSizeRole": "prose"}])
+        mf = _role_measure_file(tmp_path, {".conversation": {"rect": {"w": 0}, "chPx": 7}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert "minWidthPx floor" in report["rows"][0]["error"]
+
+    def test_ceiling_only_role_is_allowed_when_the_row_carries_its_own_floor(
+        self, monkeypatch, tmp_path,
+    ):
+        # The precision half of the test above: the ERROR is about the MISSING floor, not about
+        # ceiling-only roles as such.
+        self._roles(monkeypatch, {"prose": {"maxInlineSizeCh": 88}})
+        _register(monkeypatch, [{"selector": ".conversation",
+                                 "inlineSizeRole": "prose", "minWidthPx": 384}])
+        mf = _role_measure_file(tmp_path, {".conversation": {"rect": {"w": 600}, "chPx": 7}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        statuses = {row["constraint"]: row["status"] for row in report["rows"]}
+        assert statuses == {"minWidthPx": "ok", "inlineSizeRole": "ok"}
+
+    def test_a_stale_capture_falls_back_to_fontsize_and_says_so(self, monkeypatch, tmp_path):
+        # A probe predating the `chPx` field must still produce a verdict, but the approximation
+        # has to be VISIBLE in the row — a silent estimate is how a bound stops meaning what it says.
+        self._roles(monkeypatch, self.PROSE)
+        _register(monkeypatch, [{"selector": ".conversation", "inlineSizeRole": "prose"}])
+        mf = _role_measure_file(tmp_path, {".conversation": {"rect": {"w": 600}, "fontSize": "14px"}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        assert report["rows"][0]["chPx"] == 7.0
+        assert "fontSize" in report["rows"][0]["note"]
+
+    def test_no_chpx_and_no_fontsize_is_exit_2(self, monkeypatch, tmp_path):
+        # Not a silent pass: a `ch` bound that cannot be resolved has decided nothing.
+        self._roles(monkeypatch, self.PROSE)
+        _register(monkeypatch, [{"selector": ".conversation", "inlineSizeRole": "prose"}])
+        mf = _role_measure_file(tmp_path, {".conversation": {"rect": {"w": 600}}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+
+
+class TestRoleTokenEquality:
+    """Tempdoc 816 §4a.3 — the ONE-AUTHORITY loop. The register is where a bound's FUNCTION is
+    written down; `tokens.css` is where the browser reads it. If those drift, the register stops
+    describing the rendered UI and the gate starts judging a number nothing applies (the
+    `catalog-verbatim` failure mode). These rows are register-level: they run BEFORE any capture and
+    are independent of whether a step's element row happens to reference the role."""
+
+    def _setup(self, monkeypatch, roles, declared):
+        monkeypatch.setattr(ui_proportion_gate, "load_roles", lambda: roles)
+        monkeypatch.setattr(ui_proportion_gate, "_load_declared_tokens", lambda: declared)
+        monkeypatch.setattr(ui_proportion_gate, "load_register_steps", lambda: [])
+
+    def test_agreeing_token_is_clean(self, monkeypatch):
+        self._setup(monkeypatch, {"prose": {"maxInlineSizeCh": 88, "token": "--measure-prose"}},
+                    {"--measure-prose": "88ch"})
+        report = ui_proportion_gate.evaluate(lambda step: _cap("unused"))
+        assert report["exit_code"] == 0
+        assert report["rows"] == [{"constraint": "roleTokenEquality", "role": "prose",
+                                   "token": "--measure-prose", "status": "ok",
+                                   "declared": "88ch", "expected": "88ch"}]
+
+    def test_drifted_token_is_a_violation(self, monkeypatch):
+        self._setup(monkeypatch, {"prose": {"maxInlineSizeCh": 88, "token": "--measure-prose"}},
+                    {"--measure-prose": "65ch"})
+        report = ui_proportion_gate.evaluate(lambda step: _cap("unused"))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "TOKEN_DRIFT"
+        assert report["rows"][0]["declared"] == "65ch"
+        assert report["rows"][0]["expected"] == "88ch"
+
+    def test_a_token_missing_from_tokens_css_is_exit_2(self, monkeypatch):
+        # The register's role has no renderer — not "no drift".
+        self._setup(monkeypatch, {"prose": {"maxInlineSizeCh": 88, "token": "--measure-prose"}}, {})
+        report = ui_proportion_gate.evaluate(lambda step: _cap("unused"))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+        assert "not declared in tokens.css" in report["rows"][0]["error"]
+
+    def test_an_unreadable_tokens_css_is_exit_2_not_no_drift(self, monkeypatch):
+        # `green-masked-destructive`: a token check that silently stops checking is the failure this
+        # assertion exists to prevent, so the unreadable-file branch gets its own test.
+        self._setup(monkeypatch, {"prose": {"maxInlineSizeCh": 88, "token": "--measure-prose"}},
+                    None)
+        report = ui_proportion_gate.evaluate(lambda step: _cap("unused"))
+        assert report["exit_code"] == 2
+        assert "tokens.css not found" in report["rows"][0]["error"]
+
+    def test_a_token_bearing_role_with_no_ceiling_to_render_is_exit_2(self, monkeypatch):
+        self._setup(monkeypatch, {"prose": {"minInlineSizeCh": 30, "token": "--measure-prose"}},
+                    {"--measure-prose": "88ch"})
+        report = ui_proportion_gate.evaluate(lambda step: _cap("unused"))
+        assert report["exit_code"] == 2
+        assert "declares no maxInlineSizeCh" in report["rows"][0]["error"]
+
+    def test_a_role_without_a_token_produces_no_row(self, monkeypatch):
+        # Precision guard: the loop checks token-BEARING roles, so a tokenless role is silent
+        # rather than a spurious ERROR.
+        self._setup(monkeypatch, {"pane": {"documentational": True}}, {"--measure-prose": "88ch"})
+        report = ui_proportion_gate.evaluate(lambda step: _cap("unused"))
+        assert report["exit_code"] == 0
+        assert report["rows"] == []
+
+
+class TestShippedRolesMatchTheRenderedTokens:
+    """The live half the hermetic fixture above deliberately removes: the SHIPPED register and the
+    SHIPPED `tokens.css` must actually agree. Reads both real files — no capture involved, because
+    `roleTokenEquality` is a fact about the two authorities."""
+
+    def test_the_real_register_and_the_real_tokens_css_agree(self):
+        roles = _REAL_LOAD_ROLES()
+        assert roles, "the shipped register declares no `roles` block"
+        rows, violation, error = ui_proportion_gate._role_token_rows(roles)
+        assert [r for r in rows if r["status"] == "ok"], "no role resolved a rendered token"
+        assert not violation, f"register/tokens.css drift: {[r for r in rows if r['status'] != 'ok']}"
+        assert not error, f"role token rows errored: {[r for r in rows if r['status'] == 'ERROR']}"
+
+    def test_every_role_bound_row_carries_a_floor(self):
+        # The register's anti-vacuity rule, asserted against the SHIPPED rows rather than a fixture:
+        # a role-bound row with neither the role's `minInlineSizeCh` nor its own `minWidthPx` is an
+        # ERROR at gate time, so it must not be possible to ship one.
+        roles = _REAL_LOAD_ROLES()
+        bound = 0
+        for step in _REAL_LOAD_REGISTER_STEPS():
+            for el in step.get("elements") or []:
+                role_name = el.get("inlineSizeRole")
+                if role_name is None:
+                    continue
+                role = roles.get(role_name)
+                assert role is not None, f"{step.get('uiShotStep')}/{el.get('selector')}: unknown role {role_name!r}"
+                assert not role.get("documentational"), (
+                    f"{step.get('uiShotStep')}/{el.get('selector')}: bound to documentational role {role_name!r}"
+                )
+                assert role.get("minInlineSizeCh") is not None or el.get("minWidthPx") is not None, (
+                    f"{step.get('uiShotStep')}/{el.get('selector')}: role {role_name!r} has no "
+                    f"minInlineSizeCh and the row declares no minWidthPx floor"
+                )
+                bound += 1
+        # Anti-vacuity for this test itself: a register that bound NO rows would pass the loop above
+        # without checking anything.
+        assert bound > 0, "no register row binds an inlineSizeRole — this test asserted nothing"
