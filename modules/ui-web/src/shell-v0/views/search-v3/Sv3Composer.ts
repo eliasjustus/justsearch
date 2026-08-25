@@ -279,33 +279,55 @@ export class Sv3Composer extends JfElement {
          banner covers nothing.
          This window's one banner is the availability reason: the local model cannot answer, said
          where the send would have happened. It is TEXT, not a disabled control's tooltip — the
-         availability authority's whole point is that the reason stays reachable ('state/availability.ts:18-20'). */
-      .notice {
-        margin-bottom: var(--space-2);
-        padding: var(--space-2) var(--space-4);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-3xl);
-        background: var(--muted);
-        color: var(--foreground);
-        font-size: var(--font-size-sv3-xs);
-        line-height: 1.5;
-      }
+         availability authority's whole point is that the reason stays reachable ('state/availability.ts:18-20').
 
-      /* ── Reduced capability, at summary height (inventory E1/E3) ──────────
-         The SAME slot and the same box as the .notice box above — one banner idiom, not two — so the
+         ── Reduced capability, at summary height (inventory E1/E3) ──────────
+         '.degradation' is the SAME slot and the same box — one banner idiom, not two — so the
          degradation and the availability reason cannot read as two different kinds of chrome. What
          it adds is a ROW: a severity mark, the resting headline, the remedy, the disclosure. Its
          resting height is one line by construction (the detail is a sibling that only exists when
-         opened), which is the founding constraint this window is built against. */
+         opened), which is the founding constraint this window is built against. ONE rule now rather
+         than two identical copies, so the material below cannot land on one banner and not the other.
+
+         AND THE BOX NEEDS A REAL SURFACE (tempdoc 859 live-leg). It used to be '--muted', which was
+         a checkable pair while the composer sat in the flow. Since 859 §B the composer floats, so
+         this banner floats with it over ARBITRARY SCROLLING CONTENT — and '--muted' in dark is
+         4% white on transparent ('sv3-tokens.css.ts:69'), which is not a surface at all. Measured live over the
+         transcript: 18.16:1 against empty column, 3.34:1 against body text, 1.00:1 against a
+         heading, in ALL THREE surface modes (the strip carried no blur to lose, so
+         'prefers-reduced-transparency' — which is ACTIVE on the owner's machine — changed nothing).
+         The material is the composer's own glass recipe, not a second one: the same
+         '--glass-blur-scale' multiplier drives the blur AND the fill's translucency, exactly as
+         '.glass' above and 'Sv3ContextBar.ts:66-97' do, so '[data-surface-mode="solid"]' and
+         reduced-transparency degrade every floating box in this dock identically, from one source. */
+      .notice,
       .degradation {
         margin-bottom: var(--space-2);
         padding: var(--space-2) var(--space-4);
         border: 1px solid var(--border);
         border-radius: var(--radius-3xl);
-        background: var(--muted);
+        background: color-mix(
+          in srgb,
+          var(--composer-glass-surface)
+            calc(100% - (100% - var(--glass-opacity)) * var(--glass-blur-scale)),
+          transparent
+        );
+        -webkit-backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale)))
+          saturate(var(--glass-saturation));
+        backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale)))
+          saturate(var(--glass-saturation));
         color: var(--foreground);
         font-size: var(--font-size-sv3-xs);
         line-height: 1.5;
+      }
+      /* The mandatory companion to any glass surface in this window: where blur is unsupported the
+         fill goes opaque, because a translucent surface with nothing blurred behind it is
+         unreadable, not subtle. */
+      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+        .notice,
+        .degradation {
+          background: var(--composer-glass-surface);
+        }
       }
       .degradation-line {
         display: flex;

@@ -549,18 +549,23 @@ describe('the composer glass is token-fed material, so dark inverts without a co
 
     // ...and no blur declaration of the GLASS's own recipe lives anywhere else — a node split is
     // what put it out of reach. Phase F10 added a SECOND blurred surface, the control menu, which
-    // is a different recipe on its own node; it is admitted by name and by rule bounds, so a blur
-    // that escaped either silhouette still fails here. The matcher pins the MULTIPLIED form (859
-    // §B), so a site that reverted to a bare `blur(var(--glass-blur))` would drop out of the count
-    // and fail rather than pass unnoticed.
+    // is a different recipe on its own node; the 859 live-leg added a THIRD, the banner box shared
+    // by the availability notice and the degradation strip, which floats over the transcript with
+    // the composer and so needs the same material. Each is admitted by name and by rule bounds, so
+    // a blur that escaped every silhouette still fails here. The matcher pins the MULTIPLIED form
+    // (859 §B), so a site that reverted to a bare `blur(var(--glass-blur))` would drop out of the
+    // count and fail rather than pass unnoticed.
     const menuStart = composer.indexOf('.menu {');
     const menuEnd = composer.indexOf('}', menuStart);
+    const bannerStart = composer.indexOf('.notice,\n      .degradation {');
+    expect(bannerStart, 'the notice and the degradation strip must share ONE box rule').toBeGreaterThan(-1);
+    const bannerEnd = composer.indexOf('}', bannerStart);
     const declarations = [
       ...composer.matchAll(
         /backdrop-filter: blur\(calc\(var\(--glass-blur\) \* var\(--glass-blur-scale\)\)\)/g,
       ),
     ];
-    expect(declarations).toHaveLength(4);
+    expect(declarations).toHaveLength(6);
     // Nothing anywhere in the component blurs WITHOUT the multiplier — the direct statement of
     // "search-v3 is no longer deaf to the user's own solid-surfaces setting".
     expect(composer).not.toMatch(/blur\(var\(--glass-blur\)\)/);
@@ -568,7 +573,10 @@ describe('the composer glass is token-fed material, so dark inverts without a co
       const at = declaration.index ?? -1;
       const inGlass = at > start && at < end;
       const inMenu = at > menuStart && at < menuEnd;
-      expect(inGlass || inMenu, 'a blur declaration escaped both silhouette nodes').toBe(true);
+      const inBanner = at > bannerStart && at < bannerEnd;
+      expect(inGlass || inMenu || inBanner, 'a blur declaration escaped every silhouette node').toBe(
+        true,
+      );
     }
     // The two recipes stay distinct: only the composer's ambient glass saturates.
     expect(composer.slice(menuStart, menuEnd)).not.toContain('saturate(');

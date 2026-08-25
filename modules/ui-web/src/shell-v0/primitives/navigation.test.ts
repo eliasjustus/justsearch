@@ -127,6 +127,47 @@ describe('navigation — §21 CONTROL (the live/pinned intent)', () => {
     expect(nav.pinned).toBeNull();
     expect(nav.activeId).toBe('a1'); // back to derived
   });
+
+  /**
+   * Tempdoc 859 live-leg — the pin must survive the very key that set it.
+   *
+   * `jumpTo` moves DOM focus INTO the scroller, so from the second J/K press onward the keydown
+   * ORIGINATES on a landmark inside the scroll container and bubbles through this controller's own
+   * `keydown` listener on its way to the host's window-level handler. While that listener was
+   * `onUserScroll` itself, every press released the pin the previous press had set — before the host
+   * read `activeId` — so the walk re-derived its position from the scroll instead of advancing.
+   * A scroll key still releases it: that IS the gesture the listener exists for.
+   */
+  it('859 live-leg: a NON-scroll key over the scroller keeps the pin; a scroll key releases it', () => {
+    const conv = document.createElement('div');
+    for (const id of ['t1', 'a1']) {
+      const el = document.createElement('div');
+      el.setAttribute('data-item-id', id);
+      conv.appendChild(el);
+    }
+    document.body.appendChild(conv);
+    const nav = new NavigationController(fakeHost(), {
+      scrollEl: () => conv,
+      spineEl: () => null,
+      active: () => true,
+    });
+    nav.hostUpdated(); // binds the scroller's listeners
+    nav.landmarks = RUN;
+    nav.viewport = { topFrac: 0.5, botFrac: 0.8 }; // derived focus would be a1
+    nav.jumpTo('t1');
+    expect(nav.pinned).toBe('t1');
+
+    // The press comes from the element `jumpTo` just focused, exactly as it does in a browser.
+    const focused = conv.querySelector('[data-item-id="t1"]') as HTMLElement;
+    focused.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }));
+    expect(nav.pinned, 'a J press is navigation, not a scroll gesture').toBe('t1');
+    expect(nav.activeId).toBe('t1');
+
+    focused.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(nav.pinned, 'an arrow key genuinely scrolls the column').toBeNull();
+    expect(nav.activeId).toBe('a1');
+    conv.remove();
+  });
 });
 
 describe('navigation — §21 AFFORDANCE (the minimap-as-scrollbar)', () => {
