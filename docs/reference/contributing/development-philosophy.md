@@ -15,7 +15,7 @@ This project follows **organic development**: issues and rough edges are capture
 
 | Tier | Location | Friction | Lifetime | When to use |
 |------|----------|----------|----------|-------------|
-| Observations | `docs/observations.md` (grouped conditions; per-session shards in `docs/observations.d/`) | Low (one line, write-blind) | Until routed, retired, or parked at a triage pass | Notice something mid-task |
+| Observations | `docs/observations.md` (grouped conditions; per-writer shards in `docs/observations.d/`) | Low (one line, write-blind) | Until routed, retired, or parked at a triage pass | Notice something mid-task |
 | Domain registers | `docs/reference/search-quality-register.md`, `docs/reference/inference-runtime-register.md` | High (ID, evidence, verification date) | Until the finding is superseded by shipped work | Empirical findings and standing trade-offs in a register's domain |
 
 The standing per-domain issue registers under `docs/reference/issues/` were **retired** (tempdoc 821 §7 D5, 2026-08-12) — most had not been stamped since 2026-02/04 and real tracking had already migrated to the observations store, the two domain registers, and tempdocs. Live entries were routed into the store at retirement; the deleted files' content is recoverable from git history.

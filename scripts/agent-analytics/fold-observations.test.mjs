@@ -130,6 +130,29 @@ try {
     assert.equal(r.entries, 0);
     assert.ok(!storeText(root).includes('should be ignored'));
   });
+  // Tempdoc 862 D.6.3: shards are now `<sessionId>[.<writer>].md`. The fold needs
+  // no change because listShards GLOBS and never parses the name — but "needs no
+  // change" is a claim about behaviour, so it is proven here rather than read off
+  // the source. Both shapes must be discovered, drained and deleted.
+  run('foldShards consumes a writer-suffixed shard alongside a bare one (tempdoc 862)', () => {
+    const root = freshRoot();
+    const sid = 'bccfc163-7b8f-4b1a-b9e4-0c011632d8a1';
+    const bare = path.join(root, SHARD_DIR, `${sid}.md`);
+    const dotted = path.join(root, SHARD_DIR, `${sid}.agent-af06f4a5.md`);
+    fs.writeFileSync(bare, '# shard\n\n- [ ] finding written in the home checkout (2026-08-25)\n');
+    fs.writeFileSync(dotted, '# shard\n\n- [ ] finding written in a linked worktree (2026-08-25)\n');
+    assert.deepEqual(
+      listShards(root).map((p) => path.basename(p)).sort(),
+      [`${sid}.agent-af06f4a5.md`, `${sid}.md`].sort(),
+    );
+    const r = foldShards({ root, apply: true });
+    assert.equal(r.folded, 2);
+    assert.equal(r.entries, 2);
+    assert.ok(storeText(root).includes('finding written in the home checkout'));
+    assert.ok(storeText(root).includes('finding written in a linked worktree'));
+    assert.ok(!fs.existsSync(bare));
+    assert.ok(!fs.existsSync(dotted)); // consumed shards are deleted regardless of name shape
+  });
   run('foldShards throws a migration pointer on a pre-680 flat-inbox store', () => {
     const root = freshRoot('# Observations\n\n## Inbox\n\n- [ ] flat entry (2026-06-01)\n');
     appendObservation({ description: 'anything', root, sessionId: 'sessH', date: '2026-07-06' });
