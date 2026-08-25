@@ -59,13 +59,37 @@
  *    newest file under the sink's output dir is >7 days old, that is a signal
  *    worth a (softer) notice too — e.g. a stray unrelated process bound the
  *    port, or the sink is stuck. Uses the same asyncRewake/exit-2 channel.
+ *  - Tempdoc 861 W3 [A6] — the sink is the third `agent-spawns/` producer, and the
+ *    only `ownerless-singleton` one: it is DECLARED rather than exempted, so the
+ *    reaper's matrix (861 §6.3) reads "never reap" for a real reason instead of
+ *    this daemon sitting in the observed tier next to a printed kill line (the
+ *    exact mis-kill invitation [A6] closes). Registration is best-effort and
+ *    NEVER disturbs the sink itself: whether this session just spawned it or
+ *    found it already listening (the common case — the sink outlives every
+ *    session), the record is written or its lease renewed, never the process
+ *    restarted or signalled.
  */
 
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { repoRoot, mainRepoRoot, runHook } from '../lib/hook-base.mjs';
+
+// Tempdoc 861 §7.5 — the documented cross-format interop: an ESM hook pulls the shared `.cjs`
+// dev-stack libs in via `createRequire`, exactly as `server.mjs:125-130` already does.
+const require = createRequire(import.meta.url);
+const { resolveListenerPidWindows } = require('../../dev/lib/port-owner.cjs');
+const { readProcessTable, normalizeCreationTime } = require('../../dev/lib/process-identity.cjs');
+const {
+  resolveAgentSpawnsRegisterDir,
+  buildAgentSpawnRecord,
+  writeAgentSpawnRecord,
+  renewAgentSpawnLease,
+  OWNERSHIP_MODES,
+  DEFAULT_MAX_RECORD_AGE_MS,
+} = require('../../dev/lib/agent-spawn-record.cjs');
 
 const SINK_HOST = '127.0.0.1';
 const SINK_PORT = 4318;
@@ -82,6 +106,67 @@ const LAUNCH_LOG = path.join(mainRepoRoot, 'tmp', 'agent-telemetry', 'otlp-sink-
 // generous headroom without eating meaningfully into the 5s hook timeout.
 const LIVENESS_RECHECK_MS = 1200;
 const STALE_DATA_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Tempdoc 861 W3 [A6] — the sink is a singleton (one per machine, one port), so ONE fixed record
+// id is correct — never a pid- or port-suffixed one, which would leave a stale record behind every
+// time the sink is restarted under a new pid. The lease duration matches the register's own
+// default retention window: a session-start renewal every few hours/days keeps the lease "live"
+// so [A10]'s pruning (age AND no-live-lease) never mistakes a quiet stretch between sessions for
+// abandonment — though per the §6.3 matrix, `ownerless-singleton` is never reaped regardless.
+const SINK_AGENT_SPAWN_RECORD_ID = 'otlp-sink';
+const SINK_AGENT_SPAWN_LEASE_DURATION_SEC = Math.floor(DEFAULT_MAX_RECORD_AGE_MS / 1000);
+// Safe as the third identity conjunct (with an exact creation-time match as the second): every
+// invocation's command line contains the sink script's own basename.
+const SINK_CMDLINE_FINGERPRINT = path.basename(SINK_SCRIPT);
+
+/**
+ * 861 W3 [A6] — register (or renew) the sink's `ownerless-singleton` agent-spawn record.
+ *
+ * Lease-on-use first: if a record already exists (the overwhelmingly common case — the sink
+ * outlives every session, so most SessionStart hits find it already registered), renew ONLY its
+ * lease and touch nothing else. A fresh record is built from the process table only when no
+ * record exists yet to renew — e.g. the very first session after this feature ships, or after
+ * [A10]'s pruning finally ages one out following a long gap.
+ *
+ * Best-effort and NEVER throws: registration bookkeeping must not turn a healthy sink into a
+ * fail-loud session-start warning, and must never signal or restart the process it describes.
+ *
+ * @param {number} pid
+ * @param {object} [deps] - injectable for tests; never disturbs the real sink either way.
+ */
+async function registerSinkSpawn(pid, { table = readProcessTable, dir = resolveAgentSpawnsRegisterDir(mainRepoRoot) } = {}) {
+  try {
+    const renewed = await renewAgentSpawnLease({
+      dir,
+      recordId: SINK_AGENT_SPAWN_RECORD_ID,
+      durationSec: SINK_AGENT_SPAWN_LEASE_DURATION_SEC,
+    });
+    if (renewed.renewed) return;
+
+    const snapshot = table();
+    if (!snapshot.ok) return; // no evidence, no record — never guess (861 [A2])
+    const row = snapshot.table.find((r) => Number(r?.ProcessId) === pid);
+    if (!row) return;
+    const creationFileTimeUtc = normalizeCreationTime(row.CreationFileTimeUtc);
+    if (creationFileTimeUtc === null) return;
+    const cmdline = typeof row.CommandLine === 'string' ? row.CommandLine : '';
+    if (!cmdline.includes(SINK_CMDLINE_FINGERPRINT)) return; // refuse an unverified identity
+
+    const record = await buildAgentSpawnRecord({
+      recordId: SINK_AGENT_SPAWN_RECORD_ID,
+      producer: 'otlp-sink',
+      pid,
+      creationFileTimeUtc,
+      cmdlineFingerprint: SINK_CMDLINE_FINGERPRINT,
+      port: SINK_PORT,
+      leaseDurationSec: SINK_AGENT_SPAWN_LEASE_DURATION_SEC,
+      ownership: OWNERSHIP_MODES.OWNERLESS_SINGLETON,
+    });
+    await writeAgentSpawnRecord({ dir, record });
+  } catch {
+    // Registration is best-effort — see the function docstring's failure policy.
+  }
+}
 
 /** Resolve true iff something is already listening on the sink port (probe). */
 function isSinkListening() {
@@ -140,6 +225,10 @@ function startSink() {
   // "did it come up", so swallow it here.
   child.on('error', () => {});
   child.unref();
+  // 861 W3 [A6]: no shell wrapper here (`spawn(PYTHON, [...])`, no `shell: true`), so `child.pid`
+  // IS the real listener's pid directly — none of `serve-worktree-fe.cjs`'s [A3] cmd.exe-shim
+  // problem applies to this producer.
+  return child.pid;
 }
 
 /** Last `n` non-empty lines of `filePath`, reading at most `maxBytes` from the tail. Never throws. */
@@ -204,6 +293,10 @@ async function main() {
   if (await isSinkListening()) {
     // Already up (this or a concurrent session) — no [re]spawn needed. Still worth a
     // (softer) notice if the data it's producing looks stale.
+    // 861 W3 [A6]: this session did not spawn it, so its pid is resolved from the port —
+    // read-only, never disturbs the running sink.
+    const owner = resolveListenerPidWindows(SINK_PORT);
+    if (owner.ok) await registerSinkSpawn(owner.pid);
     const notice = buildStalenessNotice({
       newestMtimeMs: newestFileMtimeMs(SINK_OUT_DIR),
       nowMs: Date.now(),
@@ -217,9 +310,14 @@ async function main() {
     return;
   }
 
-  startSink();
+  const spawnedPid = startSink();
   await delay(LIVENESS_RECHECK_MS);
-  if (await isSinkListening()) return; // came up cleanly — silent, exit 0
+  if (await isSinkListening()) {
+    // 861 W3 [A6]: `spawnedPid` IS the real listener (no shell shim for this producer) — register
+    // directly, no port-owner resolution needed.
+    if (spawnedPid) await registerSinkSpawn(spawnedPid);
+    return; // came up cleanly — silent, exit 0
+  }
 
   const warning = buildDeathWarning({
     python: PYTHON,
@@ -235,4 +333,6 @@ runHook(import.meta.url, main);
 export {
   isSinkListening, SINK_PORT, SINK_SCRIPT, SINK_OUT_DIR, LAUNCH_LOG, STALE_DATA_MS,
   LIVENESS_RECHECK_MS, mainRepoRoot,
+  registerSinkSpawn, SINK_AGENT_SPAWN_RECORD_ID, SINK_AGENT_SPAWN_LEASE_DURATION_SEC,
+  SINK_CMDLINE_FINGERPRINT,
 };

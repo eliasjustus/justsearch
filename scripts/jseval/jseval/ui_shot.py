@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import agent_spawn_register
 from . import ui_check
 from . import ui_selectors as S
 
@@ -63,6 +64,60 @@ FILE_TO_STEPS: dict[str, list[str]] = _load_step_index()
 
 _SERVER_INFO_PATH = Path("tmp/ui-shot-server.json")
 _VITE_PORT_START = 5174  # scan start; the actual port is the first FREE one (615 §28 U6)
+
+# Tempdoc 861 W3 -- the `agent-spawns/` register scope's lease-on-use TTL for this producer,
+# renewed on BOTH the start path and the reuse path (861 §6.2: "an actively used server keeps
+# extending its own claim; an abandoned one lapses"). No supervisor process, no renewal daemon.
+_AGENT_SPAWN_LEASE_DURATION_SEC = 30 * 60
+
+
+def _register_agent_spawn(proc: subprocess.Popen, port: int, ui_web: Path) -> None:
+    """Tempdoc 861 W3 -- write this freshly-started Vite's `agent-spawns/` register record.
+
+    Best-effort and NEVER raises: registration bookkeeping must not fail a UI capture. Skipped
+    entirely (not written half-formed) when the creation time cannot be read -- a record without
+    it can never be identity-verified, so writing one anyway would only add an unactionable entry
+    to a register whose whole product is a defensible kill decision.
+    """
+    try:
+        creation = agent_spawn_register.process_creation_file_time_utc(proc.pid)
+        if creation is None:
+            log.debug(
+                "agent-spawn registration skipped for pid %s: no readable creation time", proc.pid,
+            )
+            return
+        checkout_root = ui_web.parent.parent
+        record = agent_spawn_register.build_record(
+            record_id=f"ui-shot-{port}",
+            producer="ui-shot",
+            pid=proc.pid,
+            creation_file_time_utc=creation,
+            cmdline_fingerprint=f"--port {port}",
+            port=port,
+            lease_duration_sec=_AGENT_SPAWN_LEASE_DURATION_SEC,
+            repo_root=checkout_root,
+            worktree_root=checkout_root,
+            # The junction-lock field (861 §6.2): resolved HERE, through whatever
+            # `_ensure_node_modules_junction` created, so a build error naming the MAIN checkout's
+            # node_modules can still be attributed back to a WORKTREE session's Vite.
+            node_modules_real_path=agent_spawn_register.resolve_node_modules_real_path(ui_web),
+        )
+        agent_spawn_register.write_record(record)
+    except Exception as exc:  # noqa: BLE001 -- bookkeeping must never fail the actual capture
+        log.debug("agent-spawn registration failed for pid %s (non-fatal): %s", proc.pid, exc)
+
+
+def _renew_agent_spawn_lease(info: dict) -> None:
+    """Tempdoc 861 W3 -- lease-on-use for the REUSE path (the start path renews at write time,
+    via ``build_record``'s fresh lease). Never raises: a renewal failure must not turn a live
+    reuse into a raised error for the caller."""
+    port = info.get("port")
+    if not port:
+        return
+    try:
+        agent_spawn_register.renew_lease(f"ui-shot-{port}", _AGENT_SPAWN_LEASE_DURATION_SEC)
+    except Exception:  # noqa: BLE001 -- see the module's failure policy
+        log.debug("agent-spawn lease renewal failed for ui-shot-%s (non-fatal)", port)
 
 
 def _port_in_use(port: int, host: str) -> bool:
@@ -319,6 +374,7 @@ def _start_vite_server() -> str:
             if _is_server_alive(info):
                 url = f"http://localhost:{info['port']}"
                 log.debug("Reusing existing Vite server at %s (pid %s)", url, info["pid"])
+                _renew_agent_spawn_lease(info)
                 return url
         except Exception:
             pass
@@ -407,6 +463,7 @@ def _start_vite_server() -> str:
         "started_at": time.time(),
     }
     _SERVER_INFO_PATH.write_text(json.dumps(info, indent=2))
+    _register_agent_spawn(proc, port, ui_web)
     log.debug("Vite server started (pid %d, port %d, stderr %s)", proc.pid, port, stderr_log)
     return url
 
@@ -439,6 +496,7 @@ def _resolve_ui_url(ui_url: str) -> str:
         try:
             info = json.loads(_SERVER_INFO_PATH.read_text())
             if _is_server_alive(info):
+                _renew_agent_spawn_lease(info)
                 return f"http://localhost:{info['port']}"
         except Exception:
             pass

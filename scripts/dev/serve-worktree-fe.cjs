@@ -24,6 +24,13 @@
  * provenance. They are two native paths bound by this contract (NOT one cross-language
  * process — that would add the very fragility §27 removes); drift is guarded by
  * `scripts/jseval/tests/test_ui_serve.py`.
+ *
+ * Tempdoc 861 W3 [A3] — registers a spawn record in the `agent-spawns/` scope so a leaked Vite is
+ * reapable and a build-conflict hint can name it. `child.pid` here is a `cmd.exe` shim (`shell:
+ * isWin` below) — NOT the surviving `node vite.js` two or three generations down — so the record
+ * is built from the port's actual LISTENER, resolved AFTER the readiness gate, never from
+ * `child.pid`. Registration is best-effort and never blocks or fails the serve: a bookkeeping
+ * failure must not stop a human from seeing their FE.
  */
 'use strict';
 const fs = require('fs');
@@ -31,12 +38,30 @@ const net = require('net');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
+const { resolveListenerPidWindows } = require('./lib/port-owner.cjs');
+const { readProcessTable, normalizeCreationTime } = require('./lib/process-identity.cjs');
+const {
+  resolveAgentSpawnsRegisterDir,
+  buildAgentSpawnRecord,
+  writeAgentSpawnRecord,
+  removeAgentSpawnRecord,
+  resolveNodeModulesRealPath,
+} = require('./lib/agent-spawn-record.cjs');
+
 const repoRoot = path.resolve(__dirname, '..', '..');
 const uiWebDir = path.join(repoRoot, 'modules', 'ui-web');
 
-function argVal(flag) {
-  const i = process.argv.indexOf(flag);
-  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : null;
+// A long-lived FOREGROUND session ceiling (861 §6.2's lease), not a renewed lease-on-use loop:
+// unlike ui-shot (invoked repeatedly across many captures), this is one process that runs until
+// the human Ctrl-C's it, so there is no natural "reuse" event to renew against. Four hours covers
+// an ordinary dev session; the §6.3 matrix already treats "own session, lease lapsed" as always
+// reapable by that SAME session and "other session, lapsed but owner activity fresh" as
+// contention, not garbage — so a generous-but-finite duration here costs nothing.
+const AGENT_SPAWN_LEASE_DURATION_SEC = 4 * 60 * 60;
+
+function argVal(flag, argv = process.argv) {
+  const i = argv.indexOf(flag);
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : null;
 }
 
 // Resolve the main repo root (state lives there even when we run inside a worktree).
@@ -52,8 +77,8 @@ function mainRepoRoot() {
   return repoRoot;
 }
 
-function detectBackendPort() {
-  const explicit = argVal('--api-port');
+function detectBackendPort(argv = process.argv) {
+  const explicit = argVal('--api-port', argv);
   if (explicit) return Number(explicit);
   try {
     const stateRoot = path.join(mainRepoRoot(), 'tmp', 'dev-runner');
@@ -97,10 +122,110 @@ async function pickPort(start) {
   throw new Error(`no free port in ${start}..${start + 50}`);
 }
 
-(async () => {
+/** Poll until something answers on `port`, or give up at `timeoutMs`. Resolves `true`/`false`. */
+async function waitForPortListening(port, { timeoutMs = 30_000, intervalMs = 250, probe = portInUse } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await probe(port, '127.0.0.1')) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/**
+ * 861 [A3] — the record's identity triple, resolved from the OS rather than trusted from the
+ * spawn call. `pid` is the port's actual listener (never `child.pid`); `creationFileTimeUtc` and
+ * `cmdlineFingerprint` come from the SAME process-table row, so the three conjuncts describe one
+ * observation rather than being stitched from two.
+ *
+ * Returns `{ ok: true, pid, creationFileTimeUtc, cmdlineFingerprint } | { ok: false, reason }`.
+ */
+function resolveListenerIdentity(port, { resolvePid = resolveListenerPidWindows, table = readProcessTable } = {}) {
+  const owner = resolvePid(port);
+  if (!owner.ok) return { ok: false, reason: `could not resolve the listener on port ${port}: ${owner.reason}` };
+  const snapshot = table();
+  if (!snapshot.ok) return { ok: false, reason: `could not read the process table: ${snapshot.reason}` };
+  const row = snapshot.table.find((r) => Number(r?.ProcessId) === owner.pid);
+  if (!row) return { ok: false, reason: `listener pid ${owner.pid} vanished before its identity could be read` };
+  const creationFileTimeUtc = normalizeCreationTime(row.CreationFileTimeUtc);
+  if (creationFileTimeUtc === null) {
+    return { ok: false, reason: `listener pid ${owner.pid} has no readable creation time` };
+  }
+  const cmdline = typeof row.CommandLine === 'string' ? row.CommandLine : '';
+  // The Vite server for THIS port is uniquely identified by its own --port flag in its command
+  // line (mirrors ui_shot.py's `_pid_is_our_vite`); safe as the third identity conjunct because
+  // the second conjunct (exact creation-time equality) is what makes a substring match sound.
+  const cmdlineFingerprint = `--port ${port}`;
+  if (!cmdline.includes(cmdlineFingerprint)) {
+    return { ok: false, reason: `listener pid ${owner.pid}'s command line does not contain ${JSON.stringify(cmdlineFingerprint)}; refusing to record an unverified identity` };
+  }
+  return { ok: true, pid: owner.pid, creationFileTimeUtc, cmdlineFingerprint };
+}
+
+/**
+ * Register this server in the `agent-spawns/` scope, once the port is confirmed listening.
+ * Best-effort and NEVER throws: a bookkeeping failure must not stop a human from seeing their FE.
+ * Returns `{ dir, recordId }` on success, `null` otherwise (logged to stderr either way).
+ */
+async function registerServedVite({ port, sessionId = resolveSessionId(), waitForPort = waitForPortListening } = {}) {
+  try {
+    const ready = await waitForPort(port);
+    if (!ready) {
+      console.error(`[serve-worktree-fe] port ${port} never started accepting connections; not registering`);
+      return null;
+    }
+    const identity = resolveListenerIdentity(port);
+    if (!identity.ok) {
+      console.error(`[serve-worktree-fe] could not establish the listener's identity, not registering: ${identity.reason}`);
+      return null;
+    }
+    const dir = resolveAgentSpawnsRegisterDir(mainRepoRoot());
+    const record = await buildAgentSpawnRecord({
+      recordId: `serve-worktree-fe-${port}`,
+      producer: 'serve-worktree-fe',
+      pid: identity.pid,
+      creationFileTimeUtc: identity.creationFileTimeUtc,
+      cmdlineFingerprint: identity.cmdlineFingerprint,
+      port,
+      leaseDurationSec: AGENT_SPAWN_LEASE_DURATION_SEC,
+      sessionId,
+      repoRoot,
+      resourceRoots: {
+        worktreeRoot: repoRoot,
+        nodeModulesRealPath: await resolveNodeModulesRealPath(uiWebDir),
+      },
+    });
+    await writeAgentSpawnRecord({ dir, record });
+    return { dir, recordId: record.recordId };
+  } catch (err) {
+    console.error(`[serve-worktree-fe] agent-spawn registration failed (non-fatal): ${err.message}`);
+    return null;
+  }
+}
+
+async function unregisterServedVite(registered) {
+  if (!registered) return;
+  try {
+    await removeAgentSpawnRecord({ dir: registered.dir, recordId: registered.recordId });
+  } catch { /* clean-exit retirement is best-effort */ }
+}
+
+/** Env-first (mirrors `note-observation.mjs`'s `resolveSessionId`), worktree-local file fallback. */
+function resolveSessionId(env = process.env) {
+  if (env.CLAUDE_CODE_SESSION_ID) return env.CLAUDE_CODE_SESSION_ID.trim();
+  if (env.JUSTSEARCH_AGENT_SESSION_ID) return env.JUSTSEARCH_AGENT_SESSION_ID.trim();
+  try {
+    const raw = fs.readFileSync(path.join(repoRoot, 'tmp', 'agent-telemetry', 'current-session-id'), 'utf8').trim();
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
+
+async function main(argv = process.argv) {
   const branch = (spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).stdout || '').trim();
-  const port = Number(argVal('--port')) || (await pickPort(5174));
-  const apiPort = detectBackendPort();
+  const port = Number(argVal('--port', argv)) || (await pickPort(5174));
+  const apiPort = detectBackendPort(argv);
 
   const env = { ...process.env };
   if (apiPort) env.VITE_JUSTSEARCH_API_PORT = String(apiPort);
@@ -118,8 +243,48 @@ async function pickPort(start) {
     stdio: 'inherit',
     shell: isWin,
   });
-  child.on('exit', (code) => process.exit(code ?? 0));
-})().catch((err) => {
-  console.error(`[serve-worktree-fe] ERROR: ${err.message}`);
-  process.exit(1);
-});
+
+  // Fire-and-track, never block the serve on registration (861 [A3]/W3).
+  const registered = isWin ? registerServedVite({ port }) : Promise.resolve(null);
+
+  child.on('exit', async (code) => {
+    // Bounded wait for a registration already in flight (e.g. a quick Vite boot) so the clean-exit
+    // retirement actually runs — but a human hitting Ctrl-C must never be held hostage by the
+    // (up to 30s) port-readiness poll: if registration has not settled yet, abandon it. A leaked
+    // record is not a leaked process — its lease lapses and the reaper (861 Phase 4) collects it.
+    const settled = await Promise.race([
+      registered.then((r) => ({ timedOut: false, r })).catch(() => ({ timedOut: false, r: null })),
+      new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 1500)),
+    ]);
+    if (!settled.timedOut) await unregisterServedVite(settled.r).catch(() => {});
+    process.exit(code ?? 0);
+  });
+}
+
+function isDirectRun() {
+  return require.main === module;
+}
+
+if (isDirectRun()) {
+  main().catch((err) => {
+    console.error(`[serve-worktree-fe] ERROR: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  argVal,
+  mainRepoRoot,
+  detectBackendPort,
+  portInUse,
+  isFree,
+  pickPort,
+  waitForPortListening,
+  resolveListenerIdentity,
+  registerServedVite,
+  unregisterServedVite,
+  resolveSessionId,
+  AGENT_SPAWN_LEASE_DURATION_SEC,
+  repoRoot,
+  uiWebDir,
+};
