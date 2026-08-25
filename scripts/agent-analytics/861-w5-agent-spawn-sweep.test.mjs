@@ -376,14 +376,59 @@ async function main() {
       assert.equal(result.available, true);
       const own = result.buckets.all.find((e) => e.recordId === 'w5-orientation');
       assert.ok(own, 'the registered record should be evaluated');
-      // Orientation has no caller session (it is a read-only, unattributed glance) — the lapsed
-      // lease + stale owner activity is what makes this fixture reap-eligible on the matrix.
+      // This call passes no callerSessionId (a caller that could not resolve its own session id) —
+      // the lapsed lease + stale owner activity is what makes this fixture reap-eligible on the
+      // matrix regardless of attribution.
       assert.equal(own.cell, 'other-session/lease-lapsed/owner-stale', 'sanity: this fixture IS reap-eligible on the matrix');
       // The matrix would reap this on an EXECUTE occasion; orientation must downgrade it instead.
       for (const e of result.buckets.all) assert.notEqual(e.disposition, 'reap');
       assert.equal(own.disposition, 'report');
       assert.equal(own.ceiling, 'reap');
       assert.equal(own.downgraded, true);
+    });
+  });
+
+  // ── D2 (closing-window findings): orientation must attribute the CALLING session's own live
+  // spawn as same-session, not other-session/lease-live. gatherAgentSpawnOrientation previously
+  // never accepted/forwarded callerSessionId to reapEligible, so a session's own record fell
+  // through to the CONTENTION branch (agent-spawn-reaper.cjs's `lease === 'live'` check) instead
+  // of the SAME_SESSION check just above it. Proves both the misattribution (red, no
+  // callerSessionId — the old call shape world-state.mjs used) and the fix (green, callerSessionId
+  // supplied) against the identical fixture.
+  await check('D2: orientation attributes the calling session\'s own live spawn as same-session, not other-session/lease-live', async () => {
+    await withTmpRegister(async ({ tmp, env, mainRepoRoot }) => {
+      const now = NOW();
+      const dir = path.join(tmp, 'agent-spawns');
+      const record = await buildAgentSpawnRecord({
+        recordId: 'w5-orientation-own-session', producer: 'test', pid: 999907,
+        creationFileTimeUtc: '134320479841300356', cmdlineFingerprint: 'vite --port 7',
+        port: 40007, leaseDurationSec: 3600, sessionId: 'caller-session', now,
+      });
+      await writeAgentSpawnRecord({ dir, record }); // live lease — no LAPSED_LEASE override
+
+      const readFakeTable = () => fakeTable(now, [
+        { ProcessId: 999907, CreationFileTimeUtc: '134320479841300356', CommandLine: 'vite --port 7' },
+      ]);
+      const thresholds = { abandonedAfterMs: 60_000, idleAfterMs: 15 * 60_000 };
+
+      // RED: the pre-fix call shape — no callerSessionId — misattributes this session's own record.
+      const before = await gatherAgentSpawnOrientation({ mainRepoRoot, env, now, readTable: readFakeTable, thresholds });
+      const ownBefore = before.buckets.all.find((e) => e.recordId === 'w5-orientation-own-session');
+      assert.ok(ownBefore, 'the registered record should be evaluated');
+      assert.equal(ownBefore.cell, 'other-session/lease-live', 'sanity: this reproduces the reported misattribution when callerSessionId is withheld');
+
+      // GREEN: passing callerSessionId lets reapEligible recognize the record as this session's own.
+      const after = await gatherAgentSpawnOrientation({
+        mainRepoRoot, env, now, readTable: readFakeTable, thresholds, callerSessionId: 'caller-session',
+      });
+      const ownAfter = after.buckets.all.find((e) => e.recordId === 'w5-orientation-own-session');
+      assert.ok(ownAfter, 'the registered record should be evaluated');
+      assert.equal(ownAfter.cell, 'same-session', 'D2 fix: an own-session record must read same-session in orientation output');
+      assert.notEqual(ownAfter.cell, 'other-session/lease-live');
+      // Orientation stays advisory even for same-session: it still never mints a live reap.
+      assert.equal(ownAfter.disposition, 'report');
+      assert.equal(ownAfter.ceiling, 'reap');
+      assert.equal(ownAfter.downgraded, true);
     });
   });
 
