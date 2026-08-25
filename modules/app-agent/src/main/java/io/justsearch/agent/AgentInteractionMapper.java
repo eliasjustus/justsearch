@@ -47,7 +47,11 @@ public final class AgentInteractionMapper {
           // set has to survive a reload it is this one: it is the justification for a compaction the
           // reader did not ask for, and it is emitted two lines above PHASE_CONTEXT_COMPACTED, which
           // does survive.
-          AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED_TO_FIT);
+          AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED_TO_FIT,
+          // Owner decision 2026-08-26 — the reader's own Stop. Durable because a cancel that races
+          // the run's terminal leaves no other trace: the loop never re-reads the flag, the
+          // disposition stays COMPLETED, and the act would be gone by the next reload.
+          AgentEvent.AgentProgress.PHASE_STOP_REQUESTED);
 
   private AgentInteractionMapper() {}
 

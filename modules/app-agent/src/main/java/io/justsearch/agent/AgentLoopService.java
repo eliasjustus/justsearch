@@ -131,6 +131,12 @@ public final class AgentLoopService implements AgentService {
   private volatile RunObservation runObservation = RunObservation.NONE;
   /** The shape a native agent run is journaled under. */
   private static final String RUN_SHAPE_ID = "core.agent-run";
+  /**
+   * Owner decision 2026-08-26 — the durable note {@link #recordStopRequest} writes. The reader's own
+   * act, in their own terms: not "cancelled" (which words their decision as a malfunction) and not a
+   * verdict on the run, which may well have finished in the same instant.
+   */
+  private static final String STOP_REQUESTED_NOTE = "You stopped this run";
   private final AgentToolEmitter agentToolEmitter;
   private final FileOperationLog fileOperationLog; // nullable
   // Tempdoc 584 §B.4: prompt assembly (the indexed-root preamble + the slice-447 condition-recovery
@@ -660,6 +666,33 @@ public final class AgentLoopService implements AgentService {
   @Override
   public void cancelSession(String sessionId) {
     sessionRegistry.cancelSession(sessionId);
+    recordStopRequest(sessionId);
+  }
+
+  /**
+   * Owner decision 2026-08-26 (late cancel) — write the reader's Stop into the run's own journal,
+   * whether or not the loop was still in a position to act on it.
+   *
+   * <p>UNCONDITIONAL, deliberately. The registry's cancel is a no-op once the run has been evicted,
+   * and even while it is registered the loop only reads the flag at its next step boundary — so a
+   * stop that arrives after the terminal `done` leaves the run COMPLETED with the reader's act
+   * recorded nowhere. Gating this on "did the cancel actually stop anything" would reintroduce
+   * exactly that race, because there is no instant at which the answer to that question is stable.
+   * The run that WAS stopped therefore records the fact twice — here and as its {@code CANCELLED}
+   * error entry — which is two statements of one true thing, not two stories: the record projection
+   * reads either as the same halt.
+   *
+   * <p>The snapshot guard keeps this addressed to runs that exist; an unknown id writes nothing
+   * rather than minting a journal for it.
+   */
+  private void recordStopRequest(String sessionId) {
+    if (sessionId == null || sessionId.isBlank() || runStore.readSnapshot(sessionId) == null) {
+      return;
+    }
+    runStore.appendEvent(
+        sessionId,
+        new AgentEvent.AgentProgress(
+            AgentEvent.AgentProgress.PHASE_STOP_REQUESTED, STOP_REQUESTED_NOTE, 0, 0));
   }
 
   @Override

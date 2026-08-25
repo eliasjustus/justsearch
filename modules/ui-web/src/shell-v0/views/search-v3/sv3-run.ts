@@ -621,6 +621,24 @@ export function sv3RunReceiptLabel(
   disposition: string | null = null,
 ): string {
   const calls = `${toolCalls} tool ${toolCalls === 1 ? 'call' : 'calls'}`;
+  // Owner decision 2026-08-26 (answerless cancel) — A HALT WITH NO TERMINAL AT ALL gets the count
+  // and NOTHING ELSE.
+  //
+  // An absent disposition is not a missing detail here, it is the whole fact: a run stopped before
+  // it produced an answer never emits `AgentDone` (`AgentStepRunner` emits `AgentError` with
+  // `CANCELLED` and returns), so there is no terminal on either plane and nothing that could have a
+  // disposition. There is no outcome to report that early — "stopped by you" is the ending of a
+  // response, and this run never began one. What the record used to say instead was "failed", off
+  // the error entry the cancel logged on its way down; the reader knows they pressed Stop, and the
+  // honest receipt is the work that had happened by then.
+  //
+  // KEYED ON THE TERMINAL, NOT ON THE ANSWER TEXT, and the difference is load-bearing: a live
+  // delegate turn's `answer` is empty until the record catches up (only the ask path streams into
+  // it), so a text test would word the same halt two ways one fetch apart. Both planes carry the
+  // disposition at the moment they settle, so both reach this line with the same value.
+  if (status === 'halted' && disposition === null) {
+    return calls;
+  }
   const ending =
     status === 'halted'
       ? 'stopped by you'
@@ -717,7 +735,32 @@ export interface Sv3Slot {
    * the title so the reason and the control cannot drift apart — they are one derivation.
    */
   readonly reason: string;
+  /**
+   * Owner decision 2026-08-26 — the STANDING stop's reason, or `''` when no second control is
+   * needed.
+   *
+   * <p>The slot's strict priority is right about which control is PRIMARY and wrong about stopping
+   * being optional. A supervised delegate run holds on a tool approval for most of its life, so
+   * `pendingPrompt` outranks `running` for most of its life — and the reader was measured with no
+   * stop control at all for 300 s of a live run. Halting a run is a capability, not a rung: it
+   * cannot be something the window withdraws because a more urgent decision is also outstanding.
+   *
+   * <p>So the stop keeps its home OUTSIDE the slot in exactly that case, the way the tier control
+   * sits beside the slot rather than in it. The slot itself still early-returns exactly one control
+   * and still never disables the loser — this is a second control, not a second winner — and the two
+   * are mutually exclusive by construction: this is `''` whenever {@link kind} is already `stop`, so
+   * the window renders exactly one stop while a run is live and none when it is not.
+   */
+  readonly haltReason: string;
 }
+
+/**
+ * The standing stop's words. Not the slot rung's sentence: that one explains what Enter does instead
+ * ("Enter steers"), and Enter does NOT steer while a decision is holding the run — the composer
+ * refuses a submit on the `answer` rung. A control whose label described a key that does nothing
+ * would be the chrome-that-lies this window's slot reasons exist to prevent.
+ */
+export const SV3_STANDING_STOP_REASON = 'Stop the run';
 
 /**
  * The window's send-routing vocabulary, said once so the composer's label and the window's routing
@@ -746,13 +789,24 @@ export function sv3PrimaryAction({
   // chosen tier: a send that delegates while its own label says "Enter asks" is chrome that lies.
   const hint = tier === 'delegate' ? SV3_DELEGATE_SEND_HINT : SV3_SEND_HINT;
   if (pendingPrompt) {
-    return { kind: 'answer', reason: 'The run is waiting for your decision' };
+    return {
+      kind: 'answer',
+      reason: 'The run is waiting for your decision',
+      // Keyed on the RUN BEING LIVE, not on the prompt: the stop is offered because there is
+      // something to stop, and a prompt left over from a run that has already ended is not it.
+      haltReason: running ? SV3_STANDING_STOP_REASON : '',
+    };
   }
   if (running) {
-    return { kind: 'stop', reason: `Stop the response · ${SV3_STEER_HINT}` };
+    // The slot IS the stop here, so there is no second one — one live run, one stop control.
+    return { kind: 'stop', reason: `Stop the response · ${SV3_STEER_HINT}`, haltReason: '' };
   }
   if (followUp) {
-    return { kind: 'follow-up', reason: `Send a follow-up in this conversation · ${hint}` };
+    return {
+      kind: 'follow-up',
+      reason: `Send a follow-up in this conversation · ${hint}`,
+      haltReason: '',
+    };
   }
-  return { kind: 'send', reason: `Send · ${hint}` };
+  return { kind: 'send', reason: `Send · ${hint}`, haltReason: '' };
 }

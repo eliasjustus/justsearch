@@ -2523,6 +2523,49 @@ class AgentLoopServiceTest {
   }
 
   @Test
+  @DisplayName("owner 2026-08-26 — a cancel that arrives AFTER the run finished is still recorded")
+  void lateCancelIsRecordedOnTheRun() {
+    // The presentation race: the reader presses Stop as the run reaches its terminal. The registry
+    // has already evicted the session, so `cancelSession` used to be a total no-op — the run's
+    // disposition stayed COMPLETED and the reader's act survived nowhere. Cold-loading the
+    // conversation then showed "finished", telling them the thing they did never happened.
+    var runStore = new AgentRunStore(tempDir.resolve("agent-runs-late-cancel"));
+    var request = new AgentRequest(userMessage("do the thing"), List.of(), 3);
+    runStore.startRun("session_late_cancel", request, request.messages(), 1000);
+
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("answered")));
+    var searchTool = new StubTool("search", RiskTier.LOW, "r");
+    var service =
+        new AgentLoopService(
+            ai,
+            stubCatalog(searchTool),
+            stubExecutor(searchTool),
+            stubEmitter(),
+            null,
+            null,
+            runStore,
+            null);
+
+    // No run is registered under this id — exactly the state a finished run leaves behind.
+    service.cancelSession("session_late_cancel");
+
+    var stopNotes =
+        runStore.readEvents("session_late_cancel").stream()
+            .filter(r -> "progress".equals(r.get("eventType")))
+            .filter(
+                r ->
+                    r.get("payload") instanceof Map<?, ?> p
+                        && AgentEvent.AgentProgress.PHASE_STOP_REQUESTED.equals(p.get("phase")))
+            .toList();
+    assertEquals(1, stopNotes.size(), "the reader's Stop must be on the run's own journal");
+
+    // An id no run was ever written under mints nothing — the guard is on the run existing, not on
+    // the caller being careful.
+    service.cancelSession("session_never_existed");
+    assertTrue(runStore.readEvents("session_never_existed").isEmpty());
+  }
+
+  @Test
   @DisplayName("859 §D F1 — a RESUMED run keeps the rung it was dispatched with")
   void resumedRunKeepsItsEffortRung() {
     // The defect: resume rebuilt a fresh AgentRequest through the short constructor, which carries

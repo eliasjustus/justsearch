@@ -468,6 +468,20 @@ public sealed interface AgentEvent {
      */
     public static final String PHASE_CONTEXT_COMPACTED_TO_FIT = "context_compacted_to_fit";
 
+    /**
+     * Owner decision 2026-08-26 (late cancel) — the READER pressed Stop on this run.
+     *
+     * <p>The four phases above narrate a decision the loop took on the reader's behalf; this one
+     * narrates the reader's OWN decision, which is the same accountability axis read from the other
+     * end. It is durable for the reason the others are and one more: a stop that lands in the same
+     * instant the run reaches its terminal changes nothing about the run, so the only place that act
+     * can survive is the record. Without it a reader who pressed Stop comes back to a turn reading
+     * "finished" — the window telling them the thing they did never happened.
+     *
+     * @see #PHASE_BUDGET_RAISED
+     */
+    public static final String PHASE_STOP_REQUESTED = "stop_requested";
+
     /** Routine progress (default {@link #INFO} severity, no trace). */
     public AgentProgress(String phase, String message, int iteration, int maxIterations) {
       this(phase, message, iteration, maxIterations, INFO, TraceContext.none());

@@ -283,6 +283,26 @@ final class AgentInteractionMapperTest {
   }
 
   @Test
+  @DisplayName("owner 2026-08-26: the reader's Stop is a durable PROGRESS note")
+  void stopRequestNarrationIsDurable() {
+    // The late-cancel gap: a stop that lands as the run reaches its terminal changes nothing about
+    // the run, so the disposition stays COMPLETED and this note is the ONLY durable trace of the act.
+    InteractionEvent e =
+        mapped(
+            "progress",
+            Map.of(
+                "phase", AgentEvent.AgentProgress.PHASE_STOP_REQUESTED,
+                "message", "You stopped this run",
+                "iteration", 0,
+                "maxIterations", 0,
+                "severity", "info"));
+    assertEquals(InteractionEventKind.PROGRESS, e.kind());
+    assertEquals("You stopped this run", e.content());
+    assertEquals(
+        AgentEvent.AgentProgress.PHASE_STOP_REQUESTED, e.attributes().get("phase"));
+  }
+
+  @Test
   @DisplayName("859 §D F6: two same-millisecond notes keep EMISSION order, not phase-name order")
   void sameMillisecondNotesSortByEmissionNotPhaseName() {
     // The F-1 defect. `context_compacted`.localeCompare(`context_gate_reapplied`) is -1, so an id
@@ -348,7 +368,8 @@ final class AgentInteractionMapperTest {
     // The guard is only meaningful if it is actually looking at constants: assert it FOUND them.
     // 859 D live-defect D4 added the fifth (PHASE_CONTEXT_COMPACTED_TO_FIT) — and this line going
     // red is exactly the guard working: the constant could not be added without classifying it.
-    assertEquals(5, AgentInteractionMapper.DURABLE_PROGRESS_PHASES.size());
+    // The owner's 2026-08-26 late-cancel decision added the sixth (PHASE_STOP_REQUESTED).
+    assertEquals(6, AgentInteractionMapper.DURABLE_PROGRESS_PHASES.size());
   }
 
   @Test

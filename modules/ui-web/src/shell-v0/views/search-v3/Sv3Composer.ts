@@ -636,6 +636,16 @@ export class Sv3Composer extends JfElement {
         min-width: 0;
       }
 
+      /* The footer's right-hand group: the primary slot, and the STANDING stop when a live run's
+         slot is holding something else (owner decision 2026-08-26). It exists so the footer keeps
+         exactly TWO flex children — space-between across three would push the slot to the middle
+         of the row every time a run held on a decision. */
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+      }
+
       /* The spec's composer control on the button sm ladder:
          h-7 / min-h-7, gap-1.5, px-2.5, the ghost variant's secondary label
          with the icon dimmed one step further, and transition-none on colour.
@@ -954,6 +964,7 @@ export class Sv3Composer extends JfElement {
     state: { type: String, reflect: true },
     slotKind: { type: String, reflect: true, attribute: 'slot-kind' },
     slotReason: { type: String, attribute: 'slot-reason' },
+    haltReason: { type: String, attribute: 'halt-reason' },
     steerable: { type: Boolean, reflect: true },
     unavailableReason: { type: String, attribute: 'unavailable-reason' },
     delegateUnavailableReason: { type: String, attribute: 'delegate-unavailable-reason' },
@@ -979,6 +990,12 @@ export class Sv3Composer extends JfElement {
   declare slotKind: Sv3SlotKind;
   /** The reason from the same derivation, carried into the control's aria-label and title. */
   declare slotReason: string;
+  /**
+   * The STANDING stop's reason, from the same one derivation — non-empty exactly when a run is live
+   * and the primary slot is holding something else (owner decision 2026-08-26). The composer renders
+   * the verdict; it never asks itself whether a run is running.
+   */
+  declare haltReason: string;
   /**
    * The live run accepts a mid-run submit as a STEER that joins it (an agent run does; an ask stream
    * has no such channel). It is what decides whether a submit while the slot is Stop is a refusal or
@@ -1076,6 +1093,7 @@ export class Sv3Composer extends JfElement {
       running: false,
       followUp: false,
     }).reason;
+    this.haltReason = '';
     this.steerable = false;
     this.unavailableReason = '';
     this.delegateUnavailableReason = '';
@@ -1283,7 +1301,13 @@ export class Sv3Composer extends JfElement {
             <div class="controls" @focusout=${this.onControlsFocusOut}>
               ${this.tierControl()}${this.effortControl()}${this.modelLabelFact()}
             </div>
-            ${this.primaryAction(empty, unavailable, this.refusalDescribedBy(reason))}
+            <div class="actions">
+              ${this.standingStop()}${this.primaryAction(
+                empty,
+                unavailable,
+                this.refusalDescribedBy(reason),
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1803,6 +1827,40 @@ export class Sv3Composer extends JfElement {
    * routing (Enter vs Ctrl+Enter, or that Enter now steers) is explained here and nowhere else, which
    * is what "no new chrome" means in practice — the composer gained a tier without gaining a band.
    */
+  /**
+   * THE stop control — one template, two placements, one `data-testid`.
+   *
+   * <p>Owner decision 2026-08-26: halting a live run is a capability, so it has to be reachable
+   * whenever a run is live, including while the slot is held by the run's own pending decision. Its
+   * two placements are mutually exclusive by construction (`sv3PrimaryAction` returns an empty
+   * {@link haltReason} on the `stop` rung), so this renders exactly once while a run is live and the
+   * test id names ONE control rather than two that a caller would have to choose between. It
+   * dispatches the SAME {@link SV3_COMPOSER_STOP} the slot rung has always dispatched — the window
+   * owns which stream a Stop halts, and a second halt path would be a second answer to that.
+   */
+  private stopControl(reason: string): TemplateResult {
+    return html`
+      <button
+        type="button"
+        class="stop"
+        aria-label=${reason}
+        title=${reason}
+        data-testid="sv3-composer-stop"
+        @click=${this.stop}
+      >
+        <!-- The spec's 12px square with a 1.5 radius. -->
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+          <rect x="2" y="2" width="8" height="8" rx="1.5"></rect>
+        </svg>
+      </button>
+    `;
+  }
+
+  /** The stop, when the primary slot is holding something else while the run is still live. */
+  private standingStop(): TemplateResult | typeof nothing {
+    return this.haltReason === '' ? nothing : this.stopControl(this.haltReason);
+  }
+
   private primaryAction(
     empty: boolean,
     unavailable: boolean,
@@ -1823,21 +1881,7 @@ export class Sv3Composer extends JfElement {
           </button>
         `;
       case 'stop':
-        return html`
-          <button
-            type="button"
-            class="stop"
-            aria-label=${this.slotReason}
-            title=${this.slotReason}
-            data-testid="sv3-composer-stop"
-            @click=${this.stop}
-          >
-            <!-- The spec's 12px square with a 1.5 radius. -->
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-              <rect x="2" y="2" width="8" height="8" rx="1.5"></rect>
-            </svg>
-          </button>
-        `;
+        return this.stopControl(this.slotReason);
       case 'follow-up':
       case 'send':
         // TWO forms of the one control, and the split is not cosmetic. An empty draft keeps slice-3's
