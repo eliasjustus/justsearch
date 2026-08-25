@@ -171,6 +171,21 @@ final class ChatControllerHeartbeatTest {
     return ctx;
   }
 
+  @Test
+  @DisplayName("859 D2 — shutdown stops the scheduler, and is idempotent (the 638 PE symmetry)")
+  void shutdownStopsTheHeartbeatScheduler() {
+    // An added START needs an added STOP, or this is tempdoc 638 PE's leak again under a new
+    // controller's name — which is why `LocalApiServer` now calls this alongside AgentController's.
+    ChatController controller =
+        new ChatController(mock(ConversationEngine.class), mock(SseWriter.class), null);
+    assertFalse(controller.isHeartbeatSchedulerShutdown(), "running before shutdown");
+    controller.shutdown();
+    assertTrue(controller.isHeartbeatSchedulerShutdown(), "shutdown() must stop the scheduler");
+    // Idempotent — a double teardown must not throw.
+    controller.shutdown();
+    assertTrue(controller.isHeartbeatSchedulerShutdown());
+  }
+
   /** Kept honest: the beat's payload is the liveness frame, not an event the FE must understand. */
   @Test
   @DisplayName("859 D2 — the beat is an out-of-band `heartbeat` frame carrying only a timestamp")
