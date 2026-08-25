@@ -24,7 +24,7 @@ import { JfElement } from '../../primitives/JfElement.js';
 // The product's ONE reading-position authority (tempdoc 565 §21), and this surface is its SECOND
 // adopter — 565 §21 deferred "the general multi-surface authority … to the 2nd adopter", so the
 // controller is consumed here rather than re-derived. Only its NAVIGATION half is used: `spineEl`
-// returns null, which the authority explicitly supports (`primitives/navigation.ts:332-333`), so
+// returns null, which the authority explicitly supports (`primitives/navigation.ts:435`), so
 // the minimap's measurements degrade to zero and the landmark/jump path is untouched.
 import { NavigationController } from '../../primitives/navigation.js';
 // The product's ONE "is the reader typing?" predicate (tempdoc 857 PR-A). A window-local copy is
@@ -1406,7 +1406,7 @@ export class Sv3Main extends JfElement {
    *
    *  1. **It is answerable BEFORE any measurement.** An `active()` derived from `nav.landmarks`
    *     deadlocks: landmarks populate only inside `measure()`, and `measure()` runs only when
-   *     `active()` is already true (`primitives/navigation.ts:131-135`), so zero landmarks would
+   *     `active()` is already true (`primitives/navigation.ts:159-165`), so zero landmarks would
    *     mean permanently inactive. Host state, always.
    *  2. **It is FALSE in every non-transcript arm** — hero, search rows, pending, unreachable,
    *     empty and locked. That is what tears the controller down when the arm changes
@@ -1505,7 +1505,7 @@ export class Sv3Main extends JfElement {
     if (isTypingTarget(deepActiveElement())) return;
     // The landmark list OUTLIVES the arm that produced it: `teardown()` releases the observer, the
     // listeners, the pin and the viewport, but deliberately keeps `landmarks`/`fractions`/`trackPx`
-    // (`primitives/navigation.ts:376-386`). So after a transcript→locked transition the list is
+    // (`primitives/navigation.ts:481-491`). So after a transcript→locked transition the list is
     // stale-but-non-empty, the length check below passes, `preventDefault()` fires, and `jumpTo`
     // then bails because the locked arm renders no `.scroller` — a key swallowed to no effect, over
     // a transcript the store is currently refusing to show. Ask the arm, not the leftovers.
