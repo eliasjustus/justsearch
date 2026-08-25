@@ -1049,6 +1049,11 @@ export class Sv3Composer extends JfElement {
   }
 
   private onKeydown(event: KeyboardEvent): void {
+    // Tempdoc 864 §3.2(b) — an IME owns its own keys FIRST, and that has to be tested before the
+    // Escape branch, not after it: `Escape` is how a reader dismisses an IME candidate window, and
+    // this handler used to read that press as "leave the composer" and flip the window to hero
+    // mid-draft. Same reason the `Enter` branch below has always tested `isComposing`.
+    if (event.isComposing) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       this.request('hero');

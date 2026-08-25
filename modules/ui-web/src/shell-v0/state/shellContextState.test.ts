@@ -21,7 +21,6 @@ describe('shellContextState — defaults', () => {
     const ctx = getShellContext();
     expect(ctx.activeSurface).toBeNull();
     expect(ctx.activeProfile).toBe('default');
-    expect(ctx.focusKind).toBe('none');
     expect(ctx.selectionKind).toBe('none');
     expect(ctx.selectionCount).toBe(0);
     expect(ctx.selectionCapabilities).toBe('');
@@ -34,7 +33,7 @@ describe('shellContextState — updates and subscription', () => {
     updateShellContext({ activeSurface: 'core.search-surface' });
     expect(getShellContext().activeSurface).toBe('core.search-surface');
     // Other fields preserved.
-    expect(getShellContext().focusKind).toBe('none');
+    expect(getShellContext().selectionKind).toBe('none');
   });
 
   it('subscribers fire on change', () => {

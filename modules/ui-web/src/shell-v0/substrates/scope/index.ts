@@ -29,9 +29,9 @@
  *   - `restoreScope(snapshot)` — apply a snapshot to live state.
  *   - `getScope()` — typed Scope view of the current ShellContext.
  *
- * The non-persistent fields of ShellContext (selection, paletteOpen,
- * focusKind, inspectorOpen, etc.) are NOT in the snapshot — those
- * are ephemeral UI state, not profile data.
+ * The non-persistent fields of ShellContext (selection, inspectorOpen,
+ * etc.) are NOT in the snapshot — those are ephemeral UI state, not
+ * profile data.
  *
  * KCS bridge per §19: under future three-layer KCS this becomes
  * `useScope()` + `useScopeSnapshot()` capability modules.
@@ -82,9 +82,8 @@ export interface ScopeSnapshot {
  * Capture the current Scope into a serializable snapshot.
  *
  * Per §3.B: this returns the PERSISTENT subset of Scope only.
- * Ephemeral fields (selection, paletteOpen, focusKind, inspectorOpen)
- * are intentionally omitted — they belong to the current session, not
- * the profile.
+ * Ephemeral fields (selection, inspectorOpen) are intentionally
+ * omitted — they belong to the current session, not the profile.
  */
 export function serializeScope(): ScopeSnapshot {
   const ctx = getShellContext();

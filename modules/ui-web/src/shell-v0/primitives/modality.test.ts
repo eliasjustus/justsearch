@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ModalityController } from './modality.js';
+import { ModalityController, modalOwnsFocus, __resetModalityForTest } from './modality.js';
 import {
   registerTransient,
   closeOthersInLayer,
@@ -58,6 +58,40 @@ describe('ModalityController (574 Move 4)', () => {
     m.exit({ skipFocusRestore: true });
     expect(document.documentElement.style.overflow).toBe(''); // scroll-lock still releases
     expect(document.activeElement).toBe(field); // focus NOT restored to invoker
+  });
+});
+
+/**
+ * Tempdoc 864 Layer 2(d) — the modal-owns-focus predicate every global key handler reads. Its depth
+ * is the SAME count the scroll-lock uses (one authority, two consumers), so stacking is asserted
+ * here: a modal closing while another is still open must not tell the keyboard it is free.
+ */
+describe('modalOwnsFocus (864 Layer 2(d))', () => {
+  beforeEach(() => __resetModalityForTest());
+
+  it('is false with nothing open, true while a modal is entered, and false again after it exits', () => {
+    expect(modalOwnsFocus()).toBe(false);
+    const a = ctrl();
+    a.enter();
+    expect(modalOwnsFocus()).toBe(true);
+    a.exit({ skipFocusRestore: true });
+    expect(modalOwnsFocus()).toBe(false);
+  });
+
+  it('stays true while ANY modal in a stack is still open', () => {
+    const a = ctrl();
+    const b = ctrl();
+    a.enter();
+    b.enter();
+    a.exit({ skipFocusRestore: true });
+    expect(modalOwnsFocus(), 'the inner modal is still open').toBe(true);
+    b.exit({ skipFocusRestore: true });
+    expect(modalOwnsFocus()).toBe(false);
+  });
+
+  it('is not claimed by a non-blocking host, which never enters', () => {
+    ctrl(); // constructed but never entered — a `show()` rather than a `showModal()`
+    expect(modalOwnsFocus()).toBe(false);
   });
 });
 
