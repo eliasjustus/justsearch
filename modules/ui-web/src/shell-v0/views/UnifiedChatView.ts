@@ -33,7 +33,12 @@ import {
   subscribeShortViewport,
 } from '../primitives/compositionLayout.js';
 import { friendlyStreamError } from '../utils/streamError.js';
-import { deepActiveElement, isTypingTarget } from '../utils/keyboardHandler.js';
+import {
+  deepActiveElement,
+  isTypingTarget,
+  shouldIgnoreKeyEvent,
+} from '../utils/keyboardHandler.js';
+import { modalOwnsFocus } from '../primitives/modality.js';
 import { composerStyles } from '../components/Composer.js';
 import '../components/Composer.js';
 import { takePendingSelection, takePendingForceShape, resolveDispatchShape, wireSelectionKind, takePendingAutoRun, compose } from '../utils/compose.js';
@@ -4877,6 +4882,13 @@ export class UnifiedChatView extends JfElement {
     if (this.affordance !== 'agent' || !this.wideZone) return;
     const dir = e.key === 'j' ? 1 : e.key === 'k' ? -1 : 0;
     if (dir === 0) return;
+    // Tempdoc 864 Layer 2(b)/(d) — the SAME two guards Search v3's window listener takes, from the
+    // same helpers: IME composition + auto-repeat, and an open modal owning the keyboard. This
+    // window has the identical shape of the L10 defect (a bare `j` on a non-editable control inside
+    // an open modal reaching a window listener), so it takes the identical guards rather than
+    // becoming the one global handler that still leaks.
+    if (shouldIgnoreKeyEvent(e)) return;
+    if (modalOwnsFocus()) return;
     // §33 — never hijack typing: descend through nested shadow roots (jf-unified-chat-view →
     // jf-composer → textarea) to the truly-focused element, and bail if it's an editable control.
     // Tempdoc 857 PR-A — the descent and the predicate are the SHARED ones now

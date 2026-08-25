@@ -24,6 +24,7 @@ import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendin
 import { SHAPE_LABELS, type ShapeId } from './unifiedChatRequest.js';
 import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
 import { Control } from '../components/Control.js';
+import { ModalityController, __resetModalityForTest } from '../primitives/modality.js';
 // Search Thread Round-2 R2 — namespace import so `compose` can be spied on directly (the shift-held
 // Ask AI staging test asserts the view calls the SAME compose() seam the pre-round-2 behavior used).
 import * as composeModule from '../utils/compose.js';
@@ -246,7 +247,11 @@ function mountView(): UnifiedChatView {
 
 // Tempdoc 738 — uiMode is a module-level store shared across tests; reset it after every test so a
 // block that sets Detailed mode cannot leak into a later block that expects the Simple default.
-afterEach(() => __resetUiModeForTest());
+afterEach(() => {
+  __resetUiModeForTest();
+  // 864 Layer 2(d) — modality depth is module state and outlives the DOM.
+  __resetModalityForTest();
+});
 
 /**
  * Tempdoc 814 §D6 — window HEIGHT is now a real input to what this view renders (the block-axis
@@ -2629,6 +2634,36 @@ describe('UnifiedChatView §33 — window-level J/K step navigation', () => {
     view.remove(); // → disconnectedCallback → removeEventListener('keydown', boundWindowKeydown)
     pressWindow('j');
     expect(jumpTo).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Tempdoc 864 Layer 2(b)/(d) — this window's j/k listener has the same shape as the one 864's L10
+   * defect was found on (Search v3's), so it takes the same two shared guards rather than being the
+   * one global handler still leaking: IME composition + auto-repeat, and an open modal owning the
+   * keyboard wherever focus sits.
+   */
+  it('864: stands down for IME composition, auto-repeat, and an open modal', () => {
+    const { nav } = mountWithLandmarks();
+    const jumpTo = vi.spyOn(nav, 'jumpTo').mockImplementation(() => {});
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', isComposing: true, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', repeat: true, bubbles: true }));
+    expect(jumpTo).not.toHaveBeenCalled();
+
+    const modality = new ModalityController({
+      addController: () => {},
+      removeController: () => {},
+      requestUpdate: () => {},
+      updateComplete: Promise.resolve(true),
+    });
+    modality.enter();
+    try {
+      pressWindow('j');
+      expect(jumpTo, 'j navigated under an open modal').not.toHaveBeenCalled();
+    } finally {
+      modality.exit({ skipFocusRestore: true });
+    }
+    pressWindow('j');
+    expect(jumpTo, 'the guards released with the modal').toHaveBeenCalledTimes(1);
   });
 });
 

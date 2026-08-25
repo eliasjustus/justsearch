@@ -29,6 +29,7 @@ import { __resetStoreRegistryForTest } from '../router/storeRegistry.js';
 import { __resetBootstrapForTest } from '../router/bootstrap.js';
 import { __resetUserConfigForTest } from '../state/userConfigState.js';
 import { deactivateProjection } from '../router/URLProjector.js';
+import { ModalityController, __resetModalityForTest } from '../primitives/modality.js';
 import type { Surface, SurfaceCatalog } from '../../api/types/surface.js';
 
 interface ShellElement extends HTMLElement {
@@ -125,6 +126,7 @@ describe('Shell global chords — the shared typing guard (tempdoc 864 Layer 2(a
     window.location.hash = '';
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    __resetModalityForTest();
   });
 
   it('leaves a chord alone while a <select> has focus — the omission 857 closed elsewhere', () => {
@@ -137,6 +139,42 @@ describe('Shell global chords — the shared typing guard (tempdoc 864 Layer 2(a
     focusInShadow('button');
     expect(press({ key: 'd', ctrlKey: true }).defaultPrevented).toBe(true);
     expect(press({ key: 'ArrowLeft', altKey: true }).defaultPrevented).toBe(true);
+  });
+
+  /**
+   * Tempdoc 864 Layer 2(b) — this raw `document` listener is one of the three global-key sites that
+   * take the SHARED `shouldIgnoreKeyEvent`. A held `Ctrl+D` used to toggle the bookmark on and off
+   * for as long as the key was down; an IME-composing press was a shortcut. Both are asserted beside
+   * the same chord still being claimed, so a guard that swallowed everything would fail.
+   */
+  it('864: ignores an IME-composing chord and an auto-repeat chord', () => {
+    focusInShadow('button');
+    expect(press({ key: 'd', ctrlKey: true, isComposing: true }).defaultPrevented).toBe(false);
+    expect(press({ key: 'd', ctrlKey: true, repeat: true }).defaultPrevented).toBe(false);
+    expect(press({ key: 'd', ctrlKey: true }).defaultPrevented).toBe(true);
+  });
+
+  /**
+   * Tempdoc 864 Layer 2(d) — a modal owns the keyboard. `showModal()` makes the background inert to
+   * the POINTER, but this is a `document` listener and a keystroke made INSIDE the dialog still
+   * arrives here, so `Ctrl+Shift+A` would swap the surface out from under an open confirmation.
+   */
+  it('864: stands down while a modal owns the keyboard', () => {
+    focusInShadow('button');
+    const modality = new ModalityController({
+      addController: () => {},
+      removeController: () => {},
+      requestUpdate: () => {},
+      updateComplete: Promise.resolve(true),
+    });
+    modality.enter();
+    try {
+      expect(press({ key: 'd', ctrlKey: true }).defaultPrevented).toBe(false);
+      expect(press({ key: 'A', ctrlKey: true, shiftKey: true }).defaultPrevented).toBe(false);
+    } finally {
+      modality.exit({ skipFocusRestore: true });
+    }
+    expect(press({ key: 'd', ctrlKey: true }).defaultPrevented).toBe(true);
   });
 
   it('leaves a chord alone while a shadow-nested <input> has focus', () => {

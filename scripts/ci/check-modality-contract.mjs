@@ -6,9 +6,20 @@
  * focus-trap + background `inert` + Top Layer; `ModalityController` (`primitives/modality.ts`) adds the
  * scroll-lock + focus-restore the native dialog does NOT. §22.D's de-risk established `.showModal()` as
  * the clean, precise signal of "this is a modal" — all 5 modals (Confirm / Elicit / MacroDryRun /
- * EffectAuditLog / Authorization) call it AND compose `ModalityController`, while the presentational
- * center-slot backdrops (IndexingOverlay / DragOverlay) do NOT call it, so they need no exemption (unlike
- * the noisy `slot="center"` signal). This gate makes a HALF-WIRED modal — one that traps stacking but
+ * EffectAuditLog / Authorization) call it AND compose `ModalityController`, while the center-slot
+ * backdrops (IndexingOverlay / DragOverlay) do NOT call it, so this gate's rule does not reach them
+ * (unlike the noisy `slot="center"` signal).
+ *
+ * **Tempdoc 864 review F2 — that non-reach stopped meaning "needs nothing".** Since 864 the
+ * `ModalityController` count is ALSO the app's keyboard-ownership authority (`modalOwnsFocus`), so a
+ * `role="dialog" aria-modal="true"` layer that skips it lets `j`/`k` and the modifier-less bindings
+ * drive the surface underneath it. `IndexingOverlay` therefore composes the controller now (entering
+ * on connect — its host renders it only while the overlay is up) WITHOUT calling `showModal()`: a
+ * shape this gate is deliberately blind to, and rightly so, since the rule below is about half-wiring
+ * a NATIVE dialog, not about who may join the authority. `DragOverlay` stays out on purpose — it is a
+ * drop-target affordance during a pointer drag, not a keyboard-owning layer.
+ *
+ * This gate makes a HALF-WIRED modal — one that traps stacking but
  * leaks scroll-lock / focus-restore (the §16 S9 class) — unrepresentable: any file calling `.showModal()`
  * MUST also compose a `ModalityController`.
  *

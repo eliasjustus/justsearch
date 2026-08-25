@@ -14,7 +14,7 @@
  * `nodeType` or `closest()` would break that test, which is the only coverage the descent has.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { deepActiveElement, isTypingTarget } from './keyboardHandler.js';
+import { deepActiveElement, isTypingTarget, shouldIgnoreKeyEvent } from './keyboardHandler.js';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -88,5 +88,28 @@ describe('deepActiveElement — the shadow-root descent', () => {
     input.focus();
     expect(deepActiveElement()).toBe(input);
     expect(isTypingTarget(deepActiveElement())).toBe(true);
+  });
+});
+
+/**
+ * Tempdoc 864 Layer 2(b) — the third shared unit: event hygiene every global handler owes the
+ * reader, independent of where focus is. Three adopters take it verbatim (the registry dispatcher,
+ * `Shell.handleGlobalKey`, `Sv3Main.onWindowKeydown`, plus `UnifiedChatView`'s window listener), so
+ * a change here changes all of them — which is the point.
+ */
+describe('shouldIgnoreKeyEvent (864 Layer 2(b))', () => {
+  const ev = (init: KeyboardEventInit): KeyboardEvent => new KeyboardEvent('keydown', init);
+
+  it('ignores a keystroke feeding an IME candidate window', () => {
+    expect(shouldIgnoreKeyEvent(ev({ key: 'j', isComposing: true }))).toBe(true);
+  });
+
+  it('ignores an auto-repeat press — a held key is one intent, not N', () => {
+    expect(shouldIgnoreKeyEvent(ev({ key: 'j', repeat: true }))).toBe(true);
+  });
+
+  it('leaves an ordinary press alone, modified or not', () => {
+    expect(shouldIgnoreKeyEvent(ev({ key: 'j' }))).toBe(false);
+    expect(shouldIgnoreKeyEvent(ev({ key: 'd', ctrlKey: true }))).toBe(false);
   });
 });

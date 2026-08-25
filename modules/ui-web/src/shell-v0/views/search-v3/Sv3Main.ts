@@ -29,7 +29,12 @@ import { JfElement } from '../../primitives/JfElement.js';
 import { NavigationController } from '../../primitives/navigation.js';
 // The product's ONE "is the reader typing?" predicate (tempdoc 857 PR-A). A window-local copy is
 // what let the retiree's own guard drift out of sync with `KeybindingRegistry`'s.
-import { deepActiveElement, isTypingTarget } from '../../utils/keyboardHandler.js';
+import {
+  deepActiveElement,
+  isTypingTarget,
+  shouldIgnoreKeyEvent,
+} from '../../utils/keyboardHandler.js';
+import { modalOwnsFocus } from '../../primitives/modality.js';
 import { matchCountLabel } from '../../components/searchResults/matchCountLabel.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import './Sv3Empty.js';
@@ -1507,7 +1512,7 @@ export class Sv3Main extends JfElement {
    * surface at a time and only a CONNECTED element listens, so a cached sibling window cannot
    * double-handle.
    *
-   * Four guards, in order, and each answers a different question:
+   * Six guards, in order, and each answers a different question:
    *
    *  - `defaultPrevented` — a window listener is the LAST handler in the chain and has no business
    *    acting on an event an inner one already claimed. This is not hypothetical:
@@ -1516,6 +1521,8 @@ export class Sv3Main extends JfElement {
    *    `preventDefault()` without `stopPropagation()`, so its keys reach this listener by bubbling.
    *    Its rows are `role="button"`, not editables, so the typing guard below would not stop them.
    *  - modifiers — `Ctrl+J` and friends belong to the browser and to chorded bindings.
+   *  - IME composition / auto-repeat — the shared `shouldIgnoreKeyEvent` (864 Layer 2(b)).
+   *  - modal ownership — an open modal owns the keyboard, wherever focus sits (864 Layer 2(d)).
    *  - the typing guard — the shared descent + predicate, so a `j` typed into the composer, or into
    *    a `<select>`, is a character rather than a jump.
    *  - a non-empty landmark list — an unmeasured or item-less transcript no-ops rather than throws.
@@ -1530,6 +1537,14 @@ export class Sv3Main extends JfElement {
     const dir = event.key === 'j' ? 1 : event.key === 'k' ? -1 : 0;
     if (dir === 0) return;
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    // Tempdoc 864 Layer 2(b) — IME composition and auto-repeat, by the app's ONE definition.
+    if (shouldIgnoreKeyEvent(event)) return;
+    // Tempdoc 864 Layer 2(d) — a modal owns the keyboard while it is open. THE L10 fix: with the
+    // palette open and focus on a control inside it, `j` used to reach here (a button is not a
+    // typing target, so the guard above passes) and `jumpTo` pulled real focus into the transcript
+    // under the open palette. The question "where is focus?" cannot answer this one — focus can sit
+    // legitimately inside the modal — so the guard asks the modality authority instead.
+    if (modalOwnsFocus()) return;
     if (isTypingTarget(deepActiveElement())) return;
     // The landmark list OUTLIVES the arm that produced it: `teardown()` releases the observer, the
     // listeners, the pin and the viewport, but deliberately keeps `landmarks`/`fractions`/`trackPx`

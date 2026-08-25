@@ -25,6 +25,7 @@
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
+import { ModalityController } from '../../primitives/modality.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import {
   COMMAND_GROUPS,
@@ -358,6 +359,20 @@ export class Sv3Palette extends JfElement {
       window host across the shadow boundary and would hand focus to a non-focusable element. */
   private invoker: HTMLElement | null = null;
 
+  /**
+   * Tempdoc 864 Layer 2(d) — this palette is a modal (`role="dialog" aria-modal="true"`, a backdrop
+   * that swallows clicks) that the platform does not know about, because it is window-scoped rather
+   * than a native `<dialog>` (see the header). Entering the app's ONE modality authority is what
+   * makes it visible to every global key handler, so `j`/`k` and the modifier-less bindings stand
+   * down while it is open instead of acting on the surface underneath it.
+   *
+   * Focus-restore stays this component's own: `hide()` returns focus to the recorded invoker and
+   * `dismiss()` deliberately does not (something else already took the keyboard), a distinction the
+   * controller's saved-focus cannot make on its own — so both exits pass `skipFocusRestore`, leaving
+   * the controller owning modality + background scroll-lock and this component owning focus.
+   */
+  private readonly modality = new ModalityController(this);
+
   constructor() {
     super();
     this.open = false;
@@ -386,6 +401,7 @@ export class Sv3Palette extends JfElement {
     this.query = '';
     this.highlight = 0;
     this.open = true;
+    this.modality.enter();
     await this.updateComplete;
     this.shadowRoot?.querySelector('input')?.focus();
   }
@@ -393,6 +409,7 @@ export class Sv3Palette extends JfElement {
   hide(): void {
     if (!this.open) return;
     this.open = false;
+    this.modality.exit({ skipFocusRestore: true });
     const invoker = this.invoker;
     this.invoker = null;
     // Focus must land somewhere deliberate, or it falls to <body> and the next Tab restarts the page.
@@ -408,6 +425,7 @@ export class Sv3Palette extends JfElement {
   dismiss(): void {
     if (!this.open) return;
     this.open = false;
+    this.modality.exit({ skipFocusRestore: true });
     this.invoker = null;
   }
 
@@ -476,21 +494,28 @@ export class Sv3Palette extends JfElement {
    * Focus may not leave an open palette. The spec's dialog gets this from the platform (`showModal`
    * makes the background `inert`); a window-scoped layer has to close the cycle itself, or Tab walks
    * out into the shipped shell's chrome behind the backdrop.
+   *
+   * Tempdoc 864 §2.9(e) — the trap now CONTAINS rather than only wrapping at the edges. It used to
+   * hand the press back to the platform whenever focus was not on the last (or, for Shift+Tab, the
+   * first) stop, which is correct only while focus is already on a stop: focus resting anywhere else
+   * inside the popup — the `role="option"` rows, which are driven by `aria-activedescendant` and are
+   * deliberately NOT tab stops, or the dialog itself — let the very next Tab walk out to `<body>`.
+   * So: every Tab reaching an open palette is consumed, and focus lands on a stop by construction,
+   * wrapping in whichever direction was asked for.
    */
   private trapTab(event: KeyboardEvent): void {
+    event.preventDefault();
     const stops = [
       ...(this.shadowRoot?.querySelectorAll<HTMLElement>(
         '.popup input, .popup button, .popup [tabindex]:not([tabindex="-1"])',
       ) ?? []),
     ].filter((el) => !el.hasAttribute('disabled'));
-    if (stops.length === 0) {
-      event.preventDefault();
-      return;
-    }
-    const edge = event.shiftKey ? stops[0] : stops[stops.length - 1];
-    if (this.shadowRoot?.activeElement !== edge) return;
-    event.preventDefault();
-    (event.shiftKey ? stops[stops.length - 1] : stops[0])?.focus();
+    if (stops.length === 0) return;
+    const at = stops.indexOf(this.shadowRoot?.activeElement as HTMLElement);
+    const delta = event.shiftKey ? -1 : 1;
+    const next =
+      at < 0 ? (event.shiftKey ? stops.length - 1 : 0) : (at + delta + stops.length) % stops.length;
+    stops[next]?.focus();
   }
 
   private renderItem(command: Sv3Command, index: number): TemplateResult {

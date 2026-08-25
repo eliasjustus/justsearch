@@ -290,7 +290,12 @@ import { canonicalize, parseUrl } from '../router/parser.js';
 import { deriveRichLabel } from '../utils/deriveRichLabel.js';
 // The app's ONE "is the reader typing?" pair (857 PR-A) — adopted here by tempdoc 864 Layer 2(a),
 // which retired this file's private fourth copy of the same descent.
-import { deepActiveElement, isTypingTarget } from '../utils/keyboardHandler.js';
+import {
+  deepActiveElement,
+  isTypingTarget,
+  shouldIgnoreKeyEvent,
+} from '../utils/keyboardHandler.js';
+import { modalOwnsFocus } from '../primitives/modality.js';
 import { SURFACE_ICONS, railAccessibleName } from '../utils/surfaceIcons.js';
 import {
   isViewSaved,
@@ -956,9 +961,22 @@ export class Shell extends JfElement {
       source: 'default',
       provenance: CORE_PROVENANCE,
     });
+    // Tempdoc 864 Layer 4 — the modifier-less-printable policy: a bare printable may be a global
+    // binding only if a `when` clause scopes it to named surfaces. `/` is the app's only one, and
+    // the two named here are the surfaces that OWN a composer. Enforced by
+    // `scripts/ci/check-printable-keybinding-policy.mjs`.
+    //
+    // What that does and does NOT buy today, stated exactly (864 review F4): on
+    // `core.unified-chat-surface` the key works — `UnifiedChatView` listens for the dispatched
+    // `jf-focus-composer` (`views/UnifiedChatView.ts` connectedCallback). On
+    // `core.search-v3-surface` it does NOT: sv3 registers no listener, so `/` still matches,
+    // `preventDefault()`s and dispatches into silence, exactly as on `main`. The clause is not the
+    // fix for that — it stops `/` being swallowed on every OTHER surface. Making it reach sv3's
+    // composer is tempdoc 864 Layer 1(c2), PR B; this scope is already correct for when it lands.
     registerKeybindingEntry({
       key: '/',
       commandId: 'shell.focus-composer',
+      when: "activeSurface == 'core.unified-chat-surface' || activeSurface == 'core.search-v3-surface'",
       source: 'default',
       provenance: CORE_PROVENANCE,
     });
@@ -1989,6 +2007,13 @@ export class Shell extends JfElement {
     // still "where is focus?" (a capture-phase `event.target` is retargeted to the shadow host and
     // would miss every input in a shadow tree); only the private predicate is gone.
     if (isTypingTarget(deepActiveElement())) return;
+    // Tempdoc 864 Layer 2(b) — IME composition and auto-repeat, by the app's ONE definition (a held
+    // `Ctrl+D` used to flap the bookmark on and off for as long as the key was down).
+    if (shouldIgnoreKeyEvent(e)) return;
+    // Tempdoc 864 Layer 2(d) — these chords navigate and mutate; none of them belongs to a reader
+    // who is inside a modal. `showModal()` makes the background inert to the POINTER, but this is a
+    // `document` listener and keystrokes made inside the dialog still arrive here.
+    if (modalOwnsFocus()) return;
     if (e.altKey && e.key === 'ArrowLeft') {
       e.preventDefault();
       if (this.intentRouter) {
