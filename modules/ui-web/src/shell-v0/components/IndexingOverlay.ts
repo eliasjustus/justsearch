@@ -17,6 +17,7 @@
 
 import { html, css, type TemplateResult, nothing } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
+import { ModalityController } from '../primitives/modality.js';
 import { icon } from './Icon.js';
 import { getOperationClient } from '../operations/OperationClient.js';
 import {
@@ -40,6 +41,28 @@ export class IndexingOverlay extends JfElement {
   declare vduQueueSize: number;
   declare switching: boolean;
   declare dismissible: boolean;
+
+  /**
+   * Tempdoc 864 Layer 2(d) — this element IS a modal: `role="dialog" aria-modal="true"` over a
+   * `pointer-events: auto` backdrop that covers the surface. It was exempt from the modality
+   * contract as a "presentational center-slot backdrop" (`check-modality-contract`'s header), and
+   * that exemption predates the modality count being repurposed as the app's KEYBOARD-ownership
+   * authority. Left out, `j`/`k` and the modifier-less bindings would keep driving the surface
+   * underneath a full-screen overlay — the L10 shape with different chrome.
+   *
+   * Entering here rather than behind a visibility flag is the whole point: the host renders this
+   * element ONLY while the overlay is up (`IndexingOverlayHost.render` returns `nothing` on every
+   * withdrawal path), so mounted === modal and `hostDisconnected` releases it on all of them at
+   * once. No `showModal()` is involved, so `check-modality-contract`'s rule is untouched; this is
+   * the `Sv3Palette` pattern — a modal the platform does not know about joining the one authority
+   * that does.
+   */
+  private readonly modality = new ModalityController(this);
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.modality.enter();
+  }
 
   constructor() {
     super();

@@ -84,6 +84,31 @@ describe('KeybindingRegistry editable-target guard (Search Thread S2)', () => {
     target.remove();
   });
 
+  /**
+   * Tempdoc 864 review F3 — SHIFT is not a modifier for this guard, and that is the runtime's answer,
+   * not an accident: the dispatcher's test is `!parsed.mod && !parsed.ctrl && !parsed.meta &&
+   * !parsed.alt`. A `shift+?` binding is therefore still a printable a reader can type, and must be
+   * suppressed in an editable exactly like a bare one. `scripts/ci/check-printable-keybinding-policy.mjs`
+   * classifies Shift the same way — this case is what keeps the gate and the runtime from drifting
+   * apart into two answers.
+   */
+  it('864: Shift does not make a printable a chord — shift+? is suppressed while typing', () => {
+    registerKeybinding({
+      key: 'shift+?',
+      commandId: 'test.help',
+      source: 'default',
+      provenance: CORE_PROVENANCE,
+    });
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: '?', shiftKey: true, bubbles: true, composed: true }),
+    );
+    expect(invoked).not.toContain('test.help');
+    document.body.dispatchEvent(
+      new KeyboardEvent('keydown', { key: '?', shiftKey: true, bubbles: true, composed: true }),
+    );
+    expect(invoked, 'the binding must still fire outside an editable').toContain('test.help');
+  });
+
   it('a modified chord (Ctrl+L) still fires from inside an input', () => {
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, bubbles: true, composed: true }),

@@ -801,6 +801,42 @@ acceptable — **carrying them forward unwritten is not.**
 > (`skipFocusRestore` on both exits): `hide()` returns focus to the invoker and `dismiss()`
 > deliberately does not, a distinction the controller's saved-focus cannot make.
 >
+> **Independent review round (#557, APPROVE-WITH-FIXES) — applied in the same PR.** Reviewer ≠
+> committer, per `independent-reviewer-required`. What it caught, and what changed:
+>
+> - **F1 — the leaked-count guard had no test.** `ModalityController.hostDisconnected` is the third
+>   exit, and the only one with no caller to remember it (a palette torn down while open runs neither
+>   `hide()` nor `dismiss()`). Post-864 a leak is not a stuck scroll-lock — it is **every global key
+>   dead for the rest of the session**, silently. Now pinned: `Sv3Palette.test.ts` "864 F1: a palette
+>   torn down while OPEN releases modality"; verified red against a disabled `hostDisconnected`.
+> - **F2 — `IndexingOverlay` was a modal that had not joined the authority.** `role="dialog"
+>   aria-modal="true"` over a `pointer-events: auto` full-screen backdrop, exempt from
+>   `check-modality-contract` as a "presentational center-slot backdrop" — an exemption written
+>   before that count became the KEYBOARD authority. It joins now (enters on `connectedCallback`; its
+>   host renders the element only while the overlay is up, so mounted === modal and one teardown
+>   covers every withdrawal path). The gate's exemption note is corrected in place; `DragOverlay`
+>   stays out deliberately (a pointer-drag affordance, not a keyboard-owning layer). Both edges
+>   pinned, plus the consumer half in `Sv3Main.navigation.test.ts`.
+> - **F3 — the gate and the runtime disagreed about Shift.** The gate treated `shift+…` as exempting;
+>   the dispatcher's test is `!mod && !ctrl && !meta && !alt`, so it does not. The runtime's answer
+>   wins (a `shift+?` binding is still a printable a reader types), the gate's modifier set drops
+>   `shift`, and both sides now carry the same documented constant plus a runtime case.
+> - **F4 — a comment claimed more than was true.** Corrected at the registration site: `/` works on
+>   `core.unified-chat-surface` and is still swallowed on sv3, unchanged from `main`; PR B (Layer
+>   1(c2)) is what makes it reach sv3's composer.
+> - **F5/F6 — gate hygiene.** `when`-detection runs through the shared `stripComments` (the 698
+>   precedent), so a commented-out `when:` cannot satisfy the policy; the bite is now a committed
+>   self-test (`check-printable-keybinding-policy.test.mjs`, 16 assertions) rather than something a
+>   reviewer reproduces by hand.
+> - **F7 — logged, not fixed:** `SearchV3View`'s `palette?.open` is a narrower second answer to the
+>   question `modalOwnsFocus()` now owns, and the module-state modality depth is a test-isolation
+>   hazard (a suite that leaves a modal open makes later global-key assertions pass for the wrong
+>   reason). Both are in the inbox.
+>
+> The review also confirmed the recipe defect this PR logged is worse than reported: the comma form
+> exits 2 and repeated `--gate` flags are silently last-wins, so **the verbatim recipe runs zero
+> kernel gates**.
+>
 > **`trapTab` was fixed in the same PR** (§2.9(e)'s second half). It used to hand `Tab` back to the
 > platform whenever focus was not already on an edge stop — and the rows are `role="option"`, driven
 > by `aria-activedescendant` and deliberately not tab stops, so focus resting on one let the next

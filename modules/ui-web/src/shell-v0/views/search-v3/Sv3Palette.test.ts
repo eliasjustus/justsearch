@@ -352,6 +352,26 @@ describe('the open palette keeps the keyboard, and hands it back on close', () =
     palette.dismiss();
     expect(modalOwnsFocus(), 'dismiss() left modality entered').toBe(false);
   });
+
+  /**
+   * Tempdoc 864 review F1 — the THIRD exit, and the one with no caller to remember it: a palette torn
+   * down while still open (surface swap, window unmount) never runs `hide()` or `dismiss()`.
+   * `ModalityController.hostDisconnected` is what releases the count there, and post-864 a leaked
+   * count is not a stuck scroll-lock any more — it is EVERY global key dead for the rest of the
+   * session, silently. Both sibling controllers pin their own teardown release
+   * (`transientController.test.ts` "hostDisconnected unregisters"); this is modality's.
+   */
+  it('864 F1: a palette torn down while OPEN releases modality (no leaked count)', async () => {
+    const el = await mount();
+    const { palette } = await openViaTopbar(el);
+    expect(modalOwnsFocus(), 'the case needs an open palette to tear down').toBe(true);
+
+    palette.remove();
+    await el.updateComplete;
+    expect(modalOwnsFocus(), 'a torn-down palette leaked its modality — every global key is now dead').toBe(
+      false,
+    );
+  });
 });
 
 /**

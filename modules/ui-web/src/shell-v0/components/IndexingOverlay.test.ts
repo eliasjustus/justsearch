@@ -6,6 +6,7 @@ import './IndexingOverlay.js';
 import type { IndexingOverlay } from './IndexingOverlay.js';
 import type { AiState } from '../state/aiStateStore.js';
 import { known } from '../state/known.js';
+import { modalOwnsFocus, __resetModalityForTest } from '../primitives/modality.js';
 
 function make(): IndexingOverlay {
   const el = document.createElement('jf-indexing-overlay') as IndexingOverlay;
@@ -16,6 +17,9 @@ function make(): IndexingOverlay {
 describe('IndexingOverlay (slice 460)', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
+    // 864 F2 — the overlay now enters the app's modality authority, whose depth is module state and
+    // outlives the DOM. Reset it so one case's overlay cannot make a later case's keys look dead.
+    __resetModalityForTest();
   });
 
   it('renders header + explain text', async () => {
@@ -76,6 +80,23 @@ describe('IndexingOverlay (slice 460)', () => {
     el.dismissible = false;
     await el.updateComplete;
     expect(el.shadowRoot?.querySelector('button.close')).toBeNull();
+  });
+
+  /**
+   * Tempdoc 864 review F2 — this overlay is a real modal (`role="dialog" aria-modal="true"` over a
+   * `pointer-events: auto` backdrop), so it owns the keyboard while it is up. Its host renders the
+   * element only while the overlay is up, so mounted IS the modal state and both edges are asserted
+   * here; `Sv3Main.navigation.test.ts` asserts the consuming half (a key standing down under it).
+   */
+  describe('864 F2 — it owns the keyboard while it is up', () => {
+    it('enters the modality authority on mount and releases it on teardown', async () => {
+      expect(modalOwnsFocus(), 'nothing is up yet').toBe(false);
+      const el = make();
+      await el.updateComplete;
+      expect(modalOwnsFocus(), 'a full-screen indexing overlay did not claim the keyboard').toBe(true);
+      el.remove();
+      expect(modalOwnsFocus(), 'the withdrawn overlay leaked its modality').toBe(false);
+    });
   });
 });
 

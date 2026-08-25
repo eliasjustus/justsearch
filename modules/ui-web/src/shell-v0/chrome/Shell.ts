@@ -963,9 +963,16 @@ export class Shell extends JfElement {
     });
     // Tempdoc 864 Layer 4 — the modifier-less-printable policy: a bare printable may be a global
     // binding only if a `when` clause scopes it to named surfaces. `/` is the app's only one, and
-    // the surfaces named here are exactly those that own a composer for it to focus — anywhere else
-    // it used to be captured and `preventDefault()`ed for a command nobody could hear (§2.6).
-    // Enforced by `scripts/ci/check-printable-keybinding-policy.mjs`.
+    // the two named here are the surfaces that OWN a composer. Enforced by
+    // `scripts/ci/check-printable-keybinding-policy.mjs`.
+    //
+    // What that does and does NOT buy today, stated exactly (864 review F4): on
+    // `core.unified-chat-surface` the key works — `UnifiedChatView` listens for the dispatched
+    // `jf-focus-composer` (`views/UnifiedChatView.ts` connectedCallback). On
+    // `core.search-v3-surface` it does NOT: sv3 registers no listener, so `/` still matches,
+    // `preventDefault()`s and dispatches into silence, exactly as on `main`. The clause is not the
+    // fix for that — it stops `/` being swallowed on every OTHER surface. Making it reach sv3's
+    // composer is tempdoc 864 Layer 1(c2), PR B; this scope is already correct for when it lands.
     registerKeybindingEntry({
       key: '/',
       commandId: 'shell.focus-composer',

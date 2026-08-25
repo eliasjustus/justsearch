@@ -29,15 +29,36 @@
  * Positive-coverage scan over the FE source: every `registerKeybindingEntry(...)` /
  * `registerKeybinding({...})` call whose `key` is a string literal is classified, and the printable
  * modifier-less ones must carry `when`.
+ *
+ * Self-test: `node scripts/ci/check-printable-keybinding-policy.test.mjs` drives {@link findViolations}
+ * with a fixture pair (a bare `'j'` must fail; `'mod+j'`, a `when`-scoped key and a dynamic key must
+ * pass), so the gate's BITE is asserted in the repo rather than reproduced by hand.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { stripComments as stripCommentsShared } from '../lib/strip-comments.mjs';
 
 const ROOTS = ['modules/ui-web/src'];
-const MODIFIERS = new Set(['mod', 'ctrl', 'control', 'cmd', 'meta', 'command', 'alt', 'option', 'shift']);
+
+/**
+ * The EXEMPTING modifiers — deliberately the same set `KeybindingRegistry.attachKeybindingDispatcher`
+ * treats as making a binding non-modifier-less: `!parsed.mod && !parsed.ctrl && !parsed.meta &&
+ * !parsed.alt`. **`shift` is NOT in it, and that is the point** (864 review F3): the runtime does not
+ * count Shift, so a `shift+/` binding is still dispatched against a reader who is typing `?`. A gate
+ * that exempted Shift would bless exactly the bindings the runtime still treats as printable — two
+ * answers to one question, which is the fork this tempdoc exists to end. Change one side and this
+ * comment plus `KeybindingRegistry.editableGuard.test.ts`'s Shift case both have to move.
+ */
+const MODIFIERS = new Set(['mod', 'ctrl', 'control', 'cmd', 'meta', 'command', 'alt', 'option']);
 
 const norm = (p) => p.replace(/\\/g, '/');
+
+/**
+ * Comments are stripped before anything is read (the tempdoc-698 precedent, shared helper), so a
+ * commented-out `when:` cannot satisfy the policy and a doc-comment naming a bare key cannot trip it.
+ */
+const stripComments = (s) => stripCommentsShared(s, { withHtml: false });
 
 function* walk(dir) {
   for (const name of readdirSync(dir)) {
@@ -52,9 +73,9 @@ function* walk(dir) {
 }
 
 /**
- * A key combo is in scope when it names NO modifier and its key is a single printable character —
- * the class a reader can type into a text field ('/' , 'j', '?'). `parseKey` in the registry splits
- * on '+', so this mirrors it.
+ * A key combo is in scope when it names no EXEMPTING modifier (see {@link MODIFIERS} — Shift is not
+ * one) and its key is a single printable character: the class a reader can type into a text field
+ * (`/`, `j`, `?`). `parseKey` in the registry splits on '+', so this mirrors it.
  */
 export function isModifierlessPrintable(combo) {
   const parts = combo.toLowerCase().split('+').map((p) => p.trim());
@@ -64,10 +85,53 @@ export function isModifierlessPrintable(combo) {
 }
 
 /**
- * Pure detection, rooted so the kernel/self-test can scan a fixture tree. Reads each
- * `registerKeybinding…(` call's argument object by brace-matching, then asks two questions of the
- * literal: is the key a modifier-less printable, and does the same literal carry `when`.
+ * Pure per-source detection: read each `registerKeybinding…(` call's argument object by
+ * brace-matching, then ask two questions of the literal — is the key a modifier-less printable, and
+ * does the same literal carry `when`. Exported so the self-test can drive it with source strings
+ * instead of a fixture tree on disk.
  */
+export function findViolations(rawSrc, file = '<source>') {
+  const violations = [];
+  let scanned = 0;
+  let printable = 0;
+  if (!rawSrc.includes('registerKeybinding')) return { violations, scanned, printable };
+  const src = stripComments(rawSrc);
+  const re = /registerKeybinding(?:Entry)?\s*\(\s*\{/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    const open = src.indexOf('{', m.index);
+    let depth = 0;
+    let end = open;
+    for (; end < src.length; end++) {
+      if (src[end] === '{') depth++;
+      else if (src[end] === '}' && --depth === 0) break;
+    }
+    const literal = src.slice(open, end + 1);
+    scanned++;
+    const keyMatch = literal.match(/\bkey\s*:\s*(['"])([^'"]*)\1/);
+    if (keyMatch === null) continue; // dynamic key — see the header's honest limit
+    const combo = keyMatch[2];
+    if (!isModifierlessPrintable(combo)) continue;
+    printable++;
+    if (/\bwhen\s*:/.test(literal)) continue;
+    const line = src.slice(0, m.index).split('\n').length;
+    violations.push({
+      file,
+      line,
+      rule: 'unscoped-printable-binding',
+      message:
+        `${file}:${line}: the modifier-less printable binding '${combo}' has no \`when\` clause. ` +
+        `Tempdoc 864 Layer 4: a bare printable is a character a reader can type, so it may only be ` +
+        `global where a \`when\` clause names the surfaces it belongs to (e.g. ` +
+        `"activeSurface == 'core.search-v3-surface'"). Scope it, or register it on the surface that ` +
+        `owns it. Shift does NOT exempt a binding — the runtime dispatcher does not count Shift ` +
+        `either.`,
+    });
+  }
+  return { violations, scanned, printable };
+}
+
+/** Whole-tree scan. Rooted (`root`) so a fixture tree can be scanned instead of the repo. */
 export function detect({ root = '.' } = {}) {
   const violations = [];
   let scanned = 0;
@@ -75,39 +139,10 @@ export function detect({ root = '.' } = {}) {
   for (const rootDir of ROOTS) {
     const abs = resolve(root, rootDir);
     for (const file of walk(abs)) {
-      const src = readFileSync(file, 'utf8');
-      if (!src.includes('registerKeybinding')) continue;
-      const re = /registerKeybinding(?:Entry)?\s*\(\s*\{/g;
-      let m;
-      while ((m = re.exec(src)) !== null) {
-        const open = src.indexOf('{', m.index);
-        let depth = 0;
-        let end = open;
-        for (; end < src.length; end++) {
-          if (src[end] === '{') depth++;
-          else if (src[end] === '}' && --depth === 0) break;
-        }
-        const literal = src.slice(open, end + 1);
-        scanned++;
-        const keyMatch = literal.match(/\bkey\s*:\s*(['"])([^'"]*)\1/);
-        if (keyMatch === null) continue; // dynamic key — see the header's honest limit
-        const combo = keyMatch[2];
-        if (!isModifierlessPrintable(combo)) continue;
-        printable++;
-        if (/\bwhen\s*:/.test(literal)) continue;
-        const line = src.slice(0, m.index).split('\n').length;
-        violations.push({
-          file: norm(relative(resolve(root), file)),
-          line,
-          rule: 'unscoped-printable-binding',
-          message:
-            `${norm(relative(resolve(root), file))}:${line}: the modifier-less printable binding ` +
-            `'${combo}' has no \`when\` clause. Tempdoc 864 Layer 4: a bare printable is a character ` +
-            `a reader can type, so it may only be global where a \`when\` clause names the surfaces ` +
-            `it belongs to (e.g. "activeSurface == 'core.search-v3-surface'"). Scope it, or register ` +
-            `it on the surface that owns it.`,
-        });
-      }
+      const found = findViolations(readFileSync(file, 'utf8'), norm(relative(resolve(root), file)));
+      violations.push(...found.violations);
+      scanned += found.scanned;
+      printable += found.printable;
     }
   }
   return { violations, scanned, printable };
