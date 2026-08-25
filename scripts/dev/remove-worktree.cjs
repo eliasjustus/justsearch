@@ -40,6 +40,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { PROCESS_TABLE_PS_COMMAND } = require('./lib/process-identity.cjs');
 
 function fail(msg) {
   console.error(`[remove-worktree] ERROR: ${msg}`);
@@ -108,16 +109,24 @@ function longPathDelete(p) {
 }
 
 /**
- * Fetch the full local process table via WMI/CIM (ProcessId, ParentProcessId, Name, CommandLine).
+ * Fetch the full local process table via WMI/CIM (ProcessId, ParentProcessId, Name, CommandLine,
+ * CreationFileTimeUtc).
  * Returns [] on any failure so `reportHolders` degrades to "no holder found" instead of throwing
  * mid-teardown. Deliberately unfiltered (not a `Where-Object -like` query): the ancestor walk in
  * `ancestorPids` needs every process's ParentProcessId to climb the chain, including ancestors
  * whose own command line does not name the worktree path (e.g. an intermediate console-host).
+ *
+ * Tempdoc 861 [A2]: the projection previously dropped `CreationDate`, so the process table this
+ * scan already collects could NOT answer "is this still the same process, or a recycled pid?".
+ * The projection now comes from ONE shared constant (`process-identity.cjs`), which adds the
+ * creation time normalized via `.ToFileTimeUtc()`. This function's own `[]`-on-failure contract is
+ * unchanged and correct for a best-effort holder report — but it is exactly why an identity check
+ * must NOT read this function's result: `[]` here means "I could not look", and
+ * `readProcessTable` in `process-identity.cjs` is the tri-state an identity check uses instead.
  */
 function getProcessTable() {
   if (process.platform !== 'win32') return [];
-  const psCmd =
-    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress -Depth 2';
+  const psCmd = PROCESS_TABLE_PS_COMMAND;
   const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
