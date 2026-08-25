@@ -1658,9 +1658,25 @@ describe('the reasoning-region boundary rule (859 §A)', () => {
   it('C-7b: slice D’s budget_raised progress note is a legitimate flush carrier', () => {
     drive([
       think('this will need more room'),
-      { eventType: 'progress', payload: { phase: 'budget_raised', message: 'Budget raised' } },
+      { eventType: 'progress', payload: { phase: 'budget_raised', message: '+12,000 tokens — continuing' } },
     ]);
     expect(types()).toEqual(['reasoning', 'progress']);
+    // Tempdoc 859 §D F6 — this is the semantic the RECORD side was made to match, so the assertion
+    // now names what it must match: the note carries the AMOUNT (a raise without the number is not an
+    // accountability record) and the typed phase the label authority projects from.
+    expect(ctrl.conversation[1]?.content).toBe('+12,000 tokens — continuing');
+    expect(ctrl.conversation[1]?.phase).toBe('budget_raised');
+  });
+
+  it('C-7c: the durable/ephemeral split is RECORD-side — live, EVERY progress phase carries', () => {
+    // Tempdoc 859 §D F6 — the asymmetry that remains, stated rather than discovered. The classification
+    // decides what OUTLIVES the run; it does not touch the live stream, where a spinner still cuts the
+    // region and appends its own entry exactly as `budget_raised` does. This is why the record's
+    // carrier set is a strict SUBSET of the live one, and why the difference is covered losslessly by
+    // the fold's hold rule (`AgentInteractionMapperTest` M-2) rather than by dropping a block.
+    drive([think('what next'), { eventType: 'progress', payload: { phase: 'llm_call', message: 'Calling LLM' } }]);
+    expect(types()).toEqual(['reasoning', 'progress']);
+    expect(ctrl.conversation[1]?.phase).toBe('llm_call');
   });
 
   it('C-8: an AUTO-RUN tool (exec_started with no prior pending) closes the region too', () => {
