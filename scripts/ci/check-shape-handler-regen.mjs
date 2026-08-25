@@ -28,6 +28,7 @@
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -41,6 +42,27 @@ function parseArgs(argv) {
     else if (a.startsWith('--port=')) args.port = Number(a.slice(7));
   }
   return args;
+}
+
+/**
+ * First structural difference between a live and a fixture `eventSchema`.
+ *
+ * An eventSchema entry is an OBJECT (`{name, fields[]}`), so `===` between the live
+ * JSON and the fixture JSON is reference equality and is false for every entry no
+ * matter how identical the two are — the live oracle could never pass. Compare by
+ * value, and hand the caller the ONE entry that differs rather than both whole
+ * schemas: the failure output is what a maintainer reads to find the drift.
+ *
+ * @returns {{index:number, live:unknown, fixture:unknown}|null} null when equal.
+ */
+export function firstSchemaDifference(liveSchema, fixtureSchema) {
+  const max = Math.max(liveSchema.length, fixtureSchema.length);
+  for (let i = 0; i < max; i += 1) {
+    if (!isDeepStrictEqual(liveSchema[i], fixtureSchema[i])) {
+      return { index: i, live: liveSchema[i], fixture: fixtureSchema[i] };
+    }
+  }
+  return null;
 }
 
 async function liveCheck(port) {
@@ -76,12 +98,13 @@ async function liveCheck(port) {
       );
       continue;
     }
-    if (
-      fixtureSchema.length !== liveSchema.length ||
-      !fixtureSchema.every((e, i) => e === liveSchema[i])
-    ) {
+    const diff = firstSchemaDifference(liveSchema, fixtureSchema);
+    if (diff) {
       drift.push(
-        `Shape '${live.id}' eventSchema mismatch:\n  live=${JSON.stringify(liveSchema)}\n  fixture=${JSON.stringify(fixtureSchema)}`,
+        `Shape '${live.id}' eventSchema mismatch ` +
+          `(live ${liveSchema.length} entr${liveSchema.length === 1 ? 'y' : 'ies'}, ` +
+          `fixture ${fixtureSchema.length}); first differing entry [${diff.index}]:\n` +
+          `  live=${JSON.stringify(diff.live)}\n  fixture=${JSON.stringify(diff.fixture)}`,
       );
     }
   }
@@ -107,13 +130,17 @@ async function liveCheck(port) {
   );
 }
 
-const args = parseArgs(process.argv);
-if (args.live) {
-  await liveCheck(args.port);
-} else {
-  const result = spawnSync('node', [GEN_SCRIPT, '--check'], {
-    cwd: REPO_ROOT,
-    stdio: 'inherit',
-  });
-  process.exit(result.status ?? 1);
+// Main-guard so importing this module (the comparator is unit-tested) does not trigger
+// the top-level check as a side effect.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const args = parseArgs(process.argv);
+  if (args.live) {
+    await liveCheck(args.port);
+  } else {
+    const result = spawnSync('node', [GEN_SCRIPT, '--check'], {
+      cwd: REPO_ROOT,
+      stdio: 'inherit',
+    });
+    process.exit(result.status ?? 1);
+  }
 }

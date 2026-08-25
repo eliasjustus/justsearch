@@ -395,6 +395,30 @@ _JS_SELECTED_REGION_OK = """(args) => {
 }"""
 
 
+# A `data-cite-key` is a SOURCE PATH, so on Windows it carries backslashes — and a backslash
+# in a CSS selector introduces an escape, string context included: `...\598-...` parses as the
+# character U+0598 followed by `-`, so a raw interpolation silently matches nothing and the step
+# times out on a page that is rendering correctly. The page's own `CSS.escape` is the authority
+# on the transform, so the raw key ships INTO the page and comes back selector-safe rather than
+# being re-implemented here.
+async def _css_escaped(page, value: str) -> str:
+    """CSS.escape `value` in the page, for interpolation into a selector."""
+    return await page.evaluate("(v) => CSS.escape(v)", value)
+
+
+def _cite_card_selector(escaped_key: str) -> str:
+    """The Sources-panel card for one cite key. `escaped_key` MUST come from `_css_escaped`."""
+    return (
+        '[data-testid="sv3-turn-citations"] button.source'
+        f'[data-cite-key="{escaped_key}"]'
+    )
+
+
+def _cite_card_selected_selector(escaped_key: str) -> str:
+    """That same card once it is marked AND announced. `escaped_key` from `_css_escaped`."""
+    return f'button.source[data-cite-key="{escaped_key}"][data-selected][aria-current="true"]'
+
+
 # ---------------------------------------------------------------------------
 # Step registry — all screenshots declared here
 # ---------------------------------------------------------------------------
@@ -1527,11 +1551,11 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # retrieved-but-uncited source with no mark, and all three assertions below would time out
         # against a card that was never going to light anything.
         cite_key = pick["key"]
+        # The key goes into the JS assertions RAW (they compare `dataset.citeKey` as a string)
+        # and into every CSS selector ESCAPED — see `_css_escaped`.
+        cite_key_css = await _css_escaped(page, cite_key)
         await page.locator('[data-testid="sv3-turn-sources"]').first.click(timeout=15_000)
-        card = page.locator(
-            '[data-testid="sv3-turn-citations"] button.source'
-            f'[data-cite-key="{cite_key}"]'
-        ).first
+        card = page.locator(_cite_card_selector(cite_key_css)).first
         await card.wait_for(state="visible", timeout=15_000)
         await card.click(timeout=10_000)
         # 1 + 2: that mark wears a fill and says it is current, and its INK never moved.
@@ -1545,7 +1569,7 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # ...and the card itself is marked and ANNOUNCED, which is the whole §5.4 repair — the far
         # side got `data-selected` first, which is a styling hook no screen reader can see.
         await page.locator(
-            f'button.source[data-cite-key="{cite_key}"][data-selected][aria-current="true"]'
+            _cite_card_selected_selector(cite_key_css)
         ).first.wait_for(state="visible", timeout=10_000)
         # --- Tempdoc 849 slice 3 §D-8: EXTENDED, not duplicated. ---
         # The card click that proved the selection above ALSO opens the window's reading pane, so
