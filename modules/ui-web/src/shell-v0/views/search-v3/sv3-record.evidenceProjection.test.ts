@@ -188,13 +188,14 @@ function settled(list: ReturnType<typeof submitInSession>): ReturnType<typeof su
   return settleAgentTurn(list, ref, 'complete', 1, 2000);
 }
 
-describe('T11 — an agent conversation with NO user message reconciles onto the local turn (§9(c))', () => {
-  it('lands the record\u2019s evidence on the window\u2019s open delegate turn', () => {
+describe('T11 — a record turn NO user item opened reconciles onto the local turn', () => {
+  it('lands the record\u2019s evidence, and KEEPS the reader\u2019s question, on the open turn', () => {
     clock = 0;
-    // `ConversationEngine.dispatchShapeDriven` never calls `appendMessage`, so a delegate run
-    // persists NO user message. The record therefore opens its turn via `ensure(item)` with an empty
-    // question and `openedByUser: false` — the shape §9 named as the untested suspect between
-    // `refreshRecord` and the rendered turn.
+    // The class is "the record recorded no prompt for this turn": a workflow or background run
+    // joined to the conversation, a search-only run, or a checkpointed message array that no longer
+    // opens with a `role:"user"` entry. `projectSv3RecordTurns` names that class exactly where it
+    // opens such a turn via `ensure(item)` — empty question, `openedByUser: false` — rather than
+    // dropping activity that really happened.
     const recordTurns = projectSv3RecordTurns([
       event('t1', 'TOOL_ACTIVITY', 'core_search', { callId: 'c1', toolName: 'core_search' }),
       agentAssistant({ citationScorer: 'CROSS_ENCODER' }),
@@ -217,16 +218,41 @@ describe('T11 — an agent conversation with NO user message reconciles onto the
     // ONE turn, not two: the record's question-less turn reconciled onto the local one by POSITION.
     expect(turns).toHaveLength(1);
     const merged = turns[0]!;
-    // OBSERVED LIMIT, pre-existing and NOT this slice's to fix (859 §9 named the reconciliation of
-    // a question-less record turn as the untested shape; PR-1's scope is the EVIDENCE): `reconcile`
-    // spreads the recorded turn first, so the record's empty question replaces the reader's prompt.
-    // Asserted as it behaves rather than as it ought to, so this file states a fact instead of
-    // silently depending on one — and logged to the inbox.
-    expect(merged.question).toBe('');
+    // Tempdoc 863 §4.B — the reader's prompt SURVIVES. `reconcile` spreads the recorded turn first
+    // and then overrides everything the record cannot know; `question` now sits in that list, gated
+    // on the record's own `recordOpenedByUser` rather than on the emptiness that merely correlates
+    // with it. A record that never held a prompt cannot erase one.
+    expect(recordTurns[0]!.recordOpenedByUser).toBe(false);
+    expect(merged.question).toBe('why did it retry?');
     // ...and the evidence LANDED, which is the whole point of the case.
     expect(merged.evidence?.sources).toHaveLength(3);
     expect(merged.evidence?.marks).toHaveLength(1);
     expect(merged.recordId).toBe(recordTurns[0]!.id);
+  });
+
+  it('still takes the question FROM the record when a USER item opened it, text differing', () => {
+    clock = 0;
+    // The companion, and the reason the case above passes for the RIGHT reason. Gate the question on
+    // emptiness and both cases would still be green today, because the projector only ever mints an
+    // empty question for a turn no user item opened. Gate it on the fact and the two halves are
+    // separable: here the record was told, so it is authoritative even though the strings differ —
+    // an edited or re-asked prompt is the record's to state, not this window's to defend.
+    const recordTurns = projectSv3RecordTurns([
+      event('u1', 'USER_MESSAGE', 'why did it retry, exactly?'),
+      event('t1', 'TOOL_ACTIVITY', 'core_search', { callId: 'c1', toolName: 'core_search' }),
+      agentAssistant({ citationScorer: 'CROSS_ENCODER' }),
+    ]);
+    expect(recordTurns).toHaveLength(1);
+    expect(recordTurns[0]!.recordOpenedByUser).toBe(true);
+
+    const withTurn = settled(
+      submitInSession(SV3_SESSIONS_EMPTY, 'why did it retry?', 1000, 'agent', 'uc-3'),
+    );
+    const turns = applySv3Record(withTurn, 'uc-3', recordTurns).sessions[0]!.turns;
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.question).toBe('why did it retry, exactly?');
+    // ...and the merge is otherwise the same merge: the evidence still lands on the one turn.
+    expect(turns[0]!.evidence?.sources).toHaveLength(3);
   });
 
   it('does not blank a live turn\u2019s evidence when the record\u2019s arrives (reconcileEvidence)', () => {
