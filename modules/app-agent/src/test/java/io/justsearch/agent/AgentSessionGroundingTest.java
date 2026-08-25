@@ -256,9 +256,29 @@ final class AgentSessionGroundingTest {
     List<AgentEvent.AgentSource> concatenated =
         java.util.stream.Stream.concat(delta1.stream(), delta2.stream()).toList();
     assertEquals(
-        session.collectGroundingSources(),
-        concatenated,
+        identityOf(session.collectGroundingSources()),
+        identityOf(concatenated),
         "concatenated deltas == the terminal source list, element for element and in order");
+  }
+
+  /**
+   * Tempdoc 865 §7.5 — compare the eight IDENTITY components, explicitly ignoring the inclusion
+   * axis.
+   *
+   * <p>The two sides legitimately differ there and only there: a delta is minted absent, while the
+   * terminal resolves inclusion against the final prompt. Bare record equality would pass here today
+   * only because this fixture records no compression receipt — a precondition nothing in the test
+   * states, and one a future fixture could remove without meaning to, turning an alignment guard into
+   * a puzzling failure about a budget fact.
+   */
+  private static List<AgentEvent.AgentSource> identityOf(List<AgentEvent.AgentSource> sources) {
+    return sources.stream()
+        .map(
+            s ->
+                s.withInclusion(
+                    AgentEvent.AgentSource.INCLUSION_ABSENT,
+                    AgentEvent.AgentSource.INCLUDED_CHARS_UNKNOWN))
+        .toList();
   }
 
   /**
@@ -301,12 +321,17 @@ final class AgentSessionGroundingTest {
    * <p>{@code structuredData} is declared free-form ({@code AgentRunShape}: {@code
    * EventField.object("structuredData", "")}), which is the honest cost of the carrier decision: no
    * schema conformance test can see this key. So the eight keys and their types are pinned HERE, and
-   * they are exactly {@code AgentSource}'s — the FE reads the delta through the same generated
-   * {@code AgentSource} interface it reads the terminal {@code sources} through, and a drift would
-   * be a silently wrong render rather than a type error.
+   * they are exactly {@code AgentSource}'s IDENTITY fields — the FE reads the delta through the same
+   * generated {@code AgentSource} interface it reads the terminal {@code sources} through, and a
+   * drift would be a silently wrong render rather than a type error.
+   *
+   * <p>Tempdoc 865 §7.5 — {@code AgentSource} also carries the two INCLUSION fields, and their
+   * absence here is the contract, not an omission: inclusion is resolved against the final prompt at
+   * the terminal, and a tool call has no final prompt to be a fact about. Eight remains the right
+   * number for a delta.
    */
   @Test
-  @DisplayName("865 §7.1 conformance: the stamped grounding key's wire shape is AgentSource's eight fields")
+  @DisplayName("865 §7.1 conformance: the stamped grounding key's wire shape is AgentSource's eight identity fields")
   void groundingStampWireShapeConformance() {
     var session = session();
     List<AgentEvent.AgentSource> delta =
@@ -338,7 +363,8 @@ final class AgentSessionGroundingTest {
             "endLine",
             "headingText"),
         chunkPrecise.keySet(),
-        "exactly AgentSource's eight fields — no more (a leak), no fewer (a silently absent field)");
+        "exactly AgentSource's eight IDENTITY fields — no more (a leak; 865 §7.5's two inclusion"
+            + " fields belong to the terminal, not to a delta), no fewer (a silently absent field)");
     assertEquals("d1", chunkPrecise.get("parentDocId"));
     assertEquals(2, chunkPrecise.get("chunkIndex"), "an ordinal, not a string");
     assertEquals(5, chunkPrecise.get("startLine"));

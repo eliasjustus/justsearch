@@ -161,7 +161,70 @@ public sealed interface AgentEvent {
       String excerpt,
       int startLine,
       int endLine,
-      String headingText) {}
+      String headingText,
+      /**
+       * Tempdoc 865 §7.5 — whether the passage this source names was still in the prompt the answer
+       * was written from: the wire name of {@code DocumentService.ContextInclusion.State}, or {@link
+       * #INCLUSION_ABSENT} when nothing resolved it.
+       *
+       * <p>Carried as a {@code String} for the same reason {@code citationScorer} and {@code
+       * disposition} are: {@code app-agent-api} is annotation-light and does not depend on {@code
+       * app-api}, so the enum crosses the module boundary as its wire name. That makes this a
+       * PROJECTION of the one 849 authority, not a parallel vocabulary free to drift from it.
+       *
+       * <p>ABSENT is the state a source is MINTED in and it is not a placeholder for "included":
+       * inclusion is decided by the prompt the terminal actually built, which does not exist when a
+       * tool call establishes a source. A reader told nothing must say nothing (849's own rule).
+       */
+      String contextInclusion,
+      /** Characters of the passage that reached the model; {@link #INCLUDED_CHARS_UNKNOWN} when
+       *  {@link #contextInclusion} is absent. */
+      int contextIncludedChars) {
+
+    /** No producer resolved inclusion for this source. */
+    public static final String INCLUSION_ABSENT = "";
+
+    /** No character count is knowable, because no inclusion state was resolved. */
+    public static final int INCLUDED_CHARS_UNKNOWN = -1;
+
+    public AgentSource {
+      contextInclusion = contextInclusion == null ? INCLUSION_ABSENT : contextInclusion;
+      contextIncludedChars =
+          contextInclusion.isEmpty() ? INCLUDED_CHARS_UNKNOWN : Math.max(0, contextIncludedChars);
+    }
+
+    /**
+     * THE MINT constructor — a source is established ABSENT (tempdoc 865 §7.5, mirroring {@code
+     * DocumentService.ContextCitation}'s "constructed absent, resolved at the cut"). Inclusion is
+     * not knowable where a source is minted, because the prompt it would be a fact about has not
+     * been built yet.
+     */
+    public AgentSource(
+        String parentDocId,
+        int chunkIndex,
+        String path,
+        String title,
+        String excerpt,
+        int startLine,
+        int endLine,
+        String headingText) {
+      this(
+          parentDocId, chunkIndex, path, title, excerpt, startLine, endLine, headingText,
+          INCLUSION_ABSENT, INCLUDED_CHARS_UNKNOWN);
+    }
+
+    /**
+     * Returns a copy carrying the inclusion state resolved against the FINAL prompt — the one
+     * transformation that may set it, exactly as {@code ContextCitation.withInclusion} is on the RAG
+     * plane. Everything upstream leaves it absent, so "nothing resolved this" and "the passage
+     * reached the model" stay distinguishable on the record itself.
+     */
+    public AgentSource withInclusion(String state, int includedChars) {
+      return new AgentSource(
+          parentDocId, chunkIndex, path, title, excerpt, startLine, endLine, headingText,
+          state, includedChars);
+    }
+  }
 
   /**
    * Tempdoc 565 §3.A — one answer sentence matched to a grounding source (the inline-citation link).

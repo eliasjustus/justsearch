@@ -342,6 +342,49 @@ public final class AgentInteractionMapper {
       // that ride on the turn they belong to. Stated as its own case rather than left to `default` so
       // the vocabulary is legible — a per-chunk thread event would mean ~445 events for one turn.
       case "reasoning_chunk" -> Optional.empty();
+      // Tempdoc 865 §7.7 — THE REST OF `AgentRunShape`'s VOCABULARY, DECLARED NON-PROJECTING.
+      //
+      // Every kind is born durable on the wire: `AgentEventPayloads`' `name()`/`base()` switches are
+      // over a SEALED interface, so the compiler forces a decision about each one. Here the switch is
+      // over a String with a `default`, so a kind nobody wrote a case for is silently non-durable —
+      // and "nobody decided" is indistinguishable from "someone decided no". `budget_raised` is that
+      // asymmetry's output, not an oversight, and this block removes the asymmetry's remaining reach
+      // over `AgentRunShape` by making the answer something a person wrote.
+      //
+      // ZERO BEHAVIOUR CHANGE: every name below already reached `default -> Optional.empty()`. The
+      // `default` arm is RETAINED, and still bites, because this mapper also serves vocabularies
+      // `AgentRunShape` does not declare — the workflow node journal and `search_executed` above.
+      // The reasons, by group:
+      //   * `session_started`, `state_snapshot` — run plumbing. Identity the conversation already
+      //     has, and a live replay aid for a mid-run re-attach; neither says anything about the turn.
+      //   * `chunk` — the answer text arriving in pieces. `done.finalResponse` persists the whole of
+      //     it, which is why the record path rebuilds the message from the terminal, not the stream.
+      //   * `tool_batch_proposed`, `tool_call_approved`, `tool_call_rejected`'s sibling
+      //     `tool_call_virtual`, `handoff_proposed`, `directive_acknowledged` — a PROPOSAL or an
+      //     acknowledgement whose OUTCOME is already durable: the executed call, the rejection, the
+      //     executed handoff, and the steps the directive changed all persist above.
+      //   * `budget_update`, `budget_gate`, `context_gate`, `context_compacted` — live meters and
+      //     open questions. Every way one of them RESOLVES into a fact the reader must keep is
+      //     already a durable `progress` note (`DURABLE_PROGRESS_PHASES`) or the terminal
+      //     `disposition` — the 859 §D split this block must not silently re-litigate.
+      //   * `intent.resolution` — not an `AgentEvent` variant at all, but the composed
+      //     `core.url-extractor` StreamConsumer's own namespaced event. Its payload is still typed
+      //     as name-only (`EventDescriptor.nameOnly`), so there is no declared shape to project;
+      //     naming it here records that as an open question rather than an answer nobody gave.
+      case "session_started",
+              "chunk",
+              "tool_batch_proposed",
+              "tool_call_approved",
+              "tool_call_virtual",
+              "directive_acknowledged",
+              "handoff_proposed",
+              "budget_update",
+              "budget_gate",
+              "context_gate",
+              "context_compacted",
+              "state_snapshot",
+              "intent.resolution" ->
+          Optional.empty();
       default -> Optional.empty();
     };
   }

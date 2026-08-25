@@ -114,21 +114,7 @@ public final class AgentEventPayloads {
         donePayload.put("totalTokensUsed", e.totalTokensUsed());
         // Tempdoc 565 §3.A — the answer's grounding sources (clickable local passages) + the
         // per-sentence inline citations (may be empty when the matcher did not run/match).
-        donePayload.put(
-            "sources",
-            e.sources().stream()
-                .map(
-                    s ->
-                        Map.<String, Object>of(
-                            "parentDocId", s.parentDocId(),
-                            "chunkIndex", s.chunkIndex(),
-                            "path", s.path(),
-                            "title", s.title(),
-                            "excerpt", s.excerpt(),
-                            "startLine", s.startLine(),
-                            "endLine", s.endLine(),
-                            "headingText", s.headingText()))
-                .toList());
+        donePayload.put("sources", e.sources().stream().map(AgentEventPayloads::sourceMap).toList());
         donePayload.put(
             "citations",
             e.citations().stream()
@@ -309,5 +295,33 @@ public final class AgentEventPayloads {
       payload.put("structuredData", e.result().structuredData());
     }
     return payload;
+  }
+
+  /**
+   * Tempdoc 865 §7.5 — one grounding source on the wire, with the two inclusion keys written the
+   * SAME way the RAG plane writes them ({@code RAGContext}: {@code contextInclusion} +
+   * {@code contextIncludedChars}, straight onto the citation). Identical keys because the frontend
+   * reads both planes through one {@code AnswerEvidenceSource} — a delegate-only spelling would be
+   * a second vocabulary for one fact, and 849's predicate would simply not fire on it.
+   *
+   * <p>Absent emits NO key, exactly as the RAG plane does: a consumer told nothing must say nothing,
+   * never "included". That also keeps every record persisted before this field readable as what it
+   * is — silent — rather than retroactively described.
+   */
+  private static Map<String, Object> sourceMap(AgentEvent.AgentSource s) {
+    var m = new LinkedHashMap<String, Object>();
+    m.put("parentDocId", s.parentDocId());
+    m.put("chunkIndex", s.chunkIndex());
+    m.put("path", s.path());
+    m.put("title", s.title());
+    m.put("excerpt", s.excerpt());
+    m.put("startLine", s.startLine());
+    m.put("endLine", s.endLine());
+    m.put("headingText", s.headingText());
+    if (!s.contextInclusion().isEmpty()) {
+      m.put("contextInclusion", s.contextInclusion());
+      m.put("contextIncludedChars", s.contextIncludedChars());
+    }
+    return Map.copyOf(m);
   }
 }

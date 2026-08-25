@@ -9,6 +9,7 @@ import io.justsearch.agent.api.ToolCallRequest;
 import io.justsearch.agent.api.AgentEvent;
 import io.justsearch.agent.api.RunObservation;
 import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.app.api.DocumentService;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -66,15 +67,45 @@ final class AgentSession {
    * call by {@link #recordExecution}, so what a call established is durable the moment it is
    * established — before any terminal decides whether to speak.
    *
-   * <p>{@code groundingSeen} is the dedup key set (chunk identity across the WHOLE run, which is why
-   * it cannot live per call), {@code groundingSources} the ordered emitted list, and {@code
-   * groundingSearchHits} the denominator the never-addressable WARN below needs.
+   * <p>ONE structure, keyed by the run-wide dedup key (chunk identity, which is why it cannot live
+   * per call) and insertion-ordered — so the key set, the ordered emitted list and each source's
+   * carriers are the same fact rather than three that can fall out of step.
+   * {@code groundingSearchHits} is the denominator the never-addressable WARN below needs.
    */
-  private final LinkedHashSet<String> groundingSeen = new LinkedHashSet<>();
-
-  private final List<AgentEvent.AgentSource> groundingSources = new ArrayList<>();
+  private final LinkedHashMap<String, GroundingEntry> grounding = new LinkedHashMap<>();
 
   private int groundingSearchHits;
+
+  /**
+   * Tempdoc 865 §7.5 — one established source and the tool calls whose results CARRIED it into the
+   * prompt.
+   *
+   * <p>The carriers are a set, not the first one, and that is the whole per-final-prompt semantic: a
+   * document established at iteration 2 and returned again by a search at iteration 9 has two
+   * carriers, and the later one may still be in the prompt when the earlier one has been stripped.
+   * Keeping only the minting call would report such a source as dropped for the rest of the run.
+   */
+  private record GroundingEntry(
+      AgentEvent.AgentSource source, LinkedHashSet<String> carrierCallIds) {}
+
+  /**
+   * Tempdoc 865 §7.5 — the tool calls whose result text the compressor has taken out of the prompt,
+   * folded from every receipt this run has seen.
+   *
+   * <p>ACCUMULATED, and that is sound rather than convenient: a tool message's content is only ever
+   * shortened, so a carrier line that is gone never comes back. It is also necessary — a message
+   * whose excerpts are stripped but whose remainder falls under the compressor's minimum length is
+   * written back bearing no marker, so the ONLY pass that can witness it is the one that did it.
+   *
+   * <p>This does not make the state cumulative in the sense §4.6 warns about. The per-final-prompt
+   * property lives in {@link GroundingEntry#carrierCallIds}: a document re-returned by a later
+   * search has a new carrier whose message is intact, and {@link #inclusionFor} requires EVERY
+   * carrier to have lost its text before it will say anything.
+   */
+  private final LinkedHashSet<String> carriersWithTextRemoved = new LinkedHashSet<>();
+
+  /** Whether any compression pass has reported at all. Before the first one, say nothing. */
+  private boolean compressionObserved;
 
   private volatile boolean cancelled;
   private int iterationsUsed;
@@ -271,7 +302,8 @@ final class AgentSession {
    * a guard here would be inert — while a guard that ever DID bite would break the equality above by
    * dropping from the deltas something the accumulator kept.
    */
-  private List<AgentEvent.AgentSource> contributeGroundingSources(OperationResult result) {
+  private List<AgentEvent.AgentSource> contributeGroundingSources(
+      String toolCallId, OperationResult result) {
     Map<String, Object> data = result == null ? Map.of() : result.structuredData();
     if (!(data.get("searchResults") instanceof List<?> results)) {
       return List.of();
@@ -287,40 +319,138 @@ final class AgentSession {
       if (chunkPrecise) {
         String parentDocId = (String) m.get("parentDocId");
         int chunkIndex = m.get("chunkIndex") instanceof Number n ? n.intValue() : 0;
-        if (!groundingSeen.add(parentDocId + "#" + chunkIndex)) {
-          continue; // dedup repeated sources across turns
+        AgentEvent.AgentSource minted =
+            establish(
+                parentDocId + "#" + chunkIndex,
+                toolCallId,
+                () ->
+                    new AgentEvent.AgentSource(
+                        parentDocId,
+                        chunkIndex,
+                        path,
+                        asString(m.get("title")),
+                        asString(m.get("excerpt")),
+                        asInt(m.get("startLine")),
+                        asInt(m.get("endLine")),
+                        asString(m.get("headingText"))));
+        if (minted != null) {
+          delta.add(minted);
         }
-        delta.add(
-            new AgentEvent.AgentSource(
-                parentDocId,
-                chunkIndex,
-                path,
-                asString(m.get("title")),
-                asString(m.get("excerpt")),
-                asInt(m.get("startLine")),
-                asInt(m.get("endLine")),
-                asString(m.get("headingText"))));
       } else if (!path.isBlank()) {
         // 603 D-3 — document-level provenance: identity is the path, chunk ordinal + lines are the
         // sentinel (no precise location). The whole document IS the source the answer drew on.
-        if (!groundingSeen.add("doc#" + path)) {
-          continue; // dedup the same document across hits/turns
+        AgentEvent.AgentSource minted =
+            establish(
+                "doc#" + path,
+                toolCallId,
+                () ->
+                    new AgentEvent.AgentSource(
+                        path,
+                        DOC_LEVEL_SENTINEL,
+                        path,
+                        asString(m.get("title")),
+                        asString(m.get("excerpt")),
+                        DOC_LEVEL_SENTINEL,
+                        DOC_LEVEL_SENTINEL,
+                        asString(m.get("headingText"))));
+        if (minted != null) {
+          delta.add(minted);
         }
-        delta.add(
-            new AgentEvent.AgentSource(
-                path,
-                DOC_LEVEL_SENTINEL,
-                path,
-                asString(m.get("title")),
-                asString(m.get("excerpt")),
-                DOC_LEVEL_SENTINEL,
-                DOC_LEVEL_SENTINEL,
-                asString(m.get("headingText"))));
       }
       // else: neither chunk identity nor a path — not addressable as a source; skipped.
     }
-    groundingSources.addAll(delta);
     return List.copyOf(delta);
+  }
+
+  /**
+   * Add {@code toolCallId} to the carriers of the source keyed by {@code key}, minting the source
+   * first if this is the run's first sight of it.
+   *
+   * <p>Returns the newly minted source, or {@code null} when the key was already established — which
+   * is the run-wide dedup, unchanged. The carrier is recorded EITHER WAY (tempdoc 865 §7.5): a
+   * repeat hit adds no source to the delta but does deliver that source's text into the prompt
+   * again, and that is precisely the fact the inclusion state has to see.
+   */
+  private AgentEvent.AgentSource establish(
+      String key, String toolCallId, java.util.function.Supplier<AgentEvent.AgentSource> mint) {
+    GroundingEntry existing = grounding.get(key);
+    if (existing != null) {
+      addCarrier(existing, toolCallId);
+      return null;
+    }
+    AgentEvent.AgentSource source = mint.get();
+    var entry = new GroundingEntry(source, new LinkedHashSet<>());
+    addCarrier(entry, toolCallId);
+    grounding.put(key, entry);
+    return source;
+  }
+
+  private static void addCarrier(GroundingEntry entry, String toolCallId) {
+    if (toolCallId != null && !toolCallId.isBlank()) {
+      entry.carrierCallIds().add(toolCallId);
+    }
+  }
+
+  /**
+   * Tempdoc 865 §7.5 — record what the compressor left standing in the prompt it just produced.
+   * Called at every {@code compressToolMessages} site, so the session always holds the LATEST
+   * picture rather than the first one.
+   */
+  void recordCompression(AgentContextCompressor.CompressionReceipt receipt) {
+    if (receipt == null) {
+      return;
+    }
+    carriersWithTextRemoved.addAll(receipt.textRemoved());
+    // A carrier the latest prompt shows as still holding text cannot also have lost it. Content only
+    // ever shrinks, so this should never fire — but the say-less answer is cheap and the alternative
+    // is a contradiction the reader would see as a confident false claim.
+    carriersWithTextRemoved.removeAll(receipt.textIntact());
+    compressionObserved = compressionObserved || receipt.observed();
+  }
+
+  /**
+   * Tempdoc 865 §7.5 — THE INCLUSION PRODUCER: was this source's passage still in the prompt?
+   *
+   * <p>Modelled on {@code RAGContext.resolveInclusion}, which is the plane that already answers this
+   * question — but where RAG cuts once at assembly and can therefore say {@code included} with a
+   * character count it measured, the delegate plane degrades CONTINUOUSLY and can measure nothing
+   * per source. So this producer states exactly one thing:
+   *
+   * <ul>
+   *   <li><b>DROPPED</b> — every tool message that carried this source has lost its {@code Excerpt:}
+   *       lines (or has left the prompt entirely). Its passage text is not in the prompt.
+   *   <li><b>ABSENT</b> — anything else. Say nothing.
+   * </ul>
+   *
+   * <p><b>Why no {@code included}, and this is the honesty constraint, not a shortcut.</b> There are
+   * THREE truncation layers and 849's vocabulary models only the third. Layer 1 is {@code
+   * SearchTool.formatResults}' per-result budget ({@code MAX_TOOL_RESULT_CHARS / hits.size()}),
+   * which clips — or omits outright — a later hit's carrier line while that hit is still minted as a
+   * source from the untruncated {@code structuredData}. Layer 2 is {@code
+   * AgentContextCompressor.truncate}'s hard per-message cut. Neither is visible here. So "this
+   * message still carries hit text" cannot mean "THIS source's text reached the model", and stamping
+   * {@code included} would fabricate exactly the claim 849 exists to remove.
+   *
+   * <p>DROPPED survives that objection because it is MONOTONE across the layers: once Layer 3 has
+   * taken the text out of the carrier message, no upstream cut can put it back. It is also the only
+   * state the reader acts on — {@code suppressGroundingFor} keys on {@code dropped} alone.
+   *
+   * <p><b>EVERY carrier, not any.</b> The quantifier is the per-final-prompt semantic: one intact
+   * carrier means the text is in the prompt, whoever else lost it. A carrier the receipts have said
+   * nothing about is not evidence either — {@code carriersWithTextRemoved} holds only calls with
+   * positive evidence of removal, so "not in that set" covers both intact and unknown, and both must
+   * silence the claim.
+   */
+  private DocumentService.ContextInclusion inclusionFor(GroundingEntry entry) {
+    if (!compressionObserved || entry.carrierCallIds().isEmpty()) {
+      return DocumentService.ContextInclusion.ABSENT;
+    }
+    for (String callId : entry.carrierCallIds()) {
+      if (!carriersWithTextRemoved.contains(callId)) {
+        return DocumentService.ContextInclusion.ABSENT;
+      }
+    }
+    return DocumentService.ContextInclusion.dropped();
   }
 
   /**
@@ -335,6 +465,13 @@ final class AgentSession {
    * iteration-exhausted run keeps everything it established even though it reaches no grounded
    * terminal and calls this method never. This method's remaining job is to report, at the two
    * {@code groundedDone} terminals, the same ordered list the deltas already delivered.
+   *
+   * <p><b>Tempdoc 865 §7.5 — plus the one thing only a terminal knows.</b> Because it runs at the
+   * terminals and nowhere else, this is also where each source's {@code ContextInclusion} is
+   * resolved against the FINAL prompt (see {@link #inclusionFor}). The identity a source carries is
+   * unchanged from its delta; the terminal adds a fact about a prompt that did not exist when the
+   * source was minted. Same split as {@code DocumentService.ContextCitation}: constructed absent,
+   * resolved at the cut.
    *
    * <p>The RULE — the two identity arms below — is unchanged by that move:
    *
@@ -362,13 +499,27 @@ final class AgentSession {
     // identity). With D-3 a path-bearing hit always yields a document-level source, so this WARN no
     // longer fires for the common BLOCKED_LEGACY whole-doc case — only for a genuinely identity-less
     // result (a malformed/stale Worker payload).
-    if (groundingSearchHits > 0 && groundingSources.isEmpty()) {
+    if (groundingSearchHits > 0 && grounding.isEmpty()) {
       LOG.warn(
           "Grounding empty: {} search hit(s) but none were addressable (no parentDocId AND no path);"
               + " the answer will lack source citations — check the search payload or a stale Worker build",
           groundingSearchHits);
     }
-    return List.copyOf(groundingSources);
+    // Tempdoc 865 §7.5 — inclusion is resolved HERE and only here, because this method runs at the
+    // two grounded terminals and nowhere else: the prompt the answer was written from is the last
+    // one the compressor reported on, and a per-call delta has no prompt to be a fact about. That is
+    // the same "constructed absent, resolved at the cut" split `ContextCitation` uses on the RAG
+    // plane — so the delta and the terminal report the same source with the same identity, and only
+    // the terminal adds what only the terminal knows.
+    var out = new ArrayList<AgentEvent.AgentSource>(grounding.size());
+    for (GroundingEntry entry : grounding.values()) {
+      DocumentService.ContextInclusion inclusion = inclusionFor(entry);
+      out.add(
+          inclusion.absent()
+              ? entry.source()
+              : entry.source().withInclusion(inclusion.wireName(), inclusion.includedChars()));
+    }
+    return List.copyOf(out);
   }
 
   private static String asString(Object value) {
@@ -684,7 +835,8 @@ final class AgentSession {
    */
   List<AgentEvent.AgentSource> recordExecution(ToolCallRequest call, OperationResult result) {
     executedTools.add(new ExecutedToolCall(call, result));
-    List<AgentEvent.AgentSource> delta = contributeGroundingSources(result);
+    List<AgentEvent.AgentSource> delta =
+        contributeGroundingSources(call == null ? null : call.id(), result);
     String signature = call.toolName() + ":" + normalizeArgs(call.arguments());
     if (signature.equals(lastCallSignature)) {
       consecutiveIdenticalCalls++;
