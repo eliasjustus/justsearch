@@ -18,6 +18,9 @@ import {
   appendObservation,
   SHARD_DIR,
 } from './note-observation.mjs';
+// The strip this round-trips against lives in the 856 recovery — the two are one
+// contract (mint dot-free / recover by last dot), so the test exercises both ends.
+import { sessionIdFromShardName } from './recover-merge-links.mjs';
 
 let passed = 0;
 const failures = [];
@@ -128,6 +131,41 @@ try {
     const name = path.basename(shardPathFor('sess1', root, 'weird.tree.name'));
     assert.equal(name, 'sess1.weird_tree_name.md');
     assert.equal((name.match(/\./g) || []).length, 2); // the writer dot + `.md`
+  });
+  // A session id is EXTERNAL INPUT ($CLAUDE_CODE_SESSION_ID) and sanitizeId permits
+  // dots, so "ids have no dots" is an assumption, not an invariant. Left unenforced,
+  // a dotted id mints the bare shard `sess.with.dots.md`, which recover-merge-links
+  // truncates to session `sess.with` — a silently wrong row in the measurement
+  // ledger, the exact class 856 exists to remove. Enforced at the mint instead.
+  run('shardPathFor: a dotted SESSION id is flattened at the mint', () => {
+    const root = freshRoot();
+    assert.equal(path.basename(shardPathFor('sess.with.dots', root, '')), 'sess_with_dots.md');
+  });
+  // The property that makes the strip sound, asserted as a round-trip rather than
+  // as two separate string checks: for every (id, writer), recovering the session
+  // from the minted basename returns the session token and never a truncation.
+  run('shardPathFor -> sessionIdFromShardName round-trips for every id/writer shape', () => {
+    const root = freshRoot();
+    // [sessionId, writer, expected recovered session] — expectations are literal,
+    // not recomputed from the implementation's own sanitizer (that would pass even
+    // if the sanitizer were wrong).
+    const cases = [
+      ['bccfc163-7b8f-4b1a-b9e4-0c011632d8a1', '', 'bccfc163-7b8f-4b1a-b9e4-0c011632d8a1'],
+      ['bccfc163-7b8f-4b1a-b9e4-0c011632d8a1', 'agent-af06f4a5', 'bccfc163-7b8f-4b1a-b9e4-0c011632d8a1'],
+      ['wt-0a1b2c3d4e5f', 'worktree-name', 'wt-0a1b2c3d4e5f'],
+      ['sess.with.dots', '', 'sess_with_dots'],
+      ['sess.with.dots', 'tree.with.dots', 'sess_with_dots'],
+      ['a.b', 'c.d', 'a_b'],
+    ];
+    for (const [sid, writer, expected] of cases) {
+      const name = path.basename(shardPathFor(sid, root, writer), '.md');
+      assert.ok((name.match(/\./g) || []).length <= 1, `>1 dot in ${name}`);
+      assert.equal(
+        sessionIdFromShardName(name),
+        expected,
+        `round-trip failed for ${JSON.stringify([sid, writer])} -> ${name}`,
+      );
+    }
   });
   run('resolveWriterSuffix: indeterminate (non-git) root fails OPEN to the bare name', () => {
     const root = freshRoot();

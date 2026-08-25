@@ -41,9 +41,28 @@ import { TELEMETRY_DIR, repoRoot } from './lib/telemetry-io.mjs';
 
 export const SHARD_DIR = 'docs/observations.d';
 
-/** Make a session id safe as a filename component. */
+/** Make a session id safe as a filename component. Feeds resolveSessionId, hence the ledger. */
 function sanitizeId(id) {
   return String(id).trim().replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'unknown';
+}
+
+/**
+ * Filename-safe AND dot-free. Both halves of a shard name are composed with this
+ * so the name carries at most ONE dot — the writer separator — by construction.
+ *
+ * Load-bearing for recover-merge-links.mjs, which recovers the session id by
+ * removing the last dot-segment. `sanitizeId` above keeps dots and session ids are
+ * external input ($CLAUDE_CODE_SESSION_ID), so without this a session id like
+ * `sess.with.dots` would mint the bare shard `sess.with.dots.md` and the recovery
+ * would read it back as session `sess.with` — a silently wrong attribution row in
+ * a measurement file, the exact class tempdoc 856 exists to remove. The invariant
+ * has to hold at the mint, not by hoping ids stay dot-free.
+ *
+ * Byte-identical for every id that has ever existed: no shard name in history has
+ * contained a dot (verified over all 109 shard adds, 2026-08-25).
+ */
+function sanitizeNameComponent(value, max) {
+  return String(value).trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, max);
 }
 
 /**
@@ -92,16 +111,14 @@ export function formatEntry(description, date = today()) {
   return `- [ ] ${text} (${date})`;
 }
 
-/**
- * Make a writer discriminator safe as a filename component. Deliberately
- * STRICTER than sanitizeId: dots are stripped too, because the shard name is
- * `<sessionId>.<writer>` and recover-merge-links.mjs recovers the session id by
- * removing the LAST dot-segment (tempdoc 862 §D.4). A dot inside the writer half
- * would make that strip ambiguous and feed a session id that never existed into
- * the measurement ledger. Exactly one dot in the name is the invariant.
- */
+/** The writer half of a shard name. Dot-free (see sanitizeNameComponent). */
 function sanitizeWriter(name) {
-  return String(name).trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40);
+  return sanitizeNameComponent(name, 40);
+}
+
+/** The session half of a shard name. Dot-free (see sanitizeNameComponent). */
+function sanitizeShardSessionId(id) {
+  return sanitizeNameComponent(id, 80) || 'unknown';
 }
 
 /**
@@ -145,9 +162,13 @@ export function resolveWriterSuffix({ root = repoRoot } = {}) {
  * building the name itself, so the writer discriminator lands in all of them by
  * construction. `writer` is injectable only so the tests can drive both branches
  * without a git fixture, mirroring resolveSessionId's `{ root, env }`.
+ *
+ * Both halves are composed dot-free, so the name carries at most one dot and
+ * recover-merge-links.mjs's "strip the last dot-segment" is correct by
+ * construction rather than by assumption about session-id shape.
  */
 export function shardPathFor(sessionId, root = repoRoot, writer = resolveWriterSuffix({ root })) {
-  const sid = sanitizeId(sessionId);
+  const sid = sanitizeShardSessionId(sessionId);
   const w = writer ? sanitizeWriter(writer) : '';
   return path.join(root, SHARD_DIR, `${w ? `${sid}.${w}` : sid}.md`);
 }

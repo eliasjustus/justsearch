@@ -92,9 +92,13 @@ export const GIT_LOG_ARGS = [
  * exists to remove (tempdoc 862 §D.4).
  *
  * The writer suffix is the LAST dot-segment; a name with no dot is a whole session
- * id. Unambiguous for every id the resolver can produce (UUIDs and `wt-<hex>` carry
- * no dots) and for every writer it can produce (`sanitizeWriter` strips dots), and
- * it degrades to the pre-862 behaviour on legacy bare-named shards.
+ * id. That is unambiguous BY CONSTRUCTION, not by assumption about id shape:
+ * `shardPathFor` composes both halves with a dot-free sanitizer, so a shard name
+ * carries at most one dot and it is always the writer separator. (Relying on
+ * "session ids are UUIDs, which have no dots" would be unsound — ids come from
+ * $CLAUDE_CODE_SESSION_ID, and `sanitizeId` permits dots, so a dotted id would
+ * otherwise mint a bare shard that this function truncates to a session that never
+ * existed.) Degrades to the pre-862 behaviour on legacy bare-named shards.
  */
 export function sessionIdFromShardName(base) {
   const name = String(base ?? '');

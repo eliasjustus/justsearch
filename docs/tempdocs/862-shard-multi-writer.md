@@ -1,7 +1,7 @@
 ---
 title: "862 — Observation shards: one file, many writers"
 type: tempdocs
-status: "DESIGNED + PLANNED (2026-08-25) — not implemented. Supersedes tempdoc 828 §A (same defect, chartered 2026-08-14, never started)."
+status: "IMPLEMENTED (2026-08-25) — shipped in PR #537 together with this document; §F.1 S1-S4 all landed, §D.6 acceptance verified by live rehearsal (see §G). Supersedes tempdoc 828 §A (same defect, chartered 2026-08-14, never started)."
 created: 2026-08-25
 updated: 2026-08-25
 author: agent session bccfc163-7b8f-4b1a-b9e4-0c011632d8a1 (charter agent, 862)
@@ -362,3 +362,51 @@ structure — no new module, script, gate, or config file is created.
 - **Risk — legacy shards in flight:** shards already committed under bare names stay
   valid input to the fold and to the recovery (both paths are name-shape-tolerant after
   S2). No migration, no rename, nothing to backfill.
+
+## G. Outcome (2026-08-25, PR #537)
+
+Implemented as planned; S1-S4 all landed in one PR, which also carries this document.
+
+**Design claims re-verified at source before relying on them** (§F.2 row 2):
+
+| Claim | Verdict |
+|---|---|
+| Fold globs, never parses names (`fold-observations.mjs:45-57`) | TRUE — zero fold code changes; now proven by test, not by reading |
+| `SESSION_ID_RE` admits dots (`merge-links.mjs:107`) | TRUE — probed: `isPlausibleSessionId("<uuid>.agent-af06f4a5") === true`, so the reject path would never have fired |
+| Only three call sites depend on the shard name | Incomplete — `docs-granularity-hint.mjs:91` also matches `observations.d` paths, via the dot-agnostic prefix `/^docs\/(?:tempdocs\/|observations)/`. Unaffected, but the design's enumeration had missed it |
+
+**Live rehearsal** (§F.2 row 3 — the guard against the silent-no-op risk named in F.3):
+
+- **R1** — real CLI in a linked worktree wrote `bccfc163-….agent-af06f4a51e146624b.md`
+  while the orchestrator's `bccfc163-….md` sat untouched beside it. The nine-writers-one-file
+  defect, resolved on the actual path.
+- **R3** — resolver against genuine trees: `git init` home → `writer=""`;
+  `git worktree add` linked → `writer="wt-859-sv3-live"`.
+- **R4** — D.6.1 acceptance, in a throwaway fixture repo, **both arms**: per-writer keys
+  merge with no conflict and both findings survive; the pre-862 shared key reproduces
+  `CONFLICT (add/add)`. The adverse arm is what makes the green meaningful
+  (`green-masked-destructive`) — this is the acceptance test 828 §A wrote and never ran.
+- **R5** — fold dry run discovered and drained dotted and bare shards alike (114 entries,
+  6 shards).
+- **R6** — recovery dry run over real history: 128 commits scanned, 104 candidates,
+  0 carrying a dotted session id.
+
+**Found in independent review, fixed in the same PR** — the design's §D.4 rule ("session
+ids are UUIDs or `wt-<hex>` — no dots — so this rule is unambiguous") rested on an
+*assumption about external input*, not an invariant: session ids come from
+`$CLAUDE_CODE_SESSION_ID` and `sanitizeId` permits dots. A dotted id would therefore mint
+the bare shard `sess.with.dots.md`, which the new strip truncates to session `sess.with` —
+reintroducing the 856 mis-attribution class through the front door. Reproduced, then closed
+at the mint: `shardPathFor` now composes **both** halves with a dot-free sanitizer, so
+"at most one dot, and it is always the writer separator" holds by construction. Byte-identical
+for every id in history (no shard name has ever contained a dot — verified across all 109
+shard adds). Round-trip asserted over six id/writer shapes; both new assertions confirmed
+red against the pre-fix mint.
+
+**Not done, deliberately:** the residual noted for honesty — `resolveSessionId` (hence the
+ledger key) still permits dots, so for a dotted id the shard token and the ledger token would
+differ. That degrades to a failed dedupe (a duplicate inference row), never to a wrong
+attribution, and no such id has ever existed. Changing the ledger key is out of scope here.
+
+**Reach note (§E):** the `check-tempdoc-numbers` same-tree gap named in §E remains open and
+unfixed, as scoped.
