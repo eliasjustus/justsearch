@@ -36,8 +36,13 @@ function fakeExec(stdout, status = 0) {
   return () => ({ status, stdout, stderr: '' });
 }
 
+// Every check below exercises the win32 CODE PATH via an injected `exec` — it must never
+// actually shell out to PowerShell, so it is safe (and REQUIRED, since this CI job runs on
+// ubuntu-latest) to force `platform: 'win32'` explicitly rather than trust `process.platform`.
+const WIN32 = { platform: 'win32' };
+
 check('resolves the OwningProcess pid from well-formed JSON', () => {
-  const result = resolveListenerPidWindows(5191, { exec: fakeExec('{"OwningProcess":4321}') });
+  const result = resolveListenerPidWindows(5191, { ...WIN32, exec: fakeExec('{"OwningProcess":4321}') });
   assert.deepEqual(result, { ok: true, pid: 4321 });
 });
 
@@ -50,38 +55,39 @@ check('non-win32 platform refuses rather than guessing', () => {
 for (const bad of [0, -1, 65536, 1.5, 'x', null, undefined]) {
   check(`invalid port ${JSON.stringify(bad)} is refused before any exec`, () => {
     let execCalled = false;
-    const result = resolveListenerPidWindows(bad, { exec: () => { execCalled = true; return { status: 0, stdout: '' }; } });
+    const result = resolveListenerPidWindows(bad, { ...WIN32, exec: () => { execCalled = true; return { status: 0, stdout: '' }; } });
     assert.equal(result.ok, false);
     assert.equal(execCalled, false, 'must refuse before shelling out to PowerShell');
   });
 }
 
 check('nothing listening (empty stdout) is reported, not thrown', () => {
-  const result = resolveListenerPidWindows(5191, { exec: fakeExec('') });
+  const result = resolveListenerPidWindows(5191, { ...WIN32, exec: fakeExec('') });
   assert.equal(result.ok, false);
   assert.match(result.reason, /nothing listening/);
 });
 
 check('a non-zero PowerShell exit is reported, not thrown', () => {
-  const result = resolveListenerPidWindows(5191, { exec: fakeExec('', 1) });
+  const result = resolveListenerPidWindows(5191, { ...WIN32, exec: fakeExec('', 1) });
   assert.equal(result.ok, false);
   assert.match(result.reason, /exited 1/);
 });
 
 check('malformed JSON is reported, not thrown', () => {
-  const result = resolveListenerPidWindows(5191, { exec: fakeExec('{not json') });
+  const result = resolveListenerPidWindows(5191, { ...WIN32, exec: fakeExec('{not json') });
   assert.equal(result.ok, false);
   assert.match(result.reason, /not JSON/);
 });
 
 check('an OwningProcess that is not a usable pid is refused', () => {
-  const result = resolveListenerPidWindows(5191, { exec: fakeExec('{"OwningProcess":"nope"}') });
+  const result = resolveListenerPidWindows(5191, { ...WIN32, exec: fakeExec('{"OwningProcess":"nope"}') });
   assert.equal(result.ok, false);
   assert.match(result.reason, /no usable OwningProcess/);
 });
 
 check('a throwing exec is caught and reported, never propagates', () => {
   const result = resolveListenerPidWindows(5191, {
+    ...WIN32,
     exec: () => { throw new Error('spawn ENOENT'); },
   });
   assert.equal(result.ok, false);
@@ -89,7 +95,7 @@ check('a throwing exec is caught and reported, never propagates', () => {
 });
 
 check('a null exec result (no process object) is reported, not thrown', () => {
-  const result = resolveListenerPidWindows(5191, { exec: () => null });
+  const result = resolveListenerPidWindows(5191, { ...WIN32, exec: () => null });
   assert.equal(result.ok, false);
   assert.match(result.reason, /with no result/);
 });
