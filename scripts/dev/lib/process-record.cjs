@@ -131,6 +131,33 @@ async function readRegister({
   return out;
 }
 
+/* ── Generic: the atomic temp+rename record write ───────────────────────────────────────────── */
+
+/**
+ * One record file, written atomically (861 §6.1 names "atomic temp+rename write" as part of the
+ * shared grammar). A reader that catches a half-written file reports it `unreadable` rather than
+ * crashing, but a torn record is still a record nobody can act on — so producers never write in
+ * place.
+ *
+ * The temp name carries this process's pid so two producers writing the same scope concurrently
+ * cannot clobber each other's temp file. Added by 861 Phase 2 as the first scope that needs a
+ * JS-side writer: `foreign/`'s producer is Python (`run_register.py:163-180`) and the dev-runner
+ * has its own (`dev-runner.cjs:117`), so this is the writer for every scope written from Node,
+ * not a fourth independent one.
+ */
+async function writeRecordAtomic(filePath, record) {
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  const json = JSON.stringify(record, null, 2) + '\n';
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  try {
+    await fsp.writeFile(tmp, json, 'utf8');
+    await fsp.rename(tmp, filePath);
+  } catch (err) {
+    await fsp.rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
 /* ── Generic: pid liveness, an HTTP status probe, and state derivation ─────────────────────────*/
 
 function pidAlive(pid) {
@@ -425,6 +452,7 @@ module.exports = {
   // Generic layer — reusable by any future scope (861 Phase 2's `agent-spawns/`).
   resolveRegisterDir,
   readRegister,
+  writeRecordAtomic,
   pidAlive,
   httpGetStatusCode,
   deriveLivenessState,
