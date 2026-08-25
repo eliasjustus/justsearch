@@ -14,7 +14,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import { agentAnswerEvidence, agentDeltaEvidence } from './agentEvidence.js';
-import { sourceGrounding, sourceGroundingLabel } from './evidenceProjection.js';
+import {
+  citationHeader,
+  contextInclusionOf,
+  inclusionBadge,
+  sourceGrounding,
+  sourceGroundingLabel,
+  suppressGroundingFor,
+} from './evidenceProjection.js';
 import type {
   AgentSentenceCite,
   AgentSource,
@@ -318,5 +325,95 @@ describe('agentDeltaEvidence — what a run established, with no terminal verdic
     expect(evidence.groundingIncomplete).toBe(true);
     const g = sourceGrounding(0, evidence.matches, SOURCES[0]!.parentDocId, null, evidence.groundingIncomplete);
     expect(sourceGroundingLabel(g)).toBe('Retrieved · grounding check did not complete');
+  });
+});
+
+/**
+ * Tempdoc 865 §7.5 — retrieved-vs-received on the delegate plane.
+ *
+ * 849 built the whole read side — `contextInclusionOf`, `inclusionBadge`, `suppressGroundingFor` and
+ * the words "Retrieved · never sent to the model" — and wired it into both the pane and the panel.
+ * The delegate plane inherited none of it for ONE reason: no producer ever gave the predicate an
+ * input, so `suppressGroundingFor(null)` was permanently `false`. These pin the forwarding that
+ * makes the existing machinery fire, and the precedence once it does.
+ */
+describe('agentAnswerEvidence — inclusion (865 §7.5)', () => {
+  const DROPPED: AgentSource = {
+    ...SOURCES[0]!,
+    contextInclusion: 'dropped',
+    contextIncludedChars: 0,
+  };
+
+  it('forwards the producer inclusion, so 849s predicate finally has an input', () => {
+    const { sources } = agentAnswerEvidence([DROPPED, SOURCES[1]!], CITES, 'CROSS_ENCODER');
+    expect(sources[0]!.contextInclusion).toBe('dropped');
+    expect(sources[0]!.contextIncludedChars).toBe(0);
+    expect(suppressGroundingFor(contextInclusionOf(sources[0]!))).toBe(true);
+    expect(inclusionBadge(contextInclusionOf(sources[0]!))?.label).toBe(
+      'Retrieved · never sent to the model',
+    );
+    // The other source reported nothing, and stays unaffected — the state is per source.
+    expect(sources[1]!.contextInclusion).toBeUndefined();
+  });
+
+  it('leaves an unreported source ABSENT — never "included" on the producers behalf', () => {
+    const { sources } = agentAnswerEvidence(SOURCES, CITES, 'CROSS_ENCODER');
+    expect(sources[0]!.contextInclusion).toBeUndefined();
+    expect(sources[0]!.contextIncludedChars).toBeUndefined();
+    expect(suppressGroundingFor(contextInclusionOf(sources[0]!))).toBe(false);
+  });
+
+  it('refuses an unrecognised state rather than guessing which of the three it meant', () => {
+    const bogus: AgentSource = { ...SOURCES[0]!, contextInclusion: 'truncated' };
+    const { sources } = agentAnswerEvidence([bogus], [], 'CROSS_ENCODER');
+    expect(sources[0]!.contextInclusion).toBeUndefined();
+  });
+
+  /**
+   * THE PRECEDENCE CASE. A delegate source can now be dropped AND structurally unexaminable (865
+   * PR-1's `sourceCoverage`) inside a run whose grounding pass never completed (PR-0's
+   * `groundingIncomplete`). Inclusion is decided FIRST and takes the whole grounding axis with it:
+   * every state on that axis is a claim about a matcher's relationship to text the model never saw.
+   */
+  it('inclusion outranks every grounding state — a dropped source shows the badge and no verdict', () => {
+    const droppedAndUnexaminable: AgentSource = {
+      parentDocId: 'f:/docs/c.md',
+      chunkIndex: -1,
+      path: 'f:/docs/c.md',
+      title: 'Doc C',
+      excerpt: 'whole-document provenance',
+      startLine: -1,
+      endLine: -1,
+      headingText: '',
+      contextInclusion: 'dropped',
+      contextIncludedChars: 0,
+    };
+    const evidence = agentAnswerEvidence([droppedAndUnexaminable], [], 'NONE');
+
+    // The grounding axis still computes its own answer, and on its own terms it is right.
+    const grounding = sourceGrounding(
+      0,
+      evidence.matches,
+      droppedAndUnexaminable.parentDocId,
+      evidence.sourceCoverage[0]!,
+      evidence.groundingIncomplete,
+    );
+    expect(grounding.state).toBe('grounding-incomplete');
+
+    // And the header withholds it entirely, leaving only what is worth the reader's attention.
+    const header = citationHeader({
+      citation: evidence.sources[0]!,
+      grounding,
+      question: 'why did the retry fail?',
+      spanUnusable: false,
+    });
+    expect(header?.inclusion?.label).toBe('Retrieved · never sent to the model');
+    expect(header?.grounding).toBeNull();
+    expect(header?.claim).toBeNull();
+  });
+
+  it('a run reconstructed from deltas claims no inclusion — no final prompt was ever built', () => {
+    const evidence = agentDeltaEvidence(SOURCES);
+    expect(evidence.sources.every((s) => s.contextInclusion === undefined)).toBe(true);
   });
 });

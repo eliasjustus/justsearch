@@ -385,6 +385,29 @@ public interface DocumentService {
     public String wireName() {
       return state.name().toLowerCase(java.util.Locale.ROOT);
     }
+
+    /**
+     * The inverse of {@link #wireName()} — read an inclusion back off a wire value (tempdoc 865
+     * §7.5, for the delegate plane, whose {@code AgentEvent.AgentSource} carries the state as a wire
+     * name because {@code app-agent-api} cannot see this enum).
+     *
+     * <p>Fails CLOSED, exactly as {@link ScorerKind#fromWire} and the frontend's {@code
+     * contextInclusionOf} do: an absent, blank or unrecognised value yields {@link #ABSENT}. An
+     * unknown state is not a known one, and guessing which of the three it meant is how a vocabulary
+     * drift becomes a false claim about what the model was shown.
+     */
+    public static ContextInclusion fromWire(String wire, int includedChars) {
+      if (wire == null || wire.isBlank()) {
+        return ABSENT;
+      }
+      for (State candidate : State.values()) {
+        if (candidate != State.ABSENT
+            && candidate.name().toLowerCase(java.util.Locale.ROOT).equals(wire)) {
+          return new ContextInclusion(candidate, includedChars);
+        }
+      }
+      return ABSENT;
+    }
   }
 
   /**

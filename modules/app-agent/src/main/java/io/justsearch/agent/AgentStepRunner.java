@@ -186,7 +186,7 @@ final class AgentStepRunner {
           return IterationOutcome.terminated(false);
         }
 
-        compressor.compressToolMessages(session.messages());
+        session.recordCompression(compressor.compressToolMessages(session.messages()));
 
         // Direction E: state machine — if PRIMARY has used enough tool rounds without committing,
         // transition to DECIDING state and restrict tools to handoff-only.
@@ -961,7 +961,11 @@ final class AgentStepRunner {
               "role", "tool",
               "tool_call_id", call.id(),
               "content", AgentContextCompressor.truncate(toolResult.message())));
-          compressor.compressToolMessages(session.messages());
+          // Tempdoc 865 §7.5 — the compressor reports what it left standing, and the session holds
+          // the LATEST report. Every site that compresses must record, because a stale receipt would
+          // describe a prompt the answer was not written from — which is the one way this producer
+          // could state a confident falsehood rather than staying silent.
+          session.recordCompression(compressor.compressToolMessages(session.messages()));
 
           checkpointer.checkpoint(sessionId, session, "AFTER_TOOL_RESULT", "Tool result recorded: " + call.toolName());
 
@@ -1194,7 +1198,7 @@ final class AgentStepRunner {
             call.id(),
             "content",
             AgentContextCompressor.truncate(opResult.message())));
-    compressor.compressToolMessages(session.messages());
+    session.recordCompression(compressor.compressToolMessages(session.messages()));
     checkpointer.checkpoint(sessionId, session, "AFTER_TOOL_RESULT", "Virtual tool completed: " + call.toolName());
   }
 }

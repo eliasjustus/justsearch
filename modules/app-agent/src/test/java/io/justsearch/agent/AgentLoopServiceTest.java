@@ -1270,7 +1270,58 @@ class AgentLoopServiceTest {
         done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
         deltaDocIds(events),
         "the concatenated per-call deltas ARE the terminal source list — same members, same order."
-            + " A divergence here is a silently misdirected inline mark on every answer.");
+            + " A divergence here is a silently misdirected inline mark on every answer."
+            + " (865 §7.5: the compared identity is the document, deliberately NOT the inclusion"
+            + " axis — a delta is minted absent and the terminal resolves it, so the two SHOULD"
+            + " differ there and equivalence is a claim about which sources, in which order.)");
+  }
+
+  /**
+   * Tempdoc 865 §7.5 — the RUNNER's half of the inclusion producer, which nothing else can see.
+   *
+   * <p>{@code AgentSession} resolves inclusion from the receipt it holds, and {@code
+   * AgentContextCompressor} produces the receipt — both unit-tested in {@code
+   * AgentGroundingInclusionTest}. Between them sits one line per compression site: {@code
+   * session.recordCompression(compressor.compressToolMessages(...))}. Delete the {@code
+   * recordCompression} wrapper and every one of those unit tests still passes while the whole
+   * feature silently reverts to "no badge" — which is also what the plane did before 865, so nobody
+   * would notice. This runs the real loop and asserts the state reaches the terminal event.
+   */
+  @Test
+  @DisplayName("865 §7.5: the loop records the compressor's receipt, so a terminal source can say its passage was never sent")
+  void groundedTerminal_carriesTheInclusionResolvedAgainstTheFinalPrompt() {
+    // A tool message shaped like SearchTool's output: indented `Excerpt:` lines (what Layer 3
+    // strips) and long enough to clear the compressor's minimum-length floor.
+    String message =
+        "Found 1 result\n  /docs/d.md\n    Lines 1-5\n    Excerpt: \"the passage text, padded so"
+            + " this message clears the compressor's minimum-length floor and is therefore a"
+            + " message that compression will actually rewrite rather than skip over\"\n";
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}"),
+                ScriptedResponse.textOnly("Here is the answer")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, message)
+                .returningStructuredData(
+                    List.of(searchEvidence("d1"), searchEvidence("d2"))));
+
+    var events = run(service, userMessage("two searches"), 4);
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "the run reaches a grounded terminal");
+    assertEquals(2, done.sources().size());
+
+    // The FIRST search's tool message is outside the compressor's keep-window under every
+    // configured `keepLastResults`, so its source's passage is provably not in the final prompt.
+    assertEquals(
+        "dropped",
+        done.sources().get(0).contextInclusion(),
+        "the terminal reports what the compressor did to the prompt the answer was written from —"
+            + " the input 849's `suppressGroundingFor` has been waiting for on this plane");
+    assertEquals(0, done.sources().get(0).contextIncludedChars());
   }
 
   /**

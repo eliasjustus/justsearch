@@ -1367,6 +1367,109 @@ saying nothing** — absent, as now — rather than to compute a badge from a gu
 nothing. This is gated on the §4.11 measurement and the design does not pre-commit
 to shipping a badge.
 
+**Rev 3 (implementation, PR-3) — the mapping WAS establishable and the badge ships. It
+ships narrowed to ONE state, and that narrowing is the honesty constraint, not a
+shortcut.**
+
+The producer is a RECEIPT, not a re-derivation: `compressToolMessages` now returns a
+`CompressionReceipt` over the message list it just wrote. A source's carriers are a SET,
+not its minting call, which is what lets a document re-returned by a later search stop
+being described as dropped.
+
+**The receipt has THREE outcomes, and the two-outcome version shipped a false claim
+(independent review F1, reproduced live).** Rev 3's first implementation asked one
+question — "does this message still have an `Excerpt:` line?" — and partitioned every
+tool message on the answer. But a vector/dense-only hit has no excerpt regions, so
+`SearchTool.formatResults`'s else-branch writes its text as `Preview:`
+(`SearchTool.java:451-459`), which Layer 3 never strips and that predicate could never
+match. Such a message was classified stripped **with zero compression having occurred**,
+and the panel rendered "Retrieved · never sent to the model" over text sitting verbatim
+in the prompt. Not silence — a confident falsehood, on the exact question the producer
+exists to answer. The licensing comment ("such a call minted no grounding source") was
+simply false for that branch.
+
+The fix is the honest predicate, *"the carrier no longer holds the text it had"*, which
+needs both a wider reader and positive evidence of removal:
+
+- **`textIntact`** — the message still matches `ToolResultCarrier.CARRIER_LINE`, which
+  covers BOTH spellings. This wins over every other signal: if any carrier line survived,
+  some of the text is there, and the one claim this producer makes is forbidden.
+- **`textRemoved`** — this pass rewrote the message, or it bears the
+  `[compressed-tool-output` marker a pass that did left behind.
+- **NEITHER** — say nothing. A tool that never carried hit text is indistinguishable from
+  one stripped by a pass this receipt did not witness, and collapsing that into "removed"
+  is exactly the F1 bug.
+
+Both signals are needed and each covers the other's blind spot: artifact-only produced
+F1; rewrite-only misses every message compressed in an *earlier* pass, because
+`compressToolOutput` refuses to re-compress its own output. The strip-only case (excerpts
+removed, remainder under `minChars`, so no marker is written) is witnessed by exactly one
+pass — which is why `AgentSession` **folds** `textRemoved` forward rather than re-deriving
+it. That accumulation is sound because a message's content only ever shrinks; the
+per-final-prompt property lives in the carrier set instead, and `inclusionFor` requires
+**every** carrier to have lost its text before it will speak.
+
+One structural consequence, recorded because it is the general lesson: the format coupling
+now has a single owner. `ToolResultCarrier` holds the writer's `excerptLine`/`previewLine`
+and both reader patterns — deliberately two patterns, since widening the *strip* to match
+the *reader* would silently delete a dense-only hit's whole text from the prompt.
+
+**What it states, and what it refuses to.** Only `dropped` (else ABSENT). Not
+`included` — and the falsifier is concrete, not cautionary: Layer 1
+(`SearchTool.java:439-448`) divides `MAX_TOOL_RESULT_CHARS` across the hits and clips —
+or omits outright — a later hit's `Excerpt:` line, while that hit is still minted as a
+source from the untruncated `structuredData` (whose excerpt is separately clamped to 320
+chars, `:344`). So "this message still carries excerpt lines" cannot mean "THIS source's
+excerpt reached the model", and `included` would fabricate exactly the claim 849 exists
+to remove. `dropped` survives because it is **monotone across the three layers**: once
+Layer 3 has taken the excerpts out of the carrier message, no upstream cut can put them
+back. It is also the only state the reader acts on — `suppressGroundingFor` keys on
+`dropped` alone — so the narrowing costs the surface nothing. That is §8.5 item 4
+answered concretely: the badge reports Layer 3, and says nothing where Layers 1-2 would
+have to be witnessed to speak.
+
+**Carrier.** The two keys ride each element of `done.sources`, spelled exactly as
+`RAGContext` spells them on a `rag.citations` entry — so the FE forwards them through the
+existing shared evidence record with no new join, and the record path needs no change at
+all (the mapper copies `payload.sources` verbatim). `AgentSource` gains them as
+components CONSTRUCTED ABSENT with a `withInclusion` copy method — `ContextCitation`'s
+own idiom, one level up — and `ContextInclusion.fromWire` is the one reverse projection,
+living beside `wireName`. The per-call delta is deliberately excluded
+(`OperationResult.withGrounding` still writes the eight identity keys): a tool call has
+no final prompt to be a fact about, and PR-1's delta contract is untouched.
+
+**Precedence, stated at the read site** (`agentEvidence.toAnswerEvidenceSource`):
+inclusion is decided BEFORE the grounding axis and takes the whole axis with it. A source
+that is dropped AND unexamined (PR-1) inside a run whose pass never completed (PR-0)
+shows only "Retrieved · never sent to the model"; `citationHeader`'s existing
+`suppressGroundingFor` withholds "not cited", "not examined" and "grounding check did not
+complete" alike. That is right rather than merely established: every state on the
+grounding axis is a claim about a matcher's relationship to text the model never saw —
+"not examined" would invite "so examine it", and "grounding check did not complete" would
+imply a completed check could have said something.
+
+**Every compression site records (review F2).** `AgentLlmCaller.attemptBudgetEdgeFinalize`
+compressed bare, and that pass is the one that builds the prompt
+`groundedDone(BUDGET_EDGE_FINALIZE)`'s answer is written from — so the terminal under the
+run's *maximal* compression pressure resolved against a one-pass-stale receipt and
+withheld the badge precisely where the most text had been dropped. The seam was invisible
+to every other test: mint, join and stamp all worked, and the only symptom was a run
+saying nothing when it had the most to say. Now threaded, and pinned by a test that goes
+red when the wrapper is removed.
+
+**Still unrun: the live tier.** Every claim above is compile-, unit- and gate-tier. §8.7's
+L-5 audit now covers PR-0, PR-1 and PR-3 — this slice adds a THIRD new sentence a reader
+will act on, and no one has yet seen any of them rendered.
+
+**Method note worth keeping.** F1 and F2 were both found by an independent reviewer rather
+than by the implementing agent's own critical-analysis pass, and they are the same shape: a
+producer that is correct on the path its author had in mind and silently wrong on a sibling
+path — a second result-formatting branch, a second compression call site. The
+generalisable check is not "re-read the diff"; it is **enumerate the writer's branches and
+the producer's call sites, and ask the predicate about each one**. `ToolResultCarrier` and
+the F2 threading both exist so that the next such branch is a compile-time or test-time
+concern rather than a reviewer's catch.
+
 ### 7.6 The acquisition axis — vocabulary now, structure only when it has a second value
 
 The scope asks for an acquisition axis. **The design records the vocabulary and
@@ -1675,6 +1778,19 @@ projection, not the switch.
    zero-behaviour-change teardown that slips out of the PR it was planned for is
    exactly the residue `retire-with-a-sweep` warns about, and naming its new home
    is what stops "a follow-up will clean it up" from being the end of the story.
+
+   **Rev 3 — LANDED in PR-3, and it paid for itself on the first run.** Thirteen
+   `AgentRunShape` kinds are now explicit non-projecting cases; `default` is retained
+   and still bites for the vocabularies `AgentRunShape` does not declare (the workflow
+   node journal, `search_executed`). Zero behaviour change, pinned by
+   `AgentInteractionMapperTest.declaredNonProjectingKindsStayNonProjecting`. The
+   legibility argument turned out to be the smaller half: the closure guard added with
+   it (`AgentRunDurabilityClosureTest`, in `app-services` because that is where
+   `AgentRunShape` lives) failed on its FIRST run over a kind no one had classified —
+   `intent.resolution`, the composed `core.url-extractor` consumer's namespaced event,
+   which is `EventDescriptor.nameOnly` and had been reaching `default` unnoticed. That
+   is the exact "nobody decided, and it is indistinguishable from someone deciding no"
+   shape §7.7 describes, found by writing the vocabulary down.
 
 **Frontend**
 

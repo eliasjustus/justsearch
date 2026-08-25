@@ -31,6 +31,10 @@ import { agentSentenceOrdinals, resolveAnswerCitations } from './citationResolve
 // copy of "may this match be shown" would be free to disagree with the record path's copy, which is
 // the 561 P-A divergence the shared authority exists to prevent.
 import { admittedMatches } from './recordEvidence.js';
+// Tempdoc 865 §7.5 — the ONE reader of the inclusion wire value, imported rather than re-tested
+// here. Its refusals are the point: an absent field and an unrecognised one both yield `null`, so a
+// vocabulary drift on the delegate plane cannot become a false claim about what the model was shown.
+import { contextInclusionOf } from './evidenceProjection.js';
 
 /** What one delegate answer stood on — the same three parts `Sv3TurnEvidence` carries. */
 export interface AgentAnswerEvidence {
@@ -132,8 +136,27 @@ function unexaminableSourceCoverage(sources: readonly AgentSource[]): SourceCove
  * and the panel groups and grades by them: `score: 0` is a "low relevance" verdict about a number
  * nobody produced, and `startChar: 0` is a claim about the document's opening characters that the
  * citation-anchor join would then act on.
+ *
+ * <p>Tempdoc 865 §7.5 — the inclusion axis is FORWARDED, and it is the whole read side of this
+ * slice. 849 built the predicate (`suppressGroundingFor`), the badge (`inclusionBadge`) and the
+ * words ("Retrieved · never sent to the model") and wired them into both surfaces; the delegate
+ * plane inherited none of it for one reason only — no producer ever gave the predicate an input, so
+ * `suppressGroundingFor(null)` was permanently `false`. Nothing new is invented here: the two wire
+ * keys are the RAG plane's own, and passing them through is what makes the existing machinery fire.
+ *
+ * <p><b>PRECEDENCE — inclusion is decided BEFORE the grounding axis, and it wins.</b> A delegate
+ * source can now be simultaneously dropped, unexamined (865 PR-1's `sourceCoverage`) and part of a
+ * run whose grounding pass never completed (PR-0's `groundingIncomplete`). `citationHeader` already
+ * resolves that: `suppressGroundingFor` withholds the ENTIRE grounding label — "not cited", "not
+ * examined" and "grounding check did not complete" alike — and the card shows only the inclusion
+ * badge. That is right rather than merely established, because every state on the grounding axis is
+ * a statement about a matcher's relationship to text the model never saw: `not examined` would
+ * invite "so examine it", and `grounding check did not complete` would imply a completed check
+ * could have said something. The one fact worth the reader's attention is that the passage was not
+ * in the prompt, and 849's reduction says exactly that and stops.
  */
 function toAnswerEvidenceSource(source: AgentSource): AnswerEvidenceSource {
+  const inclusion = contextInclusionOf(source);
   return {
     parentDocId: source.parentDocId,
     chunkIndex: source.chunkIndex,
@@ -141,6 +164,11 @@ function toAnswerEvidenceSource(source: AgentSource): AnswerEvidenceSource {
     startLine: source.startLine,
     endLine: source.endLine,
     headingText: source.headingText,
+    // Absent stays absent — `undefined`, not a spread of a `null`, so the field is missing rather
+    // than present-and-empty and `contextInclusionOf` downstream reads it as "said nothing".
+    ...(inclusion === null
+      ? {}
+      : { contextInclusion: inclusion, contextIncludedChars: source.contextIncludedChars ?? 0 }),
   };
 }
 

@@ -93,8 +93,14 @@ final class AgentLlmCaller {
    */
   String attemptBudgetEdgeFinalize(AgentSession session, Consumer<AgentEvent> sink) {
     try {
-      // Compress tool messages to maximize context space for the finalize call
-      compressor.compressToolMessages(session.messages());
+      // Compress tool messages to maximize context space for the finalize call.
+      //
+      // Tempdoc 865 §7.5 — and RECORD the receipt, like every other compression site. This one
+      // matters most: it is the last pass before `groundedDone(BUDGET_EDGE_FINALIZE)`, so it builds
+      // the exact prompt that terminal's answer is written from, under maximal compression pressure.
+      // Compressing bare here left the terminal resolving inclusion against a one-pass-stale
+      // picture — silently withholding the badge precisely where the most text had been dropped.
+      session.recordCompression(compressor.compressToolMessages(session.messages()));
       session.appendMessage(Map.of("role", "user", "content", BUDGET_EDGE_FINALIZE_INSTRUCTION));
       LlmCallResult result = callLlmWithTools(session, List.of(), sink);
       String text = result.textContent();

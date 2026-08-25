@@ -108,6 +108,11 @@ public record OperationResult(
    * against. Writing the eight keys explicitly is what makes the shape identical on the live and the
    * reloaded path, and pinnable by a conformance test in place of the descriptor.
    *
+   * <p>Tempdoc 865 §7.5 — the eight are {@code AgentSource}'s IDENTITY components, and the record's
+   * two INCLUSION components are deliberately not among them. Inclusion is resolved against the
+   * final prompt at the terminal; a tool call has no final prompt to be a fact about, so a delta
+   * that carried the key would be claiming one.
+   *
    * @param sources the delta — never the running total, so a long run does not re-send its whole
    *     evidence set every step. Callers omit the stamp entirely when the delta is empty.
    */

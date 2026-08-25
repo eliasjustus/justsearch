@@ -836,4 +836,97 @@ final class AgentInteractionMapperTest {
         folded.stream().map(InteractionEvent::id).toList(),
         "same events, same order — the fold only decorates the turn with its thinking");
   }
+
+  /**
+   * Tempdoc 865 §7.5 — THE ROUND TRIP. The inclusion state is only worth minting if it survives the
+   * journal: an honesty fact that expires on reload is worse than one never made, because the reader
+   * has already learned to trust it (the same argument 859 §D §2.6 made for {@code disposition}).
+   *
+   * <p>It rides the SOURCE MAP rather than a sibling key, which is what makes the record path need
+   * no change at all: the {@code done} case copies {@code payload.sources} verbatim, so the two keys
+   * travel with the source they describe and the reloaded panel reads them through the same {@code
+   * AnswerEvidenceSource} the live panel does.
+   */
+  @Test
+  @DisplayName("865 §7.5: a dropped source's inclusion survives the wire → record round trip")
+  void inclusionSurvivesTheRecordPath() {
+    var source =
+        new AgentEvent.AgentSource("d1", 0, "/docs/d1.md", "D1", "ex", 1, 5, "")
+            .withInclusion("dropped", 0);
+    var done =
+        new AgentEvent.AgentDone(
+            "the answer", 1, 1, 10, List.of(source), List.of(), "CROSS_ENCODER");
+
+    Map<String, Object> payload = io.justsearch.agent.api.AgentEventPayloads.base(done);
+    Map<?, ?> wireSource = (Map<?, ?>) ((List<?>) payload.get("sources")).get(0);
+    assertEquals("dropped", wireSource.get("contextInclusion"), "on the wire, RAG's own key");
+    assertEquals(0, wireSource.get("contextIncludedChars"));
+
+    InteractionEvent reloaded = mapped("done", payload);
+    Map<?, ?> recordSource =
+        (Map<?, ?>) ((List<?>) reloaded.attributes().get("sources")).get(0);
+    assertEquals(
+        "dropped",
+        recordSource.get("contextInclusion"),
+        "and on the record — a reloaded run still says the passage never reached the model");
+    assertEquals(0, recordSource.get("contextIncludedChars"));
+  }
+
+  @Test
+  @DisplayName("865 §7.5: an ABSENT inclusion emits NO key — a reader told nothing says nothing")
+  void absentInclusionEmitsNoKey() {
+    var done =
+        new AgentEvent.AgentDone(
+            "the answer",
+            1,
+            1,
+            10,
+            List.of(new AgentEvent.AgentSource("d1", 0, "/docs/d1.md", "D1", "ex", 1, 5, "")),
+            List.of(),
+            "CROSS_ENCODER");
+
+    Map<String, Object> payload = io.justsearch.agent.api.AgentEventPayloads.base(done);
+    Map<?, ?> wireSource = (Map<?, ?>) ((List<?>) payload.get("sources")).get(0);
+    assertTrue(
+        !wireSource.containsKey("contextInclusion"),
+        "absence is an omitted key, never a fourth string the consumer would have to interpret —"
+            + " and it is what keeps every source persisted before 865 readable as silent");
+    assertTrue(!wireSource.containsKey("contextIncludedChars"));
+  }
+
+  /**
+   * Tempdoc 865 §7.7 / §8.3 item 6 — the ZERO-BEHAVIOUR-CHANGE guard on the durability teardown.
+   *
+   * <p>The thirteen {@code AgentRunShape} kinds that used to reach {@code default} are now written as
+   * explicit non-projecting cases. That is a legibility change and nothing else, so it needs a test
+   * that would fail if any of them started projecting — the risk of writing a name down is that
+   * someone later gives it a body, and "no existing kind's durability changes" is the whole contract
+   * this hunk was allowed under.
+   */
+  @Test
+  @DisplayName("865 §7.7: every explicitly non-projecting kind still projects nothing")
+  void declaredNonProjectingKindsStayNonProjecting() {
+    List<String> declaredNonProjecting =
+        List.of(
+            "session_started",
+            "chunk",
+            "reasoning_chunk",
+            "tool_batch_proposed",
+            "tool_call_approved",
+            "tool_call_virtual",
+            "directive_acknowledged",
+            "handoff_proposed",
+            "budget_update",
+            "budget_gate",
+            "context_gate",
+            "context_compacted",
+            "state_snapshot",
+            "intent.resolution");
+    for (String kind : declaredNonProjecting) {
+      assertTrue(
+          AgentInteractionMapper.fromRunEvent(rec(kind, Map.of("text", "x", "phase", "x")), CONV)
+              .isEmpty(),
+          kind + " is declared non-projecting and must project nothing");
+    }
+  }
 }

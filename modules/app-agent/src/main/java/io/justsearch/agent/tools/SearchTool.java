@@ -444,7 +444,7 @@ public final class SearchTool {
             // boundary rather than a raw mid-word substring (the producer-owned-boundary principle
             // applied to the agent tool output — the same clip class fixed for ContextCitation).
             excerpt = clampToWordBoundary(excerpt, Math.min(remaining, 800));
-            sb.append(String.format("    Excerpt: \"%s\"%n", excerpt));
+            sb.append(io.justsearch.agent.ToolResultCarrier.excerptLine(excerpt));
             charsUsed += excerpt.length();
           }
         }
@@ -455,7 +455,10 @@ public final class SearchTool {
           preview = preview.strip().replace("\"", "'").replace("\n", " ").replace("\r", "");
           // Tempdoc 561 P-A5: word-boundary snap (see clampToWordBoundary).
           preview = clampToWordBoundary(preview, Math.min(perResultBudget, 800));
-          sb.append(String.format("    Preview: \"%s\"%n", preview));
+          // Tempdoc 865 §7.5 — the SAME authority the excerpt branch writes through. This branch is
+          // the one the inclusion receipt used to be blind to: a dense-only hit never produces an
+          // `Excerpt:` line, so a reader keyed on that spelling saw its message as textless.
+          sb.append(io.justsearch.agent.ToolResultCarrier.previewLine(preview));
         }
       }
     }
