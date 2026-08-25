@@ -1078,7 +1078,7 @@ Explicit constraint for PR A's implementer: `focusField()` **must** reach the te
 | **B** | Layer 1(c2) — real target for `shell.focus-composer`. ~~Layer 4~~ moved to D (A8), and `/` already carries its `when` | ui-web gates; `check-premerge-table` n/a |
 | **C** | Layer 3(a) — project sv3 conversation identity to the URL. **SHIPPED 2026-08-25** (gate satisfied by §4.1's L6/L8) — see §4.6 | router tests; back/forward live leg |
 | **D** | Layer 2 — ~~predicate unification~~ (#546), `isComposing`/`repeat`, `focusKind`/`paletteOpen` resolution, modal guard, `trapTab` containment, **+ Layer 4's gate half** | ui-web gates |
-| **E** | Layer 1(d) + Layer 3(c)(i) — resting-state affordance, row focus indicator, + the split-view residual below. **SHIPPED-PENDING-AUDIT 2026-08-25** — see §4.7 | ui-web gate set (green); **§4.4's measured UX audit still owed** — procedure in the PR body |
+| **E** | Layer 1(d) + Layer 3(c)(i) — resting-state affordance, row focus indicator, + the split-view residual below. **SHIPPED-PENDING-AUDIT 2026-08-25 (#561)** — see §4.7 | ui-web gate set (green); **§4.4's measured UX audit still owed** — procedure in #561's body |
 
 > **Amended when PR A shipped (2026-08-25).** Row A originally also listed Layer 1(d)'s
 > resting-state affordance, which row E owns — it is a visible-affordance change and therefore
@@ -1324,7 +1324,7 @@ suite (`static-green ≠ live-working`).
 > **Superseded for E (2026-08-25):** PR E is implemented and green — §4.7. What is still open for it
 > is §4.4's measured UX audit alone, which is pooled and owed by an auditor ≠ committer.
 
-## 4.7 PR E as implemented (2026-08-25) — the resting affordance, the row ring, and the residual
+## 4.7 PR E as implemented (#561, 2026-08-25) — the resting affordance, the row ring, the residual
 
 Three items, each with its mechanism named, because "de-emphasise the composer" and "make the ring
 louder" are the kind of instructions that get satisfied by something that looks right and is
@@ -1393,5 +1393,5 @@ against a plausible wrong implementation rather than against a deletion:
 Full ui-web gate set green (23 scripts + 6 kernel gates); full FE suite 6032/6032.
 
 **Owed:** §4.4's measured UX audit (axe + a contrast oracle, live, auditor ≠ committer) — the
-procedure is written into the PR body for the pooled window. Nothing in this PR discharges it: every
+procedure is written into #561's body for the pooled window, with the verdict to be recorded here. Nothing in this PR discharges it: every
 assertion above is style TEXT, which is exactly the tier the audit exists to outrank.
