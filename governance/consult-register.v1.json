@@ -42,6 +42,16 @@
       ]
     },
     {
+      "id": "ui-baseline-schemas",
+      "pathIncludes": ["governance/ui-a11y-baseline", "governance/ui-proportion-baseline"],
+      "region": "the UI measurement baselines (a11y known-rules / chrome proportion)",
+      "docs": [],
+      "recipe": [
+        "Editing governance/ui-a11y-baseline.v1.json or governance/ui-proportion-baseline.v1.json (or either .schema.json) — run node scripts/ci/check-ui-baseline-schemas.mjs. Both registers declare a relative $schema, and until that gate landed nothing read those pointers: ui-a11y-baseline named ./ui-a11y-baseline.schema.json from the day it shipped and the file did not exist, so the register was unvalidated while LOOKING validated. The gate asserts the pointer resolves, the schema compiles, and the document conforms — plus that no two a11y rows share a uiShotStep, which draft-07 cannot express and which would give one capture two accepted rule sets.",
+        "A schema edit is an authority edit: if you add a field to a register, add it to its schema in the same change, or the gate fails on the additionalProperties: false it deliberately keeps."
+      ]
+    },
+    {
       "id": "threat-model",
       "pathIncludes": ["modules/shell/src-tauri/tauri.conf.json", "ApiSecurityFilters.java"],
       "region": "the loopback egress / inbound-access security surface",

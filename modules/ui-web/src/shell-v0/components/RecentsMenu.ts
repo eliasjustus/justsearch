@@ -91,22 +91,22 @@ export class RecentsMenu extends JfElement {
       background: transparent; border: none; color: inherit; cursor: pointer;
       padding: var(--space-1, 4px); border-radius: var(--radius-sm, 4px); font: inherit;
     }
-    .toggle:hover { background: var(--surface-hover, rgba(127,127,127,0.15)); }
+    .toggle:hover { background: var(--surface-hover); }
     .menu {
-      position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-overlay-menu, 1000);
+      position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-overlay-transient);
       min-width: 220px; max-width: 320px; padding: var(--space-1, 4px);
-      background: var(--surface-raised, Canvas); color: var(--text, CanvasText);
+      background: var(--surface-raised, Canvas); color: var(--text-primary);
       border: 1px solid var(--border, rgba(127,127,127,0.3));
-      border-radius: var(--radius-md, 8px); box-shadow: var(--shadow-overlay, 0 4px 16px rgba(0,0,0,0.25));
+      border-radius: var(--radius-md, 8px); box-shadow: var(--shadow-menu);
     }
-    .heading { font-size: var(--font-size-xs, 11px); opacity: 0.6; padding: 4px 8px; }
+    .heading { font-size: var(--font-size-xs); opacity: 0.6; padding: 4px 8px; }
     .item {
       display: block; width: 100%; text-align: left; background: transparent; border: none;
       color: inherit; font: inherit; padding: 6px 8px; border-radius: var(--radius-sm, 4px); cursor: pointer;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .item:hover, .item:focus-visible { background: var(--surface-hover, rgba(127,127,127,0.15)); outline: none; }
-    .empty { padding: 6px 8px; opacity: 0.6; font-size: var(--font-size-sm, 13px); }
+    .item:hover, .item:focus-visible { background: var(--surface-hover); outline: none; }
+    .empty { padding: 6px 8px; opacity: 0.6; font-size: var(--font-size-sm); }
   `;
 
   override render(): TemplateResult {

@@ -1289,6 +1289,44 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     ]);
   });
 
+  it('859 §D F6: a RELOAD still shows the budget-raise note — through the record, not the stream', () => {
+    // The whole point of making `progress` durable, asserted end-to-end on the FE half: the wire
+    // events a reloaded conversation receives, through the shared projector, through the reducer that
+    // installs them — and the narration is still on screen. A COLD load, because that is the state the
+    // gap actually bit in: no live turn ever observed this run, so the record is the only witness.
+    const cold = mergeStoreConversations(SV3_SESSIONS_EMPTY, [row838('uc-raise')]);
+    const applied = applySv3Record(
+      cold,
+      'uc-raise',
+      projectSv3RecordTurns([
+        {
+          id: 'r1', occurredAt: '2026-08-13T10:00:00.000Z', kind: 'USER_MESSAGE',
+          originator: 'user', content: 'summarise every renewal', attributes: {},
+        },
+        {
+          id: 'r2', occurredAt: '2026-08-13T10:00:01.000Z', kind: 'PROGRESS', originator: 'agent',
+          content: '+12,000 tokens — continuing',
+          attributes: { phase: 'budget_raised' },
+        },
+        {
+          id: 'r3', occurredAt: '2026-08-13T10:00:02.000Z', kind: 'ASSISTANT_MESSAGE',
+          originator: 'agent', content: 'Four renewals lapsed.', attributes: {},
+        },
+      ]),
+    );
+    const restored = applied.sessions[0]?.turns[0] as Sv3Turn;
+    // The note reaches the feed the transcript renders — with the AMOUNT, which is the fact a reader
+    // needs to judge the raise and the one a static label would have erased.
+    expect(restored.activity).toEqual([
+      { kind: 'note', id: 'r2', label: 'Progress', text: '+12,000 tokens — continuing' },
+      { kind: 'text', id: 'r3', text: 'Four renewals lapsed.' },
+    ]);
+    // …and it lands on the AGENT arm, which is the arm that draws an activity feed at all. A turn
+    // whose record shows the loop taking a decision is a run, not an ask — the same rule `tool` and
+    // `error` notes already trip.
+    expect(restored.kind).toBe('agent');
+  });
+
   it('changes nothing for an EMPTY record or an unknown conversation', () => {
     // `fetchUnifiedThread` returns empty on failure by contract (727 F-8), so "the record said
     // nothing" must never be readable as "there is nothing".

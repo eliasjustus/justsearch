@@ -7,7 +7,8 @@
  * @vitest-environment happy-dom
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { FRAME_LATCH_FALLBACK_MS } from '../../primitives/frameLatch.js';
 import {
   mendMarkdown,
   stripTrailingCitationBlock,
@@ -1207,5 +1208,54 @@ describe('847 × 846 §2.5 — a RESTORED turn flips the trailing-list strip fro
     expect(content.textContent).not.toContain('The kernel doc');
     expect(content.querySelectorAll('.cite-ref').length).toBe(1);
     el.remove();
+  });
+});
+
+describe('MarkdownBlock — the streaming coalescer drains a page without frames (860 §6.4 / P3)', () => {
+  /**
+   * This site had NO fallback of any kind before P3: the latch was the raw rAF handle, so a stream
+   * arriving while the page stopped rendering held it until the block disconnected. Adopting the
+   * shared latch changes that here too — deliberately, which is what this case pins.
+   *
+   * The coalesced repaint is an argument-less `requestUpdate()`; Lit's own property sets pass three
+   * arguments, so counting by arity separates the latch's pass from the delta that scheduled it.
+   */
+  function coalescedRepaints(spy: { mock: { calls: unknown[][] } }): number {
+    return spy.mock.calls.filter((c) => c.length === 0).length;
+  }
+
+  it('lands the coalesced repaint on the fallback, and a disconnect withdraws it', async () => {
+    // Order matters: vitest's fake timers install their OWN rAF (one that fires as the clock is
+    // advanced), so the never-firing stub has to go on afterwards or the page still renders.
+    vi.useFakeTimers();
+    const realRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = ((): number => 1) as typeof requestAnimationFrame;
+    try {
+      const el = document.createElement('jf-markdown-block') as MarkdownBlock;
+      el.isStreaming = true;
+      el.text = 'first';
+      document.body.appendChild(el);
+      await el.updateComplete;
+
+      const repaint = vi.spyOn(el, 'requestUpdate');
+      el.text = 'first second';
+      await el.updateComplete;
+      el.text = 'first second third';
+      await el.updateComplete;
+      expect(coalescedRepaints(repaint), 'both deltas are latched behind a frame that never comes').toBe(0);
+
+      vi.advanceTimersByTime(FRAME_LATCH_FALLBACK_MS);
+      expect(coalescedRepaints(repaint), 'the fallback paints the LATEST delta, once').toBe(1);
+
+      el.text = 'first second third fourth';
+      await el.updateComplete;
+      el.remove();
+      const atDisconnect = coalescedRepaints(repaint);
+      vi.advanceTimersByTime(FRAME_LATCH_FALLBACK_MS * 3);
+      expect(coalescedRepaints(repaint), 'a disconnected block is never repainted a second later').toBe(atDisconnect);
+    } finally {
+      globalThis.requestAnimationFrame = realRaf;
+      vi.useRealTimers();
+    }
   });
 });
