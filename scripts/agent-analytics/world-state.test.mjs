@@ -77,13 +77,15 @@ run('computeVerdict: everything unknown (all probes failed) -> ACTIVE (safe defa
 
 // --- Smoke test: real subprocess against this actual repo checkout ---
 
-run('CLI smoke: markdown mode runs, exits 0, all four sections present, mentions this worktree', () => {
+run('CLI smoke: markdown mode runs, exits 0, all five sections present, mentions this worktree', () => {
   const out = execFileSync(process.execPath, [CLI], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 15000 });
   assert.match(out, /^# World state/);
   assert.match(out, /## Worktrees/);
   assert.match(out, /## Live sessions/);
   assert.match(out, /## Tempdoc numbers/);
   assert.match(out, /## Stack/);
+  // Tempdoc 861 §6.4 `orientation` occasion — read-only agent-spawns section.
+  assert.match(out, /## Agent spawns/);
   assert.match(out, /VERDICT/);
 });
 
@@ -97,6 +99,15 @@ run('CLI smoke: --json mode runs, exits 0, output is valid JSON with the expecte
   assert.ok(typeof parsed.sessions.available === 'boolean');
   assert.ok(typeof parsed.tempdocNumbers.nextFree === 'number');
   assert.ok(typeof parsed.stack.available === 'boolean');
+  assert.ok(typeof parsed.agentSpawns.available === 'boolean');
+  if (parsed.agentSpawns.available) {
+    assert.ok(Array.isArray(parsed.agentSpawns.registered));
+    assert.ok(Array.isArray(parsed.agentSpawns.observed));
+    // [A4]/861 §6.4: orientation never kills — no entry in either list may carry a spendable reap.
+    for (const e of [...parsed.agentSpawns.registered, ...parsed.agentSpawns.observed]) {
+      assert.notEqual(e.disposition, 'reap', 'orientation is advisory-only; a "reap" disposition here would be a spendable kill list');
+    }
+  }
 });
 
 run('CLI smoke: completes in under 10s (perf budget, tempdoc 743 P-J requirement)', () => {

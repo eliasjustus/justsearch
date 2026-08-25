@@ -86,6 +86,18 @@
       "file": "exec-substrate-hint.mjs",
       "role": "advisory"
     },
+    "agent-spawn-sweep-hint": {
+      "file": "agent-spawn-sweep-hint.mjs",
+      "role": "advisory"
+    },
+    "agent-spawn-session-end-reap": {
+      "file": "agent-spawn-session-end-reap.mjs",
+      "role": "advisory"
+    },
+    "agent-spawn-build-hint": {
+      "file": "agent-spawn-build-hint.mjs",
+      "role": "advisory"
+    },
     "known-state-hint": {
       "file": "known-state-hint.mjs",
       "role": "advisory",
@@ -315,6 +327,15 @@
             "asyncRewake": true
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "agent-spawn-sweep-hint",
+            "timeout": 5,
+            "async": true
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -384,6 +405,10 @@
           },
           {
             "hookId": "known-state-hint",
+            "timeout": 5
+          },
+          {
+            "hookId": "agent-spawn-build-hint",
             "timeout": 5
           }
         ]
@@ -677,6 +702,14 @@
           {
             "hookId": "compact-restore",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "agent-spawn-session-end-reap",
+            "timeout": 10
           }
         ]
       }
