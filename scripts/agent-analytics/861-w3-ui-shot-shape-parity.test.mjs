@@ -28,6 +28,7 @@ import { resolvePyBin, buildUtf8Env } from '../dev/run-py.mjs';
 const require = createRequire(import.meta.url);
 const {
   validateAgentSpawnRecord,
+  buildAgentSpawnRecord,
   AGENT_SPAWN_RECORD_SCHEMA_VERSION,
   OWNERSHIP_MODES,
 } = require('../dev/lib/agent-spawn-record.cjs');
@@ -39,13 +40,34 @@ const JSEVAL_DIR = path.join(REPO_ROOT, 'scripts', 'jseval');
 
 let passed = 0;
 const failures = [];
-function check(label, fn) {
+async function check(label, fn) {
   try {
-    fn();
+    await fn();
     passed += 1;
   } catch (e) {
     failures.push(`${label}: ${e.message}`);
   }
+}
+
+/** Sorted dotted key-paths of every (nested, non-array) field an object declares — a SET
+ * comparison of field NAMES, deliberately blind to values (which legitimately differ: JS resolves
+ * `resourceRoots` through `realpathNearest`/backslashes, Python does not touch them at all). This
+ * is the check that would catch either producer silently gaining or dropping an optional field
+ * the other does not mirror — [A8]'s additive-optional rule means `validateAgentSpawnRecord`
+ * alone would never notice such a drift, since an extra or missing OPTIONAL field never fails
+ * validation on its own. */
+function collectKeyPaths(obj, prefix = '') {
+  const paths = [];
+  for (const key of Object.keys(obj).sort()) {
+    const full = prefix ? `${prefix}.${key}` : key;
+    const val = obj[key];
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      paths.push(...collectKeyPaths(val, full));
+    } else {
+      paths.push(full);
+    }
+  }
+  return paths;
 }
 
 /** Run a small python snippet with `scripts/jseval` on sys.path, and return parsed stdout JSON. */
@@ -63,7 +85,7 @@ function runPython(snippet) {
 
 const SYS_PATH_PREAMBLE = `import sys, json\nsys.path.insert(0, ${JSON.stringify(JSEVAL_DIR)})\n`;
 
-check('a Python-written ui-shot record validates through the REAL JS validator', () => {
+await check('a Python-written ui-shot record validates through the REAL JS validator', () => {
   const record = runPython(`${SYS_PATH_PREAMBLE}
 from jseval import agent_spawn_register as reg
 rec = reg.build_record(
@@ -90,7 +112,44 @@ print(json.dumps(rec))
   });
 });
 
-check('a Python-written record with a session id declared validates too', () => {
+await check('F2: the JS and Python builders produce the SAME key set for equivalent inputs (861 [A8] drift guard)', async () => {
+  const pyRecord = runPython(`${SYS_PATH_PREAMBLE}
+import os
+os.environ["CLAUDE_CODE_SESSION_ID"] = "bccfc163-shape-parity"
+from jseval import agent_spawn_register as reg
+rec = reg.build_record(
+    record_id="ui-shot-5176", producer="ui-shot", pid=4244,
+    creation_file_time_utc="134320479841300352", cmdline_fingerprint="--port 5176",
+    port=5176, lease_duration_sec=1800,
+    repo_root="F:/example/worktree", worktree_root="F:/example/worktree",
+    node_modules_real_path="F:/example/main/modules/ui-web/node_modules",
+)
+print(json.dumps(rec))
+`);
+  const jsRecord = await buildAgentSpawnRecord({
+    recordId: 'ui-shot-5176',
+    producer: 'ui-shot',
+    pid: 4244,
+    creationFileTimeUtc: '134320479841300352',
+    cmdlineFingerprint: '--port 5176',
+    port: 5176,
+    leaseDurationSec: 1800,
+    sessionId: 'bccfc163-shape-parity',
+    repoRoot: 'F:/example/worktree',
+    resourceRoots: {
+      worktreeRoot: 'F:/example/worktree',
+      nodeModulesRealPath: 'F:/example/main/modules/ui-web/node_modules',
+    },
+  });
+  // A SET comparison, not deepEqual: JS resolves resourceRoots through realpathNearest (which can
+  // change slashes/casing on Windows), Python does not touch them at all — the VALUES legitimately
+  // differ. What must NOT differ is which FIELDS each side populates for the same inputs; either
+  // side gaining or dropping an optional field must fail this, even though [A8] means it would
+  // never fail plain validation.
+  assert.deepEqual(collectKeyPaths(jsRecord), collectKeyPaths(pyRecord));
+});
+
+await check('a Python-written record with a session id declared validates too', () => {
   const record = runPython(`${SYS_PATH_PREAMBLE}
 import os
 os.environ["CLAUDE_CODE_SESSION_ID"] = "bccfc163-shape-parity"
@@ -111,7 +170,7 @@ print(json.dumps(rec))
 // (no identity triple, no ownership mode) just as `foreign/`'s validator rejects an agent-spawn
 // record — proving the two scopes stayed distinct rather than collapsing into one permissive
 // envelope, even when the fixture crossing the boundary is Python-authored on both sides.
-check('a Python-written foreign/-shaped record is rejected by the agent-spawns validator', () => {
+await check('a Python-written foreign/-shaped record is rejected by the agent-spawns validator', () => {
   const record = runPython(`${SYS_PATH_PREAMBLE}
 from jseval import run_register
 from pathlib import Path

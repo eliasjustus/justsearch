@@ -163,25 +163,66 @@ function resolveListenerIdentity(port, { resolvePid = resolveListenerPidWindows,
 }
 
 /**
+ * 861 W3 F5 — Windows FILETIME (100ns ticks since 1601-01-01) to Unix epoch milliseconds.
+ *
+ * Used ONLY for the one-port-two-servers corroboration below: "did this listener start AFTER we
+ * called spawn()", a coarse ordering check, never an identity claim — §6.2's exact-equality rule
+ * for the identity triple is untouched.
+ */
+function fileTimeToEpochMs(fileTimeStr) {
+  return Number(BigInt(fileTimeStr) / 10000n - 11644473600000n);
+}
+
+/**
  * Register this server in the `agent-spawns/` scope, once the port is confirmed listening.
  * Best-effort and NEVER throws: a bookkeeping failure must not stop a human from seeing their FE.
  * Returns `{ dir, recordId }` on success, `null` otherwise (logged to stderr either way).
+ *
+ * 861 W3 F5 — the one-port-two-servers gap: when `port` came from `pickPort` (the free-port scan),
+ * whatever answers afterward can only be OUR Vite — nothing was listening a moment before we
+ * picked it. But an EXPLICIT `--port` carries no such guarantee: `waitForPortListening` only
+ * proves "something is listening", not "our spawn is what came up" — a pre-existing stranger on
+ * that port (our own `--strictPort` spawn then fails to bind, invisibly, behind the stranger's
+ * success) would otherwise be corroborated as if it were ours. So an explicit port additionally
+ * requires the listener to have started AFTER this call began — a listener that PREDATES the
+ * spawn is, by construction, not the process we just started.
  */
-async function registerServedVite({ port, sessionId = resolveSessionId(), waitForPort = waitForPortListening } = {}) {
+async function registerServedVite({
+  port,
+  explicitPort = false,
+  spawnStartTime = Date.now(),
+  sessionId = resolveSessionId(),
+  waitForPort = waitForPortListening,
+  resolveIdentity = resolveListenerIdentity,
+} = {}) {
   try {
     const ready = await waitForPort(port);
     if (!ready) {
       console.error(`[serve-worktree-fe] port ${port} never started accepting connections; not registering`);
       return null;
     }
-    const identity = resolveListenerIdentity(port);
+    const identity = resolveIdentity(port);
     if (!identity.ok) {
       console.error(`[serve-worktree-fe] could not establish the listener's identity, not registering: ${identity.reason}`);
       return null;
     }
+    if (explicitPort) {
+      const listenerStartedMs = fileTimeToEpochMs(identity.creationFileTimeUtc);
+      if (listenerStartedMs < spawnStartTime) {
+        console.error(
+          `[serve-worktree-fe] port ${port} was already held by pid ${identity.pid} before this spawn ` +
+          `(--port pointed at a pre-existing listener) — not registering a stranger's process`,
+        );
+        return null;
+      }
+    }
     const dir = resolveAgentSpawnsRegisterDir(mainRepoRoot());
+    // 861 W3 F5 — the pid rides in the record id itself: a clean-exit delete keyed on `port` alone
+    // could remove a DIFFERENT process's record if a stranger later took the same port under a
+    // different pid than the one this session actually registered.
+    const recordId = `serve-worktree-fe-${port}-${identity.pid}`;
     const record = await buildAgentSpawnRecord({
-      recordId: `serve-worktree-fe-${port}`,
+      recordId,
       producer: 'serve-worktree-fe',
       pid: identity.pid,
       creationFileTimeUtc: identity.creationFileTimeUtc,
@@ -224,7 +265,8 @@ function resolveSessionId(env = process.env) {
 
 async function main(argv = process.argv) {
   const branch = (spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).stdout || '').trim();
-  const port = Number(argVal('--port', argv)) || (await pickPort(5174));
+  const explicitPortArg = argVal('--port', argv);
+  const port = Number(explicitPortArg) || (await pickPort(5174));
   const apiPort = detectBackendPort(argv);
 
   const env = { ...process.env };
@@ -237,6 +279,7 @@ async function main(argv = process.argv) {
   console.error(`  backend: ${apiPort ? `port ${apiPort} (borrowed, read-only)` : 'auto-discover (no running lease found)'}`);
 
   const isWin = process.platform === 'win32';
+  const spawnStartTime = Date.now(); // F5: the corroboration clock starts HERE, before spawn()
   const child = spawn(isWin ? 'npx.cmd' : 'npx', ['vite', '--port', String(port), '--strictPort'], {
     cwd: uiWebDir,
     env,
@@ -245,7 +288,9 @@ async function main(argv = process.argv) {
   });
 
   // Fire-and-track, never block the serve on registration (861 [A3]/W3).
-  const registered = isWin ? registerServedVite({ port }) : Promise.resolve(null);
+  const registered = isWin
+    ? registerServedVite({ port, explicitPort: !!explicitPortArg, spawnStartTime })
+    : Promise.resolve(null);
 
   child.on('exit', async (code) => {
     // Bounded wait for a registration already in flight (e.g. a quick Vite boot) so the clean-exit
@@ -281,6 +326,7 @@ module.exports = {
   pickPort,
   waitForPortListening,
   resolveListenerIdentity,
+  fileTimeToEpochMs,
   registerServedVite,
   unregisterServedVite,
   resolveSessionId,

@@ -5,9 +5,14 @@
  * What this holds in place:
  *   - a fresh registration is refused (not written half-formed) when the process-table evidence
  *     is missing, unavailable, or does not verify — never a guess (861 [A2]/[A6]);
- *   - once a record exists, registration RENEWS the lease and does not re-derive identity —
- *     the write-if-absent/renew semantics the brief requires, so a live dev-stack session's
- *     already-running sink is never re-probed via the process table on every hook fire;
+ *   - when the pid in hand MATCHES the record's own pid, registration RENEWS the lease and never
+ *     re-derives identity — a live dev-stack session's already-running sink is never re-probed via
+ *     the process table on every hook fire;
+ *   - when the pid in hand does NOT match the record's pid (a restart under a new pid — the
+ *     normal path across a reboot), registration REWRITES the record from the process table
+ *     rather than renewing a dead pid's lease forever (the F1 fix: renew-first alone would have
+ *     left [A10]'s pruning unable to ever collect a stale record, and earned the new, healthy
+ *     daemon a `failed-verify` marker the first time a kill path checked its identity);
  *   - the written record declares `ownership: 'ownerless-singleton'` — a DECLARED mode, so the
  *     §6.3 matrix's "never reap" row applies for a real reason, not an accidental omission;
  *   - registration never throws, regardless of which piece of evidence is missing.
@@ -102,22 +107,53 @@ await check('a command line missing the fingerprint refuses an unverified identi
   assert.deepEqual(entries, []);
 });
 
-await check('once registered, a second call RENEWS the lease and never re-reads the table', async () => {
+await check('a SAME-pid second call RENEWS the lease and never re-reads the table', async () => {
   const dir = await makeDir();
   await registerSinkSpawn(9001, { dir, table: okTable });
   const first = JSON.parse(await fsp.readFile(path.join(dir, `${SINK_AGENT_SPAWN_RECORD_ID}.json`), 'utf8'));
 
   let tableCalled = false;
-  // A table that would REFUSE if it were ever consulted — proving the renew-first branch short-
-  // circuits before touching the process table at all.
+  // A table that would REFUSE if it were ever consulted — proving the match branch short-circuits
+  // before touching the process table at all (the "free — no table read" case).
   const poisoned = () => { tableCalled = true; return { ok: false, reason: 'must not be called' }; };
   await new Promise((resolve) => setTimeout(resolve, 5)); // ensure a distinguishable renewedAt
   await registerSinkSpawn(9001, { dir, table: poisoned });
 
-  assert.equal(tableCalled, false, 'a renew must not re-derive identity from the process table');
+  assert.equal(tableCalled, false, 'a same-pid renewal must not re-derive identity from the process table');
   const second = JSON.parse(await fsp.readFile(path.join(dir, `${SINK_AGENT_SPAWN_RECORD_ID}.json`), 'utf8'));
-  assert.ok(second.lease.expiresAt >= first.lease.expiresAt);
+  assert.ok(second.lease.expiresAt > first.lease.expiresAt);
   assert.equal(second.pid, first.pid); // renewal touches the lease only
+});
+
+await check('F1: a restart under a NEW pid REWRITES the record instead of renewing a dead pid\'s lease', async () => {
+  const dir = await makeDir();
+  await registerSinkSpawn(9001, { dir, table: okTable });
+  const first = JSON.parse(await fsp.readFile(path.join(dir, `${SINK_AGENT_SPAWN_RECORD_ID}.json`), 'utf8'));
+
+  // The normal reboot shape: a DIFFERENT pid now answers on the port, with its OWN creation time.
+  const restartedTable = () => ({
+    ok: true,
+    table: [{ ProcessId: 9002, CreationFileTimeUtc: '134320480000000000', CommandLine: 'python otlp-sink.py --port 4318' }],
+  });
+  await registerSinkSpawn(9002, { dir, table: restartedTable });
+
+  const second = JSON.parse(await fsp.readFile(path.join(dir, `${SINK_AGENT_SPAWN_RECORD_ID}.json`), 'utf8'));
+  assert.equal(second.pid, 9002, 'the record must name the pid actually in hand after a restart, not the dead one');
+  assert.notEqual(second.pid, first.pid);
+  assert.equal(second.creationFileTimeUtc, '134320480000000000');
+});
+
+await check('a mismatched-pid call that finds no evidence for the NEW pid leaves the OLD record untouched', async () => {
+  const dir = await makeDir();
+  await registerSinkSpawn(9001, { dir, table: okTable });
+  const first = JSON.parse(await fsp.readFile(path.join(dir, `${SINK_AGENT_SPAWN_RECORD_ID}.json`), 'utf8'));
+
+  // pid 9002 is not in this table at all — the rebuild attempt must refuse, not clobber the
+  // still-possibly-valid old record with a half-derived one.
+  await registerSinkSpawn(9002, { dir, table: okTable }); // okTable only knows about 9001
+
+  const still = JSON.parse(await fsp.readFile(path.join(dir, `${SINK_AGENT_SPAWN_RECORD_ID}.json`), 'utf8'));
+  assert.deepEqual(still, first);
 });
 
 await check('registration never throws even when the write path itself fails', async () => {

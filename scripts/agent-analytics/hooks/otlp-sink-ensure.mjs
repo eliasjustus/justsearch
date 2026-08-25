@@ -84,6 +84,7 @@ const { resolveListenerPidWindows } = require('../../dev/lib/port-owner.cjs');
 const { readProcessTable, normalizeCreationTime } = require('../../dev/lib/process-identity.cjs');
 const {
   resolveAgentSpawnsRegisterDir,
+  agentSpawnRecordPath,
   buildAgentSpawnRecord,
   writeAgentSpawnRecord,
   renewAgentSpawnLease,
@@ -122,11 +123,13 @@ const SINK_CMDLINE_FINGERPRINT = path.basename(SINK_SCRIPT);
 /**
  * 861 W3 [A6] — register (or renew) the sink's `ownerless-singleton` agent-spawn record.
  *
- * Lease-on-use first: if a record already exists (the overwhelmingly common case — the sink
- * outlives every session, so most SessionStart hits find it already registered), renew ONLY its
- * lease and touch nothing else. A fresh record is built from the process table only when no
- * record exists yet to renew — e.g. the very first session after this feature ships, or after
- * [A10]'s pruning finally ages one out following a long gap.
+ * Read-compare-first, NOT renew-first: a bare "does a record exist, then renew it" (the original
+ * shape) would keep ANY existing record's lease alive forever, even across a sink restart under a
+ * NEW pid (the normal path across a reboot) — permanently naming a dead pid while pruning never
+ * collects it, and earning the new, healthy daemon a `failed-verify` marker the first time a kill
+ * path tries to identity-verify against the stale record. So the pid in hand is compared against
+ * the RECORD's pid first — a cheap file read, no process-table query — and only a MATCH renews;
+ * any mismatch (or no record at all) rebuilds from the process table instead.
  *
  * Best-effort and NEVER throws: registration bookkeeping must not turn a healthy sink into a
  * fail-loud session-start warning, and must never signal or restart the process it describes.
@@ -136,12 +139,23 @@ const SINK_CMDLINE_FINGERPRINT = path.basename(SINK_SCRIPT);
  */
 async function registerSinkSpawn(pid, { table = readProcessTable, dir = resolveAgentSpawnsRegisterDir(mainRepoRoot) } = {}) {
   try {
-    const renewed = await renewAgentSpawnLease({
-      dir,
-      recordId: SINK_AGENT_SPAWN_RECORD_ID,
-      durationSec: SINK_AGENT_SPAWN_LEASE_DURATION_SEC,
-    });
-    if (renewed.renewed) return;
+    let existingPid = null;
+    try {
+      const existing = JSON.parse(fs.readFileSync(agentSpawnRecordPath(dir, SINK_AGENT_SPAWN_RECORD_ID), 'utf8'));
+      existingPid = Number.isInteger(existing?.pid) ? existing.pid : null;
+    } catch {
+      existingPid = null; // no record yet, or unreadable — rebuild below rather than guess
+    }
+
+    if (existingPid === pid) {
+      const renewed = await renewAgentSpawnLease({
+        dir,
+        recordId: SINK_AGENT_SPAWN_RECORD_ID,
+        durationSec: SINK_AGENT_SPAWN_LEASE_DURATION_SEC,
+      });
+      if (renewed.renewed) return;
+      // Fell through (e.g. the record vanished between the read above and the renew) — rebuild.
+    }
 
     const snapshot = table();
     if (!snapshot.ok) return; // no evidence, no record — never guess (861 [A2])

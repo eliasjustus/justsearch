@@ -13,7 +13,7 @@ sync rests on two things:
 
   - `SCHEMA_VERSION` is bumped on BOTH sides together, same as `AGENT_SPAWN_RECORD_SCHEMA_VERSION`
     documents on its own side ([A8] -- this scope's own constant, independent of `foreign/`'s).
-  - a shape-parity test on the JS side (`861-w3-agent-spawn-producers.test.mjs`) spawns THIS
+  - a shape-parity test on the JS side (`861-w3-ui-shot-shape-parity.test.mjs`) spawns THIS
     module for real and runs its output through `validateAgentSpawnRecord` -- the JS reader's own
     validator -- which is the one check that would catch either side silently drifting from the
     other.
@@ -30,6 +30,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -65,8 +66,27 @@ def register_dir() -> Path:
     return main_repo_root() / "tmp" / "dev-runner" / REGISTER_DIRNAME
 
 
+_SAFE_RECORD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def assert_safe_record_id(record_id: str) -> str:
+    """Mirrors `assertSafeRecordId` in `agent-spawn-record.cjs`: a record id is a FILE NAME, and
+    anything that could escape the register directory is refused LOUDLY rather than sanitized
+    quietly -- a silently-rewritten id would make a record unfindable by the producer that wrote
+    it. Same pattern, same `..` check, same 128-char cap, on both sides of the register."""
+    if (
+        not isinstance(record_id, str)
+        or not _SAFE_RECORD_ID_RE.match(record_id)
+        or ".." in record_id
+    ):
+        raise ValueError(
+            f"unsafe recordId {record_id!r}: expected [A-Za-z0-9][A-Za-z0-9._-]{{0,127}} with no '..'",
+        )
+    return record_id
+
+
 def record_path(record_id: str) -> Path:
-    return register_dir() / f"{record_id}.json"
+    return register_dir() / f"{assert_safe_record_id(record_id)}.json"
 
 
 def _session_id() -> str | None:
@@ -159,6 +179,7 @@ def build_record(
     that side's `buildAgentSpawnRecord` documents -- a producer must not leave an invalid record
     for a reader to report as `unreadable` hours later.
     """
+    assert_safe_record_id(record_id)
     if not creation_file_time_utc or not str(creation_file_time_utc).strip():
         raise ValueError(
             "refusing to build an agent-spawn record with no creationFileTimeUtc: "

@@ -7,7 +7,7 @@ raises, and that lease-on-use renews in place without disturbing the rest of the
 
 The shape-parity half -- that a record this module writes actually VALIDATES against the real JS
 reader (`validateAgentSpawnRecord` in `scripts/dev/lib/agent-spawn-record.cjs`) -- is asserted on
-the JS side (`scripts/agent-analytics/861-w3-agent-spawn-producers.test.mjs`), which spawns this
+the JS side (`scripts/agent-analytics/861-w3-ui-shot-shape-parity.test.mjs`), which spawns this
 module for real. Nothing here talks to the JS side.
 """
 
@@ -64,6 +64,33 @@ class TestRegisterLocation:
 
     def test_record_path_is_keyed_by_record_id(self, register_root):
         assert reg.record_path("ui-shot-5174").name == "ui-shot-5174.json"
+
+
+class TestSafeRecordId:
+    """Mirrors `assertSafeRecordId` in `agent-spawn-record.cjs` -- a record id is a FILE NAME, and
+    a traversal-capable one must be refused LOUDLY (ValueError), never sanitized quietly."""
+
+    def test_accepts_ordinary_ids(self):
+        for good in ("ui-shot-5174", "otlp-sink", "serve-worktree-fe-5174-4242", "a", "a" * 128):
+            assert reg.assert_safe_record_id(good) == good
+
+    def test_rejects_path_traversal(self, register_root):
+        for bad in ("../evil", "..\\evil", "a/../b", "..", "a/b", "a\\b"):
+            with pytest.raises(ValueError, match="unsafe recordId"):
+                reg.assert_safe_record_id(bad)
+
+    def test_rejects_empty_and_non_string(self):
+        for bad in ("", 123, None, [], "a" * 129):
+            with pytest.raises(ValueError, match="unsafe recordId"):
+                reg.assert_safe_record_id(bad)
+
+    def test_record_path_refuses_before_touching_disk(self, register_root):
+        with pytest.raises(ValueError, match="unsafe recordId"):
+            reg.record_path("../escape")
+
+    def test_build_record_refuses_an_unsafe_id_before_anything_else(self):
+        with pytest.raises(ValueError, match="unsafe recordId"):
+            good_record(record_id="../escape")
 
 
 class TestRecordContent:

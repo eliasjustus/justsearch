@@ -1,12 +1,19 @@
 /**
  * Tempdoc 861 W3 [A3] — `serve-worktree-fe.cjs`'s agent-spawn registration.
  *
- * Two layers:
+ * Three layers:
  *
  *   1. Pure-unit coverage of the injectable helpers (`resolveListenerIdentity`,
  *      `waitForPortListening`, `resolveSessionId`) with fakes — no real process, no real port.
  *
- *   2. THE [A3] ACCEPTANCE TEST: a REAL disposable process this test owns, spawned with the exact
+ *   2. F5 — the one-port-two-servers corroboration gap: an EXPLICIT `--port` gives no guarantee
+ *      that whatever answers the readiness poll is OUR spawn (a pre-existing stranger on that
+ *      port would otherwise be corroborated as ours, while our own `--strictPort` Vite silently
+ *      fails to bind). `registerServedVite` refuses to register a listener that PREDATES the
+ *      `spawn()` call when the port was explicit, and the record id is keyed by pid so a
+ *      clean-exit delete can never remove a stranger's record.
+ *
+ *   3. THE [A3] ACCEPTANCE TEST: a REAL disposable process this test owns, spawned with the exact
  *      shell-shim shape `serve-worktree-fe.cjs` uses (`spawn(cmd, args, { shell: true })` on
  *      win32, so `child.pid` is a `cmd.exe` intermediate, not the surviving listener) — proving
  *      the record names the port's actual listener, that killing the recorded INTERMEDIATE leaves
@@ -129,6 +136,81 @@ await check('resolveListenerIdentity refuses when the cmdline does not contain t
   });
   assert.equal(identity.ok, false);
   assert.match(identity.reason, /does not contain/);
+});
+
+/* ── F5: the one-port-two-servers corroboration gap ───────────────────────────────────────── */
+
+/** Inverse of `fileTimeToEpochMs`, for building fixture creation times relative to a known instant. */
+function epochMsToFileTime(epochMs) {
+  return ((BigInt(Math.round(epochMs)) + 11644473600000n) * 10000n).toString();
+}
+
+await check('fileTimeToEpochMs round-trips a known instant', () => {
+  const now = Date.now();
+  assert.equal(sw.fileTimeToEpochMs(epochMsToFileTime(now)), now);
+});
+
+await check('F5: an explicit --port pointed at a PRE-EXISTING listener is refused, never registered', async () => {
+  const spawnStartTime = Date.now();
+  const staleCreationTime = epochMsToFileTime(spawnStartTime - 60_000); // started a minute BEFORE we spawned
+  const result = await sw.registerServedVite({
+    port: 5199,
+    explicitPort: true,
+    spawnStartTime,
+    sessionId: 'f5-test',
+    waitForPort: async () => true,
+    resolveIdentity: () => ({ ok: true, pid: 555, creationFileTimeUtc: staleCreationTime, cmdlineFingerprint: '--port 5199' }),
+  });
+  assert.equal(result, null, 'a listener that predates this spawn must never be attributed to it');
+});
+
+await check('F5: a non-explicit port (from pickPort) is registered even with an "old" creation time — no corroboration needed', async () => {
+  const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), '861-w3-f5-state-'));
+  const originalEnv = process.env.JUSTSEARCH_DEV_RUNNER_STATE_ROOT;
+  process.env.JUSTSEARCH_DEV_RUNNER_STATE_ROOT = stateDir;
+  try {
+    const spawnStartTime = Date.now();
+    const staleCreationTime = epochMsToFileTime(spawnStartTime - 60_000);
+    const result = await sw.registerServedVite({
+      port: 5197,
+      explicitPort: false, // the scanned-free-port path: nothing was listening a moment ago by construction
+      spawnStartTime,
+      sessionId: 'f5-test',
+      waitForPort: async () => true,
+      resolveIdentity: () => ({ ok: true, pid: 557, creationFileTimeUtc: staleCreationTime, cmdlineFingerprint: '--port 5197' }),
+    });
+    assert.ok(result, 'the corroboration gate only applies to an EXPLICIT --port');
+  } finally {
+    if (originalEnv === undefined) delete process.env.JUSTSEARCH_DEV_RUNNER_STATE_ROOT;
+    else process.env.JUSTSEARCH_DEV_RUNNER_STATE_ROOT = originalEnv;
+    await fsp.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+await check('F5: an explicit --port whose listener started AFTER this spawn is registered, keyed by pid', async () => {
+  const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), '861-w3-f5-state-'));
+  const originalEnv = process.env.JUSTSEARCH_DEV_RUNNER_STATE_ROOT;
+  process.env.JUSTSEARCH_DEV_RUNNER_STATE_ROOT = stateDir;
+  try {
+    const spawnStartTime = Date.now();
+    const freshCreationTime = epochMsToFileTime(spawnStartTime + 500); // started just AFTER we spawned
+    const result = await sw.registerServedVite({
+      port: 5198,
+      explicitPort: true,
+      spawnStartTime,
+      sessionId: 'f5-test',
+      waitForPort: async () => true,
+      resolveIdentity: () => ({ ok: true, pid: 556, creationFileTimeUtc: freshCreationTime, cmdlineFingerprint: '--port 5198' }),
+    });
+    assert.ok(result, 'a listener that starts after this spawn IS ours and must be registered');
+    assert.equal(result.recordId, 'serve-worktree-fe-5198-556');
+    const rec = JSON.parse(await fsp.readFile(path.join(result.dir, `${result.recordId}.json`), 'utf8'));
+    assert.equal(rec.pid, 556);
+  } finally {
+    if (originalEnv === undefined) delete process.env.JUSTSEARCH_DEV_RUNNER_STATE_ROOT;
+    else process.env.JUSTSEARCH_DEV_RUNNER_STATE_ROOT = originalEnv;
+    await fsp.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+  }
 });
 
 /* ── [A3] ACCEPTANCE: a REAL disposable process, the shell-shim shape, a real kill ────────── */
