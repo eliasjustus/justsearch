@@ -1,7 +1,9 @@
 # 864 — Search v3 composer focus steal / global-keybinding navigation hazard
 
 ```
-status:  DIAGNOSED + DESIGNED + PLANNED (2026-08-25). No implementation this round.
+status:  DIAGNOSED + DESIGNED + PLANNED (2026-08-25); PR A and PR C SHIPPED (2026-08-25),
+         PR-0's live repro RAN and CONFIRMED the diagnosis (§4.1 results table).
+         B / D / E remain.
          ROOT CAUSE: a focus-authority vacuum on the Search v3 surface — nothing
          ever focuses the composer, nothing signals that it is unfocused, both
          keyboard routes to it are dead residue from the retired window, and focus
@@ -19,8 +21,9 @@ created: 2026-08-25
 updated: 2026-08-25
 owner:   session bccfc163-7b8f-4b1a-b9e4-0c011632d8a1
 scope:   diagnose → design → plan. No implementation this round.
-stack:   dev stack leased elsewhere — this pass is STATIC by charter. The live
-         repro is specified as plan step §4.1 and must run BEFORE any code lands.
+stack:   dev stack leased elsewhere at authoring time — that pass was STATIC by
+         charter. §4.1's live repro RAN 2026-08-25; its results are recorded in
+         §4.1 and are what satisfied PR C's gate.
 ```
 
 ## 0. The symptom (owner's live session, 2026-08-20)
@@ -301,6 +304,12 @@ in this defect is the **unimplemented command** of §2.6, not a live listener.
 The swap therefore did not come from a *surface* change at all. §2.7a names what it did come from.
 
 ### 2.7a F3 — the hash-free swap is an IN-WINDOW conversation change (ESTABLISHED)
+
+> **Dated diagnosis — SUPERSEDED for the conversation by PR C (2026-08-25).** Everything below was
+> true of `main` when written and was confirmed live (§4.1 L6/L8). The conversation identity is now
+> URL-projected (§4.6), so a swap moves the hash and Back undoes it. The rest of sv3's internal
+> state — the transcript arm, the composer's hero/docked state — is still unprojected, and the
+> reading of the ORIGINAL incident stands unchanged.
 
 **On the Search v3 surface the hash is frozen by construction.** The app *is* hash-routed —
 `router/sources/URLSource.ts:88` parses a `justsearch://…` URL out of `window.location.hash`, and a
@@ -825,7 +834,34 @@ keystroke hit. Blocking that fix on a repro would be caution theatre, not rigour
 The `audit-without-test` discipline is satisfied by test 2, not by the repro: PR A ships with an
 assertion that fails on `main` today.
 
-### 4.1 PR-0 — the deferred live-repro leg (NEXT STACK WINDOW; gates PR C only)
+### 4.1 PR-0 — the deferred live-repro leg (RAN 2026-08-25; gated PR C)
+
+> **RESULTS — run 2026-08-25 against a live stack with PR A merged.** Verdict: the primary
+> diagnosis (§2.7a-b) is **CONFIRMED**, all three falsifiers held, and hypothesis 2 (§2.7d) is
+> **out** for this incident. PR C's gate is **SATISFIED**; the URL projection shipped against these
+> results.
+>
+> | # | Leg | Verdict | What was observed |
+> |---|---|---|---|
+> | L1 | Fresh sv3 load; probe | **PASS** | With PR A live the composer `<textarea>` is focused on entry — the predicted `BODY` was the pre-PR-A state, and its absence is PR A working |
+> | L2 | Open an existing conversation from the sidebar | **PASS** | Focus lands in the composer, not on a row button (PR A's entry-path focus) |
+> | L4 | Composer padding → footer → textarea | **PASS** | The glass-box `@pointerdown` focuses the field from the padding; footer controls keep their own clicks |
+> | L5 | `F2` rename, commit with `Enter` | **PASS** | `focusRow()` parks focus on `BUTTON.row` exactly as §2.7b reads it — the a11y placement 831 asked for, on an armed trigger |
+> | L6 | **From L5's state, press `Space`** | **CONFIRMED — the decisive leg** | The conversation swapped and `location.hash` was recorded **VERBATIM UNCHANGED**. F3's fingerprint, reproduced on demand |
+> | L6-falsifier | Same, with focus deliberately in the textarea | **HELD** | `Space` typed a space. Nothing swapped — so button activation, not a stray global binding, is what fires the chain (§2.7b stands; §2.5 confirmed) |
+> | L7 | Discard the last remaining conversation, then `Space` | **NOT RUN** | Destructive (it wipes the rehydration pointer) and not needed once L6 confirmed; the worst variant is an amplification of the same mechanism, not a separate one |
+> | L8 | From L6's post-state, press **Back** | **CONFIRMED** | Nothing happened. No history entry existed to return to — §2.7a's "by construction", observed |
+> | L9 | Escape with the evidence pane open and a row focused | **REFUTED** | The pane did **not** close on that path; the original report's "Escape also exits" is not this ladder |
+> | L10 | Palette open, `Tab` to a popup button, press `j` | **DEFECT REPRODUCED** | The transcript scrolled under an open palette — §2.9(e)'s modal-owns-focus gap, live. Routed to **PR D** |
+> | L11 | Hero→docked morph with the field focused | **HELD (falsifier)** | Focus retained across the morph — §2.9/§2.7e's ruling-out stands. **Caveat:** observed docked-not-hero, so the morph exercised was the arm this window could reach, not a cold hero flip |
+> | L13 | Stage content at every swap | **CLEAN** | `<jf-sv3-window>` stayed mounted throughout; no `No surface selected.` |
+> | L14 | Console across the whole session | **CLEAN** | Zero `[NavigationHandler] BUG: received unresolved surfaceId` strings |
+>
+> Read L13/L14 as §4.1 asks them to be read: a passive watch that never fired, **not** a refutation
+> of hypothesis 2 (a boot-time race is not falsifiable on demand). It remains the standing hazard
+> §2.7d describes.
+
+The original plan text follows, unchanged, as the spec the run was executed against.
 
 Not run this round: the dev stack is leased elsewhere and the charter fixes this pass as static.
 
@@ -908,7 +944,7 @@ Explicit constraint for PR A's implementer: `focusField()` **must** reach the te
 |---|---|---|
 | **A** | Layer 1(a)(b) + Layer 2(a) — `focusField()`, entry-path focus, glass-box `@pointerdown`, `Shell.isInputFocused` unification. **Ungated; proceeds now.** | ui-web gate set; tests 2-3, 6 below |
 | **B** | Layer 1(c2) + Layer 4 — real target for `shell.focus-composer`, `when`-scope `/`, policy documented | ui-web gates; `check-premerge-table` n/a |
-| **C** | Layer 3(a) — project sv3 conversation identity to the URL | router tests; back/forward live leg |
+| **C** | Layer 3(a) — project sv3 conversation identity to the URL. **SHIPPED 2026-08-25** (gate satisfied by §4.1's L6/L8) — see §4.6 | router tests; back/forward live leg |
 | **D** | Layer 2 — predicate unification, `isComposing`/`repeat`, `focusKind`/`paletteOpen` resolution, modal guard | ui-web gates |
 | **E** | Layer 1(d) + Layer 3(c)(i) — resting-state affordance, row focus indicator | **UX audit, see §4.4** |
 
@@ -967,7 +1003,10 @@ claim it makes is a hypothesis until a test exercises it.
 8. **Slot writers** (PR D) — if `focusKind`/`paletteOpen` are kept, assert they actually change. Per
    §2.4 the failure is a *constant-valued* predicate, so the test must assert the value moves — not
    merely that a `when` clause evaluates.
-9. **Back undoes a conversation swap** (PR C) — **the incident's regression test.**
+9. **Back undoes a conversation swap** (PR C) — **the incident's regression test.** **GREEN
+   2026-08-25**: `router/sv3ConversationUrl.test.ts` (`it('Back undoes a conversation swap')`), with
+   the window half in `views/search-v3/SearchV3View.urlConversation.test.ts`. Both verified red
+   without the fix's mechanism — see §4.6.
 
 Test-infra caveat, already recorded: happy-dom's `ShadowRoot.activeElement` throws inside
 `deepActiveElement` for shadow-host landmarks (`docs/observations.d/…:44`), which is why the
@@ -1005,3 +1044,124 @@ both are bigger than this tempdoc, and folding either in would blur what PR-0 is
   surface id (`#core.unified-chat-surface`) that `URLSource.parseHash` rejects
   (`sources/URLSource.ts:100-101`), *after* the router already wrote the correct canonical URL. It
   is a live defect on the palette/action navigation path and worth its own PR.
+
+## 4.6 PR C as implemented (2026-08-25) — mechanism, format, and where it exceeded the design
+
+The design named the route and not the mechanism: *"registering the conversation as a URL-projected
+store"*, with §2.11 identifying the blocker (an FE-only surface has no wire `stateSchema`, so
+`URLProjector.activateProjection` returns early for all of it) and the fix route as "an FE-registered
+state schema for the surface, or the projector accepting FE-declared schemas". **The first was taken.**
+
+**The hash format.** One argument, and the format is the contract:
+
+```
+#justsearch://surface/core.search-v3-surface?conversationId=<id>
+#justsearch://surface/core.search-v3-surface            ← the hero: the argument is ABSENT
+```
+
+Absent rather than empty or a sentinel, because `URLProjector.collectState` drops null/undefined and
+because an empty value would restore a conversation named `""`. Asserted literally in
+`router/sv3ConversationUrl.test.ts` so a change to it is a test change.
+
+**The five moves.**
+
+1. `router/bootstrap.ts` — `registerFrontendSurfaceSchemas()` registers sv3's schema locally, before
+   the wire fetch (so a future backend entry still wins). This is §2.11's blocker, removed.
+2. `router/bootstrap.ts` — a `sv3.conversation` `StoreAdapter` over `conversationListStore.activeId`.
+   It dedups on `activeId`, because the store emits on every list refresh and a completed ask
+   re-lists.
+3. `router/URLProjector.ts` — `projectAsNavigation(emit)`. Slice 489 split history writes as
+   "surface change pushes, in-surface edit replaces", and **that split is the reason registering a
+   schema alone would not have fixed the incident**: the projector would have written the swap with
+   `replaceState` and Back would still have done nothing. A surface can replace everything the reader
+   is looking at without changing surface; the store that knows says so per-emission. Nothing that
+   does not call it changes behaviour.
+4. `state/conversationListStore.ts` — `claim` / `restore` / `list` change reasons, and
+   `restoreActiveConversation`. A claim is a navigation; a restore is the URL, a popstate or the
+   reload pointer replaying a position the reader already has.
+5. `views/search-v3/SearchV3View.ts` — `followStoreConversation`, and `restoreLastViewed` now yields
+   to a non-null store claim (the address outranks this tab's pointer).
+
+**Where the implementation went beyond the design, and why.**
+
+- **`StoreAdapter.clearsOnTraversal`** (`router/storeRegistry.ts`, honoured in
+  `navigationHandler.applyState`). Absent-valued bindings are skipped for every adapter — right for
+  a refinement (a search address without `?query=` must not empty the box), wrong for a store whose
+  whole content is the address. Without it, going **forward** onto a hero entry left the window
+  showing the conversation the reader had left, with a URL saying otherwise. Gated on traversal so a
+  programmatic `activateSurface(id, {})` is never read as "close the open conversation".
+- **The view follows `restore`, not every store change.** The first cut had it follow `activeId`
+  outright, which broke `SearchV3View.record.test.ts`'s companion-load case — that test asserts the
+  app-wide pointer being claimed by ANOTHER window must not move sv3, and it is right. Following
+  only rehydrations keeps that line exactly where it was. HONEST LIMIT, recorded at the adapter: the
+  projection still mirrors whoever writes `activeId` while sv3 is the active surface. Only the
+  surface on screen can claim in practice; a second simultaneous claimer would move the URL without
+  moving the window, and the fix then is a window-scoped slice, not a special case.
+
+**Verification.** `typecheck` clean; the whole ui-web unit suite green; the full `ui-web-gates` set +
+the six kernel gates green. Twenty-two cases across `router/sv3ConversationUrl.test.ts` (15) and
+`views/search-v3/SearchV3View.urlConversation.test.ts` (7), covering §4.3 test 9 (Back undoes a
+conversation swap), forward/back across several switches, the deep link, the reload, the literal hash
+format, the review's F1-F4 (see below), and a regression guard that other surfaces still project with
+`replaceState` only.
+
+**Red on main, verified rather than asserted** (`interrogate-results`): with
+`registerFrontendSurfaceSchemas()` removed — main's behaviour — **9 of the 11** router cases fail,
+including `Back undoes a conversation swap`. The two that survive are the "re-claiming adds no
+entry" case (vacuously true when nothing projects) and the other-surfaces regression guard, which is
+supposed to be insensitive to this change. With `followStoreConversation` unwired, **4 of the 5**
+window cases fail. Neither test passes for a reason other than the fix.
+
+### Two user-visible consequences, accepted and stated
+
+Putting the conversation in the address makes Back reach places it could not reach before. Both of
+these are consequences of the fix working, not defects in it, and both are accepted:
+
+- **Back during a streaming answer, landing on the hero, cancels the stream.** The hero teardown
+  aborts the in-flight ask (it is the same teardown New session runs). The CONVERSATION survives —
+  it is server-side, and Forward returns to it — but the partial answer on screen does not, and the
+  turn resumes from the record rather than from where the stream was. Back to a *different*
+  conversation does not abort: that matches what a row click has always done, so it is not a new
+  behaviour.
+- **Back onto a deleted conversation's entry shows a phantom row and a record notice.** The address
+  still names it, so the window merges a placeholder row for it and then fails the record fetch —
+  the reader gets the honest 404 notice rather than a silent empty transcript. Deleting the OPEN
+  conversation does not create such an entry (the drop is projected as a correction, not a
+  navigation — §"the `list` reason" in `conversationListStore`), so this is only reachable by
+  deleting a conversation whose entry is already on the stack.
+
+### Independent review (PR #556) — five findings, all applied
+
+Reviewer verdict was APPROVE-WITH-FIXES. F1 was a real defect the suite did not catch:
+
+- **F1 (MEDIUM) — the hero branch claimed during popstate handling.** `followStoreConversation`'s
+  null branch called `startFreshSession`, which writes the store; the projector cannot tell that
+  write from a fresh claim, so it pushed the bare address onto a stack the browser had just walked
+  back through — **truncating the forward tail**. Reproduced by the reviewer by reordering the
+  store's listener Set. Fixed by splitting `startFreshSession` into `resetToHero()` (state only) +
+  the two pointer writes; the follow path takes the claim-free half. Two pinning cases run in the
+  ADVERSE listener order (the window mounts before the projector's adapter subscribes): no push, and
+  no `claim` emitted at all — the second is order-independent, which is what actually closes the
+  class. Verified red on the pre-fix body: exactly one spurious `pushState`.
+- **F2 (LOW) — `isCurrentUrl` had zero coverage.** Both suites mock `history`, so `location.hash`
+  never moved and the guard was constant-false; deleting it left everything green. Added two cases
+  against a REAL `window.location.hash` — push when the browser is elsewhere, replace when it is
+  already showing that address. Verified red with the guard removed.
+- **F3 (LOW) — the `list` reason's doc was untrue.** Both delete paths null `activeId` under it. The
+  BEHAVIOUR is right (a deleted conversation is not somewhere Back can lead, so the URL is corrected
+  in place), so the doc was widened to say so rather than the reason changed — plus a case pinning
+  it, since a doc-only fix cannot fail.
+- **F4 (LOW) — a claim inside the 75ms debounce was dropped by a surface change.** Post-PR that is a
+  missing history entry, not a stale URL. **The reviewer's suggested site does not work**:
+  `handle()` calls `pushAddress` BEFORE `activateProjection` (the slice 489 T1/N2 ordering
+  invariant), so flushing inside `deactivateProjection` would write the OUTGOING surface's URL on
+  top of the entry the incoming navigation had just pushed. Flushed at the top of `handle()` instead
+  — where the browser is still on the outgoing address — via `flushPendingNavigationWrite()`, which
+  is a no-op unless a navigational write is pending and is skipped on a traversal (a push there
+  would truncate the forward tail, F1's hazard again).
+- **F5** — the two consequences above.
+
+**Still open from this tempdoc:** PR B (Layer 1(c2) + Layer 4), PR D (Layer 2 + §4.1's L10 defect),
+PR E (Layer 1(d) + Layer 3(c)(i), with §4.4's measured UX audit). §4.4's live re-verification of
+L1-L11 against the fixed build is a stack-window item and is **not** discharged by this PR's green
+suite (`static-green ≠ live-working`).
