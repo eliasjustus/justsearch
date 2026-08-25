@@ -2,7 +2,8 @@
  * Grouped observations store — tempdoc 680.
  *
  * `docs/observations.md` holds CONDITIONS (grouped observations), not a flat inbox:
- * writers stay flat one-liners in per-session shards (618 Seam C, unchanged);
+ * writers stay flat one-liners in per-writer shards (618 Seam C, keyed by the
+ * writing tree since 862 — unchanged from this module's point of view);
  * identity is resolved here, at the store — a shard entry either merges into an
  * existing condition (occurrence appended, `seen` incremented, `last` updated) or
  * opens a new condition with a *proposed* kind (trailing `?`) for triage to confirm.
