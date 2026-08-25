@@ -13,7 +13,8 @@
       ],
       "knownRules": [
         "aria-valid-attr-value"
-      ]
+      ],
+      "note": "UNEXPLAINED DEBT, labelled rather than justified. This row predates the public history (it arrives whole in the initial-release squash 29579e51), so no rationale was ever recorded and none can be recovered from the log. It is carried because deleting it would turn a known violation into a NEW one on the next capture, not because anyone judged aria-valid-attr-value acceptable on the search surface. Whoever next touches this surface should diagnose it and either fix it or replace this note with a real reason — do not read it as a justified exception."
     },
     {
       "surface": "library",
@@ -69,7 +70,8 @@
       ],
       "knownRules": [
         "color-contrast"
-      ]
+      ],
+      "note": "UNEXPLAINED DEBT, labelled rather than justified — same provenance as the `search` row: it arrives whole in the initial-release squash 29579e51 with no recorded rationale. The settings-light / security-light rows below DO explain their color-contrast debt (light-palette defects owned by the chat view, status deck and walkthrough card); whether this dark-palette one shares that cause is unverified, so it is not claimed here. Diagnose before trusting it as an exception."
     },
     {
       "surface": "brain",
