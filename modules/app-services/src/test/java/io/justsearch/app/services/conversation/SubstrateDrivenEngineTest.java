@@ -1541,7 +1541,8 @@ final class SubstrateDrivenEngineTest {
         injIds,
         consumerIds,
         controllerId,
-        List.of());
+        List.of(),
+        true);
   }
 
   private ConversationEngine newEngine(
@@ -1580,67 +1581,6 @@ final class SubstrateDrivenEngineTest {
         store);
   }
 
-  /** Records appendMessage calls per session id and counts loadHistory calls. */
-  private static class RecordingStore implements ConversationStore {
-    final Map<String, List<Map<String, Object>>> appended = new LinkedHashMap<>();
-    final Map<String, List<String>> excludedSources = new LinkedHashMap<>();
-    int loadHistoryCount;
-
-    @Override
-    public List<String> excludedSourceIds(String sessionId) {
-      return excludedSources.getOrDefault(sessionId, List.of());
-    }
-
-    @Override
-    public List<Map<String, Object>> loadHistory(String sessionId) {
-      loadHistoryCount++;
-      return List.of();
-    }
-
-    @Override
-    public void appendMessage(String sessionId, String shapeId, Map<String, Object> message) {
-      appended.computeIfAbsent(sessionId, k -> new ArrayList<>()).add(message);
-    }
-
-    @Override
-    public List<SessionSummary> listSessions(String shapeId, int limit) {
-      return List.of();
-    }
-
-    @Override
-    public Optional<SessionSummary> getSessionMeta(String sessionId) {
-      return Optional.empty();
-    }
-
-    @Override
-    public void deleteSession(String sessionId) {}
-
-    @Override
-    public void branchFrom(String parentSessionId, String branchPointMessageId, String newSessionId) {}
-
-    @Override
-    public void setContextFloor(String sessionId, String floorMessageId) {}
-
-    @Override
-    public List<Map<String, Object>> loadEffectiveContext(String sessionId) {
-      // Tempdoc 610 Phase C — the engine now seeds PERSISTENT shapes from
-      // loadEffectiveContext; with no floor it equals loadHistory, so delegate
-      // (this also keeps the existing loadHistoryCount assertions valid).
-      return loadHistory(sessionId);
-    }
-
-    @Override
-    public void compactContext(String sessionId, String floorMessageId, String summaryText) {}
-
-    @Override
-    public void excludeMessage(String sessionId, String messageId, boolean excluded) {}
-
-    @Override
-    public List<String> excludedMessageIds(String sessionId) {
-      return List.of();
-    }
-  }
-
   private static ConversationShape oneShotShape(
       List<String> contribIds, List<String> injIds, List<String> consumerIds) {
     return new ConversationShape(
@@ -1659,7 +1599,8 @@ final class SubstrateDrivenEngineTest {
         injIds,
         consumerIds,
         SingleHopController.ID,
-        List.of());
+        List.of(),
+        true);
   }
 
   private static ConversationShape iteratingShape(
@@ -1680,7 +1621,8 @@ final class SubstrateDrivenEngineTest {
         injIds,
         consumerIds,
         controllerId,
-        List.of());
+        List.of(),
+        true);
   }
 
   /** A PromptContributor with fixed text + priority. */

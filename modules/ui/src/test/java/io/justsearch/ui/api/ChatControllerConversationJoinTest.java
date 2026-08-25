@@ -224,6 +224,50 @@ final class ChatControllerConversationJoinTest {
     verify(agent).deleteConversationRuns("conv-agent");
   }
 
+  @Test
+  @DisplayName(
+      "863 A-6: a STAMPED delegate conversation lists once as its STORE row, so rename is available")
+  void stampedDelegateConversationIsStoreBackedAndRenameable() {
+    // The flip, stated against its own pre-863 twin above (`agentOnlyConversationIsListed`). Since
+    // 863 the engine appends a delegate run's turns to the conversation record as it dispatches, so
+    // the conversation HAS a store session; `hasStoreSession` finds it, `runBackedRows` stops
+    // synthesising a row for it, and `storeBacked` is absent — which is what the FE's ONE storeBacked
+    // gate reads to offer RENAME (Sv3SessionRow.ts).
+    FakeStore store = new FakeStore();
+    store.create("uc-delegate", 100L, 400L);
+    AgentService agent = agentWith(run("uc-delegate", 100L, 400L, "delegate this"));
+
+    JsonNode rows = list(store, agent, null, null);
+
+    assertEquals(1, rows.size(), "one conversation, one row");
+    assertEquals("uc-delegate", rows.get(0).get("sessionId").asString());
+    assertFalse(
+        rows.get(0).has("storeBacked"),
+        "absent = store-backed = rename available; the run-only twin above carries storeBacked:false");
+    assertTrue(rows.get(0).has("messageCount"), "and a real count, because there are real messages");
+  }
+
+  @Test
+  @DisplayName(
+      "863 A-7: DELETE is unconditional — a conversation with NO store session still loses its runs")
+  void deleteDoesNotBranchOnStoreBackedness() {
+    // A-7's claim, tested rather than asserted: `handleDeleteConversation` deletes the store session
+    // and THEN the conversation's runs without branching on whether the conversation is store-backed.
+    // So making delegate runs store-backed (863) opens no delete gap in either direction — the
+    // stamped case is covered by the store-backed test above, and this is the pre-stamp one.
+    FakeStore store = new FakeStore();
+    AgentService agent = agentWith();
+    when(agent.deleteConversationRuns("conv-runs-only")).thenReturn(3);
+
+    Captured c =
+        invoke(store, agent, ctrl -> ctrl::handleDeleteConversation, "conv-runs-only", null, null);
+
+    assertEquals(200, c.status());
+    assertEquals(3, c.body().get("agentRunsDeleted").asInt());
+    assertEquals(
+        List.of("conv-runs-only"), store.deleted, "the store deletion is attempted regardless");
+  }
+
   // ── harness ──────────────────────────────────────────────────────────────────────────────────
 
   private record Captured(int status, JsonNode body) {}

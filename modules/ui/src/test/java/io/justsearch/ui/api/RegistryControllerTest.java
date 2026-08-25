@@ -670,7 +670,8 @@ final class RegistryControllerTest {
             List.of(),
             List.of(),
             null,
-            List.of());
+            List.of(),
+            false);
     Telemetry telemetry = mock(Telemetry.class);
     RegistryController withPlugin =
         new RegistryController(
@@ -696,6 +697,80 @@ final class RegistryControllerTest {
     java.util.List<String> ids = new java.util.ArrayList<>();
     envelope.get("entries").forEach(e -> ids.add(e.get("id").asText()));
     assertTrue(ids.contains("vendor.example.demo-shape"), "the plugin-composed shape must surface");
+  }
+
+  @Test
+  @DisplayName(
+      "863 §4.A.1 wire probe: /api/registry/shapes carries EXACTLY the pre-863 keys plus"
+          + " recordsToThread")
+  void shapesEnvelopeKeySetAfterRecordsToThreadPromotion() throws Exception {
+    // The probe tempdoc 863 §4.A.1 asks for, run as a measurement rather than settled by reasoning
+    // about Jackson. `writeEnvelope` serialises `ConversationShape` objects straight into the live
+    // envelope, and a record COMPONENT is serialised where the bare no-arg accessor `recordsToThread()`
+    // (no get/is prefix) was NOT — so promoting it can ADD A KEY TO A LIVE WIRE ENVELOPE. The twelve
+    // names below are the pre-863 component list, written out verbatim: if the promotion had NOT
+    // changed the wire, this test fails on the extra expectation and says so.
+    Telemetry telemetry = mock(Telemetry.class);
+    RegistryController withCore =
+        new RegistryController(
+            List.of(new CoreOperationCatalog()),
+            List.of(ResourceCatalog.of("core", List.of())),
+            List.of(),
+            List.of(),
+            List.of(
+                io.justsearch.app.services.conversation.CoreConversationShapeCatalog.catalog()),
+            PromptCatalog.of("core", List.of()),
+            changeRegistry,
+            telemetry);
+
+    Context ctx = mock(Context.class);
+    when(ctx.contentType("application/json")).thenReturn(ctx);
+    withCore.handleShapes(ctx);
+
+    ArgumentCaptor<byte[]> body = ArgumentCaptor.forClass(byte[].class);
+    verify(ctx).result(body.capture());
+    JsonNode envelope = MAPPER.readTree(body.getValue());
+
+    JsonNode agentRun = null;
+    JsonNode workflowRun = null;
+    for (JsonNode entry : envelope.get("entries")) {
+      if ("core.agent-run".equals(entry.get("id").asText())) {
+        agentRun = entry;
+      } else if ("core.workflow-run".equals(entry.get("id").asText())) {
+        workflowRun = entry;
+      }
+    }
+    assertTrue(agentRun != null && workflowRun != null, "both core shapes must be in the envelope");
+
+    java.util.Set<String> keys = new java.util.TreeSet<>();
+    keys.addAll(agentRun.propertyNames());
+    assertEquals(
+        new java.util.TreeSet<>(
+            List.of(
+                // The twelve pre-863 record components, in the wire's own names.
+                "id",
+                "presentation",
+                "audience",
+                "provenance",
+                "executionMode",
+                "iterationMode",
+                "persistenceMode",
+                "promptContributorIds",
+                "contextInjectorIds",
+                "streamConsumerIds",
+                "iterationControllerId",
+                "eventSchema",
+                // The thirteenth, added by this slice. Its presence here is the probe's RESULT:
+                // the promotion IS a wire addition, and the FE mirror
+                // (modules/ui-web/src/api/types/conversation-shape.ts) carries it for that reason.
+                "recordsToThread")),
+        keys,
+        "the shapes envelope's per-entry key set");
+
+    assertTrue(agentRun.get("recordsToThread").asBoolean(), "core.agent-run declares true");
+    assertTrue(
+        !workflowRun.get("recordsToThread").asBoolean(),
+        "core.workflow-run stays action-plane-only");
   }
 
   @Test

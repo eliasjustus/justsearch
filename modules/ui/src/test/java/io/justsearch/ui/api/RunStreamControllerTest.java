@@ -424,7 +424,8 @@ final class RunStreamControllerTest {
         List.of(PromptEchoInjector.ID),
         List.of(),
         null,
-        List.of());
+        List.of(),
+        true);
   }
 
   /** Stands in for {@code core.user-prompt}, plus an optional hook that runs INSIDE the run. */

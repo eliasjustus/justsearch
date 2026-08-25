@@ -119,6 +119,28 @@ public interface AgentRunQueries {
   }
 
   /**
+   * Tempdoc 863 §4.A.5 (F2) — the same projection, told which runs' answers the ANSWER plane already
+   * holds. A run stamped {@code recordsToThread} has its terminal answer suppressed here so one
+   * delegate turn does not render twice; but the stamp is written when the run STARTS, and the
+   * answer is appended when it ends, so a store that becomes locked or unwritable mid-run leaves a
+   * stamped run whose answer reached neither plane. Passing the ids the caller can actually see on
+   * the record makes the suppression conditional on the duplicate EXISTING — which also self-heals
+   * every run that already failed that way, with no backfill.
+   *
+   * <p>{@code answeredRunIds} comes from the one place both planes are visible (the thread
+   * controller), read off the {@code runId} the engine stamps onto each answer it records.
+   *
+   * <p>The default DELEGATES to the single-argument form rather than returning empty, so an
+   * implementor that overrides only that one keeps answering this call with its own events —
+   * degraded to the pre-F2 behaviour, never silently blanked. The refinement is opt-in; the
+   * projection is not.
+   */
+  default List<io.justsearch.agent.api.interaction.InteractionEvent> threadEvents(
+      String conversationId, java.util.Set<String> answeredRunIds) {
+    return threadEvents(conversationId);
+  }
+
+  /**
    * Tempdoc 561 P-A / P-A2: the typed {@link io.justsearch.agent.api.lifecycle.AgentLifecycle} loop
    * objects (Session ⊃ Turn ⊃ Iteration + state + budget) for every agent run of {@code
    * conversationId}, projected from the durable {@code AgentRunStore} record. Default empty for the

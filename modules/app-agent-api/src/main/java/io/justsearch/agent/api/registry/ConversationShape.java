@@ -52,17 +52,18 @@ import java.util.Objects;
  *   <li>{@link #eventSchema}: declared SSE event names this shape emits, both substrate
  *       events ({@code chunk}, {@code done}, etc.) and shape-specific namespaced events
  *       (per §5.4). The wire-format contract per shape.
- *   <li>{@link #recordsToThread}: tempdoc 561 P-A/P-B — whether this shape's answer-plane turns
- *       are recorded to the canonical conversation record (the unified thread) under the request's
- *       {@code conversationId}, INDEPENDENT of {@link #persistenceMode}. {@code persistenceMode}
- *       governs multi-turn context RELOAD (PERSISTENT shapes seed their next prompt from history);
- *       {@code recordsToThread} governs whether the turn (and its evidence) is on the durable record
- *       the thread/History/Timeline project. An EPHEMERAL shape (e.g. RAG ask — fresh LLM context
- *       every turn) can still be {@code recordsToThread=true} so its grounded answer + citations live
- *       on the record. Agent / shape-driven shapes record via {@code AgentRunStore} instead, so they
- *       default to {@code false}. The default derives from {@code audience==USER &&
- *       executionMode==SUBSTRATE_DRIVEN} (the answer-plane shapes); the 13-arg constructor lets a
- *       shape override it explicitly.
+ *   <li>{@link #recordsToThread}: tempdoc 561 P-A/P-B, promoted to a declared component by tempdoc
+ *       863 §4.A.1 — whether this shape's answer-plane turns are recorded to the canonical
+ *       conversation record (the unified thread) under the request's {@code conversationId},
+ *       INDEPENDENT of {@link #persistenceMode}. {@code persistenceMode} governs multi-turn context
+ *       RELOAD (PERSISTENT shapes seed their next prompt from history); {@code recordsToThread}
+ *       governs whether the turn (and its evidence) is on the durable record the
+ *       thread/History/Timeline project. An EPHEMERAL shape (e.g. RAG ask — fresh LLM context every
+ *       turn) can still be {@code recordsToThread=true} so its grounded answer + citations live on
+ *       the record; a SHAPE_DRIVEN shape can also be {@code true} ({@code core.agent-run} is), because
+ *       {@link #executionMode} says who drives the loop, not where the turn belongs. Every shape
+ *       declares this explicitly — there is no derivation to fall back on, so a new shape must answer
+ *       the question rather than inherit an answer that merely correlates with its execution mode.
  * </ul>
  *
  * <p><strong>Discoverability:</strong> a USER-audience shape's user mount is established
@@ -88,7 +89,8 @@ public record ConversationShape(
     List<String> contextInjectorIds,
     List<String> streamConsumerIds,
     String iterationControllerId,
-    List<EventDescriptor> eventSchema) implements Provenanced {
+    List<EventDescriptor> eventSchema,
+    boolean recordsToThread) implements Provenanced {
 
   public ConversationShape {
     Objects.requireNonNull(id, "id");
@@ -116,21 +118,4 @@ public record ConversationShape(
     }
   }
 
-  /**
-   * Tempdoc 561 P-A/P-B — whether this shape's answer-plane turns are recorded to the canonical
-   * conversation record (the unified thread) under the request's {@code conversationId}, INDEPENDENT
-   * of {@link #persistenceMode}. {@code persistenceMode} governs multi-turn context RELOAD (PERSISTENT
-   * shapes seed their next prompt from history); this governs whether the turn (and its evidence) is
-   * on the durable record the thread / History / Timeline project. An EPHEMERAL shape (e.g. RAG ask —
-   * fresh LLM context every turn) is still {@code recordsToThread} so its grounded answer + citations
-   * live on the record; agent / shape-driven shapes record via {@code AgentRunStore} instead.
-   *
-   * <p>Derived from the manifest: the answer-plane shapes are exactly the USER-audience
-   * substrate-driven ones. This is intentionally a derivation rather than a stored slot — no shape
-   * needs to override it today (YAGNI / C-018); promote it to an explicit component if and when one
-   * does.
-   */
-  public boolean recordsToThread() {
-    return audience == Audience.USER && executionMode == ExecutionMode.SUBSTRATE_DRIVEN;
-  }
 }

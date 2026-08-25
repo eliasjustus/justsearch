@@ -55,6 +55,9 @@ public final class HierarchicalSummarizeShape {
         // SHAPE_DRIVEN shapes don't consult the substrate iteration controller; runner owns
         // the loop. Pass null — the engine tolerates null for SHAPE_DRIVEN shapes.
         null,
-        EventDescriptor.namesOnly(EVENT_SCHEMA));
+        EventDescriptor.namesOnly(EVENT_SCHEMA),
+        // recordsToThread (tempdoc 863 §4.A.1) — unchanged from the retired derivation: this
+        // runner owns its own loop and mints no answer-plane turn.
+        false);
   }
 }

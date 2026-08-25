@@ -68,7 +68,8 @@ final class StreamingCitationIntegrationTest {
             List.of(citationInjector.id()),
             List.of(matcher.id()),
             SingleHopController.ID,
-            List.of());
+            List.of(),
+            true);
 
     var engine =
         new ConversationEngine(
@@ -146,7 +147,8 @@ final class StreamingCitationIntegrationTest {
             List.of(citationInjector.id()),
             List.of(matcher.id()),
             SingleHopController.ID,
-            List.of());
+            List.of(),
+            true);
 
     var engine =
         new ConversationEngine(

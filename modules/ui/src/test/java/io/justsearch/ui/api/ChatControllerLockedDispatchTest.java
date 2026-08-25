@@ -140,7 +140,196 @@ final class ChatControllerLockedDispatchTest {
     assertTrue(store.appended.isEmpty());
   }
 
+  @Test
+  @DisplayName(
+      "863 A-9 — a DELEGATE dispatch against a locked store is refused 423 instead of running with"
+          + " a swallowed writeMeta")
+  void lockedDelegateDispatchIsRefusedRatherThanSilentlyDropped() {
+    // The pre-863 behaviour was accepted-and-dropped on BOTH planes: `core.agent-run` had no
+    // conversation-store write key, so this gate said "nothing to lose", and on the run plane
+    // `AgentRunStore.startRun`'s `writeMeta` threw against the locked key and was swallowed by a bare
+    // `catch (Exception e) { LOG.warn(...) }` (AgentRunStore.java:192-194). The run executed, nothing
+    // durable was written, and the reader was told nothing. Declaring the shape recordsToThread gives
+    // the dispatch a write key, which is what makes this gate answer — the fix for the silent drop is
+    // a consequence of the stamp, not a separate patch.
+    FakeStore store = new FakeStore();
+    store.locked = true;
+    AtomicInteger agentRuns = new AtomicInteger();
+
+    Captured c = dispatchDelegate(store, agentRuns);
+
+    assertEquals(423, c.status(), "the reader learns the store is locked instead of losing the run");
+    assertEquals("STORE_LOCKED", c.body().get("errorCode").asString());
+    assertEquals(0, agentRuns.get(), "and the agent loop never started");
+    assertTrue(store.appended.isEmpty());
+  }
+
+  @Test
+  @DisplayName("863 A-9 — the same delegate dispatch runs normally once the store is unlocked")
+  void unlockedDelegateDispatchRunsAndRecords() {
+    FakeStore store = new FakeStore();
+    store.locked = false;
+    AtomicInteger agentRuns = new AtomicInteger();
+
+    Captured c = dispatchDelegate(store, agentRuns);
+
+    assertNotEquals(423, c.status());
+    assertEquals(1, agentRuns.get(), "the delegate run executed");
+    assertEquals(
+        2, store.appended.get("uc-locked").size(), "and both of its turns reached the record");
+  }
+
+  @Test
+  @DisplayName(
+      "863 F3 — /api/chat/agent answers the locked store 423 too, not a generic BAD_REQUEST SSE"
+          + " error after the stream is already committed")
+  void lockedLegacyAgentRouteIsRefusedBeforeTheStreamCommits() {
+    // The route the FE still falls back to (`AgentSessionController.streamViaHost`'s fallbackUrl)
+    // commits SSE headers BEFORE parsing the body, and never asked the lock question — it did not
+    // have to, because a delegate run had no conversation-store write key. Declaring the shape
+    // recordsToThread gives it one, so the engine's user-turn append would now throw INTO the
+    // committed stream and the reader would be told "BAD_REQUEST" about a locked store.
+    FakeStore store = new FakeStore();
+    store.locked = true;
+    AtomicInteger agentRuns = new AtomicInteger();
+
+    Captured c = legacyAgentRun(store, agentRuns);
+
+    assertEquals(423, c.status(), "the same typed answer its two sibling dispatch routes give");
+    assertEquals("STORE_LOCKED", c.body().get("errorCode").asString());
+    assertTrue(c.body().get("locked").asBoolean());
+    assertEquals(0, agentRuns.get(), "and the agent loop never started");
+    // The SSE stream was never opened, which is what makes a status settable at all.
+    verify(c.ctx(), never()).contentType("text/event-stream; charset=utf-8");
+  }
+
+  @Test
+  @DisplayName("863 F3 — the same legacy route is untouched when the store is unlocked")
+  void unlockedLegacyAgentRouteRuns() {
+    FakeStore store = new FakeStore();
+    store.locked = false;
+    AtomicInteger agentRuns = new AtomicInteger();
+
+    Captured c = legacyAgentRun(store, agentRuns);
+
+    assertNotEquals(423, c.status());
+    assertEquals(1, agentRuns.get(), "the delegate run executed");
+    assertEquals(2, store.appended.get("uc-locked").size(), "and both turns reached the record");
+  }
+
   // ── harness ──────────────────────────────────────────────────────────────────────────────────
+
+  private static Captured legacyAgentRun(FakeStore store, AtomicInteger agentRuns) {
+    io.justsearch.agent.api.AgentService agent =
+        new StubDelegateAgent(
+            sink -> {
+              agentRuns.incrementAndGet();
+              sink.accept(new io.justsearch.agent.api.AgentEvent.AgentDone("the answer", 1, 0, 9));
+            });
+    ConversationEngine engine =
+        new ConversationEngine(
+            io.justsearch.app.services.conversation.CoreConversationShapeCatalog.catalog(),
+            List.of(
+                new io.justsearch.app.services.conversation.ToolIteratingShapeRunner(() -> agent)),
+            PromptContributorRegistry.of(List.of()),
+            ContextInjectorRegistry.of(List.of()),
+            StreamConsumerRegistry.of(List.of()),
+            IterationControllerRegistry.of(List.of()),
+            OnlineAiService::unavailable,
+            store);
+    AgentController controller =
+        new AgentController(
+            () -> agent, engine, new AgentSseWriter(new SseWriter(null), () -> agent, null), null);
+
+    AtomicInteger status = new AtomicInteger(200);
+    AtomicReference<Object> json = new AtomicReference<>();
+    String requestBody =
+        "{\"conversationId\":\"uc-locked\",\"maxIterations\":1,"
+            + "\"messages\":[{\"role\":\"user\",\"content\":\"delegate this\"}]}";
+    Context ctx = mockContext(requestBody, status, json);
+    controller.handleRunStream(ctx);
+    JsonNode parsed = json.get() == null ? MAPPER.createObjectNode() : MAPPER.valueToTree(json.get());
+    return new Captured(status.get(), parsed, json, ctx, null);
+  }
+
+  private static Captured dispatchDelegate(FakeStore store, AtomicInteger agentRuns) {
+    io.justsearch.agent.api.AgentService agent =
+        new StubDelegateAgent(
+            sink -> {
+              agentRuns.incrementAndGet();
+              sink.accept(new io.justsearch.agent.api.AgentEvent.AgentDone("the answer", 1, 0, 9));
+            });
+    ConversationEngine engine =
+        new ConversationEngine(
+            io.justsearch.app.services.conversation.CoreConversationShapeCatalog.catalog(),
+            List.of(
+                new io.justsearch.app.services.conversation.ToolIteratingShapeRunner(() -> agent)),
+            PromptContributorRegistry.of(List.of()),
+            ContextInjectorRegistry.of(List.of()),
+            StreamConsumerRegistry.of(List.of()),
+            IterationControllerRegistry.of(List.of()),
+            OnlineAiService::unavailable,
+            store);
+    ChatController controller = new ChatController(engine, new SseWriter(null), null, store);
+
+    AtomicInteger status = new AtomicInteger(200);
+    AtomicReference<Object> json = new AtomicReference<>();
+    String requestBody =
+        "{\"shapeId\":\"core.agent-run\",\"conversationId\":\"uc-locked\","
+            + "\"messages\":[{\"role\":\"user\",\"content\":\"delegate this\"}],\"maxIterations\":1}";
+    Context ctx = mockContext(requestBody, status, json);
+    try {
+      controller.dynamicHandler("/api/chat/dispatch").handle(ctx);
+    } catch (Exception e) {
+      throw new AssertionError("dispatch threw", e);
+    }
+    JsonNode parsed = json.get() == null ? MAPPER.createObjectNode() : MAPPER.valueToTree(json.get());
+    return new Captured(status.get(), parsed, json, ctx, null);
+  }
+
+  /** The minimum {@code AgentService} the delegate shape's runner needs to reach {@code done}. */
+  private record StubDelegateAgent(
+      java.util.function.Consumer<java.util.function.Consumer<io.justsearch.agent.api.AgentEvent>>
+          script)
+      implements io.justsearch.agent.api.AgentService {
+
+    @Override
+    public void runAgent(
+        io.justsearch.agent.api.AgentRequest request,
+        java.util.function.Consumer<io.justsearch.agent.api.AgentEvent> eventConsumer) {
+      script.accept(eventConsumer);
+    }
+
+    @Override
+    public void approveToolCall(String sessionId, String callId) {}
+
+    @Override
+    public void rejectToolCall(String sessionId, String callId, String reason) {}
+
+    @Override
+    public void cancelSession(String sessionId) {}
+
+    @Override
+    public boolean isAvailable() {
+      return true;
+    }
+
+    @Override
+    public List<io.justsearch.agent.api.registry.Operation> availableOperations() {
+      return List.of();
+    }
+
+    @Override
+    public List<Map<String, Object>> sessionEvents(String sessionId) {
+      return List.of();
+    }
+
+    @Override
+    public List<io.justsearch.agent.api.interaction.InteractionEvent> threadEvents(
+        String conversationId) {
+      return List.of();
+    }
+  }
 
   private record Captured(
       int status, JsonNode body, AtomicReference<Object> json, Context ctx, ScriptedAi ai) {}
@@ -221,7 +410,8 @@ final class ChatControllerLockedDispatchTest {
         List.of(PromptEchoInjector.ID),
         List.of(),
         null,
-        List.of());
+        List.of(),
+        true);
   }
 
   /** Stands in for {@code core.user-prompt}: turns the request's prompt into the user message. */

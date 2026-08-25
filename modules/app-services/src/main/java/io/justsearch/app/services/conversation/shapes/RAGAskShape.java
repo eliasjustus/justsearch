@@ -72,6 +72,9 @@ public final class RAGAskShape {
             RAGDoneEnricher.ID,
             io.justsearch.app.services.conversation.spi.MemoryExtractionConsumer.ID),
         SingleHopController.ID,
-        EventDescriptor.namesOnly(EVENT_SCHEMA));
+        EventDescriptor.namesOnly(EVENT_SCHEMA),
+        // recordsToThread (tempdoc 863 §4.A.1) — unchanged from the retired derivation. EPHEMERAL
+        // context, and still on the record: the two axes are independent (561 P-A/P-B).
+        true);
   }
 }

@@ -149,6 +149,13 @@ public final class AgentRunStore {
       // projection can find this run's events for the conversation (the §10 cross-domain join). Null
       // when the run is standalone (its own thread).
       meta.put("conversationId", request.conversationId());
+      // Tempdoc 863 §4.A.3 — the engine's record stamp, persisted beside the conversationId it is
+      // about. The thread projection (AgentRunQueryService.threadEvents) reads it to skip the
+      // synthesised `<runId>:user` turn and the mapper's terminal ASSISTANT_MESSAGE for a run whose
+      // turns the CONVERSATION record already holds, so one delegate turn renders once and not twice.
+      // Absent on every run written before the stamp — read as false, which is the true thing about
+      // those runs (they really did record nothing to the answer plane) and is why no backfill exists.
+      meta.put("recordsToThread", request.recordsToThread());
       meta.put("startedAt", now);
       meta.put("updatedAt", now);
       meta.put("state", "READY_FOR_LLM");
@@ -377,10 +384,13 @@ public final class AgentRunStore {
 
   /**
    * Tempdoc 859 slice C PR-2 — the CONVERSATIONS this store backs, newest first: the run-side half of
-   * the two-store join {@code GET /api/chat/conversations} performs. A delegate run writes no
-   * {@code ConversationStore} row ({@code ConversationEngine.dispatchShapeDriven} never appends a
-   * message), so without this projection an agent-only conversation has a complete durable record and
-   * no index entry — the record exists and the sidebar has no door to it.
+   * the two-store join {@code GET /api/chat/conversations} performs. A run that writes no
+   * {@code ConversationStore} row — a standalone run, a background run, and every delegate run
+   * created before tempdoc 863's {@code recordsToThread} stamp made
+   * {@code ConversationEngine.dispatchShapeDriven} append the turn — would otherwise have a complete
+   * durable record and no index entry: the record exists and the sidebar has no door to it. A STAMPED
+   * delegate conversation IS store-backed and the join dedups it out of this projection
+   * ({@code hasStoreSession}), so it lists once, as its store row, with rename available.
    *
    * <p>Runs are grouped by their persisted parent {@code conversationId} (the same join key
    * {@link #listRunIdsByConversation} uses), so N runs of one conversation are ONE row. The scan is
