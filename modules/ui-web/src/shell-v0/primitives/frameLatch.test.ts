@@ -173,28 +173,30 @@ describe('FrameLatch — the wedge release (860 §6.4)', () => {
 
 describe('FrameLatch — the injected scheduler', () => {
   it('drives both clocks through the injected scheduler, at the declared horizon', () => {
-    let frameRun: (() => void) | null = null;
-    let fallbackRun: (() => void) | null = null;
+    const clocks: { frame: (() => void) | null; fallback: (() => void) | null } = {
+      frame: null,
+      fallback: null,
+    };
     let fallbackMs = 0;
     let cancelledFrames = 0;
     const scheduler: FrameScheduler = {
       requestFrame: (run) => {
-        frameRun = run;
+        clocks.frame = run;
         return 7;
       },
       cancelFrame: (handle) => {
         expect(handle).toBe(7);
         cancelledFrames++;
-        frameRun = null;
+        clocks.frame = null;
       },
       requestFallback: (run, ms) => {
-        fallbackRun = run;
+        clocks.fallback = run;
         fallbackMs = ms;
         return 9;
       },
       cancelFallback: (handle) => {
         expect(handle).toBe(9);
-        fallbackRun = null;
+        clocks.fallback = null;
       },
     };
     const latch = new FrameLatch(scheduler);
@@ -203,9 +205,10 @@ describe('FrameLatch — the injected scheduler', () => {
       passes++;
     });
     expect(fallbackMs).toBe(FRAME_LATCH_FALLBACK_MS);
+    expect(clocks.frame, 'both clocks are armed through the injected scheduler').not.toBeNull();
 
     // The fallback wins this race; the frame it beat is withdrawn so the pass cannot run twice.
-    fallbackRun?.();
+    clocks.fallback?.();
     expect(passes).toBe(1);
     expect(cancelledFrames).toBe(1);
     expect(latch.latched).toBe(false);
