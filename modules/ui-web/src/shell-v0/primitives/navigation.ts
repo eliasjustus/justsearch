@@ -296,8 +296,14 @@ export class NavigationController implements ReactiveController {
    * `window`, which never traverses the scroller.)
    *
    * The fix is at the release site, not at the navigation site: `j` is not a scroll gesture, so it has
-   * no business claiming to be one. The set is the keys a browser scrolls a container with — arrows,
-   * paging, the ends, and Space — which is exactly what {@link nudge} drives by hand from the thumb.
+   * no business claiming to be one. The set is every key a browser scrolls a container with — arrows,
+   * paging, the ends, and Space — a SUPERSET of what {@link nudge} drives by hand from the thumb
+   * (which has no inline axis and no Space).
+   *
+   * Accepted false positive: Space on a focused control inside the column activates the control AND
+   * releases the pin. Harmless — a release only sends FOCUS back to the derived reading position —
+   * and narrowing it further would need this listener to know what its target does, which is exactly
+   * the coupling a scroll-gesture proxy exists to avoid.
    */
   private readonly onScrollKey = (event: Event): void => {
     if (!SCROLL_KEYS.has((event as KeyboardEvent).key)) return;
