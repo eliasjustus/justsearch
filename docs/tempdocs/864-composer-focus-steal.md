@@ -906,11 +906,24 @@ Explicit constraint for PR A's implementer: `focusField()` **must** reach the te
 
 | PR | Content | Gates / checks |
 |---|---|---|
-| **A** | Layer 1(a)(b)(d) + Layer 2(a) — `focusField()`, entry-path focus, band `@pointerdown`, resting-state affordance, `Shell.isInputFocused` unification. **Ungated; proceeds now.** | ui-web gate set; tests 2-3, 6 below |
+| **A** | Layer 1(a)(b) + Layer 2(a) — `focusField()`, entry-path focus, glass-box `@pointerdown`, `Shell.isInputFocused` unification. **Ungated; proceeds now.** | ui-web gate set; tests 2-3, 6 below |
 | **B** | Layer 1(c2) + Layer 4 — real target for `shell.focus-composer`, `when`-scope `/`, policy documented | ui-web gates; `check-premerge-table` n/a |
 | **C** | Layer 3(a) — project sv3 conversation identity to the URL | router tests; back/forward live leg |
 | **D** | Layer 2 — predicate unification, `isComposing`/`repeat`, `focusKind`/`paletteOpen` resolution, modal guard | ui-web gates |
 | **E** | Layer 1(d) + Layer 3(c)(i) — resting-state affordance, row focus indicator | **UX audit, see §4.4** |
+
+> **Amended when PR A shipped (2026-08-25).** Row A originally also listed Layer 1(d)'s
+> resting-state affordance, which row E owns — it is a visible-affordance change and therefore
+> carries §4.4's measured UX audit, which is E's gate and not A's. A shipped Layer 1(a)(b) with no
+> resting-state treatment is the correct intermediate state: (a) makes the unfocused composer rare,
+> which is exactly the condition under which (d) is the smallest of the four.
+>
+> **Residual for PR E, found in PR A's review and deliberately not fixed there.** The split-view
+> toggle re-templates the stage, which re-runs `connectedCallback` and therefore re-fires
+> `focusComposer()` — a **non-entry** path taking the caret to the composer on a layout change the
+> reader made for some other reason. Narrow (it needs focus to be outside a typing target at that
+> moment) and benign compared with the vacuum it comes from, but it is a focus move nobody asked for
+> and belongs with E's other focus-presentation work.
 
 `ConfirmDialog.ts:206-207` (§3.2(a)) is **not** in this sequence — it is a live destructive-action
 bug on an unrelated component. Ship it on its own, ahead of everything.

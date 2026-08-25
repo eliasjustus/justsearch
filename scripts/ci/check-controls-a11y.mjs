@@ -22,6 +22,8 @@
  *       which axe also accepts; the §5 limit is this gate trusts the pattern);
  *   (5) a dismiss layer — `class` includes backdrop/scrim/overlay, or the handler
  *       is an `onBackdrop`/`dismiss`/`close` (decorative; keyboard path = Escape).
+ *   (6) a FOCUS FORWARDER — `data-focus-forward` AND a lone `@pointerdown` (the
+ *       `<label>` semantic on a wrapper that also holds controls; tempdoc 864).
  * Otherwise it is a mouse-only affordance → fail.
  *
  * HONEST LIMIT (the 557 §5 ceiling): ESLint cannot inspect Lit-template `@click`
@@ -34,7 +36,11 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { stripComments } from '../lib/strip-comments.mjs';
 
-const SRC = 'modules/ui-web/src';
+// The tree to scan. Overridable ONLY so `check-controls-a11y.test.mjs` can run this gate end-to-end
+// against a fixture tree — the regex plumbing is most of what can be wrong here, so the test drives
+// the real script rather than a re-implementation of its decision.
+const srcFlag = process.argv.indexOf('--src');
+const SRC = srcFlag >= 0 ? process.argv[srcFlag + 1] : 'modules/ui-web/src';
 
 // Natively keyboard-operable elements.
 const NATIVE_OK = new Set([
@@ -68,12 +74,23 @@ const STOPPROP =
 // A FOCUS FORWARDER (tempdoc 864 Layer 1(b)) — the `<label>` semantic on a wrapper that also holds
 // controls, which a real `<label>` may not (its activation behaviour would be ambiguous, and the
 // controls would sit inside their own field's label). The press moves the caret into the element's
-// OWN text field and does nothing else: no state changes, no navigation, nothing is dispatched. It
-// therefore adds no affordance to reach by keyboard — the field it focuses IS the control, and its
-// keyboard path (Tab, and the surface's own entry-path focus) is untouched. Same family as STOPPROP
-// above, declared in the markup rather than inferred from an inline handler body, so a reviewer sees
-// the claim at the element making it. NARROW BY CONSTRUCTION: it exempts only elements that opt in.
-const FOCUS_FORWARD = /\bdata-focus-forward\b/;
+// OWN text field: it adds no affordance to reach by keyboard, because the field it focuses IS the
+// control and its keyboard path is untouched. Same family as STOPPROP above, declared in the markup
+// rather than inferred from an inline handler body, so a reviewer sees the claim at the element
+// making it.
+//
+// TWO conditions, not one. The marker alone would be a blanket opt-out — "it only forwards focus"
+// asserted by the author and checked by nothing — so the SHAPE is checked too: the element's only
+// event binding is a single `@pointerdown`. A focus forwarder needs exactly that (the press's own
+// default is the focus move it replaces); anything that also takes a `@click`, a `@keydown` or a
+// second press handler is doing something else and stays flagged.
+const FOCUS_FORWARD_MARKER = /\bdata-focus-forward\b/;
+const EVENT_BINDING = /@([a-zA-Z]+)\s*=/g;
+function isFocusForwarder(attrs) {
+  if (!FOCUS_FORWARD_MARKER.test(attrs)) return false;
+  const bound = [...attrs.matchAll(EVENT_BINDING)].map((m) => m[1]);
+  return bound.length === 1 && bound[0] === 'pointerdown';
+}
 // Selection markers that signal the listbox/grid pattern.
 const SELECTION_ATTR = /\baria-(selected|current)=/;
 // Decorative dismiss layer.
@@ -161,7 +178,7 @@ for (const f of files) {
       TOAST.test(attrs) ||
       ARIA_HIDDEN.test(attrs) ||
       STOPPROP.test(attrs) ||
-      FOCUS_FORWARD.test(attrs);
+      isFocusForwarder(attrs);
     if (!ok) {
       const line = src.slice(0, m.index).split('\n').length;
       offenders.push(`${f.slice(SRC.length + 1)}:${line}  <${tag} @click…>`);

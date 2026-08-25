@@ -69,10 +69,18 @@ function stubFetch(): void {
   });
 }
 
-/** The observed state in which the composer is genuinely usable. */
+/**
+ * The observed state in which the composer is genuinely usable. A model id is fed as well as the
+ * online verdict, because the footer's model LABEL only renders when there is one — and that label is
+ * the selectable text the dead-zone press must leave alone.
+ */
 function aiOnline(): void {
   __feedForTest({
-    inference: { mode: 'online', available: true } as never,
+    inference: {
+      mode: 'online',
+      available: true,
+      activeModelId: 'Qwen_Qwen3.5-9B.Q4_K_M.gguf',
+    } as never,
     status: { worker: { core: { indexedDocuments: 42 } } } as unknown as StatusSnapshot,
   });
   __feedContactForTest();
@@ -212,6 +220,27 @@ describe('tempdoc 864 Layer 1(a) — every entry lands the reader in the compose
     await settle(el);
     expect(deepActiveElement()).toBe(outsider);
   });
+
+  it('yields to a rename in progress across an unmount and re-entry', async () => {
+    // The window is RETAINED across a surface switch and `renamingId` survives it, so re-entry is an
+    // entry path that can land on a half-finished rename — with focus wherever the unmount left it.
+    conversations = [row('conv-a', 'first question')];
+    const el = await mount();
+    const sidebar = await region(el, 'jf-sv3-sidebar');
+    sidebar.dispatchEvent(
+      new CustomEvent('sv3-session-rename', {
+        detail: { id: 'conv-a', phase: 'start', title: null },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await settle(el);
+    el.remove();
+    (deepActiveElement() as HTMLElement | null)?.blur();
+    document.body.appendChild(el);
+    await settle(el);
+    expect(deepActiveElement()).not.toBe(await fieldOf(el));
+  });
 });
 
 describe('tempdoc 864 Layer 1(b) — the whole glass box is the field', () => {
@@ -254,6 +283,38 @@ describe('tempdoc 864 Layer 1(b) — the whole glass box is the field', () => {
     control.dispatchEvent(press);
     expect(deepActiveElement()).not.toBe(field);
     expect(press.defaultPrevented).toBe(false);
+  });
+
+  it('a press on a jf-control in the band is left alone — its host padding retargets no further', async () => {
+    // The band holds plain `<button>`s today and `jf-control` tomorrow (it is the product's one
+    // operability primitive). A press on the CONTROL'S OWN padding surfaces the host in the composed
+    // path, and an upward walk from a host finds no `<button>` — so without the host in the bail set
+    // the press would be eaten and the control would silently stop working.
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const field = await fieldOf(el);
+    blurEverything();
+    const glass = composer.shadowRoot?.querySelector('[data-testid="sv3-composer-shell"]');
+    if (!glass) throw new Error('no .glass');
+    const control = document.createElement('jf-control');
+    glass.appendChild(control);
+    const press = new Event('pointerdown', { bubbles: true, composed: true, cancelable: true });
+    control.dispatchEvent(press);
+    expect(deepActiveElement()).not.toBe(field);
+    expect(press.defaultPrevented).toBe(false);
+  });
+
+  it('a press on the model label is left alone, so its text stays selectable', async () => {
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const field = await fieldOf(el);
+    blurEverything();
+    const label = composer.shadowRoot?.querySelector('[data-testid="sv3-composer-model"]');
+    if (!label) throw new Error('no model label — the fixture must report a model');
+    const press = new Event('pointerdown', { bubbles: true, composed: true, cancelable: true });
+    label.dispatchEvent(press);
+    expect(press.defaultPrevented).toBe(false);
+    expect(deepActiveElement()).not.toBe(field);
   });
 
   it('a press on the textarea itself is left alone, so caret placement and selection still work', async () => {

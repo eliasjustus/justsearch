@@ -944,20 +944,37 @@ export class SearchV3View extends JfElement {
    * kept focus under a box that looks primed, every global single-key shortcut stayed armed, and the
    * reader's typing went to whatever control focus was parked on (§2.9/§2.11).
    *
-   * Deferred to `updateComplete` because every caller is an entry: at connect the composer does not
-   * exist yet, and after a claim the band it is being focused in is mid-re-render.
+   * TWO waits, because Lit does not await its children: this window's own update guarantees the
+   * composer ELEMENT exists, not that its shadow tree holds a field yet — the same second wait
+   * `Sv3Sidebar.placeFocusAfterDiscard` takes before reaching into a row.
    *
-   * TWO refusals, and they are the whole of "do not steal focus". A transient that OWNS focus keeps it
-   * — a rename field, the palette — and so does a reader who has already put focus in something they
-   * type into. A row button or `<body>` is neither: those are the parked-nowhere states this exists to
+   * THREE refusals, and their standing differs — stated, because a guard whose reach is assumed is
+   * how the next author decides it must be doing something:
+   *
+   *  - the TYPING guard carries the general case, and is what a reader who has put focus somewhere
+   *    themselves is protected by;
+   *  - the RENAME refusal is independently reachable and tested: `renamingId` survives an unmount, so
+   *    re-entering this window mid-rename is an entry path arriving at a half-finished edit with
+   *    focus wherever the unmount left it;
+   *  - the PALETTE refusal is belt-and-braces TODAY and kept deliberately. The popup's only focusable
+   *    is its own field, and `onHostFocusOut` dismisses the palette as soon as focus falls out of the
+   *    window — so "open palette, focus not in a field" is currently unreachable and the typing guard
+   *    covers the rest. `Sv3Palette.trapTab` already enumerates buttons and tabindex nodes, so the
+   *    first non-field focusable added to that popup makes the state live (§2.9(e)), and the failure
+   *    it would cause — a caret yanked out of an open modal — is silent.
+   *
+   * A row button or `<body>` is not a transient: those are the parked-nowhere states this exists to
    * end, and refusing them would refuse the entire fix.
    */
   private async focusComposer(): Promise<void> {
     await this.updateComplete;
+    const composer = this.composer;
+    if (composer === null) return;
+    await composer.updateComplete;
     if (this.renamingId !== null) return;
     if (this.palette?.open === true) return;
     if (isTypingTarget(deepActiveElement())) return;
-    this.composer?.focusField();
+    composer.focusField();
   }
 
   override disconnectedCallback(): void {

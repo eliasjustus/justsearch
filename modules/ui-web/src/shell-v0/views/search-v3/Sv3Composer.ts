@@ -176,8 +176,19 @@ const TIER_GLYPH = 'arrow-right-left';
  * Matched with `closest()` from the press's deepest origin rather than tested on that origin
  * directly: the stop control's glyph is an `<svg><rect>`, so the innermost element under a press on
  * the primary action is not the `<button>` it belongs to.
+ *
+ * Three entries are here for what this box may become, not only for what it holds today, because the
+ * failure they prevent is silent — a press this list misses is EATEN (`preventDefault`), so the
+ * control under it stops working rather than looking wrong. `jf-control` is the product's operability
+ * primitive and its host padding retargets no further up (the `closest()` walk from the host finds no
+ * `<button>`); `[role="button"]` and `[tabindex]` are the standalone-affordance triad's own marks.
+ *
+ * `[data-selectable]` is the opposite case and just as silent: real text inside the box that a reader
+ * may want to select, which a suppressed default would make undraggable.
  */
-const BAND_INTERACTIVE = 'button, a[href], input, textarea, select, [contenteditable="true"]';
+const BAND_INTERACTIVE =
+  'button, a[href], input, textarea, select, jf-control, [role="button"], [tabindex], ' +
+  '[contenteditable="true"], [data-selectable]';
 
 export class Sv3Composer extends JfElement {
   static styles = [
@@ -1088,18 +1099,22 @@ export class Sv3Composer extends JfElement {
    * click-to-focus (§2.9(b)): a press there landed on a non-focusable div, moved focus to `<body>`,
    * and left a box that looks primed with nothing listening.
    *
-   * The press is only claimed for a DEAD zone. Anything interactive in the band — the send/stop
-   * control, the two menu triggers, the banner's disclosure, and the `<textarea>` itself — keeps its
-   * own press, so caret placement and drag-selection inside the real field are untouched. On a dead
-   * zone the default IS suppressed, because the press's default action is precisely the focus move
-   * this method exists to prevent.
+   * SCOPED TO `.glass`, which is the box the ring draws. The hero landing, the degradation banner and
+   * the availability notice are SIBLINGS of it in the band and are not in scope — they carry text a
+   * reader may want to read and select, and nothing about them reads as the input.
+   *
+   * The press is only claimed for a DEAD zone. Everything in {@link BAND_INTERACTIVE} keeps its own
+   * press — the send/stop control, the two menu triggers, the `<textarea>` itself, and the model
+   * label's selectable text — so caret placement and drag-selection are untouched. On a dead zone the
+   * default IS suppressed, because the press's default action is precisely the focus move this
+   * method exists to prevent.
    *
    * The `data-focus-forward` marker on the element is the claim this makes to `check-controls-a11y`:
    * a press handler that only moves the caret into the element's own field adds no affordance to
    * reach by keyboard. A real `<label>` is the platform's word for it and cannot be used here — it
    * would also wrap the footer's controls, which is not what a field's label may contain.
    */
-  private onBandPointerDown(event: Event): void {
+  private onGlassPointerDown(event: Event): void {
     const origin = event.composedPath()[0];
     if (!(origin instanceof Element)) return;
     if (origin.closest(BAND_INTERACTIVE) !== null) return;
@@ -1180,7 +1195,7 @@ export class Sv3Composer extends JfElement {
           class="glass"
           data-testid="sv3-composer-shell"
           data-focus-forward
-          @pointerdown=${this.onBandPointerDown}
+          @pointerdown=${this.onGlassPointerDown}
         >
           <div class="field">
             <div class="editor">
@@ -1304,10 +1319,18 @@ export class Sv3Composer extends JfElement {
    * 14px/500, not focusable, not a button, no invented role. And it does NOT adopt the effort
    * control's evaporate-on-dock treatment (`:host([state='docked']) .control-label`): docked is the
    * transcript-reading state, which is exactly when "which model wrote this" is being asked.
+   *
+   * `data-selectable` because it is the one piece of REAL TEXT sitting in the glass box's dead zone
+   * (tempdoc 864 Layer 1(b)): a model name is exactly the kind of fact a reader copies, and the
+   * focus-forwarding press would otherwise suppress the drag that selects it.
    */
   private modelLabelFact(): TemplateResult | typeof nothing {
     if (this.modelLabel === '') return nothing;
-    return html`<span class="model-label" data-testid="sv3-composer-model" title=${this.modelLabel}
+    return html`<span
+      class="model-label"
+      data-selectable
+      data-testid="sv3-composer-model"
+      title=${this.modelLabel}
       >${this.modelLabel}</span
     >`;
   }
