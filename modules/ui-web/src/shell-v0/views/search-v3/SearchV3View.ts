@@ -950,7 +950,10 @@ export class SearchV3View extends JfElement {
     // an entry path like the other two ({@link onSessionSelect}, {@link onSessionNew}), and it is the
     // one that covers both a fresh hero and the restored record `restoreLastViewed` just claimed:
     // that runs above, in this same connect, and the focus lands after the render it schedules.
-    void this.focusComposer();
+    // Everything above this line runs on EVERY connect — subscriptions and observers have to be
+    // re-taken however the element got here. Only the focus move belongs to an entry alone, which is
+    // what {@link movedRatherThanEntered} separates out (PR E).
+    if (!this.movedRatherThanEntered) void this.focusComposer();
   }
 
   /**
@@ -1035,6 +1038,38 @@ export class SearchV3View extends JfElement {
     this.removeEventListener('keydown', this.onHostKeydown, true);
     this.removeEventListener('focusout', this.onHostFocusOut);
     window.removeEventListener('jf-focus-composer', this.onFocusComposerEvent);
+    // Tempdoc 864 PR E — LAST, so a re-parent is recorded however the teardown above went. See
+    // {@link movedRatherThanEntered}.
+    this.markPossibleMove();
+  }
+
+  /**
+   * Tempdoc 864 PR E (the residual PR A's review found and left) — A RE-PARENT IS NOT AN ENTRY.
+   *
+   * `connectedCallback` is this window's entry signal and is right for the two entries that reach it:
+   * a first mount, and a return to a RETAINED instance (`Shell.ts`'s append-only surface cache
+   * re-attaches the same element). It is wrong for a third thing the platform routes through the same
+   * callback — the split-view toggle re-templates the stage (`Shell.ts` `render()`: the surface moves
+   * from the single-pane slot into `.split > .pane`), so the very same element is removed and put back
+   * with no entry having happened, and the caret jumped into the composer on a LAYOUT gesture the
+   * reader made for some other reason.
+   *
+   * The discriminator is the TASK, not a timer: Lit removes and re-inserts the node inside one
+   * synchronous update, so a re-parent's `connectedCallback` runs before any microtask queued by the
+   * `disconnectedCallback` that preceded it, while a real re-entry needs a user event and is a later
+   * task by construction. The coupling this rests on is lit-html's own: a changed template shape
+   * CLEARS the old part's DOM and INSERTS the new instance within one `commit`, both synchronous —
+   * if a future lit-html ever deferred the insert past a microtask, this would stop recognising the
+   * move and simply focus the composer — failing the other way is harmless, because that is exactly
+   * the behaviour this narrows.
+   */
+  private movedRatherThanEntered = false;
+
+  private markPossibleMove(): void {
+    this.movedRatherThanEntered = true;
+    queueMicrotask(() => {
+      this.movedRatherThanEntered = false;
+    });
   }
 
   /**
