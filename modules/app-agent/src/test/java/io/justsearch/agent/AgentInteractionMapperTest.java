@@ -4,11 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.agent.api.AgentEvent;
 import io.justsearch.agent.api.interaction.InteractionEvent;
 import io.justsearch.agent.api.interaction.InteractionEventKind;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -275,13 +278,87 @@ final class AgentInteractionMapperTest {
     assertEquals("budget_raised", e.attributes().get("phase"));
     assertEquals("info", e.attributes().get("severity"));
     assertEquals(
-        CONV + ":progress:budget_raised:" + Instant.parse("2026-01-01T00:00:01Z").toEpochMilli(),
+        CONV + ":progress:00000:budget_raised:" + Instant.parse("2026-01-01T00:00:01Z").toEpochMilli(),
         e.id());
   }
 
   @Test
-  @DisplayName("859 §D F6: the other two accountability phases are durable too; severity is optional")
+  @DisplayName("859 §D F6: two same-millisecond notes keep EMISSION order, not phase-name order")
+  void sameMillisecondNotesSortByEmissionNotPhaseName() {
+    // The F-1 defect. `context_compacted`.localeCompare(`context_gate_reapplied`) is -1, so an id
+    // without an emission ordinal sorts the COMPACTION above the note explaining why it happened —
+    // effect before cause. And these two are emitted back-to-back on the §2.7 second-crossing path
+    // (AgentStepRunner: the re-apply note, `compactOlderTurns`, then the compaction note), so the
+    // millisecond tie is the NORMAL case there, not a rare one.
+    String tie = "2026-01-01T00:00:07Z";
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                at(tie, "progress",
+                    Map.of("phase", "context_gate_reapplied", "message", "Compacting without asking again")),
+                at(tie, "progress",
+                    Map.of("phase", "context_compacted", "message", "Compacted 4 earlier turns"))),
+            CONV);
+
+    assertEquals(2, events.size());
+    // The assertion that would fail without the ordinal: the FE tiebreaker on equal timestamps is
+    // `id.localeCompare`, so the RENDERED order is the sorted-by-id order — compared here, not the
+    // list order, which would pass either way because `fromRunEvents` emits in journal order.
+    List<String> byId = events.stream().map(InteractionEvent::id).sorted().toList();
+    assertEquals(
+        List.of(events.get(0).id(), events.get(1).id()),
+        byId,
+        "lexical id order must equal emission order on a same-millisecond tie");
+    assertTrue(
+        byId.get(0).contains("context_gate_reapplied"),
+        "the CAUSE (re-applied) must sort before the EFFECT (compacted), got: " + byId);
+    // …and the ordinal is the journal index, zero-padded so 10 does not sort before 9.
+    assertTrue(events.get(0).id().startsWith(CONV + ":progress:00000:"), events.get(0).id());
+    assertTrue(events.get(1).id().startsWith(CONV + ":progress:00001:"), events.get(1).id());
+  }
+
+  @Test
+  @DisplayName("859 §D F6: every declared PHASE_* constant is classified — durable or documented-ephemeral")
+  void everyDeclaredPhaseConstantIsClassified() throws IllegalAccessException {
+    // The UNGUARDED direction (review F-4): the mapper's allow-list defaults to ephemeral, so a new
+    // PHASE_* constant that someone declares and emits but forgets to add to DURABLE_PROGRESS_PHASES
+    // is silently non-durable — which is precisely the bug this whole change fixes, reintroduced.
+    // Reflection over the constants is what makes "someone declared a new one" observable at all.
+    //
+    // A constant may legitimately be ephemeral; it may not be UNCLASSIFIED. Adding it to either list
+    // is a deliberate act, and that is the whole ask.
+    Set<String> documentedEphemeral = Set.of();
+    List<String> unclassified = new ArrayList<>();
+    for (java.lang.reflect.Field f : AgentEvent.AgentProgress.class.getDeclaredFields()) {
+      if (!f.getName().startsWith("PHASE_")
+          || !java.lang.reflect.Modifier.isStatic(f.getModifiers())) {
+        continue;
+      }
+      String phase = (String) f.get(null);
+      if (!AgentInteractionMapper.DURABLE_PROGRESS_PHASES.contains(phase)
+          && !documentedEphemeral.contains(phase)) {
+        unclassified.add(f.getName() + " (\"" + phase + "\")");
+      }
+    }
+    assertEquals(
+        List.of(),
+        unclassified,
+        "a declared progress phase must be listed in AgentInteractionMapper.DURABLE_PROGRESS_PHASES"
+            + " or in this test's documentedEphemeral set — an unclassified one is silently ephemeral");
+    // The guard is only meaningful if it is actually looking at constants: assert it FOUND them.
+    assertEquals(4, AgentInteractionMapper.DURABLE_PROGRESS_PHASES.size());
+  }
+
+  @Test
+  @DisplayName("859 §D F6: the other accountability phases are durable too; severity is optional")
   void contextAccountabilityNotesAreDurable() {
+    InteractionEvent unanswered =
+        mapped(
+            "progress",
+            Map.of("phase", "context_gate_unanswered", "message", "Context gate unanswered — continuing"));
+    assertEquals(InteractionEventKind.PROGRESS, unanswered.kind());
+    assertEquals("Context gate unanswered — continuing", unanswered.content());
+
     InteractionEvent reapplied =
         mapped(
             "progress",
@@ -298,7 +375,10 @@ final class AgentInteractionMapperTest {
     InteractionEvent compacted =
         mapped(
             "progress",
-            Map.of("phase", "context_compacted", "message", "Compacted earlier turns", "severity", "warn"));
+            Map.of(
+                "phase", "context_compacted",
+                "message", "Compacted 4 earlier turns to stay within the model's memory",
+                "severity", "warn"));
     assertEquals(InteractionEventKind.PROGRESS, compacted.kind());
     assertEquals("warn", compacted.attributes().get("severity"));
   }

@@ -300,10 +300,12 @@ final class AgentStepRunner {
                 sessionId, session, "WAITING_CONTEXT", "Context pressure — awaiting decision");
             AgentSession.ContextGateDecision ctxDecision =
                 AgentSession.ContextGateDecision.CONTINUE;
+            boolean gateWentUnanswered = false;
             try {
               ctxDecision = contextGateFuture.get(contextGateTimeoutSeconds(), TimeUnit.SECONDS);
             } catch (TimeoutException | java.util.concurrent.ExecutionException undecided) {
               ctxDecision = AgentSession.ContextGateDecision.CONTINUE; // watcherless ⇒ proceed
+              gateWentUnanswered = true;
             } catch (InterruptedException interrupted) {
               Thread.currentThread().interrupt();
               ctxDecision = AgentSession.ContextGateDecision.STOP;
@@ -322,6 +324,19 @@ final class AgentStepRunner {
               session.markTerminated(TerminalDisposition.CANCELLED, null, CancelTrigger.USER);
               checkpointer.checkpoint(sessionId, session, "CANCELLED", "Stopped at context gate");
               return IterationOutcome.terminated(false);
+            }
+            // Tempdoc 859 §D (F6 follow-up) — the run ASKED and nobody answered, so it decided for
+            // itself and carried on. That is a silent continue by the same definition the budget
+            // raise is one, and it was the only gate fallback narrating NOTHING — not live, not on
+            // the record. Emitted here rather than in the catch so it fires only on the path that
+            // actually proceeds (an INTERRUPT falls to STOP and returns above).
+            if (gateWentUnanswered) {
+              sink.accept(
+                  new AgentEvent.AgentProgress(
+                      AgentEvent.AgentProgress.PHASE_CONTEXT_GATE_UNANSWERED,
+                      "Context gate unanswered — continuing",
+                      iteration + 1,
+                      request.maxIterations()));
             }
             compactNow = ctxDecision == AgentSession.ContextGateDecision.SUMMARIZE;
             // CONTINUE (or post-SUMMARIZE): fall through and proceed with the current prompt.
@@ -351,7 +366,15 @@ final class AgentStepRunner {
               sink.accept(
                   new AgentEvent.AgentProgress(
                       AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED,
-                      "Compacted earlier turns to stay within the model's memory",
+                      // Tempdoc 859 §D (F6 follow-up) — the COUNT, by the same standard the raise
+                      // note is held to: "history was shortened" without saying by how much is not
+                      // an accountability record. The journaled `ContextCompacted` event has carried
+                      // `droppedMessages` all along; the note that outlives the run now says it too.
+                      String.format(
+                          java.util.Locale.ROOT,
+                          "Compacted %d earlier turn%s to stay within the model's memory",
+                          dropped,
+                          dropped == 1 ? "" : "s"),
                       iteration + 1,
                       request.maxIterations()));
               // Proceed THIS iteration with the compacted (smaller) prompt; recompute the budget

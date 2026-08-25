@@ -370,7 +370,25 @@ public sealed interface AgentEvent {
     /** @see #PHASE_BUDGET_RAISED */
     public static final String PHASE_CONTEXT_GATE_REAPPLIED = "context_gate_reapplied";
 
-    /** @see #PHASE_BUDGET_RAISED */
+    /**
+     * Tempdoc 859 §D (F6 follow-up) — the context gate ASKED and nobody answered, so the run
+     * proceeded on its own. The other half of the same guard rail as {@link #PHASE_BUDGET_RAISED}:
+     * a watcherless gate falling back to CONTINUE is a silent continue by definition.
+     *
+     * @see #PHASE_BUDGET_RAISED
+     */
+    public static final String PHASE_CONTEXT_GATE_UNANSWERED = "context_gate_unanswered";
+
+    /**
+     * NAME COLLISION, deliberate and load-bearing to know about: this phase token is spelled exactly
+     * like the {@code context_compacted} journal EVENT TYPE ({@code AgentEventPayloads.name} for
+     * {@link ContextCompacted}). They are different things on different axes — one is a
+     * {@code progress} record's {@code phase} field, the other is a record's {@code eventType} — and
+     * a reader that greps the string finds both. Named here so 865's teardown does not assume one
+     * hit is the other.
+     *
+     * @see #PHASE_BUDGET_RAISED
+     */
     public static final String PHASE_CONTEXT_COMPACTED = "context_compacted";
 
     /** Routine progress (default {@link #INFO} severity, no trace). */

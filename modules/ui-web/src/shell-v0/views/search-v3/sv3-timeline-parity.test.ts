@@ -74,7 +74,9 @@ const RECORD: readonly ThreadEvent[] = [
   // cut. The LIVENESS `llm_call` progress that follows it in the journal projects nothing, so there
   // is no second note here.
   {
-    id: 'conv:progress:budget_raised:5', occurredAt: iso(5), kind: 'PROGRESS', originator: 'agent',
+    // The id carries the journal ORDINAL ahead of the phase (859 §D F6 / review F-1) — this note is
+    // record 9 of the JOURNAL above — so lexical order matches emission order on a same-ms tie.
+    id: 'conv:progress:00009:budget_raised:5', occurredAt: iso(5), kind: 'PROGRESS', originator: 'agent',
     content: '+12,000 tokens — continuing',
     attributes: {
       phase: 'budget_raised',
