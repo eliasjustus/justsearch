@@ -137,21 +137,14 @@ caches (observed 2026-07-14).
 The full dev-stack contention model moved to `/dev-stack`; load it before live
 backend work.
 
-**Agent-spawned helper processes are reaped automatically, not by hand.** Vite servers ui-shot
-and `serve-worktree-fe` spawn are recorded in a registry under `tmp/dev-runner/agent-spawns/`
-and best-effort reaped at session start (an abandoned prior session's leaks), session end (this
-session's own spawns), and worktree teardown (`remove-worktree.cjs` refuses to proceed while an
-unreapable holder remains) — never hand-`taskkill` one before checking
-`node scripts/dev/agent-spawn-sweep.cjs` or `node scripts/agent-analytics/world-state.mjs`
-first, since a hand kill bypasses the identity re-verification the registry exists to enforce
-(tempdoc 861). <!-- rule:agent-spawn-session-end-reap -->
+**Agent-spawned helpers (ui-shot's Vite, `serve-worktree-fe`) are reaped automatically** —
+session start/end + worktree teardown, via the `tmp/dev-runner/agent-spawns/` registry. Never
+hand-`taskkill` one; run `node scripts/dev/agent-spawn-sweep.cjs` first (tempdoc 861).
+<!-- rule:agent-spawn-session-end-reap -->
 
-**A registered holder under a build's target tree is named before the build fails, never
-killed automatically.** A `gradlew`/`npm` invocation about to write under a path a registered
-agent-spawn holds gets a PreToolUse hint naming the holder and a ready-to-run remedy — turning a
-mystifying `EPERM`/`-4048` into a one-line fix. This hint is advisory only by deliberate design
-(861 [A4]): it never kills a process on your behalf, even when the holder is your own session's
-spawn. <!-- rule:agent-spawn-build-hint -->
+**A build-blocking agent-spawn holder is named, never auto-killed.** A `gradlew`/`npm`
+invocation about to write a path a registered spawn holds gets a PreToolUse hint naming it +
+a remedy — advisory only (861 [A4]). <!-- rule:agent-spawn-build-hint -->
 
 ## Merge Workflow
 
