@@ -14,9 +14,12 @@
  * Usage:
  *   node scripts/ci/ensure-ci-on-sha.mjs [<branch>] [options]
  *
- *   <branch>              branch to check (default: the current branch). Its LOCAL head sha is the
- *                         subject; pass --remote to use the pushed head instead.
- *   --sha <sha>           check this sha explicitly (skips branch resolution).
+ *   <branch>              branch to check (default: the current branch; required when HEAD is
+ *                         detached). Its LOCAL head sha is the subject; pass --remote to use the
+ *                         pushed head instead. The branch is ALWAYS needed — `gh run list` and
+ *                         `gh workflow run` are both branch-scoped — so --sha narrows which sha
+ *                         must be found, it does not replace the branch.
+ *   --sha <sha>           the sha a run must carry, instead of resolving one from the branch head.
  *   --workflow <file>     workflow to look for / dispatch (default: ci.yml).
  *   --wait-sec <n>        how long to wait for an existing run to appear before dispatching
  *                         (default: 90). A run usually registers within ~30s of a push; this window
@@ -142,7 +145,18 @@ async function main() {
   let sha = opts.sha;
 
   try {
-    if (!branch) branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+    if (!branch) {
+      branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+      // Detached HEAD makes `rev-parse --abbrev-ref` answer the literal string "HEAD", which would
+      // go to `gh run list --branch HEAD`, match nothing, and read as "no CI ran" — a false alarm
+      // that this tool exists to be trusted against. Name the real problem instead.
+      if (branch === 'HEAD') {
+        throw new Error(
+          'HEAD is detached, so there is no branch for gh to list runs on or dispatch against. ' +
+            'Pass a branch explicitly: ensure-ci-on-sha.mjs <branch> [--sha <sha>]',
+        );
+      }
+    }
     if (!sha) {
       // The REMOTE head is what CI actually builds, so --remote is the honest default for a pushed
       // branch; the local head is kept as the default because it is what the caller just built and

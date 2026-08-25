@@ -21,7 +21,7 @@ _REAL_LOAD_REGISTER_STEPS = ui_proportion_gate.load_register_steps
 
 @pytest.fixture(autouse=True)
 def _no_roles(monkeypatch):
-    """Hermetic register: no `roles` block unless a test declares one.
+    """No `roles` block unless a test declares one.
 
     Tempdoc 816 gave `evaluate()` a register-level `roleTokenEquality` loop that runs BEFORE any
     capture and prepends one row per token-bearing role — a fact about two REPO authorities
@@ -31,6 +31,12 @@ def _no_roles(monkeypatch):
     reads as a gate regression. The role paths get their own coverage in `TestRoleTokenEquality` /
     `TestInlineSizeRole` (which patch `load_roles` themselves), and the shipped register's own
     agreement with `tokens.css` is pinned by `TestShippedRolesMatchTheRenderedTokens`.
+
+    Honest limit — this is NOT full hermeticity. `evaluate()` still reads `tokens.css` (via
+    `_role_token_rows`, which loads it before iterating) and `governance/status-facts.v1.json`; with
+    no roles and no `statusFactsSingleton` step neither can produce a row, so neither can move a
+    verdict here, but the files are read. What the fixture removes is the one repo input that DID
+    reach these assertions.
     """
     monkeypatch.setattr(ui_proportion_gate, "load_roles", lambda: {})
 
@@ -765,6 +771,20 @@ class TestInlineSizeRole:
         report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
         assert report["exit_code"] == 2
         assert report["rows"][0]["status"] == "ERROR"
+
+    def test_a_rect_without_a_width_is_exit_2(self, monkeypatch, tmp_path):
+        # An inline-size bound judged against a rect that has no WIDTH has decided nothing, so it
+        # is an ERROR for the same reason `maxWidthPx`'s missing-rect.w branch is. `chPx` is
+        # supplied deliberately: it keeps this test on the rect.w branch rather than falling
+        # through to the unresolvable-`ch` one above, which would make it pass for a wrong reason.
+        self._roles(monkeypatch, self.PROSE)
+        _register(monkeypatch, [{"selector": ".conversation", "inlineSizeRole": "prose"}])
+        mf = _role_measure_file(tmp_path, {".conversation": {"rect": {"h": 500}, "chPx": 7}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["constraint"] == "inlineSizeRole"
+        assert report["rows"][0]["status"] == "ERROR"
+        assert report["rows"][0]["error"] == "captured geometry has no rect.w"
 
 
 class TestRoleTokenEquality:
