@@ -312,9 +312,19 @@ async function consultAgentSpawnsForTeardown({
  *
  * Degrades to `{ available: false, reason }` on any failure, matching `world-state.mjs`'s own
  * per-section "degrade to unavailable, never crash" contract (never throws).
+ *
+ * `callerSessionId` (D2, closing-window findings): without it, `reapEligible`'s SAME-SESSION
+ * check (`callerSessionId && record.sessionId === callerSessionId`, `agent-spawn-reaper.cjs`)
+ * can never fire, so the calling session's OWN live spawn falls through to the CONTENTION branch
+ * and reads `other-session/lease-live` in the orientation report — a session misattributing its
+ * own record to "another session". Callers resolve it via the standard `resolveCallerSessionId`
+ * chain (env-first, worktree-local pointer-file fallback — the same chain `remove-worktree.cjs`
+ * gained in #558's F-2) and pass it through, exactly as `findBuildHolders`/
+ * `consultAgentSpawnsForTeardown` already do.
  */
 async function gatherAgentSpawnOrientation({
   mainRepoRoot,
+  callerSessionId = null,
   now = Date.now(),
   env = process.env,
   readTable = readProcessTable,
@@ -338,6 +348,7 @@ async function gatherAgentSpawnOrientation({
       records: rawEntries,
       processTable: tableResult,
       occasion: 'orientation',
+      callerSessionId,
       now,
       thresholds,
       devRunnerActive,

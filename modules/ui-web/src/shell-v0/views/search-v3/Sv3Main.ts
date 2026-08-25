@@ -1120,9 +1120,16 @@ export class Sv3Main extends JfElement {
         font-variant-numeric: tabular-nums;
       }
       /* The token figure is FINE PRINT: the reader chooses an amount of work, and the number is
-         there to be checkable, not to be the choice (tempdoc 859 §D §2.5). */
+         there to be checkable, not to be the choice (tempdoc 859 §D §2.5).
+         Live audit 2026-08-25 (D1, completing #555) — this wore --secondary-label, which measured
+         4.37:1 on the gate's 8% --success wash (same defect class as .run-prompt-facts dt above: a
+         wash sits BEHIND TEXT, so the quiet tier that clears AA on the window background fails
+         here). Same fix, same reasoning: --foreground clears AA on the wash (13.51:1), and "fine
+         print" stays quiet through size alone — it was already the smallest type in this window
+         (--font-size-sv3-xs) and stays there; the earlier flag that this ink might read too loud for
+         quiet-by-design text is answered by weight/size, not by a failing color. */
       .run-prompt-fine {
-        color: var(--secondary-label);
+        color: var(--foreground);
         font-size: var(--font-size-sv3-xs);
         font-variant-numeric: tabular-nums;
       }
@@ -1133,12 +1140,15 @@ export class Sv3Main extends JfElement {
       .run-prompt jf-control::part(control) .run-prompt-fine {
         margin-left: var(--space-1);
       }
-      /* Tempdoc 859 §D §2.6 — an honesty note, not a warning. It uses the same quiet secondary
-         colour the other tail facts do: the answer above is still the answer, and shouting would
-         mis-describe a partial result as a failure. */
+      /* Tempdoc 859 §D §2.6 — an honesty note, not a warning.
+         Live audit 2026-08-25 (D1) — never rendered during the original audit (same class as
+         .run-prompt-fine above, same wash, same fix), but it carries the identical --secondary-label
+         token and sits on the same 8% --success wash, so it fails the same way. --foreground clears
+         AA on the wash; the note stays quiet by weight and by following the "answer" text below it,
+         not by shouting a warning color, so an honesty note still reads as one. */
       .cut-short {
         margin: var(--space-2) 0 0;
-        color: var(--secondary-label);
+        color: var(--foreground);
         font-size: var(--font-size-sv3-sm);
       }
       /* Live audit 2026-08-25 (D2) — WCAG 2.2 2.5.8 (Target Size, Minimum). The checkbox measured
@@ -1147,14 +1157,18 @@ export class Sv3Main extends JfElement {
          itself for a pointer aimed at the checkbox rather than at the words. 24px is written as the
          literal the criterion names rather than routed through a spacing token that a later scale
          re-tune could drop back under the floor — the .copy-btn / .disclosure precedent from
-         tempdoc 853 (F-09). */
+         tempdoc 853 (F-09).
+         Live audit 2026-08-25 (D1, closing-window findings) — separately from the target-size fix
+         above, this label's --secondary-label ink measured 4.37:1 on the gate's 8% --success wash
+         (same defect as .run-prompt-fine/.cut-short in this file). --foreground clears AA on the
+         wash; the label stays quiet by staying the smallest type in the window, not by color. */
       .run-prompt-auto {
         flex: 1 1 100%;
         display: flex;
         align-items: center;
         gap: var(--space-1);
         min-height: 24px;
-        color: var(--secondary-label);
+        color: var(--foreground);
         font-size: var(--font-size-sv3-xs);
         cursor: pointer;
       }
