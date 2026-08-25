@@ -43,4 +43,4 @@ message names the allowed alternative; use it.
 
 compact-save / compact-restore (restores post-compaction state, leading with current
 worktree + branch), subagent-guide (injects the Hard-Invariants baseline brief into subagents),
-ui-shot-cleanup, mcp-session-inject, otlp-sink-ensure.
+mcp-session-inject, otlp-sink-ensure.

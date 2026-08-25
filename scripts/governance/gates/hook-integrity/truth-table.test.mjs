@@ -11,6 +11,7 @@ import {
   verdictForBite,
   verdictForBiteDeclared,
   verdictForTierRegisterSync,
+  verdictForOrphanHookFile,
 } from './truth-table.mjs';
 
 let passed = 0;
@@ -44,6 +45,11 @@ ok('blocking without bite spec fails', verdictForBiteDeclared({ hookId: 'x', has
 
 ok('resolved tier marker passes', verdictForTierRegisterSync({ marker: 'bash-guard.mjs', resolved: true }).status === 'pass');
 ok('unresolved tier marker fails', verdictForTierRegisterSync({ marker: 'ghost.mjs', resolved: false }).status === 'fail');
+
+// tempdoc 861 Phase 6 — the file->manifest direction
+ok('catalogued hook file passes', verdictForOrphanHookFile({ file: 'bash-guard.mjs', inCatalog: true }).status === 'pass');
+ok('orphaned hook file fails', verdictForOrphanHookFile({ file: 'ui-shot-cleanup.mjs', inCatalog: false }).status === 'fail');
+ok('orphan verdict names the file', verdictForOrphanHookFile({ file: 'ui-shot-cleanup.mjs', inCatalog: false }).reason.includes('ui-shot-cleanup.mjs'));
 
 // every verdict returns the {ruleId, status, reason} contract shape
 for (const v of [

@@ -124,6 +124,27 @@ export function verdictForBiteDeclared({ hookId, hasBite }) {
   return { ruleId: `${ID}/blocking-hook-has-bite-spec`, status: 'pass', reason: `'${hookId}' declares a bite` };
 }
 
+/**
+ * Every hook FILE on disk (excluding *.test.mjs siblings) appears in the manifest catalog —
+ * the file->manifest direction (tempdoc 861 Phase 6). Every rule above starts FROM the
+ * manifest and checks outward; a file absent from manifest.hooks is invisible to all of them,
+ * which is exactly how `ui-shot-cleanup.mjs` sat on disk for the project's whole public
+ * history while an always-loaded rules file described it as a live SessionEnd hook (861 §3c).
+ */
+export function verdictForOrphanHookFile({ file, inCatalog }) {
+  if (!inCatalog) {
+    return {
+      ruleId: `${ID}/orphan-hook-file`,
+      status: 'fail',
+      reason:
+        `hook file '${file}' exists on disk but is absent from manifest.hooks, so it can never ` +
+        `be wired or gate-checked. Add a catalog entry in governance/agent-hooks.v1.json, or ` +
+        `delete the file if it is dead code.`,
+    };
+  }
+  return { ruleId: `${ID}/hook-file-in-catalog`, status: 'pass', reason: `'${file}' is in manifest.hooks` };
+}
+
 /** Every `hook:` marker in the tier-register resolves to a manifest catalog entry. */
 export function verdictForTierRegisterSync({ marker, resolved }) {
   if (!resolved) {
