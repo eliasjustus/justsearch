@@ -23,6 +23,7 @@ import type { UnifiedChatView } from './UnifiedChatView.js';
 import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendingForceShape, takePendingSelection } from '../utils/compose.js';
 import { SHAPE_LABELS, type ShapeId } from './unifiedChatRequest.js';
 import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
+import { Control } from '../components/Control.js';
 // Search Thread Round-2 R2 — namespace import so `compose` can be spied on directly (the shift-held
 // Ask AI staging test asserts the view calls the SAME compose() seam the pre-round-2 behavior used).
 import * as composeModule from '../utils/compose.js';
@@ -552,9 +553,11 @@ describe('UnifiedChatView header controls are rung-invariant (round-14 finding 1
 });
 
 // Tempdoc 821 §4 — New chat used to be hidden ENTIRELY on a fresh/empty chat (thread.length > 0
-// gate), leaving no visible entry point. It now always renders, disabled when there is nothing to
-// reset (empty thread) and enabled once the thread has content — the .ver-nav disabled idiom.
-describe('UnifiedChatView "New chat" control (tempdoc 821 §4)', () => {
+// gate), leaving no visible entry point. It now always renders, aria-disabled (typed availability,
+// 596 face 1.1) when there is nothing to reset (empty thread) and operable once the thread has
+// content — the .ver-nav disabled idiom, with the reason reachable via aria-describedby instead of
+// a `title` a browser hides on a disabled control.
+describe('UnifiedChatView "New chat" control (tempdoc 821 §4, typed availability 596)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetUnifiedChatState();
@@ -562,25 +565,36 @@ describe('UnifiedChatView "New chat" control (tempdoc 821 §4)', () => {
     __resetUiModeForTest();
   });
 
-  function newChatButton(view: UnifiedChatView): HTMLButtonElement | null {
+  function newChatControl(view: UnifiedChatView): Element | null {
     return [...view.shadowRoot!.querySelectorAll('.header .new-chat-btn')].find(
       (b) => (b.textContent ?? '').trim() === 'New chat',
-    ) as HTMLButtonElement | null;
+    ) ?? null;
   }
 
-  it('renders New chat DISABLED (not hidden) when the thread is empty', async () => {
+  async function innerButton(control: Element): Promise<HTMLButtonElement> {
+    await (control as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    return control.shadowRoot!.querySelector('[part="control"]') as HTMLButtonElement;
+  }
+
+  it('renders New chat aria-disabled with a REACHABLE reason (not a suppressed title) when the thread is empty', async () => {
     const view = mountView();
     await view.updateComplete;
     (view as unknown as { thread: unknown[] }).thread = [];
     view.requestUpdate();
     await view.updateComplete;
-    const btn = newChatButton(view);
-    expect(btn).not.toBeNull();
-    expect(btn!.disabled).toBe(true);
-    expect(btn!.title).toBe('Already a new chat');
+    const control = newChatControl(view);
+    expect(control).not.toBeNull();
+    const btn = await innerButton(control!);
+    expect(btn.getAttribute('aria-disabled')).toBe('true');
+    // The whole point of the fix: the reason is reachable via aria-describedby, not a `title` a
+    // browser never renders on a disabled control.
+    const describedBy = btn.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const reasonEl = control!.shadowRoot!.getElementById(describedBy as string);
+    expect(reasonEl?.textContent).toBe('Already a new chat');
   });
 
-  it('renders New chat ENABLED once the thread has content', async () => {
+  it('renders New chat operable (no aria-disabled) once the thread has content', async () => {
     const view = mountView();
     await view.updateComplete;
     (view as unknown as { thread: unknown[] }).thread = [
@@ -589,10 +603,99 @@ describe('UnifiedChatView "New chat" control (tempdoc 821 §4)', () => {
     ];
     view.requestUpdate();
     await view.updateComplete;
-    const btn = newChatButton(view);
-    expect(btn).not.toBeNull();
-    expect(btn!.disabled).toBe(false);
-    expect(btn!.title).toBe('');
+    const control = newChatControl(view);
+    expect(control).not.toBeNull();
+    const btn = await innerButton(control!);
+    expect(btn.getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  // Precision guard for the two tests above. Both are satisfied by a control that renders the right
+  // ARIA and does NOTHING — which is exactly what a jf-control conversion that dropped the action
+  // wiring would look like. So assert the conversion at the seam that actually matters: activating
+  // it resets the thread, and activating it while unavailable does not.
+  it('activating the operable control starts a new conversation; activating it while unavailable does not', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { thread: unknown[] }).thread = [
+      { role: 'user', content: 'q', shapeId: 'core.free-chat' },
+      { role: 'assistant', content: 'a', shapeId: 'core.free-chat' },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    (await innerButton(newChatControl(view)!)).click();
+    await view.updateComplete;
+    expect((view as unknown as { thread: unknown[] }).thread).toEqual([]);
+
+    // Now empty, so the control is unavailable: a soft-unavailable jf-control must BLOCK, not
+    // silently run the action behind an aria-disabled that only looks like a guard.
+    (view as unknown as { thread: unknown[] }).thread = [
+      { role: 'user', content: 'kept', shapeId: 'core.free-chat' },
+    ];
+    const stale = newChatControl(view)!;
+    await view.updateComplete;
+    (view as unknown as { thread: unknown[] }).thread = [];
+    view.requestUpdate();
+    await view.updateComplete;
+    (view as unknown as { inputDraft: string }).inputDraft = 'not cleared';
+    (await innerButton(stale)).click();
+    await view.updateComplete;
+    expect((view as unknown as { inputDraft: string }).inputDraft).toBe('not cleared');
+  });
+});
+
+// Typed availability makes the unavailable control FOCUSABLE (aria-disabled, not native [disabled]),
+// which only helps if the focus ring survives. The outer-tree `::part(control)` rules are the one
+// thing that can silently blank it: a ::part declaration from the consuming tree beats the
+// primitive's own inner-tree rule regardless of specificity, so a stray `all:` or `outline:` there
+// reaches into jf-control and neutralises `button:focus-visible` (Control.ts). jsdom resolves
+// neither ::part nor adopted-stylesheet cascade, so this is pinned as style TEXT.
+describe('UnifiedChatView .new-chat-btn ::part styling does not blank the primitive focus ring', () => {
+  /** `[selectorList, declarationBlock]` for every top-level rule in a Lit stylesheet. */
+  function rulesOf(cssText: string): Array<[string, string]> {
+    const stripped = cssText.replace(/\/\*[\s\S]*?\*\//g, '');
+    return [...stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(
+      (m) => [(m[1] as string).trim(), (m[2] as string).trim()] as [string, string],
+    );
+  }
+  const declaredProps = (block: string): string[] =>
+    [...block.matchAll(/(^|;)\s*([\w-]+)\s*:/g)].map((m) => (m[2] as string).toLowerCase());
+
+  const partRules = rulesOf(unifiedChatBodyStyles.cssText).filter(([sel]) =>
+    sel.includes('jf-control.new-chat-btn::part(control)'),
+  );
+
+  it('styles the composed control through ::part at all (anti-vacuity for the rules below)', () => {
+    expect(partRules.length).toBeGreaterThan(0);
+  });
+
+  it.each(['all', 'outline', 'outline-style', 'outline-width', 'outline-color'])(
+    'no ::part(control) rule declares `%s`',
+    (prop) => {
+      const offenders = partRules.filter(([, block]) => declaredProps(block).includes(prop));
+      expect(offenders.map(([sel]) => sel)).toEqual([]);
+    },
+  );
+
+  it('the native <button> form keeps its own `all: unset`, which is what the ::part rule must not share', () => {
+    // Precision guard: the rules above would also pass if `all: unset` had simply been deleted
+    // outright, which would leave the native Activity/Export buttons wearing UA chrome.
+    const nativeReset = rulesOf(unifiedChatBodyStyles.cssText).filter(
+      ([sel, block]) =>
+        sel.includes('button.new-chat-btn') &&
+        !sel.includes('::part') &&
+        declaredProps(block).includes('all'),
+    );
+    expect(nativeReset.length).toBeGreaterThan(0);
+  });
+
+  it('the primitive still supplies the focus ring the rules above are protecting', () => {
+    // The other half of the invariant: if Control.ts stopped drawing a ring, the assertions above
+    // would keep passing while the composed control lost focus indication entirely.
+    const sheets = Array.isArray(Control.styles) ? Control.styles : [Control.styles];
+    const css = sheets.map((s) => (s as { cssText: string }).cssText).join('\n');
+    const focusRule = rulesOf(css).find(([sel]) => sel.includes('button:focus-visible'));
+    expect(focusRule, 'Control.ts declares no button:focus-visible rule').toBeDefined();
+    expect(declaredProps((focusRule as [string, string])[1])).toContain('outline');
   });
 });
 

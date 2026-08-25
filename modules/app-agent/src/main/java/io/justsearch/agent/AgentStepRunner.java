@@ -301,8 +301,10 @@ final class AgentStepRunner {
           // Tempdoc 859 D live-defect D4 — is the next prompt already unservable? The provider
           // rejects a prompt that does not fit its window outright ("request (4172 tokens) exceeds
           // the available context size"), and it needs room for the completion on top, so "servable"
-          // is not "<= n_ctx". Computed here so BOTH the gate arm and the re-apply arm read one
-          // condition.
+          // is not "<= n_ctx". Read by the GATE arm only: the re-apply arm below already compacts
+          // unconditionally, so it has no decision left for this condition to inform. Computed up
+          // here rather than inside that arm because it reads `pressureTokens`, which is the trigger
+          // quantity settled above — keeping the two on the same footing.
           boolean nextPromptUnservable =
               contextWindow > 0
                   && pressureTokens >= (int) (contextWindow * CONTEXT_UNSERVABLE_THRESHOLD);
@@ -324,10 +326,12 @@ final class AgentStepRunner {
                 sessionId, session, "WAITING_CONTEXT", "Context pressure — awaiting decision");
             AgentSession.ContextGateDecision ctxDecision =
                 AgentSession.ContextGateDecision.CONTINUE;
+            boolean gateWentUnanswered = false;
             try {
               ctxDecision = contextGateFuture.get(contextGateTimeoutSeconds(), TimeUnit.SECONDS);
             } catch (TimeoutException | java.util.concurrent.ExecutionException undecided) {
               ctxDecision = AgentSession.ContextGateDecision.CONTINUE; // watcherless ⇒ proceed
+              gateWentUnanswered = true;
             } catch (InterruptedException interrupted) {
               Thread.currentThread().interrupt();
               ctxDecision = AgentSession.ContextGateDecision.STOP;
@@ -346,6 +350,19 @@ final class AgentStepRunner {
               session.markTerminated(TerminalDisposition.CANCELLED, null, CancelTrigger.USER);
               checkpointer.checkpoint(sessionId, session, "CANCELLED", "Stopped at context gate");
               return IterationOutcome.terminated(false);
+            }
+            // Tempdoc 859 §D (F6 follow-up) — the run ASKED and nobody answered, so it decided for
+            // itself and carried on. That is a silent continue by the same definition the budget
+            // raise is one, and it was the only gate fallback narrating NOTHING — not live, not on
+            // the record. Emitted here rather than in the catch so it fires only on the path that
+            // actually proceeds (an INTERRUPT falls to STOP and returns above).
+            if (gateWentUnanswered) {
+              sink.accept(
+                  new AgentEvent.AgentProgress(
+                      AgentEvent.AgentProgress.PHASE_CONTEXT_GATE_UNANSWERED,
+                      "Context gate unanswered — continuing",
+                      iteration + 1,
+                      request.maxIterations()));
             }
             compactNow = ctxDecision == AgentSession.ContextGateDecision.SUMMARIZE;
             // CONTINUE (or post-SUMMARIZE): fall through and proceed with the current prompt.
@@ -379,7 +396,7 @@ final class AgentStepRunner {
               if (reappliedWithoutAsking) {
                 sink.accept(
                     new AgentEvent.AgentProgress(
-                        "context_gate_reapplied",
+                        AgentEvent.AgentProgress.PHASE_CONTEXT_GATE_REAPPLIED,
                         "Context filling up again — compacting without asking again",
                         iteration + 1,
                         request.maxIterations()));
@@ -391,7 +408,7 @@ final class AgentStepRunner {
               if (compactedToFit) {
                 sink.accept(
                     new AgentEvent.AgentProgress(
-                        "context_compacted_to_fit",
+                        AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED_TO_FIT,
                         "Compacted to fit before continuing — the next prompt did not fit the"
                             + " model's memory",
                         iteration + 1,
@@ -400,8 +417,16 @@ final class AgentStepRunner {
               sink.accept(new AgentEvent.ContextCompacted(dropped));
               sink.accept(
                   new AgentEvent.AgentProgress(
-                      "context_compacted",
-                      "Compacted earlier turns to stay within the model's memory",
+                      AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED,
+                      // Tempdoc 859 §D (F6 follow-up) — the COUNT, by the same standard the raise
+                      // note is held to: "history was shortened" without saying by how much is not
+                      // an accountability record. The journaled `ContextCompacted` event has carried
+                      // `droppedMessages` all along; the note that outlives the run now says it too.
+                      String.format(
+                          java.util.Locale.ROOT,
+                          "Compacted %d earlier turn%s to stay within the model's memory",
+                          dropped,
+                          dropped == 1 ? "" : "s"),
                       iteration + 1,
                       request.maxIterations()));
               // Proceed THIS iteration with the compacted (smaller) prompt; recompute the budget
@@ -1008,7 +1033,7 @@ final class AgentStepRunner {
     }
     sink.accept(
         new AgentEvent.AgentProgress(
-            "budget_raised",
+            AgentEvent.AgentProgress.PHASE_BUDGET_RAISED,
             // Locale.ROOT — the grouping separator is part of a WIRE string the FE renders verbatim,
             // so a German JVM must not turn "+7,777" into "+7.777" (which reads as 7.777 tokens).
             String.format(java.util.Locale.ROOT, "+%,d tokens — continuing", raised),

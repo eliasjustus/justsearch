@@ -376,6 +376,12 @@ export function projectSv3RunPrompts(
         // run's terminal (which was therefore structurally 0 at every mid-run gate). It is also the
         // number the receipt uses, so the panel and the receipt cannot describe different runs — the
         // single-authority rule {@link Sv3RunFeed.toolCallCount} already states for this window.
+        //
+        // DELIBERATE BOUNDARY, worth knowing before "reconciling" the two: this counts CARDS, and a
+        // handoff draws one (`AgentStepRunner` emits ToolCallProposed/ToolExecutionCompleted for it)
+        // without calling `session.recordExecution`, so the backend's own `done.toolCallsExecuted`
+        // excludes it. The panel wants what the reader can see and scroll to; the terminal payload
+        // wants tool executions. They answer different questions and are not expected to match.
         toolCallsExecuted: feed.toolCallCount,
         // Live from the run's `progress` frames (and the reattach primer); `null` while nothing has
         // said, which the panel OMITS rather than rendering as zero.

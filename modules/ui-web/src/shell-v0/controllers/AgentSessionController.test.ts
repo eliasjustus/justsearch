@@ -199,7 +199,6 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
       // mid-run reader — the budget gate's fact panel above all — was told "0 steps" by a
       // controller that had simply never been told. `null` is what "not told" has to look like.
       expect(ctrl.iterationsUsed).toBeNull();
-      expect(ctrl.toolCallsExecuted).toBeNull();
     });
 
     it('learns the step count from the run\'s own progress frames, before any terminal', () => {
@@ -230,7 +229,7 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
       expect(ctrl.iterationsUsed).toBe(4);
     });
 
-    it('a REATTACHING tab reads both counts off the primer, whose frames the ring may have evicted', () => {
+    it('a REATTACHING tab reads the step count off the primer, whose frames the ring may have evicted', () => {
       // The ring carries narrative only and evicts, so a long run parked at a gate can have every
       // progress frame gone while the gate is still open and answerable. The snapshot is then the
       // only authority left, and it comes straight off `AgentSession`.
@@ -242,7 +241,6 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
         activeAgentId: 'primary',
       });
       expect(ctrl.iterationsUsed).toBe(7);
-      expect(ctrl.toolCallsExecuted).toBe(4);
     });
 
     it('a fresh dispatch forgets the previous run\'s counts rather than carrying them over', () => {
@@ -257,7 +255,6 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
       // `exitReplay` is the public door onto the same reset the next dispatch performs.
       ctrl.exitReplay();
       expect(ctrl.iterationsUsed).toBeNull();
-      expect(ctrl.toolCallsExecuted).toBeNull();
     });
   });
 
@@ -540,7 +537,6 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
     const assistantTexts = ctrl.conversation.filter(e => e.type === 'assistant-text');
     expect(assistantTexts.map(e => e.content)).toEqual(['partial stream', 'final canonical response']);
     expect(ctrl.iterationsUsed).toBe(3);
-    expect(ctrl.toolCallsExecuted).toBe(1);
     expect(ctrl.totalTokensUsed).toBe(1234);
     expect(ctrl.isStreaming).toBe(false);
   });
@@ -1727,9 +1723,25 @@ describe('the reasoning-region boundary rule (859 §A)', () => {
   it('C-7b: slice D’s budget_raised progress note is a legitimate flush carrier', () => {
     drive([
       think('this will need more room'),
-      { eventType: 'progress', payload: { phase: 'budget_raised', message: 'Budget raised' } },
+      { eventType: 'progress', payload: { phase: 'budget_raised', message: '+12,000 tokens — continuing' } },
     ]);
     expect(types()).toEqual(['reasoning', 'progress']);
+    // Tempdoc 859 §D F6 — this is the semantic the RECORD side was made to match, so the assertion
+    // now names what it must match: the note carries the AMOUNT (a raise without the number is not an
+    // accountability record) and the typed phase the label authority projects from.
+    expect(ctrl.conversation[1]?.content).toBe('+12,000 tokens — continuing');
+    expect(ctrl.conversation[1]?.phase).toBe('budget_raised');
+  });
+
+  it('C-7c: the durable/ephemeral split is RECORD-side — live, EVERY progress phase carries', () => {
+    // Tempdoc 859 §D F6 — the asymmetry that remains, stated rather than discovered. The classification
+    // decides what OUTLIVES the run; it does not touch the live stream, where a spinner still cuts the
+    // region and appends its own entry exactly as `budget_raised` does. This is why the record's
+    // carrier set is a strict SUBSET of the live one, and why the difference is covered losslessly by
+    // the fold's hold rule (`AgentInteractionMapperTest` M-2) rather than by dropping a block.
+    drive([think('what next'), { eventType: 'progress', payload: { phase: 'llm_call', message: 'Calling LLM' } }]);
+    expect(types()).toEqual(['reasoning', 'progress']);
+    expect(ctrl.conversation[1]?.phase).toBe('llm_call');
   });
 
   it('C-8: an AUTO-RUN tool (exec_started with no prior pending) closes the region too', () => {

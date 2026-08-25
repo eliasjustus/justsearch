@@ -1597,7 +1597,7 @@ class AgentLoopServiceTest {
         ScriptedResponse.toolCall("call_3", "core_search", "{}").withUsage(50, 30),
         ScriptedResponse.textOnly("Done").withUsage(10, 5)));
 
-    // Tempdoc 859 §D §2.1 — the budget is now `n_ctx * effortMultiplier` (Standard 5x), not
+    // Tempdoc 859 §D §2.1 — the budget is now `n_ctx * effortMultiplier` (Standard 8x), not
     // `n_ctx - 256`. A zero context window is what yields the zero budget this scenario needs: the
     // very first projection already exceeds it, so the run gates before any LLM call. (0 also
     // disables the context-pressure gate by its own `contextWindow > 0` guard, which keeps this test
@@ -1957,8 +1957,8 @@ class AgentLoopServiceTest {
     //   countPromptTokens = 4 messages * 10 = 40 (system+user+assistant+tool)
     //   40 >= -100 → budget exhausted → attemptBudgetEdgeFinalize triggered
     //
-    // The spend sits on the COMPLETION axis on purpose. Exhausting a 5x budget in one call means
-    // spending ~5 windows, and a REPORTED PROMPT that large would legitimately trip the
+    // The spend sits on the COMPLETION axis on purpose. Exhausting a Standard budget in one call
+    // means spending several windows, and a REPORTED PROMPT that large would legitimately trip the
     // context-pressure gate too (859 §D §2.7(c) now reads the reported prompt) — which would leave
     // this test straddling two mechanisms. recordUsage decrements identically for either axis, so
     // the budget arithmetic under test is unchanged and the context axis stays quiet.
@@ -2183,7 +2183,7 @@ class AgentLoopServiceTest {
   void resumedRunKeepsItsEffortRung() {
     // The defect: resume rebuilt a fresh AgentRequest through the short constructor, which carries
     // no rung — and an absent rung IS Standard by design, so a Thorough run silently re-sized from
-    // 15x to 5x with nothing anywhere saying so. Asserted as a CONSEQUENCE (the budget the resumed
+    // 15x to Standard with nothing anywhere saying so. Asserted as a CONSEQUENCE (the budget the resumed
     // run actually got), not by reading the meta key back.
     int thorough = budgetAfterReconstruction("resume_thorough", "thorough",
         (service, sink) -> service.resumeSession("resume_thorough", sink));
@@ -2457,6 +2457,72 @@ class AgentLoopServiceTest {
         eventsOfType(events, AgentEvent.AgentProgress.class).stream()
             .anyMatch(p -> "context_gate_reapplied".equals(p.phase())),
         "and the run must SAY it re-applied the decision — bounded autonomy, never silent");
+    // Tempdoc 859 §D (F6 follow-up) — the FIRST crossing parks, nobody answers (the test JVM sets
+    // contextGateTimeoutSec=0), and the run proceeds on its own. That is a silent continue by the
+    // same definition the budget raise is one, and it narrated NOTHING before this.
+    assertTrue(
+        eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+            .anyMatch(p -> "context_gate_unanswered".equals(p.phase())),
+        "an UNANSWERED gate that proceeds must say so too — it is the same guard rail");
+    // The compaction note names HOW MUCH it dropped: "history was shortened" without the number is
+    // not an accountability record, by the same standard the raise note is held to.
+    assertTrue(
+        eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+            .filter(p -> "context_compacted".equals(p.phase()))
+            .allMatch(p -> p.message().matches("Compacted \\d+ earlier turns? .*")),
+        "every compaction note must carry its dropped count");
+  }
+
+  @Test
+  @DisplayName("859 §D F6 — an ANSWERED context gate does NOT emit the unanswered note")
+  void answeredContextGateEmitsNoUnansweredNote() throws Exception {
+    // The discriminating half: the note must key on the TIMEOUT fallback, not merely on the gate
+    // having been opened. Held long enough that the resolve below is what ends the wait — with
+    // timeout 0 the gate falls straight through and this test would pass for the wrong reason.
+    String prev = System.getProperty("justsearch.agent.contextGateTimeoutSec");
+    System.setProperty("justsearch.agent.contextGateTimeoutSec", "10");
+    try {
+      var ai =
+          new ScriptedAiService(
+              List.of(
+                  ScriptedResponse.toolCall("c1", "core_search", "{}").withUsage(20, 10),
+                  ScriptedResponse.textOnly("done").withUsage(20, 10)));
+      var service = buildServiceWithSmallBudget(ai, 50);
+
+      var events = new CopyOnWriteArrayList<AgentEvent>();
+      var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+      var parked = new CompletableFuture<AgentEvent.ContextGatePending>();
+      Consumer<AgentEvent> sink =
+          e -> {
+            events.add(e);
+            if (e instanceof AgentEvent.SessionStarted s) {
+              sessionId.set(s.sessionId());
+            }
+            if (e instanceof AgentEvent.ContextGatePending p) {
+              parked.complete(p);
+            }
+          };
+      var request =
+          new AgentRequest(
+              userMessage("search"), List.of(), 4, List.of(), null, null, null, null, List.of(),
+              "thorough");
+      var loopThread = new Thread(() -> service.runAgent(request, sink));
+      loopThread.setDaemon(true);
+      loopThread.start();
+
+      parked.get(8, java.util.concurrent.TimeUnit.SECONDS);
+      assertTrue(
+          service.resolveContextGate(sessionId.get(), "continue"),
+          "the decision reached the session — otherwise the gate times out and this asserts nothing");
+      loopThread.join(8000);
+
+      assertTrue(
+          eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+              .noneMatch(p -> "context_gate_unanswered".equals(p.phase())),
+          "the reader answered — the run did not decide for itself, so it must not say it did");
+    } finally {
+      restoreProperty("justsearch.agent.contextGateTimeoutSec", prev);
+    }
   }
 
   @Test
@@ -2466,10 +2532,15 @@ class AgentLoopServiceTest {
     // the threshold while the provider-reported prompt is far over it — the exact case where the
     // old trigger fired only after the real prompt had already exceeded the window, i.e. after the
     // damage. Projection = messages.size() * 10 = 20..40; threshold = 0.8 * 200 = 160.
+    //
+    // The reported prompt is 175, deliberately NOT 190: D4's unservable line is 0.95 * 200 = 190, so
+    // a 190 here would sit exactly ON it and this test would be exercising the compact-before-
+    // continue path while still being named for the trigger. 175 clears the 0.8 trigger it is about
+    // and stays clear of the 0.95 one it is not.
     var ai =
         new ScriptedAiService(
             List.of(
-                ScriptedResponse.toolCall("c1", "core_search", "{}").withUsage(190, 10),
+                ScriptedResponse.toolCall("c1", "core_search", "{}").withUsage(175, 10),
                 ScriptedResponse.textOnly("Done")));
     var service = buildServiceWithSmallBudget(ai, 200); // thorough ⇒ budget 3000, never binding
     var request =
@@ -2480,7 +2551,7 @@ class AgentLoopServiceTest {
 
     assertFalse(
         eventsOfType(events, AgentEvent.ContextGatePending.class).isEmpty(),
-        "a reported prompt of 190 against a 200-token window IS context pressure, even though the"
+        "a reported prompt of 175 against a 200-token window IS context pressure, even though the"
             + " projection (max 40) never sees it");
   }
 
@@ -2571,17 +2642,26 @@ class AgentLoopServiceTest {
     var ai = new ScriptedAiService(
         // PRIMARY: handoff_to_organizer, consuming enough tokens to exhaust budget
         ScriptedResponse.toolCall("hc-1", "handoff_to_organizer", "{\"reason\":\"doc.md\"}")
-            .withUsage(35, 1450), // 1485 tokens → remaining = 1450 - 1485 = -35
+            .withUsage(35, 1600), // 1635 tokens → remaining = 1600 - 1635 = -35
         // Organizer E0a: ingest_files (should be called, NOT replaced by finalize)
         ScriptedResponse.toolCall("ic-1", "core_ingest_files", "{\"paths\":[\"doc.md\"]}"),
         // Organizer done
         ScriptedResponse.textOnly("Ingested doc.md."));
-    // Tempdoc 859 §D §2.1 — contextWindow=290, no rung named ⇒ Standard 5x ⇒ budget = 1450.
-    // PRIMARY consumes 1485 → remaining = -35 (the spend rides the completion axis so the
-    // context-pressure gate stays out of this test; see budgetEdgeFinalize_synthesizesFromToolResults).
+    // Tempdoc 859 §D §2.1 — contextWindow=200, no rung named ⇒ Standard 8x ⇒ budget = 1600.
+    //
+    // THE FIXTURE HAS TO BE RE-FITTED WHENEVER THE MULTIPLIER MOVES, and this test is the reason
+    // that is not a chore: at the pre-L1 5x it read `contextWindow=290 ⇒ budget 1450` against a
+    // 1485-token spend, and at 8x that same window bought 2320 — so `budgetExhausted` was FALSE, the
+    // E0a branch was never entered, and the test passed while proving nothing. Deleting the
+    // `shouldForceToolCall` guard from AgentStepRunner left it GREEN. The window is therefore chosen
+    // so `window * multiplier` is exact (200 * 8 = 1600) and the spend clears it by a visible margin.
+    //
+    // PRIMARY consumes 1635 → remaining = -35 (the spend rides the completion axis so the
+    // context-pressure gate stays out of this test — the reported prompt of 35 is far below both
+    // 0.8*200=160 and D4's 0.95*200=190; see budgetEdgeFinalize_synthesizesFromToolResults).
     // Organizer's iteration_start: projected = messages.size() * 10 = some positive value >= -35
     // → budgetExhausted=true, but shouldForceToolCall=true → bypass → Organizer LLM call fires.
-    var service = buildServiceWithSmallBudgetAndProfiles(ai, 290, profiles);
+    var service = buildServiceWithSmallBudgetAndProfiles(ai, 200, profiles);
     var request = new AgentRequest(
         userMessage("Ingest doc.md"), List.<String>of(), 10, profiles, "primary");
     runWithRequest(service, request);

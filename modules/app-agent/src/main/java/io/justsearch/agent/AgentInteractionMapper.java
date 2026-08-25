@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.agent;
 
+import io.justsearch.agent.api.AgentEvent;
 import io.justsearch.agent.api.interaction.InteractionEvent;
 import io.justsearch.agent.api.interaction.InteractionEventKind;
 import java.time.Instant;
@@ -10,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Tempdoc 561 P-A/P-B (correction) — the READ-TIME projection of a persisted {@code AgentRunStore}
@@ -19,7 +21,8 @@ import java.util.Optional;
  * {@code AgentRunStore.events.ndjson} (§10: "the live thread is reconstructable from events.ndjson").
  * The unified thread reads those records and maps them here — it does NOT write a second store. Only
  * the events that constitute the durable thread become interaction events; transient/streaming events
- * (chunks, proposed/approved/started, progress, budget, session_started) map to empty.
+ * (chunks, approved, budget, session_started, and the LIVENESS half of {@code progress}) map to
+ * empty. The accountability half of {@code progress} does not — see the case's own rule.
  *
  * <p>Input is one {@code events.ndjson} record: {@code {timestamp: ISO, eventType: String, payload:
  * {…}}} (the shape {@code AgentRunStore.appendEvent} writes via {@code toPayload}).
@@ -28,6 +31,23 @@ public final class AgentInteractionMapper {
 
   /** 24h — a sanity ceiling on a folded block's duration, not a product limit (see {@code addBlock}). */
   private static final long MAX_PLAUSIBLE_REASONING_MS = 24L * 60L * 60L * 1000L;
+
+  /**
+   * Tempdoc 859 §D (F6 follow-up) — the {@code progress} phases that become durable thread notes. The
+   * classification rule, and why everything else stays ephemeral, is stated at the {@code "progress"}
+   * case in {@link #fromRunEvent}.
+   */
+  static final Set<String> DURABLE_PROGRESS_PHASES =
+      Set.of(
+          AgentEvent.AgentProgress.PHASE_BUDGET_RAISED,
+          AgentEvent.AgentProgress.PHASE_CONTEXT_GATE_UNANSWERED,
+          AgentEvent.AgentProgress.PHASE_CONTEXT_GATE_REAPPLIED,
+          AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED,
+          // 859 D live-defect D4 — the run overriding the reader's own CONTINUE. If any phase in this
+          // set has to survive a reload it is this one: it is the justification for a compaction the
+          // reader did not ask for, and it is emitted two lines above PHASE_CONTEXT_COMPACTED, which
+          // does survive.
+          AgentEvent.AgentProgress.PHASE_CONTEXT_COMPACTED_TO_FIT);
 
   private AgentInteractionMapper() {}
 
@@ -41,6 +61,28 @@ public final class AgentInteractionMapper {
    */
   public static Optional<InteractionEvent> fromRunEvent(
       Map<String, Object> record, String conversationId) {
+    return fromRunEvent(record, conversationId, 0);
+  }
+
+  /**
+   * As {@link #fromRunEvent(Map, String)}, with the record's ORDINAL — its 0-based position in the
+   * run's journal, which is the run's true emission order (the journal is append-only and read back
+   * in write order).
+   *
+   * <p>Tempdoc 859 §D (F6 follow-up) — it exists for the same reason {@code nodeEventId}'s role
+   * ordinal does: the FE tiebreaker on equal timestamps is {@code id.localeCompare}, so an id with no
+   * ordinal in it sorts by whatever text it happens to contain. For the progress notes that is the
+   * PHASE NAME, and {@code "context_compacted"} sorts BEFORE {@code "context_gate_reapplied"} while
+   * being emitted AFTER it — so a reloaded run could draw the compaction above the note explaining
+   * why it happened. Those two are emitted back-to-back ({@code AgentStepRunner}'s second-crossing
+   * path), so the millisecond tie is the normal case there, not a rare one.
+   *
+   * <p>A per-phase ordinal would NOT have worked: {@code budget_raised} has two emit sites, one
+   * before the context block and one after it, so its position relative to the compaction notes is
+   * not a property of the phase. The journal index is the only ordinal that is right at both sites.
+   */
+  public static Optional<InteractionEvent> fromRunEvent(
+      Map<String, Object> record, String conversationId, int ordinal) {
     if (!(record.get("eventType") instanceof String eventType)) {
       return Optional.empty();
     }
@@ -246,6 +288,56 @@ public final class AgentInteractionMapper {
                       "resultCount", payload.get("resultCount"),
                       "docIds", payload.get("docIds"),
                       "executedAt", payload.get("executedAt"))));
+      // Tempdoc 859 §D (F6 follow-up) — a progress note is DURABLE when it records a decision the run
+      // took on the reader's behalf, or a change it made to the run's material inputs. It is
+      // EPHEMERAL when it narrates what the run is doing right now.
+      //
+      // The first kind is the accountability record §D's guard rail promises ("every silent continue
+      // is NARRATED", SearchV3View.ts:2627): a raise the reader never approved, a gate that asked and
+      // proceeded when nobody answered, a context decision re-applied without asking again, a
+      // compaction that dropped earlier turns out of the prompt the answer was produced from. A
+      // disclosure that expires the moment the conversation is reloaded is worse than one never made,
+      // because the reader has already learned to trust it — the same argument §D §2.6 made for
+      // `disposition` on the persisted answer.
+      //
+      // The second kind is a spinner. Its durable trace already exists in the events around it, and
+      // the whole ephemeral set is: `llm_call` (once per iteration, and the iteration is visible in
+      // the steps it produced), `init` (restates `session_started`), `finalizing` (its outcome is the
+      // terminal `disposition`), `budget_gate_held` and `context_gate_held` (the ASK; every way either
+      // one RESOLVES is a durable note above or a terminal disposition), `retry_after_tool_failure`
+      // (both the failure and the retry are already durable tool events), `run_unobserved_parked` (a
+      // park the run left again), and `workflow:*` (mirrors the workflow's own node journal).
+      // Persisting those would add a record row per iteration saying nothing the record does not.
+      //
+      // DEFAULT IS EPHEMERAL, deliberately: a phase added later must not start polluting every
+      // reloaded conversation by accident. A new accountability phase is declared as a constant beside
+      // its emit site and listed in DURABLE_PROGRESS_PHASES here — the two-site agreement is why those
+      // tokens are constants and the liveness ones are literals, and
+      // `AgentInteractionMapperTest.everyDeclaredPhaseConstantIsClassified` fails the build if a new
+      // constant is declared and neither list claims it.
+      case "progress" -> {
+        String phase = str(payload.get("phase"));
+        if (!DURABLE_PROGRESS_PHASES.contains(phase)) {
+          yield Optional.empty();
+        }
+        yield Optional.of(
+            new InteractionEvent(
+                progressEventId(conversationId, ordinal, phase, stamp),
+                conversationId,
+                at,
+                InteractionEventKind.PROGRESS,
+                "agent",
+                // The narration itself, in `content` — where BOTH windows' note renderers read it
+                // from (`sv3-record` note text, `runStepPresentation.stepLabel`'s label-or-content
+                // choice). `phase` rides the attributes as the typed token, exactly as the live entry
+                // carries it. `budget_raised` is deliberately absent from `PROGRESS_PHASE_LABELS` so
+                // it falls back to this message: a static label would erase the amount ("+12,000
+                // tokens"), and the same holds for the compaction's dropped count. (`context_compacted`
+                // IS in that table — runStepPresentation.ts:86 — so the OTHER window still shows its
+                // fixed label there; that is a pre-existing choice this note does not change.)
+                str(payload.get("message")),
+                attrs("phase", phase, "severity", payload.get("severity"))));
+      }
       // Tempdoc 848 §2.4 — NOT dropped: reasoning chunks are FOLDED by `fromRunEvents` into blocks
       // that ride on the turn they belong to. Stated as its own case rather than left to `default` so
       // the vocabulary is legible — a per-chunk thread event would mean ~445 events for one turn.
@@ -300,7 +392,8 @@ public final class AgentInteractionMapper {
     Instant runFirstOutput = null;
     Instant lastSeen = null;
 
-    for (Map<String, Object> record : records) {
+    for (int ordinal = 0; ordinal < records.size(); ordinal++) {
+      Map<String, Object> record = records.get(ordinal);
       String eventType = record.get("eventType") instanceof String s ? s : "";
       Instant at = parseTs(record.get("timestamp"));
       lastSeen = at;
@@ -322,16 +415,22 @@ public final class AgentInteractionMapper {
         runStart = null;
         runFirstOutput = null;
       }
-      Optional<InteractionEvent> projected = fromRunEvent(record, conversationId);
+      Optional<InteractionEvent> projected = fromRunEvent(record, conversationId, ordinal);
       if (projected.isEmpty()) {
         continue;
       }
       InteractionEvent event = projected.get();
       // Tempdoc 859 §A §1.3 — flush onto the next event that ACTUALLY PROJECTS, of ANY kind. The
       // event that CUTS a region is very often one this projection drops (`budget_update` is emitted
-      // the instant each LLM stream ends, and `progress` / `handoff_proposed` / the gates project
-      // nothing either), so a rule keyed on the cutting event names a carrier that does not exist
-      // downstream. Retargeting onto the next ASSISTANT_MESSAGE — the rule this replaces — is why a
+      // the instant each LLM stream ends, and `handoff_proposed` / the gates / a LIVENESS `progress`
+      // project nothing either), so a rule keyed on the cutting event names a carrier that does not
+      // exist downstream. §D's F6 follow-up changes WHICH events project, not this rule: an
+      // accountability `progress` note now carries, exactly as the live side already does
+      // (`AgentSessionController.onProgress` appends an entry, so the open region is committed and the
+      // note follows it — `AgentSessionController.test.ts` C-7b). Its cut/carry pair therefore agrees
+      // with the live one, and the record's carrier set stays a SUBSET of the live one, with the hold
+      // rule covering the difference losslessly (M-2).
+      // Retargeting onto the next ASSISTANT_MESSAGE — the rule this replaces — is why a
       // seven-step run's seven blocks all landed on its single terminal answer and drew as a wall.
       // Chronologically this is exact: the block was produced BEFORE the cutting event, the cutting
       // event renders nothing, so the block renders immediately before the next thing that does.
@@ -441,6 +540,25 @@ public final class AgentInteractionMapper {
    * boundary first and render the node's output OUTSIDE its segment (the reload defect Fix A targets); the
    * index keeps node N's {@code end} ahead of node N+1's {@code start} on the cross-node tie.
    */
+  /**
+   * Tempdoc 859 §D (F6 follow-up) — a durable progress note's stable id, built on the SAME rule
+   * {@code nodeEventId} states: LEXICAL order == TEMPORAL order on a same-millisecond tie, because
+   * the FE tiebreaker is {@code id.localeCompare}. The journal ORDINAL leads the phase for exactly
+   * that reason — ordered by phase name, {@code context_compacted} would sort ahead of the
+   * {@code context_gate_reapplied} note that explains it, drawing the effect above its cause on the
+   * one path that emits them back-to-back.
+   */
+  private static String progressEventId(
+      String conversationId, int ordinal, String phase, String stamp) {
+    return conversationId
+        + ":progress:"
+        + String.format(java.util.Locale.ROOT, "%05d", ordinal)
+        + ":"
+        + phase
+        + ":"
+        + stamp;
+  }
+
   private static String nodeEventId(
       String conversationId, Object indexObj, int role, Object nodeId, String stamp) {
     int idx = indexObj instanceof Number n ? n.intValue() : 0;

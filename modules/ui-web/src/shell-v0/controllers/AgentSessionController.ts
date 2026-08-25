@@ -329,6 +329,13 @@ export interface BudgetGateState {
  * older turns / stop.
  */
 export interface ContextGateState {
+  /**
+   * CONTEXT USED, despite the name — 859 D live-defect D3. The wire field is still `promptTokens`
+   * (a value change, not a schema change), but since D3 the backend puts the PRESSURE quantity in
+   * it: `max(projection, lastReportedPrompt)`, the figure the gate actually fired on. It shipped the
+   * raw projection before, which is why a live gate read 2463/4096 (60%) while the run had crossed
+   * 82%. Renderers must word it as context used, never as "the prompt".
+   */
   promptTokens: number;
   contextWindow: number;
 }
@@ -407,8 +414,6 @@ export class AgentSessionController implements CoreAgentRunHandlers {
    */
   iterationsUsed: number | null = null;
 
-  /** Tool executions the run reported, per `done`. `null` until a terminal says so. */
-  toolCallsExecuted: number | null = null;
   // Tempdoc 565 §3.A — the grounding behind the latest answer: the clickable local-passage sources
   // and (when the matcher ran) the per-sentence inline citations. Read by the sources pane.
   answerSources: AgentSource[] = [];
@@ -781,7 +786,6 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.lastStreamedAnswer = '';
     this.isStreaming = false;
     this.iterationsUsed = null;
-    this.toolCallsExecuted = null;
     this.answerSources = [];
     this.answerCitations = [];
     this.answerEvidenceRunId = null;
@@ -1139,7 +1143,6 @@ export class AgentSessionController implements CoreAgentRunHandlers {
       ];
     }
     this.iterationsUsed = payload.iterationsUsed ?? null;
-    this.toolCallsExecuted = payload.toolCallsExecuted ?? null;
     this.totalTokensUsed = payload.totalTokensUsed ?? null;
     // Tempdoc 565 §3.A — capture the answer's grounding (clickable local-passage citations).
     // The generated `done` payload now types `sources`/`citations` (§13.8 schema-drift fix) — no
@@ -1376,7 +1379,6 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     // the step count may be long gone while the gate they announced is still open and answerable.
     // Both counts come straight off `AgentSession` (`AgentLoopService`'s snapshot supplier).
     this.iterationsUsed = maxKnown(this.iterationsUsed, payload.iteration);
-    this.toolCallsExecuted = maxKnown(this.toolCallsExecuted, payload.toolCallsExecuted);
     if (payload.activeAgentId) {
       this.activeAgentId = payload.activeAgentId;
     }
@@ -1753,7 +1755,6 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.lastStreamedAnswer = '';
     this.reasoning.reset();
     this.iterationsUsed = null;
-    this.toolCallsExecuted = null;
     this.totalTokensUsed = null;
     this.budgetUpdates = [];
     this.budgetGate = null;
@@ -2385,7 +2386,6 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.isStreaming = false;
     this.sessionId = null;
     this.iterationsUsed = null;
-    this.toolCallsExecuted = null;
     this.totalTokensUsed = null;
     this.budgetUpdates = [];
     this.budgetGate = null;

@@ -74,7 +74,6 @@ interface FakeCtrl {
   sessionId: string | null;
   /** 859 D live-defect D1 — tri-state: `null` is "no authority has reported a step yet". */
   iterationsUsed: number | null;
-  toolCallsExecuted: number | null;
   budgetUpdates: BudgetUpdate[];
   reasoning: ReasoningController;
   budgetGate: null;
@@ -102,7 +101,6 @@ function makeCtrl(): FakeCtrl {
     conversationId: null,
     sessionId: null,
     iterationsUsed: null,
-    toolCallsExecuted: null,
     budgetUpdates: [],
     // Tempdoc 859 §A — the live run feed derives its open-region item from the real controller.
     reasoning: new ReasoningController(() => {}),
