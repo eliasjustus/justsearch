@@ -3469,6 +3469,7 @@ export class SearchV3View extends JfElement {
           state=${this.composerState}
           slot-kind=${slot.kind}
           slot-reason=${slot.reason}
+          halt-reason=${slot.haltReason}
           ?steerable=${this.steerableRun !== null}
           unavailable-reason=${this.askUnavailableReason}
           delegate-unavailable-reason=${this.delegateUnavailableReason}

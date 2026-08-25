@@ -378,6 +378,167 @@ describe('a cancelled run comes back from the record in the live vocabulary', ()
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE TWO CANCELS D3'S FACT COULD NOT REACH (owner decisions 2026-08-26).
+ *
+ * D3 above keys on the CANCELLED disposition, which rides on the persisted assistant message. Two
+ * real cancels never write one:
+ *
+ *   1. ANSWERLESS — the reader stops the run before it answers. `AgentStepRunner.executeIteration`
+ *      emits `AgentError`/CANCELLED and returns; there is no `AgentDone`, so no assistant row and no
+ *      disposition. The derivation fell through to the error entry and the record said "failed" —
+ *      D3's exact defect, surviving in the case D3's fact could not reach.
+ *   2. LATE — the stop lands as the run reaches its terminal. The run really did finish, so its
+ *      disposition is truthfully COMPLETED and no error is logged at all; the reader's act reaches
+ *      the record only as the `stop_requested` progress note `AgentLoopService.cancelSession` now
+ *      writes.
+ *
+ * Both are read through the ONE predicate in `sv3-honesty.ts`, so the halt has one meaning here.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+describe('a cancel with no CANCELLED disposition is still the reader’s own halt', () => {
+  const toolRow = (): ThreadEvent =>
+    event('e2', 'TOOL_ACTIVITY', 'core_search', {
+      callId: 'c1',
+      toolName: 'core_search',
+      arguments: '{"q":"lease"}',
+      risk: 'low',
+      status: 'completed',
+      output: '30 hits',
+    });
+
+  it('D1: an ANSWERLESS cancel reads halted — it used to read failed', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      // No ASSISTANT_MESSAGE at all: the run never reached a terminal. The typed code is the ONLY
+      // thing on the record that says what happened, and it was already there — this is a read, not
+      // a new field. (It is `errorCode`, never the prose: matching "Session cancelled" would be the
+      // proxy the record's own wire contract makes unnecessary.)
+      event('e3', 'ERROR', 'Session cancelled', { errorCode: 'CANCELLED' }),
+    ]);
+    // The whole defect in one assertion: this was 'failed'.
+    expect(turn?.status).toBe('halted');
+    expect(turn?.kind).toBe('agent');
+    // …and the record genuinely has no disposition to have read instead.
+    expect(turn?.disposition).toBeNull();
+  });
+
+  it('D1: and its receipt names the work, with NO outcome word at all', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      event('e3', 'ERROR', 'Session cancelled', { errorCode: 'CANCELLED' }),
+    ]);
+    expect(sv3RunReceiptLabel(turn!.toolCalls, turn!.status, turn!.disposition)).toBe(
+      '1 tool call',
+    );
+  });
+
+  it('D1: …and the TIMELINE does not call it an Error either', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      // The reader's act, as the backend now records it — this is the row that stands for the stop.
+      event('e3', 'PROGRESS', 'You stopped this run', { phase: 'stop_requested' }),
+      // …and the entry the cancel logs on its way down, which used to draw a second row labelled
+      // "Error" — the receipt's old "failed", one line lower.
+      event('e4', 'ERROR', 'Session cancelled', { errorCode: 'CANCELLED' }),
+    ]);
+    const notes = turn!.activity.filter((i) => i.kind === 'note');
+    expect(notes.map((n) => (n as { label: string }).label)).toEqual(['Progress']);
+    expect(notes.map((n) => (n as { text: string }).text)).toEqual(['You stopped this run']);
+  });
+
+  it('D1 twin: a REAL error still draws its note — only the cancel entry is dropped', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      event('e3', 'ERROR', 'the model returned no candidate', { errorCode: 'PROVIDER_ERROR' }),
+    ]);
+    const notes = turn!.activity.filter((i) => i.kind === 'note');
+    expect(notes.map((n) => (n as { label: string }).label)).toEqual(['Error']);
+  });
+
+  it('D1: dropping the note keeps the entry a REASONING CARRIER (533 flush discipline)', () => {
+    clock = 0;
+    // The carrier question the suppression has to answer: a halted run's trailing thinking is folded
+    // onto its terminal ERROR event by `AgentInteractionMapper.fromRunEvents`, and `sv3-record.ts`
+    // reads reasoning off every item BEFORE the per-kind arms. So the blocks must still arrive, in
+    // position, with only the note gone — otherwise this would be silently deleting the last thing
+    // the model thought before the reader stopped it.
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      event('e3', 'ERROR', 'Session cancelled', {
+        errorCode: 'CANCELLED',
+        reasoning: [{ text: 'Checking the third lease…', durationMs: 900 }],
+      }),
+    ]);
+    expect(turn!.activity.filter((i) => i.kind === 'note')).toHaveLength(0);
+    const thinking = turn!.activity.filter((i) => i.kind === 'reasoning');
+    expect(thinking.map((i) => (i as { text: string }).text)).toEqual([
+      'Checking the third lease…',
+    ]);
+    // …and it is the LAST item, where it was produced — not hoisted by the note's removal.
+    expect(turn!.activity[turn!.activity.length - 1]?.kind).toBe('reasoning');
+  });
+
+  it('D2: a LATE cancel beats a truthful COMPLETED, live and record alike', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      // The run reached its terminal — the disposition is COMPLETED and it is not a lie.
+      event('e3', 'ASSISTANT_MESSAGE', 'Here is the summary.', { disposition: 'COMPLETED' }),
+      // …and the reader's Stop landed anyway, recorded by `AgentLoopService.cancelSession`.
+      event('e4', 'PROGRESS', 'You stopped this run', { phase: 'stop_requested' }),
+    ]);
+    expect(turn?.status).toBe('halted');
+    // The run's own account of itself is KEPT — the halt wins the presentation, not the record.
+    expect(turn?.disposition).toBe('COMPLETED');
+    // There IS an ending to report here, so the receipt words the reader's act.
+    expect(sv3RunReceiptLabel(turn!.toolCalls, turn!.status, turn!.disposition)).toBe(
+      '1 tool call · stopped by you',
+    );
+  });
+
+  it('D2 twin: the same record WITHOUT the stop note settles as a completion', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      event('e3', 'ASSISTANT_MESSAGE', 'Here is the summary.', { disposition: 'COMPLETED' }),
+    ]);
+    // Without this the case above would pass for a fixture that could never have said 'complete'.
+    expect(turn?.status).toBe('complete');
+    expect(sv3RunReceiptLabel(turn!.toolCalls, turn!.status, turn!.disposition)).toBe(
+      '1 tool call · finished',
+    );
+  });
+
+  it('twin: a NON-cancel error code, and a non-stop progress phase, change nothing', () => {
+    clock = 0;
+    const [errored] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      event('e3', 'ERROR', 'the model returned no candidate', { errorCode: 'PROVIDER_ERROR' }),
+    ]);
+    expect(errored?.status).toBe('failed');
+
+    clock = 0;
+    const [narrated] = project([
+      event('f1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      event('f2', 'PROGRESS', '+12,000 tokens — continuing', { phase: 'budget_raised' }),
+      event('f3', 'ASSISTANT_MESSAGE', 'Here is the summary.', { disposition: 'COMPLETED' }),
+    ]);
+    expect(narrated?.status).toBe('complete');
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
  * The record's EVIDENCE, rehydrated (tempdoc 847 §1.3 / §2.4).
  *
  * `GET /api/thread/{id}` copies `citations` and `claimMatches` onto the assistant event's

@@ -206,6 +206,49 @@ export function sv3WasHalted(disposition: string | null | undefined): boolean {
 }
 
 /**
+ * The typed code the cancel path stamps on its error entry ({@code AgentErrorCode.CANCELLED},
+ * carried onto the record's ERROR event by `AgentInteractionMapper`'s `error` case as
+ * `attributes.errorCode`).
+ *
+ * <p>Owner decision 2026-08-26 (answerless cancel) — {@link sv3WasHalted} reads a disposition that a
+ * cancelled run does not always have. A run stopped BEFORE it produced an answer emits `AgentError`
+ * and never `AgentDone` (`AgentStepRunner.executeIteration`), so no assistant row is written, no
+ * disposition reaches the record, and the status derivation fell through to the error entry and
+ * called the reader's own Stop a failure. The code is TYPED and was already on the record — matching
+ * the error's prose ("Session cancelled") would have been a proxy for a fact the wire states.
+ */
+export const SV3_ERROR_CODE_CANCELLED = 'CANCELLED';
+
+/**
+ * The durable progress phase the backend writes when a cancel arrives ({@code
+ * AgentEvent.AgentProgress.PHASE_STOP_REQUESTED}, listed in `AgentInteractionMapper`'s
+ * `DURABLE_PROGRESS_PHASES`).
+ *
+ * <p>Owner decision 2026-08-26 (late cancel) — it exists for the case neither of the two above can
+ * cover: a stop that lands as the run reaches its terminal changes nothing about the run, so the
+ * disposition stays `COMPLETED` and no error entry is written. The reader's act is real and the
+ * record has to hold it, or a refresh re-words their Stop as "finished".
+ */
+export const SV3_PHASE_STOP_REQUESTED = 'stop_requested';
+
+/**
+ * Whether a record ITEM says the reader stopped this run — the ONE reader of the two facts above, so
+ * a site that wants the answer asks here instead of matching a literal.
+ *
+ * <p>Takes the item's kind and attributes rather than a pre-extracted field, because the two facts
+ * live on different kinds and a caller that had to know which one to look at would be re-deriving
+ * this rule at the read site.
+ */
+export function sv3RecordItemStopsRun(
+  kind: string,
+  attributes: Readonly<Record<string, unknown>>,
+): boolean {
+  if (kind === 'error') return attributes.errorCode === SV3_ERROR_CODE_CANCELLED;
+  if (kind === 'progress') return attributes.phase === SV3_PHASE_STOP_REQUESTED;
+  return false;
+}
+
+/**
  * The answer's honest frame line: what it is based on, how long it took, which model wrote it.
  *
  * 810 §T-B singles this out as owner-valued credit worth preserving — *"Based on your documents —
