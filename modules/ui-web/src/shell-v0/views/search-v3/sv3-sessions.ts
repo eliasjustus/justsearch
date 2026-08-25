@@ -933,6 +933,14 @@ export function applySv3Record(
       ...recorded,
       id: prior.id,
       recordId: recorded.recordId ?? recorded.id,
+      // Tempdoc 863 §4.B — the record speaks for the question ONLY when it says a USER item opened
+      // the turn. The gate is `recordOpenedByUser`, the record's own statement about itself; an
+      // empty-string test would be a PROXY for "the record was never told", and dropping proxies is
+      // precisely what `reconcileEvidence` exists to do (847 F-12). So a record turn opened by
+      // something else — a run that recorded no prompt, the class `sv3-record.ts` names where it
+      // opens such a turn — keeps the reader's own prompt, and a record turn a user item DID open is
+      // authoritative even when the two strings differ (an edited or re-asked prompt).
+      question: recorded.recordOpenedByUser ? recorded.question : prior.question,
       evidence: reconcileEvidence(prior.evidence, recorded.evidence),
       status: prior.status === 'halted' ? 'halted' : recorded.status,
       detail: prior.status === 'halted' ? prior.detail : recorded.detail,
