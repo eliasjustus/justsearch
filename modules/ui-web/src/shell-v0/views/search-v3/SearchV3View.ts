@@ -272,7 +272,7 @@ import {
   type CitationHeader,
 } from '../../components/chat/evidenceProjection.js';
 // Tempdoc 859 §3 — the ONE delegate-plane evidence projection, shared with the record reader.
-import { agentAnswerEvidence } from '../../components/chat/agentEvidence.js';
+import { agentAnswerEvidence, agentDeltaEvidence } from '../../components/chat/agentEvidence.js';
 import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
 import {
   sv3CitationHeader,
@@ -2729,6 +2729,12 @@ export class SearchV3View extends JfElement {
       local.acknowledged &&
       ctrl.answerEvidenceRunId !== null &&
       ctrl.answerEvidenceRunId === ctrl.sessionId;
+    // Tempdoc 865 §7.1 / §7.9 A9 — PLANE AUTHORITY. The terminal is authoritative when it arrived;
+    // the per-call deltas fill the gap when it did not. A run that ends without a grounded terminal
+    // — cancelled, errored, MAX_ITERATIONS — establishes real evidence and then has nothing to
+    // report it, which is exactly why the mint moved onto the tool events. The deltas are never
+    // ADDED to a terminal that spoke: they are the same set, so accumulating both would double every
+    // source and break the positional index the inline marks resolve through.
     if (terminalBelongsToThisRun) {
       const evidence = agentAnswerEvidence(
         ctrl.answerSources,
@@ -2739,6 +2745,18 @@ export class SearchV3View extends JfElement {
         this.sessions,
         { sessionId: local.sessionId, turnId: local.turnId },
         { ...evidence, retrievalMode: '' },
+      );
+    } else if (
+      ctrl !== null &&
+      local.acknowledged &&
+      ctrl.groundingDeltasRunId !== null &&
+      ctrl.groundingDeltasRunId === ctrl.sessionId &&
+      ctrl.groundingDeltas.length > 0
+    ) {
+      this.sessions = setTurnEvidence(
+        this.sessions,
+        { sessionId: local.sessionId, turnId: local.turnId },
+        { ...agentDeltaEvidence(ctrl.groundingDeltas), retrievalMode: '' },
       );
     }
     this.sessions = settleAgentTurn(

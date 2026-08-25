@@ -13,7 +13,7 @@
  *    still admits a record written before the stamp existed.
  */
 import { describe, it, expect } from 'vitest';
-import { agentAnswerEvidence } from './agentEvidence.js';
+import { agentAnswerEvidence, agentDeltaEvidence } from './agentEvidence.js';
 import { sourceGrounding, sourceGroundingLabel } from './evidenceProjection.js';
 import type {
   AgentSentenceCite,
@@ -236,5 +236,87 @@ describe('agentAnswerEvidence — telling three empty match lists apart (865 PR-
     expect(g.tier).toBeNull();
     expect(g.similarity).toBe(0);
     expect(g.groundedSentences).toBe(0);
+  });
+});
+
+/**
+ * Tempdoc 865 PR-1 (F1) — the SIBLING of the missing-verdict defect, one level down.
+ *
+ * `groundingIncomplete` is a fact about the PASS. This is a fact about the SOURCE: a document-level
+ * agent source (603 D-3's sentinel — no chunk ordinal, because the hit carried no `parentDocId`) has
+ * no chunk for any matcher to fetch, so nothing ever read it. The panel nonetheless rendered
+ * "Retrieved · not cited" over it, beside a `CROSS_ENCODER` stamp — a verdict on a source nothing
+ * examined, delivered with the full authority of a pass that really did run on the OTHER sources.
+ */
+describe('agentAnswerEvidence — a source no matcher could examine (865 PR-1 / F1)', () => {
+  const DOC_LEVEL: AgentSource = {
+    // The 603 D-3 shape: identity is the path, chunk ordinal + lines are the sentinel.
+    parentDocId: 'f:/docs/c.md',
+    chunkIndex: -1,
+    path: 'f:/docs/c.md',
+    title: 'Doc C',
+    excerpt: 'whole-document provenance',
+    startLine: -1,
+    endLine: -1,
+    headingText: '',
+  };
+
+  it('reports the document-level source as unexaminable and says NOTHING about the others', () => {
+    const { sourceCoverage } = agentAnswerEvidence([...SOURCES, DOC_LEVEL], CITES, 'CROSS_ENCODER');
+    expect(sourceCoverage).toEqual([{ sourceIndex: 2, windowsConsidered: 0, windowsScored: 0 }]);
+  });
+
+  it('THE DISCRIMINATING CASE: it no longer claims a verdict the matcher never delivered', () => {
+    const evidence = agentAnswerEvidence([...SOURCES, DOC_LEVEL], CITES, 'CROSS_ENCODER');
+    const coverageAt = (i: number) =>
+      evidence.sourceCoverage.find((c) => c.sourceIndex === i) ?? null;
+
+    // The document-level source: examined by nothing, and now says so.
+    const docLevel = sourceGrounding(2, evidence.matches, DOC_LEVEL.parentDocId, coverageAt(2));
+    expect(docLevel.state).toBe('unexamined');
+    expect(sourceGroundingLabel(docLevel)).toBe('Retrieved · not examined');
+    // RED BEFORE this fix, pinned as the input rather than described: the read sites passed `null`
+    // coverage for a delegate source, so the state fell through to the binary and the pane
+    // delivered a verdict. Same source, same matches — only the fact the projection now supplies.
+    expect(sourceGroundingLabel(sourceGrounding(2, evidence.matches, DOC_LEVEL.parentDocId, null))).toBe(
+      'Retrieved · not cited',
+    );
+    expect(sourceGroundingLabel(docLevel)).not.toBe('Retrieved · not cited');
+
+    // A chunk-precise source the matcher DID cite is untouched — the fix is per-source, so it
+    // cannot smear "not examined" over the sources the pass really judged.
+    const cited = sourceGrounding(0, evidence.matches, SOURCES[0]!.parentDocId, coverageAt(0));
+    expect(cited.state).toBe('cited');
+    expect(sourceGroundingLabel(cited)).toBe('Grounds 1 sentence');
+  });
+
+  it('is INDEPENDENT of the pass-level flag — a completed pass can still carry an unread source', () => {
+    // The two facts are orthogonal, and conflating them is exactly what §7.3 refused to do when it
+    // declined to reuse `unexamined` for the timeout case.
+    const completed = agentAnswerEvidence([DOC_LEVEL], [], 'CROSS_ENCODER');
+    expect(completed.groundingIncomplete).toBe(false);
+    expect(completed.sourceCoverage).toHaveLength(1);
+    // When the pass ALSO failed, the pass-level fact wins: a run whose matcher never completed
+    // cannot have produced per-source examination facts from that pass.
+    const failed = agentAnswerEvidence([DOC_LEVEL], [], 'NONE');
+    const g = sourceGrounding(0, failed.matches, DOC_LEVEL.parentDocId, failed.sourceCoverage[0]!, failed.groundingIncomplete);
+    expect(g.state).toBe('grounding-incomplete');
+  });
+});
+
+/**
+ * Tempdoc 865 §7.1 — the run that reached no grounded terminal, reconstructed from its deltas.
+ */
+describe('agentDeltaEvidence — what a run established, with no terminal verdict', () => {
+  it('keeps the sources and refuses to deliver a verdict no pass produced', () => {
+    const evidence = agentDeltaEvidence(SOURCES);
+    expect(evidence.sources).toHaveLength(2);
+    expect(evidence.matches).toEqual([]);
+    expect(evidence.marks).toEqual([]);
+    // No answer existed, so no matcher ran, so nothing judged these. That is the missing-verdict
+    // state, not "retrieved and found wanting".
+    expect(evidence.groundingIncomplete).toBe(true);
+    const g = sourceGrounding(0, evidence.matches, SOURCES[0]!.parentDocId, null, evidence.groundingIncomplete);
+    expect(sourceGroundingLabel(g)).toBe('Retrieved · grounding check did not complete');
   });
 });

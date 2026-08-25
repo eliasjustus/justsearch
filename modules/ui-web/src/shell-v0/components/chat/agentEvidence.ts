@@ -24,7 +24,7 @@ import type {
   AgentSentenceCite,
   AgentSource,
 } from '../../../api/generated/shape-handlers/shared.js';
-import type { AnswerEvidenceSource, CitationMatch } from './citationTypes.js';
+import type { AnswerEvidenceSource, CitationMatch, SourceCoverage } from './citationTypes.js';
 import type { Citation } from './MarkdownBlock.js';
 import { agentSentenceOrdinals, resolveAnswerCitations } from './citationResolve.js';
 // Tempdoc 847 S1 — the ONE producer gate over a MATCH LIST. Imported, never re-implemented: a second
@@ -47,6 +47,24 @@ export interface AgentAnswerEvidence {
    * matcher never produced a verdict at all. This flag isolates the third.
    */
   readonly groundingIncomplete: boolean;
+  /**
+   * Tempdoc 865 PR-1 (F1) — the per-source examination facts this plane can state, for the sources
+   * NO matcher could have read.
+   *
+   * <p>The defect it closes is the sibling of {@link groundingIncomplete}: a DOCUMENT-LEVEL agent
+   * source (the 603 D-3 sentinel — no chunk ordinal, because the hit carried no `parentDocId`) is
+   * structurally unexaminable, and the panel rendered "Retrieved · not cited" over it — a verdict on
+   * a source nothing looked at. Where `groundingIncomplete` is a fact about the PASS, this is a fact
+   * about the SOURCE, and the two are independent: a run whose matcher completed perfectly can still
+   * carry a source the matcher was never able to read.
+   *
+   * <p>Only the structurally-unexaminable subset is reported. The producer also reports BUDGET-
+   * starved sources (`CitationMatchResult.sourceCoverage`, tempdoc 836), but `AgentCitationResolver`
+   * drops that list at its return — the same shape of defect 859 §4 fixed for the scorer stamp — and
+   * carrying it needs a new `done` wire field. So this is an UNDER-report, never a contradiction: a
+   * source it stays silent about keeps the established binary.
+   */
+  readonly sourceCoverage: readonly SourceCoverage[];
 }
 
 /**
@@ -71,6 +89,39 @@ const SCORER_NONE = 'NONE';
  */
 function groundingIncompleteFor(scorer: string | null | undefined): boolean {
   return scorer === SCORER_NONE;
+}
+
+/**
+ * Tempdoc 603 D-3 — the chunk-identity-absent sentinel, mirrored from Java
+ * `AgentSession.DOC_LEVEL_SENTINEL`. A NEGATIVE chunk ordinal means the hit carried no
+ * `parentDocId`, so the source is the whole DOCUMENT and there is no chunk to fetch.
+ */
+const DOC_LEVEL_SENTINEL_MAX = -1;
+
+/**
+ * Tempdoc 865 PR-1 (F1) — the sources no matcher could have examined, as the coverage facts
+ * {@link sourceGrounding} already knows how to read.
+ *
+ * <p>This is a projection of a fact the wire already carries, not a second opinion about it. The
+ * matcher's own contract says so: `CitationMatchOps.prepareWindows` refuses to look up a negative
+ * chunk ordinal ("a source that supplies no text and has no ordinal is unverifiable"), and
+ * `PassageWindows.prepare` then contributes NO window for it — so the Worker itself reports exactly
+ * `windowsConsidered: 0, windowsScored: 0` for these. The agent path always supplies blank literal
+ * text (`DocumentService.matchCitations` maps every citation to `VerificationSource(c, "")`), so the
+ * lookup arm is the only arm a delegate source can take.
+ *
+ * <p>Chunk-precise sources are OMITTED rather than reported as examined: whether the matcher reached
+ * one is a fact only the matcher has, and this plane does not carry it. Absent ⇒ the established
+ * binary, per `sourceGrounding`'s own absence discipline.
+ */
+function unexaminableSourceCoverage(sources: readonly AgentSource[]): SourceCoverage[] {
+  const out: SourceCoverage[] = [];
+  sources.forEach((source, sourceIndex) => {
+    if (source.chunkIndex <= DOC_LEVEL_SENTINEL_MAX) {
+      out.push({ sourceIndex, windowsConsidered: 0, windowsScored: 0 });
+    }
+  });
+  return out;
 }
 
 /**
@@ -159,5 +210,28 @@ export function agentAnswerEvidence(
     // empty match list is produced and therefore the only place that still knows WHY it is empty.
     // Downstream, `[]` is `[]`.
     groundingIncomplete: groundingIncompleteFor(scorer),
+    // Tempdoc 865 PR-1 (F1) — same reason, one level down: the per-source half of "an empty match
+    // list is not always a verdict".
+    sourceCoverage: unexaminableSourceCoverage(sources),
   };
+}
+
+/**
+ * Tempdoc 865 §7.1 — what a run established, RECONSTRUCTED from the per-call grounding deltas, for
+ * a run that reached no grounded terminal.
+ *
+ * <p>This is the read side of the incremental mint. A cancelled, errored or iteration-exhausted run
+ * emits no grounded `done` — `AgentDone.ofDisposition` hardcodes an empty source list and that is
+ * its contract, not a bug — but every tool call already stamped what it established onto its own
+ * `tool_exec_completed`. Concatenating those deltas in call order reproduces the terminal list
+ * exactly (pinned by `AgentLoopServiceTest.concatenatedDeltas_equalTheGroundedTerminalsSources`), so
+ * the reader keeps the evidence the run really drew on instead of an empty pane.
+ *
+ * <p>The scorer is `SCORER_NONE`, which is the truth and not a fallback: no answer existed, so no
+ * matcher ran, so nothing judged these sources. That lands them in `grounding-incomplete` —
+ * "Retrieved · grounding check did not complete" — rather than the "not cited" verdict a pass that
+ * never ran has no standing to deliver.
+ */
+export function agentDeltaEvidence(sources: readonly AgentSource[]): AgentAnswerEvidence {
+  return agentAnswerEvidence(sources, [], SCORER_NONE);
 }

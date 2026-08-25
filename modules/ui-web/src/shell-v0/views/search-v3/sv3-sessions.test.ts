@@ -1182,6 +1182,52 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     expect(silent.evidence?.groundingIncomplete).toBeUndefined();
   });
 
+  it('SURVIVES the refresh: a source no matcher could read stays unexaminable after the record lands (865 PR-1)', () => {
+    // Tempdoc 865 PR-1 (F1) — the same survival property, for the per-source fact. `reconcileEvidence`
+    // rebuilds the evidence FIELD BY FIELD, so a field it does not name is silently gone on the next
+    // refresh and the pane goes back to "Retrieved · not cited" over a source nothing examined.
+    const coverage = [{ sourceIndex: 1, windowsConsidered: 0, windowsScored: 0 }];
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'agent', 'uc-cov');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    const merged = applySv3Record(
+      settleTurn(
+        setTurnEvidence(list, ref, { ...evidence(2), sourceCoverage: coverage }),
+        ref,
+        'complete',
+        T0 + MINUTE,
+      ),
+      'uc-cov',
+      [recordTurn({ id: 'evt-1', evidence: { ...evidence(2), sourceCoverage: coverage } })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+    expect(merged.evidence?.sourceCoverage).toEqual(coverage);
+
+    // An EMPTY list is a stated observation ("this producer reported no unexaminable source"), not
+    // "never told" — so it wins over the record, exactly as `false` does for the pass-level flag.
+    const emptyList = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'agent', 'uc-cov2');
+    const emptyRef = latestTurnRef(emptyList) as Sv3TurnRef;
+    const kept = applySv3Record(
+      settleTurn(
+        setTurnEvidence(emptyList, emptyRef, { ...evidence(2), sourceCoverage: [] }),
+        emptyRef,
+        'complete',
+        T0 + MINUTE,
+      ),
+      'uc-cov2',
+      [recordTurn({ id: 'evt-1', evidence: { ...evidence(2), sourceCoverage: coverage } })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+    expect(kept.evidence?.sourceCoverage).toEqual([]);
+
+    // A turn neither side reported keeps its silence — the merge mints no value for it.
+    const silentList = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'ask', 'uc-cov3');
+    const silentRef = latestTurnRef(silentList) as Sv3TurnRef;
+    const silent = applySv3Record(
+      settleTurn(setTurnEvidence(silentList, silentRef, evidence(2)), silentRef, 'complete', T0 + MINUTE),
+      'uc-cov3',
+      [recordTurn({ id: 'evt-1', evidence: evidence(2) })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+    expect(silent.evidence?.sourceCoverage).toBeUndefined();
+  });
+
   it('takes the RECORD’s thinking on a cold load, and keeps the LIVE blocks in session (848)', () => {
     // The merge rule at the heart of tempdoc 848's reload story, and the line 847's `applySv3Record`
     // refactor rewrites — pinned here so a later extraction cannot break it silently.

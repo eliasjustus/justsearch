@@ -1180,6 +1180,193 @@ class AgentLoopServiceTest {
   }
 
   // ---------------------------------------------------------------------------
+  // Tempdoc 865 §7.1 — evidence survives every terminal (the incremental mint)
+  // ---------------------------------------------------------------------------
+
+  /** A chunk-precise search hit, as {@code SearchTool.buildSearchEvidence} shapes it. */
+  private static Map<String, Object> hit(String parentDocId) {
+    return Map.of(
+        "parentDocId", parentDocId,
+        "chunkIndex", 0,
+        "path", "/docs/" + parentDocId + ".md",
+        "title", "Doc " + parentDocId,
+        "excerpt", "an excerpt",
+        "startLine", 1,
+        "endLine", 5,
+        "headingText", "");
+  }
+
+  private static Map<String, Object> searchEvidence(String... parentDocIds) {
+    return Map.of("searchResults", Arrays.stream(parentDocIds).map(AgentLoopServiceTest::hit).toList());
+  }
+
+  /**
+   * Every {@code parentDocId} the run's {@code tool_exec_completed} events carried under the
+   * grounding key, in emission order — the FE's reconstruction, read off the same events it reads.
+   */
+  private static List<String> deltaDocIds(List<AgentEvent> events) {
+    var out = new ArrayList<String>();
+    for (AgentEvent e : events) {
+      if (!(e instanceof AgentEvent.ToolExecutionCompleted c)) {
+        continue;
+      }
+      Object raw = c.result().structuredData().get(OperationResult.GROUNDING_KEY);
+      if (!(raw instanceof List<?> delta)) {
+        continue;
+      }
+      for (Object item : delta) {
+        out.add(String.valueOf(((Map<?, ?>) item).get("parentDocId")));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Tempdoc 865 §7.1 A5 — TERMINAL EQUIVALENCE, pinned against the {@code AgentDone} EVENT (§7.9
+   * A9: asserting over the projected thread would make this sensitive to 863's plane changes and
+   * start measuring the wrong thing).
+   *
+   * <p>Why this is the slice's one catastrophic failure mode: {@code AgentSentenceCite.sourceIndex}
+   * is a POSITION into {@code done.sources()}, resolved on the FE as {@code sources[sourceIndex]}.
+   * If the incremental order and the terminal order ever diverge, every inline mark points at the
+   * wrong document — with no error anywhere. Both come from one ordered accumulator, so the property
+   * holds BY CONSTRUCTION; this test exists precisely because a later refactor could re-derive
+   * either side independently and nothing else would notice.
+   *
+   * <p>SCOPED to the two {@code groundedDone} terminals ({@code COMPLETED},
+   * {@code BUDGET_EDGE_FINALIZE}) — see {@link #maxIterationsTerminal_keepsTheEvidenceItEstablished}
+   * for why {@code ofDisposition} is exempt rather than fixed.
+   */
+  @Test
+  @DisplayName("865 §7.1 A5: on a COMPLETED terminal the concatenated deltas equal done.sources(), in order")
+  void concatenatedDeltas_equalTheGroundedTerminalsSources() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}"),
+                ScriptedResponse.textOnly("Here is the answer")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                // Call 2 re-returns d1 and adds d3 — so the deltas can only match if the run-wide
+                // dedup is applied incrementally, not per call.
+                .returningStructuredData(
+                    List.of(searchEvidence("d1", "d2"), searchEvidence("d1", "d3"))));
+
+    var events = run(service, userMessage("two searches"), 4);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "the run reaches a grounded terminal");
+    assertEquals(
+        TerminalDisposition.COMPLETED.name(),
+        done.disposition(),
+        "this fixture must exercise a groundedDone terminal, not ofDisposition");
+    assertEquals(
+        List.of("d1", "d2", "d3"),
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList());
+    assertEquals(
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
+        deltaDocIds(events),
+        "the concatenated per-call deltas ARE the terminal source list — same members, same order."
+            + " A divergence here is a silently misdirected inline mark on every answer.");
+  }
+
+  /**
+   * Tempdoc 865 §7.1 / §3.8b — the sharpest unhappy terminal. A run that exhausts its iterations
+   * emits {@code AgentDone.ofDisposition}, whose sources are a hardcoded {@code List.of()}, yet the
+   * evidence it established is intact on the tool events that delivered it.
+   *
+   * <p>{@code ofDisposition} is EXEMPT from terminal equivalence by construction, and deliberately
+   * not "fixed": its canonical constructor takes {@code List} arguments and {@code
+   * AgentGroundingSeamAuditTest}'s discriminator is a {@code java.util.List} SIGNATURE SUBSTRING, so
+   * draining the accumulator there would trip the grounding-seam audit for a reason that has nothing
+   * to do with grounding (which is the whole reason the delegating factory exists). Under this
+   * design it no longer needs to: the empty list stops being a loss and becomes the true statement
+   * "this terminal makes no grounding claim".
+   */
+  @Test
+  @DisplayName("865 §7.1: a MAX_ITERATIONS run keeps the evidence it established (the terminal claims none)")
+  void maxIterationsTerminal_keepsTheEvidenceItEstablished() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                .returningStructuredData(
+                    List.of(searchEvidence("d1", "d2"), searchEvidence("d1", "d3"))));
+
+    var events = run(service, userMessage("loop"), 2);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done);
+    assertEquals(TerminalDisposition.MAX_ITERATIONS.name(), done.disposition());
+    assertTrue(
+        done.sources().isEmpty(),
+        "ofDisposition makes no grounding claim — that is its contract, not a regression");
+    assertEquals(
+        List.of("d1", "d2", "d3"),
+        deltaDocIds(events),
+        "RED BEFORE 865: the run's evidence died with the terminal that could not carry it."
+            + " GREEN AFTER: the deltas already rode the tool events, so the whole set survives.");
+  }
+
+  /**
+   * Tempdoc 865 §7.1 — the cancel case, after TWO searches. Same property as MAX_ITERATIONS with a
+   * sharper edge: a cancelled run emits no {@code done} at all, so before this slice the evidence
+   * had no carrier of any kind.
+   */
+  @Test
+  @DisplayName("865 §7.1: a run cancelled after two searches keeps both calls' evidence")
+  void cancelledRun_keepsTheEvidenceEstablishedBeforeTheCancel() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}"),
+                ScriptedResponse.textOnly("never reached")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                .returningStructuredData(
+                    List.of(searchEvidence("d1", "d2"), searchEvidence("d1", "d3"))));
+
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+    var completed = new java.util.concurrent.atomic.AtomicInteger();
+    // Cancel from inside the consumer after the SECOND tool completes — the same in-thread
+    // synchronous-delivery assumption `sessionEnd_userCancelledMidLoop` documents.
+    Consumer<AgentEvent> sink =
+        event -> {
+          events.add(event);
+          if (event instanceof AgentEvent.SessionStarted s) {
+            sessionId.set(s.sessionId());
+          }
+          if (event instanceof AgentEvent.ToolExecutionCompleted
+              && completed.incrementAndGet() == 2
+              && sessionId.get() != null) {
+            service.cancelSession(sessionId.get());
+          }
+        };
+    service.runAgent(new AgentRequest(userMessage("cancel me"), List.of(), 5), sink);
+
+    assertNull(
+        lastEventOfType(events, AgentEvent.AgentDone.class),
+        "a cancelled run emits no grounded terminal — which is exactly why the terminal could not"
+            + " be the mint");
+    assertEquals(
+        List.of("d1", "d2", "d3"),
+        deltaDocIds(events),
+        "everything both searches established is on the tool events, durable on both planes");
+  }
+
+  // ---------------------------------------------------------------------------
   // Empty output retry
   // ---------------------------------------------------------------------------
 
@@ -3825,10 +4012,27 @@ class AgentLoopServiceTest {
           Set.of(ExecutorTag.AGENT));
     }
 
+    /**
+     * Tempdoc 865 §7.1 — a structured payload per call (the Nth call gets the Nth entry, the last
+     * entry repeating once exhausted). Empty ⇒ the stub reports no structured data at all, which is
+     * the pre-865 behaviour every other test in this file relies on.
+     */
+    private final List<Map<String, Object>> perCallStructuredData = new ArrayList<>();
+
+    StubTool returningStructuredData(List<Map<String, Object>> perCall) {
+      perCallStructuredData.addAll(perCall);
+      return this;
+    }
+
     OperationResult execute(String args) {
-      callCount.incrementAndGet();
+      int nth = callCount.incrementAndGet();
       lastArgs = args;
-      return OperationResult.success(returnValue);
+      if (perCallStructuredData.isEmpty()) {
+        return OperationResult.success(returnValue);
+      }
+      return OperationResult.success(
+          returnValue,
+          perCallStructuredData.get(Math.min(nth - 1, perCallStructuredData.size() - 1)));
     }
   }
 

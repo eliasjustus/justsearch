@@ -339,3 +339,88 @@ describe('865 PR-0 — the record replays "the grounding pass did not complete"'
     expect(scoredThenTimedOut[0]!.evidence!.matches).toEqual([]);
   });
 });
+
+/**
+ * Tempdoc 865 §7.1 / §7.9 A9 — PLANE AUTHORITY on the record, and the unhappy terminals it saves.
+ *
+ * A delegate run that ends without an answer writes NO persisted assistant row (863 §4.A.5), so the
+ * store plane has no carrier at all — and `AgentDone.ofDisposition` carries an empty source list by
+ * contract, so the run plane has nothing either. Everything the run drew on used to die there. The
+ * per-call deltas stamped onto each `tool_exec_completed` are what survives, and the mapper already
+ * copies `structuredData` onto the record event verbatim.
+ */
+describe('865 §7.1 — the record reconstructs an answerless run from its per-call deltas', () => {
+  /** The wire shape `OperationResult.withGrounding` stamps (AgentSource's eight fields). */
+  const delta = (parentDocId: string, chunkIndex = 0) => ({
+    parentDocId,
+    chunkIndex,
+    path: `f:/${parentDocId}`,
+    title: parentDocId,
+    excerpt: 'a passage',
+    startLine: 1,
+    endLine: 5,
+    headingText: '',
+  });
+
+  const toolRow = (callId: string, grounding: unknown[]): ThreadEvent =>
+    event(callId, 'TOOL_ACTIVITY', 'core_search', {
+      callId,
+      toolName: 'core_search',
+      status: 'completed',
+      success: true,
+      structuredData: { searchResults: [], grounding },
+    });
+
+  it('RED BEFORE / GREEN AFTER: a cancelled run keeps what its two searches established', () => {
+    clock = 0;
+    const [turn] = projectSv3RecordTurns([
+      event('u1', 'USER_MESSAGE', 'find the cause'),
+      toolRow('c1', [delta('docs/a.md'), delta('docs/b.md')]),
+      // No assistant row and no terminal: the run was cancelled after the second search.
+      toolRow('c2', [delta('docs/c.md')]),
+    ]);
+    // Before 865 this was `null` — the pane rendered no sources for a run that read three documents.
+    expect(turn!.evidence).not.toBeNull();
+    expect(turn!.evidence!.sources.map((s) => s.parentDocId)).toEqual([
+      'docs/a.md',
+      'docs/b.md',
+      'docs/c.md',
+    ]);
+    // No pass ran (there was no answer to check), so no source may be told it was found wanting.
+    const g = sourceGrounding(
+      0,
+      turn!.evidence!.matches,
+      'docs/a.md',
+      null,
+      turn!.evidence!.groundingIncomplete,
+    );
+    expect(sourceGroundingLabel(g)).toBe('Retrieved · grounding check did not complete');
+  });
+
+  it('the STORE-plane terminal is authoritative when present — deltas do not add to it', () => {
+    clock = 0;
+    const [turn] = projectSv3RecordTurns([
+      event('u1', 'USER_MESSAGE', 'find the cause'),
+      // The same three documents the terminal will report, delivered incrementally first.
+      toolRow('c1', [delta('docs/runbook.md', 7), delta('docs/postmortem.md', 1)]),
+      toolRow('c2', [delta('docs/ledger.md', 0)]),
+      agentAssistant({ citationScorer: 'CROSS_ENCODER' }),
+    ]);
+    // THREE, not six. The deltas and the terminal describe the same set; accumulating both would
+    // double every source and break the positional index the inline marks resolve through.
+    expect(turn!.evidence!.sources).toHaveLength(3);
+    expect(turn!.evidence!.sources.map((s) => s.startLine)).toEqual([3, 40, 1]);
+    // And the terminal's verdict survives — it is the one that judged the answer.
+    expect(turn!.evidence!.matches).toHaveLength(1);
+    expect(turn!.evidence!.groundingIncomplete).toBe(false);
+  });
+
+  it('a turn with neither a terminal nor a delta keeps its honest "never told"', () => {
+    clock = 0;
+    const [turn] = projectSv3RecordTurns([
+      event('u1', 'USER_MESSAGE', 'hello'),
+      event('t1', 'TOOL_ACTIVITY', 'core_file_read', { callId: 'c1', toolName: 'core_file_read' }),
+    ]);
+    expect(turn!.evidence).toBeNull();
+  });
+});

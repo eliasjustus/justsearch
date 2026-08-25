@@ -5,6 +5,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaConstructorCall;
+import com.tngtech.archunit.core.domain.JavaMethodCall;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.lang.ArchRule;
@@ -64,6 +65,18 @@ import org.junit.jupiter.api.Test;
  * grounding" — it does not assert the runtime property "every answer that had search hits IS
  * grounded" (that lives in {@code groundedDone}'s logic + the live end-to-end check). It is the
  * structural half of the guarantee: the differentiator's correctness cannot be forked.
+ *
+ * <p><b>Tempdoc 865 §7.8 / review A4 — the SECOND grounding-carrying record.</b> {@code AgentDone}
+ * stopped being the only one. Under 865 §7.1 the mint's authoritative attach point is the per-call
+ * stamp {@code OperationResult.withGrounding}, which carries the delta on {@code
+ * tool_exec_completed.structuredData} — and it is a METHOD on a record with no {@code
+ * java.util.List} constructor, so the discriminator above cannot see it at all. Left unextended,
+ * this class would keep asserting it guards "the one attach site" while the site that now matters
+ * had moved outside its reach: a green gate claiming a property it had stopped covering. The
+ * discriminator is therefore widened to BOTH grounding-carrying records, and the stamp gets two
+ * rules rather than one — uniqueness ({@link #groundingDeltaIsStampedOnlyAtTheDispatchSeam}) and
+ * EXISTENCE ({@link #theDispatchSeamStillStampsTheGroundingDelta}). Uniqueness alone would be
+ * decorative: deleting the stamp entirely satisfies "no second site" perfectly.
  */
 final class AgentGroundingSeamAuditTest {
 
@@ -111,6 +124,40 @@ final class AgentGroundingSeamAuditTest {
     return origin.equals(AgentEventTracing.class.getName());
   }
 
+  /**
+   * Tempdoc 865 §7.1 — the delta stamp's fully-qualified target: {@code OperationResult
+   * .withGrounding(java.util.List)}.
+   */
+  private static final String GROUNDING_STAMP =
+      io.justsearch.agent.api.registry.OperationResult.class.getName() + ".withGrounding(";
+
+  /**
+   * Is this a call to the grounding-delta STAMP made from somewhere that is not the dispatch seam?
+   *
+   * <p>Takes plain strings rather than a {@code JavaMethodCall} so the discriminator itself can be
+   * exercised by a negative fixture ({@link #theStampDiscriminatorFlagsANonSeamCaller}). An ArchUnit
+   * rule cannot be handed a violating production class to prove it bites, and a predicate no test
+   * has ever seen return {@code true} is a rule nobody has checked.
+   *
+   * @param originOwner the calling class's fully-qualified name
+   * @param originMethod the calling method's name
+   * @param targetFullName the called method's ArchUnit full name
+   */
+  static boolean isStampOutsideDispatchSeam(
+      String originOwner, String originMethod, String targetFullName) {
+    if (!targetFullName.startsWith(GROUNDING_STAMP)) {
+      return false;
+    }
+    return !(originOwner.equals(AgentStepRunner.class.getName())
+        && originMethod.equals(DISPATCH_SEAM_METHOD));
+  }
+
+  /**
+   * The method on {@link AgentStepRunner} that runs one iteration's tool dispatch — the block that
+   * already stamps {@code withLineage}, and the one place 865 §7.1 puts the grounding stamp.
+   */
+  private static final String DISPATCH_SEAM_METHOD = "executeIteration";
+
   @Test
   void groundingIsAttachedOnlyInGroundedDone() {
     // Production classes under io.justsearch.agent (this pulls in app-agent AND the sibling
@@ -147,5 +194,101 @@ final class AgentGroundingSeamAuditTest {
                     + " not attach new grounding).");
 
     rule.check(classes);
+  }
+
+  /**
+   * Tempdoc 865 §7.1 / review A4 — the delta stamp is the mint's authoritative attach point, and it
+   * has exactly one caller for the same reason {@code groundedDone} does: a second site stamping a
+   * grounding delta would be a second mint, free to apply a different dedup or a different order,
+   * and the order is what {@code AgentSentenceCite.sourceIndex} resolves through.
+   */
+  @Test
+  void groundingDeltaIsStampedOnlyAtTheDispatchSeam() {
+    JavaClasses classes = productionAgentClasses();
+
+    ArchRule rule =
+        noClasses()
+            .should()
+            .callMethodWhere(
+                new DescribedPredicate<JavaMethodCall>(
+                    "stamps a grounding delta (OperationResult.withGrounding) outside the one"
+                        + " dispatch seam (AgentStepRunner.executeIteration)") {
+                  @Override
+                  public boolean test(JavaMethodCall call) {
+                    return isStampOutsideDispatchSeam(
+                        call.getOriginOwner().getName(),
+                        call.getOrigin().getName(),
+                        call.getTarget().getFullName());
+                  }
+                })
+            .because(
+                "Tempdoc 865 §7.1 — the grounding a tool call established is minted ONCE, by"
+                    + " AgentSession's accumulator, and stamped ONCE, at the dispatch seam that"
+                    + " already stamps OutputLineage. A second stamp site would be the same 'second"
+                    + " grounding authority' 565 forbids at the terminal, one event earlier.");
+
+    rule.check(classes);
+  }
+
+  /**
+   * The half that makes the rule above non-decorative: deleting the stamp satisfies "no second site"
+   * perfectly, and would silently restore the terminal-only minting 865 §7.1 retired — evidence
+   * would go back to dying on every cancel, error and iteration ceiling, with every gate green.
+   */
+  @Test
+  void theDispatchSeamStillStampsTheGroundingDelta() {
+    JavaClasses classes = productionAgentClasses();
+    boolean stamped =
+        classes.get(AgentStepRunner.class).getMethodCallsFromSelf().stream()
+            .anyMatch(
+                call ->
+                    call.getTarget().getFullName().startsWith(GROUNDING_STAMP)
+                        && call.getOrigin().getName().equals(DISPATCH_SEAM_METHOD));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        stamped,
+        "AgentStepRunner."
+            + DISPATCH_SEAM_METHOD
+            + " must stamp the per-call grounding delta via OperationResult.withGrounding"
+            + " (tempdoc 865 §7.1). Without it a run that never reaches a grounded terminal —"
+            + " cancelled, errored, MAX_ITERATIONS — loses everything it established.");
+  }
+
+  /**
+   * The NEGATIVE fixture for {@link #isStampOutsideDispatchSeam}. The ArchUnit rule above cannot be
+   * handed a violating production class, so the discriminator is exercised directly: a stamp made
+   * from anywhere other than the seam must be flagged, and the seam itself must not be.
+   */
+  @Test
+  void theStampDiscriminatorFlagsANonSeamCaller() {
+    String stampTarget = GROUNDING_STAMP + "java.util.List)";
+    org.junit.jupiter.api.Assertions.assertTrue(
+        isStampOutsideDispatchSeam(
+            "io.justsearch.agent.SomeSecondMintSite", "emitToolResult", stampTarget),
+        "a grounding stamp from a class that is not the dispatch seam must be flagged");
+    org.junit.jupiter.api.Assertions.assertTrue(
+        isStampOutsideDispatchSeam(
+            AgentStepRunner.class.getName(), "groundedDone", stampTarget),
+        "a grounding stamp from the WRONG method of the right class must still be flagged");
+    org.junit.jupiter.api.Assertions.assertFalse(
+        isStampOutsideDispatchSeam(
+            AgentStepRunner.class.getName(), DISPATCH_SEAM_METHOD, stampTarget),
+        "the one legitimate seam must not be flagged");
+    org.junit.jupiter.api.Assertions.assertFalse(
+        isStampOutsideDispatchSeam(
+            "io.justsearch.agent.SomeSecondMintSite",
+            "emitToolResult",
+            "io.justsearch.agent.api.registry.OperationResult.withLineage(java.lang.Object)"),
+        "an unrelated OperationResult method is not a grounding stamp");
+  }
+
+  /**
+   * Production classes under {@code io.justsearch.agent} (this pulls in app-agent AND the sibling
+   * app-agent-api, which is intended). Tests are excluded — they legitimately fabricate fixtures
+   * through the very constructors and stamps these rules govern.
+   */
+  private static JavaClasses productionAgentClasses() {
+    return new ClassFileImporter()
+        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+        .importPackages("io.justsearch.agent");
   }
 }

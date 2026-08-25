@@ -939,7 +939,20 @@ final class AgentStepRunner {
                         op.id().value()));
           }
 
-          session.recordExecution(call, toolResult);
+          // Tempdoc 865 §7.1 — THE MINT, at the same dispatch seam the lineage stamp above uses.
+          // `recordExecution` runs the one grounding authority (`AgentSession
+          // .contributeGroundingSources`) over this call's results and returns what it NEWLY
+          // established, deduped against everything the run established before it. Stamping that
+          // delta onto the result makes it durable on both planes before any terminal runs, which is
+          // why a cancelled / errored / iteration-exhausted run no longer loses its evidence.
+          //
+          // Emit only on change: a call that established nothing adds NO key, so an absent key means
+          // "established nothing" rather than "reported an empty set" — the same discipline
+          // `toolCompletedPayload` already applies to structuredData as a whole.
+          List<AgentEvent.AgentSource> grounding = session.recordExecution(call, toolResult);
+          if (!grounding.isEmpty()) {
+            toolResult = toolResult.withGrounding(grounding);
+          }
           sink.accept(
               new AgentEvent.ToolExecutionCompleted(call.id(), toolResult));
 

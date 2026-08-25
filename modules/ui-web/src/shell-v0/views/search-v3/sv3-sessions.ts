@@ -39,7 +39,11 @@
  *    session spends none of it and carries a coarse relative timestamp instead.
  */
 import type { Sv3RowStatus } from './fixtures.js';
-import type { AnswerEvidenceSource, CitationMatch } from '../../components/chat/citationTypes.js';
+import type {
+  AnswerEvidenceSource,
+  CitationMatch,
+  SourceCoverage,
+} from '../../components/chat/citationTypes.js';
 import type { Citation } from '../../components/chat/MarkdownBlock.js';
 // Type-only, and deliberately the LIVE feed's own item type: a turn's record-projected activity and
 // a running turn's live feed are the same three shapes, so the content surface has ONE renderer for
@@ -77,6 +81,15 @@ export interface Sv3TurnEvidence {
    * fact, not two copies that can disagree about the same answer.
    */
   readonly groundingIncomplete?: boolean;
+  /**
+   * Tempdoc 865 PR-1 (F1) — the per-source examination facts, when the producer reported any.
+   *
+   * <p>OPTIONAL under the same absence discipline as {@link groundingIncomplete} and for the same
+   * reason: a source nobody said anything about keeps the established binary. The ask plane reads
+   * these off `rag.citation_matches`; the delegate plane reports the structurally-unexaminable
+   * subset (document-level sources, which have no chunk for any matcher to fetch).
+   */
+  readonly sourceCoverage?: readonly SourceCoverage[];
 }
 
 /**
@@ -854,6 +867,14 @@ function reconcileEvidence(
       prior.groundingIncomplete !== undefined
         ? prior.groundingIncomplete
         : recorded.groundingIncomplete,
+    // Tempdoc 865 PR-1 (F1) — the same question, same answer. ABSENCE is the only "not observed"
+    // value: an EMPTY list is a stated observation ("this producer reported no unexaminable
+    // source"), so reconciling by length — the rule the three fields above use, because for THOSE an
+    // empty list really does mean nothing was watched — would let a refresh drop the fact and put
+    // "Retrieved · not cited" back on a source no matcher could read. This function rebuilds the
+    // record field by field, so a field that is not named here is silently gone.
+    sourceCoverage:
+      prior.sourceCoverage !== undefined ? prior.sourceCoverage : recorded.sourceCoverage,
   };
 }
 

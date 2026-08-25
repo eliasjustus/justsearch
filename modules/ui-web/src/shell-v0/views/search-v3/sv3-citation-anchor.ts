@@ -116,14 +116,17 @@ export function sv3CitationHeader(
       : null;
   return citationHeader({
     citation,
-    // The matcher's own join, not a second one. `sourceCoverage` is NOT part of `Sv3TurnEvidence`
-    // (the window never carried it), so the examination state stays the established binary — a
-    // producer that said nothing about coverage does not get "unexamined" assumed on its behalf.
+    // The matcher's own join, not a second one.
     //
     // Tempdoc 865 §7.3 — the pass-level fact IS carried, and this header is where its absence bit
     // hardest: the panel falls back to an ungraded flat list when no match survives, but this join
     // reads an empty list straight into `cited: false` and the pane then said "Retrieved · not
     // cited" over a source no scorer ever judged.
+    //
+    // Tempdoc 865 PR-1 (F1) — `sourceCoverage` IS part of `Sv3TurnEvidence` now, so the per-source
+    // half is carried too. Absent for a source the producer said nothing about, which keeps the
+    // established binary: a producer that reports no coverage does not get "unexamined" assumed on
+    // its behalf.
     grounding:
       citation === null
         ? null
@@ -131,7 +134,7 @@ export function sv3CitationHeader(
             sourceIndex,
             evidence?.matches ?? [],
             citation.parentDocId,
-            null,
+            evidence?.sourceCoverage?.find((c) => c.sourceIndex === sourceIndex) ?? null,
             evidence?.groundingIncomplete,
           ),
     question: turn?.question ?? null,
