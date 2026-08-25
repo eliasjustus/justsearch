@@ -22,6 +22,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import './SearchV3View.js';
 import type { SearchV3View } from './SearchV3View.js';
 import { Sv3Composer } from './Sv3Composer.js';
+import { Sv3SessionRow } from './Sv3SessionRow.js';
+import { Sv3Sidebar } from './Sv3Sidebar.js';
 import { resetSearchState } from '../../state/searchState.js';
 import {
   __feedContactForTest,
@@ -151,6 +153,27 @@ function blurEverything(): void {
   (deepActiveElement() as HTMLElement | null)?.blur();
 }
 
+/**
+ * A component's OWN stylesheet — the last entry in `static styles`, after the shared sheets it
+ * adopts (the `sv3-tokens.test.ts` convention). Reading the whole array would let a declaration made
+ * in the shared token sheet satisfy a claim about this component's own rules.
+ */
+const ownStyleTextOf = (ctor: { styles?: unknown }): string => {
+  const sheets = ctor.styles as ReadonlyArray<{ cssText: string }>;
+  return sheets[sheets.length - 1]?.cssText ?? '';
+};
+
+const composerSheet = (): string => ownStyleTextOf(Sv3Composer);
+
+/** `[selector, declarationBlock]` per rule, selectors whitespace-normalised (the #539 idiom). */
+const rulesOf = (cssText: string): Array<[string, string]> => {
+  const stripped = cssText.replace(/\/\*[\s\S]*?\*\//g, '');
+  return [...stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(
+    (m) =>
+      [(m[1] as string).replace(/\s+/g, ' ').trim(), (m[2] as string).trim()] as [string, string],
+  );
+};
+
 async function rowButtons(el: Mounted): Promise<HTMLButtonElement[]> {
   const sidebar = await region(el, 'jf-sv3-sidebar');
   const rows = [...(sidebar.shadowRoot?.querySelectorAll('jf-sv3-session-row') ?? [])] as Updatable[];
@@ -237,9 +260,60 @@ describe('tempdoc 864 Layer 1(a) — every entry lands the reader in the compose
     await settle(el);
     el.remove();
     (deepActiveElement() as HTMLElement | null)?.blur();
+    // A TASK boundary between the unmount and the re-entry, or this case would pass for the wrong
+    // reason: PR E reads a same-task disconnect→connect as a re-parent and skips the focus move
+    // outright, so a synchronous re-append satisfies the assertion without the rename refusal ever
+    // being consulted.
+    await new Promise<void>((r) => setTimeout(r, 0));
     document.body.appendChild(el);
     await settle(el);
     expect(deepActiveElement()).not.toBe(await fieldOf(el));
+  });
+});
+
+/**
+ * Tempdoc 864 PR E — the residual PR A's review found and deliberately left: `connectedCallback` is
+ * the entry signal, and the split-view toggle routes a NON-entry through it. The stage re-templates
+ * when the split opens (`Shell.ts` `render()` — the surface moves from the single-pane slot into
+ * `.split > .pane`), so the retained element is removed and re-inserted with no entry having
+ * happened, and the caret jumped into the composer on a layout gesture made for something else.
+ *
+ * Both halves are asserted, because the guard is only right if the entry it is NOT meant to catch
+ * still fires.
+ */
+describe('tempdoc 864 PR E — a re-parent is not an entry', () => {
+  it('a split-view re-parent leaves focus on the control the reader pressed', async () => {
+    const el = await mount();
+    // The toggle is chrome OUTSIDE this window, so it keeps focus across the re-template — and it is
+    // a BUTTON, not a typing target, so the entry path's own typing guard cannot be what saves it.
+    // That is the point of the fixture: on the pre-PR-E window this assertion fails.
+    const toggle = document.createElement('button');
+    toggle.className = 'outsider-toggle';
+    document.body.appendChild(toggle);
+    toggle.focus();
+    // What the stage does to the surface: same node, new parent, ONE synchronous update.
+    const pane = document.createElement('div');
+    pane.className = 'pane';
+    el.remove();
+    pane.appendChild(el);
+    document.body.appendChild(pane);
+    await settle(el);
+    expect(deepActiveElement()).toBe(toggle);
+    expect(deepActiveElement()).not.toBe(await fieldOf(el));
+    pane.remove();
+    toggle.remove();
+  });
+
+  it('a genuine re-entry to the retained window still lands in the composer', async () => {
+    const el = await mount();
+    el.remove();
+    blurEverything();
+    // The task boundary is the whole discriminator: a re-entry needs a user event, which is a later
+    // task by construction, while Lit's re-parent finishes inside one synchronous update.
+    await new Promise<void>((r) => setTimeout(r, 0));
+    document.body.appendChild(el);
+    await settle(el);
+    expect(deepActiveElement()).toBe(await fieldOf(el));
   });
 });
 
@@ -328,12 +402,209 @@ describe('tempdoc 864 Layer 1(b) — the whole glass box is the field', () => {
 
 describe('tempdoc 864 — the focus ring stays the platform’s own', () => {
   it('keys the ring on :focus-visible only, so programmatic focus paints no ring the reader did not ask for', () => {
-    const sheets = (Sv3Composer.styles as unknown as ReadonlyArray<unknown>).map((s) => String(s));
-    const rules = sheets
-      .join('\n')
-      .split('}')
-      .filter((rule) => rule.includes('.glass::after') && rule.includes(':focus'));
-    expect(rules.length).toBeGreaterThan(0);
-    for (const rule of rules) expect(rule).toContain(':focus-visible');
+    // The ring rules moved onto the wrapper in PR E (`.glass:has(…)::after`), for the reachability
+    // reason recorded there; what they may NOT do is stop being the platform's own pseudo-class.
+    const ringRules = rulesOf(composerSheet()).filter(
+      ([selector]) => selector.includes('::after') && selector.includes(':has(textarea'),
+    );
+    expect(ringRules.length).toBeGreaterThan(0);
+    for (const [selector, block] of ringRules) {
+      const paintsFocus = /outline|border-color: var\(--ring\)/.test(block);
+      if (!paintsFocus) continue;
+      expect(selector, `${selector} paints focus without the platform pseudo-class`).toContain(
+        ':focus-visible',
+      );
+    }
+  });
+});
+
+/**
+ * Tempdoc 864 Layer 1(d) — THE RESTING-STATE AFFORDANCE, as style text.
+ *
+ * happy-dom runs no cascade and resolves no `color-mix`, so there is no honest computed colour to
+ * read out of a shadow tree here; the DECLARATIONS are the mechanism and they are what these pin
+ * (the posture `sv3-tokens.test.ts`'s a11y-floor block already takes, with the measured proof left
+ * to the live audit). Each case fails on the pre-PR-E sheet, which carried no "not focused"
+ * declaration at all.
+ */
+describe('tempdoc 864 Layer 1(d) — the resting composer says it is not focused', () => {
+  it('declares the knob at REST and spends it on the field’s own focus, not on a state flag', () => {
+    const writers = rulesOf(composerSheet()).filter(([, block]) =>
+      /--composer-rest\s*:/.test(block),
+    );
+    // Exactly two writers: the resting default and the one rule that lifts it. A third would be a
+    // second authority for "is this composer the reader's" — and a `[state=…]` writer would put the
+    // affordance back on a flag, which §2.9 is explicit the honest ring never was.
+    expect(writers.map(([selector]) => selector)).toEqual([
+      '.glass',
+      '.glass:has(textarea:focus)',
+    ]);
+    expect(writers[0]?.[1]).toContain('--composer-rest: 1');
+    expect(writers[1]?.[1]).toContain('--composer-rest: 0');
+  });
+
+  it('lifts on the real pseudo-class, and never through :host(:has(…)) — 822 F3', () => {
+    // `:host(:has(…))` is the shape 822 F3 measured as a Chrome syntax error that takes its whole
+    // selector list down with it, and `:host()` matches its argument in the OUTER tree, where this
+    // shadow textarea does not live. Either way the rule would be unreachable — silently. Comments
+    // are stripped: the prose above the re-keyed rules names the shape it replaced.
+    expect(composerSheet().replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain(':host(:has(');
+    // Not `:focus-visible` for the de-emphasis: a reader who CLICKED into the field is typing there
+    // too, and a box that stayed de-emphasised for them would be lying.
+    expect(composerSheet()).toContain('.glass:has(textarea:focus) {');
+  });
+
+  it('derives every resting declaration from the one knob, in the color-mix idiom', () => {
+    const derived = rulesOf(composerSheet()).filter(([, block]) =>
+      /var\(--composer-rest\)/.test(block),
+    );
+    // The material, in two places: the surface the box is made of, and the frame around it.
+    expect(derived.map(([selector]) => selector).sort()).toEqual(['.glass', '.glass::after']);
+    for (const [selector, block] of derived) {
+      // Whitespace-normalised: both derivations are wrapped across lines at this width.
+      expect(block.replace(/\s+/g, ' '), `${selector} derives without color-mix`).toContain(
+        'color-mix( in srgb,',
+      );
+    }
+    const glass = derived.find(([selector]) => selector === '.glass')?.[1] ?? '';
+    // The resting surface is DERIVED from the shipped material, not a second token for it.
+    expect(glass).toContain('--composer-rest-surface: color-mix(');
+    expect(glass).toContain('var(--composer-glass-surface) calc(100% - 65% * var(--composer-rest))');
+    // ...and the fill still reads it through the ONE blur multiplier (859 §B D2), unbroken.
+    expect(glass).toContain(
+      'var(--composer-rest-surface)\n            calc(100% - (100% - var(--glass-opacity)) * var(--glass-blur-scale))',
+    );
+    // The no-blur fallback carries the resting state too, or the composer would re-emphasise itself
+    // wherever backdrop-filter is missing.
+    const fallback = rulesOf(composerSheet()).filter(
+      ([selector, block]) => selector === '.glass' && block.includes('background: var('),
+    );
+    expect(fallback.map(([, block]) => block)).toContain(
+      'background: var(--composer-rest-surface);',
+    );
+  });
+
+  it('spends no TEXT contrast — the de-emphasis is material only', () => {
+    // The half that makes the measured contrast audit answerable in advance: no rule that reads the
+    // knob may also set ink or opacity. A resting treatment that dimmed the placeholder would put
+    // --muted-foreground (zinc-500 on the light page, already near the AA floor) under it.
+    for (const [selector, block] of rulesOf(composerSheet())) {
+      if (!/var\(--composer-rest\)/.test(block)) continue;
+      expect(block, `${selector} spends the resting knob on ink`).not.toMatch(/(^|;)\s*color\s*:/);
+      expect(block, `${selector} spends the resting knob on opacity`).not.toMatch(
+        /(^|;)\s*opacity\s*:/,
+      );
+    }
+    const placeholder = rulesOf(composerSheet()).find(([s]) => s === '.placeholder')?.[1] ?? '';
+    expect(placeholder).toContain('color: var(--placeholder)');
+    expect(placeholder).not.toContain('--composer-rest');
+  });
+
+  it('animates the change only where motion is welcome', () => {
+    const sheet = composerSheet();
+    for (const selector of ['.glass', '.glass::after']) {
+      const block = rulesOf(sheet).find(([s]) => s === selector)?.[1] ?? '';
+      expect(block, `${selector} declares no transition`).toContain(
+        'var(--duration-sv3-micro) var(--ease-sv3-enter)',
+      );
+    }
+    // ...and the reduce block stills exactly that, keeping the STATE and dropping its animation.
+    const reduced = rulesOf(sheet.slice(sheet.indexOf('@media (prefers-reduced-motion: reduce)')));
+    const stilled = reduced.filter(
+      ([selector, block]) =>
+        selector.includes('.glass::after') && block.includes('transition: none'),
+    );
+    expect(stilled.length, 'the reduce block does not still the resting transition').toBe(1);
+    expect(stilled[0]?.[0]).toContain('.glass,');
+  });
+
+  it('does NOT fire while the composer holds focus', () => {
+    // The direct statement of the case: every consumer reads the knob inside a
+    // `calc(100% - N% * var(--composer-rest))` term, so at the focused value (0) each resolves to the
+    // shipped, un-de-emphasised value — 100% of the material, 100% of the frame — rather than to some
+    // third state, and no consumer can read the knob bare.
+    for (const [selector, block] of rulesOf(composerSheet())) {
+      if (!/var\(--composer-rest\)/.test(block)) continue;
+      const spends = [...block.matchAll(/calc\(100% - (\d+)% \* var\(--composer-rest\)\)/g)];
+      const reads = [...block.matchAll(/var\(--composer-rest\)/g)];
+      expect(spends.length, `${selector} reads the knob outside a spend term`).toBe(reads.length);
+      for (const spend of spends) {
+        expect(
+          Number(spend[1]),
+          `${selector} spends the whole value, leaving nothing at rest`,
+        ).toBeLessThan(100);
+      }
+    }
+  });
+});
+
+/**
+ * Tempdoc 864 Layer 3(c)(i) — THE PARKED ROW. §3.3(c) keeps tempdoc 831's guarantee (focus stays on
+ * the row after a rename or a discard) and removes the hazard the other way: the row is the control
+ * a bare `Space` swaps the conversation from, so while it holds focus the reader has to SEE it.
+ */
+describe('tempdoc 864 Layer 3(c)(i) — the focused session row is unmistakable', () => {
+  const ownSheet = (): string => ownStyleTextOf(Sv3SessionRow);
+  const ruleFor = (selector: string): string => {
+    const styles = ownSheet();
+    const at = styles.indexOf(selector);
+    expect(at, `no rule for ${selector}`).toBeGreaterThan(-1);
+    return styles.slice(at, styles.indexOf('}', at));
+  };
+
+  it('draws the ring AND a halo of the same token, both inset past the row’s own clip', () => {
+    const focus = ruleFor('button.row:focus-visible {');
+    expect(focus).toContain('outline: 2px solid var(--ring)');
+    // Inset: the row sets `overflow: hidden` and sits flush in the sidebar's inset, so an outward
+    // ring is trimmed — which is why the offset is negative rather than the usual +2.
+    expect(focus).toContain('outline-offset: -2px');
+    expect(ruleFor('button.row {')).toContain('overflow: hidden');
+    // The second mark, in the composer's own halo idiom (#529): a graded mix of the SAME token.
+    expect(focus).toContain('box-shadow: inset 0 0 0 var(--space-2)');
+    expect(focus).toContain('color-mix(in srgb, var(--ring) 22%, transparent)');
+    // One hue: the ring and the halo cannot drift into two focus colours, and neither is a literal.
+    for (const literal of ['rgb(', 'hsl(', 'oklch(', '#']) expect(focus).not.toContain(literal);
+    expect([...focus.matchAll(/var\(--[a-z0-9-]+\)/g)].map((m) => m[0]).sort()).toEqual([
+      'var(--ring)',
+      'var(--ring)',
+      'var(--space-2)',
+    ]);
+  });
+
+  it('is not eaten by an `all:` reset — the #539 lesson, on this row', () => {
+    // `all: unset` (or a bare `outline: none` after the focus rule) silently blanks a focus ring,
+    // which is how #539's composed control lost one. `button.row` resets its chrome property by
+    // property instead; this pins the reason so a later "tidy-up" cannot reintroduce the shorthand.
+    expect(ruleFor('button.row {')).not.toMatch(/[;{]\s*all\s*:/);
+    expect(ruleFor('button.row {')).toContain('border: 0');
+    const own = ownSheet();
+    const after = own.slice(own.indexOf('button.row:focus-visible {'));
+    expect(after).not.toMatch(/button\.row[^{]*\{[^}]*outline:\s*none/);
+    // And the OUTER tree cannot reach in: a `::part` declaration from the consuming tree beats the
+    // inner rule regardless of specificity, which is the exact mechanism #539 was fixed for.
+    expect(own).not.toContain('::part(');
+    expect(ownStyleTextOf(Sv3Sidebar)).not.toContain('::part(');
+  });
+
+  it('exposes the focusable row through no shadow part an outer sheet could blank', async () => {
+    // The rules above are text; this is the DOM half — an element carrying no `part` attribute
+    // cannot be reached by `::part()` at all, whatever a consuming sheet later says. The row's
+    // ICONS do expose one (`jf-icon`, from the shared icon component), which is why this asserts the
+    // focusable controls specifically rather than the absence of parts everywhere.
+    const el = document.createElement('jf-sv3-session-row') as HTMLElement & {
+      updateComplete: Promise<unknown>;
+    };
+    document.body.appendChild(el);
+    await el.updateComplete;
+    const focusable = [...(el.shadowRoot?.querySelectorAll('button') ?? [])];
+    expect(focusable.length).toBeGreaterThan(0);
+    for (const control of focusable) {
+      expect(control.hasAttribute('part'), `${control.className} is reachable by ::part()`).toBe(
+        false,
+      );
+    }
+    // Anti-vacuity: the row really did render the button the rules above are about.
+    expect(el.shadowRoot?.querySelector('button.row')).not.toBeNull();
+    el.remove();
   });
 });

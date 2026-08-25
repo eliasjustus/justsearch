@@ -1078,7 +1078,7 @@ Explicit constraint for PR A's implementer: `focusField()` **must** reach the te
 | **B** | Layer 1(c2) — real target for `shell.focus-composer`. ~~Layer 4~~ moved to D (A8), and `/` already carries its `when` | ui-web gates; `check-premerge-table` n/a |
 | **C** | Layer 3(a) — project sv3 conversation identity to the URL. **SHIPPED 2026-08-25** (gate satisfied by §4.1's L6/L8) — see §4.6 | router tests; back/forward live leg |
 | **D** | Layer 2 — ~~predicate unification~~ (#546), `isComposing`/`repeat`, `focusKind`/`paletteOpen` resolution, modal guard, `trapTab` containment, **+ Layer 4's gate half** | ui-web gates |
-| **E** | Layer 1(d) + Layer 3(c)(i) — resting-state affordance, row focus indicator | **UX audit, see §4.4** |
+| **E** | Layer 1(d) + Layer 3(c)(i) — resting-state affordance, row focus indicator, + the split-view residual below. **SHIPPED-PENDING-AUDIT 2026-08-25** — see §4.7 | ui-web gate set (green); **§4.4's measured UX audit still owed** — procedure in the PR body |
 
 > **Amended when PR A shipped (2026-08-25).** Row A originally also listed Layer 1(d)'s
 > resting-state affordance, which row E owns — it is a visible-affordance change and therefore
@@ -1091,7 +1091,7 @@ Explicit constraint for PR A's implementer: `focusField()` **must** reach the te
 > `focusComposer()` — a **non-entry** path taking the caret to the composer on a layout change the
 > reader made for some other reason. Narrow (it needs focus to be outside a typing target at that
 > moment) and benign compared with the vacuum it comes from, but it is a focus move nobody asked for
-> and belongs with E's other focus-presentation work.
+> and belongs with E's other focus-presentation work. **Fixed in PR E** — §4.7 (c).
 
 `ConfirmDialog.ts:206-207` (§3.2(a)) is **not** in this sequence — it is a live destructive-action
 bug on an unrelated component. Ship it on its own, ahead of everything. **It did: #541 (A6).**
@@ -1320,3 +1320,78 @@ Reviewer verdict was APPROVE-WITH-FIXES. F1 was a real defect the suite did not 
 PR E (Layer 1(d) + Layer 3(c)(i), with §4.4's measured UX audit). §4.4's live re-verification of
 L1-L11 against the fixed build is a stack-window item and is **not** discharged by this PR's green
 suite (`static-green ≠ live-working`).
+
+> **Superseded for E (2026-08-25):** PR E is implemented and green — §4.7. What is still open for it
+> is §4.4's measured UX audit alone, which is pooled and owed by an auditor ≠ committer.
+
+## 4.7 PR E as implemented (2026-08-25) — the resting affordance, the row ring, and the residual
+
+Three items, each with its mechanism named, because "de-emphasise the composer" and "make the ring
+louder" are the kind of instructions that get satisfied by something that looks right and is
+unreachable — which is exactly what this PR found already shipped (item (d) below).
+
+**(a) Layer 1(d) — the resting-state affordance** (`Sv3Composer.ts`). ONE knob,
+`--composer-rest`, declared `1` on `.glass` and spent to `0` by the single rule
+`.glass:has(textarea:focus)`. Two derived declarations, both `color-mix` in the 859 §B idiom:
+
+- the **material** — `--composer-rest-surface` mixes `--composer-glass-surface` toward
+  `--background` by `calc(100% - 65% * var(--composer-rest))`, i.e. the resting box spends the 4%
+  lift that is its whole "raised surface" signal and sits back into the page; the shipped fill
+  recipe then reads the resting surface through the same one blur multiplier, unchanged, and the
+  `@supports` no-blur companion reads it too (or the composer would re-emphasise itself wherever
+  `backdrop-filter` is missing);
+- the **frame** — `.glass::after`'s `border-color` fades to 45% of `--composer-outline` at rest,
+  the element §2.9(b) named as the thing that "frames the entire box as the input".
+
+**It deliberately spends no text contrast.** No rule that reads the knob sets `color` or `opacity`,
+and there is a test that says so. That was a choice, not an omission: `--placeholder` is
+`--muted-foreground` (zinc-500 on the light page), already near the AA floor, so a resting treatment
+that dimmed the placeholder would have bought the affordance with the one thing the audit measures.
+Motion: both transitions are `--duration-sv3-micro`, and the existing
+`prefers-reduced-motion: reduce` block stills them — the STATE survives a reduced-motion reader, its
+animation does not.
+
+**(b) Layer 3(c)(i) — the row focus indicator** (`Sv3SessionRow.ts`). The ring keeps the repo's
+idiom (`outline: 2px solid var(--ring)`, inset because the row clips its own overflow) and gains a
+second mark in the composer's halo idiom: `box-shadow: inset 0 0 0 var(--space-2)
+color-mix(in srgb, var(--ring) 22%, transparent)`. One hue, two marks, no literal. The 8px band sits
+above and below the label's line box, so it costs no label contrast either.
+
+**(c) The split-view residual** — fixed, `SearchV3View.ts`. `connectedCallback` is the entry signal
+and three things route through it: a first mount, a re-entry to the retained instance, and a
+**re-parent**. The discriminator is the task, not a timer: Lit removes and re-inserts the node inside
+one synchronous update, so a re-parent's connect runs before a microtask queued by the disconnect
+that preceded it, while a real re-entry needs a user event and is a later task by construction. Only
+the focus move is gated — every subscription and observer is still re-taken on every connect.
+Verified red both ways: without the guard the composer steals focus from the split toggle; with the
+flag never cleared, the genuine re-entry stops landing in the composer.
+
+**(d) A defect this PR found and fixed on the way in: the composer's focus ring was unreachable.**
+The three rules that draw it were `:host(:has(textarea:focus-visible)) .glass::after` and siblings —
+the shape 822 F3 measured as a Chrome syntax error that invalidates its whole selector list, and the
+shape whose argument `:host()` matches against the host in the OUTER tree, where a shadow
+`<textarea>` does not live. Either reading makes the ring dead in Chrome. WPT agrees: Chrome fails
+the `:host(:has())` tests. §2.9's "the focus ring is honest" was therefore true about the *keying*
+and wrong about the *painting* — the composer had no focus mark at all, which sharpens rather than
+softens this tempdoc's diagnosis. All three are re-keyed onto the wrapper
+(`.glass:has(textarea:focus-visible)::after`), same pseudo-classes, same order, same declarations,
+and the banned shape is now pinned out of the sheet.
+
+**Tests** — `sv3-focus.test.ts` (the 864 home), plus the two moved pins in `sv3-tokens.test.ts`.
+Style-text, because happy-dom runs no cascade and resolves no `color-mix`; each was verified red
+against a plausible wrong implementation rather than against a deletion:
+
+| Pin | Verified red by |
+|---|---|
+| the knob is keyed on the field's focus, not a state flag | re-keying the lift to `:host([state='hero']) .glass` — 2 red |
+| the row's ring carries the halo | dropping the `box-shadow` line — 1 red |
+| `all:` cannot eat the row ring (#539) | adding `all: unset` to `button.row` — 1 red (and it caught a hole in the first regex: `(^|;)` never matched a first declaration, so the assertion was passing vacuously) |
+| the resting transition is motion-safe | removing `.glass::after` from the reduce block — 1 red |
+| a re-parent is not an entry | removing the guard — focus lands in the composer instead of on the toggle |
+| ...and the entry it must NOT catch still fires | leaving the flag set — the genuine re-entry stops focusing the field |
+
+Full ui-web gate set green (23 scripts + 6 kernel gates); full FE suite 6032/6032.
+
+**Owed:** §4.4's measured UX audit (axe + a contrast oracle, live, auditor ≠ committer) — the
+procedure is written into the PR body for the pooled window. Nothing in this PR discharges it: every
+assertion above is style TEXT, which is exactly the tier the audit exists to outrank.

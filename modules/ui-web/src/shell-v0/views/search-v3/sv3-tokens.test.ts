@@ -537,8 +537,16 @@ describe('the composer glass is token-fed material, so dark inverts without a co
     // `@supports` companion below was written to prevent. Pinning the derived forms is what stops a
     // later edit from silently un-wiring the seam; the token DECLARATIONS (--glass-blur: 16px,
     // --glass-opacity: 80%) are untouched and still pinned by the declaration list above.
+    // Tempdoc 864 Layer 1(d) — the SURFACE term is now `--composer-rest-surface`, and this assertion
+    // moves with it for the same reason 859 §B moved it: the seam being guarded (one multiplier
+    // driving blur AND translucency) is untouched, and the resting knob is DERIVED from
+    // `--composer-glass-surface` one line above rather than forking it. The derivation itself is
+    // pinned in `sv3-focus.test.ts`, next to the affordance it exists for.
     expect(rule).toContain(
-      'var(--composer-glass-surface)\n            calc(100% - (100% - var(--glass-opacity)) * var(--glass-blur-scale))',
+      'var(--composer-rest-surface)\n            calc(100% - (100% - var(--glass-opacity)) * var(--glass-blur-scale))',
+    );
+    expect(rule).toContain(
+      '--composer-rest-surface: color-mix(\n          in srgb,\n          var(--composer-glass-surface) calc(100% - 65% * var(--composer-rest)),\n          var(--background)\n        )',
     );
     expect(rule).toContain('box-shadow: var(--composer-shadow)');
     expect(rule).toContain(
@@ -618,19 +626,27 @@ describe('the composer glass is token-fed material, so dark inverts without a co
   });
 
   it('reads focus and validity off the wrapper, so one ring shows at a time', () => {
-    expect(ruleFor(':host(:has(textarea:focus-visible)) .glass::after')).toContain(
+    // Tempdoc 864 Layer 1(d) — the same three rules, re-keyed from `:host(:has(…)) .glass::after`
+    // onto `.glass:has(…)::after`. 822 F3 measured `:host(:has(` as a Chrome syntax error that takes
+    // its whole selector list down, and `:host()` matches its argument against the host in the OUTER
+    // tree, where a shadow `<textarea>` does not live — so the ring these draw was unreachable. The
+    // wrapper reads the field in its own tree. Declarations and order are unchanged.
+    expect(ruleFor('.glass:has(textarea:focus-visible)::after')).toContain(
       'border-color: var(--ring)',
     );
-    expect(ruleFor(':host(:has(textarea:focus-visible)) .glass::after')).toContain(
+    expect(ruleFor('.glass:has(textarea:focus-visible)::after')).toContain(
       'outline: 3px solid color-mix(in srgb, var(--ring) 24%, transparent)',
     );
-    expect(ruleFor(":host(:has(textarea[aria-invalid='true'])) .glass::after")).toContain(
+    expect(ruleFor(".glass:has(textarea[aria-invalid='true'])::after")).toContain(
       'border-color: color-mix(in srgb, var(--destructive) 36%, transparent)',
     );
     // Invalid must be declared AFTER focus, or a focused invalid field would show the focus hue.
-    expect(composer.indexOf(":host(:has(textarea[aria-invalid='true']))")).toBeGreaterThan(
-      composer.indexOf(':host(:has(textarea:focus-visible))'),
+    expect(composer.indexOf(".glass:has(textarea[aria-invalid='true'])")).toBeGreaterThan(
+      composer.indexOf('.glass:has(textarea:focus-visible)'),
     );
+    // The banned shape is gone from this sheet's RULES entirely, not merely unused (the prose above
+    // the re-keyed rules names it, which is why the comments are stripped before the check).
+    expect(composer.replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain(':host(:has(');
   });
 
   it('gives the primary action the spec size, material and press physics', () => {
