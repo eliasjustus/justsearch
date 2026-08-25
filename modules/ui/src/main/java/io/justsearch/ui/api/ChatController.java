@@ -251,15 +251,25 @@ public final class ChatController {
    * hold conversations (tempdoc 859 slice C PR-2).
    *
    * <p>Before this join the endpoint read {@code ConversationStore} alone, which lists exactly the
-   * conversations whose turns were APPENDED as messages. A delegate run is
-   * {@code SHAPE_DRIVEN} — {@code ConversationEngine.dispatchShapeDriven} never calls
-   * {@code appendMessage} — so an agent conversation has a complete, disk-backed record in the
-   * agent-run store, is served in full by {@code GET /api/thread/{id}} (which already merges both
-   * planes), and had no index entry anywhere: an intact record with no door to it.
+   * conversations whose turns were APPENDED as messages. A delegate run written before tempdoc 863
+   * appended none: {@code ConversationEngine.dispatchShapeDriven} did not call {@code appendMessage},
+   * so such a conversation has a complete, disk-backed record in the agent-run store, is served in
+   * full by {@code GET /api/thread/{id}} (which already merges both planes), and had no index entry
+   * anywhere: an intact record with no door to it. That is still exactly true of the runs that will
+   * always be run-plane-only — standalone runs and background runs — and of every delegate
+   * conversation created before the stamp, which is why this join stays.
    *
-   * <p>Rejected alternative: having agent runs mint a {@code ConversationStore} row. The decisive
-   * argument is the DOUBLE-RENDER — {@code InteractionThreadController} already merges both planes,
-   * so agent-authored store messages would render every delegate turn twice.
+   * <p><b>Superseded (tempdoc 863 §4.A.5 A-4).</b> This comment used to record a rejected
+   * alternative: <i>"having agent runs mint a {@code ConversationStore} row. The decisive argument is
+   * the DOUBLE-RENDER — {@code InteractionThreadController} already merges both planes, so
+   * agent-authored store messages would render every delegate turn twice."</i> That argument was
+   * correct and unanswered right up until 863 shipped its answer, which is a STAMP rather than a
+   * counter-argument: a run the engine recorded to the conversation record persists
+   * {@code recordsToThread: true} in its run meta, and {@code AgentRunQueryService.threadEvents}
+   * suppresses its own synthesised user turn and terminal assistant message for exactly those runs.
+   * One delegate turn therefore renders once through BOTH consumers. A {@code core.agent-run}
+   * conversation created since is store-backed, so {@link #hasStoreSession} dedups it here, no row is
+   * synthesised for it, {@code storeBacked} is absent (i.e. true) and RENAME becomes available on it.
    *
    * <p>The contract this join commits to:
    *
@@ -280,7 +290,9 @@ public final class ChatController {
    *       Every per-row action this list's consumers offer except discard (rename, branch,
    *       context-floor, compact, exclude) writes to a {@code ConversationStore} session; the row says
    *       so instead of offering an action that would 404. The conversation id is REAL — only the
-   *       capability claim is corrected.
+   *       capability claim is corrected. In {@code modules/ui-web} this flag gates RENAME only (the
+   *       other four are gated on message ids), so a stamped delegate conversation gains rename here
+   *       and gains the id-gated acts by having real store message ids (863 §2 P1, §4.A.5 A-6).
    *   <li><b>No {@code messageCount} on a synthesized row</b> — honestly absent. Deriving one means
    *       running the {@code /api/thread} projection per row per request, turning a sidebar refresh
    *       into O(runs x events) and defeating the run store's lazy limit. Absent = not told.
@@ -405,8 +417,16 @@ public final class ChatController {
    * <p>This endpoint does NOT perform the two-store join {@link #handleListSessions} does. The
    * unified transcript already has one authority — {@code GET /api/thread/{id}}, which merges the
    * answer plane and the action plane — and joining the agent runs in here as well would give one
-   * transcript two sources that must then be kept in agreement. A run-backed conversation therefore
-   * answers here with an empty message list, which is the true thing: it has no store messages.
+   * transcript two sources that must then be kept in agreement.
+   *
+   * <p>Narrowed by tempdoc 863 §4.A.5 A-5. This javadoc used to add that "a run-backed conversation
+   * therefore answers here with an empty message list, which is the true thing: it has no store
+   * messages." That is now true only of a conversation that is RUN-ONLY: a standalone or background
+   * run, or a delegate conversation created before the {@code recordsToThread} stamp. Since 863 the
+   * engine appends a stamped delegate run's user turn and assistant turn to the conversation record
+   * as it dispatches, so this endpoint returns them — which is what ends the legacy window's empty
+   * transcript for a delegate conversation. No backfill exists, deliberately: minting store rows for
+   * messages that were never store messages would invent addressable fork points that never existed.
    */
   public void handleLoadHistory(Context ctx) {
     String sessionId = ctx.pathParam("sessionId");

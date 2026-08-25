@@ -749,7 +749,16 @@ public final class FileConversationStore implements ConversationStore {
         meta = new LinkedHashMap<>();
         meta.put("createdAtMs", System.currentTimeMillis());
       }
-      meta.put("shapeId", shapeId);
+      // Tempdoc 863 §4.A.5 A-10.1 — FIRST WINS. This was an unconditional overwrite on every append,
+      // so a conversation's declared shape was really "the shape of its most recent turn". That is
+      // the wrong fact to store: `listSessions(shapeId, …)` filters rows by it and
+      // `UnifiedChatView` re-tags the WHOLE transcript with the one shape it resolves, so one turn in
+      // a different mode silently relabelled everything before it. The edge already existed for a
+      // mixed conversation whose last append came from a different substrate shape; 863 made it
+      // routine by putting delegate turns on the record, so the policy is FIXED rather than merely
+      // stopped from spreading: a conversation's shape is the shape that OPENED it, which is stable,
+      // legible, and the same answer on every subsequent append.
+      meta.putIfAbsent("shapeId", shapeId);
       meta.put("lastActiveAtMs", System.currentTimeMillis());
       int count = ((Number) meta.getOrDefault("messageCount", 0)).intValue() + 1;
       meta.put("messageCount", count);

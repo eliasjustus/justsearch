@@ -212,7 +212,9 @@ public final class ExamplePlugin {
         List.of(),
         List.of(),
         null,
-        List.of());
+        List.of(),
+        // recordsToThread (tempdoc 863 §4.A.1) — a demo shape owns no answer-plane turn.
+        false);
   }
 
   private static Provenance provenance() {

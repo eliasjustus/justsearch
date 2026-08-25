@@ -70,6 +70,8 @@ public final class ExtractShape {
         List.of(ExternalContextInjector.ID, SelectionContextInjector.ID, "core.user-prompt"),
         List.of(ValidationConsumer.ID),
         ValidatingController.ID,
-        EventDescriptor.namesOnly(EVENT_SCHEMA));
+        EventDescriptor.namesOnly(EVENT_SCHEMA),
+        // recordsToThread (tempdoc 863 §4.A.1) — unchanged from the retired derivation.
+        true);
   }
 }

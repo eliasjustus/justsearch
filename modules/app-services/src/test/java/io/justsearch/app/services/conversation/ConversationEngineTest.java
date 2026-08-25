@@ -94,7 +94,8 @@ final class ConversationEngineTest {
             List.of(),
             List.of(),
             null,
-            List.of());
+            List.of(),
+            false);
     var catalog =
         io.justsearch.agent.api.registry.ConversationShapeCatalog.of("core", List.of(operatorShape));
     var engine = new ConversationEngine(catalog, List.of());
@@ -109,6 +110,229 @@ final class ConversationEngineTest {
                 ev -> {
                   /* sink */
                 }));
+  }
+
+  // ── Tempdoc 863 slice A — the delegate turn on the answer plane ───────────────────────────────
+
+  private static ConversationEngine engineWithStore(
+      AgentService agentService, io.justsearch.agent.api.conversation.ConversationStore store) {
+    return new ConversationEngine(
+        CoreConversationShapeCatalog.catalog(),
+        List.of(new ToolIteratingShapeRunner(() -> agentService)),
+        PromptContributorRegistry.of(List.of()),
+        ContextInjectorRegistry.of(List.of()),
+        StreamConsumerRegistry.of(List.of()),
+        IterationControllerRegistry.of(List.of()),
+        io.justsearch.app.api.OnlineAiService::unavailable,
+        store);
+  }
+
+  @Test
+  @DisplayName(
+      "863 §4.A.2: a delegate dispatch records the CLEAN user turn and the answer on the"
+          + " conversation record, with the run plane's evidence")
+  void delegateDispatchRecordsBothTurnsWithEvidence() {
+    var capturedRequest = new AtomicReference<AgentRequest>();
+    var source =
+        new AgentEvent.AgentSource("doc-7", 0, "a/b.md", "B", "the excerpt", 1, 4, "Heading");
+    var cite = new AgentEvent.AgentSentenceCite("the answer.", 0, 0.87);
+    var agentService =
+        new StubAgentService(
+            (request, sink) -> {
+              capturedRequest.set(request);
+              sink.accept(new AgentEvent.SessionStarted("run-1", TraceContext.none()));
+              sink.accept(
+                  new AgentEvent.AgentDone(
+                      "the answer",
+                      1,
+                      2,
+                      42,
+                      List.of(source),
+                      List.of(cite),
+                      "cross-encoder",
+                      "BUDGET_EXHAUSTED"));
+            });
+    var store = new RecordingStore();
+    var engine = engineWithStore(agentService, store);
+
+    engine.run(
+        AgentRunShape.ID,
+        Map.of(
+            "messages", List.of(Map.of("role", "user", "content", "delegate this")),
+            "conversationId", "uc-delegate-1",
+            "maxIterations", 1),
+        Audience.USER,
+        ev -> {});
+
+    // THE STAMP reached the request, which is what carries it into the run meta and from there into
+    // the thread projection's suppression.
+    assertTrue(capturedRequest.get().recordsToThread(), "the engine stamped the dispatch");
+
+    List<Map<String, Object>> recorded = store.appended.get("uc-delegate-1");
+    assertEquals(2, recorded.size(), "exactly the user turn + the assistant turn");
+
+    assertEquals("user", recorded.get(0).get("role"));
+    // Read from body.messages' last role:"user" entry — the agent body names its input `messages`,
+    // not the four scalar fields the ask shapes post.
+    assertEquals("delegate this", recorded.get(0).get("content"));
+
+    Map<String, Object> answer = recorded.get(1);
+    assertEquals("assistant", answer.get("role"));
+    assertEquals("the answer", answer.get("content"), "the done payload's finalResponse");
+    // A-3 (evidence parity): the three attributes the run plane carried and the store plane did not.
+    assertEquals(List.of(Map.of(
+        "parentDocId", "doc-7",
+        "chunkIndex", 0,
+        "path", "a/b.md",
+        "title", "B",
+        "excerpt", "the excerpt",
+        "startLine", 1,
+        "endLine", 4,
+        "headingText", "Heading")), answer.get("sources"));
+    assertEquals("cross-encoder", answer.get("citationScorer"));
+    assertEquals("BUDGET_EXHAUSTED", answer.get("disposition"));
+    assertEquals(1, ((List<?>) answer.get("citations")).size());
+    // ... and the two that the agent `done` genuinely does not produce stay ABSENT, not zeroed.
+    assertFalse(answer.containsKey("calibration"), "no calibration key for an agent payload");
+    assertFalse(answer.containsKey("claimMatches"), "no claimMatches key for an agent payload");
+  }
+
+  @Test
+  @DisplayName(
+      "863 §4.A.2: an ungrounded delegate answer carries NO evidence keys — absent, not empty")
+  void delegateDispatchOmitsEmptyEvidence() {
+    var agentService =
+        new StubAgentService(
+            (request, sink) ->
+                // The 4-arg overload: no sources, no citations. The done payload still WRITES those
+                // keys as empty lists, which is exactly the shape a plain null-check would persist as
+                // a claimed zero.
+                sink.accept(new AgentEvent.AgentDone("plain answer", 1, 0, 7)));
+    var store = new RecordingStore();
+
+    engineWithStore(agentService, store)
+        .run(
+            AgentRunShape.ID,
+            Map.of(
+                "messages", List.of(Map.of("role", "user", "content", "q")),
+                "conversationId", "uc-delegate-2",
+                "maxIterations", 1),
+            Audience.USER,
+            ev -> {});
+
+    Map<String, Object> answer = store.appended.get("uc-delegate-2").get(1);
+    assertEquals("plain answer", answer.get("content"));
+    assertFalse(answer.containsKey("sources"), "an empty sources list is not a fact");
+    assertFalse(answer.containsKey("citations"), "an empty citations list is not a fact");
+    assertFalse(answer.containsKey("disposition"), "the emitter did not say");
+  }
+
+  @Test
+  @DisplayName(
+      "863 §4.A.3: a delegate dispatch with no conversationId records nothing and is NOT stamped")
+  void standaloneDelegateDispatchIsNotStamped() {
+    var capturedRequest = new AtomicReference<AgentRequest>();
+    var agentService =
+        new StubAgentService(
+            (request, sink) -> {
+              capturedRequest.set(request);
+              sink.accept(new AgentEvent.AgentDone("ok", 1, 0, 1));
+            });
+    var store = new RecordingStore();
+
+    engineWithStore(agentService, store)
+        .run(
+            AgentRunShape.ID,
+            Map.of("messages", List.of(Map.of("role", "user", "content", "q")), "maxIterations", 1),
+            Audience.USER,
+            ev -> {});
+
+    assertTrue(store.appended.isEmpty(), "no write key, so nothing recorded");
+    assertFalse(
+        capturedRequest.get().recordsToThread(),
+        "an unstamped run keeps BOTH of the thread projection's syntheses — it is their only record");
+  }
+
+  @Test
+  @DisplayName(
+      "863 §4.A.3: the stamp is the ENGINE's, not the caller's — a body that claims it is overridden")
+  void clientSuppliedStampIsOverridden() {
+    var capturedRequest = new AtomicReference<AgentRequest>();
+    var agentService =
+        new StubAgentService(
+            (request, sink) -> {
+              capturedRequest.set(request);
+              sink.accept(new AgentEvent.AgentDone("ok", 1, 0, 1));
+            });
+    var store = new RecordingStore();
+
+    // A client posting `recordsToThread: true` on a dispatch the engine records NOTHING for would,
+    // if the runner trusted the body, suppress both syntheses for a run with no store rows at all —
+    // the delegate turn would vanish from the thread entirely.
+    Map<String, Object> body = new java.util.LinkedHashMap<>();
+    body.put("messages", List.of(Map.of("role", "user", "content", "q")));
+    body.put("maxIterations", 1);
+    body.put("recordsToThread", true);
+
+    engineWithStore(agentService, store).run(AgentRunShape.ID, body, Audience.USER, ev -> {});
+
+    assertFalse(capturedRequest.get().recordsToThread(), "the engine's answer, not the caller's");
+  }
+
+  @Test
+  @DisplayName("863 §4.A.3: the engine will not stamp a run against a store that keeps nothing")
+  void noOpStoreIsNeverStamped() {
+    var capturedRequest = new AtomicReference<AgentRequest>();
+    var agentService =
+        new StubAgentService(
+            (request, sink) -> {
+              capturedRequest.set(request);
+              sink.accept(new AgentEvent.AgentDone("ok", 1, 0, 1));
+            });
+    // The 2-arg constructor's store is ConversationStore.noop(): it accepts every append and keeps
+    // none. Stamping against it would suppress the run plane's own record of a turn that was written
+    // nowhere.
+    var engine =
+        new ConversationEngine(
+            CoreConversationShapeCatalog.catalog(),
+            List.of(new ToolIteratingShapeRunner(() -> agentService)));
+
+    engine.run(
+        AgentRunShape.ID,
+        Map.of(
+            "messages", List.of(Map.of("role", "user", "content", "q")),
+            "conversationId", "uc-delegate-3",
+            "maxIterations", 1),
+        Audience.USER,
+        ev -> {});
+
+    assertFalse(capturedRequest.get().recordsToThread(), "no recording store, no stamp");
+  }
+
+  @Test
+  @DisplayName("863 §4.A.1: core.agent-run declares recordsToThread, core.workflow-run does not")
+  void agentRunShapeDeclaresRecordsToThread() {
+    var catalog = CoreConversationShapeCatalog.catalog();
+    assertTrue(
+        catalog.findById(AgentRunShape.ID).orElseThrow().recordsToThread(),
+        "the shape 863 promoted the component for");
+    assertFalse(
+        catalog.findById(WorkflowRunShape.ID).orElseThrow().recordsToThread(),
+        "a workflow run's answer lives in its per-node outputs; a store turn would double it");
+    // Every other core shape keeps exactly what the retired derivation returned.
+    for (var shape : catalog.definitions()) {
+      if (shape.id().equals(AgentRunShape.ID)) {
+        continue;
+      }
+      boolean derived =
+          shape.audience() == Audience.USER
+              && shape.executionMode()
+                  == io.justsearch.agent.api.conversation.ExecutionMode.SUBSTRATE_DRIVEN;
+      assertEquals(
+          derived,
+          shape.recordsToThread(),
+          () -> shape.id().value() + " must keep its pre-863 derived value");
+    }
   }
 
   @Test

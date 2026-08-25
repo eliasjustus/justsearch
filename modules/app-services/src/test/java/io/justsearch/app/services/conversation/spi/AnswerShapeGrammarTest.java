@@ -290,7 +290,8 @@ final class AnswerShapeGrammarTest {
         List.of(),
         List.of(),
         SingleHopController.ID,
-        List.of());
+        List.of(),
+        true);
   }
 
   /** Captures the messages the engine sends; returns one canned response. */

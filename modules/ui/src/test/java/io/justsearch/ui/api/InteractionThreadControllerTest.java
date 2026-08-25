@@ -99,6 +99,126 @@ final class InteractionThreadControllerTest {
   }
 
   @Test
+  @DisplayName(
+      "863: a STAMPED delegate turn renders ONCE through the merge — one user item, one answer")
+  void stampedDelegateTurnRendersExactlyOnce() {
+    // The merge has no dedup (handleGet appends both planes), and `projectSv3RecordTurns` opens a
+    // turn on EVERY user item, so a delegate turn present on both planes would draw twice: one turn
+    // holding the question and one holding the activity. That is the objection ChatController
+    // recorded against this design; the stamp answers it by making the RUN plane stop synthesising
+    // (AgentRunQueryServiceThreadEventsTest), so here the agent plane contributes only the tool step.
+    ConversationStore conversationStore = mock(ConversationStore.class);
+    when(conversationStore.loadHistory("conv-stamped"))
+        .thenReturn(List.of(storedUser(), storedAnswer()));
+
+    AgentService agentService = mock(AgentService.class);
+    when(agentService.threadEvents("conv-stamped"))
+        .thenReturn(
+            List.of(
+                new InteractionEvent(
+                    "c1:completed",
+                    "conv-stamped",
+                    Instant.parse("2026-08-25T10:00:02Z"),
+                    InteractionEventKind.TOOL_ACTIVITY,
+                    "agent",
+                    "",
+                    Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed"))));
+
+    JsonNode body =
+        invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-stamped");
+    JsonNode events = body.get("events");
+
+    assertEquals(3, events.size());
+    assertEquals(
+        1, countOfKind(events, "USER_MESSAGE"), "exactly one question, from the answer plane");
+    assertEquals(1, countOfKind(events, "ASSISTANT_MESSAGE"), "exactly one answer");
+    assertEquals("delegate this", events.get(0).get("content").asString());
+    assertEquals("TOOL_ACTIVITY", events.get(1).get("kind").asString());
+    assertEquals("the answer", events.get(2).get("content").asString());
+  }
+
+  @Test
+  @DisplayName(
+      "863 A-3: the store plane carries the SAME evidence attributes the run plane's done carried")
+  void storePlaneEvidenceMatchesTheRunPlanesTerminalAnswer() {
+    // The parity this makes real rather than wished for: suppressing the run-plane `done` (A-2) drops
+    // three attributes the store plane did not used to carry. Both sides are projected here from ONE
+    // done payload — the run plane through AgentInteractionMapper, the store plane through chatTurn
+    // over the row shape ConversationEngine.persistedAssistant writes (pinned against the real engine
+    // by ConversationEngineTest#delegateDispatchRecordsBothTurnsWithEvidence).
+    Map<String, Object> runPlaneAttributes =
+        io.justsearch.agent.AgentInteractionMapper.fromRunEvent(
+                Map.of(
+                    "timestamp", "2026-08-25T10:00:04Z",
+                    "eventType", "done",
+                    "payload", donePayload()),
+                "conv-stamped")
+            .orElseThrow()
+            .attributes();
+
+    ConversationStore conversationStore = mock(ConversationStore.class);
+    when(conversationStore.loadHistory("conv-stamped")).thenReturn(List.of(storedAnswer()));
+    AgentService agentService = mock(AgentService.class);
+    when(agentService.threadEvents("conv-stamped")).thenReturn(List.of());
+
+    JsonNode storePlane =
+        invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-stamped")
+            .get("events")
+            .get(0)
+            .get("attributes");
+
+    for (String key : List.of("sources", "citations", "citationScorer", "disposition")) {
+      assertEquals(
+          MAPPER.valueToTree(runPlaneAttributes.get(key)),
+          storePlane.get(key),
+          () -> "the two planes must project '" + key + "' identically");
+    }
+    // Honestly absent on BOTH planes: the agent `done` produces neither, and a zero would not be true.
+    assertTrue(!runPlaneAttributes.containsKey("calibration") && !storePlane.has("calibration"));
+    assertTrue(!runPlaneAttributes.containsKey("claimMatches") && !storePlane.has("claimMatches"));
+  }
+
+  private static int countOfKind(JsonNode events, String kind) {
+    int n = 0;
+    for (JsonNode e : events) {
+      if (kind.equals(e.get("kind").asString())) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  private static Map<String, Object> donePayload() {
+    Map<String, Object> done = new java.util.LinkedHashMap<>();
+    done.put("finalResponse", "the answer");
+    done.put("sources", List.of(Map.of("parentDocId", "doc-7", "chunkIndex", 0, "path", "a/b.md")));
+    done.put("citations", List.of(Map.of("sentenceText", "the answer", "sourceIndex", 0)));
+    done.put("citationScorer", "cross-encoder");
+    done.put("disposition", "BUDGET_EXHAUSTED");
+    return done;
+  }
+
+  /** The user row the engine appends before the run starts. */
+  private static Map<String, Object> storedUser() {
+    return Map.of(
+        "id", "11111111-1111-1111-1111-111111111111",
+        "role", "user",
+        "content", "delegate this",
+        "ts", "2026-08-25T10:00:01Z");
+  }
+
+  /** The assistant row {@code ConversationEngine.persistedAssistant} writes at the terminal done. */
+  private static Map<String, Object> storedAnswer() {
+    Map<String, Object> row = new java.util.LinkedHashMap<>(donePayload());
+    row.remove("finalResponse");
+    row.put("id", "22222222-2222-2222-2222-222222222222");
+    row.put("role", "assistant");
+    row.put("content", "the answer");
+    row.put("ts", "2026-08-25T10:00:04Z");
+    return row;
+  }
+
+  @Test
   @DisplayName("empty conversation yields an empty events array")
   void emptyConversation() {
     ConversationStore conversationStore = mock(ConversationStore.class);

@@ -284,6 +284,23 @@ public final class InteractionThreadController {
     if (reasoning instanceof List<?> r && !r.isEmpty()) {
       attributes.put("reasoning", reasoning);
     }
+    // Tempdoc 863 §4.A.4 (A-3) — the three attributes a delegate answer used to carry ONLY on the run
+    // plane. A stamped run's terminal run-plane `done` is suppressed (AgentRunQueryService), so
+    // `recordEvidenceOf` must see these from the store plane exactly as it saw them from the run
+    // plane, or the suppression would silently strip a delegate turn's Sources pane, its scorer stamp
+    // and its truncation disclosure. Same conditional rule as the three above: absent stays absent.
+    Object sources = msg.get("sources");
+    if (sources instanceof List<?> s && !s.isEmpty()) {
+      attributes.put("sources", sources);
+    }
+    Object citationScorer = msg.get("citationScorer");
+    if (citationScorer instanceof String scorer && !scorer.isBlank()) {
+      attributes.put("citationScorer", citationScorer);
+    }
+    Object disposition = msg.get("disposition");
+    if (disposition instanceof String d && !d.isBlank()) {
+      attributes.put("disposition", disposition);
+    }
     return new InteractionEvent(
         eventId,
         conversationId,

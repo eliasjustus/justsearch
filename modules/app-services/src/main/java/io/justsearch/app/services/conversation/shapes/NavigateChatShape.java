@@ -86,6 +86,8 @@ public final class NavigateChatShape {
         List.of(UserPromptInjector.ID),
         List.of(URLExtractor.ID),
         SingleHopController.ID,
-        EventDescriptor.namesOnly(EVENT_SCHEMA));
+        EventDescriptor.namesOnly(EVENT_SCHEMA),
+        // recordsToThread (tempdoc 863 §4.A.1) — unchanged from the retired derivation.
+        true);
   }
 }

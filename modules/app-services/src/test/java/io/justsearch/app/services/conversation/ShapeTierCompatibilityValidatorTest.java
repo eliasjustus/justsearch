@@ -67,7 +67,8 @@ final class ShapeTierCompatibilityValidatorTest {
         List.of(),
         List.of(),
         null,
-        EventDescriptor.namesOnly(List.of("done")));
+        EventDescriptor.namesOnly(List.of("done")),
+        true);
   }
 
   /** Test SPI: PromptContributor restricted to CORE shapes. */
@@ -267,7 +268,8 @@ final class ShapeTierCompatibilityValidatorTest {
             List.of("test.core-only-injector"),
             List.of("test.core-only-consumer"),
             "test.core-only-controller",
-            EventDescriptor.namesOnly(List.of("done")));
+            EventDescriptor.namesOnly(List.of("done")),
+            true);
     var violations = validator.validate(pluginShape);
     assertEquals(4, violations.size(), () -> "Expected 4 violations (one per SPI kind), got " + violations);
     Set<String> kinds =

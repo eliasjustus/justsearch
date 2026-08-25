@@ -40,6 +40,9 @@ function navigateChatShape(): ConversationShape {
     streamConsumerIds: ['core.url-extractor'],
     iterationControllerId: null,
     eventSchema: ['chunk', 'done', 'error', 'navigate.url_extracted', 'navigate.url_dispatched', 'navigate.url_rejected'],
+    // Tempdoc 863 §4.A.1 — the thirteenth component, now on the wire. `core.navigate-chat` is
+    // USER-audience and SUBSTRATE_DRIVEN, so this is exactly what the retired derivation returned.
+    recordsToThread: true,
   };
 }
 

@@ -85,7 +85,7 @@ public final class AgentInteractionMapper {
         }
         yield Optional.of(
             new InteractionEvent(
-                conversationId + ":assistant:" + stamp,
+                terminalAnswerIdPrefix(conversationId) + stamp,
                 conversationId,
                 at,
                 InteractionEventKind.ASSISTANT_MESSAGE,
@@ -384,7 +384,7 @@ public final class AgentInteractionMapper {
    * {@code InteractionEvent}'s compact constructor does {@code Map.copyOf}, so the map the delegate
    * returned is immutable and {@code put} on it would throw at runtime.
    */
-  private static InteractionEvent withReasoning(
+  static InteractionEvent withReasoning(
       InteractionEvent event, List<Map<String, Object>> blocks) {
     Map<String, Object> merged = new LinkedHashMap<>(event.attributes());
     // Tempdoc 859 §A — APPEND, never replace. Under the flush rule a carrier can be written twice:
@@ -425,7 +425,7 @@ public final class AgentInteractionMapper {
   }
 
   @SuppressWarnings("unchecked")
-  private static Map<String, Object> castMap(Map<?, ?> m) {
+  static Map<String, Object> castMap(Map<?, ?> m) {
     return (Map<String, Object>) m;
   }
 
@@ -441,6 +441,24 @@ public final class AgentInteractionMapper {
    * boundary first and render the node's output OUTSIDE its segment (the reload defect Fix A targets); the
    * index keeps node N's {@code end} ahead of node N+1's {@code start} on the cross-node tie.
    */
+  /**
+   * Tempdoc 863 §4.A.3 (A-2) — the id prefix the AGENT terminal {@code done} mints its single
+   * {@code ASSISTANT_MESSAGE} under. Exported so the one caller that suppresses that event for a
+   * stamped run ({@code AgentRunQueryService.threadEvents}) keys on the mint itself rather than on
+   * "the last assistant event": a WORKFLOW run's per-node answers are also {@code ASSISTANT_MESSAGE}s
+   * and mint under {@code :node:} instead, so they are untouched by that filter, and a rule keyed on
+   * position would have silently eaten the last node of every workflow run.
+   */
+  public static String terminalAnswerIdPrefix(String conversationId) {
+    return conversationId + ":assistant:";
+  }
+
+  /** Is this the event {@link #terminalAnswerIdPrefix} describes — the agent run's own answer? */
+  public static boolean isTerminalAnswer(InteractionEvent event, String conversationId) {
+    return event.kind() == InteractionEventKind.ASSISTANT_MESSAGE
+        && event.id().startsWith(terminalAnswerIdPrefix(conversationId));
+  }
+
   private static String nodeEventId(
       String conversationId, Object indexObj, int role, Object nodeId, String stamp) {
     int idx = indexObj instanceof Number n ? n.intValue() : 0;

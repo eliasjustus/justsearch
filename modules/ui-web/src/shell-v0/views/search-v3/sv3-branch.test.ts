@@ -28,7 +28,7 @@ import {
 import { siblingSessionsAt, type Conversation } from '../../state/conversationListStore.js';
 import { EMPTY_PREFIX_SENTINEL } from '../unifiedChatRequest.js';
 import { BRANCH_MENU_BRANCH, BRANCH_MENU_RETRY } from './fixtures.js';
-import type { Sv3SessionHistory, Sv3Turn } from './sv3-sessions.js';
+import { sv3TurnMessageIds, type Sv3SessionHistory, type Sv3Turn } from './sv3-sessions.js';
 
 const stored = (n: number): string => `11111111-2222-4333-8444-55555555555${n}`;
 
@@ -364,5 +364,57 @@ describe('the menu demultiplex', () => {
         isSv3BranchActionId,
       ),
     ).toBe(false);
+  });
+});
+
+describe('an agent turn withholds edit, retry and branch on its KIND (tempdoc 863 §4.A.5 A-8)', () => {
+  /**
+   * Turn 0 is now a turn 863 slice A makes possible: an agent-tier run the CONVERSATION STORE
+   * reconciled, so both its halves are real store ids — the exact shape law 1 alone would hand
+   * `canEdit`/`branchFromId` back for. Turn 1 is an ordinary ask turn, also fully store-backed.
+   */
+  const AGENT_THEN_ASK: readonly Sv3Turn[] = [
+    { ...recordTurn('t0', 0, 1), kind: 'agent' },
+    recordTurn('t1', 2, 3),
+  ];
+
+  it('an agent turn with fully valid STORE ids still offers nothing — the kind gate, not law 1', () => {
+    const lineage = projectSv3TurnLineage(AGENT_THEN_ASK, null, 'base', []);
+
+    // THE CASE LAW 1 CANNOT EXPLAIN. Both of the agent turn's own ids really are store messages —
+    // asserted here so the refusal below cannot be mistaken for the honest-null case where an id is
+    // simply missing. Only the explicit `turn.kind === 'agent'` check in `projectSv3TurnLineage`
+    // refuses what law 1 alone would allow.
+    const ids = sv3TurnMessageIds(AGENT_THEN_ASK[0] as Sv3Turn);
+    expect(ids.userMsgId).not.toBeNull();
+    expect(ids.assistantMsgId).not.toBeNull();
+
+    expect(lineage[0]?.canEdit).toBe(false);
+    expect(lineage[0]?.branchFromId).toBeNull();
+    expect(sv3BranchMenuItems(lineage, 't0', { streaming: false })).toEqual([]);
+  });
+
+  it('the IDENTICAL turn with kind "ask" offers both — the control proving case 1 is about kind', () => {
+    // TWO_TURNS is exactly AGENT_THEN_ASK's fixture with turn 0's kind left at its default ('ask').
+    const lineage = projectSv3TurnLineage(TWO_TURNS, null, 'base', []);
+
+    expect(lineage[0]?.canEdit).toBe(true);
+    expect(lineage[0]?.branchFromId).toBe(stored(1));
+    expect(sv3BranchMenuItems(lineage, 't0', { streaming: false })).toEqual([
+      { id: 'retry', label: BRANCH_MENU_RETRY, enabled: true },
+      { id: 'branch', label: BRANCH_MENU_BRANCH, enabled: true },
+    ]);
+  });
+
+  it('the ask turn AFTER a delegate turn gains Edit (863 §4.A.5 A-8.2)', () => {
+    const lineage = projectSv3TurnLineage(AGENT_THEN_ASK, null, 'base', []);
+
+    // Before 863, the predecessor's answer was a run-plane id and `forkKeyAt` (unchanged by this
+    // slice) named it, so law 1 withheld Edit here too. Now the delegate turn's answer is a real
+    // store message, so the fork point resolves and this ordinary ask turn legitimately gains Edit —
+    // the deliberate asymmetry: withholding is about what re-dispatching THIS turn would do, not
+    // about the messages around it.
+    expect(lineage[1]?.canEdit).toBe(true);
+    expect(lineage[1]?.forkKey).toBe(stored(1));
   });
 });

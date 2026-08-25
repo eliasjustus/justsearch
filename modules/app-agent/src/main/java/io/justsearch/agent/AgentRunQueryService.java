@@ -374,7 +374,19 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
       if (background) {
         out.add(backgroundBoundary(runId, conversationId, startedAt, "start"));
       }
-      if (meta != null) {
+      // Tempdoc 863 §4.A.3 (A-2) — a STAMPED run is one whose turns the CONVERSATION record already
+      // holds, because the engine appended them there as it dispatched (863 §4.A.2). Both of this
+      // projection's read-time syntheses are therefore duplicates for it: the `<runId>:user` turn
+      // below and the mapper's terminal `ASSISTANT_MESSAGE`. `InteractionThreadController` merges the
+      // two planes with no dedup and `projectSv3RecordTurns` opens a turn on EVERY user item, so
+      // without this one delegate turn would render twice — the exact objection `ChatController`
+      // recorded against this design, answered here rather than argued with.
+      //
+      // The suppression is NARROWING, not deletion: a run with no stamp (every run written before
+      // this shipped, every standalone run, every background run) keeps both syntheses and renders
+      // byte-identically to before, because for those runs the syntheses really are the only record.
+      boolean stamped = meta != null && Boolean.TRUE.equals(meta.get("recordsToThread"));
+      if (meta != null && !stamped) {
         String userContent = firstUserMessage(meta);
         if (userContent != null) {
           out.add(
@@ -390,7 +402,9 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
       // Tempdoc 848 §2.4 — the whole run at once, not record-by-record: the reasoning fold is
       // stateful (chunks coalesce into blocks that attach to the turn they belong to), and its
       // terminal-attachment rule needs the run's boundary.
-      out.addAll(AgentInteractionMapper.fromRunEvents(runStore.readEvents(runId), conversationId));
+      List<InteractionEvent> runEvents =
+          AgentInteractionMapper.fromRunEvents(runStore.readEvents(runId), conversationId);
+      out.addAll(stamped ? withoutTerminalAnswer(runEvents, conversationId) : runEvents);
       if (background) {
         // +1ms after the run's last update so the closing marker sorts AFTER every event of the run.
         java.time.Instant endAt =
@@ -400,6 +414,47 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
       }
     }
     return out;
+  }
+
+  /**
+   * Tempdoc 863 §4.A.3 (A-2) — drop the AGENT run's terminal {@code ASSISTANT_MESSAGE}, which for a
+   * stamped run is a second copy of an answer the conversation record already holds. Keyed on the
+   * mint ({@link AgentInteractionMapper#isTerminalAnswer}), never on position: a workflow run's
+   * per-node answers are {@code ASSISTANT_MESSAGE}s too, and a "drop the last assistant event" rule
+   * would have eaten the last node of every one of them.
+   *
+   * <p>The dropped event can be carrying the run's TRAILING thinking — the reasoning fold attaches a
+   * block to the next event that projects, and on an agent run the terminal answer is usually that
+   * event (848 §2.4). Those blocks are re-attached to the run's last surviving event, which is the
+   * same rule the fold itself applies when a journal ends on reasoning ({@code fromRunEvents}'s
+   * trailing case targets the run's last event). A run whose ONLY projecting event WAS the terminal
+   * answer — a delegate run that called no tool — has no carrier left, and its trailing block does
+   * not reach the thread; the record on disk still holds every {@code reasoning_chunk}, so this is a
+   * projection gap, not data loss. Closing it means giving the store-plane turn the run plane's fold
+   * output, which is a cross-plane merge this slice does not introduce.
+   */
+  private static List<InteractionEvent> withoutTerminalAnswer(
+      List<InteractionEvent> runEvents, String conversationId) {
+    List<InteractionEvent> kept = new ArrayList<>(runEvents.size());
+    List<Map<String, Object>> orphanedReasoning = new ArrayList<>();
+    for (InteractionEvent event : runEvents) {
+      if (AgentInteractionMapper.isTerminalAnswer(event, conversationId)) {
+        if (event.attributes().get("reasoning") instanceof List<?> blocks) {
+          for (Object block : blocks) {
+            if (block instanceof Map<?, ?> m) {
+              orphanedReasoning.add(AgentInteractionMapper.castMap(m));
+            }
+          }
+        }
+        continue;
+      }
+      kept.add(event);
+    }
+    if (!orphanedReasoning.isEmpty() && !kept.isEmpty()) {
+      int last = kept.size() - 1;
+      kept.set(last, AgentInteractionMapper.withReasoning(kept.get(last), orphanedReasoning));
+    }
+    return kept;
   }
 
   /**

@@ -21,6 +21,10 @@
  *    different ids on the same turn and confusing them is silent: an edit forked from the turn's own
  *    answer would inherit the very exchange the reader was replacing, and the transcript would look
  *    entirely plausible. {@link Sv3TurnLineage} carries both, named for what they do.
+ * 4. **An AGENT turn offers none of the three** (tempdoc 863 §4.A.5 A-8), gated on the turn's KIND.
+ *    All three re-dispatch through the ask tier, so on a delegate turn they are a silent tier
+ *    conversion. Until 863 this was withheld for free by law 1 — a delegate turn named no store
+ *    message — which made the refusal depend on an accident that 863 removed.
  */
 import type { Conversation } from '../../state/conversationListStore.js';
 import { siblingSessionsAt } from '../../state/conversationListStore.js';
@@ -136,11 +140,26 @@ export function projectSv3TurnLineage(
     const own = index >= firstOwn;
     const { userMsgId, assistantMsgId } = sv3TurnMessageIds(turn);
     const forkKey = own ? forkKeyAt(turns, index, firstOwn, history) : null;
+    // LAW 4 (tempdoc 863 §4.A.5 A-8) — an AGENT turn offers none of the three acts, gated on the
+    // turn's KIND rather than on the accident that its ids were not store ids. Before 863 a delegate
+    // turn named no store message, so law 1 withheld them for free; now that the engine records the
+    // delegate turn its ids ARE store ids, and law 1 would hand all three back. That would be wrong
+    // for a reason law 1 never expressed: all three re-dispatch through the ASK tier
+    // (`branchAndResend`, and Branch-to-new-thread's follow-up), so offering them on an agent turn is
+    // a SILENT TIER CONVERSION — the reader asks the delegate again and gets an ask. Re-dispatching
+    // an agent turn to the agent tier is the better answer and is 863 §8's open question, not a
+    // silent inclusion here.
+    //
+    // Note the deliberate asymmetry: `forkKeyAt` still reads the previous turn's OWN assistant id, so
+    // the ordinary ask turn that FOLLOWS a delegate turn now gets a real fork key and legitimately
+    // gains Edit (863 §4.A.5 A-8.2). Withholding on an agent turn is about what re-dispatching THAT
+    // turn would do, not about the messages around it.
+    const agentTurn = turn.kind === 'agent';
     return {
       turnId: turn.id,
-      branchFromId: own ? assistantMsgId : null,
+      branchFromId: own && !agentTurn ? assistantMsgId : null,
       forkKey,
-      canEdit: own && userMsgId !== null && forkKey !== null,
+      canEdit: own && !agentTurn && userMsgId !== null && forkKey !== null,
       versions: versionsAt(turns, index, firstOwn, history, sessionId, conversations),
     };
   });

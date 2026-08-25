@@ -32,6 +32,13 @@ import java.util.Objects;
  *     "quick"|"standard"|"thorough"}); null/unknown → Standard. It is the rung NAME, never a token
  *     count: sizing is a backend policy ({@code AgentBudgetPolicy}) because only the backend can see
  *     the model's {@code n_ctx}, and an FE-authored count would be a second sizing authority.
+ * @param recordsToThread tempdoc 863 §4.A.3 — TRUE when the dispatching {@code ConversationEngine}
+ *     is itself appending this run's turns to the canonical conversation record. It is an ENGINE
+ *     decision, not a caller preference: the engine resolves the write key and stamps the answer into
+ *     the dispatch body, the runner carries it here, and {@code AgentRunStore.startRun} persists it in
+ *     the run meta — which is where the thread projection reads it to suppress its own synthesised
+ *     copies of turns the record already holds. False for every run the engine does not record:
+ *     standalone runs, background runs, and every run written before the stamp existed.
  */
 public record AgentRequest(
     List<Map<String, Object>> messages,
@@ -43,7 +50,8 @@ public record AgentRequest(
     String conversationId,
     String autonomyLevel,
     List<String> docIds,
-    String effort) {
+    String effort,
+    boolean recordsToThread) {
 
   public AgentRequest {
     Objects.requireNonNull(messages, "messages");
@@ -55,6 +63,38 @@ public record AgentRequest(
     docIds = docIds == null ? List.of() : List.copyOf(docIds);
     // initialAgentId, maxHandoffs, conversationId, autonomyLevel, effort null are valid —
     // defaulted at runtime (effort's default is the Standard rung, AgentBudgetPolicy).
+  }
+
+  /**
+   * Back-compat constructor (pre-863, no {@code recordsToThread}) — delegates with {@code false}.
+   * Every older overload below chains through this one, so a caller that predates the stamp declares
+   * the truth about itself: it is not the engine, and it is recording nothing to the canonical
+   * record. Only {@code ToolIteratingShapeRunner} (which reads the engine's stamp off the dispatch
+   * body) uses the canonical constructor.
+   */
+  public AgentRequest(
+      List<Map<String, Object>> messages,
+      List<String> selectedToolNames,
+      int maxIterations,
+      List<AgentProfile> agentProfiles,
+      String initialAgentId,
+      Integer maxHandoffs,
+      String conversationId,
+      String autonomyLevel,
+      List<String> docIds,
+      String effort) {
+    this(
+        messages,
+        selectedToolNames,
+        maxIterations,
+        agentProfiles,
+        initialAgentId,
+        maxHandoffs,
+        conversationId,
+        autonomyLevel,
+        docIds,
+        effort,
+        false);
   }
 
   /** Back-compat constructor (pre-859 §D, no effort) — delegates with effort null ⇒ Standard. */
