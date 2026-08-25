@@ -38,11 +38,14 @@ const REAPER_PATH = path.join(HERE, '..', 'dev', 'lib', 'agent-spawn-reaper.cjs'
 const {
   REAP_DISPOSITIONS,
   OCCASION_KINDS,
+  OCCASIONS,
   CAPABILITIES,
   CELLS,
   OWNER_STATES,
+  resolveOccasion,
   ownerActivityVerdict,
   reapEligible,
+  markRefusals,
   executeReap,
 } = require('../dev/lib/agent-spawn-reaper.cjs');
 const { OWNERSHIP_MODES } = require('../dev/lib/agent-spawn-record.cjs');
@@ -50,6 +53,8 @@ const { DEFAULT_THRESHOLDS } = require('../dev/lib/ownership-verdict.cjs');
 
 let passed = 0;
 const failures = [];
+/** Temp dirs (mutant modules, register fixtures) removed at the end. */
+const mutantDirs = [];
 async function check(label, fn) {
   try {
     await fn();
@@ -115,13 +120,33 @@ const ACTIVITY = {
    * This is the exact shape of the 2026-07-14 defect (`dev-runner.cjs:2105-2113`).
    */
   quietButWorking: { lastActivityAt: iso(NOW - 6_000_000), lastDevStackTouchAt: null },
+  /**
+   * [F5] Silent 7 minutes with NO declared hold. Past `classifyActivity`'s 5-minute general
+   * threshold, inside the 10-minute floor (5m abandoned + 5m grace) every record gets. The
+   * 5-to-10-minute window the earlier fixtures skipped entirely — and the window whose verdict
+   * was previously explained as "the declared lease duration is intent" for a 30-second lease.
+   */
+  silentSevenMinutes: { lastActivityAt: iso(NOW - 420_000), lastDevStackTouchAt: null },
 };
 
+/**
+ * [F2] The three columns are now named OCCASIONS, not hand-assembled `{occasion, capability}`
+ * pairs — the module's `OCCASIONS` map is the one authority, and this test derives from it rather
+ * than restating it. When the earlier revision kept its own COLUMNS table, the test's pairing and
+ * the module's rule were two places that could disagree; now a wrong pairing here cannot even be
+ * written.
+ */
 const COLUMNS = {
-  sweep: { occasion: OCCASION_KINDS.SWEEP, capability: CAPABILITIES.EXECUTE },
-  teardown: { occasion: OCCASION_KINDS.CONFLICT, capability: CAPABILITIES.EXECUTE },
-  build: { occasion: OCCASION_KINDS.CONFLICT, capability: CAPABILITIES.ADVISORY },
+  sweep: 'session-start',
+  teardown: 'worktree-teardown',
+  build: 'before-a-build',
 };
+
+await check('[F2] the test columns ARE occasions from the module map — one authority, not a restatement', () => {
+  assert.deepEqual(resolveOccasion(COLUMNS.sweep), { kind: OCCASION_KINDS.SWEEP, capability: CAPABILITIES.EXECUTE });
+  assert.deepEqual(resolveOccasion(COLUMNS.teardown), { kind: OCCASION_KINDS.CONFLICT, capability: CAPABILITIES.EXECUTE });
+  assert.deepEqual(resolveOccasion(COLUMNS.build), { kind: OCCASION_KINDS.CONFLICT, capability: CAPABILITIES.ADVISORY });
+});
 
 const R = REAP_DISPOSITIONS;
 
@@ -179,6 +204,17 @@ const MATRIX = [
     expect: { sweep: R.CONTENTION, teardown: R.CONTENTION, build: R.CONTENTION },
     blocks: true,
     ownerState: OWNER_STATES.UNKNOWN,
+  },
+  {
+    // [F5] The floor window, distinct from a hold anyone declared.
+    id: '[F5] lease lapsed, owner silent 7min with NO declared hold -> contention via the grace window',
+    row: 'Registered, other session, lease lapsed, inside the abandonment floor',
+    record: REC({ lease: LAPSED(30) }),
+    activity: ACTIVITY.silentSevenMinutes,
+    cell: CELLS.LAPSED_GRACE_WINDOW,
+    expect: { sweep: R.CONTENTION, teardown: R.CONTENTION, build: R.CONTENTION },
+    blocks: true,
+    ownerState: OWNER_STATES.GRACE_WINDOW,
   },
   {
     // [A1]'s declared-hold arm, ported from dev-runner.cjs:2109-2113.
@@ -253,7 +289,10 @@ const MATRIX = [
     activity: ACTIVITY.longSilent,
     cell: CELLS.IDENTITY_MISMATCH,
     expect: { sweep: R.REFUSE, teardown: R.REFUSE, build: R.REFUSE },
-    blocks: true,
+    // [F3] Refuses to KILL (the pid now belongs to someone else), but does not block a teardown:
+    // the process this record describes is positively gone, so it holds nothing. Whatever inherited
+    // the pid is the observed tier's business, not this record's.
+    blocks: false,
   },
   {
     // arm (iii): the enumeration itself failed. An empty table is NO evidence, not exculpatory.
@@ -309,7 +348,6 @@ const MATRIX = [
 const seenCells = new Set();
 
 function runCell(entryRow, columnName) {
-  const col = COLUMNS[columnName];
   const records = entryRow.observed
     ? []
     : [entryRow.entry ? entryRow.entry : { ok: true, recordId: entryRow.record.recordId, record: entryRow.record }];
@@ -317,8 +355,7 @@ function runCell(entryRow, columnName) {
     records,
     observed: entryRow.observed ? [entryRow.observed] : [],
     processTable: entryRow.table === undefined ? TABLE() : entryRow.table,
-    occasion: col.occasion,
-    capability: col.capability,
+    occasion: COLUMNS[columnName],
     callerSessionId: CALLER,
     now: NOW,
     thresholds: DEFAULT_THRESHOLDS,
@@ -394,18 +431,73 @@ await check('[A4] executeReap refuses a downgraded entry — the advisory occasi
   assert.match(res.reason, /advisory-downgraded/);
 });
 
-await check('[A4] the DEFAULT capability is advisory — an occasion that forgot to declare itself gets nothing spendable', () => {
+/* ── [F2] the unwritable-spelling probe ───────────────────────────────────────────────────── */
+
+const reapable = () => {
   const rec = REC({ sessionId: CALLER, lease: LAPSED() });
+  return [{ ok: true, recordId: rec.recordId, record: rec }];
+};
+
+await check('[F2] PROBE: {occasion: CONFLICT, capability: EXECUTE} is now UNWRITABLE — it throws', () => {
+  // The exact spelling the earlier revision accepted, and the one [A4] forbids for the
+  // before-a-build surface. `OCCASION_KINDS.CONFLICT` is a column, not an occasion.
+  assert.throws(
+    () => reapEligible({
+      records: reapable(),
+      processTable: TABLE(),
+      occasion: OCCASION_KINDS.CONFLICT,
+      capability: CAPABILITIES.EXECUTE,
+      callerSessionId: CALLER,
+      now: NOW,
+      activityFor: () => null,
+      env: {},
+    }),
+    /unknown reap occasion "conflict".*Capability is bound to the occasion/s,
+  );
+});
+
+await check('[F2] PROBE: a stray `capability` alongside a REAL occasion cannot upgrade it either', () => {
   const out = reapEligible({
-    records: [{ ok: true, recordId: rec.recordId, record: rec }],
+    records: reapable(),
     processTable: TABLE(),
+    occasion: 'before-a-build',
+    // Ignored: capability is not an input. If this ever took effect, a PreToolUse hook would hold
+    // a kill list — which is precisely [A4]'s prohibition.
+    capability: CAPABILITIES.EXECUTE,
     callerSessionId: CALLER,
     now: NOW,
     activityFor: () => null,
     env: {},
   });
-  assert.equal(out.reap.length, 0, 'killing must require naming CAPABILITIES.EXECUTE out loud');
-  assert.equal(out.report[0].ceiling, R.REAP);
+  assert.equal(out.reap.length, 0, 'before-a-build must never hold a reap entry, whatever else is passed');
+  assert.equal(out.all[0].capability, CAPABILITIES.ADVISORY, 'capability comes from the occasion');
+  assert.equal(out.all[0].downgraded, true);
+});
+
+await check('[F2] PROBE: an omitted or unknown occasion THROWS — no silent safe-default fallback', () => {
+  assert.throws(() => reapEligible({ records: reapable(), processTable: TABLE() }), /unknown reap occasion/);
+  assert.throws(() => reapEligible({ records: [], processTable: TABLE(), occasion: 'sweep' }), /unknown reap occasion/);
+  assert.throws(() => resolveOccasion('constructor'), /unknown reap occasion/, 'prototype keys are not occasions');
+});
+
+await check('[F2] all six §6.4 occasions are declared, frozen, and only the two advisory ones are advisory', () => {
+  assert.deepEqual(Object.keys(OCCASIONS).sort(), [
+    'before-a-build', 'orientation', 'session-closeout', 'session-end', 'session-start', 'worktree-teardown',
+  ]);
+  assert.ok(Object.isFrozen(OCCASIONS));
+  const advisory = Object.entries(OCCASIONS).filter(([, v]) => v.capability === CAPABILITIES.ADVISORY).map(([k]) => k).sort();
+  assert.deepEqual(advisory, ['before-a-build', 'orientation'], '§6.4: before-a-build never kills; world-state never kills');
+});
+
+await check('[F2] every EXECUTE occasion can actually mint a reap, and neither advisory one can', () => {
+  for (const [name, spec] of Object.entries(OCCASIONS)) {
+    const out = reapEligible({
+      records: reapable(), processTable: TABLE(), occasion: name,
+      callerSessionId: CALLER, now: NOW, activityFor: () => null, env: {},
+    });
+    const expected = spec.capability === CAPABILITIES.EXECUTE ? 1 : 0;
+    assert.equal(out.reap.length, expected, `occasion ${name} (${spec.capability})`);
+  }
 });
 
 /* ── §6.4: a teardown refuses while an UNREAPABLE holder remains ──────────────────────────── */
@@ -421,6 +513,134 @@ await check('§6.4 blocksProceed: a never-reap holder still blocks a teardown, a
 
 await check('§6.4 blocksProceed: the observed tier never blocks — that judgement belongs to the caller', () => {
   assert.equal(runCell(MATRIX.at(-1), 'teardown').blocksProceed, false);
+});
+
+/* ── [F3] a DEAD never-reap holder is a phantom, and must not block a teardown ─────────────── */
+
+const SINGLETON = REC({
+  ownership: OWNERSHIP_MODES.OWNERLESS_SINGLETON,
+  producer: 'otlp-sink',
+  recordId: 'otlp-sink',
+  lease: LAPSED(),
+});
+
+function singletonTeardown(table) {
+  return reapEligible({
+    records: [{ ok: true, recordId: SINGLETON.recordId, record: SINGLETON }],
+    processTable: table,
+    occasion: 'worktree-teardown',
+    callerSessionId: CALLER,
+    now: NOW,
+    activityFor: () => ACTIVITY.longSilent,
+    env: {},
+  });
+}
+
+await check('[F3] ARM 1 — a LIVE ownerless-singleton blocks the teardown (it really is holding the tree)', () => {
+  const out = singletonTeardown(TABLE());
+  const e = out.all[0];
+  assert.equal(e.cell, CELLS.OWNERLESS_SINGLETON);
+  assert.equal(e.disposition, R.REPORT, 'never reaped');
+  assert.equal(e.identity.verdict, 'match');
+  assert.equal(e.blocksProceed, true, 'an unreapable holder that exists must stop the teardown');
+  assert.equal(out.blocksProceed, true);
+});
+
+await check('[F3] ARM 2 — a DEAD ownerless-singleton does NOT block: identity MISMATCH means positively gone', () => {
+  // The pid is absent from a table that WAS read. Nothing holds the tree, but the never-reap policy
+  // keeps the record in `report` and the record itself survives until the 7-day prune — so without
+  // the MISMATCH term a teardown would refuse for a week over a process that exited.
+  const out = singletonTeardown(TABLE([ROW({ ProcessId: 999999 })]));
+  const e = out.all[0];
+  assert.equal(e.cell, CELLS.OWNERLESS_SINGLETON, 'still never-reap, still reported');
+  assert.equal(e.disposition, R.REPORT);
+  assert.equal(e.identity.verdict, 'mismatch');
+  assert.match(e.identity.reason, /not present in the process table/);
+  assert.equal(e.blocksProceed, false, 'a phantom holder must not block a teardown');
+  assert.equal(out.blocksProceed, false);
+});
+
+await check('[F3] ARM 3 — an UNREADABLE verdict still blocks: unknown is not exculpatory, only a read negative unblocks', () => {
+  const unreadable = singletonTeardown(TABLE([ROW({ CreationFileTimeUtc: null })]));
+  assert.equal(unreadable.all[0].identity.verdict, 'refuse');
+  assert.equal(unreadable.all[0].blocksProceed, true);
+  const unavailable = singletonTeardown({ ok: false, reason: 'process-table query exited 1' });
+  assert.equal(unavailable.all[0].identity.verdict, 'refuse');
+  assert.equal(unavailable.all[0].blocksProceed, true);
+});
+
+await check('[F3] the same three arms hold for an ordinary registered holder, not just the singleton', () => {
+  const rec = REC({ sessionId: 'someone-else', recordId: 'ui-shot-5176' });
+  const run = (table) => reapEligible({
+    records: [{ ok: true, recordId: rec.recordId, record: rec }],
+    processTable: table,
+    occasion: 'worktree-teardown',
+    callerSessionId: CALLER,
+    now: NOW,
+    activityFor: () => ACTIVITY.fresh,
+    env: {},
+  });
+  assert.equal(run(TABLE()).blocksProceed, true, 'live + contended blocks');
+  assert.equal(run(TABLE([ROW({ ProcessId: 999999 })])).blocksProceed, false, 'gone does not block');
+  assert.equal(run({ ok: false, reason: 'query failed' }).blocksProceed, true, 'unknown still blocks');
+});
+
+/* ── [F7] the sweep-side marking obligation ───────────────────────────────────────────────── */
+
+await check('[F7] a projection refusal carries markPending, and the bucket collects them', () => {
+  const rec = REC({ sessionId: CALLER, lease: LAPSED() });
+  const out = reapEligible({
+    records: [{ ok: true, recordId: rec.recordId, record: rec }],
+    processTable: TABLE([ROW({ CreationFileTimeUtc: null })]),
+    occasion: 'session-start',
+    callerSessionId: CALLER,
+    now: NOW,
+    activityFor: () => null,
+    env: {},
+  });
+  assert.equal(out.refuse.length, 1);
+  assert.equal(out.refuse[0].markPending, true, 'the §6.3 cell says "mark failed-verify" in the SWEEP column too');
+  assert.deepEqual(out.markPending, out.refuse, 'the bucket is the obligation, made hard to skip');
+});
+
+await check('[F7] a non-refusal never carries markPending, and an unattributable refusal cannot be marked', () => {
+  assert.equal(runCell(MATRIX[0], 'sweep').all[0].markPending, false, 'a reap has nothing to mark');
+  assert.equal(runCell(MATRIX.at(-1), 'sweep').all[0].markPending, false, 'the observed tier has no record to mark');
+  // A record that failed scope validation has no identity verdict to record.
+  const unreadable = MATRIX.find((m) => m.entry);
+  assert.equal(runCell(unreadable, 'sweep').all[0].markPending, false);
+});
+
+await check('[F7] markRefusals discharges the obligation, retains every record, and reports failures', async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), '861-w4-mark-'));
+  mutantDirs.push(dir);
+  const rec = REC({ sessionId: CALLER, lease: LAPSED() });
+  const file = path.join(dir, `${rec.recordId}.json`);
+  await fsp.writeFile(file, JSON.stringify(rec, null, 2), 'utf8');
+
+  const out = reapEligible({
+    records: [{ ok: true, recordId: rec.recordId, record: rec }, { ok: false, recordId: 'ghost', reason: 'bad schema' }],
+    processTable: TABLE([ROW({ CreationFileTimeUtc: null })]),
+    occasion: 'session-start',
+    callerSessionId: CALLER,
+    now: NOW,
+    activityFor: () => null,
+    env: {},
+  });
+  const res = await markRefusals(out.markPending, { dir, now: NOW });
+  assert.deepEqual(res.marked, [rec.recordId]);
+  assert.deepEqual(res.failed, []);
+
+  const after = JSON.parse(await fsp.readFile(file, 'utf8'));
+  assert.equal(after.identityVerify.verdict, 'refuse');
+  assert.equal(after.pid, rec.pid, 'RETAINED, never deleted — the trail survives the refusal');
+
+  // A record that vanished between projection and marking is reported, not thrown.
+  await fsp.rm(file, { force: true });
+  const second = await markRefusals(out.markPending, { dir, now: NOW });
+  assert.deepEqual(second.marked, []);
+  assert.equal(second.failed.length, 1);
+  assert.match(second.failed[0].reason, /no such record/);
 });
 
 /* ── the observed tier carries a ready-to-run kill line ───────────────────────────────────── */
@@ -469,8 +689,6 @@ async function loadMutant(replace, replaceWith) {
   return { mod: require(file), dir: path.dirname(file) };
 }
 
-const mutantDirs = [];
-
 await check('MUTATION [A1]: dropping the activity join turns the reap-while-working cell into a reap', async () => {
   const working = MATRIX.find((m) => m.id.startsWith('[A1] lease lapsed BUT owner activity fresh'));
   assert.ok(working, 'the reap-while-working row must exist');
@@ -489,8 +707,7 @@ await check('MUTATION [A1]: dropping the activity join turns the reap-while-work
   const mutated = mod.reapEligible({
     records: [{ ok: true, recordId: working.record.recordId, record: working.record }],
     processTable: TABLE(),
-    occasion: OCCASION_KINDS.SWEEP,
-    capability: CAPABILITIES.EXECUTE,
+    occasion: COLUMNS.sweep,
     callerSessionId: CALLER,
     now: NOW,
     activityFor: () => working.activity,
@@ -515,8 +732,7 @@ await check('MUTATION [A1]: the same mutant also breaks the declared-hold cell',
   const mutated = mod.reapEligible({
     records: [{ ok: true, recordId: hold.record.recordId, record: hold.record }],
     processTable: TABLE(),
-    occasion: OCCASION_KINDS.SWEEP,
-    capability: CAPABILITIES.EXECUTE,
+    occasion: COLUMNS.sweep,
     callerSessionId: CALLER,
     now: NOW,
     activityFor: () => hold.activity,

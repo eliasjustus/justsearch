@@ -31,8 +31,7 @@ const require = createRequire(import.meta.url);
 
 const {
   REAP_DISPOSITIONS,
-  OCCASION_KINDS,
-  CAPABILITIES,
+  OCCASIONS,
   CELLS,
   reapEligible,
   executeReap,
@@ -70,6 +69,9 @@ async function makeRegisterDir() {
 
 const NOW = Date.parse('2026-08-25T12:00:00.000Z');
 const CALLER = 'caller-session-bbbbbbbb';
+// [F2] Occasions are named; capability comes with the name and is not a separate argument.
+const SWEEP_OCCASION = 'session-start';
+const TEARDOWN_OCCASION = 'worktree-teardown';
 const PID = 41064;
 const CTIME = '134320479841300350';
 const FINGERPRINT = 'vite --port 5174';
@@ -106,8 +108,7 @@ function eligibleEntry(record = REC()) {
   const out = reapEligible({
     records: [{ ok: true, recordId: record.recordId, record }],
     processTable: TABLE(),
-    occasion: OCCASION_KINDS.SWEEP,
-    capability: CAPABILITIES.EXECUTE,
+    occasion: SWEEP_OCCASION,
     callerSessionId: CALLER,
     now: NOW,
     activityFor: () => null,
@@ -133,6 +134,13 @@ async function seedRecord(dir, record) {
 async function readRecordFile(file) {
   return JSON.parse(await fsp.readFile(file, 'utf8'));
 }
+
+await check('[F2] the two occasions this file drives are real, and both carry the EXECUTE capability', () => {
+  // If either were advisory, every kill test below would silently degrade to asserting nothing —
+  // `eligibleEntry` would find no reap entry and the file would fail loudly rather than pass empty.
+  assert.equal(OCCASIONS[SWEEP_OCCASION]?.capability, 'execute');
+  assert.equal(OCCASIONS[TEARDOWN_OCCASION]?.capability, 'execute');
+});
 
 /* ── [A2] the three adverse identity states, end to end through executeReap ───────────────── */
 
@@ -260,7 +268,7 @@ await check('TOCTOU control: with a fresh snapshot the SAME entry proceeds — s
   assert.equal(res.confirmed, true, 'the confirmation read must see the pid gone');
   assert.deepEqual(calls, [`taskkill.exe /PID ${PID} /F`], 'by pid, /F, and never /T');
   assert.equal(reads, 2, 'executeReap reads the table twice: re-verify, then confirm');
-  assert.equal(res.stamp.by.occasion, OCCASION_KINDS.SWEEP);
+  assert.equal(res.stamp.by.occasion, SWEEP_OCCASION);
   assert.equal(res.stamp.by.cell, CELLS.SAME_SESSION);
   assert.ok(res.stamp.at, 'the stamp carries reaped-at');
   assert.equal(res.recordRemoved, true, 'a confirmed kill retires the record');
@@ -310,8 +318,7 @@ await check('executeReap refuses a contention entry, a refuse entry, and a repor
   const out = reapEligible({
     records: [{ ok: true, recordId: other.recordId, record: other }],
     processTable: TABLE(),
-    occasion: OCCASION_KINDS.CONFLICT,
-    capability: CAPABILITIES.EXECUTE,
+    occasion: TEARDOWN_OCCASION,
     callerSessionId: CALLER,
     now: NOW,
     activityFor: () => null,
@@ -404,8 +411,7 @@ if (process.platform !== 'win32') {
         records: [{ ok: true, recordId: record.recordId, record }],
         // A genuinely fresh read, taken now — the projection's own freshness bound applies.
         processTable: readProcessTable(),
-        occasion: OCCASION_KINDS.SWEEP,
-        capability: CAPABILITIES.EXECUTE,
+        occasion: SWEEP_OCCASION,
         callerSessionId: CALLER,
         activityFor: () => null,
         env: {},
@@ -453,8 +459,7 @@ if (process.platform !== 'win32') {
     const out = reapEligible({
       records: [{ ok: true, recordId: record.recordId, record }],
       processTable: { ok: true, table: [liveRow], readAt: Date.now() },
-      occasion: OCCASION_KINDS.SWEEP,
-      capability: CAPABILITIES.EXECUTE,
+      occasion: SWEEP_OCCASION,
       callerSessionId: CALLER,
       activityFor: () => null,
       env: {},

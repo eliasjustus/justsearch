@@ -47,6 +47,12 @@
  *     downgraded to `report` carrying `ceiling: 'reap'` — and `executeReap` refuses any entry
  *     whose disposition is not `reap`. An advisory caller therefore holds nothing spendable.
  *
+ *     **And capability is not the caller's to choose** (review F2). It is bound to the occasion in
+ *     `OCCASIONS`, so the spelling that would have defeated rule 4 —
+ *     `{occasion: 'conflict', capability: 'execute'}` for the before-a-build surface — is not
+ *     expressible. A rule whose enforcement depends on the caller picking the safe half of a free
+ *     pair is a convention; a rule that removes the free pair is an enforcement.
+ *
  * ── Scope: this module acts on the `agent-spawns/` register and nothing else ────────────────
  *
  * `foreign/` means a JustSearch BACKEND started outside the dev-runner; `agent-spawns/` means a
@@ -127,6 +133,60 @@ const CAPABILITIES = Object.freeze({
 });
 
 /**
+ * **The six §6.4 occasions, each BOUND to its capability — the single authority on which occasion
+ * may kill.**
+ *
+ * Review finding F2: an earlier revision took `occasion` and `capability` as INDEPENDENT caller
+ * arguments, so [A4] was only half-enforced. The projection refused to mint a `reap` under
+ * `advisory`, but nothing stopped a caller from writing `{occasion: CONFLICT, capability: EXECUTE}`
+ * and getting a kill list for the before-a-build surface — the exact spelling [A4] forbids, and one
+ * a Phase 5 author could reach by picking the pair that "looked right". A rule that depends on the
+ * caller choosing the safe half of a free pair is a convention, not an enforcement.
+ *
+ * So capability is no longer a caller argument at all. `reapEligible` takes an occasion NAME from
+ * this map and derives the pair. The unsafe spelling is now unwritable rather than merely
+ * discouraged, and Phase 5 wires by naming its occasion — which is also the thing a reviewer can
+ * check at a glance.
+ *
+ * The six, and where each comes from in §6.4:
+ *
+ *  - `session-start`     sweep lapsed records. The only trigger that works for a crash, a
+ *                        60-minute task kill, or a power loss. May act.
+ *  - `session-end`       best-effort reap of this session's own spawns. May act.
+ *  - `worktree-teardown` consult before unlinking junctions; reap what it is authorized to, and
+ *                        refuse to proceed while an unreapable holder remains. May act — it is an
+ *                        executing process, and refusing is its whole contribution.
+ *  - `before-a-build`    **advisory only; it never kills [A4]**. The most frequently observed harm
+ *                        sits at report tier by deliberate choice: a hook that kills processes as a
+ *                        side effect of an agent typing `gradlew` is a larger hazard than the one
+ *                        it removes.
+ *  - `orientation`       `world-state.mjs`'s read-only section. §6.4: "It never kills."
+ *  - `session-closeout`  the skill step that "runs the sweep and reports". Reads as the reaping
+ *                        sweep — a human-visible checklist covering what automation missed has to
+ *                        be able to clear what it finds, and it runs under direct supervision.
+ */
+const OCCASIONS = Object.freeze({
+  'session-start': Object.freeze({ kind: OCCASION_KINDS.SWEEP, capability: CAPABILITIES.EXECUTE }),
+  'session-end': Object.freeze({ kind: OCCASION_KINDS.SWEEP, capability: CAPABILITIES.EXECUTE }),
+  'worktree-teardown': Object.freeze({ kind: OCCASION_KINDS.CONFLICT, capability: CAPABILITIES.EXECUTE }),
+  'before-a-build': Object.freeze({ kind: OCCASION_KINDS.CONFLICT, capability: CAPABILITIES.ADVISORY }),
+  'orientation': Object.freeze({ kind: OCCASION_KINDS.SWEEP, capability: CAPABILITIES.ADVISORY }),
+  'session-closeout': Object.freeze({ kind: OCCASION_KINDS.SWEEP, capability: CAPABILITIES.EXECUTE }),
+});
+
+/** Resolve an occasion name, or throw loudly. An unknown occasion is never guessed at. */
+function resolveOccasion(name) {
+  const spec = Object.prototype.hasOwnProperty.call(OCCASIONS, name) ? OCCASIONS[name] : null;
+  if (!spec) {
+    throw new Error(
+      `unknown reap occasion ${JSON.stringify(name)}; expected one of ${Object.keys(OCCASIONS).join(', ')}. `
+      + 'Capability is bound to the occasion and cannot be chosen separately ([A4]).',
+    );
+  }
+  return spec;
+}
+
+/**
  * Stable cell identifiers. Each is one cell of the corrected §6.3 matrix, and the table-driven
  * test asserts on these by name — so a cell cannot be quietly dropped without a named test going
  * red, and a reviewer walking the matrix has something to walk.
@@ -137,6 +197,10 @@ const CELLS = Object.freeze({
   LEASE_UNKNOWN: 'other-session/lease-unknown',
   LAPSED_OWNER_ACTIVE: 'other-session/lease-lapsed/owner-active',
   LAPSED_OWNER_UNKNOWN: 'other-session/lease-lapsed/owner-unknown',
+  // [F5] Two sub-arms of the same §6.3 row ("owner activity fresh OR within a declared hold"):
+  // the window every record gets, and a hold a producer actually declared. Same disposition,
+  // different evidence, so a report can say which one it is.
+  LAPSED_GRACE_WINDOW: 'other-session/lease-lapsed/owner-within-grace-window',
   LAPSED_DECLARED_HOLD: 'other-session/lease-lapsed/owner-within-declared-hold',
   LAPSED_OWNER_STALE: 'other-session/lease-lapsed/owner-stale',
   OWNERLESS_SINGLETON: 'ownerless-singleton',
@@ -158,6 +222,16 @@ const CELLS = Object.freeze({
 const OWNER_STATES = Object.freeze({
   UNKNOWN: 'unknown',
   ACTIVE: 'active',
+  /**
+   * Silent past the general threshold, but inside the DEFAULT abandonment floor plus grace — the
+   * window every record gets whether or not it declared anything.
+   *
+   * Review finding F5: this used to be reported as `declared-hold` with a reason saying "the
+   * declared lease duration is intent", which for a 30s-lease record is a claim about an intent
+   * nobody expressed. The verdict was right and the explanation was fiction, which is worse than a
+   * wrong verdict in a report a human reads to decide whether to intervene.
+   */
+  GRACE_WINDOW: 'grace-window',
   DECLARED_HOLD: 'declared-hold',
   STALE: 'stale',
 });
@@ -195,7 +269,11 @@ function ownerActivityVerdict(activity, record, now, thresholds = DEFAULT_THRESH
   const declaredHoldMs = Number.isFinite(record?.lease?.durationSec) && record.lease.durationSec > 0
     ? record.lease.durationSec * 1000
     : 0;
-  const thresholdMs = Math.max(thresholds.abandonedAfterMs + grace, declaredHoldMs + grace);
+  const floorMs = thresholds.abandonedAfterMs + grace;
+  const thresholdMs = Math.max(floorMs, declaredHoldMs + grace);
+  // [F5] Whether the threshold came from the record's own declaration or from the floor everyone
+  // gets. Same verdict either way; only one of them may be reported as intent.
+  const holdIsDeclared = declaredHoldMs + grace > floorMs;
 
   const cls = classifyActivity(activity, now, thresholds);
   if (!cls.known) {
@@ -216,17 +294,28 @@ function ownerActivityVerdict(activity, record, now, thresholds = DEFAULT_THRESH
       thresholdMs,
     };
   }
+  const silence = abandonedMs === null ? 'an unreadable stamp' : `${Math.round(abandonedMs / 1000)}s`;
   if (abandonedMs === null || abandonedMs <= thresholdMs) {
-    return {
-      state: OWNER_STATES.DECLARED_HOLD,
-      reason: `owning session is silent but within its declared hold (${abandonedMs === null ? 'unreadable stamp' : `${Math.round(abandonedMs / 1000)}s`} <= ${Math.round(thresholdMs / 1000)}s); the declared lease duration is intent`,
-      abandonedMs,
-      thresholdMs,
-    };
+    return holdIsDeclared
+      ? {
+        state: OWNER_STATES.DECLARED_HOLD,
+        reason: `owning session is silent ${silence}, within the ${Math.round(declaredHoldMs / 1000)}s hold it declared (plus ${Math.round(grace / 1000)}s grace); a declared lease duration is intent`,
+        abandonedMs,
+        thresholdMs,
+      }
+      : {
+        // [F5] No hold was declared beyond the floor, so nothing is claimed about intent.
+        state: OWNER_STATES.GRACE_WINDOW,
+        reason: `owning session is silent ${silence}, within the ${Math.round(thresholdMs / 1000)}s abandonment floor every record gets; no hold was declared`,
+        abandonedMs,
+        thresholdMs,
+      };
   }
   return {
     state: OWNER_STATES.STALE,
-    reason: `owning session has been silent ${Math.round(abandonedMs / 1000)}s, beyond its declared hold plus grace (${Math.round(thresholdMs / 1000)}s)`,
+    reason: holdIsDeclared
+      ? `owning session has been silent ${silence}, beyond the ${Math.round(declaredHoldMs / 1000)}s hold it declared plus grace (${Math.round(thresholdMs / 1000)}s total)`
+      : `owning session has been silent ${silence}, beyond the ${Math.round(thresholdMs / 1000)}s abandonment floor`,
     abandonedMs,
     thresholdMs,
   };
@@ -258,6 +347,7 @@ function makeEntry({
   disposition,
   reason,
   occasion,
+  occasionKind,
   capability,
   identity = null,
   owner = null,
@@ -275,11 +365,26 @@ function makeEntry({
     downgraded: applied.downgraded,
     reason,
     occasion,
+    occasionKind,
     capability,
     identity,
     owner,
     lease,
     pid: effectivePid,
+    /**
+     * [F7] The sweep-side marking obligation, made explicit rather than left implied.
+     *
+     * §6.3's identity-failure cell reads "refuse; retain record, mark failed-verify" in BOTH
+     * columns — so marking is the matrix's instruction to whoever evaluated the cell, not a side
+     * effect of the kill path. `executeReap` marks the refusals IT produces, but a refusal from
+     * the projection never reaches `executeReap`, so on a sweep nothing would mark it.
+     *
+     * A caller that leaves this unhandled loses the diagnostic trail exactly where the matrix
+     * promised one. `markRefusals` below is the one call that discharges it.
+     */
+    markPending: applied.disposition === REAP_DISPOSITIONS.REFUSE
+      && Boolean(recordId)
+      && Boolean(identity?.verdict),
     // Present on every entry, including the reapable ones: a report that names the process but
     // makes the human reconstruct the command is a report that gets ignored.
     ...(effectivePid !== null ? { killLine: killLineFor(effectivePid) } : {}),
@@ -296,11 +401,19 @@ function makeEntry({
     // Never set on an advisory occasion — [A4] leaves before-a-build at report tier, and a hint
     // that blocked a build would be a kill path's cousin: an agent's `gradlew` failing because a
     // hook decided so.
+    //
+    // [F3] And never set for a POSITIVELY GONE process. A dead `ownerless-singleton` (or any dead
+    // registered holder) is a phantom: identity returns MISMATCH — the table WAS read and the pid
+    // is not in it — so nothing is holding the tree, yet the never-reap policy keeps the record in
+    // `report` and the record itself survives until the 7-day prune. Without this term a teardown
+    // would refuse for a week over a process that exited. `refuse` from an UNREADABLE verdict still
+    // blocks: unknown is not exculpatory, and only a read negative unblocks.
     blocksProceed:
-      occasion === OCCASION_KINDS.CONFLICT
+      occasionKind === OCCASION_KINDS.CONFLICT
       && capability === CAPABILITIES.EXECUTE
       && cell !== CELLS.OBSERVED_ONLY
-      && applied.disposition !== REAP_DISPOSITIONS.REAP,
+      && applied.disposition !== REAP_DISPOSITIONS.REAP
+      && identity?.verdict !== IDENTITY.MISMATCH,
   };
 }
 
@@ -323,8 +436,8 @@ function makeEntry({
  * @param {object} args
  * @param {object} args.record
  * @param {string} args.recordId
- * @param {string} args.occasion    one of OCCASION_KINDS
- * @param {string} args.capability  one of CAPABILITIES
+ * @param {string} args.occasion    a KEY of `OCCASIONS` — capability is derived from it, never
+ *   passed alongside it ([A4] / review F2).
  * @param {string|null} args.callerSessionId
  * @param {object} args.identity    a `verifyProcessIdentity` result
  * @param {object|null} args.activity  the owning session's activity stamp
@@ -334,7 +447,6 @@ function classifySpawnRecord({
   record,
   recordId,
   occasion,
-  capability,
   callerSessionId = null,
   now = Date.now(),
   identity,
@@ -343,7 +455,8 @@ function classifySpawnRecord({
   devRunnerActive = null,
   env = process.env,
 }) {
-  const base = { recordId, record, occasion, capability, identity };
+  const { kind: occasionKind, capability } = resolveOccasion(occasion);
+  const base = { recordId, record, occasion, occasionKind, capability, identity };
 
   // ── 1. Never-reap dimensions ────────────────────────────────────────────────────────────
   if (record?.ownership === OWNERSHIP_MODES.OWNERLESS_SINGLETON) {
@@ -358,10 +471,13 @@ function classifySpawnRecord({
     });
   }
 
+  // [F4] Membership is decided on the pid list alone. An earlier revision also matched
+  // `record.devRunnerRunId` against the active runId — a phantom field: read here, written
+  // nowhere, and not expressible by `validateAgentSpawnRecord`, so the arm could never fire.
+  // A dead branch in a never-reap guard is worse than no branch: it reads as a second protection
+  // that does not exist. The pid list is resolved from the run's own `run.json` and is sufficient.
   const activePids = Array.isArray(devRunnerActive?.pids) ? devRunnerActive.pids : [];
-  const matchesActiveRun =
-    (Number.isInteger(record?.pid) && activePids.includes(record.pid))
-    || (devRunnerActive?.runId && record?.devRunnerRunId && record.devRunnerRunId === devRunnerActive.runId);
+  const matchesActiveRun = Number.isInteger(record?.pid) && activePids.includes(record.pid);
   if (matchesActiveRun) {
     return makeEntry({
       ...base,
@@ -445,10 +561,10 @@ function classifySpawnRecord({
       owner,
     });
   }
-  if (owner.state === OWNER_STATES.DECLARED_HOLD) {
+  if (owner.state === OWNER_STATES.GRACE_WINDOW || owner.state === OWNER_STATES.DECLARED_HOLD) {
     return makeEntry({
       ...base,
-      cell: CELLS.LAPSED_DECLARED_HOLD,
+      cell: owner.state === OWNER_STATES.GRACE_WINDOW ? CELLS.LAPSED_GRACE_WINDOW : CELLS.LAPSED_DECLARED_HOLD,
       disposition: REAP_DISPOSITIONS.CONTENTION,
       reason: `lease lapsed, but ${owner.reason}`,
       lease,
@@ -490,24 +606,30 @@ function normalizeInputRecords(records) {
  * intended behaviour — an occasion that hands over a stale snapshot gets a refusal it can see,
  * not a licence it must remember not to use.
  *
+ * **[F2] `occasion` is a NAME from `OCCASIONS`, and capability comes with it.** There is no
+ * `capability` argument: `{occasion: 'conflict', capability: 'execute'}` — the pairing [A4]
+ * forbids for the before-a-build surface — is not a thing this function accepts. An unrecognized
+ * occasion THROWS rather than falling back to a default, because a silent fallback is how a
+ * mis-wired Phase 5 occasion would end up running under someone else's capability.
+ *
  * @param {object} args
  * @param {Array} args.records  agent-spawn records, or `readAgentSpawnRegister` entries.
  * @param {object|Array} args.processTable  a `readProcessTable()` result.
+ * @param {string} args.occasion  a KEY of `OCCASIONS` (`session-start`, `before-a-build`, …).
  * @param {Array} [args.observed]  process-table rows matching no record (861 §6.3's observed tier).
  * @param {function} [args.activityFor]  `(sessionId) => activity|null`. Defaults to reading the
  *   dev-runner's session stamps from `sessionsDir` when one is supplied, and to `null` otherwise
  *   — which is `unknown`, which is LEAVE. A missing wiring therefore fails safe.
- * @returns {{reap: Array, contention: Array, refuse: Array, report: Array, all: Array, blocksProceed: boolean}}
+ * @returns {{reap: Array, contention: Array, refuse: Array, report: Array, all: Array, blocksProceed: boolean, markPending: Array}}
  */
 function reapEligible({
   records = [],
   processTable = null,
   observed = [],
-  occasion = OCCASION_KINDS.SWEEP,
-  // The default is the SAFE one, matching W2's `acceptUnstampedTable: false`: an occasion that
-  // forgot to declare itself gets a report-only projection, not a list of things it may kill.
-  // Killing requires naming `CAPABILITIES.EXECUTE` out loud.
-  capability = CAPABILITIES.ADVISORY,
+  // No default: an occasion that does not name itself gets a throw, not a guess. The safest
+  // capability is still someone's capability, and picking one for a caller who forgot is the
+  // silent-fallback shape [A4] exists to prevent.
+  occasion,
   callerSessionId = null,
   now = Date.now(),
   thresholds = DEFAULT_THRESHOLDS,
@@ -518,6 +640,7 @@ function reapEligible({
   acceptUnstampedTable = false,
   env = process.env,
 } = {}) {
+  const { kind: occasionKind, capability } = resolveOccasion(occasion);
   const lookupActivity = typeof activityFor === 'function'
     ? activityFor
     : (sessionId) => (sessionsDir && sessionId ? readSessionActivity(sessionsDir, sessionId) : null);
@@ -532,6 +655,7 @@ function reapEligible({
         disposition: REAP_DISPOSITIONS.REFUSE,
         reason: `record could not be read or failed scope validation (${item.reason ?? 'no reason given'}); an unreadable record is no evidence, and no evidence never licenses a kill`,
         occasion,
+        occasionKind,
         capability,
       }));
       continue;
@@ -550,7 +674,6 @@ function reapEligible({
       record,
       recordId,
       occasion,
-      capability,
       callerSessionId,
       now,
       identity,
@@ -570,6 +693,7 @@ function reapEligible({
       disposition: REAP_DISPOSITIONS.REPORT,
       reason: `pid ${Number.isInteger(pid) ? pid : '?'} (${row?.Name ?? row?.name ?? 'unknown'}) matches no record; the observed tier is never auto-killed, only reported with a ready-to-run kill line`,
       occasion,
+      occasionKind,
       capability,
       pid: Number.isInteger(pid) && pid > 0 ? pid : null,
     }));
@@ -583,7 +707,41 @@ function reapEligible({
     all,
   };
   buckets.blocksProceed = all.some((e) => e.blocksProceed);
+  // [F7] Surfaced as its own bucket so a caller cannot discharge the matrix's marking instruction
+  // by accident or skip it by omission — `markRefusals(buckets.markPending, {dir})` is one line.
+  buckets.markPending = all.filter((e) => e.markPending);
   return buckets;
+}
+
+/**
+ * [F7] Discharge the marking obligation the §6.3 identity cell places on WHOEVER evaluated it.
+ *
+ * `executeReap` marks the refusals it produces itself; this is the projection-side counterpart for
+ * every occasion that never calls `executeReap` — the sweep, orientation, before-a-build. Retains
+ * every record; deletes nothing; touches no process. `pruneAgentSpawnRecords` is what keeps the
+ * retention bounded ([A10]).
+ */
+async function markRefusals(entries, { dir, now = Date.now() } = {}) {
+  const marked = [];
+  const failed = [];
+  if (!dir) return { marked, failed, skipped: (entries || []).length, reason: 'no register dir supplied' };
+  for (const entry of entries || []) {
+    if (!entry?.markPending) continue;
+    try {
+      const res = await markAgentSpawnRecordFailedVerify({
+        dir,
+        recordId: entry.recordId,
+        verdict: entry.identity.verdict,
+        reason: entry.identity.reason,
+        now,
+      });
+      if (res?.marked) marked.push(entry.recordId);
+      else failed.push({ recordId: entry.recordId, reason: res?.reason ?? 'unknown' });
+    } catch (err) {
+      failed.push({ recordId: entry.recordId, reason: String(err?.message || err).slice(0, 200) });
+    }
+  }
+  return { marked, failed, skipped: 0 };
 }
 
 /* ── The effectful arm ─────────────────────────────────────────────────────────────────────── */
@@ -784,13 +942,16 @@ async function readDevRunnerActiveRun({ stateRoot } = {}) {
 module.exports = {
   REAP_DISPOSITIONS,
   OCCASION_KINDS,
+  OCCASIONS,
   CAPABILITIES,
   CELLS,
   OWNER_STATES,
+  resolveOccasion,
   reaperGraceMs,
   ownerActivityVerdict,
   classifySpawnRecord,
   reapEligible,
+  markRefusals,
   executeReap,
   taskkillByPid,
   readDevRunnerActiveRun,
