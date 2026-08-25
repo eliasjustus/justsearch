@@ -48,7 +48,12 @@ import { coerceAndValidate } from './stateValidator.js';
 import { getSurfaceStateSchema, resolveSurfaceStateSchema } from './surfaceSchemas.js';
 import type { StoreAdapter } from './storeRegistry.js';
 import type { ShellAddressNavigation, StateSnapshot } from './types.js';
-import { activateProjection, currentAddress, pushAddress } from './URLProjector.js';
+import {
+  activateProjection,
+  currentAddress,
+  flushPendingNavigationWrite,
+  pushAddress,
+} from './URLProjector.js';
 
 /** Callback the Shell exposes for setting its active surface. */
 export type SetActiveSurfaceFn = (surfaceId: string) => void;
@@ -150,8 +155,21 @@ export function createNavigationHandler(config: NavigationHandlerConfig): Naviga
       //    was added is reported to the opener as `info.pushed` — the Shell needs
       //    it because `history.back()` is only a valid close when this navigation
       //    is what put the settings address on the stack (855 §11.1 D3/D4).
+      // Tempdoc 864 PR C — `push: false` is the popstate path, i.e. the browser has ALREADY moved
+      // and this address is where it landed. That is the one arrival where an absent argument is a
+      // value rather than a silence; see StoreAdapter.clearsOnTraversal.
+      const traversal = options?.push === false;
+
+      // Review finding F4 — settle the OUTGOING surface's debt first. A claim made within the
+      // projector's 75ms window and followed straight away by a surface change would otherwise be
+      // cancelled by the teardown inside activateProjection, losing the history entry the reader
+      // earned. Only a navigational write is flushed (a no-op for every other surface), and never
+      // on a traversal: the browser has already moved there, so a push would truncate the forward
+      // tail — the same hazard the hero branch of SearchV3View.followStoreConversation avoids.
+      if (!traversal) flushPendingNavigationWrite();
+
       if (config.getPlacement?.(addr.target) === 'MODAL') {
-        applyState(addr.target, addr.state);
+        applyState(addr.target, addr.state, traversal);
         // Tempdoc 855 §11.1 D3 — never stack a SECOND entry for the address we are already on.
         // Re-navigating to Settings (rail affordance pressed twice, a command-palette repeat) would
         // otherwise push a duplicate entry, and the window's `history.back()` would land back on the
@@ -172,7 +190,7 @@ export function createNavigationHandler(config: NavigationHandlerConfig): Naviga
       // 1. Distribute state to registered StoreAdapters per the schema.
       //    Pre-distribution: validate the snapshot against the surface's
       //    schema; group by adapter; restore each.
-      applyState(addr.target, addr.state);
+      applyState(addr.target, addr.state, traversal);
 
       // 2. Mount the surface (Shell-level activeId).
       config.setActiveSurface(addr.target);
@@ -215,7 +233,7 @@ export function createNavigationHandler(config: NavigationHandlerConfig): Naviga
  * URLHydrator.applyState. Behavior is identical to ensure refresh-restore
  * semantics round-trip unchanged.
  */
-function applyState(surfaceId: string, state: StateSnapshot): void {
+function applyState(surfaceId: string, state: StateSnapshot, traversal = false): void {
   const schema = getSurfaceStateSchema(surfaceId);
   if (!schema) return;
   const validation = coerceAndValidate(state, schema.schema);
@@ -232,7 +250,14 @@ function applyState(surfaceId: string, state: StateSnapshot): void {
   const byStore = new Map<StoreAdapter, StateSnapshot>();
   for (const field of resolved.fields) {
     const value = validated[field.schemaPath.replace(/^\//, '')];
-    if (value === undefined) continue;
+    if (value === undefined) {
+      // Absent is a silence for every adapter but one (StoreAdapter.clearsOnTraversal): on a
+      // traversal that adapter is still handed its — empty — bag, so it can read the absence as
+      // "nothing is claimed" instead of keeping state the address contradicts.
+      if (!traversal || field.adapter.clearsOnTraversal !== true) continue;
+      if (!byStore.has(field.adapter)) byStore.set(field.adapter, {});
+      continue;
+    }
     const bag = byStore.get(field.adapter) ?? {};
     bag[field.storeKey] = value;
     byStore.set(field.adapter, bag);
