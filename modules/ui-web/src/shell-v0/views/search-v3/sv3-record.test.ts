@@ -435,6 +435,57 @@ describe('a cancel with no CANCELLED disposition is still the reader’s own hal
     );
   });
 
+  it('D1: …and the TIMELINE does not call it an Error either', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      // The reader's act, as the backend now records it — this is the row that stands for the stop.
+      event('e3', 'PROGRESS', 'You stopped this run', { phase: 'stop_requested' }),
+      // …and the entry the cancel logs on its way down, which used to draw a second row labelled
+      // "Error" — the receipt's old "failed", one line lower.
+      event('e4', 'ERROR', 'Session cancelled', { errorCode: 'CANCELLED' }),
+    ]);
+    const notes = turn!.activity.filter((i) => i.kind === 'note');
+    expect(notes.map((n) => (n as { label: string }).label)).toEqual(['Progress']);
+    expect(notes.map((n) => (n as { text: string }).text)).toEqual(['You stopped this run']);
+  });
+
+  it('D1 twin: a REAL error still draws its note — only the cancel entry is dropped', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      event('e3', 'ERROR', 'the model returned no candidate', { errorCode: 'PROVIDER_ERROR' }),
+    ]);
+    const notes = turn!.activity.filter((i) => i.kind === 'note');
+    expect(notes.map((n) => (n as { label: string }).label)).toEqual(['Error']);
+  });
+
+  it('D1: dropping the note keeps the entry a REASONING CARRIER (533 flush discipline)', () => {
+    clock = 0;
+    // The carrier question the suppression has to answer: a halted run's trailing thinking is folded
+    // onto its terminal ERROR event by `AgentInteractionMapper.fromRunEvents`, and `sv3-record.ts`
+    // reads reasoning off every item BEFORE the per-kind arms. So the blocks must still arrive, in
+    // position, with only the note gone — otherwise this would be silently deleting the last thing
+    // the model thought before the reader stopped it.
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'summarise every lease in the vendor folder'),
+      toolRow(),
+      event('e3', 'ERROR', 'Session cancelled', {
+        errorCode: 'CANCELLED',
+        reasoning: [{ text: 'Checking the third lease…', durationMs: 900 }],
+      }),
+    ]);
+    expect(turn!.activity.filter((i) => i.kind === 'note')).toHaveLength(0);
+    const thinking = turn!.activity.filter((i) => i.kind === 'reasoning');
+    expect(thinking.map((i) => (i as { text: string }).text)).toEqual([
+      'Checking the third lease…',
+    ]);
+    // …and it is the LAST item, where it was produced — not hoisted by the note's removal.
+    expect(turn!.activity[turn!.activity.length - 1]?.kind).toBe('reasoning');
+  });
+
   it('D2: a LATE cancel beats a truthful COMPLETED, live and record alike', () => {
     clock = 0;
     const [turn] = project([

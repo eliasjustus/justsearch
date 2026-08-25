@@ -339,7 +339,8 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
     // two facts that can carry it ride on two different kinds and neither arm owns the question.
     // ONCE TRUE, ALWAYS TRUE for the turn: a stop is an act, not a state, so a later event saying
     // nothing about it cannot un-say it.
-    if (sv3RecordItemStopsRun(item.kind, item.attributes)) turn.stopRequested = true;
+    const itemStopsRun = sv3RecordItemStopsRun(item.kind, item.attributes);
+    if (itemStopsRun) turn.stopRequested = true;
     // Tempdoc 848 §2.7 — reasoning is read off EVERY item kind, not just the assistant one. A turn
     // can record several assistant items (an iterating shape, a multi-step run), so blocks accumulate
     // in record order rather than the last one winning; and a run that was HALTED or ERRORED carries
@@ -388,7 +389,21 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       turn.groundingDeltas.push(...groundingDeltaOf(call.structuredData));
       continue;
     }
-    if (item.kind === 'error') turn.errored = true;
+    if (item.kind === 'error') {
+      turn.errored = true;
+      // Owner decision 2026-08-26, applied to the TIMELINE as well as the receipt. The cancel path
+      // logs an error entry on its way down, and drawing it as a note labelled "Error" words the
+      // reader's own act as a malfunction — the same thing "failed" did in the receipt, one row
+      // lower. The act itself is already on the record as the `stop_requested` note
+      // (`AgentLoopService.cancelSession`), so this drops a second row, not the only one.
+      //
+      // NO CARRIER CONSEQUENCE (tempdoc 533 / 859 §A §1.3): only this NOTE is dropped. The item
+      // still projects — `errored` and `stopRequested` are read off it above, and its folded
+      // thinking is already emitted as `reasoning` activity items before the per-kind arms — and
+      // nothing changes about which events project on the Java side, so the fold's cut/flush
+      // targeting (whose trailing rule names the run's ERROR event) is untouched.
+      if (itemStopsRun) continue;
+    }
     turn.activity.push({
       kind: 'note',
       id: item.id,

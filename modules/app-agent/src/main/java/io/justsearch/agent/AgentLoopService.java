@@ -684,15 +684,37 @@ public final class AgentLoopService implements AgentService {
    *
    * <p>The snapshot guard keeps this addressed to runs that exist; an unknown id writes nothing
    * rather than minting a journal for it.
+   *
+   * <p>ONCE PER RUN, though (review F2). "The reader stopped this run" does not become truer for
+   * being said twice, and a second note is a second row in the reloaded feed — which is what a stop
+   * from a second window, or a stop re-sent against an already-stopped run, would have produced. The
+   * latch is the JOURNAL rather than a flag on the session, because the case this whole fix exists
+   * for is the one where the session is already gone: a session-scoped latch would be absent exactly
+   * when the duplicate arrives.
    */
   private void recordStopRequest(String sessionId) {
     if (sessionId == null || sessionId.isBlank() || runStore.readSnapshot(sessionId) == null) {
+      return;
+    }
+    if (hasStopRequestNote(sessionId)) {
       return;
     }
     runStore.appendEvent(
         sessionId,
         new AgentEvent.AgentProgress(
             AgentEvent.AgentProgress.PHASE_STOP_REQUESTED, STOP_REQUESTED_NOTE, 0, 0));
+  }
+
+  /** Does this run's journal already carry the reader's stop? (see {@link #recordStopRequest}) */
+  private boolean hasStopRequestNote(String sessionId) {
+    for (Map<String, Object> record : runStore.readEvents(sessionId)) {
+      if ("progress".equals(record.get("eventType"))
+          && record.get("payload") instanceof Map<?, ?> payload
+          && AgentEvent.AgentProgress.PHASE_STOP_REQUESTED.equals(payload.get("phase"))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override

@@ -262,6 +262,16 @@ final class AgentSession {
     virtualToolFutures.values().forEach(
         f -> f.complete(VirtualToolResult.failure("session cancelled")));
     virtualToolFutures.clear();
+    // Review of the 2026-08-26 stop-semantics work — the BUDGET and CONTEXT parks are held decisions
+    // exactly as an approval is, and they were the two the cancel did not release. The loop blocks on
+    // `future.get(timeout)` at both, so a cancel during a park did nothing for the length of that
+    // timeout: the window said "stopped by you" while the run stayed parked, and the budget gate's
+    // undecided fallback is FINALIZE — so the run then synthesised and emitted an answer to a
+    // question the reader had abandoned. STOP is the decision the reader just made, and it is the
+    // decision the gate's own vocabulary already has, so this resolves them rather than inventing a
+    // second way out. Both are no-ops when nothing is parked.
+    resolveBudgetGate(BudgetGateDecision.STOP);
+    resolveContextGate(ContextGateDecision.STOP);
   }
 
   int iterationsUsed() {

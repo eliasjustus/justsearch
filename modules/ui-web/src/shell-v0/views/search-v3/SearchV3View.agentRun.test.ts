@@ -396,6 +396,14 @@ describe('the primary slot is a strict-priority state machine in the DOM', () =>
     expect(composer.shadowRoot?.querySelectorAll('[data-testid="sv3-composer-stop"]')).toHaveLength(
       1,
     );
+    // DOM ORDER, which `occupants` cannot see (it filters a fixed id list): the standing Stop sits
+    // BEFORE the primary slot, so the slot keeps the row's trailing position it has in every other
+    // state and the reader's eye does not have to re-find the send/answer control per run phase.
+    expect(
+      [...(composer.shadowRoot?.querySelectorAll('.actions > button') ?? [])].map(
+        (b) => b.getAttribute('data-testid'),
+      ),
+    ).toEqual(['sv3-composer-stop', 'sv3-composer-answer']);
     // It says what it does, in its own words — not the slot rung's "Enter steers", which would name
     // a key that does nothing here (a submit is refused while a decision is held, asserted below).
     expect(q(composer, 'sv3-composer-stop')?.getAttribute('aria-label')).toBe(

@@ -2563,6 +2563,134 @@ class AgentLoopServiceTest {
     // the caller being careful.
     service.cancelSession("session_never_existed");
     assertTrue(runStore.readEvents("session_never_existed").isEmpty());
+
+    // Review F2 — ONCE PER RUN. A stop from a second window, or one re-sent against an already
+    // stopped run, is the same fact arriving twice; a second note would draw a second row in the
+    // reloaded feed saying exactly what the first one says.
+    service.cancelSession("session_late_cancel");
+    service.cancelSession("session_late_cancel");
+    assertEquals(1, stopNotesOn(runStore, "session_late_cancel").size());
+  }
+
+  /** The reader's-stop notes on a run's journal (review F2 / owner decision 2026-08-26). */
+  private static List<Map<String, Object>> stopNotesOn(AgentRunStore runStore, String sessionId) {
+    return runStore.readEvents(sessionId).stream()
+        .filter(r -> "progress".equals(r.get("eventType")))
+        .filter(
+            r ->
+                r.get("payload") instanceof Map<?, ?> p
+                    && AgentEvent.AgentProgress.PHASE_STOP_REQUESTED.equals(p.get("phase")))
+        .toList();
+  }
+
+  @Test
+  @DisplayName("review F1 — a cancel at a HELD BUDGET GATE stops the run, with no finalize answer")
+  void cancelAtHeldBudgetGateTerminatesCancelledWithoutFinalizing() throws Exception {
+    // The gate parks the loop on `future.get(timeout)`. `AgentSession.cancel()` completed the
+    // approval gates and the virtual-tool waits but NOT this one, so a cancel during a budget park
+    // did nothing at all for the length of the timeout — and the undecided fallback is FINALIZE, so
+    // the run then synthesised and emitted an answer to a question the reader had abandoned.
+    // The timeout is held LONG so the wait is what the cancel ends: with it short this would pass
+    // for the wrong reason (the gate falling through on its own).
+    String prev = System.getProperty("justsearch.agent.budgetGateTimeoutSec");
+    System.setProperty("justsearch.agent.budgetGateTimeoutSec", "5");
+    try {
+      var ai =
+          new ScriptedAiService(
+              List.of(
+                  ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 2000),
+                  ScriptedResponse.textOnly("the abandoned answer").withUsage(50, 20)));
+      var service = buildServiceWithSmallBudget(ai, 250);
+
+      var events = new CopyOnWriteArrayList<AgentEvent>();
+      var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+      var parked = new CompletableFuture<AgentEvent.BudgetGatePending>();
+      Consumer<AgentEvent> sink =
+          e -> {
+            events.add(e);
+            if (e instanceof AgentEvent.SessionStarted s) {
+              sessionId.set(s.sessionId());
+            }
+            if (e instanceof AgentEvent.BudgetGatePending p) {
+              parked.complete(p);
+            }
+          };
+      var loopThread =
+          new Thread(
+              () -> service.runAgent(new AgentRequest(userMessage("search"), List.of(), 5), sink));
+      loopThread.setDaemon(true);
+      loopThread.start();
+
+      parked.get(8, java.util.concurrent.TimeUnit.SECONDS);
+      service.cancelSession(sessionId.get());
+      loopThread.join(3000);
+      assertFalse(loopThread.isAlive(), "the cancel must release the park, not wait out its timeout");
+
+      // 1. The run ended as the reader's own stop…
+      var error = lastEventOfType(events, AgentEvent.AgentError.class);
+      assertNotNull(error);
+      assertEquals(AgentErrorCode.CANCELLED.name(), error.errorCode());
+      // 2. …and produced NO answer. This is the assertion the old behaviour fails: the budget-edge
+      // finalize had a successful tool result to synthesise from, so it really would have spoken.
+      assertNull(
+          lastEventOfType(events, AgentEvent.AgentDone.class),
+          "a run the reader stopped must not answer the question they abandoned");
+    } finally {
+      restoreProperty("justsearch.agent.budgetGateTimeoutSec", prev);
+    }
+  }
+
+  @Test
+  @DisplayName("review F1 — the same for a HELD CONTEXT GATE: the cancel releases the park")
+  void cancelAtHeldContextGateTerminatesCancelled() throws Exception {
+    // The cognitive sibling, and the same defect: both gates are held decisions the cancel did not
+    // release. The context gate's undecided fallback is CONTINUE, so the run carried on rather than
+    // finalizing — a different wrong outcome from the same root, which is why both are pinned.
+    String prev = System.getProperty("justsearch.agent.contextGateTimeoutSec");
+    System.setProperty("justsearch.agent.contextGateTimeoutSec", "5");
+    try {
+      var ai =
+          new ScriptedAiService(
+              List.of(
+                  ScriptedResponse.toolCall("c1", "core_search", "{}").withUsage(20, 10),
+                  ScriptedResponse.textOnly("the abandoned answer").withUsage(20, 10)));
+      var service = buildServiceWithSmallBudget(ai, 50);
+
+      var events = new CopyOnWriteArrayList<AgentEvent>();
+      var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+      var parked = new CompletableFuture<AgentEvent.ContextGatePending>();
+      Consumer<AgentEvent> sink =
+          e -> {
+            events.add(e);
+            if (e instanceof AgentEvent.SessionStarted s) {
+              sessionId.set(s.sessionId());
+            }
+            if (e instanceof AgentEvent.ContextGatePending p) {
+              parked.complete(p);
+            }
+          };
+      var request =
+          new AgentRequest(
+              userMessage("search"), List.of(), 4, List.of(), null, null, null, null, List.of(),
+              "thorough");
+      var loopThread = new Thread(() -> service.runAgent(request, sink));
+      loopThread.setDaemon(true);
+      loopThread.start();
+
+      parked.get(8, java.util.concurrent.TimeUnit.SECONDS);
+      service.cancelSession(sessionId.get());
+      loopThread.join(3000);
+      assertFalse(loopThread.isAlive(), "the cancel must release the park, not wait out its timeout");
+
+      var error = lastEventOfType(events, AgentEvent.AgentError.class);
+      assertNotNull(error);
+      assertEquals(AgentErrorCode.CANCELLED.name(), error.errorCode());
+      assertNull(
+          lastEventOfType(events, AgentEvent.AgentDone.class),
+          "a run the reader stopped must not answer the question they abandoned");
+    } finally {
+      restoreProperty("justsearch.agent.contextGateTimeoutSec", prev);
+    }
   }
 
   @Test
