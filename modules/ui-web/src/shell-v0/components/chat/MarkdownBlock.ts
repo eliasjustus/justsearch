@@ -14,6 +14,7 @@
 
 import { html, css, type TemplateResult, type PropertyValues } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
+import { FrameLatch } from '../../primitives/frameLatch.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { createMarkdownRenderer } from '../markdown/markdownRenderer.js';
 import { markdownCodeHighlight, markdownTypography } from '../markdown/markdownStyles.js';
@@ -380,7 +381,7 @@ export class MarkdownBlock extends JfElement {
    */
   declare prose: boolean;
 
-  private rafId: number | null = null;
+  private readonly streamFrame = new FrameLatch();
   private pendingText: string | null = null;
   private renderedText = '';
   private selectedSourceUnsub: (() => void) | null = null;
@@ -416,10 +417,7 @@ export class MarkdownBlock extends JfElement {
     this.removeEventListener('copy', this.onCopy as EventListener);
     this.selectedSourceUnsub?.();
     this.selectedSourceUnsub = null;
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
-    }
+    this.streamFrame.cancel();
   }
 
   /**
@@ -469,19 +467,17 @@ export class MarkdownBlock extends JfElement {
 
   override updated(changed: PropertyValues): void {
     if (changed.has('text') && this.isStreaming && this.text !== this.renderedText) {
-      if (this.rafId === null) {
-        this.pendingText = this.text;
-        this.rafId = requestAnimationFrame(() => {
-          this.rafId = null;
-          if (this.pendingText !== null && this.pendingText !== this.renderedText) {
-            this.renderedText = this.pendingText;
-            this.pendingText = null;
-            this.requestUpdate();
-          }
-        });
-      } else {
-        this.pendingText = this.text;
-      }
+      // The latest delta always wins; the latch decides only WHEN it is painted (tempdoc 860 §6.4 —
+      // a page that stops delivering frames releases on the fallback, so a stream that arrives while
+      // the tab is backgrounded is not left frozen at the last painted delta until it comes back).
+      this.pendingText = this.text;
+      this.streamFrame.request(() => {
+        if (this.pendingText !== null && this.pendingText !== this.renderedText) {
+          this.renderedText = this.pendingText;
+          this.pendingText = null;
+          this.requestUpdate();
+        }
+      });
     }
     // Tempdoc 846 §2.4 — highlight fenced code on the SETTLED answer only (a stream re-renders per
     // frame, and a mended fence would flicker through languages). Runs BEFORE the citation weave:
