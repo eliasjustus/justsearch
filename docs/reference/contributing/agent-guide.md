@@ -495,8 +495,19 @@ syntax renders as an interactive checkbox on the PR page, but publishes as
 inert plain-text `- [x]` once it becomes the squash commit message — prefer
 plain bullets or a prose list there instead.
 
-Two `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
+Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
 
+- **A push does not guarantee a CI run.** GitHub's `synchronize` event
+  intermittently does not fire, leaving a PR whose newest green check belongs
+  to an *older* commit — which reads as green on the PR page, because the
+  evidence is real, just about a different tree. `gh pr checks` cannot tell the
+  difference. Before trusting checks, confirm one exists for the exact head sha:
+  `node scripts/ci/ensure-ci-on-sha.mjs [<branch>] [--remote]` — it looks for a
+  run whose `headSha` matches, dispatches `ci.yml` for the ref if none appears,
+  and confirms the dispatched run actually carries that sha. Idempotent, so
+  re-running it is a no-op; `--no-dispatch` reports without acting. This is the
+  precondition for the next bullet: waiting on checks only means something once
+  you know checks exist for the right commit.
 - **Waiting on a PR's CI completion** fits `node scripts/dev/run-gh.mjs
   checks-wait <N>` (backgrounded) better than a hand-rolled poll loop — the
   latter forces sub-1s `sleep` calls to dodge the bash-guard threshold, costs

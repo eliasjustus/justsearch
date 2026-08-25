@@ -26,6 +26,7 @@ const NEUTRAL_SPREAD = 14; // max(r,g,b)-min(r,g,b) ≤ this ⇒ neutral (allowe
 const ALLOW_FILES = new Set([
   'modules/ui-web/src/utils/logger.ts', // console %c styling, not css``
   'modules/ui-web/src/shell-v0/themes/designTokenTree.ts', // theme infra: example/default values
+  'modules/ui-web/src/shell-v0/themes/themesCatalog.ts', // theme-picker swatches: a preview tile must show the OTHER theme's colors, not the active theme's tokens (855 §15.3)
 ]);
 
 const files = [];

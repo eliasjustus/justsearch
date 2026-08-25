@@ -194,7 +194,7 @@ export class ActionLedgerView extends JfElement {
         padding: 0;
         border: 0;
         background: none;
-        color: var(--accent, currentColor);
+        color: var(--accent);
         font: inherit;
         text-decoration: underline;
         cursor: pointer;
@@ -202,14 +202,14 @@ export class ActionLedgerView extends JfElement {
       /* tempdoc 612 §UX — the "N new since you looked" affordance + its "mark all read" link. */
       .new-count {
         font-size: var(--font-size-xs);
-        color: var(--accent-tint, var(--text-primary));
+        color: var(--text-tint);
         font-weight: 600;
       }
       .mark-read {
         padding: 0;
         border: 0;
         background: none;
-        color: var(--accent, currentColor);
+        color: var(--accent);
         font: inherit;
         font-size: var(--font-size-xs);
         text-decoration: underline;

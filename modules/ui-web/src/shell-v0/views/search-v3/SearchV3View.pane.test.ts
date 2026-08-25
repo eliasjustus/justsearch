@@ -41,6 +41,7 @@ import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence
 import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
 // READ-ONLY here, on purpose: the shared store this window must never write is asserted untouched.
 import { getInspectorState, resetInspectorState } from '../../state/inspectorState.js';
+import { FRAME_LATCH_FALLBACK_MS } from '../../primitives/frameLatch.js';
 import {
   sv3BoundaryStorageKeys,
   SV3_GRIP_KEY_STEP_PX,
@@ -671,6 +672,42 @@ describe('the two boundaries leave the main column its 640', () => {
     expect(el.paneWidthPx).toBe(SV3_PANE_DEFAULT_PX + 60);
     expect(el.style.getPropertyValue('--pane-width')).toBe(`${SV3_PANE_DEFAULT_PX + 60}px`);
     expect(localStorage.getItem(sv3BoundaryStorageKeys.paneWidth)).toBe(String(SV3_PANE_DEFAULT_PX + 60));
+  });
+
+  it('lands the drag width on the fallback when the page stops delivering frames (860 P3)', async () => {
+    // The drag coalescer had NO fallback before P3: a page that stopped rendering mid-gesture held
+    // the latch until pointerup, so every later move was coalesced into a frame that never came and
+    // the pane stayed at the width of the last painted move. Adopting the shared latch changes this
+    // site's behaviour deliberately — and the gesture's own verdict still outranks it.
+    const el = await mount();
+    await openPane(el);
+    const grip = q<HTMLElement>(el, 'sv3-pane-grip');
+    grip!.setPointerCapture = (): void => undefined;
+    // Order matters: vitest's fake timers install their OWN rAF (one that fires as the clock is
+    // advanced), so the never-firing stub has to go on afterwards or the page still renders.
+    vi.useFakeTimers();
+    const realRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = ((): number => 1) as typeof requestAnimationFrame;
+    try {
+      const before = el.style.getPropertyValue('--pane-width');
+      grip!.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: 1000 }),
+      );
+      grip!.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 940 }));
+      expect(el.style.getPropertyValue('--pane-width'), 'nothing paints without a frame').toBe(before);
+
+      vi.advanceTimersByTime(FRAME_LATCH_FALLBACK_MS);
+      expect(el.style.getPropertyValue('--pane-width')).toBe(`${SV3_PANE_DEFAULT_PX + 60}px`);
+
+      // A cancelled gesture still reverts, and no pass left in flight writes over that verdict.
+      grip!.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 800 }));
+      grip!.dispatchEvent(new MouseEvent('pointercancel', { bubbles: true }));
+      vi.advanceTimersByTime(FRAME_LATCH_FALLBACK_MS * 3);
+      expect(el.style.getPropertyValue('--pane-width')).toBe(`${SV3_PANE_DEFAULT_PX}px`);
+    } finally {
+      globalThis.requestAnimationFrame = realRaf;
+      vi.useRealTimers();
+    }
   });
 
   it('moves and resets from the keyboard, and a double-click FORGETS', async () => {
