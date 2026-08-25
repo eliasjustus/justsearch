@@ -288,6 +288,9 @@ import {
 } from '../state/NavigationJournal.js';
 import { canonicalize, parseUrl } from '../router/parser.js';
 import { deriveRichLabel } from '../utils/deriveRichLabel.js';
+// The app's ONE "is the reader typing?" pair (857 PR-A) — adopted here by tempdoc 864 Layer 2(a),
+// which retired this file's private fourth copy of the same descent.
+import { deepActiveElement, isTypingTarget } from '../utils/keyboardHandler.js';
 import { SURFACE_ICONS, railAccessibleName } from '../utils/surfaceIcons.js';
 import {
   isViewSaved,
@@ -1976,26 +1979,16 @@ export class Shell extends JfElement {
 
   /**
    * Slice 501 — global keyboard shortcut handler (capture phase).
-   * Guards: skip when focus is in a text input or contenteditable.
+   * Guards: skip when the reader is typing, by the app's one shared definition of that.
    */
-  /**
-   * Walk the activeElement chain through shadow roots to find the
-   * deepest focused element. event.target in capture phase is
-   * retargeted to the shadow host, so checking it directly misses
-   * inputs inside shadow DOM.
-   */
-  private isInputFocused(): boolean {
-    let el: Element | null = document.activeElement;
-    while (el?.shadowRoot?.activeElement) {
-      el = el.shadowRoot.activeElement;
-    }
-    if (!el) return false;
-    const tag = el.tagName?.toLowerCase();
-    return tag === 'input' || tag === 'textarea' || (el as HTMLElement).isContentEditable === true;
-  }
-
   private handleGlobalKey(e: KeyboardEvent): void {
-    if (this.isInputFocused()) return;
+    // Tempdoc 864 Layer 2(a) — THE shared typing guard (857 PR-A), not a fourth copy of it. This
+    // handler carried a private descent that omitted `SELECT` — precisely the omission 857 was
+    // written to close on the other copies — while guarding the app's most powerful chords: a `Ctrl+D`
+    // or `Alt+←` pressed with a `<select>` focused fired over the reader's type-ahead. The SUBJECT is
+    // still "where is focus?" (a capture-phase `event.target` is retargeted to the shadow host and
+    // would miss every input in a shadow tree); only the private predicate is gone.
+    if (isTypingTarget(deepActiveElement())) return;
     if (e.altKey && e.key === 'ArrowLeft') {
       e.preventDefault();
       if (this.intentRouter) {

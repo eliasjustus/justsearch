@@ -65,6 +65,15 @@ const ROW_ROLE = /role=["'`](option|row|listitem|treeitem|gridcell|cell|columnhe
 // A handler that only stops propagation / prevents default is not an affordance.
 const STOPPROP =
   /@(?:click|mousedown|pointerdown)=\$\{[^}]*\.(?:stopPropagation|preventDefault)\(\)[^}]*\}/;
+// A FOCUS FORWARDER (tempdoc 864 Layer 1(b)) — the `<label>` semantic on a wrapper that also holds
+// controls, which a real `<label>` may not (its activation behaviour would be ambiguous, and the
+// controls would sit inside their own field's label). The press moves the caret into the element's
+// OWN text field and does nothing else: no state changes, no navigation, nothing is dispatched. It
+// therefore adds no affordance to reach by keyboard — the field it focuses IS the control, and its
+// keyboard path (Tab, and the surface's own entry-path focus) is untouched. Same family as STOPPROP
+// above, declared in the markup rather than inferred from an inline handler body, so a reviewer sees
+// the claim at the element making it. NARROW BY CONSTRUCTION: it exempts only elements that opt in.
+const FOCUS_FORWARD = /\bdata-focus-forward\b/;
 // Selection markers that signal the listbox/grid pattern.
 const SELECTION_ATTR = /\baria-(selected|current)=/;
 // Decorative dismiss layer.
@@ -151,7 +160,8 @@ for (const f of files) {
       TRANSIENT.test(attrs) ||
       TOAST.test(attrs) ||
       ARIA_HIDDEN.test(attrs) ||
-      STOPPROP.test(attrs);
+      STOPPROP.test(attrs) ||
+      FOCUS_FORWARD.test(attrs);
     if (!ok) {
       const line = src.slice(0, m.index).split('\n').length;
       offenders.push(`${f.slice(SRC.length + 1)}:${line}  <${tag} @click…>`);

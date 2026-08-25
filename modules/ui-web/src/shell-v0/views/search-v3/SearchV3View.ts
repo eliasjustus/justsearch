@@ -212,6 +212,9 @@ import type { InspectorView } from '../../components/ContextInspectorPane.js';
 import { openContextMenu } from '../../components/ContextMenu.js';
 // The shared clipboard util — the export's destination, the same one the shipped window uses.
 import { copyToClipboard } from '../../utils/clipboardCopy.js';
+// Tempdoc 857 PR-A's shared "is the reader typing?" pair — read here for the one question the focus
+// authority has to answer before it moves a caret: is focus already somewhere the reader put it?
+import { deepActiveElement, isTypingTarget } from '../../utils/keyboardHandler.js';
 // The canonical thread RECORD (tempdoc 561 P-A; inventory D1) — the shared fetch, already consumed
 // by the shipped window. The shared PROJECTOR is reached through 'sv3-record.ts',
 // this window's registered run-projection site (governance/run-renderers.v1.json), never from here.
@@ -928,6 +931,33 @@ export class SearchV3View extends JfElement {
     // the palette's own field cannot swallow the chord before the window sees it.
     this.addEventListener('keydown', this.onHostKeydown, true);
     this.addEventListener('focusout', this.onHostFocusOut);
+    // Tempdoc 864 Layer 1(a) — ARRIVING AT THIS WINDOW PUTS THE READER IN THE COMPOSER. Activation is
+    // an entry path like the other two ({@link onSessionSelect}, {@link onSessionNew}), and it is the
+    // one that covers both a fresh hero and the restored record `restoreLastViewed` just claimed:
+    // that runs above, in this same connect, and the focus lands after the render it schedules.
+    void this.focusComposer();
+  }
+
+  /**
+   * Tempdoc 864 Layer 1(a) — the window's focus authority: after an entry that leaves the reader at a
+   * ready composer, the caret is IN the composer. Nothing on this surface used to do this, so `<body>`
+   * kept focus under a box that looks primed, every global single-key shortcut stayed armed, and the
+   * reader's typing went to whatever control focus was parked on (§2.9/§2.11).
+   *
+   * Deferred to `updateComplete` because every caller is an entry: at connect the composer does not
+   * exist yet, and after a claim the band it is being focused in is mid-re-render.
+   *
+   * TWO refusals, and they are the whole of "do not steal focus". A transient that OWNS focus keeps it
+   * — a rename field, the palette — and so does a reader who has already put focus in something they
+   * type into. A row button or `<body>` is neither: those are the parked-nowhere states this exists to
+   * end, and refusing them would refuse the entire fix.
+   */
+  private async focusComposer(): Promise<void> {
+    await this.updateComplete;
+    if (this.renamingId !== null) return;
+    if (this.palette?.open === true) return;
+    if (isTypingTarget(deepActiveElement())) return;
+    this.composer?.focusField();
   }
 
   override disconnectedCallback(): void {
@@ -2832,6 +2862,11 @@ export class SearchV3View extends JfElement {
     void this.refreshRecord(id);
     void this.refreshHistory(id);
     void this.setComposerState('docked');
+    // Tempdoc 864 Layer 1(a) — a claim leaves the reader at a ready composer, so the caret goes there.
+    // This is also what takes focus OFF the row button the click parked it on: that control swaps the
+    // conversation on a bare `Space`, and a reader who believes they are typing is one keystroke from
+    // swapping the thread they just opened (§2.7b).
+    void this.focusComposer();
   }
 
   /**
@@ -3007,7 +3042,9 @@ export class SearchV3View extends JfElement {
     // an emptied pane and nothing claimed — rather than a partial teardown free to forget a pointer.
     // The children go with it: the list must not keep offering conversations the store no longer has.
     for (const gone of [id, ...cascaded]) {
-      if (this.sessions.activeId === gone) this.onSessionNew();
+      // The STATE half only: the sidebar places the keyboard after a discard (tempdoc 831), so this
+      // window must not move focus on this path — see {@link startFreshSession}.
+      if (this.sessions.activeId === gone) this.startFreshSession();
       if (this.renamingId === gone) this.renamingId = null;
       this.sessions = removeSession(this.sessions, gone, gate);
     }
@@ -3027,6 +3064,25 @@ export class SearchV3View extends JfElement {
    * still spends a connection.
    */
   private onSessionNew(): void {
+    this.startFreshSession();
+    // Tempdoc 864 Layer 1(a) — a fresh hero exists to be typed into, and the affordance that asked
+    // for it is a control the reader's focus is now parked on (the sidebar's new-session button, or
+    // the palette's command) — the §2.7b state where a bare `Space` re-activates it.
+    void this.focusComposer();
+  }
+
+  /**
+   * The STATE half of a new session, without the focus move — the form a DISCARD reaches it in.
+   *
+   * After a discard the sidebar owns where the keyboard goes: the successor's row button, falling
+   * back to the new-session control when nothing survives (`Sv3Sidebar.placeFocusAfterDiscard`,
+   * tempdoc 831's "never simply drop the focus"). That placement runs in the sidebar's own `updated`,
+   * i.e. after this window's, so a composer focus on this path would not compete with it — it would
+   * silently win, and retire an a11y guarantee. Tempdoc 864 §3.3(c) keeps that guarantee deliberately
+   * and puts the remaining hazard — the parked control is an armed trigger — on the row's focus
+   * INDICATOR instead, which is a later PR's presentation work.
+   */
+  private startFreshSession(): void {
     this.abortAsk();
     // DETACHED, not halted (Slice 516 FIX-T1's rule, applied to the run half). A delegated run is
     // hosted by the product-wide controller and may be watched elsewhere, so this window stops
