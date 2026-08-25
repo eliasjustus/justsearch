@@ -45,7 +45,13 @@ import {
   restoreUnifiedChat,
   subscribeUnifiedChat,
 } from '../state/unifiedChatState.js';
+import {
+  getConversationListState,
+  restoreActiveConversation,
+  subscribeConversationList,
+} from '../state/conversationListStore.js';
 import * as selectionStateMod from '../state/selectionState.js';
+import { projectAsNavigation } from './URLProjector.js';
 import { registerStore, type StoreAdapter } from './storeRegistry.js';
 import {
   registerSurfaceStateSchema,
@@ -80,7 +86,54 @@ export function registerCoreStores(): void {
   registerStore(buildAskChatAdapter());
   registerStore(buildAgentChatAdapter());
   registerStore(buildUnifiedChatAdapter());
+  registerStore(buildSv3ConversationAdapter());
+  registerFrontendSurfaceSchemas();
 }
+
+/**
+ * Tempdoc 864 PR C — schemas for surfaces the WIRE cannot declare.
+ *
+ * {@link fetchAndRegisterSurfaceSchemas} sources every other schema from `GET /api/registry/surfaces`,
+ * which works because every other URL-addressable surface has a backend catalog entry. Search v3 does
+ * not: it is declared frontend-only in `plugin-api/CorePlugin.ts` and `search-v3` appears in no Java
+ * source. With no wire entry it had no stateSchema, so `URLProjector.activateProjection` returned
+ * early for the whole surface and NOTHING inside it could reach the URL — not the conversation, not
+ * the transcript arm (§2.7a). That is why a conversation swap left the hash verbatim unchanged and
+ * Back did nothing, confirmed live by PR-0 leg L6/L8.
+ *
+ * Registered before the fetch so a wire entry, if one is ever added, wins: `registerSurfaceStateSchema`
+ * replaces by surfaceId and the fetch runs second (`Shell.connectedCallback` order).
+ */
+export function registerFrontendSurfaceSchemas(): void {
+  registerSurfaceStateSchema(SV3_SURFACE_ID, {
+    schema: SV3_STATE_SCHEMA,
+    bindings: [
+      {
+        schemaPath: '/conversationId',
+        storeId: SV3_CONVERSATION_STORE_ID,
+        storeKey: 'conversationId',
+      },
+    ],
+  });
+}
+
+/** The frontend-only Search v3 window (`plugin-api/CorePlugin.ts`). */
+const SV3_SURFACE_ID = 'core.search-v3-surface';
+
+/** Abstract storeId the sv3 schema binds — resolved through {@link registerStore} like any other. */
+const SV3_CONVERSATION_STORE_ID = 'sv3.conversation';
+
+/**
+ * The hash format, and the whole of it (tempdoc 864 PR C):
+ *
+ *   `#justsearch://surface/core.search-v3-surface?conversationId=<id>`
+ *
+ * with the argument ABSENT — not empty, not a sentinel — when no conversation is claimed (the hero).
+ * `collectState` drops null/undefined, so "no conversation" is the bare surface address, and an
+ * absent id restores nothing rather than restoring a conversation named "".
+ */
+const SV3_STATE_SCHEMA =
+  '{"type":"object","properties":{"conversationId":{"type":"string"}}}';
 
 /**
  * Fetch the surface catalog and register every entry that declares a
@@ -279,6 +332,60 @@ function buildUnifiedChatAdapter(): StoreAdapter {
           out.docIds = cur.items.map((r) => r.id);
         }
         listener(out);
+      });
+    },
+  };
+}
+
+/**
+ * Search v3's conversation identity, as a URL-projected store (tempdoc 864 Layer 3(a)).
+ *
+ * THE CLAIM IS THE ADDRESS. `conversationListStore.activeId` is what the window is reading, and
+ * before this it lived only in module state plus a per-tab pointer — invisible to the router, so a
+ * swap moved no hash, left no history entry, and was recoverable only by reload (§2.7a). Binding it
+ * here makes the reader's position part of the address: it survives a reload, it can be linked, and
+ * `restore` is what a Back press runs.
+ *
+ * Two details are load-bearing rather than defensive:
+ *
+ *  - **The activeId dedup.** The store emits on every list refresh (a completed ask re-lists), and
+ *    an undeduped adapter would report those as state changes. Harmless under replaceState; under
+ *    the navigation projection below it would stack a history entry per re-list.
+ *  - **`claim` vs `restore`.** Only a claim is a navigation. A restore is the URL, a popstate or the
+ *    reload pointer replaying a position the reader already has — see {@link ConversationListChange}.
+ *
+ * HONEST LIMIT: `activeId` is APP-WIDE, and this projects whoever writes it while sv3 is the active
+ * surface. Only the surface on screen can claim in practice (the other window that claims the same
+ * pointer is a different surface, and two surfaces are not active at once), so the projection and
+ * what sv3 shows agree — but a future second claimer active at the same time would move the URL
+ * without moving the window. The fix then is a window-scoped slice, not a special case here.
+ */
+function buildSv3ConversationAdapter(): StoreAdapter {
+  return {
+    storeId: SV3_CONVERSATION_STORE_ID,
+    // The hero is the bare surface address, so an absent id on a Back/Forward means "nothing is
+    // claimed" and has to be applied as such.
+    clearsOnTraversal: true,
+    serialize(): StateSnapshot {
+      const id = getConversationListState().activeId;
+      return id === null ? {} : { conversationId: id };
+    },
+    restore(snapshot: StateSnapshot): void {
+      const raw = snapshot.conversationId;
+      const id = Array.isArray(raw) ? raw[0] : raw;
+      restoreActiveConversation(typeof id === 'string' && id !== '' ? id : null);
+    },
+    subscribe(listener: (s: StateSnapshot) => void): () => void {
+      let last = getConversationListState().activeId;
+      return subscribeConversationList((s, change) => {
+        if (s.activeId === last) return;
+        last = s.activeId;
+        const bag: StateSnapshot = s.activeId === null ? {} : { conversationId: s.activeId };
+        if (change === 'claim') {
+          projectAsNavigation(() => listener(bag));
+          return;
+        }
+        listener(bag);
       });
     },
   };

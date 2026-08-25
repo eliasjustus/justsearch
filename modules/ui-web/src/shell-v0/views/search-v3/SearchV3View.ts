@@ -186,7 +186,9 @@ import {
   editContextFloorSummary,
   exportConversationMarkdown,
   generateConversationTitle,
+  getConversationListState,
   loadConversations,
+  restoreActiveConversation,
   resumeConversation,
   setActiveConversation,
   setContextFloor,
@@ -908,11 +910,17 @@ export class SearchV3View extends JfElement {
     // A session is a conversation, so the app-wide store is where the list comes from. The
     // subscription fires immediately with whatever is already loaded; the fetch refreshes it.
     setConversationApiBase(this.apiBase || '');
-    this.convListUnsubscribe = subscribeConversationList((state) => {
+    this.convListUnsubscribe = subscribeConversationList((state, change) => {
       this.sessions = mergeStoreConversations(this.sessions, state.conversations);
       // The ROWS as well as the projection (852 S3): the version pager is read from the store's own
       // parent pointers, which `mergeStoreConversations` deliberately does not carry across.
       this.conversations = state.conversations;
+      // Tempdoc 864 PR C — a REHYDRATION is the ADDRESS being applied (a Back press, a deep link,
+      // this tab's own reload pointer), and the address is where this window is. A `claim` is not:
+      // the active-conversation pointer is app-wide and another window claiming it is that
+      // window's business, which is exactly what `SearchV3View.record.test.ts`'s companion-load
+      // case asserts. Following only restores keeps that line where it was.
+      if (change === 'restore') this.followStoreConversation(state.activeId);
     });
     void loadConversations();
     this.restoreLastViewed();
@@ -1161,6 +1169,11 @@ export class SearchV3View extends JfElement {
    * to an empty record, which leaves the placeholder row and says nothing false.
    */
   private restoreLastViewed(): void {
+    // Tempdoc 864 PR C — THE URL OUTRANKS THE POINTER. A deep link or a reload carrying
+    // `?conversationId=` has already been distributed to the store by the NavigationHandler, and
+    // the subscription above has already opened it; re-reading this tab's pointer here would
+    // second-guess the address the reader actually arrived on.
+    if (getConversationListState().activeId !== null) return;
     const id = readLastViewedConversation();
     if (id === null || sessionById(this.sessions, id) !== null) return;
     const now = Date.now();
@@ -1168,10 +1181,53 @@ export class SearchV3View extends JfElement {
       { id, title: null, firstUserMessage: '', createdAt: now, lastActiveAt: now },
     ]);
     this.sessions = focusSession(this.sessions, id, now);
-    setActiveConversation(id);
+    // A REHYDRATION, not a claim (tempdoc 864 PR C): this is the position the tab already had, so
+    // it corrects the URL in place. Pushing here would leave a history entry for the bare surface
+    // address behind the one the reader is on, and Back would look broken on the very first press.
+    restoreActiveConversation(id);
     void this.setComposerState('docked');
     void this.refreshRecord(id);
     void this.refreshHistory(id);
+  }
+
+  /**
+   * Tempdoc 864 Layer 3(a) — FOLLOW THE STORE. The conversation this window is reading is part of
+   * the address now, so the store can be moved by something other than this window: a Back or
+   * Forward press, a deep link, a pasted URL. Each of those lands in the NavigationHandler, which
+   * writes the store; this is the half that puts the transcript on screen to match.
+   *
+   * It is deliberately NOT `onSessionSelect`: this path must not re-write the store (it is obeying
+   * it, and a write here would push a history entry for a move the browser already made) and it
+   * must not move focus. Everything else a claim does — project the row, close the previous
+   * conversation's evidence, dock the composer, load both records — it does, because the reader is
+   * being shown a different conversation either way.
+   */
+  private followStoreConversation(storeActiveId: string | null): void {
+    if (storeActiveId === this.sessions.activeId) return;
+    if (storeActiveId === null) {
+      // The hero is a real address (the bare surface URL), so arriving back at it is the same
+      // teardown New session does — without the focus move, which belongs to the affordance.
+      this.startFreshSession();
+      return;
+    }
+    // An edit in another row is DROPPED rather than committed, the same rule every other move
+    // between conversations applies.
+    this.renamingId = null;
+    const now = Date.now();
+    if (sessionById(this.sessions, storeActiveId) === null) {
+      this.sessions = mergeStoreConversations(this.sessions, [
+        { id: storeActiveId, title: null, firstUserMessage: '', createdAt: now, lastActiveAt: now },
+      ]);
+    }
+    this.sessions = focusSession(this.sessions, storeActiveId, now);
+    // The tab is reading this conversation now, so a reload must land on it — the pointer follows
+    // the address rather than competing with it.
+    setLastViewedConversation(storeActiveId);
+    this.recordNotice = false;
+    this.closePane();
+    void this.setComposerState('docked');
+    void this.refreshRecord(storeActiveId);
+    void this.refreshHistory(storeActiveId);
   }
 
   /**

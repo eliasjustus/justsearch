@@ -18,6 +18,11 @@
  *   - `pushState`: used when the active surface changes (rail click, palette,
  *     deep-link). The Shell calls `pushAddress(...)` directly at activation
  *     time; the projector's subsequent state-driven writes use replaceState.
+ *   - `pushState` again, tempdoc 864 PR C: an IN-SURFACE state change the
+ *     emitting store declares to be a navigation — see
+ *     {@link projectAsNavigation}. A surface can replace everything the reader
+ *     is looking at without changing surface, and slice 489's two-case split
+ *     had no room for that.
  */
 
 import { canonicalize, parseUrl } from './parser.js';
@@ -57,6 +62,42 @@ let active: ActiveProjection | null = null;
  */
 const URL_WRITE_DEBOUNCE_MS = 75;
 let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Tempdoc 864 PR C — does the pending write want a history ENTRY?
+ *
+ * Slice 489's split was "surface change pushes, in-surface edit replaces", and it was drawn at the
+ * wrong altitude for a surface that swaps its whole subject without changing surface. Search v3
+ * replaces the entire transcript when the reader claims another conversation; under replace-only
+ * projection that swap left no history entry, so Back did nothing and an accidental one was
+ * recoverable only by reload (§2.7a — the incident this PR closes).
+ *
+ * The distinction is per-CHANGE, not per-surface and not per-store: the same store write is a
+ * navigation when the reader opened something and a rehydration when the URL, a popstate or a
+ * reload pointer replayed it. Only the emitting store knows which, so it says so by wrapping the
+ * emission in {@link projectAsNavigation}. Everything that does not wrap keeps slice 489's
+ * replaceState behaviour byte for byte.
+ */
+let pendingPush = false;
+let emittingNavigation = false;
+
+/**
+ * Declare that the store change made inside `emit` is a navigation: the URL write it triggers adds
+ * a history entry instead of replacing the current one, so the browser's own Back undoes it.
+ *
+ * Synchronous by contract — the flag is read by the subscriber firing inside `emit`, so a store
+ * that notifies asynchronously would fall back to replace (safe direction: a missing entry, never
+ * a spurious one).
+ */
+export function projectAsNavigation(emit: () => void): void {
+  const previous = emittingNavigation;
+  emittingNavigation = true;
+  try {
+    emit();
+  } finally {
+    emittingNavigation = previous;
+  }
+}
 
 /**
  * Activate the projector for a given surface. Subscribes to every store the
@@ -109,18 +150,24 @@ export function deactivateProjection(): void {
 }
 
 function scheduleWrite(surfaceId: string, schema: ResolvedSchema): void {
+  // A navigational change anywhere in a coalesced burst makes the trailing write a push: the
+  // burst's net effect is that the reader is somewhere else, and that is one entry, not none.
+  if (emittingNavigation) pendingPush = true;
   if (pendingTimer !== null) clearTimeout(pendingTimer);
   pendingTimer = setTimeout(() => {
     pendingTimer = null;
+    const push = pendingPush;
+    pendingPush = false;
     // Re-check `active` — deactivateProjection may have fired between schedule
     // and timer firing; the active surface may also have changed.
     if (active?.surfaceId === surfaceId) {
-      writeUrl(surfaceId, schema);
+      writeUrl(surfaceId, schema, push);
     }
   }, URL_WRITE_DEBOUNCE_MS);
 }
 
 function clearPendingWrite(): void {
+  pendingPush = false;
   if (pendingTimer !== null) {
     clearTimeout(pendingTimer);
     pendingTimer = null;
@@ -137,8 +184,10 @@ export function flushPendingProjection(): void {
   if (pendingTimer === null) return;
   clearTimeout(pendingTimer);
   pendingTimer = null;
+  const push = pendingPush;
+  pendingPush = false;
   if (active) {
-    writeUrl(active.surfaceId, active.schema);
+    writeUrl(active.surfaceId, active.schema, push);
   }
 }
 
@@ -180,25 +229,35 @@ export function currentAddress(): ShellAddressNavigation | null {
 
 // ----- helpers -----
 
-function writeUrl(surfaceId: string, schema: ResolvedSchema): void {
+function writeUrl(surfaceId: string, schema: ResolvedSchema, push = false): void {
   const state = collectState(schema);
   const addr: ShellAddressNavigation = {
     kind: 'navigate',
     target: surfaceId,
     state,
   };
-  const url = canonicalize(addr);
+  const url = toRelative(canonicalize(addr));
   try {
     // Encode the canonical justsearch:// URL into the hash fragment so the
     // browser bar projection survives refresh under the loopback HTTP origin.
-    window.history.replaceState(
-      { surfaceId },
-      '',
-      toRelative(url),
-    );
+    if (push && !isCurrentUrl(url)) {
+      window.history.pushState({ surfaceId }, '', url);
+      return;
+    }
+    window.history.replaceState({ surfaceId }, '', url);
   } catch {
     // history API failure non-fatal.
   }
+}
+
+/**
+ * Is the browser already showing this URL? A push that would duplicate the current entry is
+ * downgraded to a replace: two adjacent entries for one address make Back a no-op that costs a
+ * press, which is the failure mode this whole projection exists to remove.
+ */
+function isCurrentUrl(relative: string): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.location.hash === relative;
 }
 
 function collectState(schema: ResolvedSchema): StateSnapshot {
@@ -235,8 +294,10 @@ export function __flushPendingWriteForTest(): void {
   if (pendingTimer === null) return;
   clearTimeout(pendingTimer);
   pendingTimer = null;
+  const push = pendingPush;
+  pendingPush = false;
   if (active) {
-    writeUrl(active.surfaceId, active.schema);
+    writeUrl(active.surfaceId, active.schema, push);
   }
 }
 
