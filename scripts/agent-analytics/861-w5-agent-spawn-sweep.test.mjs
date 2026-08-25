@@ -122,8 +122,16 @@ const LAPSED_LEASE = (now) => ({
   expiresAt: new Date(now - 4000).toISOString(), // lapsed 4s ago
 });
 
+const skipped = [];
+
 async function main() {
   // ── session-start: a real kill through the full occasion pipeline ──────────────────────────
+  // Win32-only: `readProcessTable`/`taskkill` are implemented for win32 only
+  // (`process-identity.cjs`), so this is skipped rather than silently passing on CI's Linux
+  // runner — the other checks below inject a fake table and are platform-independent.
+  if (process.platform !== 'win32') {
+    skipped.push('session-start reaps a real, lapsed-and-stale OTHER-session record (real kill): win32-only (readProcessTable/taskkill)');
+  } else {
   await check('session-start reaps a real, lapsed-and-stale OTHER-session record (real kill)', async () => {
     await withTmpRegister(async ({ tmp, env, mainRepoRoot }) => {
       const child = spawnDisposableChild();
@@ -187,6 +195,7 @@ async function main() {
       }
     });
   });
+  }
 
   // ── session-end: scoped to the caller's OWN records only ────────────────────────────────────
   await check('session-end reaps the caller\'s own stale record but leaves an equally-stale OTHER session\'s alone', async () => {
@@ -395,13 +404,15 @@ async function main() {
     });
   });
 
+  for (const s of skipped) console.log(`  (skipped) ${s}`);
+
   if (failures.length) {
-    console.error(`861-w5-agent-spawn-sweep.test: ${failures.length} FAILED / ${passed} passed`);
+    console.error(`861-w5-agent-spawn-sweep.test: ${failures.length} FAILED / ${passed} passed / ${skipped.length} skipped`);
     for (const f of failures) console.error('  ✗ ' + f);
     process.exitCode = 1;
     return;
   }
-  console.log(`861-w5-agent-spawn-sweep.test: ${passed} passed`);
+  console.log(`861-w5-agent-spawn-sweep.test: ${passed} passed / ${skipped.length} skipped`);
 }
 
 main().finally(() => {
