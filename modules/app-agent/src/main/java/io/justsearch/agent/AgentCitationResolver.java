@@ -86,11 +86,17 @@ final class AgentCitationResolver {
     for (AgentEvent.AgentSource s : sources) {
       // Only parentDocId + chunkIndex drive the authoritative match (it re-fetches the chunk from
       // the index); the other fields are display metadata, defaulted here.
+      // Tempdoc 865 §7.5 — the inclusion the SOURCE carries, not a hardcoded absence. Before this it
+      // was `ContextInclusion.ABSENT` unconditionally, which is why 849's `suppressGroundingFor`
+      // never fired on a delegate source: the predicate was there, and nothing on this plane ever
+      // gave it an input. `AgentSession.collectGroundingSources` resolves the state against the
+      // final prompt; this site projects it, so the matcher is asked about the same passage the
+      // panel will describe.
       citations.add(
           new DocumentService.ContextCitation(
               s.parentDocId(), s.chunkIndex(), 1, 0, 0, 0f, s.excerpt(),
               s.startLine(), s.endLine(), s.headingText(), 0,
-              DocumentService.ContextInclusion.ABSENT));
+              inclusionOf(s)));
     }
     try {
       DocumentService.CitationMatchResult result =
@@ -121,5 +127,18 @@ final class AgentCitationResolver {
           e.toString());
       return Resolved.none();
     }
+  }
+
+  /**
+   * Tempdoc 865 §7.5 — read a source's inclusion state back into the {@code ContextInclusion} the
+   * matcher's input record takes.
+   *
+   * <p>The source carries the state as a WIRE NAME because {@code app-agent-api} cannot see the
+   * enum. The reverse projection lives on the enum's own record ({@code ContextInclusion.fromWire},
+   * beside {@code wireName}) rather than here, so the two directions cannot drift apart.
+   */
+  private static DocumentService.ContextInclusion inclusionOf(AgentEvent.AgentSource s) {
+    return DocumentService.ContextInclusion.fromWire(
+        s.contextInclusion(), s.contextIncludedChars());
   }
 }

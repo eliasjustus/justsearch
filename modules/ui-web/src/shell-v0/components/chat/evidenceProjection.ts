@@ -779,7 +779,11 @@ export function toEvidenceItem(c: AnswerEvidenceSource): EvidenceItem {
  * meant is how a vocabulary drift becomes a false claim about evidence.
  */
 export function contextInclusionOf(
-  c: Pick<AnswerEvidenceSource, 'contextInclusion'> | null | undefined,
+  // Tempdoc 865 §7.5 — typed as a bare `string`, not the union. This function IS the narrowing, and
+  // the delegate plane's wire record (`shape-handlers/shared.AgentSource`) carries the raw wire
+  // value; a parameter pre-narrowed to the union would have forced a cast at that call site, which
+  // is the same guess this function exists to refuse, moved one line earlier.
+  c: { readonly contextInclusion?: string } | null | undefined,
 ): ContextInclusion | null {
   const raw = c?.contextInclusion;
   return raw === 'included' || raw === 'partial' || raw === 'dropped' ? raw : null;

@@ -45,6 +45,19 @@ export interface AgentSource {
   startLine: number;
   endLine: number;
   headingText: string;
+  /**
+   * Tempdoc 865 §7.5 — whether this passage was still in the prompt the answer was written from,
+   * spelled EXACTLY as the RAG plane spells it (`RAGContext` writes these same two keys onto a
+   * `rag.citations` entry), because the panel reads both planes through one shared evidence record.
+   *
+   * ABSENT (the key omitted) means the producer resolved nothing — the state of every delegate
+   * source persisted before this field, and of every source whose carrier message is still intact.
+   * It is never "included": see `AgentSession.inclusionFor` for why this producer states `dropped`
+   * or nothing at all.
+   */
+  contextInclusion?: string;
+  /** Characters of this passage that reached the model. Absent together with `contextInclusion`. */
+  contextIncludedChars?: number;
 }
 
 /**
