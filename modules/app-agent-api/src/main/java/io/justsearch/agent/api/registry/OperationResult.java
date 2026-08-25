@@ -90,6 +90,60 @@ public record OperationResult(
         success, message, executionId, merged, errorCode, errorDetails, retryable);
   }
 
+  /**
+   * Tempdoc 865 §7.1 — return a copy carrying, under {@code structuredData.grounding}, the grounding
+   * sources THIS tool call newly established. Idempotent merge over the existing structuredData;
+   * other fields unchanged. Applied once at the dispatch seam — the single authoritative stamp,
+   * exactly as {@link #withLineage} is.
+   *
+   * <p>This is the CARRIER decision, and it is the reason evidence now survives a run that never
+   * reaches a grounded terminal. {@code tool_exec_completed} already projects onto both planes — the
+   * wire ({@code AgentEventPayloads.toolCompletedPayload}) and the persisted record ({@code
+   * AgentInteractionMapper}'s {@code tool_exec_completed} case) — so a delta is durable the moment
+   * its call completes, with no new event kind, no descriptor, and no timeline row.
+   *
+   * <p>The sources are projected to their WIRE shape here rather than handed to the serializer as
+   * records, because {@code structuredData} is declared free-form ({@code AgentRunShape}: {@code
+   * EventField.object("structuredData", "")}) and therefore carries no descriptor to pin this key
+   * against. Writing the eight keys explicitly is what makes the shape identical on the live and the
+   * reloaded path, and pinnable by a conformance test in place of the descriptor.
+   *
+   * @param sources the delta — never the running total, so a long run does not re-send its whole
+   *     evidence set every step. Callers omit the stamp entirely when the delta is empty.
+   */
+  public OperationResult withGrounding(
+      java.util.List<io.justsearch.agent.api.AgentEvent.AgentSource> sources) {
+    java.util.List<Map<String, Object>> wire = new java.util.ArrayList<>(sources.size());
+    for (io.justsearch.agent.api.AgentEvent.AgentSource s : sources) {
+      var item = new java.util.LinkedHashMap<String, Object>();
+      item.put("parentDocId", s.parentDocId());
+      item.put("chunkIndex", s.chunkIndex());
+      item.put("path", s.path());
+      item.put("title", s.title());
+      item.put("excerpt", s.excerpt());
+      item.put("startLine", s.startLine());
+      item.put("endLine", s.endLine());
+      item.put("headingText", s.headingText());
+      wire.add(Map.copyOf(item));
+    }
+    java.util.Map<String, Object> merged = new java.util.HashMap<>(structuredData);
+    merged.put(GROUNDING_KEY, java.util.List.copyOf(wire));
+    return new OperationResult(
+        success, message, executionId, merged, errorCode, errorDetails, retryable);
+  }
+
+  /**
+   * Tempdoc 865 §7.1 — the {@code structuredData} key {@link #withGrounding} stamps.
+   *
+   * <p>Exported so the stamp and the JAVA readers (the conformance test, the terminal-equivalence
+   * tests) name one constant instead of repeating a literal. It unifies only the Java side: the TS
+   * readers on both planes necessarily hold their own literal, because the key crosses a wire. What
+   * keeps those honest is not this constant but the equality the conformance test pins — the key and
+   * its eight fields, asserted here in the descriptor's place, since {@code structuredData} is
+   * declared free-form and no schema gate can see it.
+   */
+  public static final String GROUNDING_KEY = "grounding";
+
   /** Failure with reason. No executionId attached (failed invocations cannot be undone). */
   public static OperationResult failure(String message) {
     return new OperationResult(

@@ -1180,6 +1180,299 @@ class AgentLoopServiceTest {
   }
 
   // ---------------------------------------------------------------------------
+  // Tempdoc 865 §7.1 — evidence survives every terminal (the incremental mint)
+  // ---------------------------------------------------------------------------
+
+  /** A chunk-precise search hit, as {@code SearchTool.buildSearchEvidence} shapes it. */
+  private static Map<String, Object> hit(String parentDocId) {
+    return Map.of(
+        "parentDocId", parentDocId,
+        "chunkIndex", 0,
+        "path", "/docs/" + parentDocId + ".md",
+        "title", "Doc " + parentDocId,
+        "excerpt", "an excerpt",
+        "startLine", 1,
+        "endLine", 5,
+        "headingText", "");
+  }
+
+  private static Map<String, Object> searchEvidence(String... parentDocIds) {
+    return Map.of("searchResults", Arrays.stream(parentDocIds).map(AgentLoopServiceTest::hit).toList());
+  }
+
+  /**
+   * Every {@code parentDocId} the run's {@code tool_exec_completed} events carried under the
+   * grounding key, in emission order — the FE's reconstruction, read off the same events it reads.
+   */
+  private static List<String> deltaDocIds(List<AgentEvent> events) {
+    var out = new ArrayList<String>();
+    for (AgentEvent e : events) {
+      if (!(e instanceof AgentEvent.ToolExecutionCompleted c)) {
+        continue;
+      }
+      Object raw = c.result().structuredData().get(OperationResult.GROUNDING_KEY);
+      if (!(raw instanceof List<?> delta)) {
+        continue;
+      }
+      for (Object item : delta) {
+        out.add(String.valueOf(((Map<?, ?>) item).get("parentDocId")));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Tempdoc 865 §7.1 A5 — TERMINAL EQUIVALENCE, pinned against the {@code AgentDone} EVENT (§7.9
+   * A9: asserting over the projected thread would make this sensitive to 863's plane changes and
+   * start measuring the wrong thing).
+   *
+   * <p>Why this is the slice's one catastrophic failure mode: {@code AgentSentenceCite.sourceIndex}
+   * is a POSITION into {@code done.sources()}, resolved on the FE as {@code sources[sourceIndex]}.
+   * If the incremental order and the terminal order ever diverge, every inline mark points at the
+   * wrong document — with no error anywhere. Both come from one ordered accumulator, so the property
+   * holds BY CONSTRUCTION; this test exists precisely because a later refactor could re-derive
+   * either side independently and nothing else would notice.
+   *
+   * <p>SCOPED to the two {@code groundedDone} terminals ({@code COMPLETED},
+   * {@code BUDGET_EDGE_FINALIZE}) — see {@link #maxIterationsTerminal_keepsTheEvidenceItEstablished}
+   * for why {@code ofDisposition} is exempt rather than fixed.
+   */
+  @Test
+  @DisplayName("865 §7.1 A5: on a COMPLETED terminal the concatenated deltas equal done.sources(), in order")
+  void concatenatedDeltas_equalTheGroundedTerminalsSources() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}"),
+                ScriptedResponse.textOnly("Here is the answer")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                // Call 2 re-returns d1 and adds d3 — so the deltas can only match if the run-wide
+                // dedup is applied incrementally, not per call.
+                .returningStructuredData(
+                    List.of(searchEvidence("d1", "d2"), searchEvidence("d1", "d3"))));
+
+    var events = run(service, userMessage("two searches"), 4);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "the run reaches a grounded terminal");
+    assertEquals(
+        TerminalDisposition.COMPLETED.name(),
+        done.disposition(),
+        "this fixture must exercise a groundedDone terminal, not ofDisposition");
+    assertEquals(
+        List.of("d1", "d2", "d3"),
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList());
+    assertEquals(
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
+        deltaDocIds(events),
+        "the concatenated per-call deltas ARE the terminal source list — same members, same order."
+            + " A divergence here is a silently misdirected inline mark on every answer.");
+  }
+
+  /**
+   * Tempdoc 865 §7.1 / §3.8b — the sharpest unhappy terminal. A run that exhausts its iterations
+   * emits {@code AgentDone.ofDisposition}, whose sources are a hardcoded {@code List.of()}, yet the
+   * evidence it established is intact on the tool events that delivered it.
+   *
+   * <p>{@code ofDisposition} is EXEMPT from terminal equivalence by construction, and deliberately
+   * not "fixed": its canonical constructor takes {@code List} arguments and {@code
+   * AgentGroundingSeamAuditTest}'s discriminator is a {@code java.util.List} SIGNATURE SUBSTRING, so
+   * draining the accumulator there would trip the grounding-seam audit for a reason that has nothing
+   * to do with grounding (which is the whole reason the delegating factory exists). Under this
+   * design it no longer needs to: the empty list stops being a loss and becomes the true statement
+   * "this terminal makes no grounding claim".
+   */
+  @Test
+  @DisplayName("865 §7.1: a MAX_ITERATIONS run keeps the evidence it established (the terminal claims none)")
+  void maxIterationsTerminal_keepsTheEvidenceItEstablished() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                .returningStructuredData(
+                    List.of(searchEvidence("d1", "d2"), searchEvidence("d1", "d3"))));
+
+    var events = run(service, userMessage("loop"), 2);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done);
+    assertEquals(TerminalDisposition.MAX_ITERATIONS.name(), done.disposition());
+    assertTrue(
+        done.sources().isEmpty(),
+        "ofDisposition makes no grounding claim — that is its contract, not a regression");
+    assertEquals(
+        List.of("d1", "d2", "d3"),
+        deltaDocIds(events),
+        "RED BEFORE 865: the run's evidence died with the terminal that could not carry it."
+            + " GREEN AFTER: the deltas already rode the tool events, so the whole set survives.");
+  }
+
+  /**
+   * Tempdoc 865 §7.1 — the cancel case, after TWO searches. Same property as MAX_ITERATIONS with a
+   * sharper edge: a cancelled run emits no {@code done} at all, so before this slice the evidence
+   * had no carrier of any kind.
+   */
+  @Test
+  @DisplayName("865 §7.1: a run cancelled after two searches keeps both calls' evidence")
+  void cancelledRun_keepsTheEvidenceEstablishedBeforeTheCancel() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}"),
+                ScriptedResponse.textOnly("never reached")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                .returningStructuredData(
+                    List.of(searchEvidence("d1", "d2"), searchEvidence("d1", "d3"))));
+
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+    var completed = new java.util.concurrent.atomic.AtomicInteger();
+    // Cancel from inside the consumer after the SECOND tool completes — the same in-thread
+    // synchronous-delivery assumption `sessionEnd_userCancelledMidLoop` documents.
+    Consumer<AgentEvent> sink =
+        event -> {
+          events.add(event);
+          if (event instanceof AgentEvent.SessionStarted s) {
+            sessionId.set(s.sessionId());
+          }
+          if (event instanceof AgentEvent.ToolExecutionCompleted
+              && completed.incrementAndGet() == 2
+              && sessionId.get() != null) {
+            service.cancelSession(sessionId.get());
+          }
+        };
+    service.runAgent(new AgentRequest(userMessage("cancel me"), List.of(), 5), sink);
+
+    assertNull(
+        lastEventOfType(events, AgentEvent.AgentDone.class),
+        "a cancelled run emits no grounded terminal — which is exactly why the terminal could not"
+            + " be the mint");
+    assertEquals(
+        List.of("d1", "d2", "d3"),
+        deltaDocIds(events),
+        "everything both searches established is on the tool events, durable on both planes");
+  }
+
+  /**
+   * Tempdoc 865 PR-1 review F-2 — terminal equivalence holds for a run whose tool calls go through
+   * BOTH dispatch channels.
+   *
+   * <p>{@code handleVirtualToolCall} is the second channel: the {@code vop_*} result arrives from the
+   * FE rather than the synchronous executor, and it calls {@code recordExecution} like the main seam
+   * does. It shipped recording WITHOUT stamping, which the grounding-seam audit cannot see — that
+   * rule forbids stamping outside a seam, not recording without stamping. The failure it would
+   * produce is not an error anywhere: a source lands in the accumulator and in no delta, the
+   * concatenation stops equalling the terminal list, and every position after the gap shifts —
+   * silently redirecting the inline marks that resolve through those positions.
+   *
+   * <p><b>Honest scope, stated rather than implied.</b> The virtual channel builds its result with
+   * {@code OperationResult.success(String)} / {@code failure(String)}, neither of which carries
+   * {@code structuredData}, so a virtual call establishes nothing TODAY and its delta is empty. This
+   * case therefore pins that a virtual call in the middle of a run perturbs neither the deltas nor
+   * their ORDER — not that the virtual channel carries evidence. Writing it as if it did would be an
+   * unreachable seed; the stamp itself is held in place by
+   * {@code everyDispatchSeamStillStampsTheGroundingDelta}.
+   */
+  @Test
+  @DisplayName("865 F-2: terminal equivalence holds across BOTH dispatch channels (a vop_ call between two searches)")
+  void virtualToolRun_keepsTerminalEquivalence() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_v", "vop_open_folder", "{\"path\":\"x\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}"),
+                ScriptedResponse.textOnly("Here is the answer")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                .returningStructuredData(
+                    List.of(searchEvidence("d1", "d2"), searchEvidence("d1", "d3"))));
+
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+    // Answer the virtual call from inside the consumer. Delivery is in-thread and synchronous, so
+    // the future is already complete when the loop reaches its `get`.
+    Consumer<AgentEvent> sink =
+        event -> {
+          events.add(event);
+          if (event instanceof AgentEvent.SessionStarted s) {
+            sessionId.set(s.sessionId());
+          }
+          if (event instanceof AgentEvent.ToolCallVirtual v && sessionId.get() != null) {
+            service.completeVirtualToolCall(sessionId.get(), v.callId(), true, "opened", null);
+          }
+        };
+    service.runAgent(new AgentRequest(userMessage("mixed channels"), List.of(), 6), sink);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "the run reaches a grounded terminal");
+    assertEquals(
+        List.of("d1", "d2", "d3"),
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList());
+    assertEquals(
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
+        deltaDocIds(events),
+        "the virtual call sits between the two searches and contributes nothing — the concatenated"
+            + " deltas still equal the terminal list, same members, same order");
+    // The virtual call really did execute through the second channel (otherwise this case would be
+    // asserting the single-channel property under a longer name).
+    assertNotNull(
+        lastEventOfType(events, AgentEvent.ToolCallVirtual.class),
+        "the vop_ branch must have been taken");
+  }
+
+  /**
+   * Tempdoc 865 PR-1 review F-5 — the premise behind the mint's missing success guard, pinned.
+   *
+   * <p>{@code AgentSession.contributeGroundingSources} deliberately applies no success guard, and its
+   * javadoc justifies that by asserting a failed result cannot carry search evidence. That was an
+   * argument in a comment; this is the test behind it. If a failure factory ever gains a
+   * {@code structuredData} channel, the guard question genuinely reopens — and this fails, which is
+   * the point.
+   */
+  @Test
+  @DisplayName("865 F-5: no OperationResult failure factory can carry structuredData")
+  void failureResultsCannotCarryStructuredData() {
+    assertTrue(
+        OperationResult.failure("boom").structuredData().isEmpty(),
+        "the failure factory carries no structured payload");
+    assertTrue(
+        OperationResult.failure("boom", "SOME_CODE", Map.of("k", "v"), Boolean.TRUE)
+            .structuredData()
+            .isEmpty(),
+        "the typed-error failure factory carries errorDetails, NOT structuredData — so a failed tool"
+            + " cannot report searchResults and the mint needs no success guard");
+    // The reflective half: no OTHER public factory returns a non-success result at all, so the two
+    // above are the whole failure surface. A new one would have to be added here to be reachable.
+    List<String> failureFactories =
+        java.util.Arrays.stream(OperationResult.class.getDeclaredMethods())
+            .filter(m -> java.lang.reflect.Modifier.isStatic(m.getModifiers()))
+            .filter(m -> m.getReturnType() == OperationResult.class)
+            .map(java.lang.reflect.Method::getName)
+            .filter(name -> name.equals("failure"))
+            .toList();
+    assertEquals(
+        2,
+        failureFactories.size(),
+        "exactly two failure factories exist; a third would need its structuredData checked above");
+  }
+
+  // ---------------------------------------------------------------------------
   // Empty output retry
   // ---------------------------------------------------------------------------
 
@@ -3825,10 +4118,27 @@ class AgentLoopServiceTest {
           Set.of(ExecutorTag.AGENT));
     }
 
+    /**
+     * Tempdoc 865 §7.1 — a structured payload per call (the Nth call gets the Nth entry, the last
+     * entry repeating once exhausted). Empty ⇒ the stub reports no structured data at all, which is
+     * the pre-865 behaviour every other test in this file relies on.
+     */
+    private final List<Map<String, Object>> perCallStructuredData = new ArrayList<>();
+
+    StubTool returningStructuredData(List<Map<String, Object>> perCall) {
+      perCallStructuredData.addAll(perCall);
+      return this;
+    }
+
     OperationResult execute(String args) {
-      callCount.incrementAndGet();
+      int nth = callCount.incrementAndGet();
       lastArgs = args;
-      return OperationResult.success(returnValue);
+      if (perCallStructuredData.isEmpty()) {
+        return OperationResult.success(returnValue);
+      }
+      return OperationResult.success(
+          returnValue,
+          perCallStructuredData.get(Math.min(nth - 1, perCallStructuredData.size() - 1)));
     }
   }
 

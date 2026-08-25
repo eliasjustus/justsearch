@@ -86,11 +86,28 @@ export interface CitationMatch {
 /**
  * Tempdoc 836 S2S3-A.1 — how much of ONE source's text the matcher actually looked at.
  *
- * <p>Admission control preserves SENTENCE coverage by cutting WINDOWS, so "every sentence scored"
- * can be true while most of a source's text was never read. `windowsConsidered > 0 &&
- * windowsScored === 0` is the discriminator: that source was NEVER EXAMINED, which is a budget
- * fact, not the evidence verdict "this source supports nothing". Both produce the same empty match
- * list, and without this they are indistinguishable.
+ * <p>`windowsScored === 0` is the discriminator: that source was NEVER EXAMINED, which is a fact
+ * about reach, not the evidence verdict "this source supports nothing". Both produce the same empty
+ * match list, and without this they are indistinguishable.
+ *
+ * <p>TWO producers write this record, and the pair of counts says WHICH — a distinction worth
+ * keeping, because they are different reasons for the same silence (tempdoc 865 PR-1 F-3):
+ *
+ * <ul>
+ *   <li>`windowsConsidered > 0 && windowsScored === 0` — the BUDGET arm (836). The source produced
+ *     text and windows; admission control cut them, because it preserves SENTENCE coverage by
+ *     cutting WINDOWS. So "every sentence scored" can be true while most of a source's text was
+ *     never read. Written by the Worker, off `rag.citation_matches`.
+ *   <li>`windowsConsidered === 0 && windowsScored === 0` — the STRUCTURAL arm (865 PR-1). The source
+ *     produced no window to cut: a DOCUMENT-LEVEL agent source carries the 603 D-3 sentinel instead
+ *     of a chunk ordinal, `CitationMatchOps.prepareWindows` refuses to look one up ("a source that
+ *     supplies no text and has no ordinal is unverifiable"), and `PassageWindows.prepare` then skips
+ *     it — so the Worker reports exactly these zeros for it. `agentEvidence.ts` derives the same
+ *     record for the delegate plane, where the Worker's own list is dropped before it reaches the FE.
+ * </ul>
+ *
+ * Both arms mean "nothing read it", which is why {@link sourceGrounding} keys the `unexamined` state
+ * on `windowsScored === 0` alone and neither arm needs a distinct field.
  */
 export interface SourceCoverage {
   sourceIndex: number;

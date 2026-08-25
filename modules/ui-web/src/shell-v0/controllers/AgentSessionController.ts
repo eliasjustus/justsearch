@@ -434,6 +434,26 @@ export class AgentSessionController implements CoreAgentRunHandlers {
    */
   answerEvidenceRunId: string | null = null;
   /**
+   * Tempdoc 865 §7.1 — everything this run has established SO FAR, accumulated from the per-call
+   * grounding deltas on `tool_exec_completed`, in call order.
+   *
+   * <p>It is not a second mint. The backend already applied the one grounding authority and already
+   * deduped across the run before stamping each delta, so concatenating them reproduces the terminal
+   * source list exactly — same members, same positions. This field only keeps them.
+   *
+   * <p>Its reason to exist is the run that reaches NO grounded terminal: cancelled, errored, or
+   * MAX_ITERATIONS (whose `AgentDone.ofDisposition` carries an empty source list by contract). For
+   * those, `onDone` never writes {@link answerSources} and this is the only record of what the run
+   * drew on.
+   */
+  groundingDeltas: AgentSource[] = [];
+  /**
+   * WHICH RUN {@link groundingDeltas} belongs to — the same identity discipline
+   * {@link answerEvidenceRunId} applies, and for the same hazard: a terminal handler fires on EVERY
+   * terminal, so without this stamp run N-1's deltas get written onto run N's failed turn.
+   */
+  groundingDeltasRunId: string | null = null;
+  /**
    * Tempdoc 859 §4 / amendment 6 — which producer scored {@link answerCitations}
    * (`DocumentService.ScorerKind`'s wire name), for the 836 §4 producer gate.
    *
@@ -790,6 +810,8 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.answerCitations = [];
     this.answerEvidenceRunId = null;
     this.answerCitationScorer = null;
+    this.groundingDeltas = [];
+    this.groundingDeltasRunId = null;
     this.terminalDisposition = null;
     this.currentToolBatch = [];
     this.totalTokensUsed = null;
@@ -1035,6 +1057,10 @@ export class AgentSessionController implements CoreAgentRunHandlers {
         (data.structuredData as Record<string, unknown>) ??
         undefined,
     });
+    this.accumulateGroundingDelta(
+      (result?.structuredData as Record<string, unknown> | undefined) ??
+        (data.structuredData as Record<string, unknown> | undefined),
+    );
     // 543-fwd idea #0 — bridge the real (successful) agent tool-call into the
     // Effect Journal. Only successes: a failed op changed no state, so it is not
     // an "AI action" to undo or digest. (The chat transcript still shows it.)
@@ -1045,6 +1071,29 @@ export class AgentSessionController implements CoreAgentRunHandlers {
       const completed = this.toolCalls[callId];
       if (completed) this.journalAgentToolCall(completed);
     }
+  }
+
+  /**
+   * Tempdoc 865 §7.1 — keep the grounding delta this tool call stamped.
+   *
+   * <p>Reads `structuredData.grounding`, the key `OperationResult.withGrounding` writes at the one
+   * dispatch seam. An ABSENT key means the call established nothing — the backend omits it rather
+   * than sending an empty list — so there is no empty-vs-absent question to get wrong here.
+   *
+   * <p>Appended, never deduped: the backend's accumulator already applied the run-wide dedup before
+   * splitting the set into deltas, and re-applying it here would be a second mint free to disagree
+   * about ORDER — which is what `AgentSentenceCite.sourceIndex` resolves through.
+   */
+  private accumulateGroundingDelta(structuredData: Record<string, unknown> | undefined): void {
+    const delta = structuredData?.grounding;
+    if (!Array.isArray(delta) || delta.length === 0) return;
+    if (this.groundingDeltasRunId !== this.sessionId) {
+      // A delta from a different run than the one this state describes starts the set over, rather
+      // than appending onto the previous run's — the same identity rule `answerEvidenceRunId` states.
+      this.groundingDeltas = [];
+      this.groundingDeltasRunId = this.sessionId;
+    }
+    this.groundingDeltas = [...this.groundingDeltas, ...(delta as AgentSource[])];
   }
 
   /**

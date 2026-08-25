@@ -217,4 +217,144 @@ final class AgentSessionGroundingTest {
         sources.get(1).chunkIndex(),
         "the document-level source keeps the sentinel — dedup by 'doc#path' does not invent chunk precision");
   }
+
+  /**
+   * Tempdoc 865 §7.1 — the MINT is per call, and the per-call deltas PARTITION the run's evidence
+   * set: each source appears in exactly one delta, in terminal order.
+   *
+   * <p>This is the property the whole slice rests on. {@code AgentSentenceCite.sourceIndex} is a
+   * POSITION into the terminal list, resolved on the FE as {@code sources[cite.sourceIndex]}, so a
+   * reconstruction from deltas that reordered or repeated anything would point every inline mark at
+   * the wrong document — silently, and confidently. Two calls sharing a document are what makes the
+   * partition observable: the shared document belongs to the FIRST call's delta and to no other.
+   */
+  @Test
+  @DisplayName("865 §7.1: per-call deltas partition the run's evidence set, in terminal order")
+  void perCallDeltas_partitionTheRunsEvidenceSet() {
+    var session = session();
+    List<AgentEvent.AgentSource> delta1 =
+        session.recordExecution(
+            searchCall("call-1"),
+            OperationResult.success(
+                "r", Map.of("searchResults", List.of(chunkHit("d1", 0, 5), chunkHit("d2", 1, 12)))));
+    // Call 2 re-returns d1 (already established) and adds d3.
+    List<AgentEvent.AgentSource> delta2 =
+        session.recordExecution(
+            searchCall("call-2"),
+            OperationResult.success(
+                "r", Map.of("searchResults", List.of(chunkHit("d1", 0, 5), chunkHit("d3", 0, 2)))));
+
+    assertEquals(
+        List.of("d1", "d2"),
+        delta1.stream().map(AgentEvent.AgentSource::parentDocId).toList(),
+        "the first call's delta is everything it established");
+    assertEquals(
+        List.of("d3"),
+        delta2.stream().map(AgentEvent.AgentSource::parentDocId).toList(),
+        "the second call's delta is what it ADDED — d1 was already established, so it is not re-sent");
+
+    List<AgentEvent.AgentSource> concatenated =
+        java.util.stream.Stream.concat(delta1.stream(), delta2.stream()).toList();
+    assertEquals(
+        session.collectGroundingSources(),
+        concatenated,
+        "concatenated deltas == the terminal source list, element for element and in order");
+  }
+
+  /**
+   * Tempdoc 865 §7.1 "emit only on change" — a tool call that established nothing returns an EMPTY
+   * delta, which the dispatch seam turns into NO key on the event. An absent key means "established
+   * nothing"; a present-but-empty one would be the run narrating something that did not happen.
+   */
+  @Test
+  @DisplayName("865 §7.1: a call that establishes nothing yields an empty delta (⇒ no key)")
+  void aCallThatEstablishesNothing_yieldsAnEmptyDelta() {
+    var session = session();
+    session.recordExecution(
+        searchCall("call-1"),
+        OperationResult.success("r", Map.of("searchResults", List.of(chunkHit("d1", 0, 5)))));
+
+    // A non-search tool: no `searchResults` at all.
+    assertTrue(
+        session
+            .recordExecution(
+                new ToolCallRequest("call-2", "core_file_read", "{}"),
+                OperationResult.success("read ok"))
+            .isEmpty(),
+        "a tool that returns no search evidence establishes nothing");
+    // A search that returns only documents the run already has.
+    assertTrue(
+        session
+            .recordExecution(
+                searchCall("call-3"),
+                OperationResult.success(
+                    "r", Map.of("searchResults", List.of(chunkHit("d1", 0, 5)))))
+            .isEmpty(),
+        "a search returning only already-established documents establishes nothing NEW");
+    assertEquals(1, session.collectGroundingSources().size());
+  }
+
+  /**
+   * Tempdoc 865 §7.1 (the A2 mitigation) — the WIRE SHAPE of the stamped delta, pinned by a test in
+   * place of the descriptor a typed event field would have given it.
+   *
+   * <p>{@code structuredData} is declared free-form ({@code AgentRunShape}: {@code
+   * EventField.object("structuredData", "")}), which is the honest cost of the carrier decision: no
+   * schema conformance test can see this key. So the eight keys and their types are pinned HERE, and
+   * they are exactly {@code AgentSource}'s — the FE reads the delta through the same generated
+   * {@code AgentSource} interface it reads the terminal {@code sources} through, and a drift would
+   * be a silently wrong render rather than a type error.
+   */
+  @Test
+  @DisplayName("865 §7.1 conformance: the stamped grounding key's wire shape is AgentSource's eight fields")
+  void groundingStampWireShapeConformance() {
+    var session = session();
+    List<AgentEvent.AgentSource> delta =
+        session.recordExecution(
+            searchCall("call-1"),
+            OperationResult.success(
+                "r",
+                Map.of(
+                    "searchResults",
+                    List.of(chunkHit("d1", 2, 5), Map.of("path", "/a.md", "title", "A", "excerpt", "ex")))));
+
+    OperationResult stamped = OperationResult.success("r").withGrounding(delta);
+
+    assertEquals("grounding", OperationResult.GROUNDING_KEY, "the key the FE reads");
+    Object raw = stamped.structuredData().get(OperationResult.GROUNDING_KEY);
+    assertTrue(raw instanceof List<?>, "the delta rides as a list");
+    List<?> wire = (List<?>) raw;
+    assertEquals(2, wire.size());
+
+    Map<?, ?> chunkPrecise = (Map<?, ?>) wire.get(0);
+    assertEquals(
+        java.util.Set.of(
+            "parentDocId",
+            "chunkIndex",
+            "path",
+            "title",
+            "excerpt",
+            "startLine",
+            "endLine",
+            "headingText"),
+        chunkPrecise.keySet(),
+        "exactly AgentSource's eight fields — no more (a leak), no fewer (a silently absent field)");
+    assertEquals("d1", chunkPrecise.get("parentDocId"));
+    assertEquals(2, chunkPrecise.get("chunkIndex"), "an ordinal, not a string");
+    assertEquals(5, chunkPrecise.get("startLine"));
+
+    Map<?, ?> documentLevel = (Map<?, ?>) wire.get(1);
+    assertEquals(
+        -1,
+        documentLevel.get("chunkIndex"),
+        "the document-level sentinel survives the wire projection — it is what tells the FE this"
+            + " source has no chunk identity and therefore no matcher could examine it");
+
+    // The stamp is a MERGE, not a replacement: whatever the operation already reported stays.
+    OperationResult withOther =
+        OperationResult.success("r", Map.of("searchResults", List.of())).withGrounding(delta);
+    assertTrue(
+        withOther.structuredData().containsKey("searchResults"),
+        "the stamp merges into structuredData, exactly as withLineage does");
+  }
 }

@@ -34,7 +34,7 @@ import { claimsFromRecord, matchesFromRecord } from '../../components/chat/recor
 import { claimsToCitations } from '../../components/chat/citationResolve.js';
 // Tempdoc 859 §5a — the SAME delegate-plane projection the live terminal writes through, so a
 // delegate turn the reader watched and one they came back to hold one value from one function.
-import { agentAnswerEvidence } from '../../components/chat/agentEvidence.js';
+import { agentAnswerEvidence, agentDeltaEvidence } from '../../components/chat/agentEvidence.js';
 import type {
   AgentSentenceCite,
   AgentSource,
@@ -142,6 +142,17 @@ function declaredShapeOf(item: UnifiedTurnItem): string | null {
   return typeof declared === 'string' && declared !== '' ? declared : null;
 }
 
+/**
+ * Tempdoc 865 §7.1 — the grounding delta a recorded tool row carried, or nothing.
+ *
+ * <p>An ABSENT key means the call established nothing; the producer omits it rather than writing an
+ * empty list, so there is no empty-vs-absent question here.
+ */
+function groundingDeltaOf(structuredData: Record<string, unknown> | undefined): AgentSource[] {
+  const delta = structuredData?.grounding;
+  return Array.isArray(delta) ? (delta as AgentSource[]) : [];
+}
+
 function recordEvidenceOf(item: UnifiedTurnItem): Sv3TurnEvidence | null {
   const a = item.attributes;
   // The ACTION plane: an agent run's persisted assistant message. Its `sources` are `AgentSource`s
@@ -211,6 +222,13 @@ interface Building {
    */
   evidence: Sv3TurnEvidence | null;
   /**
+   * Tempdoc 865 §7.1 — the per-call grounding deltas this turn's tool rows carried, in record order.
+   *
+   * <p>Held separately from {@link evidence} and only consulted at the end, because it is the
+   * FALLBACK plane, not a second contributor: see the plane-authority rule where it is read.
+   */
+  groundingDeltas: AgentSource[];
+  /**
    * The id of the last assistant message in the turn THAT THE CONVERSATION STORE MINTED — last-wins
    * for the same reason {@link evidence} is, and kept even though the ask turn's activity list is
    * not (tempdoc 852 §2.3a): the rendering rule that drops the list says nothing about the identity,
@@ -252,6 +270,7 @@ const open = (
   reasoning: [],
   declaredShapeId: null,
   evidence: null,
+  groundingDeltas: [],
   disposition: null,
   assistantId: null,
 });
@@ -343,6 +362,12 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       const call = recordToolCall(item);
       turn.tools++;
       turn.activity.push({ kind: 'tool', id: call.callId, call });
+      // Tempdoc 865 §7.1 — the grounding delta this call stamped, carried onto the record by
+      // `AgentInteractionMapper`'s `tool_exec_completed` case (which copies `structuredData`
+      // verbatim, for exactly this reason). Appended in record order and never deduped: the backend
+      // already applied the run-wide dedup before splitting the set into deltas, so re-applying it
+      // here would be a second mint free to disagree about ORDER.
+      turn.groundingDeltas.push(...groundingDeltaOf(call.structuredData));
       continue;
     }
     if (item.kind === 'error') turn.errored = true;
@@ -373,6 +398,23 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       turn.declaredShapeId !== null
         ? turn.declaredShapeId === AGENT_RUN_SHAPE_ID
         : turn.activity.some((entry) => entry.kind === 'tool' || entry.kind === 'note');
+    // Tempdoc 865 §7.1 / §7.9 A9 — PLANE AUTHORITY. The terminal is authoritative when it arrived;
+    // the per-call deltas fill the gap when it did not. A run that ends without a grounded terminal
+    // — cancelled, errored, MAX_ITERATIONS — establishes real evidence and then has nothing to
+    // report it, which is exactly why the mint moved onto the tool events. The deltas are never
+    // ADDED to a terminal that spoke: they are the same set, so accumulating both would double every
+    // source and break the positional index the inline marks resolve through.
+    //
+    // On a STAMPED conversation (863) the terminal arrives on the STORE plane — `recordEvidenceOf`
+    // reads it off the persisted assistant row, last-wins — and 863's suppression filters the
+    // run-plane `done` that would otherwise say the same thing twice. For an answerless run 863
+    // writes no assistant row at all, so there is no terminal on either plane and the deltas are the
+    // only record.
+    const evidence =
+      turn.evidence ??
+      (turn.groundingDeltas.length > 0
+        ? { ...agentDeltaEvidence(turn.groundingDeltas), retrievalMode: '' }
+        : null);
     return {
       id: turn.id,
       // Tempdoc 847 §2.4.3 — the RECORD's own id for this turn, carried as its own field. It is the
@@ -391,7 +433,7 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       question: turn.question,
       answer: turn.answers.join('\n\n'),
       status: turn.errored ? 'failed' : 'complete',
-      evidence: turn.evidence,
+      evidence,
       detail: '',
       toolCalls: turn.tools,
       // An ASK turn's whole response is its answer text, which the transcript already renders through

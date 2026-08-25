@@ -83,6 +83,9 @@ interface FakeCtrl {
   answerCitations: AgentSentenceCite[];
   answerEvidenceRunId: string | null;
   answerCitationScorer: string | null;
+  /** Tempdoc 865 §7.1 — the per-call grounding deltas the run stamped, and whose run they are. */
+  groundingDeltas: AgentSource[];
+  groundingDeltasRunId: string | null;
   /** Tempdoc 859 §D §2.6 — the run’s terminal disposition, as the wire reports it. */
   terminalDisposition: string | null;
   send: ReturnType<typeof vi.fn>;
@@ -111,6 +114,8 @@ function makeCtrl(): FakeCtrl {
     answerCitations: [],
     answerEvidenceRunId: null,
     answerCitationScorer: null,
+    groundingDeltas: [],
+    groundingDeltasRunId: null,
     terminalDisposition: null,
     send: vi.fn(async () => {}),
     cancelSession: vi.fn(async () => {}),
@@ -376,6 +381,118 @@ describe('T1 — the run terminal writes the delegate answer\u2019s evidence ont
     expect(marked[0]).toBe(texts[1]);
     // The earlier step's prose gets NONE: an interim item must not capture the answer's grounding.
     expect(blockOf(texts[0]!).citations ?? []).toEqual([]);
+  });
+});
+
+/**
+ * Tempdoc 865 §7.1 / §7.9 A9 — PLANE AUTHORITY on the LIVE path.
+ *
+ * T2 below pins that a run which ends without a `done` must not wear a PREVIOUS run's evidence. This
+ * is the other half of the same question, and 865 changes the answer: a run that ends without a
+ * `done` may now stand on ITS OWN evidence, because every tool call stamped what it established
+ * before the terminal that could not carry it ever ran. The run-identity guard is what keeps the two
+ * apart — deltas are written only when the stamp names the terminating run.
+ */
+describe('865 §7.1 — a run with no grounded terminal stands on its own deltas', () => {
+  it('RED BEFORE / GREEN AFTER: an errored run keeps what its searches established', async () => {
+    const el = await mount();
+    await runWithTwoTexts(el, 'why did it retry?');
+    // The run errors out: no `done`, so nothing writes answerSources/answerEvidenceRunId. Before
+    // 865 the turn settled on `null` and everything the run read was gone.
+    await frame(el, {
+      groundingDeltas: SOURCES,
+      groundingDeltasRunId: 'run-1',
+      runInFlight: false,
+      isStreaming: false,
+      runKind: null,
+    });
+
+    const evidence = el.sessions.sessions[0]!.turns[0]!.evidence!;
+    expect(evidence).not.toBeNull();
+    expect(evidence.sources.map((s) => s.parentDocId)).toEqual([
+      'docs/runbook.md',
+      'docs/postmortem.md',
+    ]);
+    // No answer existed, so no matcher ran: the sources stand, and nothing claims a verdict on them.
+    expect(evidence.matches).toEqual([]);
+    expect(evidence.marks).toEqual([]);
+    expect(evidence.groundingIncomplete).toBe(true);
+  });
+
+  it('F-1: a MAX_ITERATIONS done OWNS the turn but claims no grounding — the deltas still win', async () => {
+    // The gate this fixes. `AgentDone.ofDisposition` DOES emit a `done`: its payload always carries
+    // a `sources` key (`AgentEventPayloads` puts it unconditionally) and `onDone` writes
+    // `answerEvidenceRunId` unconditionally — so the OWNERSHIP predicate is true for the exact
+    // terminals that report nothing. Gating the evidence write on ownership alone made the empty
+    // terminal win and the delta arm unreachable for MAX_ITERATIONS: the run's evidence was minted,
+    // journaled, delivered — and then dropped at the last read site.
+    const el = await mount();
+    await runWithTwoTexts(el, 'why did it retry?');
+    await frame(el, {
+      // Exactly what `ofDisposition` produces: an owned terminal with an empty grounding claim.
+      answerSources: [],
+      answerCitations: [],
+      answerEvidenceRunId: 'run-1',
+      answerCitationScorer: 'NONE',
+      terminalDisposition: 'MAX_ITERATIONS',
+      groundingDeltas: SOURCES,
+      groundingDeltasRunId: 'run-1',
+      runInFlight: false,
+      isStreaming: false,
+      runKind: null,
+    });
+
+    const turn = el.sessions.sessions[0]!.turns[0]!;
+    const evidence = turn.evidence!;
+    expect(evidence.sources.map((s) => s.parentDocId)).toEqual([
+      'docs/runbook.md',
+      'docs/postmortem.md',
+    ]);
+    // The two facts that ride WITH the sources must be the deltas' own, not the empty terminal's —
+    // a mismatched pair is what turns a reconcile into a false verdict.
+    expect(evidence.groundingIncomplete).toBe(true);
+    expect(evidence.sourceCoverage).toEqual([]);
+    // OWNERSHIP is untouched: the cut-short badge still comes from the same terminal, which is why
+    // the fix adds a second predicate instead of narrowing the existing one.
+    expect(turn.disposition).toBe('MAX_ITERATIONS');
+  });
+
+  it('the TERMINAL wins when it arrived — the deltas are the same set, never added to it', async () => {
+    const el = await mount();
+    await runWithTwoTexts(el, 'why did it retry?');
+    await frame(el, {
+      // Both planes describe the same run: the terminal spoke AND the deltas are held.
+      answerSources: SOURCES,
+      answerCitations: CITES,
+      answerEvidenceRunId: 'run-1',
+      answerCitationScorer: 'CROSS_ENCODER',
+      groundingDeltas: SOURCES,
+      groundingDeltasRunId: 'run-1',
+      runInFlight: false,
+      isStreaming: false,
+      runKind: null,
+    });
+
+    const evidence = el.sessions.sessions[0]!.turns[0]!.evidence!;
+    // TWO, not four. And the terminal's verdict survives, which the delta arm cannot produce.
+    expect(evidence.sources).toHaveLength(2);
+    expect(evidence.matches).toHaveLength(1);
+    expect(evidence.groundingIncomplete).toBe(false);
+  });
+
+  it('a delta stamped by a DIFFERENT run never lands on this one', async () => {
+    const el = await mount();
+    await runWithTwoTexts(el, 'why did it retry?');
+    await frame(el, {
+      groundingDeltas: SOURCES,
+      // The stamp names a run that is not the one terminating — the same identity hazard T2 pins
+      // for the terminal fields, and it must be answered the same way.
+      groundingDeltasRunId: 'run-0',
+      runInFlight: false,
+      isStreaming: false,
+      runKind: null,
+    });
+    expect(el.sessions.sessions[0]!.turns[0]!.evidence).toBeNull();
   });
 });
 
