@@ -40,7 +40,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { PROCESS_TABLE_PS_COMMAND } = require('./lib/process-identity.cjs');
+const { PROCESS_TABLE_PS_COMMAND, describeJsonParseFailure } = require('./lib/process-identity.cjs');
 const {
   consultAgentSpawnsForTeardown,
   describeEntry,
@@ -141,7 +141,11 @@ function getProcessTable() {
   try {
     const parsed = JSON.parse(res.stdout);
     return Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
+  } catch (err) {
+    // `[]`-on-failure is unchanged by design (a best-effort holder report, not an identity check —
+    // see the docstring above), but a silent `[]` left the next operator blind to WHY the scan came
+    // up empty (861 production sweep, 2026-08-25). Log the diagnostic; do not change the return.
+    console.error(`[remove-worktree] process-table query returned unparseable JSON: ${describeJsonParseFailure(res.stdout, err)}`);
     return [];
   }
 }

@@ -40,12 +40,14 @@ const {
   IDENTITY,
   DEFAULT_MAX_TABLE_AGE_MS,
   normalizeCreationTime,
+  describeJsonParseFailure,
   readProcessTable,
   coerceProcessTable,
   verifyProcessIdentity,
   isVerifiedMatch,
 } = require('../dev/lib/process-identity.cjs');
 const { getProcessTable } = require('../dev/remove-worktree.cjs');
+const { spawn, spawnSync } = require('node:child_process');
 
 let passed = 0;
 let skipped = 0;
@@ -57,6 +59,50 @@ function check(label, fn) {
   } catch (e) {
     failures.push(`${label}: ${e.message}`);
   }
+}
+
+async function checkAsync(label, fn) {
+  try {
+    await fn();
+    passed += 1;
+  } catch (e) {
+    failures.push(`${label}: ${e.message}`);
+  }
+}
+
+/** Spawn a disposable, detached child whose argv carries `marker`, killed by the caller. */
+function spawnMarked(marker) {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 20000)', marker], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+  return child;
+}
+
+function killMarked(pid) {
+  try {
+    spawnSync('taskkill', ['/PID', String(pid), '/F', '/T']);
+  } catch {
+    /* best-effort cleanup only */
+  }
+}
+
+/** Condition-poll (not a blind sleep) for a pid to show up in a live `readProcessTable()` read. */
+async function waitForPidInTable(pid, { timeoutMs = 8000, intervalMs = 250 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    const result = readProcessTable();
+    last = result;
+    if (result.ok) {
+      const row = result.table.find((r) => Number(r.ProcessId) === pid);
+      if (row) return { result, row };
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return { result: last, row: null };
 }
 
 /* ── Fixtures ─────────────────────────────────────────────────────────────────────────────── */
@@ -303,6 +349,80 @@ check('[A2] the CIM projection adds the creation time and keeps every column its
   assert.ok(PROCESS_TABLE_PS_COMMAND.includes('ToFileTimeUtc'), 'creation time must be normalized in PowerShell, not compared as a locale-dependent CIM datetime string');
 });
 
+/* ── 861 production sweep (2026-08-25): control characters survive the process-table round trip ──
+ *
+ * Root cause, reproduced live (not merely hypothesized): Windows PowerShell 5.1's
+ * `[Console]::OutputEncoding` is the OEM codepage (IBM437 on the repro host) even when
+ * `-NoProfile -NonInteractive` with stdout piped — verified directly against `spawnSync`'s own
+ * invocation shape. CP437 double-books low byte values 0x01-0x1F as GLYPHS for common symbols
+ * (U+2022 '•' -> 0x07, U+263A '☺' -> 0x01, U+2192 '→' -> 0x1A, etc. — a brute-force scan of every
+ * BMP code point found 34 such collisions). `ConvertTo-Json` emits those symbols correctly
+ * (unescaped, since they are far above the C0 range JSON requires escaping); the corruption is the
+ * OS console-encoding step that follows, converting the printable symbol to a raw CP437 byte that
+ * happens to sit in the C0 control range, which `spawnSync({encoding:'utf8'})` then decodes as a
+ * genuine control character inside what was, one hop earlier, valid JSON. Forcing the console's
+ * actual output encoding to UTF-8 (`PROCESS_TABLE_PS_COMMAND`'s `[Console]::OutputEncoding` line)
+ * closes this class. A SEPARATE regex-based sanitizer strips any control byte the source string
+ * already carries verbatim (e.g. a corrupted WMI cross-process read) before `ConvertTo-Json` ever
+ * sees it — neither layer alone covers the other's case. */
+
+check('[A2->861] the projection sets console output encoding to UTF-8, closing the codepage-glyph class', () => {
+  assert.match(PROCESS_TABLE_PS_COMMAND, /\[Console\]::OutputEncoding\s*=\s*\[System\.Text\.UTF8Encoding\]/, 'the OEM-codepage encoding mismatch (861 production sweep) is not fixed at its source');
+});
+
+check('[A2->861] the projection sanitizes CommandLine and Name against raw C0 control bytes, preserving tab/LF/CR', () => {
+  const sanitizeRegex = /\[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\]/;
+  const commandLineBlock = /CommandLine[\s\S]*?Expression=\{([\s\S]*?)\}\}/.exec(PROCESS_TABLE_PS_COMMAND);
+  const nameBlock = /Name'\s*;\s*Expression=\{([\s\S]*?)\}\}/.exec(PROCESS_TABLE_PS_COMMAND);
+  assert.ok(commandLineBlock, 'CommandLine must be a calculated property, not a bare passthrough, to be sanitizable');
+  assert.match(commandLineBlock[1], sanitizeRegex, 'CommandLine calculated property must strip C0 controls');
+  assert.ok(nameBlock, 'Name must be a calculated property');
+  assert.match(nameBlock[1], sanitizeRegex, 'Name calculated property must strip C0 controls');
+  // Tab (\x09), LF (\x0A), CR (\x0D) are the three gaps in the stripped ranges [00-08][0B-0C][0E-1F] —
+  // pin the gap explicitly so a future edit cannot silently widen the stripped range over them.
+  for (const preserved of ['\\x09', '\\x0A', '\\x0D']) {
+    assert.ok(!sanitizeRegex.source.includes(preserved), `sanitizer must not strip ${preserved} (ConvertTo-Json already escapes it correctly)`);
+  }
+});
+
+/* ── describeJsonParseFailure: the REFUSE diagnostic ──────────────────────────────────────── */
+
+check('describeJsonParseFailure locates the failure and flags any control byte still present', () => {
+  // A raw, UNESCAPED control byte sitting inside a string literal — built via fromCharCode, never
+  // as a literal source byte, so this file cannot itself become an instance of the bug it tests.
+  // 0x07 is exactly the shape CP437 produces for U+2022 once it round-trips through the
+  // console-encoding bug this fix closes (see the [A2->861] comment above).
+  const rawControlByte = String.fromCharCode(0x07);
+  const text = `{"rows":["${'x'.repeat(30)}${rawControlByte}bad${'y'.repeat(30)}"]}`;
+  let caught;
+  try {
+    JSON.parse(text);
+    assert.fail('fixture must actually fail JSON.parse — otherwise this test proves nothing');
+  } catch (err) {
+    caught = err;
+  }
+  const described = describeJsonParseFailure(text, caught);
+  assert.match(described, /position \d+/i, 'must preserve the original JSON.parse position');
+  assert.match(described, /near offset \d+/, 'must add a located window, not just repeat the raw message');
+  assert.match(described, /0x07/, 'must name the actual offending control byte, not just say "a control character"');
+});
+
+check('describeJsonParseFailure degrades gracefully when it cannot locate a position', () => {
+  const err = new Error('totally different shape of error, no position mentioned');
+  assert.equal(describeJsonParseFailure('{"a":1}', err), err.message);
+  assert.equal(describeJsonParseFailure(null, err), err.message);
+  assert.equal(describeJsonParseFailure(undefined, { message: 'position 5 but no text to slice' }), 'position 5 but no text to slice');
+});
+
+check('a genuinely unparseable table still REFUSES — the diagnostic enriches the reason, never weakens the verdict', () => {
+  const rawControlByte = String.fromCharCode(0x07);
+  const badJson = `[{"ProcessId":1,"CommandLine":"${'a'.repeat(20)}${rawControlByte}bad"}]`;
+  const r = readProcessTable({ platform: 'win32', exec: () => ({ status: 0, stdout: badJson }) });
+  assert.equal(r.ok, false, 'malformed JSON must still be REFUSE, not a best-effort parse');
+  assert.match(r.reason, /not JSON/);
+  assert.match(r.reason, /0x07/, 'the REFUSE reason must carry the diagnostic, not just the bare JSON.parse message');
+});
+
 /* ── Windows-guarded live probes (read-only) ──────────────────────────────────────────────── */
 
 if (process.platform === 'win32') {
@@ -334,6 +454,55 @@ if (process.platform === 'win32') {
     assert.ok(self, 'this process is missing from getProcessTable()');
     assert.ok(normalizeCreationTime(self.CreationFileTimeUtc) !== null, 'getProcessTable still projects the creation time away (861 [A2])');
     assert.equal(typeof self.CommandLine, 'string', 'the holder scan lost CommandLine');
+  });
+} else {
+  skipped += 2;
+}
+
+/* \u2500\u2500 861 production sweep: REAL PowerShell round trips through the live REGISTRY-fixture process,
+ * not a mocked shape. This is the fixture the tempdoc asked for: "a fixture CommandLine carrying a
+ * raw control character through the REAL PowerShell round trip". Every disposable child is killed
+ * in a `finally`, and nothing here signals or reads any OTHER process on the host. \u2500\u2500 */
+
+if (process.platform === 'win32') {
+  await checkAsync('[win32] a raw C0 control byte in a real CommandLine survives the round trip (sanitizer)', async () => {
+    // Built via fromCharCode: this spawns a REAL child process whose OS-level CommandLine (as WMI
+    // will report it) contains an actual, literal 0x01 byte \u2014 verified directly against a raw CIM
+    // query before this fix existed (not merely asserted).
+    const marker = 'W2861_RAWCTRL_' + String.fromCharCode(0x01) + '_END';
+    const child = spawnMarked(marker);
+    try {
+      const { result, row } = await waitForPidInTable(child.pid);
+      assert.ok(result && result.ok, `live process-table read failed: ${result && result.reason}`);
+      assert.ok(row, `spawned pid ${child.pid} never appeared in the process table`);
+      assert.equal(typeof row.CommandLine, 'string', 'CommandLine must survive as a string, not disappear');
+      assert.ok(row.CommandLine.includes('W2861_RAWCTRL_'), 'sanitizer must not eat the surrounding text, only the control byte');
+      for (const ch of row.CommandLine) {
+        assert.ok(ch.codePointAt(0) >= 0x20 || ch === '\t' || ch === '\n' || ch === '\r', `a raw control byte 0x${ch.codePointAt(0).toString(16)} survived the sanitizer into a live CommandLine`);
+      }
+    } finally {
+      killMarked(child.pid);
+    }
+  });
+
+  await checkAsync('[win32] a printable symbol that CP437 double-books as a control glyph survives the round trip (encoding fix)', async () => {
+    // The ACTUAL reproduced production mechanism (see the [A2->861] comment): U+2022 '\u2022' encodes to
+    // CP437 byte 0x07, which upstream Node re-decodes as a literal control character under the OLD
+    // (buggy) command. Under the fix, `[Console]::OutputEncoding` is UTF-8, so this round-trips
+    // intact as the actual symbol.
+    const bullet = String.fromCharCode(0x2022);
+    const smiley = String.fromCharCode(0x263a);
+    const marker = 'W2861_SYMBOL_' + bullet + '_' + smiley + '_END';
+    const child = spawnMarked(marker);
+    try {
+      const { result, row } = await waitForPidInTable(child.pid);
+      assert.ok(result && result.ok, `live process-table read failed (this IS the 861 production symptom if it fails): ${result && result.reason}`);
+      assert.ok(row, `spawned pid ${child.pid} never appeared in the process table`);
+      assert.ok(row.CommandLine.includes(bullet), `U+2022 must round-trip as itself, not corrupt to a control byte; got ${JSON.stringify(row.CommandLine)}`);
+      assert.ok(row.CommandLine.includes(smiley), `U+263A must round-trip as itself, not corrupt to a control byte; got ${JSON.stringify(row.CommandLine)}`);
+    } finally {
+      killMarked(child.pid);
+    }
   });
 } else {
   skipped += 2;
