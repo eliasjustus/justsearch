@@ -29,8 +29,26 @@ import { siblingSessionsAt, type Conversation } from '../../state/conversationLi
 import { EMPTY_PREFIX_SENTINEL } from '../unifiedChatRequest.js';
 import { BRANCH_MENU_BRANCH, BRANCH_MENU_RETRY } from './fixtures.js';
 import { sv3TurnMessageIds, type Sv3SessionHistory, type Sv3Turn } from './sv3-sessions.js';
+import { projectSv3RecordTurns } from './sv3-record.js';
+import type { ThreadEvent } from '../unifiedThreadProjection.js';
 
 const stored = (n: number): string => `11111111-2222-4333-8444-55555555555${n}`;
+
+/** One WIRE thread event, so a record-derived fixture runs through the real shared projection. */
+let wireClock = 0;
+const wire = (
+  id: string,
+  kind: ThreadEvent['kind'],
+  content: string,
+  attributes: Record<string, unknown> = {},
+): ThreadEvent => ({
+  id,
+  occurredAt: new Date(Date.parse('2026-08-25T10:00:00Z') + wireClock++ * 1000).toISOString(),
+  kind,
+  originator: kind === 'USER_MESSAGE' ? 'user' : 'agent',
+  content,
+  attributes,
+});
 
 const turn = (over: Partial<Sv3Turn> = {}): Sv3Turn => ({
   id: 't1',
@@ -364,6 +382,77 @@ describe('the menu demultiplex', () => {
         isSv3BranchActionId,
       ),
     ).toBe(false);
+  });
+});
+
+describe('the KIND the gate reads comes from the RECORD, not from what the turn happened to do', () => {
+  /**
+   * Tempdoc 863 §4.A.5 F1 — the case every hand-built fixture in this file dodges by construction.
+   *
+   * A delegate run that calls NO tool records no tool calls and no notes, and since slice A
+   * suppresses its run-plane events it contributes none of those either. The kind derivation used to
+   * be `activity.some(tool|note)`, so this turn — a real agent run — projected as `kind: 'ask'` and
+   * law 4 never fired: Edit, Retry and Branch appeared on it, pointed at real store ids, and
+   * re-dispatched it through the ask tier. That is the silent tier conversion A-8 exists to refuse,
+   * arrived at through the one shape of delegate run the inference cannot see.
+   *
+   * The fix is the record declaring the shape that dispatched the turn, so this fixture carries NO
+   * activity at all and the gate still fires. Built from WIRE events through the real projector,
+   * because a fixture that set `kind` by hand would assert nothing about the derivation.
+   */
+  const AGENT_SHAPE = { shapeId: 'core.agent-run' };
+  const ASK_SHAPE = { shapeId: 'core.rag-ask' };
+  const toolLessDelegateThenAsk = (): readonly Sv3Turn[] =>
+    projectSv3RecordTurns([
+      wire(stored(0), 'USER_MESSAGE', 'delegate this', AGENT_SHAPE),
+      wire(stored(1), 'ASSISTANT_MESSAGE', 'I answered without calling a tool.', AGENT_SHAPE),
+      wire(stored(2), 'USER_MESSAGE', 'and the second one?', ASK_SHAPE),
+      wire(stored(3), 'ASSISTANT_MESSAGE', 'The same lock.', ASK_SHAPE),
+    ]);
+
+  it('reads a TOOL-LESS delegate turn as an agent turn, and withholds all three on it', () => {
+    const turns = toolLessDelegateThenAsk();
+
+    // The precondition that made this invisible: nothing in the turn's activity says "agent".
+    expect(turns[0]?.activity.filter((e) => e.kind === 'tool' || e.kind === 'note')).toEqual([]);
+    // And the record says it anyway.
+    expect(turns[0]?.kind).toBe('agent');
+
+    const lineage = projectSv3TurnLineage(turns, null, 'uc-1', []);
+    expect(lineage[0]?.canEdit).toBe(false);
+    expect(lineage[0]?.branchFromId).toBeNull();
+    expect(sv3BranchMenuItems(lineage, turns[0]!.id, { streaming: false })).toEqual([]);
+
+    // FAILS FOR THE RIGHT REASON: law 1 would have handed all three back, because both halves of
+    // this turn ARE store messages. Only the kind gate refuses.
+    expect(sv3TurnMessageIds(turns[0]!).userMsgId).not.toBeNull();
+    expect(sv3TurnMessageIds(turns[0]!).assistantMsgId).not.toBeNull();
+  });
+
+  it('reads the ask turn after it as an ask turn, which keeps its own affordances', () => {
+    const turns = toolLessDelegateThenAsk();
+    expect(turns[1]?.kind).toBe('ask');
+
+    const lineage = projectSv3TurnLineage(turns, null, 'uc-1', []);
+    // A-8.2: the fork point is the delegate turn's own answer, which is now a real store message.
+    expect(lineage[1]?.canEdit).toBe(true);
+    expect(lineage[1]?.forkKey).toBe(stored(1));
+  });
+
+  it('falls back to the activity inference only for a record that cannot say', () => {
+    // A pre-863 record (or a run-plane-only turn): no `shapeId` anywhere, so the inference runs and
+    // reads the tool call as the agent signal it has always read it as. Keeping this green is what
+    // makes the change forward-only rather than a re-derivation of every old turn.
+    const turns = projectSv3RecordTurns([
+      wire('run-7:user', 'USER_MESSAGE', 'delegate this'),
+      wire('c1:completed', 'TOOL_ACTIVITY', '', {
+        callId: 'c1',
+        toolName: 'core_search_index',
+        status: 'completed',
+      }),
+      wire('uc-1:assistant:1731', 'ASSISTANT_MESSAGE', 'done'),
+    ]);
+    expect(turns[0]?.kind).toBe('agent');
   });
 });
 

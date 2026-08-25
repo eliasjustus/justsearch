@@ -62,15 +62,24 @@ public final class InteractionThreadController {
     String conversationId = ctx.pathParam("id");
     try {
       List<InteractionEvent> events = new ArrayList<>();
+      // Tempdoc 863 §4.A.5 (F2) — the runs whose ANSWER this plane actually holds. This is the one
+      // place both planes are visible, so it is where the fact belongs; the action plane suppresses
+      // its own copy of an answer only for a run named here, which makes "suppressed but never
+      // recorded" unreachable instead of merely unlikely.
+      java.util.Set<String> answeredRunIds = new java.util.LinkedHashSet<>();
       // Answer plane: the chat turns (a projection of the conversation record).
       for (Map<String, Object> msg : conversationStore.loadHistory(conversationId)) {
+        if ("assistant".equals(msg.get("role")) && msg.get("runId") instanceof String runId
+            && !runId.isBlank()) {
+          answeredRunIds.add(runId);
+        }
         InteractionEvent turn = chatTurn(conversationId, msg);
         if (turn != null) {
           events.add(turn);
         }
       }
       // Action plane: every agent run of this conversation, projected read-time from AgentRunStore.
-      events.addAll(agentService.threadEvents(conversationId));
+      events.addAll(agentService.threadEvents(conversationId, answeredRunIds));
       // Interleave by the authoritative timestamp (stable id tiebreak for determinism).
       events.sort(
           Comparator.comparing(InteractionEvent::occurredAt)
@@ -300,6 +309,15 @@ public final class InteractionThreadController {
     Object disposition = msg.get("disposition");
     if (disposition instanceof String d && !d.isBlank()) {
       attributes.put("disposition", disposition);
+    }
+    // Tempdoc 863 §4.A.5 (F1) — the SHAPE that dispatched this turn, carried from the record so the
+    // FE reads a turn's tier off the turn instead of inferring it from whether the turn happened to
+    // record tool calls. A tool-less delegate turn records none, so the inference said "ask" and the
+    // ask-tier affordances appeared on it. Absent for a message written before 863: the FE keeps its
+    // activity heuristic for exactly that class, which is the only class that still needs one.
+    Object shapeId = msg.get("shapeId");
+    if (shapeId instanceof String s && !s.isBlank()) {
+      attributes.put("shapeId", shapeId);
     }
     return new InteractionEvent(
         eventId,

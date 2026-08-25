@@ -763,4 +763,36 @@ final class FileConversationStoreTest {
     // because a value outside the two legal ones would be read back as no provenance at all.
     assertEquals("user", store.getSessionMeta("s").orElseThrow().titleSource());
   }
+
+  @Test
+  @DisplayName(
+      "863 A-10.1/F5: shapeId is first-wins, and a BLANK inherited value is not a declaration")
+  void shapeIdIsFirstWinsAndBlankIsNotADeclaration(@TempDir Path tmp) throws Exception {
+    // A conversation's shape is the shape that OPENED it. Before 863 this was overwritten on EVERY
+    // append, so one turn in another mode silently relabelled the whole conversation — which decides
+    // what `listSessions(shapeId, …)` returns for it and what `UnifiedChatView` re-tags its entire
+    // transcript as. 863 made a delegate turn an appender, turning a pre-existing sharp edge routine.
+    var store = new FileConversationStore(tmp);
+    store.appendMessage("mixed", "core.free-chat", userMsg("hello"));
+    store.appendMessage("mixed", "core.agent-run", userMsg("now delegate"));
+    assertEquals("core.free-chat", store.getSessionMeta("mixed").orElseThrow().shapeId());
+
+    // BLANK is not a declaration (F5). `branchFrom` seeds a child with
+    // `parentMeta.getOrDefault("shapeId", "")`, so a branch of a session whose meta predates the
+    // field starts at `""`. An absent-only guard would read that as "already declared" and freeze the
+    // branch at empty forever — first-wins is about the first REAL declaration.
+    Path sessionDir = tmp.resolve("blank");
+    Files.createDirectories(sessionDir);
+    Files.writeString(
+        sessionDir.resolve("meta.json"),
+        "{\"shapeId\":\"\",\"createdAtMs\":0,\"lastActiveAtMs\":0,\"messageCount\":0}",
+        StandardCharsets.UTF_8);
+
+    store.appendMessage("blank", "core.rag-ask", userMsg("and now?"));
+
+    assertEquals(
+        "core.rag-ask",
+        store.getSessionMeta("blank").orElseThrow().shapeId(),
+        "the first real declaration fills a blank rather than being refused by it");
+  }
 }

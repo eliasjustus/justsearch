@@ -295,14 +295,29 @@ public final class ConversationEngine {
     }
 
     conversationStore.appendMessage(recordKey, shape.id().value(), threadUserMessage(body));
+    // Tempdoc 863 §4.A.5 (F2) — the run's own id, observed on the sink. It rides onto the persisted
+    // answer so the thread projection can suppress the run plane's copy of THIS run's answer only
+    // when the record really holds it; see recordShapeDrivenAnswer.
+    var runId = new AtomicReference<String>();
     runner.run(
         dispatchBody,
         audience,
         event -> {
-          sink.accept(event);
-          if ("done".equals(event.name())) {
-            recordShapeDrivenAnswer(recordKey, shape, event.payload());
+          // RECORD FIRST, forward second. The sink is allowed to throw — `AgentSseWriter.writeOrEvict`
+          // throws precisely so a run drops a disconnected observer — so forwarding first would make
+          // the durable write conditional on someone still watching: a reader who closed the tab
+          // during a long run would come back to a conversation whose answer was never recorded,
+          // while the run itself completed. The store write is the durable act and does not depend on
+          // an audience.
+          if ("session_started".equals(event.name())
+              && event.payload().get("sessionId") instanceof String s
+              && !s.isBlank()) {
+            runId.compareAndSet(null, s);
           }
+          if ("done".equals(event.name())) {
+            recordShapeDrivenAnswer(recordKey, shape, event.payload(), runId.get());
+          }
+          sink.accept(event);
         });
   }
 
@@ -315,21 +330,27 @@ public final class ConversationEngine {
    *
    * <p>A store failure here is logged rather than thrown: this runs inside the runner's event
    * callback, and throwing would abort the agent loop's own terminal bookkeeping after the reader
-   * already has the answer. The one systematic cause of failure — a locked store — is refused BEFORE
-   * the stream commits a 200 ({@code wouldDiscardWhileLocked}, which now answers true for this
-   * dispatch precisely because it has a write key), so this catch guards the residual, not the
-   * known case (863 §4.A.5 A-9).
+   * already has the answer. The dispatch-time cause — a store already locked — is refused before the
+   * stream commits ({@code wouldDiscardWhileLocked}, which answers true for this dispatch precisely
+   * because it now has a write key, 863 §4.A.5 A-9). The residual is a store that becomes locked or
+   * unwritable MID-RUN, and that is why the answer carries its {@code runId} (F2): the thread
+   * projection suppresses the run plane's copy only for a run whose answer the record actually holds,
+   * so a failed append here leaves the run-plane answer standing rather than erasing the answer from
+   * both planes. The run keeps its {@code recordsToThread} stamp either way — the USER turn really
+   * was recorded, so its synthesis stays suppressed and does not double.
    */
   private void recordShapeDrivenAnswer(
-      String recordKey, ConversationShape shape, Map<String, Object> donePayload) {
+      String recordKey, ConversationShape shape, Map<String, Object> donePayload, String runId) {
     Map<String, Object> payload = donePayload == null ? Map.of() : donePayload;
     Object finalResponse = payload.get("finalResponse");
     try {
-      conversationStore.appendMessage(
-          recordKey,
-          shape.id().value(),
+      Map<String, Object> answer =
           persistedAssistant(
-              assistantMessage(finalResponse instanceof String s ? s : ""), payload, null));
+              assistantMessage(finalResponse instanceof String s ? s : ""), payload, null);
+      if (runId != null && !runId.isBlank()) {
+        answer.put("runId", runId);
+      }
+      conversationStore.appendMessage(recordKey, shape.id().value(), answer);
     } catch (RuntimeException e) {
       LOG.warn("Failed to record the {} answer for conversation {}", shape.id().value(), recordKey, e);
     }
@@ -1066,6 +1087,14 @@ public final class ConversationEngine {
     // record has to carry them or a delegate answer would lose its Sources pane, its scorer stamp and
     // its truncation disclosure on reload. `calibration` and `claimMatches` stay honestly ABSENT for
     // an agent payload — the agent `done` does not produce them, and a zero would not be the truth.
+    // WARNING (863 §4.A.5 F6) — `sources` is not just an attribute here, it is the FE's PLANE
+    // DISCRIMINATOR: `sv3-record.ts`'s recordEvidenceOf keys on `Array.isArray(a.sources)` to decide
+    // whether a persisted answer's `citations` are `AgentSentenceCite`s (action plane) or
+    // `RetrievalCitation`s (answer plane), and `UnifiedChatView` casts on the same basis. Today only
+    // the agent `done` supplies it, so the discriminator holds. The FIRST substrate shape whose
+    // consumer emits a `sources` done-entry silently reinterprets every RAG turn's citations as
+    // sentence-cites — the 859 §5a class, which produced a confident wrong number rather than an
+    // error. Adding such an entry means giving the record an explicit plane tag first.
     putIfPresent(persisted, "sources", mergedDoneEntries.get("sources"));
     putIfPresent(persisted, "citationScorer", mergedDoneEntries.get("citationScorer"));
     putIfPresent(persisted, "disposition", mergedDoneEntries.get("disposition"));

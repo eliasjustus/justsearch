@@ -528,14 +528,6 @@ public final class AgentInteractionMapper {
   }
 
   /**
-   * Tempdoc 565 §26.I — a workflow node event's stable id, built so LEXICAL order == TEMPORAL order on a
-   * same-millisecond timestamp tie: {@code …:node:<5-digit index>:<role 1=start|2=output|3=end>:<nodeId>:<ms>}.
-   * The FE sort tiebreaker is {@code id.localeCompare}, so without the index+role ordering a tie between
-   * {@code node_output} and {@code node_completed} (emitted back-to-back) would sort the {@code end}
-   * boundary first and render the node's output OUTSIDE its segment (the reload defect Fix A targets); the
-   * index keeps node N's {@code end} ahead of node N+1's {@code start} on the cross-node tie.
-   */
-  /**
    * Tempdoc 863 §4.A.3 (A-2) — the id prefix the AGENT terminal {@code done} mints its single
    * {@code ASSISTANT_MESSAGE} under. Exported so the one caller that suppresses that event for a
    * stamped run ({@code AgentRunQueryService.threadEvents}) keys on the mint itself rather than on
@@ -572,6 +564,14 @@ public final class AgentInteractionMapper {
         + stamp;
   }
 
+  /**
+   * Tempdoc 565 §26.I — a workflow node event's stable id, built so LEXICAL order == TEMPORAL order on a
+   * same-millisecond timestamp tie: {@code …:node:<5-digit index>:<role 1=start|2=output|3=end>:<nodeId>:<ms>}.
+   * The FE sort tiebreaker is {@code id.localeCompare}, so without the index+role ordering a tie between
+   * {@code node_output} and {@code node_completed} (emitted back-to-back) would sort the {@code end}
+   * boundary first and render the node's output OUTSIDE its segment (the reload defect Fix A targets); the
+   * index keeps node N's {@code end} ahead of node N+1's {@code start} on the cross-node tie.
+   */
   private static String nodeEventId(
       String conversationId, Object indexObj, int role, Object nodeId, String stamp) {
     int idx = indexObj instanceof Number n ? n.intValue() : 0;

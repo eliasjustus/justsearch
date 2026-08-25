@@ -172,6 +172,16 @@ final class AgentController {
       return;
     }
 
+    // Tempdoc 863 §4.A.5 (F3) — the locked-store refusal, asked BEFORE any SSE status is committed,
+    // exactly as the two sibling dispatch routes ask it (ChatController's `/api/chat/dispatch` and
+    // RunStreamController's `POST /api/chat/runs`). This route could skip it while a delegate run had
+    // no conversation-store write key; declaring `core.agent-run` recordsToThread gives it one, so
+    // without this the engine's user-turn append would throw INTO the already-committed stream and the
+    // reader would get a generic BAD_REQUEST SSE error instead of the typed, actionable locked answer.
+    if (refuseWhileLocked(ctx)) {
+      return;
+    }
+
     sseWriter.initSseHeaders(ctx, "/api/chat/agent");
 
     try {
@@ -234,6 +244,41 @@ final class AgentController {
           "unknown shapeId: '" + value + "'. Allowed: " + ALLOWED_SHAPE_IDS);
     }
     return new ConversationShapeRef(value);
+  }
+
+  /**
+   * Tempdoc 863 §4.A.5 (F3) — answer {@code 423 Locked} when this dispatch WOULD record turns to a
+   * conversation store that is encrypted and locked, so every append throws and the turn is
+   * accepted-and-dropped. Same authority as the sibling routes ({@code ConversationEngine
+   * .wouldDiscardWhileLocked}), asked from the one point on this route where a status can still be
+   * set — before {@code initSseHeaders} commits the 200.
+   *
+   * <p>Returns {@code false} for a body this method cannot read. A malformed body is not a lock
+   * condition, and the existing handler already answers it with its structured error event; failing
+   * open here keeps that path exactly as it was rather than converting a parse error into a lock one.
+   */
+  private boolean refuseWhileLocked(Context ctx) {
+    final Map<String, Object> body;
+    final ConversationShapeRef shapeRef;
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> parsed = MAPPER.readValue(ctx.body(), Map.class);
+      body = parsed;
+      shapeRef = resolveShapeRef(body);
+    } catch (Exception ignored) {
+      return false;
+    }
+    if (!engine.wouldDiscardWhileLocked(shapeRef, body)) {
+      return false;
+    }
+    LOG.info("Refusing agent run of shape {}: conversation store is locked", shapeRef.value());
+    Map<String, Object> locked =
+        ApiErrorHandler.toResponse(
+            ApiErrorCode.STORE_LOCKED,
+            "Your chat history is encrypted and locked - unlock it to send a message.");
+    locked.put("locked", true);
+    ctx.status(423).json(locked);
+    return true;
   }
 
   /** Internal signal: client requested a shapeId outside the whitelist. */

@@ -28,11 +28,41 @@ final class AgentRunQueryServiceThreadEventsTest {
   @TempDir Path tempDir;
 
   @Test
+  @DisplayName(
+      "863 F2: a stamped run whose answer never reached the record KEEPS its run-plane answer")
+  void stampedRunWhoseAnswerIsNotOnTheRecordIsNotSuppressed() {
+    // THE ADVERSE PRECONDITION (green-masked-destructive). The stamp is written when the run STARTS
+    // and the answer is appended when it ENDS, so a store that becomes locked or unwritable mid-run
+    // — the reader hitting Lock during a long run — leaves a stamped run whose assistant append
+    // failed with only a WARN. Keyed on the stamp alone, the suppression would still fire and the
+    // answer would exist on NEITHER plane after a reload: the run's own answer, erased by a
+    // deduplication against a duplicate that was never written.
+    //
+    // Suppression is therefore keyed on the record demonstrably HOLDING the answer. The controller
+    // passes the run ids it can actually see on the answer plane; this run is not among them.
+    AgentRunQueryService query = queryOver(store -> writeRun(store, true));
+
+    List<InteractionEvent> events = query.threadEvents("conv-1", java.util.Set.of());
+
+    InteractionEvent answer =
+        events.stream()
+            .filter(e -> e.kind() == InteractionEventKind.ASSISTANT_MESSAGE)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("the run's own answer must survive"));
+    assertEquals("the answer", answer.content());
+    // The USER synthesis stays suppressed, and correctly: its append happens BEFORE the run starts,
+    // so a stamped run's user turn is on the record by construction. Only the ANSWER is in doubt.
+    assertFalse(
+        events.stream().anyMatch(e -> e.kind() == InteractionEventKind.USER_MESSAGE),
+        "the user turn really is on the record; suppressing it is not conditional");
+  }
+
+  @Test
   @DisplayName("863 A-2: a STAMPED run synthesises neither its user turn nor its terminal answer")
   void stampedRunSuppressesBothSyntheses() {
     AgentRunQueryService query = queryOver(store -> writeRun(store, true));
 
-    List<InteractionEvent> events = query.threadEvents("conv-1");
+    List<InteractionEvent> events = query.threadEvents("conv-1", java.util.Set.of("run-1"));
 
     assertFalse(
         events.stream().anyMatch(e -> e.kind() == InteractionEventKind.USER_MESSAGE),
@@ -104,7 +134,7 @@ final class AgentRunQueryServiceThreadEventsTest {
                               Map.of("finalResponse", "the answer"))));
             });
 
-    List<InteractionEvent> events = query.threadEvents("conv-1");
+    List<InteractionEvent> events = query.threadEvents("conv-1", java.util.Set.of("run-1"));
 
     List<InteractionEvent> assistants =
         events.stream().filter(e -> e.kind() == InteractionEventKind.ASSISTANT_MESSAGE).toList();
@@ -142,7 +172,7 @@ final class AgentRunQueryServiceThreadEventsTest {
                               Map.of("finalResponse", "the answer"))));
             });
 
-    List<InteractionEvent> events = query.threadEvents("conv-1");
+    List<InteractionEvent> events = query.threadEvents("conv-1", java.util.Set.of("run-1"));
 
     InteractionEvent tool =
         events.stream()
@@ -153,6 +183,22 @@ final class AgentRunQueryServiceThreadEventsTest {
     assertEquals(1, blocks.size(), "the block the fold had attached to the dropped answer");
     assertEquals(
         "now I will summarise", ((Map<?, ?>) blocks.get(0)).get("text"), "and its text is intact");
+
+    // KNOWN INVERSION, pinned rather than left to be rediscovered (863 §4.A.5 F4). `sv3-record.ts`
+    // emits a reasoning item BEFORE the event that carries it, because the fold's ordinary rule
+    // attaches a block to the next event that projects and the block was produced before it. This
+    // block was produced AFTER the tool step, so re-homing it onto that step draws it above the tool
+    // instead of below — and its landmark id is re-keyed onto the tool's `callId` rather than the
+    // answer's. Both follow from the carrier changing.
+    //
+    // It is not corrected here because 848's own trailing rule already does exactly this (a journal
+    // ending in reasoning attaches to the run's LAST event, above nothing that follows it): a second
+    // ordering rule for one case would be the fork, not the fix. The whole question — giving the
+    // store-plane turn the run plane's fold output — is routed to 863 §8 with the tool-less gap.
+    assertEquals(
+        "c1:completed",
+        tool.id(),
+        "the carrier, and therefore the block's landmark key, is the tool step");
   }
 
   // ── fixtures ─────────────────────────────────────────────────────────────────────────────────

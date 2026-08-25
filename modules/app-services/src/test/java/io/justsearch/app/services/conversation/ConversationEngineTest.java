@@ -229,6 +229,112 @@ final class ConversationEngineTest {
 
   @Test
   @DisplayName(
+      "863 F2: the answer append failing MID-RUN does not kill the run, and the answer is not on"
+          + " the record — which is what leaves the run plane's copy standing")
+  void answerAppendFailingMidRunLeavesTheUserTurnAndNoAnswer() {
+    // The adverse precondition the dispatch-time 423 cannot cover: the store is writable when the
+    // run starts and stops being writable before it ends (the reader hits Lock during a long run).
+    var doneSeen = new java.util.concurrent.atomic.AtomicBoolean();
+    var agentService =
+        new StubAgentService(
+            (request, sink) -> {
+              sink.accept(new AgentEvent.AgentDone("the answer", 1, 0, 9));
+              doneSeen.set(true);
+            });
+    var store =
+        new RecordingStore() {
+          @Override
+          public void appendMessage(String sessionId, String shapeId, Map<String, Object> message) {
+            if ("assistant".equals(message.get("role"))) {
+              throw new IllegalStateException("store locked mid-run");
+            }
+            super.appendMessage(sessionId, shapeId, message);
+          }
+        };
+
+    engineWithStore(agentService, store)
+        .run(
+            AgentRunShape.ID,
+            Map.of(
+                "messages", List.of(Map.of("role", "user", "content", "q")),
+                "conversationId", "uc-midrun",
+                "maxIterations", 1),
+            Audience.USER,
+            ev -> {});
+
+    // The run completes: a store failure at the terminal event must not abort the agent loop's own
+    // bookkeeping after the reader already has the answer on screen.
+    assertTrue(doneSeen.get(), "the run reached its terminal done");
+    List<Map<String, Object>> recorded = store.appended.get("uc-midrun");
+    assertEquals(1, recorded.size(), "the user turn landed; the answer did not");
+    assertEquals("user", recorded.get(0).get("role"));
+    // And because it did not, the thread controller will not name this run as answered, so
+    // AgentRunQueryService keeps its run-plane answer (see that module's F2 test). The two halves
+    // together are what make "suppressed but never recorded" unreachable.
+  }
+
+  @Test
+  @DisplayName(
+      "863 F2: a reader who disconnects mid-run still gets the answer RECORDED — the durable write"
+          + " does not depend on an audience")
+  void aThrowingSinkDoesNotCostTheRecordItsAnswer() {
+    // `AgentSseWriter.writeOrEvict` throws by design, so a run drops an observer that went away.
+    // Forwarding the terminal `done` before recording it would make the store write conditional on
+    // someone still watching: close the tab during a long run and the conversation comes back with a
+    // question and no answer, while the run completed normally.
+    var agentService =
+        new StubAgentService(
+            (request, sink) -> sink.accept(new AgentEvent.AgentDone("the answer", 1, 0, 9)));
+    var store = new RecordingStore();
+
+    try {
+      engineWithStore(agentService, store)
+          .run(
+              AgentRunShape.ID,
+              Map.of(
+                  "messages", List.of(Map.of("role", "user", "content", "q")),
+                  "conversationId", "uc-gone",
+                  "maxIterations", 1),
+              Audience.USER,
+              ev -> {
+                throw new IllegalStateException("observer evicted");
+              });
+    } catch (RuntimeException expected) {
+      // The eviction propagates exactly as it did before; what must not depend on it is the record.
+    }
+
+    List<Map<String, Object>> recorded = store.appended.get("uc-gone");
+    assertEquals(2, recorded.size(), "the question AND the answer are on the record");
+    assertEquals("the answer", recorded.get(1).get("content"));
+  }
+
+  @Test
+  @DisplayName("863 F2: a recorded answer carries its runId, which is what names it as answered")
+  void recordedAnswerCarriesItsRunId() {
+    var agentService =
+        new StubAgentService(
+            (request, sink) -> {
+              sink.accept(new AgentEvent.SessionStarted("run-77", TraceContext.none()));
+              sink.accept(new AgentEvent.AgentDone("the answer", 1, 0, 9));
+            });
+    var store = new RecordingStore();
+
+    engineWithStore(agentService, store)
+        .run(
+            AgentRunShape.ID,
+            Map.of(
+                "messages", List.of(Map.of("role", "user", "content", "q")),
+                "conversationId", "uc-runid",
+                "maxIterations", 1),
+            Audience.USER,
+            ev -> {});
+
+    Map<String, Object> answer = store.appended.get("uc-runid").get(1);
+    assertEquals("run-77", answer.get("runId"), "observed off the run's own session_started");
+  }
+
+  @Test
+  @DisplayName(
       "863 §4.A.3: a delegate dispatch with no conversationId records nothing and is NOT stamped")
   void standaloneDelegateDispatchIsNotStamped() {
     var capturedRequest = new AtomicReference<AgentRequest>();

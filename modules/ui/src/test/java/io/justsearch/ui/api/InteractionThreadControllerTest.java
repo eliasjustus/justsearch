@@ -72,7 +72,7 @@ final class InteractionThreadControllerTest {
                     "2026-01-01T00:00:00Z")));
 
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents("conv-1"))
+    when(agentService.threadEvents(eq("conv-1"), any()))
         .thenReturn(
             List.of(
                 new InteractionEvent(
@@ -112,7 +112,7 @@ final class InteractionThreadControllerTest {
         .thenReturn(List.of(storedUser(), storedAnswer()));
 
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents("conv-stamped"))
+    when(agentService.threadEvents(eq("conv-stamped"), any()))
         .thenReturn(
             List.of(
                 new InteractionEvent(
@@ -159,7 +159,7 @@ final class InteractionThreadControllerTest {
     ConversationStore conversationStore = mock(ConversationStore.class);
     when(conversationStore.loadHistory("conv-stamped")).thenReturn(List.of(storedAnswer()));
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents("conv-stamped")).thenReturn(List.of());
+    when(agentService.threadEvents(eq("conv-stamped"), any())).thenReturn(List.of());
 
     JsonNode storePlane =
         invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-stamped")
@@ -224,7 +224,7 @@ final class InteractionThreadControllerTest {
     ConversationStore conversationStore = mock(ConversationStore.class);
     when(conversationStore.loadHistory("nope")).thenReturn(List.of());
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents("nope")).thenReturn(List.of());
+    when(agentService.threadEvents(eq("nope"), any())).thenReturn(List.of());
 
     JsonNode body = invokeGet(new InteractionThreadController(conversationStore, agentService), "nope");
     assertEquals(0, body.get("events").size());
@@ -251,7 +251,7 @@ final class InteractionThreadControllerTest {
                     "citations", List.of(Map.of("parentDocId", "doc-1", "startChar", 0)),
                     "calibration", Map.of("bestChunkScore", 0.91, "retrievalCoverage", 0.5))));
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents("conv-e")).thenReturn(List.of());
+    when(agentService.threadEvents(eq("conv-e"), any())).thenReturn(List.of());
 
     JsonNode body =
         invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-e");
@@ -292,7 +292,7 @@ final class InteractionThreadControllerTest {
                     "ts", "2026-01-01T00:00:03Z",
                     "reasoning", "not a list")));
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents("conv-r")).thenReturn(List.of());
+    when(agentService.threadEvents(eq("conv-r"), any())).thenReturn(List.of());
 
     JsonNode body =
         invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-r");
@@ -348,7 +348,7 @@ final class InteractionThreadControllerTest {
     key.locked = true;
 
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents("conv-locked"))
+    when(agentService.threadEvents(eq("conv-locked"), any()))
         .thenReturn(
             List.of(
                 new InteractionEvent(

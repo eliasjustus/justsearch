@@ -1,10 +1,11 @@
 ---
 number: 863
 title: The delegate turn is missing from the answer plane — `recordsToThread` as a declared capability
-status: DESIGNED — rev 2 (2026-08-25), amended after adversarial review. Not implemented. Charter
-  premise CORRECTED by source + live evidence (§1); the layer decision is SERVER-SIDE (§4.A) as the
-  fix, with the FE merge rule repaired as a distinct correctness defect (§4.B) — both, doing two
-  different jobs. Slice B is independently landable and lands first.
+status: IMPLEMENTED — slice A (PR #550) and slice B (#542) both built; awaiting merge. Charter premise
+  CORRECTED by source + live evidence (§1); the layer decision is SERVER-SIDE (§4.A) as the fix, with
+  the FE merge rule repaired as a distinct correctness defect (§4.B) — both, doing two different jobs.
+  Decisions taken during implementation are recorded in §9, including three defects the design did not
+  anticipate and one gap it leaves open (§8.4). The live leg (§7 A.8) is NOT done.
 created: 2026-08-25
 updated: 2026-08-25
 scheduling: 863 implements BEFORE 865, serial — both edit `AgentInteractionMapper`'s `done` case and
@@ -491,6 +492,80 @@ prose in the repo asserting that a delegate run records nothing — including th
    that preserves the tier — its own charter, not a silent inclusion here.
 2. **Pre-stamp conversations stay legacy-invisible.** No backfill, by design (§4.A.3). If that residue
    matters, the honest remedy is a one-time, clearly-labelled import — a decision, not a cleanup.
-3. **The `shapeId`-relabel policy** (A-10.1) is a decision this slice must make; the design names the
-   three options and requires one to be chosen and tested, but does not pre-empt the owner's call on
-   whether to fix the pre-existing sharp edge or only stop making it routine.
+3. ~~**The `shapeId`-relabel policy**~~ — **decided in-slice: first-wins.** See §9.2.
+4. **The store-plane turn does not get the run plane's reasoning fold.** New, opened by the
+   implementation (§9.4). Suppressing the run-plane terminal answer moves its trailing thinking; the
+   blocks are re-homed onto the run's last surviving event, and a delegate run that called no tool has
+   no surviving event to receive them, so its final block does not reach the thread on reload. The
+   `reasoning_chunk` records are still on disk — a projection gap, not data loss. Closing it means
+   giving the store-plane turn the run plane's fold output, which is a cross-plane merge; the shape of
+   that merge (and whether the block should render above or below its re-homed carrier) is the
+   question, and it is the same question §4.A.5 F4's known inversion points at.
+
+## 9. Implementation record (slice A, PR #550)
+
+Written at implementation time, so §7's plan is not read as the account of what shipped.
+
+### 9.1 The wire probe (§4.A.1) — measured, and it IS a wire addition
+
+`GET /api/registry/shapes` gained a `recordsToThread` key: a record *component* serialises where the
+bare `recordsToThread()` accessor did not. The probe is
+`RegistryControllerTest.shapesEnvelopeKeySetAfterRecordsToThreadPromotion`, which asserts the
+envelope's per-entry key set against the twelve pre-863 component names written out verbatim, so it
+fails if the answer ever changes in either direction. No `contracts/**` file is involved — that tree is
+the gRPC Head↔Worker contract — so `--gate wire` had nothing to say; the envelope's only consumer
+contract is the FE mirror `modules/ui-web/src/api/types/conversation-shape.ts`, updated in the same PR.
+
+### 9.2 The `shapeId` relabel (A-10.1) — FIRST WINS, and it fixes the pre-existing edge
+
+`FileConversationStore.updateMeta` overwrote `shapeId` on **every** append, so the stored fact was
+really "the shape of the most recent turn". `listSessions(shapeId, …)` filters rows on it and
+`UnifiedChatView` re-tags a whole transcript with the one shape it resolves, so a single turn in
+another mode silently relabelled everything before it. A conversation's shape is the shape that
+**opened** it: stable, legible, and the same answer on every later append. This is the *fix* option,
+not the *stop-making-it-routine* option — the edge already existed for a mixed conversation whose last
+append came from a different substrate shape, and 863 only made it common.
+
+Blank counts as undeclared (F5): `branchFrom` seeds a child with
+`parentMeta.getOrDefault("shapeId", "")`, so an absent-only guard would freeze a branch of a pre-field
+session at `""` forever.
+
+### 9.3 The per-turn shape declaration (F1) — a defect the design did not see
+
+§4.A.5 A-8 re-gates Edit/Retry/Branch on the turn's **kind**, and the FE derived kind from
+`activity.some(tool|note)` (`sv3-record.ts`). That correlates with the tier until it does not: a
+delegate run that calls **no tool** records no activity, and after A-2's suppression contributes no
+run-plane events either — so it projected as an ordinary ask turn, and the three affordances appeared
+on it pointing at real store ids. Exactly the silent tier conversion A-8 exists to refuse, reached
+through the one shape of delegate run the inference cannot see.
+
+Fixed at the root rather than at the gate: the record now declares the shape that dispatched each turn
+(`FileConversationStore` persists the caller's `shapeId` per message, `chatTurn` surfaces it,
+`projectSv3RecordTurns` reads it). The session's own `shapeId` cannot answer this — it is first-wins
+for the whole conversation (§9.2) — so the fact belongs on the turn. The activity inference survives
+only as the fallback for records that genuinely cannot say: pre-863 rows and run-plane-only turns.
+Same principle as `recordsToThread` itself and as 847's `panelSpeaks` (§6): gate a fact on itself.
+
+### 9.4 Suppression is keyed on the duplicate EXISTING (F2), not on the stamp alone
+
+The stamp is written at `startRun`; the answer is appended at the terminal `done`. Keyed on the stamp
+alone, a store that becomes locked or unwritable **mid-run** left a stamped run whose answer reached
+neither plane — the run's own answer erased by a deduplication against a duplicate that was never
+written, with a `WARN` as the only trace (`green-masked-destructive`). The engine therefore stamps the
+`runId` onto each answer it records, `InteractionThreadController` — the one place both planes are
+visible — collects the run ids the answer plane actually holds, and `AgentRunQueryService` suppresses
+only for those. This also self-heals every run that already failed that way, with no backfill. The
+USER synthesis stays keyed on the stamp alone, correctly: its append happens *before* the run starts.
+
+A second instance of the same class turned up while testing it: the engine forwarded the terminal
+`done` to the sink **before** recording it, and `AgentSseWriter.writeOrEvict` throws by design to drop
+a disconnected observer — so closing the tab during a long run cost the record its answer. The durable
+write now happens first and does not depend on an audience.
+
+### 9.5 The locked-store refusal is per-route (F3)
+
+A-9's "the dispatch is refused 423" holds for `POST /api/chat/dispatch` and `POST /api/chat/runs`,
+which ask `wouldDiscardWhileLocked` before committing an SSE status. `POST /api/chat/agent` — still the
+FE's fallback path — committed SSE headers *before* parsing the body and never asked, so post-863 its
+unguarded user-turn append would have thrown into an already-committed stream and reported a generic
+`BAD_REQUEST`. It now asks the same question at the one point a status is still settable.

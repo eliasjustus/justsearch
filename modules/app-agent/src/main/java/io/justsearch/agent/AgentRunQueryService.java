@@ -356,9 +356,16 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
    */
   @Override
   public List<InteractionEvent> threadEvents(String conversationId) {
+    return threadEvents(conversationId, java.util.Set.of());
+  }
+
+  @Override
+  public List<InteractionEvent> threadEvents(
+      String conversationId, java.util.Set<String> answeredRunIds) {
     if (conversationId == null || conversationId.isBlank()) {
       return List.of();
     }
+    java.util.Set<String> answered = answeredRunIds == null ? java.util.Set.of() : answeredRunIds;
     List<InteractionEvent> out = new ArrayList<>();
     for (String runId : runStore.listRunIdsByConversation(conversationId)) {
       Map<String, Object> meta = runStore.readSnapshot(runId);
@@ -404,7 +411,14 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
       // terminal-attachment rule needs the run's boundary.
       List<InteractionEvent> runEvents =
           AgentInteractionMapper.fromRunEvents(runStore.readEvents(runId), conversationId);
-      out.addAll(stamped ? withoutTerminalAnswer(runEvents, conversationId) : runEvents);
+      // Tempdoc 863 §4.A.5 (F2) — the ANSWER is suppressed only when the record demonstrably holds
+      // it. The stamp is written at startRun and the answer is appended at the terminal `done`, so a
+      // store locked mid-run leaves a stamped run whose answer reached neither plane; keying on the
+      // duplicate's existence makes that impossible, and self-heals runs that already failed so.
+      // The USER synthesis above stays keyed on the stamp alone, because its append happens BEFORE
+      // the run starts — a stamped run's user turn is on the record by construction.
+      boolean answerOnRecord = stamped && answered.contains(runId);
+      out.addAll(answerOnRecord ? withoutTerminalAnswer(runEvents, conversationId) : runEvents);
       if (background) {
         // +1ms after the run's last update so the closing marker sorts AFTER every event of the run.
         java.time.Instant endAt =

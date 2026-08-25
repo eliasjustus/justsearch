@@ -133,6 +133,39 @@ final class ChatControllerDelegateHistoryTest {
     assertEquals(4, store.loadHistory("uc-mixed").size(), "and the delegate turn is still recorded");
   }
 
+  @Test
+  @DisplayName("863 A-10.1: a branch keeps the shape it inherited; its own appends do not relabel it")
+  void aBranchKeepsTheShapeItInherited() {
+    FileConversationStore store = new FileConversationStore(tempDir.resolve("conversations"));
+    store.appendMessage("uc-a", "core.free-chat", Map.of("role", "user", "content", "hello"));
+    store.appendMessage("uc-a", "core.free-chat", Map.of("role", "assistant", "content", "hi"));
+    store.branchFrom("uc-a", store.loadHistory("uc-a").get(1).get("id").toString(), "uc-branch");
+
+    store.appendMessage("uc-branch", "core.rag-ask", Map.of("role", "user", "content", "and now?"));
+
+    assertEquals(
+        "core.free-chat",
+        store.getSessionMeta("uc-branch").orElseThrow().shapeId(),
+        "first-wins holds across the branch boundary — the inherited declaration is a real one");
+  }
+
+  @Test
+  @DisplayName("863 F1: every turn's record declares the shape that dispatched it")
+  void everyRecordedTurnDeclaresItsShape() {
+    FileConversationStore store = new FileConversationStore(tempDir.resolve("conversations"));
+    store.appendMessage("uc-mixed", "core.free-chat", Map.of("role", "user", "content", "hello"));
+    dispatchDelegateRun(
+        store, stubAgent(sink -> sink.accept(new AgentEvent.AgentDone("done", 1, 0, 1))),
+        "uc-mixed", "now delegate");
+
+    List<Map<String, Object>> history = store.loadHistory("uc-mixed");
+    // Per MESSAGE, not per session: the session's own shapeId is first-wins for the whole
+    // conversation (A-10.1), so it cannot answer "which tier dispatched THIS turn" in a mixed one.
+    assertEquals("core.free-chat", history.get(0).get("shapeId"));
+    assertEquals(AgentRunShape.ID.value(), history.get(1).get("shapeId"), "the delegate question");
+    assertEquals(AgentRunShape.ID.value(), history.get(2).get("shapeId"), "and its answer");
+  }
+
   // ── harness ──────────────────────────────────────────────────────────────────────────────────
 
   private static void dispatchDelegateRun(
