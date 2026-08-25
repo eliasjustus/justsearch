@@ -1,9 +1,9 @@
 # 864 — Search v3 composer focus steal / global-keybinding navigation hazard
 
 ```
-status:  DIAGNOSED + DESIGNED + PLANNED (2026-08-25); PR A and PR C SHIPPED (2026-08-25),
+status:  DIAGNOSED + DESIGNED + PLANNED (2026-08-25); PR A, PR B and PR C SHIPPED (2026-08-25),
          PR-0's live repro RAN and CONFIRMED the diagnosis (§4.1 results table).
-         B / D / E remain.
+         D / E remain.
          ROOT CAUSE: a focus-authority vacuum on the Search v3 surface — nothing
          ever focuses the composer, nothing signals that it is unfocused, both
          keyboard routes to it are dead residue from the retired window, and focus
@@ -265,6 +265,31 @@ command whose effect nobody hears — a keystroke that is swallowed and does not
 That is a `retire-with-a-sweep` residue, and it compounds F1: the app's advertised
 "focus the search bar from anywhere" affordance is dead on the one window that has a search bar.
 (`views/HelpSurface.ts:67` is separately stale about the binding set — logged to the inbox.)
+
+> **CLOSED — PR B (2026-08-25).** `SearchV3View` now listens for `jf-focus-composer`
+> (`views/search-v3/SearchV3View.ts` connectedCallback, mirroring `UnifiedChatView.ts:963`'s own
+> `addEventListener`) and routes it through the SAME `focusComposer()` every other entry path uses
+> (`:978-987` — no second focus mechanism, so the refusal set — renaming, palette open, already
+> typing elsewhere — governs an explicit `/`/`Ctrl+L` press exactly as it governs mount). The
+> listener is added in `connectedCallback` and removed in `disconnectedCallback`, the same
+> lifecycle idiom `UnifiedChatView` uses for its own `boundFocusComposer`.
+>
+> **Correction to this section's plan, stated plainly:** §3.1(c) recommended (c2) — give the
+> command a real target instead of broadcasting — and the row in §4.2 carried that label forward.
+> What shipped is **(c1)**: `Shell.ts`'s `focusComposer` action is unchanged
+> (`window.dispatchEvent(new CustomEvent('jf-focus-composer'))` still broadcasts, `Shell.ts:821`),
+> and sv3 is a second listener on the same event, not a resolved target. (c2)'s objection to (c1) —
+> "the indirection is exactly what let the command go silently unimplemented for a whole window" —
+> is accepted as a known, named debt rather than re-litigated here: the smaller diff restores parity
+> with the retiree's own mechanism today, and (c2) remains available as a follow-up if the broadcast
+> indirection causes a second silent-window incident.
+>
+> Regression coverage: `sv3-focus.test.ts` ("tempdoc 864 Layer 1(c2), PR B — jf-focus-composer
+> reaches sv3") — the dispatched event lands deep focus in the composer field (RED verified against
+> the pre-PR-B tree: failed with the row button still focused), the refusal set is honored (typing
+> elsewhere; renaming survives a remount), and the listener is removed on disconnect (no leak). The
+> `Shell.ts` comment at what was `:964-975` is corrected to state both listeners rather than pointing
+> forward at this PR.
 
 ### 2.7 What is RULED OUT for F3 (hash-free view swap)
 
@@ -1075,7 +1100,7 @@ Explicit constraint for PR A's implementer: `focusField()` **must** reach the te
 | PR | Content | Gates / checks |
 |---|---|---|
 | **A** | Layer 1(a)(b) + Layer 2(a) — `focusField()`, entry-path focus, glass-box `@pointerdown`, `Shell.isInputFocused` unification. **Ungated; proceeds now.** | ui-web gate set; tests 2-3, 6 below |
-| **B** | Layer 1(c2) — real target for `shell.focus-composer`. ~~Layer 4~~ moved to D (A8), and `/` already carries its `when` | ui-web gates; `check-premerge-table` n/a |
+| **B** | ~~Layer 1(c2) — real target for `shell.focus-composer`~~ **SHIPPED 2026-08-25 as Layer 1(c1)** — sv3 listens for `jf-focus-composer`, routed through the existing `focusComposer()` (see §2.6's closure note for the (c2)→(c1) correction). ~~Layer 4~~ moved to D (A8), and `/` already carries its `when` | ui-web gates; `check-premerge-table` n/a |
 | **C** | Layer 3(a) — project sv3 conversation identity to the URL. **SHIPPED 2026-08-25** (gate satisfied by §4.1's L6/L8) — see §4.6 | router tests; back/forward live leg |
 | **D** | Layer 2 — ~~predicate unification~~ (#546), `isComposing`/`repeat`, `focusKind`/`paletteOpen` resolution, modal guard, `trapTab` containment, **+ Layer 4's gate half** | ui-web gates |
 | **E** | Layer 1(d) + Layer 3(c)(i) — resting-state affordance, row focus indicator, + the split-view residual below. **SHIPPED-PENDING-AUDIT 2026-08-25 (#561)** — see §4.7 | ui-web gate set (green); **§4.4's measured UX audit still owed** — procedure in #561's body |
@@ -1123,7 +1148,13 @@ claim it makes is a hypothesis until a test exercises it.
    is the one that converts "recoverable only by reload" into a caught condition.
 3. **Dead-zone focus** (PR A) — a `pointerdown` on `.field` padding and on `.glass` focuses the
    textarea; a `pointerdown` on a footer control does **not**.
-4. **`/` and `Ctrl+L` reach sv3's composer** (PR B) — and a surface with no composer does not throw.
+4. ~~**`/` and `Ctrl+L` reach sv3's composer** (PR B) — and a surface with no composer does not
+   throw.~~ **GREEN — PR B (2026-08-25).** `sv3-focus.test.ts` ("tempdoc 864 Layer 1(c2), PR B —
+   jf-focus-composer reaches sv3"): the dispatched event lands deep focus in the composer field
+   (verified RED before the fix), the refusal set holds (typing elsewhere, mid-rename), and the
+   listener is removed on disconnect. The "surface with no composer" half is moot under the shipped
+   mechanism — `SearchV3View.focusComposer()` already early-returns on `composer === null` (§3.1's
+   pre-existing guard, unchanged), so there is no new no-composer path to pin.
 5. **Policy test** (~~PR B~~ → **PR D, done as a gate** — see 8c) — a modifier-less printable binding
    registered without a `when` clause fails a check. Prefer a gate over a unit test if the
    registration site is enumerable. It was, so it is a gate.
@@ -1316,10 +1347,11 @@ Reviewer verdict was APPROVE-WITH-FIXES. F1 was a real defect the suite did not 
   would truncate the forward tail, F1's hazard again).
 - **F5** — the two consequences above.
 
-**Still open from this tempdoc:** PR B (Layer 1(c2) + Layer 4), PR D (Layer 2 + §4.1's L10 defect),
-PR E (Layer 1(d) + Layer 3(c)(i), with §4.4's measured UX audit). §4.4's live re-verification of
-L1-L11 against the fixed build is a stack-window item and is **not** discharged by this PR's green
-suite (`static-green ≠ live-working`).
+**Still open from this tempdoc:** PR D (Layer 2 + §4.1's L10 defect), PR E (Layer 1(d) + Layer
+3(c)(i), with §4.4's measured UX audit). **PR B (Layer 1(c1) + `/`'s already-shipped `when`) SHIPPED
+2026-08-25** — see §2.6's closure note. §4.4's live re-verification of L1-L11 against the fixed
+build is a stack-window item and is **not** discharged by this PR's green suite
+(`static-green ≠ live-working`).
 
 > **Superseded for E (2026-08-25):** PR E is implemented and green — §4.7. What is still open for it
 > is §4.4's measured UX audit alone, which is pooled and owed by an auditor ≠ committer.

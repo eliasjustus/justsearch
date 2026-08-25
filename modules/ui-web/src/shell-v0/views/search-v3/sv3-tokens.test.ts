@@ -1223,6 +1223,29 @@ describe('the budget gate clears the a11y floors the live audit measured', () =>
     expect(dt).toMatch(/font-weight:\s*500/);
   });
 
+  it('D1 (completing #555, closing-window findings 2026-08-25): the fine-print/auto-continue/cut-short siblings clear the same wash', () => {
+    // .run-prompt-fine, .run-prompt-auto and .cut-short all carried the same --secondary-label ink as
+    // the dt fix above, on the same 8% --success wash: .run-prompt-fine/.run-prompt-auto measured
+    // 4.37:1 (the D1 sweep this test's title completes); .cut-short was never rendered during the
+    // original audit but carries the identical token on the identical wash, so it fails identically.
+    // All three must clear AA on the wash via --foreground, the same role token the dt fix used — and
+    // must stay quiet through size/weight, not through a failing color (an earlier #555 observation
+    // flagged --foreground as possibly too loud for this quiet-by-design fine print; the measured
+    // audit settled it in favour of the fix, so this pins the settled answer).
+    const styles = styleTextOf(Sv3Main);
+    const fine = ruleBodyOf(styles, '\\.run-prompt-fine');
+    expect(fine).toMatch(/color:\s*var\(--foreground\)/);
+    expect(fine).not.toMatch(/--secondary-label/);
+
+    const auto = ruleBodyOf(styles, '\\.run-prompt-auto');
+    expect(auto).toMatch(/color:\s*var\(--foreground\)/);
+    expect(auto).not.toMatch(/--secondary-label/);
+
+    const cutShort = ruleBodyOf(styles, '\\.cut-short');
+    expect(cutShort).toMatch(/color:\s*var\(--foreground\)/);
+    expect(cutShort).not.toMatch(/--secondary-label/);
+  });
+
   it('D2: the auto-continue control clears the 24px target floor in both axes', () => {
     const styles = styleTextOf(Sv3Main);
     // The checkbox measured 13 x 13. The label IS the target (it activates the control it wraps), so

@@ -460,3 +460,57 @@ describe('a navigational write that duplicates the current address degrades to r
     expect(replaceSpy.mock.calls.at(-1)?.[2]).toBe(addressFor('conv-b'));
   });
 });
+
+/**
+ * D3 (closing-window findings, 2026-08-25) — a top-level `?theme=` search param must not suppress
+ * the hash-borne conversationId restore on a cold load. Against a REAL `window.location` (not the
+ * modeled harness above, which never carries a `search`): the WHATWG URL/Location split of `search`
+ * from `hash` is unconditional — `window.location.hash` names only the fragment regardless of what
+ * precedes the `#` — and `URLSource.parseHash` (`router/sources/URLSource.ts`) reads exactly that,
+ * never `location.search` or `location.href`. Diagnosis (verified against this exact combined-URL
+ * fixture, both at this router-substrate layer and live in a real browser): the restore already
+ * succeeds on main. This case pins the invariant so a future regression that starts parsing the
+ * WHOLE href, or gates ingress on `location.search` being empty, fails loudly here instead of
+ * surfacing only as a live "sidebar row unhighlighted, transcript blank" symptom.
+ */
+describe('D3: a top-level search param does not suppress the hash-borne conversationId restore', () => {
+  beforeEach(() => {
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    __resetConversationListForTest();
+    deactivateProjection();
+    registerCoreStores();
+  });
+
+  afterEach(() => {
+    deactivateProjection();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('a cold load with ?theme= ahead of the hash still deep-links into the conversation the hash names', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      `/?theme=light${addressFor('conv-deep')}`,
+    );
+    expect(window.location.search).toBe('?theme=light'); // precondition: the top-level param is real
+    expect(window.location.hash).toBe(addressFor('conv-deep')); // precondition: the fragment is intact
+
+    let activeSurface: string | null = null;
+    const handler = createNavigationHandler({
+      setActiveSurface: (id) => { activeSurface = id; },
+      isKnownSurface: () => true,
+    });
+    const source = createURLSource({ windowImpl: window });
+    const stop = source.start((intent: Intent, options) => {
+      if (intent.address.kind !== 'navigate') return;
+      void handler.handle(intent.address, { push: options?.pushHistory });
+    }) as () => void;
+    await Promise.resolve();
+
+    expect(getConversationListState().activeId).toBe('conv-deep');
+    expect(activeSurface).toBe(SV3);
+    stop();
+  });
+});

@@ -13,6 +13,14 @@
  *   - bite       : every blocking hook emits its block signal on a violating fixture
  *                  (command-signal), or references a unit test that proves its core.
  *   - tier-sync  : every `hook:` marker in the tier-register resolves to the manifest.
+ *   - orphan     : every hook FILE on disk (excluding *.test.mjs) appears in the manifest
+ *                  catalog — the FILE->manifest direction (tempdoc 861 Phase 6). The five
+ *                  phases above all start FROM the manifest and check outward; none of them
+ *                  ever lists the hook directory, so a file that never made it into the
+ *                  manifest was invisible to every one of them. That is how
+ *                  `ui-shot-cleanup.mjs` sat on disk, described as live by an always-loaded
+ *                  rules file, for the project's whole public history while never once firing
+ *                  (861 §3c) — this phase is the gate closing over that specific gap.
  *
  * Honest scope (Wall 2): the bite test proves the hook EMITS its block signal; it
  * cannot prove the harness HONORS it for every tool/event (Claude Code exit-2
@@ -21,7 +29,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, rmSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -35,6 +43,7 @@ import {
   verdictForBite,
   verdictForBiteDeclared,
   verdictForTierRegisterSync,
+  verdictForOrphanHookFile,
 } from './truth-table.mjs';
 
 const TOOL = { toolName: 'justsearch-hook-integrity', toolVersion: '0.1.0' };
@@ -243,6 +252,26 @@ export async function enforceHookIntegrity(options) {
       seen.add(file);
       const id = file.replace(/\.mjs$/, '');
       push(verdictForTierRegisterSync({ marker: file, resolved: !!catalog[id] }), 'docs/reference/contributing/tier-register.md');
+    }
+  }
+
+  // 6. File -> manifest — every hook FILE on disk appears in the manifest catalog (861 Phase 6).
+  //    Exclude only `*.test.mjs` siblings. [A12]: the catalog's `"wiring": "opt-in"` escape is
+  //    NOT consulted here — an opt-in hook is still IN the catalog (it opts out of the
+  //    live-wiring check above, a different phase entirely); this check asks only whether a
+  //    file on disk appears in manifest.hooks at all. Carrying the opt-in caveat into this
+  //    check would create a needless exemption path, and an exemption path in an orphan check
+  //    is precisely how the next orphan hides.
+  const hookDirPath = resolve(sourceRoot, hookDir);
+  if (existsSync(hookDirPath)) {
+    const catalogFiles = new Set(Object.values(catalog).map((entry) => entry.file));
+    for (const dirent of readdirSync(hookDirPath, { withFileTypes: true })) {
+      if (!dirent.isFile()) continue;
+      if (dirent.name.endsWith('.test.mjs')) continue;
+      push(
+        verdictForOrphanHookFile({ file: dirent.name, inCatalog: catalogFiles.has(dirent.name) }),
+        join(hookDir, dirent.name),
+      );
     }
   }
 

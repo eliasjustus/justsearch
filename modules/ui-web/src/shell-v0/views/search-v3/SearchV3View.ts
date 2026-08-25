@@ -940,6 +940,12 @@ export class SearchV3View extends JfElement {
     // the palette's own field cannot swallow the chord before the window sees it.
     this.addEventListener('keydown', this.onHostKeydown, true);
     this.addEventListener('focusout', this.onHostFocusOut);
+    // Tempdoc 864 Layer 1(c2), PR B — Ctrl+L / '/' dispatch `jf-focus-composer` on `window`
+    // (`chrome/Shell.ts`, `shell.focus-composer`); `UnifiedChatView` is the only other listener
+    // (`views/UnifiedChatView.ts` connectedCallback). Routed through the SAME `focusComposer()` as
+    // every other entry path below, not a second focus mechanism — its refusal set (renaming,
+    // palette open, already typing elsewhere) applies here exactly as it does on mount.
+    window.addEventListener('jf-focus-composer', this.onFocusComposerEvent);
     // Tempdoc 864 Layer 1(a) — ARRIVING AT THIS WINDOW PUTS THE READER IN THE COMPOSER. Activation is
     // an entry path like the other two ({@link onSessionSelect}, {@link onSessionNew}), and it is the
     // one that covers both a fresh hero and the restored record `restoreLastViewed` just claimed:
@@ -1031,6 +1037,7 @@ export class SearchV3View extends JfElement {
     this.observedDock = null;
     this.removeEventListener('keydown', this.onHostKeydown, true);
     this.removeEventListener('focusout', this.onHostFocusOut);
+    window.removeEventListener('jf-focus-composer', this.onFocusComposerEvent);
     // Tempdoc 864 PR E — LAST, so a re-parent is recorded however the teardown above went. See
     // {@link movedRatherThanEntered}.
     this.markPossibleMove();
@@ -1053,8 +1060,8 @@ export class SearchV3View extends JfElement {
    * task by construction. The coupling this rests on is lit-html's own: a changed template shape
    * CLEARS the old part's DOM and INSERTS the new instance within one `commit`, both synchronous —
    * if a future lit-html ever deferred the insert past a microtask, this would stop recognising the
-   * move and simply focus the composer, i.e. degrade to today's behaviour rather than break. Failing the other way is harmless: an unrecognised move focuses the
-   * composer, which is exactly the behaviour this narrows.
+   * move and simply focus the composer — failing the other way is harmless, because that is exactly
+   * the behaviour this narrows.
    */
   private movedRatherThanEntered = false;
 
@@ -2186,6 +2193,16 @@ export class SearchV3View extends JfElement {
     if (palette === null || !palette.open) return;
     if (this.ownsNode(event.relatedTarget as Node | null)) return;
     palette.dismiss();
+  };
+
+  /**
+   * Tempdoc 864 Layer 1(c2), PR B — the `jf-focus-composer` window event (Ctrl+L / '/', dispatched
+   * by `shell.focus-composer`) reaches this window. Delegates straight to {@link focusComposer}: no
+   * second focus path, so the same three refusals (renaming, palette open, already typing elsewhere)
+   * govern an explicit keypress exactly as they govern an entry path.
+   */
+  private readonly onFocusComposerEvent = (): void => {
+    void this.focusComposer();
   };
 
   /**
