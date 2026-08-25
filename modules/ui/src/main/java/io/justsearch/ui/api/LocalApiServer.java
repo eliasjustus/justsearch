@@ -969,6 +969,15 @@ public class LocalApiServer {
         log.warn("AgentController.shutdown failed: {}", e.getMessage());
       }
     }
+    // Tempdoc 859 D live-defect D2: ChatController now carries the same heartbeat scheduler, so it
+    // gets the same symmetric stop — an added start without an added stop is the 638 PE leak again.
+    if (this.convApi != null && this.convApi.chatController() != null) {
+      try {
+        this.convApi.chatController().shutdown();
+      } catch (RuntimeException e) {
+        log.warn("ChatController.shutdown failed: {}", e.getMessage());
+      }
+    }
     // Tempdoc 834 §1.6: stop the run-stream heartbeat scheduler and retire every open run — the
     // same asymmetric-lifecycle trap the line above closes for AgentController.
     if (this.convApi != null && this.convApi.runStreamController() != null) {

@@ -75,6 +75,17 @@ public final class ChatController {
    */
   private final Supplier<AgentService> agentService;
 
+  /**
+   * Tempdoc 859 D live-defect D2 — the SAME out-of-band liveness heartbeat {@link AgentController}
+   * has carried since 604. This route dispatches Search v3's DELEGATE runs ({@code shapeId=
+   * core.agent-run} through {@code host.ai.streamShape}), and a delegate run parks at gates and emits
+   * nothing while it waits. Without a beat the FE's 40 s watchdog declared the stream dead, the
+   * panel went stale, its arms stopped working, and the run timed out server-side into
+   * {@code BUDGET_EDGE_FINALIZE} — reproduced three times on 2026-08-25. Fixed at the producer, not
+   * by widening the watchdog, which would have masked genuinely dead connections.
+   */
+  private final SseHeartbeat heartbeat;
+
   public ChatController(
       ConversationEngine engine,
       SseWriter sseWriter,
@@ -82,12 +93,40 @@ public final class ChatController {
       ConversationStore conversationStore,
       Supplier<OnlineAiService> onlineAi,
       Supplier<AgentService> agentService) {
+    this(engine, sseWriter, telemetry, conversationStore, onlineAi, agentService,
+        // A lambda, not a method reference: the reference would bind (and null-check) the writer at
+        // construction, and this controller has constructors that legitimately pass nothing useful.
+        new SseHeartbeat(
+            (ctx, event, payload) -> sseWriter.writeEvent(ctx, event, payload),
+            "chat-stream-heartbeat"));
+  }
+
+  /** Test seam: an {@link SseHeartbeat} whose scheduler and cadence a test can drive. */
+  ChatController(
+      ConversationEngine engine,
+      SseWriter sseWriter,
+      Telemetry telemetry,
+      ConversationStore conversationStore,
+      Supplier<OnlineAiService> onlineAi,
+      Supplier<AgentService> agentService,
+      SseHeartbeat heartbeat) {
     this.engine = engine;
     this.sseWriter = sseWriter;
     this.telemetry = telemetry;
     this.conversationStore = conversationStore;
     this.onlineAi = onlineAi;
     this.agentService = agentService;
+    this.heartbeat = heartbeat;
+  }
+
+  /** Stops the heartbeat scheduler. Call on shutdown (tempdoc 638 PE's asymmetry, not repeated). */
+  public void shutdown() {
+    heartbeat.shutdown();
+  }
+
+  /** Test-only: whether {@link #shutdown()} has stopped the heartbeat scheduler. */
+  boolean isHeartbeatSchedulerShutdown() {
+    return heartbeat.isShutdown();
   }
 
   public ChatController(
@@ -195,11 +234,24 @@ public final class ChatController {
       return;
     }
     sseWriter.initSseHeaders(ctx, route);
-    runToSink(
-        shapeId,
-        parsedBody,
-        readAudience(ctx),
-        sseEvent -> sseWriter.writeEvent(ctx, sseEvent.name(), sseEvent.payload()));
+    // Tempdoc 859 D live-defect D2 — the heartbeat wraps the BLOCKING run, and only it: the pre-run
+    // refusals above answer and return without ever opening a stream to beat on.
+    try {
+      heartbeat.around(
+          ctx,
+          () ->
+              runToSink(
+                  shapeId,
+                  parsedBody,
+                  readAudience(ctx),
+                  sseEvent -> sseWriter.writeEvent(ctx, sseEvent.name(), sseEvent.payload())));
+    } catch (Exception impossible) {
+      // runToSink catches every mid-run failure and reports it ON THE RUN (§15.1.3); the only way
+      // out of `around` is therefore a failure of the heartbeat plumbing itself, which must not be
+      // swallowed silently nor turned into a second error vocabulary.
+      LOG.error("Chat dispatch stream failed outside the run for shape {}", shapeId.value(), impossible);
+      sseError(ctx, message(impossible), ApiErrorCode.BAD_REQUEST);
+    }
     // Suppress unused-field warning until telemetry is wired into per-shape spans (Phase D).
     if (telemetry == null) {
       LOG.trace("telemetry sink not configured");

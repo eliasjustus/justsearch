@@ -346,7 +346,9 @@ final class AgentInteractionMapperTest {
         "a declared progress phase must be listed in AgentInteractionMapper.DURABLE_PROGRESS_PHASES"
             + " or in this test's documentedEphemeral set — an unclassified one is silently ephemeral");
     // The guard is only meaningful if it is actually looking at constants: assert it FOUND them.
-    assertEquals(4, AgentInteractionMapper.DURABLE_PROGRESS_PHASES.size());
+    // 859 D live-defect D4 added the fifth (PHASE_CONTEXT_COMPACTED_TO_FIT) — and this line going
+    // red is exactly the guard working: the constant could not be added without classifying it.
+    assertEquals(5, AgentInteractionMapper.DURABLE_PROGRESS_PHASES.size());
   }
 
   @Test
@@ -381,6 +383,57 @@ final class AgentInteractionMapperTest {
                 "severity", "warn"));
     assertEquals(InteractionEventKind.PROGRESS, compacted.kind());
     assertEquals("warn", compacted.attributes().get("severity"));
+
+    // 859 D live-defect D4 — the run compacted DESPITE the reader's CONTINUE. It is emitted two
+    // lines above `context_compacted` in the same block, so an ephemeral classification would leave
+    // a reloaded run showing the compaction with the reason it happened silently removed: the
+    // reader would see the loop shorten their history and no record of why.
+    InteractionEvent toFit =
+        mapped(
+            "progress",
+            Map.of(
+                "phase", "context_compacted_to_fit",
+                "message",
+                    "Compacted to fit before continuing — the next prompt did not fit the model's"
+                        + " memory",
+                "severity", "info"));
+    assertEquals(InteractionEventKind.PROGRESS, toFit.kind());
+    assertEquals("agent", toFit.originator());
+    assertEquals(
+        "Compacted to fit before continuing — the next prompt did not fit the model's memory",
+        toFit.content(),
+        "the JUSTIFICATION is the payload — a durable note that lost its reason is not a record");
+    assertEquals("context_compacted_to_fit", toFit.attributes().get("phase"));
+  }
+
+  @Test
+  @DisplayName("859 D4: the to-fit note and the compaction it explains survive together, in order")
+  void compactedToFitSurvivesBesideTheCompactionItExplains() {
+    // The pair is emitted back-to-back on the unservable-CONTINUE path (AgentStepRunner: the to-fit
+    // note, then ContextCompacted, then the count-bearing compaction note), so the same-millisecond
+    // tie the F-1 defect exposed is the NORMAL case here too — and here the ordering carries the
+    // cause: the reason must sort above the compaction it justifies, never below it.
+    String tie = "2026-01-01T00:00:09Z";
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                at(tie, "progress",
+                    Map.of(
+                        "phase", "context_compacted_to_fit",
+                        "message", "Compacted to fit before continuing")),
+                at(tie, "progress",
+                    Map.of("phase", "context_compacted", "message", "Compacted 2 earlier turns"))),
+            CONV);
+
+    assertEquals(2, events.size(), "BOTH notes are durable — neither may be dropped on reload");
+    List<String> byId = events.stream().map(InteractionEvent::id).sorted().toList();
+    assertTrue(
+        byId.get(0).contains("context_compacted_to_fit"),
+        "the REASON must sort before the compaction it explains, got: " + byId);
+    assertEquals(
+        List.of(events.get(0).id(), events.get(1).id()),
+        byId,
+        "lexical id order must equal emission order on a same-millisecond tie");
   }
 
   @Test

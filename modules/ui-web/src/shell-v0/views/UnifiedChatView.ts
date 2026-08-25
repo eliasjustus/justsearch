@@ -3746,9 +3746,13 @@ export class UnifiedChatView extends JfElement {
               </span>
             </div>`
           : nothing}
-        ${/* Tempdoc 577 §2.14 Root II — the HELD context-pressure gate: the prompt is approaching
+        ${/* Tempdoc 577 §2.14 Root II — the HELD context-pressure gate: context use is approaching
               the model's memory (n_ctx). The decision offers COMPACTION (the option the budget gate
-              lacks): continue anyway / compact older turns / stop, through the one control seam. */ ''}
+              lacks): continue anyway / compact older turns / stop, through the one control seam.
+              859 D live-defect D3 — the figure below is CONTEXT USED (the larger of the projection
+              and the provider-reported prompt), not "the prompt"; the wire field keeps its old
+              `promptTokens` name. This row's own wording already said "Context filling up", so only
+              the description above needed correcting. */ ''}
         ${this.agentCtrl?.contextGate
           ? html`<div class="activity-budget context-gate-row" data-testid="context-gate">
               <span class="over-budget"
