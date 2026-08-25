@@ -23,6 +23,7 @@
  *     host box (rAF-deferred, never during update), and recomputes `density` on resize.
  */
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
+import { FrameLatch } from './frameLatch.js';
 
 /**
  * The representation ladder by density (565 §19.2). `minimal` — a dot/shape only (no glyph char);
@@ -109,7 +110,7 @@ export class DensityController implements ReactiveController {
   private readonly host: ReactiveControllerHost & HTMLElement;
   private readonly opts: DensityOptions;
   private ro: ResizeObserver | null = null;
-  private rafPending = false;
+  private readonly frame = new FrameLatch();
 
   constructor(host: ReactiveControllerHost & HTMLElement, opts: DensityOptions = {}) {
     this.host = host;
@@ -139,6 +140,7 @@ export class DensityController implements ReactiveController {
   hostDisconnected(): void {
     this.ro?.disconnect();
     this.ro = null;
+    this.frame.cancel();
   }
 
   hostUpdated(): void {
@@ -146,18 +148,13 @@ export class DensityController implements ReactiveController {
     this.schedule();
   }
 
-  /** Defer all measurement/recompute to after layout (rAF), never during update. */
+  /**
+   * Defer all measurement/recompute to after layout (rAF), never during update. The latch is
+   * {@link FrameLatch} (tempdoc 860 §6.4): a page that never delivers a frame releases on the
+   * fallback instead of holding the density it was last projected at.
+   */
   private schedule(): void {
-    if (this.rafPending) return;
-    this.rafPending = true;
-    const raf =
-      typeof requestAnimationFrame !== 'undefined'
-        ? requestAnimationFrame
-        : (cb: FrameRequestCallback) => queueMicrotask(() => cb(0));
-    raf(() => {
-      this.rafPending = false;
-      this.recompute();
-    });
+    this.frame.request(() => this.recompute());
   }
 
   private recompute(): void {

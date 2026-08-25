@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   anchorFractions,
   deriveFocus,
@@ -7,6 +7,7 @@ import {
   MIN_VISIBLE,
   type Landmark,
 } from './navigation.js';
+import { FRAME_LATCH_FALLBACK_MS } from './frameLatch.js';
 import type { ReactiveControllerHost } from 'lit';
 
 // A three-item run: a short user turn, a tool step, and a tall answer, laid out top→bottom over the
@@ -740,6 +741,91 @@ describe('navigation — a measurement is stale once the content height moves (8
     expect(nav.activeId).toBe('');
     expect(measures()).toBe(0);
     conv.remove();
+  });
+});
+
+describe('navigation — the coalescer drains a page that stops delivering frames (860 §6.4 / P3)', () => {
+  /** A column that counts the measure passes it is subjected to (`measure()` reads its box once). */
+  function counted(): { conv: HTMLElement; measures: () => number } {
+    const conv = document.createElement('div');
+    document.body.appendChild(conv);
+    let measures = 0;
+    Object.defineProperty(conv, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(conv, 'scrollTop', { configurable: true, writable: true, value: 0 });
+    Object.defineProperty(conv, 'scrollHeight', { configurable: true, get: () => 600 });
+    conv.getBoundingClientRect = () => {
+      measures++;
+      return { top: 0, left: 0, right: 800, bottom: 200, width: 800, height: 200, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    };
+    const item = document.createElement('div');
+    item.setAttribute('data-item-id', 'a');
+    item.getBoundingClientRect = () =>
+      ({ top: 0, left: 0, right: 800, bottom: 100, width: 800, height: 100, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    conv.appendChild(item);
+    return { conv, measures: () => measures };
+  }
+
+  it('runs the trailing pass on the fallback when no frame ever arrives', () => {
+    // The incident's own site, in the incident's own conditions. happy-dom's rAF ALWAYS fires, so
+    // the wedge only exists once frames are withheld — which is why this stubs rather than trusting
+    // the environment. Before D3 the trailing pass was scheduled on a frame that never came, and
+    // the latch stayed set until the page was foregrounded again.
+    vi.useFakeTimers();
+    const realRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = ((): number => 1) as typeof requestAnimationFrame;
+    try {
+      const { conv, measures } = counted();
+      const nav = new NavigationController(fakeHost(), {
+        scrollEl: () => conv,
+        spineEl: () => null,
+        active: () => true,
+      });
+      nav.hostUpdated();
+      expect(measures(), 'the leading measure is synchronous').toBe(1);
+
+      nav.remeasure();
+      nav.remeasure();
+      expect(measures(), 'both coalesce into one trailing pass').toBe(1);
+
+      vi.advanceTimersByTime(FRAME_LATCH_FALLBACK_MS);
+      expect(measures(), 'which the fallback delivers — once, not once per coalesced caller').toBe(2);
+
+      // And the latch is genuinely open afterwards: a later signal measures again.
+      nav.remeasure();
+      vi.advanceTimersByTime(FRAME_LATCH_FALLBACK_MS);
+      expect(measures()).toBe(3);
+      conv.remove();
+    } finally {
+      globalThis.requestAnimationFrame = realRaf;
+      vi.useRealTimers();
+    }
+  });
+
+  it('teardown withdraws the fallback, so a detached column is never measured a second later', () => {
+    vi.useFakeTimers();
+    const realRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = ((): number => 1) as typeof requestAnimationFrame;
+    try {
+      const { conv, measures } = counted();
+      let active = true;
+      const nav = new NavigationController(fakeHost(), {
+        scrollEl: () => conv,
+        spineEl: () => null,
+        active: () => active,
+      });
+      nav.hostUpdated();
+      nav.remeasure();
+      expect(measures()).toBe(1);
+
+      active = false;
+      nav.hostUpdated(); // → teardown
+      vi.advanceTimersByTime(FRAME_LATCH_FALLBACK_MS * 3);
+      expect(measures(), 'nothing measures the arm that was torn down').toBe(1);
+      conv.remove();
+    } finally {
+      globalThis.requestAnimationFrame = realRaf;
+      vi.useRealTimers();
+    }
   });
 });
 
