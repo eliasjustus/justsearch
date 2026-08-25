@@ -31,8 +31,9 @@ import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const {
@@ -42,9 +43,17 @@ const {
   findBuildHolders,
   deriveObservedRows,
   KNOWN_AGENT_SPAWN_FINGERPRINTS,
+  describeEntry,
+  holdsWithin,
+  recordHoldsTree,
+  resolveCallerSessionId,
+  resolveMainRepoRoot,
 } = require('../dev/lib/agent-spawn-sweep.cjs');
-const { buildAgentSpawnRecord, writeAgentSpawnRecord, OWNERSHIP_MODES } = require('../dev/lib/agent-spawn-record.cjs');
+const { buildAgentSpawnRecord, writeAgentSpawnRecord, OWNERSHIP_MODES, recordHoldsPath } = require('../dev/lib/agent-spawn-record.cjs');
 const { readProcessTable, normalizeCreationTime } = require('../dev/lib/process-identity.cjs');
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const CLI = path.join(HERE, '..', 'dev', 'agent-spawn-sweep.cjs');
 
 let passed = 0;
 const failures = [];
@@ -306,6 +315,42 @@ async function main() {
     });
   });
 
+  // ── F-5: recordFilter (the per-session dedup) applies BEFORE the process-table read ─────────
+  await check('F-5: findBuildHolders never reads the process table when recordFilter excludes every path-matched candidate', async () => {
+    await withTmpRegister(async ({ tmp, env, mainRepoRoot }) => {
+      const now = NOW();
+      const dir = path.join(tmp, 'agent-spawns');
+      const worktreeRoot = path.join(tmp, 'worktree-under-build-f5');
+      await fsp.mkdir(worktreeRoot, { recursive: true });
+      const record = await buildAgentSpawnRecord({
+        recordId: 'w5-f5-already-nudged', producer: 'test', pid: 999990,
+        creationFileTimeUtc: '134320479841300390', cmdlineFingerprint: 'vite --port 90',
+        port: 40090, leaseDurationSec: 3600, sessionId: 'caller-session',
+        resourceRoots: { worktreeRoot }, now,
+      });
+      await writeAgentSpawnRecord({ dir, record });
+
+      let tableReads = 0;
+      const spyReadTable = () => { tableReads += 1; return fakeTable(now, []); };
+
+      const excluded = await findBuildHolders({
+        mainRepoRoot, targetPath: worktreeRoot, callerSessionId: 'caller-session', env, now,
+        readTable: spyReadTable,
+        recordFilter: () => false, // simulates "every path-matched holder is already nudged"
+      });
+      assert.deepEqual(excluded.holders, []);
+      assert.equal(tableReads, 0, 'recordFilter must exclude the candidate BEFORE the process-table read, not after — that IS the fix (861 W5 review F-5)');
+
+      const included = await findBuildHolders({
+        mainRepoRoot, targetPath: worktreeRoot, callerSessionId: 'caller-session', env, now,
+        readTable: spyReadTable,
+        recordFilter: () => true,
+      });
+      assert.equal(included.holders.length, 1, 'sanity: the SAME candidate is found when recordFilter admits it');
+      assert.equal(tableReads, 1, 'a non-excluded candidate still reaches the process-table read exactly once');
+    });
+  });
+
   // ── orientation: never mints a reap either, and folds in the observed tier ──────────────────
   await check('orientation (gatherAgentSpawnOrientation) never returns a reap disposition', async () => {
     await withTmpRegister(async ({ tmp, env, mainRepoRoot }) => {
@@ -403,6 +448,216 @@ async function main() {
       assert.deepEqual(result.kills, []);
     });
   });
+
+  // ── F-2a/F-3: the shared session-id resolution chain ────────────────────────────────────────
+  await check('F-2a/F-3: resolveCallerSessionId — explicit > CLAUDE_CODE_SESSION_ID > JUSTSEARCH_AGENT_SESSION_ID > pointer file > null', async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), '861-w5-session-id-'));
+    try {
+      assert.equal(resolveCallerSessionId({ explicit: 'explicit-wins', env: { CLAUDE_CODE_SESSION_ID: 'x' }, repoRoot: tmp }), 'explicit-wins');
+      assert.equal(resolveCallerSessionId({ env: { CLAUDE_CODE_SESSION_ID: 'from-claude-code' }, repoRoot: tmp }), 'from-claude-code');
+      assert.equal(resolveCallerSessionId({ env: { JUSTSEARCH_AGENT_SESSION_ID: 'from-export-hook' }, repoRoot: tmp }), 'from-export-hook');
+      assert.equal(resolveCallerSessionId({ env: {}, repoRoot: tmp }), null, 'no env, no pointer file -> null, never a guess');
+
+      const telemetryDir = path.join(tmp, 'tmp', 'agent-telemetry');
+      await fsp.mkdir(telemetryDir, { recursive: true });
+      await fsp.writeFile(path.join(telemetryDir, 'current-session-id'), 'from-pointer-file\n');
+      assert.equal(resolveCallerSessionId({ env: {}, repoRoot: tmp }), 'from-pointer-file', 'file fallback resolves, trimmed');
+      assert.equal(resolveCallerSessionId({ env: { CLAUDE_CODE_SESSION_ID: 'env-wins' }, repoRoot: tmp }), 'env-wins', 'env beats the pointer file even when both exist');
+    } finally {
+      await fsp.rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  await check('resolveMainRepoRoot is re-exported (used by remove-worktree.cjs — F-8)', () => {
+    assert.equal(typeof resolveMainRepoRoot, 'function');
+  });
+
+  // ── F-1: pruning is actually wired, not merely documented ───────────────────────────────────
+  await check('F-1 RED/GREEN: a transient IDENTITY_REFUSE record blocks teardown forever without pruning (red); the session-start sweep\'s now-wired prune clears it (green)', async () => {
+    await withTmpRegister(async ({ tmp, env, mainRepoRoot }) => {
+      const now = NOW();
+      const dir = path.join(tmp, 'agent-spawns');
+      const worktreeRoot = path.join(tmp, 'worktree-under-teardown-f1');
+      await fsp.mkdir(worktreeRoot, { recursive: true });
+
+      const EIGHT_DAYS_AGO = now - 8 * 24 * 60 * 60 * 1000; // > DEFAULT_MAX_RECORD_AGE_MS (7d)
+      const record = await buildAgentSpawnRecord({
+        recordId: 'w5-f1-aged-refuse', producer: 'test', pid: 999960,
+        creationFileTimeUtc: '134320479841300360', cmdlineFingerprint: 'vite --port 60',
+        port: 40060, leaseDurationSec: 60, sessionId: 'other-session',
+        resourceRoots: { worktreeRoot }, now: EIGHT_DAYS_AGO,
+      });
+      // Lease lapsed long ago (non-live -> prunable by age); startedAt is baked in as 8 days old.
+      await writeAgentSpawnRecord({
+        dir,
+        record: {
+          ...record,
+          lease: { durationSec: 60, renewedAt: new Date(EIGHT_DAYS_AGO).toISOString(), expiresAt: new Date(EIGHT_DAYS_AGO + 60_000).toISOString() },
+        },
+      });
+
+      // A row matching pid + creationTime but with an UNREADABLE CommandLine -> genuine
+      // IDENTITY_REFUSE (transient evidence-unavailable), never MISMATCH. MISMATCH ("positively
+      // gone") is the case F3's carve-out already unblocks; REFUSE is the case F-1 fixes.
+      const readFakeTable = () => fakeTable(now, [
+        { ProcessId: 999960, CreationFileTimeUtc: '134320479841300360', CommandLine: null },
+      ]);
+
+      // RED: query teardown directly, no sweep/prune has ever run — reproduces the pre-fix state.
+      const red = await consultAgentSpawnsForTeardown({
+        mainRepoRoot, targetPath: worktreeRoot, callerSessionId: 'caller-session', env, now, readTable: readFakeTable,
+      });
+      assert.equal(red.buckets.all[0]?.cell, 'identity-refuse', 'sanity: this is a transient REFUSE, not a positively-gone MISMATCH');
+      assert.equal(red.buckets.blocksProceed, true, 'RED: a transient identity-refuse record blocks teardown');
+
+      // GREEN: the session-start sweep (prune defaults to true for this occasion) removes the
+      // aged record BEFORE reapEligible ever evaluates it again.
+      const sweepResult = await runAgentSpawnSweep({
+        occasion: 'session-start', mainRepoRoot, env, now, readTable: readFakeTable,
+      });
+      assert.ok(sweepResult.pruned, 'session-start must invoke pruneAgentSpawnRecords (F-1 wiring)');
+      assert.deepEqual(sweepResult.pruned.deletedIds, ['w5-f1-aged-refuse']);
+
+      const green = await consultAgentSpawnsForTeardown({
+        mainRepoRoot, targetPath: worktreeRoot, callerSessionId: 'caller-session', env, now, readTable: readFakeTable,
+      });
+      assert.equal(green.buckets.blocksProceed, false, 'GREEN: pruning cleared the aged record — teardown no longer blocks forever');
+      assert.deepEqual(green.buckets.all, []);
+    });
+  });
+
+  await check('F-1 control: prune:false reproduces the pre-fix behaviour on the same fixture shape (the aged record survives)', async () => {
+    await withTmpRegister(async ({ tmp, env, mainRepoRoot }) => {
+      const now = NOW();
+      const dir = path.join(tmp, 'agent-spawns');
+      const EIGHT_DAYS_AGO = now - 8 * 24 * 60 * 60 * 1000;
+      const record = await buildAgentSpawnRecord({
+        recordId: 'w5-f1-control', producer: 'test', pid: 999961,
+        creationFileTimeUtc: '134320479841300361', cmdlineFingerprint: 'vite --port 61',
+        port: 40061, leaseDurationSec: 60, sessionId: 'other-session', now: EIGHT_DAYS_AGO,
+      });
+      await writeAgentSpawnRecord({
+        dir,
+        record: {
+          ...record,
+          lease: { durationSec: 60, renewedAt: new Date(EIGHT_DAYS_AGO).toISOString(), expiresAt: new Date(EIGHT_DAYS_AGO + 60_000).toISOString() },
+        },
+      });
+
+      const result = await runAgentSpawnSweep({
+        occasion: 'session-start', mainRepoRoot, env, now, prune: false,
+        readTable: () => fakeTable(now, []),
+      });
+      assert.equal(result.pruned, null, 'prune:false must skip pruning entirely');
+      const stillThere = await fsp.stat(path.join(dir, 'w5-f1-control.json')).then(() => true, () => false);
+      assert.equal(stillThere, true, 'without pruning wired, the aged record survives indefinitely — this is the bug F-1 fixes');
+    });
+  });
+
+  // ── F-4: root containment, both directions ──────────────────────────────────────────────────
+  await check('F-4: recordHoldsTree finds a Vite holding a path INSIDE the queried (wider) tree — the §6.2 headline case recordHoldsPath alone misses', async () => {
+    await withTmpRegister(async ({ tmp, env, mainRepoRoot }) => {
+      const mainLikeRoot = path.join(tmp, 'main-like-checkout');
+      const nodeModules = path.join(mainLikeRoot, 'node_modules');
+      await fsp.mkdir(nodeModules, { recursive: true });
+
+      const record = await buildAgentSpawnRecord({
+        recordId: 'w5-f4-cross-tree', producer: 'test', pid: 999970,
+        creationFileTimeUtc: '134320479841300370', cmdlineFingerprint: 'vite --port 70',
+        port: 40070, leaseDurationSec: 3600, sessionId: 'other-session',
+        // The record's held root is a WORKTREE's node_modules resolved to the MAIN checkout's
+        // real node_modules (the junction target) — narrower than, and nested INSIDE, the tree
+        // a build/teardown would query with (mainLikeRoot).
+        resourceRoots: { nodeModulesRealPath: nodeModules },
+      });
+
+      // THE BUG, demonstrated directly: recordHoldsPath alone asks the wrong direction.
+      assert.equal(await recordHoldsPath(record, mainLikeRoot), false, 'sanity: recordHoldsPath alone misses the headline case');
+      // THE FIX: recordHoldsTree (both directions) finds it.
+      assert.equal(await holdsWithin(record, mainLikeRoot), true);
+      assert.equal(await recordHoldsTree(record, mainLikeRoot), true, 'recordHoldsTree must find a record whose held root is nested INSIDE the queried tree');
+
+      // And through the actual occasion wiring, not just the predicate in isolation:
+      const dir = path.join(tmp, 'agent-spawns');
+      await writeAgentSpawnRecord({ dir, record });
+
+      const built = await findBuildHolders({ mainRepoRoot, targetPath: mainLikeRoot, callerSessionId: 'caller-session', env });
+      assert.equal(built.holders.length, 1, 'findBuildHolders must surface the cross-tree holder when queried with the WIDER tree root');
+      assert.equal(built.holders[0].recordId, 'w5-f4-cross-tree');
+
+      const consulted = await consultAgentSpawnsForTeardown({ mainRepoRoot, targetPath: mainLikeRoot, callerSessionId: 'caller-session', env });
+      assert.equal(consulted.buckets.all.length, 1, 'consultAgentSpawnsForTeardown must surface the same cross-tree holder');
+      assert.equal(consulted.buckets.all[0].recordId, 'w5-f4-cross-tree');
+    });
+  });
+
+  // ── F-2b: the printed remedy leads with the safe sweep, not a bare kill ─────────────────────
+  await check('F-2b: describeEntry leads with the sweep-CLI remedy for a registered entry; an observed-tier entry (no register row) keeps only the kill line', () => {
+    const registered = { disposition: 'contention', cell: 'other-session/lease-live', reason: 'x', recordId: 'some-id', pid: 123, killLine: 'taskkill /PID 123 /F', record: { producer: 'ui-shot' } };
+    const observed = { disposition: 'report', cell: 'observed-only', reason: 'y', recordId: null, pid: 456, killLine: 'taskkill /PID 456 /F', record: null };
+
+    const registeredLine = describeEntry(registered);
+    assert.match(registeredLine, /resolve via sweep: node scripts\/dev\/agent-spawn-sweep\.cjs/, 'a registered entry must lead with the safe sweep remedy');
+    assert.match(registeredLine, /taskkill/, 'the raw kill line stays present as an explicit, last-resort fallback');
+    assert.ok(
+      registeredLine.indexOf('agent-spawn-sweep.cjs') < registeredLine.indexOf('taskkill'),
+      'the sweep remedy must come BEFORE the bare taskkill line, not merely exist somewhere in the output',
+    );
+
+    const observedLine = describeEntry(observed);
+    assert.doesNotMatch(observedLine, /agent-spawn-sweep\.cjs/, 'an observed-tier entry (no recordId) has no register row for a sweep to act on');
+    assert.match(observedLine, /taskkill/);
+  });
+
+  // ── F-1 + F-2a/F-3, end to end through the real CLI subprocess (the documented invocation) ──
+  if (process.platform !== 'win32') {
+    skipped.push('CLI end-to-end (F-1/F-2a/F-3): win32-only (readProcessTable/taskkill)');
+  } else {
+    await check('CLI end-to-end: CLAUDE_CODE_SESSION_ID alone (no --session-id flag — the documented invocation) resolves the caller session and reaps its own live spawn', async () => {
+      const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), '861-w5-cli-e2e-'));
+      const child = spawnDisposableChild();
+      try {
+        const identity = await identityFor(child.pid);
+        const now = NOW();
+        const sessionId = `cli-e2e-session-${process.pid}`;
+        const dir = path.join(tmp, 'agent-spawns');
+        const record = await buildAgentSpawnRecord({
+          recordId: 'w5-cli-e2e',
+          producer: 'cli-e2e-test',
+          pid: child.pid,
+          creationFileTimeUtc: identity.creationFileTimeUtc,
+          cmdlineFingerprint: identity.cmdlineFingerprint,
+          port: 40200,
+          leaseDurationSec: 1,
+          sessionId,
+          now,
+        });
+        // Lapsed lease, NO activity stamp at all for this session. On a lapsed-lease-alone
+        // basis that would read as CONTENTION (unknown activity -> leave) — so a SAME-SESSION
+        // reap here is only reachable if the CLI actually resolved `sessionId` as the caller's
+        // own, which is exactly F-2a/F-3's fix. Get session resolution wrong (null, or some
+        // other id) and this fixture falls through to contention instead of reaping.
+        await writeAgentSpawnRecord({ dir, record: { ...record, lease: LAPSED_LEASE(now) } });
+
+        const res = spawnSync('node', [CLI, '--occasion', 'session-start'], {
+          encoding: 'utf8',
+          timeout: 15000,
+          env: { ...process.env, JUSTSEARCH_DEV_RUNNER_STATE_ROOT: tmp, CLAUDE_CODE_SESSION_ID: sessionId },
+        });
+        assert.equal(res.status, 0, `CLI exited ${res.status}. stderr:\n${res.stderr}`);
+        assert.match(res.stdout, /same-session/, 'the record must classify as same-session — proof the CLI resolved CLAUDE_CODE_SESSION_ID into callerSessionId');
+        assert.match(res.stdout, /pruned:/, 'the CLI must always run the prune step (F-1), regardless of occasion');
+
+        await new Promise((r) => setTimeout(r, 300));
+        const after = readProcessTable();
+        assert.ok(after.ok);
+        assert.ok(!after.table.some((r) => Number(r?.ProcessId) === child.pid), 'the child must actually be reaped end-to-end through the real CLI subprocess');
+      } finally {
+        killIfAlive(child.pid);
+        await fsp.rm(tmp, { recursive: true, force: true }).catch(() => {});
+      }
+    });
+  }
 
   for (const s of skipped) console.log(`  (skipped) ${s}`);
 

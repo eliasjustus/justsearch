@@ -85,12 +85,18 @@ async function main() {
       mainRepoRoot,
       targetPath: repoRoot,
       callerSessionId: sessionId,
+      // [861 W5 review F-5] Applied BEFORE the process-table read (inside `findBuildHolders`),
+      // not after: an already-nudged holder is excluded from the candidate set before it can
+      // trigger a PowerShell spawn, mirroring `exec-substrate-hint.mjs`'s check-before-work
+      // order. When every path-matched record is already-nudged, `findBuildHolders` never reads
+      // the process table at all.
+      recordFilter: (e) => !e.recordId || !alreadyNudged(sessionId, e.recordId),
     });
   } catch {
     return; // advisory — a lookup failure is silence, never a block
   }
 
-  const holders = (result.holders || []).filter((e) => e.recordId && !alreadyNudged(sessionId, e.recordId));
+  const holders = result.holders || [];
   if (holders.length === 0) return;
 
   recordNudged(sessionId, holders.map((e) => e.recordId));

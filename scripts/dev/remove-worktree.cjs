@@ -41,7 +41,12 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { PROCESS_TABLE_PS_COMMAND } = require('./lib/process-identity.cjs');
-const { consultAgentSpawnsForTeardown, describeEntry } = require('./lib/agent-spawn-sweep.cjs');
+const {
+  consultAgentSpawnsForTeardown,
+  describeEntry,
+  resolveMainRepoRoot,
+  resolveCallerSessionId,
+} = require('./lib/agent-spawn-sweep.cjs');
 
 function fail(msg) {
   console.error(`[remove-worktree] ERROR: ${msg}`);
@@ -341,11 +346,18 @@ async function main() {
   if (!target || target.startsWith('--')) {
     fail(
       'usage: node scripts/dev/remove-worktree.cjs <worktree-path> [--delete-branch]' +
-        ' [--merge-commit <sha>] [--session-id <id>]',
+        ' [--merge-commit <sha>] [--session-id <id>]' +
+        ' (--session-id overrides; otherwise resolved from CLAUDE_CODE_SESSION_ID /' +
+        ' JUSTSEARCH_AGENT_SESSION_ID / tmp/agent-telemetry/current-session-id)',
     );
   }
 
   const repoRoot = path.resolve(__dirname, '..', '..');
+  // [F-8] The register lives under the MAIN checkout (861 [A9]), not wherever THIS copy of the
+  // script happens to run from — a worktree-local copy of remove-worktree.cjs would otherwise
+  // consult its own worktree's (nonexistent, or stale) tmp/dev-runner/agent-spawns/ instead of
+  // the shared one.
+  const mainRepoRoot = resolveMainRepoRoot(repoRoot);
   const abs = path.resolve(target);
 
   // Safety gate: only operate on worktrees under .claude/worktrees/.
@@ -381,9 +393,15 @@ async function main() {
     // §2-bis (c) documents. The OBSERVED-tier fallback below (`reportHolders`, driven by
     // `filterHolders`'s own command-line scan) is UNCHANGED — it still runs regardless, for
     // whatever this registry does not cover (no-regression constraint, 861 §7.1 Phase 5).
+    //
+    // [F-2a] `callerSessionId` is resolved via the standard chain, not `--session-id` alone: the
+    // documented invocation never passes that flag, so without this a caller's OWN live spawn on
+    // this tree read as an unattributed CONTENTION instead of a same-session reap — the ONE case
+    // §6.3 says is unambiguous ("a session may always reap its own registered spawns").
+    const callerSessionId = resolveCallerSessionId({ explicit: sessionIdArg, env: process.env, repoRoot });
     let consult;
     try {
-      consult = await consultAgentSpawnsForTeardown({ mainRepoRoot: repoRoot, targetPath: abs, callerSessionId: sessionIdArg });
+      consult = await consultAgentSpawnsForTeardown({ mainRepoRoot, targetPath: abs, callerSessionId });
     } catch (err) {
       console.error(`[remove-worktree] WARN agent-spawns register consult failed (proceeding on the observed-tier fallback only): ${err && err.message ? err.message : err}`);
       consult = null;

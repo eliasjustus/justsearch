@@ -22,6 +22,7 @@
 const path = require('node:path');
 const {
   resolveMainRepoRoot,
+  resolveCallerSessionId,
   runAgentSpawnSweep,
   describeEntry,
 } = require('./lib/agent-spawn-sweep.cjs');
@@ -42,11 +43,14 @@ function printBucket(label, entries) {
 async function main() {
   const argv = process.argv.slice(2);
   const occasion = flagValue(argv, 'occasion') || 'session-closeout';
-  const sessionId = flagValue(argv, 'session-id') || process.env.CLAUDE_SESSION_ID || null;
   const ownSessionOnly = argv.includes('--own-session-only');
 
   const repoRoot = path.resolve(__dirname, '..', '..');
   const mainRepoRoot = resolveMainRepoRoot(repoRoot);
+  // [F-3] `CLAUDE_SESSION_ID` (the previous fallback here) is not a variable anything in this
+  // repo sets — the real chain is `resolveCallerSessionId`'s (861 W5 review F-2a/F-3), shared
+  // with `remove-worktree.cjs` so both consumers resolve the session id the same way.
+  const sessionId = resolveCallerSessionId({ explicit: flagValue(argv, 'session-id'), env: process.env, repoRoot });
 
   const result = await runAgentSpawnSweep({
     occasion,
@@ -54,9 +58,16 @@ async function main() {
     callerSessionId: sessionId,
     ownSessionOnly,
     actorSource: 'agent-spawn-sweep-cli',
+    // [F-1] The CLI always prunes, regardless of occasion: "run this and it cleans up" is this
+    // command's entire purpose, and `session-closeout` (the default occasion here) does not
+    // itself default to pruning the way `session-start` does.
+    prune: true,
   });
 
   console.log(`[agent-spawn-sweep] occasion=${occasion} register=${result.dir}`);
+  if (result.pruned) {
+    console.log(`[agent-spawn-sweep] pruned: ${result.pruned.deleted} deleted (of ${result.pruned.found} found), ${result.pruned.retained} retained, ${result.pruned.deletedTmp} stale .tmp file(s) swept`);
+  }
   printBucket('REAPED (attempted)', result.buckets.reap);
   printBucket('CONTENTION (left alone)', result.buckets.contention);
   printBucket('REFUSED (retained, marked)', result.buckets.refuse);

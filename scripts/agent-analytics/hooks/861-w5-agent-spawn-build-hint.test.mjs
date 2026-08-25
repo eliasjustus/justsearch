@@ -159,7 +159,16 @@ async function main() {
         assert.equal(parsed.hookSpecificOutput.permissionDecision, undefined, 'advisory only — never a permission decision');
       });
 
-      await check('THE PROOF: the reap-eligible child is still alive after the hook ran', async () => {
+      await check('SUBPROCESS-CONTRACT PIN (861 W5 review F-7a): the deployed hook binary never kills, even against a reap-eligible fixture', async () => {
+        // What this DOES prove: the real, as-invoked-by-Claude-Code hook process — the actual
+        // artifact that ships — took no action against a process it could see and identify.
+        // What this does NOT prove: the STRUCTURAL guarantee that `before-a-build` can never
+        // mint a `reap` disposition in the first place — that lives at the projection layer
+        // and is asserted directly (on `entry.disposition`) in
+        // `861-w5-agent-spawn-sweep.test.mjs`'s before-a-build checks. This test is the
+        // end-to-end pin on top of that guarantee: even if some future refactor gave this hook
+        // a path to `executeReap`, THIS assertion would still have to fail for a regression to
+        // slip through undetected here.
         await new Promise((r) => setTimeout(r, 300)); // generous margin — if it were going to die, it would have by now
         const after = readProcessTable();
         assert.ok(after.ok);

@@ -70,9 +70,16 @@ async function findOwnChildRow(pid) {
 
 /** remove-worktree.cjs writes ALL of its own reporting to stderr (console.error) even on
  *  success, so capture both streams explicitly (spawnSync, not execFileSync — which returns
- *  only stdout, discarding stderr on the non-throwing path). */
-function runRemoveWorktree(targetDir, { env }) {
-  const res = spawnSync('node', [REMOVE_WORKTREE, targetDir, '--session-id', 'caller-session'], {
+ *  only stdout, discarding stderr on the non-throwing path).
+ *
+ *  `sessionIdFlag` defaults to an explicit `--session-id caller-session` (most tests don't care
+ *  about F-2a's env-chain resolution and want a stable, known caller id); pass `null` to omit
+ *  the flag entirely — the documented invocation — so `resolveCallerSessionId` falls through to
+ *  whatever `env` supplies (F-2a/F-3's actual fix). */
+function runRemoveWorktree(targetDir, { env, sessionIdFlag = 'caller-session' } = {}) {
+  const args = [REMOVE_WORKTREE, targetDir];
+  if (sessionIdFlag) args.push('--session-id', sessionIdFlag);
+  const res = spawnSync('node', args, {
     encoding: 'utf8',
     env: { ...process.env, ...env },
   });
@@ -124,6 +131,11 @@ async function main() {
       assert.match(output, /refusing to remove/i);
       assert.match(output, /w5-teardown-test-fixture/, 'the holder\'s producer should be named');
       assert.match(output, /taskkill/i, 'a ready-to-run remedy line should be printed');
+      // [F-2b] The PRIMARY remedy is the safe sweep CLI, not the bare taskkill — printing
+      // taskkill as THE fix would contradict branch-safety.md's own "never hand-taskkill one"
+      // rule this same tempdoc added.
+      assert.match(output, /agent-spawn-sweep\.cjs/i, 'the safe sweep-CLI remedy should be printed alongside the last-resort kill line');
+      assert.ok(output.indexOf('agent-spawn-sweep.cjs') < output.indexOf('taskkill'), 'the sweep remedy must appear before the bare taskkill line');
     });
 
     await check('the target directory is LEFT INTACT after a refusal (the §2-bis (c) fix)', async () => {
@@ -159,6 +171,53 @@ async function main() {
     assert.doesNotMatch(output, /agent-spawns register/i, 'no register consult output when nothing is registered');
     const gone = await fsp.stat(target).then(() => false, () => true);
     assert.equal(gone, true);
+  });
+
+  // ── F-2a: CLAUDE_CODE_SESSION_ID alone (no --session-id flag) resolves the caller's OWN
+  // session, so its own live spawn reaps instead of falling through to CONTENTION. ────────────
+  await check('F-2a: the documented invocation (no --session-id) still reaps the caller\'s own live spawn via CLAUDE_CODE_SESSION_ID', async () => {
+    const sameSessionRoot = await fsp.mkdtemp(path.join(os.tmpdir(), '861-w5-f2a-'));
+    const sameSessionState = path.join(sameSessionRoot, 'state');
+    const sameSessionWorktree = path.join(sameSessionRoot, '.claude', 'worktrees', 'w5-f2a-fixture');
+    await fsp.mkdir(sameSessionWorktree, { recursive: true });
+    await fsp.writeFile(path.join(sameSessionWorktree, 'marker.txt'), 'x');
+
+    const ownChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+    try {
+      const row = await findOwnChildRow(ownChild.pid);
+      assert.ok(row, `spawned child pid ${ownChild.pid} never appeared in the process table`);
+      const creationFileTimeUtc = normalizeCreationTime(row.CreationFileTimeUtc);
+      assert.ok(creationFileTimeUtc);
+
+      const sessionId = `f2a-same-session-${process.pid}`;
+      const dir2 = path.join(sameSessionState, 'agent-spawns');
+      const record = await buildAgentSpawnRecord({
+        recordId: 'w5-f2a-own-holder',
+        producer: 'w5-f2a-test-fixture',
+        pid: ownChild.pid,
+        creationFileTimeUtc,
+        cmdlineFingerprint: '-e',
+        port: 40210,
+        leaseDurationSec: 3600, // live — but SAME session reaps regardless of lease state (§6.3)
+        sessionId,
+        resourceRoots: { worktreeRoot: sameSessionWorktree },
+      });
+      await writeAgentSpawnRecord({ dir: dir2, record });
+
+      // No --session-id flag: the ONLY way this resolves to `sessionId` is the env chain.
+      const { status, output } = runRemoveWorktree(sameSessionWorktree, {
+        env: { JUSTSEARCH_DEV_RUNNER_STATE_ROOT: sameSessionState, CLAUDE_CODE_SESSION_ID: sessionId },
+        sessionIdFlag: null,
+      });
+      assert.equal(status, 0, `expected exit 0 (own-session reap, not a refusal), got ${status}. Output:\n${output}`);
+      assert.match(output, /same-session/, 'the record must classify as same-session — proof CLAUDE_CODE_SESSION_ID reached the teardown consult');
+      assert.match(output, /deleted/i);
+      const gone = await fsp.stat(sameSessionWorktree).then(() => false, () => true);
+      assert.equal(gone, true, 'a correctly-attributed own-session holder must not block its own worktree\'s teardown');
+    } finally {
+      killIfAlive(ownChild.pid);
+      await fsp.rm(sameSessionRoot, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
   await fsp.rm(scratch, { recursive: true, force: true }).catch(() => {});
