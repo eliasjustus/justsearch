@@ -142,9 +142,20 @@ export class Sv3SessionRow extends JfElement {
       :host(:not([active]):not([selected])) button.row:hover {
         background: var(--sidebar-row-hover);
       }
+      /* Tempdoc 864 Layer 3(c)(i) — THE PARKED ROW IS AN ARMED TRIGGER, SO IT IS UNMISSABLE. Focus
+         lands here by design and stays: tempdoc 831 keeps a pointerless reader off '<body>' after a
+         rename or a discard, and 864 §2.7c keeps "'Space' activates a focused button" as the
+         platform's contract rather than something the app breaks. What is left is to make the row a
+         bare 'Space' would swap the conversation from impossible to miss while it holds focus — a
+         2px hairline the reader was not looking at is what the incident walked into. Two marks, one
+         hue: the ring at the repo's own focus idiom ('Control.ts' — 'outline: … solid var(--ring)'),
+         plus the composer's halo idiom (tempdoc 859 §B's glass ring — a graded 'color-mix' of the
+         SAME token, never a second colour). Both INSET: the row clips its own overflow and sits
+         flush in the sidebar's inset, so anything drawn outward is trimmed. */
       button.row:focus-visible {
         outline: 2px solid var(--ring);
         outline-offset: -2px;
+        box-shadow: inset 0 0 0 var(--space-2) color-mix(in srgb, var(--ring) 22%, transparent);
       }
       /* In-flight is ORTHOGONAL to the fill ladder: it dims the whole row and lifts on hover,
          and it yields entirely once the row is the claimed one. */

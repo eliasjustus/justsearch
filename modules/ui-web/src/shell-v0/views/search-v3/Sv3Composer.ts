@@ -451,6 +451,26 @@ export class Sv3Composer extends JfElement {
            backdrop-filter that would otherwise establish one is gone. */
         isolation: isolate;
         border-radius: var(--radius-3xl);
+        /* Tempdoc 864 Layer 1(d) — THE RESTING KNOB. §2.9 measured the illusion this window starts
+           from: the ring is honest, but there is no "not focused" signal at all, so a large glass box
+           with placeholder text looks identical whether the caret is in it or parked on a control
+           that swaps the conversation. ONE multiplier — 1 while the field does not hold focus, 0 once
+           it does — and every resting declaration is DERIVED from it, so the halves cannot half-lift
+           (the 859 §B (D2) discipline below, applied to a second state). */
+        --composer-rest: 1;
+        /* The surface, sat back INTO the page while the field is not the reader's. The box's whole
+           "raised material" signal is the lift of '--composer-glass-surface' over '--background' (4%
+           white in dark, '--card' over the page in light), so SPENDING that lift is the de-emphasis
+           — and it is the half deliberately chosen because it spends no TEXT contrast: no ink in the
+           field changes value in either theme, which is what keeps the resting state answerable to a
+           contrast audit rather than a new debt for it. DERIVED from '--composer-glass-surface', not
+           a second authority for the material, which is also why the '@supports' companion below can
+           read it instead of re-typing the recipe. */
+        --composer-rest-surface: color-mix(
+          in srgb,
+          var(--composer-glass-surface) calc(100% - 65% * var(--composer-rest)),
+          var(--background)
+        );
         /* Tempdoc 859 §B (D2) — the fill's translucency is DERIVED from the same multiplier that
            drives the blur, so the two can never disagree. '--glass-blur-scale' is the shipped
            app's ONE blur knob ('styles/tokens.css'), reached two ways: '[data-surface-mode="solid"]'
@@ -470,7 +490,7 @@ export class Sv3Composer extends JfElement {
            the default and exactly the drift that gate exists to remove. */
         background: color-mix(
           in srgb,
-          var(--composer-glass-surface)
+          var(--composer-rest-surface)
             calc(100% - (100% - var(--glass-opacity)) * var(--glass-blur-scale)),
           transparent
         );
@@ -479,12 +499,27 @@ export class Sv3Composer extends JfElement {
         backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale)))
           saturate(var(--glass-saturation));
         box-shadow: var(--composer-shadow);
+        transition: background-color var(--duration-sv3-micro) var(--ease-sv3-enter);
+      }
+      /* Tempdoc 864 Layer 1(d) — THE LIFT, and the one place the knob is spent back. The field
+         holding focus is read off the field itself, in this tree: ':has()' on '.glass' looks at
+         '.glass''s own descendants, which is where the '<textarea>' is. The ':host(:has(…))' form is
+         the obvious alternative and is the one shape this window may not use — 822 F3 measured it as
+         a Chrome syntax error that takes its whole selector list down with it, and even where it
+         parses, ':host()' matches its argument against the host in the OUTER tree, which a shadow
+         field is not part of. ':focus', not ':focus-visible': the de-emphasis lifts for a reader who
+         clicked in just as much as for one who tabbed in — it says "your typing lands here", which is
+         true either way. The ':focus-visible' ring below stays on the keyboard pseudo-class. */
+      .glass:has(textarea:focus) {
+        --composer-rest: 0;
       }
       /* Mandatory companion to any glass surface: where blur is unsupported the fill goes opaque,
-         because a translucent surface with nothing blurred behind it is unreadable, not subtle. */
+         because a translucent surface with nothing blurred behind it is unreadable, not subtle.
+         It reads the RESTING surface, so the no-blur path carries the resting state too rather than
+         quietly re-emphasising the composer wherever backdrop-filter is missing. */
       @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
         .glass {
-          background: var(--composer-glass-surface);
+          background: var(--composer-rest-surface);
         }
       }
 
@@ -495,20 +530,35 @@ export class Sv3Composer extends JfElement {
         z-index: 1;
         inset: 0;
         border: 1px solid var(--composer-outline);
+        /* Tempdoc 864 Layer 1(d), the second derived declaration — the frame §2.9(b) named as the
+           thing that "frames the entire box as the input" fades with the same knob, so the resting
+           box does not only sit lower, it is outlined more faintly too. The shorthand above keeps the
+           1px line and the token as the single source; only its alpha is spent here. */
+        border-color: color-mix(
+          in srgb,
+          var(--composer-outline) calc(100% - 55% * var(--composer-rest)),
+          transparent
+        );
         border-radius: inherit;
         box-shadow: var(--composer-highlight);
+        transition: border-color var(--duration-sv3-micro) var(--ease-sv3-enter);
       }
 
       /* Per the design spec: the field itself stays unstyled and every state is read off the wrapper, so
-         focus and validity are one ring rather than two competing outlines. */
-      :host(:has(textarea:focus-visible)) .glass::after {
+         focus and validity are one ring rather than two competing outlines.
+         Tempdoc 864 Layer 1(d) — these three were ':host(:has(…)) .glass::after' and are re-keyed onto
+         the wrapper for the reason given at '.glass:has(textarea:focus)' above: the ring they draw is
+         this composer's ONLY "here is where you are typing" mark, and on the ':host()' form it is not
+         reachable in Chrome. Same pseudo-classes, same order, same declarations — the element that
+         reads them is now the one the field it reports on actually lives in. */
+      .glass:has(textarea:focus-visible)::after {
         border-color: var(--ring);
         outline: 3px solid color-mix(in srgb, var(--ring) 24%, transparent);
       }
-      :host(:has(textarea[aria-invalid='true'])) .glass::after {
+      .glass:has(textarea[aria-invalid='true'])::after {
         border-color: color-mix(in srgb, var(--destructive) 36%, transparent);
       }
-      :host(:has(textarea[aria-invalid='true']:focus-visible)) .glass::after {
+      .glass:has(textarea[aria-invalid='true']:focus-visible)::after {
         outline-color: color-mix(in srgb, var(--destructive) 16%, transparent);
       }
 
@@ -883,6 +933,13 @@ export class Sv3Composer extends JfElement {
         button.composer-control,
         button.stop,
         button.send {
+          transition: none;
+        }
+        /* Tempdoc 864 Layer 1(d) — the resting STATE survives, its animation does not. A reader who
+           asked for less motion still gets the de-emphasis and the lift; they arrive in one frame
+           instead of easing in, which is the same trade the control labels make above. */
+        .glass,
+        .glass::after {
           transition: none;
         }
         button.stop:hover:not(:disabled),
