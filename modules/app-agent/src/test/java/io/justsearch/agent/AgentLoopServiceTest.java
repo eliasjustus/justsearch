@@ -1270,7 +1270,10 @@ class AgentLoopServiceTest {
         done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
         deltaDocIds(events),
         "the concatenated per-call deltas ARE the terminal source list — same members, same order."
-            + " A divergence here is a silently misdirected inline mark on every answer.");
+            + " A divergence here is a silently misdirected inline mark on every answer."
+            + " (865 §7.5: the compared identity is the document, deliberately NOT the inclusion"
+            + " axis — a delta is minted absent and the terminal resolves it, so the two SHOULD"
+            + " differ there and equivalence is a claim about which sources, in which order.)");
   }
 
   /**

@@ -897,7 +897,7 @@ final class AgentInteractionMapperTest {
   /**
    * Tempdoc 865 §7.7 / §8.3 item 6 — the ZERO-BEHAVIOUR-CHANGE guard on the durability teardown.
    *
-   * <p>The twelve {@code AgentRunShape} kinds that used to reach {@code default} are now written as
+   * <p>The thirteen {@code AgentRunShape} kinds that used to reach {@code default} are now written as
    * explicit non-projecting cases. That is a legibility change and nothing else, so it needs a test
    * that would fail if any of them started projecting — the risk of writing a name down is that
    * someone later gives it a body, and "no existing kind's durability changes" is the whole contract

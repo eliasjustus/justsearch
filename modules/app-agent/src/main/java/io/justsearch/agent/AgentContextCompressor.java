@@ -29,43 +29,44 @@ import java.util.regex.Pattern;
 final class AgentContextCompressor {
 
   /**
-   * Tempdoc 865 §7.5 — THE RECEIPT: which tool calls' result excerpts are still in the prompt this
-   * pass produced, and which no longer are. Keyed by {@code tool_call_id}, which is what makes the
-   * join to grounding sources possible at all: compression copies the message map and replaces only
-   * {@code content} ({@link #compressToolMessages}), so the link from a compressed message back to
-   * its tool call — and thence to the sources that call minted — survives untouched.
+   * Tempdoc 865 §7.5 — THE RECEIPT: which tool calls' results still put text in front of the model
+   * in the prompt this pass produced, and which have had their text removed. Keyed by {@code
+   * tool_call_id}, which is what makes the join to grounding sources possible at all: compression
+   * copies the message map and replaces only {@code content} ({@link #compressToolMessages}), so the
+   * link from a compressed message back to its tool call — and thence to the sources that call
+   * minted — survives untouched.
    *
-   * <p>It is a RECEIPT, not a re-derivation: the compressor states what it left standing, read off
-   * the very message list it just wrote, using its own {@code Excerpt:} line pattern. The decision
-   * is therefore self-evidencing — whether a given message still carries result excerpts is
-   * decidable from the artifact itself, with no bookkeeping to fall out of sync.
+   * <p><b>THREE outcomes, not two, and the third is why this record has two sets rather than one
+   * flag.</b> A tool call is reported {@code textIntact} when its message still holds a carrier line
+   * ({@link ToolResultCarrier#carriesText}), {@code textRemoved} when this pass rewrote it or it
+   * bears {@link #COMPRESSED_MARKER}, and named in NEITHER set otherwise. That last case is a real
+   * "cannot tell": a tool whose output never carried hit text looks exactly like one whose text was
+   * stripped by a pass this receipt did not witness. Collapsing it into "removed" is the bug this
+   * shape prevents — a dense-only search hit is written as {@code Preview:}, never {@code Excerpt:},
+   * and a one-set receipt reported every such source as never sent while its text sat in the prompt.
    *
-   * <p>Every pass reports on EVERY tool message, kept and compressed alike, so one receipt is a
-   * complete picture of a single prompt rather than a running tally. That is what makes the state
-   * PER-FINAL-PROMPT: a source whose text was stripped at iteration 5 and re-delivered by a search
-   * at iteration 9 has an intact carrier again, and the latest receipt says so.
+   * <p>{@code textIntact} is recomputed from scratch every pass, so it is a picture of ONE prompt.
+   * {@code textRemoved} is monotone by construction — a message's content is only ever shortened, so
+   * a carrier line that is gone never returns — which is why {@code AgentSession} may safely carry it
+   * forward. The per-final-prompt property lives in the CARRIER SET instead: a document re-returned
+   * by a later search has a new, intact carrier.
    *
-   * @param excerptsIntact tool calls whose message still carries {@code Excerpt:} lines
-   * @param excerptsStripped tool calls whose message no longer does
+   * @param textIntact tool calls whose message still carries a hit-text line
+   * @param textRemoved tool calls whose message demonstrably no longer does
    */
-  record CompressionReceipt(Set<String> excerptsIntact, Set<String> excerptsStripped) {
+  record CompressionReceipt(Set<String> textIntact, Set<String> textRemoved) {
 
     /** No pass has run, so nothing is known about any prompt. Consumers must say nothing. */
     static final CompressionReceipt NONE = new CompressionReceipt(Set.of(), Set.of());
 
     CompressionReceipt {
-      excerptsIntact = Set.copyOf(excerptsIntact);
-      excerptsStripped = Set.copyOf(excerptsStripped);
+      textIntact = Set.copyOf(textIntact);
+      textRemoved = Set.copyOf(textRemoved);
     }
 
-    /** True when this receipt describes a real prompt (at least one tool message was seen). */
+    /** True when this receipt describes a real prompt (at least one tool message was classified). */
     boolean observed() {
-      return !excerptsIntact.isEmpty() || !excerptsStripped.isEmpty();
-    }
-
-    /** True when this tool call's message still carries its result excerpts. */
-    boolean intact(String toolCallId) {
-      return excerptsIntact.contains(toolCallId);
+      return !textIntact.isEmpty() || !textRemoved.isEmpty();
     }
   }
 
@@ -73,8 +74,9 @@ final class AgentContextCompressor {
   static final int MAX_TOOL_RESULT_CHARS =
       Math.max(100, resolveInt(rc -> rc.agent().maxToolResultChars(), 4000));
 
-  private static final Pattern EXCERPT_LINE =
-      Pattern.compile("^\\s+Excerpt:.*$", Pattern.MULTILINE);
+  /** The marker {@link #compressToolOutput} stamps on every output it actually rewrote. */
+  static final String COMPRESSED_MARKER = "[compressed-tool-output";
+
   private static final Set<String> COMPRESSION_KEYWORDS =
       Set.of("error", "warning", "failed", "result", "path", "match", "id");
 
@@ -107,7 +109,7 @@ final class AgentContextCompressor {
    */
   CompressionReceipt compressToolMessages(List<Map<String, Object>> messages) {
     if (!enabled || messages == null || messages.isEmpty()) {
-      return receiptFor(messages);
+      return receiptFor(messages, Set.of());
     }
 
     List<Integer> toolMessageIndexes = new ArrayList<>();
@@ -119,9 +121,10 @@ final class AgentContextCompressor {
     }
 
     if (toolMessageIndexes.size() <= keepLastResults) {
-      return receiptFor(messages);
+      return receiptFor(messages, Set.of());
     }
 
+    var rewritten = new LinkedHashSet<String>();
     int compressCount = toolMessageIndexes.size() - keepLastResults;
     for (int n = 0; n < compressCount; n++) {
       int messageIndex = toolMessageIndexes.get(n);
@@ -137,28 +140,40 @@ final class AgentContextCompressor {
       var replacement = new LinkedHashMap<String, Object>(message);
       replacement.put("content", compressed);
       messages.set(messageIndex, replacement);
+      if (message.get("tool_call_id") instanceof String id && !id.isBlank()) {
+        rewritten.add(id);
+      }
     }
-    return receiptFor(messages);
+    return receiptFor(messages, rewritten);
   }
 
   /**
-   * Tempdoc 865 §7.5 — read the receipt off a message list: a tool message that still matches
-   * {@link #EXCERPT_LINE} carries its result excerpts, one that does not has lost them.
+   * Tempdoc 865 §7.5 — read the receipt off the message list this pass produced.
    *
-   * <p>Reading the RESULT rather than diffing the pass is deliberate. A message compressed in an
-   * earlier iteration is not touched again (the {@code [compressed-tool-output} guard in {@link
-   * #compressToolOutput} returns it unchanged), so a per-pass diff would report it as untouched and
-   * therefore intact — the exact inversion of the truth. The artifact cannot lie that way.
+   * <p>Two sources of truth, and each covers the other's blind spot. {@link
+   * ToolResultCarrier#carriesText} asks the ARTIFACT whether a hit's text is still in front of the
+   * model — the only question that matters, and one no bookkeeping trail can get wrong. But its
+   * negative answer is ambiguous, because a tool that never carried hit text is indistinguishable
+   * from one whose text was stripped. So "removed" needs positive evidence: this pass rewrote the
+   * message, or the message bears {@link #COMPRESSED_MARKER} from a pass that did.
    *
-   * <p>A tool message that never carried excerpts (a non-search tool) reports as stripped. That
-   * costs nothing: such a call minted no grounding source, so no source ever joins to it.
+   * <p>Neither signal alone is sufficient, and both failure modes are real. Artifact-only reported a
+   * dense-only {@code Preview:} message as stripped with zero compression. Rewrite-only would miss
+   * every message compressed in an EARLIER pass, because {@link #compressToolOutput} refuses to
+   * re-compress its own output and the marker is the only trace left — and it misses the strip-only
+   * case entirely (a message whose excerpts are removed but whose remainder falls under {@code
+   * minChars} is written back with no marker), which is what {@code AgentSession} carries forward
+   * across passes rather than re-deriving here.
+   *
+   * <p>Anything neither intact nor evidenced-removed is named in NEITHER set. Say nothing.
    */
-  private static CompressionReceipt receiptFor(List<Map<String, Object>> messages) {
+  static CompressionReceipt receiptFor(
+      List<Map<String, Object>> messages, Set<String> rewrittenThisPass) {
     if (messages == null || messages.isEmpty()) {
       return CompressionReceipt.NONE;
     }
     var intact = new LinkedHashSet<String>();
-    var stripped = new LinkedHashSet<String>();
+    var removed = new LinkedHashSet<String>();
     for (Map<String, Object> message : messages) {
       if (!"tool".equals(message.get("role"))
           || !(message.get("tool_call_id") instanceof String id)
@@ -166,16 +181,16 @@ final class AgentContextCompressor {
         continue;
       }
       String content = message.get("content") instanceof String s ? s : "";
-      if (EXCERPT_LINE.matcher(content).find()) {
+      if (ToolResultCarrier.carriesText(content)) {
+        // A carrier line survived, so this call's text is (at least partly) in the prompt. This wins
+        // over the rewrite evidence: compression's line selection can keep a `Preview:` line, and
+        // "some of it is still there" forbids the only claim this producer makes.
         intact.add(id);
-      } else {
-        stripped.add(id);
+      } else if (rewrittenThisPass.contains(id) || content.startsWith(COMPRESSED_MARKER)) {
+        removed.add(id);
       }
     }
-    // One call id can only carry one message, but assert the partition rather than assume it: an
-    // id in both sets would make `intact` ambiguous, and intact-wins is the say-less answer.
-    stripped.removeAll(intact);
-    return new CompressionReceipt(intact, stripped);
+    return new CompressionReceipt(intact, removed);
   }
 
   /**
@@ -183,16 +198,21 @@ final class AgentContextCompressor {
    * longest per-result field (~200 chars each) and are only useful for the current iteration.
    */
   static String stripSearchExcerpts(String content) {
-    if (content == null || !content.contains("Excerpt:")) {
+    if (!ToolResultCarrier.mayHaveStrippableLine(content)) {
       return content;
     }
-    return EXCERPT_LINE.matcher(content).replaceAll("").replaceAll("\n{2,}", "\n");
+    // Tempdoc 865 §7.5 — STRIPPABLE_LINE, not CARRIER_LINE: this removes excerpt lines only, exactly
+    // as before. Preview lines are a dense-only hit's whole text and were never part of Layer 3.
+    return ToolResultCarrier.STRIPPABLE_LINE
+        .matcher(content)
+        .replaceAll("")
+        .replaceAll("\n{2,}", "\n");
   }
 
   private String compressToolOutput(String content) {
     if (content == null
         || content.length() < minChars
-        || content.startsWith("[compressed-tool-output")) {
+        || content.startsWith(COMPRESSED_MARKER)) {
       return content;
     }
 
@@ -216,7 +236,7 @@ final class AgentContextCompressor {
 
     String compressed =
         String.format(
-            "[compressed-tool-output originalChars=%d keptChars=%d]%n%s",
+            COMPRESSED_MARKER + " originalChars=%d keptChars=%d]%n%s",
             content.length(),
             kept.length(),
             kept);

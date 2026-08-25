@@ -1372,14 +1372,47 @@ ships narrowed to ONE state, and that narrowing is the honesty constraint, not a
 shortcut.**
 
 The producer is a RECEIPT, not a re-derivation: `compressToolMessages` now returns a
-`CompressionReceipt` (which `tool_call_id`s' messages still match its own `Excerpt:`
-line pattern in the list it just wrote), and the session holds the LATEST one —
-replaced, never accumulated, so the state is per-final-prompt as §4.6 requires.
-Reading the ARTIFACT rather than diffing the pass is load-bearing: `compressToolOutput`
-refuses to re-compress its own output, so a per-pass diff would report an
-already-compressed message as untouched and therefore *intact* — the exact inversion of
-the truth. A source's carriers are a SET, not its minting call, which is what lets a
-document re-returned by a later search stop being described as dropped.
+`CompressionReceipt` over the message list it just wrote. A source's carriers are a SET,
+not its minting call, which is what lets a document re-returned by a later search stop
+being described as dropped.
+
+**The receipt has THREE outcomes, and the two-outcome version shipped a false claim
+(independent review F1, reproduced live).** Rev 3's first implementation asked one
+question — "does this message still have an `Excerpt:` line?" — and partitioned every
+tool message on the answer. But a vector/dense-only hit has no excerpt regions, so
+`SearchTool.formatResults`'s else-branch writes its text as `Preview:`
+(`SearchTool.java:451-459`), which Layer 3 never strips and that predicate could never
+match. Such a message was classified stripped **with zero compression having occurred**,
+and the panel rendered "Retrieved · never sent to the model" over text sitting verbatim
+in the prompt. Not silence — a confident falsehood, on the exact question the producer
+exists to answer. The licensing comment ("such a call minted no grounding source") was
+simply false for that branch.
+
+The fix is the honest predicate, *"the carrier no longer holds the text it had"*, which
+needs both a wider reader and positive evidence of removal:
+
+- **`textIntact`** — the message still matches `ToolResultCarrier.CARRIER_LINE`, which
+  covers BOTH spellings. This wins over every other signal: if any carrier line survived,
+  some of the text is there, and the one claim this producer makes is forbidden.
+- **`textRemoved`** — this pass rewrote the message, or it bears the
+  `[compressed-tool-output` marker a pass that did left behind.
+- **NEITHER** — say nothing. A tool that never carried hit text is indistinguishable from
+  one stripped by a pass this receipt did not witness, and collapsing that into "removed"
+  is exactly the F1 bug.
+
+Both signals are needed and each covers the other's blind spot: artifact-only produced
+F1; rewrite-only misses every message compressed in an *earlier* pass, because
+`compressToolOutput` refuses to re-compress its own output. The strip-only case (excerpts
+removed, remainder under `minChars`, so no marker is written) is witnessed by exactly one
+pass — which is why `AgentSession` **folds** `textRemoved` forward rather than re-deriving
+it. That accumulation is sound because a message's content only ever shrinks; the
+per-final-prompt property lives in the carrier set instead, and `inclusionFor` requires
+**every** carrier to have lost its text before it will speak.
+
+One structural consequence, recorded because it is the general lesson: the format coupling
+now has a single owner. `ToolResultCarrier` holds the writer's `excerptLine`/`previewLine`
+and both reader patterns — deliberately two patterns, since widening the *strip* to match
+the *reader* would silently delete a dense-only hit's whole text from the prompt.
 
 **What it states, and what it refuses to.** Only `dropped` (else ABSENT). Not
 `included` — and the falsifier is concrete, not cautionary: Layer 1
@@ -1415,9 +1448,27 @@ grounding axis is a claim about a matcher's relationship to text the model never
 "not examined" would invite "so examine it", and "grounding check did not complete" would
 imply a completed check could have said something.
 
+**Every compression site records (review F2).** `AgentLlmCaller.attemptBudgetEdgeFinalize`
+compressed bare, and that pass is the one that builds the prompt
+`groundedDone(BUDGET_EDGE_FINALIZE)`'s answer is written from — so the terminal under the
+run's *maximal* compression pressure resolved against a one-pass-stale receipt and
+withheld the badge precisely where the most text had been dropped. The seam was invisible
+to every other test: mint, join and stamp all worked, and the only symptom was a run
+saying nothing when it had the most to say. Now threaded, and pinned by a test that goes
+red when the wrapper is removed.
+
 **Still unrun: the live tier.** Every claim above is compile-, unit- and gate-tier. §8.7's
 L-5 audit now covers PR-0, PR-1 and PR-3 — this slice adds a THIRD new sentence a reader
 will act on, and no one has yet seen any of them rendered.
+
+**Method note worth keeping.** F1 and F2 were both found by an independent reviewer rather
+than by the implementing agent's own critical-analysis pass, and they are the same shape: a
+producer that is correct on the path its author had in mind and silently wrong on a sibling
+path — a second result-formatting branch, a second compression call site. The
+generalisable check is not "re-read the diff"; it is **enumerate the writer's branches and
+the producer's call sites, and ask the predicate about each one**. `ToolResultCarrier` and
+the F2 threading both exist so that the next such branch is a compile-time or test-time
+concern rather than a reviewer's catch.
 
 ### 7.6 The acquisition axis — vocabulary now, structure only when it has a second value
 

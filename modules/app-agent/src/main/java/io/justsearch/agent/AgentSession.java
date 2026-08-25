@@ -89,12 +89,23 @@ final class AgentSession {
       AgentEvent.AgentSource source, LinkedHashSet<String> carrierCallIds) {}
 
   /**
-   * Tempdoc 865 §7.5 — the compressor's latest receipt: what the prompt looked like after the most
-   * recent compression pass. REPLACED, never accumulated — inclusion is a fact about ONE prompt, and
-   * a running union would report a source as dropped forever after the first pass that stripped it.
+   * Tempdoc 865 §7.5 — the tool calls whose result text the compressor has taken out of the prompt,
+   * folded from every receipt this run has seen.
+   *
+   * <p>ACCUMULATED, and that is sound rather than convenient: a tool message's content is only ever
+   * shortened, so a carrier line that is gone never comes back. It is also necessary — a message
+   * whose excerpts are stripped but whose remainder falls under the compressor's minimum length is
+   * written back bearing no marker, so the ONLY pass that can witness it is the one that did it.
+   *
+   * <p>This does not make the state cumulative in the sense §4.6 warns about. The per-final-prompt
+   * property lives in {@link GroundingEntry#carrierCallIds}: a document re-returned by a later
+   * search has a new carrier whose message is intact, and {@link #inclusionFor} requires EVERY
+   * carrier to have lost its text before it will say anything.
    */
-  private AgentContextCompressor.CompressionReceipt lastCompression =
-      AgentContextCompressor.CompressionReceipt.NONE;
+  private final LinkedHashSet<String> carriersWithTextRemoved = new LinkedHashSet<>();
+
+  /** Whether any compression pass has reported at all. Before the first one, say nothing. */
+  private boolean compressionObserved;
 
   private volatile boolean cancelled;
   private int iterationsUsed;
@@ -386,7 +397,15 @@ final class AgentSession {
    * picture rather than the first one.
    */
   void recordCompression(AgentContextCompressor.CompressionReceipt receipt) {
-    this.lastCompression = receipt == null ? AgentContextCompressor.CompressionReceipt.NONE : receipt;
+    if (receipt == null) {
+      return;
+    }
+    carriersWithTextRemoved.addAll(receipt.textRemoved());
+    // A carrier the latest prompt shows as still holding text cannot also have lost it. Content only
+    // ever shrinks, so this should never fire — but the say-less answer is cheap and the alternative
+    // is a contradiction the reader would see as a confident false claim.
+    carriersWithTextRemoved.removeAll(receipt.textIntact());
+    compressionObserved = compressionObserved || receipt.observed();
   }
 
   /**
@@ -406,22 +425,28 @@ final class AgentSession {
    * <p><b>Why no {@code included}, and this is the honesty constraint, not a shortcut.</b> There are
    * THREE truncation layers and 849's vocabulary models only the third. Layer 1 is {@code
    * SearchTool.formatResults}' per-result budget ({@code MAX_TOOL_RESULT_CHARS / hits.size()}),
-   * which clips — or omits outright — a later hit's {@code Excerpt:} line while that hit is still
-   * minted as a source from the untruncated {@code structuredData}. Layer 2 is {@code
+   * which clips — or omits outright — a later hit's carrier line while that hit is still minted as a
+   * source from the untruncated {@code structuredData}. Layer 2 is {@code
    * AgentContextCompressor.truncate}'s hard per-message cut. Neither is visible here. So "this
-   * message still has excerpt lines" cannot mean "THIS source's excerpt reached the model", and
-   * stamping {@code included} would fabricate exactly the claim 849 exists to remove.
+   * message still carries hit text" cannot mean "THIS source's text reached the model", and stamping
+   * {@code included} would fabricate exactly the claim 849 exists to remove.
    *
    * <p>DROPPED survives that objection because it is MONOTONE across the layers: once Layer 3 has
-   * taken the excerpts out of the carrier message, no upstream cut can put them back. It is also the
-   * only state the reader acts on — {@code suppressGroundingFor} keys on {@code dropped} alone.
+   * taken the text out of the carrier message, no upstream cut can put it back. It is also the only
+   * state the reader acts on — {@code suppressGroundingFor} keys on {@code dropped} alone.
+   *
+   * <p><b>EVERY carrier, not any.</b> The quantifier is the per-final-prompt semantic: one intact
+   * carrier means the text is in the prompt, whoever else lost it. A carrier the receipts have said
+   * nothing about is not evidence either — {@code carriersWithTextRemoved} holds only calls with
+   * positive evidence of removal, so "not in that set" covers both intact and unknown, and both must
+   * silence the claim.
    */
   private DocumentService.ContextInclusion inclusionFor(GroundingEntry entry) {
-    if (!lastCompression.observed() || entry.carrierCallIds().isEmpty()) {
+    if (!compressionObserved || entry.carrierCallIds().isEmpty()) {
       return DocumentService.ContextInclusion.ABSENT;
     }
     for (String callId : entry.carrierCallIds()) {
-      if (lastCompression.intact(callId)) {
+      if (!carriersWithTextRemoved.contains(callId)) {
         return DocumentService.ContextInclusion.ABSENT;
       }
     }

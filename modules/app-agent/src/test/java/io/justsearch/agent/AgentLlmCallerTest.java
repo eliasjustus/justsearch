@@ -171,4 +171,78 @@ class AgentLlmCallerTest {
         instruction.contains("Do not call any more tools."),
         "the original no-tools constraint survives the rewrite (the finalize call passes no tools)");
   }
+
+  /**
+   * Tempdoc 865 §7.5 (review F2) — the budget-edge finalize's compression pass must RECORD its
+   * receipt, like every other compression site.
+   *
+   * <p>This one matters most and was the one that did not. It builds the exact prompt {@code
+   * groundedDone(BUDGET_EDGE_FINALIZE)}'s answer is written from, under the run's maximal
+   * compression pressure — so compressing bare here left the terminal resolving inclusion against a
+   * picture taken one pass earlier, silently withholding the badge precisely where the most text had
+   * been dropped. The seam is invisible to every other test: the mint works, the join works, and the
+   * only symptom is a run that says nothing when it had the most to say.
+   *
+   * <p>The LLM call itself is irrelevant here and is left to fail (a null service) — {@code
+   * attemptBudgetEdgeFinalize} catches it, and the compression happens before it either way.
+   */
+  @Test
+  void budgetEdgeFinalizeRecordsItsCompressionReceipt() {
+    var compressor = new AgentContextCompressor(true, 200, 1);
+    var session =
+        new AgentSession(
+            new java.util.ArrayList<>(List.of(java.util.Map.<String, Object>of("role", "user", "content", "q"))),
+            8000);
+
+    // Two searches, their tool messages appended — and NO compression pass recorded yet, which is
+    // the state the budget-edge path finds the session in when the budget trips mid-iteration.
+    for (String callId : List.of("call-1", "call-2")) {
+      var result =
+          io.justsearch.agent.api.registry.OperationResult.success(
+              "Found 1 result(s)\n  /docs/"
+                  + callId
+                  + ".md\n"
+                  + ToolResultCarrier.excerptLine(
+                      "the passage text for "
+                          + callId
+                          + ", padded so this message clears the compressor's minimum-length floor"
+                          + " and is therefore one that compression will actually rewrite"),
+              java.util.Map.of(
+                  "searchResults",
+                  List.of(
+                      java.util.Map.<String, Object>of(
+                          "parentDocId", callId,
+                          "chunkIndex", 0,
+                          "path", "/docs/" + callId + ".md",
+                          "title", "Doc",
+                          "excerpt", "an excerpt",
+                          "startLine", 1,
+                          "endLine", 5,
+                          "headingText", ""))));
+      session.recordExecution(new ToolCallRequest(callId, "core_search_index", "{}"), result);
+      var message = new java.util.LinkedHashMap<String, Object>();
+      message.put("role", "tool");
+      message.put("tool_call_id", callId);
+      message.put("content", result.message());
+      session.appendMessage(message);
+    }
+
+    assertTrue(
+        session.collectGroundingSources().stream()
+            .allMatch(s -> s.contextInclusion().isEmpty()),
+        "precondition: no pass has reported, so the run claims nothing about any source");
+
+    new AgentLlmCaller(null, AgentTelemetry.noop(), compressor)
+        .attemptBudgetEdgeFinalize(session, event -> {});
+
+    assertEquals(
+        "dropped",
+        session.collectGroundingSources().stream()
+            .filter(s -> s.parentDocId().equals("call-1"))
+            .findFirst()
+            .orElseThrow()
+            .contextInclusion(),
+        "the finalize pass compressed the older result out of the prompt, and the terminal that"
+            + " reads this session must be told — this is the prompt its answer is written from");
+  }
 }

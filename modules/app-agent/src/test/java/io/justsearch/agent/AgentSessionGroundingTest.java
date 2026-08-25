@@ -256,9 +256,29 @@ final class AgentSessionGroundingTest {
     List<AgentEvent.AgentSource> concatenated =
         java.util.stream.Stream.concat(delta1.stream(), delta2.stream()).toList();
     assertEquals(
-        session.collectGroundingSources(),
-        concatenated,
+        identityOf(session.collectGroundingSources()),
+        identityOf(concatenated),
         "concatenated deltas == the terminal source list, element for element and in order");
+  }
+
+  /**
+   * Tempdoc 865 §7.5 — compare the eight IDENTITY components, explicitly ignoring the inclusion
+   * axis.
+   *
+   * <p>The two sides legitimately differ there and only there: a delta is minted absent, while the
+   * terminal resolves inclusion against the final prompt. Bare record equality would pass here today
+   * only because this fixture records no compression receipt — a precondition nothing in the test
+   * states, and one a future fixture could remove without meaning to, turning an alignment guard into
+   * a puzzling failure about a budget fact.
+   */
+  private static List<AgentEvent.AgentSource> identityOf(List<AgentEvent.AgentSource> sources) {
+    return sources.stream()
+        .map(
+            s ->
+                s.withInclusion(
+                    AgentEvent.AgentSource.INCLUSION_ABSENT,
+                    AgentEvent.AgentSource.INCLUDED_CHARS_UNKNOWN))
+        .toList();
   }
 
   /**
