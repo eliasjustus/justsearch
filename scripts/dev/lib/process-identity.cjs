@@ -64,11 +64,80 @@ const { spawnSync } = require('node:child_process');
  * host's culture. Kernel-owned rows (`System Idle Process`) can carry a null `CreationDate`; the
  * guard emits `$null` for those rather than throwing, and the JS side reads a null as
  * evidence-unavailable.
+ *
+ * 861 production orientation sweep (2026-08-25): every identity verification on one host degraded
+ * to REFUSE with `process-table output is not JSON: Bad control character in string literal in
+ * JSON at position 118004`. Reproduced (not merely hypothesized) with a disposable child process
+ * whose argv embedded U+2022 ('•'): Windows PowerShell 5.1's `[Console]::OutputEncoding` when
+ * non-interactive AND redirected is the OEM codepage (IBM437 / CP437 on this host), NOT UTF-8 —
+ * confirmed via `[Console]::OutputEncoding.WebName` under `-NoProfile -NonInteractive` with stdout
+ * piped, same as this module's `spawnSync` call. `ConvertTo-Json` does its job correctly: U+2022 is
+ * far above the C0 range, so it is emitted unescaped, which is valid JSON. The corruption happens
+ * ONE STEP LATER, purely in the OS text-encoding layer: CP437 is the historical IBM-PC OEM codepage,
+ * whose low byte values 0x01-0x1F double as GLYPHS for box-drawing/suit/arrow symbols (e.g. U+2022
+ * '•' -> byte 0x07, U+263A '☺' -> byte 0x01, U+2192 '→' -> byte 0x1A) — a design predating the
+ * existence of Unicode, when those bytes only ever meant "draw this glyph" on PC display hardware.
+ * When PowerShell's console host writes the (valid) JSON string through that encoding, the
+ * printable Unicode symbol becomes a single raw CP437 byte in the 0x01-0x1F range. That byte is
+ * ALSO a valid one-byte UTF-8 code point (ASCII identity range), so `spawnSync({encoding:'utf8'})`
+ * decodes it losslessly back into a genuine C0 control character sitting unescaped inside what was,
+ * one hop earlier, valid JSON — reproducing the exact "Bad control character" message and position
+ * shape. A brute-force scan of the CP437-encode -> UTF-8-decode round trip across every BMP code
+ * point (`scan-cp437.ps1`, ad hoc) found 34 codepoints with this property, all common symbols a
+ * real-world process could plausibly carry in its command line (bullets, section/pilcrow marks,
+ * arrows, card suits, music notes). The root-cause fix is therefore the ENCODING step, not a
+ * missing escape: forcing the console's actual output encoding to match what the Node side decodes
+ * with (`utf8`) eliminates the whole codepage-glyph-collision class, verified by re-running the same
+ * repro after the encoding line was added (no corruption, U+2022/U+263A round-tripped intact).
+ *
+ * The `-replace` calculated properties below are a SEPARATE, complementary layer: they guard
+ * against a genuine raw control byte actually present in `CommandLine`/`Name` (e.g. a corrupted WMI
+ * cross-process memory read for a protected process — a documented, independent WMI failure mode,
+ * distinct from the codepage bug above) reaching `ConvertTo-Json` at all. Tab/LF/CR are excluded
+ * because `ConvertTo-Json` already escapes them correctly (`\t`/`\n`/`\r`) and they are legitimate,
+ * harmless content; every other C0 control is stripped. Neither layer alone is sufficient: the
+ * encoding fix does not help if the source string already contains a genuine raw control byte
+ * (CP437 round-trips ASCII control bytes as themselves), and the sanitizer does not help against a
+ * printable symbol being mis-encoded downstream — hence both.
  */
 const PROCESS_TABLE_PS_COMMAND =
-  'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,' +
+  '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); ' +
+  'Get-CimInstance Win32_Process | Select-Object ' +
+  "@{Name='ProcessId';Expression={$_.ProcessId}}," +
+  "@{Name='ParentProcessId';Expression={$_.ParentProcessId}}," +
+  "@{Name='Name';Expression={ if ($_.Name) { $_.Name -replace '[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]','' } else { $_.Name } }}," +
+  "@{Name='CommandLine';Expression={ if ($_.CommandLine) { $_.CommandLine -replace '[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]','' } else { $_.CommandLine } }}," +
   "@{Name='CreationFileTimeUtc';Expression={ if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc().ToString() } else { $null } }}" +
   ' | ConvertTo-Json -Compress -Depth 2';
+
+/**
+ * Best-effort diagnostic for a `JSON.parse` failure on process-table output, so REFUSE carries
+ * enough for the next operator to act instead of grepping logs (`verify-dont-guess`). Pulls the
+ * byte position V8 reports out of the error message and prints a short window around it, flagging
+ * any C0 control byte that window still contains (post-sanitization, that indicates the encoding
+ * layer, not a missing string sanitize — see `PROCESS_TABLE_PS_COMMAND`'s comment).
+ *
+ * Deliberately best-effort: an error message shape V8 changes, or non-string `text`, degrades to
+ * the plain message rather than throwing from inside a diagnostic.
+ */
+function describeJsonParseFailure(text, err) {
+  const message = String((err && err.message) || err || 'unknown JSON.parse error');
+  if (typeof text !== 'string' || text.length === 0) return message;
+  const match = /position (\d+)/.exec(message);
+  if (!match) return message;
+  const pos = Number(match[1]);
+  if (!Number.isFinite(pos)) return message;
+  const start = Math.max(0, pos - 40);
+  const end = Math.min(text.length, pos + 40);
+  const window = text.slice(start, end);
+  const controlBytes = [...window]
+    .map((ch) => ch.codePointAt(0))
+    .filter((cp) => cp !== undefined && cp < 0x20 && cp !== 0x09 && cp !== 0x0a && cp !== 0x0d);
+  const controlNote = controlBytes.length
+    ? `; control byte(s) in window: ${[...new Set(controlBytes)].map((cp) => `0x${cp.toString(16).padStart(2, '0')}`).join(',')}`
+    : '';
+  return `${message} — near offset ${pos}: ${JSON.stringify(window)}${controlNote}`;
+}
 
 /**
  * The verdict vocabulary. THREE values — a boolean cannot express "I have no evidence", which is
@@ -156,7 +225,7 @@ function readProcessTable({ platform = process.platform, exec = spawnSync, now =
   try {
     parsed = JSON.parse(res.stdout);
   } catch (err) {
-    return { ok: false, reason: `process-table output is not JSON: ${String(err?.message || err).slice(0, 200)}` };
+    return { ok: false, reason: `process-table output is not JSON: ${describeJsonParseFailure(res.stdout, err).slice(0, 400)}` };
   }
   const table = Array.isArray(parsed) ? parsed : [parsed];
   if (table.length === 0) {
@@ -319,6 +388,7 @@ module.exports = {
   IDENTITY,
   DEFAULT_MAX_TABLE_AGE_MS,
   normalizeCreationTime,
+  describeJsonParseFailure,
   readProcessTable,
   coerceProcessTable,
   verifyProcessIdentity,
