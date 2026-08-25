@@ -80,6 +80,33 @@ export const GIT_LOG_ARGS = [
 ];
 
 /**
+ * Session id from a shard basename (no `.md`), stripping the writer suffix.
+ *
+ * Shards are `<sessionId>[.<writer>]` since tempdoc 862 — keyed by the tree that
+ * writes them, because one session spawns many worktrees under the delegate model.
+ * This strip is LOAD-BEARING, not cosmetic: `isPlausibleSessionId`'s alphabet
+ * (`merge-links.mjs:107`, `/^[A-Za-z0-9._-]{4,80}$/`) ADMITS dots, so an unstripped
+ * `<uuid>.<writer>` would not be rejected — it would be accepted and written into
+ * session-merges.ndjson as a session that never existed. A silently wrong
+ * attribution row in a measurement file a falsifier reads is the exact class 856
+ * exists to remove (tempdoc 862 §D.4).
+ *
+ * The writer suffix is the LAST dot-segment; a name with no dot is a whole session
+ * id. That is unambiguous BY CONSTRUCTION, not by assumption about id shape:
+ * `shardPathFor` composes both halves with a dot-free sanitizer, so a shard name
+ * carries at most one dot and it is always the writer separator. (Relying on
+ * "session ids are UUIDs, which have no dots" would be unsound — ids come from
+ * $CLAUDE_CODE_SESSION_ID, and `sanitizeId` permits dots, so a dotted id would
+ * otherwise mint a bare shard that this function truncates to a session that never
+ * existed.) Degrades to the pre-862 behaviour on legacy bare-named shards.
+ */
+export function sessionIdFromShardName(base) {
+  const name = String(base ?? '');
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(0, dot) : name;
+}
+
+/**
  * Parse `git log --diff-filter=A --name-only --format=%x00%H%x1f%s%x1f%cI --
  * docs/observations.d/` into one record per commit. Pure; the test seam.
  *
@@ -97,7 +124,7 @@ export function parseShardAddLog(raw) {
     for (const line of rest) {
       const file = line.trim();
       if (!file.startsWith(SHARD_PREFIX) || !file.endsWith('.md')) continue;
-      const sessionId = file.slice(SHARD_PREFIX.length, -'.md'.length);
+      const sessionId = sessionIdFromShardName(file.slice(SHARD_PREFIX.length, -'.md'.length));
       if (sessionId && !shards.includes(sessionId)) shards.push(sessionId);
     }
     out.push({

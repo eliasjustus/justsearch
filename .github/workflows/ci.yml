@@ -265,6 +265,13 @@ jobs:
       - name: Retired window stays retired; successor cutover meets its deadline
         run: node scripts/ci/check-window-cutover.mjs
 
+      # The shape-handler live oracle compared eventSchema entries — objects — with `===`, so it
+      # reported drift for every shape while printing byte-identical live/fixture lines and could
+      # never pass. Only the comparator is unit-testable without a backend, and that is exactly the
+      # part that was wrong; the `--live` leg itself still needs a running stack.
+      - name: Test the shape-handler regen live comparator
+        run: node scripts/ci/check-shape-handler-regen.test.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 

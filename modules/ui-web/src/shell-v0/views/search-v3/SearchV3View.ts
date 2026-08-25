@@ -47,6 +47,7 @@
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
+import { FrameLatch } from '../../primitives/frameLatch.js';
 import { sv3Tokens } from './sv3-tokens.css.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import { COMPOSER_STATE_DEFAULT, WINDOW_TITLE, type Sv3ComposerState } from './fixtures.js';
@@ -1857,22 +1858,21 @@ export class SearchV3View extends JfElement {
     const startX = event.clientX;
     const startWidth = this.paneWidthPx;
     let width = startWidth;
-    let frame = 0;
+    // Tempdoc 860 §6.4 — the shared latch, so a drag that outlives the page's frames (a background
+    // throttle mid-gesture) still lands its last width instead of holding the latch to pointerup.
+    const frame = new FrameLatch();
     this.resizing = true;
     const move = (moved: PointerEvent): void => {
       width = clampSv3PaneWidth(startWidth - (moved.clientX - startX), available, sidebar);
-      if (frame !== 0) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        this.applyPaneWidth(width);
-      });
+      frame.request(() => this.applyPaneWidth(width));
     };
     const stop = (): void => {
       grip.removeEventListener('pointermove', move);
       grip.removeEventListener('pointerup', up);
       grip.removeEventListener('pointercancel', cancel);
-      if (frame !== 0) cancelAnimationFrame(frame);
-      frame = 0;
+      // The gesture's own width is settled by `up`/`cancel` below — a pass still in flight would
+      // write the pointer's last position over that verdict.
+      frame.cancel();
       this.resizing = false;
     };
     const up = (): void => {

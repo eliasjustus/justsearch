@@ -2456,6 +2456,72 @@ class AgentLoopServiceTest {
         eventsOfType(events, AgentEvent.AgentProgress.class).stream()
             .anyMatch(p -> "context_gate_reapplied".equals(p.phase())),
         "and the run must SAY it re-applied the decision — bounded autonomy, never silent");
+    // Tempdoc 859 §D (F6 follow-up) — the FIRST crossing parks, nobody answers (the test JVM sets
+    // contextGateTimeoutSec=0), and the run proceeds on its own. That is a silent continue by the
+    // same definition the budget raise is one, and it narrated NOTHING before this.
+    assertTrue(
+        eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+            .anyMatch(p -> "context_gate_unanswered".equals(p.phase())),
+        "an UNANSWERED gate that proceeds must say so too — it is the same guard rail");
+    // The compaction note names HOW MUCH it dropped: "history was shortened" without the number is
+    // not an accountability record, by the same standard the raise note is held to.
+    assertTrue(
+        eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+            .filter(p -> "context_compacted".equals(p.phase()))
+            .allMatch(p -> p.message().matches("Compacted \\d+ earlier turns? .*")),
+        "every compaction note must carry its dropped count");
+  }
+
+  @Test
+  @DisplayName("859 §D F6 — an ANSWERED context gate does NOT emit the unanswered note")
+  void answeredContextGateEmitsNoUnansweredNote() throws Exception {
+    // The discriminating half: the note must key on the TIMEOUT fallback, not merely on the gate
+    // having been opened. Held long enough that the resolve below is what ends the wait — with
+    // timeout 0 the gate falls straight through and this test would pass for the wrong reason.
+    String prev = System.getProperty("justsearch.agent.contextGateTimeoutSec");
+    System.setProperty("justsearch.agent.contextGateTimeoutSec", "10");
+    try {
+      var ai =
+          new ScriptedAiService(
+              List.of(
+                  ScriptedResponse.toolCall("c1", "core_search", "{}").withUsage(20, 10),
+                  ScriptedResponse.textOnly("done").withUsage(20, 10)));
+      var service = buildServiceWithSmallBudget(ai, 50);
+
+      var events = new CopyOnWriteArrayList<AgentEvent>();
+      var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+      var parked = new CompletableFuture<AgentEvent.ContextGatePending>();
+      Consumer<AgentEvent> sink =
+          e -> {
+            events.add(e);
+            if (e instanceof AgentEvent.SessionStarted s) {
+              sessionId.set(s.sessionId());
+            }
+            if (e instanceof AgentEvent.ContextGatePending p) {
+              parked.complete(p);
+            }
+          };
+      var request =
+          new AgentRequest(
+              userMessage("search"), List.of(), 4, List.of(), null, null, null, null, List.of(),
+              "thorough");
+      var loopThread = new Thread(() -> service.runAgent(request, sink));
+      loopThread.setDaemon(true);
+      loopThread.start();
+
+      parked.get(8, java.util.concurrent.TimeUnit.SECONDS);
+      assertTrue(
+          service.resolveContextGate(sessionId.get(), "continue"),
+          "the decision reached the session — otherwise the gate times out and this asserts nothing");
+      loopThread.join(8000);
+
+      assertTrue(
+          eventsOfType(events, AgentEvent.AgentProgress.class).stream()
+              .noneMatch(p -> "context_gate_unanswered".equals(p.phase())),
+          "the reader answered — the run did not decide for itself, so it must not say it did");
+    } finally {
+      restoreProperty("justsearch.agent.contextGateTimeoutSec", prev);
+    }
   }
 
   @Test

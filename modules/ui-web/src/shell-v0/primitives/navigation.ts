@@ -19,6 +19,7 @@
  * highlight-steal bug it papered over) is structurally unrepresentable now.
  */
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
+import { FrameLatch } from './frameLatch.js';
 import { viewportWindow, type ViewportWindow } from './scrollViewport.js';
 
 /** §21 — a measured reading landmark: a timeline item and the 0..1 scroll-extent its box occupies. */
@@ -133,14 +134,6 @@ const SCROLL_KEYS: ReadonlySet<string> = new Set([
   'Spacebar',
 ]);
 
-const raf =
-  typeof requestAnimationFrame !== 'undefined'
-    ? requestAnimationFrame
-    : (cb: FrameRequestCallback): number => {
-        queueMicrotask(() => cb(0));
-        return 0;
-      };
-
 export class NavigationController implements ReactiveController {
   /** §21 POSITION — each item's 0..1 TOP-EDGE scroll fraction (the dot placement; 814 §D4). */
   fractions = new Map<string, number>();
@@ -183,9 +176,9 @@ export class NavigationController implements ReactiveController {
   private scrollEl: HTMLElement | null = null;
   /** The content wrapper currently observed (859 F2); part of the rebind identity, like {@link scrollEl}. */
   private contentNode: HTMLElement | null = null;
-  private scrollRaf = false;
+  private readonly scrollLatch = new FrameLatch();
   /** A9 — a measure has already run in this frame; further renders coalesce into one trailing pass. */
-  private measureFrame = false;
+  private readonly measureLatch = new FrameLatch();
   private measurePending = false;
 
   constructor(host: ReactiveControllerHost & HTMLElement, opts: NavigationOptions) {
@@ -230,22 +223,27 @@ export class NavigationController implements ReactiveController {
    * Leading-edge, not trailing: the first measure after a render is synchronous, so a caller that
    * awaits `updateComplete` still sees the landmarks of what it just rendered. Only the SECOND and
    * later measures inside one frame are collapsed into a single trailing pass.
+   *
+   * Tempdoc 860 §6.4 (D3) — the latch itself is {@link FrameLatch}, which releases on the frame OR,
+   * if no frame arrives at all (backgrounded tab, suspended transition callback), on a one-second
+   * fallback. That horizon is far past any real frame precisely so the fallback cannot fire in a
+   * rendering page and re-introduce the second in-frame pass this coalescer exists to prevent; it
+   * only keeps a non-rendering page from wedging the latch until it is foregrounded. It does not
+   * touch {@link freshenIfStale}, which bypasses the coalescer entirely and always will.
    */
   private measureCoalesced(): void {
-    if (this.measureFrame) {
-      this.measurePending = true;
-      return;
-    }
-    this.measureFrame = true;
-    if (this.measure()) this.host.requestUpdate();
-    raf(() => {
-      this.measureFrame = false;
+    const took = this.measureLatch.request(() => {
       if (!this.measurePending) return;
       this.measurePending = false;
       // The trailing pass is skipped outright if the host went inactive (or was torn down) in the
       // meantime — measuring a detached arm is exactly what the coupling in `hostUpdated` prevents.
       if (this.opts.active()) this.measureCoalesced();
     });
+    if (!took) {
+      this.measurePending = true;
+      return;
+    }
+    if (this.measure()) this.host.requestUpdate();
   }
 
   hostDisconnected(): void {
@@ -474,10 +472,7 @@ export class NavigationController implements ReactiveController {
   }
 
   private readonly onScroll = (): void => {
-    if (this.scrollRaf) return;
-    this.scrollRaf = true;
-    raf(() => {
-      this.scrollRaf = false;
+    this.scrollLatch.request(() => {
       // A scroll only moves the reading WINDOW (item extents are scroll-invariant); the re-render then
       // re-derives FOCUS from the new window via the `activeId` getter — no IntersectionObserver needed.
       if (this.measure()) this.host.requestUpdate();
@@ -587,6 +582,12 @@ export class NavigationController implements ReactiveController {
   }
 
   private teardown(): void {
+    // 860 §6.4 — drop any scheduled pass with the observers. The frame callback already guarded on
+    // `active()`, but the fallback release outlives a torn-down arm by up to a second, so it is
+    // cancelled here rather than left to fire against a detached column.
+    this.measureLatch.cancel();
+    this.scrollLatch.cancel();
+    this.measurePending = false;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.scrollEl?.removeEventListener('scroll', this.onScroll);
