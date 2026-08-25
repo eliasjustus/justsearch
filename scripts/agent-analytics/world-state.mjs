@@ -41,7 +41,7 @@ import { collectClaims, divergentInFlightCollisions, nextFreeNumber } from '../c
 // Tempdoc 861 §7.5 — the documented cross-format interop: an ESM tool pulls the shared `.cjs`
 // dev-stack libs in via `createRequire`, exactly as `otlp-sink-ensure.mjs` already does.
 const require = createRequire(import.meta.url);
-const { gatherAgentSpawnOrientation, describeEntry } = require('../dev/lib/agent-spawn-sweep.cjs');
+const { gatherAgentSpawnOrientation, describeEntry, resolveCallerSessionId } = require('../dev/lib/agent-spawn-sweep.cjs');
 
 const STALE_DAYS_THRESHOLD = 3;
 
@@ -308,7 +308,13 @@ function gatherStack() {
 async function gatherAgentSpawns() {
   const mainRoot = mainCheckoutRoot();
   if (!mainRoot) return { available: false, reason: 'could not resolve main checkout root' };
-  const result = await gatherAgentSpawnOrientation({ mainRepoRoot: mainRoot });
+  // D2 (closing-window findings): resolve THIS session's id via the standard chain so a session's
+  // own live spawn attributes as `same-session`, not `other-session/lease-live` (861 W5 review
+  // F-2/F-3's chain, the same one `remove-worktree.cjs` gained). `repoRoot` is `process.cwd()`,
+  // the CURRENT tree — not `mainRoot` — because the SessionStart pointer-file fallback is written
+  // wherever the session actually started, per `resolveCallerSessionId`'s own doc comment.
+  const callerSessionId = resolveCallerSessionId({ env: process.env, repoRoot: process.cwd() });
+  const result = await gatherAgentSpawnOrientation({ mainRepoRoot: mainRoot, callerSessionId });
   if (!result.available) return result;
   const all = result.buckets.all;
   return {
