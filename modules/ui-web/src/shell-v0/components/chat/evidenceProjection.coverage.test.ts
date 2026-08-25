@@ -253,3 +253,73 @@ describe('836 S2S3-A.2 — the coverage note renders only when there is somethin
     expect(coverageNote(groundingCoverage([], ANSWER, partial))).toBe('Not scored');
   });
 });
+
+/**
+ * Tempdoc 865 §7.3 — the FOURTH examination state, and why it is not the third one reused.
+ *
+ * `unexamined` is a BUDGET fact minted by a pass that ran and reported per-source coverage;
+ * `grounding-incomplete` says the pass itself produced no verdict about anything. Filing a scorer
+ * failure under the budget's word would tell the reader the budget was short when the matcher had
+ * timed out — a wrong cause, stated confidently.
+ */
+describe('865 §7.3 — a source no pass judged is not a source the pass rejected', () => {
+  it('unlocks the state only on an explicit true — absent and false both leave the binary', () => {
+    // The `coverage?` precedent's rule, applied to the new input. Absence is the shipped behaviour
+    // for every producer that says nothing, and it must stay indistinguishable from today.
+    expect(sourceGrounding(0, []).state).toBe('examined-uncited');
+    expect(sourceGrounding(0, [], 'a.md').state).toBe('examined-uncited');
+    expect(sourceGrounding(0, [], 'a.md', null, undefined).state).toBe('examined-uncited');
+    expect(sourceGrounding(0, [], 'a.md', null, null).state).toBe('examined-uncited');
+    expect(sourceGrounding(0, [], 'a.md', null, false).state).toBe('examined-uncited');
+    expect(sourceGrounding(0, [], 'a.md', null, true).state).toBe('grounding-incomplete');
+  });
+
+  it('a CITED source is cited no matter what the pass says about itself', () => {
+    // The flag qualifies an absence of matches. A match that survived is evidence the pass produced
+    // something, and a run-level flag may not overwrite the per-source fact in front of it.
+    const g = sourceGrounding(0, [match({ similarity: 0.8 })], 'a.md', null, true);
+    expect(g.state).toBe('cited');
+    expect(g.cited).toBe(true);
+    expect(g.tier).not.toBeNull();
+    expect(sourceGroundingLabel(g)).toBe('Grounds 1 sentence');
+  });
+
+  it('carries NO tier, where every other state carries one', () => {
+    // §7.3's explicit decision. `evidenceTier(0)` is a "low" grade computed from a number nobody
+    // wrote; the other three states all have a pass behind their zero, and keep theirs.
+    expect(sourceGrounding(0, [], 'a.md', null, true).tier).toBeNull();
+    expect(sourceGrounding(0, [], 'a.md', null, false).tier).not.toBeNull();
+    expect(
+      sourceGrounding(0, [], 'a.md', { sourceIndex: 0, windowsConsidered: 3, windowsScored: 0 })
+        .tier,
+    ).not.toBeNull();
+  });
+
+  it('outranks the BUDGET state when both arrive, because the budget fact has no producer left', () => {
+    // A pass that did not complete cannot have reported per-source coverage FROM that pass, so the
+    // pair is incoherent by construction. If it arrives anyway, the run-level fact is the one with a
+    // reporter behind it — and "the budget did not reach this" would be a cause we did not observe.
+    const g = sourceGrounding(
+      0,
+      [],
+      'a.md',
+      { sourceIndex: 0, windowsConsidered: 3, windowsScored: 0 },
+      true,
+    );
+    expect(g.state).toBe('grounding-incomplete');
+    expect(sourceGroundingLabel(g)).toBe('Retrieved · grounding check did not complete');
+  });
+
+  it('words the MATCHER, and the other three states keep their own words', () => {
+    expect(sourceGroundingLabel(sourceGrounding(0, [], 'a.md', null, true))).toBe(
+      'Retrieved · grounding check did not complete',
+    );
+    expect(
+      sourceGroundingLabel(
+        sourceGrounding(0, [], 'a.md', { sourceIndex: 0, windowsConsidered: 3, windowsScored: 0 }),
+      ),
+    ).toBe('Retrieved · not examined');
+    expect(sourceGroundingLabel(sourceGrounding(0, [], 'a.md'))).toBe('Retrieved · not cited');
+    expect(sourceGroundingLabel(sourceGrounding(0, [match()], 'a.md'))).toBe('Grounds 1 sentence');
+  });
+});

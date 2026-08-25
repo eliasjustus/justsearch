@@ -13,10 +13,18 @@
  * mark resolves" would pass under the trap; this one puts two passages of ONE document in the set.
  */
 import { describe, it, expect } from 'vitest';
-import { SV3_SOURCE_INDEX_ABSENT, sv3SourceIndex, sv3CitationAnchor } from './sv3-citation-anchor.js';
+import {
+  SV3_SOURCE_INDEX_ABSENT,
+  sv3SourceIndex,
+  sv3CitationAnchor,
+  sv3CitationHeader,
+} from './sv3-citation-anchor.js';
 import { agentAnswerEvidence } from '../../components/chat/agentEvidence.js';
 import type { Sv3Turn } from './sv3-sessions.js';
-import type { AgentSource } from '../../../api/generated/shape-handlers/shared.js';
+import type {
+  AgentSentenceCite,
+  AgentSource,
+} from '../../../api/generated/shape-handlers/shared.js';
 import type { CitationSelectDetail } from '../../components/chat/citationTypes.js';
 
 /** TWO passages of the SAME document — the fixture the zero-fill trap cannot survive. */
@@ -150,3 +158,86 @@ describe('sv3SourceIndex — the followed-citation join (859 §5c)', () => {
 function first(): CitationSelectDetail {
   return { parentDocId: 'docs/runbook.md', startLine: 3, endLine: 9, excerpt: '' };
 }
+
+/**
+ * Tempdoc 865 §7.3 — the READING PANE is where the false verdict actually rendered.
+ *
+ * The panel falls back to an ungraded flat list when no match survives (`CitationsPanel.render`'s
+ * `!hasCitations` branch, 603 §22/U2), so it never spoke the words. This header does: it reads the
+ * evidence's match list straight into `sourceGrounding`, and an empty list is `cited: false`, which
+ * `sourceGroundingLabel` words as "Retrieved · not cited". A `COMPLETED` delegate run whose matcher
+ * timed out emits exactly that shape — `AgentCitationResolver.resolve` catches the `MATCH_TIMEOUT_MS`
+ * timeout into `Resolved.none()` (`AgentCitationResolver.java:117-123`), which
+ * `AgentStepRunner.groundedDone` stamps as `citationScorer: "NONE"` beside a full `sources` list.
+ *
+ * So the pane delivered a verdict on behalf of a matcher that never ran. The four cases below are
+ * the whole discrimination: only the third is a missing verdict, and the other three must not move.
+ */
+function delegateTurn(cites: AgentSentenceCite[], scorer: string | null): Sv3Turn {
+  const evidence = agentAnswerEvidence(TWO_PASSAGES_OF_ONE_DOC, cites, scorer);
+  return {
+    id: 't1',
+    kind: 'agent',
+    status: 'complete',
+    question: 'what happened?',
+    answer: 'The retry succeeded.',
+    evidence: { ...evidence, retrievalMode: '' },
+    detail: '',
+    toolCalls: 0,
+    activity: [],
+    askedAt: 0,
+    standaloneQuestion: '',
+    reasoning: [],
+  } as unknown as Sv3Turn;
+}
+
+const CITE_ON_SOURCE_1: AgentSentenceCite[] = [
+  { sentenceText: 'The retry succeeded.', sourceIndex: 1, similarity: 0.9 },
+];
+
+describe('sv3CitationHeader — a matcher that never ran mints no verdict (865 PR-0)', () => {
+  it('the MATCHER NEVER RAN: the pane says so, and does not say "not cited"', () => {
+    // The timeout shape: every source reported, no cite, `NONE` stamped by the emitter.
+    const turn = delegateTurn([], 'NONE');
+    expect(turn.evidence!.groundingIncomplete).toBe(true);
+    expect(turn.evidence!.matches).toEqual([]);
+
+    const header = sv3CitationHeader(turn, 0, null);
+    // RED BEFORE THIS FIX: `Retrieved · not cited`.
+    expect(header!.grounding).toBe('Retrieved · grounding check did not complete');
+    expect(header!.grounding).not.toBe('Retrieved · not cited');
+    // No similarity was produced, so no band may be printed from one.
+    expect(header!.claim).toBeNull();
+  });
+
+  it('the MATCHER RAN AND CITED NOTHING here: "not cited" is honest and stays', () => {
+    // A cross-encoder pass that cited source 1 and not source 0. Source 0 really was judged and
+    // really did ground nothing — the verdict has a producer, so it stands.
+    const turn = delegateTurn(CITE_ON_SOURCE_1, 'CROSS_ENCODER');
+    expect(turn.evidence!.groundingIncomplete).toBe(false);
+    expect(turn.evidence!.matches.length).toBe(1);
+
+    expect(sv3CitationHeader(turn, 0, null)!.grounding).toBe('Retrieved · not cited');
+    expect(sv3CitationHeader(turn, 1, null)!.grounding).toBe('Grounds 1 sentence');
+  });
+
+  it("the PRODUCER WAS REJECTED: a pass that ran keeps today's wording, deliberately", () => {
+    // 836 §4's gate drops a non-cross-encoder producer's numbers, so the match list is empty here
+    // too — but a scorer DID judge these sources, so this is not the "no verdict" case and PR-0
+    // does not reword it. The assertion pins the boundary rather than assuming it.
+    const turn = delegateTurn(CITE_ON_SOURCE_1, 'EMBEDDING_COSINE');
+    expect(turn.evidence!.groundingIncomplete).toBe(false);
+    expect(turn.evidence!.matches).toEqual([]);
+
+    expect(sv3CitationHeader(turn, 0, null)!.grounding).toBe('Retrieved · not cited');
+  });
+
+  it('an ABSENT stamp keeps the established binary — the pre-stamp allowance is not touched', () => {
+    // The `sourceGrounding(…, coverage?)` precedent, applied to the new input: a record persisted
+    // before the field existed says nothing about its pass, and must not have "it did not complete"
+    // asserted on its behalf.
+    const turn = delegateTurn([], null);
+    expect(turn.evidence!.groundingIncomplete).toBe(false);
+    expect(sv3CitationHeader(turn, 0, null)!.grounding).toBe('Retrieved · not cited');
+  });
+});

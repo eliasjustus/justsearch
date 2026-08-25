@@ -632,8 +632,16 @@ export interface SourceGrounding {
   readonly groundedSentences: number;
   /** Strongest matching-sentence similarity; 0 when uncited. */
   readonly similarity: number;
-  /** The faithfulness tier (the ONE authority), so the SOURCES panel agrees with the inline citations. */
-  readonly tier: GroundingTier;
+  /**
+   * The faithfulness tier (the ONE authority), so the SOURCES panel agrees with the inline citations.
+   *
+   * <p>Tempdoc 865 §7.3 — `null` for a `grounding-incomplete` source, and ONLY for one. A tier is
+   * minted from a similarity; when the grounding pass never produced one there is nothing to mint it
+   * from, and `evidenceTier(0)` would be a "low" verdict computed from a number nobody wrote.
+   * (`unexamined` keeps its tier: it is a budget fact reported BY a pass that ran, and the panel
+   * already routes it away from the tier groups before reading it.)
+   */
+  readonly tier: GroundingTier | null;
   /**
    * Tempdoc 836 S2S3-A.3 — the third state the binary was missing. `examined-uncited` is today's
    * `cited: false` with its meaning intact (scored, supported nothing); `unexamined` is the source
@@ -645,8 +653,20 @@ export interface SourceGrounding {
   readonly state: SourceExamination;
 }
 
-/** Tempdoc 836 S2S3-A.3 — cited / examined-and-uncited / never-examined. */
-export type SourceExamination = 'cited' | 'examined-uncited' | 'unexamined';
+/**
+ * Tempdoc 836 S2S3-A.3 / 865 §7.3 — cited / examined-and-uncited / never-examined / never-judged.
+ *
+ * <p>`grounding-incomplete` is the FOURTH member and deliberately NOT a reuse of `unexamined`. The
+ * two are opposites: `unexamined` is a BUDGET fact — the pass ran and reports that it never reached
+ * this source's text — while `grounding-incomplete` says the pass itself did not complete, so no
+ * producer judged ANY source. Filing a scorer failure as a budget outcome would mislabel it, and the
+ * reader would be told the budget was short when the matcher had timed out.
+ */
+export type SourceExamination =
+  | 'cited'
+  | 'examined-uncited'
+  | 'unexamined'
+  | 'grounding-incomplete';
 
 /**
  * Join a source to its grounding via the answer's citation-matches (603 C1, corrected per PART X.B).
@@ -667,6 +687,11 @@ export function sourceGrounding(
   // the state stays the established binary, so a producer that says nothing about coverage does
   // not get "unexamined" assumed on its behalf.
   coverage?: SourceCoverage | null,
+  // Tempdoc 865 §7.3 — the run reported that its grounding pass did not complete, when it reported
+  // anything at all. The SAME absence discipline `coverage` above follows: absent ⇒ the state stays
+  // the established binary, so a producer that says nothing about the pass does not get
+  // "grounding-incomplete" assumed on its behalf. Only an explicit `true` unlocks the state.
+  groundingIncomplete?: boolean | null,
 ): SourceGrounding {
   let count = 0;
   let best = 0;
@@ -680,22 +705,32 @@ export function sourceGrounding(
   // A source the budget never examined is uncitable for a BUDGET reason. It keeps the uncited tier
   // (a non-input, exactly as before) but says why, so the panel cannot describe it as "retrieved
   // but never grounded" — a verdict about evidence that was never read.
+  //
+  // Tempdoc 865 §7.3 — the pass-level fact is read FIRST, because it is the one that invalidates the
+  // others: a run whose grounding pass never completed cannot have produced per-source examination
+  // facts from that pass, so if both somehow arrive the per-source one has no producer to stand on.
   const state: SourceExamination = cited
     ? 'cited'
-    : coverage && coverage.windowsScored === 0
-      ? 'unexamined'
-      : 'examined-uncited';
+    : groundingIncomplete === true
+      ? 'grounding-incomplete'
+      : coverage && coverage.windowsScored === 0
+        ? 'unexamined'
+        : 'examined-uncited';
   return {
     cited,
     groundedSentences: count,
     similarity: best,
-    tier: evidenceTier(cited ? best : 0),
+    tier: state === 'grounding-incomplete' ? null : evidenceTier(cited ? best : 0),
     state,
   };
 }
 
 /** The per-source trust badge text — "Grounds N sentence(s)" when cited, else the honest "Retrieved · not cited". */
 export function sourceGroundingLabel(g: SourceGrounding): string {
+  // Tempdoc 865 §7.3 — a statement about the MATCHER, not about the source. "Not cited" is a verdict
+  // that only a pass which ran may deliver; when the pass did not complete, the honest thing to say
+  // is that nothing judged this source — not that something judged it and found nothing.
+  if (g.state === 'grounding-incomplete') return 'Retrieved · grounding check did not complete';
   // Tempdoc 836 S2S3-A.3 — an unexamined source is not "not cited": nothing read it. Saying it was
   // retrieved and found wanting would assert a verdict over text no scorer ever saw.
   if (g.state === 'unexamined') return 'Retrieved · not examined';
