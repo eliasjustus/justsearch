@@ -61,7 +61,26 @@ let state: ConversationListState = {
   loading: false,
 };
 
-const listeners = new Set<(s: ConversationListState) => void>();
+/**
+ * Why the store emitted (tempdoc 864 PR C). The conversation a window is reading is URL-projected
+ * now, and the URL projector has to tell two look-alike writes apart:
+ *
+ *  - `claim` — somebody OPENED a different conversation. That is a navigation, and it earns a
+ *    history entry, which is what makes an accidental swap undoable with Back (§3.3(a)).
+ *  - `restore` — the same write replaying state that already exists somewhere else: the URL on a
+ *    deep link or a popstate, or this tab's own reload pointer. Pushing an entry for one of those
+ *    would either duplicate the entry the browser just moved to or strand the URL a Back landed on.
+ *  - `list` — the roster changed. Usually the claim did not, but DELETING the open conversation
+ *    drops it under this reason too, and that is deliberate rather than an oversight: a deleted
+ *    conversation is not somewhere the reader can go back to (the address would restore a phantom
+ *    row and a 404 record), so the URL is corrected in place instead of earning an entry. The
+ *    projector keys on the VALUE changing, so the correction still happens — as a replace.
+ */
+export type ConversationListChange = 'claim' | 'restore' | 'list';
+
+const listeners = new Set<
+  (s: ConversationListState, change: ConversationListChange) => void
+>();
 const TITLES_KEY = 'jf-conversation-titles';
 const RECENT_SESSIONS_KEY = 'jf-chat-recent-sessions';
 const MAX_RECENT = 10;
@@ -110,8 +129,8 @@ export function forgetRecentSession(sessionId: string): void {
   } catch { /* */ }
 }
 
-function emit(): void {
-  for (const l of listeners) l(state);
+function emit(change: ConversationListChange = 'list'): void {
+  for (const l of listeners) l(state, change);
 }
 
 /**
@@ -166,10 +185,13 @@ export function setConversationApiBase(base: string): void {
 }
 
 export function subscribeConversationList(
-  listener: (s: ConversationListState) => void,
+  listener: (s: ConversationListState, change: ConversationListChange) => void,
 ): () => void {
   listeners.add(listener);
-  listener(state);
+  // The catch-up call is a `restore`: it reports state that already exists rather than a claim
+  // somebody just made, so a subscriber taken while a conversation is open must not read it as a
+  // fresh navigation (tempdoc 864 PR C).
+  listener(state, 'restore');
   return () => listeners.delete(listener);
 }
 
@@ -280,7 +302,19 @@ async function adoptLegacyTitles(
 
 export function setActiveConversation(id: string | null): void {
   state = { ...state, activeId: id };
-  emit();
+  emit('claim');
+}
+
+/**
+ * The same write as {@link setActiveConversation}, declared as a REHYDRATION rather than a claim
+ * (tempdoc 864 PR C). Callers: the router's store adapter, replaying the conversation the URL
+ * carries on a deep link or a Back, and a window restoring the per-tab pointer it was reading
+ * before a reload. Both are re-establishing a position the reader already had, so neither may add
+ * a history entry — see {@link ConversationListChange}.
+ */
+export function restoreActiveConversation(id: string | null): void {
+  state = { ...state, activeId: id };
+  emit('restore');
 }
 
 /**

@@ -40,6 +40,25 @@ export interface StoreAdapter {
    * state may have changed. Returns an unsubscribe handle.
    */
   subscribe(listener: (s: StateSnapshot) => void): () => void;
+
+  /**
+   * Tempdoc 864 PR C — on a history TRAVERSAL (Back / Forward), is an absent argument a value?
+   *
+   * The default is no, and that is right for a refinement: a search address without `?query=`
+   * means the projector had nothing to write, not that the reader wants the box emptied, so
+   * {@link NavigationHandler} skips absent-valued bindings and the store keeps what it has.
+   *
+   * It is wrong for a store whose whole content IS the address. Search v3's hero — no conversation
+   * claimed — projects as the bare surface address, so the entry a new session pushes carries no
+   * `conversationId`. Under the default skip, going FORWARD onto that entry would leave the window
+   * showing the conversation the reader had just left, with a URL saying otherwise.
+   *
+   * Gated on traversal deliberately: a programmatic `activateSurface(id, {})` also arrives with no
+   * state, and treating that as "close the open conversation" would make a re-navigation to this
+   * surface destructive. A traversal is the one arrival where the browser has already moved and the
+   * address is therefore the authority.
+   */
+  readonly clearsOnTraversal?: boolean;
 }
 
 const registry = new Map<string, StoreAdapter>();

@@ -184,6 +184,28 @@ export function sv3WasCutShort(disposition: string | null | undefined): boolean 
 }
 
 /**
+ * The terminal disposition of a run the READER stopped (`TerminalDisposition.CANCELLED`, carried onto
+ * the persisted assistant message by `AgentInteractionMapper`'s `done` case). Named here because this
+ * module already owns the disposition vocabulary — a second literal at a read site is how the record
+ * and the live tail come to disagree about the same string.
+ */
+export const SV3_DISPOSITION_CANCELLED = 'CANCELLED';
+
+/**
+ * Whether the run behind this turn was stopped by the reader.
+ *
+ * <p>Live audit 2026-08-25 (D3) — this exists because the RECORD had no way to say so. The live tail
+ * reads "stopped by you" ({@link ../sv3-run.sv3RunOutcome} returns `halted` on the halt request), but
+ * the record's projection derived its status from the error entry alone, so the same cancelled run
+ * came back from a reload reading "failed": one run, two stories, and the one the record told blamed
+ * the product for the reader's own decision. The disposition was already ON the record — it was just
+ * not consulted — so the fix is a read, not a new field.
+ */
+export function sv3WasHalted(disposition: string | null | undefined): boolean {
+  return disposition === SV3_DISPOSITION_CANCELLED;
+}
+
+/**
  * The answer's honest frame line: what it is based on, how long it took, which model wrote it.
  *
  * 810 §T-B singles this out as owner-valued credit worth preserving — *"Based on your documents —
