@@ -92,6 +92,102 @@ describe('ConfirmDialog (slice 457)', () => {
     expect(btn?.hasAttribute('disabled')).toBe(true);
   });
 
+  /**
+   * 864 — deliver a keydown to the DOCUMENT-level listener the way a real browser delivers it: an
+   * event crossing a shadow boundary is RETARGETED to the host, so `e.target` seen at `document` is
+   * the <jf-confirm-dialog>, never the inner <input>. happy-dom does not implement that retargeting
+   * (its `target` stays the inner input), which is exactly why the broken `target.tagName` guard was
+   * invisible to this suite — so dispatch on the host to reproduce what actually ships.
+   */
+  function dispatchRetargetedEnter(el: ConfirmDialog): void {
+    el.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  async function openTypedDialog(typed: string): Promise<{ el: ConfirmDialog; input: HTMLInputElement }> {
+    const el = makeDialog();
+    el.typedConfirmWord = 'DELETE';
+    el.open = true;
+    await el.updateComplete;
+    const input = el.shadowRoot!.querySelector<HTMLInputElement>('.typed-row input')!;
+    input.focus();
+    input.value = typed;
+    input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    await el.updateComplete;
+    return { el, input };
+  }
+
+  it('typed-confirm: Enter mid-phrase (non-matching) does not confirm', async () => {
+    // Standing contract, and it already held before the 864 fix: confirmDisabled() gates onKey, so a
+    // partial phrase was never destructive. Kept so the match gate itself cannot regress.
+    const { el } = await openTypedDialog('DELE');
+    let confirms = 0;
+    el.addEventListener('confirm', () => confirms++);
+    dispatchRetargetedEnter(el);
+    expect(confirms).toBe(0);
+  });
+
+  it('typed-confirm: the document-level Enter stands down while the reader is typing', async () => {
+    // THE 864 regression test. Focus is in the confirm input and the phrase already matches, so
+    // Enter belongs to the INPUT's own @keydown. The document-level listener must not fire a second
+    // `confirm` — its old retargeted-`target` test could not see the input, so it fired one here,
+    // which is precisely what its own comment said must not happen. A COMPLETE phrase is the
+    // discriminating case: with a partial one the match gate hides the defect.
+    const { el } = await openTypedDialog('DELETE');
+    let confirms = 0;
+    el.addEventListener('confirm', () => confirms++);
+    dispatchRetargetedEnter(el);
+    expect(confirms).toBe(0);
+  });
+
+  it('typed-confirm: Enter in the input confirms exactly once on an exact match', async () => {
+    // The type-to-confirm affordance itself: match-gated Enter from the input still confirms, and
+    // fires once — paired with the test above, that is the single-fire contract in a real browser.
+    const { el, input } = await openTypedDialog('DELETE');
+    let confirms = 0;
+    el.addEventListener('confirm', () => confirms++);
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      }),
+    );
+    expect(confirms).toBe(1);
+  });
+
+  it('typed-confirm: Enter in the input does nothing on a non-matching phrase', async () => {
+    const { el, input } = await openTypedDialog('delete');
+    let confirms = 0;
+    el.addEventListener('confirm', () => confirms++);
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      }),
+    );
+    expect(confirms).toBe(0);
+  });
+
+  it('plain dialog: Enter still confirms when focus is not a typing target', async () => {
+    const el = makeDialog();
+    el.open = true;
+    await el.updateComplete;
+    let confirms = 0;
+    el.addEventListener('confirm', () => confirms++);
+    dispatchRetargetedEnter(el);
+    expect(confirms).toBe(1);
+  });
+
   it('Escape (native dialog cancel) cancels', async () => {
     const el = makeDialog();
     el.open = true;
