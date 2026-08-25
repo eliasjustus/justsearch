@@ -1119,6 +1119,69 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     expect(sv3TurnSourceCount(merged)).toBe(1);
   });
 
+  it('SURVIVES the refresh: a pass that did not complete is still not complete after the record lands (865)', () => {
+    // Tempdoc 865 §7.3 — the state has to outlive `applySv3Record` or the defect comes back on the
+    // very next refresh: the live turn would drop the flag, `sourceGrounding` would fall back to the
+    // established binary, and the pane would put "Retrieved · not cited" on a source no matcher
+    // judged. The field asks its OWN question, per 847 F-12 — for a boolean, "not observed" is
+    // absence, and `false` is a real observation.
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'agent', 'uc-a');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    const liveIncomplete: Sv3TurnEvidence = { ...evidence(2), groundingIncomplete: true };
+    const settledLive = settleTurn(
+      setTurnEvidence(list, ref, liveIncomplete),
+      ref,
+      'complete',
+      T0 + MINUTE,
+    );
+    const merged = applySv3Record(settledLive, 'uc-a', [
+      recordTurn({ id: 'evt-1', evidence: { ...evidence(2), groundingIncomplete: true } }),
+    ]).sessions[0]?.turns[0] as Sv3Turn;
+    expect(merged.evidence?.groundingIncomplete).toBe(true);
+
+    // The COLD LOAD: the live turn never observed a terminal, so the record's word is all there is.
+    const coldList = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'agent', 'uc-b');
+    const coldRef = latestTurnRef(coldList) as Sv3TurnRef;
+    const cold = applySv3Record(
+      settleTurn(coldList, coldRef, 'complete', T0 + MINUTE),
+      'uc-b',
+      [recordTurn({ id: 'evt-1', evidence: { ...evidence(2), groundingIncomplete: true } })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+    expect(cold.evidence?.groundingIncomplete).toBe(true);
+
+    // A live turn that SAID the pass completed keeps its own observation — `false` is an
+    // observation, so a record claiming otherwise does not overwrite it.
+    const keptList = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'agent', 'uc-c');
+    const keptRef = latestTurnRef(keptList) as Sv3TurnRef;
+    const kept = applySv3Record(
+      settleTurn(
+        setTurnEvidence(keptList, keptRef, { ...evidence(2), groundingIncomplete: false }),
+        keptRef,
+        'complete',
+        T0 + MINUTE,
+      ),
+      'uc-c',
+      [recordTurn({ id: 'evt-1', evidence: { ...evidence(2), groundingIncomplete: true } })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+    expect(kept.evidence?.groundingIncomplete).toBe(false);
+
+    // And a turn neither side said anything about (the ask plane) stays SILENT — the merge does not
+    // mint a value for a field nobody reported.
+    const silentList = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'ask', 'uc-d');
+    const silentRef = latestTurnRef(silentList) as Sv3TurnRef;
+    const silent = applySv3Record(
+      settleTurn(
+        setTurnEvidence(silentList, silentRef, evidence(2)),
+        silentRef,
+        'complete',
+        T0 + MINUTE,
+      ),
+      'uc-d',
+      [recordTurn({ id: 'evt-1', evidence: evidence(2) })],
+    ).sessions[0]?.turns[0] as Sv3Turn;
+    expect(silent.evidence?.groundingIncomplete).toBeUndefined();
+  });
+
   it('takes the RECORD’s thinking on a cold load, and keeps the LIVE blocks in session (848)', () => {
     // The merge rule at the heart of tempdoc 848's reload story, and the line 847's `applySv3Record`
     // refactor rewrites — pinned here so a later extraction cannot break it silently.

@@ -640,3 +640,99 @@ describe('CitationsPanel 822 §5.4 — the source card is the selection’s far 
     expect(fallbackOf(hovered, 'border-color')).not.toBe(fallbackOf(resting, 'border-color'));
   });
 });
+
+/**
+ * Tempdoc 865 §7.3 — the panel's side of "a matcher that never ran mints no verdict".
+ *
+ * The panel never spoke the false verdict itself: `render` routes to the ungraded flat list whenever
+ * no match survives (603 §22/U2's `!hasCitations` branch), so a timed-out run showed neutral cards.
+ * That is not a wrong statement, but it is the WRONG SILENCE — it is byte-identical to a keyword-only
+ * run, and it withholds a fact the reader can act on. With the pass-level flag present these sources
+ * get their own heading and a badge that names the MATCHER; with it absent, every consumer keeps the
+ * flat list exactly as before.
+ */
+describe('CitationsPanel — the grounding pass did not complete (865 PR-0)', () => {
+  async function panel(
+    configure: (el: CitationsPanel) => void,
+  ): Promise<{ text: string; el: CitationsPanel }> {
+    const el = document.createElement('jf-citations-panel') as CitationsPanel;
+    el.sources = [
+      fakeSource({ parentDocId: 'a.md', startLine: 1, excerpt: 'first passage' }),
+      fakeSource({ parentDocId: 'b.md', startLine: 9, excerpt: 'second passage' }),
+    ];
+    el.citations = [];
+    configure(el);
+    document.body.appendChild(el);
+    await settle(el);
+    return { text: (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' '), el };
+  }
+
+  it('gives the sources their own heading, and never the "not cited" group', async () => {
+    const { text, el } = await panel((p) => {
+      p.groundingIncomplete = true;
+    });
+    expect(text).toContain('Not scored — the grounding check did not complete for these 2 sources');
+    expect(text).toContain('Retrieved · grounding check did not complete');
+    // The two verdicts that must NOT appear: the per-source one, and the collapsed group that files
+    // a source under it.
+    expect(text).not.toContain('Retrieved · not cited');
+    expect(text).not.toContain('retrieved (not cited)');
+    // Nor the BUDGET wording — a scorer failure is not a budget outcome (the "not `unexamined`" rule).
+    expect(text).not.toContain('not examined');
+    expect(
+      el.shadowRoot?.querySelector('[data-testid="grounding-incomplete-header"]'),
+    ).not.toBeNull();
+    el.remove();
+  });
+
+  it('says "this source" when there is exactly one', async () => {
+    const el = document.createElement('jf-citations-panel') as CitationsPanel;
+    el.sources = [fakeSource({ parentDocId: 'a.md', startLine: 1 })];
+    el.citations = [];
+    el.groundingIncomplete = true;
+    document.body.appendChild(el);
+    await settle(el);
+    expect((el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ')).toContain(
+      'Not scored — the grounding check did not complete for this source',
+    );
+    el.remove();
+  });
+
+  it('ABSENT flag keeps the flat, ungraded list byte-for-byte', async () => {
+    // The precedent's rule, at the panel: a consumer that says nothing about its pass — the ask
+    // plane, every pre-865 record — must be unchanged. Both the default and an explicit `false`.
+    const unset = await panel(() => {});
+    expect(unset.text).not.toContain('grounding check did not complete');
+    expect(unset.text).not.toContain('Retrieved · not cited');
+    expect(unset.text).toContain('sources retrieved');
+    unset.el.remove();
+
+    const explicit = await panel((p) => {
+      p.groundingIncomplete = false;
+    });
+    expect(explicit.text).toBe(unset.text);
+    explicit.el.remove();
+  });
+
+  it('FULLTEXT_FALLBACK still wins — a keyword run is graded by nothing at all', async () => {
+    const { text, el } = await panel((p) => {
+      p.groundingIncomplete = true;
+      p.retrievalMode = 'FULLTEXT_FALLBACK';
+    });
+    expect(text).not.toContain('grounding check did not complete');
+    expect(text).toContain('sources retrieved');
+    el.remove();
+  });
+
+  it('a matcher that RAN still demotes its uncited sources — the honest verdict is untouched', async () => {
+    // The control. One cite lands on source 1; source 0 was judged and grounded nothing, so it
+    // belongs in the collapsed "retrieved (not cited)" group and keeps that wording.
+    const { text, el } = await panel((p) => {
+      p.citations = [fakeCitation({ parentDocId: 'b.md', sourceIndex: 1 })];
+    });
+    expect(text).toContain('retrieved (not cited)');
+    expect(text).toContain('Grounds 1 sentence');
+    expect(text).not.toContain('grounding check did not complete');
+    el.remove();
+  });
+});

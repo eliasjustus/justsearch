@@ -181,6 +181,14 @@ interface Building {
    * too (a run's evidence record is likewise rewritten whole by the last citation event it sees),
    * so restoring matches what was on screen; it is not an invariant that one message's evidence
    * covers the whole answer.
+   *
+   * <p>Tempdoc 865 §7.3 — `groundingIncomplete` is LAST-WINS with the rest of the record, stated
+   * rather than inherited. It rides INSIDE this object, so the whole-object replacement below is its
+   * accumulation rule, and that is the right one: the flag qualifies THIS message's match list, and
+   * an earlier message's completed pass says nothing about the terminal message's. Accumulating it
+   * (an OR across messages) would let one interim timeout suppress a later message's real verdict;
+   * accumulating it as an AND would do the reverse. (Incremental, per-tool-call minting is 865 PR-1's
+   * question, not this one's — nothing here mints evidence before the terminal message.)
    */
   evidence: Sv3TurnEvidence | null;
   /**
