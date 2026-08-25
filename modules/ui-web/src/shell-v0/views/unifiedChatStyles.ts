@@ -1550,21 +1550,40 @@ export const unifiedChatBodyStyles = css`
     .dismiss-btn:hover {
       color: var(--text-primary);
     }
-    .new-chat-btn {
+    /* Two forms of this control ship side by side: native <button class="new-chat-btn"> (Activity,
+       Export) and the composed <jf-control class="new-chat-btn"> (New chat, 596 typed availability).
+       The all:unset reset strips UA button chrome and belongs to the NATIVE form only. The
+       jf-control's inner button already unsets inside the primitive, and repeating it through
+       ::part(control) would also reset the primitive's focus outline — an outer-tree ::part
+       declaration beats the inner-tree rule regardless of specificity — blanking the focus ring on
+       exactly the state typed availability makes focusable (aria-disabled is reachable, unlike
+       native [disabled]). The host is kept out of the box styling for the same reason of not
+       styling one button twice: border and padding render on the button, not on it AND its host. */
+    button.new-chat-btn {
       all: unset;
+    }
+    button.new-chat-btn,
+    jf-control.new-chat-btn {
+      margin-left: 0.5rem;
+    }
+    button.new-chat-btn,
+    jf-control.new-chat-btn::part(control) {
       font-size: var(--font-size-xs);
       color: var(--text-muted);
       cursor: pointer;
       padding: 0.15rem 0.4rem;
       border: 1px solid var(--border-subtle);
       border-radius: 0.25rem;
-      margin-left: 0.5rem;
     }
-    .new-chat-btn:hover:not(:disabled) {
+    button.new-chat-btn:hover:not(:disabled),
+    jf-control.new-chat-btn::part(control):hover:not([aria-disabled='true']) {
       color: var(--text-primary);
       border-color: var(--accent-tint);
     }
-    .new-chat-btn:disabled {
+    /* The composed jf-control's unavailable state is aria-disabled, not native [disabled]
+       (596 typed availability) — dim both forms. */
+    button.new-chat-btn:disabled,
+    jf-control.new-chat-btn::part(control)[aria-disabled='true'] {
       opacity: 0.35;
       cursor: default;
     }

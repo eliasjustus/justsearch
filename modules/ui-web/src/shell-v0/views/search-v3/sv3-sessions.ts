@@ -67,6 +67,16 @@ export interface Sv3TurnEvidence {
   readonly marks: readonly Citation[];
   /** The retrieval mode the panel needs to know whether it may grade the sources at all. */
   readonly retrievalMode: string;
+  /**
+   * Tempdoc 865 §7.3 — the run reported that its grounding pass did not complete, so an empty
+   * {@link matches} is a MISSING verdict rather than a negative one.
+   *
+   * <p>OPTIONAL, and absent means "this producer said nothing about its pass" — the ask plane never
+   * reports it and keeps the established binary, exactly as `sourceCoverage`'s absence does. It rides
+   * on the evidence record rather than beside it because the panel and the reading pane must read one
+   * fact, not two copies that can disagree about the same answer.
+   */
+  readonly groundingIncomplete?: boolean;
 }
 
 /**
@@ -834,6 +844,16 @@ function reconcileEvidence(
     matches: prior.matches.length > 0 ? prior.matches : recorded.matches,
     marks: prior.marks.length > 0 ? prior.marks : recorded.marks,
     retrievalMode: prior.retrievalMode !== '' ? prior.retrievalMode : recorded.retrievalMode,
+    // Tempdoc 865 §7.3 — the field's OWN question, per the rule above: *did the live turn actually
+    // observe this?* For a boolean the answer is not a length or an empty string — `false` is a
+    // stated observation, so the only "not observed" value is absence. A live turn that watched the
+    // terminal and was told the pass completed keeps that; one that was never told takes the
+    // record's. Reconciling it by truthiness instead would let a refresh silently drop the state and
+    // put "Retrieved · not cited" back on a source no matcher judged — the defect this survives.
+    groundingIncomplete:
+      prior.groundingIncomplete !== undefined
+        ? prior.groundingIncomplete
+        : recorded.groundingIncomplete,
   };
 }
 

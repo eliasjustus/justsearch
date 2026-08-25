@@ -269,3 +269,73 @@ describe('T11 — a record turn NO user item opened reconciles onto the local tu
     expect(again.sessions[0]!.turns[0]!.evidence?.marks).toEqual(before?.marks);
   });
 });
+
+/**
+ * Tempdoc 865 §7.3 — the RECORD leg. A state that shows while the run is on screen and vanishes on
+ * reload is worse than one never made: the reader has learned to trust it, so its absence then reads
+ * as "this one was fine". The record carries `citationScorer` verbatim
+ * (`AgentInteractionMapper.java:76-77`), so the flag is re-derived, not re-transmitted.
+ */
+describe('865 PR-0 — the record replays "the grounding pass did not complete"', () => {
+  it('re-derives the state from the persisted stamp, and words it as the live path does', () => {
+    clock = 0;
+    // The timeout shape as it is PERSISTED: the full source list, no cites, `NONE`.
+    const turns = projectSv3RecordTurns([
+      event('a1', 'ASSISTANT_MESSAGE', 'The retry succeeded.', {
+        sources: AGENT_SOURCES,
+        citations: [],
+        citationScorer: 'NONE',
+      }),
+    ]);
+    const evidence = turns[0]!.evidence!;
+    expect(evidence.sources).toHaveLength(3);
+    expect(evidence.matches).toEqual([]);
+    expect(evidence.groundingIncomplete).toBe(true);
+
+    const g = sourceGrounding(0, evidence.matches, evidence.sources[0]!.parentDocId, null, evidence.groundingIncomplete);
+    expect(sourceGroundingLabel(g)).toBe('Retrieved · grounding check did not complete');
+  });
+
+  it('a record with NO stamp keeps the pre-865 reading — absence asserts nothing', () => {
+    clock = 0;
+    const turns = projectSv3RecordTurns([
+      event('a1', 'ASSISTANT_MESSAGE', 'The retry succeeded.', {
+        sources: AGENT_SOURCES,
+        citations: [],
+      }),
+    ]);
+    expect(turns[0]!.evidence!.groundingIncomplete).toBe(false);
+  });
+
+  it('LAST-WINS across a multi-message turn, with the rest of the evidence record', () => {
+    clock = 0;
+    // The flag rides INSIDE the evidence object, so the whole-object replacement IS its rule: an
+    // interim message whose pass timed out says nothing about the terminal message's, and vice
+    // versa. An accumulated OR would let the first suppress the second's real verdict.
+    const timedOutThenScored = projectSv3RecordTurns([
+      event('u1', 'USER_MESSAGE', 'why did it retry?'),
+      event('a1', 'ASSISTANT_MESSAGE', 'Thinking.', {
+        sources: AGENT_SOURCES,
+        citations: [],
+        citationScorer: 'NONE',
+      }),
+      agentAssistant({ citationScorer: 'CROSS_ENCODER' }),
+    ]);
+    expect(timedOutThenScored).toHaveLength(1);
+    expect(timedOutThenScored[0]!.evidence!.groundingIncomplete).toBe(false);
+    expect(timedOutThenScored[0]!.evidence!.matches).toHaveLength(1);
+
+    clock = 0;
+    const scoredThenTimedOut = projectSv3RecordTurns([
+      event('u1', 'USER_MESSAGE', 'why did it retry?'),
+      agentAssistant({ citationScorer: 'CROSS_ENCODER' }),
+      event('a2', 'ASSISTANT_MESSAGE', 'And finally.', {
+        sources: AGENT_SOURCES,
+        citations: [],
+        citationScorer: 'NONE',
+      }),
+    ]);
+    expect(scoredThenTimedOut[0]!.evidence!.groundingIncomplete).toBe(true);
+    expect(scoredThenTimedOut[0]!.evidence!.matches).toEqual([]);
+  });
+});

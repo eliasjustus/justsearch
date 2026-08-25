@@ -356,6 +356,41 @@ public sealed interface AgentEvent {
     /** A failure phase the renderer decorates as an error. */
     public static final String ERROR = "error";
 
+    /**
+     * Tempdoc 859 §D (F6 follow-up) — the ACCOUNTABILITY phases: a decision the loop took ON THE
+     * READER'S BEHALF, or a change it made to the run's material inputs. They are named as constants
+     * because TWO sites must agree on the token — the emitter, and the read-time projection that
+     * makes the note durable ({@code AgentInteractionMapper}, which is what keeps the narration alive
+     * across a reload). A routine liveness phase ({@code llm_call}, {@code init}, {@code finalizing},
+     * the gate-held pair, {@code workflow:*}) has one producer and no second reader that must match,
+     * so it stays a literal at its emit site.
+     */
+    public static final String PHASE_BUDGET_RAISED = "budget_raised";
+
+    /** @see #PHASE_BUDGET_RAISED */
+    public static final String PHASE_CONTEXT_GATE_REAPPLIED = "context_gate_reapplied";
+
+    /**
+     * Tempdoc 859 §D (F6 follow-up) — the context gate ASKED and nobody answered, so the run
+     * proceeded on its own. The other half of the same guard rail as {@link #PHASE_BUDGET_RAISED}:
+     * a watcherless gate falling back to CONTINUE is a silent continue by definition.
+     *
+     * @see #PHASE_BUDGET_RAISED
+     */
+    public static final String PHASE_CONTEXT_GATE_UNANSWERED = "context_gate_unanswered";
+
+    /**
+     * NAME COLLISION, deliberate and load-bearing to know about: this phase token is spelled exactly
+     * like the {@code context_compacted} journal EVENT TYPE ({@code AgentEventPayloads.name} for
+     * {@link ContextCompacted}). They are different things on different axes — one is a
+     * {@code progress} record's {@code phase} field, the other is a record's {@code eventType} — and
+     * a reader that greps the string finds both. Named here so 865's teardown does not assume one
+     * hit is the other.
+     *
+     * @see #PHASE_BUDGET_RAISED
+     */
+    public static final String PHASE_CONTEXT_COMPACTED = "context_compacted";
+
     /** Routine progress (default {@link #INFO} severity, no trace). */
     public AgentProgress(String phase, String message, int iteration, int maxIterations) {
       this(phase, message, iteration, maxIterations, INFO, TraceContext.none());

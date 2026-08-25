@@ -68,6 +68,7 @@ export class CitationsPanel extends JfElement {
     citations: { type: Array, attribute: false },
     sources: { type: Array, attribute: false },
     sourceCoverage: { type: Array, attribute: false },
+    groundingIncomplete: { type: Boolean, attribute: false },
     retrievalMode: { type: String, attribute: false },
     showWeak: { state: true },
     sourcesExpanded: { type: Boolean, attribute: false },
@@ -82,6 +83,12 @@ export class CitationsPanel extends JfElement {
    * established two-state behaviour for every consumer whose run reports no coverage.
    */
   declare sourceCoverage: SourceCoverage[];
+  /**
+   * Tempdoc 865 §7.3 — the run reported that its grounding pass did not complete, so an empty
+   * {@link citations} list is a MISSING verdict, not a negative one. `false` (the default) is the
+   * established behaviour for every consumer whose run says nothing about its pass.
+   */
+  declare groundingIncomplete: boolean;
   declare retrievalMode: string;
   declare showWeak: boolean;
   // Tempdoc 559 Authority IV (C-1): sources are disclosed on demand, not
@@ -110,6 +117,7 @@ export class CitationsPanel extends JfElement {
     this.citations = [];
     this.sources = [];
     this.sourceCoverage = [];
+    this.groundingIncomplete = false;
     this.retrievalMode = '';
     this.showWeak = false;
     this.sourcesExpanded = false;
@@ -422,7 +430,10 @@ export class CitationsPanel extends JfElement {
    * matcher didn't run / keyword-only) the card shows NO trust claim at all (the §22/U2 degraded fallback).
    */
   private renderGrounding(g: SourceGrounding): TemplateResult {
-    const cls = g.cited ? `grounding ${tierClass(g.tier)}` : 'grounding uncited';
+    // Tempdoc 865 §7.3 — the tier is nullable now, and only a CITED source is guaranteed one, which
+    // is the only branch that reads it. The null test narrows in code rather than by an assertion:
+    // an assertion would be a claim, and the muted uncited style is the right fallback anyway.
+    const cls = g.cited && g.tier !== null ? `grounding ${tierClass(g.tier)}` : 'grounding uncited';
     return html`<span class="${cls}" aria-label=${sourceGroundingLabel(g)}>${sourceGroundingLabel(g)}</span>`;
   }
 
@@ -517,7 +528,14 @@ export class CitationsPanel extends JfElement {
       // 603 §22/U2 — without citation-matches (matcher didn't run / keyword-only) there is no faithfulness
       // signal, so render sources NEUTRALLY (flat, no trust grade) rather than grading by BM25 or marking
       // every source "not cited". With matches, group by grounding (renderTieredSources).
-      return this.retrievalMode === 'FULLTEXT_FALLBACK' || !hasCitations
+      //
+      // Tempdoc 865 §7.3 — with ONE exception, which is the whole point of the flag: an empty match
+      // list that the producer has EXPLAINED is no longer the silent case. Neutral flat cards say
+      // nothing about why there is no grounding, which is fine when nothing is known and wrong when
+      // the run reported that its grounding pass did not complete — that is a fact the reader can act
+      // on. The `!hasCitations` proxy stays the rule for every run that says nothing.
+      return this.retrievalMode === 'FULLTEXT_FALLBACK' ||
+        (!hasCitations && !this.groundingIncomplete)
         ? this.renderFlatSources()
         : this.renderTieredSources();
     }
@@ -591,7 +609,7 @@ export class CitationsPanel extends JfElement {
     const gOf = new Map<AnswerEvidenceSource, SourceGrounding>(
       this.sources.map((s, i) => [
         s,
-        sourceGrounding(i, this.citations, s.parentDocId, coverageAt(i)),
+        sourceGrounding(i, this.citations, s.parentDocId, coverageAt(i), this.groundingIncomplete),
       ]),
     );
     const groups: Record<'high' | 'supporting' | 'weak', AnswerEvidenceSource[]> = {
@@ -603,12 +621,21 @@ export class CitationsPanel extends JfElement {
     // under "retrieved (not cited)" would state an evidence verdict about text no scorer read;
     // it is a budget fact, so it gets its own slot and never a tier.
     const unexamined: AnswerEvidenceSource[] = [];
+    // Tempdoc 865 §7.3 — and a source no matcher judged leaves it for the same reason one step
+    // earlier: "not cited" is a verdict, and there was no pass to deliver one. It carries no tier
+    // either (there is no similarity to mint one from), so it must be routed out BEFORE `tierGroup`.
+    const groundingIncomplete: AnswerEvidenceSource[] = [];
     for (const s of this.sources) {
-      if (gOf.get(s)!.state === 'unexamined') {
+      const g = gOf.get(s)!;
+      if (g.state === 'grounding-incomplete' || g.tier === null) {
+        groundingIncomplete.push(s);
+        continue;
+      }
+      if (g.state === 'unexamined') {
         unexamined.push(s);
         continue;
       }
-      groups[tierGroup(gOf.get(s)!.tier)].push(s);
+      groups[tierGroup(g.tier)].push(s);
     }
     const { high, supporting, weak } = groups;
 
@@ -683,6 +710,17 @@ export class CitationsPanel extends JfElement {
                 ${unexamined.length === 1 ? 'this source' : `these ${unexamined.length} sources`}
               </div>
               ${renderGroup(unexamined)}
+            `
+          : nothing}
+        ${groundingIncomplete.length > 0
+          ? html`
+              <div class="tier-header" data-testid="grounding-incomplete-header">
+                Not scored — the grounding check did not complete for
+                ${groundingIncomplete.length === 1
+                  ? 'this source'
+                  : `these ${groundingIncomplete.length} sources`}
+              </div>
+              ${renderGroup(groundingIncomplete)}
             `
           : nothing}
       </div>`

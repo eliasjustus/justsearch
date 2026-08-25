@@ -20,6 +20,7 @@
  *     keeps rendering its own items (its CSS stays intact) + a "…" trigger.
  */
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
+import { FrameLatch } from './frameLatch.js';
 
 /**
  * How many leading items fit in `available` px. If they ALL fit, no "…" is
@@ -91,7 +92,7 @@ export class OverflowController implements ReactiveController {
   private widths: number[] = [];
   private sig = '';
   private ro: ResizeObserver | null = null;
-  private rafPending = false;
+  private readonly frame = new FrameLatch();
   private retries = 0;
 
   constructor(host: ReactiveControllerHost & HTMLElement, opts: OverflowOptions) {
@@ -113,6 +114,7 @@ export class OverflowController implements ReactiveController {
   hostDisconnected(): void {
     this.ro?.disconnect();
     this.ro = null;
+    this.frame.cancel();
   }
 
   hostUpdated(): void {
@@ -127,18 +129,13 @@ export class OverflowController implements ReactiveController {
     this.schedule();
   }
 
-  /** Defer all measurement/recompute to after layout (rAF), never during update. */
+  /**
+   * Defer all measurement/recompute to after layout (rAF), never during update. The latch is
+   * {@link FrameLatch} (tempdoc 860 §6.4): a page that never delivers a frame releases on the
+   * fallback instead of leaving the bar stuck at the width it was cut for.
+   */
   private schedule(): void {
-    if (this.rafPending) return;
-    this.rafPending = true;
-    const raf =
-      typeof requestAnimationFrame !== 'undefined'
-        ? requestAnimationFrame
-        : (cb: FrameRequestCallback) => queueMicrotask(() => cb(0));
-    raf(() => {
-      this.rafPending = false;
-      this.recompute();
-    });
+    this.frame.request(() => this.recompute());
   }
 
   private recompute(): void {

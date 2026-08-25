@@ -119,10 +119,21 @@ export function sv3CitationHeader(
     // The matcher's own join, not a second one. `sourceCoverage` is NOT part of `Sv3TurnEvidence`
     // (the window never carried it), so the examination state stays the established binary — a
     // producer that said nothing about coverage does not get "unexamined" assumed on its behalf.
+    //
+    // Tempdoc 865 §7.3 — the pass-level fact IS carried, and this header is where its absence bit
+    // hardest: the panel falls back to an ungraded flat list when no match survives, but this join
+    // reads an empty list straight into `cited: false` and the pane then said "Retrieved · not
+    // cited" over a source no scorer ever judged.
     grounding:
       citation === null
         ? null
-        : sourceGrounding(sourceIndex, evidence?.matches ?? [], citation.parentDocId),
+        : sourceGrounding(
+            sourceIndex,
+            evidence?.matches ?? [],
+            citation.parentDocId,
+            null,
+            evidence?.groundingIncomplete,
+          ),
     question: turn?.question ?? null,
     spanUnusable: anchor === null,
   });

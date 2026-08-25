@@ -139,4 +139,82 @@ final class AgentSessionGroundingTest {
   void noSearch_yieldsEmptyGroundingWithoutWarn() {
     assertTrue(session().collectGroundingSources().isEmpty());
   }
+
+  /**
+   * Tempdoc 865 §7.4 — the MINT half of the deliberate tool-card/evidence-set divergence; the card
+   * half is {@code toolSearchCard.projection.test.ts} (`modules/ui-web`), which runs the same
+   * fixture through {@code agentSearchCardData}. Both halves guard the {@code
+   * agent-tool-search-card} row in {@code governance/execution-surfaces.v1.json}.
+   *
+   * <p>The two surfaces answer different questions and are deliberately NOT merged: a tool card is
+   * a RECEIPT OF ONE CALL (every hit that call returned, in that call's own order), while this mint
+   * is the RUN'S EVIDENCE SET (deduped across calls, identity-bearing only). The legible story the
+   * reader gets is "this call returned 3; the run drew on 3 distinct documents (out of 5 hits)".
+   *
+   * <p><b>Why this fixture is MULTI-CALL.</b> The worker collapses chunk hits to one hit per parent
+   * document before results ever reach the agent ({@code
+   * SearchExecutor.collapseChunkHitsToParents}, falling back to {@code hit.docId()} when {@code
+   * PARENT_DOC_ID} is absent), so WITHIN one call there are no duplicate parents to dedup and no
+   * identity-less hits to drop — both dedup branches below are inert single-call, and a single-call
+   * version of this test would pass trivially while proving nothing. Cross-call accumulation is the
+   * only live divergence mechanism, so the fixture repeats documents ACROSS calls: drop either
+   * {@code seen.add(...)} guard in {@link AgentSession#collectGroundingSources()} and the mint
+   * returns 5 sources instead of 3, failing here.
+   */
+  @Test
+  @DisplayName("865 §7.4: the cards are a per-call receipt (5 rows) while the mint accumulates the run's DISTINCT documents (3)")
+  void cardsAreAPerCallReceipt_whileTheMintAccumulatesDistinctDocumentsAcrossCalls() {
+    // The same fixture toolSearchCard.projection.test.ts renders: A is chunk-precise, B is
+    // document-level (no parentDocId), C arrives only on the second call.
+    var hitA =
+        Map.<String, Object>of(
+            "title", "Doc A",
+            "path", "f:/docs/a.md",
+            "excerpt", "passage A",
+            "line", 3,
+            "parentDocId", "docs/a.md",
+            "chunkIndex", 2,
+            "startLine", 3,
+            "endLine", 9);
+    var hitB = Map.<String, Object>of("title", "Doc B", "path", "f:/docs/b.md", "excerpt", "passage B", "line", 0);
+    var hitC =
+        Map.<String, Object>of(
+            "title", "Doc C",
+            "path", "f:/docs/c.md",
+            "excerpt", "passage C",
+            "line", 11,
+            "parentDocId", "docs/c.md",
+            "chunkIndex", 0,
+            "startLine", 11,
+            "endLine", 14);
+
+    List<Map<String, Object>> call1 = List.of(hitA, hitB);
+    List<Map<String, Object>> call2 = List.of(hitA, hitB, hitC);
+    var session = session();
+    session.recordExecution(
+        searchCall("call-1"), OperationResult.success("found 2", Map.of("searchResults", call1)));
+    session.recordExecution(
+        searchCall("call-2"), OperationResult.success("found 3", Map.of("searchResults", call2)));
+
+    List<AgentEvent.AgentSource> sources = session.collectGroundingSources();
+
+    // The cards render every hit of every call — one row per searchResults entry, no cross-call
+    // dedup (pinned on the real projection by the TS half).
+    int cardRows = call1.size() + call2.size();
+    assertEquals(5, cardRows, "the two tool cards render 5 rows in total (the receipt side)");
+    // The mint emits the run's DISTINCT documents: A once (chunk identity), B once (document
+    // identity), C once. Removing either dedup branch makes this 5 and collapses the divergence.
+    assertEquals(3, sources.size(), "the run drew on 3 distinct documents across the two calls");
+    assertTrue(
+        cardRows > sources.size(),
+        "the receipt total exceeds the run's distinct-document count — the divergence this register row declares");
+    assertEquals(
+        List.of("docs/a.md", "f:/docs/b.md", "docs/c.md"),
+        sources.stream().map(AgentEvent.AgentSource::parentDocId).toList(),
+        "first-seen order across calls, one entry per distinct document identity");
+    assertEquals(
+        -1,
+        sources.get(1).chunkIndex(),
+        "the document-level source keeps the sentinel — dedup by 'doc#path' does not invent chunk precision");
+  }
 }
