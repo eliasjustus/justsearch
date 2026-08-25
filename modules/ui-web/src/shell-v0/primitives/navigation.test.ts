@@ -475,3 +475,110 @@ describe('navigation — the visible region under a floating overlay (859 §B)',
   });
 });
 
+/**
+ * Tempdoc 859 follow-up — the landmark list going STALE with no signal that says so.
+ *
+ * Measured live post-#534: the record's plain HTML lays out synchronously, so the render-time measure
+ * committed two landmarks while the `jf-*` rows had not upgraded, measured zero height and were
+ * skipped; nothing re-ran the measurement afterwards, because their growth moves the scroller's
+ * `scrollHeight` and NOT the scroller's own box (the ResizeObserver's blind spot, same class as 859
+ * §B/D5's floating composer) and no render followed the finished load. The content height is the
+ * signal the staleness has of its own, which is why the fix is a recorded height rather than a timer.
+ */
+describe('navigation — a measurement is stale once the content height moves (859 follow-up)', () => {
+  /** A column whose content height can be moved afterwards, counting the measures it is subjected to. */
+  function growable(clientHeight: number, contentHeight: number) {
+    const conv = document.createElement('div');
+    document.body.appendChild(conv);
+    let content = contentHeight;
+    let measures = 0;
+    Object.defineProperty(conv, 'clientHeight', { configurable: true, value: clientHeight });
+    Object.defineProperty(conv, 'scrollTop', { configurable: true, writable: true, value: 0 });
+    Object.defineProperty(conv, 'scrollHeight', { configurable: true, get: () => content });
+    // `measure()` reads the column's own box exactly once per pass, so this counts passes.
+    conv.getBoundingClientRect = () => {
+      measures++;
+      return { top: 0, left: 0, right: 800, bottom: clientHeight, width: 800, height: clientHeight, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    };
+    return { conv, grow: (h: number) => { content = h; }, measures: () => measures };
+  }
+
+  /** A stamped row whose laid-out box can change after it has already been measured once. */
+  function row(conv: HTMLElement, id: string, box: () => { top: number; height: number }): void {
+    const el = document.createElement('div');
+    el.setAttribute('data-item-id', id);
+    el.getBoundingClientRect = () => {
+      const b = box();
+      return { top: b.top, left: 0, right: 800, bottom: b.top + b.height, width: 800, height: b.height, x: 0, y: b.top, toJSON: () => ({}) } as DOMRect;
+    };
+    conv.appendChild(el);
+  }
+
+  it('re-measures on a read when the content grew, and records the height so the read settles', () => {
+    // The column is NOT scrollable in either state (clientHeight ≥ scrollHeight) and the row grows in
+    // exact proportion, so the extents, the landmark count, the track height and the reading window
+    // are all identical before and after: the moved CONTENT HEIGHT is the only thing that changed.
+    // That is what makes this case discriminate — drop `contentH !== this.measuredScrollHeight` from
+    // measure()'s changed-check and the commit never happens, the recorded height stays behind, and
+    // every subsequent read re-measures forever instead of settling.
+    const { conv, grow, measures } = growable(800, 300);
+    let rowHeight = 150;
+    row(conv, 'a', () => ({ top: 0, height: rowHeight }));
+    const nav = new NavigationController(fakeHost(), {
+      scrollEl: () => conv,
+      spineEl: () => null,
+      active: () => true,
+    });
+    nav.hostUpdated();
+    expect(nav.landmarks.map((l) => l.extent)).toEqual([{ topFrac: 0, botFrac: 0.5 }]);
+    const afterFirst = measures();
+
+    grow(600);
+    rowHeight = 300;
+    expect(nav.landmarks.map((l) => l.extent)).toEqual([{ topFrac: 0, botFrac: 0.5 }]);
+    expect(measures(), 'the grown column is re-measured on the read').toBe(afterFirst + 1);
+
+    void nav.landmarks;
+    void nav.activeId;
+    expect(measures(), 'and the recorded height settles it — no re-measure per read').toBe(afterFirst + 1);
+    conv.remove();
+  });
+
+  it('leaves a genuinely collapsed row unanchored across the re-measure', () => {
+    // The fix must not become "stop skipping zero-height elements". A step inside a CLOSED <details>
+    // is display:none and has no reading position at all, so measure() deliberately leaves it out for
+    // the dot to interpolate past. A re-measure triggered by grown content reaches the same verdict.
+    const { conv, grow } = growable(200, 1000);
+    row(conv, 'open', () => ({ top: 0, height: 100 }));
+    row(conv, 'collapsed', () => ({ top: 100, height: 0 }));
+    const nav = new NavigationController(fakeHost(), {
+      scrollEl: () => conv,
+      spineEl: () => null,
+      active: () => true,
+    });
+    nav.hostUpdated();
+    expect(nav.landmarks.map((l) => l.id)).toEqual(['open']);
+
+    grow(1400); // a sibling laid out and the column grew — the read re-measures
+    expect(nav.landmarks.map((l) => l.id)).toEqual(['open']);
+    conv.remove();
+  });
+
+  it('does not force a measurement before the render path has taken one', () => {
+    // A read on a controller that has never measured is NOT staleness — there is no baseline to be
+    // stale against, and forcing a layout for it would put a getBoundingClientRect on every consumer
+    // that touches the list of a transcript that has not rendered yet.
+    const { conv, measures } = growable(200, 1000);
+    row(conv, 'a', () => ({ top: 0, height: 100 }));
+    const nav = new NavigationController(fakeHost(), {
+      scrollEl: () => conv,
+      spineEl: () => null,
+      active: () => true,
+    });
+    expect(nav.landmarks).toEqual([]);
+    expect(nav.activeId).toBe('');
+    expect(measures()).toBe(0);
+    conv.remove();
+  });
+});
+

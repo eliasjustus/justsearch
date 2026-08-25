@@ -128,12 +128,35 @@ const raf =
 export class NavigationController implements ReactiveController {
   /** §21 POSITION — each item's 0..1 TOP-EDGE scroll fraction (the dot placement; 814 §D4). */
   fractions = new Map<string, number>();
-  /** §21 — each item's 0..1 scroll EXTENT (top/bottom span); FOCUS is derived from these × the window. */
-  landmarks: Landmark[] = [];
+  /**
+   * §21 — each item's 0..1 scroll EXTENT (top/bottom span); FOCUS is derived from these × the window.
+   *
+   * An ACCESSOR rather than a plain field because reading the reading-position is the one moment at
+   * which a stale measurement becomes visible to the reader — see {@link freshenIfStale}. The setter
+   * keeps the hand-assigned-run idiom the pure-math cases are written in.
+   */
+  get landmarks(): Landmark[] {
+    this.freshenIfStale();
+    return this.landmarkExtents;
+  }
+
+  set landmarks(next: Landmark[]) {
+    this.landmarkExtents = next;
+  }
   /** §19.4 — the measured spine-track height (px); 0 until measured → the render uses %-placement. */
   trackPx = 0;
   /** §21 WINDOW — the slice of the conversation on screen; null when it all fits (not scrollable). */
   viewport: ViewportWindow | null = null;
+
+  private landmarkExtents: Landmark[] = [];
+  /**
+   * The `scrollHeight` the committed measurement was taken against; 0 = nothing measured yet.
+   *
+   * Part of the measured state, exactly like {@link landmarks} / {@link fractions} / {@link viewport}
+   * — every extent above is a fraction OF this number, so a measurement and the content height it was
+   * normalised by are one fact, not two. It is also the STALENESS signal {@link freshenIfStale} reads.
+   */
+  private measuredScrollHeight = 0;
 
   private readonly host: ReactiveControllerHost & HTMLElement;
   private readonly opts: NavigationOptions;
@@ -236,10 +259,42 @@ export class NavigationController implements ReactiveController {
     return Math.max(1, client - occluded);
   }
 
+  /**
+   * Tempdoc 859 follow-up — re-measure BEFORE the reading position is read, when the content height
+   * says the committed measurement is stale.
+   *
+   * The measured defect (live, post-#534): on a record load the transcript's plain HTML lays out
+   * synchronously, so the `hostUpdated` measure ran and found TWO landmarks — the question div and
+   * the terminal paragraph — while the `jf-reasoning-block` / `jf-tool-call-card` rows had not
+   * upgraded yet, measured `rect.height === 0`, and were skipped by {@link measure}'s collapsed-row
+   * rule. Nothing then re-ran the measurement: those rows growing changes the scroller's
+   * `scrollHeight` but NOT the scroller's own box, so {@link setupResize}'s observer is blind to it
+   * (the same blindness class as the floating composer in 859 §B / D5), and no further render
+   * followed a finished load. A reader who pressed J at that moment walked a two-item list over a
+   * seven-row run — with no gesture of theirs able to fix it, because the scroll path only re-measures
+   * once a scroll actually happens.
+   *
+   * The staleness has its OWN signal — the content height — so this needs no component-upgrade
+   * enumeration, no timer and no speculative rAF retry: {@link measure} records the `scrollHeight` it
+   * normalised against, and every entry point that resolves "where am I" compares it against the live
+   * one first. Deliberately NOT a `requestUpdate()`: the caller reads the freshened values from this
+   * same synchronous call, and the render / scroll / resize paths already own re-rendering.
+   *
+   * A zero baseline means no measurement has been committed yet, which is not staleness — there is
+   * nothing to be stale against, and the first pass belongs to the render path.
+   */
+  private freshenIfStale(): void {
+    if (this.measuredScrollHeight === 0) return;
+    const conv = this.opts.scrollEl();
+    if (conv === null || conv.scrollHeight === this.measuredScrollHeight) return;
+    this.measure();
+  }
+
   /** §21 FOCUS — the item the reader is on (the spine's `.active` ring): the pinned target, else derived. */
   get activeId(): string {
     if (this.intent.mode === 'pinned' && this.intent.pinnedId) return this.intent.pinnedId;
-    return deriveFocus(this.landmarks, this.viewport) ?? '';
+    this.freshenIfStale();
+    return deriveFocus(this.landmarkExtents, this.viewport) ?? '';
   }
 
   /** Whether a click-jump currently pins the focus (exposed for the affordance + tests). */
@@ -249,6 +304,7 @@ export class NavigationController implements ReactiveController {
 
   /** §13/§21 CONTROL — click-jump: scroll the reading column to the timeline item + pin the focus to it. */
   jumpTo(id: string): void {
+    this.freshenIfStale();
     const conv = this.opts.scrollEl();
     const target = conv
       ? [...conv.querySelectorAll('[data-item-id]')].find((el) => el.getAttribute('data-item-id') === id)
@@ -444,7 +500,8 @@ export class NavigationController implements ReactiveController {
     // untouched — they are fractions of `scrollHeight`, which already grew by the band's padding.
     const vp = viewportWindow(conv.scrollTop, this.visibleHeight(conv), conv.scrollHeight);
     const convTop = conv.getBoundingClientRect().top;
-    const scrollH = conv.scrollHeight || 1;
+    const contentH = conv.scrollHeight;
+    const scrollH = contentH || 1;
     const clamp = (f: number): number => Math.min(1, Math.max(0, f));
     const nextLandmarks: Landmark[] = [];
     conv.querySelectorAll('[data-item-id]').forEach((el) => {
@@ -462,7 +519,13 @@ export class NavigationController implements ReactiveController {
     // 814 §D4 — the marker fractions are the landmarks' TOP edges ({@link anchorFractions}); one
     // derivation from the one measured extent, so position and focus can never disagree.
     const nextFractions = anchorFractions(nextLandmarks);
+    // 859 follow-up — a moved content height is a CHANGE in its own right, and not a redundant one:
+    // every extent above is a fraction of `contentH`, so a commit that skipped this term would leave
+    // the committed extents normalised by one number while `measuredScrollHeight` claimed another —
+    // and {@link freshenIfStale}, which reads exactly that claim, would re-measure on every read
+    // forever instead of settling. The height the content grew to is the fact that must be recorded.
     let changed =
+      contentH !== this.measuredScrollHeight ||
       nextFractions.size !== this.fractions.size ||
       Math.abs(trackPx - this.trackPx) > 1 ||
       this.viewportChanged(vp);
@@ -477,9 +540,10 @@ export class NavigationController implements ReactiveController {
     }
     if (changed) {
       this.fractions = nextFractions;
-      this.landmarks = nextLandmarks;
+      this.landmarkExtents = nextLandmarks;
       this.trackPx = trackPx;
       this.viewport = vp;
+      this.measuredScrollHeight = contentH;
     }
     return changed;
   }
