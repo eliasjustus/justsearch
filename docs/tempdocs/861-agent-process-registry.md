@@ -1,5 +1,5 @@
 ---
-status: rev 2 — all seven phases implemented (Phases 1-5 merged, Phases 6+7 in PR #TBD); closure record at §9
+status: rev 2 — all seven phases implemented (Phases 1-5 merged, Phases 6+7 in PR #559); closure record at §9
 created: 2026-08-25
 updated: 2026-08-25
 revision: rev 2 — 15 review findings folded in; §6.2/§6.3/§6.4 corrected as text before any worker brief; Phase 5's own review (F-1..F-8) folded into §7.1; Phases 6+7 as-landed + closure outcome record added by W6
@@ -11,7 +11,7 @@ phases:
   - "Phase 3 (W3) — producers (ui_shot.py, serve-worktree-fe.cjs, otlp-sink-ensure.mjs): MERGED #554"
   - "Phase 4 (W4) — the reaper and the §6.3 matrix: MERGED #552 (scripts/dev/lib/agent-spawn-reaper.cjs)"
   - "Phase 5 (W5) — reap occasions and hook bodies: PR #558, independent review APPROVE-WITH-FIXES (F-1..F-8), fixes folded in — see §7.1 as-landed"
-  - "Phases 6+7 (W6) — the file->manifest gate and the ui-shot-cleanup teardown sweep: PR #TBD, landed together per the interlock — see §7.1 Phase 6+7 as-landed and §9's closure record"
+  - "Phases 6+7 (W6) — the file->manifest gate and the ui-shot-cleanup teardown sweep: PR #559, landed together per the interlock — see §7.1 Phase 6+7 as-landed and §9's closure record"
 ---
 
 # 861 — Agent-spawned process ownership and reaping
@@ -1364,7 +1364,7 @@ not safety: a spawn born before its producer's session id resolved is swept only
 addressed this phase — the fix (if one is warranted) belongs with Phase 3's producers, which own
 the write site this limit originates from.
 
-### 7.1 Phase 6+7 — as landed (PR #TBD)
+### 7.1 Phase 6+7 — as landed (PR #559)
 
 Both phases land in one PR, as §7.1's ordering requires (the gate's own first run must not go red
 on the file its sibling phase deletes).
