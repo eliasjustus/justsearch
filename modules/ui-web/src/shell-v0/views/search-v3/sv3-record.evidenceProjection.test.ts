@@ -348,6 +348,15 @@ describe('865 PR-0 — the record replays "the grounding pass did not complete"'
  * contract, so the run plane has nothing either. Everything the run drew on used to die there. The
  * per-call deltas stamped onto each `tool_exec_completed` are what survives, and the mapper already
  * copies `structuredData` onto the record event verbatim.
+ *
+ * HONEST SCOPE (865 PR-1 review F-7): the §7.9/A9 composition with 863 is MODELLED here, not
+ * exercised end to end. These fixtures are `ThreadEvent`s that run through the shared
+ * `projectUnifiedThread` — real projection, hand-built inputs — so what they pin is this reader's
+ * rule given a store row that is present or absent. What they do NOT pin is that 863's suppression
+ * really produces those two input shapes: that a stamped conversation's run-plane `done` is filtered
+ * (`AgentRunQueryService`) and that an answerless run writes no assistant row (`ConversationEngine`).
+ * The end-to-end variant belongs on the Java side, over a real `AgentRunStore` + thread projection,
+ * and is named here as the record suite's gap rather than implied to be covered.
  */
 describe('865 §7.1 — the record reconstructs an answerless run from its per-call deltas', () => {
   /** The wire shape `OperationResult.withGrounding` stamps (AgentSource's eight fields). */

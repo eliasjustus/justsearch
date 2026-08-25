@@ -133,9 +133,14 @@ public record OperationResult(
   }
 
   /**
-   * Tempdoc 865 §7.1 — the {@code structuredData} key {@link #withGrounding} stamps. Exported so the
-   * conformance test and the wire/record readers name one constant rather than three string
-   * literals that can drift apart.
+   * Tempdoc 865 §7.1 — the {@code structuredData} key {@link #withGrounding} stamps.
+   *
+   * <p>Exported so the stamp and the JAVA readers (the conformance test, the terminal-equivalence
+   * tests) name one constant instead of repeating a literal. It unifies only the Java side: the TS
+   * readers on both planes necessarily hold their own literal, because the key crosses a wire. What
+   * keeps those honest is not this constant but the equality the conformance test pins — the key and
+   * its eight fields, asserted here in the descriptor's place, since {@code structuredData} is
+   * declared free-form and no schema gate can see it.
    */
   public static final String GROUNDING_KEY = "grounding";
 

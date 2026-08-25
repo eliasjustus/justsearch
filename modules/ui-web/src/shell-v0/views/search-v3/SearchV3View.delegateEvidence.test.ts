@@ -419,6 +419,44 @@ describe('865 §7.1 — a run with no grounded terminal stands on its own deltas
     expect(evidence.groundingIncomplete).toBe(true);
   });
 
+  it('F-1: a MAX_ITERATIONS done OWNS the turn but claims no grounding — the deltas still win', async () => {
+    // The gate this fixes. `AgentDone.ofDisposition` DOES emit a `done`: its payload always carries
+    // a `sources` key (`AgentEventPayloads` puts it unconditionally) and `onDone` writes
+    // `answerEvidenceRunId` unconditionally — so the OWNERSHIP predicate is true for the exact
+    // terminals that report nothing. Gating the evidence write on ownership alone made the empty
+    // terminal win and the delta arm unreachable for MAX_ITERATIONS: the run's evidence was minted,
+    // journaled, delivered — and then dropped at the last read site.
+    const el = await mount();
+    await runWithTwoTexts(el, 'why did it retry?');
+    await frame(el, {
+      // Exactly what `ofDisposition` produces: an owned terminal with an empty grounding claim.
+      answerSources: [],
+      answerCitations: [],
+      answerEvidenceRunId: 'run-1',
+      answerCitationScorer: 'NONE',
+      terminalDisposition: 'MAX_ITERATIONS',
+      groundingDeltas: SOURCES,
+      groundingDeltasRunId: 'run-1',
+      runInFlight: false,
+      isStreaming: false,
+      runKind: null,
+    });
+
+    const turn = el.sessions.sessions[0]!.turns[0]!;
+    const evidence = turn.evidence!;
+    expect(evidence.sources.map((s) => s.parentDocId)).toEqual([
+      'docs/runbook.md',
+      'docs/postmortem.md',
+    ]);
+    // The two facts that ride WITH the sources must be the deltas' own, not the empty terminal's —
+    // a mismatched pair is what turns a reconcile into a false verdict.
+    expect(evidence.groundingIncomplete).toBe(true);
+    expect(evidence.sourceCoverage).toEqual([]);
+    // OWNERSHIP is untouched: the cut-short badge still comes from the same terminal, which is why
+    // the fix adds a second predicate instead of narrowing the existing one.
+    expect(turn.disposition).toBe('MAX_ITERATIONS');
+  });
+
   it('the TERMINAL wins when it arrived — the deltas are the same set, never added to it', async () => {
     const el = await mount();
     await runWithTwoTexts(el, 'why did it retry?');

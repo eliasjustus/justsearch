@@ -673,6 +673,14 @@ final class AgentSession {
    *     established none). Returned rather than left to a separate call on purpose: recording an
    *     execution and contributing what it established are one act, so a future call site cannot
    *     record a result whose evidence the accumulator never saw.
+   *     <p><b>THE CALLER'S OBLIGATION, and the property that actually matters (review F-2): every
+   *     returned delta must be stamped onto the event that call emits.</b> Returning it is only half
+   *     — a caller that records and discards puts the source in the terminal list and in NO delta, so
+   *     the concatenated deltas stop equalling the terminal list and every position after the gap
+   *     shifts. Since {@code AgentSentenceCite.sourceIndex} is a position into that list, the visible
+   *     result is inline marks pointing at the wrong documents, with nothing failing. The
+   *     grounding-seam audit cannot see this shape (it forbids stamping outside the seam, not
+   *     recording without stamping), so it is pinned by test instead.
    */
   List<AgentEvent.AgentSource> recordExecution(ToolCallRequest call, OperationResult result) {
     executedTools.add(new ExecutedToolCall(call, result));

@@ -1174,7 +1174,17 @@ final class AgentStepRunner {
       String detail = vtr.errorDetail() == null ? "virtual tool failed" : vtr.errorDetail();
       opResult = OperationResult.failure(detail);
     }
-    session.recordExecution(call, opResult);
+    // Tempdoc 865 §7.1 — the SAME mint-and-stamp pair as the main dispatch seam. A recorded
+    // execution whose delta never reaches the wire is a silent terminal-equivalence trap: the
+    // accumulator would count it into the terminal list while the deltas skipped it, so the
+    // concatenation would no longer equal the terminal and every position after the gap would shift.
+    // The grounding-seam audit cannot see that shape — it forbids stamping outside the seam, not
+    // recording WITHOUT stamping — so the invariant is upheld here by construction and pinned by
+    // `virtualToolRun_keepsTerminalEquivalence`.
+    List<AgentEvent.AgentSource> grounding = session.recordExecution(call, opResult);
+    if (!grounding.isEmpty()) {
+      opResult = opResult.withGrounding(grounding);
+    }
     sink.accept(new AgentEvent.ToolExecutionCompleted(call.id(), opResult));
     session.appendMessage(
         Map.of(

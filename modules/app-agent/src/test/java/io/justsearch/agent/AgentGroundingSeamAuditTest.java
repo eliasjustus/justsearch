@@ -149,14 +149,24 @@ final class AgentGroundingSeamAuditTest {
       return false;
     }
     return !(originOwner.equals(AgentStepRunner.class.getName())
-        && originMethod.equals(DISPATCH_SEAM_METHOD));
+        && DISPATCH_SEAM_METHODS.contains(originMethod));
   }
 
   /**
-   * The method on {@link AgentStepRunner} that runs one iteration's tool dispatch — the block that
-   * already stamps {@code withLineage}, and the one place 865 §7.1 puts the grounding stamp.
+   * The methods on {@link AgentStepRunner} that DISPATCH a tool call and record its result — the two
+   * places 865 §7.1 mints and stamps a grounding delta.
+   *
+   * <p>They are two because the loop has two dispatch channels, not because the seam was widened for
+   * convenience: {@code executeIteration} runs the synchronous executor (and already stamps {@code
+   * withLineage} in the same block), and {@code handleVirtualToolCall} runs the {@code vop_*} channel
+   * whose result arrives from the FE. Both call {@code recordExecution}, so both feed the
+   * accumulator — and a site that feeds the accumulator without stamping breaks terminal equivalence
+   * just as surely as a second mint would, by leaving a gap in the deltas that the terminal list does
+   * not have. This rule cannot see that shape (it governs stamping, not recording), which is why the
+   * property is also pinned by a test.
    */
-  private static final String DISPATCH_SEAM_METHOD = "executeIteration";
+  private static final List<String> DISPATCH_SEAM_METHODS =
+      List.of("executeIteration", "handleVirtualToolCall");
 
   @Test
   void groundingIsAttachedOnlyInGroundedDone() {
@@ -211,8 +221,8 @@ final class AgentGroundingSeamAuditTest {
             .should()
             .callMethodWhere(
                 new DescribedPredicate<JavaMethodCall>(
-                    "stamps a grounding delta (OperationResult.withGrounding) outside the one"
-                        + " dispatch seam (AgentStepRunner.executeIteration)") {
+                    "stamps a grounding delta (OperationResult.withGrounding) outside"
+                        + " AgentStepRunner's two tool-dispatch seams") {
                   @Override
                   public boolean test(JavaMethodCall call) {
                     return isStampOutsideDispatchSeam(
@@ -231,26 +241,34 @@ final class AgentGroundingSeamAuditTest {
   }
 
   /**
-   * The half that makes the rule above non-decorative: deleting the stamp satisfies "no second site"
+   * The half that makes the rule above non-decorative: deleting a stamp satisfies "no second site"
    * perfectly, and would silently restore the terminal-only minting 865 §7.1 retired — evidence
    * would go back to dying on every cancel, error and iteration ceiling, with every gate green.
+   *
+   * <p>Asserted per DISPATCH SEAM, not once for the class (865 PR-1 review F-2). A single
+   * "somewhere in this class" check would stay green after the stamp was dropped from one of the two
+   * channels, which is exactly the state the virtual-tool seam shipped in: recorded into the
+   * accumulator, never stamped onto the wire.
    */
   @Test
-  void theDispatchSeamStillStampsTheGroundingDelta() {
+  void everyDispatchSeamStillStampsTheGroundingDelta() {
     JavaClasses classes = productionAgentClasses();
-    boolean stamped =
-        classes.get(AgentStepRunner.class).getMethodCallsFromSelf().stream()
-            .anyMatch(
-                call ->
-                    call.getTarget().getFullName().startsWith(GROUNDING_STAMP)
-                        && call.getOrigin().getName().equals(DISPATCH_SEAM_METHOD));
-    org.junit.jupiter.api.Assertions.assertTrue(
-        stamped,
-        "AgentStepRunner."
-            + DISPATCH_SEAM_METHOD
-            + " must stamp the per-call grounding delta via OperationResult.withGrounding"
-            + " (tempdoc 865 §7.1). Without it a run that never reaches a grounded terminal —"
-            + " cancelled, errored, MAX_ITERATIONS — loses everything it established.");
+    for (String seam : DISPATCH_SEAM_METHODS) {
+      boolean stamped =
+          classes.get(AgentStepRunner.class).getMethodCallsFromSelf().stream()
+              .anyMatch(
+                  call ->
+                      call.getTarget().getFullName().startsWith(GROUNDING_STAMP)
+                          && call.getOrigin().getName().equals(seam));
+      org.junit.jupiter.api.Assertions.assertTrue(
+          stamped,
+          "AgentStepRunner."
+              + seam
+              + " records a tool execution, so it must also stamp that call's grounding delta via"
+              + " OperationResult.withGrounding (tempdoc 865 §7.1). Recording without stamping puts"
+              + " the source in the terminal list and NOT in the deltas, so the concatenation stops"
+              + " equalling the terminal and every position after the gap shifts.");
+    }
   }
 
   /**
@@ -269,10 +287,11 @@ final class AgentGroundingSeamAuditTest {
         isStampOutsideDispatchSeam(
             AgentStepRunner.class.getName(), "groundedDone", stampTarget),
         "a grounding stamp from the WRONG method of the right class must still be flagged");
-    org.junit.jupiter.api.Assertions.assertFalse(
-        isStampOutsideDispatchSeam(
-            AgentStepRunner.class.getName(), DISPATCH_SEAM_METHOD, stampTarget),
-        "the one legitimate seam must not be flagged");
+    for (String seam : DISPATCH_SEAM_METHODS) {
+      org.junit.jupiter.api.Assertions.assertFalse(
+          isStampOutsideDispatchSeam(AgentStepRunner.class.getName(), seam, stampTarget),
+          "a legitimate dispatch seam must not be flagged: " + seam);
+    }
     org.junit.jupiter.api.Assertions.assertFalse(
         isStampOutsideDispatchSeam(
             "io.justsearch.agent.SomeSecondMintSite",

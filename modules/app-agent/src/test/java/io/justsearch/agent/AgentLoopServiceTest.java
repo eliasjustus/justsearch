@@ -1366,6 +1366,112 @@ class AgentLoopServiceTest {
         "everything both searches established is on the tool events, durable on both planes");
   }
 
+  /**
+   * Tempdoc 865 PR-1 review F-2 — terminal equivalence holds for a run whose tool calls go through
+   * BOTH dispatch channels.
+   *
+   * <p>{@code handleVirtualToolCall} is the second channel: the {@code vop_*} result arrives from the
+   * FE rather than the synchronous executor, and it calls {@code recordExecution} like the main seam
+   * does. It shipped recording WITHOUT stamping, which the grounding-seam audit cannot see — that
+   * rule forbids stamping outside a seam, not recording without stamping. The failure it would
+   * produce is not an error anywhere: a source lands in the accumulator and in no delta, the
+   * concatenation stops equalling the terminal list, and every position after the gap shifts —
+   * silently redirecting the inline marks that resolve through those positions.
+   *
+   * <p><b>Honest scope, stated rather than implied.</b> The virtual channel builds its result with
+   * {@code OperationResult.success(String)} / {@code failure(String)}, neither of which carries
+   * {@code structuredData}, so a virtual call establishes nothing TODAY and its delta is empty. This
+   * case therefore pins that a virtual call in the middle of a run perturbs neither the deltas nor
+   * their ORDER — not that the virtual channel carries evidence. Writing it as if it did would be an
+   * unreachable seed; the stamp itself is held in place by
+   * {@code everyDispatchSeamStillStampsTheGroundingDelta}.
+   */
+  @Test
+  @DisplayName("865 F-2: terminal equivalence holds across BOTH dispatch channels (a vop_ call between two searches)")
+  void virtualToolRun_keepsTerminalEquivalence() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_v", "vop_open_folder", "{\"path\":\"x\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}"),
+                ScriptedResponse.textOnly("Here is the answer")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                .returningStructuredData(
+                    List.of(searchEvidence("d1", "d2"), searchEvidence("d1", "d3"))));
+
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+    // Answer the virtual call from inside the consumer. Delivery is in-thread and synchronous, so
+    // the future is already complete when the loop reaches its `get`.
+    Consumer<AgentEvent> sink =
+        event -> {
+          events.add(event);
+          if (event instanceof AgentEvent.SessionStarted s) {
+            sessionId.set(s.sessionId());
+          }
+          if (event instanceof AgentEvent.ToolCallVirtual v && sessionId.get() != null) {
+            service.completeVirtualToolCall(sessionId.get(), v.callId(), true, "opened", null);
+          }
+        };
+    service.runAgent(new AgentRequest(userMessage("mixed channels"), List.of(), 6), sink);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "the run reaches a grounded terminal");
+    assertEquals(
+        List.of("d1", "d2", "d3"),
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList());
+    assertEquals(
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
+        deltaDocIds(events),
+        "the virtual call sits between the two searches and contributes nothing — the concatenated"
+            + " deltas still equal the terminal list, same members, same order");
+    // The virtual call really did execute through the second channel (otherwise this case would be
+    // asserting the single-channel property under a longer name).
+    assertNotNull(
+        lastEventOfType(events, AgentEvent.ToolCallVirtual.class),
+        "the vop_ branch must have been taken");
+  }
+
+  /**
+   * Tempdoc 865 PR-1 review F-5 — the premise behind the mint's missing success guard, pinned.
+   *
+   * <p>{@code AgentSession.contributeGroundingSources} deliberately applies no success guard, and its
+   * javadoc justifies that by asserting a failed result cannot carry search evidence. That was an
+   * argument in a comment; this is the test behind it. If a failure factory ever gains a
+   * {@code structuredData} channel, the guard question genuinely reopens — and this fails, which is
+   * the point.
+   */
+  @Test
+  @DisplayName("865 F-5: no OperationResult failure factory can carry structuredData")
+  void failureResultsCannotCarryStructuredData() {
+    assertTrue(
+        OperationResult.failure("boom").structuredData().isEmpty(),
+        "the failure factory carries no structured payload");
+    assertTrue(
+        OperationResult.failure("boom", "SOME_CODE", Map.of("k", "v"), Boolean.TRUE)
+            .structuredData()
+            .isEmpty(),
+        "the typed-error failure factory carries errorDetails, NOT structuredData — so a failed tool"
+            + " cannot report searchResults and the mint needs no success guard");
+    // The reflective half: no OTHER public factory returns a non-success result at all, so the two
+    // above are the whole failure surface. A new one would have to be added here to be reachable.
+    List<String> failureFactories =
+        java.util.Arrays.stream(OperationResult.class.getDeclaredMethods())
+            .filter(m -> java.lang.reflect.Modifier.isStatic(m.getModifiers()))
+            .filter(m -> m.getReturnType() == OperationResult.class)
+            .map(java.lang.reflect.Method::getName)
+            .filter(name -> name.equals("failure"))
+            .toList();
+    assertEquals(
+        2,
+        failureFactories.size(),
+        "exactly two failure factories exist; a third would need its structuredData checked above");
+  }
+
   // ---------------------------------------------------------------------------
   // Empty output retry
   // ---------------------------------------------------------------------------
