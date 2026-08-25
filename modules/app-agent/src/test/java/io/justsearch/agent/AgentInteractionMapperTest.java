@@ -1,12 +1,17 @@
 package io.justsearch.agent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.agent.api.AgentEvent;
 import io.justsearch.agent.api.interaction.InteractionEvent;
 import io.justsearch.agent.api.interaction.InteractionEventKind;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -213,13 +218,199 @@ final class AgentInteractionMapperTest {
     assertTrue(
         AgentInteractionMapper.fromRunEvent(rec("chunk", Map.of("text", "partial")), CONV).isEmpty());
     assertTrue(
-        AgentInteractionMapper.fromRunEvent(rec("progress", Map.of("phase", "p")), CONV).isEmpty());
-    assertTrue(
         AgentInteractionMapper.fromRunEvent(rec("session_started", Map.of("sessionId", "s")), CONV)
             .isEmpty());
     assertTrue(
         AgentInteractionMapper.fromRunEvent(rec("tool_call_approved", Map.of("callId", "c")), CONV)
             .isEmpty());
+  }
+
+  // ============ Tempdoc 859 §D (F6 follow-up) — progress durability by classification ============
+
+  @Test
+  @DisplayName("859 §D F6: a LIVENESS progress phase stays ephemeral — including an unknown one")
+  void livenessProgressStaysEphemeral() {
+    // The rule is an ALLOW-list, so the interesting assertion is the default arm: a phase nobody
+    // classified is ephemeral, and a phase added to the emitters later cannot start writing itself
+    // into every reloaded conversation without someone deciding it should.
+    for (String phase :
+        List.of(
+            "llm_call",
+            "init",
+            "finalizing",
+            "budget_gate_held",
+            "context_gate_held",
+            "retry_after_tool_failure",
+            "run_unobserved_parked",
+            "workflow:node_started",
+            "a_phase_nobody_has_written_yet")) {
+      assertTrue(
+          AgentInteractionMapper.fromRunEvent(
+                  rec("progress", Map.of("phase", phase, "message", "m")), CONV)
+              .isEmpty(),
+          phase + " narrates what the run is doing, so it does not outlive the run");
+    }
+    // A record with no phase at all (a malformed/legacy row) is ephemeral rather than a blank note.
+    assertTrue(AgentInteractionMapper.fromRunEvent(rec("progress", Map.of()), CONV).isEmpty());
+  }
+
+  @Test
+  @DisplayName("859 §D F6: budget_raised -> a durable PROGRESS note carrying the amount it granted")
+  void budgetRaiseNarrationIsDurable() {
+    // THE gap this closes: §D's guard rail promises "every silent continue is NARRATED", and before
+    // this the note lived only in the session's own SSE stream — so the accountability record for a
+    // budget the reader never approved was gone the moment the conversation was reloaded.
+    InteractionEvent e =
+        mapped(
+            "progress",
+            Map.of(
+                "phase", "budget_raised",
+                "message", "+12,000 tokens — continuing",
+                "iteration", 3,
+                "maxIterations", 8,
+                "severity", "info"));
+    assertEquals(InteractionEventKind.PROGRESS, e.kind());
+    assertEquals("agent", e.originator());
+    // The AMOUNT survives, which is the whole point: "the budget was raised" without the number is
+    // not an accountability record. It rides `content` because that is where both windows' note
+    // renderers read the text from.
+    assertEquals("+12,000 tokens — continuing", e.content());
+    assertEquals("budget_raised", e.attributes().get("phase"));
+    assertEquals("info", e.attributes().get("severity"));
+    assertEquals(
+        CONV + ":progress:00000:budget_raised:" + Instant.parse("2026-01-01T00:00:01Z").toEpochMilli(),
+        e.id());
+  }
+
+  @Test
+  @DisplayName("859 §D F6: two same-millisecond notes keep EMISSION order, not phase-name order")
+  void sameMillisecondNotesSortByEmissionNotPhaseName() {
+    // The F-1 defect. `context_compacted`.localeCompare(`context_gate_reapplied`) is -1, so an id
+    // without an emission ordinal sorts the COMPACTION above the note explaining why it happened —
+    // effect before cause. And these two are emitted back-to-back on the §2.7 second-crossing path
+    // (AgentStepRunner: the re-apply note, `compactOlderTurns`, then the compaction note), so the
+    // millisecond tie is the NORMAL case there, not a rare one.
+    String tie = "2026-01-01T00:00:07Z";
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                at(tie, "progress",
+                    Map.of("phase", "context_gate_reapplied", "message", "Compacting without asking again")),
+                at(tie, "progress",
+                    Map.of("phase", "context_compacted", "message", "Compacted 4 earlier turns"))),
+            CONV);
+
+    assertEquals(2, events.size());
+    // The assertion that would fail without the ordinal: the FE tiebreaker on equal timestamps is
+    // `id.localeCompare`, so the RENDERED order is the sorted-by-id order — compared here, not the
+    // list order, which would pass either way because `fromRunEvents` emits in journal order.
+    List<String> byId = events.stream().map(InteractionEvent::id).sorted().toList();
+    assertEquals(
+        List.of(events.get(0).id(), events.get(1).id()),
+        byId,
+        "lexical id order must equal emission order on a same-millisecond tie");
+    assertTrue(
+        byId.get(0).contains("context_gate_reapplied"),
+        "the CAUSE (re-applied) must sort before the EFFECT (compacted), got: " + byId);
+    // …and the ordinal is the journal index, zero-padded so 10 does not sort before 9.
+    assertTrue(events.get(0).id().startsWith(CONV + ":progress:00000:"), events.get(0).id());
+    assertTrue(events.get(1).id().startsWith(CONV + ":progress:00001:"), events.get(1).id());
+  }
+
+  @Test
+  @DisplayName("859 §D F6: every declared PHASE_* constant is classified — durable or documented-ephemeral")
+  void everyDeclaredPhaseConstantIsClassified() throws IllegalAccessException {
+    // The UNGUARDED direction (review F-4): the mapper's allow-list defaults to ephemeral, so a new
+    // PHASE_* constant that someone declares and emits but forgets to add to DURABLE_PROGRESS_PHASES
+    // is silently non-durable — which is precisely the bug this whole change fixes, reintroduced.
+    // Reflection over the constants is what makes "someone declared a new one" observable at all.
+    //
+    // A constant may legitimately be ephemeral; it may not be UNCLASSIFIED. Adding it to either list
+    // is a deliberate act, and that is the whole ask.
+    Set<String> documentedEphemeral = Set.of();
+    List<String> unclassified = new ArrayList<>();
+    for (java.lang.reflect.Field f : AgentEvent.AgentProgress.class.getDeclaredFields()) {
+      if (!f.getName().startsWith("PHASE_")
+          || !java.lang.reflect.Modifier.isStatic(f.getModifiers())) {
+        continue;
+      }
+      String phase = (String) f.get(null);
+      if (!AgentInteractionMapper.DURABLE_PROGRESS_PHASES.contains(phase)
+          && !documentedEphemeral.contains(phase)) {
+        unclassified.add(f.getName() + " (\"" + phase + "\")");
+      }
+    }
+    assertEquals(
+        List.of(),
+        unclassified,
+        "a declared progress phase must be listed in AgentInteractionMapper.DURABLE_PROGRESS_PHASES"
+            + " or in this test's documentedEphemeral set — an unclassified one is silently ephemeral");
+    // The guard is only meaningful if it is actually looking at constants: assert it FOUND them.
+    assertEquals(4, AgentInteractionMapper.DURABLE_PROGRESS_PHASES.size());
+  }
+
+  @Test
+  @DisplayName("859 §D F6: the other accountability phases are durable too; severity is optional")
+  void contextAccountabilityNotesAreDurable() {
+    InteractionEvent unanswered =
+        mapped(
+            "progress",
+            Map.of("phase", "context_gate_unanswered", "message", "Context gate unanswered — continuing"));
+    assertEquals(InteractionEventKind.PROGRESS, unanswered.kind());
+    assertEquals("Context gate unanswered — continuing", unanswered.content());
+
+    InteractionEvent reapplied =
+        mapped(
+            "progress",
+            Map.of(
+                "phase", "context_gate_reapplied",
+                "message", "Context filling up again — compacting without asking again"));
+    assertEquals(InteractionEventKind.PROGRESS, reapplied.kind());
+    assertEquals(
+        "Context filling up again — compacting without asking again", reapplied.content());
+    // A record persisted before 577 Ext II carries no severity; `attrs` drops the null rather than
+    // writing a "null" string the renderer would have to defend against.
+    assertNull(reapplied.attributes().get("severity"));
+
+    InteractionEvent compacted =
+        mapped(
+            "progress",
+            Map.of(
+                "phase", "context_compacted",
+                "message", "Compacted 4 earlier turns to stay within the model's memory",
+                "severity", "warn"));
+    assertEquals(InteractionEventKind.PROGRESS, compacted.kind());
+    assertEquals("warn", compacted.attributes().get("severity"));
+  }
+
+  @Test
+  @DisplayName("859 §D F6: a durable progress note is a PROJECTING flush carrier, as it is live")
+  void durableProgressCarriesTheReasoningBlockItCut() {
+    // The A-slice interaction. `progress` has always CUT the region (it is a genuine step boundary);
+    // before this it could not CARRY, so the block was held for the next projecting event — which on
+    // this journal is the terminal answer, three steps later. Now the cut and the carry are the same
+    // event, which is what the live side has always done (`onProgress` appends an entry, so the open
+    // region is committed and the note follows it — C-7b). The record's carrier set is now the live
+    // one restricted to the durable phases; M-2 below still pins the held path for the rest.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "this will need more room"),
+                at("2026-01-01T00:00:02Z", "budget_update", Map.of("phase", "llm_response")),
+                at("2026-01-01T00:00:03Z", "progress",
+                    Map.of("phase", "budget_raised", "message", "+12,000 tokens — continuing")),
+                reasoningAt("2026-01-01T00:00:04Z", "now answer"),
+                at("2026-01-01T00:00:05Z", "done", Map.of("finalResponse", "the answer"))),
+            CONV);
+
+    assertEquals(2, events.size(), "the note and the answer — nothing else projects here");
+    InteractionEvent note = events.get(0);
+    assertEquals(InteractionEventKind.PROGRESS, note.kind());
+    // Chronology: the model thought, ran out of room, the system granted more. The block therefore
+    // renders immediately ABOVE the note, which is where it was produced.
+    assertEquals(List.of("this will need more room"), blockTexts(note));
+    // …and the block that followed the raise is NOT swept onto it.
+    assertEquals(List.of("now answer"), blockTexts(events.get(1)));
   }
 
   // ==================== Tempdoc 848 §2.4 — the reasoning fold ====================
@@ -307,12 +498,16 @@ final class AgentInteractionMapperTest {
   }
 
   @Test
-  @DisplayName("859 §A M-2: a mid-run progress event cuts the block and cannot carry it — it is held")
+  @DisplayName("859 §A M-2: a LIVENESS progress event cuts the block and cannot carry it — it is held")
   void blockCutByANonProjectingProgressEventIsNotDropped() {
-    // The second shape with no carrier: `progress` cuts (it is a genuine step boundary) and projects
+    // The second shape with no carrier: `llm_call` cuts (it is a genuine step boundary) and projects
     // nothing on the agent plane. Under the superseded rule the block had nowhere to go at the cut;
     // if an implementation attached it there instead of holding it, this run would render no
     // thinking at all.
+    //
+    // Tempdoc 859 §D F6 kept this shape reachable rather than deleting it: only the ACCOUNTABILITY
+    // phases became carriers, so the held path is what every remaining phase still takes — which is
+    // why the phase below is named `llm_call` and not left generic.
     List<InteractionEvent> events =
         AgentInteractionMapper.fromRunEvents(
             List.of(
