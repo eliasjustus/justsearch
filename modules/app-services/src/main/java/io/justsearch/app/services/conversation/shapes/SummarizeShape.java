@@ -81,6 +81,9 @@ public final class SummarizeShape {
         List.of(SelectionContextInjector.ID, DocAccess.ID),
         List.of(StreamingCitationMatcher.ID, SummaryDoneEnricher.ID),
         SingleHopController.ID,
-        EventDescriptor.namesOnly(EVENT_SCHEMA));
+        EventDescriptor.namesOnly(EVENT_SCHEMA),
+        // recordsToThread (tempdoc 863 §4.A.1) — an answer-plane turn, as the retired derivation
+        // already computed for every USER-audience substrate-driven shape.
+        true);
   }
 }

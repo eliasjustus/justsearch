@@ -85,6 +85,14 @@ export interface ConversationShape {
   streamConsumerIds: string[];
   iterationControllerId?: string | null;
   eventSchema: string[];
+  /**
+   * Tempdoc 863 §4.A.1 — whether this shape's answer-plane turns are recorded to the canonical
+   * conversation record, INDEPENDENT of `persistenceMode`. Promoted from a derived Java accessor to
+   * a declared record component, which is what put it on this envelope: a record COMPONENT
+   * serialises where the bare `recordsToThread()` accessor did not. The wire probe that measured
+   * that addition is `RegistryControllerTest.shapesEnvelopeKeySetAfterRecordsToThreadPromotion`.
+   */
+  recordsToThread: boolean;
 }
 
 /**

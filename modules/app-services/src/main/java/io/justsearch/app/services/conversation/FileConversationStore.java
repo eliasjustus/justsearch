@@ -195,7 +195,7 @@ public final class FileConversationStore implements ConversationStore {
       Files.createDirectories(sessionDir);
       // Slice 513: ensure id + hash are present before write. The store is the
       // authoritative source — callers don't need to know about hash semantics.
-      Map<String, Object> enriched = enrichMessage(message);
+      Map<String, Object> enriched = enrichMessage(message, shapeId);
       String json = MAPPER.writeValueAsString(enriched);
       Path messagesFile = sessionDir.resolve("messages.jsonl");
       Files.writeString(
@@ -210,12 +210,27 @@ public final class FileConversationStore implements ConversationStore {
     }
   }
 
-  private static Map<String, Object> enrichMessage(Map<String, Object> message) {
+  private static Map<String, Object> enrichMessage(Map<String, Object> message, String shapeId) {
     boolean hasId = message.get("id") instanceof String s && !s.isBlank();
     boolean hasHash = message.get("hash") instanceof String h && !h.isBlank();
     boolean hasTs = message.get("ts") instanceof String t && !t.isBlank();
-    if (hasId && hasHash && hasTs) return message;
+    boolean hasShape = message.get("shapeId") instanceof String sh && !sh.isBlank();
+    if (hasId && hasHash && hasTs && hasShape) return message;
     Map<String, Object> enriched = new LinkedHashMap<>(message);
+    // Tempdoc 863 §4.A.5 (F1) — the SHAPE that dispatched this turn, per message. The session's own
+    // `shapeId` cannot answer this: it is first-wins for the whole conversation (A-10.1), so a mixed
+    // conversation's delegate turn and its ask turns would all report the shape that OPENED it. The
+    // turn's tier is a fact about the turn, and the caller already supplies it on every append.
+    //
+    // This exists because the FE derived a turn's tier from whether it recorded tool calls or notes
+    // (`sv3-record.ts`'s activity heuristic). That correlates until it does not: a delegate run that
+    // called NO tool records no activity at all, and after 863's suppression it contributes no
+    // run-plane events either, so it read as an ordinary ask turn and was offered Edit / Retry /
+    // Branch — the silent tier conversion §4.A.5 A-8 exists to refuse. Same class as `recordsToThread`
+    // itself and as 847's `panelSpeaks` (§6): gate a fact on itself, never on a correlate.
+    if (!hasShape && shapeId != null && !shapeId.isBlank()) {
+      enriched.put("shapeId", shapeId);
+    }
     if (!hasId) enriched.put("id", UUID.randomUUID().toString());
     if (!hasHash) enriched.put("hash", computeHash(enriched));
     // Tempdoc 561 P-A/P-B (correction): a per-message timestamp (does not affect the hash, which is
@@ -749,7 +764,23 @@ public final class FileConversationStore implements ConversationStore {
         meta = new LinkedHashMap<>();
         meta.put("createdAtMs", System.currentTimeMillis());
       }
-      meta.put("shapeId", shapeId);
+      // Tempdoc 863 §4.A.5 A-10.1 — FIRST WINS. This was an unconditional overwrite on every append,
+      // so a conversation's declared shape was really "the shape of its most recent turn". That is
+      // the wrong fact to store: `listSessions(shapeId, …)` filters rows by it and
+      // `UnifiedChatView` re-tags the WHOLE transcript with the one shape it resolves, so one turn in
+      // a different mode silently relabelled everything before it. The edge already existed for a
+      // mixed conversation whose last append came from a different substrate shape; 863 made it
+      // routine by putting delegate turns on the record, so the policy is FIXED rather than merely
+      // stopped from spreading: a conversation's shape is the shape that OPENED it, which is stable,
+      // legible, and the same answer on every subsequent append.
+      // Absent OR BLANK, not just absent (F5): `branchFrom` seeds a child's meta with
+      // `parentMeta.getOrDefault("shapeId", "")`, so a branch of a session whose own meta predates
+      // this field starts life with `shapeId: ""`. Treating that as "already declared" would freeze
+      // the branch's shape at empty forever — first-wins is about the first REAL declaration.
+      Object declared = meta.get("shapeId");
+      if (!(declared instanceof String s) || s.isBlank()) {
+        meta.put("shapeId", shapeId);
+      }
       meta.put("lastActiveAtMs", System.currentTimeMillis());
       int count = ((Number) meta.getOrDefault("messageCount", 0)).intValue() + 1;
       meta.put("messageCount", count);

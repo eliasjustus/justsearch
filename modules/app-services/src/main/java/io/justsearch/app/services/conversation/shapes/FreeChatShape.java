@@ -63,6 +63,8 @@ public final class FreeChatShape {
         // Tempdoc 561 P-E: the passive learning producer runs on free chat too.
         List.of(io.justsearch.app.services.conversation.spi.MemoryExtractionConsumer.ID),
         "core.single-hop",
-        EventDescriptor.namesOnly(EVENT_SCHEMA));
+        EventDescriptor.namesOnly(EVENT_SCHEMA),
+        // recordsToThread (tempdoc 863 §4.A.1) — unchanged from the retired derivation.
+        true);
   }
 }

@@ -915,6 +915,67 @@ describe('a turn that names no store message offers no branch affordance', () =>
   });
 });
 
+/* ── The KIND gate (tempdoc 863 §4.A.5 A-8) ──────────────────────────────────────────────────── */
+
+describe('a delegate turn STAMPED with real store ids still withholds by KIND', () => {
+  it('withholds edit/retry/branch on the delegate turn, but the ask turn after it gains Edit', async () => {
+    const id = 'uc-delegate';
+    backend.conversations = [conversationRow(id, 'delegate this')];
+    backend.threads[id] = {
+      conversationId: id,
+      events: [
+        wireEvent(storedId(0), 'USER_MESSAGE', 'delegate this'),
+        // A TOOL_ACTIVITY event is what makes `sv3-record`'s `projectSv3RecordTurns` derive this
+        // turn's kind as 'agent' rather than 'ask' (the kind is read off what happened, not
+        // declared) — a bare user/assistant pair here would project as an ordinary ask turn and
+        // this case would be testing nothing.
+        wireEvent('c1', 'TOOL_ACTIVITY', 'core_search', { callId: 'c1', toolName: 'core_search' }),
+        // THE STAMP (863 slice A): unlike the pre-stamp fixture above, this answer is a REAL store
+        // id — the exact shape that would make law 1 alone hand Edit/Retry/Branch back on this turn.
+        wireEvent(storedId(1), 'ASSISTANT_MESSAGE', 'done'),
+        wireEvent(storedId(3), 'USER_MESSAGE', 'and the second one?'),
+        wireEvent(storedId(4), 'ASSISTANT_MESSAGE', 'The same lock.'),
+      ],
+    };
+    backend.histories[id] = {
+      sessionId: id,
+      messages: [
+        { role: 'user', content: 'delegate this', id: storedId(0) },
+        { role: 'assistant', content: 'done', id: storedId(1) },
+        { role: 'user', content: 'and the second one?', id: storedId(3) },
+        { role: 'assistant', content: 'The same lock.', id: storedId(4) },
+      ],
+    };
+    const el = await mount();
+    await openConversation(el, 'delegate this');
+    const main = await region(el, 'jf-sv3-main');
+    const turns = turnsIn(main);
+
+    // The delegate turn offers no pencil, even though its own ids are now real store messages — the
+    // honest-null fixture above would have looked the same for a different reason (a missing id);
+    // here only the KIND gate refuses.
+    expect(turns[0]?.querySelector('[data-testid="sv3-turn-edit"]')).toBeNull();
+
+    await press(turns[0]?.querySelector('[data-testid="sv3-turn-context-menu"]'));
+    await settle(el);
+    const menu = document.querySelector('jf-context-menu') as Updatable | null;
+    await menu?.updateComplete;
+    const labels = [
+      ...(menu?.shadowRoot?.querySelectorAll<HTMLButtonElement>('button.item') ?? []),
+    ].map((b) => (b.textContent ?? '').trim());
+    // Neither of the branch module's two acts is offered — not even Branch, which the pre-stamp
+    // fixture above DOES offer on the agent turn itself (it needs only that turn's own answer).
+    // The kind gate withholds `branchFromId` outright, unlike law 1's per-id refusal.
+    expect(labels).not.toContain(BRANCH_MENU_RETRY);
+    expect(labels).not.toContain(BRANCH_MENU_BRANCH);
+
+    // THE A-8.2 FLIP. The ordinary ask turn that follows now gains Edit: its fork point is the
+    // delegate turn's answer, and that message is a real store row post-863 — before the stamp it
+    // was a run-plane id and this pencil did not render.
+    expect(turns[1]?.querySelector('[data-testid="sv3-turn-edit"]')).not.toBeNull();
+  });
+});
+
 /* ── Cascade-aware delete ────────────────────────────────────────────────────────────────────── */
 
 describe('deleting a conversation that has branches', () => {

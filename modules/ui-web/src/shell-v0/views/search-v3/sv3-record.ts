@@ -129,6 +129,19 @@ function recordReasoningItemId(item: UnifiedTurnItem, index: number): string {
  * through the disclosure's accessible name and the panel. Never cast at a read site; key on a
  * discriminator.
  */
+/**
+ * Tempdoc 863 §4.A.5 (F1) — the delegate tier's shape id, mirrored from the Java
+ * `AgentRunShape.ID`. Also in {@link ../../plugin-api/coreInteractionShapes.CORE_INTERACTION_SHAPES},
+ * which is the list the interaction-surface gate keeps in sync with the Java catalog.
+ */
+const AGENT_RUN_SHAPE_ID = 'core.agent-run';
+
+/** The shape a record item declares it was dispatched by, or `null` when it does not say. */
+function declaredShapeOf(item: UnifiedTurnItem): string | null {
+  const declared = item.attributes.shapeId;
+  return typeof declared === 'string' && declared !== '' ? declared : null;
+}
+
 function recordEvidenceOf(item: UnifiedTurnItem): Sv3TurnEvidence | null {
   const a = item.attributes;
   // The ACTION plane: an agent run's persisted assistant message. Its `sources` are `AgentSource`s
@@ -171,6 +184,12 @@ interface Building {
   errored: boolean;
   /** Tempdoc 848 §2.7 — the turn's persisted thinking, accumulated across all its assistant items. */
   reasoning: ReasoningBlock[];
+  /**
+   * Tempdoc 863 §4.A.5 (F1) — the shape the RECORD says dispatched this turn, when it says. Absent
+   * (`null`) for a turn whose items all predate 863's per-message `shapeId`, and for a turn made
+   * only of run-plane events, which are not store rows and carry no shape.
+   */
+  declaredShapeId: string | null;
   /**
    * The evidence of the LAST assistant message in the turn that carried any — last-wins, because a
    * turn's terminal assistant message is the answer, and an earlier interim message's retrieval is
@@ -231,6 +250,7 @@ const open = (
   tools: 0,
   errored: false,
   reasoning: [],
+  declaredShapeId: null,
   evidence: null,
   disposition: null,
   assistantId: null,
@@ -274,10 +294,15 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
   for (const item of items) {
     if (item.kind === 'user') {
       current = open(item.id, item.content, item.ts, true);
+      current.declaredShapeId = declaredShapeOf(item);
       built.push(current);
       continue;
     }
     const turn = ensure(item);
+    // Tempdoc 863 §4.A.5 (F1) — first declaration wins for the turn. Every store row of one turn is
+    // written by the one shape that dispatched it, so the first is the answer; a run-plane item
+    // declares nothing and cannot overwrite it.
+    turn.declaredShapeId = turn.declaredShapeId ?? declaredShapeOf(item);
     // Tempdoc 848 §2.7 — reasoning is read off EVERY item kind, not just the assistant one. A turn
     // can record several assistant items (an iterating shape, a multi-step run), so blocks accumulate
     // in record order rather than the last one winning; and a run that was HALTED or ERRORED carries
@@ -330,14 +355,24 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
   }
 
   return built.map((turn) => {
-    // A turn is "an agent run" exactly when the record shows it doing something other than talking.
+    // Tempdoc 863 §4.A.5 (F1) — when the RECORD declares which shape dispatched the turn, that is
+    // the answer, and no inference runs. The declaration only exists since 863 made delegate turns
+    // store rows; before it, the record genuinely could not say, which is why an inference existed.
     //
-    // Tempdoc 859 §A §3.5 — stated as the ALLOW-list it always meant, not as "not text". Reasoning is
-    // now an activity item and an ordinary grounded ask turn records plenty of it, so `!== 'text'`
-    // would flip every thinking ask turn to `agent` — which drops its activity list, swaps its render
-    // arm and hides its sources. That is the same class 847 §2.4.4 already fixed once for
-    // `panelSpeaks`: a fact must be gated on itself, not on a classification that merely correlates.
-    const agent = turn.activity.some((entry) => entry.kind === 'tool' || entry.kind === 'note');
+    // The inference below is the fallback for the turns that still cannot say: a run-plane-only turn
+    // (a pre-stamp delegate run, a background or standalone run joined to the conversation) and any
+    // store row written before this field. It is 859 §A §3.5's ALLOW-list, not "not text" — reasoning
+    // is an activity item and an ordinary grounded ask turn records plenty of it, so `!== 'text'`
+    // would flip every thinking ask turn to `agent`, dropping its activity list, swapping its render
+    // arm and hiding its sources (the class 847 §2.4.4 fixed once for `panelSpeaks`).
+    //
+    // Its known limit is exactly what F1 caught: a delegate run that called NO tool records no
+    // activity, so the inference reads it as an ask. That is now unreachable for a stamped run, and
+    // survives only for the pre-863 records the inference is kept for.
+    const agent =
+      turn.declaredShapeId !== null
+        ? turn.declaredShapeId === AGENT_RUN_SHAPE_ID
+        : turn.activity.some((entry) => entry.kind === 'tool' || entry.kind === 'note');
     return {
       id: turn.id,
       // Tempdoc 847 §2.4.3 — the RECORD's own id for this turn, carried as its own field. It is the

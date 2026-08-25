@@ -222,6 +222,13 @@ public final class AgentRunShape {
         // framing made literal.
         List.of("core.url-extractor"),
         null,
-        EVENT_SCHEMA);
+        EVENT_SCHEMA,
+        // Tempdoc 863 §4.A.1 — TRUE, and the reason this component exists. A delegate turn is the
+        // reader's conversation: it is USER-audience and PERSISTENT, and the only thing that ever
+        // said otherwise was a derivation off `executionMode`, which describes who drives the loop
+        // and not where the turn belongs. Declaring it true is what makes `ConversationEngine`
+        // append the turn to the canonical record, so `/history`, rename and every message-id-gated
+        // affordance see a delegate conversation the same way they see an ask one.
+        true);
   }
 }

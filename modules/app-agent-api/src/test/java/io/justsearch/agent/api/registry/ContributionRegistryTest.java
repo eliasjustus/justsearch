@@ -262,7 +262,8 @@ class ContributionRegistryTest {
         List.of(),
         List.of(),
         null,
-        List.of());
+        List.of(),
+        false);
   }
 
   /** An installation carrying only the two trailing axes (no executable body). */

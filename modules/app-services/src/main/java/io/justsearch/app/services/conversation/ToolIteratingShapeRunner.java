@@ -293,6 +293,13 @@ public final class ToolIteratingShapeRunner implements ShapeRunner {
     // which is what every caller that predates the rung (the legacy window, seam adopters, a resumed
     // run) deliberately gets.
     String effort = body.get("effort") == null ? null : body.get("effort").toString();
+    // Tempdoc 863 §4.A.3 — the ENGINE's stamp, not a caller field. `ShapeRunner.run` receives no
+    // ConversationShape, so this runner cannot ask `recordsToThread()`; `ConversationEngine`
+    // resolves the write key and writes the answer into the dispatch body under this key (always,
+    // true or false), which is why only `Boolean.TRUE` counts and a string a client happened to post
+    // does not. It rides into `AgentRunStore.startRun`'s meta, where the thread projection reads it.
+    boolean recordsToThread =
+        Boolean.TRUE.equals(body.get(ConversationEngine.RECORDS_TO_THREAD_KEY));
 
     return new AgentRequest(
         messages,
@@ -304,7 +311,8 @@ public final class ToolIteratingShapeRunner implements ShapeRunner {
         conversationId,
         autonomyLevel,
         docIds,
-        effort);
+        effort,
+        recordsToThread);
   }
 
   /** Tempdoc S7 — parse the body's optional {@code docIds} array; absent/malformed = empty (unscoped). */

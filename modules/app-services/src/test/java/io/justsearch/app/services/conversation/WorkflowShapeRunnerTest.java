@@ -179,7 +179,8 @@ class WorkflowShapeRunnerTest {
             List.of(),
             List.of(),
             null,
-            EventDescriptor.namesOnly(List.of("chunk", "done")));
+            EventDescriptor.namesOnly(List.of("chunk", "done")),
+            false);
     ConversationEngine engine =
         new ConversationEngine(
             ConversationShapeCatalog.of("core", List.of(freeChatShape)), List.of(freeChat));
@@ -293,7 +294,8 @@ class WorkflowShapeRunnerTest {
             List.of(),
             List.of(),
             null,
-            EventDescriptor.namesOnly(List.of("chunk", "done")));
+            EventDescriptor.namesOnly(List.of("chunk", "done")),
+            false);
     ConversationEngine engine =
         new ConversationEngine(
             ConversationShapeCatalog.of("core", List.of(recShape)), List.of(recorder));
@@ -338,7 +340,8 @@ class WorkflowShapeRunnerTest {
             List.of(),
             List.of(),
             null,
-            EventDescriptor.namesOnly(List.of("chunk", "done")));
+            EventDescriptor.namesOnly(List.of("chunk", "done")),
+            false);
     ConversationEngine engine =
         new ConversationEngine(
             ConversationShapeCatalog.of("core", List.of(recShape)), List.of(recorder));

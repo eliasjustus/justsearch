@@ -245,6 +245,16 @@ public final class ConversationEngine {
     }
   }
 
+  /**
+   * Tempdoc 863 §4.A.3 (A-1) — the body key the engine stamps onto a shape-driven dispatch that IS
+   * recording to the canonical record. {@code ShapeRunner.run} receives no {@link ConversationShape},
+   * so the runner cannot ask {@code recordsToThread()} itself; the engine answers the question once,
+   * here, and the runner carries the answer into its {@code AgentRequest} (and from there into the
+   * run meta, which is where the thread projection reads it). Always written — true AND false — so a
+   * client-supplied value in the request body can never be mistaken for the engine's decision.
+   */
+  public static final String RECORDS_TO_THREAD_KEY = "recordsToThread";
+
   private void dispatchShapeDriven(
       ConversationShape shape,
       Map<String, Object> body,
@@ -258,7 +268,92 @@ public final class ConversationEngine {
               + " declares SHAPE_DRIVEN execution but no ShapeRunner is registered for it");
     }
     LOG.debug("Dispatching shape-driven {} (audience={})", shape.id().value(), audience);
-    runner.run(body, audience, sink);
+
+    // Tempdoc 863 §4.A.2 — a recordsToThread SHAPE_DRIVEN shape (core.agent-run) puts its turns on
+    // the canonical record, exactly as the substrate-driven path does. The write key comes from the
+    // SAME helper the locked-store refusal is gated on (`persistenceKey`), so the 423 gate and the
+    // write cannot drift. The runner stays untouched: there is ONE store-write site (here), the
+    // clean user turn goes in before the run starts, and the assistant turn goes in at the terminal
+    // `done` observed on the sink the engine already owns.
+    // The no-op store is excluded EXPLICITLY, not incidentally. It silently accepts every append, so
+    // stamping a run against it would suppress the run plane's own synthesised turns (the stamp's
+    // whole job) while nothing had actually been recorded anywhere — one delegate turn would vanish
+    // from the thread entirely. Suppression is only ever justified by a store that really kept the
+    // turn, so the engine asks whether it has one.
+    boolean recordingStore =
+        conversationStore != null
+            && conversationStore != io.justsearch.agent.api.conversation.ConversationStore.noop();
+    String recordKey =
+        shape.recordsToThread() && recordingStore ? persistenceKey(shape, body) : null;
+
+    Map<String, Object> dispatchBody = new LinkedHashMap<>(body);
+    dispatchBody.put(RECORDS_TO_THREAD_KEY, recordKey != null);
+
+    if (recordKey == null) {
+      runner.run(dispatchBody, audience, sink);
+      return;
+    }
+
+    conversationStore.appendMessage(recordKey, shape.id().value(), threadUserMessage(body));
+    // Tempdoc 863 §4.A.5 (F2) — the run's own id, observed on the sink. It rides onto the persisted
+    // answer so the thread projection can suppress the run plane's copy of THIS run's answer only
+    // when the record really holds it; see recordShapeDrivenAnswer.
+    var runId = new AtomicReference<String>();
+    runner.run(
+        dispatchBody,
+        audience,
+        event -> {
+          // RECORD FIRST, forward second. The sink is allowed to throw — `AgentSseWriter.writeOrEvict`
+          // throws precisely so a run drops a disconnected observer — so forwarding first would make
+          // the durable write conditional on someone still watching: a reader who closed the tab
+          // during a long run would come back to a conversation whose answer was never recorded,
+          // while the run itself completed. The store write is the durable act and does not depend on
+          // an audience.
+          if ("session_started".equals(event.name())
+              && event.payload().get("sessionId") instanceof String s
+              && !s.isBlank()) {
+            runId.compareAndSet(null, s);
+          }
+          if ("done".equals(event.name())) {
+            recordShapeDrivenAnswer(recordKey, shape, event.payload(), runId.get());
+          }
+          sink.accept(event);
+        });
+  }
+
+  /**
+   * Tempdoc 863 §4.A.2/§4.A.4 — the shape-driven answer, appended to the canonical record at the
+   * terminal {@code done}. The text is the payload's {@code finalResponse} (a shape-driven run
+   * accumulates no {@code finalText} of its own in the engine), and the evidence rides the same
+   * {@link #persistedAssistant} projection the substrate path uses, so the two planes cannot carry
+   * different evidence for the same answer.
+   *
+   * <p>A store failure here is logged rather than thrown: this runs inside the runner's event
+   * callback, and throwing would abort the agent loop's own terminal bookkeeping after the reader
+   * already has the answer. The dispatch-time cause — a store already locked — is refused before the
+   * stream commits ({@code wouldDiscardWhileLocked}, which answers true for this dispatch precisely
+   * because it now has a write key, 863 §4.A.5 A-9). The residual is a store that becomes locked or
+   * unwritable MID-RUN, and that is why the answer carries its {@code runId} (F2): the thread
+   * projection suppresses the run plane's copy only for a run whose answer the record actually holds,
+   * so a failed append here leaves the run-plane answer standing rather than erasing the answer from
+   * both planes. The run keeps its {@code recordsToThread} stamp either way — the USER turn really
+   * was recorded, so its synthesis stays suppressed and does not double.
+   */
+  private void recordShapeDrivenAnswer(
+      String recordKey, ConversationShape shape, Map<String, Object> donePayload, String runId) {
+    Map<String, Object> payload = donePayload == null ? Map.of() : donePayload;
+    Object finalResponse = payload.get("finalResponse");
+    try {
+      Map<String, Object> answer =
+          persistedAssistant(
+              assistantMessage(finalResponse instanceof String s ? s : ""), payload, null);
+      if (runId != null && !runId.isBlank()) {
+        answer.put("runId", runId);
+      }
+      conversationStore.appendMessage(recordKey, shape.id().value(), answer);
+    } catch (RuntimeException e) {
+      LOG.warn("Failed to record the {} answer for conversation {}", shape.id().value(), recordKey, e);
+    }
   }
 
   /**
@@ -941,10 +1036,33 @@ public final class ConversationEngine {
     String text =
         firstNonBlank(
             body.get("question"), body.get("prompt"), body.get("message"), body.get("text"));
+    // Tempdoc 863 §4.A.2 — the agent body names its input `messages` (OpenAI shape), not one of the
+    // four scalar fields the ask shapes post. Read the last `role:"user"` entry rather than widening
+    // the wire contract: the agent dispatch already sends exactly this, and the LAST user entry is
+    // the turn being asked (an earlier one is prior history the FE replayed).
+    if (text == null) {
+      text = lastUserContent(body.get("messages"));
+    }
     Map<String, Object> m = new LinkedHashMap<>();
     m.put("role", "user");
     m.put("content", text == null ? "" : text);
     return m;
+  }
+
+  /** The content of the last {@code role:"user"} entry of an OpenAI-shaped message list. */
+  private static String lastUserContent(Object messages) {
+    if (!(messages instanceof List<?> list)) {
+      return null;
+    }
+    for (int i = list.size() - 1; i >= 0; i--) {
+      if (list.get(i) instanceof Map<?, ?> msg
+          && "user".equals(msg.get("role"))
+          && msg.get("content") instanceof String content
+          && !content.isBlank()) {
+        return content;
+      }
+    }
+    return null;
   }
 
   /**
@@ -957,21 +1075,33 @@ public final class ConversationEngine {
       Map<String, Object> mergedDoneEntries,
       List<ReasoningTrace> reasoning) {
     Map<String, Object> persisted = new LinkedHashMap<>(assistantMsg);
-    Object citations = mergedDoneEntries.get("citations");
-    if (citations != null) {
-      persisted.put("citations", citations);
-    }
-    Object calibration = mergedDoneEntries.get("calibration");
-    if (calibration != null) {
-      persisted.put("calibration", calibration);
-    }
+    // Tempdoc 863 §4.A.4 (A-3) — "present ⇒ carried, absent ⇒ no key", where EMPTY counts as absent.
+    // The agent `done` payload always writes `sources`/`citations` keys (empty lists when nothing
+    // matched), so a plain null-check would persist `citations: []` — a claimed ZERO where the honest
+    // answer is "never told". `InteractionThreadController.chatTurn` already drops empties at the
+    // wire, so this keeps the record saying what the wire says.
+    putIfPresent(persisted, "citations", mergedDoneEntries.get("citations"));
+    putIfPresent(persisted, "calibration", mergedDoneEntries.get("calibration"));
+    // Tempdoc 863 §4.A.4 — the three attributes the run plane carried and the store plane did not.
+    // Suppressing the run-plane `done` for a stamped run (A-2) drops them from that plane, so the
+    // record has to carry them or a delegate answer would lose its Sources pane, its scorer stamp and
+    // its truncation disclosure on reload. `calibration` and `claimMatches` stay honestly ABSENT for
+    // an agent payload — the agent `done` does not produce them, and a zero would not be the truth.
+    // WARNING (863 §4.A.5 F6) — `sources` is not just an attribute here, it is the FE's PLANE
+    // DISCRIMINATOR: `sv3-record.ts`'s recordEvidenceOf keys on `Array.isArray(a.sources)` to decide
+    // whether a persisted answer's `citations` are `AgentSentenceCite`s (action plane) or
+    // `RetrievalCitation`s (answer plane), and `UnifiedChatView` casts on the same basis. Today only
+    // the agent `done` supplies it, so the discriminator holds. The FIRST substrate shape whose
+    // consumer emits a `sources` done-entry silently reinterprets every RAG turn's citations as
+    // sentence-cites — the 859 §5a class, which produced a confident wrong number rather than an
+    // error. Adding such an entry means giving the record an explicit plane tag first.
+    putIfPresent(persisted, "sources", mergedDoneEntries.get("sources"));
+    putIfPresent(persisted, "citationScorer", mergedDoneEntries.get("citationScorer"));
+    putIfPresent(persisted, "disposition", mergedDoneEntries.get("disposition"));
     // Tempdoc 561 P-A (evidence non-divergence): persist the per-claim grounding (sentence->chunk
     // matches the Worker's cross-encoder produced) so a reloaded conversation renders the inline
     // per-claim marks FROM the record, matching the live render (the two paths cannot diverge).
-    Object claimMatches = mergedDoneEntries.get("claimMatches");
-    if (claimMatches != null) {
-      persisted.put("claimMatches", claimMatches);
-    }
+    putIfPresent(persisted, "claimMatches", mergedDoneEntries.get("claimMatches"));
     // Tempdoc 848 §2.1/§2.2 — the turn's thinking, as an ordered array of blocks. Passed as an
     // EXPLICIT argument rather than through `mergedDoneEntries`, because those entries also ship on
     // the `done` SSE payload: routing reasoning through them would re-send on the wire what already
@@ -981,6 +1111,23 @@ public final class ConversationEngine {
       persisted.put("reasoning", reasoning.stream().map(ReasoningTrace::asBlock).toList());
     }
     return persisted;
+  }
+
+  /** Carry a done-payload entry onto the record when it says something — empty is not a fact. */
+  private static void putIfPresent(Map<String, Object> target, String key, Object value) {
+    if (value == null) {
+      return;
+    }
+    if (value instanceof String s && s.isBlank()) {
+      return;
+    }
+    if (value instanceof java.util.Collection<?> c && c.isEmpty()) {
+      return;
+    }
+    if (value instanceof Map<?, ?> m && m.isEmpty()) {
+      return;
+    }
+    target.put(key, value);
   }
 
   private static String firstNonBlank(Object... values) {

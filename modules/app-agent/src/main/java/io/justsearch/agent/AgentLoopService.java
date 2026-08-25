@@ -780,6 +780,12 @@ public final class AgentLoopService implements AgentService {
   }
 
   @Override
+  public List<InteractionEvent> threadEvents(
+      String conversationId, java.util.Set<String> answeredRunIds) {
+    return queries.threadEvents(conversationId, answeredRunIds);
+  }
+
+  @Override
   public List<io.justsearch.agent.api.lifecycle.AgentLifecycle> lifecycles(String conversationId) {
     return queries.lifecycles(conversationId);
   }

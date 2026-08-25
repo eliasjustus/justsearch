@@ -77,6 +77,10 @@ public final class WorkflowRunShape {
         null,
         // Tempdoc 564 Phase 0: ConversationShape.eventSchema is typed (List<EventDescriptor>);
         // this shape declares names only (typed payload fields are filled when/if needed).
-        EventDescriptor.namesOnly(EVENT_SCHEMA));
+        EventDescriptor.namesOnly(EVENT_SCHEMA),
+        // Tempdoc 863 §4.A.1 — a workflow run stays on the ACTION plane only. Its answer lives in
+        // the per-node `node_output` events the thread already projects read-time from the run
+        // store; minting a store turn for it would give the last node two renders.
+        false);
   }
 }
