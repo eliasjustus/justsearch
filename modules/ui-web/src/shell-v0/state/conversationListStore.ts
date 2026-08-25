@@ -70,7 +70,11 @@ let state: ConversationListState = {
  *  - `restore` — the same write replaying state that already exists somewhere else: the URL on a
  *    deep link or a popstate, or this tab's own reload pointer. Pushing an entry for one of those
  *    would either duplicate the entry the browser just moved to or strand the URL a Back landed on.
- *  - `list` — the roster changed; the claim did not.
+ *  - `list` — the roster changed. Usually the claim did not, but DELETING the open conversation
+ *    drops it under this reason too, and that is deliberate rather than an oversight: a deleted
+ *    conversation is not somewhere the reader can go back to (the address would restore a phantom
+ *    row and a 404 record), so the URL is corrected in place instead of earning an entry. The
+ *    projector keys on the VALUE changing, so the correction still happens — as a replace.
  */
 export type ConversationListChange = 'claim' | 'restore' | 'list';
 

@@ -192,6 +192,28 @@ export function flushPendingProjection(): void {
 }
 
 /**
+ * Flush a pending write ONLY when it is a navigational one — tempdoc 864 PR C, review finding F4.
+ *
+ * A claim made inside the 75ms debounce window and followed immediately by a surface change used to
+ * be dropped: `activateProjection` tears the old projection down, and teardown cancels the pending
+ * timer. Before this PR that cost a slightly stale URL; now it costs a history ENTRY the reader
+ * earned, so the conversation they were in is not on the stack to go back to.
+ *
+ * Called at the TOP of `NavigationHandler.handle`, and that placement is the whole point. The
+ * reviewer's suggested site — inside `deactivateProjection` — cannot work: `handle` calls
+ * `pushAddress` BEFORE `activateProjection` (the slice 489 T1/N2 ordering invariant), so a flush
+ * during teardown would write the OUTGOING surface's URL on top of the entry the incoming
+ * navigation had just pushed. Here the browser is still on the outgoing address, so the entry lands
+ * where it belongs.
+ *
+ * A no-op unless a navigational write is pending, so no other surface's behaviour changes.
+ */
+export function flushPendingNavigationWrite(): void {
+  if (!pendingPush) return;
+  flushPendingProjection();
+}
+
+/**
  * Explicitly push a new navigation address as a history entry (used when the
  * active surface itself changes, vs incremental state edits within a surface).
  * The projector then activates for the new surface, which performs its own

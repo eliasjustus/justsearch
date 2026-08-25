@@ -1098,12 +1098,12 @@ because an empty value would restore a conversation named `""`. Asserted literal
   surface on screen can claim in practice; a second simultaneous claimer would move the URL without
   moving the window, and the fix then is a window-scoped slice, not a special case.
 
-**Verification.** `typecheck` clean; **5984/5984** ui-web unit tests green (457 files); the full
-`ui-web-gates` set + the six kernel gates green. Sixteen new cases across
-`router/sv3ConversationUrl.test.ts` (11) and `views/search-v3/SearchV3View.urlConversation.test.ts`
-(5), covering §4.3 test 9 (Back undoes a conversation swap), forward/back across several switches,
-the deep link, the reload, the literal hash format, and a regression guard that other surfaces still
-project with `replaceState` only.
+**Verification.** `typecheck` clean; the whole ui-web unit suite green; the full `ui-web-gates` set +
+the six kernel gates green. Twenty-two cases across `router/sv3ConversationUrl.test.ts` (15) and
+`views/search-v3/SearchV3View.urlConversation.test.ts` (7), covering §4.3 test 9 (Back undoes a
+conversation swap), forward/back across several switches, the deep link, the reload, the literal hash
+format, the review's F1-F4 (see below), and a regression guard that other surfaces still project with
+`replaceState` only.
 
 **Red on main, verified rather than asserted** (`interrogate-results`): with
 `registerFrontendSurfaceSchemas()` removed — main's behaviour — **9 of the 11** router cases fail,
@@ -1111,6 +1111,55 @@ including `Back undoes a conversation swap`. The two that survive are the "re-cl
 entry" case (vacuously true when nothing projects) and the other-surfaces regression guard, which is
 supposed to be insensitive to this change. With `followStoreConversation` unwired, **4 of the 5**
 window cases fail. Neither test passes for a reason other than the fix.
+
+### Two user-visible consequences, accepted and stated
+
+Putting the conversation in the address makes Back reach places it could not reach before. Both of
+these are consequences of the fix working, not defects in it, and both are accepted:
+
+- **Back during a streaming answer, landing on the hero, cancels the stream.** The hero teardown
+  aborts the in-flight ask (it is the same teardown New session runs). The CONVERSATION survives —
+  it is server-side, and Forward returns to it — but the partial answer on screen does not, and the
+  turn resumes from the record rather than from where the stream was. Back to a *different*
+  conversation does not abort: that matches what a row click has always done, so it is not a new
+  behaviour.
+- **Back onto a deleted conversation's entry shows a phantom row and a record notice.** The address
+  still names it, so the window merges a placeholder row for it and then fails the record fetch —
+  the reader gets the honest 404 notice rather than a silent empty transcript. Deleting the OPEN
+  conversation does not create such an entry (the drop is projected as a correction, not a
+  navigation — §"the `list` reason" in `conversationListStore`), so this is only reachable by
+  deleting a conversation whose entry is already on the stack.
+
+### Independent review (PR #556) — five findings, all applied
+
+Reviewer verdict was APPROVE-WITH-FIXES. F1 was a real defect the suite did not catch:
+
+- **F1 (MEDIUM) — the hero branch claimed during popstate handling.** `followStoreConversation`'s
+  null branch called `startFreshSession`, which writes the store; the projector cannot tell that
+  write from a fresh claim, so it pushed the bare address onto a stack the browser had just walked
+  back through — **truncating the forward tail**. Reproduced by the reviewer by reordering the
+  store's listener Set. Fixed by splitting `startFreshSession` into `resetToHero()` (state only) +
+  the two pointer writes; the follow path takes the claim-free half. Two pinning cases run in the
+  ADVERSE listener order (the window mounts before the projector's adapter subscribes): no push, and
+  no `claim` emitted at all — the second is order-independent, which is what actually closes the
+  class. Verified red on the pre-fix body: exactly one spurious `pushState`.
+- **F2 (LOW) — `isCurrentUrl` had zero coverage.** Both suites mock `history`, so `location.hash`
+  never moved and the guard was constant-false; deleting it left everything green. Added two cases
+  against a REAL `window.location.hash` — push when the browser is elsewhere, replace when it is
+  already showing that address. Verified red with the guard removed.
+- **F3 (LOW) — the `list` reason's doc was untrue.** Both delete paths null `activeId` under it. The
+  BEHAVIOUR is right (a deleted conversation is not somewhere Back can lead, so the URL is corrected
+  in place), so the doc was widened to say so rather than the reason changed — plus a case pinning
+  it, since a doc-only fix cannot fail.
+- **F4 (LOW) — a claim inside the 75ms debounce was dropped by a surface change.** Post-PR that is a
+  missing history entry, not a stale URL. **The reviewer's suggested site does not work**:
+  `handle()` calls `pushAddress` BEFORE `activateProjection` (the slice 489 T1/N2 ordering
+  invariant), so flushing inside `deactivateProjection` would write the OUTGOING surface's URL on
+  top of the entry the incoming navigation had just pushed. Flushed at the top of `handle()` instead
+  — where the browser is still on the outgoing address — via `flushPendingNavigationWrite()`, which
+  is a no-op unless a navigational write is pending and is skipped on a traversal (a push there
+  would truncate the forward tail, F1's hazard again).
+- **F5** — the two consequences above.
 
 **Still open from this tempdoc:** PR B (Layer 1(c2) + Layer 4), PR D (Layer 2 + §4.1's L10 defect),
 PR E (Layer 1(d) + Layer 3(c)(i), with §4.4's measured UX audit). §4.4's live re-verification of

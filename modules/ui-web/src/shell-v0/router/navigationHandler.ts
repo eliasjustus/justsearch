@@ -48,7 +48,12 @@ import { coerceAndValidate } from './stateValidator.js';
 import { getSurfaceStateSchema, resolveSurfaceStateSchema } from './surfaceSchemas.js';
 import type { StoreAdapter } from './storeRegistry.js';
 import type { ShellAddressNavigation, StateSnapshot } from './types.js';
-import { activateProjection, currentAddress, pushAddress } from './URLProjector.js';
+import {
+  activateProjection,
+  currentAddress,
+  flushPendingNavigationWrite,
+  pushAddress,
+} from './URLProjector.js';
 
 /** Callback the Shell exposes for setting its active surface. */
 export type SetActiveSurfaceFn = (surfaceId: string) => void;
@@ -154,6 +159,14 @@ export function createNavigationHandler(config: NavigationHandlerConfig): Naviga
       // and this address is where it landed. That is the one arrival where an absent argument is a
       // value rather than a silence; see StoreAdapter.clearsOnTraversal.
       const traversal = options?.push === false;
+
+      // Review finding F4 — settle the OUTGOING surface's debt first. A claim made within the
+      // projector's 75ms window and followed straight away by a surface change would otherwise be
+      // cancelled by the teardown inside activateProjection, losing the history entry the reader
+      // earned. Only a navigational write is flushed (a no-op for every other surface), and never
+      // on a traversal: the browser has already moved there, so a push would truncate the forward
+      // tail — the same hazard the hero branch of SearchV3View.followStoreConversation avoids.
+      if (!traversal) flushPendingNavigationWrite();
 
       if (config.getPlacement?.(addr.target) === 'MODAL') {
         applyState(addr.target, addr.state, traversal);

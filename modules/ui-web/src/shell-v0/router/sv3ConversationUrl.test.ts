@@ -35,12 +35,14 @@ import {
 } from './surfaceSchemas.js';
 import {
   __flushPendingWriteForTest,
+  activateProjection,
   deactivateProjection,
 } from './URLProjector.js';
 import { createURLSource } from './sources/URLSource.js';
 import type { Intent } from './types.js';
 import {
   __resetConversationListForTest,
+  deleteConversation,
   getConversationListState,
   setActiveConversation,
 } from '../state/conversationListStore.js';
@@ -341,6 +343,41 @@ describe('sv3 conversation identity in the URL (864 PR C)', () => {
     expect(history.entries()).toEqual([addressFor('conv-a')]);
   });
 
+  it('a claim still inside the debounce survives an immediate surface change', async () => {
+    // F4: the claim's write is settled before the surface change moves history, so the conversation
+    // the reader was in is still on the stack under the new surface's entry. Deliberately NOT
+    // flushed by the test — the whole point is that nothing else flushes it either.
+    await arriveOn('conv-a');
+    setActiveConversation('conv-b');
+
+    await handler.handle({ kind: 'navigate', target: CHAT, state: {} });
+
+    expect(history.entries()).toEqual([
+      addressFor('conv-a'),
+      addressFor('conv-b'),
+      '#justsearch://surface/core.unified-chat-surface',
+    ]);
+  });
+
+  it('deleting the open conversation corrects the address without an entry', async () => {
+    // F3: the delete paths drop the claim under the `list` reason, and that is the behaviour the
+    // vocabulary's doc now states — a deleted conversation is not somewhere Back can lead.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })),
+    );
+    await arriveOn('conv-a');
+    const entriesBefore = history.entries().length;
+
+    await deleteConversation('conv-a');
+    __flushPendingWriteForTest();
+
+    expect(getConversationListState().activeId).toBeNull();
+    expect(history.entries()).toHaveLength(entriesBefore);
+    expect(history.current()).toBe(HERO_ADDRESS);
+    vi.unstubAllGlobals();
+  });
+
   it('other surfaces still project with replaceState only', async () => {
     // The regression guard for slice 489's contract: an in-surface refinement is not a navigation,
     // and nothing in this PR may make one push. An adapter that never declares a navigation is
@@ -359,5 +396,67 @@ describe('sv3 conversation identity in the URL (864 PR C)', () => {
     expect(history.current()).toBe(
       '#justsearch://surface/core.unified-chat-surface?query=rust%20ownership',
     );
+  });
+});
+
+/**
+ * The duplicate-entry downgrade, against a REAL `window.location` — independent review of PR #556,
+ * finding F2.
+ *
+ * The suite above models the history stack but leaves `location.hash` where it started, so
+ * `URLProjector.isCurrentUrl` is constant-false there and every one of those cases would still pass
+ * with the guard deleted. It is load-bearing (a push that duplicates the current entry makes Back a
+ * no-op that costs a press), so it gets a case that actually moves the hash.
+ */
+describe('a navigational write that duplicates the current address degrades to replace (F2)', () => {
+  let pushSpy: ReturnType<typeof vi.spyOn>;
+  let replaceSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    __resetConversationListForTest();
+    deactivateProjection();
+    registerCoreStores();
+    pushSpy = vi.spyOn(window.history, 'pushState').mockImplementation(() => {
+      /* the real location is driven by the test, not by these */
+    });
+    replaceSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {
+      /* swallow */
+    });
+  });
+
+  afterEach(() => {
+    deactivateProjection();
+    window.location.hash = '';
+    vi.restoreAllMocks();
+  });
+
+  it('pushes when the browser is somewhere else', () => {
+    window.location.hash = addressFor('conv-a');
+    expect(window.location.hash).toBe(addressFor('conv-a')); // precondition, not decoration
+    setActiveConversation('conv-a');
+    activateProjection(SV3);
+
+    setActiveConversation('conv-b');
+    __flushPendingWriteForTest();
+
+    expect(pushSpy.mock.calls.at(-1)?.[2]).toBe(addressFor('conv-b'));
+  });
+
+  it('replaces when the browser is already showing that address', () => {
+    // The browser is at conv-b already — a popstate landed here, or the projector wrote it — and
+    // something claims conv-b again. The claim is real; a second entry for it is not.
+    window.location.hash = addressFor('conv-b');
+    setActiveConversation('conv-a');
+    activateProjection(SV3);
+    const pushesBefore = pushSpy.mock.calls.length;
+
+    setActiveConversation('conv-b');
+    __flushPendingWriteForTest();
+
+    expect(pushSpy.mock.calls.length).toBe(pushesBefore);
+    expect(replaceSpy.mock.calls.at(-1)?.[2]).toBe(addressFor('conv-b'));
   });
 });

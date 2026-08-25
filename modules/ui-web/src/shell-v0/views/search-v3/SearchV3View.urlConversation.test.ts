@@ -28,7 +28,20 @@ import {
   getConversationListState,
   restoreActiveConversation,
   setActiveConversation,
+  subscribeConversationList,
+  type ConversationListChange,
 } from '../../state/conversationListStore.js';
+import {
+  __resetBootstrapForTest,
+  registerCoreStores,
+} from '../../router/bootstrap.js';
+import { __resetStoreRegistryForTest } from '../../router/storeRegistry.js';
+import { __resetSurfaceSchemasForTest } from '../../router/surfaceSchemas.js';
+import {
+  __flushPendingWriteForTest,
+  activateProjection,
+  deactivateProjection,
+} from '../../router/URLProjector.js';
 import {
   readLastViewedConversation,
   setLastViewedConversation,
@@ -205,5 +218,84 @@ describe('the window follows the conversation in the address (864 PR C)', () => 
 
     expect(el.sessions.activeId).toBe('conv-a');
     expect(getConversationListState().activeId).toBe('conv-a');
+  });
+});
+
+/**
+ * Handling a popstate must not WRITE history — independent review of PR #556, finding F1.
+ *
+ * The first cut had the hero branch call `startFreshSession`, which claims. A claim during popstate
+ * handling is indistinguishable to the projector from a fresh one, so it pushed the bare address
+ * onto a stack the browser had already walked back through — truncating the forward tail, and
+ * Forward silently lost the conversation. It was masked by production listener order and by the
+ * `isCurrentUrl` downgrade, neither of which is a guarantee.
+ *
+ * So the ADVERSE order is what these cases run in: the window subscribes to the store BEFORE the
+ * projector's adapter does, which is the order the reviewer reproduced the failure in.
+ */
+describe('a popstate landing on the hero writes no history (F1)', () => {
+  let pushSpy: ReturnType<typeof vi.spyOn>;
+  let replaceSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    registerCoreStores();
+    pushSpy = vi.spyOn(window.history, 'pushState').mockImplementation(() => {
+      /* swallow */
+    });
+    replaceSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {
+      /* swallow */
+    });
+  });
+
+  afterEach(() => {
+    deactivateProjection();
+    pushSpy.mockRestore();
+    replaceSpy.mockRestore();
+  });
+
+  /** Mount first, project second — the window's store listener lands ahead of the adapter's. */
+  async function mountInAdverseOrder(): Promise<Mounted> {
+    setActiveConversation('conv-a');
+    const el = await mount();
+    activateProjection('core.search-v3-surface');
+    return el;
+  }
+
+  it('adds no history entry when the address returns to the hero', async () => {
+    const el = await mountInAdverseOrder();
+    expect(el.sessions.activeId).toBe('conv-a');
+    const pushesBefore = pushSpy.mock.calls.length;
+
+    // What `NavigationHandler.applyState` does on a Back that lands on the bare surface address.
+    restoreActiveConversation(null);
+    await settle(el);
+    __flushPendingWriteForTest();
+
+    expect(el.sessions.activeId).toBeNull();
+    expect(pushSpy.mock.calls.length).toBe(pushesBefore);
+    // The URL still has to be corrected to the hero address — the fix removes the ENTRY, not the
+    // projection, and a case asserting only "no push" would also pass with the projection dead.
+    expect(replaceSpy.mock.calls.at(-1)?.[2]).toBe(
+      '#justsearch://surface/core.search-v3-surface',
+    );
+  });
+
+  it('makes no claim at all while following the address to the hero', async () => {
+    // The order-independent form of the case above: no claim is emitted, so no listener ordering
+    // can turn one into a push. This is the property; the push assertion is the consequence.
+    const el = await mountInAdverseOrder();
+    const reasons: ConversationListChange[] = [];
+    const unsubscribe = subscribeConversationList((_s, change) => reasons.push(change));
+    reasons.length = 0;
+
+    restoreActiveConversation(null);
+    await settle(el);
+    unsubscribe();
+
+    expect(reasons).not.toContain('claim');
   });
 });

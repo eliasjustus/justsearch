@@ -1205,9 +1205,15 @@ export class SearchV3View extends JfElement {
   private followStoreConversation(storeActiveId: string | null): void {
     if (storeActiveId === this.sessions.activeId) return;
     if (storeActiveId === null) {
-      // The hero is a real address (the bare surface URL), so arriving back at it is the same
-      // teardown New session does — without the focus move, which belongs to the affordance.
-      this.startFreshSession();
+      // The hero is a real address (the bare surface URL), so arriving back at it is the teardown
+      // New session does — minus the focus move, which belongs to the affordance, and minus the
+      // CLAIM, which would push a history entry for a move the browser already made and truncate
+      // the forward tail with it. See {@link resetToHero}.
+      this.resetToHero();
+      // The pointer still follows: the tab is on the hero now, so a reload must not resurrect the
+      // conversation the reader just left. This one is a browser-local write with no emission, so
+      // it cannot reach the projector.
+      clearLastViewedConversation();
       return;
     }
     // An edit in another row is DROPPED rather than committed, the same rule every other move
@@ -3187,6 +3193,29 @@ export class SearchV3View extends JfElement {
    * INDICATOR instead, which is a later PR's presentation work.
    */
   private startFreshSession(): void {
+    this.resetToHero();
+    // New conversation means "do not restore the one I just left" (tempdoc 609 Phase 3).
+    setActiveConversation(null);
+    clearLastViewedConversation();
+  }
+
+  /**
+   * The hero teardown with NO claim — tempdoc 864 PR C, and the split matters more than it looks.
+   *
+   * {@link startFreshSession} is the reader STARTING a new session, so it claims: it writes the
+   * app-wide pointer, which the URL projects as a navigation and therefore as a history entry.
+   * {@link followStoreConversation} arriving at the hero is the opposite — the browser has already
+   * moved and the store is already null. Calling the claiming form there would write during
+   * popstate handling, and the projector cannot tell that write from a fresh one: it would push an
+   * entry onto a stack the browser had just walked back through, TRUNCATING the forward tail. Back
+   * onto the hero would silently destroy Forward.
+   *
+   * That was live in the first cut of this PR and masked by two accidents — production listener
+   * order (the projector's adapter subscribes synchronously in `activateProjection`, this window's
+   * listener only after its dynamic import) and the `isCurrentUrl` downgrade. Neither is a
+   * guarantee, so the fix is to not make the write at all.
+   */
+  private resetToHero(): void {
     this.abortAsk();
     // DETACHED, not halted (Slice 516 FIX-T1's rule, applied to the run half). A delegated run is
     // hosted by the product-wide controller and may be watched elsewhere, so this window stops
@@ -3202,9 +3231,6 @@ export class SearchV3View extends JfElement {
     this.sessions = startNewSession(this.sessions);
     this.asked = false;
     this.composer?.clearDraft();
-    // New conversation means "do not restore the one I just left" (tempdoc 609 Phase 3).
-    setActiveConversation(null);
-    clearLastViewedConversation();
     void this.setComposerState('hero');
   }
 
