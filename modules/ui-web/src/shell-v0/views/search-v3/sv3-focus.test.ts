@@ -326,6 +326,63 @@ describe('tempdoc 864 Layer 1(b) — the whole glass box is the field', () => {
   });
 });
 
+describe('tempdoc 864 Layer 1(c2), PR B — jf-focus-composer reaches sv3', () => {
+  it('the command path (shell.focus-composer dispatches jf-focus-composer, chrome/Shell.ts) lands deep focus in the composer field', async () => {
+    conversations = [row('conv-a', 'first question')];
+    const el = await mount();
+    const [first] = await rowButtons(el);
+    if (first === undefined) throw new Error('no session rows');
+    // Park focus on the armed row button — exactly §2.7b's hazard state, and the case the shortcut
+    // exists to recover from.
+    first.focus();
+    expect(deepActiveElement()).toBe(first);
+    window.dispatchEvent(new CustomEvent('jf-focus-composer'));
+    await settle(el);
+    expect(deepActiveElement()).toBe(await fieldOf(el));
+  });
+
+  it('honors the refusal set — a reader typing elsewhere keeps their focus, no steal', async () => {
+    const el = await mount();
+    const outsider = park();
+    window.dispatchEvent(new CustomEvent('jf-focus-composer'));
+    await settle(el);
+    expect(deepActiveElement()).toBe(outsider);
+  });
+
+  it('honors the refusal set — arriving mid-rename (renamingId survives a remount) does not steal focus', async () => {
+    // Focus after the remount is <body> (not a typing target), so this isolates the renamingId
+    // refusal specifically — the typing guard alone would not have blocked it here.
+    conversations = [row('conv-a', 'first question')];
+    const el = await mount();
+    const sidebar = await region(el, 'jf-sv3-sidebar');
+    sidebar.dispatchEvent(
+      new CustomEvent('sv3-session-rename', {
+        detail: { id: 'conv-a', phase: 'start', title: null },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await settle(el);
+    el.remove();
+    (deepActiveElement() as HTMLElement | null)?.blur();
+    document.body.appendChild(el);
+    await settle(el);
+    window.dispatchEvent(new CustomEvent('jf-focus-composer'));
+    await settle(el);
+    expect(deepActiveElement()).not.toBe(await fieldOf(el));
+  });
+
+  it('unsubscribes on disconnect — the event does nothing once the window is torn down (no leak)', async () => {
+    const el = await mount();
+    const outsider = park();
+    el.remove();
+    await settle(el);
+    window.dispatchEvent(new CustomEvent('jf-focus-composer'));
+    await settle(el);
+    expect(deepActiveElement()).toBe(outsider);
+  });
+});
+
 describe('tempdoc 864 — the focus ring stays the platform’s own', () => {
   it('keys the ring on :focus-visible only, so programmatic focus paints no ring the reader did not ask for', () => {
     const sheets = (Sv3Composer.styles as unknown as ReadonlyArray<unknown>).map((s) => String(s));
