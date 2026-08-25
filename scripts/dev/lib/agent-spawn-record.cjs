@@ -591,6 +591,7 @@ module.exports = {
   markAgentSpawnRecordFailedVerify,
   leaseState,
   realpathNearest,
+  normalizePathForCompare,
   normalizeResourceRoots,
   recordHoldsPath,
   resolveNodeModulesRealPath,

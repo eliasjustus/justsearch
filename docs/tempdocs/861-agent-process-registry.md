@@ -1,16 +1,16 @@
 ---
-status: in progress, rev 2 — Phases 1/2/4 landed or in review; Phases 3/5/6/7 outstanding
+status: in progress, rev 2 — Phases 1/2/3/4/5 landed or in review; Phases 6/7 outstanding
 created: 2026-08-25
 updated: 2026-08-25
-revision: rev 2 — 15 review findings folded in; §6.2/§6.3/§6.4 corrected as text before any worker brief
+revision: rev 2 — 15 review findings folded in; §6.2/§6.3/§6.4 corrected as text before any worker brief; Phase 5's own review (F-1..F-8) folded into §7.1
 author: agent session (Opus 5, 1M context)
 charter: agent-spawned background processes outlive their spawner with no adjudicable ownership claim — and the one reaper that existed was never wired
 phases:
   - "Phase 1 (W1) — shared grammar + reader: MERGED (scripts/dev/lib/process-record.cjs)"
   - "Phase 2 (W2) — record shape, identity verification, pruning: MERGED #549 (agent-spawn-record.cjs, process-identity.cjs)"
-  - "Phase 3 (W3) — producers (ui_shot.py, serve-worktree-fe.cjs, otlp-sink-ensure.mjs): outstanding"
-  - "Phase 4 (W4) — the reaper and the §6.3 matrix: PR #552 in review (scripts/dev/lib/agent-spawn-reaper.cjs)"
-  - "Phase 5 (W5) — reap occasions and hook bodies: outstanding; wires by OCCASION NAME from the reaper's frozen OCCASIONS map, never by hand-picked capability (Phase 4 review F2)"
+  - "Phase 3 (W3) — producers (ui_shot.py, serve-worktree-fe.cjs, otlp-sink-ensure.mjs): MERGED #554"
+  - "Phase 4 (W4) — the reaper and the §6.3 matrix: MERGED #552 (scripts/dev/lib/agent-spawn-reaper.cjs)"
+  - "Phase 5 (W5) — reap occasions and hook bodies: PR #558, independent review APPROVE-WITH-FIXES (F-1..F-8), fixes folded in — see §7.1 as-landed"
   - "Phases 6+7 (W6) — the file->manifest gate and the ui-shot-cleanup teardown sweep: outstanding, must land together"
 ---
 
@@ -1313,3 +1313,53 @@ conclusions more loosely than §5 had stated them (A1, A2, A6 each have their co
 written in §5.5, §5.6, and §5.7 respectively). The lesson is not "check the design against the
 sources" — that was done — but **check the design against the tempdoc's own earlier section**, which
 is the cheaper and more reliable check, and the one that was skipped.
+
+### 7.1 Phase 5 — as landed (PR #558)
+
+Each of §6.4's six occasions is wired through one shared assembly,
+`scripts/dev/lib/agent-spawn-sweep.cjs`: `session-start` (`agent-spawn-sweep-hint.mjs`,
+SessionStart/async), `session-end` (`agent-spawn-session-end-reap.mjs`, SessionEnd,
+`ownSessionOnly`), `worktree-teardown` (`remove-worktree.cjs`'s pre-junction-unlink consult),
+`before-a-build` (`agent-spawn-build-hint.mjs`, PreToolUse/Bash, structurally advisory),
+`orientation` (`world-state.mjs`'s read-only "Agent spawns" section), and `session-closeout`
+(`scripts/dev/agent-spawn-sweep.cjs`, the runnable CLI the skill's checklist step names). None
+of the six occasions gained a kill path this phase did not already have from Phase 4 — capability
+is bound to the occasion name in the reaper's frozen `OCCASIONS` map, never chosen by the caller.
+
+**Independent review returned APPROVE-WITH-FIXES.** The kill funnel stayed single (zero
+`executeReap` callers outside the shared assembly), the TOCTOU discipline held (a sweep's own
+process-table snapshot can never reach the kill — `executeReap` always re-reads fresh), [A1] was
+genuinely consulted (the lapsed-lease-alone column stays split, never collapsed back to "lapsed
+→ reap"), both required test mutations were present, and `branch-safety.md`'s growth was net
+additive with the destructive-git command table intact. Eight findings, clustering into one
+broken remedy loop (a record could get stuck failed-verify with nothing ever aging it out, no
+way for a caller to attribute its own spawn, and no fix visible from either surface):
+
+| # | Sev | Finding | Fix | Evidence |
+|---|---|---|---|---|
+| F-1 | **HIGH** | `pruneAgentSpawnRecords` had ZERO production callers — the "7-day retention bound" the reaper's own comments and F3's `blocksProceed` carve-out lean on did not exist. A single transient `IDENTITY_REFUSE` (one bad process-table read) marked a record failed-verify and blocked `remove-worktree` on that tree FOREVER. | `runAgentSpawnSweep` now runs `pruneAgentSpawnRecords` BEFORE the register read, defaulting to `true` on `session-start` and force-enabled on the CLI regardless of occasion. | `861-w5-agent-spawn-sweep.test.mjs` — "F-1 RED/GREEN" (a transient-refuse record blocks teardown with `prune:false`, and the wired session-start sweep clears it) + "F-1 control"; `861-w5-session-hooks.test.mjs` — the SessionStart kill-switch test now discriminates on this pruning (enabled deletes the aged record, disabled doesn't) |
+| F-2a | MEDIUM | `--session-id` was optional and absent from the documented invocation, so a caller's OWN live spawn classified `CONTENTION` instead of `SAME_SESSION`-reap. | `resolveCallerSessionId` (env-first: `CLAUDE_CODE_SESSION_ID` → `JUSTSEARCH_AGENT_SESSION_ID` → `tmp/agent-telemetry/current-session-id`, `--session-id` as override) resolves the caller inside `remove-worktree.cjs` and the CLI. | `861-w5-agent-spawn-sweep.test.mjs` — the `resolveCallerSessionId` chain unit tests + the CLI end-to-end test; `861-w5-remove-worktree-teardown.test.mjs` — "F-2a" (no `--session-id` flag, `CLAUDE_CODE_SESSION_ID` alone reaps the caller's own live spawn instead of refusing) |
+| F-2b | MEDIUM | The teardown refusal printed a bare `taskkill` line as the fix — contradicting the very rule this tempdoc adds to `branch-safety.md` ("never hand-`taskkill` one"). | `describeEntry` now leads with `resolve via sweep: node scripts/dev/agent-spawn-sweep.cjs …` for every registered entry; the raw kill line stays as an explicit, clearly-labeled last resort. | `861-w5-agent-spawn-sweep.test.mjs` — "F-2b" (sweep line precedes the kill line; absent for the observed tier, which has no register row to sweep); `861-w5-remove-worktree-teardown.test.mjs` — the refusal test asserts the sweep line appears before `taskkill` |
+| F-3 | MEDIUM | The CLI read `CLAUDE_SESSION_ID`, a variable nothing in this repo sets. | Same `resolveCallerSessionId` chain as F-2a. | The CLI end-to-end test (`861-w5-agent-spawn-sweep.test.mjs`) drives the documented invocation (`--occasion session-start`, no `--session-id`) with only `CLAUDE_CODE_SESSION_ID` set and asserts a same-session reap |
+| F-4 | MEDIUM | `recordHoldsPath` asks "does the queried path sit at/under the record's held root" — inert for §6.2's headline case (a worktree's Vite holding the MAIN checkout's `node_modules`, a root NARROWER than and nested INSIDE the tree a build/teardown queries with a tree ROOT, never the specific deep path). | `holdsWithin` adds the reverse direction; `recordHoldsTree` (both directions) replaces the bare `recordHoldsPath` pre-filter in `findBuildHolders` and `consultAgentSpawnsForTeardown`. | `861-w5-agent-spawn-sweep.test.mjs` — "F-4" (demonstrates `recordHoldsPath` returning `false` on the exact fixture `recordHoldsTree` returns `true` for, through both the predicate directly and the full occasion wiring) |
+| F-5 | LOW | The build hint's per-session dedup filtered already-nudged holders AFTER `findBuildHolders` had already spent a process-table read on them. | `findBuildHolders` gained a `recordFilter` parameter applied before the process-table read; the hook passes its `alreadyNudged` check there. | `861-w5-agent-spawn-sweep.test.mjs` — "F-5" (a spied `readTable` proves zero calls when `recordFilter` excludes every candidate, exactly one when it admits one) |
+| F-6 | LOW (docs) | The record-side session/producer attribution this phase's occasions all key on inherits Phase 3's own known limit, undocumented here. | See the paragraph immediately below. | — |
+| F-7a | LOW | The build-hint test's "child still alive" check was labeled as if it proved the structural [A4] guarantee, when that guarantee is asserted directly (on `entry.disposition`) at the projection layer. | Re-labeled as a subprocess-contract pin, with the structural guarantee's actual location named in the same comment. | `hooks/861-w5-agent-spawn-build-hint.test.mjs` |
+| F-7b | LOW | The `JUSTSEARCH_DISABLE_HOOKS=1` test asserted only "exit 0, empty stdout" for both hooks — true whether or not the kill switch did anything, since an enabled hook against an empty register is equally silent. | SessionStart's kill-switch check now discriminates on F-1's pruning (enabled deletes an aged fixture, disabled doesn't); SessionEnd's stays a labeled non-discriminating smoke check, since it has no default-on side effect to discriminate against. | `861-w5-session-hooks.test.mjs` |
+| F-8 | LOW | `remove-worktree.cjs` passed its OWN tree as `mainRepoRoot` — a worktree-local copy of the script would consult its own (nonexistent or stale) register instead of the shared main-checkout one. | Uses the already-exported `resolveMainRepoRoot(repoRoot)` (861 [A9]'s override-aware resolver) instead of the raw `repoRoot`. | `861-w5-agent-spawn-sweep.test.mjs` — smoke-checks the re-export; the fix itself is structural (a worktree-local invocation is not part of the automated suite, since it requires a second git worktree as a fixture) |
+
+**F-6, in full — the known limit this phase inherits, not one it introduces.** Every occasion in
+this phase attributes a record to a session (or not) purely by reading `record.sessionId` — a
+field Phase 3's producers populate via the SAME env-first, file-fallback chain `resolveCallerSessionId`
+now formalizes (`serve-worktree-fe.cjs`'s pre-existing `resolveSessionId`, `note-observation.mjs`'s
+chain). When that resolution fails at PRODUCER time (no env var set, no pointer file written yet —
+plausible for the very first tool call of a session, before `export-session-env.mjs`'s SessionStart
+hook has run), the record is written with no `sessionId` at all. This phase's occasions all fail
+SAFE on that gap: an unattributed record can never match `SAME_SESSION`, so it is never reaped on
+ownership grounds alone — it falls through to the lapsed-lease/owner-activity branch like any other
+session's record, and `session-end`'s `ownSessionOnly` filter (which requires a truthy
+`sessionId === callerSessionId`) excludes it outright rather than guessing. The cost is availability,
+not safety: a spawn born before its producer's session id resolved is swept only by the broader
+`session-start`/`session-closeout` occasions, never by its own session's `session-end`. Not
+addressed this phase — the fix (if one is warranted) belongs with Phase 3's producers, which own
+the write site this limit originates from.

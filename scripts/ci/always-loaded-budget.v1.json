@@ -5,12 +5,12 @@
   "ceilings": {
     "CLAUDE.md": 22364,
     ".claude/rules/agent-lessons.md": 9247,
-    ".claude/rules/branch-safety.md": 13193,
+    ".claude/rules/branch-safety.md": 13768,
     ".claude/rules/context-efficiency.md": 1934,
     ".claude/rules/hooks-reference.md": 2836,
     ".claude/rules/slice-execution.md": 4667
   },
-  "totalCeiling": 54241,
+  "totalCeiling": 54816,
   "bumps": [
     {
       "file": "CLAUDE.md",
@@ -130,6 +130,13 @@
       "to": 22364,
       "reason": "tempdoc 842: chat-model-profile amendment to rule:use-every-verification-tier (compact vs standard verification tiers); paragraph compressed -100B first, residual growth declared",
       "ts": "2026-08-18T16:20:29.173Z"
+    },
+    {
+      "file": ".claude/rules/branch-safety.md",
+      "from": 13193,
+      "to": 13768,
+      "reason": "tempdoc 861 W5: two new hook-enforced dev-stack rules (agent-spawn-session-end-reap, agent-spawn-build-hint) genuinely new mechanisms, no room to trim further without losing the always-loaded discipline reminder",
+      "ts": "2026-08-25T16:40:55.839Z"
     }
   ]
 }

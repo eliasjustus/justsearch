@@ -137,6 +137,15 @@ caches (observed 2026-07-14).
 The full dev-stack contention model moved to `/dev-stack`; load it before live
 backend work.
 
+**Agent-spawned helpers (ui-shot's Vite, `serve-worktree-fe`) are reaped automatically** —
+session start/end + worktree teardown, via the `tmp/dev-runner/agent-spawns/` registry. Never
+hand-`taskkill` one; run `node scripts/dev/agent-spawn-sweep.cjs` first (tempdoc 861).
+<!-- rule:agent-spawn-session-end-reap -->
+
+**A build-blocking agent-spawn holder is named, never auto-killed.** A `gradlew`/`npm`
+invocation about to write a path a registered spawn holds gets a PreToolUse hint naming it +
+a remedy — advisory only (861 [A4]). <!-- rule:agent-spawn-build-hint -->
+
 ## Merge Workflow
 
 **Never merge or publish a PR without an explicit, per-action go-ahead.** <!-- rule:no-merge-without-authorization -->

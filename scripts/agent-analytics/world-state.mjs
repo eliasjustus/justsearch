@@ -17,6 +17,12 @@
  *                        linked run.json for runId/ports; "not running or unknown" otherwise.
  *                        Authoritative ownership state still comes from quick_health — this is a
  *                        read-only orientation glance, not a replacement.
+ *   (e) AGENT SPAWNS   — tempdoc 861 §6.4 `orientation` occasion: registered + observed
+ *                        agent-spawned helper processes (ui-shot's Vite, `serve-worktree-fe`, the
+ *                        OTel sink) with their §6.3 verdicts. Read-only: this occasion binds to
+ *                        `capability: 'advisory'` in the reaper's frozen `OCCASIONS` map, so it
+ *                        can never obtain a kill list — a ready-to-run kill line is printed for
+ *                        the observed tier, never auto-run.
  *
  * Every external probe (git, claude CLI, dev-runner state files) is wrapped in try/catch and
  * degrades to an explicit "unavailable"/"unknown" line — this tool must never crash the orienting
@@ -29,7 +35,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { collectClaims, divergentInFlightCollisions, nextFreeNumber } from '../ci/lib/tempdoc-scan.mjs';
+
+// Tempdoc 861 §7.5 — the documented cross-format interop: an ESM tool pulls the shared `.cjs`
+// dev-stack libs in via `createRequire`, exactly as `otlp-sink-ensure.mjs` already does.
+const require = createRequire(import.meta.url);
+const { gatherAgentSpawnOrientation, describeEntry } = require('../dev/lib/agent-spawn-sweep.cjs');
 
 const STALE_DAYS_THRESHOLD = 3;
 
@@ -146,6 +158,20 @@ export function renderMarkdown(data) {
 
   lines.push('## Stack', '');
   lines.push(data.stack.available ? data.stack.summary : `not running or unknown — use quick_health (${data.stack.reason})`);
+  lines.push('');
+
+  lines.push('## Agent spawns', '');
+  if (data.agentSpawns.available) {
+    const { registered, observed } = data.agentSpawns;
+    if (registered.length === 0 && observed.length === 0) {
+      lines.push('_no registered or observed agent-spawned processes_');
+    } else {
+      for (const e of registered) lines.push(`- REGISTERED ${describeEntry(e).replace(/\n\s*/g, ' ')}`);
+      for (const e of observed) lines.push(`- OBSERVED ${describeEntry(e).replace(/\n\s*/g, ' ')}`);
+    }
+  } else {
+    lines.push(`unavailable — ${data.agentSpawns.reason}`);
+  }
   lines.push('');
 
   return lines.join('\n');
@@ -275,23 +301,41 @@ function gatherStack() {
   }
 }
 
+/** Tempdoc 861 §6.4 `orientation` occasion — read-only, never kills (enforced in the reaper's
+ * frozen `OCCASIONS` map, not here: `capability: 'advisory'` mints no `reap` entry regardless of
+ * what this gatherer passes in). `recordId === null` is how `reapEligible` marks an observed-tier
+ * entry (no record behind it) — the same distinction `probeForeignRuns` makes with `source`. */
+async function gatherAgentSpawns() {
+  const mainRoot = mainCheckoutRoot();
+  if (!mainRoot) return { available: false, reason: 'could not resolve main checkout root' };
+  const result = await gatherAgentSpawnOrientation({ mainRepoRoot: mainRoot });
+  if (!result.available) return result;
+  const all = result.buckets.all;
+  return {
+    available: true,
+    registered: all.filter((e) => e.recordId !== null),
+    observed: all.filter((e) => e.recordId === null),
+  };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Report assembly + CLI.
 // ---------------------------------------------------------------------------------------------
 
-export function buildReport() {
+export async function buildReport() {
   return {
     generatedAt: new Date().toISOString(),
     worktrees: gatherWorktrees(),
     sessions: gatherSessions(),
     tempdocNumbers: gatherTempdocNumbers(),
     stack: gatherStack(),
+    agentSpawns: await gatherAgentSpawns(),
   };
 }
 
-function main() {
+async function main() {
   const jsonMode = process.argv.includes('--json');
-  const data = buildReport();
+  const data = await buildReport();
   if (jsonMode) {
     console.log(JSON.stringify(data, null, 2));
   } else {
@@ -301,5 +345,8 @@ function main() {
 
 const isMainModule = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (isMainModule) {
-  main();
+  main().catch((err) => {
+    console.error(`world-state: ERROR: ${err && err.message ? err.message : err}`);
+    process.exit(1);
+  });
 }
