@@ -1,7 +1,7 @@
 # 869 — Citation mark carve-outs: the four mechanical defects that do not wait for 867
 
 ```
-status:  DERISKED (2026-08-26) — §3 probes amend §2 (C1 rules, C2b carrier, contrast hook); implementing.
+status:  IMPLEMENTED (2026-08-26) — PR open; §4 implementation + verification record; measured audit partial (see §4.3).
          implementation-eligible remainder; 867 itself stays no-implementation.
 created: 2026-08-26
 follows: 867 (species theorization — the decision this doc is NOT), 847 (marks follow the
@@ -620,3 +620,86 @@ medium elsewhere.
 
 **Slicing amendment.** Implemented as one branch, two commits (A: reachability, B: honesty),
 one PR, one measured audit — §2.7 allowed folding the audits and the owner asked for end-to-end.
+
+---
+
+## 4. Implementation record (2026-08-26)
+
+One branch (`worktree-869-cite-carve-outs`), one PR, four code commits — two design slices and
+two review-fix rounds. Every commit was written by a delegated worker and reviewed refute-first by
+an independent agent (reviewer ≠ committer) before the next round.
+
+| commit | scope |
+|---|---|
+| A  | C4 register (+ `MarkdownBlock.citationProjection.test.ts` conformance guard) · C2 one neutralizer with a frame-derived predicate + `sourceCount` · muted spans carry `title`/`aria-label`/`data-claimed-label` · `--md-pseudo-cite-color` hook replaces `opacity` · C2b `sv3AnswerFrame` exported, both v3 block sites bind `frame` + `.sourceCount` · seven call sites wired · T-sites inventory extended |
+| B  | C1 literal-transparent extension, `closeLiteralGap` whitespace rule, upgrade keeps the model's whitespace · C3 positive tier classes (`cite-grounded` gets its rule; base `.cite-ref` neutral), `makeMarker(cite, tier)`, `data-cite-tier`, source-tier title · three §3.4 assertions re-based |
+| review 1 fixes  | neutralizer skips `pre/code` · sentence span ends before a skipped literal (`spanEnd` vs `endIndex`) · literal skip and punctuation walk are code-aware · wording "this citation was not verified" (no examination implied) · live agent block: run-scoped count + `is-streaming` (and `agentAnswerCitations()` gated by the same verdict) · base `.cite-ref` ink `--text-primary` (distinct from weak) · `closeLiteralGap` never treats a newline as removable · cold-load parity test · `recordEvidence` guard exercises its surface (`evidence-fe-record-evidence`) |
+| review 2 fixes  | settled DOM re-derives from inputs when `citations`/`sourceCount`/`frame` change post-settle (late evidence mints marks; withdrawn evidence removes them); `unmutePseudoCitations` retired as subsumed · in-sentence override rendering pinned · no-space code-span shape pinned |
+
+### 4.1 What the reviews caught that the design and derisk did not
+
+Recorded because each is a gap in §2/§3's reasoning, not in the worker's execution:
+
+1. **§2.2 asserted the neutralizer skipped `pre/code`. It never had.** Un-gating it would have muted
+   every `argv[1]` in a programming answer. (Design error; the derisk did not probe code spans.)
+2. **The literal skip widened the verified sentence span onto the literal** — a "not verified" span
+   nested inside a "scored" span, and a tier-2 mark nested inside a tier-1 span. The fix separates
+   *where the span ends* from *where the mark lands*. (The §3.1 rule was stated in terms of the
+   mark only.)
+3. **"Pure function of inputs" was claimed by a pass that could not deliver it** — the weave's own
+   idempotency early-return meant a late citation withdrew the mute but minted nothing. The root
+   fix rebuilds the settled DOM from `text` when a decoration input changes. (A `verdict-is-gate`
+   shape: the first fix's test covered only the fixture where the invariant happened to hold.)
+4. **The live agent block counted the previous run's sources mid-stream.** The run-scoped verdict
+   existed (`evidenceIsThisRun`) and was not applied to the count or, it turned out, to the
+   citations either.
+5. **Source-tier ink collided with weak-tier ink** outside the v3 bridge — the neutral default had
+   been chosen from the same token as the weakest verified tier.
+6. **A mid-sentence literal inside a verified sentence renders muted inside the grounded span.**
+   Judged *correct* and pinned: the span asserts the sentence was scored (it was — the literal is
+   in the key), the mute asserts the ref was not verified (it was not). This is the S3 override made
+   visible, which 867 §3.2 wanted; 867 may later annotate it (family D) — the `data-claimed-label`
+   is the hook.
+
+### 4.2 Verification
+
+- `npm run typecheck` clean; full `npm run test:unit:run` green after each commit (known flakes
+  under load, unrelated: `PluginLoader.test.ts`, `EnvelopeStream.test.ts:488` — logged).
+- ui-web gate set (34 check scripts + 6 kernel gates), `execution-surface`,
+  `register-guard-resolution`: pass.
+- `./gradlew.bat build -x test`: exit 0.
+- C1 non-vacuity: 6 conformance tests fail on pre-869 code, reproducing §3.1 R1 verbatim; the
+  847 anchoring matrix (54 tests) unchanged and an instrumented probe counted the new skip branch
+  firing zero times across it.
+- **Live (worktree FE on :5176 borrowing the running backend, compact profile, dark theme):**
+  `jseval ui-shot sv3-citation-selected` → axe **0 violations**, console errors identical to the
+  same step on `main`'s FE (pre-existing, not 869). A shadow-DOM probe of the **cold-loaded**
+  session (restore path): block `frame="grounded"`, `sourceCount=5`, three verified marks
+  (`data-cite-tier="sentence"`, `cite-grounded`), eleven literal `[4]` muted with
+  `title`/`aria-label` "The model cited source 4; this citation was not verified",
+  `data-claimed-label="4"`, `opacity 1`, none inside code — the S4 case from 859 §7, rendered as
+  designed. Re-probed on the final commit () against a fresh stack: identical facts;
+  a fresh ask on the final code rendered 6 verified marks, axe 0. Muted ink over the v3 background: **7.8:1** measured (dark). Light arm: ~7.7:1
+  computed from the bridge's tokens, **not measured** — the window's persisted user state pinned
+  dark and the probe's `color_scheme` emulation did not override it.
+- The `citation-highlight` chain step was unreachable in this window (`search-results` fails on
+  `main`'s FE too — environmental); the v3 surface is where 859 §7 observed the defect, so it is
+  the measured surface.
+
+### 4.3 Honest limits / not done
+
+- The §2.7 measured whole-screen UX audit by an auditor ≠ committer is **partially** satisfied:
+  axe-clean and contrast-measured on the v3 surface (dark), by this orchestrator, not the
+  implementing worker. Light theme and the legacy chat surface are un-measured. Owner's call at
+  closure.
+- `word [1], and more.` renders the mark after the comma (`word,¹ and more.`) — consistent with
+  how the weave already treats punctuation without a literal; recorded, not changed.
+- Tier-2 marks in v3 now use body ink (`--foreground`); a clickable `role=button` in body colour
+  is a presentation choice for the audit.
+- `.pseudo-cite` ink (`--text-secondary`) equals the weak-tier mark ink; distinguished by shape
+  (bracketed, body size vs superscript digit). Recorded.
+- `[a]` (non-digit bracket) still lets the punctuation walk cross a bare `[` — pre-existing,
+  logged to the inbox.
+- `MarkdownBlock`'s default `frame='grounded'` remains strongest-by-default (§2.2); inert with
+  `sourceCount=0`, pinned by the T-sites test for every citation-passing site.
+- Handed to 867 unchanged: the S1–S4 counter, the species idiom, any per-source "claimed" state.
