@@ -931,10 +931,20 @@ one step.
      `modules/worker-core/src/test/java/io/justsearch/indexerworker/embed/onnx/`.
    - `resourceRegistry.test.ts` "produces the four expected registrations" times out at 5000 ms
      under the full ui-web suite (`vi.resetModules()` + dynamic re-import) and passes in isolation;
-     its import graph contains none of 878's files.
+     its import graph contains none of 878's files. **Pinned** as
+     `ui-web-resourceregistry-defaults-timeout` (same shape as the already-pinned
+     `ui-web-pluginloader-module-mode-timeout`); the fix is a per-test timeout or a shape that does
+     not re-transform the module graph inside one test's budget.
      `modules/ui-web/src/shell-v0/renderers/resourceRegistry.test.ts:243`.
 
-6. **The shared Gradle single-lane wrapper leaks its lock.** It writes its `owner` file *inside* the
+6. **Two `app-services` integrationTest cases are wall-clock assertions** that flake when the
+   machine is busy, and `./gradlew build` runs integrationTest: `LambdaMartBenchmarkTest`'s 5 ms
+   p50 threshold (seen at 5.41 ms) and `KnowledgeServerIntegrationTest.fullE2E_...`'s 30 s
+   worker-spawn timeout. Both passed immediately on re-run in isolation. **Pinned** as
+   `app-services-integrationtest-wallclock-flaky`; the fix is a threshold sized to the property
+   rather than to an idle machine, or moving the benchmark off the `build` path.
+
+7. **The shared Gradle single-lane wrapper leaks its lock.** It writes its `owner` file *inside* the
    lock directory, so the release `rmdir "$LOCK"` always fails with "Directory not empty" and the
    lock is never released by its holder; a patient poller can starve for hours (both of this
    workstream's sub-workers did, ~90 minutes each). The fix is an `"$LOCK.owner"` sibling file, or

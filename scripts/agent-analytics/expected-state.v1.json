@@ -73,6 +73,30 @@
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
       "exitProbe": "node scripts/ci/check-store-recoverability.mjs"
+    },
+    {
+      "id": "ui-web-resourceregistry-defaults-timeout",
+      "match": [
+        "test:unit(?!.*resourceRegistry)",
+        "vitest(?!.*resourceRegistry)"
+      ],
+      "claim": "resourceRegistry.test.ts 'produces the four expected registrations and leaves HISTORY unsupported' times out at the 5000ms default on a full ui-web suite run (1.5s in isolation). It calls vi.resetModules() and then dynamically re-imports the registry plus its defaults module, so the whole re-transform lands inside one test's budget. A failure ONLY there is pre-existing; re-run in isolation to confirm. Same shape as ui-web-pluginloader-module-mode-timeout.",
+      "evidence": "Seen 3x on full-suite runs from worktree agent-aa51999fa41f5fdf9 (tempdoc 878) on 2026-08-26, and passing in isolation each time (14/14). Not change-induced: the import graph of resourceRegistryDefaults.ts is StatusCard/Table/TimeseriesPolyline/TimeseriesSparkline/HealthLitView, none of which 878 touches.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: npm --prefix modules/ui-web run test:unit:run"
+    },
+    {
+      "id": "app-services-integrationtest-wallclock-flaky",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?=.*\\bbuild\\b)",
+        "gradlew?(\\.bat)? .*integrationTest(?!.*--tests)"
+      ],
+      "claim": "Two app-services integrationTest cases are WALL-CLOCK assertions that flake when the machine is busy (e.g. several agent worktrees building at once), and `./gradlew build` runs integrationTest: LambdaMartBenchmarkTest 'inference on 50 candidates completes under 5ms median' (seen at 5.41ms, an 8% overshoot of a 5ms threshold) and KnowledgeServerIntegrationTest.fullE2E_spawnConnectIngestAndSearch ('Timeout waiting for worker port after 30000ms' while spawning a real Worker process). A failure ONLY in these two is pre-existing; re-run them with --tests to confirm.",
+      "evidence": "Both failed on a full `spotlessApply build` from worktree agent-aa51999fa41f5fdf9 (tempdoc 878) on 2026-08-26 while three sibling worktrees were building, and both passed immediately when re-run in isolation (`:modules:app-services:integrationTest --tests \"*LambdaMartBenchmarkTest*\" --tests \"*KnowledgeServerIntegrationTest*\"` -> BUILD SUCCESSFUL in 33s). The same run’s 34 unit-test tasks were all green.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:app-services:integrationTest --tests \"*LambdaMartBenchmarkTest*\" --tests \"*KnowledgeServerIntegrationTest*\""
     }
   ]
 }
