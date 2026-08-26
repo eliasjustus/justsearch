@@ -53,6 +53,13 @@ export interface AgentSearchCardProjection {
   readonly query: string;
   readonly scope: string;
   readonly mode: string;
+  /**
+   * Tempdoc 871 §3b — the `limit` this call EXPLICITLY asked for, or `null` when it asked for none.
+   * `null` is not "no limit": the effective one then comes from config (`SearchTool.DEFAULT_LIMIT`,
+   * itself read from `ConfigStore`), which the record does not carry — the same shape as {@link mode}'s
+   * named gap. The scope line therefore renders a limit only when the model actually chose one.
+   */
+  readonly limit: number | null;
   readonly hits: readonly AgentSearchCardRow[];
   readonly resultCount: number;
   readonly evidenceCount: number;
@@ -121,6 +128,18 @@ function scopeFromArguments(argumentsJson: string | undefined): string {
   }
 }
 
+/** Tempdoc 871 §3b — the `limit` the call explicitly carried (see {@link AgentSearchCardProjection.limit}). */
+function limitFromArguments(argumentsJson: string | undefined): number | null {
+  if (!argumentsJson) return null;
+  try {
+    const parsed = JSON.parse(argumentsJson) as unknown;
+    const n = (parsed as Record<string, unknown> | null)?.['limit'];
+    return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The ONE search-evidence tool-card projection (tempdoc 867): every hit this call returned, joined
  * against the run's evidence-path set for {@link AgentSearchCardRow.inEvidence}. Returns `null` when
@@ -151,7 +170,15 @@ export function agentSearchCardProjection(
   // absent on a record persisted before the stamp, which is why this is '' (never re-derived from
   // the call's OWN `mode`/`pipeline` arguments — those name what the LLM asked for, not what ran).
   const mode = typeof sd['searchMode'] === 'string' ? (sd['searchMode'] as string) : '';
-  return { query, scope: scopeFromArguments(argumentsJson), mode, hits, resultCount, evidenceCount };
+  return {
+    query,
+    scope: scopeFromArguments(argumentsJson),
+    mode,
+    limit: limitFromArguments(argumentsJson),
+    hits,
+    resultCount,
+    evidenceCount,
+  };
 }
 
 /** Look up one hit by id (== path) for the reading-pane open path (`card-open`). */

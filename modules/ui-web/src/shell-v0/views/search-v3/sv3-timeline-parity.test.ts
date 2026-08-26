@@ -171,6 +171,50 @@ describe('one run, two paths, one timeline (859 §A §2.2)', () => {
   });
 
   /**
+   * Tempdoc 871 §3b — the chronology regression the owner caught on a HEALTHY run (2026-08-26).
+   *
+   * A stamped delegate run's terminal answer is suppressed on the action plane (863 A-2), which
+   * deleted the carrier of the run's last thinking block; 863 re-homed it onto the run's last
+   * surviving event — the tool step, which happened BEFORE it — and this projection draws a
+   * carrier's blocks ABOVE the carrier, so the transcript read "planned → analysed the results →
+   * [the search that produced them]". For a while that made F4's shape the NORMAL path rather than
+   * the truncated-run edge it is named for.
+   *
+   * The fix is on the wire (`InteractionThreadController` merges the orphaned block onto the ANSWER
+   * plane's copy of that same answer — pinned by `InteractionThreadControllerTest`), so this case
+   * asserts the consequence a reader actually sees: given that wire, the thought renders where it
+   * happened. It uses `projectSv3RecordTurns` alone — the live half of the same journal is already
+   * the R-4 case above, and it produces the identical order.
+   */
+  it('871: a healthy stamped run draws the trailing thought AFTER the tool it analysed', () => {
+    // The wire the thread endpoint now produces: the run plane's tool step, then the answer-plane
+    // answer carrying the block the suppressed run-plane answer would have carried.
+    const healthyRecord: readonly ThreadEvent[] = [
+      { id: 'e0', occurredAt: iso(0), kind: 'USER_MESSAGE', originator: 'user', content: 'find the renewals', attributes: {} },
+      {
+        id: 'c1:proposed', occurredAt: iso(1), kind: 'TOOL_ACTIVITY', originator: 'agent', content: '',
+        attributes: {
+          callId: 'c1', toolName: 'core_search', status: 'proposed', risk: 'low',
+          reasoning: [{ text: 'plan the search', durationMs: 1000 }],
+        },
+      },
+      { id: 'c1:completed', occurredAt: iso(2), kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', status: 'completed', success: true, output: '3 hits' } },
+      {
+        id: 'conv:msg:1', occurredAt: iso(3), kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'the answer',
+        attributes: { reasoning: [{ text: 'the results are thin', durationMs: 1000 }] },
+      },
+    ];
+    const [turn] = projectSv3RecordTurns(healthyRecord);
+
+    expect(shapeOf(turn!.activity)).toEqual([
+      ['reasoning', 'plan the search'],
+      ['tool', 'c1'],
+      ['reasoning', 'the results are thin'],
+      ['text', 'the answer'],
+    ]);
+  });
+
+  /**
    * F4 — the ONE shape where the parity invariant does not hold, named and pinned rather than left
    * to be rediscovered.
    *
@@ -191,6 +235,10 @@ describe('one run, two paths, one timeline (859 §A §2.2)', () => {
    * block to carry a "this one trails" marker — a wire-visible change to every persisted reasoning
    * element and to both windows' readers, for a shape that only an interrupted run produces. That is
    * a bigger change than slice A, so the limit is recorded here instead of papered over.
+   *
+   * "Only an interrupted run" was briefly UNTRUE: 863's answer suppression gave healthy runs a
+   * second route into this shape, which is the defect 871 §3b fixed (the case above). This one is
+   * again what its name says.
    */
   it('F4: a TRUNCATED run is the one shape where the two orderings differ — by design, pinned', () => {
     ctrl.loadReplayFromExport({

@@ -9,12 +9,14 @@ import io.justsearch.agent.api.AgentRequest;
 import io.justsearch.agent.api.RetryAction;
 import io.justsearch.agent.api.interaction.InteractionEvent;
 import io.justsearch.agent.api.interaction.InteractionEventKind;
+import io.justsearch.agent.api.interaction.ThreadProjection;
 import io.justsearch.agent.api.registry.Operation;
 import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.tools.FileOperationLog;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -362,11 +364,20 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
   @Override
   public List<InteractionEvent> threadEvents(
       String conversationId, java.util.Set<String> answeredRunIds) {
+    return threadProjection(conversationId, answeredRunIds).events();
+  }
+
+  @Override
+  public ThreadProjection threadProjection(
+      String conversationId, java.util.Set<String> answeredRunIds) {
     if (conversationId == null || conversationId.isBlank()) {
-      return List.of();
+      return ThreadProjection.of(List.of());
     }
     java.util.Set<String> answered = answeredRunIds == null ? java.util.Set.of() : answeredRunIds;
     List<InteractionEvent> out = new ArrayList<>();
+    // Tempdoc 871 §3b — the trailing blocks of every run whose terminal answer is suppressed below,
+    // handed to the caller (the ONE place both planes are visible) rather than re-homed backwards.
+    Map<String, List<Map<String, Object>>> trailingReasoning = new LinkedHashMap<>();
     for (String runId : runStore.listRunIdsByConversation(conversationId)) {
       Map<String, Object> meta = runStore.readSnapshot(runId);
       // Tempdoc 565 §26.D — a BACKGROUND run (ran "while you were away") that carries this
@@ -418,7 +429,15 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
       // The USER synthesis above stays keyed on the stamp alone, because its append happens BEFORE
       // the run starts — a stamped run's user turn is on the record by construction.
       boolean answerOnRecord = stamped && answered.contains(runId);
-      out.addAll(answerOnRecord ? withoutTerminalAnswer(runEvents, conversationId) : runEvents);
+      if (answerOnRecord) {
+        List<Map<String, Object>> orphaned = new ArrayList<>();
+        out.addAll(withoutTerminalAnswer(runEvents, conversationId, orphaned));
+        if (!orphaned.isEmpty()) {
+          trailingReasoning.put(runId, List.copyOf(orphaned));
+        }
+      } else {
+        out.addAll(runEvents);
+      }
       if (background) {
         // +1ms after the run's last update so the closing marker sorts AFTER every event of the run.
         java.time.Instant endAt =
@@ -427,7 +446,7 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
         out.add(backgroundBoundary(runId, conversationId, endAt, "end"));
       }
     }
-    return out;
+    return new ThreadProjection(out, trailingReasoning);
   }
 
   /**
@@ -439,34 +458,32 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
    *
    * <p>The dropped event can be carrying the run's TRAILING thinking — the reasoning fold attaches a
    * block to the next event that projects, and on an agent run the terminal answer is usually that
-   * event (848 §2.4). Those blocks are re-attached to the run's last surviving event, which is the
-   * same rule the fold itself applies when a journal ends on reasoning ({@code fromRunEvents}'s
-   * trailing case targets the run's last event). A run whose ONLY projecting event WAS the terminal
-   * answer — a delegate run that called no tool — has no carrier left, and its trailing block does
-   * not reach the thread; the record on disk still holds every {@code reasoning_chunk}, so this is a
-   * projection gap, not data loss. Closing it means giving the store-plane turn the run plane's fold
-   * output, which is a cross-plane merge this slice does not introduce.
+   * event (848 §2.4). Tempdoc 871 §3b closes 863 §8.4's open question about where those blocks then
+   * go: they are collected into {@code orphanedOut} for the caller to place, NOT re-attached to the
+   * run's last surviving event. That re-home was 863's own "KNOWN INVERSION" and it is a chronology
+   * defect, not a cosmetic one — the last surviving event is normally the run's final
+   * {@code TOOL_ACTIVITY}, which happened BEFORE the thinking, and the FE draws a carrier's blocks
+   * ABOVE the carrier. A reader saw "planned → analysed the results → [the search that produced
+   * them]". The blocks' real carrier is the answer plane's copy of this same answer, which only the
+   * thread controller can see; the cross-plane merge this comment used to defer is now made there.
    */
   private static List<InteractionEvent> withoutTerminalAnswer(
-      List<InteractionEvent> runEvents, String conversationId) {
+      List<InteractionEvent> runEvents,
+      String conversationId,
+      List<Map<String, Object>> orphanedOut) {
     List<InteractionEvent> kept = new ArrayList<>(runEvents.size());
-    List<Map<String, Object>> orphanedReasoning = new ArrayList<>();
     for (InteractionEvent event : runEvents) {
       if (AgentInteractionMapper.isTerminalAnswer(event, conversationId)) {
         if (event.attributes().get("reasoning") instanceof List<?> blocks) {
           for (Object block : blocks) {
             if (block instanceof Map<?, ?> m) {
-              orphanedReasoning.add(AgentInteractionMapper.castMap(m));
+              orphanedOut.add(AgentInteractionMapper.castMap(m));
             }
           }
         }
         continue;
       }
       kept.add(event);
-    }
-    if (!orphanedReasoning.isEmpty() && !kept.isEmpty()) {
-      int last = kept.size() - 1;
-      kept.set(last, AgentInteractionMapper.withReasoning(kept.get(last), orphanedReasoning));
     }
     return kept;
   }
