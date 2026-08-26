@@ -409,6 +409,18 @@ const SHIPPED_CONSUMERS: ReadonlyArray<readonly [string, number]> = [
   ['components/chat/ReasoningBlock.ts', 1],
 ];
 
+/**
+ * Tempdoc 869 §2.5 — the same inventory, EXTENDED (not forked) with the Search v3 window, for the
+ * assertions that are about the citation props rather than the geometry containment. Sv3 is absent
+ * from the coverage table above because its two sites are covered by `Sv3Main.imports.test.ts` +
+ * `SearchV3View.markdown.test.ts`; it is present here because it is the surface 869 C2b wires, and
+ * an inventory of "who renders marks" that omitted it would be the omission this row guards against.
+ */
+const CITATION_CONSUMERS: readonly string[] = [
+  ...SHIPPED_CONSUMERS.map(([file]) => file),
+  'views/search-v3/Sv3Main.ts',
+];
+
 describe('the shipped consumer inventory is closed', () => {
   it.each(SHIPPED_CONSUMERS)('%s renders exactly %i call site(s)', (file, count) => {
     const text = source(file);
@@ -418,6 +430,58 @@ describe('the shipped consumer inventory is closed', () => {
   it('counts ten shipped call sites in total — an eleventh must claim its coverage row', () => {
     const total = SHIPPED_CONSUMERS.reduce((sum, [, count]) => sum + count, 0);
     expect(total).toBe(10);
+  });
+
+  it('gives every citation-passing call site the source list those citations are labelled against', () => {
+    // Tempdoc 869 §2.5 (T-sites) — the source-level half of I-2, and the reason it is source-level:
+    // the defect it guards is a call site that FORGETS a prop, which no DOM test of the renderer can
+    // see. `.citations` and `.sourceCount` are two halves of one fact — the labels are `index + 1`
+    // over the same source array — so a site that passes marks without the count tells the renderer
+    // the model referenced nothing and silently turns the mute off for that surface. That is exactly
+    // how the Search v3 window shipped without a `frame` (§2.0-1).
+    for (const file of CITATION_CONSUMERS) {
+      const text = source(file);
+      for (const template of text.match(/<jf-markdown-block\s[\s\S]*?<\/jf-markdown-block>/g) ?? []) {
+        if (!template.includes('.citations=')) continue;
+        expect(template, `${file} passes .citations without .sourceCount`).toContain('.sourceCount=');
+      }
+    }
+  });
+
+  it('gives the LIVE agent block both halves of "this run, and still streaming" (869 F5)', () => {
+    // The one block that renders text the model is STILL WRITING, and it was missing both facts
+    // that make the citation passes safe there. It bound `.sourceCount` straight off
+    // `answerSources.length` — a list `onDone` writes, so mid-stream it is the PREVIOUS run's, and
+    // its length is exactly the range the mute's predicate calls "resolvable". And it carried no
+    // `?is-streaming`, so the renderer treated a half-written answer as settled and wove marks into
+    // prose the model had not finished. Source-level for the T-sites reason: a forgotten binding is
+    // invisible to any DOM test of the renderer.
+    const view = source('views/UnifiedChatView.ts');
+    const live = (view.match(/<jf-markdown-block\s[\s\S]*?<\/jf-markdown-block>/g) ?? []).filter(
+      (t) => t.includes('ctrl.streamingText'),
+    );
+    expect(live, 'the live agent streaming block').toHaveLength(1);
+    // The binding is asserted WHOLE, not just present: `?is-streaming=${…}` with anything at all
+    // inside it passes a hard-coded `false`, and a live block bound to a constant is exactly the
+    // defect this row exists for. It must read the controller's own flag, because `streamingText`
+    // outlives `isStreaming` between a terminal event and the commit that clears the buffer.
+    expect(live[0], 'a live block that renders as settled').toContain(
+      '?is-streaming=${ctrl.isStreaming}',
+    );
+    expect(live[0], 'a live count read off the previous run').toMatch(/answerEvidenceIsThisRun\(\)/);
+  });
+
+  it('gives the Search v3 blocks the frame their own tail line words', () => {
+    // The window computes the frame already (`sv3AnswerFrame`) and rendered its blocks at the
+    // renderer's default `'grounded'` — so the receipt under the answer could say "per-sentence
+    // grounding not verified" while the answer above it framed itself as grounded. One computation,
+    // two projections: a site that binds marks here binds the frame too.
+    const sv3 = source('views/search-v3/Sv3Main.ts');
+    const sites = sv3.match(/<jf-markdown-block\s[\s\S]*?<\/jf-markdown-block>/g) ?? [];
+    expect(sites).toHaveLength(2);
+    for (const template of sites) {
+      expect(template, 'a Search v3 block without its frame').toMatch(/\bframe=\$\{/);
+    }
   });
 
   it('has no shipped consumer opting in or re-pointing a geometry token', () => {
