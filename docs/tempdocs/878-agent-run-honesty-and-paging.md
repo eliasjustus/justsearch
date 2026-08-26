@@ -940,7 +940,41 @@ findings. Pinned rather than fixed — it is not wired into CI and is not a pre-
 subject, and the advisories on the canonical doc this branch edits (`tags`, `aliases`, H1-vs-title)
 are demonstrably untouched by the diff.
 
-### §I.6 Delegation
+### §I.6 Third merge (post-872) and what the CI lane caught
+
+`origin/main` moved a third time (#575 residue sweep, #577 871 follow-up). One conflict —
+`CLAUDE.md`, where main's #575 had made the SAME ride-along fix to the retired-inbox pointer that
+this branch made independently; main's wording landed first and won. The nine-file overlap set was
+re-checked as in §I.4: main's `AgentInteractionMapper` change (`withReasoning` made public) and
+`ToolCallCard`/`Sv3Main` reworks are additive to this branch's carriage, and both `outputCharsToModel`
+keys plus the model-visibility note survived intact in the merged tree.
+
+**Two findings, both this branch's own, both from running the thing rather than reading it:**
+
+1. **The lineage rule made the seam audit time out.** `productionAgentClasses()` ran a full
+   `ClassFileImporter` scan of `io.justsearch.agent` on EVERY call, and a fourth rule built its own
+   importer inline — four whole-package bytecode scans per test class. That fit inside the 30-second
+   per-test budget only while the machine was idle, and §D.5's new rule was the fifth caller. The
+   symptom was a `TimeoutException` naming the new test, which says nothing about the property it
+   asserts. Fixed at the root: imported once into a lazy holder (`JavaClasses` is immutable and the
+   rules only read it), so the class is now faster than before this tempdoc touched it rather than
+   paying for the new rule with a raised threshold.
+
+2. **A third ui-web suite pin broke the register's pairwise exclusion.** CI's Public-claims lane
+   runs `known-state-hint.test.mjs`, which asserts every pin's `exitProbe` resolves to EXACTLY its
+   own entry. 872's two ui-web pins each negatively-lookahead the OTHER's probe filter — exhaustive
+   while they were a pair, stale the moment a third arrived. Each now excludes both siblings (not
+   itself, which it still has to match), written out per entry so the next addition sees what it
+   must update. The new pin also DROPPED its `exitProbe` and stands on `reviewBy`: the isolation run
+   passes, so exit 0 would read as "the red is gone" and demand deletion of a live pin, while the
+   bare full-suite run carries no filter token and cannot be attributed to one entry. For a flake
+   whose trigger is machine load, `reviewBy` is the only honest exit — and the contract takes either.
+
+The second is the same defect class as the first review's finding 1 and this tempdoc's whole
+subject: a convention that was true for the case it was written against, silently false for the
+next one, with nothing at the writing site saying so.
+
+### §I.7 Delegation
 
 Two bounded chunks ran as pinned-opus subagents in this worktree on disjoint modules — the
 schema-aware token projection (§D.6, `app-inference` + `app-api`) and the read tool's three silent
