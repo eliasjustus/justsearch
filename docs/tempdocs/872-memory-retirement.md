@@ -182,6 +182,10 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
 - **Domain-register hygiene**: `search-quality-register.md` D-004 and the register skills now say
   "routed into the retired store"; the entries that were live there are in `7b85a5a6` for
   whoever next touches those registers.
+- **`scripts/dev/run-gh.mjs checks-wait` reports PASS on CLA alone** when the `CI` workflow run
+  has not yet registered on the PR rollup (observed twice on #571: "all checks green" with only
+  `cla-assistant` present; the CI run was `pending` in `gh run list`). Its pre-poll should wait
+  for the `CI` workflow specifically, not for "any check". Owner: `scripts/dev`.
 - **Owner call, still open**: an external defect tracker. Not needed for 872 to hold.
 
 ## §7 What this does NOT claim
