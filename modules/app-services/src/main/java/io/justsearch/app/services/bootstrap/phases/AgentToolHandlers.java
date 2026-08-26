@@ -71,6 +71,33 @@ public final class AgentToolHandlers {
     return true;
   }
 
+  /**
+   * True when every ref {@link #registerLateBound} could register already resolves. REMEMBER counts
+   * only when a {@code memoryStore} exists to back it, and READ_DOCUMENT counts unconditionally: the
+   * factory may return a null read tool, in which case there is nothing this path can add for that
+   * ref either way, so treating it as outstanding would defeat the check on every call.
+   */
+  private static boolean allLateBoundRefsPresent(
+      HandlerRegistry operationHandlers, io.justsearch.agent.api.memory.MemoryStore memoryStore) {
+    List<OperationRef> required =
+        new ArrayList<>(
+            List.of(
+                AgentToolsOperationCatalog.SEARCH_INDEX,
+                AgentToolsOperationCatalog.READ_DOCUMENT,
+                AgentToolsOperationCatalog.BROWSE_FOLDERS,
+                AgentToolsOperationCatalog.INGEST_FILES,
+                AgentToolsOperationCatalog.FILE_OPERATIONS));
+    if (memoryStore != null) {
+      required.add(AgentToolsOperationCatalog.REMEMBER);
+    }
+    for (OperationRef ref : required) {
+      if (operationHandlers.resolve(ref).isEmpty()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /** Eager-path registration: register only the non-null tool instances, skipping any ref
    * already registered (idempotent, symmetric with {@link #registerLateBound}). */
   public static void registerEager(
@@ -146,6 +173,14 @@ public final class AgentToolHandlers {
     if (dataDir == null) {
       log.warn("registerAgentToolHandlers skipped: dataDir not initialized");
       return false;
+    }
+    // Tempdoc 876 §B.5: nothing-to-do check over the WHOLE set this path can register, which is a
+    // different thing from the sentinel it replaced — that one let SEARCH_INDEX stand proxy for the
+    // rest and so permanently suppressed REMEMBER. This one skips only when every ref is already
+    // handled, so the two paths still compose. It matters because assemble() is not side-effect
+    // free: it constructs a FileOperationLog, whose constructor runs a diagnostic retention prune.
+    if (allLateBoundRefsPresent(operationHandlers, memoryStore)) {
+      return true;
     }
     // Tempdoc 832: one construction authority. This path used to duplicate AgentToolFactory's
     // assembly, which is how the lane-D scan-observability wiring reached only one of the two

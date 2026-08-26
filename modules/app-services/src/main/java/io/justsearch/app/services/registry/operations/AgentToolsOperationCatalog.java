@@ -172,7 +172,11 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         // nonsense call in its place). The guarantee now rests on
         // ReadinessReconciliationTrigger, which re-runs the readiness snapshot on worker and
         // inference capability transitions as well as on request — name THAT if this comment is
-        // ever revisited, because it is the thing that makes the clear reliable. Belt and braces,
+        // ever revisited, because it is the thing that makes the clear reliable. It is a second
+        // TRIGGER, not total coverage: this condition is also asserted from the INDEX_SERVING
+        // NOT_READY / "index.not_healthy" row (LifecycleSnapshotTap's MAPPING_TABLE), whose reason
+        // code comes from the Worker-reported operational view rather than from a capability
+        // transition, so that arm still moves only when a snapshot is taken. Belt and braces,
         // 876 §B.2b: within a run the offering may grow but never shrink, so a trigger regression
         // can no longer amputate a tool mid-conversation.
         new OperationAvailability(

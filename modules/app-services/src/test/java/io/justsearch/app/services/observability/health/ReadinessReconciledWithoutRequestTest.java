@@ -22,17 +22,30 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tempdoc 876 §B.2a — the regression this work package exists for.
+ * Tempdoc 876 §B.2a — the trigger's own mechanics, over a stand-in envelope supplier.
+ *
+ * <p><b>Scope, precisely.</b> What this file proves is that a {@link WorkerCapability} transition
+ * drives {@link LifecycleSnapshotTap#accept} through a {@link ReadinessReconciliationTrigger}, on a
+ * graph that contains no request handler: the trigger's subscription, its {@code attach} self-seed,
+ * and the resulting assert/clear of {@code index.unavailable} in the {@link ConditionStore}. The
+ * envelope, however, comes from a test-owned {@link AtomicReference} that stands in for {@code
+ * StatusLifecycleHandler.buildReadinessEnvelope}. So "no {@code /api/status} call happened" is true
+ * here <em>by fixture construction</em> — there is no {@code StatusLifecycleHandler} in this graph
+ * to call.
+ *
+ * <p><b>What binds the production thunk.</b> {@code CoreApiAssembly}'s {@code
+ * readinessTrigger.attach(statusLifecycleHandler::buildStatusSnapshot)} is asserted by {@code
+ * modules/ui}'s {@code ReadinessTriggerCompositionTest}, which wires this same trigger to a real
+ * {@code StatusLifecycleHandler} + real tap and observes the same clear. Read the two together: this
+ * file is the trigger's contract, that one is the composition.
  *
  * <p><b>This test fails on {@code main}.</b> There, {@link LifecycleSnapshotTap#accept} — the only
  * writer that asserts or clears {@code index.unavailable} — has exactly one production caller,
  * {@code StatusLifecycleHandler.buildStatusMap()}, i.e. {@code GET /api/status}. Nothing subscribes
  * a reconcile to a capability transition, so a worker coming back READY cannot clear the condition;
- * only the next status request can. The composition below contains no request handler at all: the
- * tap's sole caller is the thunk the {@link ReadinessReconciliationTrigger} owns, so a clear
- * observed here is a clear that happened without anyone asking.
+ * only the next status request can.
  */
-@DisplayName("Readiness reconciles on a capability transition, with no /api/status request")
+@DisplayName("The reconciliation trigger drives the tap off a capability transition")
 final class ReadinessReconciledWithoutRequestTest {
 
   private static final Instant T0 = Instant.parse("2026-08-26T09:00:00Z");
@@ -49,7 +62,10 @@ final class ReadinessReconciledWithoutRequestTest {
   }
 
   @Test
-  @DisplayName("a worker READY transition clears index.unavailable without any status request")
+  @DisplayName(
+      "a worker READY transition clears index.unavailable via the trigger's thunk"
+          + " (stand-in envelope supplier; the real handler is bound in modules/ui's"
+          + " ReadinessTriggerCompositionTest)")
   void workerReadyTransitionClearsIndexUnavailableWithoutStatusRequest()
       throws InterruptedException {
     ConditionStore conditions = new ConditionStore();

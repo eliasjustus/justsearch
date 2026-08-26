@@ -62,10 +62,13 @@ final class AgentOfferingProseTest {
 
   /**
    * The composed operation set production offers the model: both static base catalogs plus the
-   * workflows projected onto agent tools against those operations. {@code
-   * core.navigate-to-surface} is declared by BOTH base catalogs (deliberately — see
-   * {@code AgentToolsOperationCatalog.NAVIGATE_TO_SURFACE}), so the composition is de-duplicated by
-   * ref, first declaration winning, to keep wire names distinct in the emitted list.
+   * workflows projected onto agent tools against those operations. The de-duplication by ref
+   * (first declaration winning) mirrors what {@code OperationCatalogComposition.installBaseCatalogs}
+   * guarantees at boot — the base catalogs declare disjoint refs today ({@code
+   * core.navigate-to-surface}'s single canonical declaration lives in {@code
+   * AgentToolsOperationCatalog}; {@code CoreOperationCatalog} keeps only the ref constant, tempdoc
+   * 560 WS4) — so it is a belt-and-braces guard that keeps this fixture honest if that ever
+   * changes, not a live requirement.
    */
   private static List<Operation> composedOperations() {
     Map<OperationRef, Operation> byRef = new LinkedHashMap<>();

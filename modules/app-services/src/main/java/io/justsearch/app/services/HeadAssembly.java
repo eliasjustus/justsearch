@@ -1248,7 +1248,9 @@ public final class HeadAssembly implements AutoCloseable {
     // (worker not yet available), caching a premature false so the agent's server-side tools
     // were NEVER registered ("No handler registered for binding core.search-index"). Resolve
     // only when the worker is available (caching success, never a premature false) and forward
-    // later transitions. registerLateBound is idempotent (skips if SEARCH_INDEX present).
+    // later transitions. registerLateBound is idempotent PER REF (tempdoc 876 §B.5): a ref the
+    // eager path already registered is left alone, so the two paths compose. It no longer
+    // short-circuits the whole call on SEARCH_INDEX standing proxy for the rest.
     if (localCap != null && localCap.available()) {
       this.agentToolsRegistration.get();
     } else if (localCap != null) {

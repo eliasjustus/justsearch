@@ -226,8 +226,11 @@ final class AgentToolsController {
    * Projects an {@link Operation} onto the {@code GET /api/chat/agent/tools} JSON shape so
    * existing FE consumers (and contract tests) see no wire change post-Phase-10. Per
    * tempdoc 429 §C.G: name uses the {@code wireName} when present (e.g.,
-   * {@code search_index}); description emits the i18n key (FE resolves via
-   * {@code /api/messages/registry-operation/{locale}}); safetyLevel translates from
+   * {@code search_index}); description emits the i18n key (the FE resolves it per-locale — via
+   * {@code /api/messages/registry-operation/{locale}} for {@code ops.*} keys and the sibling
+   * {@code registry-workflow} catalog for a projected workflow's {@code registry-workflow.*} key,
+   * both of which the FE resource catalog merges; the EMITTER resolves server-side instead, because
+   * a model cannot resolve anything — tempdoc 876 §B.3); safetyLevel translates from
    * the new {@link io.justsearch.agent.api.registry.RiskTier} to the legacy enum string.
    */
   private static Map<String, Object> operationToToolMap(Operation op) {

@@ -694,11 +694,20 @@ public final class AgentLoopService implements AgentService {
     return refreshed;
   }
 
-  /** The wire names in an emitted tool list, in emission order. */
+  /**
+   * The wire names in an emitted tool list, in emission order. An envelope carrying no name
+   * contributes nothing rather than a shared sentinel: two nameless entries collapsing to one set
+   * element would make the strict-superset comparison reason about the wrong cardinality. Nothing
+   * emits one today (the OpenAI projection always names its tool and {@code
+   * VirtualOperationStore.withoutCollisions} drops nameless virtual entries), which is exactly why
+   * a sentinel here would be a silent landmine rather than a visible bug.
+   */
   private static Set<String> toolNames(List<Map<String, Object>> tools) {
     Set<String> names = new LinkedHashSet<>();
     for (Map<String, Object> tool : tools) {
-      names.add(tool.get("function") instanceof Map<?, ?> f ? String.valueOf(f.get("name")) : "?");
+      if (tool.get("function") instanceof Map<?, ?> function && function.get("name") != null) {
+        names.add(function.get("name").toString());
+      }
     }
     return names;
   }

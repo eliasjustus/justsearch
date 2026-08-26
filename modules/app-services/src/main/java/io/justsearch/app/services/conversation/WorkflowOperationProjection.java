@@ -19,6 +19,7 @@ import io.justsearch.agent.api.registry.Workflow;
 import io.justsearch.agent.api.registry.WorkflowCatalog;
 import io.justsearch.agent.api.registry.WorkflowNode;
 import io.justsearch.agent.api.registry.WorkflowRef;
+import io.justsearch.app.services.registry.preview.CapabilityAvailability;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -117,6 +118,15 @@ public final class WorkflowOperationProjection {
    * availability expressions — one distinct expression is carried through as-is, several become an
    * {@link AvailabilityExpression.AllOf}, and none (nothing composed declares state-dependent gating)
    * leaves {@link OperationAvailability#empty()}, the pre-876 behaviour for the simple case.
+   *
+   * <p>A composed op that declares no expression but DOES declare {@link
+   * io.justsearch.agent.api.registry.RequiredCapability}s contributes its capability-derived
+   * expression, resolved here through the same {@link CapabilityAvailability#derive} the composed
+   * catalog's own derivation pass uses. Deriving at this seam rather than relying on that later pass
+   * is deliberate: {@code withCapabilityDerivedAvailability} fills only ops with NO expression, so a
+   * projection that already carries one composed op's explicit expression would never receive
+   * another's capability gate — and the workflow would be offered while the operation it runs is
+   * capability-blocked, which is the very defect §B.4 exists to close, one level down.
    */
   public static Optional<Operation> toOperation(
       Workflow workflow, Function<OperationRef, Optional<Operation>> resolver) {
@@ -137,7 +147,12 @@ public final class WorkflowOperationProjection {
             step.operation().value());
         return Optional.empty();
       }
-      target.get().availability().expression().ifPresent(composed::add);
+      Operation composedOp = target.get();
+      composedOp
+          .availability()
+          .expression()
+          .or(() -> CapabilityAvailability.derive(composedOp.policy().requiredCapabilities()))
+          .ifPresent(composed::add);
     }
     OperationRef ref = opRefFor(workflow.id());
     return Optional.of(

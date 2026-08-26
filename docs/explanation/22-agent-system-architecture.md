@@ -90,7 +90,7 @@ The set of tools a run puts in front of the model — the *offering* — is prod
 
 Two properties are deliberate:
 
-- **Availability filtering is live, and the reconciliation behind it does not require a request.** An operation may declare an availability expression over health conditions (`core.search-index` and `core.read-document` are offered only while the index is serving). Those conditions are reconciled from readiness transitions as well as from `/api/status`, so a client that never polls still sees the truth.
+- **Availability filtering is live, and the reconciliation behind it no longer requires a request.** An operation may declare an availability expression over health conditions (`core.search-index` and `core.read-document` are offered only while the index is serving). Those conditions are reconciled on worker and inference capability transitions as well as on `/api/status`, so a client that never polls is no longer stuck with whatever the last request left behind. It is a second *trigger*, not full coverage: a condition whose only input is the Worker-reported operational view (rather than a capability transition) still moves on the next readiness snapshot, whenever that is taken.
 - **Within a run the offering grows but never shrinks.** It is re-evaluated each iteration and adopted only when it gained a tool, so a subsystem that recovers mid-run becomes usable, while a tool the model has already been shown never vanishes underneath it. The asymmetry is intentional: an offered-but-broken tool returns an error the model can read and adapt to, whereas a withheld tool is not experienced as a missing capability at all — it is experienced as a reason to improvise.
 
 Every offered tool is executable: the offering is a subset of the registered operation handlers, the workflow-runner routes, and the FE-published virtual tools.
@@ -104,7 +104,7 @@ Current built-in agent-facing tool names include:
 | `core_browse_folders` | Read-only | Discover indexed folders and paths. |
 | `core_file_operations` | Write/destructive depending on action | Move, rename, copy, or create directories (`FileOperation.OpType`: MOVE / RENAME / MKDIR / COPY — there is no delete) with approval where required. |
 | `core_ingest_files` | Write | Request ingestion of files or folders. Takes an optional `collection` tag; omitted, a path inherits its containing indexed root's collection, or `mcp-ingest` when it is under no indexed root (tempdoc 811 C-2a). |
-| `core_remember` | Read-only-ish | Persist one durable fact or user preference to the single-authority memory record, inspectable and forgettable from the Memory surface. |
+| `core_remember` | Write (LOW, no approval) | Persist one durable fact or user preference to the single-authority memory record, inspectable and forgettable from the Memory surface. |
 | `core_navigate_to_surface` | Read-only | Activate a top-level UI surface, dispatched as a Navigation Intent rather than emitted as a URL in chat text. |
 
 Beyond the built-ins, the offering also carries anything else composed into the agent partition of the catalog: tools contributed by connected MCP servers, and declared workflows projected onto agent-callable operations (`core.<name>` becomes `core_workflow_<name>`). A projected workflow inherits the availability of the operations it composes, and one whose steps reference an operation the running install does not have is not projected at all — so a workflow is never offered as a tool the model cannot actually run.

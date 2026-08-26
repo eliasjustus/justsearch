@@ -39,6 +39,18 @@
       "exitProbe": "slow: ./gradlew.bat :modules:app-services:test --tests \"*WatchedRootScanCollectionTest*\" --rerun"
     },
     {
+      "id": "app-inference-external-server-config-store-flaky",
+      "match": [
+        "gradlew?(.bat)? (?!.*-x test)(?!.*:modules:(?!app-inference))(?!.*--tests)(?=.*\btest\b)",
+        "gradlew?(.bat)? .*--tests .*InferenceLifecycleManagerExternalServer"
+      ],
+      "claim": "InferenceLifecycleManagerExternalServerTest 'startLlamaServerCanAdoptHealthOnlyWhenExplicitlyEnabled' fails with 'IllegalStateException: ConfigStore not initialized - call setGlobal() at startup' under a full ./gradlew test run only; it passes in isolation. Test-isolation defect (a sibling test in the same module JVM leaves the ConfigStore global unset), not a product defect and not your change. A failure ONLY there is pre-existing; re-run in isolation to confirm.",
+      "evidence": "tempdoc 876 full-suite run 2026-08-26 (session f6617483): :modules:app-inference:test FAILED, 1 of 6 cases in that class; the same class re-run with --tests in the same tree was BUILD SUCCESSFUL. app-inference depends only on gpu-bridge/app-api/configuration/telemetry/core-contracts, none of whose code 876 touches.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:app-inference:test"
+    },
+    {
       "id": "ui-web-envelopestream-heartbeat-flaky",
       "match": [
         "test:unit(?!.*PluginLoader)",

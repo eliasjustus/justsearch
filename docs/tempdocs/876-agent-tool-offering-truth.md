@@ -1,5 +1,5 @@
 ---
-status: DESIGNED
+status: IMPLEMENTED
 created: 2026-08-26
 updated: 2026-08-26
 follows: 868 §C.3/§D.1, 550 F3, 560 WS5
@@ -407,7 +407,15 @@ reconciliation:
   capability transition.
 
 This keeps **one** authority for the readiness envelope (`buildReadinessEnvelope`, unchanged) and
-adds a second *trigger*. It fixes all five taps, not just `index.unavailable`.
+adds a second *trigger*. It reaches all five taps, not just `index.unavailable` — but "reaches" is
+the honest verb, not "fixes": the trigger fires on worker + inference **capability** transitions, so
+a condition whose only input is the Worker-reported operational view still moves only when a
+snapshot is taken. `index.unavailable` itself has both kinds of arm (`LifecycleSnapshotTap`'s
+MAPPING_TABLE: the `worker.starting` rows follow the capability, the
+`INDEX_SERVING NOT_READY / index.not_healthy` row follows the Worker's operational view). §B.2b is
+what makes the residue survivable rather than silent. Corrected 2026-08-26 after the independent
+review; the over-claim was also live in docs/22 and in `AgentToolsOperationCatalog`'s comment, both
+fixed in the same pass.
 
 **B.2b — the offering re-evaluates within a run, monotonically.** `AgentLoopService:549`
 evaluates once and hands the same `baseTools` to every iteration (`577-580`), so a run that
@@ -762,3 +770,124 @@ panel and that log agree on a live stack.
 Each package goes to a pinned worker (opus for W1/W2/W3/W5/W7, sonnet for W4/W6/W8), sequentially,
 with the common brief's rules 1-4 inlined and a compile as the acceptance gate. Brief-writing,
 evidence judgment and the merge stay in the main loop.
+
+---
+
+## §C. Implementation record (2026-08-26)
+
+### C.0 Session handover
+
+The implementing session was killed by an account session limit mid-verification (W3/W4/W5/W7
+were written but unverified). A successor session salvaged the worktree: all 43 changed/added
+files were present as uncommitted WIP with no stashes and no surviving sub-worker branches
+(`git worktree list` + an ancestry sweep over every `worktree-agent-*` branch found no descendant
+of the predecessor's `27004dbe`, so nothing was stranded elsewhere). The WIP is committed as
+`50fee453`; `origin/main` was then merged clean (no conflicts, `3f00f98b`).
+
+The session's `docs/observations.d/` shard was **deleted, not folded** — tempdoc 872 retired the
+observations store on `main` while this branch was in flight, and `check-no-observations-shards`
+now fails on any shard. Its three entries were routed per the new CLAUDE.md rule; see §C.3.
+
+### C.1 What shipped
+
+All eight plan packages. Nothing was deliberately skipped.
+
+| Pkg | Design | Landed |
+|---|---|---|
+| W1 | §B.1 | `AgentToolEmitter.offer(...)` is the one membership authority; `emit` is its wire projection; `@FunctionalInterface` dropped. `AgentRunQueries.offeredOperations()` added as a NEW read (`availableOperations()` deliberately unchanged — its three name-resolution consumers need the full catalog). `AgentToolsController.handleListTools` projects the offering; its inline virtual-collision loop and the emitter's private `collidesWithCore` are both replaced by `VirtualOperationStore.withoutCollisions(...)`. |
+| W2 | §B.2a | `ReadinessReconciliationTrigger` — single daemon thread, coalescing, fail-soft, self-seeding on `attach`. Wired to worker + inference transitions in `OrchestrationPhase`, thunk attached in `CoreApiAssembly` (`statusLifecycleHandler::buildStatusSnapshot`), closed in `HeadAssembly.close()`. Threaded through `HealthSubstrateInit.Output` / `SubstrateGraph.HealthSubstrate` / `SubstrateGraphAssembler`. |
+| W3 | §B.2b | `AgentLoopService.adoptGrownOffering` — re-emit per iteration, adopt only on a strict-superset name set. |
+| W4 | §B.3 + §B.7 | `BootstrapHelpers.loadRegistryMessages()` unions the operation + workflow catalogs (single-file method removed, not shimmed). `registry-operation.en.properties`: `mode` no longer promised, `browse_folders` → `core_browse_folders`. |
+| W5 | §B.4 | `WorkflowOperationProjection.project(catalog, knownOperations)` — unresolvable ToolStep ⇒ not projected; otherwise availability is the conjunction of what it composes. `SubstratePhase` moves `installWorkflowOps` after `mcpHostService.connect()`, before `deriveAndPartition`. |
+| W6 | §B.5 | The SEARCH_INDEX sentinel short-circuit is gone; `registerIfAbsent` makes the eager and late-bound paths compose. The hand-listed log string logs the refs actually registered. |
+| W7 | §B.6 | `RegistrySnapshotExporter` builds both `agentWitnessDeliveredIds()` and `buildOperationEntries()` from the production composition with an explicit `conditionId -> false` probe; `ValidatorRunnerTest` gains a composed-catalog context. |
+| W8 | §B.8 | `docs/explanation/22-agent-system-architecture.md` offering section + tool table; `docs/reference/api-contract-map.md`'s `/api/chat/agent/tools` line. |
+
+### C.2 Verification
+
+Run from the worktree, Gradle single-lane.
+
+- `spotlessApply` — `BUILD SUCCESSFUL in 3s`
+- `build -x test` — `BUILD SUCCESSFUL in 9m 24s`, exit 0 (includes `:modules:app-services:integrationTest` and `:modules:ui:integrationTest`)
+- `test` (full suite) — see the PR body for the verbatim line
+- `node scripts/ci/check-live-witness.mjs` — `OK — authority + enforcing test + reused build-tier merge all present and wired`, exit 0
+- `--gate operation-surface` — pass, 0 findings
+- `--gate runtime-witness` — pass; its one note now reads *"the agent offering channel delivers exactly the 17 declared agent-consumable, agent-audience-eligible operation(s)"* — the composed set, which is the W7 point
+- `--gate execution-surface`, `--gate register-guard-resolution` — pass
+- no `modules/ui-web` change, so the ui-web gate recipe is not triggered
+
+**Still needs a live run** (dev stack is the orchestrator's phase): that a real agent run started
+with **no** `/api/status` poll offers `core_search_index` (the 868 §C.3 reproduction, instrument =
+the `Agent tools offered` log line), and that the trust panel and that log agree on a live stack.
+
+### C.3 Open items and routed findings
+
+Not fixed here; recorded where they are acted on rather than in a retired inbox.
+
+1. **The workflow→agent-tool projection is a boot-time snapshot.** `McpHostService`'s
+   `tools/list_changed` listener re-installs a server's operations at runtime
+   (`modules/app-services/src/main/java/io/justsearch/app/services/mcphost/McpHostService.java:99`),
+   but `WorkflowOperationProjection` runs once in `SubstratePhase`
+   (`.../bootstrap/phases/SubstratePhase.java:221`). After §B.4 a workflow dropped — or
+   availability-conjoined — at boot never re-derives when its composed operations later appear.
+   This is the same "reconciliation has one trigger" shape as §B.2a, one layer over, and it is
+   this tempdoc's own open item: the fix is to re-run the projection from the `list_changed`
+   listener. Not done here because it needs the projection to be re-entrant against a live
+   registry, which is a larger change than the availability derivation itself.
+2. **Vacuous guard in `SubstratePhase`.** The MCP shutdown hook is installed under
+   `!mcpHostService.operations().isEmpty()`
+   (`.../bootstrap/phases/SubstratePhase.java:208`), but `McpHostService.operations()` returns the
+   SHARED `ContributionRegistry` — core + agent-tools are already installed into it
+   (`.../mcphost/McpHostService.java:141`), so the condition is always true and the hook is
+   installed even with zero MCP servers configured. Harmless today; the guard means nothing.
+   Pre-existing, unrelated to the offering, left for the MCP-host owner.
+3. **`tmp/agent-orchestration/gradle-locked.sh` can never release its lock** (orchestration
+   scratch, not repo code). It `mkdir`s the lock dir, writes `$LOCK/owner` *inside* it, then
+   releases with `rmdir`, which fails on a non-empty directory with the error swallowed by
+   `2>/dev/null` — so the first build to acquire wedges the shared Gradle lane for every agent
+   permanently. Observed live 2026-08-26 (two workers blocked ~15 min). Reported to the
+   orchestrator; this session used a corrected copy that releases with `rm -rf` and steals a lock
+   whose owner file has not been touched for 45 minutes.
+
+### C.4 Independent review — findings and dispositions
+
+Refute-first, read-only, opus, reviewer ≠ implementer (`independent-reviewer-required`). Verdict:
+**no blockers**; four should-fixes and seven nits. Every should-fix was verified against source
+before acting on it, not taken on the reviewer's word.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | docs/22 claimed the new trigger closes the staleness for `index.unavailable`, but the `INDEX_SERVING NOT_READY / index.not_healthy` row comes from the Worker-reported operational view, not a capability transition (`LifecycleSnapshotTap` MAPPING_TABLE; the reason code is computed in `StatusLifecycleHandler`) | **Fixed.** Verified the mapping row first. docs/22, `AgentToolsOperationCatalog`'s comment and §B.2a above now say "a second trigger, not total coverage" and name the arm that is still snapshot-driven. |
+| 2 | `ReadinessReconciledWithoutRequestTest` attaches a hand-authored lambda, so "no `/api/status` call" is true by fixture construction; the production line `CoreApiAssembly.attach(statusLifecycleHandler::buildStatusSnapshot)` is asserted by nothing (`audit-without-test`) | **Fixed, with one residual gap named.** `ReadinessTriggerCompositionTest` (modules/ui) binds the real `StatusLifecycleHandler` + `LifecycleSnapshotTap` + `WorkerCapability` + trigger, attaching the identical `handler::buildStatusSnapshot` method reference `CoreApiAssembly` uses; no Javalin `Context` or HTTP path exists in the graph. Teeth verified by two fail-probes: attaching nothing leaves `index.unavailable` absent after the self-seed, and disabling `wireTo`'s worker subscription leaves it asserted after the transition. **Residual:** the literal `attach(...)` line at `CoreApiAssembly.java:453` is still executed by no test — nothing in the repo constructs `CoreApiAssembly` (it needs a full `HeadAssembly` graph), so deleting that one line would not turn anything red. What is now guarded is the composition that line creates. The app-services test's naming was narrowed to what its fixture proves. |
+| 3 | W5 folds only *explicit* availability. A composed op declaring `RequiredCapability` but no expression contributed nothing, and `withCapabilityDerivedAvailability` fills only ops with NO expression — so a workflow carrying one op's explicit gate could never receive another's capability gate | **Fixed.** `WorkflowOperationProjection` now resolves each composed op as `expression().or(() -> CapabilityAvailability.derive(policy().requiredCapabilities()))` before conjoining. Latent today (no such workflow exists) but it is §B.4's own rule one level down, and `structural-defects-no-repeat` says a known structural defect does not wait for an incident. |
+| 4 | Retire-with-a-sweep residue: three sites still described the deleted behaviour as current — `HeadAssembly`'s "skips if SEARCH_INDEX present" comment, `LiveWitness`'s javadoc + `governance/live-witness.v1.json` still calling the static tiers blind to `core.workflow-*` (W7 changed that), and a properties comment naming a test that never carried the assertions | **All three fixed.** |
+| 5 | Deleting the sentinel made `AgentToolFactory.assemble` run on every late-bound call, and `assemble` constructs a `FileOperationLog` whose constructor runs a diagnostic retention prune | **Fixed** with `allLateBoundRefsPresent(...)` — a nothing-to-do check over the WHOLE set, which is categorically different from the sentinel it replaced (that one let one ref stand proxy for the rest). The eager/late-bound composition, and its regression test, are unaffected. |
+| 6 (nit) | `toolNames` mapped a nameless envelope to the sentinel `"?"`, collapsing two into one set element and mis-counting the strict-superset comparison | **Fixed** — nameless envelopes now contribute nothing. |
+| 8, 10 (nits) | A false javadoc claim that `core.navigate-to-surface` is declared by both base catalogs (only the ref constant remains in `CoreOperationCatalog`, tempdoc 560 WS4), and a controller javadoc naming only the `registry-operation` message route | **Both fixed**, after verifying the WS4 comment in `CoreOperationCatalog`. |
+| 7 (nit) | `registerEager` lost its throw-on-duplicate assertion | **Accepted as designed.** Symmetric idempotence across the two paths is §B.5's point; a per-path loud failure would re-introduce an ordering dependence between them. |
+| 9, 11 (nits) | A pre-existing regression guard that passes identically on `main`; a test not using try-with-resources on `McpHostService` | **Accepted.** The first is a guard, not evidence, and is labelled as such; the second leaks nothing a test JVM cares about. |
+| 12 (nit) | `HandlerRegistry` is a plain `LinkedHashMap`, so `registerIfAbsent` is read-then-act rather than atomic; the eager path runs on the boot thread and the late-bound path on the capability-listener thread | **Open item**, below. Pre-existing (the sentinel it replaced was the same read-then-act shape) and marginally widened, not introduced here. |
+
+Additional open item from the review, recorded here rather than fixed:
+
+4. **`HandlerRegistry` is not thread-safe and both agent-tool registration paths write to it.**
+   `modules/app-agent-api/src/main/java/io/justsearch/agent/api/registry/HandlerRegistry.java:24`
+   backs the registry with a plain `LinkedHashMap`; `AgentToolHandlers.registerIfAbsent` resolves
+   then registers, and the two callers run on different threads (boot vs the worker-capability
+   listener). Pre-existing — `register` itself was already a non-atomic put behind a duplicate
+   check — and unobserved, but the correct fix is a `ConcurrentHashMap` plus a real `putIfAbsent`
+   in the registry, which is `HandlerRegistry`'s owner's call, not this tempdoc's.
+
+5. **`InferenceLifecycleManagerExternalServerTest` is order-dependent** — tracked here because
+   this session's full-suite run surfaced it and a pin without a tracked fix is just a pile.
+   `startLlamaServerCanAdoptHealthOnlyWhenExplicitlyEnabled` fails with
+   `IllegalStateException: ConfigStore not initialized — call setGlobal() at startup` under a full
+   `./gradlew test`, and passes when the class is run alone: a sibling test in the same module JVM
+   leaves the `ConfigStore` global unset. Not 876's code — `modules/app-inference` depends only on
+   gpu-bridge / app-api / configuration / telemetry / core-contracts, none of whose *code* this
+   tempdoc touches — so it is pinned as `app-inference-external-server-config-store-flaky` in
+   `scripts/agent-analytics/expected-state.v1.json` with an `exitProbe`, per CLAUDE.md's
+   route-out-of-scope-findings rule. The fix is the test's own: whichever
+   `modules/app-inference/src/test/**` case clears or fails to set the `ConfigStore` global should
+   restore it in an `@AfterEach`, or the class should set it in `@BeforeEach` rather than inheriting
+   another test's. The pin is a dated exception and must be deleted by the PR that fixes it.
