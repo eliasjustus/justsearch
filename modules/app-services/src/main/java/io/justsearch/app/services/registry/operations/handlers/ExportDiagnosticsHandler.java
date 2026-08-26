@@ -11,7 +11,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * Handler for {@code core.export-diagnostics}.
@@ -27,7 +26,6 @@ import tools.jackson.databind.ObjectMapper;
 public final class ExportDiagnosticsHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(ExportDiagnosticsHandler.class);
-  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private final Supplier<DiagnosticsService> diagnosticsSupplier;
 
@@ -70,11 +68,11 @@ public final class ExportDiagnosticsHandler implements OperationHandler {
       return null;
     }
     try {
-      JsonNode node = MAPPER.readTree(argumentsJson).get("feTelemetry");
+      JsonNode node = HandlerJson.MAPPER.readTree(argumentsJson).get("feTelemetry");
       if (node == null || !node.isObject()) {
         return null;
       }
-      return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
+      return HandlerJson.MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
     } catch (Exception e) {
       log.debug("Ignoring unparseable feTelemetry in export-diagnostics args", e);
       return null;

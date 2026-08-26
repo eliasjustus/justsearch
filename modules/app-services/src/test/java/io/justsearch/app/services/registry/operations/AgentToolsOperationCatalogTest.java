@@ -28,8 +28,8 @@ import tools.jackson.databind.ObjectMapper;
  *
  * <p>The drift was invisible and total: {@code AgentOperationEmitter} projects {@code
  * op.intf().inputs()} to the model, this catalog declared only {@code query}/{@code limit}, and the
- * schema that DID declare {@code path_prefix} ({@code SearchTool.PARAMETER_SCHEMA}) is preserved for
- * unit tests with no production consumer. So the system prompt instructed the model to use a
+ * schema that DID declare {@code path_prefix} was a tool-local constant read only by unit tests
+ * (deleted in tempdoc 877 §2.1). So the system prompt instructed the model to use a
  * parameter the model could not see, and across 37 recorded runs it was used zero times — while the
  * outward MCP surface declared it and external agents had the scoping the in-app delegate did not.
  * These assertions pin the coupling that was missing, in both directions: what the catalog declares,
@@ -55,8 +55,8 @@ final class AgentToolsOperationCatalogTest {
   @DisplayName("the search-index Interface declares every property SearchTool honours from the model")
   void searchIndexInterfaceDeclaresEveryModelFacingProperty() {
     JsonNode properties = inputs(AgentToolsOperationCatalog.SEARCH_INDEX).get("properties");
-    // `query`, `limit` and `path_prefix` are the three keys SearchTool reads from LLM-authored
-    // arguments (SearchTool.java:198, :210, :222). `mode`/`pipeline` are deliberately NOT declared —
+    // `query`, `limit` and `path_prefix` are the three keys SearchTool.execute reads from
+    // LLM-authored arguments. `mode`/`pipeline` are deliberately NOT declared —
     // they are internal retrieval levers, not a capability the model should steer — and `docIds` is
     // merged server-side by AgentToolDispatcher, never chosen by the model.
     for (String declared : List.of("query", "limit", "path_prefix")) {

@@ -2,8 +2,6 @@
 package io.justsearch.app.services.registry.operations.handlers;
 
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 import io.justsearch.agent.api.registry.BackendIntentRouter;
 import io.justsearch.agent.api.registry.Intent;
 import io.justsearch.agent.api.registry.IntentDispatchResult;
@@ -45,7 +43,6 @@ import org.slf4j.LoggerFactory;
 public final class NavigateToSurfaceHandler implements OperationHandler {
 
   private static final Logger LOG = LoggerFactory.getLogger(NavigateToSurfaceHandler.class);
-  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
   private final Supplier<BackendIntentRouter> routerSupplier;
   private final Clock clock;
@@ -73,7 +70,7 @@ public final class NavigateToSurfaceHandler implements OperationHandler {
   public OperationResult execute(String argumentsJson, InvocationProvenance provenance) {
     String surfaceId;
     try {
-      JsonNode node = MAPPER.readTree(argumentsJson == null ? "{}" : argumentsJson);
+      JsonNode node = HandlerJson.MAPPER.readTree(argumentsJson == null ? "{}" : argumentsJson);
       JsonNode sidNode = node.get("surfaceId");
       if (sidNode == null || !sidNode.isTextual() || sidNode.asText().isBlank()) {
         return OperationResult.failure(

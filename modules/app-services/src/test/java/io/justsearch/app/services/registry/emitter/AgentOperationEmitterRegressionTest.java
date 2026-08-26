@@ -103,7 +103,7 @@ final class AgentOperationEmitterRegressionTest {
         "Configured emitter (via OperationCatalog) must match legacy baseline.");
   }
 
-  private static Operation stubOp(String wireName, String parameterSchema) {
+  private static Operation stubOp(String wireName, String inputsSchema) {
     // Per tempdoc 429 §F.21 C1: OperationRef is the single identity. Tests construct
     // ids in `core.<id>` form so toWireName transliterates to the test's expected
     // wire form (e.g., `core.search-index` → `core_search_index`).
@@ -114,7 +114,7 @@ final class AgentOperationEmitterRegressionTest {
             new I18nKey("stub"), // resolver returns "stub" for any key
             Optional.empty(),
             Optional.empty()),
-        Interface.of(parameterSchema, "{\"type\":\"object\"}"),
+        Interface.of(inputsSchema, "{\"type\":\"object\"}"),
         new OperationPolicy(
             RiskTier.LOW,
             ConfirmStrategy.None.INSTANCE,

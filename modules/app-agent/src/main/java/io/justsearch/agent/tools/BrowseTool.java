@@ -2,7 +2,6 @@
 package io.justsearch.agent.tools;
 
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.app.api.knowledge.FolderBrowseRequest;
 import io.justsearch.app.api.knowledge.FolderBrowseResponse;
@@ -15,8 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Read-only tool for browsing indexed folder structure. Auto-approved (no user gate).
@@ -30,8 +27,6 @@ import org.slf4j.LoggerFactory;
  * {@link io.justsearch.app.services.registry.operations.handlers.BrowseOperationHandler}.
  */
 public final class BrowseTool {
-  private static final Logger LOG = LoggerFactory.getLogger(BrowseTool.class);
-  private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final int DEFAULT_MAX_FOLDERS =
       Math.max(1, Math.min(200, resolveBrowseDefaultMaxFolders()));
 
@@ -48,57 +43,30 @@ public final class BrowseTool {
   private static final int DEFAULT_MAX_FILES = 20;
   private static final int MAX_MAX_FILES = 200;
 
-  private static final String PARAMETER_SCHEMA =
-      """
-      {
-        "type": "object",
-        "properties": {
-          "parent_path": {
-            "type": "string",
-            "description": "Folder path to list subfolders of (relative or absolute). Omit to list top-level indexed roots. Use paths from previous browse results."
-          },
-          "max_folders": {
-            "type": "integer",
-            "description": "Maximum folders to return (default 20, max 200)",
-            "default": 20,
-            "maximum": 200
-          },
-          "list_files": {
-            "type": "boolean",
-            "description": "If true, list individual files instead of subfolders. Auto-triggers when a folder has no subfolders.",
-            "default": false
-          },
-          "max_files": {
-            "type": "integer",
-            "description": "Maximum files to return when listing files (default 20, max 200)",
-            "default": 20,
-            "maximum": 200
-          }
-        }
-      }
-      """;
-
   private final BrowseCallback browseCallback;
   private final FilesCallback filesCallback;
-  private final Supplier<List<RootInfo>> rootsSupplier;
+  private final AgentToolPaths.RootsView rootsView;
 
   public BrowseTool(
       BrowseCallback browseCallback,
       FilesCallback filesCallback,
       Supplier<List<RootInfo>> rootsSupplier) {
+    this(browseCallback, filesCallback, AgentToolPaths.RootsView.of(rootsSupplier));
+  }
+
+  /** Tempdoc 877 §2.4 — the shared roots view {@code AgentToolFactory.assemble} builds once. */
+  public BrowseTool(
+      BrowseCallback browseCallback,
+      FilesCallback filesCallback,
+      AgentToolPaths.RootsView rootsView) {
     this.browseCallback = browseCallback;
     this.filesCallback = filesCallback;
-    this.rootsSupplier = rootsSupplier;
+    this.rootsView = rootsView == null ? AgentToolPaths.RootsView.of(null) : rootsView;
   }
 
   /** Backward-compatible constructor without file listing support. */
   public BrowseTool(BrowseCallback browseCallback, Supplier<List<RootInfo>> rootsSupplier) {
     this(browseCallback, null, rootsSupplier);
-  }
-
-  /** Per tempdoc 429 §C.G: parameter schema preserved as a constant for unit tests. */
-  public static String parameterSchema() {
-    return PARAMETER_SCHEMA;
   }
 
   public OperationResult execute(String argumentsJson) {
@@ -110,35 +78,28 @@ public final class BrowseTool {
       boolean listFiles = false;
 
       if (argumentsJson != null && !argumentsJson.isBlank()) {
-        JsonNode args = MAPPER.readTree(argumentsJson);
-        if (args.has("parent_path") && !args.get("parent_path").isNull()) {
-          parentPath = args.get("parent_path").asText().strip();
+        JsonNode args = ToolArgs.parse(argumentsJson);
+        String rawParent = ToolArgs.stringArg(args, "parent_path");
+        if (rawParent != null) {
+          parentPath = rawParent.strip();
           if (parentPath.isEmpty() || ROOT_SENTINELS.contains(parentPath.toLowerCase())) {
             parentPath = null;
           }
         }
-        if (args.has("max_folders")) {
-          maxFolders = Math.min(args.get("max_folders").asInt(DEFAULT_MAX_FOLDERS), MAX_MAX_FOLDERS);
-          if (maxFolders < 1) maxFolders = DEFAULT_MAX_FOLDERS;
-        }
-        if (args.has("list_files")) {
-          listFiles = args.get("list_files").asBoolean(false);
-        }
-        if (args.has("max_files")) {
-          maxFiles = Math.min(args.get("max_files").asInt(DEFAULT_MAX_FILES), MAX_MAX_FILES);
-          if (maxFiles < 1) maxFiles = DEFAULT_MAX_FILES;
-        }
+        maxFolders = ToolArgs.intArg(args, "max_folders", DEFAULT_MAX_FOLDERS, 1, MAX_MAX_FOLDERS);
+        listFiles = ToolArgs.boolArg(args, "list_files");
+        maxFiles = ToolArgs.intArg(args, "max_files", DEFAULT_MAX_FILES, 1, MAX_MAX_FILES);
       }
 
       // --- shared setup: resolve + validate path ---
       if (parentPath != null) {
         if (!AgentToolPaths.looksAbsolute(parentPath)) {
-          String resolved = resolveRelativeParent(parentPath);
+          String resolved = rootsView.resolveRelative(parentPath);
           if (resolved != null) {
             parentPath = resolved;
           }
         }
-        String rejection = validateParentPath(parentPath);
+        String rejection = rootsView.validate(parentPath, "parent_path");
         if (rejection != null) {
           return OperationResult.failure(rejection);
         }
@@ -160,15 +121,17 @@ public final class BrowseTool {
       return executeFolderList(parentPath, maxFolders);
 
     } catch (Exception e) {
-      LOG.error("BrowseTool execution failed", e);
-      return OperationResult.failure("Browse error: " + e.getMessage());
+      return AgentToolErrors.classify("core_browse_folders", "Browse error", e);
     }
   }
 
-  private OperationResult executeFolderList(String parentPath, int maxFolders) {
+  // Tempdoc 877 §2.8 — both Worker listings run under the shared fetch budget, so an unresponsive
+  // Worker cannot hold the agent loop thread forever (it could, before this). The checked
+  // TimeoutException rides out to execute()'s catch, which classifies it as a retryable failure.
+  private OperationResult executeFolderList(String parentPath, int maxFolders) throws Exception {
     FolderBrowseResponse response;
     if (parentPath == null) {
-      List<RootInfo> roots = rootsSupplier.get();
+      List<RootInfo> roots = rootsView.roots();
       List<FolderBrowseResponse.Folder> folders =
           roots.stream()
               .map(r -> new FolderBrowseResponse.Folder(r.path(), r.name(), -1, -1, 0))
@@ -176,7 +139,9 @@ public final class BrowseTool {
       response = new FolderBrowseResponse(folders, 0, false);
     } else {
       var request = new FolderBrowseRequest(parentPath, maxFolders);
-      response = browseCallback.listFolders(request);
+      response =
+          io.justsearch.agent.AgentTimeouts.call(
+              "core_browse_folders", () -> browseCallback.listFolders(request));
       if (response == null) {
         return OperationResult.failure("Browse returned no response");
       }
@@ -184,9 +149,7 @@ public final class BrowseTool {
 
     // Auto-fallback: empty folders → try files, fall back to hint on empty files
     if (response.folders().isEmpty() && parentPath != null && filesCallback != null) {
-      FolderFilesResponse filesResponse =
-          filesCallback.listFiles(
-              new FolderFilesRequest(parentPath, DEFAULT_MAX_FILES, List.of()));
+      FolderFilesResponse filesResponse = listFiles(parentPath, DEFAULT_MAX_FILES);
       if (filesResponse != null && !filesResponse.files().isEmpty()) {
         return OperationResult.success(formatFileResults(filesResponse, parentPath));
       }
@@ -196,13 +159,18 @@ public final class BrowseTool {
     return OperationResult.success(formatResults(response, parentPath));
   }
 
-  private OperationResult executeFileList(String parentPath, int maxFiles) {
-    FolderFilesResponse filesResponse =
-        filesCallback.listFiles(new FolderFilesRequest(parentPath, maxFiles, List.of()));
+  private OperationResult executeFileList(String parentPath, int maxFiles) throws Exception {
+    FolderFilesResponse filesResponse = listFiles(parentPath, maxFiles);
     if (filesResponse == null) {
       return OperationResult.failure("File listing returned no response");
     }
     return OperationResult.success(formatFileResults(filesResponse, parentPath));
+  }
+
+  private FolderFilesResponse listFiles(String parentPath, int maxFiles) throws Exception {
+    return io.justsearch.agent.AgentTimeouts.call(
+        "core_browse_folders",
+        () -> filesCallback.listFiles(new FolderFilesRequest(parentPath, maxFiles, List.of())));
   }
 
   private String formatResults(FolderBrowseResponse response, String parentPath) {
@@ -215,7 +183,7 @@ public final class BrowseTool {
       String displayParent = toRelativePath(parentPath);
       String msg = "No folders found under \"" + displayParent + "\".";
       if (!AgentToolPaths.looksAbsolute(parentPath)) {
-        List<RootInfo> roots = rootsSupplier.get();
+        List<RootInfo> roots = rootsView.roots();
         if (!roots.isEmpty()) {
           var hint = new StringBuilder(msg);
           hint.append(" HINT: Use a path starting with one of these root names:");
@@ -306,13 +274,8 @@ public final class BrowseTool {
    * path unchanged if no root matches or if roots are unavailable.
    */
   String toRelativePath(String absolutePath) {
-    List<RootInfo> roots;
-    try {
-      roots = rootsSupplier.get();
-    } catch (Exception e) {
-      return absolutePath;
-    }
-    if (roots == null || roots.isEmpty()) {
+    List<RootInfo> roots = rootsView.roots();
+    if (roots.isEmpty()) {
       return absolutePath;
     }
     try {
@@ -331,39 +294,6 @@ public final class BrowseTool {
       // Fall through
     }
     return absolutePath;
-  }
-
-  /**
-   * Resolves a relative parent_path against indexed roots by matching the first path component
-   * against root names. Returns the resolved absolute path, or null if no root matches.
-   */
-  private String resolveRelativeParent(String relativePath) {
-    List<RootInfo> roots;
-    try {
-      roots = rootsSupplier.get();
-    } catch (Exception e) {
-      return null;
-    }
-    return AgentToolPaths.resolveRelativePath(relativePath, roots);
-  }
-
-  /**
-   * Validates that parent_path is an absolute path under one of the indexed roots. Returns null if
-   * valid, or an error message string if rejected.
-   */
-  private String validateParentPath(String parentPath) {
-    List<RootInfo> roots;
-    try {
-      roots = rootsSupplier.get();
-    } catch (Exception e) {
-      LOG.warn("Failed to get roots for path validation", e);
-      return null; // Degrade gracefully
-    }
-    if (roots == null || roots.isEmpty()) {
-      return null; // No roots configured — allow any path
-    }
-    List<String> rootPaths = roots.stream().map(RootInfo::path).toList();
-    return AgentToolPaths.validateAgainstRoots(parentPath, rootPaths, "parent_path");
   }
 
   /** Lightweight root info returned by the roots supplier. */

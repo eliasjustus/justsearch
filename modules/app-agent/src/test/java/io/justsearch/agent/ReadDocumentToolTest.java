@@ -199,6 +199,44 @@ final class ReadDocumentToolTest {
   }
 
   @Test
+  @DisplayName("877 §2.6: a Worker failure is reported as a Worker failure, not as 'not found'")
+  void workerErrorIsNotReportedAsNotFound() {
+    // found=false carries a REASON and the tool used to discard it, so a Worker that answered
+    // "index is rebuilding" told the model the document did not exist — a lie that sends it
+    // browsing for a path that is already correct.
+    var workerFailure =
+        new DocumentService.DocumentSlice(
+            PATH, "", Map.of(), false, false, 0, "index segment unreadable: rebuild in progress");
+    OperationResult result =
+        new ReadDocumentTool(new FakeFetch(workerFailure)).execute("{\"path\":\"" + PATH + "\"}");
+
+    assertFalse(result.success());
+    assertTrue(
+        result.message().contains("index segment unreadable: rebuild in progress"),
+        "the Worker's own reason must reach the model: " + result.message());
+    assertFalse(
+        result.message().startsWith("Document not found in the index"),
+        "a Worker failure must not be relabelled as an absent document: " + result.message());
+  }
+
+  @Test
+  @DisplayName("877 §2.6: the Worker's own absent-document wording keeps the not-found remedy")
+  void workerAbsentWordingStillNamesTheRecoveryPath() {
+    // GrpcSearchService.fetchDocumentSlice answers a missing document with this exact prose. It is
+    // an absent document, not a Worker fault, so it must keep the message that names the two tools
+    // that can find the right path — recognising the marker by content, not by which side minted it.
+    var missing =
+        new DocumentService.DocumentSlice(
+            PATH, "", Map.of(), false, false, 0, "Document not found in index");
+    OperationResult result =
+        new ReadDocumentTool(new FakeFetch(missing)).execute("{\"path\":\"" + PATH + "\"}");
+
+    assertFalse(result.success());
+    assertTrue(result.message().startsWith("Document not found in the index: " + PATH));
+    assertTrue(result.message().contains("core_browse_folders"));
+  }
+
+  @Test
   @DisplayName("868: an indexed document with NO extracted text fails and names the reason — never an empty page")
   void emptyExtractionAtOffsetZeroFails() {
     // The Worker answers found=true with empty content for an extraction dropout (tempdoc 790), so

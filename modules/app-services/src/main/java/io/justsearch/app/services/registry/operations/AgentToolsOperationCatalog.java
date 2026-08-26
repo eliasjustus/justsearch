@@ -21,6 +21,7 @@ import io.justsearch.agent.api.registry.Presentation;
 import io.justsearch.agent.api.registry.Provenance;
 import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
+import io.justsearch.agent.tools.FileOperationsTool;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -132,10 +133,11 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
     return new Operation(
         SEARCH_INDEX,
         Presentation.forId(SEARCH_INDEX),
-        // Tempdoc 868 §B.4 (from §A.2): `path_prefix` is DECLARED here because this Interface — not
-        // SearchTool.PARAMETER_SCHEMA — is what AgentOperationEmitter projects to the model
-        // (AgentOperationEmitter.java:252 reads op.intf().inputs()). SearchTool honours the key
-        // (SearchTool.java:222-236) and the system prompt instructs the model to use it, but the
+        // Tempdoc 868 §B.4 (from §A.2): `path_prefix` is DECLARED here because this Interface is
+        // what AgentOperationEmitter projects to the model (AgentOperationEmitter.toOpenAiTool
+        // reads op.intf().inputs()). SearchTool.execute honours the key (resolve-then-validate
+        // against the indexed roots, SearchTool.validatePathPrefix) and the system prompt
+        // instructs the model to use it, but the
         // in-app delegate could never see it: across 37 recorded runs it was used 0 times. The
         // outward MCP surface (McpToolSurface) already declared it, so external agents had scoping
         // the delegate did not. `mode`/`pipeline` stay undeclared on purpose — they are internal
@@ -194,7 +196,7 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         Presentation.forId(READ_DOCUMENT),
         Interface.of(
             "{\"type\":\"object\",\"properties\":{"
-                + "\"path\":{\"type\":\"string\",\"description\":\"Absolute path of the document to"
+                + "\"path\":{\"type\":\"string\",\"description\":\"Path of the document to"
                 + " read, as returned by core_browse_folders or a core_search_index result.\"},"
                 + "\"offset_chars\":{\"type\":\"integer\",\"description\":\"Character offset to"
                 + " start reading from (default 0). Use the offset the previous page's 'More:' line"
@@ -259,13 +261,24 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         Presentation.forId(BROWSE_FOLDERS),
         // Tempdoc 655: list_files added so this declared schema matches the MCP-visible schema
         // for justsearch_browse (McpToolSurface) — the two were independently authored and had
-        // drifted (list_files was accepted by MCP callers but never declared here). The
-        // underlying BrowseOperationHandler does not yet read list_files (auto-detect only,
-        // logged separately as a pre-existing gap) — declaring it here keeps the two schemas in
-        // sync without changing today's runtime behavior.
+        // drifted (list_files was accepted by MCP callers but never declared here). BrowseTool
+        // does read it (BrowseTool.execute), switching to the file listing; it also auto-detects
+        // when a folder has no subfolders.
+        // Tempdoc 877 §2.1 — max_folders/max_files promoted: BrowseTool.execute honours both, and
+        // the truncation message tells the model to "increase max_folders", an instruction it
+        // could not follow while the key was undeclared. The 200 ceiling is stated in the
+        // description but NOT declared as `maximum`, deliberately: this schema is ENFORCED before
+        // dispatch (OperationExecutorImpl -> OperationInputSchemaValidator), while BrowseTool
+        // CLAMPS an over-large value — a `maximum` keyword would turn a harmless over-ask on a
+        // read-only tool into a rejected call. Same reason `limit` on searchIndex() has none.
         Interface.of(
             "{\"type\":\"object\",\"properties\":{\"parent_path\":{\"type\":\"string\"},"
-                + "\"list_files\":{\"type\":\"boolean\"}}}",
+                + "\"list_files\":{\"type\":\"boolean\"},"
+                + "\"max_folders\":{\"type\":\"integer\",\"default\":20,"
+                + "\"description\":\"Maximum folders to return (default 20, capped at 200).\"},"
+                + "\"max_files\":{\"type\":\"integer\",\"default\":20,"
+                + "\"description\":\"Maximum files to return when listing files (default 20,"
+                + " capped at 200).\"}}}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(
             RiskTier.LOW,
@@ -316,8 +329,55 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
     return new Operation(
         FILE_OPERATIONS,
         Presentation.forId(FILE_OPERATIONS, Optional.of("warning"), Optional.of("destructive")),
+        // Tempdoc 877 §2.1 — the item shape FileOperationsTool.parseOperations actually parses,
+        // promoted from an untyped `array` the model had to guess at; `conflict_strategy` and
+        // `explanation` are promoted for the same reason (the tool honours both, but undeclared
+        // they were pinned to FAIL and the literal "File operations" in the undo journal).
+        // Item-level `required` is ["op"] ONLY, deliberately: this schema is ENFORCED before
+        // dispatch (OperationExecutorImpl -> OperationInputSchemaValidator), and parseOperations
+        // accepts `path` as an alias for `destination` because small models emit it — requiring
+        // `destination` here would reject those calls before the alias could resolve. The
+        // destination is still required, in parseOperations, which reports it per-operation.
+        // Tempdoc 877 §3.1 — the rule these promotions follow, because this schema is BOTH shown to
+        // the model AND enforced before dispatch: DECLARE the shape (which keys exist, their JSON
+        // type, which are required), DESCRIBE the value constraints in prose, and ENFORCE them in
+        // the tool. A value-constraint keyword — `enum`, `maximum`, `maxItems` — pre-empts the
+        // tool's own check with a generic validator string and, worse, narrows behaviour the tool
+        // deliberately accepts:
+        //   · `op` has NO `enum`. parseOperations upper-cases it (FileOperationsTool.parseOperations)
+        //     because small local models emit "mkdir"; FileOperationsToolTest#executeCaseInsensitiveOpType
+        //     pins that as intended behaviour. An `enum` here would reject those calls at the
+        //     dispatch boundary while that unit test — which calls execute() directly, bypassing the
+        //     validator — stayed green: a live regression with a green suite over it. Same for
+        //     `conflict_strategy`, upper-cased at the same altitude.
+        //   · No `maxItems`. FileOperationsTool.execute already refuses an oversized batch with an
+        //     actionable "...exceeds limit of 50. Split into smaller batches."
+        // The allowed values and the limit therefore ride the DESCRIPTIONS, which is what the model
+        // reads anyway. The limit is INTERPOLATED from the enforcing constant so it has one author;
+        // contrast browseFolders() above, whose 200 is a literal because its default comes from
+        // ConfigStore at class-init and interpolating it would bake one machine's configured value
+        // into a static, model-visible schema.
         Interface.of(
-            "{\"type\":\"object\",\"properties\":{\"operations\":{\"type\":\"array\"}},"
+            "{\"type\":\"object\",\"properties\":{\"operations\":{\"type\":\"array\","
+                + "\"description\":\"File operations to execute sequentially, at most "
+                + FileOperationsTool.MAX_BATCH_SIZE
+                + " per call.\","
+                + "\"items\":{\"type\":\"object\",\"properties\":{"
+                + "\"op\":{\"type\":\"string\",\"description\":\"Operation type: one of MOVE,"
+                + " RENAME, MKDIR, COPY (case-insensitive).\"},"
+                + "\"source\":{\"type\":\"string\",\"description\":\"Source file or folder path"
+                + " (not needed for MKDIR).\"},"
+                + "\"destination\":{\"type\":\"string\",\"description\":\"Destination file or"
+                + " folder path. Required for every operation.\"}},"
+                + "\"required\":[\"op\"]}},"
+                + "\"conflict_strategy\":{\"type\":\"string\",\"default\":\"FAIL\","
+                + "\"description\":\"How to handle destination conflicts (case-insensitive), one"
+                + " of FAIL, SKIP, AUTO_SUFFIX: FAIL aborts the batch,"
+                + " SKIP skips the conflicting operations, AUTO_SUFFIX renames to a unique name"
+                + " like file (1).txt.\"},"
+                + "\"explanation\":{\"type\":\"string\",\"description\":\"One line saying what"
+                + " these operations accomplish. Recorded in the undo journal and shown in the"
+                + " user's undo history.\"}},"
                 + "\"required\":[\"operations\"]}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(

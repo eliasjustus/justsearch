@@ -10,8 +10,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Handler for {@code core.switch-inference-mode} — a <b>temporary alias</b> superseded by
@@ -34,8 +32,6 @@ public final class SwitchInferenceModeHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(SwitchInferenceModeHandler.class);
 
-  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
-
   private final Supplier<RuntimeSpecStore> specStoreSupplier;
   private final Supplier<RuntimeReconciler> reconcilerSupplier;
 
@@ -51,7 +47,8 @@ public final class SwitchInferenceModeHandler implements OperationHandler {
     boolean enabled;
     try {
       JsonNode root =
-          MAPPER.readTree(argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
+          HandlerJson.MAPPER.readTree(
+              argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
       JsonNode modeNode = root.get("mode");
       if (modeNode == null || !modeNode.isTextual() || modeNode.asString().isBlank()) {
         return OperationResult.failure("Missing required arg: mode (use 'online' or 'indexing')");
@@ -66,7 +63,7 @@ public final class SwitchInferenceModeHandler implements OperationHandler {
             "Invalid mode. Use 'online' or 'indexing'", "INVALID_REQUEST", null, false);
       }
     } catch (Exception e) {
-      return OperationResult.failure("Invalid args: " + e.getMessage());
+      return HandlerJson.invalidArgs(e);
     }
     return SetChatEnabledHandler.RuntimeIntentWrite.apply(
         specStoreSupplier, reconcilerSupplier, enabled, log);

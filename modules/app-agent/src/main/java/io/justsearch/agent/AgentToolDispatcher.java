@@ -45,7 +45,6 @@ import tools.jackson.databind.node.ObjectNode;
 final class AgentToolDispatcher {
 
   private static final Logger LOG = LoggerFactory.getLogger(AgentToolDispatcher.class);
-  private static final long APPROVAL_TIMEOUT_SECONDS = 300;
 
   private final OperationDispatcher operationExecutor;
   private final AgentTelemetry agentTelemetry;
@@ -282,7 +281,7 @@ final class AgentToolDispatcher {
         new AgentEvent.ToolCallPendingApproval(
             call.id(), call.toolName(), call.arguments(), risk, gateBehavior));
     try {
-      return gate.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+      return gate.get(AgentTimeouts.approvalGateMs(), TimeUnit.MILLISECONDS);
     } catch (Exception e) {
       LOG.warn("Approval gate timeout/error for call {}", call.id(), e);
       return false;

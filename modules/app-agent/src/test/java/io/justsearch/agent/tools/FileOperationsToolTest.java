@@ -37,14 +37,6 @@ class FileOperationsToolTest {
   }
 
   @Test
-  void parameterSchemaPresent() {
-    // Per Phase 12 of tempdoc 429: name/description/safetyLevel/supportsUndo moved to
-    // the AgentToolsOperationCatalog Operation declaration. The undoSupported policy is
-    // verified at the Operation level (FILE_OPERATIONS has undoSupported=true).
-    assertNotNull(FileOperationsTool.parameterSchema());
-  }
-
-  @Test
   void executeMoveWithValidJson() throws IOException {
     Path src = root.resolve("source.txt");
     Files.writeString(src, "data");
@@ -241,17 +233,9 @@ class FileOperationsToolTest {
     assertTrue(result.success(), "Exactly MAX_BATCH_SIZE should succeed: " + result.message());
   }
 
-  @Test
-  void schemaBatchLimitMatchesConstant() throws Exception {
-    var schema =
-        new tools.jackson.databind.ObjectMapper()
-            .readTree(FileOperationsTool.parameterSchema());
-    int schemaMaxItems = schema.get("properties").get("operations").get("maxItems").asInt();
-    assertEquals(
-        FileOperationsTool.MAX_BATCH_SIZE,
-        schemaMaxItems,
-        "Schema maxItems must match MAX_BATCH_SIZE constant");
-  }
+  // Tempdoc 877 §2.1: `schemaBatchLimitMatchesConstant` moved to AgentToolCatalogContractTest
+  // (app-services) — the catalog Interface is now the only declared schema, so that is where
+  // `operations.maxItems == MAX_BATCH_SIZE` has to be pinned.
 
   // ===== Undo tests =====
 

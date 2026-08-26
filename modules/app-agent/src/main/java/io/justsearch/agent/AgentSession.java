@@ -347,10 +347,10 @@ final class AgentSession {
       String toolCallId, OperationResult result) {
     Map<String, Object> data = result == null ? Map.of() : result.structuredData();
     var delta = new ArrayList<AgentEvent.AgentSource>();
-    if (data.get("searchResults") instanceof List<?> results) {
+    if (data.get(OperationResult.SEARCH_RESULTS_KEY) instanceof List<?> results) {
       contributeSearchSources(toolCallId, results, delta);
     }
-    if (data.get("readResults") instanceof List<?> reads) {
+    if (data.get(OperationResult.READ_RESULTS_KEY) instanceof List<?> reads) {
       contributeReadSources(toolCallId, reads, delta);
     }
     return List.copyOf(delta);

@@ -2,7 +2,6 @@
 package io.justsearch.agent.tools;
 
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequest;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequestFiltersBuilder;
@@ -15,8 +14,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Read-only tool for querying the knowledge index. Auto-approved (no user gate).
@@ -32,8 +29,6 @@ import org.slf4j.LoggerFactory;
  * {@link io.justsearch.agent.api.registry.OperationHandler} contract.
  */
 public final class SearchTool {
-  private static final Logger LOG = LoggerFactory.getLogger(SearchTool.class);
-  private static final ObjectMapper MAPPER = new ObjectMapper();
   // Three-layer truncation for search results delivered to the LLM (see tempdocs 208, 213):
   // Layer 1 (formatResults): per-result budget = MAX_TOOL_RESULT_CHARS / hits.size()
   //   — accumulates excerpt chars per hit; breaks when budget exhausted.
@@ -49,11 +44,6 @@ public final class SearchTool {
   private static int resolveSearchDefaultLimit() {
     ConfigStore cs = ConfigStore.globalOrNull();
     return cs != null ? cs.get().agent().searchDefaultLimit() : 3;
-  }
-
-  private static int resolveMaxToolResultChars() {
-    ConfigStore cs = ConfigStore.globalOrNull();
-    return cs != null ? cs.get().agent().maxToolResultChars() : 4000;
   }
 
   /**
@@ -97,7 +87,10 @@ public final class SearchTool {
     if (args.has("pipeline") && args.get("pipeline").isObject()) {
       return "custom";
     }
-    String modeStr = args.has("mode") ? args.get("mode").asText() : resolveSearchDefaultMode();
+    String modeStr = ToolArgs.stringArg(args, "mode");
+    if (modeStr == null) {
+      modeStr = resolveSearchDefaultMode();
+    }
     if (modeStr == null || modeStr.isBlank()) {
       return "hybrid";
     }
@@ -112,19 +105,15 @@ public final class SearchTool {
   /** Parses a JSON pipeline argument into a PipelineConfig (256: Phase H1). */
   static PipelineConfig parsePipelineArg(JsonNode node) {
     return new PipelineConfig(
-        boolField(node, "sparseEnabled"),
-        boolField(node, "denseEnabled"),
-        boolField(node, "spladeEnabled"),
-        node.has("fusionAlgorithm") ? node.get("fusionAlgorithm").asText("none") : "none",
-        boolField(node, "lambdamartEnabled"),
-        boolField(node, "crossEncoderEnabled"),
-        node.has("crossEncoderWindow") ? node.get("crossEncoderWindow").asInt(0) : 0,
-        boolField(node, "expansionEnabled"),
-        boolField(node, "freshnessEnabled"));
-  }
-
-  private static boolean boolField(JsonNode node, String field) {
-    return node.has(field) && node.get(field).asBoolean(false);
+        ToolArgs.boolArg(node, "sparseEnabled"),
+        ToolArgs.boolArg(node, "denseEnabled"),
+        ToolArgs.boolArg(node, "spladeEnabled"),
+        ToolArgs.stringArg(node, "fusionAlgorithm", "none"),
+        ToolArgs.boolArg(node, "lambdamartEnabled"),
+        ToolArgs.boolArg(node, "crossEncoderEnabled"),
+        ToolArgs.intArg(node, "crossEncoderWindow", 0, Integer.MIN_VALUE, Integer.MAX_VALUE),
+        ToolArgs.boolArg(node, "expansionEnabled"),
+        ToolArgs.boolArg(node, "freshnessEnabled"));
   }
 
   /**
@@ -150,50 +139,8 @@ public final class SearchTool {
     return text.substring(0, cut).stripTrailing() + "...";
   }
 
-  private static final String PARAMETER_SCHEMA =
-      """
-      {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "Search query text"
-          },
-          "limit": {
-            "type": "integer",
-            "description": "Maximum number of results (default 3, max 20)",
-            "default": 3,
-            "maximum": 20
-          },
-          "mode": {
-            "type": "string",
-            "enum": ["text", "vector", "hybrid"],
-            "description": "Search mode preset (text, vector, or hybrid). Use pipeline for fine-grained control."
-          },
-          "pipeline": {
-            "type": "object",
-            "description": "Fine-grained pipeline control. Overrides mode when provided. Components: sparseEnabled (BM25), denseEnabled (vector KNN), spladeEnabled (learned sparse), fusionAlgorithm (rrf/none), lambdamartEnabled, crossEncoderEnabled, expansionEnabled (LLM query expansion).",
-            "properties": {
-              "sparseEnabled": { "type": "boolean" },
-              "denseEnabled": { "type": "boolean" },
-              "spladeEnabled": { "type": "boolean" },
-              "fusionAlgorithm": { "type": "string", "enum": ["rrf", "none"] },
-              "lambdamartEnabled": { "type": "boolean" },
-              "crossEncoderEnabled": { "type": "boolean" },
-              "expansionEnabled": { "type": "boolean" }
-            }
-          },
-          "path_prefix": {
-            "type": "string",
-            "description": "Restrict results to files under this folder path"
-          }
-        },
-        "required": ["query"]
-      }
-      """;
-
   private final SearchCallback searchCallback;
-  private final Supplier<List<BrowseTool.RootInfo>> rootsSupplier; // nullable
+  private final AgentToolPaths.RootsView rootsView;
 
   public SearchTool(SearchCallback searchCallback) {
     this(searchCallback, (Supplier<List<BrowseTool.RootInfo>>) null);
@@ -201,24 +148,31 @@ public final class SearchTool {
 
   public SearchTool(
       SearchCallback searchCallback, Supplier<List<BrowseTool.RootInfo>> rootsSupplier) {
-    this.searchCallback = searchCallback;
-    this.rootsSupplier = rootsSupplier;
+    this(searchCallback, AgentToolPaths.RootsView.of(rootsSupplier));
   }
 
-  /** Per tempdoc 429 §C.G: parameter schema preserved as a constant for unit tests. */
-  public static String parameterSchema() {
-    return PARAMETER_SCHEMA;
+  /** Tempdoc 877 §2.4 — the shared roots view {@code AgentToolFactory.assemble} builds once. */
+  public SearchTool(SearchCallback searchCallback, AgentToolPaths.RootsView rootsView) {
+    this.searchCallback = searchCallback;
+    this.rootsView = rootsView == null ? AgentToolPaths.RootsView.of(null) : rootsView;
   }
 
   public OperationResult execute(String argumentsJson) {
+    // Tempdoc 877 §2.1 — the argument keys, and who authors each one. Model-visible: `query`,
+    // `limit`, `path_prefix` — exactly what AgentToolsOperationCatalog.searchIndex() declares, which
+    // is the only schema the model is shown (AgentOperationEmitter projects op.intf().inputs()).
+    // Server-injected: `docIds`, merged in by AgentToolDispatcher.scopeToolCall. Honoured but
+    // deliberately undeclared per 868 §B.4: `mode` (the shape the agent.searchDefaultMode config
+    // default flows through) and `pipeline` (fine-grained retrieval levers — no production caller
+    // supplies it today; only SearchToolTest does).
     if (argumentsJson == null || argumentsJson.isBlank()) {
       return OperationResult.failure("No arguments provided");
     }
     try {
-      JsonNode args = MAPPER.readTree(argumentsJson);
+      JsonNode args = ToolArgs.parse(argumentsJson);
 
       // Extract query (required)
-      String query = args.has("query") ? args.get("query").asText() : null;
+      String query = ToolArgs.stringArg(args, "query");
       if (query == null || query.isBlank()) {
         return OperationResult.failure("Search query is required");
       }
@@ -229,32 +183,27 @@ public final class SearchTool {
       query = sanitizeFilePathQuery(query);
 
       // Extract optional parameters
-      int limit = DEFAULT_LIMIT;
-      if (args.has("limit")) {
-        limit = Math.min(args.get("limit").asInt(DEFAULT_LIMIT), MAX_LIMIT);
-        if (limit < 1) limit = DEFAULT_LIMIT;
-      }
+      int limit = ToolArgs.intArg(args, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT);
       // 256-H1: pipeline parameter overrides mode when both are provided.
       PipelineConfig pipeline;
       if (args.has("pipeline") && args.get("pipeline").isObject()) {
         pipeline = parsePipelineArg(args.get("pipeline"));
       } else {
-        String modeStr = args.has("mode") ? args.get("mode").asText() : resolveSearchDefaultMode();
-        pipeline = modeToPreset(modeStr);
+        String modeStr = ToolArgs.stringArg(args, "mode");
+        pipeline = modeToPreset(modeStr == null ? resolveSearchDefaultMode() : modeStr);
       }
-      String pathPrefix = args.has("path_prefix") ? args.get("path_prefix").asText() : null;
+      String pathPrefix = ToolArgs.stringArg(args, "path_prefix");
       String effectiveMode = resolveEffectiveSearchMode(args);
 
       // Resolve relative path_prefix against indexed roots, then validate
       if (pathPrefix != null && !pathPrefix.isBlank()) {
-        if (!AgentToolPaths.looksAbsolute(pathPrefix) && rootsSupplier != null) {
-          String resolved =
-              AgentToolPaths.resolveRelativePath(pathPrefix, rootsSupplier.get());
+        if (!AgentToolPaths.looksAbsolute(pathPrefix)) {
+          String resolved = rootsView.resolveRelative(pathPrefix);
           if (resolved != null) {
             pathPrefix = resolved;
           }
         }
-        String rejection = validatePathPrefix(pathPrefix);
+        String rejection = rootsView.validate(pathPrefix, "path_prefix");
         if (rejection != null) {
           return OperationResult.failure(rejection);
         }
@@ -262,8 +211,8 @@ public final class SearchTool {
 
       // Tempdoc S7 — an optional docIds scope (FE "scope chips"), merged into these arguments
       // server-side by AgentToolDispatcher.scopeToolCall when the run carries one. Deliberately
-      // NOT part of the LLM-facing PARAMETER_SCHEMA above — the LLM never chooses this key, it
-      // rides along silently so every search call in a scoped run stays confined to those paths.
+      // NOT declared on AgentToolsOperationCatalog.searchIndex() — the LLM never chooses this key,
+      // it rides along silently so every search call in a scoped run stays confined to those paths.
       List<String> docIds = extractDocIds(args);
 
       // Build search request
@@ -283,8 +232,11 @@ public final class SearchTool {
           new KnowledgeSearchRequest(
               query, limit, null, null, null, null, filters, null, null, null, true, null, pipeline);
 
-      // Execute search
-      KnowledgeSearchResponse response = searchCallback.search(request);
+      // Execute search. Tempdoc 877 §2.8 — under the shared fetch budget, so an unresponsive Worker
+      // cannot hold the agent loop thread forever (it could, before this).
+      KnowledgeSearchResponse response =
+          io.justsearch.agent.AgentTimeouts.call(
+              "core_search_index", () -> searchCallback.search(request));
       if (response == null) {
         return OperationResult.failure("Search returned no response");
       }
@@ -292,11 +244,7 @@ public final class SearchTool {
       // Format results for LLM consumption
       String formatted = formatResults(response);
       if (response.results().isEmpty() && pathPrefix != null && !AgentToolPaths.looksAbsolute(pathPrefix)) {
-        formatted +=
-            " HINT: The path_prefix \""
-                + pathPrefix
-                + "\" looks relative. Use an absolute path from browse_folders or the"
-                + " system prompt's indexed root folders.";
+        formatted += unresolvedPathPrefixHint(pathPrefix);
       }
       // Tempdoc 561 #6: carry STRUCTURED evidence alongside the LLM-facing text so the tool card can
       // render real evidence cards (filename · location · excerpt) instead of a raw monospace dump.
@@ -305,15 +253,15 @@ public final class SearchTool {
       return OperationResult.success(formatted, buildSearchEvidence(query, effectiveMode, response));
 
     } catch (Exception e) {
-      LOG.error("SearchTool execution failed", e);
-      return OperationResult.failure("Search error: " + e.getMessage());
+      return AgentToolErrors.classify("core_search_index", "Search error", e);
     }
   }
 
   /**
    * Tempdoc S7 — the optional {@code docIds} scope (FE "scope chips"), silently accepted alongside
-   * the LLM-facing {@code query}/{@code limit}/{@code mode} args but not documented in {@link
-   * #PARAMETER_SCHEMA}: {@code AgentToolDispatcher.scopeToolCall} merges it into the arguments JSON
+   * the LLM-facing {@code query}/{@code limit}/{@code path_prefix} args but not declared on {@code
+   * AgentToolsOperationCatalog.searchIndex()}'s {@code Interface} (tempdoc 877 §2.1 — the one schema
+   * the model is shown): {@code AgentToolDispatcher.scopeToolCall} merges it into the arguments JSON
    * server-side for every search call in a scoped run, so the LLM never chooses this key itself.
    */
   private static List<String> extractDocIds(JsonNode args) {
@@ -400,8 +348,8 @@ public final class SearchTool {
     evidence.put("query", query);
     evidence.put("resultCount", out.size());
     evidence.put("searchMode", searchMode);
-    evidence.put("searchResults", List.copyOf(out));
-    evidence.put("feedbackFeatures", List.copyOf(feedback));
+    evidence.put(OperationResult.SEARCH_RESULTS_KEY, List.copyOf(out));
+    evidence.put(OperationResult.FEEDBACK_FEATURES_KEY, List.copyOf(feedback));
     return Map.copyOf(evidence);
   }
 
@@ -435,68 +383,118 @@ public final class SearchTool {
     }
   }
 
+  /**
+   * Tempdoc 877 §2.2 — the rendered result set, sized to fit the Layer-2 cap BY CONSTRUCTION.
+   *
+   * <p>The previous budget divided the cap by {@code hits.size()} and then charged each hit only
+   * {@code excerpt.length()} — never the {@code [n] title (score)} header, the {@code Path:} line,
+   * the carrier line's own framing, nor the trailing summary. At {@code limit:20} that reliably
+   * overshot {@code AgentContextCompressor}'s hard cut, and the tail of the list — the later,
+   * lower-ranked hits and the "Found N results" summary itself — died inside Layer 2 without a
+   * trace. Here the summary is reserved first, and every hit is charged the FULL length of every
+   * line it writes, so the returned string is {@code <= layerTwoCapChars()} rather than
+   * approximately so.
+   */
   private String formatResults(KnowledgeSearchResponse response) {
     List<KnowledgeSearchResponse.Hit> hits = response.results();
     if (hits.isEmpty()) {
       return "No results found (took " + response.tookMs() + "ms).";
     }
 
-    // Per-result char budget: divide the total context budget evenly across all results so
-    // later results are not starved by Layer 2 (AgentLoopService.truncateForContext) firing
-    // after the first result has consumed all available chars.
-    int maxToolResultChars = resolveMaxToolResultChars();
-    int perResultBudget = Math.max(200, maxToolResultChars / hits.size());
+    String summary = summaryLine(response);
+    int budget =
+        Math.max(0, io.justsearch.agent.ToolResultCarrier.layerTwoCapChars() - summary.length());
 
     var sb = new StringBuilder();
     for (int i = 0; i < hits.size(); i++) {
-      var hit = hits.get(i);
-      var fields = hit.fields();
+      // Spread what is LEFT across the hits that are left, so an under-spending hit hands its
+      // slack forward instead of forfeiting it.
+      int perResultBudget = Math.max(0, (budget - sb.length()) / (hits.size() - i));
+      appendHit(sb, hits.get(i), i, perResultBudget);
+    }
+    sb.append(summary);
+    return sb.toString();
+  }
 
-      String title = fields.getOrDefault("title", fields.getOrDefault("filename", "(untitled)"));
-      String path = fields.getOrDefault("path", "");
+  /** One hit's block — header, path, carrier lines — or nothing at all when it cannot fit. */
+  private static void appendHit(
+      StringBuilder out, KnowledgeSearchResponse.Hit hit, int index, int budget) {
+    var fields = hit.fields();
+    String title = fields.getOrDefault("title", fields.getOrDefault("filename", "(untitled)"));
+    String path = fields.getOrDefault("path", "");
 
-      sb.append(String.format("[%d] %s (score: %.2f)%n", i + 1, title, hit.score()));
-      if (!path.isEmpty()) {
-        sb.append(String.format("    Path: %s%n", path));
-      }
+    var block = new StringBuilder();
+    block.append(String.format("[%d] %s (score: %.2f)%n", index + 1, title, hit.score()));
+    if (!path.isEmpty()) {
+      block.append(String.format("    Path: %s%n", path));
+    }
+    if (block.length() > budget) {
+      // Not even the identity of this hit fits; emitting a half-header would be worse than nothing.
+      return;
+    }
+    int remaining = budget - block.length();
 
-      // Include excerpt regions up to the per-result budget (backend computes up to 3 regions).
-      // The 800-char per-region cap is a secondary guard for large-k queries where perResultBudget
-      // itself would otherwise allow a single very large region to dominate.
-      if (!hit.excerptRegions().isEmpty()) {
-        int charsUsed = 0;
-        for (int r = 0; r < hit.excerptRegions().size(); r++) {
-          if (charsUsed >= perResultBudget) break;
-          String excerpt = hit.excerptRegions().get(r).text().strip();
-          if (!excerpt.isEmpty()) {
-            excerpt = excerpt.replace("\"", "'").replace("\n", " ").replace("\r", "");
-            int remaining = perResultBudget - charsUsed;
-            // Tempdoc 561 P-A5: when bounding to the agent's per-result budget, snap to a word
-            // boundary rather than a raw mid-word substring (the producer-owned-boundary principle
-            // applied to the agent tool output — the same clip class fixed for ContextCitation).
-            excerpt = clampToWordBoundary(excerpt, Math.min(remaining, 800));
-            sb.append(io.justsearch.agent.ToolResultCarrier.excerptLine(excerpt));
-            charsUsed += excerpt.length();
-          }
+    // Include excerpt regions up to the per-result budget (backend computes up to 3 regions).
+    // The 800-char per-region cap is a secondary guard for large-k queries where the per-result
+    // budget itself would otherwise allow a single very large region to dominate.
+    if (!hit.excerptRegions().isEmpty()) {
+      for (var region : hit.excerptRegions()) {
+        String excerpt = region.text().strip();
+        if (excerpt.isEmpty()) {
+          continue;
         }
-      } else {
-        // Vector search fallback: use content_preview when no excerpt regions
-        String preview = fields.getOrDefault("content_preview", "");
-        if (!preview.isBlank()) {
-          preview = preview.strip().replace("\"", "'").replace("\n", " ").replace("\r", "");
-          // Tempdoc 561 P-A5: word-boundary snap (see clampToWordBoundary).
-          preview = clampToWordBoundary(preview, Math.min(perResultBudget, 800));
+        excerpt = excerpt.replace("\"", "'").replace("\n", " ").replace("\r", "");
+        int room =
+            textRoom(remaining, io.justsearch.agent.ToolResultCarrier.excerptLine("").length());
+        if (room <= 0) {
+          break;
+        }
+        // Tempdoc 561 P-A5: when bounding to the agent's per-result budget, snap to a word
+        // boundary rather than a raw mid-word substring (the producer-owned-boundary principle
+        // applied to the agent tool output — the same clip class fixed for ContextCitation).
+        String line =
+            io.justsearch.agent.ToolResultCarrier.excerptLine(clampToWordBoundary(excerpt, room));
+        if (line.length() > remaining) {
+          break;
+        }
+        block.append(line);
+        remaining -= line.length();
+      }
+    } else {
+      // Vector search fallback: use content_preview when no excerpt regions
+      String preview = fields.getOrDefault("content_preview", "");
+      if (!preview.isBlank()) {
+        preview = preview.strip().replace("\"", "'").replace("\n", " ").replace("\r", "");
+        int room =
+            textRoom(remaining, io.justsearch.agent.ToolResultCarrier.previewLine("").length());
+        if (room > 0) {
           // Tempdoc 865 §7.5 — the SAME authority the excerpt branch writes through. This branch is
           // the one the inclusion receipt used to be blind to: a dense-only hit never produces an
           // `Excerpt:` line, so a reader keyed on that spelling saw its message as textless.
-          sb.append(io.justsearch.agent.ToolResultCarrier.previewLine(preview));
+          String line =
+              io.justsearch.agent.ToolResultCarrier.previewLine(clampToWordBoundary(preview, room));
+          if (line.length() <= remaining) {
+            block.append(line);
+          }
         }
       }
     }
+    out.append(block);
+  }
 
+  /**
+   * How much TEXT fits in {@code remaining} once the carrier framing and a possible ellipsis (which
+   * {@link #clampToWordBoundary} appends when it truncates) are paid for, capped at 800.
+   */
+  private static int textRoom(int remaining, int framing) {
+    return Math.min(remaining - framing - 3, 800);
+  }
+
+  /** The trailing summary, reserved out of the budget before any hit is rendered. */
+  private static String summaryLine(KnowledgeSearchResponse response) {
+    var sb = new StringBuilder();
     sb.append(
-        String.format(
-            "%nFound %d results (took %dms).", response.totalHits(), response.tookMs()));
+        String.format("%nFound %d results (took %dms).", response.totalHits(), response.tookMs()));
     // Tempdoc 549 Phase E4: read the correction from the unified trace's CORRECTION stage
     // (status=EXECUTED, detail=corrected query). SearchIntrospection was retired.
     String correctedQuery = correctedQueryFromTrace(response.searchTrace());
@@ -541,25 +539,21 @@ public final class SearchTool {
   }
 
   /**
-   * Validates that path_prefix is an absolute path under one of the indexed roots. Returns null if
-   * valid, or an error message string if rejected.
+   * Tempdoc 877 §2.7 — the hint that fires when {@code path_prefix} stayed relative after root
+   * resolution. It used to say "Use an absolute path from browse_folders", which is advice browse
+   * cannot follow: browse emits ROOT-RELATIVE paths (a measured 227 §A.6 decision), so the model was
+   * being sent to look for something no tool produces.
+   *
+   * <p>This branch is reached ONLY when the roots are unknown or empty — with roots known, an
+   * unresolvable relative prefix is rejected by {@code RootsView.validate} before the search runs,
+   * and that rejection already lists the indexed roots. So the one thing this can usefully say is
+   * where the root names come from.
    */
-  private String validatePathPrefix(String pathPrefix) {
-    if (rootsSupplier == null) {
-      return null; // No roots available — fall back to heuristic hint (existing behavior)
-    }
-    List<BrowseTool.RootInfo> rootInfos;
-    try {
-      rootInfos = rootsSupplier.get();
-    } catch (Exception e) {
-      LOG.warn("Failed to get roots for path validation", e);
-      return null; // Degrade gracefully
-    }
-    if (rootInfos == null || rootInfos.isEmpty()) {
-      return null; // No roots configured — allow any path
-    }
-    List<String> roots = rootInfos.stream().map(BrowseTool.RootInfo::path).toList();
-    return AgentToolPaths.validateAgainstRoots(pathPrefix, roots, "path_prefix");
+  private static String unresolvedPathPrefixHint(String pathPrefix) {
+    return " HINT: The path_prefix \""
+        + pathPrefix
+        + "\" matched no indexed root folder. Use core_browse_folders to see the root folders, and"
+        + " pass a path from its results straight back.";
   }
 
   /** Callback for executing search queries against the knowledge index. */

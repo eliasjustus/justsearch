@@ -2,6 +2,8 @@
 package io.justsearch.app.services.bootstrap.phases;
 
 import io.justsearch.agent.api.registry.HandlerRegistry;
+import io.justsearch.agent.api.registry.OperationHandler;
+import io.justsearch.agent.api.registry.OperationRef;
 import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.agent.tools.BrowseTool;
@@ -22,6 +24,9 @@ import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -130,30 +135,60 @@ public final class AgentToolHandlers {
             scanProgressRegistry,
             scanRollupLedger,
             documentService);
-    operationHandlers.register(
-        AgentToolsOperationCatalog.SEARCH_INDEX, new SearchOperationHandler(tools.searchTool()));
+    // Tempdoc 877 §2.10: the log line is DERIVED from what this method actually registered. It
+    // used to hand-list the names, which is a second authority that drifts the moment a
+    // conditional registration is skipped (READ_DOCUMENT and REMEMBER both are, below).
+    List<OperationRef> registered = new ArrayList<>();
+    register(
+        operationHandlers,
+        registered,
+        AgentToolsOperationCatalog.SEARCH_INDEX,
+        new SearchOperationHandler(tools.searchTool()));
     if (tools.readDocumentTool() != null) {
-      operationHandlers.register(
+      register(
+          operationHandlers,
+          registered,
           AgentToolsOperationCatalog.READ_DOCUMENT,
           new ReadDocumentHandler(tools.readDocumentTool()));
     }
-    operationHandlers.register(
-        AgentToolsOperationCatalog.BROWSE_FOLDERS, new BrowseOperationHandler(tools.browseTool()));
-    operationHandlers.register(
-        AgentToolsOperationCatalog.INGEST_FILES, new IngestOperationHandler(tools.ingestTool()));
-    operationHandlers.register(
+    register(
+        operationHandlers,
+        registered,
+        AgentToolsOperationCatalog.BROWSE_FOLDERS,
+        new BrowseOperationHandler(tools.browseTool()));
+    register(
+        operationHandlers,
+        registered,
+        AgentToolsOperationCatalog.INGEST_FILES,
+        new IngestOperationHandler(tools.ingestTool()));
+    register(
+        operationHandlers,
+        registered,
         AgentToolsOperationCatalog.FILE_OPERATIONS,
         new FileOperationsHandler(tools.fileOperationsTool()));
     // Tempdoc 561 P-E: the learning producer — core_remember persists durable facts into the shared
     // single-authority MemoryStore (the same instance /api/memory reads).
     if (memoryStore != null) {
-      operationHandlers.register(
+      register(
+          operationHandlers,
+          registered,
           AgentToolsOperationCatalog.REMEMBER,
           new io.justsearch.app.services.registry.operations.handlers.RememberFactHandler(
               memoryStore));
     }
     log.info(
-        "AgentTools operation handlers registered: SEARCH_INDEX, READ_DOCUMENT, BROWSE_FOLDERS, INGEST_FILES, FILE_OPERATIONS, REMEMBER");
+        "AgentTools operation handlers registered: {}",
+        registered.stream().map(OperationRef::value).collect(Collectors.joining(", ")));
     return true;
+  }
+
+  /** Registers a handler and records its ref, so the completion log cannot drift from the fact. */
+  private static void register(
+      HandlerRegistry operationHandlers,
+      List<OperationRef> registered,
+      OperationRef ref,
+      OperationHandler handler) {
+    operationHandlers.register(ref, handler);
+    registered.add(ref);
   }
 }

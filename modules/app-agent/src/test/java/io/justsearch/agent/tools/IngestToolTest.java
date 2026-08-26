@@ -45,6 +45,14 @@ class IngestToolTest {
         ingestCallback, localScan(ingestCallback), rootsSupplier, rootBindingsSupplier);
   }
 
+  /**
+   * Test-local ceiling on the stubbed directory walk, so a stray large temp directory can never
+   * turn one of these unit tests into an unbounded scan. Deliberately test-local: the production
+   * expansion cap it used to borrow from {@code IngestTool} was unreachable (MAX_PATHS = 100 caps
+   * the array long before it) and was deleted in tempdoc 877 §2.1.
+   */
+  private static final int STUB_SCAN_CAP = 10_000;
+
   private static IngestTool.ScanRootCallback localScan(IngestTool.IngestCallback ingest) {
     return (rootPath, collection, excludeGlobs) -> {
       List<Path> expanded = new ArrayList<>();
@@ -54,7 +62,7 @@ class IngestToolTest {
             .filter(Files::isReadable)
             .forEach(
                 p -> {
-                  if (expanded.size() < IngestTool.MAX_EXPANDED_FILES) {
+                  if (expanded.size() < STUB_SCAN_CAP) {
                     expanded.add(p);
                   }
                 });
@@ -66,13 +74,6 @@ class IngestToolTest {
       }
       return ingest.ingest(expanded, collection);
     };
-  }
-
-  @Test
-  void parameterSchemaPresent() {
-    // Per Phase 12 of tempdoc 429: name/description/safetyLevel/supportsUndo moved to
-    // the AgentToolsOperationCatalog Operation declaration.
-    assertNotNull(IngestTool.parameterSchema());
   }
 
   @Test
@@ -215,15 +216,6 @@ class IngestToolTest {
     assertFalse(result.success());
     assertTrue(result.message().contains("exceeds limit"), result.message());
     assertTrue(result.message().contains(String.valueOf(IngestTool.MAX_PATHS)));
-  }
-
-  @Test
-  void expandedFileLimitIsReasonable() {
-    // The expansion cap protects against a single directory with millions of files.
-    // We can't create 10k files in a unit test, but we verify the constant is sane
-    // and the error message format is correct.
-    assertTrue(IngestTool.MAX_EXPANDED_FILES >= 1000, "Cap should allow reasonable batches");
-    assertTrue(IngestTool.MAX_EXPANDED_FILES <= 100_000, "Cap should prevent memory exhaustion");
   }
 
   @Test
@@ -458,10 +450,8 @@ class IngestToolTest {
     assertEquals(List.of(outside), byCollection.get(IngestCollectionPolicy.OUT_OF_ROOT));
   }
 
-  @Test
-  void parameterSchemaAdvertisesCollection() {
-    assertTrue(
-        IngestTool.parameterSchema().contains("\"collection\""),
-        "the tool schema must advertise the optional collection argument");
-  }
+  // Tempdoc 877 §2.1: the "schema advertises the optional collection tag" assertion moved to
+  // AgentToolCatalogContractTest#ingestFilesAdvertisesTheOptionalCollectionTag (app-services) —
+  // the catalog Interface is the only schema the model is shown, so that is the schema that has to
+  // advertise `collection`.
 }

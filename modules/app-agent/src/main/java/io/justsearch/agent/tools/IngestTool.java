@@ -2,7 +2,6 @@
 package io.justsearch.agent.tools;
 
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.app.api.knowledge.IngestCollectionPolicy;
 import io.justsearch.app.api.knowledge.KnowledgeIngestResponse;
@@ -29,38 +28,11 @@ import org.slf4j.LoggerFactory;
  */
 public final class IngestTool {
   private static final Logger LOG = LoggerFactory.getLogger(IngestTool.class);
-  private static final ObjectMapper MAPPER = new ObjectMapper();
   static final int MAX_PATHS = 100;
-  static final int MAX_EXPANDED_FILES = 10_000;
-
-  private static final String PARAMETER_SCHEMA =
-      """
-      {
-        "type": "object",
-        "properties": {
-          "paths": {
-            "type": "array",
-            "description": "File or folder paths to ingest. Accepts absolute or relative paths — relative paths are resolved against indexed roots. Folders are expanded recursively.",
-            "items": { "type": "string" },
-            "minItems": 1,
-            "maxItems": 100
-          },
-          "collection": {
-            "type": "string",
-            "description": "Optional collection tag for the indexed documents. Omit to inherit the containing indexed root's collection, or 'mcp-ingest' for paths outside every indexed root. The app-internal collections 'justsearch-help' and 'agent-history' are rejected."
-          },
-          "explanation": {
-            "type": "string",
-            "description": "Why these files are being ingested"
-          }
-        },
-        "required": ["paths"]
-      }
-      """;
 
   private final IngestCallback ingestCallback;
   private final ScanRootCallback scanRootCallback;
-  private final Supplier<List<BrowseTool.RootInfo>> rootsSupplier;
+  private final AgentToolPaths.RootsView rootsView;
   private final Supplier<List<IngestCollectionPolicy.RootBinding>> rootBindingsSupplier;
 
   /**
@@ -86,15 +58,23 @@ public final class IngestTool {
       ScanRootCallback scanRootCallback,
       Supplier<List<BrowseTool.RootInfo>> rootsSupplier,
       Supplier<List<IngestCollectionPolicy.RootBinding>> rootBindingsSupplier) {
-    this.ingestCallback = ingestCallback;
-    this.scanRootCallback = scanRootCallback;
-    this.rootsSupplier = rootsSupplier;
-    this.rootBindingsSupplier = rootBindingsSupplier;
+    this(
+        ingestCallback,
+        scanRootCallback,
+        AgentToolPaths.RootsView.of(rootsSupplier),
+        rootBindingsSupplier);
   }
 
-  /** Per tempdoc 429 §C.G: parameter schema preserved as a constant for unit tests. */
-  public static String parameterSchema() {
-    return PARAMETER_SCHEMA;
+  /** Tempdoc 877 §2.4 — the shared roots view {@code AgentToolFactory.assemble} builds once. */
+  public IngestTool(
+      IngestCallback ingestCallback,
+      ScanRootCallback scanRootCallback,
+      AgentToolPaths.RootsView rootsView,
+      Supplier<List<IngestCollectionPolicy.RootBinding>> rootBindingsSupplier) {
+    this.ingestCallback = ingestCallback;
+    this.scanRootCallback = scanRootCallback;
+    this.rootsView = rootsView == null ? AgentToolPaths.RootsView.of(null) : rootsView;
+    this.rootBindingsSupplier = rootBindingsSupplier;
   }
 
   public OperationResult execute(String argumentsJson) {
@@ -102,7 +82,7 @@ public final class IngestTool {
       return OperationResult.failure("No arguments provided");
     }
     try {
-      JsonNode args = MAPPER.readTree(argumentsJson);
+      JsonNode args = ToolArgs.parse(argumentsJson);
       JsonNode pathsNode = args.get("paths");
       if (pathsNode == null || !pathsNode.isArray() || pathsNode.isEmpty()) {
         return OperationResult.failure("Paths array is required and must not be empty");
@@ -118,12 +98,10 @@ public final class IngestTool {
 
       // Tempdoc 811 (C-2a) — optional caller-supplied collection, validated HERE (server side of the
       // MCP boundary) rather than relying on the advertised tool schema.
-      JsonNode collectionNode = args.get("collection");
       String requestedCollection;
       try {
         requestedCollection =
-            IngestCollectionPolicy.normalizeRequested(
-                collectionNode == null || collectionNode.isNull() ? null : collectionNode.asText());
+            IngestCollectionPolicy.normalizeRequested(ToolArgs.stringArg(args, "collection"));
       } catch (IllegalArgumentException e) {
         return OperationResult.failure(e.getMessage());
       }
@@ -150,8 +128,14 @@ public final class IngestTool {
         }
         String collection = IngestCollectionPolicy.resolve(requestedCollection, input, rootBindings);
         if (Files.isDirectory(input)) {
+          // Tempdoc 877 §2.8 — bounded; an unresponsive Worker used to hold the agent loop thread
+          // here indefinitely. Sized by toolScanMs, not toolFetchMs: this call blocks until a whole
+          // directory tree has been walked Worker-side.
           KnowledgeIngestResponse scanResp =
-              scanRootCallback.scanRoot(input.toString(), collection, List.of());
+              io.justsearch.agent.AgentTimeouts.call(
+                  "core_ingest_files",
+                  io.justsearch.agent.AgentTimeouts.toolScanMs(),
+                  () -> scanRootCallback.scanRoot(input.toString(), collection, List.of()));
           directoryAccepted += scanResp.accepted();
           if (scanResp.error() != null && !scanResp.error().isEmpty()) {
             directoryErrors.add(input + ":" + scanResp.error());
@@ -169,15 +153,6 @@ public final class IngestTool {
       if (singleFileCount == 0 && directoryAccepted == 0 && directoryErrors.isEmpty()) {
         return OperationResult.failure("No readable files found in the provided paths");
       }
-      if (singleFileCount >= MAX_EXPANDED_FILES) {
-        return OperationResult.failure(
-            "Too many single-file paths: "
-                + singleFileCount
-                + " exceeds limit of "
-                + MAX_EXPANDED_FILES
-                + ". Pass directories instead so the Worker can scan in bulk.");
-      }
-
       int singleAccepted = 0;
       List<String> singleErrors = new ArrayList<>();
       for (Map.Entry<String, List<Path>> group : singleFilesByCollection.entrySet()) {
@@ -202,15 +177,21 @@ public final class IngestTool {
       return OperationResult.success(formatResult(response, skippedCount));
 
     } catch (Exception e) {
-      LOG.error("IngestTool execution failed", e);
-      return OperationResult.failure("Ingest error: " + e.getMessage());
+      return AgentToolErrors.classify("core_ingest_files", "Ingest error", e);
     }
   }
 
   /**
-   * Resolves a path string to an absolute Path. If the path is already absolute, returns it
-   * directly. If relative, tries resolving against each indexed root and returns the first match
-   * that exists on disk. Returns null if no resolution succeeds.
+   * Resolves a path string to an absolute Path: absolute input is normalized; a root-relative one
+   * goes through the ONE relative→absolute algorithm ({@code AgentToolPaths.RootsView#resolveRelative}
+   * — first component matched against a root NAME); anything it misses falls back to the
+   * existence-probe of resolving under each root in turn. {@code null} when nothing resolves, which
+   * {@link #execute} reports as a skipped path.
+   *
+   * <p>Tempdoc 877 §2.4 — this used to end in {@code p.toAbsolutePath().normalize()}, resolving an
+   * unmatched relative path against the JVM's working directory. That is never what the model meant
+   * (it has no idea what the Head's cwd is) and it is the one behaviour in this cluster that could
+   * address a file outside every indexed root. Removed: fail closed and say "skipped" instead.
    */
   private Path resolvePath(String raw) {
     try {
@@ -218,35 +199,18 @@ public final class IngestTool {
       if (p.isAbsolute()) {
         return p.normalize();
       }
-      // Relative path — resolve against indexed roots
-      List<BrowseTool.RootInfo> roots = rootsSupplier.get();
-      for (BrowseTool.RootInfo root : roots) {
+      String resolved = rootsView.resolveRelative(raw);
+      if (resolved != null) {
+        return Path.of(resolved).normalize();
+      }
+      for (BrowseTool.RootInfo root : rootsView.roots()) {
         Path candidate = Path.of(root.path()).resolve(p).normalize();
         if (Files.exists(candidate)) {
-          LOG.debug("Resolved relative path '{}' against root '{}' → {}", raw, root.path(), candidate);
           return candidate;
         }
       }
-      // Also try stripping a leading component that matches the indexed root's folder name.
-      // This handles paths like "docs/explanation/file.md" when the indexed root is ".../docs".
-      for (BrowseTool.RootInfo root : roots) {
-        Path rootPath = Path.of(root.path());
-        String rootName = rootPath.getFileName() != null ? rootPath.getFileName().toString() : "";
-        if (!rootName.isEmpty() && p.getNameCount() > 1
-            && p.getName(0).toString().equals(rootName)) {
-          Path stripped = p.subpath(1, p.getNameCount());
-          Path candidate = rootPath.resolve(stripped).normalize();
-          if (Files.exists(candidate)) {
-            LOG.debug(
-                "Resolved path '{}' by stripping root-name prefix '{}' → {}",
-                raw, rootName, candidate);
-            return candidate;
-          }
-        }
-      }
-      // No root matched — fall back to absolute resolution (may fail existence check later)
-      return p.toAbsolutePath().normalize();
-    } catch (Exception e) {
+      return null;
+    } catch (RuntimeException e) {
       LOG.warn("Invalid path: '{}'", raw, e);
       return null;
     }

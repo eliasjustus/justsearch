@@ -13,8 +13,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Handler for {@code core.add-watched-root}.
@@ -30,8 +28,6 @@ public final class AddWatchedRootHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(AddWatchedRootHandler.class);
 
-  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
-
   private final Supplier<IndexingService> indexingSupplier;
 
   public AddWatchedRootHandler(Supplier<IndexingService> indexingSupplier) {
@@ -43,7 +39,9 @@ public final class AddWatchedRootHandler implements OperationHandler {
     String pathArg;
     String collection;
     try {
-      JsonNode root = MAPPER.readTree(argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
+      JsonNode root =
+          HandlerJson.MAPPER.readTree(
+              argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
       JsonNode pathNode = root.get("path");
       if (pathNode == null || !pathNode.isTextual() || pathNode.asString().isBlank()) {
         return OperationResult.failure("Missing required arg: path");
@@ -55,7 +53,7 @@ public final class AddWatchedRootHandler implements OperationHandler {
               ? collectionNode.asString()
               : "default";
     } catch (Exception e) {
-      return OperationResult.failure("Invalid args: " + e.getMessage());
+      return HandlerJson.invalidArgs(e);
     }
 
     IndexingService indexing;

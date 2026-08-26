@@ -353,34 +353,61 @@ contract. They still hold one fact in 19 places, so this PR gives them one holde
 own package (`HandlerJson.MAPPER` + `HandlerJson.invalidArgs(e)`) and adopts it at all 19 +
 9 sites. Zero behaviour change; it is a rename, and it is verifiable by grep.
 
-### 2.7 One path convention: browse emits absolute (finding 7)
+### 2.7 One path convention: root-relative is accepted everywhere (finding 7)
 
 Two candidate conventions:
 
-- (a) Make the prose match the code: teach every consumer to resolve root-relative paths.
+- (a) Make the prose match the code: root-relative is the emitted form, every consumer
+  resolves it, and the prompt says so.
 - (b) Make the code match the prose: browse emits absolute paths.
 
-**(b).** Three reasons. The prompt already promises absolute paths and the read tool's
-declared schema says "Absolute path … as returned by `core_browse_folders`" — under (a)
-both statements stay false and would have to be rewritten into something more complicated
-for the model to hold. `path_prefix` validation *requires* absolute
-(`validateAgainstRoots` rejects non-absolute outright), so (a) would leave search's
-contract different from browse's output. And `FileOperationsTool` does a bare `Path.of` on
-the destination, so a root-relative browse path fails sandboxing — the concrete bug in the
-census.
+**The first draft of this design chose (b) and was wrong.** `BrowseTool.toRelativePath` is
+not an accident: tempdoc 227 §A.6 round 6 (2026-02-23) introduced it deliberately, together
+with `resolveRelativeParent`, off a measured live battery — absolute paths leaking into a
+handoff reason produced an Organizer non-compliance failure, and the same round removed the
+prompt's "NOT browse_folders" prohibition *because* browse had become relative-safe.
+Reversing a measured decision on the strength of a prose mismatch, with no measurement of
+our own, is the mistake `interrogate-results` exists to prevent. Recorded here rather than
+silently dropped, because "the design considered X and rejected it for reason Y" is the part
+that stops the next agent re-deriving it.
 
-`BrowseTool.toRelativePath` is deleted. The folder/file listings emit absolute paths in
-their `Path:` lines. The human-readable header keeps a short display form (`Folders under
-"docs/reference"`) because it is prose, not an address — and it is derived from the same
-absolute path rather than replacing it.
+**So: (a).** It is also the convention the system already has almost everywhere —
+`SearchTool` (`path_prefix`), `ReadDocumentTool` (`path`) and `IngestTool` (`paths`) all
+resolve relative→absolute against the indexed roots before validating. `FileOperationsTool`
+is the ONE tool that does not: `parseOperations` does a bare `Path.of(destStr)`, so a
+root-relative path echoed back from a browse result fails sandboxing with
+`DEST_NOT_SANDBOXED`. That is the actual defect, and it is one tool wide, not a convention
+question.
 
-Belt and braces: `FileOperationsTool` also gains the `RootsView.resolveRelative` pre-pass,
-so a model that echoes a relative path from an older transcript still lands inside the
-sandbox instead of failing `DEST_NOT_SANDBOXED`.
+The work:
 
-**Test**: a browse listing over a known root emits a path that `AgentToolPaths.looksAbsolute`
-accepts and that `validateAgainstRoots` admits — i.e. browse output is directly usable as
-`path_prefix`, `path` and `destination`. That is the round-trip nobody was asserting.
+1. `FileOperationsTool` gains the same `RootsView.resolveRelative` pre-pass the other three
+   tools have, applied to `source` and `destination` in `parseOperations`. A path that is
+   already absolute is untouched; a root-relative one resolves; one that matches no root is
+   passed through unchanged so `FileOperationExecutor`'s sandbox check still rejects it with
+   its existing message (degrade-open on resolution, fail-closed on sandboxing — the split
+   the other tools already use).
+2. The prose is corrected to describe the real convention, in the three places that
+   currently misdescribe it:
+   - `AgentPromptComposer.DEFAULT_SYSTEM_PROMPT` — "All file paths in this system are
+     absolute paths" becomes a statement of what is actually true: paths from
+     `core_browse_folders` and search results can be passed straight back to any tool.
+     Keep it SHORT; this string is in every agent prompt and 227 round 6 showed prompt
+     wording here is load-bearing and measurable. The change must remove a falsehood
+     without adding length.
+   - `SearchTool`'s empty-result hint ("Use an absolute path from browse_folders…") — the
+     hint fires when `path_prefix` matched no root, so it should name the root NAMES the
+     model can use, exactly as `BrowseTool`'s own no-folders hint already does.
+   - `core.read-document`'s catalog `Interface` description says "Absolute path … as
+     returned by `core_browse_folders`" — drop "Absolute", since the tool resolves
+     root-relative input and browse returns root-relative output.
+3. `BrowseTool.toRelativePath` STAYS. It is renamed only if the rename is free.
+
+**Test**: the round-trip nobody was asserting — take a path as `BrowseTool` emits it, feed
+it to `SearchTool` as `path_prefix`, to `ReadDocumentTool` as `path`, and to
+`FileOperationsTool` as `destination`, and assert all four agree it addresses the same file
+inside the sandbox. That single test binds the convention across all four tools, which is
+what makes it one authority rather than four agreeing by luck.
 
 ### 2.8 `AgentTimeouts` (finding 8)
 
@@ -487,7 +514,7 @@ critical-analysis pass.
 | W4 | §2.4 `RootsView` + adoption in 5 tools + factory; delete 6 forks incl. the cwd fall-through | `AgentToolPaths`, 5 tools, `AgentToolFactory`, tests | `:modules:app-agent:test`, `:modules:app-services:test` |
 | W5 | §2.5 `ToolArgs` + adoption in 5 tools; delete 3 private helpers + 5 mappers | `ToolArgs` (new), 5 tools, tests | `:modules:app-agent:test` |
 | W6 | §2.6 `AgentToolErrors` + adoption; `DocumentSlice.error` honoured; `HandlerJson` for the 19+9 handler sites | `AgentToolErrors` (new), 5 tools, `HandlerJson` (new) + 19 handlers | `:modules:app-agent:test`, `:modules:app-services:test` |
-| W7 | §2.7 browse emits absolute; delete `toRelativePath`; file-ops `resolveRelative` pre-pass; prose sync; round-trip test | `BrowseTool`, `FileOperationsTool`, `BrowseToolTest` | `:modules:app-agent:test` |
+| W7 | §2.7 file-ops `resolveRelative` pre-pass; prose corrected in prompt / search hint / read-document schema; four-tool round-trip test | `FileOperationsTool`, `AgentPromptComposer`, `SearchTool`, catalog, tests | `:modules:app-agent:test` |
 | W8 | §2.8 `AgentTimeouts` + adoption at 9 sites; `toolFetchMs` applied to 3 unguarded fetches; stale comment fixed | `AgentTimeouts` (new), 7 files | `:modules:app-agent:test` |
 | W9 | §2.10 stale prose sweep incl. `docs/explanation/22` | catalog, `AgentToolHandlers`, 1 doc | docs regen check |
 
@@ -495,6 +522,85 @@ Then: full `spotlessApply` → `build -x test` → `test`, the pre-merge checks 
 touched (`--gate operation-surface` for the catalog `Interface` changes;
 `check-live-witness` is not implicated), a critical-analysis pass, and ONE independent
 refute-first opus reviewer on the diff.
+
+### 3.1 Findings discovered during implementation
+
+Two facts turned up mid-implementation that the census did not have, and both changed a
+decision. Recorded because a design that is only right by luck is not right.
+
+**(a) The catalog `Interface` is ENFORCED, not merely advertised.**
+`OperationExecutorImpl:327-339` validates every `argumentsJson` against
+`op.intf().inputs()` with a full DRAFT-2020-12 validator
+(`OperationInputSchemaValidator`) BEFORE the handler is invoked, returning a typed
+`BAD_REQUEST` and never calling the tool. That makes §2.1's promotion double-duty: what the
+model is shown is also what it is held to. Two consequences:
+
+- Promoting a *constraint* keyword (`maximum`, `maxItems`) converts a tool's forgiving
+  clamp into a hard rejection. `BrowseTool` clamps `max_folders` to 200; declaring
+  `"maximum":200` would instead fail the whole call. `FileOperationsTool` answers an
+  oversized batch with "Too many operations: N exceeds limit of 50. Split into smaller
+  batches."; declaring `"maxItems":50` would replace that remedy with a generic validation
+  string. So the promoted schemas declare `default`, `enum` and `description` — which shape
+  what the model *generates* — but not the numeric bounds, which the tools already enforce
+  more helpfully. `core.search-index`'s existing `limit` declaration was already this shape;
+  the promotion follows it rather than inventing a second convention.
+- Item-level `required` on file-operations is `["op"]` only. `parseOperations` accepts
+  `path` as an alias for `destination` because small models emit it; requiring
+  `destination` in the schema would reject those calls before the alias could resolve.
+  The destination is still required — by `parseOperations`, which names the offending
+  operation index.
+- `docIds` survives because no schema sets `additionalProperties:false`. Worth stating,
+  since setting it would silently break every scoped run.
+
+**(b) The rule the promotions follow, derived from (a).** *Declare the shape, describe the
+constraint, enforce in the tool.* A `type`/`required` keyword is shape and is safe to
+declare. An `enum`/`maximum`/`maxItems` keyword is a value constraint, and declaring one on
+this schema does two harmful things at once: it replaces the tool's specific, actionable
+message with a generic validator string, and it can NARROW behaviour the tool deliberately
+accepts. The worked case, caught during implementation and nearly shipped:
+
+> `FileOperationsTool.parseOperations` upper-cases `op`, because small local models emit
+> `"mkdir"` — `FileOperationsToolTest#executeCaseInsensitiveOpType` pins that as intended
+> behaviour. Declaring `"enum":["MOVE","RENAME","MKDIR","COPY"]` would reject those calls at
+> the dispatch boundary **while that unit test stayed green**, because every tool unit test
+> calls `execute(json)` directly and never passes through the validator. A live regression
+> with a green suite over it — `static-green ≠ live-working`, produced by the very change
+> meant to remove a drift. The allowed values now ride the `description`, which is what the
+> model reads anyway, and `AgentToolCatalogContractTest` asserts both that every
+> `FileOperation.OpType` is named there AND that no `enum` keyword exists, so the
+> "tightening" cannot be reapplied without reading why. Same for `conflict_strategy`.
+
+**(c) Finding 5's headline bug is not reachable through the agent loop.** The census reports
+`offset_chars:"3000"` silently restarting a read at page 0. `ReadDocumentTool.intArg`
+genuinely does fall back to 0 on a string — but `core.read-document` already declared
+`offset_chars` as `{"type":"integer"}`, so the pre-dispatch validator rejects the string
+before the tool sees it. The observable defect is therefore narrower than reported: the two
+helpers disagree, and the disagreement bites only off the Operation path (direct calls,
+tests, and any future caller that does not go through `OperationExecutorImpl`). The
+unification is still right — one answer to one question, and defence in depth behind a
+validator that a non-Operation caller bypasses — but the tempdoc should not claim a live
+paging bug it cannot demonstrate. Recorded because "the fix worked" and "the bug was real"
+are separate claims, and only the first is established here.
+
+**(d) `BrowseTool.toRelativePath` is a measured decision, not an accident** — see §2.7.
+This is what turned finding 7 from "browse is wrong" into "the prose is wrong".
+
+### 3.2 What shipped, per census finding
+
+| # | Finding | Outcome |
+|---|---|---|
+| 1 | Dead `PARAMETER_SCHEMA` ×4 | **Done.** All four constants + accessors + the 7 test call sites deleted; the three SUBSTANTIVE assertions relocated to `AgentToolCatalogContractTest` (schema-parses, `maxItems`↔`MAX_BATCH_SIZE`, ingest advertises `collection`) rather than dropped. File-op item shape + `conflict_strategy` + `explanation` and browse `max_folders`/`max_files` promoted into the catalog `Interface`. `mode`/`pipeline` settled as delete-the-prose, keep-the-code, with the authorship of every key stated once in `SearchTool.execute`. `MAX_EXPANDED_FILES` + its unreachable guard + the tautological test deleted. |
+| 2 | Two readers of `agent.maxToolResultChars` | See §3.3. |
+| 3 | Bilateral `structuredData` literals | **Done.** Four constants beside `GROUNDING_KEY`; `AgentSession`, `AgentDispositionWiring` and `withLineage` adopt them; `AgentToolStructuredDataKeysTest` pins each key's value and checks the consumer that cannot import it. |
+| 4 | Roots access forked 13 ways | See §3.3. |
+| 5 | Two arg-parsing helpers | `ToolArgs` + tests shipped; adoption in §3.3. Note the correction in §3.1(c). |
+| 6 | Error handling | `AgentToolErrors` + tests shipped (adoption in §3.3). The handler-side half is **done**: `HandlerJson` holds one mapper for 19 handlers and one `invalidArgs` for the 9 byte-identical sites, with a regression test that fails if a per-handler mapper reappears. `NavigateToSurfaceHandler` and four `"Invalid arguments JSON: "` handlers were deliberately left alone — different text, different shape, not the same fact. |
+| 7 | Path convention | Redesigned (§2.7); see §3.3. |
+| 8 | Nine timeout constants | **Done for the holder.** `AgentTimeouts` declares all nine in one unit; the five non-tool sites adopt it; `AgentLlmCaller`'s "5 minutes" message is derived from the constant it waits on; the 10×-stale "aligns with INLINE_CONFIRM" comment is replaced with the real relationship, and `AgentTimeoutsTest` asserts `virtualToolMs() < approvalGateMs()` — the assertion that would have caught it. Tool-side adoption in §3.3. |
+| 9 | MCP "bypass" | **Refuted, not deferred** (§2.9). No MCP file touched. |
+| 10 | Stale comments/docs | **Done.** The false "handler does not yet read list_files" note corrected; drifted line-number citations replaced with method names; `AgentToolHandlers`' hand-listed completion log derived from what it actually registered; `docs/explanation/22`'s tool table completed (7 rows) with the non-existent "delete" capability removed and the approval paragraph corrected. `ServicePhase` needed no change — 868 had already fixed it. |
+
+### 3.3 Deliberately not done
 
 **Not doing** (with reasons, per §2.9 and §2.3): the MCP evidence unification (refuted —
 two governed projections of one canonical record, not a fork); `query`/`resultCount`/

@@ -10,8 +10,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Handler for {@code core.import-ai-pack}.
@@ -28,8 +26,6 @@ public final class ImportAiPackHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(ImportAiPackHandler.class);
 
-  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
-
   private final Supplier<PackImportService> supplier;
 
   public ImportAiPackHandler(Supplier<PackImportService> supplier) {
@@ -41,7 +37,9 @@ public final class ImportAiPackHandler implements OperationHandler {
     String path;
     boolean allowDowngrade;
     try {
-      JsonNode root = MAPPER.readTree(argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
+      JsonNode root =
+          HandlerJson.MAPPER.readTree(
+              argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
       JsonNode p = root.get("path");
       if (p == null || !p.isTextual() || p.asString().isBlank()) {
         return OperationResult.failure("Missing required arg: path");
@@ -50,7 +48,7 @@ public final class ImportAiPackHandler implements OperationHandler {
       JsonNode ad = root.get("allowDowngrade");
       allowDowngrade = ad != null && ad.isBoolean() && ad.asBoolean();
     } catch (Exception e) {
-      return OperationResult.failure("Invalid args: " + e.getMessage());
+      return HandlerJson.invalidArgs(e);
     }
 
     PackImportService svc;
