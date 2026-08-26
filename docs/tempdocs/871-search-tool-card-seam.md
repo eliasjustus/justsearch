@@ -147,6 +147,15 @@ collapsed ▶ / expanded ▼. Follow-up logged (observations): `composeToolLabel
 still renders raw tool names ("Search Index") where the design wants verb copy
 ("Searched …") — a shared-authority (565 §12.3.B) copy pass, not card work.
 
+Two more live findings caught on the merged build (PR #570), fixed in a follow-up
+branch: (1) a `10 results · 10 in evidence` search rendered all 10 rows at L2,
+collapsing the summary back into a list — capped at 5 (`ToolCallCard.ts`'s
+`EVIDENCE_ROW_CAP`), footer now composed from `evidenceCount`/`resultCount`
+honestly ("N more in evidence" / "N more retrieved, not in evidence"); (2) SV3
+mounted the tool card with no `card-open` listener, so an evidence-row click was
+dead in that window — wired in `Sv3Main.ts` (`onToolCardOpen`), routed through
+the existing `SV3_CITATION_OPEN` document-open seam rather than a new pane.
+
 ## 4. What this orphans (deleted/tombstoned in this tempdoc's work)
 
 - The nested second disclosure: `ToolCallCard`'s `variant="excerpt"` mount and
