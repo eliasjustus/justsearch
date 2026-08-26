@@ -103,6 +103,10 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
   content). `observation-shard-hint` removed from `governance/agent-hooks.v1.json`; wiring
   regenerated; `hook-integrity` gate passes.
 - `docs/observations.md` → a retirement notice (frontmatter `status: retired`).
+- `scripts/ci/check-no-observations-shards.mjs` (in `ci.yml`): fails legibly if
+  `docs/observations.d/` reappears. Needed because sessions already running on the pre-872
+  brief kept writing shards — the publish catch-up merge found 7 new shard files (35 notes)
+  on `main` after the #568 fold; they were routed (see §6) and the directory deleted again.
 - `.claude/rules/branch-safety.md` (post-merge fold step, inbox bullet, docs-ride-along
   `observations*` clauses), `hooks-reference.md`, `context-efficiency.md`.
 - Canonical docs/skills (14 files, sonnet sweep, orchestrator-reviewed): `development-philosophy.md`
@@ -208,6 +212,15 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
   has not yet registered on the PR rollup (observed twice on #571: "all checks green" with only
   `cla-assistant` present; the CI run was `pending` in `gh run list`). Its pre-poll should wait
   for the `CI` workflow specifically, not for "any check". Owner: `scripts/dev`.
+- **Publish catch-up (2026-08-26): 7 post-fold shards, 35 notes, routed** — 8 genuinely new
+  notes appended to 859 (1), 869 (4), 871 (2), 847 (1); the rest were duplicates of notes already
+  routed above. New **pin candidates** (not pinned — add only when they bite a session again):
+  ui-web vitest exits non-zero on an unhandled `ECONNREFUSED` from the dev-proxy probe
+  (`vite.config.js:73`) even with all tests passing; `./gradlew test` under *concurrent-agent*
+  load times out random worker-core/worker-services tests (30 s `TimeoutException`, zero
+  assertion failures — the one-Gradle-at-a-time convention in `branch-safety.md`, not a defect).
+  New **unowned**: the Settings "Solid surfaces" toggle in `renderAppearance()` is unreachable;
+  the recipe's `--gate a,b,c` wording (fixed in place in `consult-register.v1.json`).
 - **Owner call, still open**: an external defect tracker. Not needed for 872 to hold.
 
 ## §7 What this does NOT claim

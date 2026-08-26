@@ -737,3 +737,12 @@ one — needs a standard-profile run or a seeded record); light theme; the legac
 Two things noticed and logged, not fixed: a verified sentence the model quoted inside backticks
 gets its mark woven inside the `<code>` (847 anchoring into code spans — pre-existing); an ask
 with 8 verified refs rendered 1 mark (847 anchoring failure class on list-shaped answers).
+
+## Open items routed from the retired observations store (tempdoc 872, 2026-08-26)
+
+Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from shards on origin/main at the 872 merge.
+
+- [ ] MarkdownBlock reads its render root two ways in one component: decorateCitations uses this.renderRoot.querySelector('.md-content'), neutralizePseudoCitations uses this.shadowRoot?.querySelector('.md-content') — pre-existing, equivalent today but two authorities for one lookup — `modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts:588` (2026-08-26)
+- [ ] The live agent streaming answer block binds no ?is-streaming, so MarkdownBlock treats every mid-stream frame as settled (weave + neutralizer run) — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:4634` (2026-08-26)
+- [ ] MarkdownBlock in `plain` format: the citation weave splits Lit's ChildPart text node, so a later `text` change hits lit-html's primitive fast path (`startNode.nextSibling.data = value`) and can write to a `.cite-sentence` span instead of a text node — stale content. Pre-existing, unrelated to 869 R2 — `modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts:1010` (2026-08-26)
+- [ ] stripTrailingCitationBlock (565 §13.8) treats any PROSE paragraph starting with 'Citation…/Source…/Reference…' that contains a [n] as a trailing bibliography and deletes it to EOF — live: a 2202-char answer rendered 1020 chars (half the answer silently gone). Heading must be its own line — `modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts:161` (2026-08-26)

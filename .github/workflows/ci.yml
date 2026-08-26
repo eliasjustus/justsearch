@@ -167,6 +167,11 @@ jobs:
       - name: expected-state pins declare an exit and are not expired
         run: node scripts/agent-analytics/expected-state-probe.mjs --gate
 
+      # Tempdoc 872: the observations inbox is retired; a shard from a session still on the
+      # old brief would otherwise land unread. Fail legibly, with the routing remedy.
+      - name: no observations shards (inbox retired)
+        run: node scripts/ci/check-no-observations-shards.mjs
+
       - name: Test dead-config scanner (config-surface gate)
         run: node scripts/ci/test-config-surface-dead-config.mjs
 
