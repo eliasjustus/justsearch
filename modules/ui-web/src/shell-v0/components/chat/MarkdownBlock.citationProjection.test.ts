@@ -23,7 +23,8 @@
  * @vitest-environment happy-dom
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadHighlighter, resetHighlighterForTest } from '../markdown/markdownHighlight.js';
 import {
   MarkdownBlock as MarkdownBlockClass,
   type MarkdownBlock,
@@ -586,6 +587,215 @@ describe('the producer gate the registered record→evidence projection owns (86
   it('admits an envelope that predates the field — an absent fact, not an unknown producer', () => {
     expect(admittedMatches(MATCHES, null)).toEqual(MATCHES);
     expect(admittedMatches(MATCHES, undefined)).toEqual(MATCHES);
+  });
+});
+
+/* ── R2 — the settled DOM re-derives from the inputs, in whatever order they arrive ───────────── */
+
+describe('a decoration input that changes after the settle re-derives the content (869 R2)', () => {
+  /** A verified first sentence, plus a second ref the model wrote as a literal of its own. */
+  const ANSWER = `${ANCHORED} The model also wrote [2] here.`;
+  const ONE = (): MarkdownCitation[] => [mark(ANCHORED, 1, 0)];
+  const BOTH = (): MarkdownCitation[] => [mark(ANCHORED, 1, 0), mark(UNANCHORED, 2, 1)];
+
+  it('R2a: mints the mark for evidence that lands after its literal was muted', async () => {
+    const el = await mounted({ text: ANSWER, citations: ONE(), sourceCount: 5 });
+    // The cold-load shape: label 2 resolves to a source and nothing verified it, so it is muted.
+    expect(muted(el).map((s) => s.textContent)).toEqual(['[2]']);
+
+    el.citations = BOTH();
+    await settled(el);
+
+    // THE INVARIANT, and the half that was missing: the mute is withdrawn AND the mark it stood in
+    // for is minted. Withdrawing alone is what shipped — `decorateCitations` early-returns on a
+    // root that already carries a mark, so the tier-2 upgrade never saw the literal and `[2]` went
+    // out as bare prose in an answer that by then held the very evidence it names.
+    const late = content(el).querySelector<HTMLElement>('.cite-ref[data-cite-tier="source"]');
+    expect(late, 'the late citation never got a mark').toBeTruthy();
+    expect(late!.textContent).toBe('2');
+    expect(muted(el)).toHaveLength(0);
+    expect(text(el)).not.toContain('[2]');
+    el.remove();
+  });
+
+  it('R2b: withdraws the marks and restores the literal when the evidence goes away', async () => {
+    const el = await mounted({
+      text: `${ANCHORED} The model wrote [1] too.`,
+      citations: ONE(),
+      sourceCount: 5,
+    });
+    expect(content(el).querySelectorAll('.cite-ref')).toHaveLength(1);
+    // The tier-2 dedupe removed the model's duplicate of a label the weave had already rendered.
+    expect(text(el)).not.toContain('[1]');
+
+    el.citations = [];
+    await settled(el);
+
+    // A mark and a `.cite-sentence` are claims about a citation set the block no longer holds; the
+    // strip of the model's literal was a consequence of the same set. All three go together.
+    expect(content(el).querySelectorAll('.cite-ref')).toHaveLength(0);
+    expect(content(el).querySelectorAll('.cite-sentence')).toHaveLength(0);
+    expect(text(el)).toContain('[1]');
+    expect(
+      content(el).querySelector('.pseudo-cite[data-claimed-label="1"]'),
+      'the restored literal is unverified now, so it is muted',
+    ).toBeTruthy();
+    el.remove();
+  });
+
+  it('is idempotent in the strong sense: identical inputs, identical DOM', async () => {
+    const el = await mounted({ text: ANSWER, citations: BOTH(), sourceCount: 5 });
+    const first = content(el).innerHTML;
+
+    // An equal-but-DISTINCT array is a change as far as Lit is concerned, so this is a real second
+    // rebuild — "same inputs, same DOM", whatever the DOM it replaced happened to be.
+    el.citations = BOTH();
+    await settled(el);
+    expect(content(el).innerHTML).toBe(first);
+    el.remove();
+  });
+
+  it('re-derives a `plain` answer through the same two facts render() states', async () => {
+    // The rebuild has a format split of its own, so the verbatim format needs its own exercise: a
+    // `plain` answer is the extract/summary/navigate shape, and its whitespace is the reader's
+    // content (`white-space: pre-wrap`), not markdown to re-parse.
+    const el = await mounted({
+      format: 'plain',
+      text: 'Alpha beta gamma\n  indented [2] line',
+      citations: [mark('Alpha beta gamma', 1, 0)],
+      sourceCount: 5,
+    });
+    expect(muted(el).map((s) => s.textContent)).toEqual(['[2]']);
+
+    el.citations = [mark('Alpha beta gamma', 1, 0), mark(UNANCHORED, 2, 1)];
+    await settled(el);
+
+    expect(muted(el)).toHaveLength(0);
+    expect(text(el)).toBe('Alpha beta gamma1\n  indented 2 line');
+    el.remove();
+  });
+
+  it('keeps its rebuild across an unrelated re-render, and still yields to a real text change', async () => {
+    // The Lit-cache assumption, asserted rather than trusted. `unsafeHTML` caches on the source
+    // STRING: a re-render that leaves it unchanged does not touch the directive's DOM (so the
+    // rebuild stands), while a changed one renders through the part markers the rebuild kept — the
+    // one thing a manual `innerHTML` reset could have broken.
+    const el = await mounted({ text: ANSWER, citations: BOTH(), sourceCount: 5 });
+    el.citations = BOTH();
+    await settled(el);
+    const rebuilt = content(el).innerHTML;
+
+    el.prose = true;
+    await settled(el);
+    expect(content(el).innerHTML).toBe(rebuilt);
+
+    el.text = 'A different answer entirely.';
+    await settled(el);
+    expect(text(el).trim()).toBe('A different answer entirely.');
+    expect(content(el).querySelectorAll('.cite-ref')).toHaveLength(0);
+    el.remove();
+  });
+});
+
+describe('F9 generalised — a first settle that ALREADY decorated is corrected too', () => {
+  const TEXT = `${ANCHORED} The model wrote [2] and [4].`;
+  const PARTIAL = (): MarkdownCitation[] => [mark(ANCHORED, 1, 0)];
+  const FULL = (): MarkdownCitation[] => [mark(ANCHORED, 1, 0), mark(UNANCHORED, 4, 1)];
+
+  it('matches a block that had the whole citation set at mount', async () => {
+    const atMount = await mounted({ text: TEXT, citations: FULL(), sourceCount: 5 });
+    const expected = content(atMount).innerHTML;
+
+    const late = await mounted({ text: TEXT, citations: PARTIAL(), sourceCount: 5 });
+    // NON-VACUITY: the first settle really did decorate — a mark AND two mutes stand before the
+    // rest of the evidence lands. The original F9 fixture started from an undecorated first settle,
+    // where the unwrap-only pass was enough; this one is the case it could not correct.
+    expect(content(late).querySelectorAll('.cite-ref')).toHaveLength(1);
+    expect(muted(late).map((s) => s.textContent)).toEqual(['[2]', '[4]']);
+
+    late.citations = FULL();
+    await settled(late);
+    expect(content(late).innerHTML).toBe(expected);
+
+    atMount.remove();
+    late.remove();
+  });
+});
+
+describe('the highlight pass keeps its place ahead of the weave on a rebuilt tree (T19)', () => {
+  afterEach(() => {
+    resetHighlighterForTest();
+  });
+
+  it('re-highlights the fence the rebuild replaced and keeps the mark out of it', async () => {
+    const answer = [ANCHORED, '', '```js', 'const other = 2;', '```', '', 'And [2] closes it.'].join(
+      '\n',
+    );
+    await loadHighlighter();
+    const el = await mounted({ text: answer, sourceCount: 5 });
+    expect(content(el).querySelector('pre code .hljs-keyword'), 'the first settle').toBeTruthy();
+    expect(muted(el).map((s) => s.textContent)).toEqual(['[2]']);
+
+    el.citations = [mark(ANCHORED, 1, 0)];
+    await settled(el);
+
+    // The rebuild discards the highlighted markup with everything else, so `updated()`'s ordering
+    // has to hold on the rebuilt tree as well: highlight first (it rewrites a code block's
+    // innerHTML wholesale), then weave into what it left.
+    expect(
+      content(el).querySelector('pre code .hljs-keyword'),
+      'the rebuilt fence lost its highlighting',
+    ).toBeTruthy();
+    const refs = [...content(el).querySelectorAll<HTMLElement>('.cite-ref')];
+    expect(refs.map((r) => r.textContent)).toEqual(['1']);
+    expect(refs[0]!.closest('pre, code')).toBeNull();
+    el.remove();
+  });
+});
+
+/* ── R1 — the override case: a muted ref inside the sentence the verifier scored ──────────────── */
+
+describe('a literal the model wrote INSIDE a verified sentence stays inside it (869 R1)', () => {
+  it('nests the mute in the grounding span and leaves the mark outside', async () => {
+    // Both spans are true at once: the outer says the cross-encoder scored this text (the literal
+    // included — it is part of what was scored), the inner says THIS ref was not verified. F2's
+    // rule is about EXTENSION — the span never grows over a TRAILING literal — not containment.
+    const el = await mounted({
+      text: 'Alpha beta [2] gamma delta.',
+      citations: [mark('Alpha beta [2] gamma delta.', 1, 0)],
+      sourceCount: 5,
+    });
+
+    const claimed = content(el).querySelector<HTMLElement>('.pseudo-cite[data-claimed-label="2"]');
+    expect(claimed, 'the unverified ref is muted').toBeTruthy();
+    expect(claimed!.closest('.cite-sentence'), 'the mute belongs to the scored text').not.toBeNull();
+
+    const ref = content(el).querySelector<HTMLElement>('.cite-ref')!;
+    expect(ref.textContent).toBe('1');
+    expect(ref.dataset.citeTier).toBe('sentence');
+    // The mark sits after the sentence's period, outside the span it labels (847 §2.1e).
+    expect(ref.closest('.cite-sentence')).toBeNull();
+    expect(text(el)).toBe('Alpha beta [2] gamma delta.1\n');
+    el.remove();
+  });
+});
+
+/* ── R3 — a code span with no space before it ─────────────────────────────────────────────────── */
+
+describe('a code span glued to the word it follows (869 F3, the no-space shape)', () => {
+  it('stops the mark at the element edge and leaves the literal verbatim', async () => {
+    const el = await mounted({ text: 'shared`[1]` more.', citations: [mark('shared', 1, 0)] });
+    const code = content(el).querySelector('code')!;
+    // THE GUARD (`!inCode` in the punctuation walk). Without it the walk crosses the `[` — the
+    // model wrote no whitespace to stop it — and the mark is inserted BETWEEN `[` and `1`, inside
+    // the one element whose contract is to be reproduced exactly (`[11]` on screen).
+    expect(code.textContent, 'the reader\'s own code was edited').toBe('[1]');
+    const ref = content(el).querySelector<HTMLElement>('.cite-ref')!;
+    expect(ref.textContent).toBe('1');
+    expect(ref.closest('pre, code'), 'a mark woven into code').toBeNull();
+    expect(ref.nextElementSibling?.tagName, 'the mark stopped at the element edge').toBe('CODE');
+    expect(text(el)).toBe('shared1[1] more.\n');
+    el.remove();
   });
 });
 

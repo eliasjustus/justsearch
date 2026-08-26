@@ -377,7 +377,13 @@ describe('the shipped consumer inventory is closed', () => {
       (t) => t.includes('ctrl.streamingText'),
     );
     expect(live, 'the live agent streaming block').toHaveLength(1);
-    expect(live[0], 'a live block that renders as settled').toMatch(/\?is-streaming=\$\{/);
+    // The binding is asserted WHOLE, not just present: `?is-streaming=${…}` with anything at all
+    // inside it passes a hard-coded `false`, and a live block bound to a constant is exactly the
+    // defect this row exists for. It must read the controller's own flag, because `streamingText`
+    // outlives `isStreaming` between a terminal event and the commit that clears the buffer.
+    expect(live[0], 'a live block that renders as settled').toContain(
+      '?is-streaming=${ctrl.isStreaming}',
+    );
     expect(live[0], 'a live count read off the previous run').toMatch(/answerEvidenceIsThisRun\(\)/);
   });
 

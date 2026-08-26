@@ -236,11 +236,16 @@ interface MatchedRun {
   startIndex: number;
   /**
    * Tempdoc 869 F2 — where the CITED SENTENCE ends: the matched run plus the punctuation that
-   * closes it, and never a model literal the walk stepped over. The span asserts "the cross-encoder
-   * scored THIS text"; a `[n]` the model wrote is not text it scored. Before this split the two
-   * were one number, so the `.cite-sentence` underline swallowed the literal — and with it the
-   * muted `.pseudo-cite` the neutralizer later made of it, rendering "not verified" INSIDE the
-   * grounded sentence it contradicts.
+   * closes it, and never a model literal the walk stepped over PAST the run's end. The span asserts
+   * "the cross-encoder scored THIS text"; a `[n]` written after that text is not text it scored.
+   * Before this split the two were one number, so the `.cite-sentence` underline swallowed a
+   * trailing literal — and with it the muted `.pseudo-cite` the neutralizer later made of it.
+   *
+   * The rule is about EXTENSION, not containment (869 R1): a literal the model wrote INSIDE the
+   * sentence (`Alpha beta [2] gamma delta.`) falls between two matched tokens, so it is part of the
+   * text the verifier scored and stays inside the span — muted there if nothing verified label 2.
+   * That nesting is the honest rendering of the override case, and both spans are true at once: the
+   * outer one says the verifier scored this sentence, the inner one says THIS ref was not verified.
    */
   spanEnd: number;
   /** Where the MARK goes: after any skipped literal and the sentence's own closing punctuation. */
@@ -575,6 +580,13 @@ export class MarkdownBlock extends JfElement {
         }
       });
     }
+    // Tempdoc 869 F4b — the settled DOM is a pure function of (text, format, citations,
+    // sourceCount, frame), so a decoration input that changes AFTER the answer settled re-derives
+    // the content instead of being applied on top of the previous settle's edits. Every pass below
+    // then runs on the same DOM a first settle would have handed it. See `contentIsDecorated`.
+    if (!this.isStreaming && this.decorationInputChanged(changed) && this.contentIsDecorated()) {
+      this.rebuildContent();
+    }
     // Tempdoc 846 §2.4 — highlight fenced code on the SETTLED answer only (a stream re-renders per
     // frame, and a mended fence would flicker through languages). Runs BEFORE the citation weave:
     // highlighting rewrites a code block's innerHTML, which would discard anything woven into it.
@@ -590,16 +602,6 @@ export class MarkdownBlock extends JfElement {
     // for a later pass to discard), and a partially-streamed fence is already scrollable on screen.
     if (this.format === 'markdown') {
       markScrollableRegions(this.renderRoot.querySelector('.md-content'));
-    }
-    // Tempdoc 869 F4b — every settled pass RE-DERIVES the muting from the current inputs, so the
-    // pipeline below is a pure function of (text, citations, sourceCount, frame) rather than of the
-    // order those arrived in. The mute used to be a one-way edit: `unsafeHTML` does not re-render
-    // when only `.citations` changes, so a block that muted `[4]` at first settle (evidence not yet
-    // attached — the cold-load shape) still carried that span when the evidence landed, and the
-    // tier-2 upgrade then nested a live `.cite-ref` INSIDE a span saying the citation was not
-    // verified. Unwrapping first makes the second settle indistinguishable from a first one.
-    if (!this.isStreaming) {
-      this.unmutePseudoCitations();
     }
     // Tempdoc 565 §3.C — weave inline citation marks into the freshly-rendered markdown. Citations
     // attach post-stream (the matcher runs at AgentDone), so only decorate the settled answer. Lit's
@@ -622,6 +624,65 @@ export class MarkdownBlock extends JfElement {
   }
 
   /**
+   * Tempdoc 869 F4b — did an input the settled passes read change in this update? `text` and
+   * `format` are deliberately absent: they are what `render()` binds, so a change to either already
+   * re-derived the content through Lit and there is nothing left to rebuild. These three are the
+   * ones Lit CANNOT see — `unsafeHTML` caches on the source string, so a block whose citations,
+   * source count or frame changed re-renders to the same string and keeps the previous settle's
+   * edits unless this pass takes them out.
+   */
+  private decorationInputChanged(changed: PropertyValues): boolean {
+    return changed.has('citations') || changed.has('sourceCount') || changed.has('frame');
+  }
+
+  /**
+   * Tempdoc 869 F4b — does `.md-content` currently carry edits the settled passes made?
+   *
+   * Asked of the DOM rather than tracked in a flag, because the DOM is the thing the answer has to
+   * be true of: Lit re-renders the content whenever the SOURCE STRING changes, which is neither
+   * "the text property changed" (two texts can strip to one source) nor "it did not" — and a flag
+   * would have to predict that. Every edit the passes make comes with one of these three classes:
+   * the weave mints `.cite-ref` (and only then strips a literal or wraps a `.cite-sentence`), the
+   * neutralizer mints `.pseudo-cite`. None present ⇒ the content is exactly what the parser
+   * produced, and the passes below are additive on it.
+   */
+  private contentIsDecorated(): boolean {
+    const root = this.renderRoot.querySelector('.md-content');
+    return root !== null && root.querySelector('.cite-ref, .cite-sentence, .pseudo-cite') !== null;
+  }
+
+  /**
+   * Tempdoc 869 F4b — re-derive `.md-content` from {@link contentSource}, discarding every edit the
+   * settled passes made, so a late-arriving citation set produces the same DOM as one present at
+   * mount. The pass this replaces unwrapped the mutes only, which made the withdrawal of a mute
+   * possible but not the MINTING of a mark the newly-arrived evidence had earned: `decorateCitations`
+   * early-returns on an already-woven root, so a `[2]` that was muted at the first settle shipped as
+   * bare prose once its citation landed, and a citation set going back to empty left its marks and
+   * `.cite-sentence` spans standing over evidence the block no longer holds.
+   *
+   * The parse is the ONE renderer `render()` uses — this rebuild states the same two facts (the
+   * §13.8 strip, the `plain`/`markdown` split) through the same helpers, and never a second parser.
+   */
+  private rebuildContent(): void {
+    const root = this.renderRoot.querySelector('.md-content');
+    if (!root) return;
+    // Lit's ChildPart addresses its content relative to marker COMMENTS, so those survive: removing
+    // one detaches the binding, and the next `text` change would then render into a detached node.
+    // The sanitizer strips comments, so nothing this rebuild appends can accumulate among them.
+    for (const node of [...root.childNodes]) {
+      if (node.nodeType !== Node.COMMENT_NODE) node.remove();
+    }
+    const source = this.contentSource();
+    if (this.format === 'plain') {
+      root.appendChild(document.createTextNode(source));
+      return;
+    }
+    const parsed = document.createElement('template');
+    parsed.innerHTML = md.render(source);
+    root.appendChild(parsed.content);
+  }
+
+  /**
    * Tempdoc 869 §2.2 — WHICH citation-shaped token this answer's frame says is not a reference, and
    * what the muted span must then say it is. Returns the span's note for a token that must be muted,
    * `null` for one that is ordinary prose.
@@ -636,29 +697,6 @@ export class MarkdownBlock extends JfElement {
    *    an out-of-range `[n]` are prose here and stay untouched. With the default `sourceCount = 0`
    *    this arm mutes nothing at all.
    */
-  /**
-   * Tempdoc 869 F4b — undo every mute this block previously applied, returning each `.pseudo-cite`
-   * to the plain text it wrapped and merging the neighbours back into one node.
-   *
-   * This is what makes {@link neutralizePseudoCitations} idempotent in the strong sense: not "runs
-   * twice without doubling", but "produces the same DOM for the same inputs regardless of what the
-   * previous inputs were". The mute is a claim about the CURRENT citation set, and a citation set
-   * only ever arrives late (the matcher runs at AgentDone; a restored turn hydrates its evidence
-   * after its text) — so a mute that could not be withdrawn was a claim about a state the block had
-   * already left. The `normalize()` matters as much as the unwrap: the token walk splits on text
-   * NODES, so a `[4]` left flanked by two sibling text nodes would never be seen as one token again.
-   */
-  private unmutePseudoCitations(): void {
-    const root = this.renderRoot.querySelector('.md-content');
-    if (!root) return;
-    for (const span of [...root.querySelectorAll('.pseudo-cite')]) {
-      const parent = span.parentNode;
-      if (parent === null) continue;
-      parent.replaceChild(document.createTextNode(span.textContent ?? ''), span);
-      parent.normalize();
-    }
-  }
-
   private pseudoCiteRule(): (token: string) => string | null {
     if (this.frame === 'ungrounded') {
       return () => 'Citation-shaped text in an answer that is not grounded in your files';
@@ -940,18 +978,31 @@ export class MarkdownBlock extends JfElement {
     }
   `];
 
+  /**
+   * §13.8 — the answer text `.md-content` renders, with any model-authored trailing "Citations:"
+   * list stripped (the UI is the source authority).
+   *
+   * Tempdoc 846 §2.5 — but ONLY when this block actually has sources to show. The strip's whole
+   * justification is that the interface presents the sources itself; with no citations the UI
+   * presents nothing, so deleting the model's own trailing list replaces information with
+   * silence. Accepted consequence: citations attach post-stream (the matcher runs at AgentDone),
+   * so a trailing list the model is writing is now visible until they arrive — a brief flash of
+   * real output beats a silent deletion in the case where nothing replaces it.
+   *
+   * Tempdoc 869 F4b — a method rather than a local, because {@link rebuildContent} re-derives the
+   * settled content from the SAME text `render()` binds. Two copies of this one line would drift
+   * into two answers about what the block is showing (and the strip's own trigger is the citation
+   * list, which is exactly what a rebuild is reacting to).
+   */
+  private contentSource(): string {
+    return this.citations.length > 0 ? stripTrailingCitationBlock(this.text) : this.text;
+  }
+
   override render(): TemplateResult {
-    // §13.8 — strip any model-authored trailing "Citations:" list (the UI is the source authority);
-    // then mend partial syntax during streaming. Strip-before-mend so a half-written trailing list
-    // never flashes (the strip matches the partial block's trailing-to-EOF shape too).
-    //
-    // Tempdoc 846 §2.5 — but ONLY when this block actually has sources to show. The strip's whole
-    // justification is that the interface presents the sources itself; with no citations the UI
-    // presents nothing, so deleting the model's own trailing list replaces information with
-    // silence. Accepted consequence: citations attach post-stream (the matcher runs at AgentDone),
-    // so a trailing list the model is writing is now visible until they arrive — a brief flash of
-    // real output beats a silent deletion in the case where nothing replaces it.
-    const stripped = this.citations.length > 0 ? stripTrailingCitationBlock(this.text) : this.text;
+    // The mend is the STREAM's own step (auto-closing partial syntax on a copy), applied after the
+    // strip so a half-written trailing list never flashes: the strip matches the partial block's
+    // trailing-to-EOF shape too.
+    const stripped = this.contentSource();
     const cursor = this.isStreaming ? html`<span class="cursor">&nbsp;</span>` : '';
     // Tempdoc 565 §15.B — the ONE renderer: `plain` renders the text verbatim (the retired
     // StreamingTextBlock's job — no markdown styling, whitespace preserved); `markdown` parses GFM.
@@ -978,7 +1029,12 @@ export class MarkdownBlock extends JfElement {
   private decorateCitations(): void {
     const root = this.renderRoot.querySelector('.md-content') as HTMLElement | null;
     if (!root) return;
-    // A fresh unsafeHTML render has no markers; if any exist, this render is already decorated.
+    // IDEMPOTENCY, and nothing more (869 F4b). This fires on a re-render that derived the SAME
+    // content from the SAME citations — a property that touches no pass (`prose`), a selection
+    // repaint, an `isStreaming` flip whose mended and unmended source strings are identical — where
+    // re-weaving would double every mark. It can no longer be reached with STALE marks standing:
+    // a changed decoration input rebuilds the content in `updated()` first, so this root is either
+    // freshly parsed or already correct for the inputs it is being asked about.
     if (root.querySelector('.cite-ref')) return;
 
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -1232,7 +1288,7 @@ export class MarkdownBlock extends JfElement {
     // taken per occurrence, from the literal's neighbours.
     const re = /\[(\d+)\]/g;
     for (const node of nodes) {
-      // Tempdoc 869 F4b — `.pseudo-cite` joins the skip list as belt and braces. The unwrap pass in
+      // Tempdoc 869 F4b — `.pseudo-cite` joins the skip list as belt and braces. The rebuild in
       // `updated()` means no muted span survives into this walk, but an upgrade nesting a live mark
       // inside a span that says "not verified" is the one outcome no ordering may produce.
       if ((node.parentElement)?.closest('pre, code, .cite-ref, .pseudo-cite')) continue;
