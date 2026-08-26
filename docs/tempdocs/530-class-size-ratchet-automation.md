@@ -3,7 +3,7 @@ title: "530 — Discipline-gate kernel: the four-layer design (substrate / gates
 type: tempdocs
 status: done
 created: 2026-05-20
-updated: 2026-05-30 (CI-gate remediation: shell-mismatch, UI-cycle cluster, lock-skew, dead-code unmasking — see §Remediation)
+updated: "2026-05-30 (CI-gate remediation: shell-mismatch, UI-cycle cluster, lock-skew, dead-code unmasking — see §Remediation)"
 category: discipline / structural-prevention
 related:
   - scripts/governance/lib/ (the substrate — Layer 1, shipped)

@@ -209,7 +209,7 @@ Key findings across real sessions (N=41): tool outputs consume 80–85% of conte
 | `generate-index.mjs` | Aggregates session reports + costs into `session-index.json`. |
 | `evaluate-session.mjs` | LLM-as-judge outcome evaluation, written to `judge-outcomes.ndjson`. Condenses transcripts, sends to `claude` CLI. CLI: `--session-id`, `--all`, `--force`, `--dry-run`, `--model`, `--json`. |
 | `outcome-session.mjs` | Per-session outcome JOIN over canonical owners (git merge link, build counter, tempdoc frontmatter, governance SARIF), **computed on demand and printed**. The judge's verdict is carried as a residual `inference` block and never overwrites a fact. `--write` emits `outcomes.ndjson` as a timestamped report, not an authority. |
-| `test-pipeline.mjs` | Legacy standalone assertion script. **Not wired to anything** — `run-all-tests.mjs` discovers `*.test.mjs` only, so this file runs solely when invoked by hand, and it has known stale failures (see `docs/observations.md`). Treat it as historical coverage, not as a gate. |
+| `test-pipeline.mjs` | Legacy standalone assertion script. **Not wired to anything** — `run-all-tests.mjs` discovers `*.test.mjs` only, so this file runs solely when invoked by hand, and it has known stale failures (observations store retired — tempdoc 872; see git history of `docs/observations.md`). Treat it as historical coverage, not as a gate. |
 
 ### Hook Configuration
 
@@ -289,8 +289,9 @@ every `*.test.mjs` under `scripts/agent-analytics/` and exits non-zero if any fi
 the suite to run and the one CI runs.
 
 `test-pipeline.mjs` is a separate legacy script that **`run-all-tests.mjs` does not discover** (it
-is not a `*.test.mjs` file), so nothing invokes it and it has accumulated stale failures — see the
-`obs:test-pipeline` condition in `docs/observations.md`. Its group table below is retained as a
+is not a `*.test.mjs` file), so nothing invokes it and it has accumulated stale failures — formerly
+tracked as the `obs:test-pipeline` condition in the observations store (retired, tempdoc 872; see
+git history of `docs/observations.md`). Its group table below is retained as a
 map of what that historical coverage aimed at; do not read it as a passing suite, and do not cite
 an assertion count from it. The group numbering has deliberate gaps where a group was deleted with
 its subject: 19 (dashboard generation) with the dashboard, and 2 (scoring logic), 17 (Z-score

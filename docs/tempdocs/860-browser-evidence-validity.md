@@ -1026,4 +1026,10 @@ work ends here; dispatch is the orchestrator's.
 - **BLOCKED ON OWNER:** the §7.5 tier-register scope decision — whether the register should cover
   load-bearing rules resident in skills. A governance contract change, not an implementation choice;
   it blocks none of P1-P6.
+
+## Open items routed from the retired observations store (tempdoc 872, 2026-08-26)
+
+Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from the shards folded at commit 7b85a5a6.
+
+- [ ] STANDING TAKEOVER (owner-approved 2026-08-26): when PR #404 merges, dispatch 860 P1+P2 (the evidence-validity stamp + shared measure.json reader); when the skill-registry-clean worktree merges, dispatch 860 P4+P5 (the once-per-session browser hint hook + skill carve-out amendment) — both per tempdoc 860 rev 2's wave table; orchestrator session bccfc163 or successor — docs/tempdocs/860-browser-evidence-validity.md (2026-08-25)
 - **PROCEEDING:** P3. Everything else is scheduled, not stalled.

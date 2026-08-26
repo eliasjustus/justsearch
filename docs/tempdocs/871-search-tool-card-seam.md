@@ -147,6 +147,15 @@ collapsed ▶ / expanded ▼. Follow-up logged (observations): `composeToolLabel
 still renders raw tool names ("Search Index") where the design wants verb copy
 ("Searched …") — a shared-authority (565 §12.3.B) copy pass, not card work.
 
+Two more live findings caught on the merged build (PR #570), fixed in a follow-up
+branch: (1) a `10 results · 10 in evidence` search rendered all 10 rows at L2,
+collapsing the summary back into a list — capped at 5 (`ToolCallCard.ts`'s
+`EVIDENCE_ROW_CAP`), footer now composed from `evidenceCount`/`resultCount`
+honestly ("N more in evidence" / "N more retrieved, not in evidence"); (2) SV3
+mounted the tool card with no `card-open` listener, so an evidence-row click was
+dead in that window — wired in `Sv3Main.ts` (`onToolCardOpen`), routed through
+the existing `SV3_CITATION_OPEN` document-open seam rather than a new pane.
+
 ## 4. What this orphans (deleted/tombstoned in this tempdoc's work)
 
 - The nested second disclosure: `ToolCallCard`'s `variant="excerpt"` mount and
@@ -200,3 +209,10 @@ regression to embedding lists in cards) while Open in Search sees actual use.
 detail *in the transcript* (repeated L3 round-trips for a single glance), the
 principle is wrong for this surface and L2 should carry more — measure, then
 widen, rather than pre-widening.
+
+## Open items routed from the retired observations store (tempdoc 872, 2026-08-26)
+
+Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from shards on origin/main at the 872 merge.
+
+- [ ] UnifiedChatView.renderToolActivity's record-hydrated tool cards get no evidence-path set (ToolCallCard.evidencePaths passed null) — full per-turn evidence wiring would need turn-boundary scanning like sv3-record.ts's Building; deferred, sv3 is the promoted surface — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts` toolActivityEvidencePaths (2026-08-26)
+- [ ] composeToolLabel renders 'Search Index'/'Read Document' raw tool names in the flattened 871 card header; design copy wanted verb form ('Searched ...') — shared 565 §12.3.B authority, needs its own small pass — `modules/ui-web/src/shell-v0/display/toolLabeling.ts` (2026-08-26)
