@@ -16,6 +16,7 @@ import io.justsearch.agent.api.AgentService;
 import io.justsearch.agent.api.conversation.ConversationStore;
 import io.justsearch.agent.api.interaction.InteractionEvent;
 import io.justsearch.agent.api.interaction.InteractionEventKind;
+import io.justsearch.agent.api.interaction.ThreadProjection;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -72,8 +73,8 @@ final class InteractionThreadControllerTest {
                     "2026-01-01T00:00:00Z")));
 
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents(eq("conv-1"), any()))
-        .thenReturn(
+    when(agentService.threadProjection(eq("conv-1"), any()))
+        .thenReturn(ThreadProjection.of(
             List.of(
                 new InteractionEvent(
                     "c1:completed",
@@ -82,7 +83,7 @@ final class InteractionThreadControllerTest {
                     InteractionEventKind.TOOL_ACTIVITY,
                     "agent",
                     "",
-                    Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed"))));
+                    Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed")))));
 
     JsonNode body = invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-1");
 
@@ -112,8 +113,8 @@ final class InteractionThreadControllerTest {
         .thenReturn(List.of(storedUser(), storedAnswer()));
 
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents(eq("conv-stamped"), any()))
-        .thenReturn(
+    when(agentService.threadProjection(eq("conv-stamped"), any()))
+        .thenReturn(ThreadProjection.of(
             List.of(
                 new InteractionEvent(
                     "c1:completed",
@@ -122,7 +123,7 @@ final class InteractionThreadControllerTest {
                     InteractionEventKind.TOOL_ACTIVITY,
                     "agent",
                     "",
-                    Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed"))));
+                    Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed")))));
 
     JsonNode body =
         invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-stamped");
@@ -159,7 +160,8 @@ final class InteractionThreadControllerTest {
     ConversationStore conversationStore = mock(ConversationStore.class);
     when(conversationStore.loadHistory("conv-stamped")).thenReturn(List.of(storedAnswer()));
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents(eq("conv-stamped"), any())).thenReturn(List.of());
+    when(agentService.threadProjection(eq("conv-stamped"), any()))
+        .thenReturn(ThreadProjection.of(List.of()));
 
     JsonNode storePlane =
         invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-stamped")
@@ -176,6 +178,94 @@ final class InteractionThreadControllerTest {
     // Honestly absent on BOTH planes: the agent `done` produces neither, and a zero would not be true.
     assertTrue(!runPlaneAttributes.containsKey("calibration") && !storePlane.has("calibration"));
     assertTrue(!runPlaneAttributes.containsKey("claimMatches") && !storePlane.has("claimMatches"));
+  }
+
+  @Test
+  @DisplayName(
+      "871 §3b: a suppressed answer's TRAILING thinking lands on the answer, not on the tool before it")
+  void trailingReasoningLandsOnTheAnswerNotOnThePrecedingTool() {
+    // THE CHRONOLOGY DEFECT (owner-observed 2026-08-26; 863 §4.A.5 F4's "KNOWN INVERSION"). A
+    // stamped run's terminal answer is suppressed on the action plane, so the block the fold had
+    // attached to it lost its carrier. 863 re-homed it onto the run's LAST SURVIVING event — the
+    // search tool step, which happened BEFORE the thinking — and `sv3-record.ts` draws a carrier's
+    // blocks ABOVE the carrier, so the transcript read "planned → analysed the results → [the search
+    // that produced them]".
+    //
+    // The fix is here rather than in the FE because this is the only place both planes are visible:
+    // the block's true carrier is the ANSWER plane's copy of that same answer, whose timestamp is
+    // after the tool's. Asserting on the wire (not on rendering) is what makes this a chronology
+    // test: given the FE's draw-above-carrier rule, carrier == answer IS "after the tool".
+    ConversationStore conversationStore = mock(ConversationStore.class);
+    when(conversationStore.loadHistory("conv-chrono"))
+        .thenReturn(List.of(storedUser(), storedAnswerOfRun("run-1")));
+
+    AgentService agentService = mock(AgentService.class);
+    when(agentService.threadProjection(eq("conv-chrono"), any()))
+        .thenReturn(
+            new ThreadProjection(
+                List.of(
+                    new InteractionEvent(
+                        "c1:completed",
+                        "conv-chrono",
+                        Instant.parse("2026-08-25T10:00:02Z"),
+                        InteractionEventKind.TOOL_ACTIVITY,
+                        "agent",
+                        "",
+                        Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed"))),
+                Map.of("run-1", List.of(Map.of("text", "the results are thin", "durationMs", 1000)))));
+
+    JsonNode events =
+        invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-chrono")
+            .get("events");
+
+    assertEquals(3, events.size());
+    assertEquals("TOOL_ACTIVITY", events.get(1).get("kind").asString());
+    assertEquals("ASSISTANT_MESSAGE", events.get(2).get("kind").asString());
+    // The block is on the answer…
+    JsonNode blocks = events.get(2).get("attributes").get("reasoning");
+    assertEquals(1, blocks.size(), "the orphaned block reaches the answer it was thought for");
+    assertEquals("the results are thin", blocks.get(0).get("text").asString());
+    // …and NOT on the tool step. Both halves are needed: attaching it to both would render it twice,
+    // and attaching it only to the tool is precisely the defect.
+    assertTrue(
+        events.get(1).get("attributes").get("reasoning") == null,
+        "the tool step must not carry a thought that came after it");
+  }
+
+  @Test
+  @DisplayName("871 §3b: a run whose answer row projects no carrier drops the block, never misplaces it")
+  void trailingReasoningWithNoMatchingAnswerIsNotMisplaced() {
+    // The honest degradation. If the action plane hands across a run the answer plane does not hold
+    // (it cannot, today — `answeredRunIds` is read off those very rows — but the merge must not
+    // depend on that), the block stays on disk unrendered rather than landing on some other turn.
+    ConversationStore conversationStore = mock(ConversationStore.class);
+    when(conversationStore.loadHistory("conv-orphan"))
+        .thenReturn(List.of(storedUser(), storedAnswerOfRun("run-1")));
+
+    AgentService agentService = mock(AgentService.class);
+    when(agentService.threadProjection(eq("conv-orphan"), any()))
+        .thenReturn(
+            new ThreadProjection(
+                List.of(
+                    new InteractionEvent(
+                        "c1:completed",
+                        "conv-orphan",
+                        Instant.parse("2026-08-25T10:00:02Z"),
+                        InteractionEventKind.TOOL_ACTIVITY,
+                        "agent",
+                        "",
+                        Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed"))),
+                Map.of("run-9", List.of(Map.of("text", "homeless", "durationMs", 1)))));
+
+    JsonNode events =
+        invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-orphan")
+            .get("events");
+
+    for (JsonNode e : events) {
+      assertTrue(
+          e.get("attributes").get("reasoning") == null,
+          "an unmatched block lands nowhere, rather than on the wrong turn");
+    }
   }
 
   private static int countOfKind(JsonNode events, String kind) {
@@ -207,6 +297,13 @@ final class InteractionThreadControllerTest {
         "ts", "2026-08-25T10:00:01Z");
   }
 
+  /** The same row, stamped with the run that produced it (what makes the run "answered", 863 F2). */
+  private static Map<String, Object> storedAnswerOfRun(String runId) {
+    Map<String, Object> row = storedAnswer();
+    row.put("runId", runId);
+    return row;
+  }
+
   /** The assistant row {@code ConversationEngine.persistedAssistant} writes at the terminal done. */
   private static Map<String, Object> storedAnswer() {
     Map<String, Object> row = new java.util.LinkedHashMap<>(donePayload());
@@ -224,7 +321,8 @@ final class InteractionThreadControllerTest {
     ConversationStore conversationStore = mock(ConversationStore.class);
     when(conversationStore.loadHistory("nope")).thenReturn(List.of());
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents(eq("nope"), any())).thenReturn(List.of());
+    when(agentService.threadProjection(eq("nope"), any()))
+        .thenReturn(ThreadProjection.of(List.of()));
 
     JsonNode body = invokeGet(new InteractionThreadController(conversationStore, agentService), "nope");
     assertEquals(0, body.get("events").size());
@@ -251,7 +349,8 @@ final class InteractionThreadControllerTest {
                     "citations", List.of(Map.of("parentDocId", "doc-1", "startChar", 0)),
                     "calibration", Map.of("bestChunkScore", 0.91, "retrievalCoverage", 0.5))));
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents(eq("conv-e"), any())).thenReturn(List.of());
+    when(agentService.threadProjection(eq("conv-e"), any()))
+        .thenReturn(ThreadProjection.of(List.of()));
 
     JsonNode body =
         invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-e");
@@ -292,7 +391,8 @@ final class InteractionThreadControllerTest {
                     "ts", "2026-01-01T00:00:03Z",
                     "reasoning", "not a list")));
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents(eq("conv-r"), any())).thenReturn(List.of());
+    when(agentService.threadProjection(eq("conv-r"), any()))
+        .thenReturn(ThreadProjection.of(List.of()));
 
     JsonNode body =
         invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-r");
@@ -348,8 +448,8 @@ final class InteractionThreadControllerTest {
     key.locked = true;
 
     AgentService agentService = mock(AgentService.class);
-    when(agentService.threadEvents(eq("conv-locked"), any()))
-        .thenReturn(
+    when(agentService.threadProjection(eq("conv-locked"), any()))
+        .thenReturn(ThreadProjection.of(
             List.of(
                 new InteractionEvent(
                     "c1:completed",
@@ -358,7 +458,7 @@ final class InteractionThreadControllerTest {
                     InteractionEventKind.TOOL_ACTIVITY,
                     "agent",
                     "",
-                    Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed"))));
+                    Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed")))));
 
     Context ctx = mock(Context.class);
     when(ctx.pathParam("id")).thenReturn("conv-locked");

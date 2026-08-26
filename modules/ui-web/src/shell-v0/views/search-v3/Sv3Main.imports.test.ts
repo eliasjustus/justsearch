@@ -512,6 +512,12 @@ describe('every text/surface pair those components can paint clears WCAG AA on t
       { what: 'tool target, risk tier, risk-why, because, accessory, search scope/path/locator/footer', text: 'var(--text-secondary)', on: ['var(--surface-secondary)'] },
       { what: 'args / output text in a well', text: 'var(--foreground)', on: ['var(--surface-secondary)', 'var(--surface-tertiary)'] },
       { what: 'Open in Search pill label', text: 'var(--text-primary)', on: ['var(--surface-secondary)', 'var(--surface-tertiary)'] },
+      // Tempdoc 871 §3b — the level-2 "used" marking paints a tinted wash UNDER the row and a
+      // deeper one behind the tag, so both stacks are measured on top of the card fill.
+      // A used row's path/locator inherit the row colour rather than staying `--text-secondary`:
+      // this oracle measured that pair at 4.31:1 on the tint, which is why the rule exists.
+      { what: 'used-row title and path/locator on the tinted row', text: 'var(--text-primary)', on: ['var(--surface-secondary)', 'var(--accent-tint-08)'] },
+      { what: 'the "used" tag on its own tint', text: 'var(--text-tint)', on: ['var(--surface-secondary)', 'var(--accent-tint-08)', 'var(--accent-tint-16)'] },
       { what: 'lineage frame label on the quoted frame', text: 'var(--text-secondary)', on: ['var(--surface-secondary)', 'var(--surface-2)'] },
       { what: 'rejected reason', text: 'var(--text-warning)', on: ['var(--surface-secondary)'] },
       { what: 'resource link', text: 'var(--accent)', on: ['var(--surface-secondary)'] },

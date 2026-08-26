@@ -18,8 +18,19 @@
  * target (no separate tiny expand button); RISK is no longer a header text badge — the glyph alone
  * carries status, and risk renders as its own row ONLY for MEDIUM/HIGH (border tint + the focusable
  * "why" disclosure are unaffected). A search card's body is no longer a nested `<jf-results-card>`
- * mount: it is a level-2 list of the hits that are actually IN the run's evidence set, plus a
- * "K more retrieved, not in evidence" footer and an "Open in Search" pill.
+ * mount: it is the card's own level-2 body, plus a footer and an "Open in Search" pill.
+ *
+ * Tempdoc 871 §3b (owner batch, 2026-08-26) — three changes to that shape:
+ *   - The header reads as the MODEL'S act: the VERB form (`composeToolLabel().verbLabel` — the one
+ *     565 §12.3.B authority, so both windows get it) followed by the query in quotes, not the raw
+ *     catalog name ("Searched “taxes”", not "Search Index taxes").
+ *   - Level 2 is the FULL ranked list the model saw, capped at {@link SEARCH_ROW_CAP}, with the rows
+ *     the run actually drew on marked (tint + filled dot + a `used` tag) — REVERSING 867's used-only
+ *     summary, which hid the ranking the reader is trying to judge. Rows are two lines (title, then
+ *     dim path + locator) so a path never ellipsizes against a locator on one jammed line.
+ *   - Visible copy is "used", not "in evidence" (owner-settled; the internal register keeps the
+ *     grounding authority's `inEvidence`/`evidenceCount` names — this is a copy decision, not a
+ *     second axis).
  *
  * Tempdoc 550 C3: the per-card Approve/Reject buttons were removed. A tool call that needs
  * a human decision now routes through the ONE unified ceremony host
@@ -61,12 +72,12 @@ export type { ToolCall, ToolRisk, ToolCallStatus } from '../../controllers/Agent
 const EMPTY_EVIDENCE_PATHS: ReadonlySet<string> = new Set();
 
 /**
- * Tempdoc 871 §1 ("level 2 — the summary, expanded in place... a footer counts the rest honestly") +
- * live finding (2026-08-26, PR #570): a search returning `10 results · 10 in evidence` rendered all
- * 10 rows at level 2, collapsing the "summary, not a list" design into a list again. Cap the rendered
- * evidence rows at this count; anything past it is counted in the footer, never rendered as a row.
+ * Tempdoc 871 §3b — level 2 renders the model's ranked list, capped here; anything past the cap is
+ * counted in the footer, never rendered as a row. The cap survives the owner's reversal of 867's
+ * used-only summary (raised 5 → 6): the card is still a reading-density projection, and the ranking
+ * detail past the cap lives on the surface the reader can act on ("Open in Search", 871 §7).
  */
-const EVIDENCE_ROW_CAP = 5;
+const SEARCH_ROW_CAP = 6;
 
 /** `1 result` / `2 results` — the ONE pluralization for a hit count on this card. */
 function countLabel(n: number, noun: string): string {
@@ -88,9 +99,9 @@ export class ToolCallCard extends JfElement {
   declare stepPresentation: StepPresentation | null;
   /**
    * Tempdoc 867 — the run's evidence-path set, for a search card's level-2 join. `null` when the
-   * mount site never wired this property (renders the accessory's " · M in evidence" segment absent
-   * — an honest "we don't know", not a claimed zero — while the body still renders every hit as
-   * "not (yet) in evidence" rather than fail closed on the whole card).
+   * mount site never wired this property (renders the accessory's " · M used" segment absent — an
+   * honest "we don't know", not a claimed zero — while the body still renders the full ranked list,
+   * unmarked, rather than fail closed on the whole card).
    */
   declare evidencePaths: ReadonlySet<string> | null;
   declare expanded: boolean;
@@ -163,13 +174,14 @@ export class ToolCallCard extends JfElement {
       display: flex;
       align-items: center;
       min-width: 0;
-      overflow: hidden;
     }
+    /* Tempdoc 871 §3b — the VERB ("Searched"), bold, then the query. The old nowrap+ellipsis clipped
+       the query mid-word on a narrow card; the owner's shape wraps instead (the header stays ONE
+       logical line — it simply reflows), so the reader always sees the whole query. */
     .tool-name {
       font-weight: 600;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     /* Tempdoc 565 §12.3.B — the tool's target (query / filename), subdued after the label. */
     .tool-target {
@@ -177,7 +189,7 @@ export class ToolCallCard extends JfElement {
       font-weight: 400;
       margin-left: 0.4ch;
     }
-    /* Tempdoc 867 — the muted right accessory (e.g. "3 results · 2 in evidence"). */
+    /* Tempdoc 867 — the muted right accessory (e.g. "3 results · 2 used"). */
     .tool-card-accessory {
       margin-left: auto;
       color: var(--text-secondary);
@@ -306,21 +318,31 @@ export class ToolCallCard extends JfElement {
       flex-direction: column;
       gap: 0.125rem;
     }
+    /* Tempdoc 871 §3b — a two-LINE row. The single-line shape jammed title, path and locator into
+       one flex line, so the path ellipsized mid-way while the locator floated right; the path now
+       owns its own line under the title and only truncates when it genuinely cannot fit. */
     .search-row-open {
       display: flex;
-      align-items: baseline;
+      align-items: flex-start;
       gap: 0.4rem;
       width: 100%;
       text-align: left;
       background: none;
       border: none;
-      padding: 0.1875rem 0.125rem;
+      padding: 0.25rem 0.3rem;
       border-radius: 0.25rem;
       font: inherit;
       font-size: var(--font-size-xs);
-      color: inherit;
+      /* The default row is a hit the run did NOT draw on: present, ranked, dimmed. */
+      color: var(--text-secondary);
       cursor: pointer;
       min-width: 0;
+    }
+    /* A row the run actually drew on: tinted ground + full-strength text (the filled dot and the
+       "used" tag carry the same fact for readers who cannot see the tint). */
+    .search-row-open.used {
+      background: var(--accent-tint-08);
+      color: var(--text-primary);
     }
     .search-row-open:hover,
     .search-row-open:focus-visible {
@@ -332,15 +354,53 @@ export class ToolCallCard extends JfElement {
     }
     .search-row-dot {
       flex: none;
-      align-self: center;
-      width: 0.3rem;
-      height: 0.3rem;
+      width: 0.35rem;
+      height: 0.35rem;
+      margin-top: 0.45em;
+      border: 1px solid currentColor;
       border-radius: 50%;
+      background: transparent;
+    }
+    .search-row-open.used .search-row-dot {
       background: currentColor;
+    }
+    /* A used row's second line is NOT dimmed, and that is measured, not aesthetic: the tint lightens
+       the ground just enough that --text-secondary lands at 4.31:1 on the dark window (Sv3Main's
+       contrast oracle). The dimming axis is used-vs-unused — inside a used row the hierarchy is
+       carried by weight and the locator's italic instead. */
+    .search-row-open.used .search-row-path,
+    .search-row-open.used .search-row-locator {
+      color: inherit;
+    }
+    .search-row-lines {
+      display: flex;
+      flex-direction: column;
+      gap: 0.0625rem;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .search-row-line {
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+      min-width: 0;
     }
     .search-row-filename {
       font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    /* The small "used" tag — the accessible twin of the tint, in the muted accent. */
+    .search-row-used-tag {
       flex: none;
+      font-size: var(--font-size-xs);
+      line-height: 1.4;
+      padding: 0 0.4em;
+      border-radius: 999px;
+      background: var(--accent-tint-16);
+      color: var(--text-tint);
     }
     .search-row-path {
       color: var(--text-secondary);
@@ -353,7 +413,6 @@ export class ToolCallCard extends JfElement {
       color: var(--text-secondary);
       font-style: italic;
       flex: none;
-      margin-left: auto;
     }
     .search-more {
       color: var(--text-secondary);
@@ -430,7 +489,11 @@ export class ToolCallCard extends JfElement {
     const riskClass =
       tc.risk === 'HIGH' ? 'high-risk' : tc.risk === 'MEDIUM' ? 'medium-risk' : '';
     const showRisk = tc.risk === 'HIGH' || tc.risk === 'MEDIUM';
-    const { label, target } = composeToolLabel(tc.toolName, tc.arguments);
+    // Tempdoc 871 §3b — the header is the model's ACT ("Searched"), from the ONE 565 §12.3.B label
+    // authority, so the unified window and SV3 read identically. A SEARCH target is a query, so it
+    // is quoted (a filename target is not — quoting a path would read as a literal, not a name).
+    const { verbLabel, target } = composeToolLabel(tc.toolName, tc.arguments);
+    const quotedTarget = verbLabel === 'Searched' && target ? `“${target}”` : target;
     // Tempdoc 867 — the search projection now carries the level-2 body's own data (hits joined
     // against the run's evidence set); null when there is no evidence (or, the honest old-record
     // edge case, no derivable query) so the raw-output path below renders instead of a fabrication.
@@ -439,7 +502,7 @@ export class ToolCallCard extends JfElement {
       : null;
     const accessory = searchProjection ? this.searchAccessory(searchProjection) : '';
     const presentedStatus = presentedToolStatus(tc.status, tc.success);
-    const headerLabel = `${this.expanded ? 'Collapse' : 'Expand'} ${label}${target ? ` ${target}` : ''} — ${presentedStatus}`;
+    const headerLabel = `${this.expanded ? 'Collapse' : 'Expand'} ${verbLabel}${target ? ` ${target}` : ''} — ${presentedStatus}`;
     return html`
       <div class="tool-card ${riskClass}">
         <div
@@ -461,7 +524,10 @@ export class ToolCallCard extends JfElement {
                 ></jf-run-node>`
               : nothing}
             <span class="tool-name"
-              >${label}${target ? html`<span class="tool-target">${target}</span>` : nothing}</span
+              ><span class="tool-verb" data-testid="tool-card-verb">${verbLabel}</span
+              >${target
+                ? html`<span class="tool-target" data-testid="tool-card-target">${quotedTarget}</span>`
+                : nothing}</span
             >
           </span>
           ${accessory
@@ -505,23 +571,29 @@ export class ToolCallCard extends JfElement {
     `;
   }
 
-  /** Tempdoc 867 — "N results · M in evidence"; the evidence segment omits when the run's evidence
-   * set was never wired to this card (an honest "we don't know", not a claimed zero). */
+  /** Tempdoc 867/871 — "N results · M used"; the used segment omits when the run's evidence set was
+   * never wired to this card (an honest "we don't know", not a claimed zero). */
   private searchAccessory(projection: AgentSearchCardProjection): string {
     const results = countLabel(projection.resultCount, 'result');
     if (this.evidencePaths === null) return results;
-    return `${results} · ${projection.evidenceCount} in evidence`;
+    return `${results} · ${projection.evidenceCount} used`;
   }
 
   /**
-   * Tempdoc 867 §2a — "roots · pipeline preset actually used" (type filters are dropped: not a
-   * per-call fact). `mode` is '' on a record persisted before the 867 backend stamp — the named gap
-   * — so the line renders only what this call's record actually carries, never a guessed preset.
+   * Tempdoc 871 §3b — the scope/filters line: the facts of the CALL, always rendered at level 2.
+   *   - the folder restriction, or "all folders" when the call carried none (that IS a fact of the
+   *     call's arguments — the absence of `path_prefix` means corpus-wide, not "unknown");
+   *   - the RESOLVED pipeline preset, when the record carries one (867 §2a's named gap: a record
+   *     persisted before that stamp simply does not say, and the segment is omitted, never guessed);
+   *   - the `limit` the call explicitly asked for (omitted when it asked for none — the effective
+   *     default is a config fact the record does not carry).
+   * The query moved to the header (871 §3b) and the count to the accessory, so neither repeats here.
    */
   private searchScopeLine(projection: AgentSearchCardProjection): string {
-    const base = `${countLabel(projection.resultCount, 'result')} for "${projection.query}"`;
-    const scoped = projection.scope ? `${base} in ${projection.scope}` : base;
-    return projection.mode ? `${scoped} · ${projection.mode}` : scoped;
+    const segments = [projection.scope || 'all folders'];
+    if (projection.mode) segments.push(projection.mode);
+    if (projection.limit !== null) segments.push(`limit ${projection.limit}`);
+    return segments.join(' · ');
   }
 
   /**
@@ -549,32 +621,39 @@ export class ToolCallCard extends JfElement {
   }
 
   /**
-   * Tempdoc 867 — the search tool card's level-2 body: a muted scope line (roots · pipeline preset
-   * actually used — type filters are dropped per §2a, not a per-call fact), then ONLY the hits that
-   * are in the run's evidence set (dot · filename · dim path · locator), capped at
-   * {@link EVIDENCE_ROW_CAP} (871 §1 + the live finding above the constant's declaration), a footer
-   * honestly counting what the cap hid, and an "Open in Search" pill (852 owns the actual navigation —
+   * Tempdoc 871 §3b — the search tool card's level-2 body: the scope/filters line, then the model's
+   * FULL ranked list (capped at {@link SEARCH_ROW_CAP}) with the rows the run drew on marked, a
+   * footer counting what the cap hid, and an "Open in Search" pill (852 owns the actual navigation —
    * this only dispatches the intent).
    *
-   * The footer is composed from the projection's OWN two counts, not from the rendered row list, so
-   * it never mixes "hidden by the cap" with "never retrieved as evidence" into one misleading number:
-   *   - hidden-in-evidence = max(0, evidenceCount − EVIDENCE_ROW_CAP) — "N more in evidence"
-   *   - retrieved-not-in-evidence = resultCount − evidenceCount — "N more retrieved, not in evidence"
-   * Each segment renders only when > 0, joined with " · " when both are present.
+   * This REVERSES 867's used-only summary (owner, 2026-08-26): filtering to the used rows hid the
+   * ranking the reader is trying to judge — whether the model's search was any good is a fact about
+   * the whole list, not about its accepted subset. Every row stays clickable, used or not.
+   *
+   * The footer counts what is BEYOND THE CAP, and its used/not-used split is composed from the hits
+   * this card actually observed, never inferred:
+   *   - `K more used`   = hits past the cap whose path is in the run's evidence set;
+   *   - `J more retrieved, not used` = the remaining hidden total (`resultCount` − rendered − K).
+   * When the evidence set was never wired, the card does not know which hidden hits were used, so
+   * the footer says `N more results` rather than claiming any of them went unused.
    *
    * The per-row open path is UNCHANGED in contract: clicking a row fires the same `card-open`
    * CustomEvent (bubbles, composed, `{id}`) the old nested `<jf-results-card>` excerpt rows fired, so
    * the mount site's existing `findAgentSearchHit(structuredData, id)` resolution keeps working.
    */
   private renderSearchBody(projection: AgentSearchCardProjection): TemplateResult {
-    const rows = projection.hits.filter((h) => h.inEvidence).slice(0, EVIDENCE_ROW_CAP);
-    const hiddenInEvidence = Math.max(0, projection.evidenceCount - EVIDENCE_ROW_CAP);
-    const retrievedNotInEvidence = projection.resultCount - projection.evidenceCount;
-    const footerSegments = [
-      hiddenInEvidence > 0 ? `${hiddenInEvidence} more in evidence` : null,
-      retrievedNotInEvidence > 0 ? `${retrievedNotInEvidence} more retrieved, not in evidence` : null,
-    ].filter((s): s is string => s !== null);
-    const footerText = footerSegments.join(' · ');
+    const rows = projection.hits.slice(0, SEARCH_ROW_CAP);
+    const hiddenUsed = projection.hits.slice(SEARCH_ROW_CAP).reduce((n, h) => (h.inEvidence ? n + 1 : n), 0);
+    const hiddenTotal = Math.max(0, projection.resultCount - rows.length);
+    const hiddenOther = Math.max(0, hiddenTotal - hiddenUsed);
+    const footerSegments =
+      this.evidencePaths === null
+        ? [hiddenTotal > 0 ? `${hiddenTotal} more ${hiddenTotal === 1 ? 'result' : 'results'}` : null]
+        : [
+            hiddenUsed > 0 ? `${hiddenUsed} more used` : null,
+            hiddenOther > 0 ? `${hiddenOther} more retrieved, not used` : null,
+          ];
+    const footerText = footerSegments.filter((s): s is string => s !== null).join(' · ');
     const scopeText = this.searchScopeLine(projection);
     return html`<div class="tool-search-body" data-testid="tool-search-body">
       <div class="search-scope" data-testid="tool-search-scope">${scopeText}</div>
@@ -584,16 +663,28 @@ export class ToolCallCard extends JfElement {
               (hit) => html`<li>
                 <button
                   type="button"
-                  class="search-row-open"
+                  class="search-row-open ${hit.inEvidence ? 'used' : ''}"
                   data-testid="tool-search-row"
+                  data-used=${hit.inEvidence ? 'true' : 'false'}
                   @click=${() => this.openSearchHit(hit.id)}
                 >
                   <span class="search-row-dot" aria-hidden="true"></span>
-                  <span class="search-row-filename">${hit.title}</span>
-                  <span class="search-row-path">${hit.path}</span>
-                  ${hit.locator
-                    ? html`<span class="search-row-locator">${hit.locator}</span>`
-                    : nothing}
+                  <span class="search-row-lines">
+                    <span class="search-row-line" data-testid="tool-search-row-title">
+                      <span class="search-row-filename">${hit.title}</span>
+                      ${hit.inEvidence
+                        ? html`<span class="search-row-used-tag" data-testid="tool-search-row-used"
+                            >used</span
+                          >`
+                        : nothing}
+                    </span>
+                    <span class="search-row-line" data-testid="tool-search-row-path">
+                      <span class="search-row-path">${hit.path}</span>
+                      ${hit.locator
+                        ? html`<span class="search-row-locator">${hit.locator}</span>`
+                        : nothing}
+                    </span>
+                  </span>
                 </button>
               </li>`,
             )}
