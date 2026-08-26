@@ -578,6 +578,15 @@ describe('MarkdownBlock 822 §3c — the ungrounded mark has its own color', () 
     const weak = shippedInk('.cite-ref.cite-weak');
     const ungrounded = shippedInk('.cite-ref.cite-ungrounded');
     expect(new Set([grounded, weak, ungrounded]).size).toBe(3);
+    // Tempdoc 869 F6 — FOUR inks, because there are four things a mark can be, and the SOURCE tier
+    // (the base rule, worn by a tier-2 mark that states no grounding class) is one of them. C3's
+    // first cut gave the base rule `--text-secondary`, which is `.cite-weak`'s own shipped ink: in
+    // any window that re-points neither hook — the shipped shell — a mark asserting "the model
+    // named this source" and a mark asserting "the verifier scored this sentence WEAKLY" resolved
+    // to one colour. Moving the tint off the base rule is only half the inversion; the other half
+    // is that what falls through must not collide with a tier that states itself.
+    const sourceTier = shippedInk('.cite-ref');
+    expect(new Set([sourceTier, grounded, weak, ungrounded]).size).toBe(4);
     // The warning role's TEXT member — `check-accent-as-text` forbids an `--accent-*` fill token as a
     // text color, and sv3 bridges `--text-warning` and `--accent-warning` to one `--warning-foreground`.
     expect(ungrounded).toBe('--text-warning');

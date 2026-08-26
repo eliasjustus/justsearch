@@ -404,12 +404,12 @@
       "note": "Tempdoc 869 §2.5: the renderer that projects `Citation` (← ContextCitation via `claimsToCitations`) into the answer's inline marks — the verified `.cite-ref` mark, the tier-2 upgrade of a model-authored literal, and the muted `.pseudo-cite` a frame refuses to let pose as a reference. 869's invariants I-1 (mark position and tier colour) and I-2 (which citation-shaped text is reachable by the mute, and that tier 2 runs first) live in the guard."
     },
     {
-      "id": "sv3-record-evidence-projection",
+      "id": "evidence-fe-record-evidence",
       "kind": "projection",
       "lang": "ts",
       "path": "modules/ui-web/src/shell-v0/components/chat/recordEvidence.ts",
       "guard": "test:MarkdownBlock.citationProjection",
-      "note": "Tempdoc 869 §2.5: the record→evidence projection `sv3-record-evidence` consumes (847 §2.3) — the shared envelope reader that owns the 836 §4 producer gate and hands the answer plane's sources/matches on to `claimsToCitations`, whose output the registered renderer above marks."
+      "note": "Tempdoc 869 §2.5: the record→evidence projection `sv3-record-evidence` consumes (847 §2.3) — the shared envelope reader that owns the 836 §4 producer gate and hands the answer plane's sources/matches on to `claimsToCitations`, whose output the registered renderer above marks. Named `evidence-fe-*` with its FE siblings, not `sv3-*`: the module is the answer plane's, and every window reads it. 869 F10: the guard exercises `admittedMatches` directly — the entry previously pointed at a file that never imported this one, so the gate was green over a surface nothing tested."
     },
     {
       "id": "evidence-fe-document-pane",

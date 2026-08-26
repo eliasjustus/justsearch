@@ -3600,6 +3600,14 @@ export class UnifiedChatView extends JfElement {
    * detail reuses the same `citation-select` contract the Sources pane and RAG path use.
    */
   private agentAnswerCitations(): Citation[] {
+    // Tempdoc 869 F5 — run-scoped, through the same {@link answerEvidenceIsThisRun} verdict the
+    // timeline projection and the live block's `.sourceCount` read. This resolver's ONE consumer is
+    // the live streaming block, and `answerSources`/`answerCitations` are written only by `onDone`:
+    // a run that ended without one (error, abort, watchdog, budget stop) leaves the previous run's
+    // evidence standing, so the marks would be run N-1's, woven into run N's prose. Gating the
+    // count alone would have been the worse half-fix — the renderer told "nothing resolves" while
+    // handed a verified mark list from a different answer.
+    if (!this.answerEvidenceIsThisRun()) return [];
     return this.resolveAnswerCitations(
       this.agentCtrl?.answerSources ?? [],
       this.agentCtrl?.answerCitations ?? [],
@@ -3947,19 +3955,32 @@ export class UnifiedChatView extends JfElement {
     return it;
   }
 
+  /**
+   * Tempdoc 859 §3c / amendment 7 — is the controller's answer evidence THIS run's? The guard
+   * belongs at the read site, not inside `projectLiveAgentActivity` (which is pure and receives the
+   * grounding as a parameter). Evidence is written only by `onDone`, so a run that terminated
+   * without one — error, abort, watchdog, budget stop — leaves the previous run's sources standing.
+   *
+   * Tempdoc 869 F5 — extracted from {@link mergedTimeline} so the live answer block reads the SAME
+   * verdict. It bound `.sourceCount` straight off `answerSources.length`, which mid-stream is run
+   * N-1's list: the renderer was told "the model may reference sources 1..5" while streaming an
+   * answer whose sources did not exist yet, and the mute's whole predicate is that range. One
+   * question ("is this evidence this run's?"), one answer, every consumer.
+   */
+  private answerEvidenceIsThisRun(): boolean {
+    const ctrl = this.agentCtrl;
+    return (
+      ctrl !== null &&
+      ctrl.answerEvidenceRunId !== null &&
+      ctrl.answerEvidenceRunId === ctrl.sessionId
+    );
+  }
+
   private mergedTimeline(): UnifiedTurnItem[] {
     // The reconciliation is computed here (the one merge authority), not at render time (621 Phase 4).
     const recordItems = projectUnifiedThread(this.unifiedEvents).map((it) => this.attachLiveMatch(it));
     const ctrl = this.agentCtrl;
-    // Tempdoc 859 §3c / amendment 7 — the run-id guard belongs HERE, at the read site, not inside
-    // `projectLiveAgentActivity` (which is pure and receives the grounding as a parameter). Evidence
-    // is written only by `onDone`, so a run that terminated without one — error, abort, watchdog,
-    // budget stop — leaves the previous run's sources standing; handing them to this projection
-    // would attach run N-1's grounding to run N's failed activity.
-    const evidenceIsThisRun =
-      ctrl !== null &&
-      ctrl.answerEvidenceRunId !== null &&
-      ctrl.answerEvidenceRunId === ctrl.sessionId;
+    const evidenceIsThisRun = this.answerEvidenceIsThisRun();
     const liveItems =
       this.affordance === 'agent' && ctrl
         ? projectLiveAgentActivity(ctrl.conversation, ctrl.toolCalls, {
@@ -4631,10 +4652,21 @@ export class UnifiedChatView extends JfElement {
       ${this.renderTimeline(merged)}
       ${ctrl?.streamingText
         ? html`<div class="message assistant">
+            ${/* Tempdoc 869 F5 — the LIVE block, and the two facts it was missing. (1) The count is
+                run-scoped through the ONE `answerEvidenceIsThisRun` verdict the timeline projection
+                uses: `answerSources` is written only at `onDone`, so mid-stream it still holds run
+                N-1's list, and handing that length over told the renderer which `[n]` the model
+                could resolve in an answer whose sources did not exist yet. (2) `?is-streaming` was
+                absent, so a partial answer was treated as SETTLED and both citation passes ran on
+                every frame — weaving marks into prose the model had not finished writing. It is
+                bound from the controller's own flag rather than hard-coded from this branch's
+                guard, because `streamingText` outlives `isStreaming` between a terminal event and
+                the commit that clears the buffer. */ ''}
             <jf-markdown-block
               .text=${ctrl.streamingText}
               .citations=${this.agentAnswerCitations()}
-              .sourceCount=${(ctrl?.answerSources ?? []).length}
+              .sourceCount=${this.answerEvidenceIsThisRun() ? (ctrl.answerSources ?? []).length : 0}
+              ?is-streaming=${ctrl.isStreaming}
             ></jf-markdown-block>
             ${this.renderGroundingBadge(
               ctrl.streamingText,

@@ -364,6 +364,23 @@ describe('the shipped consumer inventory is closed', () => {
     }
   });
 
+  it('gives the LIVE agent block both halves of "this run, and still streaming" (869 F5)', () => {
+    // The one block that renders text the model is STILL WRITING, and it was missing both facts
+    // that make the citation passes safe there. It bound `.sourceCount` straight off
+    // `answerSources.length` — a list `onDone` writes, so mid-stream it is the PREVIOUS run's, and
+    // its length is exactly the range the mute's predicate calls "resolvable". And it carried no
+    // `?is-streaming`, so the renderer treated a half-written answer as settled and wove marks into
+    // prose the model had not finished. Source-level for the T-sites reason: a forgotten binding is
+    // invisible to any DOM test of the renderer.
+    const view = source('views/UnifiedChatView.ts');
+    const live = (view.match(/<jf-markdown-block\s[\s\S]*?<\/jf-markdown-block>/g) ?? []).filter(
+      (t) => t.includes('ctrl.streamingText'),
+    );
+    expect(live, 'the live agent streaming block').toHaveLength(1);
+    expect(live[0], 'a live block that renders as settled').toMatch(/\?is-streaming=\$\{/);
+    expect(live[0], 'a live count read off the previous run').toMatch(/answerEvidenceIsThisRun\(\)/);
+  });
+
   it('gives the Search v3 blocks the frame their own tail line words', () => {
     // The window computes the frame already (`sv3AnswerFrame`) and rendered its blocks at the
     // renderer's default `'grounded'` — so the receipt under the answer could say "per-sentence

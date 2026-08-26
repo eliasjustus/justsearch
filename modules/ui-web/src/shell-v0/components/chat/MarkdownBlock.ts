@@ -234,9 +234,29 @@ function collapseInlineLinks(s: string): string {
 /** An accepted anchor run, in character offsets of the flattened DOM text. */
 interface MatchedRun {
   startIndex: number;
+  /**
+   * Tempdoc 869 F2 — where the CITED SENTENCE ends: the matched run plus the punctuation that
+   * closes it, and never a model literal the walk stepped over. The span asserts "the cross-encoder
+   * scored THIS text"; a `[n]` the model wrote is not text it scored. Before this split the two
+   * were one number, so the `.cite-sentence` underline swallowed the literal — and with it the
+   * muted `.pseudo-cite` the neutralizer later made of it, rendering "not verified" INSIDE the
+   * grounded sentence it contradicts.
+   */
+  spanEnd: number;
+  /** Where the MARK goes: after any skipped literal and the sentence's own closing punctuation. */
   endIndex: number;
   /** Index of the run's last token in the DOM token array — where the next citation resumes. */
   lastTok: number;
+}
+
+/**
+ * The length of a {@link LEADING_LITERAL_REF} match anchored at `at`, or `0` when none starts there.
+ * Stated once so the span walk and the mark walk cannot disagree about where a literal begins.
+ */
+function literalRefLength(full: string, at: number): number {
+  LEADING_LITERAL_REF.lastIndex = at;
+  const m = LEADING_LITERAL_REF.exec(full);
+  return m === null ? 0 : m[0].length;
 }
 
 /**
@@ -279,6 +299,12 @@ function matchWordRun(
   domToks: readonly WordToken[],
   fromTok: number,
   full: string,
+  /**
+   * Tempdoc 869 F3 — does the flattened offset fall inside a `pre`/`code` text node? `full` spans
+   * EVERY text node, so without this the walks below cannot tell a `[1]` the model wrote in prose
+   * from one the reader is meant to read verbatim inside a fence.
+   */
+  inCode: (index: number) => boolean,
 ): MatchedRun | null {
   const first = keyToks[0];
   if (!first) return null;
@@ -326,6 +352,19 @@ function matchWordRun(
   const startIndex = domToks[at]!.start;
   let lastTok = at + len - 1;
   let endIndex = domToks[lastTok]!.end;
+  // Tempdoc 869 F2 — the SENTENCE closes here: the run plus the punctuation that immediately
+  // follows it, stopping at the first literal (or at code). Everything the walk below then steps
+  // over belongs to the MARK's position and to nothing the verifier read.
+  let spanEnd = endIndex;
+  const spanLimit = domToks[lastTok + 1]?.start ?? full.length;
+  while (
+    spanEnd < spanLimit &&
+    !/\s/.test(full[spanEnd]!) &&
+    !inCode(spanEnd) &&
+    literalRefLength(full, spanEnd) === 0
+  ) {
+    spanEnd++;
+  }
   // Tempdoc 869 C1 (§3.1 rule 1) — the extension is LITERAL-TRANSPARENT: a model-written `[n]`
   // between the run and its sentence's punctuation is skipped as if it were not written, so the
   // mark lands exactly where it would land in the same text without it. Two shapes needed this.
@@ -336,19 +375,24 @@ function matchWordRun(
   // is a property of the bracket, not of whether the number resolves to a source, and this
   // function is not given the citation set.
   for (;;) {
-    LEADING_LITERAL_REF.lastIndex = endIndex;
-    const lit = LEADING_LITERAL_REF.exec(full);
-    if (lit === null) break;
-    endIndex += lit[0].length;
+    const litLen = literalRefLength(full, endIndex);
+    if (litLen === 0) break;
+    // Tempdoc 869 F3 — only a literal in PROSE is transparent. A `[1]` inside `<code>` is verbatim
+    // content the reader is meant to see, and stepping over it put the mark (and the sentence span)
+    // inside the code element — the renderer editing text it must reproduce exactly.
+    if (inCode(endIndex + (full[endIndex] === '[' ? 0 : 1))) break;
+    endIndex += litLen;
     // The digits inside a literal are word tokens of their own, so the run has now crossed them:
     // advance the consumed-range cursor (§2.1d) past every token the skip walked over.
     while (lastTok + 1 < domToks.length && domToks[lastTok + 1]!.start < endIndex) lastTok++;
   }
   // Extend over the punctuation that immediately follows (no whitespace, no next token), so the
-  // mark still lands AFTER the sentence's period rather than inside it.
+  // mark still lands AFTER the sentence's period rather than inside it. It stops at a code boundary
+  // for the same reason the skip does (869 F3): `word` + `<code>[1]</code>` would otherwise walk
+  // the mark's insertion point across the element edge.
   const nextTokStart = domToks[lastTok + 1]?.start ?? full.length;
-  while (endIndex < nextTokStart && !/\s/.test(full[endIndex]!)) endIndex++;
-  return { startIndex, endIndex, lastTok };
+  while (endIndex < nextTokStart && !/\s/.test(full[endIndex]!) && !inCode(endIndex)) endIndex++;
+  return { startIndex, spanEnd, endIndex, lastTok };
 }
 
 /**
@@ -547,6 +591,16 @@ export class MarkdownBlock extends JfElement {
     if (this.format === 'markdown') {
       markScrollableRegions(this.renderRoot.querySelector('.md-content'));
     }
+    // Tempdoc 869 F4b — every settled pass RE-DERIVES the muting from the current inputs, so the
+    // pipeline below is a pure function of (text, citations, sourceCount, frame) rather than of the
+    // order those arrived in. The mute used to be a one-way edit: `unsafeHTML` does not re-render
+    // when only `.citations` changes, so a block that muted `[4]` at first settle (evidence not yet
+    // attached — the cold-load shape) still carried that span when the evidence landed, and the
+    // tier-2 upgrade then nested a live `.cite-ref` INSIDE a span saying the citation was not
+    // verified. Unwrapping first makes the second settle indistinguishable from a first one.
+    if (!this.isStreaming) {
+      this.unmutePseudoCitations();
+    }
     // Tempdoc 565 §3.C — weave inline citation marks into the freshly-rendered markdown. Citations
     // attach post-stream (the matcher runs at AgentDone), so only decorate the settled answer. Lit's
     // unsafeHTML re-render wipes prior markers, so re-decorating on every render keeps them correct.
@@ -582,6 +636,29 @@ export class MarkdownBlock extends JfElement {
    *    an out-of-range `[n]` are prose here and stay untouched. With the default `sourceCount = 0`
    *    this arm mutes nothing at all.
    */
+  /**
+   * Tempdoc 869 F4b — undo every mute this block previously applied, returning each `.pseudo-cite`
+   * to the plain text it wrapped and merging the neighbours back into one node.
+   *
+   * This is what makes {@link neutralizePseudoCitations} idempotent in the strong sense: not "runs
+   * twice without doubling", but "produces the same DOM for the same inputs regardless of what the
+   * previous inputs were". The mute is a claim about the CURRENT citation set, and a citation set
+   * only ever arrives late (the matcher runs at AgentDone; a restored turn hydrates its evidence
+   * after its text) — so a mute that could not be withdrawn was a claim about a state the block had
+   * already left. The `normalize()` matters as much as the unwrap: the token walk splits on text
+   * NODES, so a `[4]` left flanked by two sibling text nodes would never be seen as one token again.
+   */
+  private unmutePseudoCitations(): void {
+    const root = this.renderRoot.querySelector('.md-content');
+    if (!root) return;
+    for (const span of [...root.querySelectorAll('.pseudo-cite')]) {
+      const parent = span.parentNode;
+      if (parent === null) continue;
+      parent.replaceChild(document.createTextNode(span.textContent ?? ''), span);
+      parent.normalize();
+    }
+  }
+
   private pseudoCiteRule(): (token: string) => string | null {
     if (this.frame === 'ungrounded') {
       return () => 'Citation-shaped text in an answer that is not grounded in your files';
@@ -597,7 +674,12 @@ export class MarkdownBlock extends JfElement {
       // Written as the POSITIVE condition so the pass fails CLOSED: an absent or non-numeric count
       // makes every comparison false and mutes nothing, where `n > count` would mute everything.
       if (!(n >= 1 && n <= this.sourceCount) || rendered.has(n)) return null;
-      return `The model cited source ${n}; the verifier did not confirm it`;
+      // Tempdoc 869 F4a — "was not verified", NOT "the verifier did not confirm it". The second
+      // wording asserts an EXAMINATION that returned a negative verdict; the frames this arm reaches
+      // include the ones where nothing examined the sentence at all (a matcher that ran out of
+      // budget, a producer the 836 §4 gate refused). The honest claim is the absence of a
+      // verification, which is the only fact the renderer holds.
+      return `The model cited source ${n}; this citation was not verified`;
     };
   }
 
@@ -622,8 +704,14 @@ export class MarkdownBlock extends JfElement {
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const t = n as Text;
       // Skip text already inside a pseudo-cite (idempotency) and the real cite marks.
+      //
+      // Tempdoc 869 F1 — and CODE, for the same reason {@link normalizeLiteralCitationTokens} skips
+      // it: `argv[1]` and `items[2]` are the language's subscript syntax, not the model claiming a
+      // source, and wrapping them muted a fragment of the reader's own code as an unverified
+      // citation. A frame is a statement about the answer's PROSE; verbatim content is quoted, not
+      // asserted.
       const parent = t.parentElement;
-      if (parent?.closest('.pseudo-cite, .cite-ref')) continue;
+      if (parent?.closest('pre, code, .pseudo-cite, .cite-ref')) continue;
       if (!PSEUDO_CITE_SPLIT.test(t.data)) continue;
       const parts = t.data.split(PSEUDO_CITE_SPLIT);
       if (parts.some((part) => PSEUDO_CITE_TOKEN.test(part) && noteFor(part) !== null)) {
@@ -752,8 +840,17 @@ export class MarkdownBlock extends JfElement {
          the STRONGEST tier's colour: the tier-2 upgrade of a literal the model wrote — which no
          cross-encoder verified — painted itself the colour of the marks that were. The grounded tier
          now states itself in its own rule below; what falls through to here is a mark that claims
-         source attribution and nothing more. */
-      color: var(--md-cite-source-color, var(--text-secondary));
+         source attribution and nothing more.
+
+         Tempdoc 869 F6 — and the default is the BODY foreground, not '--text-secondary'. The first
+         cut took the secondary token, which is also '.cite-ref.cite-weak''s: in a window that does
+         not re-point either hook — the shipped shell — the source tier and the WEAK tier resolved
+         to one ink, so the two tiers the reader is meant to tell apart were the same colour and the
+         positive-class inversion above bought nothing. Body foreground is also the honest role: a
+         tier-2 mark asserts no verification strength, so it should read as the prose it sits in
+         rather than as a subdued (weaker) version of it. Sv3 bridges '--text-primary' to
+         '--foreground', so the window and the shell agree on which role this is. */
+      color: var(--md-cite-source-color, var(--text-primary));
       cursor: pointer;
       margin-left: 0.1em;
       font-weight: 600;
@@ -886,6 +983,10 @@ export class MarkdownBlock extends JfElement {
 
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const ranges: Array<{ node: Text; start: number; end: number }> = [];
+    // Tempdoc 869 F3 — the flattened offsets of the text nodes that render VERBATIM content. The
+    // walks in `matchWordRun` read one string spanning the whole answer, so this is the only thing
+    // that tells them where the prose stops and a fence or an inline code span begins.
+    const codeSpans: Array<{ start: number; end: number }> = [];
     let full = '';
     let tn: Node | null;
     while ((tn = walker.nextNode())) {
@@ -893,12 +994,20 @@ export class MarkdownBlock extends JfElement {
       const start = full.length;
       full += t.data;
       ranges.push({ node: t, start, end: full.length });
+      if (t.parentElement?.closest('pre, code')) codeSpans.push({ start, end: full.length });
     }
     if (!full) return;
+    const inCode = (index: number): boolean =>
+      codeSpans.some((s) => index >= s.start && index < s.end);
 
     const domToks = wordTokens(full);
     /** One anchored run, carrying every citation of the sentence that anchored there (§2.1e). */
-    const anchors: Array<{ startIndex: number; endIndex: number; cites: Citation[] }> = [];
+    const anchors: Array<{
+      startIndex: number;
+      spanEnd: number;
+      endIndex: number;
+      cites: Citation[];
+    }> = [];
     // §2.1e — the dedupe key is `endIndex:label`, not `endIndex`: two sources of ONE sentence are
     // two marks at one boundary, and only a repeat of the SAME label there is a duplicate.
     const seen = new Set<string>();
@@ -906,7 +1015,12 @@ export class MarkdownBlock extends JfElement {
     // accepted run's end. Without it, an answer repeating a sentence stacks every mark on the first
     // occurrence, which is strictly worse than the pre-847 single-mark behaviour.
     let cursor = 0;
-    let group: { startIndex: number; endIndex: number; cites: Citation[] } | null = null;
+    let group: {
+      startIndex: number;
+      spanEnd: number;
+      endIndex: number;
+      cites: Citation[];
+    } | null = null;
     let groupSentence: number | null = null;
 
     // §2.1d is a statement about the ANSWER'S sentence order, so the order is established here
@@ -948,6 +1062,7 @@ export class MarkdownBlock extends JfElement {
         domToks,
         cursor,
         full,
+        inCode,
       );
       if (!run) continue; // graceful skip — tier 2 or tier 3 decides what happens next
       cursor = run.lastTok + 1;
@@ -955,7 +1070,13 @@ export class MarkdownBlock extends JfElement {
       const key = `${endIndex}:${Number(cite.label)}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      group = { startIndex: run.startIndex, endIndex, cites: [cite] };
+      group = {
+        startIndex: run.startIndex,
+        // The block guard clamps the MARK; the span can never outrun it (869 F2).
+        spanEnd: Math.min(run.spanEnd, endIndex),
+        endIndex,
+        cites: [cite],
+      };
       anchors.push(group);
     }
 
@@ -969,7 +1090,7 @@ export class MarkdownBlock extends JfElement {
 
     // Insert LAST→FIRST so earlier node offsets stay valid across splitText.
     anchors.sort((a, b) => b.endIndex - a.endIndex);
-    for (const { startIndex, endIndex, cites } of anchors) {
+    for (const { startIndex, spanEnd, endIndex, cites } of anchors) {
       const endRange = ranges.find((r) => endIndex > r.start && endIndex <= r.end);
       if (!endRange) continue;
       // The offsets were measured before any split. Two anchors CAN land on one boundary (two runs
@@ -1008,10 +1129,15 @@ export class MarkdownBlock extends JfElement {
       ];
       const selected = getSelectedSource();
       const spanned = ranges
-        .filter((r) => r.end > startIndex && r.start < endIndex)
+        .filter((r) => r.end > startIndex && r.start < spanEnd)
         .sort((a, b) => b.start - a.start);
       for (const r of spanned) {
-        // For the boundary node the marker split already truncated it to [r.start, endIndex).
+        // Tempdoc 869 F2 — the span closes at `spanEnd`, which is at or BEFORE the boundary the
+        // marker split made, so the node's tail comes off first (its own split, before the head's,
+        // so the head offset stays valid). `Math.min` because a previous anchor's marker split may
+        // already have truncated this node past `spanEnd`.
+        const tailOffset = Math.min(Math.min(spanEnd, r.end) - r.start, r.node.data.length);
+        if (tailOffset < r.node.data.length) r.node.splitText(tailOffset);
         const segStart = Math.max(startIndex, r.start);
         const offset = segStart - r.start;
         if (offset > r.node.data.length) continue; // same graceful skip as the boundary split above
@@ -1106,7 +1232,10 @@ export class MarkdownBlock extends JfElement {
     // taken per occurrence, from the literal's neighbours.
     const re = /\[(\d+)\]/g;
     for (const node of nodes) {
-      if ((node.parentElement)?.closest('pre, code, .cite-ref')) continue;
+      // Tempdoc 869 F4b — `.pseudo-cite` joins the skip list as belt and braces. The unwrap pass in
+      // `updated()` means no muted span survives into this walk, but an upgrade nesting a live mark
+      // inside a span that says "not verified" is the one outcome no ordering may produce.
+      if ((node.parentElement)?.closest('pre, code, .cite-ref, .pseudo-cite')) continue;
       const matches = [...node.data.matchAll(re)].filter((m) => byLabel.has(Number(m[1])));
       // Right-to-left so earlier offsets stay valid across splits.
       for (const m of matches.reverse()) {
@@ -1133,22 +1262,33 @@ export class MarkdownBlock extends JfElement {
    * and which side goes is read off the neighbours the literal sat between (`before` ends where the
    * literal began; `after` starts where it ended):
    *
-   *  - preceded by whitespace and followed by punctuation, whitespace or nothing → the PRECEDING
-   *    space goes, so the period closes on the word (`word [1].` → `word.`) and a mid-sentence strip
-   *    leaves a single space (`a [1] b` → `a b`);
-   *  - at the node's start → the FOLLOWING space goes, which is the block-leading `[1] The kernel…`
-   *    orphan (a leading space is invisible in the DOM and shifts the first word by a space width);
+   *  - preceded by a space or tab and followed by punctuation, whitespace or nothing → the
+   *    PRECEDING one goes, so the period closes on the word (`word [1].` → `word.`) and a
+   *    mid-sentence strip leaves a single space (`a [1] b` → `a b`);
+   *  - at the node's start OR at a line's start (869 F7) → the FOLLOWING space goes, which is the
+   *    block-leading `[1] The kernel…` orphan (a leading space is invisible in the DOM and shifts
+   *    the first word by a space width);
    *  - flanked by word characters → neither, because the model wrote no space to reclaim
    *    (`word[1].` → `word.`).
+   *
+   * A newline is never the whitespace that goes — see the F7 note in the body.
    */
   private closeLiteralGap(before: Text, after: Text): void {
     const prev = before.data.slice(-1);
     const next = after.data.slice(0, 1);
-    if (prev !== '' && /\s/.test(prev)) {
+    // Tempdoc 869 F7 — the removable whitespace is a SPACE or a TAB, never a newline. `/\s/` also
+    // matches `\n`, so a literal opening a line (`… gamma\n[1] next`) had the line break deleted and
+    // the two lines ran together — in `plain` format, where `white-space: pre-wrap` renders it, that
+    // is the model's own line structure edited away to close a gap the literal never held. A break
+    // is not a gap: at a line start it is the space AFTER the literal that goes, exactly as at a
+    // node start.
+    if (/[ \t]/.test(prev)) {
       if (next === '' || !/[\p{L}\p{N}]/u.test(next)) before.data = before.data.slice(0, -1);
       return;
     }
-    if (prev === '' && next !== '' && /\s/.test(next)) after.data = after.data.slice(1);
+    if ((prev === '' || /[\n\r]/.test(prev)) && /[ \t]/.test(next)) {
+      after.data = after.data.slice(1);
+    }
   }
 
 
