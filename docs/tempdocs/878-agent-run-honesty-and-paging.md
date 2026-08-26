@@ -864,7 +864,35 @@ returned instantly — that is the budget wall's existing behaviour and the cost
 synthesis at all, not a defect this tempdoc introduces. `AgentBudgetPolicyTest`'s "rounded UP" prose
 was corrected rather than the arithmetic, which was already right.
 
-### §I.4 Delegation
+### §I.4 Critical-analysis pass on the merge seam
+
+`origin/main` moved twice mid-flight (871/873/874/869, then 872's retirement of the observations
+store). Nine files were changed by BOTH sides since the branch point and auto-merged with no
+conflict marker — the shape the `merge-full-suite-hint` warns about, where each side is correct
+alone and the merge reopens a hole. Checked one by one:
+
+- `sv3-honesty.ts` — main ADDED `sv3AnswerFrame`; it does not touch `SV3_TRUNCATION_NOTICES` or
+  `sv3CutShortNotice`. Disjoint. The two-arm notice has exactly ONE production caller
+  (`Sv3Main.ts:1996`) and it passes both arguments explicitly, so nothing silently takes the
+  `hasAnswer = true` default; `sv3IsTruncated` reads the same function but is arm-independent (both
+  arms are non-null).
+- `AgentToolsOperationCatalog.java` — main edited `browse-folders`' comment, ours `read-document`'s
+  `offset_chars`. Disjoint.
+- `execution-surfaces.v1.json` — our note survived; the one surviving `ofDisposition` mention is our
+  own past-tense tombstone, and a repo-wide grep confirms all five remaining mentions are historical
+  context, with no live reference to the deleted symbol.
+- The FE files' behaviour is pinned by the suite, which is the real check: 460/462 files green with
+  only the two pinned pre-existing flakes.
+
+**One finding, fixed (`85df979e`).** The model-visibility note rode on
+`renderLineageFramedOutput`, and the search branch does not call it — a search card renders
+`renderSearchBody` instead (867). So the BULKIEST tool output, the one most likely to be Layer-2
+cut, was the only card that could be truncated silently. This was ours, not the merge's: the note
+was attached to the wrong thing from the start, and 871's arrival on the same file is what made it
+visible. The note is a fact about the tool RESULT rather than about the raw-output panel, so it now
+sits outside both body branches, with a search-card fixture pinning it.
+
+### §I.5 Delegation
 
 Two bounded chunks ran as pinned-opus subagents in this worktree on disjoint modules — the
 schema-aware token projection (§D.6, `app-inference` + `app-api`) and the read tool's three silent
