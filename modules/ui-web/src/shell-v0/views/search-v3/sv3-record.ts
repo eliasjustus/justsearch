@@ -40,7 +40,7 @@ import type {
   AgentSource,
 } from '../../../api/generated/shape-handlers/shared.js';
 import type { Sv3RunFeedItem } from './sv3-run.js';
-import { sv3WasHalted } from './sv3-honesty.js';
+import { sv3RecordItemStopsRun, sv3WasHalted } from './sv3-honesty.js';
 import { isSv3StoreMessageId, type Sv3Turn, type Sv3TurnEvidence } from './sv3-sessions.js';
 
 /**
@@ -250,6 +250,17 @@ interface Building {
    * to trust it, so its absence then reads as "this one was fine".
    */
   disposition: string | null;
+  /**
+   * Owner decisions 2026-08-26 — the record's own statement that THE READER STOPPED this run, from
+   * either fact that can carry it ({@link ../sv3-honesty.sv3RecordItemStopsRun}).
+   *
+   * <p>Held beside {@link disposition} rather than folded into it, because the two are different
+   * claims and only one of them is the run's own account of how it ended. A late cancel leaves a
+   * genuinely `COMPLETED` disposition — the run really did finish — and overwriting it here would
+   * lose that, while reading the stop off the disposition alone loses every cancel that never
+   * reached a terminal at all.
+   */
+  stopRequested: boolean;
   /** The record opened this turn on a `user` item, rather than on whatever arrived first. */
   openedByUser: boolean;
 }
@@ -273,6 +284,7 @@ const open = (
   evidence: null,
   groundingDeltas: [],
   disposition: null,
+  stopRequested: false,
   assistantId: null,
 });
 
@@ -323,6 +335,12 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
     // written by the one shape that dispatched it, so the first is the answer; a run-plane item
     // declares nothing and cannot overwrite it.
     turn.declaredShapeId = turn.declaredShapeId ?? declaredShapeOf(item);
+    // Owner decisions 2026-08-26 — read off EVERY item kind, before the per-kind arms, because the
+    // two facts that can carry it ride on two different kinds and neither arm owns the question.
+    // ONCE TRUE, ALWAYS TRUE for the turn: a stop is an act, not a state, so a later event saying
+    // nothing about it cannot un-say it.
+    const itemStopsRun = sv3RecordItemStopsRun(item.kind, item.attributes);
+    if (itemStopsRun) turn.stopRequested = true;
     // Tempdoc 848 §2.7 — reasoning is read off EVERY item kind, not just the assistant one. A turn
     // can record several assistant items (an iterating shape, a multi-step run), so blocks accumulate
     // in record order rather than the last one winning; and a run that was HALTED or ERRORED carries
@@ -371,7 +389,21 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       turn.groundingDeltas.push(...groundingDeltaOf(call.structuredData));
       continue;
     }
-    if (item.kind === 'error') turn.errored = true;
+    if (item.kind === 'error') {
+      turn.errored = true;
+      // Owner decision 2026-08-26, applied to the TIMELINE as well as the receipt. The cancel path
+      // logs an error entry on its way down, and drawing it as a note labelled "Error" words the
+      // reader's own act as a malfunction — the same thing "failed" did in the receipt, one row
+      // lower. The act itself is already on the record as the `stop_requested` note
+      // (`AgentLoopService.cancelSession`), so this drops a second row, not the only one.
+      //
+      // NO CARRIER CONSEQUENCE (tempdoc 533 / 859 §A §1.3): only this NOTE is dropped. The item
+      // still projects — `errored` and `stopRequested` are read off it above, and its folded
+      // thinking is already emitted as `reasoning` activity items before the per-kind arms — and
+      // nothing changes about which events project on the Java side, so the fold's cut/flush
+      // targeting (whose trailing rule names the run's ERROR event) is untouched.
+      if (itemStopsRun) continue;
+    }
     turn.activity.push({
       kind: 'note',
       id: item.id,
@@ -441,7 +473,21 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       // ENTRY. `applySv3Record` already carried a live `halted` across a refresh (`sv3-sessions.ts`
       // `status: prior.status === 'halted' ? …`), which is exactly why the divergence only showed on
       // a COLD load, where there is no prior turn to carry.
-      status: sv3WasHalted(turn.disposition) ? 'halted' : turn.errored ? 'failed' : 'complete',
+      //
+      // Owner decisions 2026-08-26 extend that precedence by one case each, and both are the SAME
+      // rule read from a different fact. D3 keyed on `disposition`, which a cancelled run does not
+      // always have: a run stopped before it produced an answer writes no assistant row at all, so
+      // the derivation fell through to `errored` and the record called the reader's Stop a failure
+      // — the exact divergence D3 fixed, surviving in the case D3's fact could not reach. And a stop
+      // that RACES the terminal leaves a truthful `COMPLETED` disposition, so the halt has to win
+      // over a completion as well as over an error. `stopRequested` carries both, and it is checked
+      // FIRST for the same reason halt led the ternary before: the reader's own act outranks every
+      // account the run gives of itself.
+      status: turn.stopRequested || sv3WasHalted(turn.disposition)
+        ? 'halted'
+        : turn.errored
+          ? 'failed'
+          : 'complete',
       evidence,
       detail: '',
       toolCalls: turn.tools,

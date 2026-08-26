@@ -23,7 +23,12 @@ import {
   sv3SourcesTriggerCount,
   sv3SourcesTriggerLabel,
   sv3TailModelLabel,
+  sv3RecordItemStopsRun,
+  sv3WasHalted,
   SV3_CORPUS_UNKNOWN,
+  SV3_DISPOSITION_CANCELLED,
+  SV3_ERROR_CODE_CANCELLED,
+  SV3_PHASE_STOP_REQUESTED,
   SV3_SOURCES_COUNT_IN_TRIGGER,
 } from './sv3-honesty.js';
 import { CITATIONS_LABEL, SOURCES_LABEL } from './fixtures.js';
@@ -42,6 +47,43 @@ const withLock = (state: string | undefined): AiState =>
       ? {}
       : { conversationProtection: { state } }) as unknown as StatusSnapshot,
   });
+
+describe('the stop vocabulary matches the wire, and nothing but a test binds it', () => {
+  // Three literals this module owns are the backend's, spelled again in TypeScript. NOTHING BINDS
+  // THEM — no generator, no contract — so a rename on the Java side would leave a silently dead
+  // predicate here, which for a HALT means the reader's own act is re-worded as a failure. Pinning
+  // them against the documented Java values is the cheapest thing that turns that into a red test,
+  // and it is the reason each constant's javadoc names its producer.
+  it('pins the three literals to the Java values they mirror', () => {
+    // io.justsearch.agent.TerminalDisposition.CANCELLED
+    expect(SV3_DISPOSITION_CANCELLED).toBe('CANCELLED');
+    // io.justsearch.agent.api.AgentErrorCode.CANCELLED, carried onto the record's ERROR event by
+    // AgentInteractionMapper's `error` case as `attributes.errorCode`.
+    expect(SV3_ERROR_CODE_CANCELLED).toBe('CANCELLED');
+    // io.justsearch.agent.api.AgentEvent.AgentProgress.PHASE_STOP_REQUESTED, listed in
+    // AgentInteractionMapper.DURABLE_PROGRESS_PHASES so it survives a reload.
+    expect(SV3_PHASE_STOP_REQUESTED).toBe('stop_requested');
+    // The two CANCELLED spellings are the same string on different AXES — a disposition and an
+    // error code — so they are separate constants on purpose, read by different predicates.
+    expect(sv3WasHalted(SV3_DISPOSITION_CANCELLED)).toBe(true);
+  });
+
+  it('reads the stop off the kind that carries it, and off no other', () => {
+    expect(sv3RecordItemStopsRun('error', { errorCode: SV3_ERROR_CODE_CANCELLED })).toBe(true);
+    expect(sv3RecordItemStopsRun('progress', { phase: SV3_PHASE_STOP_REQUESTED })).toBe(true);
+    // The twins that must stay false — otherwise the two cases above would pass for a predicate
+    // that answered `true` to anything.
+    expect(sv3RecordItemStopsRun('error', { errorCode: 'PROVIDER_ERROR' })).toBe(false);
+    expect(sv3RecordItemStopsRun('progress', { phase: 'budget_raised' })).toBe(false);
+    expect(sv3RecordItemStopsRun('error', {})).toBe(false);
+    // Crossed axes: the phase is not an error code and the code is not a phase, so neither is read
+    // off the other's kind.
+    expect(sv3RecordItemStopsRun('progress', { errorCode: SV3_ERROR_CODE_CANCELLED })).toBe(false);
+    expect(sv3RecordItemStopsRun('error', { phase: SV3_PHASE_STOP_REQUESTED })).toBe(false);
+    // And a kind that carries neither fact never claims one.
+    expect(sv3RecordItemStopsRun('assistant', { errorCode: SV3_ERROR_CODE_CANCELLED })).toBe(false);
+  });
+});
 
 describe('the lock is read from EVERY snapshot, and only when the snapshot says so', () => {
   it('picks up a lock taken elsewhere', () => {

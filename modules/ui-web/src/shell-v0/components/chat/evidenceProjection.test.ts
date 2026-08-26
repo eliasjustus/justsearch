@@ -27,6 +27,8 @@ import {
   sourcesAreChunkPrecise,
   sourceGrounding,
   sourceGroundingLabel,
+  // Tempdoc 868 §B.3 — the acquisition axis' one normalisation point.
+  acquisitionOf,
   // Tempdoc 849 slice 3 §7 — the citation header's label authority.
   inclusionBadge,
   claimMatch,
@@ -65,6 +67,9 @@ const FULL: RetrievalCitation = {
   headingLevel: 2,
   contextInclusion: 'partial',
   contextIncludedChars: 96,
+  // Tempdoc 868 §B.3 — a retrieval citation is a search hit by construction, so this plane only ever
+  // states `retrieved`. It is set here so the field-classification case below sees it at all.
+  acquisition: 'retrieved',
 };
 
 describe('evidenceProjection — total projection of the evidence record', () => {
@@ -99,6 +104,10 @@ describe('evidenceProjection — total projection of the evidence record', () =>
       'headingText',
       // Tempdoc 849 §5.1 — retrieved-vs-received, carried as EvidenceItem.inclusion.
       'contextInclusion',
+      // Tempdoc 868 §B.3 — how the source arrived, carried as EvidenceItem.acquisition. Represented
+      // rather than dropped because two labels open with it, and a card that could not read it would
+      // have to re-derive the word — the drift the one authority exists to prevent.
+      'acquisition',
     ]);
     // Deliberately dropped — not needed by the citation card (chunk indexing +
     // heading depth are navigation-internal, not user-facing evidence).
@@ -403,6 +412,54 @@ describe('sourceGrounding — faithfulness join by ARRAY POSITION (603 C1 / PART
     expect(g.tier).toBe('low'); // never "high confidence"
   });
 
+  it('868: every prefixed branch takes its opening word from the acquisition axis', () => {
+    // All four branches of the label, over an OPENED source. Three name the acquisition; the cited
+    // branch names none, because "Grounds N sentences" is a statement about the answer rather than
+    // about how the source arrived.
+    const opened = { acquisition: 'opened' };
+    const incomplete: SourceGrounding = { cited: false, groundedSentences: 0, similarity: 0, tier: null, state: 'grounding-incomplete' };
+    const unexamined: SourceGrounding = { cited: false, groundedSentences: 0, similarity: 0, tier: 'low' as never, state: 'unexamined' };
+    const uncited: SourceGrounding = { cited: false, groundedSentences: 0, similarity: 0, tier: 'low' as never, state: 'examined-uncited' };
+    const cited: SourceGrounding = { cited: true, groundedSentences: 2, similarity: 0.8, tier: 'high' as never, state: 'cited' };
+    expect(sourceGroundingLabel(incomplete, opened)).toBe('Opened · grounding check did not complete');
+    expect(sourceGroundingLabel(unexamined, opened)).toBe('Opened · not examined');
+    expect(sourceGroundingLabel(uncited, opened)).toBe('Opened · not cited');
+    expect(sourceGroundingLabel(cited, opened)).toBe('Grounds 2 sentences');
+    // The whole point, stated as a refusal: no branch may still say "Retrieved" about this source.
+    for (const g of [incomplete, unexamined, uncited, cited]) {
+      expect(sourceGroundingLabel(g, opened)).not.toContain('Retrieved');
+    }
+  });
+
+  it('868: an absent or unreadable acquisition says "Retrieved" — the state that existed before the read tool', () => {
+    const uncited: SourceGrounding = { cited: false, groundedSentences: 0, similarity: 0, tier: 'low' as never, state: 'examined-uncited' };
+    // No source at all (a caller with nothing to read), a source that reports nothing, and a value
+    // outside the vocabulary. Only `opened` is minted by the read path, so an unrecognised value is
+    // not an opened source — and `retrieved` is the conservative half of 865 §7.6's invariant.
+    expect(sourceGroundingLabel(uncited)).toBe('Retrieved · not cited');
+    expect(sourceGroundingLabel(uncited, {})).toBe('Retrieved · not cited');
+    expect(sourceGroundingLabel(uncited, { acquisition: 'fetched' })).toBe('Retrieved · not cited');
+  });
+
+  it('868: acquisitionOf is the ONE place absence is answered', () => {
+    expect(acquisitionOf({ acquisition: 'opened' })).toBe('opened');
+    expect(acquisitionOf({ acquisition: 'retrieved' })).toBe('retrieved');
+    expect(acquisitionOf({})).toBe('retrieved');
+    expect(acquisitionOf(null)).toBe('retrieved');
+    expect(acquisitionOf(undefined)).toBe('retrieved');
+    // Unlike `contextInclusionOf`, an unrecognised value is NOT refused into a null: absence has a
+    // real answer on this axis, so there is no third state for it to fall into.
+    expect(acquisitionOf({ acquisition: 'OPENED' })).toBe('retrieved');
+  });
+
+  it('868: the projection resolves acquisition, and it never touches the score or the tier', () => {
+    expect(toEvidenceItem(FULL).acquisition).toBe('retrieved');
+    const opened = toEvidenceItem({ ...FULL, acquisition: 'opened' });
+    expect(opened.acquisition).toBe('opened');
+    // Containment, the same rule inclusion carries: how a source arrived is not a relevance grade.
+    expect(opened.score).toEqual(toEvidenceItem(FULL).score);
+  });
+
   it('sourceGroundingLabel: count when cited, honest "not cited" otherwise', () => {
     expect(sourceGroundingLabel({ cited: true, groundedSentences: 1, similarity: 0.8, tier: 'high' as never, state: 'cited' })).toBe('Grounds 1 sentence');
     expect(sourceGroundingLabel({ cited: true, groundedSentences: 3, similarity: 0.8, tier: 'high' as never, state: 'cited' })).toBe('Grounds 3 sentences');
@@ -443,11 +500,26 @@ describe('849 §7 — the citation header labels', () => {
     expect(inclusionBadge(null)).toBeNull();
   });
 
+  it('868: the dropped badge opens with the acquisition word, and its DETAIL follows', () => {
+    const opened = { acquisition: 'opened' };
+    expect(inclusionBadge('dropped', opened)?.label).toBe('Opened · never sent to the model');
+    // "The search found this passage" is the retrieval claim again, one sentence quieter. A test on
+    // the label alone would pass while the detail below it kept saying the false thing.
+    expect(inclusionBadge('dropped', opened)?.detail).not.toContain('search');
+    expect(inclusionBadge('dropped', opened)?.detail).toContain('opened this document');
+    // `included` / `partial` name no acquisition at all: "sent to the model" is a fact about the
+    // prompt, and how the passage got there is a different axis that has no business in it.
+    expect(inclusionBadge('included', opened)?.label).toBe('Sent to the model');
+    expect(inclusionBadge('partial', opened)?.label).toBe('Partly sent to the model');
+  });
+
   it('no badge quotes a character count — 849 Q6 kept contextIncludedChars record-only', () => {
     for (const state of ['included', 'partial', 'dropped'] as const) {
-      const badge = inclusionBadge(state);
-      expect(badge).not.toBeNull();
-      expect(`${badge?.label} ${badge?.detail}`).not.toMatch(/\d/);
+      for (const source of [null, { acquisition: 'opened' }]) {
+        const badge = inclusionBadge(state, source);
+        expect(badge).not.toBeNull();
+        expect(`${badge?.label} ${badge?.detail}`).not.toMatch(/\d/);
+      }
     }
   });
 
