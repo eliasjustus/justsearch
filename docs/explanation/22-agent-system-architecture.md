@@ -90,11 +90,13 @@ Current built-in agent-facing tool names include:
 |------|--------|---------|
 | `core_search_index` | Read-only | Search indexed knowledge. Accepts `path_prefix` to restrict results to an absolute folder path. |
 | `core_read_document` | Read-only | Read one indexed document's extracted text, paged by character offset (`path`, `offset_chars`, `max_chars`). Served by the Worker's `FetchDocumentSlice`, so the readable universe is exactly the indexed corpus and the Head never opens the file. A page is capped below the per-tool-result context cap, and the result names the offset to continue from. |
-| `core_browse_folders` | Read-only | Discover indexed folders and paths. |
-| `core_file_operations` | Write/destructive depending on action | Move, rename, copy, delete, or create filesystem items with approval where required. |
+| `core_browse_folders` | Read-only | Discover indexed folders and paths. Optional `list_files`, `max_folders`, `max_files`. |
+| `core_file_operations` | Destructive | Move, rename, copy, or create directories (`MOVE`, `RENAME`, `COPY`, `MKDIR` — there is no delete), as a batch with an explanation and a conflict strategy. Requires approval, and the batch is undoable. |
 | `core_ingest_files` | Write | Request ingestion of files or folders. Takes an optional `collection` tag; omitted, a path inherits its containing indexed root's collection, or `mcp-ingest` when it is under no indexed root (tempdoc 811 C-2a). |
+| `core_remember` | Write (low risk, no approval) | Persist a durable fact or user preference to the single-authority memory record, inspectable and forgettable via the Memory surface / `/api/memory`. |
+| `core_navigate_to_surface` | Low risk, no approval | Open a named app surface for the user. Presentation-layer only; also exposed to the UI executor. |
 
-Safety metadata lives with the operation definitions and handlers. Write/destructive operations pause for explicit user approval before execution.
+Safety metadata lives with the operation definitions and handlers. The approval posture is the operation's `ConfirmStrategy`, not its read/write character: `core_ingest_files` and `core_file_operations` pause for explicit user approval before execution; every other tool above runs unattended.
 
 ## Query Pre-Processing
 
