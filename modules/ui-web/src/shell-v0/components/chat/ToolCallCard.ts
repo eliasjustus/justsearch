@@ -490,6 +490,11 @@ export class ToolCallCard extends JfElement {
               ? this.renderLineageFramedOutput(tc)
               : nothing}
             ${searchProjection ? this.renderSearchBody(searchProjection) : nothing}
+            ${/* Tempdoc 878 §D.4 — the model-visibility note sits OUTSIDE the two body branches,
+                because it is a fact about the tool RESULT and not about the raw-output panel. Riding
+                it on the lineage frame left the search card — the bulkiest output, and so the one
+                most likely to be cut — the only card that could be truncated silently. */ ''}
+            ${isCompleted ? this.renderModelVisibilityNote(tc) : nothing}
             ${isCompleted ? this.renderRichContent(tc) : nothing}
             ${isRejected
               ? html`<div class="rejected-reason">
@@ -652,7 +657,7 @@ export class ToolCallCard extends JfElement {
               data-testid="tool-output-lineage"
               >${label}</span
             >${tc.output}</div>`;
-    return html`${body}${this.renderModelVisibilityNote(tc)}`;
+    return body;
   }
 
   /**

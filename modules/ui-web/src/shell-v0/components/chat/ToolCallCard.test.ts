@@ -291,6 +291,29 @@ describe('ToolCallCard', () => {
     el.remove();
   });
 
+  it('878 §D.4 — the note reaches a SEARCH card too, whose body is not the raw-output panel', async () => {
+    // The search card renders `renderSearchBody`, not the lineage-framed raw output. Riding the note
+    // on that panel left the bulkiest output — the one most likely to be cut — the only card that
+    // could be truncated silently. The note is a fact about the RESULT, so it sits outside both
+    // body branches.
+    const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+    el.toolCall = fake({
+      toolName: 'core_search_index',
+      arguments: '{"query":"runbook"}',
+      status: 'completed',
+      output: 'z'.repeat(9000),
+      structuredData: { searchResults: [{ path: '/a.md', title: 'A', excerpt: 'x' }] },
+      outputCharsToModel: 4000,
+      truncatedForModel: true,
+    });
+    document.body.appendChild(el);
+    await settle(el);
+    const note = el.shadowRoot?.querySelector('[data-testid="tool-output-model-note"]');
+    expect(note, 'a truncated search result must disclose it too').not.toBeNull();
+    expect(note?.textContent).toContain('4,000');
+    el.remove();
+  });
+
   it('878 §D.4 — says NOTHING when the model got all of it, and nothing when nobody measured', async () => {
     // Two distinct silences, and conflating them is the defect. An unmeasured record (everything
     // written before the backend carried this field, and any emitter that does not measure) must
