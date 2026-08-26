@@ -435,6 +435,46 @@ const BLOCK_TAGS = new Set([
 const PSEUDO_CITE_SPLIT = /([[(]\d{1,3}[\])])/;
 const PSEUDO_CITE_TOKEN = /^[[(]\d{1,3}[\])]$/;
 
+/**
+ * Tempdoc 867 F1 — the character on one side of a removed literal, read ACROSS the text node's edge.
+ * `closeLiteralGap` takes its neighbours from the two halves of the split text node, and an empty
+ * half used to read as "end of prose". It is not: `Cited [2]*ital* tail` ends the text node at the
+ * literal because an inline ELEMENT follows, so the strip took the preceding space and rendered
+ * `Citedital tail` — two words glued by the renderer. Only a literal with nothing after it inside
+ * its own block sits at an end; an element or a further text node beside it is prose the space
+ * still separates.
+ *
+ * A `.cite-ref` / `.pseudo-cite` span is skipped over as an END rather than a word: it is the
+ * renderer's own glyph, not text the model wrote, and a marker that inherited a glued literal's
+ * place (`word [1][2].` → `word2.1`) must keep that place.
+ */
+function edgeChar(from: Node, dir: 'previous' | 'next'): string {
+  let cur: Node | null = from;
+  while (cur !== null) {
+    let sib: Node | null = dir === 'next' ? cur.nextSibling : cur.previousSibling;
+    while (sib !== null) {
+      // A COMMENT renders nothing and is skipped — lit's own `<!--?lit$…-->` part markers sit
+      // between these nodes, and reading one's data as text made every block-leading strip look
+      // like it had a word before it.
+      if (sib.nodeType === Node.ELEMENT_NODE) {
+        const el = sib as Element;
+        if (el.tagName === 'BR') return '';
+        if (el.classList.contains('cite-ref') || el.classList.contains('pseudo-cite')) return '';
+        const rendered = el.textContent ?? '';
+        if (rendered.length > 0) return dir === 'next' ? rendered[0]! : rendered[rendered.length - 1]!;
+      } else if (sib.nodeType === Node.TEXT_NODE) {
+        const data = (sib as Text).data;
+        if (data.length > 0) return dir === 'next' ? data[0]! : data[data.length - 1]!;
+      }
+      sib = dir === 'next' ? sib.nextSibling : sib.previousSibling;
+    }
+    const parent: HTMLElement | null = cur.parentElement;
+    if (parent === null || BLOCK_TAGS.has(parent.tagName)) return '';
+    cur = parent;
+  }
+  return '';
+}
+
 /** The nearest block-level ancestor of `node` inside `root` (the root itself when there is none). */
 function blockAncestor(node: Node, root: Element): Element {
   let el: Element | null = node.parentElement;
@@ -1364,7 +1404,7 @@ export class MarkdownBlock extends JfElement {
    *  - preceded by a space or tab and followed by punctuation, whitespace or nothing → the
    *    PRECEDING one goes, so the period closes on the word (`word [1].` → `word.`) and a
    *    mid-sentence strip leaves a single space (`a [1] b` → `a b`);
-   *  - at the node's start OR at a line's start (869 F7) → the FOLLOWING space goes, which is the
+   *  - at the block's start OR at a line's start (869 F7) → the FOLLOWING space goes, which is the
    *    block-leading `[1] The kernel…` orphan (a leading space is invisible in the DOM and shifts
    *    the first word by a space width);
    *  - flanked by word characters → neither, because the model wrote no space to reclaim
@@ -1373,8 +1413,12 @@ export class MarkdownBlock extends JfElement {
    * A newline is never the whitespace that goes — see the F7 note in the body.
    */
   private closeLiteralGap(before: Text, after: Text): void {
-    const prev = before.data.slice(-1);
-    const next = after.data.slice(0, 1);
+    // Tempdoc 867 F1 — an EMPTY half is an edge, not an end: read the neighbour across it
+    // ({@link edgeChar}). Reading `''` as "nothing follows" deleted the space between a word and the
+    // inline element that followed the literal (`Cited [2]*ital* tail` → `Citedital tail`), and the
+    // mirror hole read a literal after `**bold**` as block-leading and ate the space after it.
+    const prev = before.data.length > 0 ? before.data.slice(-1) : edgeChar(before, 'previous');
+    const next = after.data.length > 0 ? after.data.slice(0, 1) : edgeChar(after, 'next');
     // Tempdoc 869 F7 — the removable whitespace is a SPACE or a TAB, never a newline. `/\s/` also
     // matches `\n`, so a literal opening a line (`… gamma\n[1] next`) had the line break deleted and
     // the two lines ran together — in `plain` format, where `white-space: pre-wrap` renders it, that
@@ -1382,10 +1426,24 @@ export class MarkdownBlock extends JfElement {
     // is not a gap: at a line start it is the space AFTER the literal that goes, exactly as at a
     // node start.
     if (/[ \t]/.test(prev)) {
-      if (next === '' || !/[\p{L}\p{N}]/u.test(next)) before.data = before.data.slice(0, -1);
+      // Followed by a word: the space separates two words the model wrote, not a gap the literal
+      // held open — whatever side of a node edge that word sits on.
+      if (next !== '' && /[\p{L}\p{N}]/u.test(next)) return;
+      if (before.data.length > 0) {
+        before.data = before.data.replace(/[ \t]+$/, '');
+        // Tempdoc 867 F1 — a literal the model spaced on BOTH sides closes to ONE space, not to the
+        // two-plus the two runs would leave (`a  [2]  b` → `a b`; visible under `plain`'s pre-wrap).
+        if (/[ \t]/.test(next) && after.data.length > 0) {
+          after.data = after.data.replace(/^[ \t]+/, ' ');
+        }
+      } else if (/[ \t]/.test(next) && after.data.length > 0) {
+        // The whitespace to reclaim sits in a node across the edge, which this pass does not own;
+        // taking the following one closes the same gap to the same single space.
+        after.data = after.data.replace(/^[ \t]+/, '');
+      }
       return;
     }
-    if ((prev === '' || /[\n\r]/.test(prev)) && /[ \t]/.test(next)) {
+    if ((prev === '' || /[\n\r]/.test(prev)) && /[ \t]/.test(next) && after.data.length > 0) {
       after.data = after.data.slice(1);
     }
   }

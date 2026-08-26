@@ -210,6 +210,21 @@ describe('the ungrounded frame keeps its broad rule (577 Move 3, unchanged by 86
   });
 });
 
+describe('the strip predicate is POSITIVE about the frame — every frame but ungrounded (867 §7)', () => {
+  // The predicate reads `frame !== 'ungrounded'`, and the frames a sourced answer actually settles
+  // in are named here rather than left to the default: a narrowing to `frame === 'grounded'` looks
+  // green against every fixture that never sets a frame, and would silently leave the reader an
+  // unverified ref on exactly the answers 867 §7 is about.
+  for (const frame of ['sourced', 'partially-grounded'] as const) {
+    it(`strips the unverified ref in the ${frame} frame`, async () => {
+      const el = await mounted({ text: 'Alpha [2] beta.', sourceCount: 5, frame });
+      expect(muted(el)).toHaveLength(0);
+      expect(text(el)).toBe('Alpha beta.\n');
+      el.remove();
+    });
+  }
+});
+
 /* ── I-1 POSITION (C1) — the literal is transparent, and its whitespace is the model's ────────── */
 
 /** A `.md-content` text dump, marker glyphs included — what the reader actually sees. */
@@ -293,6 +308,51 @@ describe('I-1 position — the STRIP arm: the mark lands where no literal was wr
       expect(text(el), `${shape.id}`).not.toMatch(/\s[.,;:!?]/);
       el.remove();
     }
+  });
+});
+
+describe('I-1 position — the strip at a TEXT NODE EDGE (867 F1)', () => {
+  /**
+   * A literal that ends (or opens) its text node because an inline ELEMENT sits next to it is not at
+   * the end of the prose. `closeLiteralGap` read the empty half as "nothing there" and closed a gap
+   * that was holding two words apart: `Cited [2]*ital* tail` rendered `Citedital tail`, and the
+   * mirror hole read the literal in `**bold**[2] tail` as block-leading and ate the space after it.
+   * No citation is attached in any row, so every `[2]` here takes the STRIP arm.
+   */
+  const EDGES: ReadonlyArray<{ id: string; input: string; expected: string }> = [
+    {
+      id: 'an emphasis follows the literal with no space between',
+      input: 'Cited [2]*ital* tail',
+      expected: 'Cited ital tail\n',
+    },
+    {
+      id: 'a space, then a strong',
+      input: 'Cited [2] **bold** here',
+      expected: 'Cited bold here\n',
+    },
+    {
+      id: 'a strong precedes the literal with no space between',
+      input: '**bold**[2] tail',
+      expected: 'bold tail\n',
+    },
+  ];
+
+  for (const edge of EDGES) {
+    it(`${edge.id}: "${edge.input}" renders "${edge.expected.replace(/\n/g, '\\n')}"`, async () => {
+      const el = await mounted({ text: edge.input, citations: [], sourceCount: 5 });
+      expect(content(el).querySelectorAll('.cite-ref')).toHaveLength(0);
+      expect(muted(el)).toHaveLength(0);
+      expect(text(el)).toBe(edge.expected);
+      el.remove();
+    });
+  }
+
+  it('closes a gap the model spaced on BOTH sides to one space, not to three', async () => {
+    // `plain` renders with `white-space: pre-wrap`, so the run the strip leaves is one the reader
+    // sees. Removing a single character left `a` and `b` three spaces apart.
+    const el = await mounted({ format: 'plain', text: 'a  [2]  b', sourceCount: 5 });
+    expect(text(el)).toBe('a b');
+    el.remove();
   });
 });
 

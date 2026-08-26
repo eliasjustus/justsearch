@@ -243,7 +243,8 @@ const citeLegendId = (turnId: string): string => `sv3-cite-legend-${turnId}`;
  * Tempdoc 822 §5.7 (F7) — the ONE line that names the answer's mark vocabulary. Sentence case, like
  * every other string this window says: v3 uses UPPERCASE nowhere. It exists mostly for the two greys
  * — a `.pseudo-cite` and a `.cite-weak` look identical and mean "the model invented this reference"
- * versus "a real reference the evidence supports weakly" — and it says what selection is FOR, which
+ * (ungrounded frame only; on sourced answers an unverified ref is stripped — 867 §7) versus "a real
+ * reference the evidence supports weakly" — and it says what selection is FOR, which
  * is the question §5.3's sentence region answers but nothing on screen asks.
  */
 const CITE_LEGEND =
@@ -801,7 +802,8 @@ export class Sv3Main extends JfElement {
       }
       /* Tempdoc 822 §5.7 (F7) — the mark legend. A reader can meet five mark types in one answer
          plus two dotted underlines with no key anywhere, and the two GREYS mean opposite things:
-         '.pseudo-cite' is "the model invented this reference", '.cite-weak' is "a real reference the
+         '.pseudo-cite' is "the model invented this reference" (ungrounded frame only; on sourced
+         answers an unverified ref is stripped — 867 §7), '.cite-weak' is "a real reference the
          evidence supports weakly". It lives INSIDE the Sources disclosure, so it is already gated and
          costs zero resting chrome against the fit audit's 16. Existing tokens only, no new colour,
          no icon — a legend that needed its own swatch would be a sixth mark type. */
