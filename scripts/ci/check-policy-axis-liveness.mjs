@@ -158,8 +158,13 @@ const catalogSources = existsSync(CATALOG_DIR)
       .filter((f) => f.endsWith('.java'))
       .map((f) => join(CATALOG_DIR, f).split('\\').join('/'))
   : [];
-const catalogText = catalogSources.map((f) => readFileSync(f, 'utf8')).join('\n');
+// Comments stripped here too: a `withX(` mentioned in prose would otherwise satisfy the wither
+// branch of the declaration rule the same way a comment comma satisfied the positional branch.
+const catalogText = catalogSources
+  .map((f) => stripComments(readFileSync(f, 'utf8')))
+  .join('\n');
 
+export function runLivenessCheck() {
 const failures = [];
 
 for (const comp of components) {
@@ -194,6 +199,16 @@ for (const comp of components) {
   }
 }
 
+if (failures.length > 0) {
+  fail(failures);
+}
+
+console.log(
+  `policy-axis liveness: OK — ${components.length} axes, each with a production reader` +
+    ` outside the validators (${components.map((c) => c.name).join(', ')}).`,
+);
+}
+
 /**
  * Positional attribution for an `Optional<...>` component: find each `new OperationPolicy(`
  * construction, split its top-level arguments, and check whether the argument at this component's
@@ -202,10 +217,17 @@ for (const comp of components) {
  * The backwards-compat overloads mirror a prefix of the canonical list, so an index that exists in
  * a shorter call is still the same component — which is why positional attribution is sound here.
  */
-function declaresOptionalPositionally(comp, files) {
-  const index = components.indexOf(comp);
+export function declaresOptionalPositionally(comp, files, componentList = components) {
+  const index = componentList.indexOf(comp);
   for (const file of files) {
-    const src = readFileSync(file, 'utf8');
+    // Comments MUST be stripped before splitting the argument list, for a second and sharper
+    // reason than the reader scan's: a comma inside a `//` comment BETWEEN two arguments creates a
+    // phantom argument and shifts every index after it. Measured on the real tree before this was
+    // fixed, `advisoryClass` (index 6) was attributed to `Set.of()` at browse-folders and to a
+    // comment fragment at ping-backend — its only genuine declarer. The rule therefore passed on
+    // prose, so deleting every real `advisoryClass` declaration would have left this gate green:
+    // exactly the false-negative `rateLimit` produced, in the gate written to prevent it.
+    const src = stripComments(readFileSync(file, 'utf8'));
     let from = 0;
     for (;;) {
       const at = src.indexOf('new OperationPolicy(', from);
@@ -256,11 +278,11 @@ function splitTopLevel(body) {
   return parts;
 }
 
-if (failures.length > 0) {
-  fail(failures);
-}
+export { stripComments, splitTopLevel, parseComponents };
 
-console.log(
-  `policy-axis liveness: OK — ${components.length} axes, each with a production reader` +
-    ` outside the validators (${components.map((c) => c.name).join(', ')}).`,
-);
+if (
+  process.argv[1] &&
+  process.argv[1].replace(/\\/g, '/').endsWith('check-policy-axis-liveness.mjs')
+) {
+  runLivenessCheck();
+}

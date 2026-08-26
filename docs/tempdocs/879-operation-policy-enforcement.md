@@ -536,9 +536,22 @@ operation declared.
 
 This closes a representable hole: `ConfirmValidator` explicitly permits any strategy at MEDIUM, so
 a *reversible* MEDIUM operation declaring `Inline` auto-fires under the `AUTO` dial today —
-auto-approving something whose own declaration asks for a confirmation. No operation is in that
-state right now, which is why the change is a safety floor and not a fix; the existing HIGH floor
+auto-approving something whose own declaration asks for a confirmation. The existing HIGH floor
 (`:127-129`) is the precedent and is tested the same way.
+
+**Be precise about how much this changes today: nothing.** The independent review traced every
+agent-executable operation and found none whose verdict the floor alters — `core.ingest-files` is
+MEDIUM/irreversible, so the existing C-4 rule already returns `TYPED_CONFIRM` under `AUTO` (a
+stricter verdict than the `Inline` floor); `core.file-operations` is HIGH and short-circuits before
+the floor runs; every other agent operation declares `None`. So `confirm` is now an axis with a real
+consumer and a test that flips it, but with no *current* declaration whose flip changes a verdict.
+
+That is a weaker result than the other three axes, and it is worth naming rather than letting the
+docs' axis table imply parity. It is defensible as a safety floor — floors exist for the case that
+has not happened yet, and this one is representable today — but it is the one place in this tempdoc
+where "wire it" produced a mechanism ahead of a declaration. The honest reading is that `confirm`
+was the weakest of the five candidates, and the alternative (delete) was never available because
+four non-agent consumers read it.
 
 The change is one added input and one narrowing rule on the single gate authority, so it composes
 with rather than collides against 875's family-grant work on the same method.
@@ -568,11 +581,26 @@ it must still fire, because `core.ping-backend` is simultaneously the only `advi
 and one of the six `NONE` operations (§C.1). This is the wrong-gate hazard of the whole tempdoc,
 found before the code was written; the test asserts *both* halves for that one operation.
 
-Consequence, and it is an improvement rather than a loss: the 200-entry operation-history ring stops
-being filled by health pings, navigations, and the agent's read/search traffic. Agent-loop dispatches
-are already excluded from the unified action ledger (`OperationSubstrateInit.java:231-236` gates on
-`transport != AGENT_LOOP`; their ledger rows come from `AgentRunLedgerProjector`), so the agent's
-audit trail is unaffected — only the ring changes.
+**Consequence, stated at its real scope.** An earlier draft of this section said "only the
+200-entry ring changes". That was wrong, and the independent review caught it.
+`OperationSubstrateInit.java:231-236` registers the unified Action Ledger as an *append listener on
+the history store*, so suppressing the entry suppresses the ledger row too — the ledger is
+downstream of the store by construction. What actually changes:
+
+- **Agent-loop dispatches**: unaffected. They were already excluded from the unified ledger (the
+  listener gates on `transport != AGENT_LOOP`); their rows are projected from `AgentRunStore` by
+  `AgentRunLedgerProjector`. So `core.search-index`, `core.read-document`, `core.remember` and
+  `core.browse-folders` lose only their ring entries.
+- **`core.navigate-to-surface`** (`{UI, AGENT}`): loses its ledger row on the UI transport. Nothing
+  is lost outright — navigation rows reach the ledger via `navigationHistoryStore`, a separate
+  listener on the same registry.
+- **`core.ping-backend`** (`{UI, AGENT, CLI}`): loses its ledger row entirely. This is the
+  declaration working, not a regression: a health ping declaring "no audit record" should not be
+  filling the user's action ledger.
+
+`ActionLedgerE2ETest` was updated to assert against an operation that declares `METADATA_ONLY`
+rather than one that declares `NONE`. That is an adaptation to a deliberate behaviour change, not a
+weakened test — its merge assertion is intact.
 
 **Delete `FULL_PAYLOAD`.** Zero declarations, and the machinery it would need does not exist: there
 is no PII flag on `Interface` inputs (the enum javadoc's "PII-flagged inputs … surface a WARN" is
@@ -645,7 +673,8 @@ exactly the deferral the wire-or-delete rule bans, and would be reached for imme
 
 Bounded deliberately to this one record. The general version (every policy record in the registry)
 is a much wider blast radius and lands better once it has something green to ratchet from.
-Registered in `CLAUDE.md`'s pre-merge table (which requires `check-premerge-table` to pass).
+Delivery ended up in `governance/consult-register.v1.json` rather than `CLAUDE.md`'s pre-merge
+table, and in `ci.yml` — see F.1 for why.
 
 The lint-vs-runtime line the gate encodes: an axis may be validator-only when a structural invariant
 is its whole purpose; it may not be validator-only when its name and documentation promise a runtime
@@ -860,6 +889,47 @@ The merge brought tempdoc 872, which retired the observations inbox. The six not
 workstream's shard had accumulated were routed per the new rule (§G) and the shard deleted;
 `check-no-observations-shards` is green.
 
+### F.6 Independent review — dispositions
+
+An independent refute-first reviewer (≠ any implementer) attacked the diff read-only. Ten findings;
+dispositions below. The two it confirmed are recorded in full because both are this tempdoc's own
+thesis turned back on it.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | **The liveness gate's `Optional`-declaration rule passed on comment text.** | **Confirmed and fixed.** |
+| 2 | `NOT_APPLICABLE` is a note-free escape used by 18 rows, conflating two different claims. | **Confirmed and fixed.** |
+| 3 | `pathVerification: LITERAL` is satisfiable by adding sources rather than by the path being literal. | **Confirmed and fixed** (segments must now be found within a *single* source). |
+| 4 | The gate cannot detect a revert of the `audit` or `confirm` wire (non-`Optional` axes with several readers). | **Accepted as a strength gap, not fixed.** Rule (2) applies only to `Optional` axes; extending it to "an axis whose only non-validator readers are wire projections fails" is a real improvement but a wider change than this tempdoc's five axes. The docs' wording ("fails when an axis *loses its consumer*") is literally accurate, so no doc lie to correct. |
+| 5 | The `confirm` floor changes zero current operations, and the docs' axis table implies parity with axes that do change behaviour. | **Confirmed; docs corrected.** §D.2 now says so outright. |
+| 6 | The `AuditPolicy.NONE` suppression reaches the unified Action Ledger, not just the 200-entry ring. | **Confirmed; §D.3 corrected** at its real scope. |
+| 7 | `strictest()` / the `GateBehavior` ordinal assumption. | Not a defect — declaration order *is* strictness order; `DENY` short-circuits before the floor and `declaredFloor` can never return it. |
+| 8 | Retry test precision; other callers needing the same update. | Not a defect — all three cases fail on revert (pre-change counts were 2/2/1 against asserted 1/3/3), and `AgentToolDispatcher` is the only Operation-dispatch retry loop in the tree. |
+| 9 | Sweep completeness, wire/contract, dual-copy parity. | Not a defect — zero live hits repo-wide; proto field number *and* both names reserved; the 1.0.3 → 2.0.0 major bump matches the changeset README's `evolution-rule: remove`; the three dual-copy schema pairs are byte-identical. |
+| 10 | Housekeeping (stale `CLAUDE.md`-table claim in §D.7, uncommitted doc edit, cosmetic indentation). | Fixed. |
+
+**On finding 1, in detail**, because it is the one that mattered. `stripComments` was applied to the
+*reader* scan but not to the *declaration* scan. A comma inside a `//` comment sitting between two
+constructor arguments creates a phantom argument and shifts every index after it. Measured on the
+real tree before the fix, `advisoryClass` (index 6) was attributed to `Set.of()` at
+`AgentToolsOperationCatalog.java:270` and to a comment fragment at `CoreOperationCatalog.java:453` —
+its only genuine declarer. `advisoryClass` is the sole `Optional` axis with no wither, so rule (2)
+rested entirely on that function: **deleting every real `advisoryClass` declaration would have left
+the gate green.** That is precisely the false negative `rateLimit` produced, reproduced inside the
+gate written to prevent it, in a PR whose thesis is that a mechanism which cannot contradict
+anything is not a constraint.
+
+The fix is one line. What the fix alone would not have bought is confidence that it stays fixed, so
+`scripts/ci/check-policy-axis-liveness.test.mjs` now pins the *mechanism* rather than the verdict:
+eight assertions over temp-directory fixtures covering the comment-comma regression, a genuine
+positional declaration, the all-`Optional.empty()` (`rateLimit`) shape, a short back-compat
+overload, block comments, and a guard that the real record still has the shape the fixtures assume.
+Both the gate and its test run in CI.
+
+The reviewer also refuted the hypothesis the brief had handed it — that the four backwards-compat
+constructor arities were the likely bug. They are strict prefixes of the canonical list, so
+positional attribution is sound. The actual mechanism was somewhere the brief did not point.
+
 ---
 
 ## §G. Findings routed out of this workstream
@@ -927,6 +997,27 @@ re-fetch on demand.
 **Recommendation if a decision is wanted:** the sharper, cheaper win is bounding what
 `events.ndjson` stores for *arguments* and giving the 30-day retention a named constant — neither of
 which needs the reference scheme. Not implemented here either way.
+
+### O-4. The `LITERAL` path check cannot tell a path constant from an error-message label
+
+Named here rather than left as a silent limit, because it is the same species this tempdoc exists
+to refuse. `checkPathAgreement` matches string literals, so a row can be `LITERAL`-green on a
+literal that is not a path: `agent-runs`, `memories` and `conversations` each satisfy their
+directory segment via a `CorruptDurableStoreException` store *label* in the store class, while the
+real `resolve("…")` lives in `HeadAssembly`. A rename of those directories would therefore pass the
+check. It is a false negative, not a false pass on the drift the gate was built for — all four
+original `ownedPaths` mismatches are caught either way — but it is a hole.
+
+Two ways to close it: teach the gate to recognise `resolve("x")` / `Paths.get("x")`-shaped
+occurrences specifically, or name the real construction site per row (which would move several rows
+to `COMPOSED`, since `HeadAssembly` holds the directory segment while the store class holds the
+basename). Not attempted here: it is the third iteration on this check in one PR, and the register's
+`note` now states the limit outright so nobody reads `LITERAL` as a stronger claim than it is.
+
+One related inconsistency *was* closed: `feedback-records` was `LITERAL`-green via
+`StoreCatalog.java`, a file that only *declares* the directory name and writes nothing — the exact
+literal-donation removed from `run-events` in the same pass. Its source list now names
+`HeadAssembly.java:595` (`resolveDataDir().resolve("feedback")`), the actual writer.
 
 ### O-3. The encrypted backup contains four stores and silently omits the rest
 

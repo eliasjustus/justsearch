@@ -1,7 +1,7 @@
 {
   "version": 2,
   "tempdoc": 617,
-  "note": "The StoreCatalog mirror remains the cipher-selection authority for its six stores. durableStores is the broader in-place-upgrade compatibility register: every process-owned durable authority names its owner, recovery class, format, write behavior, reconciliation, implementation, and evidence. HARDENING_REQUIRED rows are an explicit tempdoc-617 ratchet; the gate forbids adding an unnamed gap.",
+  "note": "The StoreCatalog mirror remains the cipher-selection authority for its six stores. durableStores is the broader in-place-upgrade compatibility register: every process-owned durable authority names its owner, recovery class, format, write behavior, reconciliation, implementation, and evidence. HARDENING_REQUIRED rows are an explicit tempdoc-617 ratchet; the gate forbids adding an unnamed gap. Tempdoc 879 added two required per-row answers. pathVerification: LITERAL means ONE implementationSources file contains the string literal of every segment of the declared path - a union across several files does not count, because that made LITERAL satisfiable by adding an unrelated file that merely mentions the missing word; COMPOSED means the path is assembled at runtime, and pathVerificationNote must say by what. encryption: SEALED_BY_STORE_CIPHER = the StoreCatalog cipher seals it; UNSEALED_KEY_ROOT = it IS the key root and cannot be sealed by the key it holds; UNSEALED_EXTERNAL_AUTHORITY = the bytes belong to the user or an operator, not the app; UNSEALED_NO_JVM_CIPHER = Shell-owned, written by Rust with no reach to the JVM StoreCipher; UNSEALED_DERIVED_OS_DISK_ENCRYPTION = StoreCatalog's Framing.OPAQUE position, a derived/rebuildable store that does hold user-derived content in the clear and is covered by OS disk encryption only; UNSEALED_GAP = no structural reason, simply not sealed yet; NOT_APPLICABLE = there is nothing here worth sealing. UNSEALED_GAP, UNSEALED_DERIVED_OS_DISK_ENCRYPTION and NOT_APPLICABLE are all claims about what the bytes hold, so the gate requires an encryptionNote on each saying what the file actually contains - before 879 NOT_APPLICABLE was the one value nobody had to justify, and it was standing in for both 'nothing sensitive' and 'the user's own document text'. Known limit of the LITERAL check: it matches string literals, so it cannot tell a path constant from a same-named error-message label - a few rows (agent-runs, memories, conversations) are LITERAL-green via a CorruptDurableStoreException store label rather than a path constant, which means a rename of those directories could pass. Closing that needs the gate to recognise resolve(...)-shaped occurrences specifically; tracked in tempdoc 879.",
   "catalog": {
     "file": "modules/app-agent-api/src/main/java/io/justsearch/agent/api/encryption/StoreCatalog.java"
   },
@@ -104,7 +104,8 @@
     },
     {
       "id": "plugin-allowlist",
-      "pathVerification": "LITERAL",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "PluginAllowlistStore receives its file from the caller (PluginAllowlistStore.java:46) and holds no path literal at all. The whole path is composed at the wiring site as the settings file's sibling - LocalApiServer.java:189, b.settingsStore.settingsPath().resolveSibling(\"plugin-allowlist.json\") - so the ui segment comes from UiSettingsStore.java:122 and only the base name is ever written literally.",
       "encryption": "UNSEALED_GAP",
       "encryptionNote": "Plaintext JSON of the SHA-256 hashes of plugin artifacts an operator explicitly trusted. Nothing structural prevents sealing it; nothing seals it today.",
       "owner": "HEAD",
@@ -164,6 +165,7 @@
       "id": "installed-packs",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "An inventory of the AI packs the app itself installed under AI Home - pack ids, versions, and the files each pack owns. Every value is app-distributed asset metadata; no user content, no user-chosen path.",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["installed-packs.v1.json"],
@@ -191,6 +193,7 @@
       "id": "ai-install-contract",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "The install bill of materials: model package ids, the variant/precision chosen per model, the detected hardware profile, and the app's own models directory (InstallContract.java:33-40). Machine and app-install facts only - no user content and no user-chosen path.",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["install-contract.v2.json"],
@@ -361,7 +364,8 @@
     },
     {
       "id": "run-events",
-      "pathVerification": "LITERAL",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "Only the base name is a literal (RunEventStore.java:254, runDir(sessionId).resolve(\"events.ndjson\")); RunEventStore receives its rootDir (RunEventStore.java:56) and the session directory is the run id. The agent-runs prefix is composed at the wiring site - HeadAssembly.java:429, dataDir.resolve(\"agent-runs\") - and StoreCatalog.java, which was listed here, only declares that dirName; it writes nothing.",
       "encryption": "SEALED_BY_STORE_CIPHER",
       "owner": "HEAD",
       "root": "DATA_DIR",
@@ -379,8 +383,7 @@
       "reconciliation": "PRESERVE_APPEND_LOG_AND_UPCAST_METADATA",
       "status": "READY",
       "implementationSources": [
-        "modules/app-agent/src/main/java/io/justsearch/agent/RunEventStore.java",
-        "modules/app-agent-api/src/main/java/io/justsearch/agent/api/encryption/StoreCatalog.java"
+        "modules/app-agent/src/main/java/io/justsearch/agent/RunEventStore.java"
       ],
       "tests": [
         "modules/app-agent/src/test/java/io/justsearch/agent/RunEventStoreTest.java"
@@ -438,7 +441,7 @@
       "status": "READY",
       "implementationSources": [
         "modules/app-services/src/main/java/io/justsearch/app/services/feedback/NdjsonAppendStore.java",
-        "modules/app-agent-api/src/main/java/io/justsearch/agent/api/encryption/StoreCatalog.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/HeadAssembly.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/feedback/NdjsonAppendStoreTest.java"
@@ -448,7 +451,8 @@
     {
       "id": "gpl-training-triples",
       "pathVerification": "LITERAL",
-      "encryption": "NOT_APPLICABLE",
+      "encryption": "UNSEALED_DERIVED_OS_DISK_ENCRYPTION",
+      "encryptionNote": "Plaintext NDJSON of query/passage training triples mined from the user's own corpus - each row carries a synthetic_query generated from one of the user's documents plus that document's id (GplTrainingTripleStore.java:369-371). Derived and regenerable from the source documents, so it is deliberately unsealed and covered by OS disk encryption only.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["gpl-training-triples.ndjson"],
@@ -504,6 +508,7 @@
       "id": "worker-config-snapshot",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "The resolved justsearch.* configuration map handed to the Worker at spawn, plus the app's own directories - data dir, AI home, models dir, model/runtime executable paths (ResolvedConfig.java:127-141). App-install layout and settings only: no user document content and none of the user's chosen index roots, which live in watched_roots.json instead.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["runtime/worker-config-snapshot.json"],
@@ -534,7 +539,8 @@
       "id": "jobs-db",
       "pathVerification": "COMPOSED",
       "pathVerificationNote": "Only the base name is a literal (KnowledgeServer.java:394, dataDir.resolve(\"jobs.db\")). SQLite itself creates the -wal and -shm sidecars, and the triage backup is composed as the db path plus \".bak\" (SqliteJobQueue.java:1772) - none of those three names exists as a literal anywhere.",
-      "encryption": "NOT_APPLICABLE",
+      "encryption": "UNSEALED_DERIVED_OS_DISK_ENCRYPTION",
+      "encryptionNote": "Plaintext SQLite. Indexing-job rows are keyed on the user's absolute file paths, so the queue describes the user's disk layout in the clear - the same data class the watched-roots row calls an UNSEALED_GAP, but here it is StoreCatalog's stated Framing.OPAQUE position: a DERIVED queue rebuildable from the watched roots, covered by OS disk encryption only.",
       "catalogDirName": "jobs.db",
       "owner": "WORKER",
       "root": "DATA_DIR",
@@ -566,7 +572,8 @@
       "id": "index-generations",
       "pathVerification": "COMPOSED",
       "pathVerificationNote": "The index base path is resolved from configuration (ResolvedConfigBuilder.java:963, dataDir.resolve(\"index\").resolve(collection)), so the index/<collection> prefix is not a literal in the owning component. Under it the layout IS literal - IndexGenerationManager.java:58-62 declares \"indices\", \"state.json\", \"state.json.prev\" - but the sibling recovery markers are composed as <generation dir name> + \".rebuild-pending\" / \".clean-shutdown\" (IndexRecoveryMarker.java:29,37; CleanShutdownMarker.java:28,36).",
-      "encryption": "NOT_APPLICABLE",
+      "encryption": "UNSEALED_DERIVED_OS_DISK_ENCRYPTION",
+      "encryptionNote": "The largest plaintext user-content store in the product: the Lucene index stores the user's document text verbatim in stored fields (FieldMapper.java:370,380,382,393,395,410 use Field.Store.YES / StoredField), alongside the source paths. StoreCatalog frames it OPAQUE - a DERIVED store rebuildable from the source documents - so it is deliberately unsealed and covered by OS disk encryption only.",
       "catalogDirName": "index",
       "owner": "WORKER",
       "root": "DATA_DIR",
@@ -599,7 +606,8 @@
       "id": "index-migration-progress",
       "pathVerification": "COMPOSED",
       "pathVerificationNote": "MigrationProgressStore.java:33 resolves \"migration_progress.json\" against an injected indexBasePath; the index/<collection> prefix is configuration-resolved, not a literal in this component.",
-      "encryption": "NOT_APPLICABLE",
+      "encryption": "UNSEALED_DERIVED_OS_DISK_ENCRYPTION",
+      "encryptionNote": "Mostly counters, but the snapshot also writes last_path - the absolute path of the last user file the enumerator walked (MigrationProgressStore.java:89) - so it holds one user document path in the clear. Derived from the in-flight migration and deleted-and-recomputed on any problem, so it is deliberately unsealed and covered by OS disk encryption only.",
       "owner": "WORKER",
       "root": "DATA_DIR",
       "ownedPaths": ["index/*/migration_progress.json"],
@@ -658,6 +666,7 @@
       "id": "runtime-activation-status",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "Which inference runtime variant is active and whether it came up: variant name, health, an activation error code from a closed vocabulary, and timestamps (RuntimeActivationService.java:1434-1441). No user content.",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["ai/runtime-activation-state.json"],
@@ -683,6 +692,7 @@
       "id": "pack-import-status",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "Progress of an AI-pack import: which pack id is staging or installed and how far it got. App asset-management state only; no user content.",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["pack-import-state.json"],
@@ -708,6 +718,7 @@
       "id": "runtime-manifest-history",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "Who is running right now and where: instance id, process ids, loopback ports, the app's own data directory, and reachability/shutdown classification per instance (RuntimeManifestPublisher.java:40). Process bookkeeping only; no user content.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["runtime/manifest.json", "runtime/instances/**"],
@@ -736,6 +747,7 @@
       "id": "telemetry-rrd",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "Round-robin numeric time series, one datasource per curated low-cardinality metric (RrdMetricStore.java:45,183). Numbers against fixed metric names - no free text, no paths, no user content; the high-cardinality streams that can carry a document path go to telemetry/*.ndjson instead.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["telemetry/*.rrd"],
@@ -762,6 +774,7 @@
       "id": "managed-ai-assets",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "Model weights and runtime binaries the app downloaded or bundled - and only those, since the ownership rule limits this row to files a verified managed manifest names. Publicly distributed artifacts identical on every install; nothing user-derived to protect (files NOT claimed by a manifest are the byo-ai-assets row).",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["models/**", "native-bin/**"],
@@ -887,6 +900,7 @@
       "id": "head-shutdown-receipt",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "A one-shot handshake token: the preparation id the Shell asked for, the receipt nonce, and whether the Head shut down cleanly. Nothing but the nonce pair, which is meaningless after the upgrade it gates.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["upgrade/head-shutdown-receipt.v1.json"],
@@ -912,6 +926,7 @@
       "id": "inference-runtime-projections",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "The id of the loaded model, plus a transition log of fromMode/toMode/reason/success/durationMs/generation (NdjsonInferenceTransitionLog.java:161-172). A closed vocabulary of lifecycle phases and reason codes - no prompt text, no completion text, no user content.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["inference-model-id.txt", "telemetry/inference-transitions.ndjson"],
@@ -938,7 +953,8 @@
     {
       "id": "telemetry-and-crash-artifacts",
       "pathVerification": "LITERAL",
-      "encryption": "NOT_APPLICABLE",
+      "encryption": "UNSEALED_DERIVED_OS_DISK_ENCRYPTION",
+      "encryptionNote": "Plaintext diagnostics that do carry user-derived content: the exported span attributes include doc.path and http.target (NdjsonSpanExporter.java:45,59), so indexed document paths and request query strings land in telemetry/*.ndjson, and crashes/*.json records the raw exception message plus stack trace (CrashReporter.java:101-102), which for an indexing failure names the file being read. Derived, bounded, and pruned rather than recovered, so it is deliberately unsealed and covered by OS disk encryption only.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["telemetry/*.ndjson", "crashes/*.json", "diagnostics/slow-*.json"],
@@ -972,6 +988,7 @@
       "pathVerification": "COMPOSED",
       "pathVerificationNote": "The fatal-reason marker name IS a literal (WorkerFatalReasonMarker.java:29), but the two index markers are composed as <active generation dir name> + \".rebuild-pending\" / \".clean-shutdown\" against a configuration-resolved index path (IndexRecoveryMarker.java:29,37; CleanShutdownMarker.java:28,36).",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "Signal files, not data files: the two index markers carry meaning by existing, and worker-fatal-reason holds one reason code - its only production writer passes the INDEX_CORRUPT constant (KnowledgeServer.java:758-759; WorkerFatalReasonMarker.java:27). No message text, no path, no user content.",
       "owner": "WORKER",
       "root": "DATA_DIR",
       "ownedPaths": ["worker-fatal-reason", "index/*/indices/*.rebuild-pending", "index/*/indices/*.clean-shutdown"],
@@ -1001,6 +1018,7 @@
       "id": "process-locks",
       "pathVerification": "LITERAL",
       "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "Owner metadata for an OS file lock: the holding process's PID and its start timestamp, written so a later process can tell a live owner from a dead one (AppInstanceLock.java:121-122,157-172). PID and timestamp only; no user content.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["*.lock"],

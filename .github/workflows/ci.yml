@@ -177,6 +177,9 @@ jobs:
       # register's gate was in fact RED on main for ~90 commits (an unclassified persistence
       # write site) precisely because no workflow invoked it. Wired here in the PR that fixes
       # it, not left as a follow-up.
+      - name: Test policy-axis liveness attribution
+        run: node scripts/ci/check-policy-axis-liveness.test.mjs
+
       - name: Operation policy axes have live consumers
         run: node scripts/ci/check-policy-axis-liveness.mjs
 

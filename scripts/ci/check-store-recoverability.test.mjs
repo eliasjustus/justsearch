@@ -200,6 +200,37 @@ test('COMPOSED is a stated exclusion that must say why', () => {
   );
 });
 
+// Tempdoc 879 review: unioning every source's literals made LITERAL satisfiable by ADDING a file
+// that happens to contain the missing word, so a row could go green with nothing writing its path.
+test('LITERAL needs ONE source to hold the whole path, never a union of two', () => {
+  const row = readyRow({
+    id: 'plugin-allowlist',
+    catalogDirName: undefined,
+    ownedPaths: ['ui/plugin-allowlist.json'],
+    encryption: 'UNSEALED_GAP',
+    encryptionNote: 'Plaintext hashes of plugin artifacts an operator trusted.',
+    implementationSources: ['Store.java', 'Neighbour.java'],
+  });
+  const split = check([row], {
+    catalog: [],
+    readSource: (absolutePath) =>
+      absolutePath.replace(/\\/g, '/').endsWith('Neighbour.java')
+        ? 'var settings = base.resolve("ui").resolve("settings.json");'
+        : 'this.file = dir.resolve("plugin-allowlist.json");',
+  });
+  assert.equal(split.length, 1);
+  assert.ok(split[0].includes('no SINGLE implementation source'));
+  assert.ok(split[0].includes('`ui`'));
+  // ... and the same row is green the moment ONE file writes the whole path.
+  assert.deepEqual(
+    check([row], {
+      catalog: [],
+      readSource: () => 'var p = base.resolve("ui").resolve("plugin-allowlist.json");',
+    }),
+    [],
+  );
+});
+
 test('pathVerification and encryption are required on every row', () => {
   const result = check([readyRow({ pathVerification: undefined, encryption: undefined })]);
   assert.ok(result.some((failure) => failure.includes('pathVerification is required')));
@@ -233,6 +264,47 @@ test('the open-gap disposition must name what the plaintext file contains', () =
     check([{ ...row, encryptionNote: 'Plaintext UI preferences incl. the local model path.' }], {
       catalog: [],
     }),
+    [],
+  );
+});
+
+// Tempdoc 879 review: NOT_APPLICABLE was the ONE disposition nobody had to justify, so it was
+// doing double duty for "nothing sensitive here" and "the user's own document text, unsealed".
+test('the nothing-to-seal disposition must say what the file holds', () => {
+  const row = readyRow({
+    id: 'process-locks',
+    catalogDirName: undefined,
+    encryption: 'NOT_APPLICABLE',
+  });
+  assert.ok(
+    check([row], { catalog: [] }).some((failure) =>
+      failure.includes('encryption NOT_APPLICABLE requires an encryptionNote'),
+    ),
+  );
+  assert.deepEqual(
+    check([{ ...row, encryptionNote: 'PID and lock timestamp only; no user content.' }], {
+      catalog: [],
+    }),
+    [],
+  );
+});
+
+test('the derived-store disposition must name the user content it leaves in the clear', () => {
+  const row = readyRow({
+    id: 'index-generations',
+    catalogDirName: undefined,
+    encryption: 'UNSEALED_DERIVED_OS_DISK_ENCRYPTION',
+  });
+  assert.ok(
+    check([row], { catalog: [] }).some((failure) =>
+      failure.includes('encryption UNSEALED_DERIVED_OS_DISK_ENCRYPTION requires an encryptionNote'),
+    ),
+  );
+  assert.deepEqual(
+    check(
+      [{ ...row, encryptionNote: 'Lucene stored fields hold the user document text verbatim.' }],
+      { catalog: [] },
+    ),
     [],
   );
 });

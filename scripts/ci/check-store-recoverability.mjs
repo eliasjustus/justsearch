@@ -30,16 +30,31 @@ const UPGRADE_HANDLING = new Set([
 const PATH_VERIFICATION = new Set(['LITERAL', 'COMPOSED']);
 /**
  * Whether a row's bytes are sealed at rest, and if not, why not. Every row answers; the absence of an
- * answer is a build failure. UNSEALED_GAP is the honest label for "no structural reason, just not done"
- * and carries an encryptionNote naming what the plaintext file contains.
+ * answer is a build failure. UNSEALED_GAP is the honest label for "no structural reason, just not done";
+ * UNSEALED_DERIVED_OS_DISK_ENCRYPTION is the deliberate StoreCatalog Framing.OPAQUE position — a DERIVED,
+ * rebuildable store that holds user-derived bytes and is covered by OS disk encryption only; and
+ * NOT_APPLICABLE claims there is nothing here worth sealing. All three are claims about content, so all
+ * three carry an encryptionNote saying what the file actually contains (tempdoc 879: NOT_APPLICABLE was
+ * the one value nobody had to justify, and it was standing in for both "nothing sensitive" and "the
+ * user's own document text").
  */
 const ENCRYPTION = new Set([
   'SEALED_BY_STORE_CIPHER',
   'UNSEALED_KEY_ROOT',
   'UNSEALED_EXTERNAL_AUTHORITY',
   'UNSEALED_NO_JVM_CIPHER',
+  'UNSEALED_DERIVED_OS_DISK_ENCRYPTION',
   'UNSEALED_GAP',
   'NOT_APPLICABLE',
+]);
+/** The dispositions that are claims about what the bytes hold, and so must say what that is. */
+const ENCRYPTION_NOTE_REQUIRED = new Map([
+  ['UNSEALED_GAP', 'saying what the plaintext file contains'],
+  [
+    'UNSEALED_DERIVED_OS_DISK_ENCRYPTION',
+    'naming the user-derived content it holds in the clear and why the store is rebuildable',
+  ],
+  ['NOT_APPLICABLE', 'saying what the file holds and why none of it is worth sealing'],
 ]);
 
 /** Extract `NAME("dir", StoreRecoverability.CLASS, ...)` entries from StoreCatalog.java. */
@@ -95,6 +110,9 @@ export function checkParity(catalogEntries, registerStores) {
  * literal, plus each of its slash-separated parts, so `"ui/settings.json"` answers for `ui` and for
  * `settings.json` while `"ui"` answers only for `ui`. Component equality (not substring) is the match
  * rule, so a literal containing `build` can never stand in for the declared segment `ui`.
+ *
+ * Callers pass ONE source's text at a time (checkPathAgreement requires a single file to answer for a
+ * whole declared path); the array form is kept for the union view a caller may still want.
  */
 export function literalPathComponents(sources) {
   const components = new Set();
@@ -281,6 +299,11 @@ export function checkDurableStoreRegister({
  * Hold a row's declared paths to the code that writes them. Without this the register could name any
  * path at all and stay green — which is how four rows drifted from their real on-disk locations
  * (tempdoc 879). A row opts out only by SAYING so: pathVerification COMPOSED plus a note.
+ *
+ * ONE source file must answer for a whole declared path. Unioning the literals of every listed source
+ * made LITERAL satisfiable by adding an unrelated file that happens to contain the missing word — the
+ * row goes green without any file actually writing the path. Requiring a single file to hold every
+ * segment means the match is evidence of a writer, not of a well-stocked source list.
  */
 export function checkPathAgreement({ root, row, label, readableSources, readSource }) {
   const failures = [];
@@ -299,33 +322,45 @@ export function checkPathAgreement({ root, row, label, readableSources, readSour
     return failures;
   }
 
-  const sourceTexts = [];
+  const perSource = [];
   for (const source of readableSources) {
     try {
-      sourceTexts.push(readSource(resolve(root, source)));
+      perSource.push({ source, components: literalPathComponents([readSource(resolve(root, source))]) });
     } catch (error) {
       failures.push(`${label}: cannot read implementation source ${source}: ${error.message}.`);
     }
   }
-  const components = literalPathComponents(sourceTexts);
   for (const ownedPath of row.ownedPaths ?? []) {
-    for (const segment of checkablePathSegments(ownedPath)) {
-      if (components.has(segment)) continue;
-      failures.push(
-        `${label}: ownedPaths declares \`${ownedPath}\` but no implementation source contains the ` +
-          `string literal \`${segment}\` (searched: ${readableSources.join(', ') || 'none'}). ` +
-          `Either the declared path is wrong, the writing source is missing from implementationSources, ` +
-          `or the path is assembled at runtime — say so with pathVerification COMPOSED + pathVerificationNote.`,
-      );
+    const segments = checkablePathSegments(ownedPath);
+    if (segments.length === 0) continue;
+    if (perSource.some(({ components }) => segments.every((segment) => components.has(segment)))) {
+      continue;
     }
+    const best = perSource
+      .map(({ source, components }) => ({
+        source,
+        missing: segments.filter((segment) => !components.has(segment)),
+      }))
+      .sort((a, b) => a.missing.length - b.missing.length)[0];
+    const detail = best
+      ? `closest source ${best.source} is missing ${best.missing.map((s) => `\`${s}\``).join(', ')}`
+      : 'no readable implementation source';
+    failures.push(
+      `${label}: ownedPaths declares \`${ownedPath}\` but no SINGLE implementation source contains ` +
+        `every one of its string literals ${segments.map((s) => `\`${s}\``).join(', ')} ` +
+        `(searched: ${readableSources.join(', ') || 'none'}; ${detail}). ` +
+        `Either the declared path is wrong, the writing source is missing from implementationSources, ` +
+        `or the path is assembled at runtime — say so with pathVerification COMPOSED + pathVerificationNote. ` +
+        `Adding a second file that merely mentions the missing segment does not make the path literal.`,
+    );
   }
   return failures;
 }
 
 /**
  * Every row states whether its bytes are sealed at rest and, when they are not, which reason applies.
- * A store the StoreCatalog calls AUTHORED must be sealed; the open-gap value must name what the
- * plaintext file holds. This records the disposition — it does not change any store's behavior.
+ * A store the StoreCatalog calls AUTHORED must be sealed; every disposition that is a claim about the
+ * file's content must name that content. This records the disposition — it does not change behavior.
  */
 export function checkEncryptionDisposition({ row, label, authoredCatalogDirs }) {
   const failures = [];
@@ -335,12 +370,13 @@ export function checkEncryptionDisposition({ row, label, authoredCatalogDirs }) 
     );
     return failures;
   }
+  const noteObligation = ENCRYPTION_NOTE_REQUIRED.get(row.encryption);
   if (
-    row.encryption === 'UNSEALED_GAP'
+    noteObligation
     && (typeof row.encryptionNote !== 'string' || row.encryptionNote.trim() === '')
   ) {
     failures.push(
-      `${label}: encryption UNSEALED_GAP requires an encryptionNote saying what the plaintext file contains.`,
+      `${label}: encryption ${row.encryption} requires an encryptionNote ${noteObligation}.`,
     );
   }
 
