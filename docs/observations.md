@@ -21,6 +21,6 @@ on `main` becomes a dated pin with an exit in `scripts/agent-analytics/expected-
 a tracked fix; a platform lesson becomes a hook or an `agent-lessons.md` line; a product defect goes
 to the owning tempdoc's open-items section or its domain register.
 
-**The retired content** is in git history — the last full store is at commit `c5aa7ae2`
-(`git show c5aa7ae2:docs/observations.md`). Nothing in it was being read; nothing in it is lost.
+**The retired content** is in git history — the last full store is at commit `7b85a5a6`
+(`git show 7b85a5a6:docs/observations.md`). Nothing in it was being read; nothing in it is lost.
 `docs/observations.d/` shards written by sessions that predate 872 are likewise history only.

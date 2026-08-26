@@ -75,8 +75,8 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
    drift is fixed in place. Reopen this if a tracker is wanted — everything else in 872 stands
    either way.
 2. **Accept 680's fallback and delete the store rather than make it TTL?** Yes — deleted. The
-   content is in git history (last full store: commit `c5aa7ae2`,
-   `git show c5aa7ae2:docs/observations.md`). Deleting an unread note asserts nothing about the
+   content is in git history (last full store: commit `7b85a5a6`,
+   `git show 7b85a5a6:docs/observations.md`). Deleting an unread note asserts nothing about the
    bug; 821 §6.1 showed a third of *verified* "fixed" verdicts wrong, so the originals are no
    cleaner, and per-item verification of 523 uncorroborated claims nobody consumes is not work
    worth doing.
@@ -162,7 +162,7 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
   opportunistically (quote the offending value) or exclude tempdocs from front-matter parsing.
   `docs-validate` itself is not a CI gate and is red on main for other pre-existing reasons
   (Title Case, tags/aliases) — its exit code is not a signal today.
-- **Unrouted content of the 7 deleted shards** (2 sessions, 2026-08-25/26; text at `c5aa7ae2`):
+- **Unrouted content of the 7 deleted shards** (2 sessions, 2026-08-25/26; text at `7b85a5a6`):
   ~20 product findings (sv3 a11y: composer edge 1.21:1, `sidebar-grip` 16 px target, double focus
   ring; `[jf-control] no accessible name` on every session; `SES_UNHANDLED_REJECTION` on sv3 load;
   no stop affordance during answer streaming; late-cancel live/record divergence; agent
@@ -177,7 +177,7 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
   9) and **dev-runner bound to the main repo path** (seen 8) were the two other genuine repeats —
   both real, both defects, both belong to their scripts' owners (`scripts/ci`, `scripts/dev`).
 - **Domain-register hygiene**: `search-quality-register.md` D-004 and the register skills now say
-  "routed into the retired store"; the entries that were live there are in `c5aa7ae2` for
+  "routed into the retired store"; the entries that were live there are in `7b85a5a6` for
   whoever next touches those registers.
 - **Owner call, still open**: an external defect tracker. Not needed for 872 to hold.
 
