@@ -855,10 +855,11 @@ export class Sv3Main extends JfElement {
            budget (818 law 5: act-now / in-motion / broken, no fourth role). */
         --accent-danger-45: color-mix(in srgb, var(--destructive) 45%, transparent);
         --accent-warning-45: color-mix(in srgb, var(--warning) 45%, transparent);
-        /* The status word is written by an INLINE style (ToolCallCard.ts:354) off
-           utils/statusTone.ts:88-104, but what that authority returns is 'var(--accent-<tone>)' —
-           a custom property, so the inline colour resolves against these declarations like any
-           other. (The audit recorded it as unreachable from a host token; it is not.) */
+        /* No status WORD renders here any more (871 owner-feedback batch removed it — the glyph
+           alone carries status, per ToolCallCard.ts's own header comment). The status glyph
+           (jf-run-node, nested inside jf-tool-call-card) still colours off these tokens via
+           utils/statusTone.ts, which returns 'var(--accent-<tone>)' — a custom property, so its
+           colour resolves against these declarations like any other. */
         --accent-success: var(--success-foreground);
         --accent-warning: var(--warning-foreground);
         --accent-danger: var(--error-foreground);
