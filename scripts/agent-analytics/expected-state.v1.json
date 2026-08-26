@@ -41,8 +41,8 @@
     {
       "id": "ui-web-envelopestream-heartbeat-flaky",
       "match": [
-        "test:unit(?!.*PluginLoader)",
-        "vitest(?!.*PluginLoader)"
+        "test:unit(?!.*(?:PluginLoader|resourceRegistry))",
+        "vitest(?!.*(?:PluginLoader|resourceRegistry))"
       ],
       "claim": "EnvelopeStream.test.ts heartbeat-watchdog reconnect case is FLAKY under full-suite parallel load only (expects >=2 source reconnects inside a fixed window; passes in isolation). Noted by 14 sessions 2026-08-06..25 before being pinned. A failure ONLY there is pre-existing; re-run in isolation to confirm. The fix (deterministic timer control) is a tracked item in tempdoc 872.",
       "evidence": "retired observations condition obs:envelopestream-test (seen 14, 2026-08-06..2026-08-25)",
@@ -53,8 +53,8 @@
     {
       "id": "ui-web-pluginloader-module-mode-timeout",
       "match": [
-        "test:unit(?!.*EnvelopeStream)",
-        "vitest(?!.*EnvelopeStream)"
+        "test:unit(?!.*(?:EnvelopeStream|resourceRegistry))",
+        "vitest(?!.*(?:EnvelopeStream|resourceRegistry))"
       ],
       "claim": "PluginLoader.test.ts 'module-mode: an ES-import plugin resolves @kernel/data and installs' times out at the 5000ms default on a cold full-suite run (330ms in isolation). A failure ONLY there is pre-existing; the fix (per-test timeout or warm import) is a tracked item in tempdoc 872.",
       "evidence": "retired observations condition obs:pluginloader-test (seen 7, all 2026-08-25)",
@@ -77,14 +77,13 @@
     {
       "id": "ui-web-resourceregistry-defaults-timeout",
       "match": [
-        "test:unit(?!.*resourceRegistry)",
-        "vitest(?!.*resourceRegistry)"
+        "test:unit(?!.*(?:PluginLoader|EnvelopeStream))",
+        "vitest(?!.*(?:PluginLoader|EnvelopeStream))"
       ],
       "claim": "resourceRegistry.test.ts 'produces the four expected registrations and leaves HISTORY unsupported' times out at the 5000ms default on a full ui-web suite run (1.5s in isolation). It calls vi.resetModules() and then dynamically re-imports the registry plus its defaults module, so the whole re-transform lands inside one test's budget. A failure ONLY there is pre-existing; re-run in isolation to confirm. Same shape as ui-web-pluginloader-module-mode-timeout.",
       "evidence": "Seen 3x on full-suite runs from worktree agent-aa51999fa41f5fdf9 (tempdoc 878) on 2026-08-26, and passing in isolation each time (14/14). Not change-induced: the import graph of resourceRegistryDefaults.ts is StatusCard/Table/TimeseriesPolyline/TimeseriesSparkline/HealthLitView, none of which 878 touches.",
       "added": "2026-08-26",
-      "reviewBy": "2026-09-30",
-      "exitProbe": "slow: npm --prefix modules/ui-web run test:unit:run"
+      "reviewBy": "2026-09-30"
     },
     {
       "id": "app-services-integrationtest-wallclock-flaky",
