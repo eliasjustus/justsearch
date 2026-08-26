@@ -631,10 +631,10 @@ an independent agent (reviewer ≠ committer) before the next round.
 
 | commit | scope |
 |---|---|
-| A  | C4 register (+ `MarkdownBlock.citationProjection.test.ts` conformance guard) · C2 one neutralizer with a frame-derived predicate + `sourceCount` · muted spans carry `title`/`aria-label`/`data-claimed-label` · `--md-pseudo-cite-color` hook replaces `opacity` · C2b `sv3AnswerFrame` exported, both v3 block sites bind `frame` + `.sourceCount` · seven call sites wired · T-sites inventory extended |
-| B  | C1 literal-transparent extension, `closeLiteralGap` whitespace rule, upgrade keeps the model's whitespace · C3 positive tier classes (`cite-grounded` gets its rule; base `.cite-ref` neutral), `makeMarker(cite, tier)`, `data-cite-tier`, source-tier title · three §3.4 assertions re-based |
-| review 1 fixes  | neutralizer skips `pre/code` · sentence span ends before a skipped literal (`spanEnd` vs `endIndex`) · literal skip and punctuation walk are code-aware · wording "this citation was not verified" (no examination implied) · live agent block: run-scoped count + `is-streaming` (and `agentAnswerCitations()` gated by the same verdict) · base `.cite-ref` ink `--text-primary` (distinct from weak) · `closeLiteralGap` never treats a newline as removable · cold-load parity test · `recordEvidence` guard exercises its surface (`evidence-fe-record-evidence`) |
-| review 2 fixes  | settled DOM re-derives from inputs when `citations`/`sourceCount`/`frame` change post-settle (late evidence mints marks; withdrawn evidence removes them); `unmutePseudoCitations` retired as subsumed · in-sentence override rendering pinned · no-space code-span shape pinned |
+| A `1def52b9` | C4 register (+ `MarkdownBlock.citationProjection.test.ts` conformance guard) · C2 one neutralizer with a frame-derived predicate + `sourceCount` · muted spans carry `title`/`aria-label`/`data-claimed-label` · `--md-pseudo-cite-color` hook replaces `opacity` · C2b `sv3AnswerFrame` exported, both v3 block sites bind `frame` + `.sourceCount` · seven call sites wired · T-sites inventory extended |
+| B `ab326053` | C1 literal-transparent extension, `closeLiteralGap` whitespace rule, upgrade keeps the model's whitespace · C3 positive tier classes (`cite-grounded` gets its rule; base `.cite-ref` neutral), `makeMarker(cite, tier)`, `data-cite-tier`, source-tier title · three §3.4 assertions re-based |
+| review 1 fixes `9e91e64e` | neutralizer skips `pre/code` · sentence span ends before a skipped literal (`spanEnd` vs `endIndex`) · literal skip and punctuation walk are code-aware · wording "this citation was not verified" (no examination implied) · live agent block: run-scoped count + `is-streaming` (and `agentAnswerCitations()` gated by the same verdict) · base `.cite-ref` ink `--text-primary` (distinct from weak) · `closeLiteralGap` never treats a newline as removable · cold-load parity test · `recordEvidence` guard exercises its surface (`evidence-fe-record-evidence`) |
+| review 2 fixes `a36ad822` | settled DOM re-derives from inputs when `citations`/`sourceCount`/`frame` change post-settle (late evidence mints marks; withdrawn evidence removes them); `unmutePseudoCitations` retired as subsumed · in-sentence override rendering pinned · no-space code-span shape pinned |
 
 ### 4.1 What the reviews caught that the design and derisk did not
 
@@ -678,7 +678,7 @@ Recorded because each is a gap in §2/§3's reasoning, not in the worker's execu
   (`data-cite-tier="sentence"`, `cite-grounded`), eleven literal `[4]` muted with
   `title`/`aria-label` "The model cited source 4; this citation was not verified",
   `data-claimed-label="4"`, `opacity 1`, none inside code — the S4 case from 859 §7, rendered as
-  designed. Re-probed on the final commit () against a fresh stack: identical facts;
+  designed. Re-probed on the final commit (`a36ad822`) against a fresh stack: identical facts;
   a fresh ask on the final code rendered 6 verified marks, axe 0. Muted ink over the v3 background: **7.8:1** measured (dark). Light arm: ~7.7:1
   computed from the bridge's tokens, **not measured** — the window's persisted user state pinned
   dark and the probe's `color_scheme` emulation did not override it.
