@@ -29,6 +29,7 @@ import {
   sv3RunSessionStatus,
   SV3_RUN_FEED_EMPTY,
   SV3_RUN_PRESENCE_TITLE,
+  SV3_STANDING_STOP_REASON,
   type Sv3RunLocal,
   type Sv3RunSource,
 } from './sv3-run.js';
@@ -392,8 +393,22 @@ describe('the feed is ONE projection the receipt counts', () => {
   it('says a run receipt in words, with stopped-by-you as an OUTCOME and not an error', () => {
     expect(sv3RunReceiptLabel(0, 'complete')).toBe('0 tool calls · finished');
     expect(sv3RunReceiptLabel(1, 'complete')).toBe('1 tool call · finished');
-    expect(sv3RunReceiptLabel(3, 'halted')).toBe('3 tool calls · stopped by you');
+    expect(sv3RunReceiptLabel(3, 'halted', 'COMPLETED')).toBe('3 tool calls · stopped by you');
+    expect(sv3RunReceiptLabel(3, 'halted', 'CANCELLED')).toBe('3 tool calls · stopped by you');
     expect(sv3RunReceiptLabel(2, 'failed')).toBe('2 tool calls · failed');
+  });
+
+  it('owner 2026-08-26: a halt with NO terminal gets the count and no outcome word at all', () => {
+    // A run stopped before it answered emits `AgentError`/CANCELLED and never `AgentDone`, so
+    // neither plane has a disposition for it. There is no ending to report, and the record used to
+    // report the WRONG one — "failed", off the error entry the cancel logged on its way down.
+    expect(sv3RunReceiptLabel(3, 'halted', null)).toBe('3 tool calls');
+    expect(sv3RunReceiptLabel(1, 'halted')).toBe('1 tool call');
+    expect(sv3RunReceiptLabel(0, 'halted')).toBe('0 tool calls');
+    // It is the HALT that is worded differently, not the absent disposition: every other status
+    // still says what it always said when the run reported no terminal.
+    expect(sv3RunReceiptLabel(3, 'complete', null)).toBe('3 tool calls · finished');
+    expect(sv3RunReceiptLabel(3, 'failed', null)).toBe('3 tool calls · failed');
   });
 });
 
@@ -487,5 +502,29 @@ describe('the primary slot is a STRICT priority machine', () => {
     expect(kinds[2]?.reason).toContain('Ctrl+Enter');
     expect(kinds[3]?.reason).toContain('Ctrl+Enter');
     expect(kinds[1]?.reason).toContain('steers');
+  });
+
+  it('owner 2026-08-26: the STOP stands beside the slot whenever a run is live', () => {
+    // The slot's priority is right about which control is primary and was wrong about stopping
+    // being optional: a supervised run holds on a decision for most of its life, so `pendingPrompt`
+    // outranked `running` for most of its life and the reader had no stop control at all.
+    const held = sv3PrimaryAction({ pendingPrompt: true, running: true, followUp: true });
+    expect(held.kind).toBe('answer');
+    expect(held.haltReason).toBe(SV3_STANDING_STOP_REASON);
+
+    // It is keyed on the RUN, not on the prompt: a prompt left over from a run that has ended has
+    // nothing to stop.
+    expect(
+      sv3PrimaryAction({ pendingPrompt: true, running: false, followUp: false }).haltReason,
+    ).toBe('');
+
+    // And it never doubles the slot's own Stop — one live run, one stop control.
+    for (const slot of [
+      sv3PrimaryAction({ pendingPrompt: false, running: true, followUp: false }),
+      sv3PrimaryAction({ pendingPrompt: false, running: false, followUp: true }),
+      sv3PrimaryAction({ pendingPrompt: false, running: false, followUp: false }),
+    ]) {
+      expect(slot.haltReason).toBe('');
+    }
   });
 });
