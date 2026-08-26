@@ -236,7 +236,7 @@ export class Sv3Composer extends JfElement {
       .band {
         position: relative;
         width: 100%;
-        max-inline-size: 48rem;
+        max-inline-size: var(--measure-prose);
         margin-inline: auto;
         pointer-events: auto;
       }

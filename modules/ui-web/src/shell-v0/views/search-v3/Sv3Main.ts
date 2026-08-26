@@ -361,7 +361,7 @@ export class Sv3Main extends JfElement {
          the field that produced it share an edge. */
       .transcript {
         width: 100%;
-        max-inline-size: 48rem;
+        max-inline-size: var(--measure-prose);
         min-width: 0;
         margin-inline: auto;
       }

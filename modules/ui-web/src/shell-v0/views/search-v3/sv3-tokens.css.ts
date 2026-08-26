@@ -297,7 +297,14 @@ export const sv3Tokens = css`
        The design spec's transcript column is 'max-w-3xl'. It reuses the
        SHIPPED concept name (styles/tokens.css:352) rather than minting a second measure vocabulary,
        and it is the COLUMN's property — which is why it is spent on the window's own '.answer' box
-       and not inside the shared renderer (tempdoc 822 §2.5). */
+       and not inside the shared renderer (tempdoc 822 §2.5).
+
+       Tempdoc 874 — this is now the SINGLE width authority for the whole chat column: the
+       transcript ('Sv3Main.ts .transcript'), the composer band ('Sv3Composer.ts .band') and the
+       context bar ('Sv3ContextBar.ts .bar') all read it instead of re-hardcoding 48rem, so the
+       three share one edge by construction. The declaration below is the DEFAULT; the reader's
+       chat-width preset ('state/chatWidthState.ts') overrides it inline on the SearchV3View host,
+       which is why it must stay a bare 'var(--measure-prose)' at every use site. */
     --measure-prose: 48rem;
 
     /* ── Z-scale (an improvement on the spec, which has none) ──────────────
