@@ -342,6 +342,16 @@ describe('the three imported components read NO token the window leaves unbridge
             'dress a surface that cannot render.',
         ),
         ...reasons(
+          ['--md-pseudo-cite-color'],
+          'the MUTED-ref ink (tempdoc 869 §3.6) is UNREACHABLE here for the same reason one step ' +
+            'further out: `ReasoningBlock.ts:181` passes no `.citations`, no `frame` and no ' +
+            '`.sourceCount`, so the block frames itself `grounded` over zero sources and BOTH mute ' +
+            'arms are vacuous — the ungrounded arm because the frame is not it, the sourced arm ' +
+            'because nothing resolves. No `.pseudo-cite` element exists in the trace to ink. The ' +
+            'ANSWER blocks, which do reach it, are inside the `.sv3-markdown` bridge, where it is ' +
+            're-pointed.',
+        ),
+        ...reasons(
           MD_CITE,
           'the citation-mark vocabulary (tempdoc 822 citation-mark presentation) is UNREACHABLE ' +
             'here for the same reason: `ReasoningBlock.ts:181` renders the block with no ' +

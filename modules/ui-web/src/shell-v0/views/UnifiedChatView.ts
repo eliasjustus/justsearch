@@ -4634,6 +4634,7 @@ export class UnifiedChatView extends JfElement {
             <jf-markdown-block
               .text=${ctrl.streamingText}
               .citations=${this.agentAnswerCitations()}
+              .sourceCount=${(ctrl?.answerSources ?? []).length}
             ></jf-markdown-block>
             ${this.renderGroundingBadge(
               ctrl.streamingText,
@@ -5333,7 +5334,12 @@ export class UnifiedChatView extends JfElement {
                 the kind switch now, for every item kind, because the fold no longer guarantees this
                 answer is the carrier. Position is unchanged for the reader: still immediately before
                 the body it belongs to. */ ''}
-            <jf-markdown-block .text=${it.content} .citations=${marks} frame=${frame}></jf-markdown-block>
+            <jf-markdown-block
+              .text=${it.content}
+              .citations=${marks}
+              frame=${frame}
+              .sourceCount=${agentSources.length}
+            ></jf-markdown-block>
             ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
             ${this.renderGroundingBadge(
               it.content,
@@ -5662,6 +5668,7 @@ export class UnifiedChatView extends JfElement {
                 .text=${m.content}
                 .citations=${marks}
                 frame=${frame}
+                .sourceCount=${(m.sources ?? []).length}
               ></jf-markdown-block>`
             : // Tempdoc 565 §15.B — the canonical answer block for every other mode (agent/chat).
               html`<jf-markdown-block .text=${m.content} frame=${frame}></jf-markdown-block>`}
@@ -5778,6 +5785,7 @@ export class UnifiedChatView extends JfElement {
               format="plain"
               .text=${this.streamingText}
               .citations=${this.resolveClaimCitations(this.claims, this.sources)}
+              .sourceCount=${this.sources.length}
               ?is-streaming=${this.isStreaming}
             ></jf-markdown-block>`}
         ${this.sources.length > 0 || this.citations.length > 0

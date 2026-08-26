@@ -344,6 +344,15 @@ const BLOCK_TAGS = new Set([
   'FORM', 'FIELDSET', 'LEGEND',
 ]);
 
+/**
+ * Tempdoc 577 §2.12 Move 3 — the citation-SHAPED token: `[n]` or `(n)`, three digits at most. The
+ * split form keeps the token as its own part (a capturing group), so one walk yields both the prose
+ * between tokens and the tokens themselves; the anchored form tests a single part. Which of those
+ * tokens is actually MUTED is the frame's decision, not this shape's (`pseudoCiteRule`).
+ */
+const PSEUDO_CITE_SPLIT = /([[(]\d{1,3}[\])])/;
+const PSEUDO_CITE_TOKEN = /^[[(]\d{1,3}[\])]$/;
+
 /** The nearest block-level ancestor of `node` inside `root` (the root itself when there is none). */
 function blockAncestor(node: Node, root: Element): Element {
   let el: Element | null = node.parentElement;
@@ -358,6 +367,7 @@ export class MarkdownBlock extends JfElement {
     format: { type: String, reflect: true },
     citations: { attribute: false },
     frame: { type: String, reflect: true },
+    sourceCount: { type: Number },
     prose: { type: Boolean, reflect: true },
   };
 
@@ -368,12 +378,27 @@ export class MarkdownBlock extends JfElement {
   /** Tempdoc 565 §15.B — resolved inline citation marks woven into the rendered answer (or []). */
   declare citations: Citation[];
   /**
-   * Tempdoc 577 §2.12 Move 3 — the answer's epistemic frame ({@link AnswerFrame}). When
-   * `ungrounded`, model-authored citation-shaped text (`[n]`/`(n)`) is neutralized to a muted,
-   * non-credible span so the LLM cannot borrow the index's citation credibility (the §2.11 #4
-   * fabricated-citations defect). Default `grounded` is a no-op.
+   * Tempdoc 577 §2.12 Move 3 — the answer's epistemic frame ({@link AnswerFrame}). Model-authored
+   * citation-shaped text is neutralized to a muted, non-credible span so the LLM cannot borrow the
+   * index's citation credibility (the §2.11 #4 fabricated-citations defect).
+   *
+   * Tempdoc 869 §2.2 — the frame chooses the PREDICATE, it no longer gates the pass. `ungrounded`
+   * keeps the broad rule (the whole answer is framed, so nothing in it is a reference: any
+   * `[n]`/`(n)`); every other frame mutes only what {@link sourceCount} makes resolvable and the
+   * verifier did not confirm. Default `grounded` with the default `sourceCount = 0` is still a no-op.
    */
   declare frame: AnswerFrame;
+  /**
+   * Tempdoc 869 §2.2 — the LENGTH of the turn's source list. Labels are `index + 1` over that one
+   * list (`citationResolve.ts:76/:155`), so the count IS the set of model refs that resolve to a
+   * source: `[n]` with `1 <= n <= sourceCount` names a real source, and anything above it names
+   * nothing the reader could open. That is what lets the mute (see {@link frame}) reach a SOURCED
+   * answer without swallowing ordinary prose — an unresolvable `[7]` or a `(2)` is left alone.
+   *
+   * Default `0` makes the sourced arm vacuous by construction, so a consumer that passes no count
+   * mutes nothing: the weakest claim is the default (869 §2.8).
+   */
+  declare sourceCount: number;
   /**
    * Tempdoc 822 §C2/§2.3 (slice S5) — the opt-in prose variant. Off is the shipped rendering, and a
    * consumer that never sets it cannot be reached by a single variant rule (the containment is the
@@ -394,6 +419,7 @@ export class MarkdownBlock extends JfElement {
     this.format = 'markdown';
     this.citations = [];
     this.frame = 'grounded';
+    this.sourceCount = 0;
     this.prose = false;
   }
 
@@ -502,39 +528,95 @@ export class MarkdownBlock extends JfElement {
     if (!this.isStreaming && this.citations.length > 0) {
       this.decorateCitations();
     }
-    // Tempdoc 577 Move 3 — neutralize model-authored citation-shaped text in an UNGROUNDED answer so
-    // it cannot pose as a verifiable reference. Runs on the settled answer (post-stream), uniformly
-    // for plain + markdown (both produce `.md-content` text nodes), mirroring decorateCitations.
-    if (!this.isStreaming && this.frame === 'ungrounded') {
+    // Tempdoc 577 Move 3 — neutralize model-authored citation-shaped text so it cannot pose as a
+    // verifiable reference. Runs on the settled answer (post-stream), uniformly for plain + markdown
+    // (both produce `.md-content` text nodes), mirroring decorateCitations.
+    //
+    // Tempdoc 869 §2.2 — for EVERY frame, and always AFTER the weave above. The frame chooses the
+    // predicate (`pseudoCiteRule`), it does not gate the pass: keying the pass on `ungrounded` made
+    // the mute unreachable in exactly the answers that need it, where an unverified `[n]` sits beside
+    // verified ones. The order is load-bearing, not incidental: tier 2 upgrades a literal the model
+    // wrote for a VERIFIED label, so muting first would mute a mark the weave was about to earn.
+    if (!this.isStreaming) {
       this.neutralizePseudoCitations();
     }
   }
 
   /**
-   * Tempdoc 577 §2.12 Move 3 — wrap bare `[n]` / `(n)` tokens in the rendered answer with a muted,
-   * non-interactive span so an ungrounded model answer's fabricated markers read as plain text, not
-   * as the index's clickable citations. Idempotent (skips already-wrapped runs).
+   * Tempdoc 869 §2.2 — WHICH citation-shaped token this answer's frame says is not a reference, and
+   * what the muted span must then say it is. Returns the span's note for a token that must be muted,
+   * `null` for one that is ordinary prose.
+   *
+   * Two arms, one mechanism (the walker below is shared):
+   *
+   *  - `ungrounded` (577 Move 3, unchanged): the WHOLE answer is framed as not standing on the
+   *    index, so nothing inside it can be a reference — any `[n]` or `(n)` is muted. The over-reach
+   *    on a parenthesised number is confined to the one frame where it is harmless.
+   *  - every other frame: only a ref that RESOLVES and was NOT verified — `[n]` with
+   *    `1 <= n <= sourceCount` and `n` not among the labels this block actually rendered. `(n)` and
+   *    an out-of-range `[n]` are prose here and stay untouched. With the default `sourceCount = 0`
+   *    this arm mutes nothing at all.
+   */
+  private pseudoCiteRule(): (token: string) => string | null {
+    if (this.frame === 'ungrounded') {
+      return () => 'Citation-shaped text in an answer that is not grounded in your files';
+    }
+    // The labels the verifier stood behind. A literal carrying one of them is EVIDENCE, not a claim:
+    // by the time this runs it has either anchored a tier-1 mark or been upgraded in place by tier 2
+    // (which is why the pass runs after the weave), and a label the model never wrote as a literal
+    // has nothing here to mute anyway.
+    const rendered = new Set(this.citations.map((c) => Number(c.label)));
+    return (token: string): string | null => {
+      if (!token.startsWith('[')) return null;
+      const n = Number(token.slice(1, -1));
+      // Written as the POSITIVE condition so the pass fails CLOSED: an absent or non-numeric count
+      // makes every comparison false and mutes nothing, where `n > count` would mute everything.
+      if (!(n >= 1 && n <= this.sourceCount) || rendered.has(n)) return null;
+      return `The model cited source ${n}; the verifier did not confirm it`;
+    };
+  }
+
+  /**
+   * Tempdoc 577 §2.12 Move 3 — wrap the citation-shaped tokens {@link pseudoCiteRule} refuses with a
+   * muted, non-interactive span so a model-authored marker reads as plain text, not as the index's
+   * clickable citation. Idempotent (skips already-wrapped runs).
+   *
+   * Tempdoc 869 §2.2 — the span SAYS what it is (`title` + `aria-label`) and carries the label the
+   * model claimed (`data-claimed-label`). Colour alone carrying the meaning is the documented defect
+   * of the shipped prior art; a mute the reader cannot name is a mark with no author. It stays
+   * NON-INTERACTIVE by construction — no role, no tabindex, no handler: there is nothing to open.
    */
   private neutralizePseudoCitations(): void {
     const root = this.shadowRoot?.querySelector('.md-content');
     if (!root) return;
+    const noteFor = this.pseudoCiteRule();
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const targets: Text[] = [];
+    // Only the nodes that actually CHANGE: the pass runs on every settled render now, and rebuilding
+    // a node whose tokens the frame accepts would churn the DOM of every answer for nothing.
+    const targets: Array<{ node: Text; parts: string[] }> = [];
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const t = n as Text;
       // Skip text already inside a pseudo-cite (idempotency) and the real cite marks.
       const parent = t.parentElement;
       if (parent?.closest('.pseudo-cite, .cite-ref')) continue;
-      if (/[[(]\d{1,3}[\])]/.test(t.data)) targets.push(t);
+      if (!PSEUDO_CITE_SPLIT.test(t.data)) continue;
+      const parts = t.data.split(PSEUDO_CITE_SPLIT);
+      if (parts.some((part) => PSEUDO_CITE_TOKEN.test(part) && noteFor(part) !== null)) {
+        targets.push({ node: t, parts });
+      }
     }
-    for (const node of targets) {
+    for (const { node, parts } of targets) {
       const frag = document.createDocumentFragment();
-      const parts = node.data.split(/([[(]\d{1,3}[\])])/);
       for (const part of parts) {
-        if (/^[[(]\d{1,3}[\])]$/.test(part)) {
+        const note = PSEUDO_CITE_TOKEN.test(part) ? noteFor(part) : null;
+        if (note !== null) {
           const span = document.createElement('span');
           span.className = 'pseudo-cite';
           span.textContent = part;
+          // Only a bracketed token claims a LABEL; `(2)` is a number the model happened to bracket.
+          if (part.startsWith('[')) span.dataset.claimedLabel = part.slice(1, -1);
+          span.title = note;
+          span.setAttribute('aria-label', note);
           frag.appendChild(span);
         } else if (part.length > 0) {
           frag.appendChild(document.createTextNode(part));
@@ -706,12 +788,18 @@ export class MarkdownBlock extends JfElement {
       background: var(--md-cite-selected-bg, var(--accent-tint));
       box-shadow: inset 0 0 0 1px var(--md-cite-selected-edge, transparent);
     }
-    /* Tempdoc 577 §2.12 Move 3 — a model-authored citation-shaped token in an UNGROUNDED answer:
+    /* Tempdoc 577 §2.12 Move 3 — a model-authored citation-shaped token the answer's frame refuses:
        muted inline text (NOT the accent superscript of a real cite-ref), so it cannot pose as a
-       verifiable reference. Non-interactive by construction (a plain span, no handlers). */
+       verifiable reference. Non-interactive by construction (a plain span, no handlers).
+
+       Tempdoc 869 §3.6 — the 'opacity: 0.7' is GONE and the ink is tokenized, mirroring the
+       '--md-cite-weak-color' hook above. The opacity was a second, invisible authority over the
+       composite: on the v3 window, which re-points '--text-secondary' to '--muted-foreground', the
+       muted token measured ~3.0:1 dark / ~2.7:1 light — a contrast FAILURE, in the one idiom whose
+       whole job is to be read as text. 869 C2 widens this idiom from the ungrounded frame to every
+       sourced answer, so the value had to move with the reach, not after it. */
     .pseudo-cite {
-      color: var(--text-secondary);
-      opacity: 0.7;
+      color: var(--md-pseudo-cite-color, var(--text-secondary));
     }
   `];
 

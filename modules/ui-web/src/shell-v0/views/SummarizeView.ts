@@ -261,6 +261,7 @@ export class SummarizeView extends JfElement {
               format="plain"
               .text=${this.streamingText}
               .citations=${claimsToCitations(this.claims, this.sources)}
+              .sourceCount=${this.sources.length}
               ?is-streaming=${this.isStreaming}
             ></jf-markdown-block>`
           : nothing}
