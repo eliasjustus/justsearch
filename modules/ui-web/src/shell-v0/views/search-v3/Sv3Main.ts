@@ -2465,7 +2465,7 @@ export class Sv3Main extends JfElement {
         @click=${() => void this.copyAnswer(turn)}
       >
         ${icon({
-          name: copied ? 'check-circle-2' : 'clipboard-copy',
+          name: copied ? 'check-circle-2' : 'copy',
           size: TAIL_GLYPH_SIZE,
         })}</button
       ><span

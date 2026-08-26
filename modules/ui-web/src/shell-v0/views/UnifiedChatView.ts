@@ -1611,7 +1611,7 @@ export class UnifiedChatView extends JfElement {
               aria-label="Copy answer"
               @click=${() => this.copyText(m.content)}
             >
-              ${icon({ name: 'clipboard-copy', size: 15 })}
+              ${icon({ name: 'copy', size: 15 })}
             </button>
             <button
               class="turn-act-btn"

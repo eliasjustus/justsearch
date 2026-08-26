@@ -2362,7 +2362,7 @@ export class Shell extends JfElement {
             void this.handleCopyUrlClick();
           }}
         >
-          ${icon({ name: 'clipboard-copy', size: 12 })}
+          ${icon({ name: 'copy', size: 12 })}
           ${this.copyUrlFeedback === 'copied'
             ? 'Copied!'
             : this.copyUrlFeedback === 'failed'

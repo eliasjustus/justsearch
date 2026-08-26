@@ -546,20 +546,25 @@ export class Sv3Composer extends JfElement {
 
       /* Per the design spec: the field itself stays unstyled and every state is read off the wrapper, so
          focus and validity are one ring rather than two competing outlines.
-         Tempdoc 864 Layer 1(d) — these three were ':host(:has(…)) .glass::after' and are re-keyed onto
-         the wrapper for the reason given at '.glass:has(textarea:focus)' above: the ring they draw is
+         Tempdoc 864 Layer 1(d) — these were ':host(:has(…)) .glass::after' and are re-keyed onto
+         the wrapper for the reason given at '.glass:has(textarea:focus)' above: the mark they draw is
          this composer's ONLY "here is where you are typing" mark, and on the ':host()' form it is not
-         reachable in Chrome. Same pseudo-classes, same order, same declarations — the element that
-         reads them is now the one the field it reports on actually lives in. */
+         reachable in Chrome. Same pseudo-classes, same order — the element that reads them is now the
+         one the field it reports on actually lives in.
+
+         Tempdoc 870 item 2 — the 3px halo is GONE and the frame is the whole keyboard mark now. The
+         box painted TWO rings at once: this one, and the app-global ':focus-visible' ambient rule
+         ('primitives/ambientStyles.ts'), adopted into this shadow root and landing on the <textarea>
+         because its (0,1,0) out-specifies the bare-type reset below. The ambient half is closed by
+         the local 'textarea:focus-visible' rule at the field; this half spends the halo. What is left
+         still says "keyboard": the frame takes '--ring' (from '--composer-outline'), on top of the
+         resting→engaged surface lift the ':has(textarea:focus)' knob above already drives — a colour
+         AND a material change, neither of which the halo was carrying. */
       .glass:has(textarea:focus-visible)::after {
         border-color: var(--ring);
-        outline: 3px solid color-mix(in srgb, var(--ring) 24%, transparent);
       }
       .glass:has(textarea[aria-invalid='true'])::after {
         border-color: color-mix(in srgb, var(--destructive) 36%, transparent);
-      }
-      .glass:has(textarea[aria-invalid='true']:focus-visible)::after {
-        outline-color: color-mix(in srgb, var(--destructive) 16%, transparent);
       }
 
       /* ── The field ───────────────────────────────────────────────────────── */
@@ -593,6 +598,16 @@ export class Sv3Composer extends JfElement {
         field-sizing: content;
         min-block-size: var(--composer-field-min-hero);
         max-block-size: var(--composer-field-max);
+      }
+      /* Tempdoc 870 item 2 — the OTHER half of the double ring. The bare-type reset above is (0,0,1)
+         and the adopted app-global ':focus-visible { outline: 2px solid var(--focus-ring-color) }'
+         ('primitives/ambientStyles.ts') is (0,1,0), so on every tab into the field the ambient rule
+         won and painted a second outline inside the wrapper's own. Re-stating the reset ON the
+         pseudo-class is (0,1,1) and takes it back, in THIS sheet — the ambient rule is app-global and
+         stays exactly as it is for every other focusable surface. The wrapper's frame is still the
+         mark: this rule removes a duplicate, not the indication. */
+      textarea:focus-visible {
+        outline: none;
       }
       /* The spec's compact composer is a SINGLE truncating line beside the send control, and its
          expanded form is the 70px editor — the two forms differ in INTERNAL layout, not just in
@@ -736,17 +751,18 @@ export class Sv3Composer extends JfElement {
         padding: var(--space-1);
         border: 1px solid var(--dropdown-border);
         border-radius: var(--radius-lg);
-        /* 859 §B (D2) — '--dropdown-surface' derives its own translucency from the same multiplier
-           in the token sheet, so this fill goes opaque with the blur. */
-        background: var(--dropdown-surface);
-        -webkit-backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale)));
-        backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale)));
+        /* Tempdoc 870 item 1 — FULLY OPAQUE, and the blur is gone rather than tuned. '.glass' above
+           declares 'isolation: isolate', so a backdrop-filter on a descendant samples only the
+           composer's OWN painted content: the placeholder glyphs sitting under an open menu blurred
+           slightly and then composited through '--dropdown-surface''s ~16 % transparency, which is
+           the bleed-through the owner reported. Sampling the PAGE from inside an isolated context is
+           not reachable at all, so the two backdrop-filter declarations this replaces were dead
+           weight that only cost a repaint. '--popover' is the same opaque surface the no-blur
+           fallback removed with them already used, so the menu's resting look is unchanged in solid
+           mode and in reduced-transparency. '--dropdown-surface' itself is untouched: its other
+           consumers sit over NON-isolated contexts where the translucency does work. */
+        background: var(--popover);
         box-shadow: var(--dropdown-shadow);
-      }
-      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-        .menu {
-          background: var(--popover);
-        }
       }
       /* The spec's menu group label: px-2 py-1.5, medium, muted, 12px. */
       .menu-label {

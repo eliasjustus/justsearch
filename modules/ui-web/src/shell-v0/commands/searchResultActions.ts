@@ -62,7 +62,7 @@ export function registerSearchResultActions(): void {
     id: 'search-result.copy-path',
     context: SEARCH_RESULT_CONTEXT,
     label: 'Copy path',
-    icon: 'clipboard-copy',
+    icon: 'copy',
     priority: 30,
     source: 'core',
     provenance: CORE_PROVENANCE,
