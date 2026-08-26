@@ -81,6 +81,21 @@ export class ReasoningBlock extends JfElement {
     :host {
       display: block;
     }
+    /* Tempdoc 870 item 3, the seam the slim form has to bring with it. The card this replaced
+       carried its own 0.5rem of padding and a fill, which is what separated it from whatever
+       followed; a bare 12px line has neither, and NOT every container supplies the gap. The four
+       non-sv3 mount sites split on exactly this: NavigateView's and SummarizeView's '.conversation'
+       are flex columns with 'gap: 0.75rem', but UnifiedChatView's '.message'
+       (views/unifiedChatStyles.ts) is a plain block and Search v3's own '.turn' has only a
+       'padding-bottom' — in both the disclosure would abut the answer prose with nothing between
+       them. The margin is declared HERE, on the block, because the block is what changed; pushing it
+       onto each container would be four edits that can drift and a fifth mount site with none.
+       Gap-bearing containers add it to their gap, which is the direction that is safe to be wrong in
+       (the net box is still shorter than the card's was). The '[inline]' form is excluded: the run
+       feed's gap is that arm's ONE spacing authority, per 859 §A §1.6. */
+    :host(:not([inline])) {
+      margin-block-end: 0.5rem;
+    }
     .container {
       font-size: var(--font-size-sm);
       /* Tempdoc 853 (F-07) — was '--text-muted', measured 4.11:1 (light) / 4.40:1 (hc-light) at 13px:
@@ -92,15 +107,15 @@ export class ReasoningBlock extends JfElement {
       color: var(--text-secondary);
     }
     /* Tempdoc 859 §A §1.6 (A2) — the IN-FEED form. A tool card is an ACTION; a thought is subordinate
-       to the action it produced, so in the run timeline the block keeps the hairline left rule (which
-       is what says "aside") and drops the filled box and the radius that made it read as a competing
-       card. Vertical rhythm comes from '.run-feed''s gap — ONE spacing authority — so the block
+       to the action it produced, so in the run timeline the block keeps the hairline left rule, which
+       is what says "aside". It used to also RESET a filled box and a radius the base rule set; 870
+       item 3 retired those from the base for both forms, so the resets went with them rather than
+       staying on as no-ops that read like live declarations. Vertical rhythm comes from '.run-feed''s
+       gap — ONE spacing authority, which is also why this form takes no host margin — so the block
        contributes padding only: 0.25rem above and below the 24px WCAG target floor puts the collapsed
        row at 32px. The floor itself (F-09) and the '--text-secondary' grade (F-07) are untouched. */
     :host([inline]) .container {
       border-left: 3px solid var(--border-muted);
-      background: none;
-      border-radius: 0;
       padding-block: 0.25rem;
       padding-inline: 0.75rem 0;
     }

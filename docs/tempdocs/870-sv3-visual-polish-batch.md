@@ -63,6 +63,17 @@ still puts the label first. The expanded trace keeps a left hairline + indent. T
 `--text-secondary`: tempdoc 853 F-07 measured `--text-muted` at 4.11:1 on this component's own label,
 so the de-emphasis is bought with size and box, which cost no contrast.
 
+`ReasoningBlock` is a shared component, so the restyle also reaches four non-sv3 mount sites —
+`NavigateView.ts:133,137`, `SummarizeView.ts:250,254` and `UnifiedChatView.ts:5239,5638` — which is
+accepted (the card was the same overweight box in all of them), but they do not all supply the
+separation the card's own padding used to: Navigate's and Summarize's `.conversation` are flex
+columns with `gap: 0.75rem`, while UnifiedChatView's `.message` (`views/unifiedChatStyles.ts:476`)
+is a plain block and Search v3's own `.turn` declares only a `padding-bottom`, so the slim line would
+abut the answer prose there. The block therefore carries its own `margin-block-end: 0.5rem` on
+`:host(:not([inline]))` — declared once on the thing that changed rather than as four container
+edits that can drift, and excluded from the `[inline]` arm whose one spacing authority is
+`.run-feed`'s gap.
+
 ### 4. Copy button on the reasoning block renders while collapsed
 
 **Root cause.** `ReasoningBlock.ts` rendered the copy button on `!streaming && text`, with no

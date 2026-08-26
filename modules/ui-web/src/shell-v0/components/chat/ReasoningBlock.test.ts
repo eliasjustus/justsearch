@@ -241,14 +241,18 @@ describe('ReasoningBlock — the run-timeline form (859 §A)', () => {
     // A tool card is an action; a thought is subordinate to it. The hairline left rule is what says
     // "aside" — the filled box and the radius were what made the row read as a competing card.
     // Tempdoc 870 item 3 retired the card from the OTHER form too, so the rule this form keeps is
-    // declared here rather than inherited from a base that no longer draws a box.
+    // declared here rather than inherited from a base that no longer draws a box — and the
+    // `background: none` / `border-radius: 0` RESETS went with it. Pinned as absent, not merely
+    // deleted: a reset that outlives the declaration it countered is residue reading as live intent.
     const inFeed = ruleBody(':host\\(\\[inline\\]\\) \\.container');
     expect(inFeed).toMatch(/border-left:\s*3px solid var\(--border-muted\)/);
-    expect(inFeed).toMatch(/background:\s*none/);
-    expect(inFeed).toMatch(/border-radius:\s*0/);
+    expect(inFeed).not.toMatch(/background/);
+    expect(inFeed).not.toMatch(/border-radius/);
     // Vertical rhythm belongs to `.run-feed`'s gap — ONE spacing authority — so the block declares
-    // padding only, and no margin.
+    // padding only, and no margin. The slim form's host margin below is scoped away from this arm
+    // for exactly that reason.
     expect(inFeed).not.toMatch(/margin/);
+    expect(styleText()).not.toMatch(/:host\(\[inline\]\)\s*\{/);
     // The base rule keeps the grade the a11y work pinned (F-07) and NONE of the card chrome: a
     // background or radius reappearing there would put the box back under both forms at once.
     const base = ruleBody('\\.container');
@@ -314,6 +318,18 @@ describe('ReasoningBlock — 870 the slim disclosure', () => {
     );
     // No card chrome anywhere in the sheet's container rules — the box is gone, not overridden.
     expect(css).not.toMatch(/background:\s*var\(--surface-subtle\);[\s\S]{0,40}border-radius/);
+  });
+
+  it('item 3: the slim form brings its own seam, because not every container has a gap', () => {
+    // The card carried 0.5rem of padding and a fill; a bare 12px line carries neither, and the
+    // mount sites split on whether their container supplies the separation. NavigateView's and
+    // SummarizeView's `.conversation` are flex columns with `gap: 0.75rem`; UnifiedChatView's
+    // `.message` (views/unifiedChatStyles.ts) is a plain block and Search v3's `.turn` declares only
+    // a `padding-bottom` — in those two the disclosure would abut the answer prose with nothing
+    // between them. The margin rides the BLOCK, so a fifth mount site inherits the seam for free.
+    expect(ruleBody(':host\\(:not\\(\\[inline\\]\\)\\)')).toMatch(/margin-block-end:\s*0\.5rem/);
+    // …and never on the in-feed arm, whose ONE spacing authority is `.run-feed`'s gap (859 §A §1.6).
+    expect(styleText()).not.toMatch(/:host\(\[inline\]\)[^{]*\{[^}]*margin/);
   });
 
   it('item 3: the streaming affordance and the [inline] form are untouched', async () => {
