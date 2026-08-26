@@ -155,8 +155,13 @@ export function mendMarkdown(text: string): string {
  * sentence are untouched (they lack the leading blank-line heading + trailing-to-EOF shape). Pure;
  * unit-tested alongside `mendMarkdown`.
  */
+// Tempdoc 869 §4 (live finding) — the heading word must be the whole heading: followed by an
+// optional colon and then a line break, a `[n]`, or a list marker. Without that, a PROSE paragraph
+// that merely STARTS with "Citation…"/"Source…" and cites something later ("Citation verification
+// scores supplied text [4]. …") matched as a bibliography and the rest of the answer was deleted to
+// EOF — observed live as a 2202-char answer rendering 1020 chars.
 const TRAILING_CITATION_BLOCK_RE =
-  /\n[ \t]*\n[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?[ \t]*(?:citations?|sources?|references?)\b[\s\S]*$/i;
+  /\n[ \t]*\n[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?[ \t]*(?:citations?|sources?|references?)\b[ \t]*:?[ \t]*(?:\*\*|__)?[ \t]*(?:\r?\n|\[\d+\]|[-*+] )[\s\S]*$/i;
 export function stripTrailingCitationBlock(text: string): string {
   if (!text) return text;
   const m = text.match(TRAILING_CITATION_BLOCK_RE);

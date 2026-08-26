@@ -167,6 +167,19 @@ describe('stripTrailingCitationBlock (565 §13.8 — UI is the source authority)
     expect(stripTrailingCitationBlock(text)).toBe(text);
   });
 
+  it('869 — does NOT strip a PROSE paragraph that merely starts with "Citation…" and cites later', () => {
+    // Live finding (869 §4): this shape matched as a bibliography and deleted half the answer.
+    const text =
+      'The "sourced" state renders with a secondary tone [5].\n\n' +
+      'Citation verification scores supplied passage text instead of re-fetching, and this is a ' +
+      'Worker-facing seam [4]. The Worker already knows these states [2].\n\n' +
+      'The pane lets a reader check a claim [1].';
+    expect(stripTrailingCitationBlock(text)).toBe(text);
+    const sources =
+      'Body [1].\n\nSource documents are the authority here [2]; the model only summarizes them.';
+    expect(stripTrailingCitationBlock(sources)).toBe(sources);
+  });
+
   it('does NOT strip a mid-prose "Sources:" sentence (no trailing-to-EOF list shape)', () => {
     const text = 'Sources: the index and the model. We fuse them [1], then rerank. Final answer here.';
     expect(stripTrailingCitationBlock(text)).toBe(text);
