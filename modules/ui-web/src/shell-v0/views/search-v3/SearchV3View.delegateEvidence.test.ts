@@ -729,16 +729,16 @@ describe('T11 — a truncated run says so, whatever its answer says', () => {
     await settle(el);
     const notice = q(await region(el, 'jf-sv3-main'), 'sv3-turn-cut-short');
     expect(notice).not.toBeNull();
-    // Tempdoc 878 §D.1 — the ANSWERLESS arm, and the fixture is why: the run has terminated
-    // (`runKind: null`) and no record has caught up, so this turn currently displays no prose at
-    // all. The notice sits directly under that emptiness, so "the run used all its steps before
-    // reaching an answer" is the sentence that matches the screen. The with-answer arm is exercised
-    // at the function level below — rendering it here would need a record fixture this file has no
-    // other use for.
-    expect(notice?.textContent?.trim()).toBe(SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE);
-    expect(SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE.toLowerCase()).toContain('step');
+    // Tempdoc 878 §I.5 finding 4 — the WITH-ANSWER arm, and the fixture is why: this run streamed
+    // two text items before terminating, so the reader watched an answer arrive. It used to assert
+    // the answerless arm, because the notice read the PHASE-FILTERED run (null once the run ends)
+    // and so could not see the feed that still holds that text — printing "before reaching an
+    // answer" over an answer already on screen, permanently if the record fetch never lands. The
+    // answerless arm is exercised at the function level below.
+    expect(notice?.textContent?.trim()).toBe(SV3_CUT_SHORT_STEPS_NOTICE);
+    expect(SV3_CUT_SHORT_STEPS_NOTICE.toLowerCase()).toContain('step');
     expect(
-      SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE.toLowerCase(),
+      SV3_CUT_SHORT_STEPS_NOTICE.toLowerCase(),
       'a step-ceiling run must not be told the budget stopped it',
     ).not.toContain('budget');
     // The two sentences are genuinely different — a split that produced one string twice would

@@ -72,7 +72,7 @@
       "evidence": "Introduced by 3af0e859 (feat(install): staged, component-level model acquisition, #483). Confirmed 2026-08-26 from worktree agent-aa51999fa41f5fdf9 (tempdoc 878): `git diff origin/main` is EMPTY for the gate script, StoreCatalog.java, governance/store-recoverability.v1.json and AcquisitionStage.java, so the red is main’s and not the branch’s.",
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
-      "exitProbe": "node scripts/ci/check-store-recoverability.mjs"
+      "exitProbe": "slow: node scripts/ci/check-store-recoverability.mjs"
     },
     {
       "id": "ui-web-resourceregistry-defaults-timeout",
@@ -90,13 +90,24 @@
       "id": "app-services-integrationtest-wallclock-flaky",
       "match": [
         "gradlew?(\\.bat)? (?!.*-x test)(?=.*\\bbuild\\b)",
-        "gradlew?(\\.bat)? .*integrationTest(?!.*--tests)"
+        "gradlew?(\\.bat)? (?!.*--tests).*integrationTest"
       ],
       "claim": "Two app-services integrationTest cases are WALL-CLOCK assertions that flake when the machine is busy (e.g. several agent worktrees building at once), and `./gradlew build` runs integrationTest: LambdaMartBenchmarkTest 'inference on 50 candidates completes under 5ms median' (seen at 5.41ms, an 8% overshoot of a 5ms threshold) and KnowledgeServerIntegrationTest.fullE2E_spawnConnectIngestAndSearch ('Timeout waiting for worker port after 30000ms' while spawning a real Worker process). A failure ONLY in these two is pre-existing; re-run them with --tests to confirm.",
       "evidence": "Both failed on a full `spotlessApply build` from worktree agent-aa51999fa41f5fdf9 (tempdoc 878) on 2026-08-26 while three sibling worktrees were building, and both passed immediately when re-run in isolation (`:modules:app-services:integrationTest --tests \"*LambdaMartBenchmarkTest*\" --tests \"*KnowledgeServerIntegrationTest*\"` -> BUILD SUCCESSFUL in 33s). The same run’s 34 unit-test tasks were all green.",
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
-      "exitProbe": "slow: ./gradlew.bat :modules:app-services:integrationTest --tests \"*LambdaMartBenchmarkTest*\" --tests \"*KnowledgeServerIntegrationTest*\""
+      "exitProbe": "slow: ./gradlew.bat build"
+    },
+    {
+      "id": "docs-validate-heading-case-repo-wide",
+      "match": [
+        "docs-validate\\.mjs"
+      ],
+      "claim": "`node scripts/docs/docs-validate.mjs` exits 1 REPO-WIDE: 6751 `heading-case` findings across docs/, plus per-file `[tags] Few tags (0)`, `[aliases] Few aliases (0)` and `[heading] H1 does not match front matter title` advisories. It is not wired into CI and is not a pre-merge gate for any subject in CLAUDE.md's table, so editing a canonical doc does not make its red yours. A docs-validate failure is only yours if it names a heading or frontmatter key your diff actually touched.",
+      "evidence": "Reproduced 2026-08-26 from worktree agent-aa51999fa41f5fdf9 (tempdoc 878): exit 1, 6751 heading-case lines. Confirmed not branch-induced — `git diff 7ef5df6f HEAD -- docs/explanation/22-agent-system-architecture.md` shows no change to the H1 or to any frontmatter key, yet that file carries three of the advisories.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node scripts/docs/docs-validate.mjs"
     }
   ]
 }

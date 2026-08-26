@@ -297,10 +297,11 @@ function turnHasAnswerText(turn: Sv3Turn, run: Sv3RunView | null): boolean {
  * for the same reason: the grounding — and the notice — describe the ANSWER, not the transcript.
  */
 function hasTerminalText(items: readonly Sv3RunFeedItem[]): boolean {
-  const id = terminalTextItemId(items);
-  if (id === null) return false;
-  const terminal = items.find((item) => item.id === id);
-  return terminal?.kind === 'text' && terminal.text.trim() !== '';
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item?.kind === 'text') return item.text.trim() !== '';
+  }
+  return false;
 }
 
 export class Sv3Main extends JfElement {
@@ -1946,6 +1947,14 @@ export class Sv3Main extends JfElement {
     const live = this.run;
     const run =
       turn.kind === 'agent' && live?.turnId === turn.id && live.phase !== 'ended' ? live : null;
+    // Tempdoc 878 §D.1 — the cut-short notice reads THIS one, not `run`. Same id match, WITHOUT the
+    // phase filter: `run` is deliberately null for an ended run because its feed was attention and
+    // the receipt is what survives, but the feed still holds the answer text. Between the terminal
+    // and the record catching up, asking `run` would find nothing and print "the run used all its
+    // steps before reaching an answer" over an answer the reader just watched stream — and if the
+    // record fetch never lands, permanently. The notice is a claim about the RUN, not about which
+    // half of the window is currently drawing it.
+    const liveForTurn = turn.kind === 'agent' && live?.turnId === turn.id ? live : null;
     // Tempdoc 610 (852 S2) — what the EFFECTIVE context does with this turn. A turn the window has
     // no context frame for renders exactly as it did before the port: nothing about the prompt is
     // claimed for a conversation whose `/history` has not been read.
@@ -1993,7 +2002,7 @@ export class Sv3Main extends JfElement {
                     ></jf-markdown-block>`}
               </div>
             `}
-        ${this.cutShortNotice(turn, run)}${this.tail(turn)}${this.citations(turn)}
+        ${this.cutShortNotice(turn, liveForTurn)}${this.tail(turn)}${this.citations(turn)}
       </div>
     `;
   }

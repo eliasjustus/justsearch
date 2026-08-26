@@ -308,6 +308,12 @@ describe('ToolCallCard', () => {
     });
     document.body.appendChild(el);
     await settle(el);
+    // Assert the SEARCH body actually rendered: without this the fixture could fall through to the
+    // raw-output path (if agentSearchCardProjection ever returned null) and pass for the old reason.
+    expect(
+      el.shadowRoot?.querySelector('[data-testid="tool-search-body"]'),
+      'this fixture must exercise the search branch, not the raw-output panel',
+    ).not.toBeNull();
     const note = el.shadowRoot?.querySelector('[data-testid="tool-output-model-note"]');
     expect(note, 'a truncated search result must disclose it too').not.toBeNull();
     expect(note?.textContent).toContain('4,000');

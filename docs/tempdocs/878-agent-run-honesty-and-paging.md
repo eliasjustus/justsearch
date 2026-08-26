@@ -872,17 +872,19 @@ conflict marker — the shape the `merge-full-suite-hint` warns about, where eac
 alone and the merge reopens a hole. Checked one by one:
 
 - `sv3-honesty.ts` — main ADDED `sv3AnswerFrame`; it does not touch `SV3_TRUNCATION_NOTICES` or
-  `sv3CutShortNotice`. Disjoint. The two-arm notice has exactly ONE production caller
-  (`Sv3Main.ts:1996`) and it passes both arguments explicitly, so nothing silently takes the
-  `hasAnswer = true` default; `sv3IsTruncated` reads the same function but is arm-independent (both
-  arms are non-null).
+  `sv3CutShortNotice`. Disjoint. The two-arm notice has exactly ONE production caller in `Sv3Main`
+  and it passes both arguments explicitly, so nothing silently takes the `hasAnswer = true` default;
+  `sv3WasCutShort` reads the same function on that default but is arm-independent (both arms are
+  non-null).
 - `AgentToolsOperationCatalog.java` — main edited `browse-folders`' comment, ours `read-document`'s
   `offset_chars`. Disjoint.
 - `execution-surfaces.v1.json` — our note survived; the one surviving `ofDisposition` mention is our
   own past-tense tombstone, and a repo-wide grep confirms all five remaining mentions are historical
   context, with no live reference to the deleted symbol.
-- The FE files' behaviour is pinned by the suite, which is the real check: 460/462 files green with
-  only the two pinned pre-existing flakes.
+- The FE suite is green (460/462, the two failures both pinned pre-existing flakes) — but the suite
+  is NOT what earned this conclusion, and the finding below is why: it passed while the
+  model-visibility note was unreachable on a whole card type. The overlap files were re-read
+  three-way (main's side, ours, merged) by hand.
 
 **One finding, fixed (`85df979e`).** The model-visibility note rode on
 `renderLineageFramedOutput`, and the search branch does not call it — a search card renders
@@ -892,7 +894,53 @@ was attached to the wrong thing from the start, and 871's arrival on the same fi
 visible. The note is a fact about the tool RESULT rather than about the raw-output panel, so it now
 sits outside both body branches, with a search-card fixture pinning it.
 
-### §I.5 Delegation
+### §I.5 Second independent review (merge seam) — findings and dispositions
+
+A second independent refute-first reviewer (read-only, ≠ implementer) audited the merge seam and the
+post-merge deltas. **No blockers.** It independently reached the search-card finding §I.4 records,
+and confirmed the fix passes for the right reason. Four SHOULD-FIX, all taken:
+
+1. **The integrationTest pin fired on its own confirm command.** `(?!.*--tests)` sat AFTER the
+   `.*`, so backtracking let `integrationTest` match from inside a `--tests` filter VALUE
+   (`*KnowledgeServerIntegrationTest*`), leaving no later `--tests` for the lookahead to reject —
+   and the hook compiles case-insensitively. The claim ends "re-run them with `--tests` to confirm",
+   so the pin was suppressing the very step it prescribed. Lookahead hoisted ahead of the `.*`;
+   pinned by a ten-case matcher check (both confirm forms no-match, `build` and bare
+   `integrationTest` still match, `build -x test` and `test` still don't).
+2. **That pin's `exitProbe` was guaranteed to fire.** It was verbatim the isolation run the claim
+   states PASSES, and the contract reads exit 0 as "the pinned red is GONE" — so `--slow --gate`
+   would have demanded deletion of a live pin. The inverse of a probe that never fires, and equally
+   a lie. The exit is now the condition under which the flake occurs (`slow: ./gradlew.bat build`).
+3. **The store-recoverability probe ran in CI.** It was the file's first non-`slow:` `exitProbe`,
+   which contradicted the register's own contract note ("CI runs the --gate form WITHOUT --slow …
+   the CI check is shape + reviewBy"). Prefixed `slow:`.
+4. **The cut-short notice read the PHASE-FILTERED run.** `Sv3Main` nulls `run` once
+   `live.phase === 'ended'` — correct for the feed, which is attention — but the notice needs the
+   answer text, which that same feed still holds. Between the terminal and the record catching up
+   (permanently, if the record fetch never lands) the reader would get "the run used all its steps
+   before reaching an answer" over an answer they had just watched stream. A separate
+   `liveForTurn`, matched by id WITHOUT the phase filter, now feeds the notice; `runBody`'s filter
+   is untouched. This is the tempdoc's own thesis turned on itself: the notice is a claim about the
+   RUN, not about which half of the window is currently drawing it.
+
+NITs taken: the tempdoc named `sv3IsTruncated` for `sv3WasCutShort`; §I.4 claimed the suite was
+"the real check" two paragraphs before recording a finding the suite missed (corrected — the
+overlap files were re-read three-way by hand, and that is what earned the conclusion);
+`hasTerminalText` round-tripped through `terminalTextItemId` instead of returning the item; and the
+search-card fixture now asserts the search body actually rendered, so it cannot pass via the
+raw-output path it was written to exclude.
+
+NIT not taken, with the reason: `check-no-observations-shards.mjs` failing on an EMPTY
+`docs/observations.d/` is not a gate bug — the gate's own remedy line says `git rm -r
+docs/observations.d`, so removing the directory is what it asks for. The leftover empty directory
+was this worktree's, and removing it turns the gate green.
+
+Routed out (§O.8): `scripts/docs/docs-validate.mjs` exits 1 repo-wide with 6751 `heading-case`
+findings. Pinned rather than fixed — it is not wired into CI and is not a pre-merge gate for any
+subject, and the advisories on the canonical doc this branch edits (`tags`, `aliases`, H1-vs-title)
+are demonstrably untouched by the diff.
+
+### §I.6 Delegation
 
 Two bounded chunks ran as pinned-opus subagents in this worktree on disjoint modules — the
 schema-aware token projection (§D.6, `app-inference` + `app-api`) and the read tool's three silent
@@ -972,7 +1020,13 @@ one step.
    `app-services-integrationtest-wallclock-flaky`; the fix is a threshold sized to the property
    rather than to an idle machine, or moving the benchmark off the `build` path.
 
-7. **The shared Gradle single-lane wrapper leaks its lock.** It writes its `owner` file *inside* the
+7. **`scripts/docs/docs-validate.mjs` exits 1 repo-wide** — 6751 `heading-case` findings across
+   `docs/`, plus per-file `tags`/`aliases`/H1-vs-frontmatter-title advisories. Not wired into CI and
+   not a pre-merge gate for any subject, so a canonical-doc edit does not inherit its red.
+   **Pinned** as `docs-validate-heading-case-repo-wide`; the fix is a decision about whether
+   `heading-case` is a rule this repo actually wants, before 6751 findings are mechanically applied.
+
+8. **The shared Gradle single-lane wrapper leaks its lock.** It writes its `owner` file *inside* the
    lock directory, so the release `rmdir "$LOCK"` always fails with "Directory not empty" and the
    lock is never released by its holder; a patient poller can starve for hours (both of this
    workstream's sub-workers did, ~90 minutes each). The fix is an `"$LOCK.owner"` sibling file, or
