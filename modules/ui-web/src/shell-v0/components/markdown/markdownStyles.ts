@@ -20,12 +20,26 @@
  * A consumer that needs to differ puts this sheet FIRST in its `static styles` array and overrides
  * in its own, later, sheet.
  *
- * Tempdoc 873 retunes four of the frozen defaults and adds a tenth variant token. That is a
- * DELIBERATE app-wide change, not a drift: every surface wearing this sheet — the chat renderer,
- * `DocumentPane`'s Rendered mode, Navigate, Summarize — gets the new prose rhythm, which is the
- * point (the wall-of-text diagnosis is not sv3-specific). The changed defaults still live in
- * exactly one place and `MarkdownBlock.geometry.test.ts` still pins each one; what moved is the
- * value, not the containment.
+ * Tempdoc 873 retunes four frozen defaults, one raw declaration (`strong`) and adds a tenth variant
+ * token. That is a DELIBERATE cross-surface change, not a drift — but its reach is narrower than
+ * "every surface wearing this sheet", and the difference is worth stating because two gates decide
+ * it, not one:
+ *
+ *   - `strong` weight and `--md-list-indent` are DEFAULT-PATH, so they reach every mount that
+ *     actually renders markdown: `UnifiedChatView`'s markdown mounts, `ReasoningBlock`'s nested
+ *     block, sv3's two answer mounts, and `DocumentPane`. They do NOT reach `NavigateView` or
+ *     `SummarizeView` — both mount with `format="plain"` (`NavigateView.ts:144`,
+ *     `SummarizeView.ts:261`), which renders a verbatim text node and never emits `<strong>` or a
+ *     list at all.
+ *   - `--md-heading-*`, `--md-item-adjacent-gap` and `--md-rule-margin` are PROSE-GATED, so they
+ *     reach only a mount that sets the attribute: sv3's two answer mounts and `DocumentPane`
+ *     (`prose` defaults to true there). Nothing else can be reached by them, by selector.
+ *
+ * The changed values still live in exactly one place and `MarkdownBlock.geometry.test.ts` pins each
+ * one — the token defaults through `RETUNED_873`, the `strong` declaration through
+ * `RETUNED_873_DECLARATIONS` (a token record cannot reach a raw declaration, which is how the
+ * `strong` retune first shipped with no coverage at all). What moved is the value, not the
+ * containment.
  */
 import { css } from 'lit';
 

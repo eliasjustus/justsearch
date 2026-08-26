@@ -137,7 +137,9 @@ function resolvedRule(selector: string): Map<string, string> {
 
 /**
  * Tempdoc 873 — the defaults DELIBERATELY retuned after the 822 freeze, recorded as
- * `name → [the 822 literal, the 873 value]`. The freeze was never "this value is correct forever";
+ * `name → [the 873 value, the superseded 822 literal]` — CURRENT first, because these tuples are
+ * spread into `it.each` titles and a test name that states the old value as the current one is a
+ * decision log that lies. The freeze was never "this value is correct forever";
  * it was "no value moves without a decision that says so". This list is that decision written down,
  * and the assertions below pin BOTH ends: the current default must be the 873 value AND must no
  * longer be the 822 one, so a revert is as loud as a drift.
@@ -149,10 +151,24 @@ function resolvedRule(selector: string): Map<string, string> {
  * between list items was swallowed by a multi-line item's own leading.
  */
 const RETUNED_873: ReadonlyArray<readonly [string, string, string]> = [
-  ['--md-list-indent', '1.25rem', '1.75rem'], //                        the list column becomes a column
-  ['--md-heading-weight', '600', '700'], //                             a step a scanning reader can see
-  ['--md-heading-margin', '1.25rem 0 0.5rem', '1.75rem 0 0.5rem'], //   the ABOVE half only
-  ['--md-item-adjacent-gap', '0.25rem', '0.375rem'], //                 items stop running together
+  // name                          now                    was (822)
+  ['--md-list-indent', '1.75rem', '1.25rem'], //                        the list column becomes a column
+  ['--md-heading-weight', '700', '600'], //                             a step a scanning reader can see
+  ['--md-heading-margin', '1.75rem 0 0.5rem', '1.25rem 0 0.5rem'], //   the ABOVE half only
+  ['--md-item-adjacent-gap', '0.375rem', '0.25rem'], //                 items stop running together
+];
+
+/**
+ * Tempdoc 873 — the retunes that are NOT token defaults but RAW DECLARATIONS, which `RETUNED_873`
+ * structurally cannot reach: its lookup resolves a name on `:host` / `:host([prose])`, and a rule's
+ * own property lives in neither. `.md-content strong` is the case — the 822 tokenization never
+ * touched it, so it is absent from `BEFORE` and from both frozen-default tables, and the weight
+ * could be reverted to 600 with the whole suite still green. Same both-ends discipline, applied to
+ * a property instead of a name: `[selector, property, the 873 value, the superseded literal]`.
+ */
+const RETUNED_873_DECLARATIONS: ReadonlyArray<readonly [string, string, string, string]> = [
+  // selector             property       now    was
+  ['.md-content strong', 'font-weight', '700', '600'],
 ];
 
 /**
@@ -204,12 +220,25 @@ describe('the tempdoc-873 retunes are the only defaults that moved off the 822 f
   const currentDefault = (name: string): string | undefined =>
     HOST.get(name) ?? VARIANT_HOST.get(name);
 
-  it.each(RETUNED_873)('%s is %s now, and is no longer the 822 literal %s', (name, was, now) => {
+  it.each(RETUNED_873)('%s is %s now, and is no longer the 822 literal %s', (name, now, was) => {
     expect(currentDefault(name), `${name} did not take its 873 value`).toBe(now);
     // The second half is the one that catches a revert: a "tidy-up" back to the frozen literal
     // would otherwise satisfy nothing but this line.
     expect(currentDefault(name), `${name} reverted to the superseded 822 literal`).not.toBe(was);
   });
+
+  it.each(RETUNED_873_DECLARATIONS)(
+    '%s { %s } is %s now, and is no longer %s',
+    (selector, property, now, was) => {
+      const rule = RULES.get(selector);
+      expect(rule, `no rule for ${selector}`).toBeDefined();
+      expect((rule as Decls).get(property), `${selector} { ${property} }`).toBe(now);
+      expect(
+        (rule as Decls).get(property),
+        `${selector} { ${property} } reverted to the superseded ${was}`,
+      ).not.toBe(was);
+    },
+  );
 
   it('retunes nothing the list does not name', () => {
     // Every OTHER default is still the 822 literal, asserted by the two frozen-default blocks
@@ -217,7 +246,7 @@ describe('the tempdoc-873 retunes are the only defaults that moved off the 822 f
     // ones. Both records are read here, so a name added to one must be added to the other.
     const declared = RETUNED_873.map(([name]) => name).sort();
     const pinned = [...FROZEN_DEFAULTS, ...VARIANT_DEFAULTS]
-      .filter(([name, value]) => RETUNED_873.some(([n, , now]) => n === name && value === now))
+      .filter(([name, value]) => RETUNED_873.some(([n, now]) => n === name && value === now))
       .map(([name]) => name)
       .sort();
     expect(pinned).toEqual(declared);
