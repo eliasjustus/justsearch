@@ -33,6 +33,8 @@ import { icon } from '../components/Icon.js';
 import { present } from '../display/present.js';
 import { localizeResourceKey, onCatalogUpdated } from '../../i18n/resourceCatalog.js';
 import { applyAppearance, getSurfaceMode, setSurfaceMode } from '../state/themeState.js';
+// Tempdoc 874 — the Search v3 chat-column width preset (FE-only, user-state document).
+import { getChatWidth, setChatWidth, type ChatWidth } from '../state/chatWidthState.js';
 import { setUiMode, getUiMode, subscribeUiMode } from '../state/uiModeState.js';
 // 569 Move 1/3 — the body-tier apply path: a real region rendered from a declaration.
 import {
@@ -199,6 +201,8 @@ export class SettingsSurface extends JfElement {
     renameDraft: { state: true },
     // Tempdoc 567 §9.4 — the glass/solid surface-mode toggle (FE-only pref, mirrors high-contrast).
     surfaceMode: { state: true },
+    // Tempdoc 874 — the Search v3 chat-column width preset (FE-only pref, mirrors surfaceMode).
+    chatWidth: { state: true },
   };
 
   declare apiBase: string;
@@ -226,6 +230,7 @@ export class SettingsSurface extends JfElement {
   declare renamingThemeId: string | null;
   declare renameDraft: string;
   declare surfaceMode: 'glass' | 'solid';
+  declare chatWidth: ChatWidth;
   declare userConfig: RendererUserConfig;
   declare railSurfaces: Surface[];
   /** Active settings-window category id: a native category id, or a member surface id. */
@@ -315,6 +320,7 @@ export class SettingsSurface extends JfElement {
     this.renamingThemeId = null;
     this.renameDraft = '';
     this.surfaceMode = getSurfaceMode();
+    this.chatWidth = getChatWidth();
     this.userConfig = {} as RendererUserConfig;
     this.railSurfaces = SettingsSurface.railSurfacesForCustomization();
     this.activeCategory = firstCategoryId();
@@ -757,6 +763,9 @@ export class SettingsSurface extends JfElement {
   override connectedCallback(): void {
     super.connectedCallback();
     this.catalogUpdatedUnsub = onCatalogUpdated(() => this.requestUpdate());
+    // Tempdoc 874 — a retained instance re-attaches showing the preset the document holds NOW, not
+    // the one it was constructed with (the window can be closed, the preference changed elsewhere).
+    this.chatWidth = getChatWidth();
     // Tempdoc 738 — reflect external Simple/Detailed changes (e.g. the topbar toggle, which writes the
     // same uiModeState store) in the Interface section's selected state; the section renders from the
     // live getUiMode() so the two controls cannot disagree.
@@ -1431,6 +1440,53 @@ export class SettingsSurface extends JfElement {
         )}
       </div>
     `;
+  }
+
+  /**
+   * Tempdoc 874 — the chat-column width preset, as the same ordered-three-stop control shape Density
+   * uses. Three named stops rather than a free slider: the width is one fact three Search v3
+   * components share (`--measure-prose` caps the transcript, the composer band and the context bar),
+   * so a bounded vocabulary is what lets the suite pin it. Its own registered section rather than a
+   * row inside `renderAppearance()`, which is dead on the production declared path (see
+   * `renderRelatedSettingsRow`'s comment above).
+   */
+  private static readonly CHAT_WIDTH_STEPS: readonly DiscreteSliderStep[] = [
+    { value: 'narrow', label: 'Narrow' },
+    { value: 'default', label: 'Default' },
+    { value: 'wide', label: 'Wide' },
+  ];
+
+  private renderChatWidth(): TemplateResult {
+    return html`
+      <div class="section" data-testid="settings-chat-width">
+        <h3>${icon({ name: 'arrow-right-left', size: 12 })} Chat width</h3>
+        ${this.renderSettingRow(
+          'Chat width',
+          'How wide the chat column may grow. Narrower lines are easier to read; wider fits more on screen.',
+          html`
+            <jf-discrete-slider
+              .steps=${SettingsSurface.CHAT_WIDTH_STEPS}
+              .value=${this.chatWidth}
+              label="Chat width"
+              ?disabled=${this.readOnly}
+              @change=${(e: CustomEvent<{ value: string }>) =>
+                this.selectChatWidth(e.detail.value as ChatWidth)}
+            ></jf-discrete-slider>
+          `,
+          { below: true },
+        )}
+      </div>
+    `;
+  }
+
+  /**
+   * Tempdoc 874 — pick a chat-width preset. `setChatWidth` persists it in the user-state document;
+   * the mounted Search v3 window re-applies through its own subscription, so this method does not
+   * reach across into the window.
+   */
+  private selectChatWidth(w: ChatWidth): void {
+    this.chatWidth = w;
+    setChatWidth(w);
   }
 
   /**
@@ -2574,6 +2630,7 @@ export class SettingsSurface extends JfElement {
       interface: () => this.renderInterfaceRegion(),
       theme: () => this.renderThemes(),
       accessibility: () => this.renderAccessibility(),
+      'chat-width': () => this.renderChatWidth(),
       'token-editor': () => this.renderTokenEditorLink(),
       layout: () => this.renderLayout(),
       rail: () => this.renderRail(),

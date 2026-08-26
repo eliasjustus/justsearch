@@ -163,9 +163,6 @@ an upstream "do X" as covering the whole downstream merge/publish chain.
    investigate before retrying. Keep checkpoint/retry commits off `main`;
    use the PR title/body.
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.
-   Also fold any pending observation shards: `node scripts/agent-analytics/fold-observations.mjs --apply`
-   (tempdoc 618 §P1.2's proposed boundary, tempdoc 665 wires it — the natural point since the agent is
-   already back on `main` doing post-merge maintenance).
 5. Remove the worktree. GitHub deletes merged remote branches; delete local
    branches after verifying the merge. On Windows, prefer
    `node scripts/dev/remove-worktree.cjs <path> [--delete-branch]` over
@@ -182,16 +179,12 @@ the merge *squash* a branch into one commit; this rule governs the complementary
 question of whether a change should be its **own** public PR at all (tempdoc 653
 "axis 2").
 
-- A **tempdoc / observations** edit (`docs/tempdocs/**`, `docs/observations*`) is
-  dated working history. Do not open a standalone PR for a tempdoc-only change.
-  Ride it along in the same PR as the code it documents, or batch several tempdoc
-  edits into one periodic `docs(tempdocs): …` PR.
+- A **tempdoc** edit (`docs/tempdocs/**`) is dated working history. Do not open a
+  standalone PR for a tempdoc-only change. Ride it along in the same PR as the code
+  it documents, or batch several tempdoc edits into one periodic `docs(tempdocs): …` PR.
 - A **canonical-doc** update (`docs/{explanation,reference,how-to,decisions}`) is
   durable current truth and may stand alone as its own PR/commit.
 - A branch mixing docs with code is already a ride-along — publish it normally.
-- The **step-4 post-merge fold** *is* that periodic batch (many sessions' shards at
-  once) and publishes as its own `chore(observations): fold …` PR. One shard alone
-  is not — let it wait for the next fold.
 - **A prior standalone tempdoc PR is not a precedent.** Predictable evasion (653
   follow-up): citing an earlier `docs(NNN)` PR as licence chains one non-ideal PR
   into a series — and the cited precedent often is not comparable (the observed
@@ -225,13 +218,8 @@ publication and cleanup scoped to your branch:
   (`.claude/skills/{design,plan,takeover,theorize}`) were leaked once by a
   `git add -A` and the owner has since **accepted them as tracked** — never open a
   PR to remove them (repeated removal PRs, e.g. #151, are unwanted). <!-- rule:accepted-tracked-skills-no-removal -->
-- For inbox notes, use `node scripts/agent-analytics/note-observation.mjs "…"`
-  (618 Seam C) — it writes to *your* per-session shard under `docs/observations.d/`,
-  not the shared `observations.md`, so a neighbour's commit can no longer reset out
-  an un-committed append (618 §9/§12 reproduced that as data loss). Reconcile the
-  shards into `observations.md` `## Inbox` with
-  `node scripts/agent-analytics/fold-observations.mjs --apply` (run at merge,
-  next to `record-merge.mjs`).
+- There is no shared inbox file to append to (the observations store was retired,
+  tempdoc 872): route out-of-scope findings per CLAUDE.md `log-pre-existing-issues`.
 
 ## Recovery
 

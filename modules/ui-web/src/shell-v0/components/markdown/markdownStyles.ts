@@ -7,20 +7,39 @@
  * now dressed a whole `.md` file in user-agent defaults (32px `h1`, unstyled tables, a `<pre>` with
  * no surface — on the one surface whose entire job is reading a document).
  *
- * Moved, not rewritten. Every token name, every default and every use site is the one tempdoc 822
- * froze (slices S4/S5), so Search v3's `.sv3-markdown` bridge keeps re-pointing exactly what it
- * re-pointed before, and `MarkdownBlock.geometry.test.ts` — which reads `MarkdownBlock.styles`, an
- * array being flattened and joined — still proves containment against these rules WITHOUT an edit.
- * That test passing unmodified is the evidence the move is faithful; keep it that way:
+ * Moved, not rewritten — the 846 move changed no value. The STRUCTURE tempdoc 822 froze is still
+ * the structure here, and `MarkdownBlock.geometry.test.ts` still proves containment against these
+ * rules; keep it that way:
  *
  *   - the fifteen `--md-*` geometry tokens are declared on `:host` and nowhere else;
- *   - the nine variant tokens are declared on `:host([prose])` and nowhere else, and that rule
+ *   - the ten variant tokens are declared on `:host([prose])` and nowhere else, and that rule
  *     carries NOTHING but `--md-*` declarations;
  *   - no heading / table / hr / img selector may appear outside a `:host([prose])` rule;
  *   - a consumer of this sheet must not declare a SECOND `:host` rule of markdown geometry.
  *
  * A consumer that needs to differ puts this sheet FIRST in its `static styles` array and overrides
  * in its own, later, sheet.
+ *
+ * Tempdoc 873 retunes four frozen defaults, one raw declaration (`strong`) and adds a tenth variant
+ * token. That is a DELIBERATE cross-surface change, not a drift — but its reach is narrower than
+ * "every surface wearing this sheet", and the difference is worth stating because two gates decide
+ * it, not one:
+ *
+ *   - `strong` weight and `--md-list-indent` are DEFAULT-PATH, so they reach every mount that
+ *     actually renders markdown: `UnifiedChatView`'s markdown mounts, `ReasoningBlock`'s nested
+ *     block, sv3's two answer mounts, and `DocumentPane`. They do NOT reach `NavigateView` or
+ *     `SummarizeView` — both mount with `format="plain"` (`NavigateView.ts:144`,
+ *     `SummarizeView.ts:261`), which renders a verbatim text node and never emits `<strong>` or a
+ *     list at all.
+ *   - `--md-heading-*`, `--md-item-adjacent-gap` and `--md-rule-margin` are PROSE-GATED, so they
+ *     reach only a mount that sets the attribute: sv3's two answer mounts and `DocumentPane`
+ *     (`prose` defaults to true there). Nothing else can be reached by them, by selector.
+ *
+ * The changed values still live in exactly one place and `MarkdownBlock.geometry.test.ts` pins each
+ * one — the token defaults through `RETUNED_873`, the `strong` declaration through
+ * `RETUNED_873_DECLARATIONS` (a token record cannot reach a raw declaration, which is how the
+ * `strong` retune first shipped with no coverage at all). What moved is the value, not the
+ * containment.
  */
 import { css } from 'lit';
 
@@ -38,7 +57,10 @@ export const markdownTypography = css`
     --md-block-gap: 0.25em;
     --md-block-gap-wide: 0.5em;
     --md-item-gap: 0.125em;
-    --md-list-indent: 1.25rem;
+    /* Tempdoc 873 §3 — retuned from the 822-frozen 1.25rem. At 20px a bullet's text hung barely
+       clear of the marker, so a list read as paragraph text with dots in front of it; 28px is the
+       indent that makes the list column legible as its own column. */
+    --md-list-indent: 1.75rem;
     /* A shorthand, not a width: the default 'none' computes to zero width, which is byte-identical
        to declaring no border at all ('1px solid transparent' would shift every chip by 2px). */
     --md-code-border: none;
@@ -110,9 +132,14 @@ export const markdownTypography = css`
   .md-content a:hover {
     text-decoration: underline;
   }
+  /* Tempdoc 873 §2 — 700, not 600. Against a 400 body, 600 is a half-step most UI faces barely
+     resolve at reading size, so emphasis registered as "slightly darker" rather than as emphasis.
+     700 is a step the reader can see while scanning. The heading weight moves with it (below) —
+     the two are not distinguished from each OTHER by weight (size and rhythm do that), they are
+     both distinguished from body text, which is the job 600 was failing at. */
   .md-content strong {
     color: var(--text-primary);
-    font-weight: 600;
+    font-weight: 700;
   }
   .md-content blockquote {
     border-left: var(--md-quote-border);
@@ -135,11 +162,15 @@ export const markdownTypography = css`
      Tempdoc 846 §2.3 — 'DocumentPane' is the second surface to opt in (a document IS headings,
      tables and rules), through the same attribute, not a parallel one. */
   :host([prose]) {
-    --md-heading-weight: 600;
+    /* Tempdoc 873 §2 — 700, matching the 'strong' move above and for the same reason. */
+    --md-heading-weight: 700;
     --md-heading-line-height: 1.3;
     /* Asymmetric on purpose — a heading belongs to what FOLLOWS it, so the space above is the
-       separation from the previous block and the space below is not. */
-    --md-heading-margin: 1.25rem 0 0.5rem;
+       separation from the previous block and the space below is not. Tempdoc 873 §3 widens only
+       the ABOVE half (1.25rem -> 1.75rem): the 8px below keeps the heading glued to its section,
+       while 28px above is what actually ends the previous one. Widening both would have made the
+       heading float between two sections instead of leading one. */
+    --md-heading-margin: 1.75rem 0 0.5rem;
     --md-table-size: var(--font-size-xs);
     --md-table-cell-padding: 0.45rem 0.75rem;
     --md-table-rule: 1px solid var(--border-subtle);
@@ -147,9 +178,16 @@ export const markdownTypography = css`
        lifting): a single-line cell so arbitrary chat content cannot blow a column out. */
     --md-table-cell-max: 24rem;
     --md-rule: 1px solid var(--border-subtle);
+    /* Tempdoc 873 §3 — an 'hr' is the biggest break prose can express, so it gets the biggest
+       rhythm: its own name rather than '--md-block-gap-wide', which it shared with 'pre' and
+       'blockquote'. Sharing that name meant a section break was spaced exactly like a code fence,
+       i.e. it read as one more block rather than as the end of something. */
+    --md-rule-margin: 1.5rem;
     /* The gap lives BETWEEN items, not around each one — pairs with a consumer setting
-       '--md-item-gap: 0' (the shipped default keeps its symmetric margins). */
-    --md-item-adjacent-gap: 0.25rem;
+       '--md-item-gap: 0' (the shipped default keeps its symmetric margins). Tempdoc 873 §3 opens
+       it 0.25rem -> 0.375rem: at 4px a multi-line item's own leading swallowed the gap, so the
+       list ran together. */
+    --md-item-adjacent-gap: 0.375rem;
   }
   :host([prose]) .md-content :is(h1, h2, h3, h4, h5, h6) {
     font-weight: var(--md-heading-weight);
@@ -225,7 +263,7 @@ export const markdownTypography = css`
   :host([prose]) .md-content hr {
     border: 0;
     border-top: var(--md-rule);
-    margin: var(--md-block-gap-wide) 0;
+    margin: var(--md-rule-margin) 0;
   }
   :host([prose]) .md-content img {
     max-inline-size: 100%;

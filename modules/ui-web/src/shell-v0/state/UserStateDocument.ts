@@ -277,6 +277,8 @@ export interface UserStateV2Storage {
    * not per-mode). FE-only (no backend `ui` setting); applied by the one appearance writer at boot.
    */
   readonly surfaceMode?: 'glass' | 'solid';
+  /** Tempdoc 874 — the Search v3 chat-column width preset. Cross-profile, FE-only (no backend setting). */
+  readonly chatWidth?: 'narrow' | 'default' | 'wide';
 }
 
 /**
@@ -313,6 +315,8 @@ export interface UserStateV1 {
   readonly presentationHistory?: readonly PresentationHistoryEntry[];
   /** Tempdoc 567 §9.4 — glass/solid surface mode (cross-profile, FE-only). */
   readonly surfaceMode?: 'glass' | 'solid';
+  /** Tempdoc 874 — Search v3 chat-column width preset (cross-profile, FE-only). */
+  readonly chatWidth?: 'narrow' | 'default' | 'wide';
 }
 
 /** 569 §19 Seam 6 — one entry in the presentation apply history. */
@@ -411,6 +415,7 @@ function viewFromStorage(storage: UserStateV2Storage): UserStateV1 {
       ? { presentationHistory: storage.presentationHistory }
       : {}),
     ...(storage.surfaceMode !== undefined ? { surfaceMode: storage.surfaceMode } : {}),
+    ...(storage.chatWidth !== undefined ? { chatWidth: storage.chatWidth } : {}),
   };
 }
 
@@ -456,6 +461,7 @@ function storageFromView(view: UserStateV1): UserStateV2Storage {
       ? { presentationHistory: view.presentationHistory }
       : {}),
     ...(view.surfaceMode !== undefined ? { surfaceMode: view.surfaceMode } : {}),
+    ...(view.chatWidth !== undefined ? { chatWidth: view.chatWidth } : {}),
   };
 }
 
@@ -971,6 +977,13 @@ function validateV2(candidate: unknown): UserStateV2Storage | null {
   const surfaceMode: 'glass' | 'solid' | undefined =
     rawSurfaceMode === 'glass' || rawSurfaceMode === 'solid' ? rawSurfaceMode : undefined;
 
+  // Tempdoc 874 — Search v3 chat-column width (cross-profile); only the three valid literals survive.
+  const rawChatWidth = c['chatWidth'];
+  const chatWidth: 'narrow' | 'default' | 'wide' | undefined =
+    rawChatWidth === 'narrow' || rawChatWidth === 'default' || rawChatWidth === 'wide'
+      ? rawChatWidth
+      : undefined;
+
   // 569 §19 Seam 6 — presentation apply history (cross-profile); malformed entries dropped.
   const rawHistory = c['presentationHistory'];
   let presentationHistory: PresentationHistoryEntry[] | undefined;
@@ -997,6 +1010,7 @@ function validateV2(candidate: unknown): UserStateV2Storage | null {
     ...(recentCommandIds !== undefined ? { recentCommandIds } : {}),
     ...(walkthroughState !== undefined ? { walkthroughState } : {}),
     ...(surfaceMode !== undefined ? { surfaceMode } : {}),
+    ...(chatWidth !== undefined ? { chatWidth } : {}),
   };
 }
 

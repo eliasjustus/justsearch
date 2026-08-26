@@ -163,8 +163,9 @@ After investigation:
   is a code change): treat as a bug, open a tempdoc, bisect per
   `docs/how-to/interpret-bisect-output.md` to find the change that
   caused it.
-- **Benign distribution shift** (Step 2 latencies flat): document
-  the observation in `docs/observations.md` but no action.
+- **Benign distribution shift** (Step 2 latencies flat): note it in
+  the owning tempdoc's open-items section (or the relevant domain
+  register) but take no action (route-at-discovery, tempdoc 872).
 
 ## Related
 

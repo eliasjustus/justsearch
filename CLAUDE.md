@@ -4,7 +4,7 @@
 
 This file provides guidance to Claude Code when working with code in this repository.
 
-Canonical entry points: `docs/llms.txt` (docs index), `docs/tempdocs/` (active work), `docs/observations.md` (inbox).
+Canonical entry points: `docs/llms.txt` (docs index), `docs/tempdocs/` (active work).
 
 ## Hard Invariants (Do Not Violate)
 
@@ -82,19 +82,17 @@ When asked "what should we do next?", consult the active tempdoc for remaining i
 - **If nothing is left on the current tempdoc**, say so explicitly and let the user decide.
 - **Parallel agents share `main`** — untouched-code reformatting causes merge conflicts with other worktrees, so keep diffs scoped to your task.
 
-### Log Pre-Existing Issues, Don't Fix Them <!-- rule:log-pre-existing-issues -->
+### Route Out-of-Scope Findings, Don't Log Them <!-- rule:log-pre-existing-issues -->
 
-When you notice an issue outside your current task's scope — pre-existing bug, dead code, stale comment, broken-but-unrelated test, config drift — log one line to the inbox and keep working. This resolves the tension in *Stay Focused*: noticed-but-out-of-scope findings have a home instead of becoming scope creep or knowledge loss.
+There is no inbox (tempdoc 872 retired the observations store: 565 notes, none read). A finding outside your task goes where it is acted on, at discovery — a note is not knowledge, it is a deferred fix:
 
-- **Log via the per-session inbox helper** (618 Seam C — writes to *your* shard under `docs/observations.d/`, never the shared file, so a neighbour's commit can't wipe your note):
+- **Wrong doc/comment, verified one-line fix** → fix it in place; it rides along in your PR.
+- **Red or flaky verification command on `main`** → a dated pin with an exit in `scripts/agent-analytics/expected-state.v1.json` (`known-state-hint` delivers it) **and** the fix as a tracked item. Main being red is a defect, not a fact to remember.
+- **Platform/process lesson** → a hook if it is a must/never, else `.claude/rules/agent-lessons.md`.
+- **Product defect you won't fix now** → the owning tempdoc's open-items section (or its domain register).
+- **Do not investigate further** — route and return to your task. Issues caused by your change are yours to fix.
 
-  ```bash
-  node scripts/agent-analytics/note-observation.mjs "<description> — \`<file:line>\`"
-  ```
-
-  It resolves your session id and stamps the date; the shard commits with your work. `fold-observations.mjs --apply` later folds shards into `docs/observations.md`'s conditions store.
-- **Do not investigate.** Record and return to your task.
-- Issues caused by your current change don't belong here — fix those.
+Predictable evasion: "I'll log it in my tempdoc for later triage" — a triage nobody is scheduled to run is the pile again.
 
 ### Retire With a Sweep <!-- rule:retire-with-a-sweep -->
 
@@ -205,7 +203,6 @@ Full rules — destructive-command list, worktree lifecycle, merge workflow: `.c
 - **Full agent guide**: `docs/reference/contributing/agent-guide.md`
 - **Docs index**: `docs/llms.txt`
 - **Active work**: `docs/tempdocs/`
-- **Out-of-scope findings**: `docs/observations.md` (conditions store)
 - **Canonical docs** (must not drift): `docs/explanation/`, `docs/reference/`, `docs/how-to/`, `docs/decisions/`
 - **Reference cases by handle**: `docs/reference/contributing/agent-postmortems.md`
 - **Contribution recipes**: `docs/reference/contributing/common-workflows.md` (relocated from always-loaded; path-triggerable recipes also push via `governance/consult-register.v1.json`)

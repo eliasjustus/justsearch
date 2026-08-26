@@ -76,10 +76,8 @@ function buildGuidance(input = {}) {
   );
 
   sections.push(
-    '### Observations protocol',
-    'If you notice a pre-existing issue outside your task scope (bug, dead code, stale comment, config drift): log one line and keep working. Do not investigate. Do not fix. Do NOT read the store first or check for duplicates — re-observation is welcome signal (it bumps the matching condition\'s seen-count at the next fold; tempdoc 680).',
-    'Log via: `node scripts/agent-analytics/note-observation.mjs "<description> — \\`<file:line>\\`"` — it writes to a shard keyed by your session AND your worktree under `docs/observations.d/` (618 Seam C, 862), so no other writer touches that file; it resolves both and stamps the date.',
-    'Log freely: since tempdoc 862 your shard is your own file even though you inherit the parent\'s session id, so a note can no longer conflict with the orchestrator\'s or a sibling worker\'s. Do not skip logging to keep your PR clean.',
+    '### Out-of-scope findings protocol (tempdoc 872 — there is no inbox)',
+    'If you notice a pre-existing issue outside your task scope: a wrong doc/comment with a verified one-line fix -> fix it in place (ride-along). Anything else -> report it in your final result with `file:line` so the orchestrator routes it (expected-state pin for a red/flaky command on main; a hook or agent-lessons.md for a platform lesson; the owning tempdoc for a defect). Do not investigate further and do not call note-observation.mjs — it no longer writes.',
   );
 
   sections.push(

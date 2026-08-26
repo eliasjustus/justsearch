@@ -15,8 +15,8 @@
  *
  * Same shape as pipe-mask-hint: advisory, never blocks, fail-open on any error,
  * honors JUSTSEARCH_DISABLE_HOOKS=1. Pin freshness is not this hook's job —
- * `observations-triage --probe` checks each entry's exitProbe and reports pins
- * whose exit condition fired (report-only; a human edits the baseline).
+ * `expected-state-probe.mjs` (tempdoc 872) checks each pin's exit (`exitProbe` /
+ * `reviewBy`) and reports pins whose red is gone; a human deletes the pin.
  */
 
 import fs from 'node:fs';
@@ -50,7 +50,8 @@ export function matchExpectedState(cmd, entries) {
 export function renderHint(matched) {
   const lines = [
     'Known expected state for this command (expected-state.v1.json — tempdoc 680):',
-    ...matched.slice(0, 4).map((e) => `  • [${e.id}] ${e.claim}`),
+    // Every match is shown: a silent cap here hid pins exactly when the file grew (872).
+    ...matched.map((e) => `  • [${e.id}] ${e.claim}${e.reviewBy ? ` (review by ${e.reviewBy})` : ''}`),
     'A failure matching the above is pre-existing — do NOT stash-and-verify or re-log it',
     '(re-observation is fine but costs nothing new). A failure NOT matching it is yours.',
   ];
