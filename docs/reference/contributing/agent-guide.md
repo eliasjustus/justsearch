@@ -570,7 +570,7 @@ fixes rather than open a PR each):
 
 | Change | How it should reach `main` |
 |---|---|
-| **tempdoc / observations** edit (`docs/tempdocs/**`, `docs/observations*`) — dated working history | Ride along in the same PR as the code it documents, **or** batch several into one `docs(tempdocs): …` PR. Do not open a standalone PR per tempdoc append. |
+| **tempdoc** edit (`docs/tempdocs/**`) — dated working history | Ride along in the same PR as the code it documents, **or** batch several into one `docs(tempdocs): …` PR. Do not open a standalone PR per tempdoc append. |
 | **canonical doc** (`docs/{explanation,reference,how-to,decisions}`) — durable current truth | May stand alone as its own PR/commit. |
 | **docs + code together** | Already a ride-along — publish normally. |
 

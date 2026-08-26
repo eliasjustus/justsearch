@@ -17,6 +17,7 @@ import { Sv3Sidebar } from './Sv3Sidebar.js';
 import { Sv3SessionRow } from './Sv3SessionRow.js';
 import { Sv3Main } from './Sv3Main.js';
 import { Sv3Composer } from './Sv3Composer.js';
+import { Sv3ContextBar } from './Sv3ContextBar.js';
 import { Sv3Palette } from './Sv3Palette.js';
 import { Sv3Empty } from './Sv3Empty.js';
 import {
@@ -1311,5 +1312,44 @@ describe('the budget gate clears the a11y floors the live audit measured', () =>
     expect(hit).toMatch(/min-width:\s*24px/);
     expect(hit).toMatch(/min-height:\s*24px/);
     expect(hit).toMatch(/display:\s*inline-flex/);
+  });
+});
+
+/* ── Tempdoc 874: one width authority for the chat column ────────────────────────────────────── */
+
+/**
+ * The transcript, the composer band and the context bar are three components that must share ONE
+ * edge — the design spec gives them all 'max-w-3xl', and until 874 each restated it as a literal
+ * `48rem`. Three literals is three chances to drift, and it also made the width unadjustable: an
+ * inline override on the window host cannot reach a hard-coded declaration. These pin the
+ * consolidation — each component reads the token, none re-hardcodes the number, and the token sheet
+ * still carries the shipped default the preset system overrides.
+ */
+describe('the chat column caps on one token, not three literals', () => {
+  for (const [name, ctor] of [
+    ['Sv3Main (.transcript)', Sv3Main],
+    ['Sv3Composer (.band)', Sv3Composer],
+    ['Sv3ContextBar (.bar)', Sv3ContextBar],
+  ] as const) {
+    it(`${name} caps on --measure-prose and re-hardcodes no width`, () => {
+      const styles = styleTextOf(ctor);
+      expect(styles).toContain('max-inline-size: var(--measure-prose)');
+      // Bare `var()` with NO fallback: a `var(--measure-prose, 48rem)` would pass the line above
+      // while quietly restoring the literal, and the strip-token-fallbacks gate forbids the form.
+      expect(styles).not.toContain('48rem');
+      // EXCLUSIVITY. A consumer must only ever READ the property, never DECLARE it. Its own
+      // `:host { --measure-prose: … }` would shadow the inline value `SearchV3View.applyChatWidth`
+      // writes on the view host — the preset would stop moving that component, silently, while
+      // every assertion above still passed. The unit environment (happy-dom) does not compute the
+      // cascade, so no runtime test in this suite can observe that regression; this static pin on
+      // the declaration is the only place it is catchable.
+      expect(styles).not.toMatch(/--measure-prose\s*:/);
+    });
+  }
+
+  it('the token sheet still declares the shipped default the preset overrides', () => {
+    // The inline host write (SearchV3View.applyChatWidth) is what moves it; this declaration is what
+    // a reader who never chose a preset gets, and what a detached/preview render falls back to.
+    expect(tokens).toContain('--measure-prose: 48rem');
   });
 });

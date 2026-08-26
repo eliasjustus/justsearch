@@ -30,8 +30,9 @@ update it before closing.
 **Replaces:** the GPU- and inference-related items of the former
 `docs/reference/issues/` registers (`gpu-detection.md`, `retrieval-quality.md`
 RAG-001/RAG-009). That whole register set was retired in tempdoc 821 §7 D5
-(2026-08-12); its still-live entries were routed into `docs/observations.md`,
-and anything belonging to this domain should be promoted from there into the
+(2026-08-12); its still-live entries were routed into the observations store
+(retired, tempdoc 872 — see git history of `docs/observations.md`), and
+anything belonging to this domain should be promoted from there into the
 sections below rather than re-created as a standalone issue file.
 
 ---
@@ -157,7 +158,8 @@ Settled empirical facts. Each was an open question that got answered.
   windows CLS-pool a non-[CLS] token on windows 2+ — offline A/B isolates this as the dominant
   share of the old whole-doc dense death (0.105 vs 0.745 R@10 with proper per-window special
   tokens, same model/windowing). F-031's single-pass path moots it up to 8192 tokens; any residual
-  >8192-token window-mean path still carries it (observations inbox).
+  >8192-token window-mean path still carries it (open, no active tempdoc — the observations
+  inbox that held it was retired in tempdoc 872).
 - **Runtime fact 2 (tooling):** Snowflake arctic-embed-m-v2.0's HF remote code (mGTE family)
   hard-requires `xformers` on CUDA (`AssertionError: please install xformers`); the incumbent's
   Alibaba remote code does not. `xformers` 0.0.35 installs clean against torch 2.13.0+cu126

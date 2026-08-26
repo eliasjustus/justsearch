@@ -9,28 +9,26 @@ description: "Issue tracking tiers, observation workflow, and documentation upda
 
 This project follows **organic development**: issues and rough edges are captured as they're noticed, not as separate investigation tasks.
 
-**`docs/observations.md`** is the store for this — a channel of grouped **conditions**, not a flat inbox (tempdoc 680). During any task, if you notice a behavioral issue -- something that affects users, causes bugs, or creates friction -- log ONE flat line via `node scripts/agent-analytics/note-observation.mjs "<description> — file:line"`. **Do not read the store first and do not check for duplicates**: re-observation is signal — at the next fold it bumps the matching condition's `seen` count, which is the triage ranking. Skip structural commentary (large files, naming style) unless it directly caused a problem. Don't stop to investigate unless explicitly asked. Just record and continue.
+The observations conditions store (`docs/observations.md` / `docs/observations.d/`) was **retired** (tempdoc 872) in favor of **route, don't log**: an out-of-scope finding is routed to its destination at the moment it's discovered, not appended to a pile for later triage. During any task, if you notice a behavioral issue — something that affects users, causes bugs, or creates friction — route it immediately: (a) a wrong doc/comment with a verified one-line fix → fix it in place, ride-along in the same PR; (b) a red/flaky verification command on main → a dated pin with an exit in `scripts/agent-analytics/expected-state.v1.json` (delivered by the `known-state-hint` hook) plus the fix as a tracked item; (c) a platform/process lesson → a hook (must/never) or `.claude/rules/agent-lessons.md`; (d) a product defect you won't fix now → the owning tempdoc's open-items section, or a domain register for its domain. Don't stop to investigate unless explicitly asked — route and continue.
 
 ## Two tiers of issue tracking
 
 | Tier | Location | Friction | Lifetime | When to use |
 |------|----------|----------|----------|-------------|
-| Observations | `docs/observations.md` (grouped conditions; per-writer shards in `docs/observations.d/`) | Low (one line, write-blind) | Until routed, retired, or parked at a triage pass | Notice something mid-task |
+| Routed finding | Owning tempdoc's open-items section, `expected-state.v1.json` pin, or `agent-lessons.md`, per the routing rule above | Low (route at discovery, no separate triage pass) | Until the destination item is resolved | Notice something mid-task |
 | Domain registers | `docs/reference/search-quality-register.md`, `docs/reference/inference-runtime-register.md` | High (ID, evidence, verification date) | Until the finding is superseded by shipped work | Empirical findings and standing trade-offs in a register's domain |
 
-The standing per-domain issue registers under `docs/reference/issues/` were **retired** (tempdoc 821 §7 D5, 2026-08-12) — most had not been stamped since 2026-02/04 and real tracking had already migrated to the observations store, the two domain registers, and tempdocs. Live entries were routed into the store at retirement; the deleted files' content is recoverable from git history.
+The standing per-domain issue registers under `docs/reference/issues/` were **retired** (tempdoc 821 §7 D5, 2026-08-12) — most had not been stamped since 2026-02/04 and real tracking had already migrated to the (then-live, now also retired) observations store, the two domain registers, and tempdocs. The deleted files' content is recoverable from git history, as is the observations store's (last full snapshot: commit 7b85a5a6).
 
-Conditions are processed at the maintainer's periodic triage pass (`node scripts/agent-analytics/observations-triage.mjs` is the read-model; `--probe` re-runs each condition's probe — exit 0 means the condition is gone and writes a *proposed* retirement). Kinds route conditions onward: **defect** → the owning domain register, or its owning tempdoc when a fix is being planned; **environment** (facts about main/CI/machines that verification hits) → `scripts/agent-analytics/expected-state.v1.json`, delivered by the `known-state-hint` hook; **lesson** → hooks / `agent-lessons.md` / postmortems; **follow-up** → its owning tempdoc or register. Resolved conditions are **deleted** when fixed — the commit (or tempdoc) that made the fix is the permanent record — and deletion is always a human act; automation only proposes.
-
-Architectural trade-offs and conscious design tensions belong in an ADR (`docs/decisions/`) when the "why not X?" answer is worth preserving, or as a register entry with its revisit trigger. A trade-off that is neither is a condition in the store with `status: parked (<reason>)`.
+Architectural trade-offs and conscious design tensions belong in an ADR (`docs/decisions/`) when the "why not X?" answer is worth preserving, or as a register entry with its revisit trigger. A trade-off that is neither belongs as a parked item in its owning tempdoc.
 
 **Tempdocs** (`docs/tempdocs/`) are for active implementation work — investigation logs, planning docs, and session-scoped notes. They are not part of the issue tracking system.
 
 ## Issue lifecycle rules
 
-- A fixed finding is **deleted** from its register or the store, not marked closed — the commit that fixed it is the permanent record.
-- An item evaluated and intentionally closed (won't-fix, deferred, accepted) needs a durable home for its rationale: an ADR, a register entry with a revisit trigger, or a parked condition. Do not leave closed items sitting in an active list.
-- Registers and the store hold only items someone could act on. If it is not something to fix or revisit, it belongs in an ADR or nowhere.
+- A fixed finding is **deleted** from its register, or closed out in its owning tempdoc, not marked closed in a separate list — the commit that fixed it is the permanent record.
+- An item evaluated and intentionally closed (won't-fix, deferred, accepted) needs a durable home for its rationale: an ADR, a register entry with a revisit trigger, or a parked item in its owning tempdoc. Do not leave closed items sitting in an active list.
+- Registers and tempdoc open-items sections hold only items someone could act on. If it is not something to fix or revisit, it belongs in an ADR or nowhere.
 
 ## Softness portfolio
 
@@ -61,5 +59,5 @@ Without this, operators see "unset" when the runtime is silently using the defau
 - When you record an architectural decision with alternatives: create an ADR in `docs/decisions/`.
 - After adding/changing canonical docs: run `node scripts/docs/llmstxt-generate.mjs` to regenerate the index.
 - When the Gradle module graph changes (`settings.gradle.kts` or `modules/**/build.gradle.kts`): run `node scripts/architecture/module-deps.mjs --update-canonical` and verify with `--check-canonical`.
-- When you write notes/ideas: use `docs/tempdocs/` (noncanonical); for a one-line out-of-scope finding, use `node scripts/agent-analytics/note-observation.mjs`.
+- When you write notes/ideas: use `docs/tempdocs/` (noncanonical); an out-of-scope finding is routed per CLAUDE.md `rule:log-pre-existing-issues` (fix in place / expected-state pin / rules / owning tempdoc) — there is no inbox helper.
 - Full guide (frontmatter, CI checks, doc types): `docs/reference/contributing/writing-docs-for-ai.md`
