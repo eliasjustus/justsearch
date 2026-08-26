@@ -77,6 +77,22 @@ seedFromExample('.mcp.json.example', '.mcp.json');
 seedFromExample(path.join('.claude', 'settings.local.json.example'), path.join('.claude', 'settings.local.json'));
 console.error('[prepare-worktree] if .mcp.json was just created: the justsearch-dev server needs no secret and works immediately.');
 
+// 0b. Hook wiring drift (tempdoc 872). `.worktreeinclude` copies the parent's REAL
+// settings.local.json in, so a new worktree inherits whatever hooks block the parent had —
+// which can name a hook the manifest has since removed (the Stop hook then exits 1 visibly
+// every turn). The generator only rewrites the hooks block, so regenerating is safe.
+{
+  const settingsLocal = path.join(repoRoot, '.claude', 'settings.local.json');
+  const gen = path.join(repoRoot, 'scripts', 'codegen', 'gen-agent-hooks-wiring.mjs');
+  if (fs.existsSync(settingsLocal) && fs.existsSync(gen)) {
+    const check = spawnSync(process.execPath, [gen, '--check'], { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8' });
+    if (check.status !== 0) {
+      console.error('[prepare-worktree] hooks block drifted from governance/agent-hooks.v1.json — regenerating');
+      run(process.execPath, [gen], repoRoot);
+    }
+  }
+}
+
 // 1. FE deps — npm ci (clean, lockfile-pinned; same command the build task now uses).
 run(npm, ['ci'], path.join(repoRoot, 'modules', 'ui-web'));
 

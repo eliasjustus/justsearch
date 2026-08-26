@@ -184,8 +184,9 @@ run('several tempdoc edits are a BATCH — the rule permits it, so no hint', () 
     false,
   );
 });
-run('a shard fold is a BATCH — the step-4 case that had no compliant path', () => {
-  // Real shape of `fold-observations.mjs --apply`: shards consumed + store updated.
+run('a multi-file working-history batch is a BATCH, not a standalone note', () => {
+  // Historical shape (the retired observations fold, tempdoc 872): several working-history
+  // files in one push. The ARCHAEOLOGY prefix still classifies these paths, so the case stands.
   assert.equal(
     isStandaloneNote([
       'docs/observations.md',
