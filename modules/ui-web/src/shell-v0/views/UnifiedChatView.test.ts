@@ -1019,11 +1019,18 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     expect(text).toContain('taxes');
     // Honesty: no fabricated "% RELEVANCE" badge from the uncalibrated ranking score (559 §5 / C-6).
     expect(text).not.toContain('%');
-    // Tempdoc 867 report — UnifiedChatView does not wire the run's evidence-path set for a
-    // record-hydrated tool item (cross-run misattribution risk, disclosed limitation), so this hit
-    // is never shown as an evidence row; it is counted in the "retrieved, not in evidence" footer.
-    expect(toolCard!.shadowRoot.querySelector('[data-testid="tool-search-row"]')).toBeNull();
-    expect(text).toContain('1 more retrieved, not in evidence');
+    // Tempdoc 871 §3b — level 2 is the model's FULL ranked list, so the hit renders as a row here
+    // even though UnifiedChatView does not wire the run's evidence-path set for a record-hydrated
+    // tool item (cross-run misattribution risk, disclosed limitation). Because the set is unwired,
+    // the card must NOT mark the row either way: no `used` tag, and no accessory claim about it.
+    expect(toolCard!.shadowRoot.querySelectorAll('[data-testid="tool-search-row"]')).toHaveLength(1);
+    expect(toolCard!.shadowRoot.querySelector('[data-testid="tool-search-row-used"]')).toBeNull();
+    expect(
+      toolCard!.shadowRoot.querySelector('[data-testid="tool-card-accessory"]')?.textContent?.trim(),
+    ).toBe('1 result');
+    // Nothing is beyond the cap, so nothing is counted — and the old footer's "not in evidence"
+    // claim (which the unwired card could never actually know) is gone.
+    expect(toolCard!.shadowRoot.querySelector('[data-testid="tool-search-more"]')).toBeNull();
     // The raw monospace dump is still suppressed in favour of the structured body.
     expect(toolCard!.shadowRoot.querySelector('.tool-output')).toBeNull();
   });
