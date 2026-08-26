@@ -289,6 +289,10 @@ const MD_PROSE_RAMP = ['--font-size-xl', '--font-size-lg', '--font-size-md'] as 
  * whose containment proof enumerates its fifteen names exactly.
  */
 const MD_CITE = [
+  // Tempdoc 869 C3 — the two tiers the renderer states POSITIVELY. `--md-cite-grounded-color` is the
+  // strongest tier's ink, moved off the base `.cite-ref` rule so that "no grounding class" resolves
+  // to neutral instead of strongest; `--md-cite-source-color` is that neutral, on the base rule.
+  '--md-cite-grounded-color',
   '--md-cite-pad-x',
   '--md-cite-pad-x-rest',
   '--md-cite-radius',
@@ -297,6 +301,7 @@ const MD_CITE = [
   '--md-cite-region-pad-x',
   '--md-cite-selected-bg',
   '--md-cite-selected-edge',
+  '--md-cite-source-color',
   '--md-cite-ungrounded-color',
   '--md-cite-weak-color',
 ] as const;
@@ -513,6 +518,12 @@ const CITE_BRIDGE: Readonly<Record<string, string>> = {
   '--md-cite-selected-edge': 'var(--sv3-selected-edge)',
   '--md-cite-weak-color': 'var(--sv3-cite-weak)',
   '--md-cite-ungrounded-color': 'var(--sv3-cite-ungrounded)',
+  // Tempdoc 869 C3 — the two POSITIVE tiers. `--md-cite-grounded-color` restates the ink this
+  // window already painted through `--text-tint`; `--md-cite-source-color` is the tier-2 mark's
+  // neutral, the body foreground rather than the renderer's `--text-secondary` default (which this
+  // window re-points to `--muted-foreground`, under AA for a 12px glyph).
+  '--md-cite-grounded-color': 'var(--info-foreground)',
+  '--md-cite-source-color': 'var(--foreground)',
   '--md-cite-region-bg': 'var(--sv3-selected-region)',
   '--md-cite-pad-x-rest': '0.25em',
   '--md-cite-pad-x': '0.25em',

@@ -645,6 +645,17 @@ export class Sv3Main extends JfElement {
            token sheet; 'Sv3Main.imports.test.ts' asserts the composite, both themes, both tiers. */
         --md-cite-weak-color: var(--sv3-cite-weak);
         --md-cite-ungrounded-color: var(--sv3-cite-ungrounded);
+        /* Tempdoc 869 C3 — the two tiers the renderer states POSITIVELY now that "no class" is
+           neutral rather than strongest. The GROUNDED ink is the value this window already painted
+           (its '--text-tint' re-point four rules above resolves to exactly this), named here because
+           the tier moved out of the base rule and a bridge that skipped it would silently hand the
+           strongest tier the SOURCE tier's neutral. The SOURCE ink is the body foreground: a tier-2
+           mark is the model's own attribution, so it wears the window's ordinary text ink and no
+           honesty tier's colour — and, unlike the renderer's '--text-secondary' default, which this
+           window re-points to '--muted-foreground' (~4.4:1 in light, under AA for a 12px numeral),
+           it is a colour a reader can actually read on a control they are meant to click. */
+        --md-cite-grounded-color: var(--info-foreground);
+        --md-cite-source-color: var(--foreground);
         /* Tempdoc 869 §3.6 — the MUTED ref's ink, and the one bridge line that fixes a measured
            failure rather than preserving a value. The renderer's default is '--text-secondary',
            which this bridge re-points to '--muted-foreground' four rules above; with the (now

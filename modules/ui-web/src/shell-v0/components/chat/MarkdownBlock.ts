@@ -198,6 +198,13 @@ interface WordToken {
   chars: number;
 }
 
+/**
+ * Tempdoc 869 C1 — a model-written literal `[n]`, optionally preceded by ONE space or tab, anchored
+ * (`y`) at `lastIndex`. Shared by the anchoring walk, which skips such a literal, and stated once so
+ * the two halves of C1 cannot disagree about what a literal is.
+ */
+const LEADING_LITERAL_REF = /[ \t]?\[\d+\]/y;
+
 function wordTokens(s: string): WordToken[] {
   const out: WordToken[] = [];
   for (const seg of WORD_SEGMENTER.segment(s)) {
@@ -316,9 +323,27 @@ function matchWordRun(
   // hole the floor alone cannot: a mark landing on whichever occurrence happened to come first.
   if ((matchedChars < 4 || len === 1) && occurrences > 1) return null;
 
-  const lastTok = at + len - 1;
   const startIndex = domToks[at]!.start;
+  let lastTok = at + len - 1;
   let endIndex = domToks[lastTok]!.end;
+  // Tempdoc 869 C1 (§3.1 rule 1) — the extension is LITERAL-TRANSPARENT: a model-written `[n]`
+  // between the run and its sentence's punctuation is skipped as if it were not written, so the
+  // mark lands exactly where it would land in the same text without it. Two shapes needed this.
+  // `word [1].` stopped the walk at the space and put the mark BEFORE the period the literal
+  // precedes; `word[1].` was worse — the walk crossed `[` and split the text node INSIDE the
+  // literal, after which the tier-2 normalizer's regex no longer saw a literal and the digit
+  // shipped twice with orphaned brackets (`word[11].`). Label-agnostic on purpose: the corruption
+  // is a property of the bracket, not of whether the number resolves to a source, and this
+  // function is not given the citation set.
+  for (;;) {
+    LEADING_LITERAL_REF.lastIndex = endIndex;
+    const lit = LEADING_LITERAL_REF.exec(full);
+    if (lit === null) break;
+    endIndex += lit[0].length;
+    // The digits inside a literal are word tokens of their own, so the run has now crossed them:
+    // advance the consumed-range cursor (§2.1d) past every token the skip walked over.
+    while (lastTok + 1 < domToks.length && domToks[lastTok + 1]!.start < endIndex) lastTok++;
+  }
   // Extend over the punctuation that immediately follows (no whitespace, no next token), so the
   // mark still lands AFTER the sentence's period rather than inside it.
   const nextTokStart = domToks[lastTok + 1]?.start ?? full.length;
@@ -721,7 +746,14 @@ export class MarkdownBlock extends JfElement {
     .cite-ref {
       font-size: var(--font-size-xs);
       vertical-align: super;
-      color: var(--text-tint);
+      /* Tempdoc 869 §2.3 — the base rule's ink is the SOURCE tier's (tier 2), because the absence of
+         a tier class is NEUTRAL, not strongest. This declaration used to be 'var(--text-tint)', and
+         only the two subdued tiers stated themselves, so a mark with no grounding class inherited
+         the STRONGEST tier's colour: the tier-2 upgrade of a literal the model wrote — which no
+         cross-encoder verified — painted itself the colour of the marks that were. The grounded tier
+         now states itself in its own rule below; what falls through to here is a mark that claims
+         source attribution and nothing more. */
+      color: var(--md-cite-source-color, var(--text-secondary));
       cursor: pointer;
       margin-left: 0.1em;
       font-weight: 600;
@@ -759,6 +791,14 @@ export class MarkdownBlock extends JfElement {
        design named is "the weak tier's colour moves, not the wash" (§7.5) — so a window that opts
        into a selection wash also opts into a tier ink lifted far enough to survive it. Defaults are
        today's values ⇒ shipped rendering byte-identical. */
+    /* Tempdoc 869 C3 — the STRONGEST tier, stated positively. It was the base rule's colour until
+       this slice, which is the same defect the 822 §3c comment below records for the weakest tier,
+       one level up: "no class" is not a tier, and a rule that paints it as one puts the strongest
+       claim on every mark that makes no claim. Every tier-1 mark already carries exactly one of the
+       three grounding classes, so the shipped rendering of a verified mark is byte-identical. */
+    .cite-ref.cite-grounded {
+      color: var(--md-cite-grounded-color, var(--text-tint));
+    }
     .cite-ref.cite-weak {
       color: var(--md-cite-weak-color, var(--text-secondary));
     }
@@ -943,7 +983,7 @@ export class MarkdownBlock extends JfElement {
       const tail = endRange.node.splitText(endOffset);
       const ordered = [...cites].sort((a, b) => Number(a.label) - Number(b.label));
       for (const cite of ordered) {
-        endRange.node.parentNode?.insertBefore(this.makeMarker(cite), tail);
+        endRange.node.parentNode?.insertBefore(this.makeMarker(cite, 'sentence'), tail);
         insertedLabels.add(Number(cite.label));
       }
       // …then color the cited sentence body by its grounding tier (the union with the retired
@@ -1042,6 +1082,14 @@ export class MarkdownBlock extends JfElement {
    * placed. That is why a tier-2 mark gets NO `.cite-sentence` underline — the sentence was never
    * identified, so no span may claim it was. Structural rather than checked (only the tier-1 weave
    * builds spans), and pinned by a test so a future refactor cannot let a span follow the marker.
+   *
+   * Tempdoc 869 C3 — and why it is COLOURLESS BY CONSTRUCTION. A tier-2 mark used to wear the
+   * grounding tint because `.cite-ref`'s base rule carried it and only the two SUBDUED tiers stated
+   * themselves, so "no tier class" resolved to the STRONGEST tier: the mark the cross-encoder never
+   * verified painted itself the colour of the ones it did. The mint below therefore passes
+   * `'source'`, which emits no `cite-*` grounding class at all — there is no tier to state — and the
+   * base rule now paints a neutral ink. What the mark asserts rides on `title` and `data-cite-tier`,
+   * not on a colour a reader has to decode.
    */
   private normalizeLiteralCitationTokens(root: HTMLElement, insertedLabels: Set<number>): void {
     const byLabel = new Map<number, Citation>(this.citations.map((c) => [Number(c.label), c]));
@@ -1050,7 +1098,13 @@ export class MarkdownBlock extends JfElement {
     const nodes: Text[] = [];
     let n: Node | null;
     while ((n = walker.nextNode())) nodes.push(n as Text);
-    const re = /\s?\[(\d+)\]/g;
+    // Tempdoc 869 C1 (§3.1 rules 2-3) — the match is the LITERAL, nothing around it. The old
+    // `/\s?\[(\d+)\]/` swallowed the preceding whitespace unconditionally, which made the renderer
+    // decide typography the model did not write: an UPGRADE glued the marker to the previous word
+    // (`trade-offs⁴` for a model that wrote `trade-offs [4]`), and a STRIP at node start left an
+    // orphaned leading space. Whose whitespace goes — and whether any does — is now a decision
+    // taken per occurrence, from the literal's neighbours.
+    const re = /\[(\d+)\]/g;
     for (const node of nodes) {
       if ((node.parentElement)?.closest('pre, code, .cite-ref')) continue;
       const matches = [...node.data.matchAll(re)].filter((m) => byLabel.has(Number(m[1])));
@@ -1059,11 +1113,14 @@ export class MarkdownBlock extends JfElement {
         const label = Number(m[1]);
         const start = m.index ?? 0;
         const token = node.splitText(start);
-        token.splitText(m[0].length);
+        const rest = token.splitText(m[0].length);
         if (insertedLabels.has(label)) {
           token.remove();
+          this.closeLiteralGap(node, rest);
         } else {
-          const marker = this.makeMarker(byLabel.get(label)!);
+          // The marker inherits the literal's position exactly; the model's own spacing survives
+          // (`word [4]` → `word ⁴`, `word[4]` → `word⁴`).
+          const marker = this.makeMarker(byLabel.get(label)!, 'source');
           token.parentNode?.replaceChild(marker, token);
           insertedLabels.add(label);
         }
@@ -1071,15 +1128,52 @@ export class MarkdownBlock extends JfElement {
     }
   }
 
+  /**
+   * Tempdoc 869 C1 (§3.1 rule 2) — a stripped literal leaves ONE adjacent whitespace behind at most,
+   * and which side goes is read off the neighbours the literal sat between (`before` ends where the
+   * literal began; `after` starts where it ended):
+   *
+   *  - preceded by whitespace and followed by punctuation, whitespace or nothing → the PRECEDING
+   *    space goes, so the period closes on the word (`word [1].` → `word.`) and a mid-sentence strip
+   *    leaves a single space (`a [1] b` → `a b`);
+   *  - at the node's start → the FOLLOWING space goes, which is the block-leading `[1] The kernel…`
+   *    orphan (a leading space is invisible in the DOM and shifts the first word by a space width);
+   *  - flanked by word characters → neither, because the model wrote no space to reclaim
+   *    (`word[1].` → `word.`).
+   */
+  private closeLiteralGap(before: Text, after: Text): void {
+    const prev = before.data.slice(-1);
+    const next = after.data.slice(0, 1);
+    if (prev !== '' && /\s/.test(prev)) {
+      if (next === '' || !/[\p{L}\p{N}]/u.test(next)) before.data = before.data.slice(0, -1);
+      return;
+    }
+    if (prev === '' && next !== '' && /\s/.test(next)) after.data = after.data.slice(1);
+  }
 
-  private makeMarker(cite: Citation): HTMLElement {
+
+  /**
+   * Tempdoc 869 C3 — the mark's TIER is a fact of which path minted it, known here and nowhere else,
+   * so it is an argument rather than a `Citation` field (a field would persist a render decision as
+   * a second authority beside the verifier's record).
+   *
+   * `'sentence'` — the tier-1 weave: the cross-encoder located this sentence, so the mark states its
+   * grounding tier as a positive `cite-*` class and the CSS paints it.
+   * `'source'` — the tier-2 upgrade of a literal the model wrote: no sentence was identified and no
+   * similarity applies to a POSITION, so the mark states no tier and takes the base rule's neutral
+   * ink. The distinction is carried in `title` and `data-cite-tier`; `citeAriaLabel` stays a stable,
+   * state-free name (822 F6) and is deliberately identical for both.
+   */
+  private makeMarker(cite: Citation, tier: 'sentence' | 'source'): HTMLElement {
     const span = document.createElement('span');
     // Tempdoc 565 §12.3.E — the source identity this mark cites, so the cross-surface selection can
     // highlight it in sync with the matching rail card.
     const key = sourceKey(cite.detail.parentDocId, cite.detail.startLine);
     span.dataset.citeKey = key;
+    span.dataset.citeTier = tier;
     const isSelected = getSelectedSource() === key;
-    span.className = `cite-ref cite-${groundingClass(cite.similarity)}${isSelected ? ' cite-selected' : ''}`;
+    const grounding = tier === 'sentence' ? ` cite-${groundingClass(cite.similarity)}` : '';
+    span.className = `cite-ref${grounding}${isSelected ? ' cite-selected' : ''}`;
     span.textContent = String(cite.label);
     span.setAttribute('role', 'button');
     span.setAttribute('tabindex', '0');
@@ -1087,9 +1181,12 @@ export class MarkdownBlock extends JfElement {
     // not only after the next selection change.
     if (isSelected) span.setAttribute('aria-current', 'true');
     span.setAttribute('aria-label', this.citeAriaLabel(String(cite.label)));
+    // Tempdoc 869 C3 — the tier says what it asserts. Tier 2 has no passage to open: the model
+    // named the source, nothing located the sentence, so the tooltip offers the source itself.
+    const what = tier === 'source' ? 'the model cited this source; open it' : 'open the cited passage';
     span.title = cite.hover.title
-      ? `${cite.hover.title} — open the cited passage`
-      : 'Open the cited passage';
+      ? `${cite.hover.title} — ${what}`
+      : `${what.charAt(0).toUpperCase()}${what.slice(1)}`;
     const fire = (): void => {
       // Tempdoc 565 §12.3.E — focus this source across surfaces (highlight the matching rail card)
       // before the existing deep-link dispatch.
