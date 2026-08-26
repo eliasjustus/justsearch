@@ -363,6 +363,28 @@ describe('the session row spends one fill and three colours, by construction', (
     expect(ruleFor('.status-slot {')).toContain('min-inline-size: var(--space-8)');
   });
 
+  it('870 item 6b: the slot WIDENS on the same clock the status fades on', () => {
+    // The two halves of one swap. The widening (32px floor → the action set's width, three rules
+    // below) used to land in a single frame while its sibling `.slot-content` faded over 150ms, so
+    // the title's clip jumped before the status it was making room for had finished leaving. Both
+    // ends of the width are real lengths, which is what makes `min-inline-size` interpolable at all
+    // — a rule that dropped the resting floor would silently stop animating rather than fail.
+    const slot = ruleFor('.status-slot {');
+    expect(slot).toContain('min-inline-size: var(--space-8)');
+    expect(slot).toContain(
+      'transition: min-inline-size var(--duration-sv3-micro) var(--ease-sv3-enter)',
+    );
+    // Same duration and curve as the fade it is paired with — one swap, one clock.
+    expect(ruleFor('.slot-content {')).toContain(
+      'transition: opacity var(--duration-sv3-micro) var(--ease-sv3-enter)',
+    );
+    // …and it joins the reduced-motion opt-out with its sibling, rather than being the one animated
+    // property that ignores the setting.
+    const reduced = styles.slice(styles.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(reduced).toContain('.status-slot');
+    expect(reduced).toContain('transition: none');
+  });
+
   /**
    * The status→action slot swap (Phase F3) as MECHANISM: happy-dom runs no cascade and
    * no hover, so the properties pinned here are the ones that decide the outcome — the hidden state
@@ -556,13 +578,17 @@ describe('the composer glass is token-fed material, so dark inverts without a co
     expect(rule).toContain('-webkit-backdrop-filter:');
 
     // ...and no blur declaration of the GLASS's own recipe lives anywhere else — a node split is
-    // what put it out of reach. Phase F10 added a SECOND blurred surface, the control menu, which
-    // is a different recipe on its own node; the 859 live-leg added a THIRD, the banner box shared
-    // by the availability notice and the degradation strip, which floats over the transcript with
-    // the composer and so needs the same material. Each is admitted by name and by rule bounds, so
-    // a blur that escaped every silhouette still fails here. The matcher pins the MULTIPLIED form
-    // (859 §B), so a site that reverted to a bare `blur(var(--glass-blur))` would drop out of the
-    // count and fail rather than pass unnoticed.
+    // what put it out of reach. The 859 live-leg added a SECOND blurred surface, the banner box
+    // shared by the availability notice and the degradation strip, which floats over the transcript
+    // with the composer and so needs the same material. Each is admitted by name and by rule
+    // bounds, so a blur that escaped every silhouette still fails here. The matcher pins the
+    // MULTIPLIED form (859 §B), so a site that reverted to a bare `blur(var(--glass-blur))` would
+    // drop out of the count and fail rather than pass unnoticed.
+    //
+    // Tempdoc 870 item 1 retired the THIRD surface's blur — Phase F10's control menu. `.glass`
+    // declares `isolation: isolate`, so a backdrop-filter on a descendant of it can only ever
+    // sample the composer's own paint; the menu is opaque now and its two declarations (webkit +
+    // standard) came out of this count with it.
     const menuStart = composer.indexOf('.menu {');
     const menuEnd = composer.indexOf('}', menuStart);
     const bannerStart = composer.indexOf('.notice,\n      .degradation {');
@@ -573,20 +599,20 @@ describe('the composer glass is token-fed material, so dark inverts without a co
         /backdrop-filter: blur\(calc\(var\(--glass-blur\) \* var\(--glass-blur-scale\)\)\)/g,
       ),
     ];
-    expect(declarations).toHaveLength(6);
+    expect(declarations).toHaveLength(4);
     // Nothing anywhere in the component blurs WITHOUT the multiplier — the direct statement of
     // "search-v3 is no longer deaf to the user's own solid-surfaces setting".
     expect(composer).not.toMatch(/blur\(var\(--glass-blur\)\)/);
     for (const declaration of declarations) {
       const at = declaration.index ?? -1;
       const inGlass = at > start && at < end;
-      const inMenu = at > menuStart && at < menuEnd;
       const inBanner = at > bannerStart && at < bannerEnd;
-      expect(inGlass || inMenu || inBanner, 'a blur declaration escaped every silhouette node').toBe(
-        true,
-      );
+      expect(inGlass || inBanner, 'a blur declaration escaped every silhouette node').toBe(true);
     }
-    // The two recipes stay distinct: only the composer's ambient glass saturates.
+    // …and the menu is not one of them any more, which is the half a count alone would not say.
+    // Matched WITH the colon: the rule's own prose names the property it retired.
+    expect(composer.slice(menuStart, menuEnd)).not.toContain('backdrop-filter:');
+    // The composer's ambient glass is still the only surface that saturates.
     expect(composer.slice(menuStart, menuEnd)).not.toContain('saturate(');
   });
 
@@ -625,18 +651,31 @@ describe('the composer glass is token-fed material, so dark inverts without a co
     expect(light).toContain('--composer-outline: rgb(0 0 0 / 8%)');
   });
 
-  it('reads focus and validity off the wrapper, so one ring shows at a time', () => {
-    // Tempdoc 864 Layer 1(d) — the same three rules, re-keyed from `:host(:has(…)) .glass::after`
-    // onto `.glass:has(…)::after`. 822 F3 measured `:host(:has(` as a Chrome syntax error that takes
+  it('reads focus and validity off the wrapper, so ONE mark shows at a time', () => {
+    // Tempdoc 864 Layer 1(d) — these rules were re-keyed from `:host(:has(…)) .glass::after` onto
+    // `.glass:has(…)::after`. 822 F3 measured `:host(:has(` as a Chrome syntax error that takes
     // its whole selector list down, and `:host()` matches its argument against the host in the OUTER
     // tree, where a shadow `<textarea>` does not live — so the ring these draw was unreachable. The
-    // wrapper reads the field in its own tree. Declarations and order are unchanged.
+    // wrapper reads the field in its own tree.
     expect(ruleFor('.glass:has(textarea:focus-visible)::after')).toContain(
       'border-color: var(--ring)',
     );
-    expect(ruleFor('.glass:has(textarea:focus-visible)::after')).toContain(
-      'outline: 3px solid color-mix(in srgb, var(--ring) 24%, transparent)',
-    );
+    // Tempdoc 870 item 2 — and the mark is the FRAME, alone. The 3px `--ring` halo that used to sit
+    // outside it is gone: with the ambient `:focus-visible` outline also landing on the <textarea>
+    // (closed below), a keyboard focus painted THREE concentric marks. What survives still carries
+    // the state in two channels — the frame's hue AND the resting→engaged surface lift — so this
+    // pins "no outline anywhere on the wrapper's ::after rules", not "no indication".
+    for (const selector of [
+      '.glass:has(textarea:focus-visible)::after',
+      ".glass:has(textarea[aria-invalid='true'])::after",
+    ]) {
+      expect(ruleFor(selector), `${selector} re-opened the halo`).not.toContain('outline');
+    }
+    // The OTHER half of the double ring: the app-global ambient rule (primitives/ambientStyles.ts)
+    // is adopted into this shadow root at (0,1,0) and out-specifies the bare `textarea` reset, so
+    // the reset has to be restated ON the pseudo-class — (0,1,1) — to take the field back. A sheet
+    // that dropped this rule would silently paint the ambient ring again.
+    expect(ruleFor('textarea:focus-visible {')).toContain('outline: none');
     expect(ruleFor(".glass:has(textarea[aria-invalid='true'])::after")).toContain(
       'border-color: color-mix(in srgb, var(--destructive) 36%, transparent)',
     );
@@ -712,7 +751,15 @@ describe('the composer glass is token-fed material, so dark inverts without a co
    */
   it('builds the control menu on the spec dropdown recipe, by token', () => {
     const menu = ruleFor('.menu {');
-    expect(menu).toContain('background: var(--dropdown-surface)');
+    // Tempdoc 870 item 1 — OPAQUE, and by the token the no-blur fallback already used. `.glass`
+    // isolates, so a backdrop-filter here samples only the composer's own paint: the placeholder
+    // glyphs under an open menu blurred and then composited through `--dropdown-surface`'s ~16 %
+    // transparency. The geometry tokens below are the parts of the spec recipe that still apply.
+    expect(menu).toContain('background: var(--popover)');
+    expect(menu).not.toContain('background: var(--dropdown-surface)');
+    // The blur went with it rather than being tuned down: it could never sample the page from
+    // inside the isolated context, so it was dead weight that only cost a repaint.
+    expect(menu).not.toContain('backdrop-filter:');
     expect(menu).toContain('border: 1px solid var(--dropdown-border)');
     expect(menu).toContain('box-shadow: var(--dropdown-shadow)');
     expect(menu).toContain('border-radius: var(--radius-lg)');
@@ -746,12 +793,19 @@ describe('the composer glass is token-fed material, so dark inverts without a co
       (m) => m[1],
     );
     expect(blurred).toContain('.glass');
-    expect(blurred).toContain('.menu');
+    // Tempdoc 870 item 1 — the control menu is no longer on this list, and that is the point: it is
+    // opaque in EVERY mode now, so it needs no fallback because it has no translucency to lose.
+    // Asserted as an absence rather than deleted, so a re-added blur would have to answer the
+    // fallback requirement here again.
+    expect(blurred).not.toContain('.menu');
     const fallback = composer.slice(
       composer.indexOf('@supports not ((-webkit-backdrop-filter: blur(1px))'),
     );
     expect(fallback).toContain('.glass');
-    expect(fallback).toContain('.menu');
+    // Every surface that IS blurred appears in a fallback block.
+    for (const surface of blurred) {
+      expect(fallback, `${surface} blurs with no opaque companion`).toContain(surface);
+    }
   });
 
   it('evaporates the control labels leftward on docking, and only fades them under reduced motion', () => {

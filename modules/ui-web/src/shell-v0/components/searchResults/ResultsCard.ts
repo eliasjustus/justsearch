@@ -467,7 +467,7 @@ export class ResultsCard extends JfElement {
       data-testid="copy-btn-${format}"
       @click=${() => void this.handleCopyClick(format)}
     >
-      ${icon({ name: 'clipboard-copy', size: 11 })} ${flashing ? 'Copied!' : label}
+      ${icon({ name: 'copy', size: 11 })} ${flashing ? 'Copied!' : label}
     </button>`;
   }
 

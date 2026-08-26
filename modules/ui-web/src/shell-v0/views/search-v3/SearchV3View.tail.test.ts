@@ -415,8 +415,9 @@ describe('copy is the only yielding element, and it reports without renaming its
     expect(copy.getAttribute('aria-label')).toBe(TURN_COPY_LABEL);
     // Icon-only: no text of its own, so the row's resting width is the facts' alone.
     expect(text(copy)).toBe('');
-    // The spec's glyph pair, told apart by their own shapes: `clipboard-copy` opens with a <rect>,
-    // the confirmation `check-circle-2` with a <circle> (`components/Icon.ts`).
+    // The spec's glyph pair, told apart by their own shapes: `copy` (lucide, two rounded rects
+    // since 870 item 5) opens with a <rect>, the confirmation `check-circle-2` with a <circle>
+    // (`components/Icon.ts`).
     expect(copy.querySelector('svg rect')).not.toBeNull();
     expect(copy.querySelector('svg circle')).toBeNull();
     expect(copy.querySelector('svg')?.getAttribute('width')).toBe('12');

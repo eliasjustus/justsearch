@@ -223,6 +223,12 @@ export class Sv3SessionRow extends JfElement {
         min-inline-size: var(--space-8);
         flex-shrink: 0;
         font-size: var(--font-size-sv3-xs);
+        /* Tempdoc 870 item 6b — the widening below (32px floor → the action set's width) SNAPPED in
+           one frame while '.slot-content' faded out over the same 150ms, so the title's clip jumped
+           before the status it was making room for had finished leaving. Both halves of one swap now
+           run on the same duration and the same curve. Both ends are real lengths, which is what
+           makes 'min-inline-size' interpolable here at all. */
+        transition: min-inline-size var(--duration-sv3-micro) var(--ease-sv3-enter);
       }
       .slot-content {
         display: flex;
@@ -478,6 +484,7 @@ export class Sv3SessionRow extends JfElement {
         button.row,
         button.act,
         .slot-content,
+        .status-slot,
         .glyph {
           transition: none;
         }
