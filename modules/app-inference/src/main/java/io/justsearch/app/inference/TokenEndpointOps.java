@@ -101,12 +101,23 @@ final class TokenEndpointOps {
     }
   }
 
+  /** Applies the chat template to messages only. Equivalent to passing no tools. */
+  Optional<String> applyTemplate(List<Map<String, Object>> messages) {
+    return applyTemplate(messages, List.of());
+  }
+
   /**
    * Applies the llama-server chat template to OpenAI-style messages via /apply-template.
    *
+   * <p>The projection MUST be built from the same inputs the generation call passes. A chat
+   * template renders tool schemas into the prompt, so a schema-blind projection measures a prompt
+   * that will never be sent — not an approximation of the real one, a different one (tempdoc 878
+   * finding 6). Pass the same {@code tools} list the generation request carries.
+   *
    * <p>Returns empty if the endpoint is unavailable or the server is not in ONLINE mode.
    */
-  Optional<String> applyTemplate(List<Map<String, Object>> messages) {
+  Optional<String> applyTemplate(
+      List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
     if (messages == null || messages.isEmpty()) {
       return Optional.of("");
     }
@@ -118,11 +129,7 @@ final class TokenEndpointOps {
     }
 
     try {
-      Map<String, Object> body = new java.util.HashMap<>();
-      body.put("messages", messages);
-      // Match generation behavior: include the assistant prefix / generation prompt if supported.
-      body.put("add_generation_prompt", true);
-      String json = objectMapper.writeValueAsString(body);
+      String json = objectMapper.writeValueAsString(buildApplyTemplateBody(messages, tools));
 
       HttpRequest request =
           buildJsonPostRequest(serverPort.get(), PATH_APPLY_TEMPLATE, json, ENDPOINT_TIMEOUT);
@@ -151,12 +158,37 @@ final class TokenEndpointOps {
   }
 
   /**
+   * Builds the /apply-template request body.
+   *
+   * <p>{@code "tools"} is omitted entirely for an absent or empty list, so a caller with no tools
+   * sends exactly the body it sent before tool threading existed.
+   */
+  Map<String, Object> buildApplyTemplateBody(
+      List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
+    Map<String, Object> body = new java.util.HashMap<>();
+    body.put("messages", messages);
+    // Match generation behavior: include the assistant prefix / generation prompt if supported.
+    body.put("add_generation_prompt", true);
+    if (tools != null && !tools.isEmpty()) {
+      body.put("tools", tools);
+    }
+    return body;
+  }
+
+  /** Counts prompt tokens for messages only. Equivalent to passing no tools. */
+  Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
+    return countPromptTokens(messages, List.of());
+  }
+
+  /**
    * Counts prompt tokens for OpenAI-style messages using /apply-template + /tokenize.
    *
-   * <p>This is best-effort and returns empty when unsupported.
+   * <p>This is best-effort and returns empty when unsupported. See {@link #applyTemplate(List,
+   * List)} for why {@code tools} must match the generation call's tool list.
    */
-  Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
-    var prompt = applyTemplate(messages);
+  Optional<Integer> countPromptTokens(
+      List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
+    var prompt = applyTemplate(messages, tools);
     if (prompt.isEmpty()) {
       return Optional.empty();
     }

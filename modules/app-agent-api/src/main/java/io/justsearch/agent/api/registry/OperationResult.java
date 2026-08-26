@@ -85,7 +85,7 @@ public record OperationResult(
    */
   public OperationResult withLineage(OutputLineage lineage) {
     java.util.Map<String, Object> merged = new java.util.HashMap<>(structuredData);
-    merged.put("lineage", lineage.wireToken());
+    merged.put(LINEAGE_KEY, lineage.wireToken());
     return new OperationResult(
         success, message, executionId, merged, errorCode, errorDetails, retryable);
   }
@@ -153,6 +153,25 @@ public record OperationResult(
    * declared free-form and no schema gate can see it.
    */
   public static final String GROUNDING_KEY = "grounding";
+
+  /**
+   * Tempdoc 878 §D.5 — the {@code structuredData} key {@link #withLineage} stamps, and the ONLY
+   * CLASSIFICATION stamp on this record.
+   *
+   * <p>That distinction is what {@code RunChannelPolicy} reads it for. A tool result is EVIDENCE
+   * when it carries bulk — search hits, read pages, a grounding delta — and NARRATIVE when it is a
+   * plain success or failure message. The discriminator used to be "is {@code structuredData}
+   * present at all", which stopped separating the two the moment 577 began stamping a lineage onto
+   * every successful result: a bare "ok" now carries a key.
+   *
+   * <p>The rule the reader applies is the inverse of listing the bulk keys: <b>a classification
+   * stamp is not bulk.</b> Listing bulk keys rots silently the first time a producer adds one;
+   * excluding the stamps rots only when a new STAMP is added, and that failure is visible (a
+   * narrative frame classified as evidence — today's state, so it cannot get worse). {@link
+   * #GROUNDING_KEY} is deliberately NOT in that exclusion: a grounding delta carries the excerpts,
+   * so it is content, not classification.
+   */
+  public static final String LINEAGE_KEY = "lineage";
 
   /** Failure with reason. No executionId attached (failed invocations cannot be undone). */
   public static OperationResult failure(String message) {

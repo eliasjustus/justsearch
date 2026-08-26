@@ -44,6 +44,17 @@ public record RunChannelPolicy(int maxFrames, long maxBytes, boolean parkable) {
 
   private static final String STRUCTURED_DATA_KEY = "structuredData";
 
+  /**
+   * Tempdoc 878 §D.5 — the CLASSIFICATION stamps inside {@code structuredData}: keys that describe
+   * the result rather than carry it. Read from {@code app-agent-api}, which this module already
+   * depends on, so the stamp is named once rather than repeated as a literal here.
+   *
+   * <p>{@code OperationResult.GROUNDING_KEY} is deliberately absent: a grounding delta carries the
+   * excerpts it established, so it IS bulk.
+   */
+  private static final Set<String> CLASSIFICATION_STAMP_KEYS =
+      Set.of(io.justsearch.agent.api.registry.OperationResult.LINEAGE_KEY);
+
   public RunChannelPolicy {
     if (maxFrames <= 0) {
       throw new IllegalArgumentException("maxFrames must be > 0, got " + maxFrames);
@@ -88,14 +99,36 @@ public record RunChannelPolicy(int maxFrames, long maxBytes, boolean parkable) {
     if (!TOOL_COMPLETED_EVENT.equals(event)) {
       return Optional.empty();
     }
-    // A tool result is evidence only when it carries structuredData — the bulk case. A plain
-    // success/failure message is narrative, and routing it to the latest-wins slot would COLLAPSE
-    // the record of several tool calls into whichever ran last.
-    if (!frame.get().data().containsKey(STRUCTURED_DATA_KEY)) {
+    // A tool result is evidence only when it carries BULK — search hits, read pages, a grounding
+    // delta. A plain success/failure message is narrative and belongs in the ring, where it costs a
+    // frame rather than a share of the evidence budget.
+    //
+    // Tempdoc 878 §D.5 — "does it carry structuredData at all" stopped answering that question when
+    // 577 began stamping a lineage onto EVERY successful result: a bare "ok" now carries a key. The
+    // rule is the inverse of listing bulk keys, which would rot silently the first time a producer
+    // added one: a CLASSIFICATION stamp is not bulk, and anything else is.
+    if (!carriesBulk(frame.get().data().get(STRUCTURED_DATA_KEY))) {
       return Optional.empty();
     }
     Object callId = frame.get().data().get("callId");
     return Optional.of(
         TOOL_COMPLETED_EVENT + ":" + (callId instanceof String id && !id.isBlank() ? id : "?"));
+  }
+
+  /**
+   * Does this {@code structuredData} carry content, as opposed to only classification stamps?
+   * Public alongside {@link #evidenceKey} for the same reason: the rule should be testable as a
+   * rule.
+   */
+  public static boolean carriesBulk(Object structuredData) {
+    if (!(structuredData instanceof java.util.Map<?, ?> map) || map.isEmpty()) {
+      return false;
+    }
+    for (Object key : map.keySet()) {
+      if (!(key instanceof String name) || !CLASSIFICATION_STAMP_KEYS.contains(name)) {
+        return true;
+      }
+    }
+    return false;
   }
 }

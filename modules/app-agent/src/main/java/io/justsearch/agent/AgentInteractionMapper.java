@@ -195,7 +195,14 @@ public final class AgentInteractionMapper {
                       "output", payload.get("output"),
                       // Tempdoc 561 #6: carry the producer evidence onto the record event so the
                       // record render shows the same evidence cards as the live overlay.
-                      "structuredData", payload.get("structuredData"))));
+                      "structuredData", payload.get("structuredData"),
+                      // Tempdoc 878 §D.4 — and carry the model-visibility label for the same
+                      // reason. `attrs` drops nulls, so an unmeasured completion writes neither key
+                      // and the reloaded card stays silent exactly as the live one does. Omitting
+                      // them here would make a run say less on reload than it said while running —
+                      // the live-vs-record divergence 867 built one renderer to prevent.
+                      "outputCharsToModel", payload.get("outputCharsToModel"),
+                      "truncatedForModel", payload.get("truncatedForModel"))));
       case "tool_call_rejected" ->
           Optional.of(
               toolActivity(

@@ -31,6 +31,12 @@ import java.util.regex.Pattern;
  * page starts at. Without a label here a read result would match neither pattern, and the
  * {@code CompressionReceipt} would put it in neither {@code textIntact} nor {@code textRemoved} —
  * inclusion-mute, which is the very silence 865 built this class to end.
+ *
+ * <p>Tempdoc 878 §D.2 — the FOURTH label, {@code Elided:}, is the SCAR and is the one that is not a
+ * carrier. Surviving as a bare header turned out not to be enough: what the model was left holding
+ * was a {@code More: call core_read_document again with offset_chars=N} instruction on a message
+ * whose page had just been deleted, with nothing saying the deletion had happened. See
+ * {@link #elidedLine} for why it must match neither pattern.
  */
 public final class ToolResultCarrier {
 
@@ -44,6 +50,24 @@ public final class ToolResultCarrier {
 
   /** The label on a line carrying one page of a document opened by {@code core_read_document}. */
   private static final String READ_LABEL = "Read";
+
+  /**
+   * Tempdoc 878 §D.2 — the FOURTH label, and the only one that is not a carrier: the SCAR Layer-3
+   * leaves where it removed carrier lines.
+   *
+   * <p>It exists because a deletion that leaves no trace is a lie told to the model. A stripped read
+   * result collapsed to a bare {@code [read] … More: offset_chars=N} header — a line that reads as
+   * an instruction to call the tool again, on a message whose text had just been taken away. The
+   * neighbouring layers both mark what they removed ({@code [... truncated, N chars omitted]},
+   * {@code [compressed-tool-output …]}); Layer 3 was the one that did not.
+   *
+   * <p>It must match NEITHER pattern below, and both halves are load-bearing. Matching {@link
+   * #CARRIER_LINE} would make the inclusion receipt report stripped text as still in front of the
+   * model — the exact false claim 865 built this class to prevent. Matching {@link
+   * #STRIPPABLE_LINE} would let the next pass strip the scar, and the elision would go silent one
+   * iteration later. {@code ToolResultCarrierTest} pins both non-matches.
+   */
+  private static final String ELIDED_LABEL = "Elided";
 
   /** The indent every carrier line is written with, under its {@code [n] title} header. */
   private static final String INDENT = "    ";
@@ -76,6 +100,23 @@ public final class ToolResultCarrier {
    */
   public static String readLine(String text) {
     return String.format("%s%s: \"%s\"%n", INDENT, READ_LABEL, text);
+  }
+
+  /**
+   * Tempdoc 878 §D.2 — write the scar for a strip that removed {@code lines} carrier lines totalling
+   * {@code chars} characters.
+   *
+   * <p>Addressed to the MODEL, so it is written to change a decision rather than to record history:
+   * it states the quantity (as the two neighbouring marks do) AND the consequence, because the
+   * observed failure was a behaviour — a run that kept calling the read tool at a message whose page
+   * had been taken away. ONE line per message, not one per removed line: a ten-hit search result
+   * would otherwise pay more tokens for its scars than the strip saved.
+   */
+  static String elidedLine(int lines, int chars) {
+    return String.format(
+        "%s%s: %d passage%s (%d chars) removed to fit the context window — already shown to you;"
+            + " calling the tool again will not return it.%n",
+        INDENT, ELIDED_LABEL, lines, lines == 1 ? "" : "s", chars);
   }
 
   /**

@@ -96,7 +96,18 @@ public final class AgentRunShape {
               // (e.g. an MCP tool's image/resource blocks). Free-form map → Record<string, unknown>
               // on the FE (empty objectType). Declared here so the descriptor is a complete
               // projection of the emitter (the AgentEventPayloadConformanceTest invariant).
-              EventField.object("structuredData", "").asOptional()),
+              EventField.object("structuredData", "").asOptional(),
+              // Tempdoc 878 §D.4 — how much of `output` the MODEL received, and whether that was
+              // less than the tool returned. `output` is the tool's WHOLE answer; the agent loop
+              // appends a Layer-2-truncated copy to the prompt, so one field was quietly answering
+              // two different questions.
+              //
+              // OPTIONAL, and the absence is load-bearing: an emitter that did not measure writes
+              // NEITHER key, so a consumer can tell "the model got all of it" from "nobody said".
+              // Every record persisted before this field falls in the second case and must stay
+              // readable as silent rather than be retroactively described as complete.
+              EventField.number("outputCharsToModel").asOptional(),
+              EventField.bool("truncatedForModel").asOptional()),
           EventDescriptor.ofTraced(
               "tool_call_rejected", EventField.string("callId"), EventField.string("reason")),
           EventDescriptor.ofTraced(

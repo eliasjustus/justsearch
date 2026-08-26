@@ -122,8 +122,7 @@ export function sv3ReceiptTail(durationMs: number | null, modelLabel: string | n
  * line that says WHAT stopped it.
  *
  * `BUDGET_EDGE_FINALIZE`: the budget ran out and the model was given one last call to synthesise
- * whatever it had. `MAX_ITERATIONS`: the loop hit its step ceiling, which produces no answer text at
- * all — so the model cannot disclose that one even in principle.
+ * whatever it had. `MAX_ITERATIONS`: the loop hit its step ceiling.
  *
  * ONE STRING PER DISPOSITION, not one for both (859 D live-defect D5). A single "Cut short at the
  * budget limit" line served both, so a `MAX_ITERATIONS` run — which the live audit watched end with
@@ -142,9 +141,22 @@ const SV3_TRUNCATION_NOTICES: ReadonlyMap<string, string> = new Map([
   ],
   [
     'MAX_ITERATIONS',
-    'Cut short at the step limit — the run used all its steps before reaching an answer',
+    'Cut short at the step limit — this answer is based on what the run had gathered by then',
   ],
 ]);
+
+/**
+ * Tempdoc 878 §D.1 — the step ceiling's ANSWERLESS arm.
+ *
+ * Until 878 the ceiling emitted an empty answer with no LLM call at all, so one sentence covered it:
+ * "the run used all its steps before reaching an answer". The ceiling now makes the same no-tools
+ * finalize call the budget wall has always made, so that sentence became false whenever the call
+ * returned text — and the map's line above became false whenever it did not. Both outcomes are real
+ * (a compact model can still decline, 859 §7), so the disposition alone no longer determines the
+ * sentence and the second input is required rather than convenient.
+ */
+const SV3_CUT_SHORT_STEPS_ANSWERLESS =
+  'Cut short at the step limit — the run used all its steps before reaching an answer';
 
 /**
  * The compact badge on a DELEGATE turn's receipt, beside its outcome.
@@ -160,9 +172,20 @@ export const SV3_CUT_SHORT_BADGE = 'cut short';
  * The full line on the settled turn — what the badge means, in the reader's terms, FOR THE LIMIT
  * THAT ACTUALLY FIRED. `null` for anything that was not a truncation, so a render site branches on
  * the value rather than re-deriving the set.
+ *
+ * `hasAnswer` (878 §D.1) is what distinguishes the step ceiling's two outcomes: it now attempts a
+ * synthesis, and either sentence would be a false statement in the other case. It is read only for
+ * `MAX_ITERATIONS` — the budget wall reaches its notice only by producing text, so its line is the
+ * same either way — and defaults to `true`, which is the arm that says LESS about what the run
+ * failed to do.
  */
-export function sv3CutShortNotice(disposition: string | null | undefined): string | null {
-  return disposition == null ? null : (SV3_TRUNCATION_NOTICES.get(disposition) ?? null);
+export function sv3CutShortNotice(
+  disposition: string | null | undefined,
+  hasAnswer: boolean = true,
+): string | null {
+  if (disposition == null) return null;
+  if (disposition === 'MAX_ITERATIONS' && !hasAnswer) return SV3_CUT_SHORT_STEPS_ANSWERLESS;
+  return SV3_TRUNCATION_NOTICES.get(disposition) ?? null;
 }
 
 /** The budget arm of {@link sv3CutShortNotice}, exported so a test can name it without a literal. */
@@ -170,6 +193,9 @@ export const SV3_CUT_SHORT_BUDGET_NOTICE = SV3_TRUNCATION_NOTICES.get('BUDGET_ED
 
 /** The step-ceiling arm — the one a single shared string used to mis-attribute to the budget. */
 export const SV3_CUT_SHORT_STEPS_NOTICE = SV3_TRUNCATION_NOTICES.get('MAX_ITERATIONS')!;
+
+/** The step ceiling's answerless arm (878 §D.1), exported for the same reason as its sibling. */
+export const SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE = SV3_CUT_SHORT_STEPS_ANSWERLESS;
 
 /**
  * Whether the run behind this answer was truncated.

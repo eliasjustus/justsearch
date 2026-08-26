@@ -240,8 +240,9 @@ describe('budgetContinueSteps (859 §D §2.5)', () => {
   });
 
   it('takes headroom from the REPORTED prompt, not from the biased projection', () => {
-    // `tokensNeeded` is `countPromptTokens`, which is schema-blind and measured ~40% low (577).
-    // Sizing the safety margin from it would bias the margin the same way. A run whose reported
+    // `tokensNeeded` is `countPromptTokens` — a PROJECTION of a prompt not yet built (and, before
+    // tempdoc 878 §D.6 threaded the tool list through it, a schema-blind one measured ~40% low, 577).
+    // A safety margin should be sized from a measurement, not a forecast. A run whose reported
     // prompt is much larger must therefore get larger arms at an identical `tokensNeeded`.
     const modest = budgetContinueSteps({ ...gate, promptTokens: 1_000 })[0]!.addTokens;
     const heavy = budgetContinueSteps({ ...gate, promptTokens: 12_000 })[0]!.addTokens;
