@@ -36,6 +36,17 @@ async function mount(props: Partial<{ text: string; durationMs: number }> = {}):
   return el;
 }
 
+/**
+ * Tempdoc 870 item 4 — open the disclosure. The copy control renders only while the trace is
+ * EXPANDED now (it acts on text a collapsed block does not show), so every assertion about that
+ * control has to reach the state the control lives in first. Returns the settled element.
+ */
+async function expand(el: ReasoningBlock): Promise<ReasoningBlock> {
+  (el.shadowRoot?.querySelector('.disclosure') as HTMLButtonElement).click();
+  await settle(el);
+  return el;
+}
+
 const styleText = (): string =>
   [ReasoningBlock.styles].flat(Infinity).map((s) => String((s as { cssText?: string }).cssText ?? s)).join('\n');
 
@@ -70,7 +81,7 @@ describe('ReasoningBlock — F-08 nested-interactive', () => {
   });
 
   it('no interactive element is nested inside another (the axe rule, checked structurally)', async () => {
-    const el = await mount();
+    const el = await expand(await mount());
     const root = el.shadowRoot as ShadowRoot;
     const FOCUSABLE = 'button, [role="button"], [tabindex], a[href], input, select, textarea';
     const interactive = [...root.querySelectorAll(FOCUSABLE)];
@@ -84,7 +95,7 @@ describe('ReasoningBlock — F-08 nested-interactive', () => {
   });
 
   it('the copy control is a SIBLING of the disclosure, not a descendant', async () => {
-    const el = await mount();
+    const el = await expand(await mount());
     const disclosure = el.shadowRoot?.querySelector('.disclosure');
     const copy = el.shadowRoot?.querySelector('.copy-btn');
     expect(copy?.tagName).toBe('BUTTON');
@@ -115,9 +126,12 @@ describe('ReasoningBlock — behaviour preserved across the restructure', () => 
   });
 
   it('activating copy does NOT also toggle the disclosure (no double-activation)', async () => {
-    const el = await mount();
+    const el = await expand(await mount());
     const root = el.shadowRoot as ShadowRoot;
     const before = root.querySelector('.disclosure')?.getAttribute('aria-expanded');
+    // The state the copy control is reachable from at all (870 item 4) — and the state a stray
+    // re-toggle would visibly leave, which is what makes this assertion sharp.
+    expect(before).toBe('true');
 
     (root.querySelector('.copy-btn') as HTMLButtonElement).click();
     await settle(el);
@@ -152,15 +166,16 @@ describe('ReasoningBlock — behaviour preserved across the restructure', () => 
 
 describe('ReasoningBlock — F-09 copy-control name and target size', () => {
   it('names the copy control with aria-label, not with its glyph', async () => {
-    const el = await mount();
+    const el = await expand(await mount());
     const copy = el.shadowRoot?.querySelector('.copy-btn');
     // The measured defect: accessible name "clipboard-glyph", computed from CONTENT, so `title` — the
     // only prose the markup carried — could never win. aria-label outranks content, so this is the
     // name AT announces.
     expect(copy?.getAttribute('aria-label')).toBe('Copy reasoning');
     // …and the glyph is out of the a11y tree entirely, so there is no content left to compute from.
-    // Tempdoc 859 §A §1.7 (A4) — the glyph is the product's `clipboard-copy` <svg> now, not a raw
-    // emoji codepoint, so "there is a glyph" is asserted as the element rather than as text content.
+    // Tempdoc 859 §A §1.7 (A4), glyph re-pointed to lucide `copy` by 870 item 5 — the glyph is a
+    // product <svg> either way, not a raw emoji codepoint, so "there is a glyph" is asserted as the
+    // element rather than as text content.
     const glyph = copy?.firstElementChild;
     expect(glyph?.getAttribute('aria-hidden')).toBe('true');
     expect(glyph?.querySelector('svg')).not.toBeNull();
@@ -206,16 +221,17 @@ describe('ReasoningBlock — the run-timeline form (859 §A)', () => {
     })();
   });
 
-  it('B-1b: a settled item is past-tense and offers the copy control', async () => {
+  it('B-1b: a settled item is past-tense and offers the copy control once opened', async () => {
     const el = await mount({ text: 'a finished thought', durationMs: 3000 });
     expect(el.shadowRoot?.querySelector('jf-pulse-dots')).toBeNull();
     expect(el.shadowRoot?.querySelector('.label')?.textContent).toBe('Thought for 3s');
+    await expand(el);
     expect(el.shadowRoot?.querySelector('.copy-btn')).not.toBeNull();
     el.remove();
   });
 
   it('B-2 (A4): the copy control is the product’s <svg> glyph, and no U+1F4CB survives anywhere', async () => {
-    const el = await mount();
+    const el = await expand(await mount());
     expect(el.shadowRoot?.querySelector('.copy-btn svg')).not.toBeNull();
     expect(el.shadowRoot?.innerHTML.includes('\u{1F4CB}')).toBe(false);
     el.remove();
@@ -224,22 +240,125 @@ describe('ReasoningBlock — the run-timeline form (859 §A)', () => {
   it('A2: the IN-FEED form drops the card, keeps the rule, and pins the 24px floor', async () => {
     // A tool card is an action; a thought is subordinate to it. The hairline left rule is what says
     // "aside" — the filled box and the radius were what made the row read as a competing card.
+    // Tempdoc 870 item 3 retired the card from the OTHER form too, so the rule this form keeps is
+    // declared here rather than inherited from a base that no longer draws a box — and the
+    // `background: none` / `border-radius: 0` RESETS went with it. Pinned as absent, not merely
+    // deleted: a reset that outlives the declaration it countered is residue reading as live intent.
     const inFeed = ruleBody(':host\\(\\[inline\\]\\) \\.container');
-    expect(inFeed).toMatch(/background:\s*none/);
-    expect(inFeed).toMatch(/border-radius:\s*0/);
+    expect(inFeed).toMatch(/border-left:\s*3px solid var\(--border-muted\)/);
+    expect(inFeed).not.toMatch(/background/);
+    expect(inFeed).not.toMatch(/border-radius/);
     // Vertical rhythm belongs to `.run-feed`'s gap — ONE spacing authority — so the block declares
-    // padding only, and no margin.
+    // padding only, and no margin. The slim form's host margin below is scoped away from this arm
+    // for exactly that reason.
     expect(inFeed).not.toMatch(/margin/);
-    // The base rule still carries the rule and the grade the a11y work pinned (F-07).
+    expect(styleText()).not.toMatch(/:host\(\[inline\]\)\s*\{/);
+    // The base rule keeps the grade the a11y work pinned (F-07) and NONE of the card chrome: a
+    // background or radius reappearing there would put the box back under both forms at once.
     const base = ruleBody('\\.container');
-    expect(base).toMatch(/border-left:\s*3px solid var\(--border-muted\)/);
     expect(base).toMatch(/color:\s*var\(--text-secondary\)/);
+    expect(base).not.toMatch(/background|border-radius|border-left/);
 
     const el = await mount();
     el.inline = true;
     await settle(el);
     expect(el.hasAttribute('inline')).toBe(true);
     el.remove();
+  });
+});
+
+/**
+ * Tempdoc 870 — the owner's 2026-08-26 visual pass on this block: items 3 (slim disclosure), 4 (the
+ * copy control is part of the expanded trace) and 5 (the lucide `copy` glyph).
+ */
+describe('ReasoningBlock — 870 the slim disclosure', () => {
+  it('item 4: the copy control renders only while the trace is EXPANDED', async () => {
+    const el = await mount({ text: 'a settled thought', durationMs: 2000 });
+    // Collapsed and settled: text exists, but it is not on screen, so neither is the action on it.
+    expect(el.shadowRoot?.querySelector('.disclosure')?.getAttribute('aria-expanded')).toBe('false');
+    expect(el.shadowRoot?.querySelector('.copy-btn')).toBeNull();
+
+    await expand(el);
+    expect(el.shadowRoot?.querySelector('.content')?.classList.contains('hidden')).toBe(false);
+    expect(el.shadowRoot?.querySelector('.copy-btn')).not.toBeNull();
+
+    // …and it leaves again with the trace, rather than surviving as a stale control.
+    await expand(el);
+    expect(el.shadowRoot?.querySelector('.copy-btn')).toBeNull();
+    el.remove();
+  });
+
+  it('item 4: an EXPANDED but still-streaming block offers no copy control', async () => {
+    // The `!streaming` half of the condition is independent of the collapsed half: a trace being
+    // written is visible and still has nothing final to copy.
+    const el = document.createElement('jf-reasoning-block') as ReasoningBlock;
+    el.text = 'partial…';
+    el.streaming = true;
+    document.body.appendChild(el);
+    await settle(el);
+    await expand(el);
+    expect(el.shadowRoot?.querySelector('.content')?.classList.contains('hidden')).toBe(false);
+    expect(el.shadowRoot?.querySelector('.copy-btn')).toBeNull();
+    el.remove();
+  });
+
+  it('item 3: the ask-arm form is a slim text disclosure, not a card', () => {
+    const css = styleText();
+    // Content-sized header at the tail's own 12px rung, so the collapsed row is a line of text and
+    // not a full-width band.
+    const header = ruleBody(':host\\(:not\\(\\[inline\\]\\)\\) \\.header');
+    expect(header).toMatch(/display:\s*inline-flex/);
+    expect(header).toMatch(/font-size:\s*var\(--font-size-xs\)/);
+    // The chevron TRAILS the label — by flex order, so DOM order (and therefore reading order)
+    // still puts the label first.
+    expect(ruleBody(':host\\(:not\\(\\[inline\\]\\)\\) \\.chevron')).toMatch(/order:\s*1/);
+    // The expanded trace carries the hairline the collapsed header gave up.
+    expect(ruleBody(':host\\(:not\\(\\[inline\\]\\)\\) \\.content')).toMatch(
+      /border-left:\s*3px solid var\(--border-muted\)/,
+    );
+    // No card chrome anywhere in the sheet's container rules — the box is gone, not overridden.
+    expect(css).not.toMatch(/background:\s*var\(--surface-subtle\);[\s\S]{0,40}border-radius/);
+  });
+
+  it('item 3: the slim form brings its own seam, because not every container has a gap', () => {
+    // The card carried 0.5rem of padding and a fill; a bare 12px line carries neither, and the
+    // mount sites split on whether their container supplies the separation. NavigateView's and
+    // SummarizeView's `.conversation` are flex columns with `gap: 0.75rem`; UnifiedChatView's
+    // `.message` (views/unifiedChatStyles.ts) is a plain block and Search v3's `.turn` declares only
+    // a `padding-bottom` — in those two the disclosure would abut the answer prose with nothing
+    // between them. The margin rides the BLOCK, so a fifth mount site inherits the seam for free.
+    expect(ruleBody(':host\\(:not\\(\\[inline\\]\\)\\)')).toMatch(/margin-block-end:\s*0\.5rem/);
+    // …and never on the in-feed arm, whose ONE spacing authority is `.run-feed`'s gap (859 §A §1.6).
+    expect(styleText()).not.toMatch(/:host\(\[inline\]\)[^{]*\{[^}]*margin/);
+  });
+
+  it('item 3: the streaming affordance and the [inline] form are untouched', async () => {
+    const el = document.createElement('jf-reasoning-block') as ReasoningBlock;
+    el.text = 'still going';
+    el.durationMs = 5000;
+    el.streaming = true;
+    el.inline = true;
+    document.body.appendChild(el);
+    await settle(el);
+    expect(el.shadowRoot?.querySelector('jf-pulse-dots')).not.toBeNull();
+    expect(el.shadowRoot?.querySelector('.label')?.textContent).toBe('Thinking (5s)');
+    el.remove();
+  });
+
+  it('item 5: the copy glyph is lucide `copy` (two rects), not the five-path clipboard', () => {
+    // Told apart by shape rather than by name: the retired `clipboard-copy` opened with a 8x4 lid
+    // rect and carried an inbound arrow; `copy` is two rounded rects and nothing else.
+    const el = document.createElement('jf-reasoning-block') as ReasoningBlock;
+    el.text = 'x';
+    document.body.appendChild(el);
+    return (async () => {
+      await settle(el);
+      await expand(el);
+      const svg = el.shadowRoot?.querySelector('.copy-btn svg');
+      expect(svg?.innerHTML).toContain('x="8" y="8"');
+      expect(svg?.innerHTML).not.toContain('m15 10-4 4 4 4');
+      el.remove();
+    })();
   });
 });
 

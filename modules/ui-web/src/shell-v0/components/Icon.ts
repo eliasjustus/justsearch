@@ -68,8 +68,9 @@ type IconName =
   | 'package'
   // Slice 486 G36 — pin/bookmark glyph for pinned-search button
   | 'bookmark'
-  // Slice 486 G35 — copy-to-clipboard glyph for output formatters
-  | 'clipboard-copy'
+  // Tempdoc 870 item 5 — the product's ONE copy glyph (lucide `copy`). Replaced the five-path
+  // `clipboard-copy`, whose clipboard body + inbound arrow read as a busy smudge at 11-15px.
+  | 'copy'
   // Slice 486 F15-narrow — history glyph for the Activity surface rail icon
   | 'history'
   // Slice 495 F6 — fork glyph for conversation forking
@@ -138,8 +139,8 @@ const PATHS: Record<IconName, SVGTemplateResult> = {
   package: svg`<path d="M16.5 9.4 7.55 4.24" /><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><polyline points="3.29 7 12 12 20.71 7" /><line x1="12" x2="12" y1="22" y2="12" />`,
   // Lucide "bookmark" — slice 486 G36 pin glyph.
   bookmark: svg`<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />`,
-  // Lucide "clipboard-copy" — slice 486 G35 copy glyph.
-  'clipboard-copy': svg`<rect width="8" height="4" x="8" y="2" rx="1" ry="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><path d="M16 4h2a2 2 0 0 1 2 2v4" /><path d="M21 14H11" /><path d="m15 10-4 4 4 4" />`,
+  // Lucide "copy" — tempdoc 870 item 5. Two rounded rects, and nothing else.
+  copy: svg`<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>`,
   // Lucide "history" — slice 486 F15-narrow Activity surface rail icon.
   history: svg`<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" />`,
   // Lucide "git-branch" — slice 495 F6 conversation fork button.

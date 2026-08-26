@@ -145,12 +145,18 @@ export class CitationsPanel extends JfElement {
       display: block;
       margin: 0.5rem 0;
     }
+    /* Tempdoc 870 item 7 — the panel's type scale, normalised. Eight declared roles resolved to two
+       sizes with three uppercase sites and hand-authored letter-spacing between them; the roles are
+       two now — META/LABELS at --font-size-xs, CONTENT at --font-size-sm — and nothing shouts.
+       Sentence case is also the app-wide direction and Search v3's own stated law (Sv3Main.ts:236):
+       "v3 uses UPPERCASE nowhere", which this shared panel was breaking in the one window that says
+       so. The strings already read as sentences ("Grounds the answer"), so nothing had to be
+       re-worded — only the transform that was shouting them removed. */
     .panel-header {
-      font-size: var(--font-size-sm);
+      font-size: var(--font-size-xs);
+      font-weight: 500;
       color: var(--text-secondary);
       padding: 0.25rem 0 0.5rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
       /* 559 C-1: disclosure toggle — reset native button chrome, keep the look. */
       display: inline-flex;
       align-items: center;
@@ -250,18 +256,44 @@ export class CitationsPanel extends JfElement {
          before. */
       border-color: var(--cp-selected-hover-edge, var(--cp-hover-edge, var(--accent-tint)));
     }
+    /* Tempdoc 870 item 6a — the reveal EASES now. 'display' is a discrete property, so the
+       none → block swap this rule pair has always made could never animate: the preview appeared
+       whole, one frame after the pointer arrived, and the card grew under it. The layout half still
+       has to be 'display' (a preview left in the flow at opacity 0 would keep the card tall at rest
+       and take pointer events), so the fade is bought with the 'allow-discrete' transition behavior:
+       'display' is held at its OLD value for the transition's duration while 'opacity' runs, and
+       '@starting-style' gives the entering box an opacity to come FROM (without it the element's
+       first style after 'display: block' is already the final one and nothing interpolates). */
     .source .preview {
       display: none;
+      opacity: 0;
       margin-top: 0.4rem;
       padding-top: 0.4rem;
       border-top: 1px solid var(--border-subtle);
       font-size: var(--font-size-sm);
       color: var(--text-secondary);
-      line-height: 1.4;
+      line-height: 1.5;
+      transition:
+        opacity var(--duration-fast) var(--ease-standard),
+        display var(--duration-fast) var(--ease-standard) allow-discrete;
     }
     .source:hover .preview,
     .source:focus-within .preview {
       display: block;
+      opacity: 1;
+    }
+    @starting-style {
+      .source:hover .preview,
+      .source:focus-within .preview {
+        opacity: 0;
+      }
+    }
+    /* The panel's existing reduced-motion posture (the disclosure chevron above): drop the animation,
+       keep the affordance — the preview still appears, it just does not fade in. */
+    @media (prefers-reduced-motion: reduce) {
+      .source .preview {
+        transition: none;
+      }
     }
     .preview .detail {
       font-size: var(--font-size-xs);
@@ -322,11 +354,10 @@ export class CitationsPanel extends JfElement {
     /* 559 Authority IV — the declared metric label (the "%" is no longer bare). */
     .score-metric {
       margin-left: 0.3rem;
+      /* A unit suffix on the figure beside it — the meta role WITHOUT emphasis (870 item 7). */
       font-weight: 400;
       font-size: var(--font-size-xs);
       color: var(--text-secondary);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
     }
     .confidence-bar {
       width: 3rem;
@@ -343,14 +374,12 @@ export class CitationsPanel extends JfElement {
     .confidence-bar .fill.high { background: var(--accent-tint); }
     .confidence-bar .fill.medium { background: var(--text-secondary); }
     .confidence-bar .fill.low { background: var(--accent-warning); }
+    /* The CONTENT role: --font-size-sm off the '.citation, .source' rule above, at the transcript's
+       own rhythm rather than the tighter 1.4 this panel used to set itself (870 item 7). Its sibling
+       '.excerpt' went with the same edit — no template in this file ever applied that class, so it
+       was a fourth type role that could not be seen. */
     .sentence {
-      line-height: 1.4;
-    }
-    .excerpt {
-      margin-top: 0.35rem;
-      font-style: italic;
-      color: var(--text-secondary);
-      font-size: var(--font-size-sm);
+      line-height: 1.5;
     }
     .heading-breadcrumb {
       font-size: var(--font-size-xs);
@@ -358,8 +387,9 @@ export class CitationsPanel extends JfElement {
     }
     .tier-header {
       font-size: var(--font-size-xs);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+      /* A group heading — the meta role WITH emphasis (870 item 7), which is the one weight
+         distinction this panel makes now. */
+      font-weight: 500;
       color: var(--text-secondary);
       padding: 0.5rem 0 0.25rem;
     }
