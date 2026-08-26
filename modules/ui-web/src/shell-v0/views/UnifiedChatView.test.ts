@@ -979,7 +979,7 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     expect(summaryChip()).toBeNull();
   });
 
-  it('S7 — renders agent search evidence from the RECORD through the shared jf-results-card (live == record, not the raw dump)', async () => {
+  it('867 — renders agent search evidence from the RECORD through the tool card\'s own level-2 body (not the raw dump)', async () => {
     const view = mountView();
     await view.updateComplete;
     // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
@@ -1006,29 +1006,25 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     await view.updateComplete;
     const sr = view.shadowRoot!;
     // Tempdoc 565 §12.3.B — the record's tool activity renders through the SAME <jf-tool-call-card>
-    // the live half uses. Search Thread S7 (tempdoc decision 4): the search evidence itself now lives
-    // in the ONE shared `<jf-results-card>` nested inside the tool card's shadow DOM (a THIRD nesting
-    // level to pierce — live == record == user search, one card).
+    // the live half uses. Tempdoc 867 replaced the nested `<jf-results-card>` mount with the tool
+    // card's OWN level-2 evidence body.
     const toolCard = sr.querySelector('.tool-activity jf-tool-call-card') as
       | (Element & { shadowRoot: ShadowRoot; updateComplete: Promise<unknown> })
       | null;
     expect(toolCard).not.toBeNull();
     await toolCard!.updateComplete;
-    const resultsCard = toolCard!.shadowRoot.querySelector(
-      '[data-testid="tool-search-card"] jf-results-card',
-    ) as (Element & { shadowRoot: ShadowRoot; updateComplete: Promise<unknown> }) | null;
-    expect(resultsCard, 'the shared results card mounts inside the tool card').not.toBeNull();
-    await resultsCard!.updateComplete;
-    // Expand the collapsed excerpt to the row list.
-    (resultsCard!.shadowRoot.querySelector('[data-testid="card-excerpt"]') as HTMLButtonElement).click();
-    await resultsCard!.updateComplete;
-    const text = (resultsCard!.shadowRoot.textContent ?? '').replace(/\s+/g, ' ');
-    expect(text).toContain('Tax Notes');
-    expect(text).toContain('deductible limits');
+    const body = toolCard!.shadowRoot.querySelector('[data-testid="tool-search-body"]');
+    expect(body, 'the level-2 search body mounts inside the tool card').not.toBeNull();
+    const text = (body!.textContent ?? '').replace(/\s+/g, ' ');
+    expect(text).toContain('taxes');
     // Honesty: no fabricated "% RELEVANCE" badge from the uncalibrated ranking score (559 §5 / C-6).
     expect(text).not.toContain('%');
-    // The raw monospace dump is suppressed in favour of the structured card (live == record):
-    // the tool card renders `.tool-output` only when there is NO structured evidence.
+    // Tempdoc 867 report — UnifiedChatView does not wire the run's evidence-path set for a
+    // record-hydrated tool item (cross-run misattribution risk, disclosed limitation), so this hit
+    // is never shown as an evidence row; it is counted in the "retrieved, not in evidence" footer.
+    expect(toolCard!.shadowRoot.querySelector('[data-testid="tool-search-row"]')).toBeNull();
+    expect(text).toContain('1 more retrieved, not in evidence');
+    // The raw monospace dump is still suppressed in favour of the structured body.
     expect(toolCard!.shadowRoot.querySelector('.tool-output')).toBeNull();
   });
 

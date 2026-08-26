@@ -225,6 +225,17 @@ export interface Sv3Turn {
    * TRUNCATING values, so an unstated disposition says nothing rather than claiming success.
    */
   readonly disposition: string | null;
+  /**
+   * Tempdoc 867 — the run's evidence-PATH set for this turn's tool cards (`AgentSource.path`, not
+   * the doc-identity-only {@link Sv3TurnEvidence.sources}, which drops `path` — see
+   * `agentEvidence.toAnswerEvidenceSource`). OPTIONAL and `undefined` on every LIVE turn: the live
+   * feed's tool cards read the run's growing set straight off the controller instead
+   * (`AgentSessionController.groundingDeltaPaths`, threaded as `Sv3Main`'s own `liveEvidencePaths`
+   * prop) — reading a value pinned at turn-open time would go stale mid-run. Populated ONLY by the
+   * record projection (`sv3-record.ts`), for a turn the reader came back to, where there is no live
+   * controller to ask.
+   */
+  readonly evidencePaths?: readonly string[];
 }
 
 /**

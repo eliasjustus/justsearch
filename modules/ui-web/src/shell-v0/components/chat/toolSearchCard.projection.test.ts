@@ -2,19 +2,23 @@
  * Tempdoc 865 §7.4 — the guard for the `agent-tool-search-card` register row
  * (`governance/execution-surfaces.v1.json`).
  *
- * `toolSearchCard.ts` is the delegate plane's SECOND evidence surface: it mints a
- * `SearchProvenance` — "every label here is a positive claim about how the search ran"
- * (`ResultsCard.ts:126-133`) — from the same `structuredData.searchResults` the Java mint reads
- * (`AgentSession.collectGroundingSources`). The register declares it a projection; this file is
- * what makes that declaration bite.
+ * `toolSearchCard.ts` is the delegate plane's SECOND evidence surface: it projects the same
+ * `structuredData.searchResults` the Java mint reads (`AgentSession.collectGroundingSources`) into
+ * the shape `ToolCallCard`'s own level-2 evidence body renders (tempdoc 867). The register declares
+ * it a projection; this file is what makes that declaration bite.
  *
- * **The divergence is DELIBERATE, and this pins it as such.** The two surfaces answer different
- * questions, so they are not merged:
+ * **The divergence from the run's evidence-set mint is DELIBERATE, and this pins it as such.** The
+ * two surfaces answer different questions, so they are not merged:
  *
  *  - the tool card is a **receipt of one call** — every hit that call returned, in that call's own
  *    order, addressable identity or not;
  *  - the accumulator is the **run's evidence set** — deduped across calls, identity-bearing only,
  *    positionally aligned with the citation indices.
+ *
+ * Tempdoc 867 adds a JOIN, not a merge: `inEvidence` asks "is this receipt row ALSO in the run's
+ * evidence set" against a `Set<string>` handed in from outside — it never re-derives the set itself,
+ * so a call's own (possibly absent) grounding delta cannot change what the JOIN reports for a
+ * document another call already established (the "duplicate-search" case below).
  *
  * **It is also cross-call ONLY.** The worker collapses chunk hits to one hit per parent document
  * before results ever reach the agent (`SearchExecutor.collapseChunkHitsToParents`,
@@ -29,7 +33,11 @@
  * branch there and the distinct-document count this file's story depends on goes red.
  */
 import { describe, it, expect } from 'vitest';
-import { agentSearchCardData, findAgentSearchHit, hasAgentSearchEvidence } from './toolSearchCard.js';
+import {
+  agentSearchCardProjection,
+  findAgentSearchHit,
+  hasAgentSearchEvidence,
+} from './toolSearchCard.js';
 
 /** A chunk-precise hit as `SearchTool.buildSearchEvidence` emits it (parentDocId + chunkIndex). */
 const HIT_A = {
@@ -55,6 +63,7 @@ const HIT_C = {
   chunkIndex: 0,
   startLine: 11,
   endLine: 14,
+  headingText: 'Chapter 2',
 };
 
 /**
@@ -64,59 +73,76 @@ const HIT_C = {
 const CALL_1 = { query: 'chunk collapse', resultCount: 2, searchResults: [HIT_A, HIT_B] };
 const CALL_2 = { query: 'chunk collapse depth', resultCount: 3, searchResults: [HIT_A, HIT_B, HIT_C] };
 
-const AT = '2026-08-25T10:00:00Z';
+const EMPTY = new Set<string>();
 
 describe('toolSearchCard — the projection law', () => {
   it('projects one card row per searchResults entry, with path as the row identity', () => {
-    const data = agentSearchCardData(CALL_1, undefined, AT);
+    const data = agentSearchCardProjection(CALL_1, undefined, EMPTY);
     expect(data).not.toBeNull();
-    expect(data!.snapshot.results.map((h) => h.id)).toEqual(['f:/docs/a.md', 'f:/docs/b.md']);
-    expect(data!.snapshot.results.map((h) => h.path)).toEqual(['f:/docs/a.md', 'f:/docs/b.md']);
-    expect(data!.snapshot.results.map((h) => h.title)).toEqual(['Doc A', 'Doc B']);
+    expect(data!.hits.map((h) => h.id)).toEqual(['f:/docs/a.md', 'f:/docs/b.md']);
+    expect(data!.hits.map((h) => h.path)).toEqual(['f:/docs/a.md', 'f:/docs/b.md']);
+    expect(data!.hits.map((h) => h.title)).toEqual(['Doc A', 'Doc B']);
   });
 
   it('falls back to the filename for an empty title, never a raw path or a blank row', () => {
-    const { snapshot } = agentSearchCardData(
+    const { hits } = agentSearchCardProjection(
       { query: 'q', searchResults: [{ title: '', path: 'f:/docs/deep/notes.md', excerpt: 'e' }] },
       undefined,
-      AT,
+      EMPTY,
     )!;
-    expect(snapshot.results[0]!.title).toBe('notes.md');
+    expect(hits[0]!.title).toBe('notes.md');
   });
 
-  it('mints the provenance from the record: actor agent, the executed query, the carried counts', () => {
-    const { provenance } = agentSearchCardData(CALL_2, undefined, AT)!;
-    expect(provenance.actor).toBe('agent');
-    expect(provenance.query).toBe('chunk collapse depth');
-    expect(provenance.matchCount).toBe(3);
-    expect(provenance.resultCount).toBe(3);
-    expect(provenance.executedAt).toBe(AT);
-    // No retrieval-mode signal rides the agent tool's structuredData, so the mode segment omits
-    // rather than asserting a mode the record does not carry.
-    expect(provenance.mode).toBe('');
+  it('mints query/scope/mode/resultCount from the record', () => {
+    const data = agentSearchCardProjection(CALL_2, undefined, EMPTY)!;
+    expect(data.query).toBe('chunk collapse depth');
+    expect(data.resultCount).toBe(3);
+    expect(data.scope).toBe('');
+    // 867 §2a's named gap: CALL_2's fixture predates the `searchMode` stamp, so mode is honestly ''.
+    expect(data.mode).toBe('');
+  });
+
+  it('reads the RESOLVED mode from `structuredData.searchMode`, verbatim, never re-derived', () => {
+    const data = agentSearchCardProjection(
+      { ...CALL_1, searchMode: 'hybrid' },
+      undefined,
+      EMPTY,
+    )!;
+    expect(data.mode).toBe('hybrid');
+  });
+
+  it('reads the scope from the tool call\'s own `path_prefix` argument', () => {
+    const data = agentSearchCardProjection(
+      CALL_1,
+      '{"query":"chunk collapse","path_prefix":"f:/docs"}',
+      EMPTY,
+    )!;
+    expect(data.scope).toBe('f:/docs');
   });
 
   it('derives resultCount from the hit list when an old record lacks the top-level key', () => {
-    const { snapshot, provenance } = agentSearchCardData({ query: 'q', searchResults: [HIT_A] }, undefined, AT)!;
-    expect(snapshot.matchCount).toBe(1);
-    expect(snapshot.totalHits).toBe(1);
-    expect(provenance.resultCount).toBe(1);
+    const { resultCount } = agentSearchCardProjection(
+      { query: 'q', searchResults: [HIT_A] },
+      undefined,
+      EMPTY,
+    )!;
+    expect(resultCount).toBe(1);
   });
 
   it('recovers a missing query from the tool call arguments, and returns null when it cannot', () => {
     const noQuery = { searchResults: [HIT_A] };
-    expect(agentSearchCardData(noQuery, '{"query":"from arguments"}', AT)!.provenance.query).toBe(
-      'from arguments',
-    );
+    expect(
+      agentSearchCardProjection(noQuery, '{"query":"from arguments"}', EMPTY)!.query,
+    ).toBe('from arguments');
     // Nothing to derive an honest query from: no card at all, rather than a fabricated header.
-    expect(agentSearchCardData(noQuery, undefined, AT)).toBeNull();
-    expect(agentSearchCardData(noQuery, 'not json', AT)).toBeNull();
+    expect(agentSearchCardProjection(noQuery, undefined, EMPTY)).toBeNull();
+    expect(agentSearchCardProjection(noQuery, 'not json', EMPTY)).toBeNull();
   });
 
   it('has no evidence card without searchResults', () => {
     expect(hasAgentSearchEvidence({ searchResults: [] })).toBe(false);
     expect(hasAgentSearchEvidence(CALL_1)).toBe(true);
-    expect(agentSearchCardData({ query: 'q' }, undefined, AT)).toBeNull();
+    expect(agentSearchCardProjection({ query: 'q' }, undefined, EMPTY)).toBeNull();
   });
 
   it('looks a hit up by its row identity for the reading-pane open path', () => {
@@ -126,23 +152,68 @@ describe('toolSearchCard — the projection law', () => {
   });
 });
 
+describe('toolSearchCard — the locator (867)', () => {
+  it('prefers headingText when the backend reported one', () => {
+    const { hits } = agentSearchCardProjection(CALL_2, undefined, EMPTY)!;
+    expect(hits.find((h) => h.path === 'f:/docs/c.md')?.locator).toBe('Chapter 2');
+  });
+
+  it('falls back to `Line N` when there is no heading but a positive line', () => {
+    const { hits } = agentSearchCardProjection(CALL_1, undefined, EMPTY)!;
+    expect(hits.find((h) => h.path === 'f:/docs/a.md')?.locator).toBe('Line 3');
+  });
+
+  it('is null when neither headingText nor a positive line is available', () => {
+    const { hits } = agentSearchCardProjection(CALL_1, undefined, EMPTY)!;
+    expect(hits.find((h) => h.path === 'f:/docs/b.md')?.locator).toBeNull();
+  });
+});
+
+describe('toolSearchCard — the evidence JOIN (867), never a re-derivation', () => {
+  it('marks a hit in-evidence when its path is in the handed-in set, and counts it', () => {
+    const inEvidence = new Set(['f:/docs/a.md']);
+    const data = agentSearchCardProjection(CALL_1, undefined, inEvidence)!;
+    expect(data.hits.find((h) => h.path === 'f:/docs/a.md')?.inEvidence).toBe(true);
+    expect(data.hits.find((h) => h.path === 'f:/docs/b.md')?.inEvidence).toBe(false);
+    expect(data.evidenceCount).toBe(1);
+  });
+
+  it('an empty evidence set marks every hit not-in-evidence, honestly — never a guess', () => {
+    const data = agentSearchCardProjection(CALL_1, undefined, EMPTY)!;
+    expect(data.hits.every((h) => h.inEvidence === false)).toBe(true);
+    expect(data.evidenceCount).toBe(0);
+  });
+
+  // The duplicate-search case: call 2 returns A again. Whether call 2's OWN structuredData carried a
+  // fresh grounding delta for A is irrelevant to this JOIN — the evidence set is handed in from
+  // OUTSIDE (the run's accumulator), so a document another call already established stays in-evidence
+  // here even when nothing about the delta is visible to this projection call.
+  it('a hit is in-evidence by SET MEMBERSHIP alone, regardless of which call established it', () => {
+    const runEvidence = new Set(['f:/docs/a.md']); // established by call 1, not re-stated by call 2
+    const call2 = agentSearchCardProjection(CALL_2, undefined, runEvidence)!;
+    expect(call2.hits.find((h) => h.path === 'f:/docs/a.md')?.inEvidence).toBe(true);
+    expect(call2.hits.find((h) => h.path === 'f:/docs/c.md')?.inEvidence).toBe(false);
+    expect(call2.evidenceCount).toBe(1);
+  });
+});
+
 describe('toolSearchCard — the deliberate cross-call divergence from the run evidence mint', () => {
   it('shows a repeated document on EVERY call that returned it (a per-call receipt, not a run set)', () => {
-    const call1 = agentSearchCardData(CALL_1, undefined, AT)!;
-    const call2 = agentSearchCardData(CALL_2, undefined, AT)!;
+    const call1 = agentSearchCardProjection(CALL_1, undefined, EMPTY)!;
+    const call2 = agentSearchCardProjection(CALL_2, undefined, EMPTY)!;
 
     // A and B came back on both calls. The card does not know call 1 happened, and must not:
     // suppressing them on call 2 would make that card a false receipt of what call 2 returned.
-    expect(call1.snapshot.results.map((h) => h.id)).toContain('f:/docs/a.md');
-    expect(call2.snapshot.results.map((h) => h.id)).toContain('f:/docs/a.md');
-    expect(call1.snapshot.results.map((h) => h.id)).toContain('f:/docs/b.md');
-    expect(call2.snapshot.results.map((h) => h.id)).toContain('f:/docs/b.md');
+    expect(call1.hits.map((h) => h.id)).toContain('f:/docs/a.md');
+    expect(call2.hits.map((h) => h.id)).toContain('f:/docs/a.md');
+    expect(call1.hits.map((h) => h.id)).toContain('f:/docs/b.md');
+    expect(call2.hits.map((h) => h.id)).toContain('f:/docs/b.md');
   });
 
   it('totals FIVE card rows across the two calls for THREE distinct documents', () => {
     const rows = [
-      ...agentSearchCardData(CALL_1, undefined, AT)!.snapshot.results,
-      ...agentSearchCardData(CALL_2, undefined, AT)!.snapshot.results,
+      ...agentSearchCardProjection(CALL_1, undefined, EMPTY)!.hits,
+      ...agentSearchCardProjection(CALL_2, undefined, EMPTY)!.hits,
     ];
 
     expect(rows).toHaveLength(5);
@@ -154,7 +225,7 @@ describe('toolSearchCard — the deliberate cross-call divergence from the run e
   });
 
   it('reports each call count on its own card, never a running total', () => {
-    expect(agentSearchCardData(CALL_1, undefined, AT)!.provenance.resultCount).toBe(2);
-    expect(agentSearchCardData(CALL_2, undefined, AT)!.provenance.resultCount).toBe(3);
+    expect(agentSearchCardProjection(CALL_1, undefined, EMPTY)!.resultCount).toBe(2);
+    expect(agentSearchCardProjection(CALL_2, undefined, EMPTY)!.resultCount).toBe(3);
   });
 });

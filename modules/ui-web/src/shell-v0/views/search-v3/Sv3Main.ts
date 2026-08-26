@@ -67,7 +67,13 @@ import {
   sv3CitationAnchor,
   sv3MatchedSentence,
   sv3SourceIndex,
+  SV3_SOURCE_INDEX_ABSENT,
 } from './sv3-citation-anchor.js';
+import type { ToolCall } from '../../controllers/AgentSessionController.js';
+// Tempdoc 871 fix (live finding, 2026-08-26) — resolves a `card-open` hit back out of the SAME
+// structuredData the search tool card projected its rows from. Mirrors
+// `UnifiedChatView.ts:184`'s comment for the identical pattern on the unified window's own mount.
+import { findAgentSearchHit } from '../../components/chat/toolSearchCard.js';
 import type { ReasoningController } from '../../controllers/ReasoningController.js';
 // The shared clipboard util (slice 486 G35) — permission-denied and API-absent already handled, so a
 // per-turn copy needs no error path of its own.
@@ -362,7 +368,7 @@ export class Sv3Main extends JfElement {
          the field that produced it share an edge. */
       .transcript {
         width: 100%;
-        max-inline-size: 48rem;
+        max-inline-size: var(--measure-prose);
         min-width: 0;
         margin-inline: auto;
       }
@@ -728,12 +734,17 @@ export class Sv3Main extends JfElement {
            declared on its ':host' with the SHIPPED literals; the values here are the spec's, and
            they reach only the elements carrying this class — the citations list and the reasoning
            trace keep the shipped rhythm on purpose. Two of the fifteen are absent because sv3 keeps
-           the shipped value: '--md-list-indent' (1.25rem) and '--md-pre-padding'. */
+           the shipped value: '--md-list-indent' (1.75rem after tempdoc 873 §3 retuned the shared
+           default — sv3 still takes whatever it is) and '--md-pre-padding'. */
         /* The transcript's prose leading. */
         --md-line-height: 1.625;
-        /* One 0.65rem-class rhythm for every block, wide or not (10px on the ladder). */
-        --md-block-gap: var(--space-2-5);
-        --md-block-gap-wide: var(--space-2-5);
+        /* Tempdoc 873 §3 — the two names are DIFFERENT again. Collapsing both onto 10px was the
+           single biggest contributor to the wall of text: a code fence, a table and a quote sat in
+           exactly as much air as the paragraph before them, so nothing in an answer read as a
+           different KIND of thing. 12px between paragraphs, 20px around the blocks that are not
+           prose. */
+        --md-block-gap: var(--space-3);
+        --md-block-gap-wide: var(--space-5);
         /* List items sit tight; the variant's 'li + li' carries the gap (S5). */
         --md-item-gap: 0;
         /* The inline chip: an edge, the small radius, a tighter inset and the
@@ -753,19 +764,29 @@ export class Sv3Main extends JfElement {
         --md-link-decoration: none;
 
         /* The prose variant's heading ramp (tempdoc 822 §2.3, slice S5). The variant reads the
-           SHIPPED type scale for h1/h2/h3 (and the already-re-pointed '--font-size-sm' for h4-h6),
-           so the spec's heading scale — 1.25 / 1.125 / 1 / 0.875rem — arrives the same
-           way the two steps above do: as a re-point onto this window's own ramp, which already IS
-           that scale. Not one rem literal is copied (§2.1). Inside the renderer nothing else reads
-           these three steps, so re-pointing the ramp here retunes exactly the headings.
-           The variant's remaining defaults (weight 600, line-height 1.3, the asymmetric margin, the
-           table padding and rules, the 24rem truncation cap, the between-items gap) already match
-           the spec's numbers, or they read a colour/size token re-pointed above — so they are
-           deliberately NOT re-pointed; 'Sv3Main.imports.test.ts' carries that decision in writing,
-           name by name. */
+           SHIPPED type scale for h1/h2/h3 (and '--font-size-sm' for h4-h6), so the spec's heading
+           scale — 1.25 / 1.125 / 1rem — arrives the same way the two steps above do: as a re-point
+           onto this window's own ramp, which already IS that scale. Inside the renderer nothing else
+           reads these three steps, so re-pointing the ramp here retunes exactly the headings.
+           The variant's remaining defaults (line-height 1.3, the asymmetric margin, the table
+           padding and rules, the 24rem truncation cap, the between-items gap, the rule margin) are
+           the shared sheet's — retuned there by tempdoc 873 for EVERY prose surface, not forked
+           here; 'Sv3Main.imports.test.ts' carries that decision in writing, name by name. */
         --font-size-xl: var(--font-size-sv3-xl);
         --font-size-lg: var(--font-size-sv3-lg);
         --font-size-md: var(--font-size-sv3-base);
+        /* Tempdoc 873 §4 — the answer prose steps up to 15px, and ONLY the answer prose. The
+           window's own '--font-size-sv3-sm' stays 14px, so tool cards, the reasoning trace, the
+           sources panel and the hover card are untouched; this re-point lives in the
+           '.sv3-markdown'-ONLY rule and reaches nothing else (the shared colour/size bridge above
+           still points '--font-size-sm' at 14px, which is what '.sv3-citations' keeps riding).
+           One declaration carries both halves: the renderer's ':host' reads '--font-size-sm' for
+           the body size, and its variant's h4-h6 read the same name — so re-pointing it lifts body
+           text off 14px AND keeps the deepest headings from landing BELOW the body they lead (they
+           sit AT body size, distinguished by weight, which is what the ramp's bottom step means).
+           There is no sv3 ramp step at 15px — 'sm' is 14 and 'base' is 16 — and minting one for a
+           single consumer would fork the window's ramp, so the value is written at its use site. */
+        --font-size-sm: 0.9375rem;
       }
       /* The expanded evidence sits under the TAIL ROW, not under the answer (Phase F11), so its
          rhythm is the row's own 8px. An outer-tree rule on the host beats the component's own :host
@@ -1054,11 +1075,27 @@ export class Sv3Main extends JfElement {
         gap: var(--space-2);
         min-width: 0;
       }
+      /* Tempdoc 867 — a hairline spine down the feed's left gutter, the status glyph column's own
+         rail. Decorative only: it does not reach into a card's shadow root to align pixel-for-pixel
+         with jf-run-node (Sv3Main styles the region, not the card), so this is a legible rail
+         beside the feed, not a literal connector through each glyph. All item kinds keep their
+         chronological order (projectSv3RunFeed) — the spine is purely visual. */
       .run-feed {
+        position: relative;
         display: flex;
         flex-direction: column;
         gap: var(--space-2);
         min-width: 0;
+        padding-inline-start: var(--space-4);
+      }
+      .run-feed::before {
+        content: '';
+        position: absolute;
+        top: 0.15rem;
+        bottom: 0.15rem;
+        left: calc(var(--space-4) / 2);
+        width: 1px;
+        background: var(--border);
       }
       .run-echo {
         margin: 0;
@@ -1242,6 +1279,7 @@ export class Sv3Main extends JfElement {
     view: { attribute: false },
     turns: { attribute: false },
     run: { attribute: false },
+    liveEvidencePaths: { attribute: false },
     recordNotice: { type: Boolean, attribute: 'record-notice' },
     historyLocked: { type: Boolean, attribute: 'history-locked' },
     lockedRefusal: { type: Boolean, attribute: 'locked-refusal' },
@@ -1278,6 +1316,15 @@ export class Sv3Main extends JfElement {
    * cannot appear under a turn that did not open it (tempdoc 822 Phase F2).
    */
   declare run: Sv3RunView | null;
+  /**
+   * Tempdoc 867 — the LIVE run's growing evidence-path set (`AgentSessionController.
+   * groundingDeltaPaths`), for the live feed's tool cards. Handed down rather than read off a
+   * `Sv3Turn` field: the live turn's evidence is still accumulating call by call, and a value pinned
+   * onto the turn at open time would go stale mid-run — see `Sv3Turn.evidencePaths`'s own doc, which
+   * this prop is the live counterpart of. Defaults to an empty set so a caller that has no run yet
+   * (or an older caller not yet passing it) renders every hit as not-yet-in-evidence rather than throw.
+   */
+  declare liveEvidencePaths: ReadonlySet<string>;
   /**
    * The claimed conversation's canonical record could not be read, so what is on screen may be
    * incomplete (tempdoc 822 Phase F6 / inventory D2). A BOOLEAN, not a message: the copy is fixed
@@ -1502,6 +1549,7 @@ export class Sv3Main extends JfElement {
     this.view = SV3_RESULTS_IDLE;
     this.turns = [];
     this.run = null;
+    this.liveEvidencePaths = new Set();
     this.recordNotice = false;
     this.historyLocked = false;
     this.lockedRefusal = false;
@@ -2494,7 +2542,7 @@ export class Sv3Main extends JfElement {
         @click=${() => void this.copyAnswer(turn)}
       >
         ${icon({
-          name: copied ? 'check-circle-2' : 'clipboard-copy',
+          name: copied ? 'check-circle-2' : 'copy',
           size: TAIL_GLYPH_SIZE,
         })}</button
       ><span
@@ -2531,8 +2579,12 @@ export class Sv3Main extends JfElement {
   private recordedActivity(turn: Sv3Turn): TemplateResult | typeof nothing {
     if (turn.activity.length === 0) return nothing;
     const terminalId = terminalTextItemId(turn.activity);
+    // Tempdoc 867 — this turn's OWN evidence-path set (`sv3-record.ts`'s projection), not the live
+    // prop: a settled turn has no controller left to ask, and `turn.evidencePaths` is what it wrote
+    // down instead.
+    const evidencePaths = new Set(turn.evidencePaths ?? []);
     return html`<div class="run-feed" data-testid="sv3-record-activity">
-      ${turn.activity.map((item) => this.runItem(item, turn, item.id === terminalId))}
+      ${turn.activity.map((item) => this.runItem(item, turn, item.id === terminalId, evidencePaths))}
     </div>`;
   }
 
@@ -2627,6 +2679,36 @@ export class Sv3Main extends JfElement {
   };
 
   /**
+   * Tempdoc 871 fix (live finding, 2026-08-26) — `ToolCallCard` fires `card-open` (bubbles+composed,
+   * `{id}` = the hit's path) on an evidence row click, but no SV3 mount listened for it, so a
+   * reader's click on a search tool card's evidence row did nothing in this window (pre-existing;
+   * `UnifiedChatView` wires the same event via `handleRetrieveCardOpen`/`handleCommittedCardOpen`/
+   * `handleToolEvidenceOpen`).
+   *
+   * This routes through the SAME document-open seam a followed citation already uses —
+   * `SV3_CITATION_OPEN`, landed by `SearchV3View.onCitationOpen` — because that IS this window's one
+   * document-open path; no second pane is invented here. The hit is resolved via
+   * `findAgentSearchHit` against the SAME `structuredData` the card projected its rows from (mirrors
+   * `UnifiedChatView.handleToolEvidenceOpen`), so an id that does not actually resolve in this call's
+   * own evidence is a no-op rather than a fabricated open. `sourceIndex` is
+   * {@link SV3_SOURCE_INDEX_ABSENT}: an evidence row is a raw search-tool result, not a member of the
+   * turn's `evidence.sources` citation list, so the pane opens on the document with no citation
+   * anchor/header — the same degraded-but-correct path an unresolvable followed citation already
+   * takes when {@link sv3SourceIndex} itself returns ABSENT.
+   */
+  private onToolCardOpen(call: ToolCall, turnId: string, hitId: string): void {
+    const hit = findAgentSearchHit(call.structuredData, hitId);
+    if (!hit) return;
+    this.dispatchEvent(
+      new CustomEvent<Sv3CitationOpen>(SV3_CITATION_OPEN, {
+        detail: { docPath: hit.path, anchor: null, turnId, sourceIndex: SV3_SOURCE_INDEX_ABSENT },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /**
    * The live run: its feed, then the decisions it is parked on. Prompts come LAST and outside the
    * feed's own flow, because a held decision must not be something the reader can scroll past — the
    * same "incompressible occupant" rule the retired search-v2 window gave its run controls.
@@ -2643,7 +2725,9 @@ export class Sv3Main extends JfElement {
           ? html`<p class="run-echo" data-testid="sv3-run-echo" role="status">${RUN_DISPATCHING}</p>`
           : html`
               <div class="run-feed" data-testid="sv3-run-feed">
-                ${run.feed.items.map((item) => this.runItem(item, turn, item.id === terminalId))}
+                ${run.feed.items.map((item) =>
+                  this.runItem(item, turn, item.id === terminalId, this.liveEvidencePaths),
+                )}
               </div>
             `}
         ${run.prompts.map((prompt) => this.runPrompt(prompt))}
@@ -2657,7 +2741,12 @@ export class Sv3Main extends JfElement {
    * same landmarks in a live conversation and a reloaded one. The retiree reaches the same coverage
    * only by merging two projections.
    */
-  private runItem(item: Sv3RunFeedItem, turn: Sv3Turn, terminal: boolean): TemplateResult {
+  private runItem(
+    item: Sv3RunFeedItem,
+    turn: Sv3Turn,
+    terminal: boolean,
+    evidencePaths: ReadonlySet<string>,
+  ): TemplateResult {
     if (item.kind === 'text') {
       // Tempdoc 859 §6 (N1) — the agent turn's prose is where its inline `[n]` marks belong, and
       // until now this was the ONLY text renderer in the agent branch that carried no `.citations`
@@ -2694,6 +2783,9 @@ export class Sv3Main extends JfElement {
         data-item-id=${item.id}
         .toolCall=${item.call}
         .stepPresentation=${null}
+        .evidencePaths=${evidencePaths}
+        @card-open=${(e: CustomEvent<{ id: string }>) =>
+          this.onToolCardOpen(item.call, turn.id, e.detail.id)}
       ></jf-tool-call-card>`;
     }
     if (item.kind === 'reasoning') {

@@ -755,6 +755,77 @@ describe('CitationsPanel — the grounding pass did not complete (865 PR-0)', ()
 });
 
 /**
+ * Tempdoc 870 items 6a + 7 — the owner's 2026-08-26 visual pass on this shared panel: the preview
+ * reveal eases instead of snapping, and the type scale collapses to two roles with no shouting.
+ *
+ * happy-dom runs no cascade and lays nothing out, so the DECLARATIONS are the mechanism here and
+ * they are what these pin — the same posture the sv3 sheets' own token tests take.
+ */
+describe('CitationsPanel — 870 motion and type scale', () => {
+  const styleText = (): string =>
+    [CitationsPanel.styles]
+      .flat(Infinity)
+      .map((s) => String((s as { cssText?: string }).cssText ?? s))
+      .join('\n');
+
+  /** One rule's declaration body, so a match from a NEIGHBOURING rule cannot satisfy an assertion. */
+  const ruleBody = (selector: string): string => {
+    const m = new RegExp(`${selector}\\s*\\{([^}]*)\\}`).exec(styleText());
+    if (m === null) throw new Error(`CitationsPanel.styles has no ${selector} rule`);
+    return m[1] as string;
+  };
+
+  it('item 6a: the hover preview FADES — `display` alone could never animate', () => {
+    const preview = ruleBody('\\.source \\.preview');
+    // The layout half stays `display` (opacity 0 in the flow would keep the card tall at rest), so
+    // the fade needs all three parts: an opacity to run, `allow-discrete` to hold `display` while it
+    // runs, and a `@starting-style` opacity for the entering box to come FROM. Any one missing and
+    // the reveal snaps again exactly as it did before.
+    expect(preview).toMatch(/opacity:\s*0/);
+    expect(preview).toMatch(/transition:/);
+    expect(preview).toContain('allow-discrete');
+    const css = styleText();
+    expect(css).toContain('@starting-style');
+    expect(css).toMatch(/@starting-style\s*\{[\s\S]*?opacity:\s*0/);
+    // Reduced motion drops the animation, not the affordance — the panel's existing posture.
+    const reduced = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(reduced).toContain('.source .preview');
+    expect(reduced).toMatch(/transition:\s*none/);
+  });
+
+  it('item 7: nothing in this panel shouts — no uppercase, no hand-authored tracking', () => {
+    // Search v3's own stated law (Sv3Main.ts: "v3 uses UPPERCASE nowhere"), which this shared panel
+    // was breaking in the one window that says so. The strings already read as sentences, so this is
+    // a transform removal and not a re-wording. Comments stripped: the prose names what it retired.
+    const declarations = styleText().replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(declarations).not.toContain('text-transform');
+    expect(declarations).not.toContain('letter-spacing');
+  });
+
+  it('item 7: two type roles — meta at xs, content at sm', () => {
+    const declarations = styleText().replace(/\/\*[\s\S]*?\*\//g, '');
+    const sizes = new Set(
+      [...declarations.matchAll(/font-size:\s*var\((--font-size-[\w-]+)\)/g)].map((m) => m[1]),
+    );
+    expect([...sizes].sort()).toEqual(['--font-size-sm', '--font-size-xs']);
+    // The three roles the item named, each on the side of the split it belongs to.
+    expect(ruleBody('\\.panel-header')).toMatch(/font-size:\s*var\(--font-size-xs\)/);
+    expect(ruleBody('\\.tier-header')).toMatch(/font-size:\s*var\(--font-size-xs\)/);
+    expect(ruleBody('\\.score-metric')).toMatch(/font-size:\s*var\(--font-size-xs\)/);
+    // ONE weight treatment: 500 where a label carries emphasis, normal where it does not.
+    expect(ruleBody('\\.panel-header')).toMatch(/font-weight:\s*500/);
+    expect(ruleBody('\\.tier-header')).toMatch(/font-weight:\s*500/);
+    expect(ruleBody('\\.score-metric')).toMatch(/font-weight:\s*400/);
+    // Content rides the transcript's rhythm rather than the tighter 1.4 this panel used to set.
+    expect(ruleBody('\\.sentence')).toMatch(/line-height:\s*1\.5/);
+    expect(ruleBody('\\.source \\.preview')).toMatch(/line-height:\s*1\.5/);
+    // The dead `.excerpt` role is gone — no template in this file ever applied that class, which is
+    // why it could drift into a fourth size unnoticed.
+    expect(declarations).not.toContain('.excerpt');
+  });
+});
+
+/**
  * Tempdoc 868 §B.3 — the source card's excerpt BUDGET, once an excerpt can be a whole page.
  *
  * The read tool hands the model up to `READ_PAGE_CHARS = 3000` characters and the source carries all

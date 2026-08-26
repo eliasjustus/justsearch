@@ -285,6 +285,13 @@ import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiSta
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
+// Tempdoc 874 — the reader's chat-column width preset, applied onto this host.
+import {
+  subscribeChatWidth,
+  chatWidthMeasure,
+  CHAT_WIDTH_VAR,
+  type ChatWidth,
+} from '../../state/chatWidthState.js';
 import {
   getAppearanceMode,
   subscribeAppearanceMode,
@@ -324,6 +331,9 @@ import './Sv3Palette.js';
 import './Sv3Pane.js';
 
 const COMPOSER_STATE_ATTR = 'composer-state';
+
+/** Tempdoc 867 — a stable empty-set identity for when no run controller exists yet. */
+const EMPTY_EVIDENCE_PATHS: ReadonlySet<string> = new Set();
 
 /**
  * Tempdoc 859 §B — the occluded band: what the floating dock takes out of the bottom of the
@@ -772,6 +782,7 @@ export class SearchV3View extends JfElement {
   private aiUnsubscribe: (() => void) | null = null;
   private uiModeUnsubscribe: (() => void) | null = null;
   private appearanceUnsubscribe: (() => void) | null = null;
+  private chatWidthUnsubscribe: (() => void) | null = null;
   private agentUnsubscribe: (() => void) | null = null;
   private convListUnsubscribe: (() => void) | null = null;
   /** The in-flight record fetch, so a claim that supersedes another cannot land out of order. */
@@ -903,6 +914,9 @@ export class SearchV3View extends JfElement {
     this.appearanceUnsubscribe = subscribeAppearanceMode((mode) => {
       this.theme = mode;
     });
+    // Tempdoc 874 — the reader's chat-column width. `subscribeChatWidth` fires immediately with the
+    // current value, so this subscription IS the initial apply as well as the live one.
+    this.chatWidthUnsubscribe = subscribeChatWidth((w) => this.applyChatWidth(w));
     // Subscribing does NOT create a controller (the read below is a `peek`), so a window that never
     // delegates never starts the agent controller's polling as a side effect of being mounted.
     this.agentUnsubscribe = subscribeAgentSession(this.onAgentUpdate);
@@ -1019,6 +1033,8 @@ export class SearchV3View extends JfElement {
     this.uiModeUnsubscribe = null;
     this.appearanceUnsubscribe?.();
     this.appearanceUnsubscribe = null;
+    this.chatWidthUnsubscribe?.();
+    this.chatWidthUnsubscribe = null;
     // The RUN is not cancelled here. Unlike the ask stream (which this window owns), a delegated run
     // is hosted by the product-wide controller and may be watched from another surface; tearing it
     // down because this dev window unmounted would be this window deciding for the whole product.
@@ -1156,6 +1172,16 @@ export class SearchV3View extends JfElement {
       this.style.setProperty(OCCLUSION_VAR, '0px');
     }
     this.shadowRoot?.querySelector('jf-sv3-main')?.remeasureReadingWindow();
+  }
+
+  /**
+   * Tempdoc 874 — the reader's chat-width preset, written as an inline custom property on THIS host.
+   * The token sheet declares `--measure-prose` on `:host`, so an inline value on the same element
+   * wins and inherits into the whole shadow subtree — the transcript, the composer band and the
+   * context bar all cap on it, which is why one write moves the whole column.
+   */
+  private applyChatWidth(width: ChatWidth): void {
+    this.style.setProperty(CHAT_WIDTH_VAR, chatWidthMeasure(width));
   }
 
   /**
@@ -3443,6 +3469,7 @@ export class SearchV3View extends JfElement {
           .view=${results}
           .turns=${turns}
           .run=${run}
+          .liveEvidencePaths=${this.agentController()?.groundingDeltaPaths ?? EMPTY_EVIDENCE_PATHS}
           ?record-notice=${this.recordNotice}
           ?history-locked=${this.historyLocked}
           ?locked-refusal=${this.lockedRefusal}

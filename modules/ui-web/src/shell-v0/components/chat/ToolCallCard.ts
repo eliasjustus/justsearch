@@ -9,6 +9,17 @@
  * Props:
  *   - `.toolCall: ToolCall` — the call to render
  *   - `.expanded: boolean` — collapsed/expanded toggle (reflected attribute)
+ *   - `.evidencePaths: ReadonlySet<string> | null` — tempdoc 867: the run's evidence-path set, for a
+ *     search card's level-2 body to say which of its own hits the run actually drew on. `null` means
+ *     "the mount site did not wire this" (an older caller, or a test), distinct from an empty set
+ *     ("wired, and nothing is in evidence yet") — see the accessory text below.
+ *
+ * Tempdoc 867 (L1+L2 slice) — ONE disclosure per card. The header row is the ENTIRE click/keyboard
+ * target (no separate tiny expand button); RISK is no longer a header text badge — the glyph alone
+ * carries status, and risk renders as its own row ONLY for MEDIUM/HIGH (border tint + the focusable
+ * "why" disclosure are unaffected). A search card's body is no longer a nested `<jf-results-card>`
+ * mount: it is a level-2 list of the hits that are actually IN the run's evidence set, plus a
+ * "K more retrieved, not in evidence" footer and an "Open in Search" pill.
  *
  * Tempdoc 550 C3: the per-card Approve/Reject buttons were removed. A tool call that needs
  * a human decision now routes through the ONE unified ceremony host
@@ -18,39 +29,55 @@
  *
  * Invariants:
  *   - `pending` status shows an "awaiting approval" hint (no inline buttons).
- *   - Risk badges (HIGH/MEDIUM) tint the card border.
- *   - Executing state shows animated pulse dots next to the status text.
- *   - Output panel only renders for status=completed with non-empty output.
- *   - Collapsed state hides args/output/actions (toggle via expand button).
+ *   - Risk row (MEDIUM/HIGH only) tints the card border and explains itself on demand.
+ *   - Executing state is carried by the status glyph alone (no visible status word — the header's
+ *     accessible name carries it for AT).
+ *   - Output panel only renders for status=completed with non-empty output (non-search tools only).
+ *   - Collapsed state hides args/output/search body/actions (toggle via the header).
  */
 
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
-// Tempdoc 565 §17 — the ONE run-step node primitive; its `running` glyph is the unified alive-indicator
-// (it replaces the card's bespoke <jf-pulse-dots>, so a running step looks the same here as on the spine).
+// Tempdoc 565 §17 — the ONE run-step node primitive; its `running` glyph is the unified alive-indicator.
 import './RunNode.js';
 import type { ToolCall } from '../../controllers/AgentSessionController.js';
 import type { StepPresentation } from '../../views/runStepPresentation.js';
 // 543-fwd #2 — derive a plain-text "why" line from risk + the current dial level.
 import { becauseLine, getAutonomyLevel } from '../../substrates/autonomy/index.js';
-// Search Thread S7 (tempdoc decision 4) — an agent search renders through the ONE shared results
-// card (the same card a user-issued search commits to), replacing the retired bespoke
-// searchEvidence.ts evidence-card renderer.
-import '../searchResults/ResultsCard.js';
-import { agentSearchCardData } from './toolSearchCard.js';
-// Tempdoc 577 §2.14 Root III (#18) — the ONE tool-output text-provenance authority.
+import { agentSearchCardProjection, type AgentSearchCardProjection } from './toolSearchCard.js';
+// Tempdoc 577 §2.14 Root III (#18) — the ONE tool-output text-provenance authority (non-search only —
+// tempdoc 867 removed the search-specific "evidence-lineage" header alongside the raw JSON dump).
 import { toolOutputLineage, lineageFrameLabel } from './toolOutputLineage.js';
-// Tempdoc 565 §3.B — the ONE status → semantic-tone → accent-token authority (status-word colour).
-// Tempdoc 577 Ext I — presentedToolStatus folds the result outcome into the presented status word.
-import { statusAccent, presentedToolStatus } from '../../utils/statusTone.js';
+// Tempdoc 577 Ext I — presentedToolStatus folds the result outcome into the presented status word,
+// read into the header's accessible name (867 removed the visible, inline-coloured status word — the
+// glyph carries status now, so `statusAccent` is no longer read here; the ONE status → tone →
+// accent-token authority (`statusTone.ts`) still colours the nested `<jf-run-node>` glyph directly).
+import { presentedToolStatus } from '../../utils/statusTone.js';
 import { composeToolLabel } from '../../display/toolLabeling.js';
 
 export type { ToolCall, ToolRisk, ToolCallStatus } from '../../controllers/AgentSessionController.js';
+
+/** Tempdoc 867 — a stable empty-set identity, so a search body's join never allocates for "nothing". */
+const EMPTY_EVIDENCE_PATHS: ReadonlySet<string> = new Set();
+
+/**
+ * Tempdoc 871 §1 ("level 2 — the summary, expanded in place... a footer counts the rest honestly") +
+ * live finding (2026-08-26, PR #570): a search returning `10 results · 10 in evidence` rendered all
+ * 10 rows at level 2, collapsing the "summary, not a list" design into a list again. Cap the rendered
+ * evidence rows at this count; anything past it is counted in the footer, never rendered as a row.
+ */
+const EVIDENCE_ROW_CAP = 5;
+
+/** `1 result` / `2 results` — the ONE pluralization for a hit count on this card. */
+function countLabel(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+}
 
 export class ToolCallCard extends JfElement {
   static properties = {
     toolCall: { attribute: false },
     stepPresentation: { attribute: false },
+    evidencePaths: { attribute: false },
     expanded: { type: Boolean, reflect: true },
     riskWhyOpen: { state: true },
   };
@@ -59,6 +86,13 @@ export class ToolCallCard extends JfElement {
   /** Tempdoc 565 §17 — the ONE run-step presentation descriptor (glyph + tone), passed by the mount
    * site (UnifiedChatView.renderToolActivity) so the card shows the SAME glyph the spine/trace do. */
   declare stepPresentation: StepPresentation | null;
+  /**
+   * Tempdoc 867 — the run's evidence-path set, for a search card's level-2 join. `null` when the
+   * mount site never wired this property (renders the accessory's " · M in evidence" segment absent
+   * — an honest "we don't know", not a claimed zero — while the body still renders every hit as
+   * "not (yet) in evidence" rather than fail closed on the whole card).
+   */
+  declare evidencePaths: ReadonlySet<string> | null;
   declare expanded: boolean;
   /** Tempdoc 577 §2.12 Move 4 — the risk-tier explanation disclosure is OPEN (keyboard-reachable;
    * the explanation is no longer hover-`title`-only — §2.11 #11). */
@@ -67,42 +101,26 @@ export class ToolCallCard extends JfElement {
   /** Tempdoc 565 §3.C — once the user toggles, stop auto-collapsing on status change. */
   private userToggled = false;
 
-  /**
-   * Search Thread S7 — per-callId cache for the search-card's `executedAt`. `ToolCall` carries no
-   * execution timestamp; caching the first-computed instant (rather than stamping `Date.now()` fresh
-   * on every render) keeps the card's relative-time display ("just now" → "2m ago") stable instead of
-   * drifting back to "just now" on every unrelated re-render (e.g. toggling the risk disclosure).
-   */
-  private searchCardExecutedAt = new Map<string, string>();
-
-  private executedAtFor(callId: string): string {
-    let ts = this.searchCardExecutedAt.get(callId);
-    if (ts == null) {
-      ts = new Date().toISOString();
-      this.searchCardExecutedAt.set(callId, ts);
-    }
-    return ts;
-  }
-
   constructor() {
     super();
     this.toolCall = null;
     this.stepPresentation = null;
+    this.evidencePaths = null;
     this.expanded = true;
     this.riskWhyOpen = false;
   }
 
   /**
-   * Tempdoc 565 §3.C — keep the run compact: terminal cards (completed/rejected) auto-collapse to a
-   * one-line row, while active cards (pending/proposed/executing/approved) stay expanded so the
-   * args + the approval hint are visible. A manual toggle pins the choice.
+   * Tempdoc 565 §3.C / 867 — keep the run compact: a card whose call is still in flight (pending /
+   * proposed / executing / approved) auto-expands and settles back to collapsed once it completes
+   * successfully. A FAILED terminal call stays expanded (577 Ext I — collapsing it would hide the one
+   * signal that distinguishes it from a success in a compacted run). A user toggle pins the choice —
+   * the system never overrides it again for this card's lifetime.
    */
   override updated(changed: Map<string, unknown>): void {
     if (this.userToggled || !changed.has('toolCall')) return;
     const status = this.toolCall?.status;
     const active = status === 'pending' || status === 'proposed' || status === 'executing' || status === 'approved';
-    // Tempdoc 577 Ext I — a FAILED terminal call stays expanded: collapsing it would hide the one
-    // signal (the error output) that distinguishes it from a success in a compacted run.
     const failed = status === 'completed' && this.toolCall?.success === false;
     const shouldExpand = active || failed;
     if (this.expanded !== shouldExpand) this.expanded = shouldExpand;
@@ -128,14 +146,30 @@ export class ToolCallCard extends JfElement {
     .tool-card.medium-risk {
       border-color: var(--accent-warning-45);
     }
+    /* Tempdoc 867 — ONE disclosure: the whole header row is the click/keyboard toggle. */
     .tool-card-header {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      margin-bottom: 0.5rem;
+      gap: 0.4rem;
+      cursor: pointer;
+      border-radius: 0.25rem;
+      outline: none;
+    }
+    .tool-card-header:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .tool-card-lead {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      overflow: hidden;
     }
     .tool-name {
       font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     /* Tempdoc 565 §12.3.B — the tool's target (query / filename), subdued after the label. */
     .tool-target {
@@ -143,19 +177,34 @@ export class ToolCallCard extends JfElement {
       font-weight: 400;
       margin-left: 0.4ch;
     }
-    .tool-status {
-      font-size: var(--font-size-xs);
+    /* Tempdoc 867 — the muted right accessory (e.g. "3 results · 2 in evidence"). */
+    .tool-card-accessory {
+      margin-left: auto;
       color: var(--text-secondary);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
+      font-size: var(--font-size-xs);
+      white-space: nowrap;
+      flex: none;
     }
-    /* Tempdoc 565 §3.B — the status word carries the semantic tone (statusTone authority). */
-    .status-word {
-      font-weight: 600;
+    .expand-chevron {
+      flex: none;
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      transition: transform var(--duration-normal) var(--ease-standard);
     }
-    /* Tempdoc 577 Ext II — the risk tier explains itself on hover (becauseLine tooltip). */
-    /* Tempdoc 577 Move 4 — the risk tier is a FOCUSABLE disclosure button (keyboard/AT reachable),
-       styled inline so it reads as a chip, not a heavy button. */
+    @media (prefers-reduced-motion: reduce) {
+      .expand-chevron { transition: none; }
+    }
+    /* Collapsed points along the reading direction (▶); expanded rotates it down (▼). The base
+       glyph is ▶, so the EXPANDED state carries the rotation — live-caught 2026-08-26: the old
+       rule (collapsed −90°) belonged to the retired ▼ base glyph and rendered collapsed as ▲. */
+    :host([expanded]) .expand-chevron {
+      transform: rotate(90deg);
+    }
+    /* Tempdoc 867 — the risk row: MEDIUM/HIGH only, below the header, unaffected by expand/collapse
+       (it was always visible before too — only its position moved out of the header). */
+    .risk-row {
+      margin-top: 0.375rem;
+    }
     .risk-word {
       cursor: help;
       text-decoration: underline dotted;
@@ -165,22 +214,41 @@ export class ToolCallCard extends JfElement {
       padding: 0;
       margin: 0;
       font: inherit;
-      color: inherit;
-      letter-spacing: inherit;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
     .risk-why {
       color: var(--text-secondary);
       font-size: var(--font-size-xs);
       font-style: italic;
-      margin: 0.25rem 0;
+      margin: 0.25rem 0 0;
     }
     /* Tempdoc 565 §17 — the run-step glyph (the SAME <jf-run-node> the spine/trace show), sized inline. */
     .tool-status-glyph {
       display: inline-flex;
       width: 0.85rem;
       height: 0.85rem;
-      vertical-align: -0.15em;
-      margin-right: 0.25rem;
+      flex: none;
+      margin-right: 0.35rem;
+    }
+    /* Tempdoc 867 — the collapsible body, animated with the grid-template-rows 0fr/1fr technique so
+       height animates without a measured pixel value. */
+    .tool-card-body {
+      display: grid;
+      grid-template-rows: 1fr;
+      transition: grid-template-rows var(--duration-normal) var(--ease-standard);
+    }
+    :host(:not([expanded])) .tool-card-body {
+      grid-template-rows: 0fr;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tool-card-body { transition: none; }
+    }
+    .tool-card-body-inner {
+      overflow: hidden;
+      min-height: 0;
     }
     .tool-args {
       font-family: monospace;
@@ -192,6 +260,7 @@ export class ToolCallCard extends JfElement {
       overflow: auto;
       white-space: pre-wrap;
       word-break: break-word;
+      margin-top: 0.5rem;
     }
     .tool-output {
       font-family: monospace;
@@ -220,10 +289,90 @@ export class ToolCallCard extends JfElement {
       margin-bottom: 0.35rem;
       font-style: italic;
     }
-    /* Search Thread S7 — the shared results card carries its own shadow-root styles; this host only
-       needs the wrapper's spacing + the collapse-when-not-expanded rule below. */
-    .tool-search-card {
+    /* Tempdoc 867 — the search card's level-2 evidence body. */
+    .tool-search-body {
       margin-top: 0.5rem;
+    }
+    .search-scope {
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      margin-bottom: 0.375rem;
+    }
+    .search-rows {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.125rem;
+    }
+    .search-row-open {
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+      width: 100%;
+      text-align: left;
+      background: none;
+      border: none;
+      padding: 0.1875rem 0.125rem;
+      border-radius: 0.25rem;
+      font: inherit;
+      font-size: var(--font-size-xs);
+      color: inherit;
+      cursor: pointer;
+      min-width: 0;
+    }
+    .search-row-open:hover,
+    .search-row-open:focus-visible {
+      background: var(--surface-tertiary);
+    }
+    .search-row-open:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .search-row-dot {
+      flex: none;
+      align-self: center;
+      width: 0.3rem;
+      height: 0.3rem;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .search-row-filename {
+      font-weight: 500;
+      flex: none;
+    }
+    .search-row-path {
+      color: var(--text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .search-row-locator {
+      color: var(--text-secondary);
+      font-style: italic;
+      flex: none;
+      margin-left: auto;
+    }
+    .search-more {
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      margin-top: 0.375rem;
+    }
+    .search-open-in-search {
+      margin-top: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: var(--surface-tertiary);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: var(--font-size-xs);
+      cursor: pointer;
+    }
+    .search-open-in-search:hover {
+      background: var(--surface-2);
     }
     .tool-rich-content {
       margin-top: 0.5rem;
@@ -245,26 +394,6 @@ export class ToolCallCard extends JfElement {
       color: var(--accent);
       word-break: break-all;
     }
-    .tool-actions {
-      display: flex;
-      gap: 0.5rem;
-      margin-top: 0.5rem;
-    }
-    .tool-actions button {
-      padding: 0.375rem 0.875rem;
-      background: var(--surface-tertiary);
-      color: var(--text-primary);
-      border: 1px solid var(--border-subtle);
-      border-radius: 0.25rem;
-      font: inherit;
-      font-size: var(--font-size-xs);
-      cursor: pointer;
-    }
-    .tool-actions button.primary {
-      background: var(--accent-tint);
-      color: var(--accent-on-tint);
-      border-color: var(--accent-tint);
-    }
     .rejected-reason {
       color: var(--text-warning);
       font-size: var(--font-size-xs);
@@ -277,36 +406,19 @@ export class ToolCallCard extends JfElement {
       margin-top: 0.5rem;
       font-style: italic;
     }
-    .expand-toggle {
-      cursor: pointer;
-      background: none;
-      border: none;
-      color: var(--text-secondary);
-      font-size: var(--font-size-xs);
-      padding: 0;
-      margin-left: 0.375rem;
-      transition: transform var(--duration-normal) var(--ease-standard);
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .expand-toggle { transition: none; }
-    }
-    :host(:not([expanded])) .expand-toggle {
-      transform: rotate(-90deg);
-    }
-    :host(:not([expanded])) .tool-args,
-    :host(:not([expanded])) .tool-output,
-    :host(:not([expanded])) .tool-search-card,
-    :host(:not([expanded])) .tool-actions,
-    :host(:not([expanded])) .because,
-    :host(:not([expanded])) .rejected-reason {
-      display: none;
-    }
     /* dot-pulse animation moved to <jf-pulse-dots> shared component */
   `;
 
   private toggleExpanded(): void {
     this.userToggled = true;
     this.expanded = !this.expanded;
+  }
+
+  private onHeaderKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      this.toggleExpanded();
+    }
   }
 
   override render(): TemplateResult {
@@ -317,20 +429,30 @@ export class ToolCallCard extends JfElement {
     const isRejected = tc.status === 'rejected';
     const riskClass =
       tc.risk === 'HIGH' ? 'high-risk' : tc.risk === 'MEDIUM' ? 'medium-risk' : '';
+    const showRisk = tc.risk === 'HIGH' || tc.risk === 'MEDIUM';
     const { label, target } = composeToolLabel(tc.toolName, tc.arguments);
-    // Search Thread S7 (tempdoc decision 4) — the agent search evidence card, projected from
-    // structuredData once per render; null when there is no evidence (or, the honest old-record
+    // Tempdoc 867 — the search projection now carries the level-2 body's own data (hits joined
+    // against the run's evidence set); null when there is no evidence (or, the honest old-record
     // edge case, no derivable query) so the raw-output path below renders instead of a fabrication.
-    const searchCard = isCompleted
-      ? agentSearchCardData(tc.structuredData, tc.arguments, this.executedAtFor(tc.callId))
+    const searchProjection = isCompleted
+      ? agentSearchCardProjection(tc.structuredData, tc.arguments, this.evidencePaths ?? EMPTY_EVIDENCE_PATHS)
       : null;
+    const accessory = searchProjection ? this.searchAccessory(searchProjection) : '';
+    const presentedStatus = presentedToolStatus(tc.status, tc.success);
+    const headerLabel = `${this.expanded ? 'Collapse' : 'Expand'} ${label}${target ? ` ${target}` : ''} — ${presentedStatus}`;
     return html`
       <div class="tool-card ${riskClass}">
-        <div class="tool-card-header">
-          <span class="tool-name"
-            >${label}${target ? html`<span class="tool-target">${target}</span>` : nothing}</span
-          >
-          <span class="tool-status">
+        <div
+          class="tool-card-header"
+          role="button"
+          tabindex="0"
+          aria-expanded=${this.expanded ? 'true' : 'false'}
+          aria-label=${headerLabel}
+          data-testid="tool-card-header"
+          @click=${() => this.toggleExpanded()}
+          @keydown=${(e: KeyboardEvent) => this.onHeaderKeydown(e)}
+        >
+          <span class="tool-card-lead">
             ${this.stepPresentation
               ? html`<jf-run-node
                   class="tool-status-glyph"
@@ -338,110 +460,175 @@ export class ToolCallCard extends JfElement {
                   .presentation=${this.stepPresentation}
                 ></jf-run-node>`
               : nothing}
-            ${/* Tempdoc 577 Ext II / §2.12 Move 4 — the risk tier is an approval-lattice input, not
-                jargon: a FOCUSABLE disclosure (button) explains it via the same becauseLine
-                authority, reachable by keyboard/AT (not a hover-only title — §2.11 #11). The
-                accessible name carries the full explanation so AT announces it without expanding. */ ''}
-            <button
-              class="risk-word"
-              aria-expanded=${this.riskWhyOpen ? 'true' : 'false'}
-              aria-label=${`Risk tier ${tc.risk}. ${becauseLine(tc.risk, getAutonomyLevel(), tc.gateBehavior)}`}
-              @click=${() => {
-                this.riskWhyOpen = !this.riskWhyOpen;
-              }}
-              >${tc.risk}</button
-            > ·
-            <span class="status-word" style=${`color: ${statusAccent(presentedToolStatus(tc.status, tc.success))}`}
-              >${presentedToolStatus(tc.status, tc.success)}</span
+            <span class="tool-name"
+              >${label}${target ? html`<span class="tool-target">${target}</span>` : nothing}</span
             >
-            <button class="expand-toggle"
-              @click=${() => this.toggleExpanded()}
-              title=${this.expanded ? 'Collapse' : 'Expand'}
-              aria-expanded=${this.expanded ? 'true' : 'false'}
-              aria-label=${this.expanded ? `Collapse ${tc.toolName}` : `Expand ${tc.toolName}`}
-            >${this.expanded ? '▼' : '▶'}</button>
           </span>
+          ${accessory
+            ? html`<span class="tool-card-accessory" data-testid="tool-card-accessory">${accessory}</span>`
+            : nothing}
+          <span class="expand-chevron" aria-hidden="true">▶</span>
         </div>
-        ${/* Tempdoc 577 Move 4 — the risk explanation revealed by the focusable disclosure (visible
-            text, not just the button's accessible name), so a sighted keyboard user sees it too. */ ''}
-        ${this.riskWhyOpen
-          ? html`<div class="risk-why" role="note">
-              ${becauseLine(tc.risk, getAutonomyLevel(), tc.gateBehavior)}
-            </div>`
-          : nothing}
-        ${tc.arguments
-          ? html`<div class="tool-args">${tc.arguments}</div>`
-          : nothing}
-        ${/* Search Thread S7: the shared results card replaces the raw monospace dump when present. */ ''}
-        ${/* Tempdoc 577 §2.14 Root III (#18): frame raw tool output by its backend-stamped lineage —
-            corpus-quoted text is the user's documents quoted back (so injection/citation-shaped text
-            inside it cannot read as the agent's own claim); runtime output renders plainly. */ ''}
-        ${isCompleted && tc.output && !searchCard
-          ? this.renderLineageFramedOutput(tc)
-          : nothing}
-        ${/* Tempdoc 577 §2.14 Root III (#18): the STRUCTURED search-evidence path is the main corpus
-            reader's output — frame it as quoted too (the raw-output frame above only covers non-search
-            corpus tools like browse-folders), so a search result reads as the documents' words. */ ''}
-        ${isCompleted && searchCard ? this.renderEvidenceLineageHeader(tc) : nothing}
-        ${searchCard ? this.renderSearchCard(searchCard) : nothing}
-        ${isCompleted ? this.renderRichContent(tc) : nothing}
-        ${isRejected
-          ? html`<div class="rejected-reason">
-              Rejected${tc.rejectReason ? html`: ${tc.rejectReason}` : nothing}
-            </div>`
-          : nothing}
-        ${isPending
-          ? html`
-              <div class="because" data-testid="tool-call-because">
-                ${/* Tempdoc 561 P-D1: explain the BACKEND gate verdict when present. */ ''}
-                ${becauseLine(tc.risk, getAutonomyLevel(), tc.gateBehavior)}
-              </div>
-              <div class="rejected-reason" data-testid="awaiting-approval">
-                Awaiting your approval…
-              </div>
-            `
-          : nothing}
+        ${showRisk ? this.renderRiskRow(tc) : nothing}
+        <div class="tool-card-body">
+          <div class="tool-card-body-inner">
+            ${tc.arguments && !searchProjection
+              ? html`<div class="tool-args">${tc.arguments}</div>`
+              : nothing}
+            ${/* Tempdoc 577 §2.14 Root III (#18): frame raw tool output by its backend-stamped lineage
+                — corpus-quoted text is the user's documents quoted back. A search card's evidence is
+                framed by the level-2 body itself (867), not this raw-output panel. */ ''}
+            ${isCompleted && tc.output && !searchProjection
+              ? this.renderLineageFramedOutput(tc)
+              : nothing}
+            ${searchProjection ? this.renderSearchBody(searchProjection) : nothing}
+            ${isCompleted ? this.renderRichContent(tc) : nothing}
+            ${isRejected
+              ? html`<div class="rejected-reason">
+                  Rejected${tc.rejectReason ? html`: ${tc.rejectReason}` : nothing}
+                </div>`
+              : nothing}
+            ${isPending
+              ? html`
+                  <div class="because" data-testid="tool-call-because">
+                    ${/* Tempdoc 561 P-D1: explain the BACKEND gate verdict when present. */ ''}
+                    ${becauseLine(tc.risk, getAutonomyLevel(), tc.gateBehavior)}
+                  </div>
+                  <div class="rejected-reason" data-testid="awaiting-approval">
+                    Awaiting your approval…
+                  </div>
+                `
+              : nothing}
+          </div>
+        </div>
       </div>
     `;
   }
 
-  /**
-   * Tempdoc 577 §2.14 Root III (#18) — render raw tool output framed by its text-provenance lineage
-   * (the ONE {@link toolOutputLineage} authority). Corpus-quoted output gets a "Quoted from your
-   * documents" header + a quoting frame so its citation/instruction-shaped text reads as the
-   * documents' words, not the agent's own claim; runtime output renders plainly as before.
-   */
-  /**
-   * Tempdoc 577 §2.14 Root III (#18) — the lineage header for the STRUCTURED search-evidence path
-   * (the main corpus reader). Renders "Quoted from your documents" above the evidence cards when the
-   * backend stamped the result corpus-quoted, so search output carries the same provenance frame the
-   * raw-output path gives browse-folders. Same ONE toolOutputLineage authority; nothing for runtime.
-   */
-  private renderEvidenceLineageHeader(tc: ToolCall): TemplateResult | typeof nothing {
-    const label = lineageFrameLabel(toolOutputLineage(tc.structuredData));
-    return label === null
-      ? nothing
-      : html`<span class="lineage-frame-label" data-testid="evidence-lineage">${label}</span>`;
+  /** Tempdoc 867 — "N results · M in evidence"; the evidence segment omits when the run's evidence
+   * set was never wired to this card (an honest "we don't know", not a claimed zero). */
+  private searchAccessory(projection: AgentSearchCardProjection): string {
+    const results = countLabel(projection.resultCount, 'result');
+    if (this.evidencePaths === null) return results;
+    return `${results} · ${projection.evidenceCount} in evidence`;
   }
 
   /**
-   * Search Thread S7 (tempdoc decision 4) — the ONE card for an agent search: the same
-   * `<jf-results-card>` a user-issued search commits to, `variant="excerpt"` (the one-line
-   * collapsed summary that expands in place to the full row list). `card-open` bubbles + composes
-   * out of the card's shadow root through this one's, unhandled here — the mount site
-   * (`UnifiedChatView.renderToolActivity`) listens on the `<jf-tool-call-card>` host element and
-   * resolves the hit back out of the SAME structuredData (no independent hit store).
+   * Tempdoc 867 §2a — "roots · pipeline preset actually used" (type filters are dropped: not a
+   * per-call fact). `mode` is '' on a record persisted before the 867 backend stamp — the named gap
+   * — so the line renders only what this call's record actually carries, never a guessed preset.
    */
-  private renderSearchCard(
-    searchCard: NonNullable<ReturnType<typeof agentSearchCardData>>,
-  ): TemplateResult {
-    return html`<div class="tool-search-card" data-testid="tool-search-card">
-      <jf-results-card
-        variant="excerpt"
-        .snapshot=${searchCard.snapshot}
-        .provenance=${searchCard.provenance}
-      ></jf-results-card>
+  private searchScopeLine(projection: AgentSearchCardProjection): string {
+    const base = `${countLabel(projection.resultCount, 'result')} for "${projection.query}"`;
+    const scoped = projection.scope ? `${base} in ${projection.scope}` : base;
+    return projection.mode ? `${scoped} · ${projection.mode}` : scoped;
+  }
+
+  /**
+   * Tempdoc 867 — the risk row: MEDIUM/HIGH only, a focusable disclosure explaining the tier via the
+   * SAME `becauseLine` authority, reachable by keyboard/AT (§2.11 #11 / §2.12 Move 4).
+   */
+  private renderRiskRow(tc: ToolCall): TemplateResult {
+    return html`<div class="risk-row">
+      <button
+        type="button"
+        class="risk-word"
+        aria-expanded=${this.riskWhyOpen ? 'true' : 'false'}
+        aria-label=${`Risk tier ${tc.risk}. ${becauseLine(tc.risk, getAutonomyLevel(), tc.gateBehavior)}`}
+        @click=${() => {
+          this.riskWhyOpen = !this.riskWhyOpen;
+        }}
+        >${tc.risk}</button
+      >
+      ${this.riskWhyOpen
+        ? html`<div class="risk-why" role="note">
+            ${becauseLine(tc.risk, getAutonomyLevel(), tc.gateBehavior)}
+          </div>`
+        : nothing}
     </div>`;
+  }
+
+  /**
+   * Tempdoc 867 — the search tool card's level-2 body: a muted scope line (roots · pipeline preset
+   * actually used — type filters are dropped per §2a, not a per-call fact), then ONLY the hits that
+   * are in the run's evidence set (dot · filename · dim path · locator), capped at
+   * {@link EVIDENCE_ROW_CAP} (871 §1 + the live finding above the constant's declaration), a footer
+   * honestly counting what the cap hid, and an "Open in Search" pill (852 owns the actual navigation —
+   * this only dispatches the intent).
+   *
+   * The footer is composed from the projection's OWN two counts, not from the rendered row list, so
+   * it never mixes "hidden by the cap" with "never retrieved as evidence" into one misleading number:
+   *   - hidden-in-evidence = max(0, evidenceCount − EVIDENCE_ROW_CAP) — "N more in evidence"
+   *   - retrieved-not-in-evidence = resultCount − evidenceCount — "N more retrieved, not in evidence"
+   * Each segment renders only when > 0, joined with " · " when both are present.
+   *
+   * The per-row open path is UNCHANGED in contract: clicking a row fires the same `card-open`
+   * CustomEvent (bubbles, composed, `{id}`) the old nested `<jf-results-card>` excerpt rows fired, so
+   * the mount site's existing `findAgentSearchHit(structuredData, id)` resolution keeps working.
+   */
+  private renderSearchBody(projection: AgentSearchCardProjection): TemplateResult {
+    const rows = projection.hits.filter((h) => h.inEvidence).slice(0, EVIDENCE_ROW_CAP);
+    const hiddenInEvidence = Math.max(0, projection.evidenceCount - EVIDENCE_ROW_CAP);
+    const retrievedNotInEvidence = projection.resultCount - projection.evidenceCount;
+    const footerSegments = [
+      hiddenInEvidence > 0 ? `${hiddenInEvidence} more in evidence` : null,
+      retrievedNotInEvidence > 0 ? `${retrievedNotInEvidence} more retrieved, not in evidence` : null,
+    ].filter((s): s is string => s !== null);
+    const footerText = footerSegments.join(' · ');
+    const scopeText = this.searchScopeLine(projection);
+    return html`<div class="tool-search-body" data-testid="tool-search-body">
+      <div class="search-scope" data-testid="tool-search-scope">${scopeText}</div>
+      ${rows.length > 0
+        ? html`<ul class="search-rows" data-testid="tool-search-rows">
+            ${rows.map(
+              (hit) => html`<li>
+                <button
+                  type="button"
+                  class="search-row-open"
+                  data-testid="tool-search-row"
+                  @click=${() => this.openSearchHit(hit.id)}
+                >
+                  <span class="search-row-dot" aria-hidden="true"></span>
+                  <span class="search-row-filename">${hit.title}</span>
+                  <span class="search-row-path">${hit.path}</span>
+                  ${hit.locator
+                    ? html`<span class="search-row-locator">${hit.locator}</span>`
+                    : nothing}
+                </button>
+              </li>`,
+            )}
+          </ul>`
+        : nothing}
+      ${footerText
+        ? html`<div class="search-more" data-testid="tool-search-more">${footerText}</div>`
+        : nothing}
+      <button
+        type="button"
+        class="search-open-in-search"
+        data-testid="tool-search-open-in-search"
+        @click=${() => this.openInSearch(projection.query, projection.scope)}
+      >
+        Open in Search
+      </button>
+    </div>`;
+  }
+
+  /** Tempdoc 867 — preserves the existing `card-open` contract (bubbles + composed, `{id}`). */
+  private openSearchHit(id: string): void {
+    this.dispatchEvent(
+      new CustomEvent('card-open', { detail: { id }, bubbles: true, composed: true }),
+    );
+  }
+
+  /** Tempdoc 867 — the "Open in Search" intent. No navigation wired here; 852 owns the landing. */
+  private openInSearch(query: string, scope: string): void {
+    this.dispatchEvent(
+      new CustomEvent('tool-card-open-search', {
+        detail: { query, scope },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private renderLineageFramedOutput(tc: ToolCall): TemplateResult {

@@ -433,3 +433,66 @@ describe('865 §7.1 — the record reconstructs an answerless run from its per-c
     expect(turn!.evidence).toBeNull();
   });
 });
+
+/**
+ * Tempdoc 867 — `Sv3Turn.evidencePaths`: the RAW `path`-carrying set a record-hydrated turn's tool
+ * cards join their own hits against (`Sv3Main.recordedActivity`). Distinct from `evidence.sources`,
+ * which drops `path` (`agentEvidence.toAnswerEvidenceSource` projects onto `AnswerEvidenceSource`) —
+ * this is the field that keeps it, following the SAME plane-authority rule 865 §7.1 gives `evidence`
+ * itself: the deltas fill the gap when the terminal never spoke, and are never ADDED to one that did.
+ */
+describe('867 — Sv3Turn.evidencePaths follows the same plane-authority rule as evidence', () => {
+  const delta = (parentDocId: string, chunkIndex = 0) => ({
+    parentDocId,
+    chunkIndex,
+    path: `f:/${parentDocId}`,
+    title: parentDocId,
+    excerpt: 'a passage',
+    startLine: 1,
+    endLine: 5,
+    headingText: '',
+  });
+
+  const toolRow = (callId: string, grounding: unknown[]): ThreadEvent =>
+    event(callId, 'TOOL_ACTIVITY', 'core_search', {
+      callId,
+      toolName: 'core_search',
+      status: 'completed',
+      success: true,
+      structuredData: { searchResults: [], grounding },
+    });
+
+  it('an answerless run keeps the paths its calls established, from the deltas alone', () => {
+    clock = 0;
+    const [turn] = projectSv3RecordTurns([
+      event('u1', 'USER_MESSAGE', 'find the cause'),
+      toolRow('c1', [delta('docs/a.md'), delta('docs/b.md')]),
+      toolRow('c2', [delta('docs/c.md')]),
+    ]);
+    expect(new Set(turn!.evidencePaths)).toEqual(new Set(['f:/docs/a.md', 'f:/docs/b.md', 'f:/docs/c.md']));
+  });
+
+  it('a grounded terminal keeps ITS paths, not doubled by the same-set deltas that preceded it', () => {
+    clock = 0;
+    const [turn] = projectSv3RecordTurns([
+      event('u1', 'USER_MESSAGE', 'find the cause'),
+      toolRow('c1', [delta('docs/runbook.md', 7), delta('docs/postmortem.md', 1)]),
+      toolRow('c2', [delta('docs/ledger.md', 0)]),
+      agentAssistant({ citationScorer: 'CROSS_ENCODER' }),
+    ]);
+    // The terminal's own AGENT_SOURCES cover the same three documents the deltas already established;
+    // a Set dedups the overlap, so this is still 3 — never 6.
+    expect(new Set(turn!.evidencePaths)).toEqual(
+      new Set(['f:/docs/runbook.md', 'f:/docs/postmortem.md', 'f:/docs/ledger.md']),
+    );
+  });
+
+  it('a turn with neither a terminal nor a delta has an empty path set, not a guess', () => {
+    clock = 0;
+    const [turn] = projectSv3RecordTurns([
+      event('u1', 'USER_MESSAGE', 'hello'),
+      event('t1', 'TOOL_ACTIVITY', 'core_file_read', { callId: 'c1', toolName: 'core_file_read' }),
+    ]);
+    expect(turn!.evidencePaths).toEqual([]);
+  });
+});

@@ -1611,7 +1611,7 @@ export class UnifiedChatView extends JfElement {
               aria-label="Copy answer"
               @click=${() => this.copyText(m.content)}
             >
-              ${icon({ name: 'clipboard-copy', size: 15 })}
+              ${icon({ name: 'copy', size: 15 })}
             </button>
             <button
               class="turn-act-btn"
@@ -5558,9 +5558,29 @@ export class UnifiedChatView extends JfElement {
       <jf-tool-call-card
         .toolCall=${toolCall}
         .stepPresentation=${stepPresentation(it)}
+        .evidencePaths=${this.toolActivityEvidencePaths(it)}
         @card-open=${(e: CustomEvent<{ id: string }>) => this.handleToolEvidenceOpen(toolCall, e.detail.id)}
       ></jf-tool-call-card>
     </div>`;
+  }
+
+  /**
+   * Tempdoc 867 — this tool item's run evidence-path set, or `null` (not wired) when it cannot be
+   * attributed safely.
+   *
+   * <p>`this.agentCtrl.groundingDeltaPaths` is ONE run's accumulation, but `renderToolActivity` draws
+   * from the projected THREAD (`unifiedEvents`), which renders every past run's tool activity in one
+   * pass alongside whichever run is live right now. Attaching the controller's current set to every
+   * card indiscriminately would misattribute it to an unrelated PAST run the moment a newer one
+   * starts — exactly the cross-run leak `AgentSessionController.groundingDeltasRunId` exists to
+   * prevent one level up. This item carries no run/session id this call site can compare against that
+   * stamp, so — pending that discriminator — every card here reads `null` (an honest "not wired"),
+   * never a value that could be silently wrong. Search v3 (`Sv3Main`/`sv3-record.ts`) does not have
+   * this gap: each `Sv3Turn` carries its OWN `evidencePaths`, so there is no shared mutable set to
+   * misattribute. Tracked as a disclosed limitation (867 report), not a silent gap.
+   */
+  private toolActivityEvidencePaths(_it: UnifiedTurnItem): ReadonlySet<string> | null {
+    return null;
   }
 
   /**
