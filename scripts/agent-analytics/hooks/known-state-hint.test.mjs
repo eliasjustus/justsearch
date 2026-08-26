@@ -58,11 +58,14 @@ run('an invalid regex in one entry never crashes or matches', () => {
 });
 
 // --- rendering ---
-run('renderHint lists matched claims and caps at 4', () => {
-  const many = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, claim: `claim ${i}` }));
+// 872: no silent cap — a hidden fifth pin is a hint that lies by omission exactly when
+// the baseline has grown enough to matter. reviewBy is rendered so the reader sees the exit.
+run('renderHint lists EVERY matched claim and shows reviewBy', () => {
+  const many = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, claim: `claim ${i}`, reviewBy: i === 5 ? '2026-09-30' : undefined }));
   const text = renderHint(many);
   assert.match(text, /\[p0\] claim 0/);
-  assert.ok(!text.includes('[p4]'));
+  assert.match(text, /\[p4\] claim 4/);
+  assert.match(text, /\[p5\] claim 5 \(review by 2026-09-30\)/);
 });
 
 // --- the real baseline file loads and its regexes compile ---
