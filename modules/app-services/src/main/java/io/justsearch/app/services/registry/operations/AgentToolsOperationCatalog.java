@@ -76,6 +76,17 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
   }
 
   public static final OperationRef SEARCH_INDEX = new OperationRef("core.search-index");
+
+  /**
+   * Tempdoc 868 §B.2 — the delegate's one content-bearing READ. Search returns budgeted excerpts;
+   * this returns a document's extracted text a page at a time over the Worker's
+   * {@code FetchDocumentSlice} RPC, so "read this file and summarize it" (the rank-1 recorded
+   * intent, 0 clean completions before this) becomes literally executable. LOW risk, no confirm:
+   * the readable universe is exactly the INDEXED documents — the Worker serves nothing else, which
+   * is a stronger boundary than any path allowlist and needs no new consent posture.
+   */
+  public static final OperationRef READ_DOCUMENT = new OperationRef("core.read-document");
+
   public static final OperationRef BROWSE_FOLDERS = new OperationRef("core.browse-folders");
   public static final OperationRef INGEST_FILES = new OperationRef("core.ingest-files");
   public static final OperationRef FILE_OPERATIONS = new OperationRef("core.file-operations");
@@ -100,6 +111,7 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
   private final List<Operation> definitions =
       List.of(
           searchIndex(),
+          readDocument(),
           browseFolders(),
           ingestFiles(),
           fileOperations(),
@@ -120,9 +132,20 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
     return new Operation(
         SEARCH_INDEX,
         Presentation.forId(SEARCH_INDEX),
+        // Tempdoc 868 §B.4 (from §A.2): `path_prefix` is DECLARED here because this Interface — not
+        // SearchTool.PARAMETER_SCHEMA — is what AgentOperationEmitter projects to the model
+        // (AgentOperationEmitter.java:252 reads op.intf().inputs()). SearchTool honours the key
+        // (SearchTool.java:222-236) and the system prompt instructs the model to use it, but the
+        // in-app delegate could never see it: across 37 recorded runs it was used 0 times. The
+        // outward MCP surface (McpToolSurface) already declared it, so external agents had scoping
+        // the delegate did not. `mode`/`pipeline` stay undeclared on purpose — they are internal
+        // retrieval levers, not a capability the model should be steering.
         Interface.of(
             "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"},"
-                + "\"limit\":{\"type\":\"integer\"}},\"required\":[\"query\"]}",
+                + "\"limit\":{\"type\":\"integer\"},"
+                + "\"path_prefix\":{\"type\":\"string\",\"description\":\"Restrict results to files"
+                + " under this absolute folder path (get it from core_browse_folders)\"}},"
+                + "\"required\":[\"query\"]}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(
             RiskTier.LOW,
@@ -146,6 +169,48 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             Optional.empty()),
         OperationLineage.empty(),
         Binding.of(SEARCH_INDEX),
+        Provenance.core("1.0"),
+        Set.of(ExecutorTag.AGENT));
+  }
+
+  /**
+   * Tempdoc 868 §B.2 — {@code core.read-document}. Same availability expression as {@link
+   * #searchIndex()} and for the same reason: both are served by the Worker's index, so both are
+   * offered only while the index is serving ({@code Not(ConditionMatches("index.unavailable"))} —
+   * absence=healthy, re-shown on recovery). Deliberately NO auto-retry: a read is paged, and a
+   * transparent retry of a page the model already saw would double it into the prompt.
+   */
+  private static Operation readDocument() {
+    return new Operation(
+        READ_DOCUMENT,
+        Presentation.forId(READ_DOCUMENT),
+        Interface.of(
+            "{\"type\":\"object\",\"properties\":{"
+                + "\"path\":{\"type\":\"string\",\"description\":\"Absolute path of the document to"
+                + " read, as returned by core_browse_folders or a core_search_index result.\"},"
+                + "\"offset_chars\":{\"type\":\"integer\",\"description\":\"Character offset to"
+                + " start reading from (default 0). Use the offset the previous page's 'More:' line"
+                + " gives you to continue.\"},"
+                + "\"max_chars\":{\"type\":\"integer\",\"description\":\"Maximum characters to"
+                + " return in this page. Capped server-side so one page always fits the context"
+                + " window.\"}},"
+                + "\"required\":[\"path\"]}",
+            "{\"type\":\"object\"}"),
+        new OperationPolicy(
+            RiskTier.LOW,
+            ConfirmStrategy.None.INSTANCE,
+            AuditPolicy.NONE,
+            RetryPolicy.noRetry(),
+            Optional.empty(),
+            Set.of(),
+            false),
+        new OperationAvailability(
+            Optional.of(
+                new AvailabilityExpression.Not(
+                    new AvailabilityExpression.ConditionMatches("index.unavailable"))),
+            Optional.empty()),
+        OperationLineage.empty(),
+        Binding.of(READ_DOCUMENT),
         Provenance.core("1.0"),
         Set.of(ExecutorTag.AGENT));
   }

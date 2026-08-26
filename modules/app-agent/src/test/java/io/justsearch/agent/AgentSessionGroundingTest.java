@@ -140,6 +140,130 @@ final class AgentSessionGroundingTest {
     assertTrue(session().collectGroundingSources().isEmpty());
   }
 
+  // -----------------------------------------------------------------------------------------
+  // Tempdoc 868 §B.3 — the second producer and the acquisition axis
+  // -----------------------------------------------------------------------------------------
+
+  private static ToolCallRequest readCall(String id) {
+    return new ToolCallRequest(id, "core_read_document", "{\"path\":\"/a.md\"}");
+  }
+
+  private static Map<String, Object> readPage(String path, String excerpt) {
+    return Map.of(
+        "path", path,
+        "title", "Doc " + path,
+        "excerpt", excerpt,
+        "startChar", 0,
+        "endChar", excerpt.length(),
+        "truncated", false);
+  }
+
+  @Test
+  @DisplayName("868 §B.3: readResults mints a DOCUMENT-LEVEL source marked acquisition=opened")
+  void readResults_mintOpenedDocumentLevelSources() {
+    var session = session();
+    session.recordExecution(
+        readCall("call-1"),
+        OperationResult.success(
+            "[read] /a.md", Map.of("readResults", List.of(readPage("/a.md", "the page text")))));
+
+    List<AgentEvent.AgentSource> sources = session.collectGroundingSources();
+
+    assertEquals(1, sources.size(), "a read establishes the document it opened as a source");
+    AgentEvent.AgentSource s = sources.get(0);
+    assertEquals(
+        AgentEvent.AgentSource.ACQUISITION_OPENED,
+        s.acquisition(),
+        "nothing ranked this document — the agent named it and read it, and 865 §7.6's invariant is"
+            + " that an opened source carries LESS relevance evidence than a retrieved one");
+    assertEquals("/a.md", s.parentDocId(), "the path is the identity: a read has no chunk ordinal");
+    assertEquals(-1, s.chunkIndex(), "document-level sentinel");
+    assertEquals(-1, s.startLine());
+    assertEquals(
+        "the page text",
+        s.excerpt(),
+        "the excerpt is the page the model saw — what the citation matcher verifies against");
+  }
+
+  @Test
+  @DisplayName("868 §B.3: a document already RETRIEVED is not re-minted by a later read — opened never upgrades")
+  void readOfAnAlreadyRetrievedDocument_doesNotReMint() {
+    var session = session();
+    // Search first: the document is established as retrieved, with whatever identity search gave it.
+    session.recordExecution(
+        searchCall("call-1"),
+        OperationResult.success(
+            "r",
+            Map.of("searchResults", List.of(Map.of("path", "/a.md", "title", "A", "excerpt", "hit")))));
+    // Then read the SAME document. The run-wide dedup key is `doc#<path>` on both arms.
+    List<AgentEvent.AgentSource> readDelta =
+        session.recordExecution(
+            readCall("call-2"),
+            OperationResult.success(
+                "[read] /a.md", Map.of("readResults", List.of(readPage("/a.md", "the page text")))));
+
+    assertTrue(readDelta.isEmpty(), "the read added no NEW document, so its delta is empty");
+    List<AgentEvent.AgentSource> sources = session.collectGroundingSources();
+    assertEquals(1, sources.size(), "one document, one source");
+    assertEquals(
+        AgentEvent.AgentSource.ACQUISITION_RETRIEVED,
+        sources.get(0).acquisition(),
+        "the first identity wins: a document that WAS ranked keeps that stronger evidence, and"
+            + " 'opened' must never overwrite it (the invariant is directional)");
+    assertEquals("hit", sources.get(0).excerpt(), "the retrieved excerpt is not replaced either");
+  }
+
+  @Test
+  @DisplayName("868 §B.3: a read-only run's terminal sources all carry acquisition=opened")
+  void readOnlyRun_terminalSourcesAreAllOpened() {
+    var session = session();
+    session.recordExecution(
+        readCall("call-1"),
+        OperationResult.success("r", Map.of("readResults", List.of(readPage("/a.md", "page a")))));
+    session.recordExecution(
+        readCall("call-2"),
+        OperationResult.success("r", Map.of("readResults", List.of(readPage("/b.md", "page b")))));
+
+    List<AgentEvent.AgentSource> sources = session.collectGroundingSources();
+    assertEquals(2, sources.size());
+    assertTrue(
+        sources.stream()
+            .allMatch(
+                s -> AgentEvent.AgentSource.ACQUISITION_OPENED.equals(s.acquisition())),
+        "a run that only read must not present its evidence as retrieved: " + sources);
+  }
+
+  @Test
+  @DisplayName("868 §B.3: a read page with no path is not addressable — skipped, not minted blank")
+  void readResultWithoutAPath_isSkipped() {
+    var session = session();
+    session.recordExecution(
+        readCall("call-1"),
+        OperationResult.success(
+            "r", Map.of("readResults", List.of(Map.of("title", "A", "excerpt", "ex")))));
+    assertTrue(session.collectGroundingSources().isEmpty());
+  }
+
+  @Test
+  @DisplayName("868 §B.3: both producer keys on one result contribute, and the delta order follows them")
+  void searchAndReadResultsOnOneResult_bothContribute() {
+    var session = session();
+    List<AgentEvent.AgentSource> delta =
+        session.recordExecution(
+            searchCall("call-1"),
+            OperationResult.success(
+                "r",
+                Map.of(
+                    "searchResults",
+                    List.of(Map.of("path", "/s.md", "title", "S", "excerpt", "hit")),
+                    "readResults",
+                    List.of(readPage("/r.md", "page")))));
+
+    assertEquals(2, delta.size());
+    assertEquals(AgentEvent.AgentSource.ACQUISITION_RETRIEVED, delta.get(0).acquisition());
+    assertEquals(AgentEvent.AgentSource.ACQUISITION_OPENED, delta.get(1).acquisition());
+  }
+
   /**
    * Tempdoc 865 §7.4 — the MINT half of the deliberate tool-card/evidence-set divergence; the card
    * half is {@code toolSearchCard.projection.test.ts} (`modules/ui-web`), which runs the same
@@ -320,18 +444,22 @@ final class AgentSessionGroundingTest {
    *
    * <p>{@code structuredData} is declared free-form ({@code AgentRunShape}: {@code
    * EventField.object("structuredData", "")}), which is the honest cost of the carrier decision: no
-   * schema conformance test can see this key. So the eight keys and their types are pinned HERE, and
+   * schema conformance test can see this key. So the nine keys and their types are pinned HERE, and
    * they are exactly {@code AgentSource}'s IDENTITY fields — the FE reads the delta through the same
    * generated {@code AgentSource} interface it reads the terminal {@code sources} through, and a
    * drift would be a silently wrong render rather than a type error.
    *
    * <p>Tempdoc 865 §7.5 — {@code AgentSource} also carries the two INCLUSION fields, and their
    * absence here is the contract, not an omission: inclusion is resolved against the final prompt at
-   * the terminal, and a tool call has no final prompt to be a fact about. Eight remains the right
-   * number for a delta.
+   * the terminal, and a tool call has no final prompt to be a fact about.
+   *
+   * <p>Tempdoc 868 §B.3 — {@code acquisition} is the NINTH, and it belongs here for the mirror-image
+   * reason inclusion does not: how a source was acquired is fixed at the mint and cannot change, so
+   * a delta that dropped it would let a reloaded run silently re-describe an opened document as
+   * retrieved.
    */
   @Test
-  @DisplayName("865 §7.1 conformance: the stamped grounding key's wire shape is AgentSource's eight identity fields")
+  @DisplayName("865 §7.1 / 868 §B.3 conformance: the stamped grounding key's wire shape is AgentSource's nine identity fields")
   void groundingStampWireShapeConformance() {
     var session = session();
     List<AgentEvent.AgentSource> delta =
@@ -361,10 +489,15 @@ final class AgentSessionGroundingTest {
             "excerpt",
             "startLine",
             "endLine",
-            "headingText"),
+            "headingText",
+            "acquisition"),
         chunkPrecise.keySet(),
-        "exactly AgentSource's eight IDENTITY fields — no more (a leak; 865 §7.5's two inclusion"
+        "exactly AgentSource's nine IDENTITY fields — no more (a leak; 865 §7.5's two inclusion"
             + " fields belong to the terminal, not to a delta), no fewer (a silently absent field)");
+    assertEquals(
+        AgentEvent.AgentSource.ACQUISITION_RETRIEVED,
+        chunkPrecise.get("acquisition"),
+        "a search hit is retrieved: something ranked it");
     assertEquals("d1", chunkPrecise.get("parentDocId"));
     assertEquals(2, chunkPrecise.get("chunkIndex"), "an ordinal, not a string");
     assertEquals(5, chunkPrecise.get("startLine"));

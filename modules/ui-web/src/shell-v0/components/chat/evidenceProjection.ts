@@ -28,6 +28,7 @@
  * boundary-aware fields (startLine/endLine/headingText) verbatim for navigation.
  */
 import type {
+  Acquisition,
   AnswerEvidenceSource,
   CitationMatch,
   SourceCoverage,
@@ -236,6 +237,13 @@ export interface EvidenceItem {
    * grounding tier, a grounding count, or {@link EvidenceScore}.
    */
   readonly inclusion: ContextInclusion | null;
+  /**
+   * Tempdoc 868 §B.3 — how the source arrived, RESOLVED (never `null`): absence has a defined
+   * answer, so unlike {@link inclusion} there is no "the producer said nothing" state to render.
+   * A surface reads this instead of re-deriving the word, which is what keeps the panel's badge and
+   * the reading pane's header from disagreeing about one document's provenance.
+   */
+  readonly acquisition: Acquisition;
 }
 
 /** Default declared metric for retrieval evidence — the relevance of the chunk. */
@@ -725,16 +733,30 @@ export function sourceGrounding(
   };
 }
 
-/** The per-source trust badge text — "Grounds N sentence(s)" when cited, else the honest "Retrieved · not cited". */
-export function sourceGroundingLabel(g: SourceGrounding): string {
+/**
+ * The per-source trust badge text — "Grounds N sentence(s)" when cited, else the honest
+ * "Retrieved · not cited" / "Opened · not cited".
+ *
+ * <p>Tempdoc 868 §B.3 — the opening word is the ACQUISITION axis and it is never hardcoded here.
+ * Three of the four branches state what the matcher did (or failed to do) about a source, and each
+ * names how the source arrived first; over a document the agent opened by name, "Retrieved" claims a
+ * retrieval that never happened (865 §7.6). `source` is the record the word is read off — omitted by
+ * a caller with nothing to read, which {@link acquisitionWord} answers with `Retrieved`, the only
+ * state that existed before the read tool.
+ */
+export function sourceGroundingLabel(
+  g: SourceGrounding,
+  source?: { readonly acquisition?: string } | null,
+): string {
+  const word = acquisitionWord(source);
   // Tempdoc 865 §7.3 — a statement about the MATCHER, not about the source. "Not cited" is a verdict
   // that only a pass which ran may deliver; when the pass did not complete, the honest thing to say
   // is that nothing judged this source — not that something judged it and found nothing.
-  if (g.state === 'grounding-incomplete') return 'Retrieved · grounding check did not complete';
+  if (g.state === 'grounding-incomplete') return `${word} · grounding check did not complete`;
   // Tempdoc 836 S2S3-A.3 — an unexamined source is not "not cited": nothing read it. Saying it was
   // retrieved and found wanting would assert a verdict over text no scorer ever saw.
-  if (g.state === 'unexamined') return 'Retrieved · not examined';
-  if (!g.cited) return 'Retrieved · not cited';
+  if (g.state === 'unexamined') return `${word} · not examined`;
+  if (!g.cited) return `${word} · not cited`;
   return g.groundedSentences === 1 ? 'Grounds 1 sentence' : `Grounds ${g.groundedSentences} sentences`;
 }
 
@@ -750,13 +772,69 @@ export function evidenceScore(value: number, label: string = RELEVANCE_METRIC): 
   return { value: v, pct: Math.round(v * 100), tier: evidenceTier(value), label };
 }
 
-/** Project a retrieval-evidence record into the citation view-model. */
+/**
+ * Elide `text` to `maxChars` at a WORD boundary, appending an ellipsis — never a raw mid-word cut.
+ *
+ * <p>`minKeep` is how far back the walk may go looking for whitespace: a single token longer than
+ * the lookback still gets a hard cut rather than collapsing the whole string. Callers name their own
+ * lookback because "how much may I lose to reach a space" is a per-budget question — an 80-char
+ * header can afford to give up half of itself, a 320-char excerpt cannot.
+ *
+ * <p>The producer side does the same thing in Java (`SearchTool.clampToWordBoundary`, and
+ * `RagContextOps.clampExcerptToWordBoundary` before it) and deliberately keeps its own copy: separate
+ * module, separate budget, per AHA. This is the FE's one copy, shared by the two FE budgets rather
+ * than written out twice here.
+ */
+function elideAtWordBoundary(text: string, maxChars: number, minKeep: number): string {
+  if (text.length <= maxChars) return text;
+  const cut = text.slice(0, maxChars);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > minKeep ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+/**
+ * Tempdoc 868 §B.3 — how much excerpt one source CARD shows before eliding.
+ *
+ * <p>A card is a fixed-size promise: it exists so the reader can scan several sources at once, and a
+ * source that fills the panel has stopped being a card. The budget is therefore a property of the
+ * CARD, not of the producer — which is why it is applied to every excerpt rather than switched on
+ * {@link Acquisition}. Two consequences worth stating, because both were live options:
+ *
+ * <ul>
+ *   <li>It does not change what a RETRIEVED source renders today. Retrieval producers already clamp
+ *     to their own smaller budget (`RagContextOps.clampExcerptToWordBoundary(content, 240)`), so
+ *     every retrieved excerpt arrives under this ceiling and is returned untouched.
+ *   <li>It bites `opened` sources because the read tool's page is the whole text the model saw (up
+ *     to `READ_PAGE_CHARS = 3000`) and MUST stay uncapped on the wire — the citation matcher verifies
+ *     an opened source against its own literal text (868 §B.1). Display is the only place this may be
+ *     shortened, and an acquisition-conditional rule would let the identical defect return the day a
+ *     retrieval producer raises its cap.
+ * </ul>
+ */
+const EXCERPT_DISPLAY_MAX_CHARS = 320;
+
+/** The lookback for the excerpt budget — matches the producer's own 40-char walk. */
+const EXCERPT_WORD_LOOKBACK_CHARS = 40;
+
+/**
+ * Project a retrieval-evidence record into the citation view-model.
+ *
+ * <p>Tempdoc 868 §B.3 — `excerpt` is the DISPLAY text and is elided here; the record's own `excerpt`
+ * is untouched, because it is evidence rather than presentation. The witness check
+ * (`charAnchor.locateWitness`, via `DocumentPane.resolveAnchor`) and the citation-select deep link
+ * both read the SOURCE, not this projection, so shortening here cannot weaken either. That split is
+ * the whole reason the clamp lives in the view-model instead of anywhere upstream of it.
+ */
 export function toEvidenceItem(c: AnswerEvidenceSource): EvidenceItem {
   return {
     docId: c.parentDocId,
     filename: filenameOf(c.parentDocId),
     score: typeof c.score === 'number' ? evidenceScore(c.score) : null,
-    excerpt: c.excerpt ?? '',
+    excerpt: elideAtWordBoundary(
+      c.excerpt ?? '',
+      EXCERPT_DISPLAY_MAX_CHARS,
+      EXCERPT_DISPLAY_MAX_CHARS - EXCERPT_WORD_LOOKBACK_CHARS,
+    ),
     headingText: c.headingText ?? '',
     location: {
       parentDocId: c.parentDocId,
@@ -766,6 +844,7 @@ export function toEvidenceItem(c: AnswerEvidenceSource): EvidenceItem {
       endChar: c.endChar,
     },
     inclusion: contextInclusionOf(c),
+    acquisition: acquisitionOf(c),
   };
 }
 
@@ -790,6 +869,42 @@ export function contextInclusionOf(
 }
 
 /**
+ * Tempdoc 868 §B.3 — read a source's {@link Acquisition} off the wire. THE one place the absent
+ * field is answered, so no reader has to decide what a missing `acquisition` means.
+ *
+ * <p>It is the mirror image of {@link contextInclusionOf}'s refusal, and the asymmetry is the point.
+ * An absent inclusion state yields `null` because "the model saw this" is a fact only a producer can
+ * report. An absent acquisition yields `retrieved` because the alternative did not exist until
+ * `core_read_document` shipped: every source minted before it, on either plane, was a ranked hit.
+ * The default describes the producer's history rather than assuming its intent.
+ *
+ * <p>An UNRECOGNISED value also reads `retrieved`, and that is deliberately not the "unknown is not
+ * known" refusal `contextInclusionOf` makes: only the read path mints `opened`, so a value this
+ * function does not recognise is not an opened source — falling back to the retrieved wording is the
+ * conservative half of 865 §7.6's invariant (never claim MORE evidence than exists is the danger;
+ * `opened` is the weaker claim, and asserting it on a guess would be the fabrication).
+ */
+export function acquisitionOf(
+  // Same bare-`string` parameter reasoning as {@link contextInclusionOf}: this function IS the
+  // narrowing, and the delegate plane's wire record carries the unnarrowed value.
+  source: { readonly acquisition?: string } | null | undefined,
+): Acquisition {
+  return source?.acquisition === 'opened' ? 'opened' : 'retrieved';
+}
+
+/**
+ * Tempdoc 868 §B.3 — the ONE authority for the word an evidence label opens with. Both label
+ * producers ({@link sourceGroundingLabel} and {@link inclusionBadge}'s `dropped` wording) route
+ * through it, so the panel and the reading pane cannot describe the same source's provenance with
+ * two different verbs.
+ */
+export function acquisitionWord(
+  source: { readonly acquisition?: string } | null | undefined,
+): string {
+  return acquisitionOf(source) === 'opened' ? 'Opened' : 'Retrieved';
+}
+
+/**
  * Tempdoc 849 §7 — the retrieved-vs-received badge, as WORDS. One authority, because the sources
  * panel and the reading pane must not describe the same budget fact two different ways.
  *
@@ -806,13 +921,22 @@ export interface InclusionBadge {
 /**
  * The badge for a resolved inclusion state — `null` for ABSENCE, which is the whole point.
  *
- * <p>The `dropped` wording is the flagship. "Retrieved" is the half the reader can already see (the
- * source is sitting in the panel); "never sent to the model" is the half nothing in the product has
- * ever said. It deliberately echoes {@link sourceGroundingLabel}'s `Retrieved · not cited` shape, so
- * the two budget facts read as siblings rather than as a verdict and an error — they are two
- * different cuts (§5.5) and neither is a fault.
+ * <p>The `dropped` wording is the flagship. "Retrieved" — or, since 868 §B.3, "Opened" — is the half
+ * the reader can already see (the source is sitting in the panel); "never sent to the model" is the
+ * half nothing in the product has ever said. It deliberately echoes {@link sourceGroundingLabel}'s
+ * `Retrieved · not cited` shape, so the two budget facts read as siblings rather than as a verdict
+ * and an error — they are two different cuts (§5.5) and neither is a fault.
+ *
+ * <p>Tempdoc 868 §B.3 — the echo is now literal: both labels take their opening word from the ONE
+ * {@link acquisitionWord} authority, so a document the agent opened by name cannot be described as
+ * retrieved on one surface and opened on the other. `source` is the record that word is read off;
+ * `included` and `partial` never name the acquisition at all, because "sent to the model" is a fact
+ * about the prompt and says nothing about how the passage got there.
  */
-export function inclusionBadge(inclusion: ContextInclusion | null): InclusionBadge | null {
+export function inclusionBadge(
+  inclusion: ContextInclusion | null,
+  source?: { readonly acquisition?: string } | null,
+): InclusionBadge | null {
   switch (inclusion) {
     case 'included':
       return {
@@ -830,9 +954,14 @@ export function inclusionBadge(inclusion: ContextInclusion | null): InclusionBad
     case 'dropped':
       return {
         state: 'dropped',
-        label: 'Retrieved · never sent to the model',
+        // Tempdoc 868 §B.3 — the DETAIL moves with the word. "The search found this passage" is a
+        // second, quieter retrieval claim, and it is false about an opened document for the same
+        // reason the label was: nothing searched, the agent asked for the document by name.
+        label: `${acquisitionWord(source)} · never sent to the model`,
         detail:
-          'The search found this passage, but the prompt had no room left for it — the model answered without ever seeing it.',
+          acquisitionOf(source) === 'opened'
+            ? 'The agent opened this document, but the prompt had no room left for it — the model answered without ever seeing it.'
+            : 'The search found this passage, but the prompt had no room left for it — the model answered without ever seeing it.',
       };
     default:
       return null;
@@ -881,10 +1010,10 @@ const TURN_LABEL_MAX_CHARS = 80;
 export function citingTurnLabel(question: string | null | undefined): string | null {
   const q = (question ?? '').trim().replace(/\s+/g, ' ');
   if (q.length === 0) return null;
-  if (q.length <= TURN_LABEL_MAX_CHARS) return q;
-  const cut = q.slice(0, TURN_LABEL_MAX_CHARS);
-  const lastSpace = cut.lastIndexOf(' ');
-  return `${(lastSpace > TURN_LABEL_MAX_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+  // The whitespace collapse above is turn-label-specific (a typed question, not corpus text), so it
+  // stays here; only the elision is shared. The lookback is unchanged at half the budget — a header
+  // this short can afford to lose half of itself to reach a space.
+  return elideAtWordBoundary(q, TURN_LABEL_MAX_CHARS, TURN_LABEL_MAX_CHARS / 2);
 }
 
 /**
@@ -989,8 +1118,8 @@ export function citationHeader(input: {
   const header: CitationHeader = {
     turnLabel: citingTurnLabel(question),
     passage: passageLabel(citation),
-    inclusion: inclusionBadge(inclusion),
-    grounding: claimable === null ? null : sourceGroundingLabel(claimable),
+    inclusion: inclusionBadge(inclusion, citation),
+    grounding: claimable === null ? null : sourceGroundingLabel(claimable, citation),
     claim: claimMatch(claimable),
     spanUnusable,
   };

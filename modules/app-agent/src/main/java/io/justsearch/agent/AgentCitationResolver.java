@@ -82,26 +82,35 @@ final class AgentCitationResolver {
     if (documentService == null || answer == null || answer.isBlank() || sources.isEmpty()) {
       return Resolved.none();
     }
-    List<DocumentService.ContextCitation> citations = new ArrayList<>(sources.size());
+    List<DocumentService.VerificationSource> verificationSources = new ArrayList<>(sources.size());
     for (AgentEvent.AgentSource s : sources) {
-      // Only parentDocId + chunkIndex drive the authoritative match (it re-fetches the chunk from
-      // the index); the other fields are display metadata, defaulted here.
+      // For a RETRIEVED source, parentDocId + chunkIndex drive the authoritative match (the Worker
+      // re-fetches that chunk from the index); the other fields are display metadata, defaulted
+      // here. Tempdoc 868 §B.1/§B.3 — an OPENED source has no chunk identity to re-fetch, so it is
+      // verified against its OWN literal text: the page the model actually saw. That is strictly
+      // more honest than a re-fetch even where both are possible (it verifies what was shown, not
+      // what the index holds now), which is why this switched from the `matchCitations` overload
+      // (which blanks every literal) to `matchCitationsAgainst`, the real method.
       // Tempdoc 865 §7.5 — the inclusion the SOURCE carries, not a hardcoded absence. Before this it
       // was `ContextInclusion.ABSENT` unconditionally, which is why 849's `suppressGroundingFor`
       // never fired on a delegate source: the predicate was there, and nothing on this plane ever
       // gave it an input. `AgentSession.collectGroundingSources` resolves the state against the
       // final prompt; this site projects it, so the matcher is asked about the same passage the
       // panel will describe.
-      citations.add(
+      var citation =
           new DocumentService.ContextCitation(
               s.parentDocId(), s.chunkIndex(), 1, 0, 0, 0f, s.excerpt(),
               s.startLine(), s.endLine(), s.headingText(), 0,
-              inclusionOf(s)));
+              inclusionOf(s));
+      String literalText =
+          AgentEvent.AgentSource.ACQUISITION_OPENED.equals(s.acquisition()) ? s.excerpt() : "";
+      verificationSources.add(
+          new DocumentService.VerificationSource(citation, literalText));
     }
     try {
       DocumentService.CitationMatchResult result =
           documentService
-              .matchCitations(answer, citations, similarityThreshold)
+              .matchCitationsAgainst(answer, verificationSources, similarityThreshold)
               .toCompletableFuture()
               .get(MATCH_TIMEOUT_MS, TimeUnit.MILLISECONDS);
       List<AgentEvent.AgentSentenceCite> out = new ArrayList<>();

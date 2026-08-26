@@ -5,7 +5,9 @@ import io.justsearch.agent.tools.BrowseTool;
 import io.justsearch.agent.tools.FileOperationLog;
 import io.justsearch.agent.tools.FileOperationsTool;
 import io.justsearch.agent.tools.IngestTool;
+import io.justsearch.agent.tools.ReadDocumentTool;
 import io.justsearch.agent.tools.SearchTool;
+import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.knowledge.IngestCollectionPolicy;
@@ -41,7 +43,9 @@ public final class AgentToolFactory {
       FileOperationsTool fileOperationsTool,
       SearchTool searchTool,
       BrowseTool browseTool,
-      IngestTool ingestTool) {}
+      IngestTool ingestTool,
+      /** Tempdoc 868 §B.2 — the content-bearing read; null when no DocumentService was supplied. */
+      ReadDocumentTool readDocumentTool) {}
 
   /**
    * Build the eager-path agent-tool instances. Returns an all-null output when either
@@ -53,9 +57,10 @@ public final class AgentToolFactory {
       RemoteKnowledgeClient knowledgeClient,
       IndexingService indexingService,
       OnlineAiService onlineAiService,
-      LambdaMartReranker lambdaMartReranker) {
+      LambdaMartReranker lambdaMartReranker,
+      DocumentService documentService) {
     if (knowledgeClient == null || indexingService == null) {
-      return new Output(null, null, null, null, null, null);
+      return new Output(null, null, null, null, null, null, null);
     }
     return assemble(
         dataDir,
@@ -66,7 +71,8 @@ public final class AgentToolFactory {
         lambdaMartReranker,
         null,
         null,
-        null);
+        null,
+        documentService);
   }
 
   /**
@@ -83,6 +89,9 @@ public final class AgentToolFactory {
    *     null on the eager path, where neither collaborator exists yet (see
    *     {@link #bindScanObservability}).
    * @param scanRollupLedger scan-rollup ledger, same lifecycle caveat as the registry.
+   * @param documentService the Worker-backed document fetch {@code ReadDocumentTool} pages over
+   *     (tempdoc 868 §B.2). Null only where no read capability can be offered; the tool is then
+   *     null and its handler is not registered, exactly as the other null-tolerant fields behave.
    */
   static Output assemble(
       Path dataDir,
@@ -93,7 +102,8 @@ public final class AgentToolFactory {
       LambdaMartReranker lambdaMartReranker,
       KnowledgeHttpApiAdapter existingAdapter,
       io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry,
-      io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger) {
+      io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger,
+      DocumentService documentService) {
     KnowledgeHttpApiAdapter agentSearchAdapter =
         existingAdapter != null
             ? existingAdapter
@@ -124,8 +134,21 @@ public final class AgentToolFactory {
             agentSearchAdapter::scanRoot,
             rootsSupplier,
             () -> rootBindings(indexingService));
+    // Tempdoc 868 §B.2: the read tool rides the SAME rootsSupplier as search, so `path` validation
+    // and `path_prefix` validation share one authority and one degrade-open rule. The fetch is the
+    // Worker's FetchDocumentSlice via DocumentService — the Head still never reads document bytes.
+    ReadDocumentTool readDocumentTool =
+        documentService == null
+            ? null
+            : new ReadDocumentTool(documentService::fetchSlice, rootsSupplier);
     return new Output(
-        agentSearchAdapter, fileOperationLog, fileOperationsTool, searchTool, browseTool, ingestTool);
+        agentSearchAdapter,
+        fileOperationLog,
+        fileOperationsTool,
+        searchTool,
+        browseTool,
+        ingestTool,
+        readDocumentTool);
   }
 
   /**

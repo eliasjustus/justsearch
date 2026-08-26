@@ -297,19 +297,37 @@ final class AgentSession {
    * the property {@code AgentSentenceCite.sourceIndex} depends on, since it is a POSITION into that
    * list and a divergence would silently point every inline mark at the wrong document.
    *
-   * <p>No success guard, deliberately. {@code searchResults} rides only a successful result ({@code
-   * SearchTool.java:281} is its one producer, and it is the {@code OperationResult.success} arm), so
-   * a guard here would be inert — while a guard that ever DID bite would break the equality above by
-   * dropping from the deltas something the accumulator kept.
+   * <p>No success guard, deliberately. Both producer keys ride only a successful result ({@code
+   * SearchTool.java:281} and {@code ReadDocumentTool}'s success arm), so a guard here would be
+   * inert — while a guard that ever DID bite would break the equality above by dropping from the
+   * deltas something the accumulator kept.
+   *
+   * <p>Tempdoc 868 §B.3 — TWO producer keys now. {@code searchResults} mints RETRIEVED sources (a
+   * ranker matched them); {@code readResults} mints OPENED ones (the agent named the document and
+   * read it). They are separate branches rather than one normalized list precisely because the
+   * acquisition axis must be decided by WHICH producer wrote the key — a read tool that emitted
+   * {@code searchResults} would mint sources indistinguishable from search hits, which is the 865
+   * §7.6 violation the axis exists to prevent. The shared {@link #establish} dedup spans both: a
+   * document already retrieved is not re-minted by a later read, so "opened" never upgrades an
+   * existing source and the delta-equals-terminal property holds across producers.
    */
   private List<AgentEvent.AgentSource> contributeGroundingSources(
       String toolCallId, OperationResult result) {
     Map<String, Object> data = result == null ? Map.of() : result.structuredData();
-    if (!(data.get("searchResults") instanceof List<?> results)) {
-      return List.of();
-    }
-    groundingSearchHits += results.size();
     var delta = new ArrayList<AgentEvent.AgentSource>();
+    if (data.get("searchResults") instanceof List<?> results) {
+      contributeSearchSources(toolCallId, results, delta);
+    }
+    if (data.get("readResults") instanceof List<?> reads) {
+      contributeReadSources(toolCallId, reads, delta);
+    }
+    return List.copyOf(delta);
+  }
+
+  /** The {@code searchResults} producer: the two identity arms, unchanged from 565 §3.A / 603 D-3. */
+  private void contributeSearchSources(
+      String toolCallId, List<?> results, List<AgentEvent.AgentSource> delta) {
+    groundingSearchHits += results.size();
     for (Object o : results) {
       if (!(o instanceof Map<?, ?> m)) {
         continue;
@@ -359,7 +377,47 @@ final class AgentSession {
       }
       // else: neither chunk identity nor a path — not addressable as a source; skipped.
     }
-    return List.copyOf(delta);
+  }
+
+  /**
+   * Tempdoc 868 §B.3 — the {@code readResults} producer. A read has only DOCUMENT-level identity: it
+   * addresses a character span, not a chunk ordinal, so it takes the same {@code doc#<path>} arm as
+   * a chunk-less search hit (sentinel chunk + lines, so the FE renders the SOURCED frame and
+   * suppresses the precise-line deep-link). The excerpt is the page the model actually saw, which is
+   * what {@code AgentCitationResolver} verifies an opened source against instead of re-fetching.
+   *
+   * <p>Read hits are NOT added to {@code groundingSearchHits}: nothing searched, so counting them
+   * would inflate a retrieval statistic with documents no ranker ever saw.
+   */
+  private void contributeReadSources(
+      String toolCallId, List<?> reads, List<AgentEvent.AgentSource> delta) {
+    for (Object o : reads) {
+      if (!(o instanceof Map<?, ?> m)) {
+        continue;
+      }
+      String path = asString(m.get("path"));
+      if (path.isBlank()) {
+        continue;
+      }
+      AgentEvent.AgentSource minted =
+          establish(
+              "doc#" + path,
+              toolCallId,
+              () ->
+                  new AgentEvent.AgentSource(
+                      path,
+                      DOC_LEVEL_SENTINEL,
+                      path,
+                      asString(m.get("title")),
+                      asString(m.get("excerpt")),
+                      DOC_LEVEL_SENTINEL,
+                      DOC_LEVEL_SENTINEL,
+                      "",
+                      AgentEvent.AgentSource.ACQUISITION_OPENED));
+      if (minted != null) {
+        delta.add(minted);
+      }
+    }
   }
 
   /**
