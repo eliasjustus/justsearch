@@ -180,14 +180,18 @@ final class AgentToolsOperationCatalogTest {
               + " the agent's own words. If it really is a computed value, add it here.");
     }
 
-    // The other direction: an id in CORPUS_READERS that no operation answers to is a rename that
-    // already broke the classification, and it downgrades silently to RUNTIME.
+    // The other direction, read from the AUTHORITY rather than restated here — a third hand-written
+    // copy of these ids would check nothing. An id in CORPUS_READERS that no operation answers to is
+    // a rename that already broke the classification, and it downgrades silently to RUNTIME.
     java.util.Set<String> declaredIds =
         new AgentToolsOperationCatalog()
             .definitions().stream()
                 .map(o -> o.id().value())
                 .collect(java.util.stream.Collectors.toSet());
-    for (String reader : List.of("core.search-index", "core.browse-folders", "core.read-document")) {
+    java.util.Set<String> readers =
+        io.justsearch.agent.api.registry.OutputLineage.corpusReaderIds();
+    assertFalse(readers.isEmpty(), "the authority must actually name some corpus readers");
+    for (String reader : readers) {
       assertTrue(
           declaredIds.contains(reader),
           "OutputLineage.CORPUS_READERS names '"

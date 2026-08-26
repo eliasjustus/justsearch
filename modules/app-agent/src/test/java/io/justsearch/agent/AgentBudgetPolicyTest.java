@@ -295,8 +295,10 @@ final class AgentBudgetPolicyTest {
   @DisplayName("878 §D.8: THOROUGH_MULTIPLIER still clears the per-run spend bound at the current iteration cap")
   void thoroughMultiplierStillClearsItsStructuralBound() {
     int maxCompletionTokens = AgentLlmCaller.DEFAULT_MAX_TOKENS;
-    // spend(run) <= maxIterations * (n_ctx + maxTokens), expressed as a multiple of n_ctx and
-    // rounded UP: the multiplier must clear the worst case, not the average one.
+    // spend(run) <= maxIterations * (n_ctx + maxTokens), expressed as a multiple of n_ctx. Kept as a
+    // double and compared with >=, so the integer multiplier must CLEAR the exact worst case rather
+    // than tie a rounded one. At today's constants the bound is 12.5 against a multiplier of 15, so
+    // the guard first bites at a cap of 13 — deliberate slack, not a tight fit.
     double boundAsMultiple =
         (double) DEFAULT_ITERATION_CAP
             * (COMPACT_N_CTX + maxCompletionTokens)

@@ -227,7 +227,9 @@ final class AgentContextCompressor {
     int chars = 0;
     while (matcher.find()) {
       lines++;
-      chars += matcher.end() - matcher.start();
+      // +1 for the line's own newline: `.*$` stops before it, but the strip removes it too, and a
+      // scar that under-reports what it removed is a small version of the defect it exists to fix.
+      chars += matcher.end() - matcher.start() + 1;
     }
     if (lines == 0) {
       return content;

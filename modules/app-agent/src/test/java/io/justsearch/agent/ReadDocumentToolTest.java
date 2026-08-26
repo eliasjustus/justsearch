@@ -357,8 +357,10 @@ final class ReadDocumentToolTest {
   void emptyExtractionAtOffsetZeroFails() {
     // The Worker answers found=true with empty content for an extraction dropout (tempdoc 790), so
     // "found" is not "readable". Succeeding here would mint an opened source with a blank literal,
-    // and a blank literal sends the matcher back to an index lookup with the document-level -1 chunk
-    // ordinal clamped to 0 — the re-fetch an opened source must never do.
+    // and a blank literal sends the matcher back to an index lookup — verifying the source against
+    // whatever the index returns instead of against the page the model was shown, which is the
+    // re-fetch an opened source must never do. (878 §D.9: this used to say the -1 chunk ordinal was
+    // clamped to 0. `ContextCitation.CHUNK_INDEX_ABSENT` preserves it, and has since 836 §8.4.)
     var dropout =
         new DocumentService.DocumentSlice(
             PATH,

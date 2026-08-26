@@ -1383,6 +1383,111 @@ class AgentLoopServiceTest {
   }
 
   /**
+   * Tempdoc 878 review B2 — a NO-TOOLS finalize must never inherit a TOOL-FORCING sampling profile.
+   *
+   * <p>{@code attemptFinalize} used the 3-argument {@code callLlmWithTools}, which resolves sampling
+   * from the SESSION via {@code resolveAgentSampling}. In the E0a forced-tool state that returns
+   * {@code tool_choice=required} PLUS {@code TOOL_CALL_GRAMMAR} — and the server applies a grammar
+   * exactly when the tools list is empty, which it always is for a finalize. The model would be
+   * CONSTRAINED to emit {@code <tool_call>{…}</tool_call>} with no tools to call, and
+   * {@code recoverInlineToolCalls} cannot strip it (its name set is empty when tools is empty), so
+   * the raw JSON blob streams out as the ANSWER of a truncated run.
+   *
+   * <p>Reachable, not theoretical: {@code recordHandoff} zeroes {@code agentIterationsSinceHandoff}
+   * and the counter only increments AFTER the LLM call, so a handoff on the last allowed iteration
+   * leaves the session forced when the loop falls through to the ceiling.
+   *
+   * <p>The budget wall never met this because its outer gate excludes forced-tool turns for an
+   * unrelated reason. Asserted here at the FINALIZE, because that is where the fix lives: a no-tools
+   * call pins its own unconstrained profile instead of every call site remembering a guard.
+   */
+  @Test
+  @DisplayName("878 B2: the ceiling finalize is never grammar-constrained, even from a forced-tool session")
+  void theFinalizeNeverInheritsATellingToolForcingProfile() {
+    var session = new AgentSession(new ArrayList<>(userMessage("q")), 8000);
+    // E0a: a handoff to a non-primary agent, whose very next turn is forced to call a tool.
+    session.recordHandoff("primary", "organizer", "delegating the ingest");
+    assertTrue(
+        AgentTurnPolicy.shouldForceToolCall(session),
+        "precondition: this session IS in the forced-tool state, or the test proves nothing");
+    var forced = AgentLlmCaller.resolveAgentSampling(session);
+    assertEquals(
+        "required",
+        forced.toolChoice(),
+        "precondition: session-resolved sampling really does force a tool call here — this is the"
+            + " half a reader cannot check by reading attemptFinalize");
+    assertNotNull(forced.grammar(), "and really does carry the tool-call grammar");
+
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("Partial answer.")));
+    new AgentLlmCaller(ai, AgentTelemetry.noop(), new AgentContextCompressor(true, 200, 1))
+        .attemptStepCeilingFinalize(session, event -> {});
+
+    assertEquals(1, ai.recordedSampling.size(), "the finalize made exactly one call");
+    var used = ai.recordedSampling.get(0);
+    assertNull(
+        used.grammar(),
+        "RED BEFORE the B2 fix: the finalize resolved sampling from the session and inherited"
+            + " TOOL_CALL_GRAMMAR, so the model was constrained to emit a <tool_call> blob with no"
+            + " tools to call — machine syntax presented as the run's answer");
+    assertNotEquals(
+        "required",
+        used.toolChoice(),
+        "and it must not force a tool choice either: there are no tools in this call to choose");
+    assertTrue(ai.recordedTools.get(0).isEmpty(), "the finalize is a no-tools call by construction");
+  }
+
+  /**
+   * Tempdoc 878 review B1 — the END-TO-END measurement, through the real Layer-2 cut.
+   *
+   * <p>The two unit-level tests hand-pass a count, so neither could see that the PRODUCER was
+   * measuring the wrong string: {@code AgentContextCompressor.truncate} returns the prefix plus a
+   * {@code [... truncated, N chars omitted]} marker, and measuring its return value reported ~35
+   * characters MORE than the model received. This runs a real over-cap tool result through the real
+   * loop and asserts the relationship that must hold — the count is what the prompt got, and it is
+   * a fraction of what the tool returned.
+   */
+  @Test
+  @DisplayName("878 B1: an over-cap tool result reports the chars the PROMPT got, not the marker's length")
+  void anOverCapToolResultReportsWhatThePromptActuallyGot() {
+    String bigOutput = "y".repeat(9000);
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.textOnly("done")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, bigOutput));
+
+    var events = run(service, userMessage("big result"), 4);
+
+    var completed =
+        events.stream()
+            .filter(AgentEvent.ToolExecutionCompleted.class::isInstance)
+            .map(AgentEvent.ToolExecutionCompleted.class::cast)
+            .filter(e -> "call_1".equals(e.callId()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no completion for call_1"));
+
+    assertEquals(
+        bigOutput.length(),
+        completed.result().message().length(),
+        "`output` on the wire stays the tool's WHOLE answer — the reader is not context-bound");
+    assertTrue(
+        completed.outputCharsToModel() < bigOutput.length(),
+        "and the model got strictly less: "
+            + completed.outputCharsToModel()
+            + " vs "
+            + bigOutput.length());
+    assertEquals(
+        AgentContextCompressor.MAX_TOOL_RESULT_CHARS,
+        completed.outputCharsToModel(),
+        "RED BEFORE the B1 fix: the producer measured truncate()'s RETURN, which carries the"
+            + " `[... truncated, N chars omitted]` marker, so it reported ~35 chars more than the"
+            + " prompt received — a number larger than the output for a small overflow, which"
+            + " inverted truncatedForModel into a measured 'the model got all of it'");
+    assertTrue(completed.truncatedForModel(), "and the derived flag agrees with the count");
+  }
+
+  /**
    * Tempdoc 878 §D.1 — the ceiling ATTEMPTS synthesis, and the attempt is a real no-tools LLM call.
    *
    * <p>The defect: {@code AgentLoopService} emitted an empty answer and returned, so a run that had
@@ -3009,10 +3114,16 @@ class AgentLoopServiceTest {
   @Test
   @DisplayName("859 §D T4 — hitting the iteration ceiling declares MAX_ITERATIONS")
   void iterationCeilingDeclaresItsDisposition() {
-    // The other truncating terminal, and the one where the model CANNOT disclose even in principle:
-    // it produces no answer text at all. Closing this in the same PR is the point — the FE derives
-    // cut-short from both values, so leaving one unstamped would leave the same hole under a
+    // The other truncating terminal. Closing this in the same PR was the point — the FE derives
+    // cut-short from both values, so leaving one unstamped would have left the same hole under a
     // different name.
+    //
+    // Tempdoc 878 §D.1 — this used to say the ceiling "produces no answer text at all", and the
+    // empty-response assertion below rested on that. It no longer does: the ceiling now makes one
+    // no-tools synthesis call. THIS FIXTURE deliberately exercises the ANSWERLESS arm — the
+    // two-response script is exhausted by the time the finalize runs, so the call fails and the
+    // terminal falls back to exactly the pre-878 behaviour. That is the fail-open floor, and
+    // asserting it here is what keeps the floor from silently rising.
     var ai =
         new ScriptedAiService(
             List.of(
@@ -3022,7 +3133,11 @@ class AgentLoopServiceTest {
     var done = lastEventOfType(events, AgentEvent.AgentDone.class);
     assertNotNull(done, "the ceiling terminal still emits a done");
     assertEquals("MAX_ITERATIONS", done.disposition());
-    assertEquals("", done.finalResponse(), "with no answer text for the model to disclose in");
+    assertEquals(
+        "",
+        done.finalResponse(),
+        "the finalize could not run (script exhausted), so the terminal is answerless — and the"
+            + " disposition is stamped anyway, which is the whole fail-closed guarantee");
   }
 
   // ---------------------------------------------------------------------------

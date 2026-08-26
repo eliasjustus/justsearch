@@ -2536,7 +2536,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 
 ### obs:agentevent — AgentDone.ofDisposition hardcodes List.of()/List.of()/SCORER_NONE, so the MAX_ITERATIONS terminal di
 `kind: defect?` `anchor: modules/app-agent-api/src/main/java/io/justsearch/agent/api/AgentEvent.java` `seen: 2` `first: 2026-08-25` `last: 2026-08-26`
-- [ ] AgentDone.ofDisposition hardcodes List.of()/List.of()/SCORER_NONE, so the MAX_ITERATIONS terminal discards a full run's accumulated grounding sources through the SUCCESS path — found during 865 rev-2 review verification — `modules/app-agent-api/src/main/java/io/justsearch/agent/api/AgentEvent.java:287-303` (2026-08-25)
+- [x] ~~AgentDone.ofDisposition hardcodes List.of()/List.of()/SCORER_NONE, so the MAX_ITERATIONS terminal discards a full run's accumulated grounding sources through the SUCCESS path — found during 865 rev-2 review verification — `modules/app-agent-api/src/main/java/io/justsearch/agent/api/AgentEvent.java:287-303` (2026-08-25)~~ RESOLVED (2026-08-26, tempdoc 878 §D.1): the factory is DELETED. The ceiling had no route to `AgentStepRunner.groundedDone` — that was the whole reason `ofDisposition` existed — so 878 gave it one (`finalizeAtIterationCeiling`); the terminal now carries the run's evidence like every other, and terminal equivalence covers three dispositions instead of two. (2026-08-26)
 - [ ] CI javadoc warning MissingSummary at AgentEvent.java:500 (AgentSource acquisition javadoc opens with a @see-style fragment) — cosmetic, from PR #566 (2026-08-26)
 
 ### obs:runsteppresentation — Progress phase `context_gate_reapplied` is emitted by the loop but absent from PROGRESS_PHASE_LABELS

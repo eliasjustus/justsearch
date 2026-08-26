@@ -224,8 +224,12 @@ const ceilTo = (value: number, unit: number): number => Math.ceil(value / unit) 
  *    DISPLAY, because showing a reader a negative remaining is nonsense — but borrowing a display
  *    clamp into arithmetic would under-fund every over-budget gate by exactly the overrun.
  *  - `headroom` is the provider-REPORTED last prompt, not a fraction of `tokensNeeded`.
- *    `tokensNeeded` is the loop's projection, which is schema-blind and measured ~40% low (577);
- *    sizing the safety margin from the biased number would bias the margin the same way.
+ *    `tokensNeeded` is the loop's PROJECTION of the next prompt. It was also schema-blind and
+ *    measured ~40% low (577) until tempdoc 878 §D.6 threaded the iteration's tool list through it,
+ *    and sizing a safety margin from a biased number biases the margin the same way. That
+ *    particular bias is gone, but the choice stands on its own remaining ground: a projection is a
+ *    forecast of a prompt not yet built, while the reported prompt is a measurement of one that
+ *    was — and a safety margin should be sized from a measurement.
  *
  * **Monotone separation.** Flooring collapses steps: three arms can land on the same number with
  * three different labels. After flooring, each step is pushed strictly above the previous one by a

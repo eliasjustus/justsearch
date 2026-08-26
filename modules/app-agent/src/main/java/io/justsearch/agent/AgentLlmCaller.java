@@ -181,7 +181,22 @@ final class AgentLlmCaller {
       // picture — silently withholding the badge precisely where the most text had been dropped.
       session.recordCompression(compressor.compressToolMessages(session.messages()));
       session.appendMessage(Map.of("role", "user", "content", instruction + openedInventory(session)));
-      LlmCallResult result = callLlmWithTools(session, List.of(), sink);
+      // Tempdoc 878 review B2 — SAMPLING IS PASSED EXPLICITLY, never resolved from the session.
+      //
+      // The 3-argument overload resolves it via `resolveAgentSampling`, which returns
+      // `tool_choice=required` PLUS `TOOL_CALL_GRAMMAR` whenever `shouldForceToolCall` holds — and
+      // `OnlineModeOps` forwards a grammar exactly when the tools list is empty, which it always is
+      // here. A finalize sampled that way is constrained to emit `<tool_call>{…}</tool_call>` with no
+      // tools to call, and `recoverInlineToolCalls` cannot strip it (its name set is empty), so the
+      // raw blob streams out AS THE ANSWER of a truncated run.
+      //
+      // The budget wall never hit this because its OUTER gate already excludes the forced-tool state
+      // for its own reason (E0a must not be stranded). The iteration ceiling has no such gate and
+      // must not grow one: at a hard ceiling the run is over either way, and a synthesis attempt is
+      // still the right thing. Fixing it HERE makes the invariant structural — a no-tools call is
+      // never tool-forced — instead of a guard every future call site has to remember.
+      LlmCallResult result =
+          callLlmWithTools(session, List.of(), sink, SamplingParams.AGENT);
       String text = result.textContent();
       return text != null && !text.isBlank() ? text : null;
     } catch (Exception e) {

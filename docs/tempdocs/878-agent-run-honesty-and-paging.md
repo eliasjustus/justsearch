@@ -781,15 +781,90 @@ the *reason* generalizes, not because the fix was hard.
 | 4 | `ToolExecutionCompleted.outputCharsToModel` (+ derived `truncatedForModel`), the Layer-2 cut moved before the emit at all three seams, payload + `AgentRunShape` + fixture + generated FE types + `AgentInteractionMapper` + `sv3-record` + the tool card's note; `AgentRunStore.updateCheckpoint` javadoc names which store answers which question | `toolCompletedReportsWhatReachedTheModel`; ui-web `878 §D.4 — says when the MODEL received less…` and its silent-in-two-ways sibling |
 | 5 | `withLineage` at the virtual seam; `everyDispatchSeamStillStampsTheLineage`; `OperationResult.LINEAGE_KEY`; `RunChannelPolicy.carriesBulk` (a classification stamp is not bulk) | `everyDispatchSeamStillStampsTheLineage`, `aClassificationStampIsNotBulk`, and the lineage assertions added to `virtualToolRun_keepsTerminalEquivalence` |
 | 6 | `tools` threaded through `applyTemplate` / `countPromptTokens` / `OnlineAiService` (defaulted overload) and passed at both `AgentStepRunner` projection sites | `applyTemplate_sendsToolsWhenListNonEmpty`, `applyTemplate_emptyToolsProducesBodyIdenticalToNoToolsForm`, `countPromptTokens_interfaceDefault_delegatesToSingleArgumentForm` |
-| 7 | `total_chars` end to end (proto → Worker → `DocumentSlice` → read header); `intArg` coerces integer strings and refuses anything else loudly; an errored slice reports its reason instead of "not found"; one-page-per-document declared in the operation description; the finalize instruction carries the run's opened-document inventory; `AgentBudgetPolicyTest.thoroughMultiplierStillClearsItsStructuralBound` | the `ReadDocumentToolTest` additions and `thoroughMultiplierStillClearsItsStructuralBound` |
+| 7 | `total_chars` end to end (proto → Worker → `DocumentSlice` → read header); `intArg` coerces integer strings and refuses anything else loudly; an errored slice reports its reason instead of "not found"; one-page-per-document declared in the operation description; the finalize instruction carries the run's opened-document inventory | `stringifiedOffsetIsCoercedNotDropped` (asserted 0 on `main`, asserts 3000 now — the sharpest one), `unusableOffsetIsRefusedLoudly`, `unusableSliceSurfacesItsReason`, `headerNamesTheTotalWhenTheSliceReportsOne` |
 | 8 | `SourceAcquisition` enum in `app-agent-api`, `AgentSource`'s constants projected from it and its compact constructor normalising through `fromWireToken`; the stale `ContextCitation`-clamps-to-0 comment corrected | wire tokens unchanged is the test (existing `AgentSessionGroundingTest` assertions) |
 | 9 | `everyAgentOperationIsClassifiedByOutputLineage` — every AGENT-tagged operation must be a declared corpus reader or a declared runtime one, and every `CORPUS_READERS` id must still name a declared operation | that test |
+
+**One addition is deliberately NOT a regression test, and saying so matters.**
+`AgentBudgetPolicyTest.thoroughMultiplierStillClearsItsStructuralBound` is GREEN on `main` — 15x
+already clears the 12.5x bound at today's cap of 10. It is a RATCHET, not a red-before-green: it
+computes the bound from the constants so the next cap raise fails the build instead of silently
+voiding the derivation the Thorough rung's meaning rests on (§D.8). Listing it beside the genuine
+regressions would be the same category error this tempdoc is about.
 
 Canonical doc: `docs/explanation/22-agent-system-architecture.md` gains a **Run-honesty invariants**
 section — the involuntary-terminal rule and the elision-mark table — plus the read tool's row
 updated for the total and the one-page default.
 
-### §I.3 Delegation
+### §I.3 Independent review — findings and dispositions
+
+An independent refute-first opus reviewer (read-only, ≠ implementer) audited the committed diff. It
+found **two BLOCKERs, both real and both mine.** Every finding is recorded, including the ones not
+taken and why.
+
+**B1 — the model-visibility count measured the envelope, not the output. FIXED.**
+`AgentContextCompressor.truncate` does not return a prefix; it returns the prefix PLUS a
+`[... truncated, N chars omitted]` marker, ~35 characters of framing. The producer measured the
+returned string, so for an output just over the cap it reported MORE characters than the tool
+produced — which inverted the derived `truncatedForModel` into a measured *"the model got all of
+it"* on an output it demonstrably did not get all of, and put a number on the tool card larger than
+the output it was a fraction of. This is the exact mixed signal §D.4 chose a single derived
+component to make impossible, reintroduced one layer down, in the field whose entire purpose is to
+stop guessing. `charsToModel` now measures the ORIGINAL, capped: the marker is in the prompt but it
+is not the tool's answer, and this field counts the answer. Pinned by
+`anOverCapToolResultReportsWhatThePromptActuallyGot` (a real 9000-char result through the real loop
+— the two unit tests hand-passed a count and so could not see it) and by
+`theModelCountIsAFractionOfTheOutput`, which states the invariant rather than a magic number.
+
+**B2 — the ceiling finalize could be sent grammar-constrained to emit a tool call. FIXED.**
+`attemptFinalize` used the 3-argument `callLlmWithTools`, which resolves sampling from the SESSION.
+In the E0a forced-tool state that returns `tool_choice=required` **plus** `TOOL_CALL_GRAMMAR` — and
+the server applies a grammar exactly when the tools list is empty, which it always is for a
+finalize. The model would be CONSTRAINED to emit `<tool_call>{…}</tool_call>` with no tools to call,
+and `recoverInlineToolCalls` cannot strip it (its name set is empty when tools is empty), so a raw
+JSON blob would stream out AS THE ANSWER of a truncated run. Reachable, not exotic: `recordHandoff`
+zeroes `agentIterationsSinceHandoff` and the counter only increments after the LLM call, so a
+handoff on the last allowed iteration leaves the session forced when the loop falls through.
+
+The budget wall never met this because its outer gate excludes forced-tool turns for an unrelated
+reason (E0a must not be stranded). §D.1's claim that the machinery was reused "verbatim" was
+therefore wrong in the one way that mattered — it reused the finalize and not the guard around it.
+The fix is at the finalize, not at the call site: a no-tools call now pins `SamplingParams.AGENT`
+explicitly, so the invariant is structural rather than something every future caller must remember.
+The ceiling deliberately does NOT grow the budget wall's outer gate — at a hard ceiling the run is
+over either way and a synthesis attempt is still right. Pinned by
+`theFinalizeNeverInheritsATellingToolForcingProfile`, which asserts the premise (session-resolved
+sampling really does force a tool call here) before asserting the fix.
+
+**S1–S6, all FIXED.** The sweep §D.10 committed to was incomplete, which is the residue-outliving-
+its-reason failure the rule exists to prevent, committed inside the tempdoc that cites it:
+the stale `ContextCitation`-clamps-to-`0` claim survived in three more places (`ReadDocumentTool`,
+`AgentSessionGroundingTest`, `ReadDocumentToolTest`); `ofDisposition` and "MAX_ITERATIONS claims no
+grounding" survived in `governance/execution-surfaces.v1.json` (a governance register naming a
+deleted symbol) and as an open item in `docs/observations.md` (now marked resolved);
+`iterationCeilingDeclaresItsDisposition`'s comment and assertion reason had become false, and its
+fixture is now labelled as deliberately exercising the fail-open arm; "schema-blind and measured
+~40% low" survived in `budgetProjection.ts`, where it is the STATED REASON the headroom uses the
+reported prompt — the one place a reader would act on it (the choice stands, on its remaining
+ground: a margin should be sized from a measurement, not a forecast). `turnHasAnswerText` asked
+`.some(kind === 'text')` while its javadoc said "terminal text item", so a run with interim prose and
+no answer would have claimed one; it now goes through `terminalTextItemId`, the same authority both
+render iterators use. And `everyAgentOperationIsClassifiedByOutputLineage`'s second direction was a
+third hand-written copy of the reader ids rather than a binding — `OutputLineage.corpusReaderIds()`
+now exposes the authority and the test iterates it.
+
+**NITs taken:** the scar's char count was short by one newline per removed line; `badIntArg` echoed
+an unbounded `JsonNode` (an error is not a channel for returning content); the handoff confirmation
+— the third `ToolExecutionCompleted` producer — stamped no lineage; and `intArg` accepted a
+non-integral JSON number while refusing its stringified twin, which made its own "must be a whole
+number" message false in one of the two cases.
+
+**NITs not taken, with reasons:** the ceiling can now block for the LLM timeout where it previously
+returned instantly — that is the budget wall's existing behaviour and the cost of attempting
+synthesis at all, not a defect this tempdoc introduces. `AgentBudgetPolicyTest`'s "rounded UP" prose
+was corrected rather than the arithmetic, which was already right.
+
+### §I.4 Delegation
 
 Two bounded chunks ran as pinned-opus subagents in this worktree on disjoint modules — the
 schema-aware token projection (§D.6, `app-inference` + `app-api`) and the read tool's three silent

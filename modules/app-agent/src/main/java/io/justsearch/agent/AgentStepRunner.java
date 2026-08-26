@@ -261,9 +261,11 @@ final class AgentStepRunner {
                     budgetSnapshot,
                     session.totalTokens(),
                     // Tempdoc 859 D live-defect (minor) — `promptTokens` stays 0 HONESTLY: this
-                    // phase has no provider-reported prompt, and putting the schema-blind projection
-                    // in the field documented as "the latest LLM call's prompt size" would make the
-                    // context meter read a number no call ever had. The WINDOW, though, is known
+                    // phase has no provider-reported prompt, and putting the PROJECTION in the field
+                    // documented as "the latest LLM call's prompt size" would make the context meter
+                    // read a number no call ever had. (878 §D.6 made the projection schema-aware; it
+                    // is still a forecast of a prompt not yet sent, which is why it does not belong
+                    // in a field that reports a measurement.) The WINDOW, though, is known
                     // here exactly as it is on `llm_response`, and shipping 0 for it made two frames
                     // of one run disagree about the model they were describing.
                     0,
@@ -782,16 +784,20 @@ final class AgentStepRunner {
             // Swap the trace Sequencer AFTER HandoffExecuted so it carries fromId
             traceSequencerRef.set(new AgentEventTracing.Sequencer(sessionId, toId));
 
-            // Tempdoc 878 §D.4 — the same measurement as the other two emit sites. A handoff
-            // confirmation is far under the Layer-2 cap, so this always reports "all of it"; the
-            // point is that the FE never has to distinguish "not truncated" from "not measured"
-            // depending on which seam produced the event.
-            String handoffContent =
-                AgentContextCompressor.truncate("Handoff to " + toId + " confirmed.");
+            // Tempdoc 878 §D.4/§D.5 — the handoff confirmation is the THIRD producer of this event,
+            // and it gets the same two stamps as the other two. The measurement, because the FE must
+            // never have to distinguish "not truncated" from "not measured" by guessing which seam
+            // produced the event (a handoff line is far under the Layer-2 cap, so this always reports
+            // "all of it" — that is the point, not a triviality). And the lineage, because the FE's
+            // default is fail-open: unstamped renders exactly as a runtime value, so "classified
+            // runtime" and "never classified" are indistinguishable unless every producer stamps.
+            String handoffText = "Handoff to " + toId + " confirmed.";
+            String handoffContent = AgentContextCompressor.truncate(handoffText);
             sink.accept(new AgentEvent.ToolExecutionCompleted(
                 call.id(),
-                OperationResult.success("Handoff to " + toId + " confirmed."),
-                charsToModel(handoffContent)));
+                OperationResult.success(handoffText)
+                    .withLineage(io.justsearch.agent.api.registry.OutputLineage.RUNTIME),
+                charsToModel(handoffText)));
             session.appendMessage(Map.of(
                 "role", "tool",
                 "tool_call_id", call.id(),
@@ -978,7 +984,7 @@ final class AgentStepRunner {
           String modelContent = AgentContextCompressor.truncate(toolResult.message());
           sink.accept(
               new AgentEvent.ToolExecutionCompleted(
-                  call.id(), toolResult, charsToModel(modelContent)));
+                  call.id(), toolResult, charsToModel(toolResult.message())));
 
           // Append tool result to conversation for next iteration (truncated to save context)
           session.appendMessage(Map.of(
@@ -1083,15 +1089,26 @@ final class AgentStepRunner {
   }
 
   /**
-   * Tempdoc 878 §D.4 — how many characters of a tool result were placed in the prompt.
+   * Tempdoc 878 §D.4 — how many characters OF THE TOOL'S OUTPUT were placed in the prompt.
    *
    * <p>ONE helper for all three emit sites (main dispatch, handoff confirmation, virtual tool),
    * because a measurement present at some seams and absent at others is worse than none: the FE
    * could not tell "this output was not truncated" from "whoever emitted this did not measure", and
    * would have to guess which — on a field whose entire purpose is to stop guessing.
+   *
+   * <p><b>Measured from the ORIGINAL, not from the truncated string, and that is the whole
+   * correctness of it.</b> {@code AgentContextCompressor.truncate} does not return a prefix — it
+   * returns the prefix PLUS a {@code [... truncated, N chars omitted]} marker, ~35 characters of
+   * framing that are not output. Measuring the returned string therefore reported MORE characters
+   * than the tool produced for any output just over the cap, which inverted the derived {@code
+   * truncatedForModel} into "the model got all of it" on an output it demonstrably did not, and put
+   * a number on the tool card larger than the output it was a fraction of. The marker is in the
+   * prompt; it is not the tool's answer, and this field counts the answer.
    */
-  private static int charsToModel(String modelContent) {
-    return modelContent == null ? 0 : modelContent.length();
+  private static int charsToModel(String output) {
+    return output == null
+        ? 0
+        : Math.min(output.length(), AgentContextCompressor.MAX_TOOL_RESULT_CHARS);
   }
 
   private AgentEvent.AgentDone groundedDone(
@@ -1289,7 +1306,8 @@ final class AgentStepRunner {
     // Tempdoc 878 §D.4 — cut first, then report what reached the model (see the main seam).
     String modelContent = AgentContextCompressor.truncate(opResult.message());
     sink.accept(
-        new AgentEvent.ToolExecutionCompleted(call.id(), opResult, charsToModel(modelContent)));
+        new AgentEvent.ToolExecutionCompleted(
+            call.id(), opResult, charsToModel(opResult.message())));
     session.appendMessage(
         Map.of("role", "tool", "tool_call_id", call.id(), "content", modelContent));
     session.recordCompression(compressor.compressToolMessages(session.messages()));

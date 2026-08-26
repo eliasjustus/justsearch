@@ -211,9 +211,16 @@ public final class ReadDocumentTool {
   /**
    * The extraction-dropout arm. Fails rather than succeeding with an empty page, because an empty
    * page is worse than useless downstream: it mints an opened source with a BLANK literal, and a
-   * blank literal makes {@code DocumentService.matchCitationsAgainst} fall back to an index lookup
-   * whose {@code -1} chunk ordinal is clamped to {@code 0} — an opened source silently verified
-   * against a chunk nobody read.
+   * blank literal makes {@code DocumentService.matchCitationsAgainst} fall back to an index lookup —
+   * an opened source silently verified against text nobody read, instead of against the page the
+   * model was shown.
+   *
+   * <p>Tempdoc 878 §D.9 corrects the reason this used to give. It said the fallback's {@code -1}
+   * chunk ordinal was "clamped to {@code 0}", which was true when written and has not been since:
+   * {@code ContextCitation.CHUNK_INDEX_ABSENT} PRESERVES {@code -1} (the 836 §8.4 fix) exactly so
+   * "no chunk position" stops reading as "the first chunk". The refusal is still right; only its
+   * stated cause had gone stale — the more dangerous of the two states, because a reader checks the
+   * reason and not the guard.
    */
   private static OperationResult noExtractedText(
       String path, DocumentService.DocumentSlice slice) {
@@ -351,6 +358,11 @@ public final class ReadDocumentTool {
    * available here. Anything else (a non-numeric string, an object, an array, a boolean) is refused
    * out loud so the model can correct the call instead of reading the same page forever.
    *
+   * <p>A NON-INTEGRAL number is refused on the same terms as {@code "3000.9"} (878 review). The
+   * refusal message says "must be a whole number", and a branch that silently floored {@code 3000.9}
+   * while refusing its stringified twin would make that sentence false in one of the two cases — a
+   * small version of the exact defect this method exists to remove.
+   *
    * <p>Tempdoc 877 is building a shared {@code ToolArgs} helper with this same contract; fold this
    * into it when it lands.
    */
@@ -359,8 +371,11 @@ public final class ReadDocumentTool {
       return fallback;
     }
     JsonNode node = args.get(field);
-    if (node.isNumber()) {
+    if (node.isIntegralNumber()) {
       return node.asInt(fallback);
+    }
+    if (node.isNumber()) {
+      return null;
     }
     if (node.isString()) {
       try {
@@ -372,15 +387,28 @@ public final class ReadDocumentTool {
     return null;
   }
 
+  /**
+   * The loud refusal. Names the field AND the offending value, because a model that cannot see what
+   * it sent cannot correct it — but the value is BOUNDED: a model that passes a large object as
+   * {@code offset_chars} would otherwise get an error message the size of that object, and an error
+   * is not a channel for returning content.
+   */
   private static OperationResult badIntArg(JsonNode args, String field) {
+    String offending = String.valueOf(args.get(field));
+    if (offending.length() > BAD_ARG_ECHO_CHARS) {
+      offending = offending.substring(0, BAD_ARG_ECHO_CHARS) + "…";
+    }
     return OperationResult.failure(
         field
             + " must be a whole number, but was "
-            + args.get(field)
+            + offending
             + ". Call core_read_document again with "
             + field
             + " as a number, e.g. \"offset_chars\": 3000.");
   }
+
+  /** How much of an unusable argument is echoed back — enough to recognise, not enough to carry. */
+  private static final int BAD_ARG_ECHO_CHARS = 120;
 
   private List<BrowseTool.RootInfo> roots() {
     if (rootsSupplier == null) {

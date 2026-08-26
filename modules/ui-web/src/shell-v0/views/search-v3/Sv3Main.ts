@@ -271,13 +271,29 @@ function terminalTextItemId(items: readonly Sv3RunFeedItem[]): string | null {
  * only on the RECORD path (`sv3-record`'s `answers.join`). Reading `turn.answer` alone would report
  * every live delegate run as answerless and print "before reaching an answer" directly above the
  * answer the reader is looking at.
+ *
+ * TERMINAL item, not any text item — see {@link hasTerminalText}.
  */
 function turnHasAnswerText(turn: Sv3Turn, run: Sv3RunView | null): boolean {
-  if (run !== null) {
-    return run.feed.items.some((item) => item.kind === 'text' && item.text.trim() !== '');
-  }
+  if (run !== null) return hasTerminalText(run.feed.items);
   if (turn.answer.trim() !== '') return true;
-  return turn.activity.some((item) => item.kind === 'text' && item.text.trim() !== '');
+  return hasTerminalText(turn.activity);
+}
+
+/**
+ * Does this feed's ANSWER — its terminal text item — carry prose?
+ *
+ * Deliberately not `.some(kind === 'text')`. A run that produced interim prose and then ended
+ * without an answer would satisfy that, and the notice would say "this answer is based on what the
+ * run had gathered" while pointing at a mid-run remark that is not the answer. `terminalTextItemId`
+ * is the same authority both render iterators use to decide which item wears the inline marks, and
+ * for the same reason: the grounding — and the notice — describe the ANSWER, not the transcript.
+ */
+function hasTerminalText(items: readonly Sv3RunFeedItem[]): boolean {
+  const id = terminalTextItemId(items);
+  if (id === null) return false;
+  const terminal = items.find((item) => item.id === id);
+  return terminal?.kind === 'text' && terminal.text.trim() !== '';
 }
 
 export class Sv3Main extends JfElement {
