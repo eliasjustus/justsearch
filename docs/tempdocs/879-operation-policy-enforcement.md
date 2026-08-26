@@ -814,6 +814,87 @@ failed two *different* files that also passed in isolation — load flakes from 
 a signal. The orchestrator re-runs the full suite once at the end, unloaded, rather than trusting
 this.
 
+### F.4 What the store-register work found, and the CI wiring it forced
+
+`check-store-recoverability.mjs` was **red on `main`** and invoked by no workflow and no gate id —
+its only wiring was a manual row in `CLAUDE.md`'s pre-merge table. An unclassified persistence write
+site (`AcquisitionStage.java`, writing managed model assets under AI_HOME) had been sitting there
+since PR #483 while the register's last touch was PR #381. Nobody ran it, so nobody saw it.
+
+That is this tempdoc's thesis one more altitude up, and it forced a scope decision. Shipping
+`check-policy-axis-liveness.mjs` as another manual pre-merge row would have reproduced the exact
+defect the gate exists to catch — an enforcement mechanism nothing runs cannot contradict anything.
+So both gates (plus the store gate's own unit tests, which also ran nowhere) are wired into
+`ci.yml` in this PR rather than left as a follow-up.
+
+Beyond the red: `ownedPaths` turned out to be unvalidated free text, and **four** rows disagreed
+with the code that writes them, not the one the handover named — `durable-grants`
+(`intent/` vs the real `ui/`), `ui-settings`, `plugin-allowlist`, and `watched-roots` (hyphen vs
+the real underscore). The drift was not cosmetic: `scripts/dev/dev-runner.cjs` derives its
+soft-clean keep-set from the first path segment of every AUTHORED row, so a data-loss guard was
+protecting a directory (`intent/`) that has never existed, while the real one survived only because
+it was *separately* hand-listed. The register is corrected to match the code (shipped user data
+already occupies those paths), and the gate now checks each declared path's literal segments
+against string literals in the row's own `implementationSources`, with `COMPOSED` as a *stated*
+exclusion a row must justify rather than an unanswered question.
+
+Every row now carries a required `encryption` disposition. The final split: 5
+`SEALED_BY_STORE_CIPHER`, 18 `NOT_APPLICABLE`, 6 unsealed for a *named structural* reason (1 key
+root, 3 external authorities, 2 Rust-owned with no JVM cipher reachable) — and **7**
+`UNSEALED_GAP`, one more than the review found: `entity-clusters` also holds authored user data
+(the `entity_overrides` merge/split decisions) in plaintext SQLite. Each gap row carries a note
+saying what the plaintext contains. `pathVerification` came out 31 `LITERAL` / 5 `COMPOSED`, so the
+stated-exclusion escape was used sparingly rather than to silence failures. No bytes changed;
+sealing is O-2 below.
+
+### F.5 Interruption and recovery
+
+This session was terminated mid-flight by an account session limit, taking three sub-workers with
+it. The worktree survived intact and the tree compiled, so the recovery was inventory → verify each
+worker's half → commit → merge `origin/main`. Recorded because the recovery shape is the useful
+part: `git status` plus a compile told the whole story in two commands, and every worker's change
+was independently checkable against its own acceptance test rather than against a report that no
+longer existed.
+
+The merge brought tempdoc 872, which retired the observations inbox. The six notes this
+workstream's shard had accumulated were routed per the new rule (§G) and the shard deleted;
+`check-no-observations-shards` is green.
+
+---
+
+## §G. Findings routed out of this workstream
+
+Three findings surfaced during the work that are **not** this tempdoc's subject. Recorded here with
+their evidence so they are routed rather than piled, per `rule:log-pre-existing-issues`.
+
+1. **`WireContractVersion.CURRENT` has silently drifted from its declared source.**
+   `modules/app-api/src/main/java/io/justsearch/app/api/stream/WireContractVersion.java:53` hard-codes
+   `"0.2.0"` while its own javadoc says "Sourced from `contracts/wire/VERSION`". `VERSION` read
+   `1.0.3` before this PR and `2.0.0` after (removing a proto field is a major bump under the file's
+   own stated rule). So the constant `/infra/capabilities` advertises has been wrong across two
+   major bumps. **Deliberately not fixed here**: correcting the constant changes what the API
+   advertises, which is a behaviour change with consumers this workstream has not surveyed, and
+   "declared source that isn't the source" is a wire-contract subject rather than an operation-policy
+   one. It is the same bug class as this tempdoc, at a third site.
+
+2. **The `wire` gate may report `pass` when it cannot run.** A worker observed that with
+   `scripts/wire-contract/node_modules` absent, `scripts/governance/gates/wire/protobuf-buf-breaking.mjs`
+   emits an `error`-level `contract-governance/buf-cli-missing` finding and the gate still reports
+   `wire: pass`. **Stated as an unreproduced worker observation, not a verified finding** — I did not
+   reproduce it (the dependencies were installed by the time I looked, and I will not report a
+   gate-integrity defect on hearsay). The reproduction for whoever picks it up: remove
+   `scripts/wire-contract/node_modules`, run `node scripts/governance/run.mjs --gate wire --mode gate`,
+   and check whether the verdict is `pass`. If it is, a gate that cannot run is reporting success —
+   which would make every `wire: pass` in the repo's history conditional on a directory nobody checks.
+   *This PR's own `wire: pass` was re-run with the dependencies present and returned 0 findings.*
+
+3. **`NdjsonInferenceTransitionLogTest` "retention prunes entries older than the cutoff" failed once
+   under load** (`modules/app-inference/src/test/java/io/justsearch/inference/NdjsonInferenceTransitionLogTest.java:95`)
+   and passed on immediate re-run, during a full suite executed with three concurrent Gradle builds.
+   **Deliberately not pinned** in `expected-state.v1.json`: one failure under abnormal load does not
+   establish a steady state, and that file's own contract warns that a pin whose red is gone is a lie.
+   Reported so a second sighting has something to join.
+
 ---
 
 ## OWNER-DECISION — items this workstream deliberately does not decide
@@ -847,10 +928,21 @@ re-fetch on demand.
 `events.ndjson` stores for *arguments* and giving the 30-day retention a named constant — neither of
 which needs the reference scheme. Not implemented here either way.
 
-### O-2. Which of the six plaintext AUTHORED stores should be sealed
+### O-3. The encrypted backup contains four stores and silently omits the rest
 
-D.8 makes every row declare an answer; it does not change any bytes. The six carrying real user data
-in plaintext are `action-ledger-audit-journal` and `file-operation-journal` (absolute user paths),
-`watched-roots` (the indexed-folder list), `ui-settings`, `plugin-allowlist`, and `durable-grants`
-(where the exposure is tamper rather than privacy — an unauthenticated file decides what runs
-without a gate). Each would need an on-disk migration. Recorded, not decided.
+Surfaced by the store-register work (`ConversationBackupController.java:62`). The backup enumerates
+a hand-maintained registration list, not `StoreCatalog`, and covers conversations, memories,
+agent-runs and feedback. A restore therefore silently loses the indexed-folder list, UI settings,
+plugin trust decisions, standing grants, and the audit trail — with no warning that the bundle was
+partial. `StoreCatalog.isAuthored()` now has a consumer (registration asserts it), so the two lists
+can no longer disagree about *class*; they can still disagree about *membership*. Whether a backup
+should carry the other AUTHORED stores is a product decision, not an axis-enforcement one.
+
+### O-2. Which of the seven plaintext AUTHORED stores should be sealed
+
+D.8 makes every row declare an answer; it does not change any bytes. The seven now labelled
+`UNSEALED_GAP` are `action-ledger-audit-journal` and `file-operation-journal` (absolute user paths),
+`watched-roots` (the indexed-folder list), `ui-settings` (including the configured local model
+path), `plugin-allowlist`, `entity-clusters` (the user's own entity merge/split decisions), and
+`durable-grants` — where the exposure is tamper rather than privacy: an unauthenticated file decides
+what the agent may run without a gate. Each would need an on-disk migration. Recorded, not decided.

@@ -172,6 +172,20 @@ jobs:
       - name: no observations shards (inbox retired)
         run: node scripts/ci/check-no-observations-shards.mjs
 
+      # Tempdoc 879. Both gates below existed only as manual pre-merge rows, which is the same
+      # defect they check for: a mechanism nothing runs cannot contradict anything. The store
+      # register's gate was in fact RED on main for ~90 commits (an unclassified persistence
+      # write site) precisely because no workflow invoked it. Wired here in the PR that fixes
+      # it, not left as a follow-up.
+      - name: Operation policy axes have live consumers
+        run: node scripts/ci/check-policy-axis-liveness.mjs
+
+      - name: Test store-recoverability register checks
+        run: node scripts/ci/check-store-recoverability.test.mjs
+
+      - name: Store-recoverability register agrees with the code
+        run: node scripts/ci/check-store-recoverability.mjs
+
       - name: Test dead-config scanner (config-surface gate)
         run: node scripts/ci/test-config-surface-dead-config.mjs
 

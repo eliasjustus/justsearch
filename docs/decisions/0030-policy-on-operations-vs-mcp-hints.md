@@ -127,6 +127,13 @@ public final class OperationExecutor {
     (untrusted plugins cannot self-grant capabilities).
   - Treats `rateLimit` as a maximum rather than a request.
 
+*(Amended 2026-08-26: this branch is unimplemented — it throws — and two
+of the four levers it names no longer exist. `AuditPolicy.FULL_PAYLOAD` and
+`OperationPolicy.rateLimit` were deleted by tempdoc 879 because no operation
+declared either and no runtime read them. The list is retained as the
+historical design commitment; whoever implements the tier chooses levers
+that exist. See "Amendment: what is actually enforced" below.)*
+
 The UNTRUSTED_PLUGIN branch is the MCP-aligned tier. JustSearch
 adopts MCP discipline where MCP's threat model applies (untrusted
 publisher) and diverges where it doesn't (trusted single distribution).
