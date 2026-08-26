@@ -84,7 +84,12 @@ final class NdjsonInferenceTransitionLogTest {
   @Test
   @DisplayName("retention prunes entries older than the cutoff")
   void retentionPrunes(@TempDir Path tmp) throws Exception {
-    var log = new NdjsonInferenceTransitionLog(tmp, Duration.ofMillis(100));
+    // The cutoff is recomputed from System.currentTimeMillis() on EVERY record() (see the
+    // production prune), so the retention window must outlast this test's own execution or the
+    // "current" record below is pruned by its own write and the assertion races. At 100ms it lost
+    // that race on a loaded machine and in isolation. Two seconds still prunes the 5s/10s-old
+    // records the test is about, and no longer depends on how fast three file rewrites happen.
+    var log = new NdjsonInferenceTransitionLog(tmp, Duration.ofSeconds(2));
     long now = System.currentTimeMillis();
     log.record(now - 10_000L, "OFFLINE", "ONLINE", "USER_SWITCH", true, 1, null, 1); // old
     log.record(now - 5_000L, "ONLINE", "INDEXING", "USER_SWITCH", true, 1, null, 2); // old

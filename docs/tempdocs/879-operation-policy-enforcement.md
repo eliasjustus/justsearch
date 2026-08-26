@@ -930,6 +930,28 @@ The reviewer also refuted the hypothesis the brief had handed it — that the fo
 constructor arities were the likely bug. They are strict prefixes of the canonical list, so
 positional attribution is sound. The actual mechanism was somewhere the brief did not point.
 
+### F.7 A masked green, caught
+
+Worth recording because it nearly produced a false verification claim in a PR about false
+verification. Two post-merge `build -x test` runs reported **exit 0** and were briefly treated as a
+green compile. Reading the captured log instead of the exit code showed Gradle had never started:
+
+```
+gradle-locked.sh: line 7: syntax error near unexpected token `;'
+```
+
+The shared `gradle-locked.sh` wrapper was being rewritten in place by another agent at the moment
+my shell read it, so bash executed a torn file. The exit code was 0 because the command was
+`bash … > log 2>&1; echo "RC=$?"` — the harness reports the *compound* command's status, and `echo`
+succeeds. This is `piped-exit-masked` (agent-lessons.md) in a new costume: not a pipe, but the same
+mechanism — the thing whose exit code you get is not the thing you care about.
+
+The general lesson, which the existing rule does not quite cover: **a shared wrapper script is
+mutable infrastructure**, and a run through it can fail in ways that look nothing like the command
+failing. Assert on the log's `BUILD SUCCESSFUL` line, never on the wrapper's exit status. Reported
+for routing rather than fixed here — the script lives outside the repo, in the orchestration
+scratch directory.
+
 ---
 
 ## §G. Findings routed out of this workstream
@@ -958,12 +980,32 @@ their evidence so they are routed rather than piled, per `rule:log-pre-existing-
    which would make every `wire: pass` in the repo's history conditional on a directory nobody checks.
    *This PR's own `wire: pass` was re-run with the dependencies present and returned 0 findings.*
 
-3. **`NdjsonInferenceTransitionLogTest` "retention prunes entries older than the cutoff" failed once
-   under load** (`modules/app-inference/src/test/java/io/justsearch/inference/NdjsonInferenceTransitionLogTest.java:95`)
-   and passed on immediate re-run, during a full suite executed with three concurrent Gradle builds.
-   **Deliberately not pinned** in `expected-state.v1.json`: one failure under abnormal load does not
-   establish a steady state, and that file's own contract warns that a pin whose red is gone is a lie.
-   Reported so a second sighting has something to join.
+3. **`NdjsonInferenceTransitionLogTest` "retention prunes entries older than the cutoff" — diagnosed
+   and fixed, after an earlier judgement call went the wrong way.**
+   (`modules/app-inference/src/test/java/io/justsearch/app/inference/NdjsonInferenceTransitionLogTest.java:88`)
+
+   First sighting was one failure during a full suite run with three concurrent Gradle builds. I
+   declined to pin it, reasoning that one failure under abnormal load does not establish a steady
+   state. That reasoning was wrong in its conclusion: it treated "load-induced" as a *cause* when it
+   was only a *trigger*. The test failed again on the next full run and a third time in isolation
+   with `--rerun` and no concurrent load.
+
+   The root cause is a race by construction, not an environment artifact. `NdjsonInferenceTransitionLog`
+   recomputes `cutoff = System.currentTimeMillis() - retention` inside the prune that runs on **every**
+   `record()` call. The test constructed the log with a 100 ms retention, captured `now`, then wrote
+   three records — so if more than 100 ms elapsed between capturing `now` and the third write's prune,
+   the "current" record the test asserts on was pruned by its own write. Three file read-modify-write
+   cycles on Windows regularly exceed 100 ms. Load made it likely; it was always possible.
+
+   Fixed at the root by widening the test's retention to 2 s: the 5 s- and 10 s-old records it is
+   actually about still prune, and the assertion no longer depends on machine speed. Not pinned,
+   because a pin for a red that is now green would be exactly the lie `expected-state.v1.json`'s own
+   contract warns about. `app-inference` is otherwise untouched by this branch, and the module is
+   green on re-run.
+
+   The transferable lesson: "it only fails under load" is a hypothesis about the trigger, and says
+   nothing about whether the defect is real. A timing assertion that can lose a race under load can
+   lose it without load too.
 
 ---
 
