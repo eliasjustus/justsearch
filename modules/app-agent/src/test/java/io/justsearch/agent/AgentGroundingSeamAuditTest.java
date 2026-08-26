@@ -39,27 +39,24 @@ import org.junit.jupiter.api.Test;
  *   <li><b>{@code AgentStepRunner.groundedDone}</b> — THE attach seam (computes sources from the
  *       session, resolves inline citations via {@code AgentCitationResolver}).
  *   <li><b>{@code AgentEvent.AgentDone} itself</b> — the record's own convenience-constructor
- *       delegations (4/5/7/8-arg → canonical 9-arg) AND the {@code ofDisposition} static factory
- *       (859 §D), which builds an UNGROUNDED terminal — {@code List.of()} sources and citations,
- *       {@code SCORER_NONE} — for the max-iterations ceiling. It attaches nothing; it exists because
- *       that ceiling has to declare its disposition, and routing it through the canonical
- *       constructor from {@code AgentLoopService} would trip this rule for a reason that has nothing
- *       to do with grounding.
+ *       delegations (4/5/7/8-arg → canonical 9-arg).
  *   <li><b>{@code AgentEventTracing}</b> — the uniform trace-decoration pass-through, which
  *       reconstructs every event type with a {@code TraceContext} added; it <em>copies</em> the
  *       source event's already-attached {@code sources()}/{@code citations()}, it does not attach
  *       new grounding.
  * </ol>
  *
- * <p><b>Second honest limit, from the {@code ofDisposition} route (859 §D review).</b> This rule is
- * {@code callConstructorWhere}: it sees CONSTRUCTOR calls. A static factory on the record is
- * therefore invisible to it twice over — the factory's own call to the canonical constructor is
- * exempted by the {@code AGENT_DONE} origin check, and the factory's CALLERS are not constructor
- * calls at all, so they are never examined. That is correct today, because {@code ofDisposition}
- * hardcodes empty grounding and cannot be handed any. It stops being correct the moment a factory on
- * this record accepts sources or citations as parameters: such a factory would be a second attach
- * site that this rule cannot see. If one is ever added, extend the predicate to method calls
- * targeting {@code AgentDone}'s grounding-bearing static factories.
+ * <p><b>Second honest limit — static factories are invisible to this rule.</b> It is {@code
+ * callConstructorWhere}: it sees CONSTRUCTOR calls. A static factory on the record would be
+ * invisible twice over — its own call to the canonical constructor is exempted by the {@code
+ * AGENT_DONE} origin check, and its CALLERS are not constructor calls at all, so they are never
+ * examined. 859 §D added exactly such a factory ({@code ofDisposition}) for the max-iterations
+ * ceiling, which then had no route to {@link AgentStepRunner#groundedDone}; tempdoc 878 §D.1 gave
+ * the ceiling that route ({@code AgentStepRunner.finalizeAtIterationCeiling}) and deleted the
+ * factory, so no such blind spot exists today. It would return the moment a factory on this record
+ * accepts sources or citations as parameters — that would be a second attach site this rule cannot
+ * see. If one is ever added, extend the predicate to method calls targeting {@code AgentDone}'s
+ * grounding-bearing static factories.
  *
  * <p><b>Honest scope (the seam, not the runtime property).</b> This pins "no second site ATTACHES
  * grounding" — it does not assert the runtime property "every answer that had search hits IS
@@ -106,7 +103,7 @@ final class AgentGroundingSeamAuditTest {
   /**
    * The three sites permitted to construct a grounding-carrying {@code AgentDone} (see class
    * javadoc): the attach seam {@code AgentStepRunner.groundedDone}, the record's own ctor
-   * delegations and {@code ofDisposition} factory, and the trace-decoration pass-through.
+   * delegations, and the trace-decoration pass-through.
    */
   private static boolean isPermittedGroundingCtorCaller(JavaConstructorCall call) {
     String origin = call.getOriginOwner().getName();
@@ -115,8 +112,8 @@ final class AgentGroundingSeamAuditTest {
     if (origin.equals(AgentStepRunner.class.getName()) && method.equals("groundedDone")) {
       return true;
     }
-    // 2. AgentDone's own delegations: the convenience constructors (4/5/7/8-arg -> canonical 9-arg)
-    // and the ungrounded `ofDisposition` factory. Both are intra-record shims, not attach sites.
+    // 2. AgentDone's own delegations: the convenience constructors (4/5/7/8-arg -> canonical
+    // 9-arg). Intra-record shims, not attach sites.
     if (origin.equals(AGENT_DONE)) {
       return true;
     }
@@ -130,6 +127,13 @@ final class AgentGroundingSeamAuditTest {
    */
   private static final String GROUNDING_STAMP =
       io.justsearch.agent.api.registry.OperationResult.class.getName() + ".withGrounding(";
+
+  /**
+   * Tempdoc 878 §D.5 — the text-provenance stamp's fully-qualified target: {@code
+   * OperationResult.withLineage(…)}.
+   */
+  private static final String LINEAGE_STAMP =
+      io.justsearch.agent.api.registry.OperationResult.class.getName() + ".withLineage(";
 
   /**
    * Is this a call to the grounding-delta STAMP made from somewhere that is not the dispatch seam?
@@ -157,9 +161,13 @@ final class AgentGroundingSeamAuditTest {
    * places 865 §7.1 mints and stamps a grounding delta.
    *
    * <p>They are two because the loop has two dispatch channels, not because the seam was widened for
-   * convenience: {@code executeIteration} runs the synchronous executor (and already stamps {@code
-   * withLineage} in the same block), and {@code handleVirtualToolCall} runs the {@code vop_*} channel
-   * whose result arrives from the FE. Both call {@code recordExecution}, so both feed the
+   * convenience: {@code executeIteration} runs the synchronous executor, and {@code
+   * handleVirtualToolCall} runs the {@code vop_*} channel whose result arrives from the FE. Both
+   * stamp the text-provenance lineage too (tempdoc 878 §D.5 — the virtual seam had been skipping it
+   * since 577 called that stamp "the single authoritative" one, so the FE's fail-open default framed
+   * a whole channel's output by accident rather than by classification; {@link
+   * #everyDispatchSeamStillStampsTheLineage} now pins it per seam). Both call {@code
+   * recordExecution}, so both feed the
    * accumulator — and a site that feeds the accumulator without stamping breaks terminal equivalence
    * just as surely as a second mint would, by leaving a gap in the deltas that the terminal list does
    * not have. This rule cannot see that shape (it governs stamping, not recording), which is why the
@@ -268,6 +276,41 @@ final class AgentGroundingSeamAuditTest {
               + " OperationResult.withGrounding (tempdoc 865 §7.1). Recording without stamping puts"
               + " the source in the terminal list and NOT in the deltas, so the concatenation stops"
               + " equalling the terminal and every position after the gap shifts.");
+    }
+  }
+
+  /**
+   * Tempdoc 878 §D.5 — the same existence rule, for the OTHER per-call stamp.
+   *
+   * <p>{@code OutputLineage} is the display half of prompt-injection safety: the backend classifies
+   * a tool output's text-provenance once, at dispatch, and the FE frames corpus-quoted text as
+   * quoted so citation- or instruction-shaped bytes inside it cannot read as the agent's own claim.
+   * The FE's default is FAIL-OPEN ({@code toolOutputLineage}: unknown ⇒ {@code runtime} ⇒ no frame),
+   * which is what made the virtual seam's missing stamp invisible for a whole release — the output
+   * rendered exactly as an unframed runtime value, because that is what unstamped looks like.
+   *
+   * <p>Per SEAM, for the reason the grounding half is: "somewhere in this class" stays green after
+   * the stamp is dropped from one of the two channels, and that is precisely the state this rule was
+   * written to catch.
+   */
+  @Test
+  void everyDispatchSeamStillStampsTheLineage() {
+    JavaClasses classes = productionAgentClasses();
+    for (String seam : DISPATCH_SEAM_METHODS) {
+      boolean stamped =
+          classes.get(AgentStepRunner.class).getMethodCallsFromSelf().stream()
+              .anyMatch(
+                  call ->
+                      call.getTarget().getFullName().startsWith(LINEAGE_STAMP)
+                          && call.getOrigin().getName().equals(seam));
+      org.junit.jupiter.api.Assertions.assertTrue(
+          stamped,
+          "AgentStepRunner."
+              + seam
+              + " dispatches a tool call, so it must stamp that result's text-provenance via"
+              + " OperationResult.withLineage (tempdoc 577 §2.14 Root III / 878 §D.5). An unstamped"
+              + " result is indistinguishable from a runtime value on the FE, because unknown"
+              + " lineage fails open to exactly that.");
     }
   }
 

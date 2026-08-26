@@ -307,6 +307,22 @@
             "objectType": ""
           },
           {
+            "name": "outputCharsToModel",
+            "type": "NUMBER",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "truncatedForModel",
+            "type": "BOOLEAN",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
             "name": "trace",
             "type": "OBJECT",
             "optional": true,

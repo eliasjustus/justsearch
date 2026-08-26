@@ -271,4 +271,73 @@ final class AgentBudgetPolicyTest {
     // And it never goes negative on a pathologically small window.
     assertEquals(0, AgentBudgetPolicy.initialBudget(null, 100, true));
   }
+
+  /**
+   * Tempdoc 878 §D.8 — the Thorough rung's STRUCTURAL BOUND, computed instead of asserted in prose.
+   *
+   * <p>{@link AgentBudgetPolicy}'s javadoc derives 15x from {@code maxIterations * (n_ctx +
+   * maxTokens)}, and states what the rung therefore MEANS: "tokens can never be what stops this run
+   * — the iteration cap is." That derivation is stated in terms of the ITERATION CAP, so the cap and
+   * the multiplier are one decision wearing two hats. Nothing enforced the link: raising the FE's
+   * cap from 10 to 20 — a one-line edit in a file that knows nothing about budgets — would double
+   * the bound to ~25x, silently void the derivation, and turn Thorough into a rung tokens CAN stop,
+   * with every existing test still green.
+   *
+   * <p>878 designed an effort-scaled cap and deliberately did not ship the number, because it is a
+   * spend decision. This is the half that does ship: the next agent to change the cap gets a red
+   * build naming the multiplier that has to move with it, instead of a rung whose meaning quietly
+   * stopped being true.
+   *
+   * <p>Asserted at the COMPACT window, which is the binding one — the bound as a multiple is
+   * {@code maxIterations * (1 + maxTokens/n_ctx)}, largest at the smallest window.
+   */
+  @Test
+  @DisplayName("878 §D.8: THOROUGH_MULTIPLIER still clears the per-run spend bound at the current iteration cap")
+  void thoroughMultiplierStillClearsItsStructuralBound() {
+    int maxCompletionTokens = AgentLlmCaller.DEFAULT_MAX_TOKENS;
+    // spend(run) <= maxIterations * (n_ctx + maxTokens), expressed as a multiple of n_ctx and
+    // rounded UP: the multiplier must clear the worst case, not the average one.
+    double boundAsMultiple =
+        (double) DEFAULT_ITERATION_CAP
+            * (COMPACT_N_CTX + maxCompletionTokens)
+            / COMPACT_N_CTX;
+
+    assertTrue(
+        AgentBudgetPolicy.THOROUGH_MULTIPLIER >= boundAsMultiple,
+        "THOROUGH_MULTIPLIER is "
+            + AgentBudgetPolicy.THOROUGH_MULTIPLIER
+            + "x but the structural bound at n_ctx "
+            + COMPACT_N_CTX
+            + ", maxTokens "
+            + maxCompletionTokens
+            + " and an iteration cap of "
+            + DEFAULT_ITERATION_CAP
+            + " is "
+            + boundAsMultiple
+            + "x. Whoever raised the cap (or the completion cap) has to re-derive the multiplier"
+            + " with it — otherwise the Thorough rung stops meaning 'tokens can never be what stops"
+            + " this run', which is the only thing that distinguishes it from Standard.");
+
+    // The Standard rung is the deliberate opposite and must NOT clear the bound: it is the rung
+    // where tokens genuinely can stop a run. Pinning both directions is what stops a future edit
+    // from "fixing" the assertion above by raising every multiplier.
+    assertTrue(
+        AgentBudgetPolicy.STANDARD_MULTIPLIER < boundAsMultiple,
+        "STANDARD_MULTIPLIER must stay UNDER the structural bound — a Standard run that tokens"
+            + " cannot stop is a Thorough run with a different name");
+  }
+
+  /**
+   * The delegate cap the frontend sends today ({@code AgentSessionController.DEFAULT_MAX_ITERATIONS
+   * = 10}), and the number the bound above is derived at.
+   *
+   * <p>It is duplicated here rather than read from the FE because a Java test cannot see a
+   * TypeScript constant. That makes this copy exactly the kind of unbound duplicate 878 §T.7 warns
+   * about — so the failure message names the coupling explicitly, and a cap change that forgets this
+   * file produces a bound that is too LOW, i.e. a test that passes when it should fail. That is the
+   * honest limit of this guard: it catches the multiplier moving without the cap, and it catches a
+   * cap change made by someone who updated this constant. It cannot catch a cap change made in
+   * ignorance of it.
+   */
+  private static final int DEFAULT_ITERATION_CAP = 10;
 }

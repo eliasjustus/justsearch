@@ -268,6 +268,49 @@ describe('ToolCallCard', () => {
     el.remove();
   });
 
+  it('878 §D.4 — says when the MODEL received less of the output than the reader is seeing', async () => {
+    // The panel shows what the tool returned; the agent loop appends a truncated copy to the prompt.
+    // Both are honest answers to "what was the output", and until the backend labelled them the card
+    // silently gave the first while the agent worked from the second — so a reader debugging a wrong
+    // answer was looking at evidence the model never had.
+    const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+    el.toolCall = fake({
+      status: 'completed',
+      output: 'x'.repeat(9000),
+      outputCharsToModel: 4000,
+      truncatedForModel: true,
+    });
+    document.body.appendChild(el);
+    await settle(el);
+    const note = el.shadowRoot?.querySelector('[data-testid="tool-output-model-note"]');
+    expect(note, 'a truncated-for-the-model output must say so').not.toBeNull();
+    expect(note?.textContent).toContain('4,000');
+    expect(note?.textContent, 'and name the whole, so the gap is legible').toContain('9,000');
+    // The panel itself is unchanged: shrinking it to the model's view would be a NEW dishonesty.
+    expect(el.shadowRoot?.querySelector('.tool-output')?.textContent?.length).toBe(9000);
+    el.remove();
+  });
+
+  it('878 §D.4 — says NOTHING when the model got all of it, and nothing when nobody measured', async () => {
+    // Two distinct silences, and conflating them is the defect. An unmeasured record (everything
+    // written before the backend carried this field, and any emitter that does not measure) must
+    // not be retroactively described as complete.
+    for (const tc of [
+      { outputCharsToModel: 12, truncatedForModel: false },
+      {},
+    ]) {
+      const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+      el.toolCall = fake({ status: 'completed', output: 'short output', ...tc });
+      document.body.appendChild(el);
+      await settle(el);
+      expect(
+        el.shadowRoot?.querySelector('[data-testid="tool-output-model-note"]'),
+        `no note for ${JSON.stringify(tc)}`,
+      ).toBeNull();
+      el.remove();
+    }
+  });
+
   it('falls back to the raw output when there is no structured search evidence', async () => {
     const el = document.createElement('jf-tool-call-card') as ToolCallCard;
     el.toolCall = fake({ status: 'completed', output: 'plain text result' });

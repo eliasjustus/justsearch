@@ -56,10 +56,23 @@ final class ReadDocumentToolTest {
     return slice(PATH, content, truncated, nextOffset);
   }
 
+  /** Default fixture: total UNKNOWN (0), i.e. the pre-878 producer, so the header is the old one. */
   private static DocumentService.DocumentSlice slice(
       String path, String content, boolean truncated, int nextOffset) {
+    return slice(path, content, truncated, nextOffset, 0);
+  }
+
+  private static DocumentService.DocumentSlice slice(
+      String path, String content, boolean truncated, int nextOffset, int totalChars) {
     return new DocumentService.DocumentSlice(
-        path, content, Map.of("title", "Quarterly Report"), true, truncated, nextOffset, null);
+        path,
+        content,
+        Map.of("title", "Quarterly Report"),
+        true,
+        truncated,
+        nextOffset,
+        totalChars,
+        null);
   }
 
   private static String page(int chars) {
@@ -128,6 +141,122 @@ final class ReadDocumentToolTest {
   }
 
   @Test
+  @DisplayName("878: the header names the DOCUMENT total when the slice reports one")
+  void headerNamesTheTotalWhenTheSliceReportsOne() {
+    // Without a denominator a model at n_ctx 4096 cannot choose between paging and sampling a 27 KB
+    // document, so it pages to exhaustion. The Worker already knew the total and threw it away.
+    var fetch = new FakeFetch(slice(PATH, page(3000), true, 3000, 27431));
+    OperationResult result =
+        new ReadDocumentTool(fetch).execute("{\"path\":\"" + PATH + "\",\"offset_chars\":0}");
+
+    String firstLine = result.message().lines().findFirst().orElseThrow();
+    assertTrue(
+        firstLine.startsWith("[read] " + PATH + " — chars 0–3000 of 27431"),
+        "got: " + firstLine);
+    assertFalse(
+        firstLine.contains("of more"),
+        "'of more' is the DEGRADED denominator; a real total replaces it: " + firstLine);
+    assertTrue(
+        firstLine.contains("core_read_document again with offset_chars=3000"),
+        "the continuation wording and offset are unchanged: " + firstLine);
+  }
+
+  @Test
+  @DisplayName("878: an unknown total (0) leaves the header byte-for-byte what it was")
+  void headerOmitsTheTotalWhenTheProducerCannotSayIt() {
+    // 0 means UNKNOWN — an older Worker, or a source with no total. Inventing one would be worse
+    // than omitting it, so this path must stay identical to the pre-878 header.
+    var fetch = new FakeFetch(slice(PATH, page(500), true, 500, 0));
+    OperationResult result =
+        new ReadDocumentTool(fetch).execute("{\"path\":\"" + PATH + "\",\"offset_chars\":0}");
+
+    String firstLine = result.message().lines().findFirst().orElseThrow();
+    assertEquals(
+        "[read] " + PATH + " — chars 0–500 of more; More: call core_read_document again with"
+            + " offset_chars=500",
+        firstLine,
+        "an unknown total must not change the header at all");
+  }
+
+  @Test
+  @DisplayName("878: a full page under a maximal path AND a total still survives Layer-2 truncation")
+  void fullPageWithATotalIsNotClippedByLayerTwo() {
+    // Companion to fullPageIsNotClippedByLayerTwo: the total lengthens the header, so the headroom
+    // budget has to cover the LONGER envelope too, not just the pre-878 one.
+    String longPath = longWindowsPath();
+    var fetch =
+        new FakeFetch(
+            slice(longPath, page(ReadDocumentTool.READ_PAGE_CHARS), true, 3000, 987_654_321));
+    OperationResult result =
+        new ReadDocumentTool(fetch)
+            .execute("{\"path\":\"" + longPath.replace("\\", "\\\\") + "\"}");
+
+    assertTrue(result.success(), result.message());
+    String message = result.message();
+    assertTrue(message.contains(" of 987654321"), "the total is in the header: " + message);
+    assertSame(
+        message,
+        AgentContextCompressor.truncate(message),
+        "the denominator must fit inside PAGE_HEADROOM_CHARS. message length="
+            + message.length()
+            + " cap="
+            + AgentContextCompressor.MAX_TOOL_RESULT_CHARS);
+  }
+
+  @Test
+  @DisplayName("878: a STRINGIFIED offset_chars pages forward — it must never silently re-serve page 1")
+  void stringifiedOffsetIsCoercedNotDropped() {
+    // Small models emit {"offset_chars": "3000"} constantly. The old intArg fell back to 0 and the
+    // tool returned page 1 again — a duplicate page that looks to the model like progress.
+    var fetch = new FakeFetch(slice(page(120), false, 3120));
+    OperationResult result =
+        new ReadDocumentTool(fetch)
+            .execute("{\"path\":\"" + PATH + "\",\"offset_chars\":\"3000\"}");
+
+    assertTrue(result.success(), result.message());
+    assertEquals(3000, fetch.lastOffset, "the stringified offset must reach the fetcher as 3000");
+  }
+
+  @Test
+  @DisplayName("878: a stringified max_chars is coerced and still capped at READ_PAGE_CHARS")
+  void stringifiedMaxCharsIsCoercedAndCapped() {
+    var fetch = new FakeFetch(slice(page(10), false, 10));
+    new ReadDocumentTool(fetch)
+        .execute("{\"path\":\"" + PATH + "\",\"max_chars\":\"100000\",\"offset_chars\":\"7\"}");
+    assertEquals(ReadDocumentTool.READ_PAGE_CHARS, fetch.lastMaxChars);
+    assertEquals(7, fetch.lastOffset);
+  }
+
+  @Test
+  @DisplayName("878: an unusable offset_chars is refused OUT LOUD, naming the field")
+  void unusableOffsetIsRefusedLoudly() {
+    // Falling back to the default here would hand the model page 1 under a different name. A
+    // refusal that names the field is the only answer it can act on.
+    var fetch = new FakeFetch(slice(page(120), false, 120));
+    OperationResult result =
+        new ReadDocumentTool(fetch)
+            .execute("{\"path\":\"" + PATH + "\",\"offset_chars\":\"abc\"}");
+
+    assertFalse(result.success(), "a garbage offset must not read page 1: " + result.message());
+    assertTrue(result.message().contains("offset_chars"), result.message());
+    assertTrue(result.message().contains("abc"), "the offending value is named: " + result.message());
+    assertEquals(-1, fetch.lastOffset, "no fetch is attempted on an unusable argument");
+  }
+
+  @Test
+  @DisplayName("878: a non-scalar max_chars is refused rather than silently defaulted")
+  void nonScalarMaxCharsIsRefused() {
+    var fetch = new FakeFetch(slice(page(120), false, 120));
+    OperationResult result =
+        new ReadDocumentTool(fetch)
+            .execute("{\"path\":\"" + PATH + "\",\"max_chars\":{\"value\":10}}");
+
+    assertFalse(result.success(), result.message());
+    assertTrue(result.message().contains("max_chars"), result.message());
+    assertEquals(-1, fetch.lastMaxChars, "no fetch is attempted on an unusable argument");
+  }
+
+  @Test
   @DisplayName("a complete page carries no More: line — the loop has a termination signal")
   void completePageHasNoMoreLine() {
     var fetch = new FakeFetch(slice(page(120), false, 120));
@@ -176,7 +305,7 @@ final class ReadDocumentToolTest {
   @DisplayName("the title falls back to the file name when the document carries no title metadata")
   void titleFallsBackToFileName() {
     var untitled =
-        new DocumentService.DocumentSlice(PATH, "body", Map.of(), true, false, 4, null);
+        new DocumentService.DocumentSlice(PATH, "body", Map.of(), true, false, 4, 4, null);
     OperationResult result =
         new ReadDocumentTool(new FakeFetch(untitled)).execute("{\"path\":\"" + PATH + "\"}");
     Map<?, ?> item = (Map<?, ?>) ((List<?>) result.structuredData().get("readResults")).get(0);
@@ -184,16 +313,41 @@ final class ReadDocumentToolTest {
   }
 
   @Test
-  @DisplayName("a document the index does not hold fails with the two tools that could find it")
-  void notFoundNamesTheRecoveryPath() {
-    var missing =
+  @DisplayName("878: an unusable slice that says WHY reports the reason, not 'not found'")
+  void unusableSliceSurfacesItsReason() {
+    // The producers set `error` for several different causes ("not_found", "missing_doc_id", the
+    // Worker's own read failure). Reporting all of them as "not found in the index — use
+    // core_browse_folders" sends the model hunting for a path that exists. The recovery guidance
+    // still rides along, so a genuinely-missing document loses nothing.
+    var failed =
         new DocumentService.DocumentSlice(
-            PATH, "", Map.of(), false, false, 0, "not_found");
+            PATH, "", Map.of(), false, false, 0, 0, "Document not found in index");
+    OperationResult result =
+        new ReadDocumentTool(new FakeFetch(failed)).execute("{\"path\":\"" + PATH + "\"}");
+
+    assertFalse(result.success());
+    assertTrue(
+        result.message().contains("Document not found in index"),
+        "the producer's own reason must reach the model: " + result.message());
+    assertTrue(result.message().contains(PATH), result.message());
+    assertTrue(result.message().contains("core_browse_folders"));
+    assertTrue(result.message().contains("core_search_index"));
+  }
+
+  @Test
+  @DisplayName("878: an unusable slice with NO reason falls back to today's not-found guidance")
+  void unusableSliceWithoutAReasonKeepsTheNotFoundGuidance() {
+    // The discriminator is the PRESENCE of a reason, never its wording — string-matching the
+    // Worker's prose would make that prose a contract.
+    var missing =
+        new DocumentService.DocumentSlice(PATH, "", Map.of(), false, false, 0, 0, null);
     OperationResult result =
         new ReadDocumentTool(new FakeFetch(missing)).execute("{\"path\":\"" + PATH + "\"}");
 
     assertFalse(result.success());
-    assertTrue(result.message().startsWith("Document not found in the index: " + PATH));
+    assertTrue(
+        result.message().startsWith("Document not found in the index: " + PATH),
+        result.message());
     assertTrue(result.message().contains("core_browse_folders"));
     assertTrue(result.message().contains("core_search_index"));
   }
@@ -213,6 +367,7 @@ final class ReadDocumentToolTest {
             true,
             false,
             0,
+            0,
             null);
     OperationResult result =
         new ReadDocumentTool(new FakeFetch(dropout)).execute("{\"path\":\"" + PATH + "\"}");
@@ -230,7 +385,7 @@ final class ReadDocumentToolTest {
   void emptyExtractionFallsBackToTheExtractionMethod() {
     var dropout =
         new DocumentService.DocumentSlice(
-            PATH, "", Map.of("extraction_method", "NONE"), true, false, 0, null);
+            PATH, "", Map.of("extraction_method", "NONE"), true, false, 0, 0, null);
     OperationResult result =
         new ReadDocumentTool(new FakeFetch(dropout)).execute("{\"path\":\"" + PATH + "\"}");
     assertFalse(result.success());

@@ -114,11 +114,48 @@ public sealed interface AgentEvent {
     }
   }
 
-  /** Tool execution completed. */
-  record ToolExecutionCompleted(String callId, OperationResult result, TraceContext trace)
+  /**
+   * Tool execution completed.
+   *
+   * <p>Tempdoc 878 §D.4 — {@code outputCharsToModel} is how much of {@link OperationResult#message}
+   * was actually placed in the prompt. The wire has always carried the tool's WHOLE output while the
+   * loop appended a Layer-2-truncated copy to the conversation, so the reader was shown more than
+   * the model ever saw, with nothing on the event saying so.
+   *
+   * <p>ONE component, not a count plus a boolean: "truncated for the model" is DERIVED from the
+   * count ({@link #truncatedForModel}) so the two can never contradict each other. {@link
+   * #CHARS_TO_MODEL_UNMEASURED} is a real third state — an emitter that did not measure says
+   * nothing, exactly as an absent {@code contextInclusion} does, rather than claiming "not
+   * truncated".
+   */
+  record ToolExecutionCompleted(
+      String callId, OperationResult result, int outputCharsToModel, TraceContext trace)
       implements AgentEvent {
+
+    /** No emitter measured what reached the model. A consumer told nothing must say nothing. */
+    public static final int CHARS_TO_MODEL_UNMEASURED = -1;
+
     public ToolExecutionCompleted(String callId, OperationResult result) {
-      this(callId, result, TraceContext.none());
+      this(callId, result, CHARS_TO_MODEL_UNMEASURED, TraceContext.none());
+    }
+
+    public ToolExecutionCompleted(String callId, OperationResult result, int outputCharsToModel) {
+      this(callId, result, outputCharsToModel, TraceContext.none());
+    }
+
+    public ToolExecutionCompleted {
+      outputCharsToModel = Math.max(CHARS_TO_MODEL_UNMEASURED, outputCharsToModel);
+    }
+
+    /**
+     * Did the model receive less than this tool returned? {@code false} when nothing was measured —
+     * which is why every consumer must read {@link #outputCharsToModel} to tell "no" from "unknown".
+     */
+    public boolean truncatedForModel() {
+      return outputCharsToModel > CHARS_TO_MODEL_UNMEASURED
+          && result != null
+          && result.message() != null
+          && outputCharsToModel < result.message().length();
     }
   }
 
@@ -184,7 +221,9 @@ public sealed interface AgentEvent {
        * Tempdoc 865 §7.6 / 868 §B.3 — HOW this source came to be in front of the model: {@link
        * #ACQUISITION_RETRIEVED} (a search matched it) or {@link #ACQUISITION_OPENED} (the agent
        * named it and read it). 865 designed the axis and deferred it for want of a second producer;
-       * {@code core.read-document} is that producer, so it lands here.
+       * {@code core.read-document} is that producer, so it lands here. The vocabulary's authority is
+       * {@link SourceAcquisition} (878 §D.9); these constants project it, exactly as the three
+       * sibling String fields on this record project their own enums.
        *
        * <p>The recorded invariant is directional and must not be read the other way: an
        * opened-by-name document has LESS relevance evidence than a retrieved one, never more —
@@ -206,18 +245,24 @@ public sealed interface AgentEvent {
     /** No character count is knowable, because no inclusion state was resolved. */
     public static final int INCLUDED_CHARS_UNKNOWN = -1;
 
-    /** The source was found by a search: something ranked it against the query. */
-    public static final String ACQUISITION_RETRIEVED = "retrieved";
+    /**
+     * The source was found by a search: something ranked it against the query.
+     *
+     * <p>Tempdoc 878 §D.9 — a PROJECTION of {@link SourceAcquisition}, not a free-standing literal,
+     * which is what its three sibling vocabularies on this record have always been.
+     */
+    public static final String ACQUISITION_RETRIEVED = SourceAcquisition.RETRIEVED.wireToken();
 
     /** The source was opened by name and read: nothing ranked it (868 §B.3). */
-    public static final String ACQUISITION_OPENED = "opened";
+    public static final String ACQUISITION_OPENED = SourceAcquisition.OPENED.wireToken();
 
     public AgentSource {
       contextInclusion = contextInclusion == null ? INCLUSION_ABSENT : contextInclusion;
       contextIncludedChars =
           contextInclusion.isEmpty() ? INCLUDED_CHARS_UNKNOWN : Math.max(0, contextIncludedChars);
-      acquisition =
-          acquisition == null || acquisition.isBlank() ? ACQUISITION_RETRIEVED : acquisition;
+      // Tempdoc 878 §D.9 — normalise THROUGH the authority, so an unrecognised token resolves the
+      // one way the enum documents instead of being carried forward as a value nothing can read.
+      acquisition = SourceAcquisition.fromWireToken(acquisition).wireToken();
     }
 
     /**
@@ -400,37 +445,13 @@ public sealed interface AgentEvent {
       this(finalResponse, iterationsUsed, toolCallsExecuted, totalTokensUsed, sources, citations, citationScorer, disposition, TraceContext.none());
     }
 
-    /**
-     * Tempdoc 859 §D §2.6 — an UNGROUNDED terminal that still declares its disposition: the
-     * max-iterations ceiling, which produces no answer text and therefore no grounding, but is one
-     * of the two TRUNCATING dispositions the FE must be able to disclose.
-     *
-     * <p>A static factory rather than a fifth constructor overload for two reasons.
-     * {@code (String,int,int,int,String)} beside the existing
-     * {@code (String,int,int,int,TraceContext)} is an ambiguous pair at any {@code null} call site.
-     * And the canonical constructor takes the {@code sources}/{@code citations} lists, so calling it
-     * from outside this record would trip {@code AgentGroundingSeamAuditTest} — whose discriminator
-     * is a {@code java.util.List} SIGNATURE SUBSTRING (its own javadoc names this limit) — for a
-     * reason that has nothing to do with grounding. Constructed here, the record's own delegation
-     * exemption applies and the audit keeps meaning what it says.
-     */
-    public static AgentDone ofDisposition(
-        String finalResponse,
-        int iterationsUsed,
-        int toolCallsExecuted,
-        int totalTokensUsed,
-        String disposition) {
-      return new AgentDone(
-          finalResponse,
-          iterationsUsed,
-          toolCallsExecuted,
-          totalTokensUsed,
-          List.of(),
-          List.of(),
-          SCORER_NONE,
-          disposition,
-          TraceContext.none());
-    }
+    // Tempdoc 878 §D.1 — `ofDisposition`, the UNGROUNDED terminal factory 859 §D §2.6 added for the
+    // max-iterations ceiling, is deleted here with its only caller. It existed because the ceiling
+    // had no route to `AgentStepRunner.groundedDone`, so a terminal that carried the run's evidence
+    // would have tripped the grounding-seam audit's `java.util.List` signature discriminator. The
+    // ceiling now finalizes THROUGH that seam (`AgentStepRunner.finalizeAtIterationCeiling`), so the
+    // exemption has no subject left — and terminal equivalence covers three dispositions instead of
+    // two. Left standing it would be a second, ungrounded way to emit a terminal.
   }
 
   /** Agent encountered an error. */

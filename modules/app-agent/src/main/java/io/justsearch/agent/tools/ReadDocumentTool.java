@@ -81,6 +81,10 @@ public final class ReadDocumentTool {
   /** How long to wait on the Worker fetch before degrading to a failure result. */
   private static final long FETCH_TIMEOUT_MS = 15_000;
 
+  /** Shared tail for every unreadable-document failure: the two tools that could still find it. */
+  private static final String RECOVERY_GUIDANCE =
+      "Use core_browse_folders to find the absolute path, or core_search_index to search inside it.";
+
   private final SliceFetcher sliceFetcher;
   private final Supplier<List<BrowseTool.RootInfo>> rootsSupplier; // nullable
 
@@ -143,9 +147,16 @@ public final class ReadDocumentTool {
       return OperationResult.failure(rejection);
     }
 
-    int offsetChars = Math.max(0, intArg(args, "offset_chars", 0));
-    int requested = intArg(args, "max_chars", READ_PAGE_CHARS);
-    int maxChars = requested <= 0 ? READ_PAGE_CHARS : Math.min(requested, READ_PAGE_CHARS);
+    Integer offsetArg = intArg(args, "offset_chars", 0);
+    if (offsetArg == null) {
+      return badIntArg(args, "offset_chars");
+    }
+    Integer maxArg = intArg(args, "max_chars", READ_PAGE_CHARS);
+    if (maxArg == null) {
+      return badIntArg(args, "max_chars");
+    }
+    int offsetChars = Math.max(0, offsetArg);
+    int maxChars = maxArg <= 0 ? READ_PAGE_CHARS : Math.min(maxArg, READ_PAGE_CHARS);
 
     DocumentService.DocumentSlice slice;
     try {
@@ -160,7 +171,13 @@ public final class ReadDocumentTool {
       return OperationResult.failure("Could not read \"" + path + "\": " + e.getMessage());
     }
     if (slice == null || !slice.found()) {
-      return notFound(path);
+      // Tempdoc 878: an unusable slice is not automatically a MISSING one. The producers set
+      // `error` ("not_found", "missing_doc_id", the Worker's own prose), and reporting a read
+      // failure as "not found in the index" sends the model hunting for a path that exists. The
+      // PRESENCE of a reason is the discriminator — never the reason's wording, which would make
+      // the Worker's message text a contract.
+      String reason = slice == null ? null : slice.error();
+      return reason == null ? notFound(path) : unreadable(path, reason);
     }
 
     String text = slice.content() == null ? "" : slice.content();
@@ -187,7 +204,7 @@ public final class ReadDocumentTool {
     }
 
     return OperationResult.success(
-        formatPage(path, pageText, startChar, endChar, truncated, nextOffset),
+        formatPage(path, pageText, startChar, endChar, truncated, nextOffset, slice.totalChars()),
         buildReadEvidence(path, titleOf(slice, path), pageText, startChar, endChar, truncated));
   }
 
@@ -227,15 +244,34 @@ public final class ReadDocumentTool {
    * ({@code ToolResultCarrier.readLine}) so Layer-3 compression can strip the body in a later
    * iteration while the header — the fact that this document WAS read, and where the next page
    * starts — survives.
+   *
+   * <p>Tempdoc 878: the span is stated OUT OF the whole whenever the producer knows the whole.
+   * Without a denominator a model at n_ctx 4096 cannot choose between paging and sampling a ~27 KB
+   * document, so it pages to exhaustion. {@code totalChars == 0} means the producer could not say
+   * (an older Worker, a source with no total) — the header then reads exactly as it did before,
+   * because inventing a total is worse than omitting one.
    */
   private static String formatPage(
-      String path, String pageText, int startChar, int endChar, boolean truncated, int nextOffset) {
+      String path,
+      String pageText,
+      int startChar,
+      int endChar,
+      boolean truncated,
+      int nextOffset,
+      int totalChars) {
     var sb = new StringBuilder();
     sb.append("[read] ").append(path).append(" — chars ").append(startChar).append('–')
         .append(endChar);
+    if (totalChars > 0) {
+      sb.append(" of ").append(totalChars);
+    }
     if (truncated) {
-      sb.append(" of more; More: call core_read_document again with offset_chars=")
-          .append(nextOffset);
+      // "of more" is the DEGRADED denominator — it exists only for the case where no real one is
+      // available, so it is dropped the moment the real total is in the header.
+      if (totalChars <= 0) {
+        sb.append(" of more");
+      }
+      sb.append("; More: call core_read_document again with offset_chars=").append(nextOffset);
     }
     sb.append(System.lineSeparator());
     sb.append(io.justsearch.agent.ToolResultCarrier.readLine(pageText));
@@ -281,10 +317,17 @@ public final class ReadDocumentTool {
 
   private static OperationResult notFound(String path) {
     return OperationResult.failure(
-        "Document not found in the index: "
-            + path
-            + ". Use core_browse_folders to find the absolute path, or core_search_index to search"
-            + " inside it.");
+        "Document not found in the index: " + path + ". " + RECOVERY_GUIDANCE);
+  }
+
+  /**
+   * The slice was unusable AND said why. The reason is passed through verbatim rather than mapped,
+   * because the vocabulary belongs to the producers and a map would silently stale; the recovery
+   * guidance is still attached, so the model gets a next step either way.
+   */
+  private static OperationResult unreadable(String path, String reason) {
+    return OperationResult.failure(
+        "Could not read \"" + path + "\": " + reason + ". " + RECOVERY_GUIDANCE);
   }
 
   /** Stored {@code title} metadata when present, else the file name. */
@@ -297,10 +340,46 @@ public final class ReadDocumentTool {
     return cut >= 0 && cut + 1 < path.length() ? path.substring(cut + 1) : path;
   }
 
-  private static int intArg(JsonNode args, String field, int fallback) {
-    return args.has(field) && args.get(field).isNumber()
-        ? args.get(field).asInt(fallback)
-        : fallback;
+  /**
+   * Tempdoc 878 — three outcomes, not two: the value, the default (field absent), and {@code null}
+   * for "present but unusable", which the caller turns into a loud refusal via {@link
+   * #badIntArg(JsonNode, String)}.
+   *
+   * <p>A stringified number is COERCED rather than ignored, because small models emit {@code
+   * {"offset_chars": "3000"}} constantly and the old fallback-to-default silently re-served page 1 —
+   * a duplicate page that looks to the model like progress, which is the worst failure shape
+   * available here. Anything else (a non-numeric string, an object, an array, a boolean) is refused
+   * out loud so the model can correct the call instead of reading the same page forever.
+   *
+   * <p>Tempdoc 877 is building a shared {@code ToolArgs} helper with this same contract; fold this
+   * into it when it lands.
+   */
+  private static Integer intArg(JsonNode args, String field, int fallback) {
+    if (!args.has(field) || args.get(field).isNull()) {
+      return fallback;
+    }
+    JsonNode node = args.get(field);
+    if (node.isNumber()) {
+      return node.asInt(fallback);
+    }
+    if (node.isString()) {
+      try {
+        return Integer.valueOf(node.asString().strip());
+      } catch (NumberFormatException e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  private static OperationResult badIntArg(JsonNode args, String field) {
+    return OperationResult.failure(
+        field
+            + " must be a whole number, but was "
+            + args.get(field)
+            + ". Call core_read_document again with "
+            + field
+            + " as a number, e.g. \"offset_chars\": 3000.");
   }
 
   private List<BrowseTool.RootInfo> roots() {

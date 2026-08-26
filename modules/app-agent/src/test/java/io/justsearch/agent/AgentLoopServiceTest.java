@@ -1233,9 +1233,10 @@ class AgentLoopServiceTest {
    * holds BY CONSTRUCTION; this test exists precisely because a later refactor could re-derive
    * either side independently and nothing else would notice.
    *
-   * <p>SCOPED to the two {@code groundedDone} terminals ({@code COMPLETED},
-   * {@code BUDGET_EDGE_FINALIZE}) — see {@link #maxIterationsTerminal_keepsTheEvidenceItEstablished}
-   * for why {@code ofDisposition} is exempt rather than fixed.
+   * <p>Tempdoc 878 §D.1 — this used to be SCOPED to two terminals, because the max-iterations
+   * ceiling emitted through an ungrounded factory that could not carry sources. The ceiling now
+   * finalizes through {@code groundedDone} like the other two, so the property covers all THREE
+   * dispositions; {@link #maxIterationsTerminal_carriesTheEvidenceItEstablished} asserts it there.
    */
   @Test
   @DisplayName("865 §7.1 A5: on a COMPLETED terminal the concatenated deltas equal done.sources(), in order")
@@ -1262,7 +1263,7 @@ class AgentLoopServiceTest {
     assertEquals(
         TerminalDisposition.COMPLETED.name(),
         done.disposition(),
-        "this fixture must exercise a groundedDone terminal, not ofDisposition");
+        "this fixture must exercise the COMPLETED terminal specifically");
     assertEquals(
         List.of("d1", "d2", "d3"),
         done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList());
@@ -1325,21 +1326,27 @@ class AgentLoopServiceTest {
   }
 
   /**
-   * Tempdoc 865 §7.1 / §3.8b — the sharpest unhappy terminal. A run that exhausts its iterations
-   * emits {@code AgentDone.ofDisposition}, whose sources are a hardcoded {@code List.of()}, yet the
-   * evidence it established is intact on the tool events that delivered it.
+   * Tempdoc 865 §7.1 / §3.8b, extended by 878 §D.1 — the sharpest unhappy terminal.
    *
-   * <p>{@code ofDisposition} is EXEMPT from terminal equivalence by construction, and deliberately
-   * not "fixed": its canonical constructor takes {@code List} arguments and {@code
-   * AgentGroundingSeamAuditTest}'s discriminator is a {@code java.util.List} SIGNATURE SUBSTRING, so
-   * draining the accumulator there would trip the grounding-seam audit for a reason that has nothing
-   * to do with grounding (which is the whole reason the delegating factory exists). Under this
-   * design it no longer needs to: the empty list stops being a loss and becomes the true statement
-   * "this terminal makes no grounding claim".
+   * <p>865 could only assert that the run's evidence survived on the TOOL events, because the
+   * ceiling emitted {@code AgentDone.ofDisposition} — an ungrounded factory whose sources were a
+   * hardcoded {@code List.of()}. It was exempt from terminal equivalence by construction: the
+   * canonical constructor takes {@code List} arguments and {@code AgentGroundingSeamAuditTest}'s
+   * discriminator is a {@code java.util.List} SIGNATURE SUBSTRING, so draining the accumulator there
+   * would have tripped the grounding-seam audit for a reason unrelated to grounding.
+   *
+   * <p>878 §D.1 removed the exemption's cause rather than the exemption: the ceiling finalizes
+   * through {@code AgentStepRunner.groundedDone}, so it carries the evidence like every other
+   * terminal, and the factory is deleted. This test therefore asserts the STRONGER property — the
+   * terminal's sources ARE the concatenated deltas — where it used to assert their absence.
+   *
+   * <p>The finalize call here fails (the script is exhausted), which is deliberate: it pins the
+   * FAIL-OPEN half. An unanswerable ceiling still lands on an empty answer stamped {@code
+   * MAX_ITERATIONS}, exactly the behaviour this replaced, and still carries its evidence.
    */
   @Test
-  @DisplayName("865 §7.1: a MAX_ITERATIONS run keeps the evidence it established (the terminal claims none)")
-  void maxIterationsTerminal_keepsTheEvidenceItEstablished() {
+  @DisplayName("878 §D.1: a MAX_ITERATIONS terminal carries the evidence it established (865 §7.1 equivalence, third disposition)")
+  void maxIterationsTerminal_carriesTheEvidenceItEstablished() {
     var ai =
         new ScriptedAiService(
             List.of(
@@ -1357,14 +1364,81 @@ class AgentLoopServiceTest {
     var done = lastEventOfType(events, AgentEvent.AgentDone.class);
     assertNotNull(done);
     assertEquals(TerminalDisposition.MAX_ITERATIONS.name(), done.disposition());
-    assertTrue(
-        done.sources().isEmpty(),
-        "ofDisposition makes no grounding claim — that is its contract, not a regression");
+    assertEquals(
+        "",
+        done.finalResponse(),
+        "the finalize attempt failed (script exhausted), so the terminal is answerless — the"
+            + " fail-open floor is byte-for-byte the pre-878 behaviour, never worse");
     assertEquals(
         List.of("d1", "d2", "d3"),
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
+        "878 §D.1: the ceiling terminal now CARRIES the run's evidence. RED BEFORE: ofDisposition"
+            + " hardcoded an empty list, so a reader reloading this run saw a terminal that claimed"
+            + " nothing while the deltas said otherwise.");
+    assertEquals(
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
         deltaDocIds(events),
-        "RED BEFORE 865: the run's evidence died with the terminal that could not carry it."
-            + " GREEN AFTER: the deltas already rode the tool events, so the whole set survives.");
+        "and terminal equivalence (865 §7.1 A5) now covers this disposition too — same members,"
+            + " same order, so a sentence cite's sourceIndex resolves correctly here as well");
+  }
+
+  /**
+   * Tempdoc 878 §D.1 — the ceiling ATTEMPTS synthesis, and the attempt is a real no-tools LLM call.
+   *
+   * <p>The defect: {@code AgentLoopService} emitted an empty answer and returned, so a run that had
+   * done all its work and hit the step ceiling threw that work away. The budget wall has always made
+   * this call; the ceiling never did.
+   *
+   * <p>The assertions are split deliberately. That a THIRD call happened, with NO tools and the
+   * step-limit instruction, is the structural claim — it is what "attempted synthesis" means and it
+   * cannot be talked out of. That the returned text reaches the terminal is the visible consequence.
+   * What is NOT claimed anywhere: that a real model produces useful text here (859 §7 watched one
+   * decline). The disposition is asserted independently for exactly that reason.
+   */
+  @Test
+  @DisplayName("878 §D.1: the iteration ceiling makes one no-tools finalize call and its answer reaches the terminal")
+  void maxIterationsTerminal_attemptsFinalizeAndCarriesItsAnswer() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}"),
+                ScriptedResponse.textOnly("Partial: I found d1 and d2 but ran out of steps.")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                .returningStructuredData(List.of(searchEvidence("d1", "d2"))));
+
+    var events = run(service, userMessage("loop"), 2);
+
+    assertEquals(
+        3,
+        ai.recordedTools.size(),
+        "two iterations plus ONE finalize call — the ceiling no longer stops without asking");
+    assertTrue(
+        ai.recordedTools.get(2).isEmpty(),
+        "the finalize call passes NO tools: it is a synthesis turn, not another step");
+    List<Map<String, Object>> finalizePrompt = ai.recordedMessages.get(2);
+    String lastUserMessage =
+        String.valueOf(finalizePrompt.get(finalizePrompt.size() - 1).get("content"));
+    assertTrue(
+        lastUserMessage.startsWith(AgentLlmCaller.STEP_CEILING_FINALIZE_INSTRUCTION),
+        "and it names the STEP limit, not the token budget — 859 D5's rule (a run stopped by the"
+            + " ceiling with budget to spare must not be told tokens stopped it) applied to the"
+            + " text handed to the MODEL, not only to the FE notice");
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done);
+    assertEquals(
+        "Partial: I found d1 and d2 but ran out of steps.",
+        done.finalResponse(),
+        "RED BEFORE 878: the ceiling emitted \"\" with no LLM call at all, so 8/8 recorded"
+            + " MAX_ITERATIONS runs answered nothing despite having done the work");
+    assertEquals(
+        TerminalDisposition.MAX_ITERATIONS.name(),
+        done.disposition(),
+        "the truncation stays disclosed: a partial answer does not make this a COMPLETED run");
   }
 
   /**
@@ -1485,6 +1559,30 @@ class AgentLoopServiceTest {
     assertNotNull(
         lastEventOfType(events, AgentEvent.ToolCallVirtual.class),
         "the vop_ branch must have been taken");
+
+    // Tempdoc 878 §D.5 — the virtual channel's result carries a text-provenance stamp, like the
+    // synchronous channel's has since 577. RED BEFORE: this seam skipped `withLineage` entirely, and
+    // the FE's fail-open default (unknown ⇒ runtime ⇒ no frame) rendered the result exactly as an
+    // unstamped one, so nothing downstream could tell "classified runtime" from "never classified".
+    var virtualCompletion =
+        events.stream()
+            .filter(AgentEvent.ToolExecutionCompleted.class::isInstance)
+            .map(AgentEvent.ToolExecutionCompleted.class::cast)
+            .filter(e -> "call_v".equals(e.callId()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no completion for the virtual call"));
+    assertEquals(
+        io.justsearch.agent.api.registry.OutputLineage.RUNTIME.wireToken(),
+        virtualCompletion.result().structuredData().get(OperationResult.LINEAGE_KEY),
+        "a vop_ tool's output is a runtime value by classification — which is a DIFFERENT fact from"
+            + " being unclassified, even though the two render identically");
+
+    // And the same seam reports what the model received (878 §D.4).
+    assertEquals(
+        "opened".length(),
+        virtualCompletion.outputCharsToModel(),
+        "the virtual seam measures too — a measurement present at some seams and absent at others"
+            + " leaves the FE unable to tell 'not truncated' from 'not measured'");
   }
 
   /**

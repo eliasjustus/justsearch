@@ -172,6 +172,54 @@ final class AgentEventPayloadsCoverageTest {
     assertEquals(42L, park.get("sinceEpochMs"));
   }
 
+  /**
+   * Tempdoc 878 §D.4 — the wire says how much of a tool's output the MODEL received, and stays
+   * SILENT when nobody measured.
+   *
+   * <p>The defect: {@code output} carried the tool's whole answer while the loop appended a
+   * Layer-2-truncated copy to the prompt, so one field quietly answered two different questions and
+   * a reader debugging a wrong answer was looking at evidence the model never had.
+   *
+   * <p>The absent case is asserted first because it is the one a "helpful" default would break. An
+   * emitter that did not measure must produce NO key — never {@code truncatedForModel: false},
+   * which would retroactively describe every record written before this field as complete.
+   */
+  @Test
+  @DisplayName("878 §D.4: tool_exec_completed reports what the model saw, and says nothing when unmeasured")
+  void toolCompletedReportsWhatReachedTheModel() {
+    var full =
+        io.justsearch.agent.api.registry.OperationResult.success("0123456789ABCDEFGHIJ");
+
+    Map<String, Object> unmeasured =
+        AgentEventPayloads.base(new AgentEvent.ToolExecutionCompleted("c1", full));
+    assertFalse(
+        unmeasured.containsKey("outputCharsToModel"),
+        "an emitter that did not measure writes NO key — absent is 'unknown', not 'all of it'");
+    assertFalse(unmeasured.containsKey("truncatedForModel"), "and neither half appears alone");
+
+    Map<String, Object> truncated =
+        AgentEventPayloads.base(new AgentEvent.ToolExecutionCompleted("c1", full, 8));
+    assertEquals(
+        "0123456789ABCDEFGHIJ",
+        truncated.get("output"),
+        "`output` stays the tool's WHOLE answer: the reader is not context-bound, and showing less"
+            + " than the tool returned would be a new dishonesty rather than a fix for the old one");
+    assertEquals(8, truncated.get("outputCharsToModel"), "and beside it, what the prompt got");
+    assertEquals(
+        true,
+        truncated.get("truncatedForModel"),
+        "derived from the count, never carried independently — two fields can contradict each other");
+
+    Map<String, Object> whole =
+        AgentEventPayloads.base(
+            new AgentEvent.ToolExecutionCompleted("c1", full, full.message().length()));
+    assertEquals(
+        false,
+        whole.get("truncatedForModel"),
+        "measured-and-complete is a real, DIFFERENT answer from unmeasured — a consumer can tell"
+            + " 'the model got everything' from 'nobody said', which is the whole point of the pair");
+  }
+
   private static Set<String> componentsOf(AgentEvent event) {
     RecordComponent[] components = event.getClass().getRecordComponents();
     return java.util.Arrays.stream(components)

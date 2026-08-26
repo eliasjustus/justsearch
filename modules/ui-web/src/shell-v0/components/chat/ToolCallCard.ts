@@ -281,6 +281,14 @@ export class ToolCallCard extends JfElement {
       margin-bottom: 0.35rem;
       font-style: italic;
     }
+    /* Tempdoc 878 §D.4 — the model saw less of this output than you are reading. Sits UNDER the
+       output, because it is a qualification of what is above it rather than a heading for it. */
+    .tool-output-model-note {
+      font-family: var(--font-display);
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      margin-top: 0.25rem;
+    }
     /* Tempdoc 867 — the search card's level-2 evidence body. */
     .tool-search-body {
       margin-top: 0.5rem;
@@ -617,14 +625,40 @@ export class ToolCallCard extends JfElement {
     const label = lineageFrameLabel(lineage);
     // Runtime output (the default) renders byte-identically to before — no frame, no extra nodes.
     // Only a backend-stamped corpus-quoted excerpt gets the quoting frame + header.
-    if (label === null) {
-      return html`<div class="tool-output lineage-${lineage}" data-lineage=${lineage}>${tc.output}</div>`;
-    }
-    return html`<div class="tool-output lineage-${lineage}" data-lineage=${lineage}><span
-        class="lineage-frame-label"
-        data-testid="tool-output-lineage"
-        >${label}</span
-      >${tc.output}</div>`;
+    const body =
+      label === null
+        ? html`<div class="tool-output lineage-${lineage}" data-lineage=${lineage}>${tc.output}</div>`
+        : html`<div class="tool-output lineage-${lineage}" data-lineage=${lineage}><span
+              class="lineage-frame-label"
+              data-testid="tool-output-lineage"
+              >${label}</span
+            >${tc.output}</div>`;
+    return html`${body}${this.renderModelVisibilityNote(tc)}`;
+  }
+
+  /**
+   * Tempdoc 878 §D.4 — say when the MODEL received less of this output than the reader is seeing.
+   *
+   * The panel above shows what the tool returned; the agent loop appends a truncated copy to the
+   * prompt. Both are honest answers to "what was the output", and until the backend labelled them
+   * the card silently gave the first while the agent worked from the second — so a reader debugging
+   * a wrong answer was looking at evidence the model never had.
+   *
+   * Renders NOTHING in two distinct cases, and the distinction is the point: the model got all of it
+   * (nothing to disclose), or nobody measured (`outputCharsToModel` absent — say nothing rather than
+   * imply completeness). Records written before the backend carried this field fall in the second.
+   */
+  private renderModelVisibilityNote(tc: ToolCall): TemplateResult | typeof nothing {
+    if (tc.truncatedForModel !== true || tc.outputCharsToModel === undefined) return nothing;
+    const total = (tc.output ?? '').length;
+    // 'en-US' explicitly, not the host locale: the shell ships English copy, and a German host would
+    // otherwise render "4.000" — which reads as four, not four thousand, in the sentence around it.
+    // Same reasoning the backend applies to its own grouped numbers.
+    const grouped = (n: number): string => n.toLocaleString('en-US');
+    return html`<div class="tool-output-model-note" data-testid="tool-output-model-note">
+      The model received the first ${grouped(tc.outputCharsToModel)} of ${grouped(total)} characters
+      of this output.
+    </div>`;
   }
 
   /**

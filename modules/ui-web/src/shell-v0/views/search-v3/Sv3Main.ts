@@ -260,6 +260,26 @@ function terminalTextItemId(items: readonly Sv3RunFeedItem[]): string | null {
   return null;
 }
 
+/**
+ * Tempdoc 878 §D.1 — did this turn end up with an answer the reader can see?
+ *
+ * The cut-short notice needs it because the step ceiling now ATTEMPTS a synthesis and may or may not
+ * get one, and either sentence is a false statement in the other case.
+ *
+ * It has to ask the same two places the ANSWER is rendered from, which is the whole subtlety: an
+ * agent turn's prose is the run feed's terminal text item, not `turn.answer` — that field is filled
+ * only on the RECORD path (`sv3-record`'s `answers.join`). Reading `turn.answer` alone would report
+ * every live delegate run as answerless and print "before reaching an answer" directly above the
+ * answer the reader is looking at.
+ */
+function turnHasAnswerText(turn: Sv3Turn, run: Sv3RunView | null): boolean {
+  if (run !== null) {
+    return run.feed.items.some((item) => item.kind === 'text' && item.text.trim() !== '');
+  }
+  if (turn.answer.trim() !== '') return true;
+  return turn.activity.some((item) => item.kind === 'text' && item.text.trim() !== '');
+}
+
 export class Sv3Main extends JfElement {
   static styles = [
     sv3Shared,
@@ -1907,7 +1927,7 @@ export class Sv3Main extends JfElement {
                     ></jf-markdown-block>`}
               </div>
             `}
-        ${this.cutShortNotice(turn)}${this.tail(turn)}${this.citations(turn)}
+        ${this.cutShortNotice(turn, run)}${this.tail(turn)}${this.citations(turn)}
       </div>
     `;
   }
@@ -1927,8 +1947,12 @@ export class Sv3Main extends JfElement {
    * stopped by the step ceiling with most of its budget unspent named the wrong limit — and the two
    * limits have different remedies.
    */
-  private cutShortNotice(turn: Sv3Turn): TemplateResult | typeof nothing {
-    const notice = sv3CutShortNotice(turn.disposition);
+  private cutShortNotice(turn: Sv3Turn, run: Sv3RunView | null): TemplateResult | typeof nothing {
+    // Tempdoc 878 §D.1 — the step ceiling now attempts a synthesis, so the sentence depends on
+    // whether it produced one. The notice sits directly under the text it qualifies, and saying
+    // "before reaching an answer" above a paragraph of answer is the kind of contradiction the
+    // reader notices immediately. `turnHasAnswerText` asks the same places the answer renders from.
+    const notice = sv3CutShortNotice(turn.disposition, turnHasAnswerText(turn, run));
     if (notice === null) return nothing;
     return html`<p class="cut-short" role="note" data-testid="sv3-turn-cut-short">${notice}</p>`;
   }

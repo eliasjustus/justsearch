@@ -35,6 +35,8 @@ import type {
 import {
   SV3_CUT_SHORT_BUDGET_NOTICE,
   SV3_CUT_SHORT_STEPS_NOTICE,
+  SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE,
+  sv3CutShortNotice,
 } from './sv3-honesty.js';
 
 const SOURCES: AgentSource[] = [
@@ -419,17 +421,23 @@ describe('865 §7.1 — a run with no grounded terminal stands on its own deltas
     expect(evidence.groundingIncomplete).toBe(true);
   });
 
-  it('F-1: a MAX_ITERATIONS done OWNS the turn but claims no grounding — the deltas still win', async () => {
-    // The gate this fixes. `AgentDone.ofDisposition` DOES emit a `done`: its payload always carries
-    // a `sources` key (`AgentEventPayloads` puts it unconditionally) and `onDone` writes
+  it('F-1: a done that OWNS the turn but claims no grounding — the deltas still win', async () => {
+    // The gate this fixes. An answerless terminal still emits a `done`: its payload always carries a
+    // `sources` key (`AgentEventPayloads` puts it unconditionally) and `onDone` writes
     // `answerEvidenceRunId` unconditionally — so the OWNERSHIP predicate is true for the exact
     // terminals that report nothing. Gating the evidence write on ownership alone made the empty
-    // terminal win and the delta arm unreachable for MAX_ITERATIONS: the run's evidence was minted,
-    // journaled, delivered — and then dropped at the last read site.
+    // terminal win and the delta arm unreachable: the run's evidence was minted, journaled,
+    // delivered — and then dropped at the last read site.
+    //
+    // Tempdoc 878 §D.1 — the fixture keeps `MAX_ITERATIONS` as its label, but that disposition is no
+    // longer a PRODUCER of this shape: the step ceiling now finalizes through the grounded seam and
+    // carries its sources. The shape itself is still reachable (a cancelled or errored run, or a
+    // ceiling whose finalize established nothing), and it is the SHAPE this gate is about — an owned
+    // terminal with an empty claim — not the disposition on it.
     const el = await mount();
     await runWithTwoTexts(el, 'why did it retry?');
     await frame(el, {
-      // Exactly what `ofDisposition` produces: an owned terminal with an empty grounding claim.
+      // An owned terminal with an empty grounding claim.
       answerSources: [],
       answerCitations: [],
       answerEvidenceRunId: 'run-1',
@@ -699,9 +707,11 @@ describe('T11 — a truncated run says so, whatever its answer says', () => {
   });
 
   it('discloses the ITERATION ceiling too — and blames the STEP limit, not the budget', async () => {
-    // MAX_ITERATIONS produces no answer text, so there is nowhere for a model to say it even if it
-    // wanted to. Closing both truncating dispositions in one change is the point; leaving one
-    // unstamped would be the same hole under a different name.
+    // Closing both truncating dispositions is the point; leaving one unstamped would be the same
+    // hole under a different name. (Tempdoc 878 §D.1: the ceiling used to produce no answer text at
+    // all — it made no LLM call — so the disposition was the ONLY thing that could disclose the
+    // truncation. It now attempts a synthesis, which is why this case and the answerless one below
+    // are two tests with two sentences rather than one.)
     //
     // 859 D live-defect D5: one shared sentence used to serve BOTH terminals, so this run — which
     // the live audit watched end with 59% of its budget UNSPENT — told the reader that tokens had
@@ -719,15 +729,42 @@ describe('T11 — a truncated run says so, whatever its answer says', () => {
     await settle(el);
     const notice = q(await region(el, 'jf-sv3-main'), 'sv3-turn-cut-short');
     expect(notice).not.toBeNull();
-    expect(notice?.textContent?.trim()).toBe(SV3_CUT_SHORT_STEPS_NOTICE);
-    expect(SV3_CUT_SHORT_STEPS_NOTICE.toLowerCase()).toContain('step');
+    // Tempdoc 878 §D.1 — the ANSWERLESS arm, and the fixture is why: the run has terminated
+    // (`runKind: null`) and no record has caught up, so this turn currently displays no prose at
+    // all. The notice sits directly under that emptiness, so "the run used all its steps before
+    // reaching an answer" is the sentence that matches the screen. The with-answer arm is exercised
+    // at the function level below — rendering it here would need a record fixture this file has no
+    // other use for.
+    expect(notice?.textContent?.trim()).toBe(SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE);
+    expect(SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE.toLowerCase()).toContain('step');
     expect(
-      SV3_CUT_SHORT_STEPS_NOTICE.toLowerCase(),
+      SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE.toLowerCase(),
       'a step-ceiling run must not be told the budget stopped it',
     ).not.toContain('budget');
     // The two sentences are genuinely different — a split that produced one string twice would
     // satisfy every assertion above and fix nothing.
     expect(SV3_CUT_SHORT_STEPS_NOTICE).not.toBe(SV3_CUT_SHORT_BUDGET_NOTICE);
+  });
+
+  it('878 §D.1: the step ceiling has TWO honest sentences, and the turn picks by whether an answer landed', () => {
+    // The backend now makes a no-tools synthesis call when the loop hits its step ceiling, so a
+    // MAX_ITERATIONS turn may or may not carry an answer. One sentence cannot be true in both
+    // cases: "this answer is based on what the run had gathered" is false above an empty turn, and
+    // "the run used all its steps before reaching an answer" is false above a paragraph of answer.
+    // Both outcomes are real — a compact model can still decline the finalize (859 §7) — so the
+    // disposition alone no longer determines the copy.
+    expect(sv3CutShortNotice('MAX_ITERATIONS', true)).toBe(SV3_CUT_SHORT_STEPS_NOTICE);
+    expect(sv3CutShortNotice('MAX_ITERATIONS', false)).toBe(SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE);
+    expect(SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE).not.toBe(SV3_CUT_SHORT_STEPS_NOTICE);
+    expect(
+      SV3_CUT_SHORT_STEPS_NO_ANSWER_NOTICE.toLowerCase(),
+      'the answerless arm still names the STEP limit, not the budget',
+    ).not.toContain('budget');
+
+    // The budget wall reaches its notice only by producing text, so its sentence is unchanged in
+    // both directions — the second argument must not silently rewrite the OTHER terminal's copy.
+    expect(sv3CutShortNotice('BUDGET_EDGE_FINALIZE', false)).toBe(SV3_CUT_SHORT_BUDGET_NOTICE);
+    expect(sv3CutShortNotice('COMPLETED', false)).toBeNull();
   });
 
   it('says NOTHING for a run that completed, or for one that never stated a disposition', async () => {

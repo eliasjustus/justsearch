@@ -456,4 +456,133 @@ final class AgentGroundingInclusionTest {
         "and must NOT strip preview lines — widening it to match the reader would silently delete a"
             + " dense-only hit's whole text from the prompt");
   }
+
+  /* ── Tempdoc 878 §D.2: the Layer-3 scar ────────────────────────────────────────────────────── */
+
+  /**
+   * The scar's two defining non-matches, asserted as the properties they are rather than through a
+   * strip. Matching {@code CARRIER_LINE} would make the receipt report stripped text as still in the
+   * prompt; matching {@code STRIPPABLE_LINE} would let the next pass strip the scar and the elision
+   * would go silent one iteration later. Both are one-character mistakes away.
+   */
+  @Test
+  @DisplayName("878 §D.2: the elision scar is neither a carrier line nor itself strippable")
+  void theScarMatchesNeitherPattern() {
+    String scar = ToolResultCarrier.elidedLine(3, 900);
+
+    assertFalse(
+        ToolResultCarrier.carriesText(scar),
+        "a scar must not read as a carrier — the receipt would then report stripped text as intact,"
+            + " the exact false claim ToolResultCarrier exists to prevent");
+    assertFalse(
+        ToolResultCarrier.STRIPPABLE_LINE.matcher(scar).find(),
+        "and must not be strippable — a second pass would delete the mark and the elision would be"
+            + " silent again");
+    assertFalse(
+        ToolResultCarrier.mayHaveStrippableLine(scar),
+        "including via the cheap pre-check, which is what actually decides whether a second pass"
+            + " runs the regex at all");
+  }
+
+  /**
+   * The behaviour the scar exists for: a stripped READ result used to collapse to a bare
+   * {@code [read] … More: offset_chars=N} header — an instruction to call the tool again, on a
+   * message whose page had just been deleted, with nothing saying the deletion had happened.
+   */
+  @Test
+  @DisplayName("878 §D.2: a stripped read result no longer presents a bare More: header with no trace of the removal")
+  void strippingAReadPageLeavesAScarBesideTheMoreHeader() {
+    String readResult =
+        "[read] /docs/manual.md — chars 0–3000 of more; More: call core_read_document again with"
+            + " offset_chars=3000\n"
+            + ToolResultCarrier.readLine("the page text ".repeat(60));
+
+    String stripped = AgentContextCompressor.stripSearchExcerpts(readResult);
+
+    assertFalse(
+        ToolResultCarrier.carriesText(stripped), "the page itself is gone — that is Layer 3's job");
+    assertTrue(
+        stripped.contains("More: call core_read_document again"),
+        "the header survives, as it always has: the run keeps the fact of the read and the offset");
+    assertTrue(
+        stripped.contains("Elided:"),
+        "RED BEFORE 878: the strip deleted the page and left the More: instruction standing alone,"
+            + " so the only thing the model could read was an invitation to call the tool again");
+    assertTrue(
+        stripped.contains("will not return it"),
+        "and the scar states the CONSEQUENCE, not only the quantity — the observed failure was a"
+            + " behaviour, so a mark that merely recorded history would change nothing");
+  }
+
+  /** A second pass must find nothing to strip, and must not stack a second scar. */
+  @Test
+  @DisplayName("878 §D.2: the strip is idempotent — a second pass adds no second scar")
+  void theStripIsIdempotent() {
+    String once = AgentContextCompressor.stripSearchExcerpts(searchMessage("d1", "d2"));
+    String twice = AgentContextCompressor.stripSearchExcerpts(once);
+
+    assertEquals(once, twice, "a stripped message is a fixed point of the strip");
+    assertEquals(
+        1,
+        once.split("Elided:", -1).length - 1,
+        "exactly ONE scar per message, whatever the number of lines removed — a scar per line would"
+            + " cost a ten-hit result more tokens than the strip saved");
+  }
+
+  /**
+   * The scar must not change what the RECEIPT says. It is addressed to the model; the reader's
+   * answer about this call is unchanged, and a scar that flipped it would trade one false claim for
+   * another.
+   */
+  @Test
+  @DisplayName("878 §D.2: the scar leaves the inclusion receipt's verdict untouched")
+  void theScarDoesNotDisturbTheReceipt() {
+    var session = session();
+    var compressor = compressor();
+    dispatch(session, compressor, "call_1", "d1");
+    dispatch(session, compressor, "call_2", "d2");
+
+    var sources = session.collectGroundingSources();
+    assertEquals(
+        "dropped",
+        sourceOf(sources, "d1").contextInclusion(),
+        "the first call's message was stripped, scar and all — it still reports dropped");
+    assertEquals(
+        "",
+        sourceOf(sources, "d2").contextInclusion(),
+        "and the live call's carrier is intact, so nothing is claimed about it");
+  }
+
+  /* ── Tempdoc 878 §D.3: compaction reports what it dropped ──────────────────────────────────── */
+
+  /**
+   * The reader-facing half of the same discipline. {@code compactOlderTurns} DELETES messages;
+   * before 878 it told the ledger nothing, so a source whose only carrier had been deleted resolved
+   * to ABSENT — say-nothing — and rendered as ordinary evidence next to sources that were still in
+   * the prompt. Deletion is the stronger removal of the two, so it must report at least as much as
+   * a strip does.
+   */
+  @Test
+  @DisplayName("878 §D.3: a source whose only carrier was compacted away is reported dropped, not absent")
+  void compactedAwayCarrier_yieldsDroppedSource() {
+    var session = session();
+    var compressor = compressor();
+    dispatch(session, compressor, "call_1", "d1");
+    dispatch(session, compressor, "call_2", "d2");
+
+    // Keep only the most recent message, which drops both tool messages' groups.
+    int dropped = session.compactOlderTurns(1);
+    assertTrue(dropped > 0, "the fixture must actually compact something");
+
+    var sources = session.collectGroundingSources();
+    assertEquals(
+        "dropped",
+        sourceOf(sources, "d1").contextInclusion(),
+        "RED BEFORE 878: compaction wrote nothing to the ledger, so this read back ABSENT");
+    assertEquals(
+        "dropped",
+        sourceOf(sources, "d2").contextInclusion(),
+        "including the call whose carrier was INTACT until compaction deleted it — the case a"
+            + " strip-only ledger could never see");
+  }
 }

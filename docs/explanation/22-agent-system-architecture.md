@@ -58,6 +58,38 @@ The loop follows a tool-using ReAct-style flow:
 5. Stop on completion, cancellation, safety limits, budget exhaustion, or unsupported state.
 ```
 
+### Run-honesty invariants
+
+Two invariants bind how a run reports itself. Both are structural: they hold whatever the model
+says, because the model's own text is never the thing that carries them.
+
+**An involuntary terminal owes the run one synthesis attempt.** When the loop walks into a limit —
+the token budget, or the iteration ceiling — it makes one final LLM call with no tools, instructing
+the model to write a partial answer from what it already gathered and to disclose that the run was
+cut short. `AgentLlmCaller` holds one shared obligation block for both, and a per-terminal sentence
+naming the limit that actually fired: a run stopped by the step ceiling routinely has budget to
+spare, so telling it (or the reader) that tokens stopped it is a specific false statement about the
+remedy. The attempt is best-effort — a compact model can decline — so the fail-closed guarantee is
+`AgentEvent.AgentDone.disposition`, which is decided by the call site and written independently of
+the answer text. A *voluntary* terminal owes nothing: a cancelled run is deliberately answerless.
+
+**Every layer that removes information leaves a mark, addressed to a named consumer.** A run has
+two consumers reading two different artifacts — the MODEL reads the prompt, the READER reads the
+wire and the persisted record — and a mark aimed at one is not a mark for the other. The layers and
+their marks:
+
+| Layer | What it removes | The mark it leaves | Consumer |
+|---|---|---|---|
+| Layer-2 per-result cut (`AgentContextCompressor.truncate`) | the tail of one tool output | `[... truncated, N chars omitted]` in the prompt; `outputCharsToModel` / `truncatedForModel` on `tool_exec_completed` | model + reader |
+| Layer-3 strip (`stripSearchExcerpts`) | excerpt and read-page carrier lines | one `Elided:` line naming how much went and that re-calling the tool will not return it | model |
+| Layer-3 compression (`compressToolOutput`) | most of an older tool message | `[compressed-tool-output originalChars=… keptChars=…]` | model |
+| Compaction (`AgentSession.compactOlderTurns`) | whole messages | the dropped calls enter the inclusion ledger, so their sources report `dropped` | reader |
+| A truncating terminal | the rest of the run | `AgentDone.disposition` | reader |
+
+`tool_exec_completed.output` is deliberately the tool's WHOLE answer — the reader is not
+context-bound — with `outputCharsToModel` beside it saying how much reached the prompt. Both keys
+are absent when no emitter measured, and absent means *unknown*, never *nothing was truncated*.
+
 Current defaults are intentionally modest:
 
 | Constant / setting | Current behavior |
@@ -89,7 +121,7 @@ Current built-in agent-facing tool names include:
 | Tool | Safety | Purpose |
 |------|--------|---------|
 | `core_search_index` | Read-only | Search indexed knowledge. Accepts `path_prefix` to restrict results to an absolute folder path. |
-| `core_read_document` | Read-only | Read one indexed document's extracted text, paged by character offset (`path`, `offset_chars`, `max_chars`). Served by the Worker's `FetchDocumentSlice`, so the readable universe is exactly the indexed corpus and the Head never opens the file. A page is capped below the per-tool-result context cap, and the result names the offset to continue from. |
+| `core_read_document` | Read-only | Read one indexed document's extracted text, paged by character offset (`path`, `offset_chars`, `max_chars`). Served by the Worker's `FetchDocumentSlice`, so the readable universe is exactly the indexed corpus and the Head never opens the file. A page is capped below the per-tool-result context cap; the result names the span read, the document's total length when the Worker reports one, and the offset to continue from. One page per document is the declared default — at a small context window, paging one document to the end costs the steps the other documents needed. |
 | `core_browse_folders` | Read-only | Discover indexed folders and paths. |
 | `core_file_operations` | Write/destructive depending on action | Move, rename, copy, delete, or create filesystem items with approval where required. |
 | `core_ingest_files` | Write | Request ingestion of files or folders. Takes an optional `collection` tag; omitted, a path inherits its containing indexed root's collection, or `mcp-ingest` when it is under no indexed root (tempdoc 811 C-2a). |
