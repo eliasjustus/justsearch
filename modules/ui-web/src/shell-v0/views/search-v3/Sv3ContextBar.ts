@@ -69,7 +69,7 @@ export class Sv3ContextBar extends JfElement {
         flex-wrap: wrap;
         align-items: center;
         gap: var(--space-2);
-        max-inline-size: 48rem;
+        max-inline-size: var(--measure-prose);
         margin-inline: auto;
         padding: var(--space-1) var(--space-3);
         border-radius: var(--radius-lg);

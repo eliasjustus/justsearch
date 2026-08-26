@@ -276,6 +276,7 @@ const MD_PROSE = [
   '--md-table-rule',
   '--md-table-cell-max',
   '--md-rule',
+  '--md-rule-margin',
   '--md-item-adjacent-gap',
 ] as const;
 
@@ -289,6 +290,10 @@ const MD_PROSE_RAMP = ['--font-size-xl', '--font-size-lg', '--font-size-md'] as 
  * whose containment proof enumerates its fifteen names exactly.
  */
 const MD_CITE = [
+  // Tempdoc 869 C3 — the two tiers the renderer states POSITIVELY. `--md-cite-grounded-color` is the
+  // strongest tier's ink, moved off the base `.cite-ref` rule so that "no grounding class" resolves
+  // to neutral instead of strongest; `--md-cite-source-color` is that neutral, on the base rule.
+  '--md-cite-grounded-color',
   '--md-cite-pad-x',
   '--md-cite-pad-x-rest',
   '--md-cite-radius',
@@ -297,6 +302,7 @@ const MD_CITE = [
   '--md-cite-region-pad-x',
   '--md-cite-selected-bg',
   '--md-cite-selected-edge',
+  '--md-cite-source-color',
   '--md-cite-ungrounded-color',
   '--md-cite-weak-color',
 ] as const;
@@ -345,6 +351,16 @@ describe('the three imported components read NO token the window leaves unbridge
             'dress a surface that cannot render.',
         ),
         ...reasons(
+          ['--md-pseudo-cite-color'],
+          'the MUTED-ref ink (tempdoc 869 §3.6) is UNREACHABLE here for the same reason one step ' +
+            'further out: `ReasoningBlock.ts:181` passes no `.citations`, no `frame` and no ' +
+            '`.sourceCount`, so the block frames itself `grounded` over zero sources and BOTH mute ' +
+            'arms are vacuous — the ungrounded arm because the frame is not it, the sourced arm ' +
+            'because nothing resolves. No `.pseudo-cite` element exists in the trace to ink. The ' +
+            'ANSWER blocks, which do reach it, are inside the `.sv3-markdown` bridge, where it is ' +
+            're-pointed.',
+        ),
+        ...reasons(
           MD_CITE,
           'the citation-mark vocabulary (tempdoc 822 citation-mark presentation) is UNREACHABLE ' +
             'here for the same reason: `ReasoningBlock.ts:181` renders the block with no ' +
@@ -361,7 +377,9 @@ describe('the three imported components read NO token the window leaves unbridge
     // the class bridge on the host element (an outer-tree rule on the host beats the component's
     // own `:host`). Two of the fifteen are deliberately absent.
     const KEEPS_SHIPPED: Readonly<Record<string, string>> = {
-      '--md-list-indent': 'sv3 keeps the shipped value (1.25rem)',
+      '--md-list-indent':
+        'sv3 keeps the shipped value (1.75rem since tempdoc 873 §3 retuned the shared default ' +
+        'for every prose surface — sv3 takes whatever it is, which is the point of not forking it)',
       '--md-pre-padding': 'sv3 keeps the shipped value (0.625rem 0.75rem)',
     };
     const scope = bridgeFor(MAIN, '\\.sv3-markdown');
@@ -377,8 +395,13 @@ describe('the three imported components read NO token the window leaves unbridge
     expect(scope.get('--md-code-size')).toBe('var(--font-size-sv3-xs)');
     expect(scope.get('--md-code-font')).toBe('var(--font-mono)');
     expect(scope.get('--md-code-border')).toBe('1px solid var(--border)');
-    expect(scope.get('--md-block-gap')).toBe('var(--space-2-5)');
-    expect(scope.get('--md-block-gap-wide')).toBe('var(--space-2-5)');
+    // Tempdoc 873 §3 — the two gaps are DIFFERENT names for a reason, so they are pinned as a pair
+    // and as an inequality. Collapsing them onto one value (both were `--space-2-5`) is what made a
+    // code fence, a table and a quote sit in exactly the air of the paragraph before them; a later
+    // "tidy" that re-flattens them would pass two equalities but not the third assertion.
+    expect(scope.get('--md-block-gap')).toBe('var(--space-3)');
+    expect(scope.get('--md-block-gap-wide')).toBe('var(--space-5)');
+    expect(scope.get('--md-block-gap')).not.toBe(scope.get('--md-block-gap-wide'));
     expect(scope.get('--md-pre-radius')).toBe('var(--radius)');
     expect(scope.get('--md-link-decoration')).toBe('none');
   });
@@ -389,10 +412,14 @@ describe('the three imported components read NO token the window leaves unbridge
     // re-pointed is the majority — because the variant's own defaults already ARE the spec's
     // numbers, or they read a token this bridge has already re-pointed one line above.
     const KEEPS_VARIANT: Readonly<Record<string, string>> = {
-      '--md-heading-weight': 'the variant default (600) is already the spec value',
+      '--md-heading-weight':
+        'the variant default (700 since tempdoc 873 §2) is the value this window wants, and it is ' +
+        'wanted on every prose surface — re-pointing it here would fork one window off the shared ' +
+        'decision instead of carrying it',
       '--md-heading-line-height': 'the variant default (1.3) is already the spec value',
       '--md-heading-margin':
-        'the variant default (1.25rem 0 0.5rem) is already the spec asymmetric margin',
+        'the variant default (1.75rem 0 0.5rem since tempdoc 873 §3) is the asymmetric margin this ' +
+        'window wants: 28px above ends the previous section, 8px below keeps the heading with its own',
       '--md-table-size':
         'the variant reads --font-size-xs, which this bridge re-points to --font-size-sv3-xs ' +
         '(12px) — re-pointing it here would be a second authority for one value',
@@ -401,8 +428,12 @@ describe('the three imported components read NO token the window leaves unbridge
         'the variant reads --border-subtle, which this bridge re-points to the window --border',
       '--md-rule': 'same as --md-table-rule: the rule hue arrives through the re-pointed --border-subtle',
       '--md-table-cell-max': 'the variant default (24rem) is already the spec truncation cap',
+      '--md-rule-margin':
+        'tempdoc 873 §3 gave the section break its own name so it stops sharing the wide-block gap; ' +
+        'the shared default (1.5rem) is the rhythm this window wants, and it is the LARGEST in prose ' +
+        'by design — an hr ends a section, it is not one more block',
       '--md-item-adjacent-gap':
-        'the variant default (0.25rem) is already the spec li + li gap',
+        'the variant default (0.375rem since tempdoc 873 §3) is the li + li gap this window wants',
     };
     const scope = bridgeFor(MAIN, '\\.sv3-markdown');
     const missing = MD_PROSE.filter((name) => !scope.has(name) && !(name in KEEPS_VARIANT));
@@ -419,12 +450,34 @@ describe('the three imported components read NO token the window leaves unbridge
     expect(scope.get('--font-size-xl')).toBe('var(--font-size-sv3-xl)');
     expect(scope.get('--font-size-lg')).toBe('var(--font-size-sv3-lg)');
     expect(scope.get('--font-size-md')).toBe('var(--font-size-sv3-base)');
-    // h4-h6 need no fourth line: they read `--font-size-sm`, which the shared colour/size bridge
-    // one rule above already points at `--font-size-sv3-sm` (asserted there).
     expect(TOKENS.get('--font-size-sv3-xl')).toBe('1.25rem'); //   spec h1
     expect(TOKENS.get('--font-size-sv3-lg')).toBe('1.125rem'); //  spec h2
     expect(TOKENS.get('--font-size-sv3-base')).toBe('1rem'); //    spec h3
-    expect(TOKENS.get('--font-size-sv3-sm')).toBe('0.875rem'); //  spec h4-h6 (= body)
+  });
+
+  it('lifts the answer prose to 15px WITHOUT dragging the window ramp with it (873 §4)', () => {
+    // Tempdoc 873 §4. `--font-size-sm` is the ONE name that carries both halves of the body-size
+    // change: the renderer's `:host` reads it for the block's own `font-size`, and the variant's
+    // h4-h6 read it too. So this single re-point lifts body text off 14px and, in the same move,
+    // stops the ramp's bottom step from landing BELOW the body it leads — h4-h6 sit AT body size,
+    // distinguished by weight, which is what that step has always meant.
+    const prose = bridgeFor(MAIN, '\\.sv3-markdown');
+    expect(prose.get('--font-size-sm')).toBe('0.9375rem');
+
+    // The containment half, and the reason this is not just "make the chat bigger": the window's
+    // own ramp step is untouched, so every OTHER surface — tool cards, the reasoning trace, the
+    // sources panel, the hover card — stays at 14px. A future edit that lifted the token instead
+    // of the bridge would pass the line above and fail this one.
+    expect(TOKENS.get('--font-size-sv3-sm')).toBe('0.875rem');
+    for (const tag of ['jf-tool-call-card', 'jf-reasoning-block', 'jf-citation-hover-card']) {
+      expect(bridgeFor(MAIN, tag).get('--font-size-sm'), tag).toBe('var(--font-size-sv3-sm)');
+    }
+    // …and the shared colour/size bridge (which `.sv3-citations` rides) still carries the 14px
+    // step: the re-point lives in the `.sv3-markdown`-only rule, which is later and therefore wins
+    // for the answer prose alone.
+    expect(bridgeFor(MAIN, '\\.sv3-citations').get('--font-size-sm')).toBe(
+      'var(--font-size-sv3-sm)',
+    );
   });
 
 
@@ -507,6 +560,12 @@ const CITE_BRIDGE: Readonly<Record<string, string>> = {
   '--md-cite-selected-edge': 'var(--sv3-selected-edge)',
   '--md-cite-weak-color': 'var(--sv3-cite-weak)',
   '--md-cite-ungrounded-color': 'var(--sv3-cite-ungrounded)',
+  // Tempdoc 869 C3 — the two POSITIVE tiers. `--md-cite-grounded-color` restates the ink this
+  // window already painted through `--text-tint`; `--md-cite-source-color` is the tier-2 mark's
+  // neutral, the body foreground rather than the renderer's `--text-secondary` default (which this
+  // window re-points to `--muted-foreground`, under AA for a 12px glyph).
+  '--md-cite-grounded-color': 'var(--info-foreground)',
+  '--md-cite-source-color': 'var(--foreground)',
   '--md-cite-region-bg': 'var(--sv3-selected-region)',
   '--md-cite-pad-x-rest': '0.25em',
   '--md-cite-pad-x': '0.25em',
