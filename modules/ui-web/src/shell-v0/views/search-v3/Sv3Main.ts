@@ -67,7 +67,13 @@ import {
   sv3CitationAnchor,
   sv3MatchedSentence,
   sv3SourceIndex,
+  SV3_SOURCE_INDEX_ABSENT,
 } from './sv3-citation-anchor.js';
+import type { ToolCall } from '../../controllers/AgentSessionController.js';
+// Tempdoc 871 fix (live finding, 2026-08-26) — resolves a `card-open` hit back out of the SAME
+// structuredData the search tool card projected its rows from. Mirrors
+// `UnifiedChatView.ts:184`'s comment for the identical pattern on the unified window's own mount.
+import { findAgentSearchHit } from '../../components/chat/toolSearchCard.js';
 import type { ReasoningController } from '../../controllers/ReasoningController.js';
 // The shared clipboard util (slice 486 G35) — permission-denied and API-absent already handled, so a
 // per-turn copy needs no error path of its own.
@@ -2644,6 +2650,36 @@ export class Sv3Main extends JfElement {
   };
 
   /**
+   * Tempdoc 871 fix (live finding, 2026-08-26) — `ToolCallCard` fires `card-open` (bubbles+composed,
+   * `{id}` = the hit's path) on an evidence row click, but no SV3 mount listened for it, so a
+   * reader's click on a search tool card's evidence row did nothing in this window (pre-existing;
+   * `UnifiedChatView` wires the same event via `handleRetrieveCardOpen`/`handleCommittedCardOpen`/
+   * `handleToolEvidenceOpen`).
+   *
+   * This routes through the SAME document-open seam a followed citation already uses —
+   * `SV3_CITATION_OPEN`, landed by `SearchV3View.onCitationOpen` — because that IS this window's one
+   * document-open path; no second pane is invented here. The hit is resolved via
+   * `findAgentSearchHit` against the SAME `structuredData` the card projected its rows from (mirrors
+   * `UnifiedChatView.handleToolEvidenceOpen`), so an id that does not actually resolve in this call's
+   * own evidence is a no-op rather than a fabricated open. `sourceIndex` is
+   * {@link SV3_SOURCE_INDEX_ABSENT}: an evidence row is a raw search-tool result, not a member of the
+   * turn's `evidence.sources` citation list, so the pane opens on the document with no citation
+   * anchor/header — the same degraded-but-correct path an unresolvable followed citation already
+   * takes when {@link sv3SourceIndex} itself returns ABSENT.
+   */
+  private onToolCardOpen(call: ToolCall, turnId: string, hitId: string): void {
+    const hit = findAgentSearchHit(call.structuredData, hitId);
+    if (!hit) return;
+    this.dispatchEvent(
+      new CustomEvent<Sv3CitationOpen>(SV3_CITATION_OPEN, {
+        detail: { docPath: hit.path, anchor: null, turnId, sourceIndex: SV3_SOURCE_INDEX_ABSENT },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /**
    * The live run: its feed, then the decisions it is parked on. Prompts come LAST and outside the
    * feed's own flow, because a held decision must not be something the reader can scroll past — the
    * same "incompressible occupant" rule the retired search-v2 window gave its run controls.
@@ -2713,6 +2749,8 @@ export class Sv3Main extends JfElement {
         .toolCall=${item.call}
         .stepPresentation=${null}
         .evidencePaths=${evidencePaths}
+        @card-open=${(e: CustomEvent<{ id: string }>) =>
+          this.onToolCardOpen(item.call, turn.id, e.detail.id)}
       ></jf-tool-call-card>`;
     }
     if (item.kind === 'reasoning') {
