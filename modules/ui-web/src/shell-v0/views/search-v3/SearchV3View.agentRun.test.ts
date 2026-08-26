@@ -30,6 +30,7 @@ import type {
 } from '../../controllers/AgentSessionController.js';
 import { ReasoningController } from '../../controllers/ReasoningController.js';
 import type { BudgetUpdate } from '../../controllers/AgentSessionController.js';
+import { SV3_STANDING_STOP_REASON } from './sv3-run.js';
 
 /** The observable surface the window projects, plus the spies the seam should reach. */
 interface FakeCtrl {
@@ -49,6 +50,14 @@ interface FakeCtrl {
   contextGate: { promptTokens: number; contextWindow: number } | null;
   /** Tempdoc 834 §6.2 — why the run is stopped, when it is; the window reads it as `holding`. */
   runPark: { kind: string; sinceEpochMs: number; detail: string } | null;
+  /** Tempdoc 859 §D §2.6 — the run's terminal disposition, written only by `onDone`. */
+  terminalDisposition: string | null;
+  /** …and the run it belongs to, which is how the window refuses a previous run's terminal. */
+  answerEvidenceRunId: string | null;
+  /** Tempdoc 859 §3b — the terminal's grounding claim; empty here, so no evidence is written. */
+  answerSources: unknown[];
+  groundingDeltas: unknown[];
+  groundingDeltasRunId: string | null;
   send: ReturnType<typeof vi.fn>;
   steer: ReturnType<typeof vi.fn>;
   cancelSession: ReturnType<typeof vi.fn>;
@@ -77,6 +86,11 @@ function makeCtrl(): FakeCtrl {
     budgetGate: null,
     contextGate: null,
     runPark: null,
+    terminalDisposition: null,
+    answerEvidenceRunId: null,
+    answerSources: [],
+    groundingDeltas: [],
+    groundingDeltasRunId: null,
     send: vi.fn(async () => {}),
     steer: vi.fn(async () => true),
     cancelSession: vi.fn(async () => {}),
@@ -364,7 +378,7 @@ describe('the primary slot is a strict-priority state machine in the DOM', () =>
     expect(composer.shadowRoot?.querySelector('button.send')).toBeNull();
   });
 
-  it('holds Answer alone while a typed prompt is held — over the LIVE run below it', async () => {
+  it('holds Answer in the SLOT while a typed prompt is held — over the LIVE run below it', async () => {
     aiOnline();
     const el = await mount();
     await delegateWithCalls(el, 'do the thing', []);
@@ -372,7 +386,29 @@ describe('the primary slot is a strict-priority state machine in the DOM', () =>
     const composer = await region(el, 'jf-sv3-composer');
     // The run is still live, so this is the PRIORITY that is being asserted, not mere presence.
     expect(ctrl.runInFlight).toBe(true);
-    expect(occupants(composer)).toEqual(['sv3-composer-answer']);
+    // Owner decision 2026-08-26 — the SLOT still holds exactly one control, and Answer is still the
+    // one that wins it. What changed is that the Stop no longer disappears with the rung it lost:
+    // the reader was measured with no stop control for 300 s of a live run, because a supervised
+    // run is held on a decision for most of its life. The Stop stands BESIDE the slot (the same
+    // place the tier control stands), so the strict-priority law is intact and the capability is
+    // not conditional on the run having nothing else outstanding.
+    expect(occupants(composer)).toEqual(['sv3-composer-answer', 'sv3-composer-stop']);
+    expect(composer.shadowRoot?.querySelectorAll('[data-testid="sv3-composer-stop"]')).toHaveLength(
+      1,
+    );
+    // DOM ORDER, which `occupants` cannot see (it filters a fixed id list): the standing Stop sits
+    // BEFORE the primary slot, so the slot keeps the row's trailing position it has in every other
+    // state and the reader's eye does not have to re-find the send/answer control per run phase.
+    expect(
+      [...(composer.shadowRoot?.querySelectorAll('.actions > button') ?? [])].map(
+        (b) => b.getAttribute('data-testid'),
+      ),
+    ).toEqual(['sv3-composer-stop', 'sv3-composer-answer']);
+    // It says what it does, in its own words — not the slot rung's "Enter steers", which would name
+    // a key that does nothing here (a submit is refused while a decision is held, asserted below).
+    expect(q(composer, 'sv3-composer-stop')?.getAttribute('aria-label')).toBe(
+      SV3_STANDING_STOP_REASON,
+    );
 
     // The rung does the one thing it honestly can: it takes the reader to the decision. It cannot
     // resolve it — the dedicated controls in the prompt block are the only things that can.
@@ -382,6 +418,13 @@ describe('the primary slot is a strict-priority state machine in the DOM', () =>
     // The prompt's FIRST control, which since Phase F7 (inventory B8) is the raise remedy rather
     // than a concession — landing the reader on "give something up" would be the wrong default.
     expect(main.shadowRoot?.activeElement).toBe(q(main, 'sv3-run-budget-raise-little'));
+    expect(ctrl.resolveBudgetGate).not.toHaveBeenCalled();
+
+    // …and the standing Stop is the SAME halt the slot rung fires — one stop, one path to the run,
+    // no second halt mechanism minted for the held case.
+    (q(composer, 'sv3-composer-stop') as HTMLButtonElement).click();
+    await settle(el);
+    expect(ctrl.cancelSession).toHaveBeenCalledTimes(1);
     expect(ctrl.resolveBudgetGate).not.toHaveBeenCalled();
   });
 
@@ -585,7 +628,13 @@ describe('the run ends in ONE receipt whose counts come from the feed it summari
     expect(q(main, 'sv3-run-feed')).toBeNull();
   });
 
-  it('says stopped-by-you when the reader halted it, and keeps the counts honest', async () => {
+  it('says NOTHING about the outcome when the halt reached no terminal at all', async () => {
+    // Owner decision 2026-08-26 (answerless cancel). This used to read "2 tool calls · stopped by
+    // you" LIVE while the same run, cold-loaded, read "2 tool calls · failed" — a run stopped before
+    // it answered emits `AgentError`/CANCELLED and never `AgentDone`, so no disposition reaches
+    // either plane and the record's derivation fell to the error entry. The owner's ruling is that
+    // no outcome word is needed that early. It is worded ONCE, off the absent terminal, so both
+    // planes reach it with the same value and cannot tell different stories again.
     aiOnline();
     const el = await mount();
     await delegateWithCalls(el, 'audit the folder', ['c1', 'c2']);
@@ -597,8 +646,36 @@ describe('the run ends in ONE receipt whose counts come from the feed it summari
     await frame(el, { runInFlight: false, isStreaming: false });
     const main = await region(el, 'jf-sv3-main');
     const receipt = q(main, 'sv3-run-receipt');
-    expect(receipt?.textContent?.trim()).toBe('2 tool calls · stopped by you');
+    expect(receipt?.textContent?.trim()).toBe('2 tool calls');
+    // The status underneath is still the halt, so nothing downstream reads this as a completion.
+    expect(receipt?.dataset.outcome).toBe('halted');
     // A halt is the reader's own act: it is an outcome, not a break.
+    expect(receipt?.dataset.broken).toBe('false');
+  });
+
+  it('says stopped-by-you when the halt DID reach a terminal — the late-cancel race', async () => {
+    // The other half of the same rule, and the case owner decision 2026-08-26 (late cancel) is
+    // about: the reader's Stop lands as the run reaches its terminal, so the run really did finish
+    // and carries a disposition. There IS an ending to report now, and the reader's act is what it
+    // is called — in the outcome slot beside "finished", never in an error position.
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'audit the folder', ['c1', 'c2']);
+    const composer = await region(el, 'jf-sv3-composer');
+    (q(composer, 'sv3-composer-stop') as HTMLButtonElement | null)?.click();
+    await settle(el);
+    expect(ctrl.cancelSession).toHaveBeenCalledTimes(1);
+
+    // …and the run's own terminal arrives anyway, because it had already been reached.
+    ctrl.terminalDisposition = 'COMPLETED';
+    ctrl.answerEvidenceRunId = 'run-1';
+    await frame(el, { runInFlight: false, isStreaming: false });
+    const main = await region(el, 'jf-sv3-main');
+    const receipt = q(main, 'sv3-run-receipt');
+    expect(receipt?.textContent?.trim()).toBe('2 tool calls · stopped by you');
+    // The halt still wins the STATUS over the completion — the reader's act outranks the run's own
+    // account of itself.
+    expect(receipt?.dataset.outcome).toBe('halted');
     expect(receipt?.dataset.broken).toBe('false');
   });
 
@@ -795,7 +872,12 @@ describe('presence: a live run this window never dispatched (tempdoc 822 Phase F
     // ...and a HELD run reaches the answer rung from presence just as it does from a local dispatch.
     await frame(el, { toolCalls: { c1: toolCall('c1', { status: 'pending' }) } });
     expect(q(composer, 'sv3-composer-answer')).not.toBeNull();
-    expect(q(composer, 'sv3-composer-stop')).toBeNull();
+    // Owner decision 2026-08-26 — and the Stop STAYS, because the run is still live. This used to
+    // assert its absence; halting a live run is a capability, not a rung the slot may withdraw
+    // because a decision is also outstanding.
+    expect(q(composer, 'sv3-composer-stop')?.getAttribute('aria-label')).toBe(
+      SV3_STANDING_STOP_REASON,
+    );
     expect((await rowsOf(el))[0]?.getAttribute('status')).toBe('act-now');
   });
 
