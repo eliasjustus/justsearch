@@ -105,13 +105,14 @@ public record OperationResult(
    * <p>The sources are projected to their WIRE shape here rather than handed to the serializer as
    * records, because {@code structuredData} is declared free-form ({@code AgentRunShape}: {@code
    * EventField.object("structuredData", "")}) and therefore carries no descriptor to pin this key
-   * against. Writing the eight keys explicitly is what makes the shape identical on the live and the
+   * against. Writing the nine keys explicitly is what makes the shape identical on the live and the
    * reloaded path, and pinnable by a conformance test in place of the descriptor.
    *
-   * <p>Tempdoc 865 §7.5 — the eight are {@code AgentSource}'s IDENTITY components, and the record's
-   * two INCLUSION components are deliberately not among them. Inclusion is resolved against the
-   * final prompt at the terminal; a tool call has no final prompt to be a fact about, so a delta
-   * that carried the key would be claiming one.
+   * <p>Tempdoc 865 §7.5 + 868 §B.3 — the nine are {@code AgentSource}'s IDENTITY components
+   * (including {@code acquisition}), and the record's two INCLUSION components are deliberately not
+   * among them. Inclusion is resolved against the final prompt at the terminal; a tool call has no
+   * final prompt to be a fact about, so a delta that carried the key would be claiming one.
+   * Acquisition is the opposite case: it is known exactly when the source is minted.
    *
    * @param sources the delta — never the running total, so a long run does not re-send its whole
    *     evidence set every step. Callers omit the stamp entirely when the delta is empty.
@@ -129,6 +130,10 @@ public record OperationResult(
       item.put("startLine", s.startLine());
       item.put("endLine", s.endLine());
       item.put("headingText", s.headingText());
+      // Tempdoc 868 §B.3 — acquisition IS an identity component (fixed at the mint), so unlike the
+      // two inclusion keys it belongs in the delta: a reloaded run must not silently re-describe an
+      // opened document as retrieved.
+      item.put("acquisition", s.acquisition());
       wire.add(Map.copyOf(item));
     }
     java.util.Map<String, Object> merged = new java.util.HashMap<>(structuredData);

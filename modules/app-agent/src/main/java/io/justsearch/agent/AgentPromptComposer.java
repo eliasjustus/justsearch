@@ -47,6 +47,25 @@ final class AgentPromptComposer {
           + " IMPORTANT: Never answer factual questions about the knowledge base without"
           + " searching first. If the user asks about file contents, topics, or documents,"
           + " always call core_search_index before responding."
+          // Tempdoc 868 §B.4 — the two tools do different jobs and the model has to be told which,
+          // because search RETURNS EXCERPTS: before core_read_document existed, "read these three
+          // files and summarize each" was answered from budgeted snippets and never completed
+          // cleanly in 16-17 recorded attempts (§A.1). The explicit paging instruction is the
+          // second half: a ranged read is a LOOP, and prior art (LangChain deepagents #82) records
+          // agents re-truncating forever when the "there is more" signal is not acted on.
+          + " core_search_index finds relevant passages; core_read_document reads a document's text"
+          + " in pages — when asked to read or summarize a specific file, call core_read_document"
+          + " with its absolute path (from core_browse_folders or a search result). Each page is a"
+          + " few thousand characters and long documents have many pages: for a summary or an"
+          + " overview, the first page or two of each document is enough — do not page through a"
+          + " whole document unless the task needs a specific detail from later in it. Read the"
+          + " documents you were asked about first, summarize what you have read, and say which"
+          + " part of each document you read. Follow the \"More:\" offset only when you need more."
+          // Tempdoc 868 §B.4 / 866 §2 — refusal honesty. A bare "I don't have access" is both
+          // unhelpful and usually false: the capability that is missing is specific, and something
+          // adjacent almost always exists.
+          + " If no available tool can do what was asked, say precisely which capability is missing"
+          + " and what you can do instead. Never answer with a bare \"I don't have access\"."
           + " When you reference a source, cite it inline with a bracketed number like [1], [2]"
           + " at the end of the sentence it supports. Do NOT append a separate"
           + " \"Citations:\", \"Sources:\", or \"References:\" list at the end of your answer —"
