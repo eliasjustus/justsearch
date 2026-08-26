@@ -108,6 +108,17 @@ final class FileOperationExecutor {
     return ValidationResult.valid(index, op);
   }
 
+  /**
+   * Containment check against the CURRENT indexed roots, for callers outside the validate/execute
+   * pipeline — specifically undo's direct COPY reversal, which deletes and must therefore re-prove
+   * containment the way the forward operation did (tempdoc 875 §C.6). Reading the live roots is the
+   * point: a root the user removed between the operation and the undo makes the target out of
+   * bounds. Fails closed — empty roots or an IOException while canonicalizing yields false.
+   */
+  boolean isWithinIndexedRoots(Path path) {
+    return isWithinRoots(path, indexedRootsSupplier.get());
+  }
+
   private boolean isWithinRoots(Path path, List<Path> roots) {
     try {
       // For new paths (MKDIR dest, MOVE dest), toRealPath() would fail since the path doesn't exist

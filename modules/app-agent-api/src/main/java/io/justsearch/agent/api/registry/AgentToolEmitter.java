@@ -2,8 +2,11 @@
 package io.justsearch.agent.api.registry;
 
 import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * SPI for projecting an {@link OperationCatalog} into the OpenAI function-calling tools
@@ -27,4 +30,50 @@ public interface AgentToolEmitter {
    * to a subset of operation ids (empty / null filter returns all AGENT-targeted entries).
    */
   List<Map<String, Object>> emit(OperationCatalog catalog, Collection<String> selectedNames);
+
+  /**
+   * The wire names this emitter would offer for {@code (catalog, selectedNames)} — i.e. the
+   * authority set the agent loop is allowed to dispatch (tempdoc 875 Move 3).
+   *
+   * <p><strong>Projection, not fork.</strong> The set is derived from {@link #emit} rather than
+   * re-deriving the filter chain (executor tag, {@code Audience} allow-list, availability
+   * expression, selection), because a second copy of that chain is precisely the drift that made
+   * "offered" and "resolvable" disagree: the emitter withheld a tool and
+   * {@code OperationCatalog.resolveByWireName} — which iterates the raw {@code definitions()} —
+   * still handed it to the dispatcher. One authority ({@code emit}), one derived view.
+   *
+   * <p>Consequence for implementers: do not override this to compute the names some cheaper way.
+   * If it can disagree with {@code emit}, the boundary is back to being two lists.
+   *
+   * <p>Malformed entries (no {@code function} object, no {@code name}) are skipped — an entry the
+   * model could not name is not authority for anything.
+   *
+   * @param catalog the catalog to project
+   * @param selectedNames the run's tool selection (empty / null = no selection restriction)
+   * @return an unmodifiable set in emission order; empty when nothing is offered
+   */
+  default Set<String> offeredWireNames(OperationCatalog catalog, Collection<String> selectedNames) {
+    List<Map<String, Object>> emitted = emit(catalog, selectedNames);
+    if (emitted == null || emitted.isEmpty()) {
+      return Set.of();
+    }
+    Set<String> names = new LinkedHashSet<>(emitted.size());
+    for (Map<String, Object> tool : emitted) {
+      if (tool == null) {
+        continue;
+      }
+      if (!(tool.get("function") instanceof Map<?, ?> function)) {
+        continue;
+      }
+      Object name = function.get("name");
+      if (name == null) {
+        continue;
+      }
+      String wire = name.toString();
+      if (!wire.isEmpty()) {
+        names.add(wire);
+      }
+    }
+    return Collections.unmodifiableSet(names);
+  }
 }

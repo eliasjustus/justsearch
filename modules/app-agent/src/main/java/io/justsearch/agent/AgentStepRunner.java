@@ -847,6 +847,46 @@ final class AgentStepRunner {
           sink.accept(
               new AgentEvent.ToolCallProposed(call, op.policy().risk()));
 
+          // Tempdoc 875 Move 3 — offering IS authorization. resolveByWireName above iterates the
+          // RAW catalog, so on its own it will happily hand back an operation the emitter withheld
+          // (OPERATOR audience, availability expression false, or not in the run's selection). The
+          // offered set is therefore consulted here, and a tool outside it is denied rather than
+          // dispatched.
+          //
+          // WHY the run-level authority set and not the per-iteration `tools` list: the DECIDING
+          // handoff-only restriction and E0a's first-turn narrowing are prompt STEERING, not
+          // authority — turning them into hard denials would strand a run on an ordinary model
+          // mis-step. request.selectedToolNames() is what the user/product actually authorized for
+          // this run, so that is the filter argument.
+          //
+          // WHY recomputed here rather than derived from `baseTools` (the run-start snapshot): a
+          // tool whose availability went false mid-run must be denied, not dispatched on the
+          // strength of having been offered at minute zero.
+          if (!agentToolEmitter
+              .offeredWireNames(operationCatalog, request.selectedToolNames())
+              .contains(OperationCatalog.toWireName(op.id()))) {
+            String notOffered =
+                "Tool \"" + call.toolName() + "\" is not available in this session.";
+            LOG.warn(
+                "AgentLoop: refusing un-offered tool '{}' (resolved to {}) — not in the offered set",
+                call.toolName(),
+                op.id().value());
+            sink.accept(new AgentEvent.ToolCallRejected(call.id(), notOffered));
+            // role:"tool" keeps the OpenAI format contract (every tool_call needs a matching tool
+            // response) — same idiom as the loop guard below.
+            session.appendMessage(
+                Map.of(
+                    "role",
+                    "tool",
+                    "tool_call_id",
+                    call.id(),
+                    "content",
+                    notOffered + " Use one of the tools you were offered."));
+            checkpointer.checkpoint(
+                sessionId, session, "READY_FOR_LLM", "Tool not offered: " + call.toolName());
+            continue;
+          }
+
           // Safety gate
           if (op.policy().risk() != RiskTier.LOW) {
             checkpointer.checkpoint(sessionId, session, "WAITING_APPROVAL", "Waiting for tool approval: " + call.toolName());

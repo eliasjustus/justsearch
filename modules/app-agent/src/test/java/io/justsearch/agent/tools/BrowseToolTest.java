@@ -18,8 +18,17 @@ import org.junit.jupiter.api.Test;
 @Tag("windows")
 class BrowseToolTest {
 
+  // Tempdoc 875 §C.5 — browse fails CLOSED when the roots are unknown, so the shared fixtures
+  // supply real roots that cover the parent paths these tests browse. Each test still asserts
+  // exactly what it asserted before (formatting, capping, truncation, hints); only the paths moved
+  // from unrooted ("/docs") to rooted ("D:\data\docs") so validation can pass.
+  private static final List<BrowseTool.RootInfo> FIXTURE_ROOTS =
+      List.of(
+          new BrowseTool.RootInfo("D:\\data", "data"),
+          new BrowseTool.RootInfo("D:\\Documents", "Documents"));
+
   private static BrowseTool browseOnly(BrowseTool.BrowseCallback cb) {
-    return new BrowseTool(cb, List::of);
+    return new BrowseTool(cb, () -> FIXTURE_ROOTS);
   }
 
   @Test
@@ -43,9 +52,9 @@ class BrowseToolTest {
                   false);
             });
 
-    OperationResult result = tool.execute("{\"parent_path\": \"/docs\"}");
+    OperationResult result = tool.execute("{\"parent_path\": \"D:\\\\data\\\\docs\"}");
     assertTrue(result.success(), result.message());
-    assertEquals("/docs", capturedParent.get());
+    assertEquals("D:\\data\\docs", capturedParent.get());
     assertTrue(result.message().contains("sub"));
   }
 
@@ -59,7 +68,7 @@ class BrowseToolTest {
               return new FolderBrowseResponse(List.of(), 1, false);
             });
 
-    tool.execute("{\"parent_path\": \"/docs\", \"max_folders\": 25}");
+    tool.execute("{\"parent_path\": \"D:\\\\data\\\\docs\", \"max_folders\": 25}");
     assertEquals(25, capturedMax.get());
   }
 
@@ -73,14 +82,14 @@ class BrowseToolTest {
               return new FolderBrowseResponse(List.of(), 1, false);
             });
 
-    tool.execute("{\"parent_path\": \"/docs\", \"max_folders\": 999}");
+    tool.execute("{\"parent_path\": \"D:\\\\data\\\\docs\", \"max_folders\": 999}");
     assertEquals(200, capturedMax.get(), "max_folders should be capped at 200");
   }
 
   @Test
   void executeWithNullResponse() {
     var tool = browseOnly(req -> null);
-    OperationResult result = tool.execute("{\"parent_path\": \"/docs\"}");
+    OperationResult result = tool.execute("{\"parent_path\": \"D:\\\\data\\\\docs\"}");
     assertFalse(result.success());
     assertTrue(result.message().contains("no response"));
   }
@@ -89,7 +98,7 @@ class BrowseToolTest {
   void executeWithEmptyFoldersUnderParent() {
     var tool = browseOnly(req -> new FolderBrowseResponse(List.of(), 3, false));
 
-    OperationResult result = tool.execute("{\"parent_path\": \"/empty\"}");
+    OperationResult result = tool.execute("{\"parent_path\": \"D:\\\\data\\\\empty\"}");
     assertTrue(result.success(), result.message());
     assertTrue(result.message().contains("No folders found under"));
     assertTrue(result.message().contains("/empty"));
@@ -105,7 +114,7 @@ class BrowseToolTest {
                     1,
                     true));
 
-    OperationResult result = tool.execute("{\"parent_path\": \"/root\"}");
+    OperationResult result = tool.execute("{\"parent_path\": \"D:\\\\data\\\\root\"}");
     assertTrue(result.success(), result.message());
     assertTrue(result.message().contains("truncated"), "Should mention truncation: " + result.message());
   }
@@ -131,7 +140,7 @@ class BrowseToolTest {
                     3,
                     false));
 
-    OperationResult result = tool.execute("{\"parent_path\": \"/root\"}");
+    OperationResult result = tool.execute("{\"parent_path\": \"D:\\\\data\\\\root\"}");
     assertTrue(result.success(), result.message());
     assertTrue(result.message().contains("512 B"), "Should format bytes: " + result.message());
     assertTrue(result.message().contains("MB"), "Should format megabytes: " + result.message());
@@ -387,8 +396,51 @@ class BrowseToolTest {
 
   @Test
   void toRelativePath_noRoots_returnsAbsolute() {
-    var tool = browseOnly(req -> new FolderBrowseResponse(List.of(), 0, false));
+    // Constructs its own empty-roots tool rather than using browseOnly(): this test's subject IS
+    // the no-roots case, which the shared fixture no longer represents.
+    var tool = new BrowseTool(req -> new FolderBrowseResponse(List.of(), 0, false), List::of);
     assertEquals("D:\\data\\docs", tool.toRelativePath("D:\\data\\docs"));
+  }
+
+  // --- Fail-closed adverse preconditions (tempdoc 875 §C.5) ---
+
+  @Test
+  void parentPath_rejected_whenRootsSupplierThrows() {
+    // Browse is a pure directory-disclosure primitive: when the roots lookup is unavailable there
+    // is no containment to check against, so it must REFUSE rather than list any path on the
+    // machine. Pre-875 this returned null (= allow) and browsed anywhere.
+    var tool =
+        new BrowseTool(
+            req -> {
+              fail("Browse callback must not be reached when the roots are unavailable");
+              return null;
+            },
+            () -> {
+              throw new IllegalStateException("roots unavailable");
+            });
+
+    OperationResult result = tool.execute("{\"parent_path\": \"C:\\\\Users\\\\someone\"}");
+    assertFalse(result.success(), "Roots unavailable must reject: " + result.message());
+    assertTrue(
+        result.message().contains("unavailable"),
+        "Rejection should name the reason (roots unavailable): " + result.message());
+  }
+
+  @Test
+  void parentPath_rejected_whenRootsEmpty() {
+    var tool =
+        new BrowseTool(
+            req -> {
+              fail("Browse callback must not be reached when no roots are configured");
+              return null;
+            },
+            List::of);
+
+    OperationResult result = tool.execute("{\"parent_path\": \"C:\\\\Users\\\\someone\"}");
+    assertFalse(result.success(), "Empty roots must reject: " + result.message());
+    assertTrue(
+        result.message().contains("no indexed root folders are configured"),
+        "Rejection should name the reason (no roots configured): " + result.message());
   }
 
   @Test
@@ -405,7 +457,7 @@ class BrowseToolTest {
 
   private static BrowseTool browseAndFiles(
       BrowseTool.BrowseCallback browseCb, BrowseTool.FilesCallback filesCb) {
-    return new BrowseTool(browseCb, filesCb, List::of);
+    return new BrowseTool(browseCb, filesCb, () -> FIXTURE_ROOTS);
   }
 
   @Test
@@ -426,7 +478,8 @@ class BrowseToolTest {
                   3);
             });
 
-    OperationResult result = tool.execute("{\"parent_path\": \"/docs/explanation\"}");
+    OperationResult result =
+        tool.execute("{\"parent_path\": \"D:\\\\data\\\\docs\\\\explanation\"}");
     assertTrue(result.success(), result.message());
     assertTrue(filesCalled.get(), "Files callback should be called on auto-fallback");
     assertTrue(result.message().contains("overview.md"), "Should list file name: " + result.message());
@@ -452,7 +505,8 @@ class BrowseToolTest {
                     1,
                     2));
 
-    OperationResult result = tool.execute("{\"parent_path\": \"/docs\", \"list_files\": true}");
+    OperationResult result =
+        tool.execute("{\"parent_path\": \"D:\\\\data\\\\docs\", \"list_files\": true}");
     assertTrue(result.success(), result.message());
     assertFalse(browseCalled.get(), "Folder browse should NOT be called when list_files=true");
     assertTrue(result.message().contains("readme.md"), "Should list file: " + result.message());
@@ -463,7 +517,7 @@ class BrowseToolTest {
     // Backward-compat: null filesCallback preserves original "No folders found" behavior
     var tool = browseOnly(req -> new FolderBrowseResponse(List.of(), 1, false));
 
-    OperationResult result = tool.execute("{\"parent_path\": \"/empty\"}");
+    OperationResult result = tool.execute("{\"parent_path\": \"D:\\\\data\\\\empty\"}");
     assertTrue(result.success(), result.message());
     assertTrue(
         result.message().contains("No folders found"),
@@ -513,7 +567,7 @@ class BrowseToolTest {
                     2,
                     3));
 
-    OperationResult result = tool.execute("{\"parent_path\": \"/docs\"}");
+    OperationResult result = tool.execute("{\"parent_path\": \"D:\\\\data\\\\docs\"}");
     assertTrue(result.success(), result.message());
     assertTrue(result.message().contains("256 B"), "Should format bytes: " + result.message());
     assertTrue(result.message().contains("MB"), "Should format megabytes: " + result.message());
@@ -527,7 +581,7 @@ class BrowseToolTest {
             req -> new FolderBrowseResponse(List.of(), 1, false),
             req -> new FolderFilesResponse(List.of(), 0, 1));
 
-    OperationResult result = tool.execute("{\"parent_path\": \"/nonexistent\"}");
+    OperationResult result = tool.execute("{\"parent_path\": \"D:\\\\data\\\\nonexistent\"}");
     assertTrue(result.success(), result.message());
     assertTrue(
         result.message().contains("No folders found"),

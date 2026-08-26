@@ -3374,7 +3374,9 @@ class AgentLoopServiceTest {
    * observer; a test double for evict-on-throw + bounded replay would be a reimplementation of the
    * exact mechanism the attach and park tests exist to pin.
    */
-  private static AgentLoopService observed(AgentLoopService service) {
+  // Package-private (tempdoc 875 Move 3): AgentToolAuthorityBoundaryTest reuses this harness
+  // rather than standing up a parallel one.
+  static AgentLoopService observed(AgentLoopService service) {
     service.setRunObservation(
         new io.justsearch.app.observability.stream.run.RunChannelObservation(
             new io.justsearch.app.observability.stream.run.RunChannelRegistry()));
@@ -4457,7 +4459,7 @@ class AgentLoopServiceTest {
   // ScriptedAiService — replays pre-defined responses synchronously
   // ===========================================================================
 
-  private static final class ScriptedAiService implements OnlineAiService {
+  static final class ScriptedAiService implements OnlineAiService {
     private final List<ScriptedResponse> responses;
     final List<List<Map<String, Object>>> recordedMessages = new ArrayList<>();
     final List<SamplingParams> recordedSampling = new ArrayList<>();
@@ -4657,7 +4659,7 @@ class AgentLoopServiceTest {
   // ScriptedResponse — describes what one LLM call returns
   // ===========================================================================
 
-  private record ScriptedResponse(
+  record ScriptedResponse(
       String text, String reasoning, List<String> toolCallDeltas, OnlineAiService.AiUsage usage) {
 
     static ScriptedResponse textOnly(String text) {

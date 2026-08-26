@@ -39,6 +39,10 @@ class OperationSubstrateInitTest {
     assertNotNull(out.intentEnvelopeChangeRegistry());
     assertNotNull(out.backendIntentRouter());
     assertNotNull(out.healthRecoveryProjector());
+    // Tempdoc 875 C.3: durable grants are never wired without the argument scope that bounds them —
+    // the phase constructs both and setDurableGrantStore requires both, so this pins the wiring.
+    assertNotNull(out.durableGrantStore());
+    assertNotNull(out.durableGrantScope());
 
     // The phase function registers the navigate-to-surface handler as a side effect.
     assertTrue(

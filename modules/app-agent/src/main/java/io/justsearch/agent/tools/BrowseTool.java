@@ -350,6 +350,12 @@ public final class BrowseTool {
   /**
    * Validates that parent_path is an absolute path under one of the indexed roots. Returns null if
    * valid, or an error message string if rejected.
+   *
+   * <p>Tempdoc 875 §C.5 — browse FAILS CLOSED when the roots are unknown. Search
+   * ({@code path_prefix}) and read ({@code path}) may degrade open because Lucene index membership
+   * still bounds what they can return; browse is a pure directory-disclosure primitive with nothing
+   * else bounding it, so "roots unavailable" must mean "cannot browse by path", not "browse
+   * anywhere".
    */
   private String validateParentPath(String parentPath) {
     List<RootInfo> roots;
@@ -357,10 +363,16 @@ public final class BrowseTool {
       roots = rootsSupplier.get();
     } catch (Exception e) {
       LOG.warn("Failed to get roots for path validation", e);
-      return null; // Degrade gracefully
+      return "Cannot browse \""
+          + parentPath
+          + "\": the indexed root folders are currently unavailable, so the path cannot be checked."
+          + " Omit parent_path to list the indexed roots.";
     }
     if (roots == null || roots.isEmpty()) {
-      return null; // No roots configured — allow any path
+      return "Cannot browse \""
+          + parentPath
+          + "\": no indexed root folders are configured, so no path is browsable."
+          + " Add a folder to the index first.";
     }
     List<String> rootPaths = roots.stream().map(RootInfo::path).toList();
     return AgentToolPaths.validateAgainstRoots(parentPath, rootPaths, "parent_path");

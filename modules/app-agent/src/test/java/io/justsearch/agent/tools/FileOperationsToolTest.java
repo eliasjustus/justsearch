@@ -19,6 +19,10 @@ class FileOperationsToolTest {
 
   private Path root;
   private AtomicReference<Map<Path, Path>> capturedMappings;
+  // Tempdoc 875 §C.6 — the indexed roots are a live lookup, not a constant: a user can remove a
+  // watched root between an operation and its undo. Holding them in a reference lets a test
+  // reproduce that without changing what any existing test sees (it starts as List.of(root)).
+  private AtomicReference<List<Path>> indexedRoots;
   private FileOperationsTool tool;
 
   @BeforeEach
@@ -26,9 +30,10 @@ class FileOperationsToolTest {
     root = tempDir.resolve("indexed");
     Files.createDirectories(root);
     capturedMappings = new AtomicReference<>();
+    indexedRoots = new AtomicReference<>(List.of(root));
     tool =
         new FileOperationsTool(
-            () -> List.of(root),
+            () -> indexedRoots.get(),
             pathMappings -> {
               capturedMappings.set(pathMappings);
               return pathMappings.size();
@@ -371,6 +376,100 @@ class FileOperationsToolTest {
     assertFalse(
         undoResult.message().toLowerCase(java.util.Locale.ROOT).contains("changed since"),
         "No conflict should be reported for an untouched target: " + undoResult.message());
+  }
+
+  // --- Directory-copy undo (tempdoc 875 §C.6 / finding 2) ---
+
+  /** Creates {@code <root>/tree} holding one nested file, and returns it. */
+  private Path createSourceTree() throws IOException {
+    Path tree = root.resolve("tree");
+    Files.createDirectories(tree.resolve("nested"));
+    Files.writeString(tree.resolve("nested").resolve("note.txt"), "original");
+    return tree;
+  }
+
+  private OperationResult copyTreeTo(Path source, Path dest) {
+    String json =
+        """
+        {"operations": [{"op": "COPY", "source": "%s", "destination": "%s"}]}
+        """
+            .formatted(
+                source.toString().replace("\\", "\\\\"), dest.toString().replace("\\", "\\\\"));
+    OperationResult copyResult = tool.execute(json);
+    assertTrue(copyResult.success(), copyResult.message());
+    assertTrue(Files.isDirectory(dest), "Precondition: the directory copy exists");
+    return copyResult;
+  }
+
+  @Test
+  void undoOfACopiedDirectoryOutsideTheRootsIsSkippedNotDeleted() throws IOException {
+    // Undoing a COPY is a RECURSIVE DELETE. The MOVE/RENAME arm re-validates through
+    // executor.validate(...); before 875 the COPY arm deleted with no containment check at all, so
+    // a root removed between the operation and the undo left undo deleting outside the sandbox.
+    Path source = createSourceTree();
+    Path dest = root.resolve("tree-copy");
+    OperationResult copyResult = copyTreeTo(source, dest);
+
+    // The user re-points the indexed roots elsewhere; the copy is now outside the sandbox.
+    Path otherRoot = Files.createDirectories(tempDir.resolve("other-indexed"));
+    indexedRoots.set(List.of(otherRoot));
+
+    OperationResult undoResult = tool.undo(copyResult.executionId().orElseThrow());
+    assertTrue(undoResult.success(), "Undo should still succeed (partial): " + undoResult.message());
+    assertTrue(
+        Files.isDirectory(dest),
+        "A copy outside the indexed roots must NOT be recursively deleted by undo");
+    assertTrue(
+        Files.exists(dest.resolve("nested").resolve("note.txt")),
+        "The tree's contents must survive: " + undoResult.message());
+    assertTrue(
+        undoResult.message().contains("outside the indexed root folders"),
+        "Undo must report the skipped out-of-roots target: " + undoResult.message());
+  }
+
+  @Test
+  void undoOfACopiedDirectoryWithANestedEditIsReportedAsChangedSince() throws IOException {
+    // A directory's own mtime tracks entry add/remove, NOT edits to files inside it. Before 875 the
+    // conflict check stat'ed only the directory, so a copied tree whose nested file the user edited
+    // read as untouched and was deleted recursively.
+    Path source = createSourceTree();
+    Path dest = root.resolve("tree-copy");
+    OperationResult copyResult = copyTreeTo(source, dest);
+
+    Path nested = dest.resolve("nested").resolve("note.txt");
+    Files.writeString(nested, "the user's own edits");
+    Files.setLastModifiedTime(
+        nested, java.nio.file.attribute.FileTime.from(java.time.Instant.now().plusSeconds(120)));
+
+    OperationResult undoResult = tool.undo(copyResult.executionId().orElseThrow());
+    assertTrue(undoResult.success(), "Undo should still succeed (partial): " + undoResult.message());
+    assertTrue(
+        Files.isDirectory(dest),
+        "A tree with a since-edited nested file must NOT be recursively deleted");
+    assertEquals(
+        "the user's own edits", Files.readString(nested), "The user's edit must be preserved");
+    assertTrue(
+        undoResult.message().toLowerCase(java.util.Locale.ROOT).contains("changed since"),
+        "Undo must report the conflict-skipped tree: " + undoResult.message());
+  }
+
+  @Test
+  void undoOfAnUntouchedCopiedDirectorySucceeds() throws IOException {
+    // The two guards above must not over-fire: an in-root, untouched copied tree still reverts.
+    Path source = createSourceTree();
+    Path dest = root.resolve("tree-copy");
+    OperationResult copyResult = copyTreeTo(source, dest);
+
+    OperationResult undoResult = tool.undo(copyResult.executionId().orElseThrow());
+    assertTrue(undoResult.success(), undoResult.message());
+    assertFalse(Files.exists(dest), "An untouched in-root copied directory reverts: " + undoResult.message());
+    assertTrue(Files.isDirectory(source), "The original tree must remain");
+    assertFalse(
+        undoResult.message().contains("outside the indexed root folders"),
+        "No containment skip should be reported: " + undoResult.message());
+    assertFalse(
+        undoResult.message().toLowerCase(java.util.Locale.ROOT).contains("changed since"),
+        "No conflict should be reported for an untouched tree: " + undoResult.message());
   }
 
   @Test

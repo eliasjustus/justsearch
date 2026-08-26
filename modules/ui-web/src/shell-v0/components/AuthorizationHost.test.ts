@@ -124,6 +124,50 @@ describe('<jf-authorization-host> (tempdoc 550 C3)', () => {
     await expect(decision).resolves.toEqual({ approved: true, allowAlways: true });
   });
 
+  /**
+   * Tempdoc 875 C.2 — the backend's DurableGrantStore refuses RiskTier.HIGH before consulting any
+   * grant set, so an "always allow" on a HIGH-risk operation is a promise it will not keep. A control
+   * that lies is worse than no control: the checkbox is hidden for HIGH and present below it.
+   */
+  it('875: hides the allow-always checkbox for a HIGH-risk prompt (the backend will not honour it)', async () => {
+    const decision = requestAuthorization({
+      pendingId: 'pa-high',
+      operationId: 'core.file-operations',
+      gateBehavior: 'TYPED_CONFIRM',
+      riskTier: 'HIGH',
+    });
+    await settle();
+    expect(host.shadowRoot!.querySelector('[data-testid="authorization-allow-always"]')).toBeNull();
+    // Right-reason check: the ceremony IS rendered — it is the checkbox that is withheld.
+    expect(host.shadowRoot!.querySelector('[data-testid="authorization-ceremony"]')).not.toBeNull();
+    const input = host.shadowRoot!.querySelector('[data-testid="authorization-typed-input"]') as HTMLInputElement;
+    input.value = 'core.file-operations';
+    input.dispatchEvent(new Event('input'));
+    await settle();
+    await activateJfButton(host.shadowRoot!.querySelector('[data-testid="authorization-approve"]'));
+    // Approving a HIGH prompt can never resolve with allowAlways: true.
+    await expect(decision).resolves.toEqual({ approved: true, allowAlways: false });
+  });
+
+  it('875: keeps the allow-always checkbox for a MEDIUM-risk prompt (the grant is still honoured)', async () => {
+    const decision = requestAuthorization({
+      pendingId: 'pa-medium',
+      operationId: 'core.ingest-files',
+      gateBehavior: 'INLINE_CONFIRM',
+      riskTier: 'MEDIUM',
+    });
+    await settle();
+    const cb = host.shadowRoot!.querySelector(
+      '[data-testid="authorization-allow-always"] input',
+    ) as HTMLInputElement;
+    expect(cb).not.toBeNull();
+    cb.checked = true;
+    cb.dispatchEvent(new Event('change'));
+    await settle();
+    await activateJfButton(host.shadowRoot!.querySelector('[data-testid="authorization-approve"]'));
+    await expect(decision).resolves.toEqual({ approved: true, allowAlways: true });
+  });
+
   it('resolves false on Deny', async () => {
     const decision = requestAuthorization({ pendingId: 'pa-2', operationId: 'core.x', gateBehavior: 'INLINE_CONFIRM' });
     await settle();
