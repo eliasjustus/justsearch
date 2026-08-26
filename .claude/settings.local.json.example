@@ -595,18 +595,6 @@
             "timeout": 5
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/observation-shard-hint.mjs"
-            ],
-            "timeout": 5
-          }
-        ]
       }
     ],
     "SessionEnd": [

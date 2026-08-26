@@ -19,8 +19,8 @@ classification: lockfile-import
 adr: 0026-manual-ci-triggering
 ---
 React 18 upgrade added one transitive high-severity advisory we can't
-patch upstream yet; tracking in observations.md. Counts will be re-pinned
-when the upstream fix lands.
+patch upstream yet; tracked in the owning tempdoc's open-items section.
+Counts will be re-pinned when the upstream fix lands.
 ```
 
 ## Allowed `classification` values

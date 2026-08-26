@@ -89,7 +89,7 @@ Source-of-emit: `LifecycleSnapshotTap` (per rev 3.7 §B.T.1; the `WorkerHealthEv
 
 Until either path is in place, item 7's substrate path is validated indirectly: item 6 already exercises the same `LifecycleSnapshotTap` → `ConditionStore` → SSE delivery chain through worker death (different trigger, same path). The structural validation holds; only the throughput-specific reason code is unverified.
 
-Track as deferred: see `docs/observations.md` and slice 1.3 spec-tightening pass for whether to add the flag.
+Deferred and currently **unowned** — no active tempdoc holds this item (slice 430 has no tempdoc file); whoever next opens the health-event substrate decides whether to add the flag. (Formerly tracked in the observations store, retired in tempdoc 872.)
 
 ### Item 7a — Threshold via rule engine (memory pressure)
 
