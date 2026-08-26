@@ -18,13 +18,25 @@
     {
       "id": "vdu-pdf-fixtures-local-env",
       "match": [
-        "gradlew?(\\.bat)? (?!.*-x test).*\\btest\\b"
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*--tests(?!.*VduEligibility))(?=.*\\btest\\b)"
       ],
       "claim": "VduEligibilityPdfFixturesTest can be RED on THIS machine only (Tesseract/tessdata + Tika PDF env; @DisabledIfEnvironmentVariable CI=true, CI is green) — a local failure there is environmental, not your change.",
       "evidence": "observations condition obs:vdu-pdf-fixtures-local-env (seen 9)",
       "added": "2026-07-06",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: ./gradlew.bat :modules:worker-services:test --tests \"*VduEligibilityPdfFixturesTest*\""
+    },
+    {
+      "id": "app-services-watched-root-scan-collection-flaky",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*WatchedRootScanCollection"
+      ],
+      "claim": "WatchedRootScanCollectionTest 'addWatchedRoot's scan reaches the wire with the root's collection set' is FLAKY under the full ./gradlew test run only (JUnitException/IOException in the in-process gRPC scan; passes in isolation and on --rerun). Seen 2026-08-25 (session bccfc163) and 2026-08-26 (872's post-merge full run). A failure ONLY there is pre-existing; re-run in isolation to confirm. The fix is a tracked item in tempdoc 872 §6.",
+      "evidence": "retired shard bccfc163…agent-ae33cee35818e8403 (2026-08-25, 'failed once and passed on rerun'); tempdoc 872 post-merge full-suite run 2026-08-26 (2372 tests, this one failed; --rerun in isolation passed)",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:app-services:test --tests \"*WatchedRootScanCollectionTest*\" --rerun"
     },
     {
       "id": "ui-web-envelopestream-heartbeat-flaky",

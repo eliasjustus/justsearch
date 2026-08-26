@@ -171,8 +171,11 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
   `BrowseTool` ignores caller `max_files`; standard-profile delegate fails at n_ctx 4096) — these
   belong to 859/860/864/868's open-items sections; the orchestrators of those tempdocs should pull
   them from the commit. One scheduling note (`STANDING TAKEOVER …860 P1+P2 / P4+P5`) belongs in
-  860. Two flaky Java tests (`WorkerMethvinWatcherTest`, app-services `addWatchedRoot`) and one
-  local-env forensic test (`OnnxEmbeddingEncoder` long-doc) — pin if they recur.
+  860. `WorkerMethvinWatcherTest` (flaky once) and the `OnnxEmbeddingEncoder` long-doc forensic
+  test (local env) — pin if they recur. **`WatchedRootScanCollectionTest` recurred** in this
+  PR's post-merge full run (2372 tests, 1 failed; passes on `--rerun` in isolation) → pinned
+  `app-services-watched-root-scan-collection-flaky`; the fix (in-process gRPC scan racing the
+  watcher under full-suite load) is owed to app-services.
 - **`check-tempdoc-numbers` cross-worktree blind spot** (retired `obs:check-tempdoc-numbers`, seen
   9) and **dev-runner bound to the main repo path** (seen 8) were the two other genuine repeats —
   both real, both defects, both belong to their scripts' owners (`scripts/ci`, `scripts/dev`).
