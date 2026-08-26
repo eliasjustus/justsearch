@@ -98,6 +98,7 @@ public final class SubstratePhase {
       BrowseTool browseTool,
       IngestTool ingestTool,
       FileOperationsTool fileOperationsTool,
+      io.justsearch.agent.tools.ReadDocumentTool readDocumentTool,
       Function<RequiredCapability, Boolean> capabilityResolver,
       io.justsearch.app.api.OperationLeaseService operationLeaseService,
       List<McpServerConfig> mcpServers) {
@@ -122,6 +123,7 @@ public final class SubstratePhase {
               browseTool,
               ingestTool,
               fileOperationsTool,
+              readDocumentTool,
               capabilityResolver,
               operationLeaseService,
               mcpServers));
@@ -153,6 +155,7 @@ public final class SubstratePhase {
       BrowseTool browseTool,
       IngestTool ingestTool,
       FileOperationsTool fileOperationsTool,
+      io.justsearch.agent.tools.ReadDocumentTool readDocumentTool,
       Function<RequiredCapability, Boolean> capabilityResolver,
       io.justsearch.app.api.OperationLeaseService operationLeaseService,
       List<McpServerConfig> mcpServers) {
@@ -174,7 +177,7 @@ public final class SubstratePhase {
         runtimeReconcilerSupplier,
         operationLeaseService);
     AgentToolHandlers.registerEager(
-        operationHandlers, searchTool, browseTool, ingestTool, fileOperationsTool);
+        operationHandlers, searchTool, browseTool, ingestTool, fileOperationsTool, readDocumentTool);
     // Tempdoc 560 WS4 — the operation-catalog collapse + two-phase composition. Core + agent-tools +
     // the MCP-host's contributions compose into the ONE ContributionRegistry, and capability-derived
     // availability is applied ONCE over the full merged set (tempdoc 550 E3), closing the pre-WS4 gap

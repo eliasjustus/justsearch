@@ -12,6 +12,11 @@ class OutputLineageTest {
   void corpusReadersClassifyAsCorpusQuoted() {
     assertEquals(OutputLineage.CORPUS_QUOTED, OutputLineage.forOperationId("core.search-index"));
     assertEquals(OutputLineage.CORPUS_QUOTED, OutputLineage.forOperationId("core.browse-folders"));
+    // Tempdoc 868 §B.2 — core.read-document returns a whole page of the user's own document, which
+    // is the most corpus-quoted output the agent produces: the display half of prompt-injection
+    // safety depends on it being FRAMED as quoted, so instruction-shaped text inside a read page
+    // cannot render as the agent's own claim.
+    assertEquals(OutputLineage.CORPUS_QUOTED, OutputLineage.forOperationId("core.read-document"));
   }
 
   @Test

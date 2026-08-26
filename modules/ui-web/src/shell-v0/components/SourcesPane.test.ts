@@ -284,3 +284,78 @@ describe('SourcesPane docked rail + cross-highlight (565 §12.3.E)', () => {
     el.remove();
   });
 });
+
+/**
+ * Tempdoc 868 §B.3 — the rail's hide/restore control names the CHANNEL, and the channel is the
+ * acquisition axis.
+ *
+ * "Hide {name} from the assistant's retrieval" is a provenance claim in a place easy to miss: it is
+ * an aria-label, so the reader who hears it is the one least able to check it against the card. Over
+ * a document the agent opened by name, nothing retrieved anything — the same false claim the badge
+ * stopped making, one control over.
+ */
+describe('SourcesPane — the hide control names the acquisition channel (868 §B.3)', () => {
+  function seedWith(acquisition?: string): void {
+    const ctrl = getAgentSessionController('http://x');
+    (ctrl as unknown as { answerSources: unknown[] }).answerSources = [
+      {
+        parentDocId: 'C:/docs/handbook.md',
+        chunkIndex: 2,
+        path: 'C:/docs/handbook.md',
+        title: 'handbook.md',
+        excerpt: 'a passage',
+        startLine: 42,
+        endLine: 48,
+        headingText: '',
+        ...(acquisition === undefined ? {} : { acquisition }),
+      },
+    ];
+  }
+
+  async function hideButton(acquisition?: string, hidden = false): Promise<{
+    el: SourcesPane;
+    btn: Element | null;
+  }> {
+    seedWith(acquisition);
+    if (hidden) setExcludedSources([sourceExcludeKey('C:/docs/handbook.md', 2)]);
+    const el = document.createElement('jf-sources-pane') as SourcesPane;
+    el.apiBase = 'http://x';
+    el.open = true;
+    document.body.appendChild(el);
+    await settle(el);
+    return { el, btn: el.shadowRoot?.querySelector('.source-hide') ?? null };
+  }
+
+  it('an OPENED source is hidden from the assistant\'s READING, never its retrieval', async () => {
+    const { el, btn } = await hideButton('opened');
+    expect(btn?.getAttribute('aria-label')).toBe("Hide handbook.md from the assistant's reading");
+    expect(btn?.getAttribute('title')).toBe('Hide from reading');
+    // The refusal, on both surfaces of the control — an aria-label that still said "retrieval" would
+    // be the defect surviving exactly where it is hardest to notice.
+    expect(btn?.getAttribute('aria-label')).not.toContain('retrieval');
+    expect(btn?.getAttribute('title')).not.toContain('retrieval');
+    el.remove();
+  });
+
+  it('the RESTORE wording follows the same channel', async () => {
+    const { el, btn } = await hideButton('opened', true);
+    expect(btn?.getAttribute('aria-label')).toBe("Restore handbook.md to the assistant's reading");
+    expect(btn?.getAttribute('title')).toBe('Restore to reading');
+    el.remove();
+  });
+
+  it('a retrieved source keeps the established wording, byte-for-byte', async () => {
+    // The control. 610 §J.3's words are unchanged for the case that has always existed — this slice
+    // adds a second channel, it does not rename the first.
+    const { el, btn } = await hideButton('retrieved');
+    expect(btn?.getAttribute('aria-label')).toBe("Hide handbook.md from the assistant's retrieval");
+    expect(btn?.getAttribute('title')).toBe('Hide from retrieval');
+    el.remove();
+  });
+
+  it('a source that reports no acquisition reads as retrieved — the same default the badge uses', async () => {
+    const { el, btn } = await hideButton(undefined);
+    expect(btn?.getAttribute('aria-label')).toBe("Hide handbook.md from the assistant's retrieval");
+    el.remove();
+  });
+});

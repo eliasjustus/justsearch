@@ -179,7 +179,26 @@ public sealed interface AgentEvent {
       String contextInclusion,
       /** Characters of the passage that reached the model; {@link #INCLUDED_CHARS_UNKNOWN} when
        *  {@link #contextInclusion} is absent. */
-      int contextIncludedChars) {
+      int contextIncludedChars,
+      /**
+       * Tempdoc 865 §7.6 / 868 §B.3 — HOW this source came to be in front of the model: {@link
+       * #ACQUISITION_RETRIEVED} (a search matched it) or {@link #ACQUISITION_OPENED} (the agent
+       * named it and read it). 865 designed the axis and deferred it for want of a second producer;
+       * {@code core.read-document} is that producer, so it lands here.
+       *
+       * <p>The recorded invariant is directional and must not be read the other way: an
+       * opened-by-name document has LESS relevance evidence than a retrieved one, never more —
+       * nothing ranked it, the agent simply asked for it. {@code
+       * AgentSession.documentGroundingKeys} preserves that across the two producers: a document
+       * already established by EITHER search arm keeps its {@code retrieved} identity when a later
+       * read returns it — including when the search keyed it by {@code parentDocId#chunkIndex} and
+       * the read keys it by path, which is the normal case, since the path the model reads with is
+       * usually one a search result handed it.
+       *
+       * <p>Unlike {@link #contextInclusion} this is an IDENTITY component, fixed at the mint: how a
+       * source was acquired is knowable exactly when it is established, and never changes.
+       */
+      String acquisition) {
 
     /** No producer resolved inclusion for this source. */
     public static final String INCLUSION_ABSENT = "";
@@ -187,10 +206,18 @@ public sealed interface AgentEvent {
     /** No character count is knowable, because no inclusion state was resolved. */
     public static final int INCLUDED_CHARS_UNKNOWN = -1;
 
+    /** The source was found by a search: something ranked it against the query. */
+    public static final String ACQUISITION_RETRIEVED = "retrieved";
+
+    /** The source was opened by name and read: nothing ranked it (868 §B.3). */
+    public static final String ACQUISITION_OPENED = "opened";
+
     public AgentSource {
       contextInclusion = contextInclusion == null ? INCLUSION_ABSENT : contextInclusion;
       contextIncludedChars =
           contextInclusion.isEmpty() ? INCLUDED_CHARS_UNKNOWN : Math.max(0, contextIncludedChars);
+      acquisition =
+          acquisition == null || acquisition.isBlank() ? ACQUISITION_RETRIEVED : acquisition;
     }
 
     /**
@@ -210,7 +237,47 @@ public sealed interface AgentEvent {
         String headingText) {
       this(
           parentDocId, chunkIndex, path, title, excerpt, startLine, endLine, headingText,
-          INCLUSION_ABSENT, INCLUDED_CHARS_UNKNOWN);
+          ACQUISITION_RETRIEVED);
+    }
+
+    /**
+     * THE MINT constructor for a source whose acquisition is not the default — today only {@code
+     * core.read-document}'s {@link #ACQUISITION_OPENED}. Same absent-inclusion rule as the arity-8
+     * mint above: a source is established ABSENT and inclusion is resolved at the cut.
+     */
+    public AgentSource(
+        String parentDocId,
+        int chunkIndex,
+        String path,
+        String title,
+        String excerpt,
+        int startLine,
+        int endLine,
+        String headingText,
+        String acquisition) {
+      this(
+          parentDocId, chunkIndex, path, title, excerpt, startLine, endLine, headingText,
+          INCLUSION_ABSENT, INCLUDED_CHARS_UNKNOWN, acquisition);
+    }
+
+    /**
+     * Inclusion-carrying construction without an explicit acquisition — defaults to {@link
+     * #ACQUISITION_RETRIEVED}, which is what every pre-868 producer meant.
+     */
+    public AgentSource(
+        String parentDocId,
+        int chunkIndex,
+        String path,
+        String title,
+        String excerpt,
+        int startLine,
+        int endLine,
+        String headingText,
+        String contextInclusion,
+        int contextIncludedChars) {
+      this(
+          parentDocId, chunkIndex, path, title, excerpt, startLine, endLine, headingText,
+          contextInclusion, contextIncludedChars, ACQUISITION_RETRIEVED);
     }
 
     /**
@@ -222,7 +289,7 @@ public sealed interface AgentEvent {
     public AgentSource withInclusion(String state, int includedChars) {
       return new AgentSource(
           parentDocId, chunkIndex, path, title, excerpt, startLine, endLine, headingText,
-          state, includedChars);
+          state, includedChars, acquisition);
     }
   }
 

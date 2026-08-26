@@ -42,7 +42,7 @@ public enum OutputLineage {
   // The operations whose OUTPUT is the user's corpus quoted back. A new corpus reader adds its id
   // here (the one declaration site) — everything else is RUNTIME by classification.
   private static final Set<String> CORPUS_READERS =
-      Set.of("core.search-index", "core.browse-folders");
+      Set.of("core.search-index", "core.browse-folders", "core.read-document");
 
   /**
    * Classify a tool's output lineage from its operation id. Corpus readers return their documents'

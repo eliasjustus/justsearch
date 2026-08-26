@@ -47,6 +47,7 @@ import {
   type InclusionBadge,
 } from './evidenceProjection.js';
 import type {
+  Acquisition,
   AnswerEvidenceSource,
   CitationMatch,
   CitationSelectDetail,
@@ -79,7 +80,7 @@ export class CitationsPanel extends JfElement {
   declare sources: AnswerEvidenceSource[];
   /**
    * Tempdoc 836 S2S3-A.3 — the per-source examination facts, so a source the verification budget
-   * never looked at is not filed under "retrieved · not cited". Empty (the default) keeps the
+   * never looked at is not filed under the "not cited" group. Empty (the default) keeps the
    * established two-state behaviour for every consumer whose run reports no coverage.
    */
   declare sourceCoverage: SourceCoverage[];
@@ -428,13 +429,23 @@ export class CitationsPanel extends JfElement {
    * "Grounds N sentences" for a cited source, the honest "Retrieved · not cited" for a retrieved-but-unused
    * one (muted, never "high confidence"). When `grounding` is null (no citation-matches available — the
    * matcher didn't run / keyword-only) the card shows NO trust claim at all (the §22/U2 degraded fallback).
+   *
+   * <p>Tempdoc 868 §B.3 — "Opened · not cited" over a source the agent read by name rather than
+   * retrieved. The badge takes both halves from {@link sourceGroundingLabel} and re-states neither:
+   * the panel writing its own provenance word is exactly how one surface comes to disagree with the
+   * reading pane about the same document.
    */
-  private renderGrounding(g: SourceGrounding): TemplateResult {
+  private renderGrounding(g: SourceGrounding, acquisition: Acquisition): TemplateResult {
     // Tempdoc 865 §7.3 — the tier is nullable now, and only a CITED source is guaranteed one, which
     // is the only branch that reads it. The null test narrows in code rather than by an assertion:
     // an assertion would be a claim, and the muted uncited style is the right fallback anyway.
     const cls = g.cited && g.tier !== null ? `grounding ${tierClass(g.tier)}` : 'grounding uncited';
-    return html`<span class="${cls}" aria-label=${sourceGroundingLabel(g)}>${sourceGroundingLabel(g)}</span>`;
+    // Tempdoc 868 §B.3 — the label's opening word comes from the source's acquisition, resolved by
+    // the projection. The aria-label and the visible text are the SAME call for the same reason they
+    // always were: a screen reader hearing "Retrieved" over a document the agent opened by name is
+    // the identical false claim, delivered where nobody will notice it.
+    const label = sourceGroundingLabel(g, { acquisition });
+    return html`<span class="${cls}" aria-label=${label}>${label}</span>`;
   }
 
   /**
@@ -487,9 +498,9 @@ export class CitationsPanel extends JfElement {
         >
           <div class="header">
             ${grounding && !suppressGroundingFor(item.inclusion)
-              ? this.renderGrounding(grounding)
+              ? this.renderGrounding(grounding, item.acquisition)
               : nothing}
-            ${this.renderInclusion(inclusionBadge(item.inclusion))}
+            ${this.renderInclusion(inclusionBadge(item.inclusion, item))}
             ${item.headingText
               ? html`<span class="heading-breadcrumb">${item.headingText}</span>`
               : nothing}
@@ -576,6 +587,12 @@ export class CitationsPanel extends JfElement {
    * Flat, NEUTRAL source list — no trust grade. Used for FULLTEXT_FALLBACK and (603 §22/U2) when no
    * citation-matches are available (the faithfulness matcher didn't run), so we never assert grounding we
    * don't have nor fall back to the misleading BM25 "confidence". `renderSourceCard(s, null)` shows no badge.
+   *
+   * <p>Tempdoc 868 §B.3 — the count is ACQUISITION-NEUTRAL. It used to read "N sources retrieved",
+   * which was true of every source until the read tool existed and is now a claim about a SET that
+   * can mix retrieved hits with opened-by-name documents. A per-source axis cannot be summed into one
+   * verb, and the honest summary is the one that says less: the cards below carry the provenance,
+   * each for itself. Neutral also keeps this header's promise — "no trust grade" — literally true.
    */
   private renderFlatSources(): TemplateResult {
     return html`
@@ -583,7 +600,7 @@ export class CitationsPanel extends JfElement {
         ? nothing
         : html`<div class="panel-header">
             ${this.sources.length}
-            ${this.sources.length === 1 ? 'source retrieved' : 'sources retrieved'}
+            ${this.sources.length === 1 ? 'source' : 'sources'}
           </div>`}
       ${this.bodyOpen
         ? html`<div class="citations">
@@ -596,8 +613,9 @@ export class CitationsPanel extends JfElement {
   private renderTieredSources(): TemplateResult {
     // Tempdoc 603 C1 — group sources by their GROUNDING (faithfulness) tier, joined from the answer's
     // per-sentence citation-matches (sourceGrounding), NOT the BM25 retrieval score. So a source that
-    // actually grounds the answer ranks high and a retrieved-but-uncited one is demoted into the
-    // collapsed "retrieved · not cited" slot — the panel agrees with the inline citations + the banner
+    // actually grounds the answer ranks high and an uncited one is demoted into the collapsed
+    // "not cited" slot (868 §B.3 dropped that slot's acquisition verb — it groups a SET, and the set
+    // can mix opened and retrieved) — the panel agrees with the inline citations + the banner
     // (the §1 mis-calibration). The tier still comes from the ONE evidenceTier authority (groundingSemantics).
     // 603 PART X.B — grounding joins by the source's ARRAY POSITION in this.sources (the established
     // convention the inline marks use), NOT a doc-ordinal compare. Compute once per (index, source) and
@@ -618,7 +636,7 @@ export class CitationsPanel extends JfElement {
       weak: [],
     };
     // Tempdoc 836 S2S3-A.3 — an UNEXAMINED source leaves the uncited group entirely. Filing it
-    // under "retrieved (not cited)" would state an evidence verdict about text no scorer read;
+    // under "not cited" would state an evidence verdict about text no scorer read;
     // it is a budget fact, so it gets its own slot and never a tier.
     const unexamined: AnswerEvidenceSource[] = [];
     // Tempdoc 865 §7.3 — and a source no matcher judged leaves it for the same reason one step
@@ -689,16 +707,22 @@ export class CitationsPanel extends JfElement {
           : nothing}
         ${weak.length > 0
           ? html`
+              <!-- Tempdoc 868 §B.3 — acquisition-neutral, for the reason renderFlatSources states:
+                   this slot is a SET, and it can hold an opened document beside a retrieved one.
+                   "not cited" is the fact the whole group actually shares (it is what put them here,
+                   via the uncited tier), so dropping the verb costs the reader nothing and stops the
+                   group header from asserting a retrieval over documents nothing ranked. The count
+                   stays — it is what the toggle is for. -->
               <jf-control
                 class="weak-toggle"
                 label=${this.showWeak
-                  ? 'Hide retrieved (not cited)'
-                  : `Show ${weak.length} retrieved (not cited)`}
+                  ? 'Hide not cited'
+                  : `Show ${weak.length} not cited`}
                 .onActivate=${() => (this.showWeak = !this.showWeak)}
               >
                 ${this.showWeak
                   ? 'Hide'
-                  : `${weak.length} retrieved (not cited)`}
+                  : `${weak.length} not cited`}
               </jf-control>
               ${this.showWeak ? renderGroup(weak) : nothing}
             `

@@ -414,13 +414,15 @@ public final class HeadAssembly implements AutoCloseable {
     this.gpuBroadcastListener = serviceOut.inferenceRuntimeHandles().gpuBroadcastListener();
     this.runtimeReconciler = serviceOut.inferenceRuntimeHandles().runtimeReconciler();
     this.offlineCoordinator = serviceOut.offlineCoordinator();
-    this.agentSearchAdapter = serviceOut.agentSearchAdapter();
+    this.agentSearchAdapter = serviceOut.agentTools().agentSearchAdapter();
     this.excludes = serviceOut.excludes();
-    FileOperationLog fileOperationLog = serviceOut.fileOperationLog();
-    FileOperationsTool fileOperationsToolInstance = serviceOut.fileOperationsTool();
-    SearchTool searchToolInstance = serviceOut.searchTool();
-    BrowseTool browseToolInstance = serviceOut.browseTool();
-    IngestTool ingestToolInstance = serviceOut.ingestTool();
+    FileOperationLog fileOperationLog = serviceOut.agentTools().fileOperationLog();
+    FileOperationsTool fileOperationsToolInstance = serviceOut.agentTools().fileOperationsTool();
+    SearchTool searchToolInstance = serviceOut.agentTools().searchTool();
+    BrowseTool browseToolInstance = serviceOut.agentTools().browseTool();
+    IngestTool ingestToolInstance = serviceOut.agentTools().ingestTool();
+    io.justsearch.agent.tools.ReadDocumentTool readDocumentToolInstance =
+        serviceOut.agentTools().readDocumentTool();
 
     // Tempdoc 629 (LAYER): seal agent-run meta.json + events.ndjson with the data key (lazy reads → no
     // reload-listener needed; while locked the ledger is empty until unlock).
@@ -514,6 +516,8 @@ public final class HeadAssembly implements AutoCloseable {
     final BrowseTool browseToolFinal = browseToolInstance;
     final IngestTool ingestToolFinal = ingestToolInstance;
     final FileOperationsTool fileOperationsToolFinal = fileOperationsToolInstance;
+    final io.justsearch.agent.tools.ReadDocumentTool readDocumentToolFinal =
+        readDocumentToolInstance;
     this.substrateOut =
         tracedPhase(
                 "substrate",
@@ -541,6 +545,7 @@ public final class HeadAssembly implements AutoCloseable {
                     browseToolFinal,
                     ingestToolFinal,
                     fileOperationsToolFinal,
+                    readDocumentToolFinal,
                     buildCapabilityResolver(),
                     this.serviceOut.operationLeaseService(),
                     // MCP-host servers (tempdoc 560 §6): resolved by the config authority here at
@@ -784,7 +789,12 @@ public final class HeadAssembly implements AutoCloseable {
                     this.agentSearchAdapter,
                     this.memoryStore,
                     this.scanProgressRegistry,
-                    scanRollupLedgerOrNull()));
+                    scanRollupLedgerOrNull(),
+                    // Tempdoc 868 §B.2: read at RESOLVE time, like indexing() above — the memo body
+                    // runs after connectKnowledgeServer reassembles the graph with the fresh
+                    // Worker-backed services, so capturing a value here would bind the pre-connect
+                    // (index-less) DocumentService.
+                    this.services.worker().documents()));
     bootTraceBuilder.record(
         io.justsearch.app.services.bootstrap.PhaseRecord.lazyPending(
             "agent-tools-registration",

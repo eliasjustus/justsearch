@@ -188,7 +188,11 @@ final class ConversationEngineTest {
         "excerpt", "the excerpt",
         "startLine", 1,
         "endLine", 4,
-        "headingText", "Heading")), answer.get("sources"));
+        "headingText", "Heading",
+        // Tempdoc 868 §B.3 — the acquisition axis rides the store plane too, or a reloaded
+        // conversation would silently re-describe an opened document as retrieved.
+        "acquisition", AgentEvent.AgentSource.ACQUISITION_RETRIEVED)),
+        answer.get("sources"));
     assertEquals("cross-encoder", answer.get("citationScorer"));
     assertEquals("BUDGET_EXHAUSTED", answer.get("disposition"));
     assertEquals(1, ((List<?>) answer.get("citations")).size());
