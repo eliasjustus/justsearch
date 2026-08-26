@@ -1,7 +1,7 @@
 ---
 title: "872 — Stop needing memories: retire the observations store, route findings at discovery"
 type: tempdocs
-status: implemented (this PR); open items in §6
+status: implemented + reviewed (PR #571 green at 34921ac6, CI run 32926396477; awaiting merge); open items in §6; post-merge step in §4
 created: 2026-08-26
 updated: 2026-08-26
 author: agent session (Fable 5), taking over the 2026-08-26 analysis thread (Opus 5)
