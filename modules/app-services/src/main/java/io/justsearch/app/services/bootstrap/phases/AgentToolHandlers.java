@@ -7,13 +7,16 @@ import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.agent.tools.BrowseTool;
 import io.justsearch.agent.tools.FileOperationsTool;
 import io.justsearch.agent.tools.IngestTool;
+import io.justsearch.agent.tools.ReadDocumentTool;
 import io.justsearch.agent.tools.SearchTool;
+import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.services.gpl.LambdaMartReranker;
 import io.justsearch.app.services.lifecycle.WorkerCapability;
 import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.handlers.BrowseOperationHandler;
 import io.justsearch.app.services.registry.operations.handlers.FileOperationsHandler;
 import io.justsearch.app.services.registry.operations.handlers.IngestOperationHandler;
+import io.justsearch.app.services.registry.operations.handlers.ReadDocumentHandler;
 import io.justsearch.app.services.registry.operations.handlers.SearchOperationHandler;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
@@ -49,10 +52,19 @@ public final class AgentToolHandlers {
       SearchTool searchTool,
       BrowseTool browseTool,
       IngestTool ingestTool,
-      FileOperationsTool fileOperationsTool) {
+      FileOperationsTool fileOperationsTool,
+      ReadDocumentTool readDocumentTool) {
     if (searchTool != null) {
       operationHandlers.register(
           AgentToolsOperationCatalog.SEARCH_INDEX, new SearchOperationHandler(searchTool));
+    }
+    // Tempdoc 868 §B.2: registered on BOTH paths deliberately. registerLateBound short-circuits on
+    // SEARCH_INDEX already being present, so an eager registration that skipped the read tool would
+    // leave `core.read-document` permanently unhandled — the 832 one-authority lesson, applied to
+    // the registration side.
+    if (readDocumentTool != null) {
+      operationHandlers.register(
+          AgentToolsOperationCatalog.READ_DOCUMENT, new ReadDocumentHandler(readDocumentTool));
     }
     if (browseTool != null) {
       operationHandlers.register(
@@ -86,7 +98,8 @@ public final class AgentToolHandlers {
       KnowledgeHttpApiAdapter existingAdapter,
       io.justsearch.agent.api.memory.MemoryStore memoryStore,
       io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry,
-      io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger) {
+      io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger,
+      DocumentService documentService) {
     if (operationHandlers.resolve(AgentToolsOperationCatalog.SEARCH_INDEX).isPresent()) {
       return false;
     }
@@ -115,9 +128,15 @@ public final class AgentToolHandlers {
             lambdaMartReranker,
             existingAdapter,
             scanProgressRegistry,
-            scanRollupLedger);
+            scanRollupLedger,
+            documentService);
     operationHandlers.register(
         AgentToolsOperationCatalog.SEARCH_INDEX, new SearchOperationHandler(tools.searchTool()));
+    if (tools.readDocumentTool() != null) {
+      operationHandlers.register(
+          AgentToolsOperationCatalog.READ_DOCUMENT,
+          new ReadDocumentHandler(tools.readDocumentTool()));
+    }
     operationHandlers.register(
         AgentToolsOperationCatalog.BROWSE_FOLDERS, new BrowseOperationHandler(tools.browseTool()));
     operationHandlers.register(
@@ -134,7 +153,7 @@ public final class AgentToolHandlers {
               memoryStore));
     }
     log.info(
-        "AgentTools operation handlers registered: SEARCH_INDEX, BROWSE_FOLDERS, INGEST_FILES, FILE_OPERATIONS, REMEMBER");
+        "AgentTools operation handlers registered: SEARCH_INDEX, READ_DOCUMENT, BROWSE_FOLDERS, INGEST_FILES, FILE_OPERATIONS, REMEMBER");
     return true;
   }
 }

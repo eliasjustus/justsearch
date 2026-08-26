@@ -213,6 +213,8 @@ final class ValidatorRunnerTest {
           }
         };
     handlers.register(AgentToolsOperationCatalog.SEARCH_INDEX, stubHandler);
+    // Tempdoc 868 §B.2 added core.read-document to the agent palette.
+    handlers.register(AgentToolsOperationCatalog.READ_DOCUMENT, stubHandler);
     handlers.register(AgentToolsOperationCatalog.BROWSE_FOLDERS, stubHandler);
     handlers.register(AgentToolsOperationCatalog.INGEST_FILES, stubHandler);
     handlers.register(AgentToolsOperationCatalog.FILE_OPERATIONS, stubHandler);

@@ -548,6 +548,17 @@ public final class AgentLoopService implements AgentService {
 
       List<Map<String, Object>> baseTools =
           agentToolEmitter.emit(operationCatalog, request.selectedToolNames());
+      // Tempdoc 868 §C: the ONE record of what the model was offered this run. Verifying a tool
+      // "exists" against a controller's catalog view proved nothing about this list (a tool the
+      // controller advertised was absent here for a whole live campaign), so the emitted names are
+      // logged at the seam rather than inferred from a neighbouring surface.
+      LOG.info(
+          "Agent tools offered (session={}, selected={}): {}",
+          sessionId,
+          request.selectedToolNames(),
+          baseTools.stream()
+              .map(t -> t.get("function") instanceof Map<?, ?> f ? String.valueOf(f.get("name")) : "?")
+              .toList());
 
       if (baseTools.isEmpty() && request.agentProfiles().isEmpty()) {
         emitError(

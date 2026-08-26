@@ -58,6 +58,18 @@ export interface AgentSource {
   contextInclusion?: string;
   /** Characters of this passage that reached the model. Absent together with `contextInclusion`. */
   contextIncludedChars?: number;
+  /**
+   * Tempdoc 868 §B.3 (865 §7.6's acquisition axis, second value) — HOW this source came to be in
+   * front of the model: `"retrieved"` (a ranked search hit) or `"opened"` (the agent read the
+   * document by name through `core_read_document`).
+   *
+   * ABSENT means `"retrieved"`, and that default is honest rather than convenient: until the read
+   * tool existed every delegate source was a search hit, so absence is a known fact about the
+   * producer, not a guess about it. The narrowing lives in ONE place — `acquisitionOf` in
+   * `evidenceProjection.ts` — and this stays a raw wire `string` for the same reason
+   * {@link contextInclusion} does: a field pre-narrowed to the union would force a cast here.
+   */
+  acquisition?: string;
 }
 
 /**

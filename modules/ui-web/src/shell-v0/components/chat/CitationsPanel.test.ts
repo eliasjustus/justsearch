@@ -179,8 +179,10 @@ describe('CitationsPanel', () => {
     const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
     expect(text).toContain('Grounds the answer');
     expect(text).toContain('a.md');
-    // the uncited high-BM25 source is in the collapsed "retrieved (not cited)" group, NOT shown by default
-    expect(text).toContain('1 retrieved (not cited)');
+    // the uncited high-BM25 source is in the collapsed "not cited" group, NOT shown by default
+    // (868 §B.3 dropped the group's acquisition verb — it groups a set that can mix opened and
+    // retrieved sources; the COUNT is what the toggle is for and is still pinned here).
+    expect(text).toContain('1 not cited');
     expect(text).not.toContain('Unused passage');
     el.remove();
   });
@@ -192,7 +194,12 @@ describe('CitationsPanel', () => {
     document.body.appendChild(el);
     await settle(el);
     const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
-    expect(text).toContain('1 source retrieved');
+    // 868 §B.3 — the flat header is acquisition-neutral now, so it is pinned on the ELEMENT rather
+    // than as a substring: "1 source" alone would also match a stray mention elsewhere in the panel,
+    // and this header's whole job is to be the count and nothing more.
+    expect(
+      (el.shadowRoot?.querySelector('.panel-header')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    ).toBe('1 source');
     expect(text).toContain('Retrieved text');
     expect(text).not.toContain('Grounds');
     expect(text).not.toContain('Grounds the answer');
@@ -676,7 +683,9 @@ describe('CitationsPanel — the grounding pass did not complete (865 PR-0)', ()
     // The two verdicts that must NOT appear: the per-source one, and the collapsed group that files
     // a source under it.
     expect(text).not.toContain('Retrieved · not cited');
-    expect(text).not.toContain('retrieved (not cited)');
+    // 868 §B.3 — the group's own words are now just "not cited", so this refusal covers BOTH the
+    // per-source verdict and the group that files a source under it, in one assertion.
+    expect(text).not.toContain('not cited');
     // Nor the BUDGET wording — a scorer failure is not a budget outcome (the "not `unexamined`" rule).
     expect(text).not.toContain('not examined');
     expect(
@@ -704,7 +713,12 @@ describe('CitationsPanel — the grounding pass did not complete (865 PR-0)', ()
     const unset = await panel(() => {});
     expect(unset.text).not.toContain('grounding check did not complete');
     expect(unset.text).not.toContain('Retrieved · not cited');
-    expect(unset.text).toContain('sources retrieved');
+    // 868 §B.3 — the flat header, pinned on the element (see the neutral-flat-list case above).
+    expect(
+      (unset.el.shadowRoot?.querySelector('.panel-header')?.textContent ?? '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    ).toBe('2 sources');
     unset.el.remove();
 
     const explicit = await panel((p) => {
@@ -720,17 +734,20 @@ describe('CitationsPanel — the grounding pass did not complete (865 PR-0)', ()
       p.retrievalMode = 'FULLTEXT_FALLBACK';
     });
     expect(text).not.toContain('grounding check did not complete');
-    expect(text).toContain('sources retrieved');
+    expect(
+      (el.shadowRoot?.querySelector('.panel-header')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    ).toBe('2 sources');
     el.remove();
   });
 
   it('a matcher that RAN still demotes its uncited sources — the honest verdict is untouched', async () => {
     // The control. One cite lands on source 1; source 0 was judged and grounded nothing, so it
-    // belongs in the collapsed "retrieved (not cited)" group and keeps that wording.
+    // belongs in the collapsed "not cited" group and keeps that wording (868 §B.3 dropped only the
+    // acquisition verb from it; the demotion and the count are the behaviour under test).
     const { text, el } = await panel((p) => {
       p.citations = [fakeCitation({ parentDocId: 'b.md', sourceIndex: 1 })];
     });
-    expect(text).toContain('retrieved (not cited)');
+    expect(text).toContain('1 not cited');
     expect(text).toContain('Grounds 1 sentence');
     expect(text).not.toContain('grounding check did not complete');
     el.remove();
@@ -805,5 +822,159 @@ describe('CitationsPanel — 870 motion and type scale', () => {
     // The dead `.excerpt` role is gone — no template in this file ever applied that class, which is
     // why it could drift into a fourth size unnoticed.
     expect(declarations).not.toContain('.excerpt');
+  });
+});
+
+/**
+ * Tempdoc 868 §B.3 — the source card's excerpt BUDGET, once an excerpt can be a whole page.
+ *
+ * The read tool hands the model up to `READ_PAGE_CHARS = 3000` characters and the source carries all
+ * of them, deliberately: the citation matcher verifies an opened source against its own literal text
+ * (§B.1), so the wire value must stay uncapped. The card is the opposite kind of thing — a
+ * fixed-size promise that lets the reader scan several sources at once — and rendering 3000 chars
+ * turned one card into the whole panel (observed live on `278-decision-log.md`).
+ *
+ * So the clamp is a DISPLAY clamp, in the view-model projection, over every excerpt. These pin both
+ * halves: it bites the long one, and the record behind it is untouched.
+ */
+describe('CitationsPanel — excerpt display budget (868 §B.3)', () => {
+  // ~3000 chars, the shape a `core_read_document` page has: real words, so the boundary walk has
+  // somewhere to land.
+  const OPENED_TEXT = 'opened page text '.repeat(177).trim();
+  // ~300 chars — a retrieved excerpt at the top of what its producer emits (RagContextOps clamps to
+  // 240; this is deliberately above that and still under the card budget).
+  const RETRIEVED_TEXT = 'passage '.repeat(38).trim();
+
+  async function cards(): Promise<{ el: CitationsPanel; sentences: string[] }> {
+    const el = document.createElement('jf-citations-panel') as CitationsPanel;
+    el.sources = [
+      fakeSource({ parentDocId: 'long.md', startLine: 1, excerpt: OPENED_TEXT, acquisition: 'opened' }),
+      fakeSource({ parentDocId: 'short.md', startLine: 5, excerpt: RETRIEVED_TEXT }),
+    ];
+    el.citations = [];
+    document.body.appendChild(el);
+    await settle(el);
+    const sentences = Array.from(el.shadowRoot?.querySelectorAll('.sentence') ?? []).map((n) =>
+      (n.textContent ?? '').trim(),
+    );
+    return { el, sentences };
+  }
+
+  it('the premise: the two fixtures sit on either side of the budget', () => {
+    // Stated rather than assumed — a fixture that drifted under the ceiling would make the clamp
+    // test below pass while testing nothing.
+    expect(OPENED_TEXT.length).toBeGreaterThan(2900);
+    expect(RETRIEVED_TEXT.length).toBeGreaterThan(280);
+    expect(RETRIEVED_TEXT.length).toBeLessThan(320);
+  });
+
+  it('an opened page is elided to the card budget, at a word boundary, with an ellipsis', async () => {
+    const { el, sentences } = await cards();
+    const opened = sentences[0]!;
+    expect(opened.length).toBeLessThanOrEqual(330);
+    expect(opened.endsWith('…')).toBe(true);
+    // A word boundary, not a mid-word cut — asserted structurally rather than by naming the word the
+    // cut happens to land on: the body is a PREFIX of the page, and the character it stopped before
+    // is whitespace. Both halves are needed. A prefix check alone passes a mid-word cut, and a
+    // "ends with a letter" check passes text that was never the page's.
+    const body = opened.slice(0, -1);
+    expect(OPENED_TEXT.startsWith(body)).toBe(true);
+    expect(OPENED_TEXT.charAt(body.length)).toBe(' ');
+    el.remove();
+  });
+
+  it('a retrieved excerpt under the budget renders byte-for-byte — the clamp is a ceiling, not a format', async () => {
+    const { el, sentences } = await cards();
+    expect(sentences[1]).toBe(RETRIEVED_TEXT);
+    expect(sentences[1]).not.toContain('…');
+    el.remove();
+  });
+
+  it('the SOURCE keeps its full text — display shortened it, nothing else did', async () => {
+    // The load-bearing half. The matcher verifies an opened source against this literal text and the
+    // pane's witness check reads it too; a clamp that reached the record would quietly weaken both.
+    const { el } = await cards();
+    expect(el.sources[0]!.excerpt).toBe(OPENED_TEXT);
+    expect(el.sources[0]!.excerpt.length).toBeGreaterThan(2900);
+    el.remove();
+  });
+});
+
+/**
+ * Tempdoc 868 §B.3 — the panel's AGGREGATE copy, once a run can mix acquisitions.
+ *
+ * The per-source badge got the honest word first ("Opened · not cited"), which left the group
+ * headers as the last place claiming a retrieval for documents nothing ranked: "N sources retrieved"
+ * over a set, and "Show N retrieved (not cited)" over a slot two sources reached by different routes.
+ * A per-source axis cannot be summed into one verb — so the headers say less, and the cards inside
+ * them keep saying it each for itself. These pin both halves of that split.
+ */
+describe('CitationsPanel — acquisition-neutral group copy (868 §B.3)', () => {
+  const MIXED: RetrievalCitation[] = [
+    fakeSource({ parentDocId: 'a.md', startLine: 1, excerpt: 'grounded passage' }),
+    fakeSource({ parentDocId: 'b.md', startLine: 5, excerpt: 'unused hit' }),
+    fakeSource({
+      parentDocId: 'c.md',
+      startLine: 9,
+      excerpt: 'unused page',
+      acquisition: 'opened',
+    }),
+  ];
+
+  function normalized(el: CitationsPanel): string {
+    return (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
+  }
+
+  async function panelOf(sources: RetrievalCitation[]): Promise<CitationsPanel> {
+    const el = document.createElement('jf-citations-panel') as CitationsPanel;
+    el.sources = sources;
+    // One cite, on source 0 — so the matcher RAN (the tiered path) and sources 1 and 2 land in the
+    // collapsed group together: one retrieved, one opened.
+    el.citations = [fakeCitation({ parentDocId: 'a.md', sourceIndex: 0 })];
+    document.body.appendChild(el);
+    await settle(el);
+    return el;
+  }
+
+  it('says nothing about retrieval in ANY group copy when the set is mixed', async () => {
+    const el = await panelOf(MIXED.map((s) => ({ ...s })));
+    const text = normalized(el);
+    // The collapsed state is the one where every visible word is group copy — the per-source badges
+    // are behind the toggle, so a stray "retrieved" here could only have come from a header.
+    expect(text.toLowerCase()).not.toContain('retrieved');
+    // ...and it still tells the reader the two things the copy is FOR: the total and the slot count.
+    expect(
+      (el.shadowRoot?.querySelector('.panel-header')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    ).toContain('3 sources');
+    expect(text).toContain('2 not cited');
+    el.remove();
+  });
+
+  it('the neutral group still holds sources that describe themselves — each by its own route', async () => {
+    // The other half. Neutral group copy would be a REGRESSION if the provenance vanished with it;
+    // it moved down to the cards, where it is a per-source fact rather than a claim about a set.
+    const el = await panelOf(MIXED.map((s) => ({ ...s })));
+    (el as unknown as { showWeak: boolean }).showWeak = true;
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    const text = normalized(el);
+    expect(text).toContain('Opened · not cited');
+    expect(text).toContain('Retrieved · not cited');
+    el.remove();
+  });
+
+  it('a wholly-retrieved run reads the same — the copy is neutral, not conditional', async () => {
+    // Neutrality is unconditional: the headers do not switch wording when a run happens to be all
+    // search hits. A conditional header would be a second acquisition authority, deciding for a SET
+    // what `acquisitionWord` decides per source.
+    const el = await panelOf(
+      MIXED.map((s) => {
+        const { acquisition: _dropped, ...retrieved } = s;
+        return retrieved;
+      }),
+    );
+    const text = normalized(el);
+    expect(text.toLowerCase()).not.toContain('retrieved');
+    expect(text).toContain('2 not cited');
+    el.remove();
   });
 });
