@@ -50,8 +50,8 @@ Assign a label `D-N` continuing from the existing series (D-1 D-2
 D-3 already taken by tempdoc 400 §23.8 and §23.9). Next defect
 is D-4.
 
-Add a log entry to `docs/observations.md` under the **Silent-failure
-log** section (not the Inbox):
+Record it in the owning tempdoc's open-items section (route-at-discovery,
+tempdoc 872) as:
 
 ```text
 - [ ] 2026-MM-DD — <description> — pillar(s) that would have caught
@@ -161,7 +161,7 @@ it hid before.>
 
 pytest scripts/jseval/tests/ → X passed (was Y + N new D-N).
 
-docs/observations.md — D-N marked resolved with fix date + summary.
+Owning tempdoc's open-items section — D-N marked resolved with fix date + summary.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
@@ -169,10 +169,10 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ### Step 5 — Update the log
 
 After shipping:
-1. Update the `docs/observations.md` silent-failure log: change
+1. Update the owning tempdoc's open-items entry: change
    `[ ]` to `[x]`; append `— fixed YYYY-MM-DD in <commit-sha>:
    <summary>`.
-2. Keep the log current as a running engineering record.
+2. Keep the record current as a running engineering record.
 
 ## What NOT to do
 
@@ -187,8 +187,6 @@ After shipping:
   the recurrence signal.
 - Skip the pillar classification. The classification keeps the
   engineering record crisp.
-- Let the fix linger in observations.md. Convert `[ ]` → `[x]` at
-  commit time, not later.
 - Open a new tempdoc for every instance. Only when the fix scope
   crosses a language boundary or surfaces a pattern worth
   formalizing.
@@ -240,7 +238,7 @@ pattern. Resist the impulse to generalize prematurely.
   defect each would catch; used by Step 1's classification.
 - **Tempdoc 405 §7** — the recommendation that makes this playbook
   the canonical path.
-- **`docs/observations.md`** — silent-failure log section.
+- **Owning tempdoc's open-items section** — silent-failure log, per route-at-discovery (tempdoc 872; the former `docs/observations.md` silent-failure log is retired, history in git).
 - **`scripts/jseval/tests/test_projections_encoder_drift.py::
   TestDurationMsExtractionContract`** — reference contract-test
   template.

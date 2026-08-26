@@ -12,7 +12,15 @@ for (const f of files) {
   if (raw.includes('\uFFFD')) {
     issues.push({ file: f, kind: 'encoding', msg: 'Found U+FFFD replacement character' });
   }
-  const fm = matter(raw);
+  // A single malformed front matter must be a FINDING, not a crash that hides every other
+  // result (872: two tempdocs each killed the whole run for weeks, unreported).
+  let fm;
+  try {
+    fm = matter(raw);
+  } catch (e) {
+    issues.push({ file: f, kind: 'frontmatter-parse', severity: 'error', msg: `Front matter does not parse: ${e.reason || e.message}` });
+    continue;
+  }
   const data = fm.data || {};
   // Detect duplicate front-matter keys (best-effort, top-level only)
   if (fm.matter && fm.matter.startsWith('---')) {

@@ -5,7 +5,7 @@
 ## Canonical vs noncanonical (critical)
 
 - **Canonical (must not drift):** `docs/explanation/`, `docs/reference/`, `docs/how-to/`, `docs/decisions/`
-- **Noncanonical (allowed to drift):** `docs/tempdocs/`, `docs/future-features/`, `docs/observations.md`, `docs/ui-explorations/` (and background folders like `docs/Hardware/`, `docs/Economy/`)
+- **Noncanonical (allowed to drift):** `docs/tempdocs/`, `docs/future-features/`, `docs/ui-explorations/` (and background folders like `docs/Hardware/`, `docs/Economy/`)
 
 If docs disagree, treat **canonical** docs as truth. If canonical docs are unclear, verify against code + contract tests.
 

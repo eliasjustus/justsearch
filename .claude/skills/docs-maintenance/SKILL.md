@@ -51,7 +51,7 @@ metric.
 
 ### Canonical vs Noncanonical
 - **Canonical (must not drift):** `docs/explanation/`, `docs/reference/`, `docs/how-to/`, `docs/decisions/`
-- **Noncanonical (dated working history, allowed to drift):** `docs/tempdocs/`, `docs/observations.md` + `docs/observations.d/`
+- **Noncanonical (dated working history, allowed to drift):** `docs/tempdocs/`
 
 If the two disagree, canonical is truth. If canonical is unclear, verify against source and
 contract tests — not against a tempdoc, which reflects only its writing date.

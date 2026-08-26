@@ -37,7 +37,7 @@ message names the allowed alternative; use it.
   governance-precommit-hint (`git commit`), docs-granularity-hint (`git push`),
   dataset-cache-hint (corpus/dataset fetch — use the cache-backed `jseval corpus-fetch-*`, 709),
   exec-substrate-hint (scoop `&`-paste, `gh` wait-loops, piped py — use `run-gh`/`run-py.mjs`, 743).
-- Read-triggered: tempdoc-age-hint. Stop-triggered: observation-shard-hint.
+- Read-triggered: tempdoc-age-hint.
 
 ## Transparent (no action needed)
 
