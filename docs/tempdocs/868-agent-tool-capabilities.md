@@ -1,9 +1,9 @@
 # 868 — The delegate agent's tool surface: what it can actually do
 
 ```
-status:  IMPLEMENTING (2026-08-26 — owner said "proceed autonomously" after §A; design in §B;
-         branch worktree-868-read-chunk). Was BRIEFING until §A landed: investigation,
-         research, and theorization only, the owner deciding direction afterwards.
+status:  IMPLEMENTED (2026-08-26, PR #566) — §B delivered, live-verified (§C), independently
+         reviewed (§C.6). Follow-ups in §D. Was BRIEFING until §A landed, then IMPLEMENTING
+         after the owner's "proceed autonomously".
 created: 2026-08-26
 follows: 866 (the file-read capability sketch — OWNER-DECISION-GATED; this tempdoc is
          the wider frame it sits inside), 865 (delegate evidence authority — what tool
@@ -547,3 +547,41 @@ document server-side. Recorded, not decided.
 Could-not-refute (kept as verified): readable universe = Lucene stored fields only, no disk fallback; both production `DocumentService` impls override `matchCitationsAgainst`; `acquisition` written at both serialization sites and defaulted at one FE site; the two seam/durability audits still bind; both handler registration paths register the read tool; `STRIPPABLE_LINE` cannot strip anything new; the deep-link path still receives the full excerpt.
 
 Directional note on #1: the dedup is read-after-search only. A search that later finds a chunk of an already-read document still mints a chunk-precise retrieved source — it adds ranking evidence and an inline-mark identity the read never had; 865 §7.6 forbids opened claiming what retrieved earned, not the reverse (`AgentSession.java` documentGroundingKeys comment). The `READ_PAGE_CHARS < MIN_PAGE_CHARS` refusal is deliberately not unit-tested: the constant freezes from `ConfigStore` at class load, so a test would be JVM-order-dependent.
+
+---
+
+## §D. Follow-ups (2026-08-26, at close)
+
+Candidates for their own tempdoc:
+
+1. **Availability truth without a poller.** `LifecycleSnapshotTap.accept` reconciles
+   conditions only when `/api/status` is built, so availability-gated tools
+   (`core_search_index`, `core_read_document`) are silently absent for API-only/headless
+   clients until something polls (§C.3). The fix belongs in the health substrate (reconcile
+   on worker-readiness transitions, or evaluate availability from the readiness envelope
+   directly), plus a test that an agent run started before any status poll still offers
+   search. The `Agent tools offered` log is the instrument.
+2. **Delegate paging economics.** With n_ctx 4096, a 10-step FE cap, and a 4B model, "read
+   three documents" pages to exhaustion (§C.4b). Levers, each an owner call: raise or
+   effort-scale the FE's fixed `DEFAULT_MAX_ITERATIONS`; put `total_chars` in the read
+   header so the model can budget; a summary-mode default of one page per document;
+   per-document progress vocabulary for the budget gate (859 §2.3's "1 of 3 files").
+3. **Standard-profile reasoning exhaustion.** Qwen3.5-9B fails 2/2 on the turn after
+   `browse` at n_ctx 4096 / max_tokens 1024 ("possible reasoning token exhaustion"), before
+   any read — the user-facing profile cannot run the delegate tier at defaults.
+
+Small, no tempdoc needed:
+
+4. `POST /api/chat/agent` with a non-empty `tools` selection returns `NO_TOOLS` in either
+   name form (observations shard) — the selection path is broken independently of 868.
+5. 866 §6.1 ("how far does scoped search get") is now runnable — `path_prefix` is declared —
+   and worth one measured run for the record, though the read tool made it moot for the
+   rank-1 shape.
+6. Comment/copy residue logged: retired-shell banner copy; `autonomy/index.ts` still omits
+   `core_remember`/`core_navigate_to_surface`; `RetryPolicy` on agent ops is declarative.
+
+Owner decisions still open (unchanged from §C.5): journal-by-reference for content-bearing
+tool outputs (A.7); the MCP surface deliberately gets no read/fetch (770 §4).
+
+Tempdoc 866 is superseded by this one (its question was answered: the tool shipped; its §4
+questions are settled in §B/§C).

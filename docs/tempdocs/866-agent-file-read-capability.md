@@ -1,7 +1,10 @@
 # 866 — Should the delegate agent be able to read a file?
 
 ```
-status:  OWNER-DECISION-GATED (2026-08-25) — charter sketch only. NO design and NO
+status:  SUPERSEDED by 868 (2026-08-26, PR #566) — the owner decided in 868's frame; the read
+         tool shipped as `core.read-document` (ranged, over FetchDocumentSlice) with the
+         acquisition axis; §4's questions are settled in 868 §B/§C. Kept as dated history.
+         Was: OWNER-DECISION-GATED (2026-08-25) — charter sketch only. NO design and NO
          implementation this wave. Adding a tool to the agent's vocabulary is a
          product-capability call the owner makes, not an agent-initiated one. This
          document exists to state the problem precisely and to park the questions
