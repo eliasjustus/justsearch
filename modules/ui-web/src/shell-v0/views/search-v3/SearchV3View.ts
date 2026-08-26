@@ -325,6 +325,9 @@ import './Sv3Pane.js';
 
 const COMPOSER_STATE_ATTR = 'composer-state';
 
+/** Tempdoc 867 — a stable empty-set identity for when no run controller exists yet. */
+const EMPTY_EVIDENCE_PATHS: ReadonlySet<string> = new Set();
+
 /**
  * Tempdoc 859 §B — the occluded band: what the floating dock takes out of the bottom of the
  * transcript scroller's client box. Declared with a non-zero default in `sv3-tokens.css.ts` and
@@ -3443,6 +3446,7 @@ export class SearchV3View extends JfElement {
           .view=${results}
           .turns=${turns}
           .run=${run}
+          .liveEvidencePaths=${this.agentController()?.groundingDeltaPaths ?? EMPTY_EVIDENCE_PATHS}
           ?record-notice=${this.recordNotice}
           ?history-locked=${this.historyLocked}
           ?locked-refusal=${this.lockedRefusal}

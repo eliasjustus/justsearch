@@ -307,10 +307,13 @@ const reasons = (names: readonly string[], why: string): Record<string, string> 
 /* ── 1. Closure: nothing falls through to the shipped app's light `:root` ─────────────────────── */
 
 describe('the three imported components read NO token the window leaves unbridged', () => {
-  it('dresses <jf-tool-call-card>, including the tokens its inline status colour resolves', () => {
-    // `ToolCallCard.ts:354` writes the status word's colour inline, but what `statusTone.ts:88-104`
-    // returns is `var(--accent-<tone>)` — a custom property, so the host bridge reaches it after
-    // all (the audit recorded it as unreachable; it is not).
+  it('dresses <jf-tool-call-card>, including the tokens the nested <jf-run-node> glyph resolves', () => {
+    // Tempdoc 867 removed the card's own inline-coloured status word (status is the glyph now), but
+    // the NESTED `<jf-run-node>` (`RunNode.ts`) still colours its glyph from `statusTone.ts`'s
+    // `toneAccent`, which returns `var(--accent-<tone>)` — a custom property the naive source scan
+    // cannot see (it is JS-computed, not literal text in either file), yet it still resolves through
+    // ToolCallCard's OWN bridge scope: shadow-DOM custom-property inheritance carries it from the
+    // `jf-tool-call-card` host selector down into the nested element's shadow tree.
     assertClosed('jf-tool-call-card', componentSource('ToolCallCard.ts'), [
       '--accent-success',
       '--accent-warning',
@@ -442,22 +445,23 @@ describe('the three imported components read NO token the window leaves unbridge
 
 describe('every text/surface pair those components can paint clears WCAG AA on the dark window', () => {
   it('keeps the tool-call card legible — the white-on-white case the audit measured', () => {
-    // Pairs read from `ToolCallCard.ts`: the card fill (:119), its wells (:189,200), the quoted
-    // frame (:213), the subdued rungs (:142,148,172,219,275,284), the actions (:255-266), the
-    // rejected reason (:269), the resource link (:245) and the inline status word (:354).
+    // Tempdoc 867 flattened the card to one header disclosure and replaced the nested
+    // `<jf-results-card>` with a level-2 search body; the inline-coloured status word and the
+    // (already-unrendered since 550 C3) `.tool-actions` buttons are gone. Pairs read from the
+    // current `ToolCallCard.ts`: the card fill (`.tool-card`), its wells (`.tool-args`/`.tool-output`),
+    // the quoted frame (`.tool-output.lineage-corpus-quoted` + `.lineage-frame-label`), the subdued
+    // rungs (`.tool-target`/`.tool-card-accessory`/`.risk-word`/`.risk-why`/`.because`/the search
+    // body's `.search-scope`/`.search-row-path`/`.search-row-locator`/`.search-more`), the "Open in
+    // Search" pill (`.search-open-in-search`), the rejected reason (`.rejected-reason`) and the
+    // resource link (`.tool-resource a`).
     check('jf-tool-call-card', [
-      { what: 'tool name / body on the card', text: 'var(--foreground)', on: ['var(--surface-secondary)'] },
-      { what: 'tool target, status, risk-why, because, expand', text: 'var(--text-secondary)', on: ['var(--surface-secondary)'] },
+      { what: 'tool name / search-row filename on the card', text: 'var(--foreground)', on: ['var(--surface-secondary)'] },
+      { what: 'tool target, risk tier, risk-why, because, accessory, search scope/path/locator/footer', text: 'var(--text-secondary)', on: ['var(--surface-secondary)'] },
       { what: 'args / output text in a well', text: 'var(--foreground)', on: ['var(--surface-secondary)', 'var(--surface-tertiary)'] },
-      { what: 'action button label', text: 'var(--text-primary)', on: ['var(--surface-secondary)', 'var(--surface-tertiary)'] },
-      { what: 'primary action label on its fill', text: 'var(--accent-on-tint)', on: ['var(--surface-secondary)', 'var(--accent-tint)'], filled: true },
+      { what: 'Open in Search pill label', text: 'var(--text-primary)', on: ['var(--surface-secondary)', 'var(--surface-tertiary)'] },
       { what: 'lineage frame label on the quoted frame', text: 'var(--text-secondary)', on: ['var(--surface-secondary)', 'var(--surface-2)'] },
       { what: 'rejected reason', text: 'var(--text-warning)', on: ['var(--surface-secondary)'] },
       { what: 'resource link', text: 'var(--accent)', on: ['var(--surface-secondary)'] },
-      { what: 'status word — completed', text: 'var(--accent-success)', on: ['var(--surface-secondary)'] },
-      { what: 'status word — waiting', text: 'var(--accent-warning)', on: ['var(--surface-secondary)'] },
-      { what: 'status word — failed', text: 'var(--accent-danger)', on: ['var(--surface-secondary)'] },
-      { what: 'status word — running', text: 'var(--accent-tint)', on: ['var(--surface-secondary)'] },
     ]);
   });
 

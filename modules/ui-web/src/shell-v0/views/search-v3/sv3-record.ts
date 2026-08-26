@@ -230,6 +230,15 @@ interface Building {
    */
   groundingDeltas: AgentSource[];
   /**
+   * Tempdoc 867 — the raw `AgentSource[]` off the LAST assistant item that carried `attributes.sources`
+   * (the action-plane terminal, last-wins like {@link evidence} and for the same reason: the terminal
+   * message's sources are what the reader is looking at). Held separately from {@link evidence}
+   * because {@link Sv3TurnEvidence.sources} drops `path` (`agentEvidence.toAnswerEvidenceSource`
+   * projects onto `AnswerEvidenceSource`, which has no `path` field) — this keeps the raw field the
+   * tool cards' evidence-path join needs.
+   */
+  terminalSources: AgentSource[];
+  /**
    * The id of the last assistant message in the turn THAT THE CONVERSATION STORE MINTED — last-wins
    * for the same reason {@link evidence} is, and kept even though the ask turn's activity list is
    * not (tempdoc 852 §2.3a): the rendering rule that drops the list says nothing about the identity,
@@ -283,6 +292,7 @@ const open = (
   declaredShapeId: null,
   evidence: null,
   groundingDeltas: [],
+  terminalSources: [],
   disposition: null,
   stopRequested: false,
   assistantId: null,
@@ -371,6 +381,11 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       if (isSv3StoreMessageId(item.id)) turn.assistantId = item.id;
       const evidence = recordEvidenceOf(item);
       if (evidence !== null) turn.evidence = evidence;
+      // Tempdoc 867 — the same terminal, kept in its RAW (path-carrying) shape alongside the
+      // projected `evidence` above, last-wins for the same reason.
+      if (Array.isArray(item.attributes.sources)) {
+        turn.terminalSources = item.attributes.sources as AgentSource[];
+      }
       // Tempdoc 859 §D §2.6 — the terminal disposition rides the same assistant message the answer
       // does, so a reloaded turn discloses the truncation it disclosed live.
       const disposition = item.attributes.disposition;
@@ -516,6 +531,15 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       // (which the record genuinely does not hold), this one IS persisted, so leaving it null would
       // be discarding a fact the record has.
       disposition: turn.disposition,
+      // Tempdoc 867 — the SAME plane-authority rule `evidence` above follows (865 §7.1): the
+      // per-call deltas fill the gap when the terminal never spoke, and are never ADDED to a
+      // terminal that did (they are the same set — a Set dedups the overlap rather than double it).
+      evidencePaths: Array.from(
+        new Set([
+          ...turn.groundingDeltas.map((s) => s.path),
+          ...turn.terminalSources.map((s) => s.path),
+        ]),
+      ),
     } satisfies Sv3Turn;
   });
 }

@@ -537,6 +537,29 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
     expect(ctrl.groundingDeltasRunId).toBe('run-2');
   });
 
+  // ===== Tempdoc 867: groundingDeltaPaths — the tool-card evidence-set read =====
+  it('groundingDeltaPaths joins groundingDeltas by `path`, live, on every access', () => {
+    ctrl.sessionId = 'run-1';
+    expect(ctrl.groundingDeltaPaths.size).toBe(0);
+    ctrl.onToolCallPending({ callId: 'g6', toolName: 'core_search_index', arguments: '{}', risk: 'LOW' });
+    ctrl.onToolExecCompleted({
+      callId: 'g6',
+      result: {
+        success: true,
+        output: 'ok',
+        structuredData: { grounding: [deltaSource('docs/a.md'), deltaSource('docs/b.md')] },
+      },
+    });
+    expect(ctrl.groundingDeltaPaths).toEqual(new Set(['f:/docs/a.md', 'f:/docs/b.md']));
+    // A second call's delta is APPENDED (867 reads the live accumulation, not a snapshot).
+    ctrl.onToolCallPending({ callId: 'g7', toolName: 'core_search_index', arguments: '{}', risk: 'LOW' });
+    ctrl.onToolExecCompleted({
+      callId: 'g7',
+      result: { success: true, output: 'ok', structuredData: { grounding: [deltaSource('docs/c.md')] } },
+    });
+    expect(ctrl.groundingDeltaPaths).toEqual(new Set(['f:/docs/a.md', 'f:/docs/b.md', 'f:/docs/c.md']));
+  });
+
   // ===== 543-fwd idea #0: agent→journal bridge =====
   it('journals a successful tool-call as an originator:agent invoke-operation entry + wires undo via executionId', () => {
     ctrl.onToolCallPending({ callId: 'b1', toolName: 'core_search_index', arguments: '{"query":"x"}', risk: 'LOW' });
