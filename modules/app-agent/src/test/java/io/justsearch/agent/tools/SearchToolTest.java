@@ -329,6 +329,40 @@ class SearchToolTest {
   }
 
   @Test
+  void structuredDataCarriesTheResolvedSearchMode() {
+    // Tempdoc 867 — the RESOLVED mode after config-default resolution (modeToPreset's own
+    // defaulting), not a re-derivation: no "mode" arg and no configured default resolves to
+    // "hybrid" (modeToPreset(null) == HYBRID), and an explicit mode is stamped verbatim (lowercase).
+    stubbedResponse = emptyResponse();
+
+    OperationResult noModeArg = tool.execute("{\"query\": \"taxes\"}");
+    assertTrue(noModeArg.success(), noModeArg.message());
+    assertEquals("hybrid", noModeArg.structuredData().get("searchMode"));
+
+    OperationResult vectorMode = tool.execute("{\"query\": \"taxes\", \"mode\": \"vector\"}");
+    assertTrue(vectorMode.success(), vectorMode.message());
+    assertEquals("vector", vectorMode.structuredData().get("searchMode"));
+
+    OperationResult textMode = tool.execute("{\"query\": \"taxes\", \"mode\": \"TEXT\"}");
+    assertTrue(textMode.success(), textMode.message());
+    assertEquals("text", textMode.structuredData().get("searchMode"));
+  }
+
+  @Test
+  void structuredDataStampsCustomForAFineGrainedPipeline() {
+    // A fine-grained `pipeline` object overrides `mode` and has no single named preset — stamped
+    // "custom" rather than guessing one of the three named modes for it.
+    stubbedResponse = emptyResponse();
+
+    OperationResult result =
+        tool.execute(
+            "{\"query\": \"taxes\", \"mode\": \"vector\","
+                + " \"pipeline\": {\"sparseEnabled\": true, \"denseEnabled\": false}}");
+    assertTrue(result.success(), result.message());
+    assertEquals("custom", result.structuredData().get("searchMode"));
+  }
+
+  @Test
   void executeShowsQueryCorrection() {
     stubbedResponse =
         KnowledgeSearchResponseBuilder.builder()

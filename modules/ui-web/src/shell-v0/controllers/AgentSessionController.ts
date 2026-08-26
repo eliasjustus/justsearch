@@ -454,6 +454,15 @@ export class AgentSessionController implements CoreAgentRunHandlers {
    */
   groundingDeltasRunId: string | null = null;
   /**
+   * Tempdoc 867 — {@link groundingDeltas} joined by `path`, for a tool card to say which of its own
+   * hits are (so far) members of the run's evidence set. A getter, not a cached field: it must read
+   * the CURRENT accumulation on every access, and `groundingDeltas` is reassigned (never mutated in
+   * place) on every delta, so there is no staleness to guard against.
+   */
+  get groundingDeltaPaths(): ReadonlySet<string> {
+    return new Set(this.groundingDeltas.map((s) => s.path));
+  }
+  /**
    * Tempdoc 859 §4 / amendment 6 — which producer scored {@link answerCitations}
    * (`DocumentService.ScorerKind`'s wire name), for the 836 §4 producer gate.
    *

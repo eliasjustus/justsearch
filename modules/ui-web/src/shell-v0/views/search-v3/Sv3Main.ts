@@ -1032,11 +1032,27 @@ export class Sv3Main extends JfElement {
         gap: var(--space-2);
         min-width: 0;
       }
+      /* Tempdoc 867 — a hairline spine down the feed's left gutter, the status glyph column's own
+         rail. Decorative only: it does not reach into a card's shadow root to align pixel-for-pixel
+         with jf-run-node (Sv3Main styles the region, not the card), so this is a legible rail
+         beside the feed, not a literal connector through each glyph. All item kinds keep their
+         chronological order (projectSv3RunFeed) — the spine is purely visual. */
       .run-feed {
+        position: relative;
         display: flex;
         flex-direction: column;
         gap: var(--space-2);
         min-width: 0;
+        padding-inline-start: var(--space-4);
+      }
+      .run-feed::before {
+        content: '';
+        position: absolute;
+        top: 0.15rem;
+        bottom: 0.15rem;
+        left: calc(var(--space-4) / 2);
+        width: 1px;
+        background: var(--border);
       }
       .run-echo {
         margin: 0;
@@ -1220,6 +1236,7 @@ export class Sv3Main extends JfElement {
     view: { attribute: false },
     turns: { attribute: false },
     run: { attribute: false },
+    liveEvidencePaths: { attribute: false },
     recordNotice: { type: Boolean, attribute: 'record-notice' },
     historyLocked: { type: Boolean, attribute: 'history-locked' },
     lockedRefusal: { type: Boolean, attribute: 'locked-refusal' },
@@ -1256,6 +1273,15 @@ export class Sv3Main extends JfElement {
    * cannot appear under a turn that did not open it (tempdoc 822 Phase F2).
    */
   declare run: Sv3RunView | null;
+  /**
+   * Tempdoc 867 — the LIVE run's growing evidence-path set (`AgentSessionController.
+   * groundingDeltaPaths`), for the live feed's tool cards. Handed down rather than read off a
+   * `Sv3Turn` field: the live turn's evidence is still accumulating call by call, and a value pinned
+   * onto the turn at open time would go stale mid-run — see `Sv3Turn.evidencePaths`'s own doc, which
+   * this prop is the live counterpart of. Defaults to an empty set so a caller that has no run yet
+   * (or an older caller not yet passing it) renders every hit as not-yet-in-evidence rather than throw.
+   */
+  declare liveEvidencePaths: ReadonlySet<string>;
   /**
    * The claimed conversation's canonical record could not be read, so what is on screen may be
    * incomplete (tempdoc 822 Phase F6 / inventory D2). A BOOLEAN, not a message: the copy is fixed
@@ -1480,6 +1506,7 @@ export class Sv3Main extends JfElement {
     this.view = SV3_RESULTS_IDLE;
     this.turns = [];
     this.run = null;
+    this.liveEvidencePaths = new Set();
     this.recordNotice = false;
     this.historyLocked = false;
     this.lockedRefusal = false;
@@ -2502,8 +2529,12 @@ export class Sv3Main extends JfElement {
   private recordedActivity(turn: Sv3Turn): TemplateResult | typeof nothing {
     if (turn.activity.length === 0) return nothing;
     const terminalId = terminalTextItemId(turn.activity);
+    // Tempdoc 867 — this turn's OWN evidence-path set (`sv3-record.ts`'s projection), not the live
+    // prop: a settled turn has no controller left to ask, and `turn.evidencePaths` is what it wrote
+    // down instead.
+    const evidencePaths = new Set(turn.evidencePaths ?? []);
     return html`<div class="run-feed" data-testid="sv3-record-activity">
-      ${turn.activity.map((item) => this.runItem(item, turn, item.id === terminalId))}
+      ${turn.activity.map((item) => this.runItem(item, turn, item.id === terminalId, evidencePaths))}
     </div>`;
   }
 
@@ -2614,7 +2645,9 @@ export class Sv3Main extends JfElement {
           ? html`<p class="run-echo" data-testid="sv3-run-echo" role="status">${RUN_DISPATCHING}</p>`
           : html`
               <div class="run-feed" data-testid="sv3-run-feed">
-                ${run.feed.items.map((item) => this.runItem(item, turn, item.id === terminalId))}
+                ${run.feed.items.map((item) =>
+                  this.runItem(item, turn, item.id === terminalId, this.liveEvidencePaths),
+                )}
               </div>
             `}
         ${run.prompts.map((prompt) => this.runPrompt(prompt))}
@@ -2628,7 +2661,12 @@ export class Sv3Main extends JfElement {
    * same landmarks in a live conversation and a reloaded one. The retiree reaches the same coverage
    * only by merging two projections.
    */
-  private runItem(item: Sv3RunFeedItem, turn: Sv3Turn, terminal: boolean): TemplateResult {
+  private runItem(
+    item: Sv3RunFeedItem,
+    turn: Sv3Turn,
+    terminal: boolean,
+    evidencePaths: ReadonlySet<string>,
+  ): TemplateResult {
     if (item.kind === 'text') {
       // Tempdoc 859 §6 (N1) — the agent turn's prose is where its inline `[n]` marks belong, and
       // until now this was the ONLY text renderer in the agent branch that carried no `.citations`
@@ -2659,6 +2697,7 @@ export class Sv3Main extends JfElement {
         data-item-id=${item.id}
         .toolCall=${item.call}
         .stepPresentation=${null}
+        .evidencePaths=${evidencePaths}
       ></jf-tool-call-card>`;
     }
     if (item.kind === 'reasoning') {

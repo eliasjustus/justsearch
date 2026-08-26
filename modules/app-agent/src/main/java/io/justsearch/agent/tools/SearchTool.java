@@ -86,6 +86,29 @@ public final class SearchTool {
     };
   }
 
+  /**
+   * Tempdoc 867 — the RESOLVED mode/preset this call actually ran with, after config-default
+   * resolution ({@link #modeToPreset}'s own defaulting rules, restated here rather than reverse-
+   * derived from the {@link PipelineConfig} it produced, so the stamp cannot drift from the
+   * decision). A fine-grained {@code pipeline} object has no single named mode, so it stamps
+   * {@code "custom"} rather than guessing one of the three presets for it.
+   */
+  private static String resolveEffectiveSearchMode(JsonNode args) {
+    if (args.has("pipeline") && args.get("pipeline").isObject()) {
+      return "custom";
+    }
+    String modeStr = args.has("mode") ? args.get("mode").asText() : resolveSearchDefaultMode();
+    if (modeStr == null || modeStr.isBlank()) {
+      return "hybrid";
+    }
+    return switch (modeStr.toLowerCase(java.util.Locale.ROOT)) {
+      case "text" -> "text";
+      case "vector" -> "vector";
+      case "hybrid" -> "hybrid";
+      default -> "hybrid";
+    };
+  }
+
   /** Parses a JSON pipeline argument into a PipelineConfig (256: Phase H1). */
   static PipelineConfig parsePipelineArg(JsonNode node) {
     return new PipelineConfig(
@@ -220,6 +243,7 @@ public final class SearchTool {
         pipeline = modeToPreset(modeStr);
       }
       String pathPrefix = args.has("path_prefix") ? args.get("path_prefix").asText() : null;
+      String effectiveMode = resolveEffectiveSearchMode(args);
 
       // Resolve relative path_prefix against indexed roots, then validate
       if (pathPrefix != null && !pathPrefix.isBlank()) {
@@ -278,7 +302,7 @@ public final class SearchTool {
       // render real evidence cards (filename · location · excerpt) instead of a raw monospace dump.
       // NOTE: deliberately NO relevance score — hit.score() is the uncalibrated RANKING score, which
       // 559 §5 / §18 C-6 say must not be surfaced as a "% relevance" (that would fabricate calibration).
-      return OperationResult.success(formatted, buildSearchEvidence(query, response));
+      return OperationResult.success(formatted, buildSearchEvidence(query, effectiveMode, response));
 
     } catch (Exception e) {
       LOG.error("SearchTool execution failed", e);
@@ -323,10 +347,16 @@ public final class SearchTool {
    * {@code searchResults}/{@code feedbackFeatures} — existing consumers that only read {@code
    * searchResults} (e.g. {@code searchEvidence.ts}) are unaffected.
    *
-   * <p>Returns {@code {"query": ..., "resultCount": ..., "searchResults": [...], "feedbackFeatures":
-   * [...]}}.
+   * <p>Tempdoc 867 — also carries {@code searchMode}, the RESOLVED mode/preset this call actually ran
+   * with ({@link #resolveEffectiveSearchMode}), so the tool card's scope line can say how the search
+   * ran without re-deriving it from the raw arguments. Absent on records persisted before this field
+   * — the FE renders nothing rather than guess a mode for an old record.
+   *
+   * <p>Returns {@code {"query": ..., "resultCount": ..., "searchMode": ..., "searchResults": [...],
+   * "feedbackFeatures": [...]}}.
    */
-  private Map<String, Object> buildSearchEvidence(String query, KnowledgeSearchResponse response) {
+  private Map<String, Object> buildSearchEvidence(
+      String query, String searchMode, KnowledgeSearchResponse response) {
     List<Map<String, Object>> out = new ArrayList<>();
     List<Map<String, Object>> feedback = new ArrayList<>();
     int rank = 0;
@@ -369,6 +399,7 @@ public final class SearchTool {
     var evidence = new LinkedHashMap<String, Object>();
     evidence.put("query", query);
     evidence.put("resultCount", out.size());
+    evidence.put("searchMode", searchMode);
     evidence.put("searchResults", List.copyOf(out));
     evidence.put("feedbackFeatures", List.copyOf(feedback));
     return Map.copyOf(evidence);
