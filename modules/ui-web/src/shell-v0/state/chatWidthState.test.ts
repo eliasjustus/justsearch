@@ -81,6 +81,27 @@ describe('the projection over the user-state document', () => {
     expect(getChatWidth()).toBe('narrow');
   });
 
+  it('reads a document written BEFORE this slice existed as the default', () => {
+    // Every user upgrading into 874 has one of these: a real, valid v2 body with no `chatWidth` key
+    // at all. The migration claim is that such a document needs no migration — the sanitizer leaves
+    // the key absent and the projection's `?? DEFAULT_CHAT_WIDTH` supplies the answer. Built from a
+    // GENUINE persisted body with the key deleted rather than a hand-written literal, so it stays a
+    // real document (profiles, version, the sibling cross-profile slices) and not a fixture that
+    // happens to parse.
+    setChatWidth('wide');
+    const raw = JSON.parse(localStorage.getItem(__DOCUMENT_STORAGE_KEY)!);
+    delete raw.chatWidth;
+    expect(raw.version).toBe(2); // still the real shape, not an empty object
+    localStorage.setItem(__DOCUMENT_STORAGE_KEY, JSON.stringify(raw));
+    __resetInMemoryStateForTest();
+
+    expect(() => getChatWidth()).not.toThrow();
+    expect(getChatWidth()).toBe('default');
+    // And the pre-874 document is still writable — the reader can choose a preset from it.
+    setChatWidth('narrow');
+    expect(getChatWidth()).toBe('narrow');
+  });
+
   it('drops a malformed chatWidth on parse', () => {
     setChatWidth('wide');
     const raw = JSON.parse(localStorage.getItem(__DOCUMENT_STORAGE_KEY)!);

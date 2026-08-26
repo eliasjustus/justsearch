@@ -1337,6 +1337,13 @@ describe('the chat column caps on one token, not three literals', () => {
       // Bare `var()` with NO fallback: a `var(--measure-prose, 48rem)` would pass the line above
       // while quietly restoring the literal, and the strip-token-fallbacks gate forbids the form.
       expect(styles).not.toContain('48rem');
+      // EXCLUSIVITY. A consumer must only ever READ the property, never DECLARE it. Its own
+      // `:host { --measure-prose: … }` would shadow the inline value `SearchV3View.applyChatWidth`
+      // writes on the view host — the preset would stop moving that component, silently, while
+      // every assertion above still passed. The unit environment (happy-dom) does not compute the
+      // cascade, so no runtime test in this suite can observe that regression; this static pin on
+      // the declaration is the only place it is catchable.
+      expect(styles).not.toMatch(/--measure-prose\s*:/);
     });
   }
 

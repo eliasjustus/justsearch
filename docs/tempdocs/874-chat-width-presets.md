@@ -24,7 +24,7 @@ collapses the four sites onto one token.
 | `modules/ui-web/src/shell-v0/views/search-v3/Sv3ContextBar.ts:72` (`.bar`) | `max-inline-size: 48rem` | `var(--measure-prose)` |
 | `modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts:587` (`.answer`) | `var(--measure-prose)` | unchanged — it was already the token |
 
-`--measure-prose` is declared at `modules/ui-web/src/shell-v0/views/search-v3/sv3-tokens.css.ts:301`
+`--measure-prose` is declared at `modules/ui-web/src/shell-v0/views/search-v3/sv3-tokens.css.ts:308`
 inside the sheet's `:host { … }` block, and that sheet is adopted on the `SearchV3View` host only —
 never `:root`, which `sv3-tokens.test.ts:42-47` already pins. The global
 `modules/ui-web/src/styles/tokens.css:352` declares `--measure-prose: 88ch` for the rest of the app;
@@ -132,10 +132,25 @@ never reaches across into the window: the store is the entire channel.
   top-level `chatWidth` in the stored JSON → `__resetInMemoryStateForTest()` → re-read), which is
   the assertion that catches a missed spread in §3's five sites. Plus malformed-literal rejection
   and the subscribe/notify/dispose contract.
+
+  Also (review, LOW) the **pre-874 document** case: a genuine persisted v2 body with `chatWidth`
+  deleted, re-parsed from storage, must read `'default'` without throwing and must still be
+  writable. Every upgrading user has exactly that document, and the "no migration needed" claim was
+  previously only exercised against a fresh in-memory default — which is not the same object and
+  never goes through the sanitizer.
 - `sv3-tokens.test.ts` (appended block) — each of `Sv3Main` / `Sv3Composer` / `Sv3ContextBar` caps on
-  `var(--measure-prose)` and contains no `48rem`, and the sheet still declares the default. Scoped
-  per-component via the file's existing `styleTextOf` helper rather than repo-wide, because
-  `Sv3Empty.ts` legitimately uses `48rem` as a breakpoint.
+  `var(--measure-prose)`, contains no `48rem`, and **never declares the property** (`not.toMatch(/--measure-prose\s*:/)`),
+  and the sheet still declares the default. Scoped per-component via the file's existing
+  `styleTextOf` helper rather than repo-wide, because `Sv3Empty.ts` legitimately uses `48rem` as a
+  breakpoint.
+
+  The exclusivity assertion is the one review added (independent review of PR #573, LOW). Reading
+  the token is only half the contract: a consumer that later grew its own
+  `:host { --measure-prose: … }` would **shadow** the inline value the view host writes and silently
+  stop responding to the preset, with every other assertion still green. happy-dom does not compute
+  the cascade, so no runtime test in this suite can observe that regression — the static pin on the
+  *declaration* is the only place it is catchable. (The reviewer confirmed the cascade itself works
+  by a real Chromium probe; these pins are what make the assumption fail-able in CI.)
 - `SearchV3View.chatWidth.test.ts` — the live contract: default measure on mount, a pre-chosen preset
   on mount, all three presets applied while mounted, and an unmounted window that stops following.
   Test 1 fails outright if the subscription is deleted (nothing else writes the property inline);
