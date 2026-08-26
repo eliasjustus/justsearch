@@ -3,6 +3,7 @@ package io.justsearch.agent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.interaction.InteractionEvent;
@@ -146,8 +147,8 @@ final class AgentRunQueryServiceThreadEventsTest {
   }
 
   @Test
-  @DisplayName("863 A-2: thinking that would have landed on the suppressed answer re-attaches")
-  void trailingReasoningReattachesToTheLastSurvivingEvent() {
+  @DisplayName("871 §3b: thinking that would have landed on the suppressed answer is HANDED ACROSS")
+  void trailingReasoningIsHandedToTheCallerNotRehomedBackwards() {
     AgentRunQueryService query =
         queryOver(
             store -> {
@@ -172,33 +173,33 @@ final class AgentRunQueryServiceThreadEventsTest {
                               Map.of("finalResponse", "the answer"))));
             });
 
-    List<InteractionEvent> events = query.threadEvents("conv-1", java.util.Set.of("run-1"));
+    io.justsearch.agent.api.interaction.ThreadProjection projection =
+        query.threadProjection("conv-1", java.util.Set.of("run-1"));
 
+    // The block reaches the caller keyed by run, so the ONE place that can see both planes can put
+    // it on the answer it was thought for.
+    List<Map<String, Object>> handed = projection.trailingReasoningByRun().get("run-1");
+    assertEquals(1, handed.size(), "the block the fold had attached to the dropped answer");
+    assertEquals("now I will summarise", handed.get(0).get("text"), "and its text is intact");
+
+    // THE INVERSION THIS REPLACES (863 §4.A.5 F4, fixed by 871 §3b). The block was produced AFTER
+    // the tool step, and `sv3-record.ts` draws a carrier's blocks ABOVE the carrier — so re-homing
+    // it onto the last surviving event made a reader see "planned → analysed the results → [the
+    // search that produced them]". The tool step must therefore carry NOTHING it did not already
+    // carry: the assertion is on the carrier, not merely on the count, because attaching the block
+    // to any run-plane event at all reproduces the defect.
     InteractionEvent tool =
-        events.stream()
+        projection.events().stream()
             .filter(e -> e.kind() == InteractionEventKind.TOOL_ACTIVITY)
             .findFirst()
             .orElseThrow();
-    List<?> blocks = (List<?>) tool.attributes().get("reasoning");
-    assertEquals(1, blocks.size(), "the block the fold had attached to the dropped answer");
-    assertEquals(
-        "now I will summarise", ((Map<?, ?>) blocks.get(0)).get("text"), "and its text is intact");
-
-    // KNOWN INVERSION, pinned rather than left to be rediscovered (863 §4.A.5 F4). `sv3-record.ts`
-    // emits a reasoning item BEFORE the event that carries it, because the fold's ordinary rule
-    // attaches a block to the next event that projects and the block was produced before it. This
-    // block was produced AFTER the tool step, so re-homing it onto that step draws it above the tool
-    // instead of below — and its landmark id is re-keyed onto the tool's `callId` rather than the
-    // answer's. Both follow from the carrier changing.
-    //
-    // It is not corrected here because 848's own trailing rule already does exactly this (a journal
-    // ending in reasoning attaches to the run's LAST event, above nothing that follows it): a second
-    // ordering rule for one case would be the fork, not the fix. The whole question — giving the
-    // store-plane turn the run plane's fold output — is routed to 863 §8 with the tool-less gap.
-    assertEquals(
-        "c1:completed",
-        tool.id(),
-        "the carrier, and therefore the block's landmark key, is the tool step");
+    assertEquals("c1:completed", tool.id(), "the run's last surviving event, as before");
+    assertNull(
+        tool.attributes().get("reasoning"),
+        "the tool step must not become the carrier of a thought that came after it");
+    assertTrue(
+        projection.events().stream().noneMatch(e -> e.attributes().containsKey("reasoning")),
+        "no run-plane event carries it — the answer plane does");
   }
 
   // ── fixtures ─────────────────────────────────────────────────────────────────────────────────

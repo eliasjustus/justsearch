@@ -182,10 +182,7 @@ final class AgentGroundingSeamAuditTest {
     // app-agent-api, which is intended: AgentDone's own delegating constructors live there and are
     // exempted by the AGENT_DONE origin check). Tests are excluded — they legitimately fabricate
     // AgentDone fixtures via the ungrounded constructors, which this rule never touches anyway.
-    JavaClasses classes =
-        new ClassFileImporter()
-            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-            .importPackages("io.justsearch.agent");
+    JavaClasses classes = productionAgentClasses();
 
     ArchRule rule =
         noClasses()
@@ -348,9 +345,28 @@ final class AgentGroundingSeamAuditTest {
    * app-agent-api, which is intended). Tests are excluded — they legitimately fabricate fixtures
    * through the very constructors and stamps these rules govern.
    */
+  /**
+   * The production class graph under {@code io.justsearch.agent}, imported ONCE for the whole class.
+   *
+   * <p>Every rule here needs the same graph, and a {@code ClassFileImporter} re-scans the entire
+   * package's bytecode on each call — seconds apiece. It used to be re-imported per test (four
+   * times), which put the class's total inside a 30-second per-test budget only while the machine
+   * was idle; adding the lineage rule pushed it over on a loaded box and the suite failed with a
+   * {@code TimeoutException} that said nothing about the property being asserted.
+   *
+   * <p>Safe to share: {@link JavaClasses} is immutable and the rules only read it. Held in a nested
+   * holder so the import happens on first use rather than at class-init, and exactly once.
+   */
+  private static final class Imported {
+    private static final JavaClasses PRODUCTION_AGENT_CLASSES =
+        new ClassFileImporter()
+            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+            .importPackages("io.justsearch.agent");
+
+    private Imported() {}
+  }
+
   private static JavaClasses productionAgentClasses() {
-    return new ClassFileImporter()
-        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-        .importPackages("io.justsearch.agent");
+    return Imported.PRODUCTION_AGENT_CLASSES;
   }
 }

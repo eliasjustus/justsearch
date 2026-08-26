@@ -881,14 +881,22 @@ export class Sv3Main extends JfElement {
         --accent: var(--info-foreground);
         --accent-tint: var(--primary);
         --accent-on-tint: var(--primary-foreground);
+        /* Tempdoc 871 §3b — the level-2 "used" marking: an 8 % wash under the row, 16 % behind the
+           tag. Spelled out here for the same reason the risk edges below are: the shipped ramp
+           (styles/tokens.css) mixes against ITS --accent-tint, and this window's is --primary. */
+        --accent-tint-08: color-mix(in srgb, var(--primary) 8%, transparent);
+        --accent-tint-16: color-mix(in srgb, var(--primary) 16%, transparent);
+        /* The tag's LABEL is the tint role's TEXT member, never the fill (576 §6 rung-1). */
+        --text-tint: var(--info-foreground);
         /* The risk tiers keep the spec's 45 % edge grade, spent on the window's three-colour
            budget (818 law 5: act-now / in-motion / broken, no fourth role). */
         --accent-danger-45: color-mix(in srgb, var(--destructive) 45%, transparent);
         --accent-warning-45: color-mix(in srgb, var(--warning) 45%, transparent);
-        /* The status word is written by an INLINE style (ToolCallCard.ts:354) off
-           utils/statusTone.ts:88-104, but what that authority returns is 'var(--accent-<tone>)' —
-           a custom property, so the inline colour resolves against these declarations like any
-           other. (The audit recorded it as unreachable from a host token; it is not.) */
+        /* No status WORD renders here any more (871 owner-feedback batch removed it — the glyph
+           alone carries status, per ToolCallCard.ts's own header comment). The status glyph
+           (jf-run-node, nested inside jf-tool-call-card) still colours off these tokens via
+           utils/statusTone.ts, which returns 'var(--accent-<tone>)' — a custom property, so its
+           colour resolves against these declarations like any other. */
         --accent-success: var(--success-foreground);
         --accent-warning: var(--warning-foreground);
         --accent-danger: var(--error-foreground);

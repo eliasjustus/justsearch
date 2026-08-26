@@ -537,7 +537,7 @@ public final class AgentInteractionMapper {
    * {@code InteractionEvent}'s compact constructor does {@code Map.copyOf}, so the map the delegate
    * returned is immutable and {@code put} on it would throw at runtime.
    */
-  static InteractionEvent withReasoning(
+  public static InteractionEvent withReasoning(
       InteractionEvent event, List<Map<String, Object>> blocks) {
     Map<String, Object> merged = new LinkedHashMap<>(event.attributes());
     // Tempdoc 859 §A — APPEND, never replace. Under the flush rule a carrier can be written twice:
