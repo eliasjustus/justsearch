@@ -135,6 +135,18 @@ card never invents a third axis. A row that was retrieved but not minted is
 counted, not listed. If 865's inclusion computation (§4.6 derisk) later lands,
 the same rows inherit `partial/dropped` badges without a card redesign.
 
+## 3a. Live verification (2026-08-26, worktree FE on the shared dev stack)
+
+Delegate run dispatched in SV3 (compact profile, 661-doc corpus): flattened L1
+rows render with `N results · M in evidence` accessories; L2 expands in place
+with evidence rows (dot · title · dim path · `Line N`/heading locator) and the
+`Open in Search` pill; run-set join live (`3 in evidence` matched the run's
+minted sources). One live-caught defect fixed in the same branch: the chevron
+inherited the retired ▼-base rotation rule and rendered collapsed as ▲ — now
+collapsed ▶ / expanded ▼. Follow-up logged (observations): `composeToolLabel`
+still renders raw tool names ("Search Index") where the design wants verb copy
+("Searched …") — a shared-authority (565 §12.3.B) copy pass, not card work.
+
 ## 4. What this orphans (deleted/tombstoned in this tempdoc's work)
 
 - The nested second disclosure: `ToolCallCard`'s `variant="excerpt"` mount and
