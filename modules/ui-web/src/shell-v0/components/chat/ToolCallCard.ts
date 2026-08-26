@@ -186,8 +186,11 @@ export class ToolCallCard extends JfElement {
     @media (prefers-reduced-motion: reduce) {
       .expand-chevron { transition: none; }
     }
-    :host(:not([expanded])) .expand-chevron {
-      transform: rotate(-90deg);
+    /* Collapsed points along the reading direction (▶); expanded rotates it down (▼). The base
+       glyph is ▶, so the EXPANDED state carries the rotation — live-caught 2026-08-26: the old
+       rule (collapsed −90°) belonged to the retired ▼ base glyph and rendered collapsed as ▲. */
+    :host([expanded]) .expand-chevron {
+      transform: rotate(90deg);
     }
     /* Tempdoc 867 — the risk row: MEDIUM/HIGH only, below the header, unaffected by expand/collapse
        (it was always visible before too — only its position moved out of the header). */
