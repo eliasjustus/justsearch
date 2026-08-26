@@ -146,6 +146,20 @@ jobs:
       - name: Always-loaded agent-doc budget ratchet
         run: node scripts/ci/check-always-loaded-budget.mjs
 
+      # Tempdoc 872: the ui-web gate set (authority: the `ui-web-gates` recipe in
+      # governance/consult-register.v1.json) was advisory-only — pushed at edit time, run in
+      # CI nowhere — so `gen-token-names --check` sat RED on main for weeks and twelve sessions
+      # each re-discovered and wrote it down. A state main can hold silently is a memory
+      # generator; this makes it impossible instead.
+      - name: ui-web pre-merge gate set
+        run: node scripts/ci/run-ui-web-gates.mjs
+
+      # Tempdoc 872: expected-state pins are dated exceptions with exits. A pin with no exit,
+      # past its reviewBy, or whose red is gone fails here so the known-state-hint never
+      # delivers a stale claim.
+      - name: expected-state pins carry a live exit
+        run: node scripts/agent-analytics/expected-state-probe.mjs --gate
+
       - name: Test dead-config scanner (config-surface gate)
         run: node scripts/ci/test-config-surface-dead-config.mjs
 

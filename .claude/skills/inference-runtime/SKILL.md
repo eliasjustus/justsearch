@@ -39,8 +39,9 @@ update it before closing.
 **Replaces:** the GPU- and inference-related items of the former
 `docs/reference/issues/` registers (`gpu-detection.md`, `retrieval-quality.md`
 RAG-001/RAG-009). That whole register set was retired in tempdoc 821 §7 D5
-(2026-08-12); its still-live entries were routed into `docs/observations.md`,
-and anything belonging to this domain should be promoted from there into the
+(2026-08-12); its still-live entries were routed into the observations store
+(retired, tempdoc 872 — see git history of `docs/observations.md`), and
+anything belonging to this domain should be promoted from there into the
 sections below rather than re-created as a standalone issue file.
 
 ---

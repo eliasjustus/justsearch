@@ -583,4 +583,4 @@ All views use a consistent card pattern: `rounded-2xl bg-[var(--glass-surface)] 
 ## Related
 
 - [`search-ui-behavior.md`](search-ui-behavior.md) — Search UI behavioral reference (Zones A, C, D, E)
-- [`../observations.md`](../observations.md) — where accessibility findings are tracked now (the `issues/search-accessibility.md` register was retired, tempdoc 821 §7 D5)
+- Accessibility findings are routed to the owning tempdoc at discovery (tempdoc 872; the `issues/search-accessibility.md` register was retired, tempdoc 821 §7 D5; the observations store that briefly superseded it is retired too — its history is in git)
