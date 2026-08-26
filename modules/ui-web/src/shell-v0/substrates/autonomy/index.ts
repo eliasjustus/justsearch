@@ -38,7 +38,7 @@
  * `VirtualToolDispatcher` → `invokeCommandWithResult({originator:'agent'})` →
  * `invokeAndApply(...,'agent')`, i.e. THIS gate. EVERYTHING ELSE — the core
  * agent ops (`core_search_index`, `core_ingest_files`, `core_file_operations`,
- * `core_browse_folders`) — runs SERVER-SIDE via `executeOperationWithPolicy`
+ * `core_browse_folders`, `core_read_document`) — runs SERVER-SIDE via `executeOperationWithPolicy`
  * (OperationDispatcher → BackendIntentRouter → trust lattice) and NEVER reaches
  * this gate. So the dial gates the FE-virtual (`vop_`) agent path only; the
  * backend trust lattice (transport=AGENT_LOOP → UNTRUSTED) is what gates the

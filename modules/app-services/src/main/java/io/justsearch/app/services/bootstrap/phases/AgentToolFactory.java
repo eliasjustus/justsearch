@@ -21,10 +21,10 @@ import java.util.function.Supplier;
 
 /**
  * Tempdoc 519 §7 / Step 7: agent-tool factory extracted from the bootstrap's main constructor
- * body. Builds the eager-path KnowledgeHttpApiAdapter + 4 tool instances (Search/Browse/Ingest/
- * FileOperations) when both knowledgeClient and indexingService are available at construction
- * time. Returns null fields in {@link Output} when prerequisites are not met, so the caller
- * can skip registration.
+ * body. Builds the eager-path KnowledgeHttpApiAdapter + 5 tool instances (Search/Browse/Ingest/
+ * FileOperations, and ReadDocument since tempdoc 868 §B.2) when both knowledgeClient and
+ * indexingService are available at construction time. Returns null fields in {@link Output} when
+ * prerequisites are not met, so the caller can skip registration.
  *
  * <p>Tempdoc 832: {@link #assemble} is the SINGLE construction authority for the agent tool
  * bundle. Both entry points route through it — {@link #build} for the eager path and

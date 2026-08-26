@@ -53,21 +53,45 @@ final class ReadDocumentToolTest {
 
   private static DocumentService.DocumentSlice slice(
       String content, boolean truncated, int nextOffset) {
+    return slice(PATH, content, truncated, nextOffset);
+  }
+
+  private static DocumentService.DocumentSlice slice(
+      String path, String content, boolean truncated, int nextOffset) {
     return new DocumentService.DocumentSlice(
-        PATH, content, Map.of("title", "Quarterly Report"), true, truncated, nextOffset, null);
+        path, content, Map.of("title", "Quarterly Report"), true, truncated, nextOffset, null);
   }
 
   private static String page(int chars) {
     return "x".repeat(chars);
   }
 
+  /**
+   * A 400-char Windows path — the worst case {@code PAGE_HEADROOM_CHARS} claims to cover. The header
+   * echoes the path in full, so the headroom budget is really "how long can a path be"; a fixture
+   * using a 15-char path would leave the claim untested.
+   */
+  private static String longWindowsPath() {
+    var sb = new StringBuilder("F:\\indexed");
+    while (sb.length() < 397) {
+      sb.append("\\segment");
+    }
+    sb.setLength(397);
+    return sb + ".md";
+  }
+
   @Test
   @DisplayName("a full page survives Layer-2 truncation unchanged — the arithmetic, not a copy of it")
   void fullPageIsNotClippedByLayerTwo() {
-    var fetch = new FakeFetch(slice(page(ReadDocumentTool.READ_PAGE_CHARS), true, 3000));
-    OperationResult result = new ReadDocumentTool(fetch).execute("{\"path\":\"" + PATH + "\"}");
+    String longPath = longWindowsPath();
+    assertEquals(400, longPath.length(), "the fixture must exercise the headroom budget");
+    var fetch =
+        new FakeFetch(slice(longPath, page(ReadDocumentTool.READ_PAGE_CHARS), true, 3000));
+    OperationResult result =
+        new ReadDocumentTool(fetch)
+            .execute("{\"path\":\"" + longPath.replace("\\", "\\\\") + "\"}");
 
-    assertTrue(result.success());
+    assertTrue(result.success(), result.message());
     // THE point of READ_PAGE_CHARS: header + carrier framing + a maximal page must still fit under
     // MAX_TOOL_RESULT_CHARS. Run through the real truncate, so a future change to either constant
     // (or to the header text) fails here instead of silently shipping clipped pages.
@@ -75,8 +99,8 @@ final class ReadDocumentToolTest {
     assertSame(
         message,
         AgentContextCompressor.truncate(message),
-        "a maximal read page must reach the model whole; truncate returns the same instance when"
-            + " it has nothing to cut. message length="
+        "a maximal read page under a maximal path must reach the model whole; truncate returns the"
+            + " same instance when it has nothing to cut. message length="
             + message.length()
             + " cap="
             + AgentContextCompressor.MAX_TOOL_RESULT_CHARS);
@@ -172,6 +196,89 @@ final class ReadDocumentToolTest {
     assertTrue(result.message().startsWith("Document not found in the index: " + PATH));
     assertTrue(result.message().contains("core_browse_folders"));
     assertTrue(result.message().contains("core_search_index"));
+  }
+
+  @Test
+  @DisplayName("868: an indexed document with NO extracted text fails and names the reason — never an empty page")
+  void emptyExtractionAtOffsetZeroFails() {
+    // The Worker answers found=true with empty content for an extraction dropout (tempdoc 790), so
+    // "found" is not "readable". Succeeding here would mint an opened source with a blank literal,
+    // and a blank literal sends the matcher back to an index lookup with the document-level -1 chunk
+    // ordinal clamped to 0 — the re-fetch an opened source must never do.
+    var dropout =
+        new DocumentService.DocumentSlice(
+            PATH,
+            "",
+            Map.of("extraction_reason_code", "EXTRACTION_DROPOUT_NO_TIER", "extraction_method", "NONE"),
+            true,
+            false,
+            0,
+            null);
+    OperationResult result =
+        new ReadDocumentTool(new FakeFetch(dropout)).execute("{\"path\":\"" + PATH + "\"}");
+
+    assertFalse(result.success(), "an unreadable document is a failure, not an empty success");
+    assertTrue(result.message().contains(PATH), "the path is named: " + result.message());
+    assertTrue(
+        result.message().contains("EXTRACTION_DROPOUT_NO_TIER"),
+        "'no text' and 'no tier could read it' are different facts to a user: " + result.message());
+    assertTrue(result.structuredData().isEmpty(), "no readResults, so nothing can be minted");
+  }
+
+  @Test
+  @DisplayName("868: the reason falls back to extraction_method when no reason code is stored")
+  void emptyExtractionFallsBackToTheExtractionMethod() {
+    var dropout =
+        new DocumentService.DocumentSlice(
+            PATH, "", Map.of("extraction_method", "NONE"), true, false, 0, null);
+    OperationResult result =
+        new ReadDocumentTool(new FakeFetch(dropout)).execute("{\"path\":\"" + PATH + "\"}");
+    assertFalse(result.success());
+    assertTrue(result.message().contains("NONE"), result.message());
+  }
+
+  @Test
+  @DisplayName("868: a blank page PAST offset 0 is the normal terminus — success, and no readResults")
+  void blankPagePastOffsetZeroIsEndOfDocument() {
+    // Distinct from the dropout above: the previous page ended exactly at the document's end, so
+    // this is a successful "you are done", not a failure. It carries no readResults because there is
+    // no text to be evidence of.
+    var atEnd = slice("", false, 3000);
+    OperationResult result =
+        new ReadDocumentTool(new FakeFetch(atEnd))
+            .execute("{\"path\":\"" + PATH + "\",\"offset_chars\":3000}");
+
+    assertTrue(result.success(), "reaching the end of a document is not an error");
+    assertTrue(result.message().contains("end of document"), result.message());
+    assertTrue(result.message().contains("3000"), "the offset that ended it: " + result.message());
+    assertFalse(
+        result.structuredData().containsKey("readResults"),
+        "an empty page is not evidence of anything");
+    assertFalse(result.message().contains("More:"), "nothing more to page to");
+  }
+
+  @Test
+  @DisplayName("868 §B.1: the evidence excerpt IS the string on the carrier line, character for character")
+  void excerptIsExactlyWhatTheModelWasShown() {
+    // The matcher verifies an opened source against its literal text, so a literal that differs from
+    // the prompt by every newline and quote in the page is not a verification. Flatten once, use the
+    // one result for both.
+    var multiline = slice("line one\r\nline \"two\"\nline three", false, 31);
+    OperationResult result =
+        new ReadDocumentTool(new FakeFetch(multiline)).execute("{\"path\":\"" + PATH + "\"}");
+
+    Map<?, ?> item = (Map<?, ?>) ((List<?>) result.structuredData().get("readResults")).get(0);
+    String excerpt = (String) item.get("excerpt");
+    assertEquals("line one line 'two' line three", excerpt, "flattened once, at the seam");
+    assertTrue(
+        result.message().contains("Read: \"" + excerpt + "\""),
+        "the carrier line must carry exactly the excerpt string; got: " + result.message());
+    assertEquals(0, item.get("startChar"), "spans stay on the RAW slice's coordinates");
+    assertEquals(
+        31,
+        item.get("endChar"),
+        "…including the newline chars the flattening dropped — the span addresses the document in"
+            + " the index, not the rendering (31 raw vs 30 flattened)");
   }
 
   @Test

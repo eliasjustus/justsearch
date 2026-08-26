@@ -905,6 +905,21 @@ export function acquisitionWord(
 }
 
 /**
+ * Tempdoc 868 §B.3 — the same axis as a NOUN, for the sentences that name the channel rather than
+ * badge the source: "Hide {name} from the assistant's **retrieval**" / "…**reading**".
+ *
+ * <p>A second export rather than a caller-side rewording of {@link acquisitionWord}, because the two
+ * fill different lexical slots and a surface that inflected the badge word for itself would be
+ * minting provenance vocabulary — the thing the one-authority rule exists to stop. Same axis, same
+ * narrowing, one file: a third value on the axis lands in both slots or in neither.
+ */
+export function acquisitionChannel(
+  source: { readonly acquisition?: string } | null | undefined,
+): string {
+  return acquisitionOf(source) === 'opened' ? 'reading' : 'retrieval';
+}
+
+/**
  * Tempdoc 849 §7 — the retrieved-vs-received badge, as WORDS. One authority, because the sources
  * panel and the reading pane must not describe the same budget fact two different ways.
  *

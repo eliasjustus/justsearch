@@ -530,3 +530,20 @@ that remain are product levers the owner should set, not this slice: the FE's fi
 `DEFAULT_MAX_ITERATIONS = 10` for delegate runs, a `total_chars` hint in the read header
 so the model can budget, and whether a summary task should default to one page per
 document server-side. Recorded, not decided.
+
+### C.6 Independent refute-first review (reviewer ≠ implementer) — findings and disposition
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | Cross-producer dedup held only by accident: search keys chunk-precise hits `parentDocId#chunk`, reads key `doc#path`, so "search finds /a.md chunk 3, then read /a.md" minted **two** sources; the test passed for the wrong reason (its search fixture had no `parentDocId`). | **Fixed.** Path index across both arms via one `docKey(path)` (lowercased — the index lowercases on Windows); a document established by any search arm keeps its retrieved identity and the read mints nothing (865 §7.6: opened adds availability, not evidence). Tests: chunk-precise case + case-only-differs. Cost, recorded: when a doc was retrieved first, its later page text is not used as literal verification text. |
+| 2 | Empty extraction (`found=true`, `content=""`) produced a successful empty page and a blank-excerpt opened source; blank literal text makes the matcher fall back to an index lookup with `chunkIndex` clamped to 0 — the re-fetch opened sources must never use. | **Fixed.** Blank page at offset 0 → failure naming the path and the Worker's `extraction_reason_code`; blank at a later offset → "end of document", no `readResults`; mint skips blank excerpts. |
+| 3 | `READ_PAGE_CHARS = max(200, …)` — at caps below ~500 the floor beats the derivation and Layer-2 clips the page. | **Fixed.** Floor removed; the tool refuses with an explicit message when the derived page is < 200. Header math now exercised with a 400-char Windows path. |
+| 4 | Resolver verified the raw slice while the model saw the flattened page. | **Fixed.** Flatten once; the same string is the carrier line and the `excerpt`. |
+| 5 | Stale claims: "no auto-retry protects paging" (nothing consumes `OperationPolicy.retry()`); "seventh tool" (seventh component, fifth tool). | **Fixed** (comments). |
+| 6 | Outward MCP surface gets no read tool — mirror-image asymmetry of the `path_prefix` argument. | **Intended**, now stated in the catalog javadoc: 770 §4 withdrew `fetch` for the MCP consumer; different surface, different economics. |
+| 7 | `SourcesPane` aria-label "…from the assistant's retrieval" over an opened doc; `autonomy/index.ts` core-op enumeration incomplete. | **Fixed** (FE). |
+| 8 | `RetryPolicy` on agent operations is declarative only — no production consumer. | Pre-existing; logged to the observations shard. |
+
+Could-not-refute (kept as verified): readable universe = Lucene stored fields only, no disk fallback; both production `DocumentService` impls override `matchCitationsAgainst`; `acquisition` written at both serialization sites and defaulted at one FE site; the two seam/durability audits still bind; both handler registration paths register the read tool; `STRIPPABLE_LINE` cannot strip anything new; the deep-link path still receives the full excerpt.
+
+Directional note on #1: the dedup is read-after-search only. A search that later finds a chunk of an already-read document still mints a chunk-precise retrieved source — it adds ranking evidence and an inline-mark identity the read never had; 865 §7.6 forbids opened claiming what retrieved earned, not the reverse (`AgentSession.java` documentGroundingKeys comment). The `READ_PAGE_CHARS < MIN_PAGE_CHARS` refusal is deliberately not unit-tested: the constant freezes from `ConfigStore` at class load, so a test would be JVM-order-dependent.

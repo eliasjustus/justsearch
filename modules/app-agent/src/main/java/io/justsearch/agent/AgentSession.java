@@ -18,6 +18,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -73,6 +74,26 @@ final class AgentSession {
    * {@code groundingSearchHits} is the denominator the never-addressable WARN below needs.
    */
   private final LinkedHashMap<String, GroundingEntry> grounding = new LinkedHashMap<>();
+
+  /**
+   * Tempdoc 868 §B.3 — DOCUMENT-level index over {@link #grounding}: normalised document path (see
+   * {@link #docKey}) → the grounding key of the FIRST source established for that document.
+   *
+   * <p>It exists because the two producers address a document by different keys and the dedup has to
+   * span both. A search hit with chunk identity is keyed {@code parentDocId#chunkIndex}; a read is
+   * keyed {@code doc#<path>}. Without this index, "search finds chunk 3 of /a.md, then the agent
+   * reads /a.md" mints TWO sources for ONE document — the normal case, since the model gets the path
+   * it reads FROM a search result. The invariant 865 §7.6 states (an opened document has LESS
+   * relevance evidence than a retrieved one) is what decides the tie: the read adds availability,
+   * not evidence, so the retrieved identity stands and the read only records its carrier.
+   *
+   * <p>Populated by the search arms only. The reverse order (read, then a search that finds a chunk
+   * of the same document) deliberately still mints: that search is real ranking evidence plus a
+   * chunk identity the read never had, and suppressing it would throw away the inline-mark capability
+   * to avoid a duplicate row. The invariant is directional — it forbids "opened" claiming what
+   * "retrieved" earned, not the reverse.
+   */
+  private final LinkedHashMap<String, String> documentGroundingKeys = new LinkedHashMap<>();
 
   private int groundingSearchHits;
 
@@ -307,9 +328,10 @@ final class AgentSession {
    * read it). They are separate branches rather than one normalized list precisely because the
    * acquisition axis must be decided by WHICH producer wrote the key — a read tool that emitted
    * {@code searchResults} would mint sources indistinguishable from search hits, which is the 865
-   * §7.6 violation the axis exists to prevent. The shared {@link #establish} dedup spans both: a
-   * document already retrieved is not re-minted by a later read, so "opened" never upgrades an
-   * existing source and the delta-equals-terminal property holds across producers.
+   * §7.6 violation the axis exists to prevent. The dedup spans both producers via {@link
+   * #documentGroundingKeys}: a document already established by EITHER search arm is not re-minted by
+   * a later read — not even when search keyed it by chunk and the read keys it by path — so "opened"
+   * never upgrades an existing source and the delta-equals-terminal property holds across producers.
    */
   private List<AgentEvent.AgentSource> contributeGroundingSources(
       String toolCallId, OperationResult result) {
@@ -337,9 +359,16 @@ final class AgentSession {
       if (chunkPrecise) {
         String parentDocId = (String) m.get("parentDocId");
         int chunkIndex = m.get("chunkIndex") instanceof Number n ? n.intValue() : 0;
+        String groundingKey = parentDocId + "#" + chunkIndex;
+        // Tempdoc 868 §B.3 — index the DOCUMENT this chunk belongs to, under both spellings a later
+        // read could address it by: the stored `path` field and the `parentDocId` (which IS the
+        // path in this index — PreviewController: "Treat docId as opaque"). Recorded before the
+        // mint so it is present whether or not this particular chunk was new.
+        rememberDocumentKey(path, groundingKey);
+        rememberDocumentKey(parentDocId, groundingKey);
         AgentEvent.AgentSource minted =
             establish(
-                parentDocId + "#" + chunkIndex,
+                groundingKey,
                 toolCallId,
                 () ->
                     new AgentEvent.AgentSource(
@@ -357,9 +386,10 @@ final class AgentSession {
       } else if (!path.isBlank()) {
         // 603 D-3 — document-level provenance: identity is the path, chunk ordinal + lines are the
         // sentinel (no precise location). The whole document IS the source the answer drew on.
+        rememberDocumentKey(path, docKey(path));
         AgentEvent.AgentSource minted =
             establish(
-                "doc#" + path,
+                docKey(path),
                 toolCallId,
                 () ->
                     new AgentEvent.AgentSource(
@@ -386,6 +416,17 @@ final class AgentSession {
    * suppresses the precise-line deep-link). The excerpt is the page the model actually saw, which is
    * what {@code AgentCitationResolver} verifies an opened source against instead of re-fetching.
    *
+   * <p>When the document is already established — by EITHER search arm, under either key shape —
+   * this records the read as a CARRIER of the existing source and mints nothing. That is the
+   * cross-producer half of the dedup, and the normal case rather than an edge one: the path the
+   * model reads with is usually a path a search result just handed it.
+   *
+   * <p>A blank excerpt is skipped. A source whose literal text is blank falls back to an index
+   * lookup in {@code DocumentService.matchCitationsAgainst}, with {@code ContextCitation}'s compact
+   * constructor clamping the document-level {@code -1} chunk ordinal to {@code 0} — so a blank
+   * opened source would be silently verified against chunk 0 of some other document, which is
+   * exactly the re-fetch an opened source must never do.
+   *
    * <p>Read hits are NOT added to {@code groundingSearchHits}: nothing searched, so counting them
    * would inflate a retrieval statistic with documents no ranker ever saw.
    */
@@ -396,12 +437,24 @@ final class AgentSession {
         continue;
       }
       String path = asString(m.get("path"));
-      if (path.isBlank()) {
+      String excerpt = asString(m.get("excerpt"));
+      if (path.isBlank() || excerpt.isBlank()) {
         continue;
       }
+      String documentKey = docKey(path);
+      String establishedUnder = documentGroundingKeys.get(documentKey);
+      GroundingEntry established =
+          establishedUnder == null ? null : grounding.get(establishedUnder);
+      if (established != null) {
+        // The run learns that this read put the document's text in front of the model again — the
+        // carrier fact the inclusion receipt needs — without a second source for one document.
+        addCarrier(established, toolCallId);
+        continue;
+      }
+      rememberDocumentKey(path, documentKey);
       AgentEvent.AgentSource minted =
           establish(
-              "doc#" + path,
+              documentKey,
               toolCallId,
               () ->
                   new AgentEvent.AgentSource(
@@ -409,7 +462,7 @@ final class AgentSession {
                       DOC_LEVEL_SENTINEL,
                       path,
                       asString(m.get("title")),
-                      asString(m.get("excerpt")),
+                      excerpt,
                       DOC_LEVEL_SENTINEL,
                       DOC_LEVEL_SENTINEL,
                       "",
@@ -417,6 +470,28 @@ final class AgentSession {
       if (minted != null) {
         delta.add(minted);
       }
+    }
+  }
+
+  /**
+   * Tempdoc 868 §B.3 — the run-wide identity of a DOCUMENT, for the index that lets the two
+   * producers dedup against each other. One helper so both doc-level grounding keys and the index
+   * cannot spell the same document differently.
+   *
+   * <p>Case-folded on every platform, not just Windows. The Worker lowercases paths before it looks
+   * a document up ({@code GrpcSearchService.fetchDocumentSlice} → {@code
+   * PathNormalizer.normalizePath}), so two spellings that differ only in case ARE one document as
+   * far as every fetch is concerned; keying them apart here would let the case-variant mint a
+   * duplicate source for a document the index cannot even distinguish.
+   */
+  private static String docKey(String path) {
+    return "doc#" + path.toLowerCase(Locale.ROOT);
+  }
+
+  /** First writer wins: the document keeps the identity of the source that established it first. */
+  private void rememberDocumentKey(String path, String groundingKey) {
+    if (path != null && !path.isBlank()) {
+      documentGroundingKeys.putIfAbsent(docKey(path), groundingKey);
     }
   }
 

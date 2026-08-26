@@ -188,10 +188,12 @@ public sealed interface AgentEvent {
        *
        * <p>The recorded invariant is directional and must not be read the other way: an
        * opened-by-name document has LESS relevance evidence than a retrieved one, never more —
-       * nothing ranked it, the agent simply asked for it. The run-wide dedup in {@code
-       * AgentSession.establish} preserves that: a document already established by a search keeps
-       * its {@code retrieved} identity when a later read returns it, because "opened" never
-       * upgrades an existing source.
+       * nothing ranked it, the agent simply asked for it. {@code
+       * AgentSession.documentGroundingKeys} preserves that across the two producers: a document
+       * already established by EITHER search arm keeps its {@code retrieved} identity when a later
+       * read returns it — including when the search keyed it by {@code parentDocId#chunkIndex} and
+       * the read keys it by path, which is the normal case, since the path the model reads with is
+       * usually one a search result handed it.
        *
        * <p>Unlike {@link #contextInclusion} this is an IDENTITY component, fixed at the mint: how a
        * source was acquired is knowable exactly when it is established, and never changes.

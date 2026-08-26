@@ -189,13 +189,29 @@ final class AgentSessionGroundingTest {
   @DisplayName("868 §B.3: a document already RETRIEVED is not re-minted by a later read — opened never upgrades")
   void readOfAnAlreadyRetrievedDocument_doesNotReMint() {
     var session = session();
-    // Search first: the document is established as retrieved, with whatever identity search gave it.
+    // THE NORMAL CASE, and the one the first cut of this test missed by using a chunk-LESS hit: the
+    // model gets the path it reads from a search result, and a real search hit carries chunk
+    // identity — so search keys the document `parentDocId#chunkIndex` while the read keys it
+    // `doc#<path>`. Two different keys for one document is precisely how a per-key dedup produces
+    // two sources for it. The fixture therefore uses the chunk-precise arm on purpose.
     session.recordExecution(
         searchCall("call-1"),
         OperationResult.success(
             "r",
-            Map.of("searchResults", List.of(Map.of("path", "/a.md", "title", "A", "excerpt", "hit")))));
-    // Then read the SAME document. The run-wide dedup key is `doc#<path>` on both arms.
+            Map.of(
+                "searchResults",
+                List.of(
+                    Map.of(
+                        // parentDocId IS the path in this index (PreviewController: "Treat docId as
+                        // opaque"), which is how a real hit and a real read name one document.
+                        "parentDocId", "/a.md",
+                        "chunkIndex", 3,
+                        "path", "/a.md",
+                        "title", "A",
+                        "excerpt", "an excerpt",
+                        "startLine", 12,
+                        "endLine", 16,
+                        "headingText", "")))));
     List<AgentEvent.AgentSource> readDelta =
         session.recordExecution(
             readCall("call-2"),
@@ -204,13 +220,64 @@ final class AgentSessionGroundingTest {
 
     assertTrue(readDelta.isEmpty(), "the read added no NEW document, so its delta is empty");
     List<AgentEvent.AgentSource> sources = session.collectGroundingSources();
-    assertEquals(1, sources.size(), "one document, one source");
+    assertEquals(
+        1,
+        sources.size(),
+        "one document, one source — a chunk-keyed retrieval and a path-keyed read must not each"
+            + " mint their own");
     assertEquals(
         AgentEvent.AgentSource.ACQUISITION_RETRIEVED,
         sources.get(0).acquisition(),
         "the first identity wins: a document that WAS ranked keeps that stronger evidence, and"
             + " 'opened' must never overwrite it (the invariant is directional)");
-    assertEquals("hit", sources.get(0).excerpt(), "the retrieved excerpt is not replaced either");
+    assertEquals(3, sources.get(0).chunkIndex(), "the chunk-precise identity survives the read");
+    assertEquals(
+        "an excerpt", sources.get(0).excerpt(), "the retrieved excerpt is not replaced either");
+  }
+
+  @Test
+  @DisplayName("868 §B.3: the chunk-LESS search arm dedups against a later read too")
+  void readOfAnAlreadyRetrievedDocumentLevelHit_doesNotReMint() {
+    var session = session();
+    session.recordExecution(
+        searchCall("call-1"),
+        OperationResult.success(
+            "r",
+            Map.of("searchResults", List.of(Map.of("path", "/a.md", "title", "A", "excerpt", "hit")))));
+    List<AgentEvent.AgentSource> readDelta =
+        session.recordExecution(
+            readCall("call-2"),
+            OperationResult.success(
+                "[read] /a.md", Map.of("readResults", List.of(readPage("/a.md", "the page text")))));
+
+    assertTrue(readDelta.isEmpty());
+    List<AgentEvent.AgentSource> sources = session.collectGroundingSources();
+    assertEquals(1, sources.size());
+    assertEquals(AgentEvent.AgentSource.ACQUISITION_RETRIEVED, sources.get(0).acquisition());
+    assertEquals("hit", sources.get(0).excerpt());
+  }
+
+  @Test
+  @DisplayName("868 §B.3: paths differing only in case are ONE document — the index folds case before every fetch")
+  void readOfACaseVariantPath_doesNotReMint() {
+    var session = session();
+    // The Worker lowercases a docId before looking it up (GrpcSearchService.fetchDocumentSlice →
+    // PathNormalizer.normalizePath), so `/A.md` and `/a.md` cannot name two documents as far as any
+    // fetch is concerned. Keying them apart here would mint a second source for a document the index
+    // itself cannot distinguish — a duplicate row with no fact behind it.
+    session.recordExecution(
+        searchCall("call-1"),
+        OperationResult.success(
+            "r",
+            Map.of("searchResults", List.of(Map.of("path", "/A.md", "title", "A", "excerpt", "hit")))));
+    List<AgentEvent.AgentSource> readDelta =
+        session.recordExecution(
+            readCall("call-2"),
+            OperationResult.success(
+                "[read] /a.md", Map.of("readResults", List.of(readPage("/a.md", "the page text")))));
+
+    assertTrue(readDelta.isEmpty(), "a case variant of an established path is the same document");
+    assertEquals(1, session.collectGroundingSources().size());
   }
 
   @Test
@@ -231,6 +298,25 @@ final class AgentSessionGroundingTest {
             .allMatch(
                 s -> AgentEvent.AgentSource.ACQUISITION_OPENED.equals(s.acquisition())),
         "a run that only read must not present its evidence as retrieved: " + sources);
+  }
+
+  @Test
+  @DisplayName("868 §B.3: a read page with a BLANK excerpt mints nothing — a blank literal would be re-fetched")
+  void readResultWithBlankExcerpt_isSkipped() {
+    var session = session();
+    // A blank-literal opened source is worse than no source. `matchCitationsAgainst` treats a blank
+    // literalText as "look this up from the index", and `ContextCitation`'s compact constructor
+    // clamps the document-level -1 chunk ordinal to 0 — so the source would be verified against
+    // chunk 0 of whatever the path resolves to, which is the re-fetch an opened source must never
+    // do. `ReadDocumentTool` already refuses to emit one; this is the second gate.
+    session.recordExecution(
+        readCall("call-1"),
+        OperationResult.success(
+            "r",
+            Map.of(
+                "readResults",
+                List.of(Map.of("path", "/a.md", "title", "A", "excerpt", "   ")))));
+    assertTrue(session.collectGroundingSources().isEmpty());
   }
 
   @Test

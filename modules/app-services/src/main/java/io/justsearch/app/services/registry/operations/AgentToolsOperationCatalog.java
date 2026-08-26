@@ -177,8 +177,16 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
    * Tempdoc 868 §B.2 — {@code core.read-document}. Same availability expression as {@link
    * #searchIndex()} and for the same reason: both are served by the Worker's index, so both are
    * offered only while the index is serving ({@code Not(ConditionMatches("index.unavailable"))} —
-   * absence=healthy, re-shown on recovery). Deliberately NO auto-retry: a read is paged, and a
-   * transparent retry of a page the model already saw would double it into the prompt.
+   * absence=healthy, re-shown on recovery). Declares {@code noRetry}, matching the intent that a
+   * paged read should not be transparently repeated; note that {@code RetryPolicy} is DECLARATIVE
+   * today — {@code OperationPolicy.retry()} has no reader anywhere in the tree, so nothing
+   * auto-retries any agent tool and this declaration documents intent rather than enforcing it.
+   *
+   * <p>Deliberately absent from the outward MCP surface ({@code McpToolSurface}), and the asymmetry
+   * is the point: tempdoc 770 §4 withdrew a `fetch` tool there because an external MCP client is a
+   * different consumer with its own context budget and its own retrieval loop, and the search/fetch
+   * split it would need is the client's to make. The in-app delegate is the consumer whose 4096-token
+   * window and inline-confirm lattice this tool was sized and gated for.
    */
   private static Operation readDocument() {
     return new Operation(

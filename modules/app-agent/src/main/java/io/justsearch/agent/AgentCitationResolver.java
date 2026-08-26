@@ -87,10 +87,12 @@ final class AgentCitationResolver {
       // For a RETRIEVED source, parentDocId + chunkIndex drive the authoritative match (the Worker
       // re-fetches that chunk from the index); the other fields are display metadata, defaulted
       // here. Tempdoc 868 §B.1/§B.3 — an OPENED source has no chunk identity to re-fetch, so it is
-      // verified against its OWN literal text: the page the model actually saw. That is strictly
-      // more honest than a re-fetch even where both are possible (it verifies what was shown, not
-      // what the index holds now), which is why this switched from the `matchCitations` overload
-      // (which blanks every literal) to `matchCitationsAgainst`, the real method.
+      // verified against its OWN literal text: the page text the model was shown, character for
+      // character (`ReadDocumentTool` flattens once and emits that same string as both the carrier
+      // line and this excerpt). That is strictly more honest than a re-fetch even where both are
+      // possible (it verifies what was shown, not what the index holds now), which is why this
+      // switched from the `matchCitations` overload (which blanks every literal) to
+      // `matchCitationsAgainst`, the real method.
       // Tempdoc 865 §7.5 — the inclusion the SOURCE carries, not a hardcoded absence. Before this it
       // was `ContextInclusion.ABSENT` unconditionally, which is why 849's `suppressGroundingFor`
       // never fired on a delegate source: the predicate was there, and nothing on this plane ever

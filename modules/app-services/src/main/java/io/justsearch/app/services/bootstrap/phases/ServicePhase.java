@@ -123,7 +123,8 @@ public final class ServicePhase {
        * InferenceRuntimeHandles} above and for the same reason: the god-record ceiling
        * (CompositionRootGuardrailsTest 4a, MAX_OUTPUT_FIELDS) was already reached at 26 components,
        * and the six were literally that record's fields re-listed. Bundling keeps the ceiling flat
-       * while the seventh tool ({@code readDocumentTool}) joins the bundle.
+       * while {@code readDocumentTool} — the bundle's seventh COMPONENT and fifth tool (the other
+       * two components are the adapter and the file-operation log) — joins it.
        */
       AgentToolFactory.Output agentTools,
       WorkerFeatureCache workerFeatureCache,

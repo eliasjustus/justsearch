@@ -52,16 +52,28 @@ public final class ReadDocumentTool {
   static final int PAGE_HEADROOM_CHARS = 600;
 
   /**
+   * The smallest page worth serving. Below this the tool refuses rather than pages: a 100-char page
+   * of a 27 KB document is not a read, it is an excerpt with extra round-trips.
+   */
+  static final int MIN_PAGE_CHARS = 200;
+
+  /**
    * The per-call page size. DERIVED from {@code AgentContextCompressor.MAX_TOOL_RESULT_CHARS}
    * (config {@code agent.maxToolResultChars}, default 4000) rather than a bare literal, so a
    * lowered cap shrinks the page instead of clipping it: Layer-2 truncation must never cut a page —
    * a read that arrives clipped is exactly the excerpt-shaped result this tool exists to replace.
    * {@code ReadDocumentToolTest} pins the arithmetic by running a full page through the real {@code
    * truncate} and asserting it comes back unchanged.
+   *
+   * <p>The floor is ZERO, deliberately. A {@code Math.max(MIN_PAGE_CHARS, …)} floor would DEFEAT the
+   * derivation at exactly the caps it was added for: under a cap of ~500 the floor wins, the page
+   * exceeds the cap, and Layer-2 clips it — the silent failure this constant exists to prevent,
+   * reintroduced by the guard meant to bound it. So the arithmetic is allowed to go small and
+   * {@link #execute(JsonNode)} refuses out loud when it lands under {@link #MIN_PAGE_CHARS}.
    */
   public static final int READ_PAGE_CHARS =
       Math.max(
-          200,
+          0,
           Math.min(
               DEFAULT_PAGE_CHARS,
               io.justsearch.agent.ToolResultCarrier.layerTwoCapChars() - PAGE_HEADROOM_CHARS));
@@ -100,6 +112,18 @@ public final class ReadDocumentTool {
    * PreviewController}: "Treat docId as opaque"), so one {@code path} argument addresses both.
    */
   OperationResult execute(JsonNode args) {
+    if (READ_PAGE_CHARS < MIN_PAGE_CHARS) {
+      // A configuration refusal, not an argument one — checked before any work so the operator sees
+      // the cause rather than a stream of uselessly small pages.
+      return OperationResult.failure(
+          "agent.maxToolResultChars is too small to page a document (it leaves "
+              + READ_PAGE_CHARS
+              + " chars per page, minimum "
+              + MIN_PAGE_CHARS
+              + "). Raise it to at least "
+              + (MIN_PAGE_CHARS + PAGE_HEADROOM_CHARS)
+              + ", or use core_search_index to find passages instead.");
+    }
     String path = args.has("path") ? args.get("path").asText() : null;
     if (path == null || path.isBlank()) {
       return OperationResult.failure("A document path is required");
@@ -140,15 +164,62 @@ public final class ReadDocumentTool {
     }
 
     String text = slice.content() == null ? "" : slice.content();
+    // Flatten ONCE, here, and use the result for BOTH the carrier line and the evidence excerpt.
+    // Tempdoc 868 §B.1: the citation matcher verifies an opened source against its literal text, so
+    // that literal has to be the string the model was SHOWN. Emitting the raw slice as `excerpt`
+    // while showing the flattened page made every read source verified against text that differed
+    // from the prompt by every newline and quote in it.
+    String pageText = flatten(text);
     int startChar = offsetChars;
     int endChar = offsetChars + text.length();
     boolean truncated = slice.truncated();
     int nextOffset = truncated ? Math.max(endChar, slice.nextOffsetChars()) : endChar;
-    String title = titleOf(slice, path);
+
+    if (pageText.isBlank()) {
+      // The Worker answers found=true with empty content in two very different situations, and they
+      // need different answers. At offset 0 the document is IN the index but has no extracted text
+      // (an extraction dropout, tempdoc 790) — a failure, and one that must name the reason, because
+      // "no text" and "no tier could read it" are not the same fact to a user. Past offset 0 it just
+      // means the previous page ended exactly at the document's end: a normal, successful terminus.
+      return offsetChars == 0
+          ? noExtractedText(path, slice)
+          : OperationResult.success(endOfDocument(path, offsetChars));
+    }
 
     return OperationResult.success(
-        formatPage(path, text, startChar, endChar, truncated, nextOffset),
-        buildReadEvidence(path, title, text, startChar, endChar, truncated));
+        formatPage(path, pageText, startChar, endChar, truncated, nextOffset),
+        buildReadEvidence(path, titleOf(slice, path), pageText, startChar, endChar, truncated));
+  }
+
+  /**
+   * The extraction-dropout arm. Fails rather than succeeding with an empty page, because an empty
+   * page is worse than useless downstream: it mints an opened source with a BLANK literal, and a
+   * blank literal makes {@code DocumentService.matchCitationsAgainst} fall back to an index lookup
+   * whose {@code -1} chunk ordinal is clamped to {@code 0} — an opened source silently verified
+   * against a chunk nobody read.
+   */
+  private static OperationResult noExtractedText(
+      String path, DocumentService.DocumentSlice slice) {
+    String reason = metadata(slice, "extraction_reason_code");
+    if (reason.isBlank()) {
+      reason = metadata(slice, "extraction_method");
+    }
+    return OperationResult.failure(
+        "No extracted text for "
+            + path
+            + (reason.isBlank() ? "" : " (reason: " + reason + ")")
+            + "; the index has no readable content for this document. Try core_search_index for"
+            + " passages from other documents on the topic.");
+  }
+
+  /** The normal terminus: a previous page ended exactly at the document's end. */
+  private static String endOfDocument(String path, int offsetChars) {
+    return "[read] " + path + " — end of document; no more text after char " + offsetChars + ".";
+  }
+
+  private static String metadata(DocumentService.DocumentSlice slice, String key) {
+    Object value = slice.metadata() == null ? null : slice.metadata().get(key);
+    return value == null ? "" : value.toString().strip();
   }
 
   /**
@@ -158,7 +229,7 @@ public final class ReadDocumentTool {
    * starts — survives.
    */
   private static String formatPage(
-      String path, String text, int startChar, int endChar, boolean truncated, int nextOffset) {
+      String path, String pageText, int startChar, int endChar, boolean truncated, int nextOffset) {
     var sb = new StringBuilder();
     sb.append("[read] ").append(path).append(" — chars ").append(startChar).append('–')
         .append(endChar);
@@ -167,11 +238,15 @@ public final class ReadDocumentTool {
           .append(nextOffset);
     }
     sb.append(System.lineSeparator());
-    sb.append(io.justsearch.agent.ToolResultCarrier.readLine(flatten(text)));
+    sb.append(io.justsearch.agent.ToolResultCarrier.readLine(pageText));
     return sb.toString();
   }
 
-  /** The carrier line is ONE line by contract; a page's newlines collapse into it. */
+  /**
+   * The carrier line is ONE line by contract; a page's newlines collapse into it. Called exactly
+   * once per read, at the seam — see {@link #execute(JsonNode)} for why the flattened form, not the
+   * raw slice, is what the evidence carries.
+   */
   private static String flatten(String text) {
     return text.replace("\"", "'").replace("\r", "").replace("\n", " ").strip();
   }
@@ -184,16 +259,18 @@ public final class ReadDocumentTool {
    * mint sources indistinguishable from search hits, which is the exact violation the acquisition
    * axis exists to prevent.
    *
-   * <p>{@code excerpt} is the page text UNCAPPED: it is what the model actually saw, and {@code
-   * AgentCitationResolver} verifies an opened source against this literal rather than re-fetching a
-   * chunk from the index.
+   * <p>{@code excerpt} is the FLATTENED page, uncapped — byte-for-byte the string written onto the
+   * carrier line, because {@code AgentCitationResolver} verifies an opened source against this
+   * literal instead of re-fetching a chunk, and a literal that is not what the model was shown is
+   * not a verification. {@code startChar}/{@code endChar} stay on the RAW slice's coordinates, since
+   * they address the document in the index, not the rendering.
    */
   private static Map<String, Object> buildReadEvidence(
-      String path, String title, String text, int startChar, int endChar, boolean truncated) {
+      String path, String title, String pageText, int startChar, int endChar, boolean truncated) {
     var item = new LinkedHashMap<String, Object>();
     item.put("path", path);
     item.put("title", title);
-    item.put("excerpt", text);
+    item.put("excerpt", pageText);
     item.put("startChar", startChar);
     item.put("endChar", endChar);
     item.put("truncated", truncated);
