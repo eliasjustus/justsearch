@@ -706,12 +706,17 @@ export class Sv3Main extends JfElement {
            declared on its ':host' with the SHIPPED literals; the values here are the spec's, and
            they reach only the elements carrying this class — the citations list and the reasoning
            trace keep the shipped rhythm on purpose. Two of the fifteen are absent because sv3 keeps
-           the shipped value: '--md-list-indent' (1.25rem) and '--md-pre-padding'. */
+           the shipped value: '--md-list-indent' (1.75rem after tempdoc 873 §3 retuned the shared
+           default — sv3 still takes whatever it is) and '--md-pre-padding'. */
         /* The transcript's prose leading. */
         --md-line-height: 1.625;
-        /* One 0.65rem-class rhythm for every block, wide or not (10px on the ladder). */
-        --md-block-gap: var(--space-2-5);
-        --md-block-gap-wide: var(--space-2-5);
+        /* Tempdoc 873 §3 — the two names are DIFFERENT again. Collapsing both onto 10px was the
+           single biggest contributor to the wall of text: a code fence, a table and a quote sat in
+           exactly as much air as the paragraph before them, so nothing in an answer read as a
+           different KIND of thing. 12px between paragraphs, 20px around the blocks that are not
+           prose. */
+        --md-block-gap: var(--space-3);
+        --md-block-gap-wide: var(--space-5);
         /* List items sit tight; the variant's 'li + li' carries the gap (S5). */
         --md-item-gap: 0;
         /* The inline chip: an edge, the small radius, a tighter inset and the
@@ -731,19 +736,29 @@ export class Sv3Main extends JfElement {
         --md-link-decoration: none;
 
         /* The prose variant's heading ramp (tempdoc 822 §2.3, slice S5). The variant reads the
-           SHIPPED type scale for h1/h2/h3 (and the already-re-pointed '--font-size-sm' for h4-h6),
-           so the spec's heading scale — 1.25 / 1.125 / 1 / 0.875rem — arrives the same
-           way the two steps above do: as a re-point onto this window's own ramp, which already IS
-           that scale. Not one rem literal is copied (§2.1). Inside the renderer nothing else reads
-           these three steps, so re-pointing the ramp here retunes exactly the headings.
-           The variant's remaining defaults (weight 600, line-height 1.3, the asymmetric margin, the
-           table padding and rules, the 24rem truncation cap, the between-items gap) already match
-           the spec's numbers, or they read a colour/size token re-pointed above — so they are
-           deliberately NOT re-pointed; 'Sv3Main.imports.test.ts' carries that decision in writing,
-           name by name. */
+           SHIPPED type scale for h1/h2/h3 (and '--font-size-sm' for h4-h6), so the spec's heading
+           scale — 1.25 / 1.125 / 1rem — arrives the same way the two steps above do: as a re-point
+           onto this window's own ramp, which already IS that scale. Inside the renderer nothing else
+           reads these three steps, so re-pointing the ramp here retunes exactly the headings.
+           The variant's remaining defaults (line-height 1.3, the asymmetric margin, the table
+           padding and rules, the 24rem truncation cap, the between-items gap, the rule margin) are
+           the shared sheet's — retuned there by tempdoc 873 for EVERY prose surface, not forked
+           here; 'Sv3Main.imports.test.ts' carries that decision in writing, name by name. */
         --font-size-xl: var(--font-size-sv3-xl);
         --font-size-lg: var(--font-size-sv3-lg);
         --font-size-md: var(--font-size-sv3-base);
+        /* Tempdoc 873 §4 — the answer prose steps up to 15px, and ONLY the answer prose. The
+           window's own '--font-size-sv3-sm' stays 14px, so tool cards, the reasoning trace, the
+           sources panel and the hover card are untouched; this re-point lives in the
+           '.sv3-markdown'-ONLY rule and reaches nothing else (the shared colour/size bridge above
+           still points '--font-size-sm' at 14px, which is what '.sv3-citations' keeps riding).
+           One declaration carries both halves: the renderer's ':host' reads '--font-size-sm' for
+           the body size, and its variant's h4-h6 read the same name — so re-pointing it lifts body
+           text off 14px AND keeps the deepest headings from landing BELOW the body they lead (they
+           sit AT body size, distinguished by weight, which is what the ramp's bottom step means).
+           There is no sv3 ramp step at 15px — 'sm' is 14 and 'base' is 16 — and minting one for a
+           single consumer would fork the window's ramp, so the value is written at its use site. */
+        --font-size-sm: 0.9375rem;
       }
       /* The expanded evidence sits under the TAIL ROW, not under the answer (Phase F11), so its
          rhythm is the row's own 8px. An outer-tree rule on the host beats the component's own :host

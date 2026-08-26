@@ -135,13 +135,37 @@ function resolvedRule(selector: string): Map<string, string> {
 
 /* ── 1. The frozen defaults (design §2.2, "identical default" column) ─────────────────────────── */
 
-/** name → the literal the pre-tokenization stylesheet carried at the design's cited line. */
+/**
+ * Tempdoc 873 — the defaults DELIBERATELY retuned after the 822 freeze, recorded as
+ * `name → [the 822 literal, the 873 value]`. The freeze was never "this value is correct forever";
+ * it was "no value moves without a decision that says so". This list is that decision written down,
+ * and the assertions below pin BOTH ends: the current default must be the 873 value AND must no
+ * longer be the 822 one, so a revert is as loud as a drift.
+ *
+ * Diagnosis (873 §1): the chat read as a wall of uniform text. Bold at 600 was a half-step against
+ * a 400 body; the heading weight was that same 600, so emphasis and structure looked alike; a
+ * heading's 20px of air above was the same order as the gaps around it, so it did not end the
+ * previous section; a 20px list indent left bullets hanging inside the paragraph column; and 4px
+ * between list items was swallowed by a multi-line item's own leading.
+ */
+const RETUNED_873: ReadonlyArray<readonly [string, string, string]> = [
+  ['--md-list-indent', '1.25rem', '1.75rem'], //                        the list column becomes a column
+  ['--md-heading-weight', '600', '700'], //                             a step a scanning reader can see
+  ['--md-heading-margin', '1.25rem 0 0.5rem', '1.75rem 0 0.5rem'], //   the ABOVE half only
+  ['--md-item-adjacent-gap', '0.25rem', '0.375rem'], //                 items stop running together
+];
+
+/**
+ * name → the literal this stylesheet carries. Every entry was the pre-tokenization literal at the
+ * design's cited line; the four names in `RETUNED_873` now carry their retuned value instead, and
+ * are marked below with the literal they superseded.
+ */
 const FROZEN_DEFAULTS: ReadonlyArray<readonly [string, string]> = [
   ['--md-line-height', '1.6'], //                                      :host line-height (:290)
   ['--md-block-gap', '0.25em'], //                                     p, ul, ol margin (:317, :345)
   ['--md-block-gap-wide', '0.5em'], //                                 pre, blockquote margin (:337, :362)
   ['--md-item-gap', '0.125em'], //                                     li margin (:349)
-  ['--md-list-indent', '1.25rem'], //                                  ul, ol padding-left (:346)
+  ['--md-list-indent', '1.75rem'], //                                  ul, ol padding-left (873; was 1.25rem)
   ['--md-code-border', 'none'], //                                     inline code (absent before)
   ['--md-code-radius', '0.25rem'], //                                  inline code (:328)
   ['--md-code-padding', '0.125rem 0.375rem'], //                       inline code (:327)
@@ -175,9 +199,39 @@ describe('the fifteen geometry tokens keep the literals the shipped stylesheet a
   });
 });
 
+describe('the tempdoc-873 retunes are the only defaults that moved off the 822 freeze', () => {
+  /** A retuned name lives on `:host` or on `:host([prose])` — the lookup follows it either way. */
+  const currentDefault = (name: string): string | undefined =>
+    HOST.get(name) ?? VARIANT_HOST.get(name);
+
+  it.each(RETUNED_873)('%s is %s now, and is no longer the 822 literal %s', (name, was, now) => {
+    expect(currentDefault(name), `${name} did not take its 873 value`).toBe(now);
+    // The second half is the one that catches a revert: a "tidy-up" back to the frozen literal
+    // would otherwise satisfy nothing but this line.
+    expect(currentDefault(name), `${name} reverted to the superseded 822 literal`).not.toBe(was);
+  });
+
+  it('retunes nothing the list does not name', () => {
+    // Every OTHER default is still the 822 literal, asserted by the two frozen-default blocks
+    // above; this pins the retune SET so a fifth silent change cannot hide beside four declared
+    // ones. Both records are read here, so a name added to one must be added to the other.
+    const declared = RETUNED_873.map(([name]) => name).sort();
+    const pinned = [...FROZEN_DEFAULTS, ...VARIANT_DEFAULTS]
+      .filter(([name, value]) => RETUNED_873.some(([n, , now]) => n === name && value === now))
+      .map(([name]) => name)
+      .sort();
+    expect(pinned).toEqual(declared);
+  });
+});
+
 /* ── 2. Resolved-declaration equality against the pre-tokenization stylesheet ─────────────────── */
 
-/** The declarations of every touched selector, verbatim from the parent commit. */
+/**
+ * The declarations of every touched selector, verbatim from the parent commit — except the ONE
+ * property a `RETUNED_873` name resolves into (`ul, ol { padding-left }`), which carries its retuned
+ * value and is marked inline. Everything else is still the pre-tokenization set, so this table keeps
+ * doing its job for the other forty-odd properties.
+ */
 const BEFORE: ReadonlyArray<readonly [string, Readonly<Record<string, string>>]> = [
   [
     ':host',
@@ -215,7 +269,8 @@ const BEFORE: ReadonlyArray<readonly [string, Readonly<Record<string, string>>]>
     '.md-content pre code',
     { background: 'none', padding: '0', 'font-size': 'var(--font-size-xs)' },
   ],
-  ['.md-content ul, .md-content ol', { margin: '0.25em 0', 'padding-left': '1.25rem' }],
+  // `padding-left` is the 873 retune (was `1.25rem`); the margin is still the parent commit's.
+  ['.md-content ul, .md-content ol', { margin: '0.25em 0', 'padding-left': '1.75rem' }],
   ['.md-content li', { margin: '0.125em 0' }],
   ['.md-content a', { color: 'var(--text-tint)', 'text-decoration': 'underline' }],
   [
@@ -477,17 +532,21 @@ describe('the prose variant is reachable ONLY through the attribute', () => {
 
 /* ── 5. The variant's own frozen defaults (design §2.3) ───────────────────────────────────────── */
 
-/** name → the value design §2.3 records for it, and what it is for. */
+/** name → the value design §2.3 records for it (or tempdoc 873's retune of it), and what it is for. */
 const VARIANT_DEFAULTS: ReadonlyArray<readonly [string, string]> = [
-  ['--md-heading-weight', '600'],
+  ['--md-heading-weight', '700'], //                           873 retune (was 600)
   ['--md-heading-line-height', '1.3'],
-  ['--md-heading-margin', '1.25rem 0 0.5rem'], //              asymmetric: a heading owns what follows
+  ['--md-heading-margin', '1.75rem 0 0.5rem'], //              asymmetric: a heading owns what follows
   ['--md-table-size', 'var(--font-size-xs)'],
   ['--md-table-cell-padding', '0.45rem 0.75rem'],
   ['--md-table-rule', '1px solid var(--border-subtle)'],
   ['--md-table-cell-max', '24rem'], //                         the spec's truncation cap
   ['--md-rule', '1px solid var(--border-subtle)'],
-  ['--md-item-adjacent-gap', '0.25rem'],
+  // 873 §3 — an `hr` no longer shares `--md-block-gap-wide` with `pre`/`blockquote`. A section
+  // break spaced like a code fence read as one more block instead of as the end of something, so
+  // it has its own name and the largest rhythm in prose.
+  ['--md-rule-margin', '1.5rem'],
+  ['--md-item-adjacent-gap', '0.375rem'], //                   873 retune (was 0.25rem)
 ];
 
 /** The shipped token sheet — the definition site the variant's defaults resolve through. */
@@ -528,6 +587,16 @@ describe('the variant carries its own defaults, so it renders under any host', (
 
   it.each(VARIANT_DEFAULTS)('%s defaults to %s', (name, value) => {
     expect(VARIANT_HOST.get(name)).toBe(value);
+  });
+
+  it('spaces the section break by its OWN name, not the wide-block gap (873 §3)', () => {
+    // The mechanism, not just the value: reading `--md-block-gap-wide` here is what made an `hr`
+    // sit in exactly as much air as a `pre`, and a consumer re-pointing the wide gap for code
+    // fences would drag the section break along with it. Both halves are pinned so neither can be
+    // quietly undone.
+    const hr = RULES.get(`${VARIANT_PREFIX} .md-content hr`) as Decls;
+    expect(hr.get('margin')).toBe('var(--md-rule-margin) 0');
+    expect(hr.get('margin')).not.toContain('--md-block-gap-wide');
   });
 
   it('takes the heading scale from the SHIPPED type ramp, step for step', () => {
