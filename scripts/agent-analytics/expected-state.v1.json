@@ -61,6 +61,18 @@
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: npm --prefix modules/ui-web run test:unit:run -- PluginLoader"
+    },
+    {
+      "id": "store-recoverability-acquisitionstage-unclassified",
+      "match": [
+        "check-store-recoverability",
+        "governance/run\\.mjs .*--gate .*store-recoverability"
+      ],
+      "claim": "`node scripts/ci/check-store-recoverability.mjs` is RED on main: \"coverage: persistence write site is unclassified: modules/app-services/.../ai/install/AcquisitionStage.java\". The only write the scanner sees there is Files.createDirectories(targetFile.getParent()) (AcquisitionStage.java:113), preparing the model-download directory — directory preparation for re-acquirable model blobs, not a durable store. It needs a deliberate classification in governance/store-recoverability.v1.json (nonDurableWriteSites is the likely bucket, beside TempFileManager), which belongs to PR #483's authors rather than to a guess. A failure ONLY on this line is pre-existing, not your change.",
+      "evidence": "Introduced by 3af0e859 (feat(install): staged, component-level model acquisition, #483). Confirmed 2026-08-26 from worktree agent-aa51999fa41f5fdf9 (tempdoc 878): `git diff origin/main` is EMPTY for the gate script, StoreCatalog.java, governance/store-recoverability.v1.json and AcquisitionStage.java, so the red is main’s and not the branch’s.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "node scripts/ci/check-store-recoverability.mjs"
     }
   ]
 }

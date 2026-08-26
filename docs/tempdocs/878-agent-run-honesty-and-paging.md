@@ -753,7 +753,7 @@ the *reason* generalizes, not because the fix was hard.
 2. **The ceiling's telemetry has no home.** `agent.budget_edge_finalize.total` is named for the
    budget wall. Folding a second terminal into it would silently change what a recorded number
    means — this tempdoc's own defect class, committed while closing it. So the counter stays
-   budget-only, the ceiling records nothing, and the gap is logged to the inbox rather than papered
+   budget-only, the ceiling records nothing, and the gap is an open item in §O rather than papered
    over with a metric-schema change nobody asked for.
 3. **`turn.answer` is not an agent turn's answer.** The FE's two-arm notice needs "did this turn
    end up with an answer", and `turn.answer` is populated only on the RECORD path — an agent turn's
@@ -871,3 +871,73 @@ schema-aware token projection (§D.6, `app-inference` + `app-api`) and the read 
 wrong answers (§D.7a/b, proto → Worker → `app-services` → `ReadDocumentTool`). Everything touching
 `AgentStepRunner`, `AgentSession`, `AgentEvent` or the frontend was sequenced in one lane, because
 those files are each on the path of several workstreams and parallel edits would have collided.
+
+---
+
+## §O. Open items
+
+Findings this workstream turned up but deliberately did not fix. Routed here per
+`rule:log-pre-existing-issues` (tempdoc 872 retired the observations store) rather than logged to
+an inbox nobody reads — each names the file and what the fix would be, so it can be picked up in
+one step.
+
+### §O.1 Owned by 878 (this tempdoc's own debt)
+
+1. **The iteration-ceiling finalize has no telemetry counter.**
+   `agent.budget_edge_finalize.total` is named for the budget wall, and §D.1 deliberately did not
+   reuse it — folding a second terminal into a counter named for the first would silently change
+   what a recorded number means, which is this tempdoc's own defect class. So ceiling-finalize
+   success/failure is currently unmeasured. The fix is a `limit` dimension (`budget` | `steps`) on
+   that counter, or a sibling counter: a metric-schema change across `AgentMetricCatalog`,
+   `AgentTags` and the wire-format regression test.
+   `modules/app-agent/src/main/java/io/justsearch/agent/AgentLlmCaller.java` →
+   `attemptStepCeilingFinalize`.
+
+2. **The effort-scaled iteration cap is designed and not shipped (§D.8).** An owner call on spend:
+   raising the cap requires re-deriving `AgentBudgetPolicy.THOROUGH_MULTIPLIER`, because 859 derives
+   15x *from* a cap of 10. The guard that makes the coupling fail the build shipped;
+   the number did not. `modules/ui-web/src/shell-v0/controllers/AgentSessionController.ts` →
+   `DEFAULT_MAX_ITERATIONS`.
+
+3. **A `vop_*` tool's output classifies `RUNTIME` by construction (§D.5).** An operation-id
+   classifier cannot see inside an FE-supplied tool, so a plugin returning document text would be
+   framed as a runtime value rather than quoted. Named rather than guessed at.
+   `modules/app-agent-api/src/main/java/io/justsearch/agent/api/registry/OutputLineage.java`.
+
+### §O.2 Pre-existing, routed out
+
+4. **`check-store-recoverability` is RED on `main`** — "persistence write site is unclassified:
+   `AcquisitionStage.java`". Pinned with a dated exit as
+   `store-recoverability-acquisitionstage-unclassified` in
+   `scripts/agent-analytics/expected-state.v1.json`. The tracked fix: the only write the scanner
+   sees is `Files.createDirectories(targetFile.getParent())`
+   (`modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AcquisitionStage.java:113`),
+   preparing the model-download directory — directory preparation for re-acquirable model blobs, not
+   a durable store. `nonDurableWriteSites` in `governance/store-recoverability.v1.json` is the likely
+   bucket, beside `TempFileManager`, but the call belongs to PR #483's authors: a gate silenced by
+   the wrong classification is worse than a pinned red. Introduced by `3af0e859`.
+
+5. **Three load-sensitive test timeouts**, all seen only while several agent worktrees built
+   concurrently, all `TimeoutException` rather than assertion failures — so none of them evaluated
+   the property it exists to check. Each wants a budget sized to the assertion rather than to the
+   machine:
+   - `NdjsonInferenceTransitionLogTest.retentionPrunes` uses a **100 ms** retention window and then
+     asserts the just-written record survived; when the write itself exceeds the window, the
+     "current" record is pruned too and `lines.size() == 0`.
+     `modules/app-inference/src/test/java/io/justsearch/app/inference/NdjsonInferenceTransitionLogTest.java:95`.
+   - `OnnxEmbeddingEncoderLongDocForensicTest.longDocEmbedWithSpansMatchesBaseEmbed` and
+     `OnnxEmbeddingEncoderBoundedTokenizeTest.groupBoundariesPreserveResults` — 30 s / 10 s budgets
+     around two real 8192-token ONNX encoders.
+     `modules/worker-core/src/test/java/io/justsearch/indexerworker/embed/onnx/`.
+   - `resourceRegistry.test.ts` "produces the four expected registrations" times out at 5000 ms
+     under the full ui-web suite (`vi.resetModules()` + dynamic re-import) and passes in isolation;
+     its import graph contains none of 878's files.
+     `modules/ui-web/src/shell-v0/renderers/resourceRegistry.test.ts:243`.
+
+6. **The shared Gradle single-lane wrapper leaks its lock.** It writes its `owner` file *inside* the
+   lock directory, so the release `rmdir "$LOCK"` always fails with "Directory not empty" and the
+   lock is never released by its holder; a patient poller can starve for hours (both of this
+   workstream's sub-workers did, ~90 minutes each). The fix is an `"$LOCK.owner"` sibling file, or
+   `rm -rf`. Separately, some agents run `tmp/gradle-lane*.sh`, which do not touch that lock at all,
+   so single-lane Gradle is not actually enforced across worktrees.
+   `tmp/agent-orchestration/gradle-locked.sh` (orchestration harness, untracked).
