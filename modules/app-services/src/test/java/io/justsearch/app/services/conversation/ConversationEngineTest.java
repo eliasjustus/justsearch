@@ -656,6 +656,12 @@ final class ConversationEngineTest {
       return List.of();
     }
 
+    /** No catalog to filter, so the offering is the (empty) available set. */
+    @Override
+    public List<Operation> offeredOperations() {
+      return availableOperations();
+    }
+
     @Override
     public OperationResult undoOperation(String toolName, String executionId) {
       return null;

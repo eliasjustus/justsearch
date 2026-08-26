@@ -439,6 +439,20 @@ final class CoreApiAssembly {
       lateBindings.setSettingsResetFn(settingsController::resetToDefaults);
       lateBindings.setDebugStateProvider(debugStateController);
       lateBindings.setStatusSnapshotProvider(statusLifecycleHandler);
+      // Tempdoc 876 §B.2a: give the readiness-reconciliation trigger its thunk. This is the first
+      // point at which the handler exists AND its taps are wired (the tap block above), so it is
+      // also the earliest safe self-seed. Not a second envelope authority — the trigger only
+      // re-runs buildStatusSnapshot, which is buildStatusMap, which is the one place
+      // buildReadinessEnvelope is called.
+      if (b.HeadAssembly != null
+          && b.HeadAssembly.substrate() != null
+          && b.HeadAssembly.substrate().health() != null) {
+        var readinessTrigger =
+            b.HeadAssembly.substrate().health().readinessReconciliationTrigger();
+        if (readinessTrigger != null) {
+          readinessTrigger.attach(statusLifecycleHandler::buildStatusSnapshot);
+        }
+      }
     }
 
     HeadHttpInflightMetricCatalog inflightCatalog;

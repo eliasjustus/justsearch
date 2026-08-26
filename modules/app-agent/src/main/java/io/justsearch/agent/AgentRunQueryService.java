@@ -77,6 +77,18 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
     return List.copyOf(operationCatalog.definitions());
   }
 
+  /**
+   * Tempdoc 876 §B.1 — this collaborator holds the catalog but NOT the {@code AgentToolEmitter},
+   * and the offering is the emitter's to decide. {@code AgentLoopService} (which holds the emitter)
+   * overrides {@code offeredOperations()} directly instead of delegating here, so this body is
+   * never the answer any caller receives; returning empty rather than the raw catalog keeps it from
+   * becoming a second, unfiltered authority on the offering if that ever changes.
+   */
+  @Override
+  public List<Operation> offeredOperations() {
+    return List.of();
+  }
+
   @Override
   public OperationResult undoOperation(String toolName, String executionId) {
     var op = operationCatalog.findByWireName(toolName).orElse(null);

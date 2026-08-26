@@ -8,12 +8,15 @@ import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.api.registry.Severity;
+import io.justsearch.app.services.bootstrap.phases.BootstrapHelpers;
+import io.justsearch.app.services.conversation.WorkflowOperationProjection;
 import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import io.justsearch.app.services.registry.operations.handlers.BulkReindexHandler;
 import io.justsearch.app.services.registry.operations.handlers.ClearFailedJobsHandler;
 import io.justsearch.app.services.registry.operations.handlers.PingBackendHandler;
 import io.justsearch.app.services.registry.operations.handlers.RestartWorkerHandler;
+import io.justsearch.app.services.registry.snapshot.RegistrySnapshotExporter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -25,6 +28,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -36,12 +40,19 @@ import org.junit.jupiter.params.provider.MethodSource;
  * that {@code HeadAssembly.Phase 4} does at boot time, plus the loaded
  * {@code registry-operation.en.properties} keys, then runs each validator and asserts
  * no ERROR findings.
+ *
+ * <p>Three contexts: the two static base catalogs, plus (tempdoc 876 B.6) the COMPOSED set
+ * production actually assembles — base catalogs + the projected {@code core.workflow-*} tools —
+ * read from the one build-tier composition ({@link RegistrySnapshotExporter#composedOperations()}).
+ * Validating only the bases left every runtime-composed operation outside the shape gate.
  */
 final class ValidatorRunnerTest {
 
   private static ValidationContext context;
 
   private static ValidationContext agentToolsContext;
+
+  private static ValidationContext composedContext;
 
   @BeforeAll
   static void loadFixture() {
@@ -84,9 +95,12 @@ final class ValidatorRunnerTest {
         CoreOperationCatalog.EXPORT_DIAGNOSTICS,
         new io.justsearch.app.services.registry.operations.handlers.ExportDiagnosticsHandler(
             () -> null));
-    // Tempdoc 561 P-E added core.remember to AgentToolsOperationCatalog; register its handler so the
-    // ExecutorBindingValidator resolves it (the no-op MemoryStore suffices — the validator does not
-    // invoke handlers). Absorbed via the tempdoc-554 merge of main.
+    // Tempdoc 561 P-E added core.remember to AgentToolsOperationCatalog. This registration is a
+    // FIXTURE, not a mirror of production wiring: it exists only so ExecutorBindingValidator can
+    // resolve the declared binding, and the no-op MemoryStore suffices because no validator ever
+    // invokes a handler. Production binds core.remember on a different path (AgentToolHandlers'
+    // late-bound registration), which this test does not exercise — so a green run here says the
+    // DECLARATION is well-shaped and says nothing about whether production actually bound it.
     handlers.register(
         io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog.REMEMBER,
         new io.justsearch.app.services.registry.operations.handlers.RememberFactHandler(
@@ -229,6 +243,29 @@ final class ValidatorRunnerTest {
     OperationCatalog agentToolsCatalog = new AgentToolsOperationCatalog();
     agentToolsContext =
         new ValidationContext(agentToolsCatalog, handlers, validI18nKeys, Set.of());
+
+    // Tempdoc 876 B.6: the third context is the COMPOSED set — the base catalogs plus the projected
+    // core.workflow-* tools, taken from the one build-tier composition rather than re-derived here.
+    List<Operation> composedOps = RegistrySnapshotExporter.composedOperations();
+    for (Operation op : composedOps) {
+      if (op.id().value().startsWith(WorkflowOperationProjection.OP_PREFIX)) {
+        // Another FIXTURE binding: production does NOT route a projected workflow through the
+        // HandlerRegistry at all — the agent loop runs it via the streaming WorkflowToolRunner — so
+        // there is no production handler to mirror. The stub stands in so ExecutorBindingValidator
+        // can check the rest of the projected op's shape instead of skipping it.
+        handlers.register(op.id(), stubHandler);
+      }
+    }
+    // A projected op carries the WORKFLOW's Presentation, whose keys live in registry-workflow.*.
+    // Resolve against the same union the production message resolver reads (tempdoc 876 B.3) rather
+    // than against registry-operation.* alone, which would fail every projected op for a key that
+    // is correctly authored, just in the other catalog.
+    composedContext =
+        new ValidationContext(
+            OperationCatalog.of("core", composedOps),
+            handlers,
+            BootstrapHelpers.loadRegistryMessages().stringPropertyNames(),
+            Set.of());
   }
 
   @ParameterizedTest
@@ -265,6 +302,42 @@ final class ValidatorRunnerTest {
                 + validator.name()
                 + " produced ERROR findings against AgentToolsOperationCatalog: "
                 + errors);
+  }
+
+  @ParameterizedTest
+  @MethodSource("registeredValidators")
+  void runValidatorAgainstComposedCatalog(RegistryShapeValidator validator) {
+    List<ValidationFinding> errors =
+        validator
+            .validate(composedContext)
+            .filter(f -> f.severity() == Severity.ERROR)
+            .toList();
+    assertEquals(
+        List.of(),
+        errors,
+        () ->
+            "Validator "
+                + validator.name()
+                + " produced ERROR findings against the composed catalog "
+                + "(base catalogs + projected workflow tools): "
+                + errors);
+  }
+
+  @Test
+  void composedCatalogActuallyCoversProjectedWorkflowTools() {
+    // Guards the context above against passing for the wrong reason: if the projection ever stopped
+    // contributing (or the composition regressed to the two static bases), every validator would
+    // still be green while covering strictly less than before.
+    List<String> projected =
+        composedContext.catalog().definitions().stream()
+            .map(op -> op.id().value())
+            .filter(id -> id.startsWith(WorkflowOperationProjection.OP_PREFIX))
+            .toList();
+    assertEquals(
+        List.of("core.workflow-research-brief"),
+        projected,
+        "the composed context must cover the projected workflow tools; core.demo-compose is "
+            + "correctly absent offline (its ToolSteps compose vendor.mcphost.*)");
   }
 
   static Stream<RegistryShapeValidator> registeredValidators() {

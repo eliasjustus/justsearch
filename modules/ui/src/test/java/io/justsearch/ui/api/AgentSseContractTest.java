@@ -467,6 +467,12 @@ final class AgentSseContractTest {
       return List.of();
     }
 
+    /** No catalog to filter, so the offering is the (empty) available set. */
+    @Override
+    public List<Operation> offeredOperations() {
+      return availableOperations();
+    }
+
     @Override
     public boolean isAvailable() {
       return true;
@@ -500,6 +506,12 @@ final class AgentSseContractTest {
       return List.of();
     }
 
+    /** No catalog to filter, so the offering is the (empty) available set. */
+    @Override
+    public List<Operation> offeredOperations() {
+      return availableOperations();
+    }
+
     @Override
     public boolean isAvailable() {
       return true;
@@ -524,6 +536,12 @@ final class AgentSseContractTest {
     @Override
     public List<Operation> availableOperations() {
       return List.of();
+    }
+
+    /** No catalog to filter, so the offering is the (empty) available set. */
+    @Override
+    public List<Operation> offeredOperations() {
+      return availableOperations();
     }
 
     @Override
@@ -732,6 +750,12 @@ final class AgentSseContractTest {
       return List.of();
     }
 
+    /** No catalog to filter, so the offering is the (empty) available set. */
+    @Override
+    public List<Operation> offeredOperations() {
+      return availableOperations();
+    }
+
     @Override
     public boolean isAvailable() {
       return true;
@@ -759,6 +783,12 @@ final class AgentSseContractTest {
     @Override
     public List<Operation> availableOperations() {
       return List.of();
+    }
+
+    /** No catalog to filter, so the offering is the (empty) available set. */
+    @Override
+    public List<Operation> offeredOperations() {
+      return availableOperations();
     }
 
     @Override

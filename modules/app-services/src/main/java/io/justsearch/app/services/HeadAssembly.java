@@ -563,9 +563,9 @@ public final class HeadAssembly implements AutoCloseable {
           .setSampler(io.justsearch.app.services.mcphost.McpSamplingAdapter.of(() -> mcpSamplerAi));
     }
 
-    java.util.Properties registryOperationMessages =
-        io.justsearch.app.services.bootstrap.phases.BootstrapHelpers.loadRegistryOperationMessages();
-    this.operationMessageResolver = key -> registryOperationMessages.getProperty(key, key);
+    java.util.Properties registryMessages =
+        io.justsearch.app.services.bootstrap.phases.BootstrapHelpers.loadRegistryMessages();
+    this.operationMessageResolver = key -> registryMessages.getProperty(key, key);
 
     Supplier<List<String>> agentRootPaths =
         this.knowledgeClient != null
@@ -1337,6 +1337,15 @@ public final class HeadAssembly implements AutoCloseable {
         substrateOut.operationOut().scanRollupLedger().close();
       } catch (RuntimeException e) {
         log.warn("Failed to close ScanRollupLedger", e);
+      }
+    }
+    // Tempdoc 876 §B.2a: stop the readiness-reconciliation daemon thread (same precedent as the
+    // sweeper above — a substrate-owned thread is torn down with the substrate).
+    if (substrateOut != null && substrateOut.healthOut() != null) {
+      try {
+        substrateOut.healthOut().readinessReconciliationTrigger().close();
+      } catch (RuntimeException e) {
+        log.warn("Failed to close ReadinessReconciliationTrigger", e);
       }
     }
     io.justsearch.app.services.bootstrap.OrchestrationHandles handles = this.orchestration;

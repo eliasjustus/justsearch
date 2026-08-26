@@ -51,8 +51,11 @@ class LiveWitnessTest {
     ContributionRegistry registry = new ContributionRegistry();
     OperationCatalogComposition.installBaseCatalogs(
         registry, new CoreOperationCatalog(), new AgentToolsOperationCatalog());
+    // Tempdoc 876 B.4: the projection resolves ToolStep refs against the composed registry, so the
+    // already-installed operations are the known set (no MCP host here — demo-compose drops out).
     OperationCatalogComposition.installWorkflowOps(
-        registry, WorkflowOperationProjection.project(CoreWorkflowCatalog.catalog()));
+        registry,
+        WorkflowOperationProjection.project(CoreWorkflowCatalog.catalog(), registry.operations()));
     return registry;
   }
 

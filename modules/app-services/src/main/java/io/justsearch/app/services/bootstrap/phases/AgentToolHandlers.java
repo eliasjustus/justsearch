@@ -2,6 +2,8 @@
 package io.justsearch.app.services.bootstrap.phases;
 
 import io.justsearch.agent.api.registry.HandlerRegistry;
+import io.justsearch.agent.api.registry.OperationHandler;
+import io.justsearch.agent.api.registry.OperationRef;
 import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.agent.tools.BrowseTool;
@@ -22,6 +24,8 @@ import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,8 +40,10 @@ import org.slf4j.LoggerFactory;
  *       (each may be null).
  *   <li>{@link #registerLateBound} — connect-time registration after the worker channel comes
  *       up. Delegates composition of the tool bundle to {@link AgentToolFactory} (tempdoc 832: one
- *       construction authority) and registers what it returns. Idempotent: skipped if SEARCH_INDEX
- *       is already registered.
+ *       construction authority) and registers what it returns. Idempotent PER REF (tempdoc 876
+ *       §B.5): a ref already present (typically registered by {@link #registerEager}) is left
+ *       alone rather than the whole call short-circuiting on one sentinel ref — the two paths
+ *       compose instead of one excluding the other.
  * </ul>
  */
 public final class AgentToolHandlers {
@@ -46,7 +52,27 @@ public final class AgentToolHandlers {
 
   private AgentToolHandlers() {}
 
-  /** Eager-path registration: register only the non-null tool instances. */
+  /**
+   * Registers {@code handler} at {@code ref} unless {@code ref} is already registered.
+   *
+   * <p>Tempdoc 876 §B.5: this is the one call site where "skip if already present" belongs.
+   * {@link HandlerRegistry#register} keeps its throw-on-duplicate contract for every other
+   * caller — the eager and late-bound agent-tool paths are the only pair designed to both run
+   * against the same registry, so the skip lives here, not in the registry itself.
+   *
+   * @return true if this call registered the handler; false if {@code ref} was already present.
+   */
+  private static boolean registerIfAbsent(
+      HandlerRegistry operationHandlers, OperationRef ref, OperationHandler handler) {
+    if (operationHandlers.resolve(ref).isPresent()) {
+      return false;
+    }
+    operationHandlers.register(ref, handler);
+    return true;
+  }
+
+  /** Eager-path registration: register only the non-null tool instances, skipping any ref
+   * already registered (idempotent, symmetric with {@link #registerLateBound}). */
   public static void registerEager(
       HandlerRegistry operationHandlers,
       SearchTool searchTool,
@@ -55,36 +81,45 @@ public final class AgentToolHandlers {
       FileOperationsTool fileOperationsTool,
       ReadDocumentTool readDocumentTool) {
     if (searchTool != null) {
-      operationHandlers.register(
-          AgentToolsOperationCatalog.SEARCH_INDEX, new SearchOperationHandler(searchTool));
+      registerIfAbsent(
+          operationHandlers,
+          AgentToolsOperationCatalog.SEARCH_INDEX,
+          new SearchOperationHandler(searchTool));
     }
-    // Tempdoc 868 §B.2: registered on BOTH paths deliberately. registerLateBound short-circuits on
-    // SEARCH_INDEX already being present, so an eager registration that skipped the read tool would
-    // leave `core.read-document` permanently unhandled — the 832 one-authority lesson, applied to
-    // the registration side.
     if (readDocumentTool != null) {
-      operationHandlers.register(
-          AgentToolsOperationCatalog.READ_DOCUMENT, new ReadDocumentHandler(readDocumentTool));
+      registerIfAbsent(
+          operationHandlers,
+          AgentToolsOperationCatalog.READ_DOCUMENT,
+          new ReadDocumentHandler(readDocumentTool));
     }
     if (browseTool != null) {
-      operationHandlers.register(
-          AgentToolsOperationCatalog.BROWSE_FOLDERS, new BrowseOperationHandler(browseTool));
+      registerIfAbsent(
+          operationHandlers,
+          AgentToolsOperationCatalog.BROWSE_FOLDERS,
+          new BrowseOperationHandler(browseTool));
     }
     if (ingestTool != null) {
-      operationHandlers.register(
-          AgentToolsOperationCatalog.INGEST_FILES, new IngestOperationHandler(ingestTool));
+      registerIfAbsent(
+          operationHandlers,
+          AgentToolsOperationCatalog.INGEST_FILES,
+          new IngestOperationHandler(ingestTool));
     }
     if (fileOperationsTool != null) {
-      operationHandlers.register(
+      registerIfAbsent(
+          operationHandlers,
           AgentToolsOperationCatalog.FILE_OPERATIONS,
           new FileOperationsHandler(fileOperationsTool));
     }
   }
 
   /**
-   * Late-bound registration: obtain the four tool instances from {@link AgentToolFactory#assemble}
-   * and register them. Returns true if registration ran; false if it was skipped (idempotence
-   * check or missing prerequisites).
+   * Late-bound registration: obtain the tool instances from {@link AgentToolFactory#assemble} and
+   * register them, skipping any ref already registered by {@link #registerEager} (tempdoc 876
+   * §B.5 — the two paths compose, they no longer exclude each other via a single sentinel ref).
+   *
+   * @return true if the prerequisite guards passed and registration was attempted (refs already
+   *     present are left untouched, refs not yet present are newly registered); false if a
+   *     prerequisite (worker capability, knowledge server, or data dir) was missing.
    */
   public static boolean registerLateBound(
       HandlerRegistry operationHandlers,
@@ -100,9 +135,6 @@ public final class AgentToolHandlers {
       io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry,
       io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger,
       DocumentService documentService) {
-    if (operationHandlers.resolve(AgentToolsOperationCatalog.SEARCH_INDEX).isPresent()) {
-      return false;
-    }
     if (knowledgeClient == null || !workerCapability.available()) {
       log.warn("registerAgentToolHandlers skipped: knowledgeClient or worker capability unavailable");
       return false;
@@ -130,30 +162,49 @@ public final class AgentToolHandlers {
             scanProgressRegistry,
             scanRollupLedger,
             documentService);
-    operationHandlers.register(
-        AgentToolsOperationCatalog.SEARCH_INDEX, new SearchOperationHandler(tools.searchTool()));
-    if (tools.readDocumentTool() != null) {
-      operationHandlers.register(
-          AgentToolsOperationCatalog.READ_DOCUMENT,
-          new ReadDocumentHandler(tools.readDocumentTool()));
+    List<OperationRef> registered = new ArrayList<>();
+    if (registerIfAbsent(
+        operationHandlers,
+        AgentToolsOperationCatalog.SEARCH_INDEX,
+        new SearchOperationHandler(tools.searchTool()))) {
+      registered.add(AgentToolsOperationCatalog.SEARCH_INDEX);
     }
-    operationHandlers.register(
-        AgentToolsOperationCatalog.BROWSE_FOLDERS, new BrowseOperationHandler(tools.browseTool()));
-    operationHandlers.register(
-        AgentToolsOperationCatalog.INGEST_FILES, new IngestOperationHandler(tools.ingestTool()));
-    operationHandlers.register(
+    if (tools.readDocumentTool() != null
+        && registerIfAbsent(
+            operationHandlers,
+            AgentToolsOperationCatalog.READ_DOCUMENT,
+            new ReadDocumentHandler(tools.readDocumentTool()))) {
+      registered.add(AgentToolsOperationCatalog.READ_DOCUMENT);
+    }
+    if (registerIfAbsent(
+        operationHandlers,
+        AgentToolsOperationCatalog.BROWSE_FOLDERS,
+        new BrowseOperationHandler(tools.browseTool()))) {
+      registered.add(AgentToolsOperationCatalog.BROWSE_FOLDERS);
+    }
+    if (registerIfAbsent(
+        operationHandlers,
+        AgentToolsOperationCatalog.INGEST_FILES,
+        new IngestOperationHandler(tools.ingestTool()))) {
+      registered.add(AgentToolsOperationCatalog.INGEST_FILES);
+    }
+    if (registerIfAbsent(
+        operationHandlers,
         AgentToolsOperationCatalog.FILE_OPERATIONS,
-        new FileOperationsHandler(tools.fileOperationsTool()));
+        new FileOperationsHandler(tools.fileOperationsTool()))) {
+      registered.add(AgentToolsOperationCatalog.FILE_OPERATIONS);
+    }
     // Tempdoc 561 P-E: the learning producer — core_remember persists durable facts into the shared
     // single-authority MemoryStore (the same instance /api/memory reads).
-    if (memoryStore != null) {
-      operationHandlers.register(
-          AgentToolsOperationCatalog.REMEMBER,
-          new io.justsearch.app.services.registry.operations.handlers.RememberFactHandler(
-              memoryStore));
+    if (memoryStore != null
+        && registerIfAbsent(
+            operationHandlers,
+            AgentToolsOperationCatalog.REMEMBER,
+            new io.justsearch.app.services.registry.operations.handlers.RememberFactHandler(
+                memoryStore))) {
+      registered.add(AgentToolsOperationCatalog.REMEMBER);
     }
-    log.info(
-        "AgentTools operation handlers registered: SEARCH_INDEX, READ_DOCUMENT, BROWSE_FOLDERS, INGEST_FILES, FILE_OPERATIONS, REMEMBER");
+    log.info("AgentTools operation handlers registered: {}", registered);
     return true;
   }
 }

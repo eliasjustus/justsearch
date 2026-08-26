@@ -27,8 +27,32 @@ public interface AgentRunQueries {
    * which returned {@code List<ToolDefinition>}. The substrate's Operation type carries
    * the same data (id, presentation, parameter schema, risk policy, undo support) plus
    * provenance/executors metadata.
+   *
+   * <p><b>This is the FULL catalog, not the offering</b> (tempdoc 876 §A.0/§B.1). Its consumers —
+   * {@code AgentSseWriter}, {@code ToolIteratingShapeRunner}, {@code ConversationApiAssembly} —
+   * index it BY TOOL NAME to RESOLVE a tool the model has already emitted a call for, so it must
+   * stay wide: narrowing it would make a call the model actually made unresolvable (an availability
+   * flip mid-run, or a tool outside this run's selection, would render as an unknown tool). Ask
+   * {@link #offeredOperations()} for what the model was shown.
    */
   List<io.justsearch.agent.api.registry.Operation> availableOperations();
+
+  /**
+   * Tempdoc 876 §B.1 — the operations the model is actually OFFERED: {@link #availableOperations()}
+   * narrowed by the emitter's full filter chain (AGENT executor, audience allow-list, evaluated
+   * availability). This is the read-side projection of
+   * {@code AgentToolEmitter.offer(catalog, List.of())} — the same authority that decides the wire
+   * tool list, never a second derivation from the raw declarations.
+   *
+   * <p>The distinction is load-bearing and the two reads are NOT interchangeable: this one answers
+   * "what can the model see?" (the trust panel's question — a tool hidden by availability must be
+   * absent here), {@link #availableOperations()} answers "what does this tool name refer to?" (the
+   * resolvers' question — a name must resolve even if it is no longer offered).
+   *
+   * <p>Note this read applies no selection: it is the offering for a run with no
+   * {@code selectedToolNames} restriction, which is what an inventory endpoint wants.
+   */
+  List<io.justsearch.agent.api.registry.Operation> offeredOperations();
 
   /** Undo a previous tool execution by its execution ID. */
   default OperationResult undoOperation(String toolName, String executionId) {

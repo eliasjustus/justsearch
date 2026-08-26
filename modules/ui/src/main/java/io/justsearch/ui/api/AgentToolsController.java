@@ -46,42 +46,51 @@ final class AgentToolsController {
     return agentServiceSupplier.get();
   }
 
-  /** GET /api/chat/agent/tools — List available tools. */
+  /**
+   * GET /api/chat/agent/tools — the tools the model is OFFERED.
+   *
+   * <p>Tempdoc 876 §B.1: the source is {@code offeredOperations()} — the emitter's own filter chain
+   * (executor / audience / evaluated availability) — not the raw {@code availableOperations()}
+   * catalog this read used before. The FE calls this the agent's authority space, so a tool the
+   * emitter withholds must be absent here; showing a wider set made the panel a second, disagreeing
+   * account of the same fact.
+   */
   void handleListTools(Context ctx) {
-    List<Map<String, Object>> coreTools = agentService().availableOperations().stream()
+    List<Map<String, Object>> coreTools = agentService().offeredOperations().stream()
         .map(AgentToolsController::operationToToolMap)
         .toList();
-    // §11.5 / §13.5 — append FE-published virtual operations.
-    // Conflicts (same wire-name) resolve in favor of core (silent drop).
+    // §11.5 / §13.5 — append FE-published virtual operations. Conflicts (same wire-name) resolve in
+    // favor of core (silent drop) — the same rule the emit path applies, now the same code.
     List<Map<String, Object>> tools;
     if (virtualOperationStore != null) {
-      List<Map<String, Object>> virtual = virtualOperationStore.snapshot();
+      List<Map<String, Object>> virtual =
+          io.justsearch.app.services.registry.emitter.VirtualOperationStore.withoutCollisions(
+              virtualOperationStore.snapshot(), coreWireNames(coreTools));
       if (virtual.isEmpty()) {
         tools = coreTools;
       } else {
-        Set<String> coreNames = new java.util.HashSet<>();
-        for (Map<String, Object> t : coreTools) {
-          Object fn = t.get("function");
-          if (fn instanceof Map<?, ?> fnMap) {
-            Object name = fnMap.get("name");
-            if (name != null) coreNames.add(name.toString());
-          }
-        }
         List<Map<String, Object>> merged = new java.util.ArrayList<>(coreTools);
-        for (Map<String, Object> v : virtual) {
-          Object fn = v.get("function");
-          if (fn instanceof Map<?, ?> fnMap) {
-            Object name = fnMap.get("name");
-            if (name == null || coreNames.contains(name.toString())) continue;
-          }
-          merged.add(v);
-        }
+        merged.addAll(virtual);
         tools = merged;
       }
     } else {
       tools = coreTools;
     }
     ctx.json(Map.of("tools", tools, "available", agentService().isAvailable()));
+  }
+
+  /**
+   * The wire names the projected core tools occupy. This projection's name field is {@code name}
+   * (flat), not the OpenAI {@code function.name} envelope the virtual store uses, so the shared
+   * {@code VirtualOperationStore.wireNames} helper does not apply to it.
+   */
+  private static Set<String> coreWireNames(List<Map<String, Object>> coreTools) {
+    Set<String> names = new java.util.HashSet<>();
+    for (Map<String, Object> t : coreTools) {
+      Object name = t.get("name");
+      if (name != null) names.add(name.toString());
+    }
+    return names;
   }
 
   /**
@@ -232,9 +241,12 @@ final class AgentToolsController {
         "parameterSchema", op.intf().inputs(),
         // Tempdoc 560 WS5 (the one window): attribute each tool in the agent's single inventory by
         // its provenance — tier (CORE / TRUSTED_PLUGIN / UNTRUSTED_PLUGIN), the contributor id, and
-        // the kind (core operation vs. external MCP tool vs. projected workflow). After WS4 the agent
-        // view is the one merged catalog (core + agent-tools + MCP), so this is where a consumer sees
-        // "where did this tool come from" uniformly across all sources.
+        // the kind (agent operation vs. external MCP tool vs. projected workflow). Corrected in 876
+        // §A.0: the agent view is NOT "core + agent-tools + MCP" — OperationCatalogComposition
+        // .deriveAndPartition routes CORE-owner operations to the OTHER catalog, so what reaches
+        // here is agent-tools + MCP + projected workflows. And since 876 §B.1 the set is the
+        // emitter's OFFERING (availability-filtered), not the raw catalog partition — so this is
+        // where a consumer sees "where did this tool the model can actually call come from".
         "tier", op.provenance().tier().name(),
         "provenance", op.provenance().contributorId(),
         "kind", toolKind(op));
