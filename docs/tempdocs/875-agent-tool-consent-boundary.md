@@ -313,9 +313,19 @@ the principle is redundant.
 ### C.8 Explicitly not done here
 
 - **Process/object-capability sandboxing of the agent** (§A.2 framing 2) — ADR-0035 / 560 §9.2.
-- **The second ingest surface.** `KnowledgeSearchController.handleIngest` is an independent ingest
-  path (811's own correction note). Not this tempdoc's subject; its consent posture is unexamined.
 - **Structural centralisation of the path helpers** — 877's, by agreement (finding 5).
+
+### C.9 Open items this tempdoc owns
+
+- **The second ingest surface is still uncontained.** `KnowledgeSearchController.handleIngest`
+  (`modules/app-services/.../worker/KnowledgeSearchController.java`) is an independent ingest path
+  — 811's own correction note established that the MCP/agent tool and this controller are two
+  surfaces, not one. C.3's argument scope binds the *operation gate*, so it covers the tool path
+  and not this one: a caller reaching this controller directly still indexes any readable path with
+  no containment and no gate. Fixing it means routing that controller's ingest through the same
+  operation dispatch (so it inherits the gate), not bolting a second containment check onto it —
+  a second check would be the fork this tempdoc's principle argues against. Sized as its own change
+  because it moves a shipped HTTP surface onto the operation substrate.
 
 ---
 

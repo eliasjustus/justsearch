@@ -212,20 +212,10 @@ public final class BrowseTool {
       if (!hasParent) {
         return "No indexed folders found.";
       }
-      String displayParent = toRelativePath(parentPath);
-      String msg = "No folders found under \"" + displayParent + "\".";
-      if (!AgentToolPaths.looksAbsolute(parentPath)) {
-        List<RootInfo> roots = rootsSupplier.get();
-        if (!roots.isEmpty()) {
-          var hint = new StringBuilder(msg);
-          hint.append(" HINT: Use a path starting with one of these root names:");
-          for (RootInfo root : roots) {
-            hint.append(" \"").append(root.name()).append("\"");
-          }
-          return hint.toString();
-        }
-      }
-      return msg;
+      // No relative-path HINT here: execute() rejects every non-absolute parent_path in
+      // validateParentPath before this runs, so the branch that built one was unreachable.
+      // The root names the model needs are already in that rejection message.
+      return "No folders found under \"" + toRelativePath(parentPath) + "\".";
     }
 
     var sb = new StringBuilder();
