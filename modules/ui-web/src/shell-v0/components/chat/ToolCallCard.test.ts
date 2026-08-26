@@ -464,6 +464,64 @@ describe('ToolCallCard', () => {
       el.remove();
     });
 
+    // Tempdoc 871 §1 + live finding — the L2 row cap. `manyHits` builds N distinct-path hits so the
+    // evidence set can select an exact subset by path.
+    function manyHits(n: number): Array<{ title: string; path: string; excerpt: string; line: number }> {
+      return Array.from({ length: n }, (_, i) => ({
+        title: `Doc ${i}`,
+        path: `/docs/doc${i}.md`,
+        excerpt: 'excerpt text',
+        line: i + 1,
+      }));
+    }
+
+    it('871 row cap — exactly 5 in evidence renders all 5 rows, no hidden-in-evidence segment', async () => {
+      const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+      el.expanded = true;
+      el.toolCall = searchCall({
+        structuredData: { query: 'taxes', resultCount: 5, searchResults: manyHits(5) },
+      });
+      el.evidencePaths = new Set(manyHits(5).map((h) => h.path));
+      document.body.appendChild(el);
+      await settle(el);
+      expect(el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]')).toHaveLength(5);
+      expect(el.shadowRoot?.querySelector('[data-testid="tool-search-more"]')).toBeNull();
+      el.remove();
+    });
+
+    it('871 row cap — 10 in evidence renders 5 rows + "5 more in evidence"', async () => {
+      const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+      el.expanded = true;
+      el.toolCall = searchCall({
+        structuredData: { query: 'taxes', resultCount: 10, searchResults: manyHits(10) },
+      });
+      el.evidencePaths = new Set(manyHits(10).map((h) => h.path));
+      document.body.appendChild(el);
+      await settle(el);
+      const rows = el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]');
+      expect(rows).toHaveLength(5);
+      const more = el.shadowRoot?.querySelector('[data-testid="tool-search-more"]');
+      expect(more?.textContent?.trim()).toBe('5 more in evidence');
+      el.remove();
+    });
+
+    it('871 row cap — mixed case (12 results, 7 in evidence) renders 5 rows + both footer segments', async () => {
+      const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+      el.expanded = true;
+      el.toolCall = searchCall({
+        structuredData: { query: 'taxes', resultCount: 12, searchResults: manyHits(12) },
+      });
+      // First 7 of the 12 hits are in evidence: hiddenInEvidence = 7-5=2, retrievedNotInEvidence = 12-7=5.
+      el.evidencePaths = new Set(manyHits(7).map((h) => h.path));
+      document.body.appendChild(el);
+      await settle(el);
+      const rows = el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]');
+      expect(rows).toHaveLength(5);
+      const more = el.shadowRoot?.querySelector('[data-testid="tool-search-more"]');
+      expect(more?.textContent?.trim()).toBe('2 more in evidence · 5 more retrieved, not in evidence');
+      el.remove();
+    });
+
     it('renders the muted scope line, including the path_prefix scope when the call carried one', async () => {
       const el = document.createElement('jf-tool-call-card') as ToolCallCard;
       el.expanded = true;

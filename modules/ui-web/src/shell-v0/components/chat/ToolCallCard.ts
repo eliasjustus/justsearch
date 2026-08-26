@@ -60,6 +60,14 @@ export type { ToolCall, ToolRisk, ToolCallStatus } from '../../controllers/Agent
 /** Tempdoc 867 — a stable empty-set identity, so a search body's join never allocates for "nothing". */
 const EMPTY_EVIDENCE_PATHS: ReadonlySet<string> = new Set();
 
+/**
+ * Tempdoc 871 §1 ("level 2 — the summary, expanded in place... a footer counts the rest honestly") +
+ * live finding (2026-08-26, PR #570): a search returning `10 results · 10 in evidence` rendered all
+ * 10 rows at level 2, collapsing the "summary, not a list" design into a list again. Cap the rendered
+ * evidence rows at this count; anything past it is counted in the footer, never rendered as a row.
+ */
+const EVIDENCE_ROW_CAP = 5;
+
 /** `1 result` / `2 results` — the ONE pluralization for a hit count on this card. */
 function countLabel(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;
@@ -551,17 +559,30 @@ export class ToolCallCard extends JfElement {
   /**
    * Tempdoc 867 — the search tool card's level-2 body: a muted scope line (roots · pipeline preset
    * actually used — type filters are dropped per §2a, not a per-call fact), then ONLY the hits that
-   * are in the run's evidence set (dot · filename · dim path · locator), a "K more retrieved, not in
-   * evidence" footer, and an "Open in Search" pill (852 owns the actual navigation — this only
-   * dispatches the intent).
+   * are in the run's evidence set (dot · filename · dim path · locator), capped at
+   * {@link EVIDENCE_ROW_CAP} (871 §1 + the live finding above the constant's declaration), a footer
+   * honestly counting what the cap hid, and an "Open in Search" pill (852 owns the actual navigation —
+   * this only dispatches the intent).
+   *
+   * The footer is composed from the projection's OWN two counts, not from the rendered row list, so
+   * it never mixes "hidden by the cap" with "never retrieved as evidence" into one misleading number:
+   *   - hidden-in-evidence = max(0, evidenceCount − EVIDENCE_ROW_CAP) — "N more in evidence"
+   *   - retrieved-not-in-evidence = resultCount − evidenceCount — "N more retrieved, not in evidence"
+   * Each segment renders only when > 0, joined with " · " when both are present.
    *
    * The per-row open path is UNCHANGED in contract: clicking a row fires the same `card-open`
    * CustomEvent (bubbles, composed, `{id}`) the old nested `<jf-results-card>` excerpt rows fired, so
    * the mount site's existing `findAgentSearchHit(structuredData, id)` resolution keeps working.
    */
   private renderSearchBody(projection: AgentSearchCardProjection): TemplateResult {
-    const rows = projection.hits.filter((h) => h.inEvidence);
-    const more = projection.hits.length - rows.length;
+    const rows = projection.hits.filter((h) => h.inEvidence).slice(0, EVIDENCE_ROW_CAP);
+    const hiddenInEvidence = Math.max(0, projection.evidenceCount - EVIDENCE_ROW_CAP);
+    const retrievedNotInEvidence = projection.resultCount - projection.evidenceCount;
+    const footerSegments = [
+      hiddenInEvidence > 0 ? `${hiddenInEvidence} more in evidence` : null,
+      retrievedNotInEvidence > 0 ? `${retrievedNotInEvidence} more retrieved, not in evidence` : null,
+    ].filter((s): s is string => s !== null);
+    const footerText = footerSegments.join(' · ');
     const scopeText = this.searchScopeLine(projection);
     return html`<div class="tool-search-body" data-testid="tool-search-body">
       <div class="search-scope" data-testid="tool-search-scope">${scopeText}</div>
@@ -586,10 +607,8 @@ export class ToolCallCard extends JfElement {
             )}
           </ul>`
         : nothing}
-      ${more > 0
-        ? html`<div class="search-more" data-testid="tool-search-more">
-            ${more} more retrieved, not in evidence
-          </div>`
+      ${footerText
+        ? html`<div class="search-more" data-testid="tool-search-more">${footerText}</div>`
         : nothing}
       <button
         type="button"

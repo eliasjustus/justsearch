@@ -23,6 +23,7 @@ import {
   groundingCoverage,
   groundingDegraded,
   sourcesAreChunkPrecise,
+  type AnswerFrame,
 } from '../../components/chat/evidenceProjection.js';
 import { SV3_ASK_SHAPE_ID } from './sv3-ask.js';
 import { CITATIONS_LABEL, SOURCES_LABEL } from './fixtures.js';
@@ -355,6 +356,39 @@ export function sv3TailModelLabel(
   return stamped === current ? null : stamped;
 }
 
+/**
+ * Tempdoc 869 C2b — THE window's answer frame, computed once and consumed twice.
+ *
+ * It was computed here already, inside {@link projectSv3AnswerFrame}, and thrown away after the tail
+ * LABEL was worded — so the transcript's `<jf-markdown-block>` sites, which need the frame itself,
+ * had no way to reach it and rendered at the renderer's default `'grounded'`. That is a fork by
+ * construction: the tail line could say "Based on your documents — per-sentence grounding not
+ * verified" while the block beneath it framed itself as grounded and let the model's own `[n]`
+ * literals pose as verified refs. One computation, two projections, no second authority.
+ *
+ * `null` means "never told": `evidence === null` is a turn the backend sent no retrieval evidence
+ * for, and framing it would be inventing a search that may not have happened. Evidence is
+ * accumulated at the terminal, so a non-null one is settled — which is what the `settled` argument
+ * below asserts.
+ */
+export function sv3AnswerFrame(turn: Sv3Turn): AnswerFrame | null {
+  const evidence = turn.evidence;
+  if (evidence === null) return null;
+  return answerFrame(
+    SV3_ASK_SHAPE_ID,
+    evidence.sources.length,
+    // Tempdoc 822 §3b — the coverage counts the RESOLVED MARKS, not the raw match list: a claim the
+    // resolver dropped (no verified ref, or one addressing no source) renders no mark, so counting
+    // it would claim a verification the reader cannot see. The frame degrades because the evidence
+    // degraded — the same read the shipped window makes.
+    groundingCoverage(evidence.marks, turn.answer),
+    sourcesAreChunkPrecise(evidence.sources),
+    // Settled: the evidence record exists only once the terminal landed, so the matcher has finished
+    // and a zero-cite answer can no longer excuse itself as "marks pending".
+    true,
+  );
+}
+
 export function projectSv3AnswerFrame(
   turn: Sv3Turn,
   currentModelLabel: string | null,
@@ -368,24 +402,12 @@ export function projectSv3AnswerFrame(
     turn.durationMs,
     sv3TailModelLabel(turn.modelLabel, currentModelLabel, detailed),
   );
-  const evidence = turn.evidence;
-  if (evidence === null) {
+  const frame = sv3AnswerFrame(turn);
+  if (frame === null) {
+    // `evidence === null` — "never told", so there is no verdict to word; the tail still renders.
     return tail === '' ? null : { verdict: null, elaboration: '', tail };
   }
-  const sourceCount = evidence.sources.length;
-  const frame = answerFrame(
-    SV3_ASK_SHAPE_ID,
-    sourceCount,
-    // Tempdoc 822 §3b — the coverage counts the RESOLVED MARKS, not the raw match list: a claim the
-    // resolver dropped (no verified ref, or one addressing no source) renders no mark, so counting
-    // it would claim a verification the reader cannot see. The frame degrades because the evidence
-    // degraded — the same read the shipped window makes.
-    groundingCoverage(evidence.marks, turn.answer),
-    sourcesAreChunkPrecise(evidence.sources),
-    // Settled by construction: this projection refuses anything but a completed turn above, so the
-    // matcher has finished and a zero-cite answer can no longer excuse itself as "marks pending".
-    true,
-  );
+  const sourceCount = turn.evidence?.sources.length ?? 0;
   const label = answerFrameLabel(frame, groundingDegraded(SV3_ASK_SHAPE_ID, sourceCount));
   if (label === null && tail === '') return null;
   if (label === null) return { verdict: null, elaboration: '', tail };

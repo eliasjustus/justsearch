@@ -67,7 +67,13 @@ import {
   sv3CitationAnchor,
   sv3MatchedSentence,
   sv3SourceIndex,
+  SV3_SOURCE_INDEX_ABSENT,
 } from './sv3-citation-anchor.js';
+import type { ToolCall } from '../../controllers/AgentSessionController.js';
+// Tempdoc 871 fix (live finding, 2026-08-26) — resolves a `card-open` hit back out of the SAME
+// structuredData the search tool card projected its rows from. Mirrors
+// `UnifiedChatView.ts:184`'s comment for the identical pattern on the unified window's own mount.
+import { findAgentSearchHit } from '../../components/chat/toolSearchCard.js';
 import type { ReasoningController } from '../../controllers/ReasoningController.js';
 // The shared clipboard util (slice 486 G35) — permission-denied and API-absent already handled, so a
 // per-turn copy needs no error path of its own.
@@ -139,6 +145,7 @@ import {
 } from './sv3-branch.js';
 import {
   projectSv3AnswerFrame,
+  sv3AnswerFrame,
   sv3ReceiptTail,
   sv3SourcesTrigger,
   sv3SourcesTriggerCount,
@@ -397,7 +404,7 @@ export class Sv3Main extends JfElement {
          the field that produced it share an edge. */
       .transcript {
         width: 100%;
-        max-inline-size: 48rem;
+        max-inline-size: var(--measure-prose);
         min-width: 0;
         margin-inline: auto;
       }
@@ -680,6 +687,27 @@ export class Sv3Main extends JfElement {
            token sheet; 'Sv3Main.imports.test.ts' asserts the composite, both themes, both tiers. */
         --md-cite-weak-color: var(--sv3-cite-weak);
         --md-cite-ungrounded-color: var(--sv3-cite-ungrounded);
+        /* Tempdoc 869 C3 — the two tiers the renderer states POSITIVELY now that "no class" is
+           neutral rather than strongest. The GROUNDED ink is the value this window already painted
+           (its '--text-tint' re-point four rules above resolves to exactly this), named here because
+           the tier moved out of the base rule and a bridge that skipped it would silently hand the
+           strongest tier the SOURCE tier's neutral. The SOURCE ink is the body foreground: a tier-2
+           mark is the model's own attribution, so it wears the window's ordinary text ink and no
+           honesty tier's colour — and, unlike the renderer's '--text-secondary' default, which this
+           window re-points to '--muted-foreground' (~4.4:1 in light, under AA for a 12px numeral),
+           it is a colour a reader can actually read on a control they are meant to click. */
+        --md-cite-grounded-color: var(--info-foreground);
+        --md-cite-source-color: var(--foreground);
+        /* Tempdoc 869 §3.6 — the MUTED ref's ink, and the one bridge line that fixes a measured
+           failure rather than preserving a value. The renderer's default is '--text-secondary',
+           which this bridge re-points to '--muted-foreground' four rules above; with the (now
+           removed) 'opacity: .7' on top, a muted '[n]' measured ~3.0:1 dark / ~2.7:1 light in this
+           window. Without the opacity '--muted-foreground' alone still misses AA in light, so the
+           ink is lifted toward the body foreground here. Muting is not hiding: this idiom is TEXT
+           the reader is meant to read as "the model wrote this, nothing verified it", and 869 C2
+           widens it from the ungrounded frame to every sourced answer. The mix ratio is the
+           audit's to confirm; the hook is the structure. */
+        --md-pseudo-cite-color: color-mix(in oklch, var(--muted-foreground) 70%, var(--foreground));
         --md-cite-region-bg: var(--sv3-selected-region);
         --md-cite-pad-x-rest: 0.25em;
         --md-cite-pad-x: 0.25em;
@@ -742,12 +770,17 @@ export class Sv3Main extends JfElement {
            declared on its ':host' with the SHIPPED literals; the values here are the spec's, and
            they reach only the elements carrying this class — the citations list and the reasoning
            trace keep the shipped rhythm on purpose. Two of the fifteen are absent because sv3 keeps
-           the shipped value: '--md-list-indent' (1.25rem) and '--md-pre-padding'. */
+           the shipped value: '--md-list-indent' (1.75rem after tempdoc 873 §3 retuned the shared
+           default — sv3 still takes whatever it is) and '--md-pre-padding'. */
         /* The transcript's prose leading. */
         --md-line-height: 1.625;
-        /* One 0.65rem-class rhythm for every block, wide or not (10px on the ladder). */
-        --md-block-gap: var(--space-2-5);
-        --md-block-gap-wide: var(--space-2-5);
+        /* Tempdoc 873 §3 — the two names are DIFFERENT again. Collapsing both onto 10px was the
+           single biggest contributor to the wall of text: a code fence, a table and a quote sat in
+           exactly as much air as the paragraph before them, so nothing in an answer read as a
+           different KIND of thing. 12px between paragraphs, 20px around the blocks that are not
+           prose. */
+        --md-block-gap: var(--space-3);
+        --md-block-gap-wide: var(--space-5);
         /* List items sit tight; the variant's 'li + li' carries the gap (S5). */
         --md-item-gap: 0;
         /* The inline chip: an edge, the small radius, a tighter inset and the
@@ -767,19 +800,29 @@ export class Sv3Main extends JfElement {
         --md-link-decoration: none;
 
         /* The prose variant's heading ramp (tempdoc 822 §2.3, slice S5). The variant reads the
-           SHIPPED type scale for h1/h2/h3 (and the already-re-pointed '--font-size-sm' for h4-h6),
-           so the spec's heading scale — 1.25 / 1.125 / 1 / 0.875rem — arrives the same
-           way the two steps above do: as a re-point onto this window's own ramp, which already IS
-           that scale. Not one rem literal is copied (§2.1). Inside the renderer nothing else reads
-           these three steps, so re-pointing the ramp here retunes exactly the headings.
-           The variant's remaining defaults (weight 600, line-height 1.3, the asymmetric margin, the
-           table padding and rules, the 24rem truncation cap, the between-items gap) already match
-           the spec's numbers, or they read a colour/size token re-pointed above — so they are
-           deliberately NOT re-pointed; 'Sv3Main.imports.test.ts' carries that decision in writing,
-           name by name. */
+           SHIPPED type scale for h1/h2/h3 (and '--font-size-sm' for h4-h6), so the spec's heading
+           scale — 1.25 / 1.125 / 1rem — arrives the same way the two steps above do: as a re-point
+           onto this window's own ramp, which already IS that scale. Inside the renderer nothing else
+           reads these three steps, so re-pointing the ramp here retunes exactly the headings.
+           The variant's remaining defaults (line-height 1.3, the asymmetric margin, the table
+           padding and rules, the 24rem truncation cap, the between-items gap, the rule margin) are
+           the shared sheet's — retuned there by tempdoc 873 for EVERY prose surface, not forked
+           here; 'Sv3Main.imports.test.ts' carries that decision in writing, name by name. */
         --font-size-xl: var(--font-size-sv3-xl);
         --font-size-lg: var(--font-size-sv3-lg);
         --font-size-md: var(--font-size-sv3-base);
+        /* Tempdoc 873 §4 — the answer prose steps up to 15px, and ONLY the answer prose. The
+           window's own '--font-size-sv3-sm' stays 14px, so tool cards, the reasoning trace, the
+           sources panel and the hover card are untouched; this re-point lives in the
+           '.sv3-markdown'-ONLY rule and reaches nothing else (the shared colour/size bridge above
+           still points '--font-size-sm' at 14px, which is what '.sv3-citations' keeps riding).
+           One declaration carries both halves: the renderer's ':host' reads '--font-size-sm' for
+           the body size, and its variant's h4-h6 read the same name — so re-pointing it lifts body
+           text off 14px AND keeps the deepest headings from landing BELOW the body they lead (they
+           sit AT body size, distinguished by weight, which is what the ramp's bottom step means).
+           There is no sv3 ramp step at 15px — 'sm' is 14 and 'base' is 16 — and minting one for a
+           single consumer would fork the window's ramp, so the value is written at its use site. */
+        --font-size-sm: 0.9375rem;
       }
       /* The expanded evidence sits under the TAIL ROW, not under the answer (Phase F11), so its
          rhythm is the row's own 8px. An outer-tree rule on the host beats the component's own :host
@@ -1931,7 +1974,12 @@ export class Sv3Main extends JfElement {
                   ? html`<span class="answer-empty" data-testid="sv3-turn-answer-empty"
                       >${TURN_EMPTY_ANSWER}</span
                     >`
-                  : html`<jf-markdown-block
+                  : // Tempdoc 869 C2b — `frame` + `.sourceCount` are the SAME frame the tail line
+                    // words (`sv3AnswerFrame`, one computation), so the block and the receipt under
+                    // it cannot disagree about what this answer stood on. Without them the block
+                    // rendered at the renderer's default `'grounded'` and let an unverified `[n]` the
+                    // model wrote pose as a reference on a sourced answer.
+                    html`<jf-markdown-block
                       class="sv3-markdown"
                       prose
                       data-testid="sv3-turn-markdown"
@@ -1939,6 +1987,8 @@ export class Sv3Main extends JfElement {
                       .text=${turn.answer}
                       ?is-streaming=${streaming}
                       .citations=${[...(turn.evidence?.marks ?? [])]}
+                      frame=${sv3AnswerFrame(turn) ?? 'grounded'}
+                      .sourceCount=${turn.evidence?.sources.length ?? 0}
                       @citation-select=${this.onCitationSelect}
                     ></jf-markdown-block>`}
               </div>
@@ -2669,6 +2719,36 @@ export class Sv3Main extends JfElement {
   };
 
   /**
+   * Tempdoc 871 fix (live finding, 2026-08-26) — `ToolCallCard` fires `card-open` (bubbles+composed,
+   * `{id}` = the hit's path) on an evidence row click, but no SV3 mount listened for it, so a
+   * reader's click on a search tool card's evidence row did nothing in this window (pre-existing;
+   * `UnifiedChatView` wires the same event via `handleRetrieveCardOpen`/`handleCommittedCardOpen`/
+   * `handleToolEvidenceOpen`).
+   *
+   * This routes through the SAME document-open seam a followed citation already uses —
+   * `SV3_CITATION_OPEN`, landed by `SearchV3View.onCitationOpen` — because that IS this window's one
+   * document-open path; no second pane is invented here. The hit is resolved via
+   * `findAgentSearchHit` against the SAME `structuredData` the card projected its rows from (mirrors
+   * `UnifiedChatView.handleToolEvidenceOpen`), so an id that does not actually resolve in this call's
+   * own evidence is a no-op rather than a fabricated open. `sourceIndex` is
+   * {@link SV3_SOURCE_INDEX_ABSENT}: an evidence row is a raw search-tool result, not a member of the
+   * turn's `evidence.sources` citation list, so the pane opens on the document with no citation
+   * anchor/header — the same degraded-but-correct path an unresolvable followed citation already
+   * takes when {@link sv3SourceIndex} itself returns ABSENT.
+   */
+  private onToolCardOpen(call: ToolCall, turnId: string, hitId: string): void {
+    const hit = findAgentSearchHit(call.structuredData, hitId);
+    if (!hit) return;
+    this.dispatchEvent(
+      new CustomEvent<Sv3CitationOpen>(SV3_CITATION_OPEN, {
+        detail: { docPath: hit.path, anchor: null, turnId, sourceIndex: SV3_SOURCE_INDEX_ABSENT },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /**
    * The live run: its feed, then the decisions it is parked on. Prompts come LAST and outside the
    * feed's own flow, because a held decision must not be something the reader can scroll past — the
    * same "incompressible occupant" rule the retired search-v2 window gave its run controls.
@@ -2721,12 +2801,18 @@ export class Sv3Main extends JfElement {
       // rule `Sv3Turn.evidence` and `assistantRecordId` already follow. The caller decides which
       // item is terminal, because this function sees one item and cannot know.
       return html`<div class="answer" data-testid="sv3-run-text" data-item-id=${item.id}>
+        ${/* Tempdoc 869 C2b — the frame and the source count ride the SAME terminal-only rule as the
+            marks above them: a non-terminal step's prose is not the answer, so framing it would be a
+            claim about text this item does not carry. The default `'grounded'` + count 0 leave such
+            an item exactly as it renders today. */ ''}
         <jf-markdown-block
           class="sv3-markdown"
           prose
           data-turn-id=${turn.id}
           .text=${item.text}
           .citations=${terminal ? [...(turn.evidence?.marks ?? [])] : []}
+          frame=${terminal ? (sv3AnswerFrame(turn) ?? 'grounded') : 'grounded'}
+          .sourceCount=${terminal ? (turn.evidence?.sources.length ?? 0) : 0}
           @citation-select=${this.onCitationSelect}
         ></jf-markdown-block>
       </div>`;
@@ -2738,6 +2824,8 @@ export class Sv3Main extends JfElement {
         .toolCall=${item.call}
         .stepPresentation=${null}
         .evidencePaths=${evidencePaths}
+        @card-open=${(e: CustomEvent<{ id: string }>) =>
+          this.onToolCardOpen(item.call, turn.id, e.detail.id)}
       ></jf-tool-call-card>`;
     }
     if (item.kind === 'reasoning') {

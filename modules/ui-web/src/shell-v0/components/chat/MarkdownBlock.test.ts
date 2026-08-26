@@ -167,6 +167,19 @@ describe('stripTrailingCitationBlock (565 §13.8 — UI is the source authority)
     expect(stripTrailingCitationBlock(text)).toBe(text);
   });
 
+  it('869 — does NOT strip a PROSE paragraph that merely starts with "Citation…" and cites later', () => {
+    // Live finding (869 §4): this shape matched as a bibliography and deleted half the answer.
+    const text =
+      'The "sourced" state renders with a secondary tone [5].\n\n' +
+      'Citation verification scores supplied passage text instead of re-fetching, and this is a ' +
+      'Worker-facing seam [4]. The Worker already knows these states [2].\n\n' +
+      'The pane lets a reader check a claim [1].';
+    expect(stripTrailingCitationBlock(text)).toBe(text);
+    const sources =
+      'Body [1].\n\nSource documents are the authority here [2]; the model only summarizes them.';
+    expect(stripTrailingCitationBlock(sources)).toBe(sources);
+  });
+
   it('does NOT strip a mid-prose "Sources:" sentence (no trailing-to-EOF list shape)', () => {
     const text = 'Sources: the index and the model. We fuse them [1], then rerank. Final answer here.';
     expect(stripTrailingCitationBlock(text)).toBe(text);
@@ -571,10 +584,22 @@ describe('MarkdownBlock 822 §3c — the ungrounded mark has its own color', () 
       expect(names.length, `${selector} must name a token`).toBeGreaterThan(0);
       return names[names.length - 1] as string;
     };
-    const grounded = shippedInk('.cite-ref');
+    // Tempdoc 869 C3 re-bases this from `.cite-ref` to the tier's OWN rule: the base rule no longer
+    // carries the strongest tier's ink for a mark to fall through to, because falling through was
+    // the defect (a tier-2 mark states no grounding class and used to inherit the tint anyway).
+    const grounded = shippedInk('.cite-ref.cite-grounded');
     const weak = shippedInk('.cite-ref.cite-weak');
     const ungrounded = shippedInk('.cite-ref.cite-ungrounded');
     expect(new Set([grounded, weak, ungrounded]).size).toBe(3);
+    // Tempdoc 869 F6 — FOUR inks, because there are four things a mark can be, and the SOURCE tier
+    // (the base rule, worn by a tier-2 mark that states no grounding class) is one of them. C3's
+    // first cut gave the base rule `--text-secondary`, which is `.cite-weak`'s own shipped ink: in
+    // any window that re-points neither hook — the shipped shell — a mark asserting "the model
+    // named this source" and a mark asserting "the verifier scored this sentence WEAKLY" resolved
+    // to one colour. Moving the tint off the base rule is only half the inversion; the other half
+    // is that what falls through must not collide with a tier that states itself.
+    const sourceTier = shippedInk('.cite-ref');
+    expect(new Set([sourceTier, grounded, weak, ungrounded]).size).toBe(4);
     // The warning role's TEXT member — `check-accent-as-text` forbids an `--accent-*` fill token as a
     // text color, and sv3 bridges `--text-warning` and `--accent-warning` to one `--warning-foreground`.
     expect(ungrounded).toBe('--text-warning');
@@ -721,10 +746,12 @@ describe('822 F2 — a selected mark keeps its grounding tier', () => {
     const ref = el.renderRoot.querySelector('.cite-ref') as HTMLElement;
     expect(ref.className).toContain('cite-weak');
     // NON-VACUITY, the half happy-dom cannot compute: the weak rule exists and its shipped ink is
-    // the secondary role — not the base `.cite-ref` blue it would fall through to if the rule were
-    // ever deleted, which is the failure the computed equality below could not tell apart.
+    // the secondary role — not the grounded tier's blue, which is what deleting this rule would
+    // leave a weak mark wearing, and the failure the computed equality below could not tell apart.
+    // (869 C3 moved that blue off the base rule and onto `.cite-ref.cite-grounded`; the comparison
+    // is against the tier it must not be confused with, which is what it always meant.)
     expect(shippedInk('.cite-ref.cite-weak')).toBe('--text-secondary');
-    expect(shippedInk('.cite-ref.cite-weak')).not.toBe(shippedInk('.cite-ref'));
+    expect(shippedInk('.cite-ref.cite-weak')).not.toBe(shippedInk('.cite-ref.cite-grounded'));
     const resting = getComputedStyle(ref).color;
 
     setSelectedSource(sourceKey(DOC_A, 1));
@@ -747,7 +774,9 @@ describe('822 F2 — a selected mark keeps its grounding tier', () => {
     const ref = el.renderRoot.querySelector('.cite-ref') as HTMLElement;
     expect(ref.className).toContain('cite-ungrounded');
     expect(shippedInk('.cite-ref.cite-ungrounded')).toBe('--text-warning');
-    expect(shippedInk('.cite-ref.cite-ungrounded')).not.toBe(shippedInk('.cite-ref'));
+    // 869 C3, as above: the tier it must not be confused with is the GROUNDED one, which now
+    // states itself instead of being the base rule an unclassed mark fell through to.
+    expect(shippedInk('.cite-ref.cite-ungrounded')).not.toBe(shippedInk('.cite-ref.cite-grounded'));
     const resting = getComputedStyle(ref).color;
 
     setSelectedSource(sourceKey(DOC_A, 1));
