@@ -513,3 +513,12 @@ is narrow — an out-of-range `[7]` and a parenthesised `(2)` stay, `sourceCount
 code and fences are skipped, and the `ungrounded` frame is excluded — and why the settled DOM
 re-derives from `text` when the inputs change, so a late-arriving citation gets its literal back
 (869 F4b, extended: a strip leaves no class in the DOM, so the block now records that it made one).
+
+---
+
+## Open items routed from the retired observations store (tempdoc 872, 2026-08-26)
+
+Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from an unpushed 869
+closeout shard found on a local `main` (the inbox was retired before it could be folded).
+
+- [ ] 869 closeout: (1) tempdoc 867 needs a §7 pointer that 869 shipped (PR #569 / 7e0498bc) and what it hands 867 — data-claimed-label hook, S1–S4 counter need, tier-2 idiom never observed live on compact; (2) the Playwright drive/probe scripts behind 869 §4.4 (sv3 ask driver + shadow-DOM citation probe) were scratchpad-only — worth landing under scripts/jseval as a 'cite-probe' verb so the before/after is re-runnable; (3) local main's merge of origin is blocked by other sessions' untracked shards bccfc163/f6617483 (older than origin's copies) — `docs/observations.d/` (2026-08-26)
