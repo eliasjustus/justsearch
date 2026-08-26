@@ -48,9 +48,12 @@ final class AgentCitationScorerPropagationTest {
         return CompletableFuture.completedFuture(null);
       }
 
+      // Tempdoc 868 §B.1: the resolver calls `matchCitationsAgainst` — the REAL method — so an
+      // opened-by-name source can be verified against the literal text the model saw. Stubbing the
+      // `matchCitations` overload here would leave this fake silently unreached.
       @Override
-      public CompletionStage<CitationMatchResult> matchCitations(
-          String answerText, List<ContextCitation> citations, double threshold) {
+      public CompletionStage<CitationMatchResult> matchCitationsAgainst(
+          String answerText, List<VerificationSource> sources, double threshold) {
         return CompletableFuture.completedFuture(result);
       }
     };

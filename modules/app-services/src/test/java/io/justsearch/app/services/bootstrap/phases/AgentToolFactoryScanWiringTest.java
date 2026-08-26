@@ -11,6 +11,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.justsearch.agent.api.registry.HandlerRegistry;
+import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.observability.ledger.ScanRollupLedger;
 import io.justsearch.app.services.lifecycle.WorkerCapability;
@@ -123,7 +124,8 @@ final class AgentToolFactoryScanWiringTest {
               adapter,
               null,
               registry,
-              ledger);
+              ledger,
+              mock(DocumentService.class));
 
       assertTrue(registered, "registration ran (prerequisites met)");
       assertSame(registry, boundField(adapter, "scanProgressRegistry"));
@@ -152,13 +154,15 @@ final class AgentToolFactoryScanWiringTest {
             client,
             client,
             OnlineAiService.unavailable(),
-            null);
+            null,
+            mock(DocumentService.class));
     AgentToolHandlers.registerEager(
         eager,
         eagerTools.searchTool(),
         eagerTools.browseTool(),
         eagerTools.ingestTool(),
-        eagerTools.fileOperationsTool());
+        eagerTools.fileOperationsTool(),
+        eagerTools.readDocumentTool());
 
     HandlerRegistry lateBound = new HandlerRegistry();
     assertTrue(
@@ -174,7 +178,8 @@ final class AgentToolFactoryScanWiringTest {
             null,
             null,
             null,
-            null),
+            null,
+            mock(DocumentService.class)),
         "late-bound registration ran (prerequisites met)");
 
     assertEquals(
@@ -199,7 +204,8 @@ final class AgentToolFactoryScanWiringTest {
             null,
             existing,
             null,
-            null);
+            null,
+            mock(DocumentService.class));
     assertSame(existing, reused.agentSearchAdapter(), "a supplied adapter is reused, not replaced");
 
     AgentToolFactory.Output fresh =
@@ -212,7 +218,8 @@ final class AgentToolFactoryScanWiringTest {
             null,
             null,
             null,
-            null);
+            null,
+            mock(DocumentService.class));
     assertNotNull(fresh.agentSearchAdapter(), "a fresh adapter is built when none is supplied");
     assertNotSame(existing, fresh.agentSearchAdapter());
   }
@@ -233,7 +240,8 @@ final class AgentToolFactoryScanWiringTest {
               null,
               null,
               registry,
-              ledger);
+              ledger,
+              mock(DocumentService.class));
 
       assertSame(registry, boundField(out.agentSearchAdapter(), "scanProgressRegistry"));
       assertSame(ledger, boundField(out.agentSearchAdapter(), "scanRollupLedger"));
@@ -251,13 +259,16 @@ final class AgentToolFactoryScanWiringTest {
             client,
             client,
             OnlineAiService.unavailable(),
-            null);
+            null,
+            mock(DocumentService.class));
     assertNotNull(out.agentSearchAdapter());
     assertNotNull(out.fileOperationLog());
     assertNotNull(out.fileOperationsTool());
     assertNotNull(out.searchTool());
     assertNotNull(out.browseTool());
     assertNotNull(out.ingestTool());
+    // Tempdoc 868 §B.2 — the read tool joins the bundle, so it joins this completeness guard.
+    assertNotNull(out.readDocumentTool());
   }
 
   @Test
@@ -270,13 +281,15 @@ final class AgentToolFactoryScanWiringTest {
             null,
             mock(RemoteKnowledgeClient.class),
             OnlineAiService.unavailable(),
-            null);
+            null,
+            mock(DocumentService.class));
     assertNull(out.agentSearchAdapter());
     assertNull(out.fileOperationLog());
     assertNull(out.fileOperationsTool());
     assertNull(out.searchTool());
     assertNull(out.browseTool());
     assertNull(out.ingestTool());
+    assertNull(out.readDocumentTool());
   }
 
   @Test

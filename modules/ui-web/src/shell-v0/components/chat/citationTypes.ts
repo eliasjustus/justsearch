@@ -131,6 +131,24 @@ export interface SourceCoverage {
 export type ContextInclusion = 'included' | 'partial' | 'dropped';
 
 /**
+ * Tempdoc 868 §B.3 — the ACQUISITION axis 865 §7.6 designed and deferred: how a source came to be
+ * in front of the model. `retrieved` is a ranked search hit; `opened` is a document the agent read
+ * by name (`core_read_document`) because the answer needed that document, not because a retriever
+ * scored it.
+ *
+ * <p>865 §7.6's recorded invariant is the reason this is a separate axis rather than a badge on the
+ * relevance one: *an opened-by-name document has LESS relevance evidence than a retrieved one,
+ * never more*. Nothing ranked it, so no retrieval fact exists about it, and every word the panel
+ * puts over it must stop short of claiming one. "Retrieved" over an opened source is not a rounding
+ * error — it is a provenance claim the pipeline never made.
+ *
+ * <p>Unlike {@link ContextInclusion}, ABSENCE has a defined answer (`retrieved`) and it is still not
+ * a guess: before the read tool existed a delegate source could only be a search hit. The single
+ * place that answer is given is `acquisitionOf` in `evidenceProjection.ts`.
+ */
+export type Acquisition = 'retrieved' | 'opened';
+
+/**
  * Tempdoc 859 §5b — a source an ANSWER stands on, on either plane.
  *
  * <p>Two producers supply evidence sources and they do not carry the same facts. The RAG plane's
@@ -178,6 +196,12 @@ export interface AnswerEvidenceSource {
   contextInclusion?: ContextInclusion;
   /** Characters of this passage that reached the model. Absent together with `contextInclusion`. */
   contextIncludedChars?: number;
+  /**
+   * Tempdoc 868 §B.3 — {@link Acquisition}, NARROWED once on the way in (the delegate plane's
+   * projection resolves it; the RAG plane never sets it, and a retrieval citation is a search hit by
+   * construction). Absent ⇒ `retrieved`, the only answer either producer's history supports.
+   */
+  acquisition?: Acquisition;
 }
 
 /**

@@ -117,12 +117,16 @@ public final class ServicePhase {
       OnlineAiService onlineAiService,
       InferenceRuntimeHandles inferenceRuntimeHandles,
       OfflineCoordinator offlineCoordinator,
-      KnowledgeHttpApiAdapter agentSearchAdapter,
-      FileOperationLog fileOperationLog,
-      FileOperationsTool fileOperationsTool,
-      SearchTool searchTool,
-      BrowseTool browseTool,
-      IngestTool ingestTool,
+      /**
+       * Tempdoc 868 §B.2 — the agent-tool bundle, carried as {@link AgentToolFactory.Output} itself
+       * rather than as its six members spread across this record. Same move as {@link
+       * InferenceRuntimeHandles} above and for the same reason: the god-record ceiling
+       * (CompositionRootGuardrailsTest 4a, MAX_OUTPUT_FIELDS) was already reached at 26 components,
+       * and the six were literally that record's fields re-listed. Bundling keeps the ceiling flat
+       * while {@code readDocumentTool} — the bundle's seventh COMPONENT and fifth tool (the other
+       * two components are the adapter and the file-operation log) — joins it.
+       */
+      AgentToolFactory.Output agentTools,
       WorkerFeatureCache workerFeatureCache,
       // §31 Phase 3: 7 controller-services + 1 Worker-dependent ExcludesService.
       ExcludesService excludes,
@@ -250,7 +254,8 @@ public final class ServicePhase {
             in.knowledgeClient(),
             in.indexingService(),
             onlineAiService,
-            in.lambdaMartReranker());
+            in.lambdaMartReranker(),
+            in.documentService());
 
     // §31 Step 1.1: ExcludesService constructed via supplier-aware IndexingService.
     ExcludesService excludes = new ExcludesServiceImpl(in.indexingServiceSupplier());
@@ -371,12 +376,7 @@ public final class ServicePhase {
         onlineAiService,
         new InferenceRuntimeHandles(gpuListener, runtimeReconciler, runtimeSpecStore),
         offlineCoordinator,
-        agentTools.agentSearchAdapter(),
-        agentTools.fileOperationLog(),
-        agentTools.fileOperationsTool(),
-        agentTools.searchTool(),
-        agentTools.browseTool(),
-        agentTools.ingestTool(),
+        agentTools,
         workerFeatureCache,
         excludes,
         enterprisePolicy,

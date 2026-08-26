@@ -27,7 +27,10 @@ import {
   subscribeSelectedSource,
   sourceKey,
 } from '../state/selectedSource.js';
-import { filenameOf } from './chat/evidenceProjection.js';
+// Tempdoc 868 §B.3 — the hide/restore control names the CHANNEL the assistant got this document by,
+// and that word is the acquisition axis'. Imported rather than inflected here: "retrieval" over a
+// document the agent opened by name is the same false provenance claim the badge stopped making.
+import { acquisitionChannel, filenameOf } from './chat/evidenceProjection.js';
 import { activateOnKey } from '../utils/keyboardHandler.js';
 // Tempdoc 610 §J.3 — the shared hidden-source store + the active conversation id, so the rail offers the
 // same hide/restore control as the inline chips and dims consistently.
@@ -382,9 +385,11 @@ export class SourcesPane extends JfElement {
                       <button
                         class="source-hide"
                         aria-label=${isHidden
-                          ? `Restore ${name} to the assistant's retrieval`
-                          : `Hide ${name} from the assistant's retrieval`}
-                        title=${isHidden ? 'Restore to retrieval' : 'Hide from retrieval'}
+                          ? `Restore ${name} to the assistant's ${acquisitionChannel(s)}`
+                          : `Hide ${name} from the assistant's ${acquisitionChannel(s)}`}
+                        title=${isHidden
+                          ? `Restore to ${acquisitionChannel(s)}`
+                          : `Hide from ${acquisitionChannel(s)}`}
                         @click=${(e: Event) => {
                           e.stopPropagation();
                           void this.onToggleHidden(s);

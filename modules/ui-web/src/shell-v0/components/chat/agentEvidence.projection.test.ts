@@ -78,8 +78,12 @@ describe('agentAnswerEvidence — sources', () => {
     expect(first.chunkTotal).toBeUndefined();
     expect(first.headingLevel).toBeUndefined();
     // ...and absence is stated by the KEY being missing, not by a sentinel value sitting in it.
+    // Tempdoc 868 §B.3 — `acquisition` is the one key that is always PRESENT, and it is the opposite
+    // case rather than an exception to it: the five above are facts this producer never reports, so
+    // any value would be invented; acquisition is a fact it always reports (by omission, meaning
+    // "retrieved"), so resolving it here is reading the producer rather than speaking for it.
     expect(Object.keys(first).sort()).toEqual(
-      ['chunkIndex', 'endLine', 'excerpt', 'headingText', 'parentDocId', 'startLine'].sort(),
+      ['acquisition', 'chunkIndex', 'endLine', 'excerpt', 'headingText', 'parentDocId', 'startLine'].sort(),
     );
   });
 
@@ -415,5 +419,84 @@ describe('agentAnswerEvidence — inclusion (865 §7.5)', () => {
   it('a run reconstructed from deltas claims no inclusion — no final prompt was ever built', () => {
     const evidence = agentDeltaEvidence(SOURCES);
     expect(evidence.sources.every((s) => s.contextInclusion === undefined)).toBe(true);
+  });
+});
+
+/**
+ * Tempdoc 868 §B.3 — the ACQUISITION axis on the delegate plane (865 §7.6's deferred second value).
+ *
+ * The read tool (`core_read_document`) is the producer 865 lacked. What these pin is the sentence
+ * 865 §7.6 wrote down and could not yet enforce: *an opened-by-name document has LESS relevance
+ * evidence than a retrieved one, never more*. Nothing ranked an opened document, so "Retrieved" over
+ * it is not loose wording — it is the panel asserting a retrieval that never ran, on the surface
+ * whose entire job is to be checkable.
+ *
+ * Each case below is therefore about a WORD, and about the ONE place that word is decided.
+ */
+describe('agentAnswerEvidence — acquisition (868 §B.3)', () => {
+  const OPENED: AgentSource = { ...SOURCES[0]!, acquisition: 'opened' };
+
+  it('preserves the wire value through the projection — the schema round-trip', () => {
+    const { sources } = agentAnswerEvidence([OPENED, SOURCES[1]!], [], 'CROSS_ENCODER');
+    expect(sources[0]!.acquisition).toBe('opened');
+    // Per source, like every other evidence fact: one opened document in a run does not recolour
+    // the search hits beside it.
+    expect(sources[1]!.acquisition).toBe('retrieved');
+  });
+
+  it('an OPENED source reads "Opened · not cited" — never the retrieval claim', () => {
+    const { sources, matches } = agentAnswerEvidence([OPENED], [], 'CROSS_ENCODER');
+    const g = sourceGrounding(0, matches, sources[0]!.parentDocId);
+    expect(sourceGroundingLabel(g, sources[0]!)).toBe('Opened · not cited');
+    // The counter-assertion is the load-bearing one: a passing test that only checked for "not
+    // cited" would be green on the exact defect this slice exists to remove.
+    expect(sourceGroundingLabel(g, sources[0]!)).not.toContain('Retrieved');
+  });
+
+  it('an OPENED source that was dropped reads "Opened · never sent to the model"', () => {
+    const openedAndDropped: AgentSource = {
+      ...OPENED,
+      contextInclusion: 'dropped',
+      contextIncludedChars: 0,
+    };
+    const { sources } = agentAnswerEvidence([openedAndDropped], [], 'CROSS_ENCODER');
+    const badge = inclusionBadge(contextInclusionOf(sources[0]!), sources[0]!);
+    expect(badge?.label).toBe('Opened · never sent to the model');
+    // The detail moves with the label. "The search found this passage" is the same false claim one
+    // sentence quieter, and the badge's two halves must not disagree with each other.
+    expect(badge?.detail).not.toContain('search');
+  });
+
+  it('a source that says nothing is RETRIEVED — the producers history, not a convenient default', () => {
+    const { sources, matches } = agentAnswerEvidence(SOURCES, [], 'CROSS_ENCODER');
+    expect(sources[0]!.acquisition).toBe('retrieved');
+    const g = sourceGrounding(0, matches, sources[0]!.parentDocId);
+    expect(sourceGroundingLabel(g, sources[0]!)).toBe('Retrieved · not cited');
+  });
+
+  it('the header states one acquisition across BOTH of its labels', () => {
+    // The drift this refuses: the panel's badge saying "Opened" while the reading pane's header says
+    // "Retrieved" about the same document, because each resolved the word for itself.
+    const openedAndDropped: AgentSource = {
+      ...OPENED,
+      contextInclusion: 'dropped',
+      contextIncludedChars: 0,
+    };
+    const evidence = agentAnswerEvidence([openedAndDropped], [], 'CROSS_ENCODER');
+    const header = citationHeader({
+      citation: evidence.sources[0]!,
+      grounding: sourceGrounding(0, evidence.matches, openedAndDropped.parentDocId),
+      question: 'what did the handbook say?',
+      spanUnusable: false,
+    });
+    expect(header?.inclusion?.label).toBe('Opened · never sent to the model');
+    // Grounding stays withheld on a dropped passage (849 MEDIUM-3) — the acquisition word does not
+    // buy back a verdict the inclusion state already refused.
+    expect(header?.grounding).toBeNull();
+  });
+
+  it('a delta-reconstructed run carries the axis too — it is minted with the source, not at the end', () => {
+    const evidence = agentDeltaEvidence([OPENED, SOURCES[1]!]);
+    expect(evidence.sources.map((s) => s.acquisition)).toEqual(['opened', 'retrieved']);
   });
 });

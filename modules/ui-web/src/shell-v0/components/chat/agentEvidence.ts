@@ -34,7 +34,9 @@ import { admittedMatches } from './recordEvidence.js';
 // Tempdoc 865 §7.5 — the ONE reader of the inclusion wire value, imported rather than re-tested
 // here. Its refusals are the point: an absent field and an unrecognised one both yield `null`, so a
 // vocabulary drift on the delegate plane cannot become a false claim about what the model was shown.
-import { contextInclusionOf } from './evidenceProjection.js';
+// Tempdoc 868 §B.3 — `acquisitionOf` joins it for the same reason: one reader of the wire value, so
+// the "absent means retrieved" answer is given in a single place and cannot drift per surface.
+import { acquisitionOf, contextInclusionOf } from './evidenceProjection.js';
 
 /** What one delegate answer stood on — the same three parts `Sv3TurnEvidence` carries. */
 export interface AgentAnswerEvidence {
@@ -154,6 +156,15 @@ function unexaminableSourceCoverage(sources: readonly AgentSource[]): SourceCove
  * invite "so examine it", and `grounding check did not complete` would imply a completed check
  * could have said something. The one fact worth the reader's attention is that the passage was not
  * in the prompt, and 849's reduction says exactly that and stops.
+ *
+ * <p>Tempdoc 868 §B.3 — the ACQUISITION axis is forwarded on the same terms, and it is the one field
+ * here whose absence is ANSWERED rather than preserved. 865 §7.6 designed the axis and deferred it
+ * for want of a producer; `core_read_document` is that producer, and until it existed every source on
+ * this plane was a ranked search hit — so `retrieved` for an absent value is a fact about the
+ * producer's history, not a default standing in for one. It is resolved here, once, because the
+ * invariant it protects (*an opened-by-name document has LESS relevance evidence than a retrieved
+ * one, never more*) is only as good as the weakest surface, and a per-surface `?? 'retrieved'` is how
+ * one surface ends up claiming a retrieval that never happened.
  */
 function toAnswerEvidenceSource(source: AgentSource): AnswerEvidenceSource {
   const inclusion = contextInclusionOf(source);
@@ -164,6 +175,11 @@ function toAnswerEvidenceSource(source: AgentSource): AnswerEvidenceSource {
     startLine: source.startLine,
     endLine: source.endLine,
     headingText: source.headingText,
+    // Tempdoc 868 §B.3 — THE normalisation point for the acquisition axis: the wire's raw string is
+    // narrowed here, once, and every downstream label reads the resolved value rather than
+    // re-answering "what does absent mean" for itself. Unconditional, unlike the inclusion spread
+    // below, because absence is a defined `retrieved` and not a silence to preserve.
+    acquisition: acquisitionOf(source),
     // Absent stays absent — `undefined`, not a spread of a `null`, so the field is missing rather
     // than present-and-empty and `contextInclusionOf` downstream reads it as "said nothing".
     ...(inclusion === null

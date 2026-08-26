@@ -318,6 +318,11 @@ public final class AgentEventPayloads {
     m.put("startLine", s.startLine());
     m.put("endLine", s.endLine());
     m.put("headingText", s.headingText());
+    // Tempdoc 868 §B.3 — the acquisition axis rides beside the inclusion keys, but UNCONDITIONALLY:
+    // it is an identity component fixed at the mint and never absent, so there is no "said nothing"
+    // state to protect. A consumer that sees no key is reading a pre-868 record, which the compact
+    // constructor's default (retrieved) describes correctly.
+    m.put("acquisition", s.acquisition());
     if (!s.contextInclusion().isEmpty()) {
       m.put("contextInclusion", s.contextInclusion());
       m.put("contextIncludedChars", s.contextIncludedChars());
