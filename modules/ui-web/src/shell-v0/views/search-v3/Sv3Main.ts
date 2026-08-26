@@ -243,7 +243,8 @@ const citeLegendId = (turnId: string): string => `sv3-cite-legend-${turnId}`;
  * Tempdoc 822 §5.7 (F7) — the ONE line that names the answer's mark vocabulary. Sentence case, like
  * every other string this window says: v3 uses UPPERCASE nowhere. It exists mostly for the two greys
  * — a `.pseudo-cite` and a `.cite-weak` look identical and mean "the model invented this reference"
- * versus "a real reference the evidence supports weakly" — and it says what selection is FOR, which
+ * (ungrounded frame only; on sourced answers an unverified ref is stripped — 867 §7) versus "a real
+ * reference the evidence supports weakly" — and it says what selection is FOR, which
  * is the question §5.3's sentence region answers but nothing on screen asks.
  */
 const CITE_LEGEND =
@@ -801,7 +802,8 @@ export class Sv3Main extends JfElement {
       }
       /* Tempdoc 822 §5.7 (F7) — the mark legend. A reader can meet five mark types in one answer
          plus two dotted underlines with no key anywhere, and the two GREYS mean opposite things:
-         '.pseudo-cite' is "the model invented this reference", '.cite-weak' is "a real reference the
+         '.pseudo-cite' is "the model invented this reference" (ungrounded frame only; on sourced
+         answers an unverified ref is stripped — 867 §7), '.cite-weak' is "a real reference the
          evidence supports weakly". It lives INSIDE the Sources disclosure, so it is already gated and
          costs zero resting chrome against the fit audit's 16. Existing tokens only, no new colour,
          no icon — a legend that needed its own swatch would be a sixth mark type. */
@@ -844,14 +846,22 @@ export class Sv3Main extends JfElement {
         --accent: var(--info-foreground);
         --accent-tint: var(--primary);
         --accent-on-tint: var(--primary-foreground);
+        /* Tempdoc 871 §3b — the level-2 "used" marking: an 8 % wash under the row, 16 % behind the
+           tag. Spelled out here for the same reason the risk edges below are: the shipped ramp
+           (styles/tokens.css) mixes against ITS --accent-tint, and this window's is --primary. */
+        --accent-tint-08: color-mix(in srgb, var(--primary) 8%, transparent);
+        --accent-tint-16: color-mix(in srgb, var(--primary) 16%, transparent);
+        /* The tag's LABEL is the tint role's TEXT member, never the fill (576 §6 rung-1). */
+        --text-tint: var(--info-foreground);
         /* The risk tiers keep the spec's 45 % edge grade, spent on the window's three-colour
            budget (818 law 5: act-now / in-motion / broken, no fourth role). */
         --accent-danger-45: color-mix(in srgb, var(--destructive) 45%, transparent);
         --accent-warning-45: color-mix(in srgb, var(--warning) 45%, transparent);
-        /* The status word is written by an INLINE style (ToolCallCard.ts:354) off
-           utils/statusTone.ts:88-104, but what that authority returns is 'var(--accent-<tone>)' —
-           a custom property, so the inline colour resolves against these declarations like any
-           other. (The audit recorded it as unreachable from a host token; it is not.) */
+        /* No status WORD renders here any more (871 owner-feedback batch removed it — the glyph
+           alone carries status, per ToolCallCard.ts's own header comment). The status glyph
+           (jf-run-node, nested inside jf-tool-call-card) still colours off these tokens via
+           utils/statusTone.ts, which returns 'var(--accent-<tone>)' — a custom property, so its
+           colour resolves against these declarations like any other. */
         --accent-success: var(--success-foreground);
         --accent-warning: var(--warning-foreground);
         --accent-danger: var(--error-foreground);

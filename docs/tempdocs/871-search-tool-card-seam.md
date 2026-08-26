@@ -24,12 +24,20 @@ seam between them.
   `status glyph · verb · target · muted accessory · disclosure chevron`.
   Default for every card; a card the user opened stays open until the user
   closes it (no accordion, no auto-collapse of user-opened cards).
-- **Level 2 — the summary, expanded in place.** One muted scope line (roots ·
-  type filters · pipeline preset actually used), then **only the rows that
-  became run evidence** — one line each: dot · filename · dim path · locator.
-  No scores, no snippets, no repeated query, no monospace. A footer counts the
-  rest honestly ("9 more retrieved, not in evidence") and carries the one
-  bordered control: **Open in Search ⤴**.
+- **Level 2 — the ranked list with used-markers, expanded in place.** One muted
+  scope line (folder restriction or "all folders" · resolved preset · explicit
+  limit), then **the model's full ranked list**, capped at 6 — each row two
+  lines: dot · title (+ a small `used` tag) / dim path · locator. No scores, no
+  snippets, no repeated query, no monospace. Rows the run drew on carry a subtle
+  accent tint and a filled dot; the rest stay plain and dimmed, and both are
+  clickable. A footer counts what the cap hid honestly ("2 more used · 5 more
+  retrieved, not used") and carries the one bordered control: **Open in Search ⤴**.
+
+  > **Owner revision, 2026-08-26 (§3b).** This REVERSES the original "only the
+  > rows that became run evidence" summary. Filtering to the accepted subset hid
+  > the thing a reader is actually judging — whether the model's *search* was any
+  > good, which is a fact about the whole ranked list, not about its accepted
+  > tail. "Used" became a MARK on a row rather than a filter over rows.
 - **Level 3 — a navigation, not an expansion.** Open in Search leaves the
   transcript for the product's search surface, seeded with the model's query,
   scope and pinned result set; a breadcrumb ("← Back to chat · turn N ·
@@ -127,13 +135,20 @@ query inside the card.
 
 ## 3. Vocabulary (binding)
 
-The prototype's word "used" overclaims. The card adopts the 849/865 register
-instead: the accessory reads `12 results · 3 in evidence` (or the register's
-final copy), where "in evidence" = minted by the ONE grounding authority
-(865 §7.1), and any per-row inclusion badge comes from 849's vocabulary — the
-card never invents a third axis. A row that was retrieved but not minted is
-counted, not listed. If 865's inclusion computation (§4.6 derisk) later lands,
-the same rows inherit `partial/dropped` badges without a card redesign.
+**Owner decision, 2026-08-26: the visible copy is `used`.** The accessory reads
+`9 results · 1 used`; the footer reads `K more used` / `J more retrieved, not
+used`; the row tag reads `used`. This settles §5 open decision 3 against this
+section's original ruling (that "used" overclaimed and the card should say "in
+evidence") — recorded here rather than quietly changed, so the register trail is
+honest.
+
+What did NOT change is the authority. "Used" still means *minted by the ONE
+grounding authority* (865 §7.1) — the card computes nothing new, and the code
+keeps the register's names (`inEvidence`, `evidenceCount`, `evidencePaths`), so
+this is a copy decision at the presentation edge, not a second axis. Any per-row
+inclusion badge still comes from 849's vocabulary; if 865's inclusion computation
+(§4.6 derisk) later lands, the same rows inherit `partial/dropped` badges without
+a card redesign.
 
 ## 3a. Live verification (2026-08-26, worktree FE on the shared dev stack)
 
@@ -155,6 +170,101 @@ honestly ("N more in evidence" / "N more retrieved, not in evidence"); (2) SV3
 mounted the tool card with no `card-open` listener, so an evidence-row click was
 dead in that window — wired in `Sv3Main.ts` (`onToolCardOpen`), routed through
 the existing `SV3_CITATION_OPEN` document-open seam rather than a new pane.
+
+### 3b. Owner-feedback batch (2026-08-26) — what changed, and the chronology finding
+
+Five owner-directed changes on the merged card (PRs #570/#574). All five are
+implemented; the first four are FE-only, the fifth turned out to be a Java
+record-plane defect.
+
+1. **Header verb copy.** `composeToolLabel` (`display/toolLabeling.ts`, the ONE
+   565 §12.3.B authority) gains `verbLabel` — the tool as an ACT. The card header
+   renders `Searched “taxes”` with the accessory `9 results · 1 used`, and wraps
+   instead of ellipsizing the query mid-word. Map: search/find/query/grep →
+   `Searched`, read/open → `Read`, browse/list/ls/dir → `Listed`,
+   write/edit/save/create → `Write`; anything else keeps its humanized label
+   rather than getting a guessed verb. **Tense is deliberately not uniform:** the
+   read-only verbs only ever render as the record of something that already ran
+   (auto-approved LOW), so they take the past form; a WRITE routinely renders
+   *before* it happened — on the approval card — so "Wrote" would be a lie on the
+   very card the reader is deciding on. Quoting is search-only: a query is a
+   literal, a filename is a name.
+2. **Copy: "in evidence" → "used"** (§3, recorded there as the owner decision).
+3. **L2 is the full ranked list with used-markers** (§1, recorded there as the
+   owner revision). Cap 5 → 6; two-line rows; used rows tinted + filled dot + a
+   `used` tag; unused rows plain, dimmed, and still clickable. The footer counts
+   only what the cap hid, split from OBSERVED hits — and when the run's evidence
+   set was never wired to the card (`UnifiedChatView`'s record-hydrated items) it
+   says `N more results`, dropping the old footer's "not in evidence" claim that
+   an unwired card could never actually have known.
+4. **Scope/filters line** under the header at L2: folder restriction or
+   `all folders`, the resolved `searchMode` when the record carries one, and the
+   `limit` the call explicitly asked for. The effective *default* limit is a
+   config fact (`SearchTool.DEFAULT_LIMIT` ← `ConfigStore`) the record does not
+   carry, so it is omitted — the same honesty rule as §2a's `mode` gap.
+
+**A measured defect the SV3 contrast oracle caught while doing this.**
+`Sv3Main.imports.test.ts` computes every text/surface pair from the token values.
+The used-row tint lightens the ground just enough that `--text-secondary` lands
+at **4.31:1** on the dark window — below AA. Fixed at the source, not by
+relaxing the oracle: a used row's second line is not dimmed. The dimming axis is
+used-vs-unused; inside a used row the hierarchy is weight and the locator's
+italic. (This is the `ux-audit-closure` discipline paying off as a build-time
+oracle rather than an eyeballed pass.)
+
+**5. The chronology defect — root cause, and the fix.**
+
+Owner observation: a search tool card rendered AFTER the reasoning block that
+analysed its results (`Thought(plan) → Thought(analyze) → [card]`).
+
+*It is the RECORD plane, and it fires on every healthy stamped delegate run —
+not, as the code claimed, only on a truncated one.* Chain, verified at source:
+
+- `AgentInteractionMapper.fromRunEvents` attaches a trailing reasoning block to
+  the next event that projects (848 §2.4). For a run's last iteration that is the
+  terminal `done` → the `ASSISTANT_MESSAGE`. Correct.
+- `AgentRunQueryService.withoutTerminalAnswer` (863 A-2) DROPS that answer for a
+  stamped run whose answer the conversation record already holds — deleting the
+  block's carrier — and re-homed the block onto `kept.get(size-1)`, which on a
+  normal run is the run's final `TOOL_ACTIVITY`: **an event that happened before
+  the thinking.** 863 pinned this as a "KNOWN INVERSION"
+  (`AgentRunQueryServiceThreadEventsTest`) and routed the question to its §8.4,
+  on the belief that only a truncated run could reach the shape.
+- `sv3-record.ts` emits a carrier's reasoning items BEFORE the carrier's own
+  item, so the inverted carrier renders the thought above the tool.
+- The LIVE plane was ruled out: `AgentSessionController.handleToolCallEntry`
+  commits the open region at `pending`, and `onToolExecStarted` does the same for
+  a call that was never grouped — so the auto-approved-LOW path *is* covered, and
+  `AgentStepRunner` emits `ToolExecutionStarted` unconditionally.
+
+**Fix, at the root:** the block's true carrier is the ANSWER plane's copy of the
+same answer, and only `InteractionThreadController` sees both planes — which 863
+§4.A.5 already names as where cross-plane facts belong. So
+`withoutTerminalAnswer` now *hands the orphaned blocks to its caller* (new
+`ThreadProjection` record: events + `trailingReasoningByRun`) instead of guessing
+a carrier, and the controller merges them onto the store-plane
+`ASSISTANT_MESSAGE` for that run, whose timestamp is after the tool. No wire
+shape changes, no FE change, no new field, and it self-heals records already on
+disk. A run whose answer row projects no turn keeps the pre-871 projection gap:
+the blocks stay on disk unrendered rather than landing somewhere untrue.
+
+Bonus closure: 863 §8.4's other half — a delegate run that called NO tool had no
+surviving carrier at all and dropped its final block entirely — now lands on the
+store answer too.
+
+Rejected (recorded so they are not re-proposed): a `trailing: true` marker on
+persisted blocks (wire-visible, touches both windows' readers, and only
+re-encodes the same positional convention); persisting the run's reasoning on the
+store row at write time (a second fold site, helps no existing record); patching
+the order in `sv3-record.ts` (presentation patching a record defect).
+
+Tests: `AgentRunQueryServiceThreadEventsTest` (the inversion pin REWRITTEN — the
+run plane must carry nothing it did not already carry; confirmed to fail when the
+old re-home is restored), `InteractionThreadControllerTest` (the block lands on
+the answer and NOT on the tool; an unmatched run's block lands nowhere), and
+`sv3-timeline-parity.test.ts` (the reader-visible order for a healthy stamped
+run). F4 stays — a truncated run really is the one remaining shape, and its
+rationale now carries the 863→871 excursion.
 
 ## 4. What this orphans (deleted/tombstoned in this tempdoc's work)
 
@@ -180,7 +290,8 @@ the existing `SV3_CITATION_OPEN` document-open seam rather than a new pane.
 2. Running search auto-shows at level 2 while streaming, settling to level 1?
    865 §5.2's restraint finding argues default-off; prototype ships the
    affordance behind a single flag either way.
-3. Exact register copy for "in evidence" (843/849 vocabulary owners).
+3. ~~Exact register copy for "in evidence"~~ — **SETTLED 2026-08-26: `used`**
+   (§3). The authority is unchanged; only the visible word is.
 
 ## 6. Sequencing
 

@@ -2,6 +2,7 @@
 
 ```
 status:  IMPLEMENTED + PRODUCT-VALIDATED (2026-08-26) — PR #569; §4.4 before/after on the live product; tier-2 idiom still unit-only (see §4.4).
+         C2's SOURCED arm (the mute of a resolvable, unverified ref) is SUPERSEDED by 867 §7's strip — see §4.5. C1/C3/C4 and the ungrounded arm stand.
          implementation-eligible remainder; 867 itself stays no-implementation.
 created: 2026-08-26
 follows: 867 (species theorization — the decision this doc is NOT), 847 (marks follow the
@@ -737,6 +738,32 @@ one — needs a standard-profile run or a seeded record); light theme; the legac
 Two things noticed and logged, not fixed: a verified sentence the model quoted inside backticks
 gets its mark woven inside the `<code>` (847 anchoring into code spans — pre-existing); an ask
 with 8 verified refs rendered 1 mark (847 anchoring failure class on list-shaped answers).
+
+**Read the "after" column with §4.5 in hand:** every cell above that says a literal was *muted*
+now reads **removed**. The measurement stands as the record of what this PR changed (it is what
+made the sourced-arm reachability observable at all); the disposition of that same ref changed one
+decision later.
+
+### 4.5 Superseded by 867 §7 (strip)
+
+C2's **sourced arm was the pre-decision floor, and is now replaced.** It shipped as a bug fix — the
+muting vocabulary existed and was unreachable in exactly the frame that needed it (§1.2) — while
+867 was still theorizing what such a ref should *become*. On 2026-08-26 the owner decided: family
+A, strip. A model-authored `[n]` that resolves to a source and was not verified is **removed** from
+the prose, not muted, by the same pass that already strips a duplicate and upgrades a verified
+label, under §2.4's whitespace rule. Gone with the arm: the frame-derived predicate
+(`pseudoCiteRule`), the sourced wording ("The model cited source n; this citation was not
+verified"), and `data-claimed-label` — including its role as the annotation hook §4.1(6) reserved
+for 867's family D.
+
+**What of C2 survives:** the `sourceCount` input (the strip needs the same resolvability fact the
+mute did), C2b's frame wiring at both v3 block sites, the re-derive-on-input-change rebuild (§4.1
+item 3 — and it is *more* load-bearing now: a strip leaves no class in the DOM, so the block records
+that it made one), the `pre`/`code` skip (§4.1 item 1 — a miss there would now delete a fragment of
+the reader's code, not just grey it), and the F2 span/mark split. **The `ungrounded` arm is
+untouched** (577 Move 3): its predicate is any `[n]`/`(n)`, too broad to delete on, and that frame
+has no source list to resolve against. `.pseudo-cite`, the `--md-pseudo-cite-color` bridge and
+§3.6's contrast work therefore stay, serving that one frame. C1, C3 and C4 are unaffected.
 
 ## Open items routed from the retired observations store (tempdoc 872, 2026-08-26)
 

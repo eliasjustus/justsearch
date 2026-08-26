@@ -67,19 +67,44 @@ public final class InteractionThreadController {
       // its own copy of an answer only for a run named here, which makes "suppressed but never
       // recorded" unreachable instead of merely unlikely.
       java.util.Set<String> answeredRunIds = new java.util.LinkedHashSet<>();
+      // Tempdoc 871 §3b — where each answered run's turn LANDED in `events`, so the action plane's
+      // orphaned trailing reasoning can be merged onto the very answer it was thought for.
+      Map<String, Integer> answerIndexByRunId = new LinkedHashMap<>();
       // Answer plane: the chat turns (a projection of the conversation record).
       for (Map<String, Object> msg : conversationStore.loadHistory(conversationId)) {
+        InteractionEvent turn = chatTurn(conversationId, msg);
         if ("assistant".equals(msg.get("role")) && msg.get("runId") instanceof String runId
             && !runId.isBlank()) {
           answeredRunIds.add(runId);
+          if (turn != null) {
+            answerIndexByRunId.put(runId, events.size());
+          }
         }
-        InteractionEvent turn = chatTurn(conversationId, msg);
         if (turn != null) {
           events.add(turn);
         }
       }
       // Action plane: every agent run of this conversation, projected read-time from AgentRunStore.
-      events.addAll(agentService.threadEvents(conversationId, answeredRunIds));
+      io.justsearch.agent.api.interaction.ThreadProjection projection =
+          agentService.threadProjection(conversationId, answeredRunIds);
+      events.addAll(projection.events());
+      // Tempdoc 871 §3b — the cross-plane merge 863 §8.4 left open. A stamped run's terminal answer
+      // is suppressed on the action plane, which deletes the carrier of the run's LAST thinking
+      // block; 863 re-homed it onto the run's last surviving event, which normally happened BEFORE
+      // the thinking, so the FE (which draws a carrier's blocks above the carrier) rendered the tool
+      // card after the thought that analysed its result. Here — the one place both planes are
+      // visible — the block goes onto the answer plane's copy of the same answer, whose timestamp is
+      // after the tool. A run whose answer row projected no turn keeps the pre-871 projection gap:
+      // the blocks stay on disk, unrendered, rather than being placed somewhere untrue.
+      for (Map.Entry<String, List<Map<String, Object>>> e :
+          projection.trailingReasoningByRun().entrySet()) {
+        Integer at = answerIndexByRunId.get(e.getKey());
+        if (at != null) {
+          events.set(
+              at,
+              io.justsearch.agent.AgentInteractionMapper.withReasoning(events.get(at), e.getValue()));
+        }
+      }
       // Interleave by the authoritative timestamp (stable id tiebreak for determinism).
       events.sort(
           Comparator.comparing(InteractionEvent::occurredAt)
