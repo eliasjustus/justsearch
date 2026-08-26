@@ -114,7 +114,6 @@ final class OperationHistoryControllerTest {
         new OperationHistoryEntry(
             new OperationRef("core.test-appended"),
             "head",
-            Optional.empty(),
             Instant.parse("2026-04-30T12:00:00Z"),
             Instant.parse("2026-04-30T12:00:01Z"),
             OperationOutcome.SUCCESS,

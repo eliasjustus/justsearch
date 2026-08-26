@@ -5,9 +5,6 @@
     "actor" : {
       "type" : "string"
     },
-    "argumentsSummary" : {
-      "type" : [ "string", "null" ]
-    },
     "diagnosticsLink" : {
       "type" : [ "string", "null" ]
     },

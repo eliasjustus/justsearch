@@ -212,7 +212,7 @@
             "type" : "null"
           }, {
             "type" : "string",
-            "enum" : [ "NONE", "METADATA_ONLY", "FULL_PAYLOAD" ]
+            "enum" : [ "NONE", "METADATA_ONLY" ]
           } ]
         },
         "capabilityFamily" : {
@@ -256,10 +256,6 @@
         },
         "inverseOperationRef" : {
           "$ref" : "#/$defs/OperationRef-nullable"
-        },
-        "rateLimit" : {
-          "type" : [ "string", "null" ],
-          "format" : "duration"
         },
         "requiredCapabilities" : {
           "type" : [ "array", "null" ],

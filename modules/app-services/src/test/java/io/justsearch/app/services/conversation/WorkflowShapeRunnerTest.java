@@ -41,7 +41,6 @@ import io.justsearch.agent.api.registry.WorkflowRef;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -65,7 +64,6 @@ class WorkflowShapeRunnerTest {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),

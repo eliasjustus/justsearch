@@ -703,7 +703,6 @@ class AgentBatteryTest {
               ConfirmStrategy.None.INSTANCE,
               AuditPolicy.NONE,
               RetryPolicy.noRetry(),
-              java.util.Optional.empty(),
               java.util.Set.of(),
               false),
           OperationAvailability.empty(),

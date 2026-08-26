@@ -92,6 +92,8 @@ function readyRow(overrides = {}) {
     reconciliation: 'UPCAST_AND_REWRITE',
     status: 'READY',
     upgradeHandling: 'READ_IN_PLACE',
+    pathVerification: 'LITERAL',
+    encryption: 'SEALED_BY_STORE_CIPHER',
     implementationSources: ['Store.java'],
     tests: ['StoreTest.java'],
     fixtures: ['v0.json'],
@@ -108,6 +110,7 @@ function check(rows, options = {}) {
     discoveredWriteSites: options.discovered ?? ['Store.java'],
     nonDurableWriteSites: options.nonDurable ?? [],
     pathExists: options.pathExists ?? (() => true),
+    readSource: options.readSource ?? (() => 'var p = base.resolve("conversations");'),
   });
 }
 
@@ -157,6 +160,79 @@ test('HARDENING_REQUIRED is accepted only through the explicit gap ratchet', () 
   );
   assert.deepEqual(
     check([gap], { gaps: ['legacy'], catalog: [], discovered: ['Store.java'] }),
+    [],
+  );
+});
+
+// Tempdoc 879: the register named four paths no code writes and stayed green, because nothing
+// compared a declared path to its writer. These pin the comparison and its ONE stated exclusion.
+test('a declared path whose segments no source writes is a failure', () => {
+  const result = check([readyRow({ ownedPaths: ['settings/ui-settings.json'] })]);
+  assert.ok(result.some((failure) => failure.includes('`settings`')));
+  assert.ok(result.some((failure) => failure.includes('`ui-settings.json`')));
+});
+
+test('glob segments are skipped, literal segments are not', () => {
+  assert.deepEqual(check([readyRow({ ownedPaths: ['conversations/*/meta.json'] })]).length, 1);
+  assert.deepEqual(check([readyRow({ ownedPaths: ['conversations/**'] })]), []);
+});
+
+test('a literal component match is exact, never a substring', () => {
+  const result = check([readyRow({ ownedPaths: ['ui/x.json'], catalogDirName: undefined })], {
+    catalog: [],
+    readSource: () => 'var p = base.resolve("build-gui");',
+  });
+  assert.ok(result.some((failure) => failure.includes('`ui`')));
+});
+
+test('COMPOSED is a stated exclusion that must say why', () => {
+  const bare = check([readyRow({ ownedPaths: ['nowhere/at.all'], pathVerification: 'COMPOSED' })]);
+  assert.ok(bare.some((failure) => failure.includes('pathVerificationNote')));
+  assert.deepEqual(
+    check([
+      readyRow({
+        ownedPaths: ['nowhere/at.all'],
+        pathVerification: 'COMPOSED',
+        pathVerificationNote: 'SQLite creates this sidecar itself.',
+      }),
+    ]),
+    [],
+  );
+});
+
+test('pathVerification and encryption are required on every row', () => {
+  const result = check([readyRow({ pathVerification: undefined, encryption: undefined })]);
+  assert.ok(result.some((failure) => failure.includes('pathVerification is required')));
+  assert.ok(result.some((failure) => failure.includes('encryption is required')));
+});
+
+test('an AUTHORED StoreCatalog store must declare itself sealed', () => {
+  const result = check([readyRow({ encryption: 'NOT_APPLICABLE' })]);
+  assert.ok(result.some((failure) => failure.includes('SEALED_BY_STORE_CIPHER')));
+});
+
+test('a row living entirely inside an AUTHORED catalog directory must declare itself sealed', () => {
+  const result = check([
+    readyRow({
+      id: 'run-events',
+      catalogDirName: undefined,
+      ownedPaths: ['conversations/*/events.ndjson'],
+      encryption: 'UNSEALED_GAP',
+      encryptionNote: 'plaintext events',
+    }),
+  ]);
+  assert.ok(result.some((failure) => failure.includes('SEALED_BY_STORE_CIPHER')));
+});
+
+test('the open-gap disposition must name what the plaintext file contains', () => {
+  const row = readyRow({ id: 'ui-settings', catalogDirName: undefined, encryption: 'UNSEALED_GAP' });
+  assert.ok(
+    check([row], { catalog: [] }).some((failure) => failure.includes('encryptionNote')),
+  );
+  assert.deepEqual(
+    check([{ ...row, encryptionNote: 'Plaintext UI preferences incl. the local model path.' }], {
+      catalog: [],
+    }),
     [],
   );
 });

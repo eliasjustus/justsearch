@@ -84,7 +84,7 @@
       "properties" : {
         "audit" : {
           "type" : "string",
-          "enum" : [ "NONE", "METADATA_ONLY", "FULL_PAYLOAD" ]
+          "enum" : [ "NONE", "METADATA_ONLY" ]
         },
         "confirm" : {
           "type" : "object",
@@ -100,9 +100,6 @@
         },
         "inverseOperationId" : {
           "type" : [ "string", "null" ]
-        },
-        "rateLimitMs" : {
-          "type" : "integer"
         },
         "risk" : {
           "type" : "string",

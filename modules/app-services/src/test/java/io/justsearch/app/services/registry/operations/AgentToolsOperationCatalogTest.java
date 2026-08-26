@@ -12,6 +12,8 @@ import io.justsearch.agent.api.registry.ConfirmStrategy;
 import io.justsearch.agent.api.registry.ExecutorTag;
 import io.justsearch.agent.api.registry.Operation;
 import io.justsearch.agent.api.registry.OperationRef;
+import io.justsearch.agent.api.registry.ResourceRef;
+import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.app.services.registry.emitter.AgentOperationEmitter;
 import java.util.List;
@@ -132,5 +134,59 @@ final class AgentToolsOperationCatalogTest {
         search.availability().expression().orElseThrow(),
         readWhen.get(),
         "read-document must be gated on the SAME index.unavailable condition as search");
+  }
+
+  @Test
+  @DisplayName("879 — core.ingest-files declares the indexing-jobs Resource it affects")
+  void ingestFilesDeclaresWhatItAffects() {
+    // OperationLineage is not inert: the FE renders `affects` in operationButton.ts and
+    // operationHoverPreview.ts. Ingest queues indexing work, so it affects the same indexing-jobs
+    // Resource core.rebuild-index declares. Pin it so the declaration cannot silently regress to
+    // empty() — which on this axis reads as "nothing is affected".
+    Operation ingest = op(AgentToolsOperationCatalog.INGEST_FILES);
+    assertEquals(
+        java.util.Set.of(new ResourceRef("core.indexing-jobs")),
+        ingest.lineage().affects(),
+        "ingest queues indexing work; core.indexing-jobs is the Resource that changes");
+    assertTrue(
+        ingest.lineage().supersedes().isEmpty(), "ingest supersedes no other operation's effect");
+    // NOT core.indexed-roots: that Resource is the WATCHED-root list, changed only by the
+    // add/remove-watched-root gestures. Ingest dispatches a one-shot ScanRoot and registers nothing.
+    assertFalse(
+        ingest.lineage().affects().contains(new ResourceRef("core.indexed-roots")),
+        "ingest does not register a watched root");
+  }
+
+  @Test
+  @DisplayName("879 — every agent tool's retry declaration is what the dispatcher now acts on")
+  void retryDeclarationsArePinned() {
+    // Tempdoc 879 wired AgentToolDispatcher to OperationPolicy.retry(); before that the loop
+    // hard-coded `risk == LOW` and these declarations changed nothing, so they could be edited
+    // without consequence. Pinning them makes any future edit a deliberate act with a visible
+    // behavioural cost — the whole point of moving the axis from decoration to authority.
+    Map<OperationRef, RetryPolicy> expected =
+        Map.of(
+            // Idempotent reads over the index: replaying observes again rather than mutating.
+            AgentToolsOperationCatalog.SEARCH_INDEX,
+                RetryPolicy.autoRetry(2, "core.search-index"),
+            AgentToolsOperationCatalog.BROWSE_FOLDERS,
+                RetryPolicy.autoRetry(2, "core.browse-folders"),
+            // A paged read must not be transparently repeated behind a different offset.
+            AgentToolsOperationCatalog.READ_DOCUMENT, RetryPolicy.noRetry(),
+            // Writes and navigation: replaying is either unsafe or user-visible.
+            AgentToolsOperationCatalog.REMEMBER, RetryPolicy.noRetry(),
+            AgentToolsOperationCatalog.INGEST_FILES, RetryPolicy.noRetry(),
+            AgentToolsOperationCatalog.FILE_OPERATIONS, RetryPolicy.noRetry(),
+            AgentToolsOperationCatalog.NAVIGATE_TO_SURFACE, RetryPolicy.noRetry());
+
+    List<Operation> declared = new AgentToolsOperationCatalog().definitions();
+    assertEquals(
+        expected.size(), declared.size(), "a new agent tool must declare its retry axis here too");
+    for (Operation declaredOp : declared) {
+      assertEquals(
+          expected.get(declaredOp.id()),
+          declaredOp.policy().retry(),
+          () -> "retry declaration changed for " + declaredOp.id().value());
+    }
   }
 }

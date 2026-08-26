@@ -18,7 +18,7 @@ import java.util.Set;
  *
  * <ul>
  *   <li>{@link OperationPolicy} — invocation-time axes (risk, confirm, audit, retry,
- *       rateLimit, capabilities, undo). Read by the executor.
+ *       capabilities, undo). Read by the executor.
  *   <li>{@link OperationAvailability} — discovery-time axes (when is this Operation
  *       suggested? what default args ride along?). Read by the discovery layer.
  *   <li>{@link OperationLineage} — post-execution axes (which Resources are affected,

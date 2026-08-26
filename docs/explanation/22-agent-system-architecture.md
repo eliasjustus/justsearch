@@ -96,6 +96,29 @@ Current built-in agent-facing tool names include:
 
 Safety metadata lives with the operation definitions and handlers. Write/destructive operations pause for explicit user approval before execution.
 
+### What an operation's declared policy actually decides
+
+`OperationPolicy` is enforced, not advisory — that is the premise of
+[ADR-0030](../decisions/0030-policy-on-operations-vs-mcp-hints.md)'s divergence from MCP's
+"annotations are hints" discipline. Tempdoc 879 closed the gap between that claim and the code, so
+each surviving axis now has a consumer whose behaviour the declaration changes:
+
+| axis | what changes when you change the declaration |
+|---|---|
+| `risk` | the `(SourceTier × RiskTier)` lattice verdict, and the agent gate's floors |
+| `confirm` | a floor on the agent gate — the declaration may tighten the lattice's verdict, never loosen it. It does **not** decide *whether* a confirmation runs; the lattice does (see `GateBehavior`'s javadoc). No `ExecutorTag.AGENT` operation may declare `Typed`: the agent authorization ceremony renders the operation id as the phrase and cannot carry a declared one. A registry test enforces that boundary rather than leaving the phrase to be silently replaced at runtime. |
+| `audit` | `NONE` emits no operation-history record; `METADATA_ONLY` emits one. Advisory emission is independent of this and still fires either way |
+| `retry` | whether the agent dispatcher may transparently re-issue the call, and how many times. The axis declares *permission* to replay (hence `RetryPolicy`'s refusal of `allowAutoRetry` without an `idempotencyKey`); the caller's loop supplies the timing |
+| `requiredCapabilities` | the executor's capability gate and the derived availability expression |
+| `undoSupported` / `inverseOperationRef` | the executor's undo path, and the reversibility signal that stops an irreversible MEDIUM write auto-firing under the `AUTO` dial |
+| `capabilityFamily` | which durable allow-always grants cover the operation |
+| `advisoryClass` | which typed advisory Resource the completion emits into |
+
+`scripts/ci/check-policy-axis-liveness.mjs` fails the build if an axis loses its consumer, or if an
+`Optional` axis is declared by no operation. There is no opt-out: an axis that cannot pass is wired
+to a real consumer or deleted outright, because a declaration nothing can contradict reads as a
+constraint while being a comment.
+
 ## Query Pre-Processing
 
 Search operations can use backend query helpers before retrieval:

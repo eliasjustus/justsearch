@@ -21,6 +21,26 @@ const UPGRADE_HANDLING = new Set([
   'RESET',
   'PRESERVE_EXTERNAL',
 ]);
+/**
+ * How a row's declared `ownedPaths` are held to the code that writes them. LITERAL rows are checked
+ * segment-by-segment against the string literals in their implementationSources; COMPOSED rows are a
+ * STATED exclusion — the path is assembled at runtime, and the row must say why. There is no third
+ * value, so "nobody answered the question" is unrepresentable.
+ */
+const PATH_VERIFICATION = new Set(['LITERAL', 'COMPOSED']);
+/**
+ * Whether a row's bytes are sealed at rest, and if not, why not. Every row answers; the absence of an
+ * answer is a build failure. UNSEALED_GAP is the honest label for "no structural reason, just not done"
+ * and carries an encryptionNote naming what the plaintext file contains.
+ */
+const ENCRYPTION = new Set([
+  'SEALED_BY_STORE_CIPHER',
+  'UNSEALED_KEY_ROOT',
+  'UNSEALED_EXTERNAL_AUTHORITY',
+  'UNSEALED_NO_JVM_CIPHER',
+  'UNSEALED_GAP',
+  'NOT_APPLICABLE',
+]);
 
 /** Extract `NAME("dir", StoreRecoverability.CLASS, ...)` entries from StoreCatalog.java. */
 export function extractCatalogEntries(javaSrc) {
@@ -71,6 +91,33 @@ export function checkParity(catalogEntries, registerStores) {
 }
 
 /**
+ * Every path component that appears inside a double-quoted string literal of a source file: the whole
+ * literal, plus each of its slash-separated parts, so `"ui/settings.json"` answers for `ui` and for
+ * `settings.json` while `"ui"` answers only for `ui`. Component equality (not substring) is the match
+ * rule, so a literal containing `build` can never stand in for the declared segment `ui`.
+ */
+export function literalPathComponents(sources) {
+  const components = new Set();
+  const re = /"((?:[^"\\\n]|\\.)*)"/g;
+  for (const src of sources) {
+    let match;
+    while ((match = re.exec(src)) !== null) {
+      const value = match[1];
+      components.add(value);
+      for (const part of value.split(/[\\/]/)) if (part) components.add(part);
+    }
+  }
+  return components;
+}
+
+/** The declared segments of one owned path that a literal check can speak about (globs cannot). */
+export function checkablePathSegments(ownedPath) {
+  return String(ownedPath ?? '')
+    .split('/')
+    .filter((segment) => segment !== '' && !segment.includes('*'));
+}
+
+/**
  * Validate the broad durable-state register. The known-gap list is an explicit ratchet: only rows
  * already named there may remain HARDENING_REQUIRED while tempdoc 617 converts them.
  */
@@ -82,8 +129,14 @@ export function checkDurableStoreRegister({
   discoveredWriteSites,
   nonDurableWriteSites = [],
   pathExists = existsSync,
+  readSource = (absolutePath) => readFileSync(absolutePath, 'utf8'),
 }) {
   const failures = [];
+  const authoredCatalogDirs = new Set(
+    (catalogEntries ?? [])
+      .filter((entry) => entry.recoverability === 'AUTHORED')
+      .map((entry) => entry.dirName),
+  );
   const rows = Array.isArray(durableStores) ? durableStores : [];
   const gaps = new Set(Array.isArray(knownCompatibilityGaps) ? knownCompatibilityGaps : []);
   const ids = new Set();
@@ -123,10 +176,15 @@ export function checkDurableStoreRegister({
 
     const sources = Array.isArray(row.implementationSources) ? row.implementationSources : [];
     if (sources.length === 0) failures.push(`${label}: implementationSources must not be empty.`);
+    const readableSources = [];
     for (const source of sources) {
       coveredImplementations.add(normalize(source));
       if (!pathExists(resolve(root, source))) failures.push(`${label}: source does not exist: ${source}.`);
+      else readableSources.push(source);
     }
+
+    failures.push(...checkPathAgreement({ root, row, label, readableSources, readSource }));
+    failures.push(...checkEncryptionDisposition({ row, label, authoredCatalogDirs }));
     for (const evidence of [...(row.tests ?? []), ...(row.fixtures ?? [])]) {
       if (!pathExists(resolve(root, evidence))) {
         failures.push(`${label}: evidence does not exist: ${evidence}.`);
@@ -216,6 +274,87 @@ export function checkDurableStoreRegister({
     }
   }
 
+  return failures;
+}
+
+/**
+ * Hold a row's declared paths to the code that writes them. Without this the register could name any
+ * path at all and stay green — which is how four rows drifted from their real on-disk locations
+ * (tempdoc 879). A row opts out only by SAYING so: pathVerification COMPOSED plus a note.
+ */
+export function checkPathAgreement({ root, row, label, readableSources, readSource }) {
+  const failures = [];
+  if (!PATH_VERIFICATION.has(row.pathVerification)) {
+    failures.push(
+      `${label}: pathVerification is required and must be one of ${[...PATH_VERIFICATION].join(', ')}.`,
+    );
+    return failures;
+  }
+  if (row.pathVerification === 'COMPOSED') {
+    if (typeof row.pathVerificationNote !== 'string' || row.pathVerificationNote.trim() === '') {
+      failures.push(
+        `${label}: pathVerification COMPOSED requires a pathVerificationNote saying which segments are assembled at runtime and by what.`,
+      );
+    }
+    return failures;
+  }
+
+  const sourceTexts = [];
+  for (const source of readableSources) {
+    try {
+      sourceTexts.push(readSource(resolve(root, source)));
+    } catch (error) {
+      failures.push(`${label}: cannot read implementation source ${source}: ${error.message}.`);
+    }
+  }
+  const components = literalPathComponents(sourceTexts);
+  for (const ownedPath of row.ownedPaths ?? []) {
+    for (const segment of checkablePathSegments(ownedPath)) {
+      if (components.has(segment)) continue;
+      failures.push(
+        `${label}: ownedPaths declares \`${ownedPath}\` but no implementation source contains the ` +
+          `string literal \`${segment}\` (searched: ${readableSources.join(', ') || 'none'}). ` +
+          `Either the declared path is wrong, the writing source is missing from implementationSources, ` +
+          `or the path is assembled at runtime — say so with pathVerification COMPOSED + pathVerificationNote.`,
+      );
+    }
+  }
+  return failures;
+}
+
+/**
+ * Every row states whether its bytes are sealed at rest and, when they are not, which reason applies.
+ * A store the StoreCatalog calls AUTHORED must be sealed; the open-gap value must name what the
+ * plaintext file holds. This records the disposition — it does not change any store's behavior.
+ */
+export function checkEncryptionDisposition({ row, label, authoredCatalogDirs }) {
+  const failures = [];
+  if (!ENCRYPTION.has(row.encryption)) {
+    failures.push(
+      `${label}: encryption is required and must be one of ${[...ENCRYPTION].join(', ')}.`,
+    );
+    return failures;
+  }
+  if (
+    row.encryption === 'UNSEALED_GAP'
+    && (typeof row.encryptionNote !== 'string' || row.encryptionNote.trim() === '')
+  ) {
+    failures.push(
+      `${label}: encryption UNSEALED_GAP requires an encryptionNote saying what the plaintext file contains.`,
+    );
+  }
+
+  const paths = (row.ownedPaths ?? []).map(normalize);
+  const insideAuthoredCatalogDir =
+    paths.length > 0
+    && paths.every((path) => [...authoredCatalogDirs].some((dir) => path.startsWith(`${dir}/`)));
+  const isCatalogAuthored = Boolean(row.catalogDirName) && authoredCatalogDirs.has(row.catalogDirName);
+  if ((isCatalogAuthored || insideAuthoredCatalogDir) && row.encryption !== 'SEALED_BY_STORE_CIPHER') {
+    failures.push(
+      `${label}: this row is an AUTHORED StoreCatalog store (or lives entirely inside one) and must ` +
+        `declare encryption SEALED_BY_STORE_CIPHER, not \`${row.encryption}\`.`,
+    );
+  }
   return failures;
 }
 

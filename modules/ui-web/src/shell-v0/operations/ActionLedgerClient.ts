@@ -198,7 +198,7 @@ export class ActionLedgerClient {
  * Tempdoc 612 §3/§L — is a backend row routine (excluded from the curated default Activity feed)? Only
  * direct-user rows can be routine. Effects/navigation route by the witnessed local-ack classification
  * ({@link isRoutineActivity}); OPERATION rows route by their DECLARED significance — a `FAILURE` is never
- * routine, and otherwise the operation must grade insignificant (LOW · no-confirm · not-fully-audited ·
+ * routine, and otherwise the operation must grade insignificant (LOW · no-confirm ·
  * mutates-no-Resource) via {@link isRoutineOperation} over facets resolved from the OperationCatalog. An
  * ungradable operation (registry not yet loaded / unknown id) FAILS TOWARD FOREGROUND — never hide a row
  * we cannot grade. Reads the same `getOperation` singleton `present()` already uses for labels here.
@@ -216,7 +216,6 @@ function isRoutineBackendRow(e: BackendLedgerEntry): boolean {
     return isRoutineOperation({
       risk: op.policy.risk,
       confirmKind: op.policy.confirm?.kind ?? '',
-      audit: op.policy.audit,
       affectsCount: op.lineage.affects?.length ?? 0,
     });
   }
@@ -295,7 +294,7 @@ export function projectBackend(e: BackendLedgerEntry): UnifiedActionEntry {
     ...(e.outcome ? { outcome: e.outcome } : {}),
     // Tempdoc 613 §6/§10 + 612 §3/§L — flag routine direct-user rows so the default Activity feed can
     // exclude them (the de-flood): navigation + witnessed local-ack/preference effects, and insignificant
-    // user operations (LOW/no-confirm/not-fully-audited/no-affects). Everything else stays foreground.
+    // user operations (LOW/no-confirm/no-affects). Everything else stays foreground.
     ...(isRoutineBackendRow(e) ? { isRoutine: true } : {}),
   };
   // Tempdoc 812 D4 — the scan rollup carries its scan key so the view can expand it to the

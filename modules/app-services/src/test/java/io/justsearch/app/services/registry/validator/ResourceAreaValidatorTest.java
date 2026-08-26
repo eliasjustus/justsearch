@@ -733,7 +733,6 @@ final class ResourceAreaValidatorTest {
                         io.justsearch.agent.api.registry.ConfirmStrategy.None.INSTANCE,
                         io.justsearch.agent.api.registry.AuditPolicy.NONE,
                         io.justsearch.agent.api.registry.RetryPolicy.noRetry(),
-                        Optional.empty(),
                         Set.of(),
                         false),
                     io.justsearch.agent.api.registry.OperationAvailability.empty(),

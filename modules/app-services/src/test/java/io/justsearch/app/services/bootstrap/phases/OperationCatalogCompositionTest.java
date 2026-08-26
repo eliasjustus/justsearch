@@ -31,7 +31,6 @@ import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -68,7 +67,6 @@ final class OperationCatalogCompositionTest {
                 ConfirmStrategy.Inline.INSTANCE,
                 AuditPolicy.METADATA_ONLY,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(RequiredCapability.WorkerOnline.INSTANCE),
                 false),
             OperationAvailability.empty(),
@@ -130,6 +128,56 @@ final class OperationCatalogCompositionTest {
     assertTrue(
         ingest.policy().inverseOperationRef().isEmpty(),
         "ingest-files must declare no inverse so the C-4 AUTO floor confirms it");
+  }
+
+  @Test
+  void noAgentExecutableOperationDeclaresTypedConfirm() {
+    // Tempdoc 879 — the agent authorization ceremony (AuthorizationHost.ts `renderAuthorizeBody`)
+    // hardcodes the typed phrase to the OPERATION ID: it renders "Type <operationId> to confirm"
+    // and enables Approve only on `this.typed === operationId`. Unlike the operations-palette path
+    // (ActionButton.ts `requireConfirmText`), it cannot carry a backend-declared `confirmTextKey` —
+    // nothing on AgentEvent.PendingApproval / ToolCallPendingApproval conveys one. So declaring
+    // ConfirmStrategy.Typed on an AGENT-executable operation would SILENTLY substitute the operation
+    // id for the declared phrase at runtime: the declaration would be quietly ignored, not honoured.
+    //
+    // Remedy if a future operation genuinely needs a typed phrase on the agent path: wire it, don't
+    // relax this test — the phrase has to reach the renderer through AgentEvent.PendingApproval +
+    // ToolCallPendingApproval, the generated `core-agent-run` shape handler, and AuthorizationHost.ts.
+    ContributionRegistry registry = new ContributionRegistry();
+    CoreOperationCatalog core = new CoreOperationCatalog();
+    AgentToolsOperationCatalog agentTools = new AgentToolsOperationCatalog();
+    OperationCatalogComposition.installBaseCatalogs(registry, core, agentTools);
+    OperationCatalogComposition.Result composed =
+        OperationCatalogComposition.deriveAndPartition(
+            registry, core.namespace(), agentTools.namespace());
+
+    List<Operation> all =
+        java.util.stream.Stream.concat(
+                composed.operationCatalog().definitions().stream(),
+                composed.agentToolsCatalog().definitions().stream())
+            .toList();
+    // Guard the guard: if the composed set ever went empty this test would pass vacuously.
+    assertFalse(all.isEmpty(), "the composed catalogs must contain operations");
+    assertTrue(
+        all.stream().anyMatch(op -> op.executors().contains(ExecutorTag.AGENT)),
+        "the composed catalogs must contain at least one AGENT-executable operation");
+
+    for (Operation op : all) {
+      if (!op.executors().contains(ExecutorTag.AGENT)) {
+        continue;
+      }
+      assertFalse(
+          op.policy().confirm() instanceof ConfirmStrategy.Typed,
+          () ->
+              "operation "
+                  + op.id().value()
+                  + " is AGENT-executable and declares ConfirmStrategy.Typed, but the agent"
+                  + " authorization ceremony renders the OPERATION ID as the typed phrase and cannot"
+                  + " carry a declared confirmTextKey — the declaration would be silently substituted"
+                  + " at runtime. Either drop ExecutorTag.AGENT / use Inline, or wire the phrase onto"
+                  + " AgentEvent.PendingApproval + ToolCallPendingApproval, the generated"
+                  + " core-agent-run shape handler, and AuthorizationHost.ts first.");
+    }
   }
 
   @Test

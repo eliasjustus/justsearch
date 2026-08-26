@@ -103,11 +103,12 @@ export type ProvenanceTier = GenTrustTier;
 export type RiskTier = GenRiskTier;
 
 /** Operation audit policy. Generated alias of the Java `AuditPolicy`
- * authority (`NONE | METADATA_ONLY | FULL_PAYLOAD`). Drift history: the
- * hand-authored FE type previously declared the last variant as `'FULL'`,
- * which silently disagreed with the wire — fixed in 511-followup-2, and now
- * structurally impossible because the union is the generated
- * `registry-enums.generated.ts` projection, not a hand mirror. */
+ * authority (`NONE | METADATA_ONLY`). Drift history: the hand-authored FE type
+ * once declared a third variant `'FULL'` against the wire's `FULL_PAYLOAD` —
+ * fixed in 511-followup-2, and now structurally impossible because the union is
+ * the generated `registry-enums.generated.ts` projection, not a hand mirror.
+ * Tempdoc 879 then deleted `FULL_PAYLOAD` outright: no Operation declared it and
+ * the redaction machinery it named never existed. */
 export type AuditPolicy = GenAuditPolicy;
 
 /**

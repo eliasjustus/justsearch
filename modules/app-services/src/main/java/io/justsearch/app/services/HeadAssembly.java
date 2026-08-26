@@ -1062,8 +1062,25 @@ public final class HeadAssembly implements AutoCloseable {
   private final java.util.List<io.justsearch.agent.api.encryption.StoreDescriptor> authoredStores =
       new java.util.concurrent.CopyOnWriteArrayList<>();
 
-  /** Register an AUTHORED store descriptor (called at each store's construction; assembly-time only). */
+  /**
+   * Register an AUTHORED store descriptor (called at each store's construction; assembly-time only).
+   *
+   * <p>Tempdoc 879: the registration list and {@link
+   * io.justsearch.agent.api.encryption.StoreCatalog#isAuthored()} were two independent answers to the
+   * same question — the catalog named the authority, the list did the enumerating, and nothing made
+   * the list ask. It asks here, so a DERIVED store enrolled in the encrypted backup fails at assembly
+   * instead of silently widening what the backup claims to protect.
+   */
   public void registerAuthoredStore(io.justsearch.agent.api.encryption.StoreDescriptor descriptor) {
+    java.util.Objects.requireNonNull(descriptor, "descriptor");
+    if (!descriptor.store().isAuthored()) {
+      throw new IllegalArgumentException(
+          "StoreCatalog."
+              + descriptor.store().name()
+              + " is "
+              + descriptor.store().recoverability()
+              + ", not AUTHORED; it cannot be registered as an authored store.");
+    }
     this.authoredStores.add(descriptor);
   }
 

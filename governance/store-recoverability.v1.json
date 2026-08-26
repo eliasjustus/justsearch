@@ -17,9 +17,12 @@
   "durableStores": [
     {
       "id": "ui-settings",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext JSON holding the user's UI preferences, including the configured local model path and other machine-local settings. Nothing structural prevents sealing it; nothing seals it today.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["settings/ui-settings.json"],
+      "ownedPaths": ["ui/settings.json"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "JSON envelope v1 around legacy UiSettings object",
@@ -42,6 +45,9 @@
     },
     {
       "id": "action-ledger-audit-journal",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext JSONL of every governed action the user or agent took - operation ids, argument projections, and outcomes. Nothing structural prevents sealing it; nothing seals it today.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": [
@@ -70,9 +76,12 @@
     },
     {
       "id": "durable-grants",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext JSON recording which capability families the user durably granted the agent. Nothing structural prevents sealing it; nothing seals it today.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["intent/durable-grants.json"],
+      "ownedPaths": ["ui/durable-grants.json"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "JSON grant envelope v1",
@@ -95,9 +104,12 @@
     },
     {
       "id": "plugin-allowlist",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext JSON of the SHA-256 hashes of plugin artifacts an operator explicitly trusted. Nothing structural prevents sealing it; nothing seals it today.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["plugins/allowlist.json"],
+      "ownedPaths": ["ui/plugin-allowlist.json"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "JSON allowlist envelope v1",
@@ -111,7 +123,9 @@
       "reconciliation": "READ_V0_ARRAY_OR_V1_ENVELOPE_AND_WRITE_V1",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/settings/PluginAllowlistStore.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/settings/PluginAllowlistStore.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/settings/UiSettingsStore.java",
+        "modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/settings/PluginAllowlistStoreTest.java"
@@ -120,6 +134,9 @@
     },
     {
       "id": "feedback-capture-preference",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
+      "encryptionNote": "A single on/off capture preference. No user content, no path, nothing that discloses anything about the machine.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["feedback-capture.json"],
@@ -145,6 +162,8 @@
     },
     {
       "id": "installed-packs",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["installed-packs.v1.json"],
@@ -170,6 +189,8 @@
     },
     {
       "id": "ai-install-contract",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["install-contract.v2.json"],
@@ -186,7 +207,8 @@
       "reconciliation": "REBUILD_FROM_VERIFIED_INSTALLED_ASSETS",
       "status": "READY",
       "implementationSources": [
-        "modules/configuration/src/main/java/io/justsearch/configuration/model/InstallContractIO.java"
+        "modules/configuration/src/main/java/io/justsearch/configuration/model/InstallContractIO.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/model/InstallContract.java"
       ],
       "tests": [
         "modules/configuration/src/test/java/io/justsearch/configuration/model/InstallContractIOTest.java"
@@ -195,6 +217,8 @@
     },
     {
       "id": "encryption-keystore",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_KEY_ROOT",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["encryption/keystore.json"],
@@ -221,6 +245,8 @@
     },
     {
       "id": "user-policy",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_EXTERNAL_AUTHORITY",
       "owner": "EXTERNAL",
       "root": "PROGRAM_DATA_OR_DATA_DIR",
       "ownedPaths": ["policy.v1.json"],
@@ -237,7 +263,8 @@
       "reconciliation": "PRESERVE_EXTERNAL_AUTHORITY",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/policy/UserPolicyWriter.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/policy/UserPolicyWriter.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/policy/EnterprisePolicyServiceImpl.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/policy/UserPolicyWriterTest.java"
@@ -246,6 +273,8 @@
     },
     {
       "id": "memories",
+      "pathVerification": "LITERAL",
+      "encryption": "SEALED_BY_STORE_CIPHER",
       "catalogDirName": "memories",
       "owner": "HEAD",
       "root": "DATA_DIR",
@@ -272,6 +301,8 @@
     },
     {
       "id": "conversations",
+      "pathVerification": "LITERAL",
+      "encryption": "SEALED_BY_STORE_CIPHER",
       "catalogDirName": "conversations",
       "owner": "HEAD",
       "root": "DATA_DIR",
@@ -298,10 +329,12 @@
     },
     {
       "id": "agent-runs",
+      "pathVerification": "LITERAL",
+      "encryption": "SEALED_BY_STORE_CIPHER",
       "catalogDirName": "agent-runs",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["agent-runs/*/meta.json", "agent-runs/last-session-id"],
+      "ownedPaths": ["agent-runs/*/meta.json", "agent-runs/last-session.txt"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "meta/checkpoint JSON v4 plus append-only events",
@@ -328,6 +361,8 @@
     },
     {
       "id": "run-events",
+      "pathVerification": "LITERAL",
+      "encryption": "SEALED_BY_STORE_CIPHER",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["agent-runs/*/events.ndjson"],
@@ -344,7 +379,8 @@
       "reconciliation": "PRESERVE_APPEND_LOG_AND_UPCAST_METADATA",
       "status": "READY",
       "implementationSources": [
-        "modules/app-agent/src/main/java/io/justsearch/agent/RunEventStore.java"
+        "modules/app-agent/src/main/java/io/justsearch/agent/RunEventStore.java",
+        "modules/app-agent-api/src/main/java/io/justsearch/agent/api/encryption/StoreCatalog.java"
       ],
       "tests": [
         "modules/app-agent/src/test/java/io/justsearch/agent/RunEventStoreTest.java"
@@ -353,6 +389,9 @@
     },
     {
       "id": "file-operation-journal",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext JSON transaction log of agent file mutations, including the absolute source and destination paths it moved or rewrote. Nothing structural prevents sealing it; nothing seals it today.",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["file-operations/*.json"],
@@ -369,7 +408,8 @@
       "reconciliation": "RECOVER_ACTIVE_TRANSACTION_PRESERVE_HISTORY",
       "status": "READY",
       "implementationSources": [
-        "modules/app-agent/src/main/java/io/justsearch/agent/tools/FileOperationLog.java"
+        "modules/app-agent/src/main/java/io/justsearch/agent/tools/FileOperationLog.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/AgentToolFactory.java"
       ],
       "tests": [
         "modules/app-agent/src/test/java/io/justsearch/agent/tools/FileOperationLogTest.java"
@@ -378,6 +418,8 @@
     },
     {
       "id": "feedback-records",
+      "pathVerification": "LITERAL",
+      "encryption": "SEALED_BY_STORE_CIPHER",
       "catalogDirName": "feedback",
       "owner": "HEAD",
       "root": "DATA_DIR",
@@ -395,7 +437,8 @@
       "reconciliation": "PRESERVE_OLD_LINES_AND_VERSION_NEW_LINES",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/feedback/NdjsonAppendStore.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/feedback/NdjsonAppendStore.java",
+        "modules/app-agent-api/src/main/java/io/justsearch/agent/api/encryption/StoreCatalog.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/feedback/NdjsonAppendStoreTest.java"
@@ -404,6 +447,8 @@
     },
     {
       "id": "gpl-training-triples",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["gpl-training-triples.ndjson"],
@@ -428,9 +473,12 @@
     },
     {
       "id": "watched-roots",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext JSON naming every filesystem root the user indexes - absolute paths that describe the user's disk layout. Nothing structural prevents sealing it; nothing seals it today.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["watched-roots.json"],
+      "ownedPaths": ["watched_roots.json"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "JSON envelope v1 around legacy list or unversioned object",
@@ -444,7 +492,8 @@
       "reconciliation": "MIGRATE_LEGACY_LOCATION_READ_V0_AND_WRITE_V1",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/worker/RemoteKnowledgeClient.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/worker/WatchedRootsStoreTest.java"
@@ -453,6 +502,8 @@
     },
     {
       "id": "worker-config-snapshot",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["runtime/worker-config-snapshot.json"],
@@ -481,6 +532,9 @@
     },
     {
       "id": "jobs-db",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "Only the base name is a literal (KnowledgeServer.java:394, dataDir.resolve(\"jobs.db\")). SQLite itself creates the -wal and -shm sidecars, and the triage backup is composed as the db path plus \".bak\" (SqliteJobQueue.java:1772) - none of those three names exists as a literal anywhere.",
+      "encryption": "NOT_APPLICABLE",
       "catalogDirName": "jobs.db",
       "owner": "WORKER",
       "root": "DATA_DIR",
@@ -499,7 +553,8 @@
       "status": "READY",
       "implementationSources": [
         "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqliteJobQueue.java",
-        "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqlitePathResolutionStore.java"
+        "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqlitePathResolutionStore.java",
+        "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/server/KnowledgeServer.java"
       ],
       "tests": [
         "modules/indexer-worker/src/test/java/io/justsearch/indexerworker/queue/JobQueueMigrationTest.java",
@@ -509,10 +564,13 @@
     },
     {
       "id": "index-generations",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "The index base path is resolved from configuration (ResolvedConfigBuilder.java:963, dataDir.resolve(\"index\").resolve(collection)), so the index/<collection> prefix is not a literal in the owning component. Under it the layout IS literal - IndexGenerationManager.java:58-62 declares \"indices\", \"state.json\", \"state.json.prev\" - but the sibling recovery markers are composed as <generation dir name> + \".rebuild-pending\" / \".clean-shutdown\" (IndexRecoveryMarker.java:29,37; CleanShutdownMarker.java:28,36).",
+      "encryption": "NOT_APPLICABLE",
       "catalogDirName": "index",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": ["index/generations/**", "index/state.json", "index/state.json.prev", "index.rebuild-pending", "index.clean-shutdown"],
+      "ownedPaths": ["index/*/indices/**", "index/*/state.json", "index/*/state.json.prev", "index/*/indices/*.rebuild-pending", "index/*/indices/*.clean-shutdown"],
       "recoverability": "DERIVED",
       "upgradeHandling": "REBUILD",
       "format": "Lucene generations plus state v2 and generation manifest v1",
@@ -539,9 +597,12 @@
     },
     {
       "id": "index-migration-progress",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "MigrationProgressStore.java:33 resolves \"migration_progress.json\" against an injected indexBasePath; the index/<collection> prefix is configuration-resolved, not a literal in this component.",
+      "encryption": "NOT_APPLICABLE",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": ["index/migration_progress.json"],
+      "ownedPaths": ["index/*/migration_progress.json"],
       "recoverability": "EPHEMERAL",
       "upgradeHandling": "RESET",
       "format": "JSON status v1",
@@ -564,6 +625,10 @@
     },
     {
       "id": "entity-clusters",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "Only the base name is a literal (DisambiguationService.java:50, dataDir.resolve(\"entity-clusters.db\")). SQLite creates the -wal and -shm sidecars itself, so neither name exists as a literal.",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext SQLite. entity_overrides records the user's own merge/split decisions and entity_clusters holds entity surface forms mined from the user's documents (EntityClusterSchema.java:8,15,41). Worker-owned, but the Worker is a JVM - unlike the Rust shell rows there is no reachability bar, only that nothing seals it today.",
       "owner": "WORKER",
       "root": "DATA_DIR",
       "ownedPaths": ["entity-clusters.db", "entity-clusters.db-wal", "entity-clusters.db-shm"],
@@ -581,7 +646,8 @@
       "status": "READY",
       "implementationSources": [
         "modules/worker-core/src/main/java/io/justsearch/indexerworker/disambiguation/EntityClusterStore.java",
-        "modules/worker-core/src/main/java/io/justsearch/indexerworker/disambiguation/EntityClusterSchema.java"
+        "modules/worker-core/src/main/java/io/justsearch/indexerworker/disambiguation/EntityClusterSchema.java",
+        "modules/worker-core/src/main/java/io/justsearch/indexerworker/disambiguation/DisambiguationService.java"
       ],
       "tests": [
         "modules/worker-core/src/test/java/io/justsearch/indexerworker/disambiguation/EntityClusterStoreTest.java"
@@ -590,6 +656,8 @@
     },
     {
       "id": "runtime-activation-status",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["ai/runtime-activation-state.json"],
@@ -613,6 +681,8 @@
     },
     {
       "id": "pack-import-status",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["pack-import-state.json"],
@@ -636,9 +706,11 @@
     },
     {
       "id": "runtime-manifest-history",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["runtime/runtime-manifest.v1.json", "runtime/instances/**"],
+      "ownedPaths": ["runtime/manifest.json", "runtime/instances/**"],
       "recoverability": "EPHEMERAL",
       "upgradeHandling": "RESET",
       "format": "atomic current manifest plus append-only instance history",
@@ -662,6 +734,8 @@
     },
     {
       "id": "telemetry-rrd",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["telemetry/*.rrd"],
@@ -686,6 +760,8 @@
     },
     {
       "id": "managed-ai-assets",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "AI_HOME",
       "ownedPaths": ["models/**", "native-bin/**"],
@@ -704,6 +780,7 @@
         "modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java",
         "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/PackInstallOps.java",
         "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/PackStagingOps.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AcquisitionStage.java",
         "modules/shell/src-tauri/src/lib.rs"
       ],
       "tests": [
@@ -713,6 +790,8 @@
     },
     {
       "id": "byo-ai-assets",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_EXTERNAL_AUTHORITY",
       "owner": "EXTERNAL",
       "root": "AI_HOME",
       "ownedPaths": ["models/**", "native-bin/**"],
@@ -739,6 +818,8 @@
     },
     {
       "id": "user-plugin-payloads",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_EXTERNAL_AUTHORITY",
       "owner": "EXTERNAL",
       "root": "DATA_DIR",
       "ownedPaths": ["plugins/*/manifest.json", "plugins/*/plugin.js"],
@@ -758,6 +839,8 @@
     },
     {
       "id": "shell-upgrade-intent",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_NO_JVM_CIPHER",
       "owner": "SHELL",
       "root": "DATA_DIR",
       "ownedPaths": ["upgrade/intent.v1.json"],
@@ -779,6 +862,8 @@
     },
     {
       "id": "shell-release-sequence",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_NO_JVM_CIPHER",
       "owner": "SHELL",
       "root": "DATA_DIR",
       "ownedPaths": ["upgrade/sequence.v1.json"],
@@ -800,6 +885,8 @@
     },
     {
       "id": "head-shutdown-receipt",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["upgrade/head-shutdown-receipt.v1.json"],
@@ -823,6 +910,8 @@
     },
     {
       "id": "inference-runtime-projections",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["inference-model-id.txt", "telemetry/inference-transitions.ndjson"],
@@ -848,6 +937,8 @@
     },
     {
       "id": "telemetry-and-crash-artifacts",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "DATA_DIR",
       "ownedPaths": ["telemetry/*.ndjson", "crashes/*.json", "diagnostics/slow-*.json"],
@@ -878,9 +969,12 @@
     },
     {
       "id": "worker-protocol-markers",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "The fatal-reason marker name IS a literal (WorkerFatalReasonMarker.java:29), but the two index markers are composed as <active generation dir name> + \".rebuild-pending\" / \".clean-shutdown\" against a configuration-resolved index path (IndexRecoveryMarker.java:29,37; CleanShutdownMarker.java:28,36).",
+      "encryption": "NOT_APPLICABLE",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": ["worker-fatal-reason.txt", "index.rebuild-pending", "index.clean-shutdown"],
+      "ownedPaths": ["worker-fatal-reason", "index/*/indices/*.rebuild-pending", "index/*/indices/*.clean-shutdown"],
       "recoverability": "DERIVED",
       "upgradeHandling": "RESET",
       "format": "single-use worker recovery and clean-shutdown marker files",
@@ -905,9 +999,11 @@
     },
     {
       "id": "process-locks",
+      "pathVerification": "LITERAL",
+      "encryption": "NOT_APPLICABLE",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["*.lock", "runtime/*.lock"],
+      "ownedPaths": ["*.lock"],
       "recoverability": "EPHEMERAL",
       "upgradeHandling": "RESET",
       "format": "process ownership lock and PID marker files",

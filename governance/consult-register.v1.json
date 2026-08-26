@@ -142,14 +142,19 @@
     },
     {
       "id": "workflow-agent-tool",
-      "pathIncludes": ["registry/operations/", "AgentToolsOperationCatalog"],
+      "pathIncludes": ["registry/operations/", "AgentToolsOperationCatalog", "OperationPolicy.java"],
       "region": "the agent tool / operation substrate",
-      "docs": [],
+      "docs": [
+        {
+          "path": "docs/decisions/0030-policy-on-operations-vs-mcp-hints.md",
+          "why": "this ADR is why JustSearch treats operation metadata as ENFORCED policy rather than MCP-style untrusted hints. The divergence is justified BY the enforcement, so an axis that stops being enforced invalidates the argument, not just the prose."
+        }
+      ],
       "recipe": [
         "Add/update the operation definition in OperationCatalog / AgentToolsOperationCatalog.",
         "Implement/update the handler in modules/app-services/.../registry/operations/handlers/.",
         "Confirm AgentToolEmitter projects the intended model-visible wire name + schema.",
-        "Add safety/approval metadata at the operation layer.",
+        "Declare safety/approval metadata at the operation layer, and run node scripts/ci/check-policy-axis-liveness.mjs. Tempdoc 879: every OperationPolicy axis must have a production reader outside the registry validators, and every Optional axis must be declared by at least one operation. An axis that fails is not 'not wired yet' — wire it to a consumer whose behaviour the declaration changes, or delete it (field, every declaration site, validators, wire projection, both schema copies, generated FE types, docs). There is deliberately no opt-out: an escape hatch for 'declared ahead of its consumer' is the deferral this gate exists to refuse.",
         "Update docs/explanation/22-agent-system-architecture.md.",
         "Verify: ./gradlew.bat :modules:app-agent:test :modules:app-services:test",
         "Full reference: docs/reference/contributing/common-workflows.md (Add an agent tool)."

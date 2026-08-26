@@ -138,6 +138,9 @@ publisher) and diverges where it doesn't (trusted single distribution).
 - **Operation policy is load-bearing**, not documentation. The shell
   enforces declared risk, confirm, audit, and rate-limit on
   invocation; tests verify the enforcement.
+  *(Amended 2026-08-26 — this was not true as written for three of the
+  four axes named. See "Amendment: what is actually enforced" below for
+  the corrected list and the invariant that now keeps it true.)*
 - **Single declaration source for UI + agent invocation.** An
   Operation declared once is consumed by the UI button, the agent
   tool emitter (per 429's `AgentOperationEmitter`), and any future
@@ -218,6 +221,64 @@ Rejected because:
 - **Without an enforcement decision, plugin authors cannot design
   against the contract.** They need to know whether declaring
   `risk: low` is honored or merely advisory.
+
+## Amendment: what is actually enforced (2026-08-26, tempdoc 879)
+
+The decision above stands. The claim supporting it did not.
+
+This ADR's argument is conditional: JustSearch may treat operation
+metadata as enforced policy rather than MCP-style untrusted hints
+*because it enforces it*. Take the enforcement away and the position
+reduces to "we trust the declarations because we wrote them" — which is
+the reasoning MCP's discipline exists to refuse. So the Consequences
+sentence naming risk, confirm, audit and rate-limit as enforced was not
+a stale detail; it was the load-bearing premise.
+
+Of those four, one was enforced. `confirm` was projected onto the wire
+but never consulted on the agent path. `audit` was read only by a
+build-time lint. `rateLimit` was declared by no operation, read by no
+runtime, and projected as a wire field that could never be emitted.
+`retry` — named in the record but not in that sentence — had no
+production reader at all, so `core.read-document` declared "do not
+retry a paged read" and was retried anyway. No test verified any of it.
+
+Note which rejected alternative this had become. "Defer the
+policy-vs-hints decision — ship Operations with policy fields but leave
+enforcement TBD" was rejected above as the exact failure mode ADR-0023
+defends against. It is what shipped, not by decision but by drift: each
+axis was declared with a consumer in mind, and the consumer did not
+arrive.
+
+**Corrected record.** After tempdoc 879 the enforced axes are:
+
+| axis | enforced by |
+|---|---|
+| `risk` | the `(SourceTier × RiskTier)` trust lattice and the agent gate |
+| `confirm` | a floor on the agent gate's verdict — the declaration may tighten what the lattice decided, never loosen it |
+| `audit` | `NONE` suppresses the operation-history record; `METADATA_ONLY` emits it |
+| `retry` | the agent dispatcher's retry loop reads the declared permission and count |
+| `requiredCapabilities` | the executor's capability gate and the availability projection |
+| `undoSupported` / `inverseOperationRef` | the executor's undo path and the gate's reversibility signal |
+| `capabilityFamily` | durable allow-always grant matching |
+| `advisoryClass` | typed advisory emission on completion |
+
+`rateLimit` was **deleted**, not fixed: nothing declared it and nothing
+throttled on it, so building a throttle would have served zero
+declarations. `AuditPolicy.FULL_PAYLOAD` was deleted for the same reason.
+The Context section's Java snippet above is retained as the historical
+record of the 2026-04-30 shape and no longer matches the record — it
+also shows a separate `confirmTextKey` field that was folded into
+`ConfirmStrategy.Typed` before this amendment.
+
+**What keeps this true.** `scripts/ci/check-policy-axis-liveness.mjs`
+fails the build when an `OperationPolicy` axis has no production reader
+outside the registry validators, or when an `Optional` axis is declared
+by no operation. It has no opt-out, deliberately: an escape hatch for
+"declared ahead of its consumer" is the deferral that produced this
+amendment. The UNTRUSTED_PLUGIN branch described above remains
+unimplemented (it throws), so its hint-not-policy handling is a design
+commitment rather than shipped behaviour — the same distinction this
+amendment exists to keep visible.
 
 ## References
 
