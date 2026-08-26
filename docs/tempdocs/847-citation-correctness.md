@@ -1471,3 +1471,9 @@ tests do that, one cause each. It covers **L1 partially** (a real ask over the i
 not the list-shaped prompt S6 asks for) and **L2** (reload: marks and panel come back). It does
 **not** cover **L3** (the cosine-fallback arm — and could not have on this build, which emits no
 `scorer` at all), nor the ui-shot step S6 calls for. Those remain open.
+
+## Open items routed from the retired observations store (tempdoc 872, 2026-08-26)
+
+Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from shards on origin/main at the 872 merge.
+
+- [ ] 847 anchoring: a sentence the model quoted inside backticks gets its verified mark woven INSIDE the <code> span (live, ask 1 of 869 §4.4); and a list-shaped answer with 8 verified refs rendered 1 mark — anchoring-failure class, not 869 — `modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts` decorateCitations (2026-08-26)

@@ -138,15 +138,14 @@ function branchChangedFiles(cwd) {
 
 export const HINT = [
   'History hygiene (ADR-0045 axis-2, tempdoc 653): this branch changes exactly ONE',
-  'working-history file (docs/tempdocs/** or docs/observations*) and nothing else.',
+  'working-history file (docs/tempdocs/**) and nothing else.',
   'Public `main` is a curated narrative, so a lone working-history note should not',
   'become its own standalone PR/commit. Prefer to either:',
   '  - ride it along in the same PR as the code it documents, or',
-  '  - batch it into the next periodic `docs(tempdocs): …` /',
-  '    `chore(observations): fold …` PR.',
+  '  - batch it into the next periodic `docs(tempdocs): …` PR.',
   'A prior standalone tempdoc PR is not a precedent — re-qualify on the rule, not',
-  'on what an earlier PR did. Multi-file batches (a shard fold, several tempdoc',
-  'edits) and canonical-doc updates are durable units and do NOT trigger this.',
+  'on what an earlier PR did. Multi-file batches (several tempdoc edits) and',
+  'canonical-doc updates are durable units and do NOT trigger this.',
   'Rationale: docs/reference/contributing/agent-guide.md (History publication).',
 ].join('\n');
 

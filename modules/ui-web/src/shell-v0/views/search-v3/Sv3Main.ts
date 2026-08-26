@@ -145,6 +145,7 @@ import {
 } from './sv3-branch.js';
 import {
   projectSv3AnswerFrame,
+  sv3AnswerFrame,
   sv3ReceiptTail,
   sv3SourcesTrigger,
   sv3SourcesTriggerCount,
@@ -650,6 +651,27 @@ export class Sv3Main extends JfElement {
            token sheet; 'Sv3Main.imports.test.ts' asserts the composite, both themes, both tiers. */
         --md-cite-weak-color: var(--sv3-cite-weak);
         --md-cite-ungrounded-color: var(--sv3-cite-ungrounded);
+        /* Tempdoc 869 C3 — the two tiers the renderer states POSITIVELY now that "no class" is
+           neutral rather than strongest. The GROUNDED ink is the value this window already painted
+           (its '--text-tint' re-point four rules above resolves to exactly this), named here because
+           the tier moved out of the base rule and a bridge that skipped it would silently hand the
+           strongest tier the SOURCE tier's neutral. The SOURCE ink is the body foreground: a tier-2
+           mark is the model's own attribution, so it wears the window's ordinary text ink and no
+           honesty tier's colour — and, unlike the renderer's '--text-secondary' default, which this
+           window re-points to '--muted-foreground' (~4.4:1 in light, under AA for a 12px numeral),
+           it is a colour a reader can actually read on a control they are meant to click. */
+        --md-cite-grounded-color: var(--info-foreground);
+        --md-cite-source-color: var(--foreground);
+        /* Tempdoc 869 §3.6 — the MUTED ref's ink, and the one bridge line that fixes a measured
+           failure rather than preserving a value. The renderer's default is '--text-secondary',
+           which this bridge re-points to '--muted-foreground' four rules above; with the (now
+           removed) 'opacity: .7' on top, a muted '[n]' measured ~3.0:1 dark / ~2.7:1 light in this
+           window. Without the opacity '--muted-foreground' alone still misses AA in light, so the
+           ink is lifted toward the body foreground here. Muting is not hiding: this idiom is TEXT
+           the reader is meant to read as "the model wrote this, nothing verified it", and 869 C2
+           widens it from the ungrounded frame to every sourced answer. The mix ratio is the
+           audit's to confirm; the hook is the structure. */
+        --md-pseudo-cite-color: color-mix(in oklch, var(--muted-foreground) 70%, var(--foreground));
         --md-cite-region-bg: var(--sv3-selected-region);
         --md-cite-pad-x-rest: 0.25em;
         --md-cite-pad-x: 0.25em;
@@ -1923,7 +1945,12 @@ export class Sv3Main extends JfElement {
                   ? html`<span class="answer-empty" data-testid="sv3-turn-answer-empty"
                       >${TURN_EMPTY_ANSWER}</span
                     >`
-                  : html`<jf-markdown-block
+                  : // Tempdoc 869 C2b — `frame` + `.sourceCount` are the SAME frame the tail line
+                    // words (`sv3AnswerFrame`, one computation), so the block and the receipt under
+                    // it cannot disagree about what this answer stood on. Without them the block
+                    // rendered at the renderer's default `'grounded'` and let an unverified `[n]` the
+                    // model wrote pose as a reference on a sourced answer.
+                    html`<jf-markdown-block
                       class="sv3-markdown"
                       prose
                       data-testid="sv3-turn-markdown"
@@ -1931,6 +1958,8 @@ export class Sv3Main extends JfElement {
                       .text=${turn.answer}
                       ?is-streaming=${streaming}
                       .citations=${[...(turn.evidence?.marks ?? [])]}
+                      frame=${sv3AnswerFrame(turn) ?? 'grounded'}
+                      .sourceCount=${turn.evidence?.sources.length ?? 0}
                       @citation-select=${this.onCitationSelect}
                     ></jf-markdown-block>`}
               </div>
@@ -2739,12 +2768,18 @@ export class Sv3Main extends JfElement {
       // rule `Sv3Turn.evidence` and `assistantRecordId` already follow. The caller decides which
       // item is terminal, because this function sees one item and cannot know.
       return html`<div class="answer" data-testid="sv3-run-text" data-item-id=${item.id}>
+        ${/* Tempdoc 869 C2b — the frame and the source count ride the SAME terminal-only rule as the
+            marks above them: a non-terminal step's prose is not the answer, so framing it would be a
+            claim about text this item does not carry. The default `'grounded'` + count 0 leave such
+            an item exactly as it renders today. */ ''}
         <jf-markdown-block
           class="sv3-markdown"
           prose
           data-turn-id=${turn.id}
           .text=${item.text}
           .citations=${terminal ? [...(turn.evidence?.marks ?? [])] : []}
+          frame=${terminal ? (sv3AnswerFrame(turn) ?? 'grounded') : 'grounded'}
+          .sourceCount=${terminal ? (turn.evidence?.sources.length ?? 0) : 0}
           @citation-select=${this.onCitationSelect}
         ></jf-markdown-block>
       </div>`;

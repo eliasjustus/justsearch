@@ -320,3 +320,10 @@ regression to embedding lists in cards) while Open in Search sees actual use.
 detail *in the transcript* (repeated L3 round-trips for a single glance), the
 principle is wrong for this surface and L2 should carry more — measure, then
 widen, rather than pre-widening.
+
+## Open items routed from the retired observations store (tempdoc 872, 2026-08-26)
+
+Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from shards on origin/main at the 872 merge.
+
+- [ ] UnifiedChatView.renderToolActivity's record-hydrated tool cards get no evidence-path set (ToolCallCard.evidencePaths passed null) — full per-turn evidence wiring would need turn-boundary scanning like sv3-record.ts's Building; deferred, sv3 is the promoted surface — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts` toolActivityEvidencePaths (2026-08-26)
+- [ ] composeToolLabel renders 'Search Index'/'Read Document' raw tool names in the flattened 871 card header; design copy wanted verb form ('Searched ...') — shared 565 §12.3.B authority, needs its own small pass — `modules/ui-web/src/shell-v0/display/toolLabeling.ts` (2026-08-26)

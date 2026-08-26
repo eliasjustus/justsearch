@@ -290,6 +290,10 @@ const MD_PROSE_RAMP = ['--font-size-xl', '--font-size-lg', '--font-size-md'] as 
  * whose containment proof enumerates its fifteen names exactly.
  */
 const MD_CITE = [
+  // Tempdoc 869 C3 — the two tiers the renderer states POSITIVELY. `--md-cite-grounded-color` is the
+  // strongest tier's ink, moved off the base `.cite-ref` rule so that "no grounding class" resolves
+  // to neutral instead of strongest; `--md-cite-source-color` is that neutral, on the base rule.
+  '--md-cite-grounded-color',
   '--md-cite-pad-x',
   '--md-cite-pad-x-rest',
   '--md-cite-radius',
@@ -298,6 +302,7 @@ const MD_CITE = [
   '--md-cite-region-pad-x',
   '--md-cite-selected-bg',
   '--md-cite-selected-edge',
+  '--md-cite-source-color',
   '--md-cite-ungrounded-color',
   '--md-cite-weak-color',
 ] as const;
@@ -344,6 +349,16 @@ describe('the three imported components read NO token the window leaves unbridge
             'defaults on the renderer\'s own `:host([prose])`, and the ramp steps its headings read ' +
             'directly — applies to no element in the trace. Re-pointing them from this bridge would ' +
             'dress a surface that cannot render.',
+        ),
+        ...reasons(
+          ['--md-pseudo-cite-color'],
+          'the MUTED-ref ink (tempdoc 869 §3.6) is UNREACHABLE here for the same reason one step ' +
+            'further out: `ReasoningBlock.ts:181` passes no `.citations`, no `frame` and no ' +
+            '`.sourceCount`, so the block frames itself `grounded` over zero sources and BOTH mute ' +
+            'arms are vacuous — the ungrounded arm because the frame is not it, the sourced arm ' +
+            'because nothing resolves. No `.pseudo-cite` element exists in the trace to ink. The ' +
+            'ANSWER blocks, which do reach it, are inside the `.sv3-markdown` bridge, where it is ' +
+            're-pointed.',
         ),
         ...reasons(
           MD_CITE,
@@ -551,6 +566,12 @@ const CITE_BRIDGE: Readonly<Record<string, string>> = {
   '--md-cite-selected-edge': 'var(--sv3-selected-edge)',
   '--md-cite-weak-color': 'var(--sv3-cite-weak)',
   '--md-cite-ungrounded-color': 'var(--sv3-cite-ungrounded)',
+  // Tempdoc 869 C3 — the two POSITIVE tiers. `--md-cite-grounded-color` restates the ink this
+  // window already painted through `--text-tint`; `--md-cite-source-color` is the tier-2 mark's
+  // neutral, the body foreground rather than the renderer's `--text-secondary` default (which this
+  // window re-points to `--muted-foreground`, under AA for a 12px glyph).
+  '--md-cite-grounded-color': 'var(--info-foreground)',
+  '--md-cite-source-color': 'var(--foreground)',
   '--md-cite-region-bg': 'var(--sv3-selected-region)',
   '--md-cite-pad-x-rest': '0.25em',
   '--md-cite-pad-x': '0.25em',
