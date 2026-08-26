@@ -1,10 +1,11 @@
 # 867 — Citation mark species: model-authored refs vs verified marks
 
 ```
-status:  THEORIZED (2026-08-26) — investigation + research + theorization appended §1–§6; no design freeze. No design freeze, no
-         implementation, no deliverable beyond this tempdoc's own growth. The owner is
-         theorizing in this dedicated thread; your job is to build the decision surface,
-         not to decide.
+status:  DECIDED (2026-08-26) — family A, strip; implemented in the same PR. §1–§6 are the
+         decision surface (investigation, research, option lattice) and stand as written;
+         §7 is the owner's decision and what it supersedes. An unverified model-authored
+         ref that resolves to a source is REMOVED from the prose; the `ungrounded` frame's
+         mute (577 Move 3) is unchanged; 869's sourced-arm mute is superseded (869 §4.5).
 created: 2026-08-26
 follows: 847 (citation correctness — the "marks follow the cross-encoder, not the model"
          policy), 849 (evidence reader + retrieved-vs-received idiom), 859 §7 (the
@@ -454,3 +455,61 @@ line the legend and audit must pay.
    `sourced`-with-zero-cites frame (§1.2 — arguably a 577 Move 3 gap, a bug not a design); the
    tier-2 colour borrow (§1.6); register `MarkdownBlock.ts` (§1.5).
 5. **Measurement first?** §4.8 — one eval pass to weight S1–S4 before choosing ink.
+
+---
+
+## 7. Decision (2026-08-26) — family A, strip
+
+**The owner chose family A.** A model-authored `[n]` that resolves to a real source
+(`1 <= n <= sourceCount`) and was not rendered as a verified label is **removed from the prose**.
+Not muted, not annotated, not corrected to the verifier's number: removed. The tier-2 upgrade is
+untouched — a literal whose label the verifier stood behind still becomes that label's mark, in the
+literal's own place — and the `ungrounded` frame keeps 577 Move 3's mute exactly as it was, because
+its predicate (any `[n]` or `(n)`, prose numbers included) is too broad to delete text on and that
+frame carries no source list to resolve a ref against. Implemented in the same PR
+(`MarkdownBlock.normalizeLiteralCitationTokens`, the one pass that already owned a literal's fate,
+using §3.3's whitespace rule so a strip closes the gap the model's own spacing left).
+
+**Why.** Three reasons, in the order they weighed. (i) *Cleanest prose* — every other family adds
+ink to the answer to describe something that failed, and the reader who came for the answer pays it
+on every sentence. (ii) *It is the industry default* — §5 and §5b found presence/absence to be the
+uniform answer across Perplexity, ChatGPT, Copilot, NotebookLM, Grok, Le Chat and the component
+libraries, and Vertex's Check Grounding drops a below-threshold citation silently; the one product
+with a disagreement idiom (Gemini's double-check) puts it in a separate, opt-in, post-hoc pass over
+sentences, not on the answer's own refs. Departing from that convention is affordable only if the
+departure buys something. (iii) *It did not* — the claim trail the mute preserved (§3.1's cost line
+for family A: "the reader loses the model *thought* source 2 supported this") was judged not worth
+the ink. It is a *diagnostic* signal about model quality, and a reader mid-answer is not debugging
+the model; §4.8's unmeasured frequencies would have told us how often it fires, but not that a
+reader wants it.
+
+**What this orphans.** 869 C2's sourced arm — the `.pseudo-cite` mute of a resolvable, unverified
+ref — was the pre-decision floor (a bug fix for the muting being unreachable in the frame that
+needed it, §1.2), and is now superseded and deleted; see 869 §4.5. With it go the frame-derived
+predicate (`pseudoCiteRule` — the neutralizer is single-arm again), the `data-claimed-label`
+attribute, and with that attribute **option D's DOM anchor**: 869 §4.1(6) had kept it as the hook a
+later "annotate the disagreement" pass would read, and family D now has no rendered artifact to
+annotate on the answer surface (it would have to re-derive the comparison at render time, which
+§3.2 says is cheap — the hook is gone, the *information* is not). The **S3 override** (§2) now
+renders as the verified mark alone: the model's losing claim leaves no trace in the prose, which is
+the honest consequence of "marks follow the cross-encoder" carried all the way through the
+presentation. `.pseudo-cite`, its `--md-pseudo-cite-color` bridge and the 869 §3.6 contrast work
+stay — the ungrounded arm still uses them.
+
+**What stays open.** *Nothing on the mark.* The species question this tempdoc was opened for is
+closed by the decision: there is one mark idiom for verified attribution (tier 1 with its grounding
+class, tier 2 colourless — 869 C3), and no second idiom for anything the model claimed. **Q5 (panel
+wording) is closed by absence**: a stripped ref has no panel state, because the reader never meets
+the claim, so "cited by the model · not verified" would describe something the interface does not
+show; the `SourceExamination` axis keeps its four members and the "not cited" wording keeps its
+(i)-half carve-out from 865 §7.3. Q4's mechanical carve-outs shipped in 869. §4.8's measurement
+(how often S1–S4 occur) is no longer a prerequisite for anything — it would now be diagnostics for
+the *model*, not input to a rendering decision, and belongs to eval work if it is ever wanted.
+
+**Risk accepted, stated plainly.** A strip deletes the reader's text on the strength of one
+inference: that `[n]` in a sourced answer means the n-th source (§4.2 — a numbering-space agreement
+between `ContextBudgeter` and `citationResolve`, not a pinned contract). That is why the predicate
+is narrow — an out-of-range `[7]` and a parenthesised `(2)` stay, `sourceCount = 0` strips nothing,
+code and fences are skipped, and the `ungrounded` frame is excluded — and why the settled DOM
+re-derives from `text` when the inputs change, so a late-arriving citation gets its literal back
+(869 F4b, extended: a strip leaves no class in the DOM, so the block now records that it made one).

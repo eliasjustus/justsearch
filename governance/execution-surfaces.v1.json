@@ -401,7 +401,7 @@
       "lang": "ts",
       "path": "modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts",
       "guard": "test:MarkdownBlock.citationProjection",
-      "note": "Tempdoc 869 §2.5: the renderer that projects `Citation` (← ContextCitation via `claimsToCitations`) into the answer's inline marks — the verified `.cite-ref` mark, the tier-2 upgrade of a model-authored literal, and the muted `.pseudo-cite` a frame refuses to let pose as a reference. 869's invariants I-1 (mark position and tier colour) and I-2 (which citation-shaped text is reachable by the mute, and that tier 2 runs first) live in the guard."
+      "note": "Tempdoc 869 §2.5: the renderer that projects `Citation` (← ContextCitation via `claimsToCitations`) into the answer's inline marks — the verified `.cite-ref` mark, the tier-2 upgrade of a model-authored literal, and (tempdoc 867 §7, the owner's decision) the REMOVAL from the prose of a model ref that resolves to a source no citation stands behind. The muted `.pseudo-cite` is now the `ungrounded` frame's alone. 869's invariants I-1 (mark position and tier colour) and I-2 (which citation-shaped text each frame may touch, and that a verified label is upgraded rather than stripped) live in the guard."
     },
     {
       "id": "evidence-fe-record-evidence",

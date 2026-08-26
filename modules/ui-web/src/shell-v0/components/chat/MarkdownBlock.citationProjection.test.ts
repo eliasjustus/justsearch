@@ -8,12 +8,13 @@
  * sentence span), the model (the literal `[n]` it wrote), and the frame (577 Move 3) — and every
  * class it mints must be traceable to exactly one of them:
  *
- *  - I-2 REACHABILITY (C2): which citation-shaped text the mute may touch, in each frame. A ref that
- *    resolves to a source and was NOT verified is muted on a SOURCED answer too — that is the whole
- *    carve-out; an unresolvable `[7]`, a parenthesised `(2)`, and a label the weave rendered are
- *    prose or evidence and stay untouched.
- *  - I-2 ORDER: a literal the tier-2 upgrade claims is never also muted.
- *  - The muted span SAYS what it is — colour is not the carrier.
+ *  - I-2 REACHABILITY (C2, redisposed by 867 §7): which citation-shaped text each frame may touch,
+ *    and how. A ref that resolves to a source and was NOT verified is REMOVED from a sourced
+ *    answer's prose — the owner's decision (867 family A), superseding 869's mute of the same ref;
+ *    an unresolvable `[7]`, a parenthesised `(2)`, and a label the weave rendered are prose or
+ *    evidence and stay. The `ungrounded` frame keeps 577's mute, predicate and wording unchanged.
+ *  - I-2 ORDER: a literal the tier-2 upgrade claims is never stripped instead.
+ *  - The muted span (ungrounded only) SAYS what it is — colour is not the carrier.
  *  - I-1 POSITION (C1): the model's literal is transparent to the weave and its whitespace is the
  *    model's, so a mark lands where the same text would put it with no literal written at all, and
  *    a strip leaves the prose the model's spacing rather than the renderer's.
@@ -104,8 +105,8 @@ const ANCHORED = 'The kernel is a shared substrate.';
 /** A sentence the answer does not contain: its label reaches the reader only through tier 2. */
 const UNANCHORED = 'A sentence this answer never wrote.';
 
-describe('I-2 reachability — the mute reaches a SOURCED answer, and only what resolves', () => {
-  it('mutes an unverified resolvable ref and leaves prose, out-of-range refs and marks alone', async () => {
+describe('I-2 reachability — the strip reaches a SOURCED answer, and only what resolves', () => {
+  it('removes an unverified resolvable ref and leaves prose, out-of-range refs and marks alone', async () => {
     // Five sources; the verifier stood behind two labels (5 anchored to a sentence, 4 reaching the
     // reader through the tier-2 upgrade of the model's own literal). The answer also carries `[2]`
     // (resolves to source 2 — nothing verified it), `[7]` (resolves to nothing: there is no seventh
@@ -116,39 +117,35 @@ describe('I-2 reachability — the mute reaches a SOURCED answer, and only what 
       sourceCount: 5,
     });
 
-    const spans = muted(el);
-    expect(spans.map((s) => s.textContent)).toEqual(['[2]']);
-    expect(spans[0]!.dataset.claimedLabel).toBe('2');
-    // The span SAYS what it is, in both channels — the muted colour is never the only carrier.
-    // 869 F4a — the wording states the ABSENCE of a verification, not a verifier's negative
-    // verdict: this arm also reaches the answers where nothing examined the sentence at all.
-    expect(spans[0]!.title).toBe('The model cited source 2; this citation was not verified');
-    expect(spans[0]!.getAttribute('aria-label')).toBe(spans[0]!.title);
-    // …and it stays inert: a mute is text with a name, not a control.
-    expect(spans[0]!.getAttribute('role')).toBeNull();
-    expect(spans[0]!.getAttribute('tabindex')).toBeNull();
+    // THE DECISION (867 §7, family A). `[2]` is gone from the prose — not greyed, not annotated.
+    // Nothing muted survives on a sourced answer at all: the mute is the ungrounded frame's now.
+    expect(muted(el)).toHaveLength(0);
+    expect(content(el).textContent).not.toContain('[2]');
+    // …and it took the space the literal was holding, not the comma that closes the clause.
+    expect(content(el).textContent).toContain('The model wrote, then');
 
     // Untouched, both of them — an unresolvable label and a parenthesised number are prose here.
+    // This is the whole safety of a strip: it deletes only what the source list answers for.
     expect(content(el).textContent).toContain('[7]');
     expect(content(el).textContent).toContain('(2)');
 
     // The verified labels are MARKS: 5 woven at its sentence, 4 upgraded from the literal.
     const refs = [...content(el).querySelectorAll('.cite-ref')].map((r) => r.textContent);
     expect(refs.sort()).toEqual(['4', '5']);
-    expect(spans.some((s) => s.textContent?.includes('4'))).toBe(false);
     el.remove();
   });
 
-  it('mutes nothing when the block was given no source list (the default, and every citation-less site)', async () => {
-    // `sourceCount = 0` makes the sourced arm vacuous BY CONSTRUCTION: nothing resolves, so nothing
-    // is claimed. This is what keeps the five citation-less consumers rendering exactly as they did.
+  it('strips nothing when the block was given no source list (the default, and every citation-less site)', async () => {
+    // `sourceCount = 0` makes the strip vacuous BY CONSTRUCTION: nothing resolves, so nothing is
+    // claimed and nothing is deleted. This is what keeps the citation-less consumers rendering
+    // exactly as they did — and it is the direction a strip has to fail in.
     const el = await mounted({ text: 'A grounded answer [2].' });
     expect(muted(el)).toHaveLength(0);
     expect(content(el).textContent).toContain('[2]');
     el.remove();
   });
 
-  it('mutes nothing while the answer is still streaming — neither pass runs before it settles', async () => {
+  it('changes nothing while the answer is still streaming — no pass runs before it settles', async () => {
     const el = await mounted({
       text: `${ANCHORED} The model wrote [2].`,
       citations: [mark(ANCHORED, 5, 0)],
@@ -157,16 +154,18 @@ describe('I-2 reachability — the mute reaches a SOURCED answer, and only what 
     });
     expect(muted(el)).toHaveLength(0);
     expect(content(el).querySelectorAll('.cite-ref')).toHaveLength(0);
+    // The literal is still there mid-stream: a ref the reader watches being typed is not yet a
+    // claim the block can settle, and deleting text under a live stream is the visible version.
     expect(content(el).textContent).toContain('[2]');
     el.remove();
   });
 });
 
-describe('I-2 order — a literal the tier-2 upgrade claims is never also muted', () => {
-  it('leaves zero muted spans when the only literal is one tier 2 upgrades', async () => {
-    // The outcome is secured twice over, which is the point: the predicate excludes a label the
-    // block rendered, AND the pass runs after `decorateCitations`. Reversing the order would hand
-    // the upgrade a literal already wrapped in a span it does not skip.
+describe('I-2 order — a literal the tier-2 upgrade claims is never stripped instead', () => {
+  it('upgrades the only literal rather than removing it', async () => {
+    // The outcome is secured by the ORDER of the two fates inside one pass: a label with a citation
+    // is upgraded (or deduped against a mark already rendered), and only a label no citation answers
+    // for is removed. A pass that asked "was it verified?" second would delete the evidence.
     const el = await mounted({
       text: 'The model wrote [4] and nothing else worth citing.',
       citations: [mark(UNANCHORED, 4, 0)],
@@ -174,11 +173,12 @@ describe('I-2 order — a literal the tier-2 upgrade claims is never also muted'
     });
     expect(muted(el)).toHaveLength(0);
     expect([...content(el).querySelectorAll('.cite-ref')].map((r) => r.textContent)).toEqual(['4']);
+    expect(text(el)).toBe('The model wrote 4 and nothing else worth citing.\n');
     el.remove();
   });
 });
 
-describe('the ungrounded frame keeps its broad rule (577 Move 3, unchanged)', () => {
+describe('the ungrounded frame keeps its broad rule (577 Move 3, unchanged by 867 §7)', () => {
   it('mutes every citation-shaped token and names each one', async () => {
     const el = await mounted({
       text: 'JustSearch uses a 4-tier strategy [1] and chaos testing (2).',
@@ -190,10 +190,22 @@ describe('the ungrounded frame keeps its broad rule (577 Move 3, unchanged)', ()
       expect(span.title).toBe('Citation-shaped text in an answer that is not grounded in your files');
       expect(span.getAttribute('aria-label')).toBe(span.title);
     }
-    // Only a BRACKETED token claims a label; `(2)` is a number the model happened to bracket.
-    expect(spans[0]!.dataset.claimedLabel).toBe('1');
-    expect(spans[1]!.dataset.claimedLabel).toBeUndefined();
     expect(content(el).querySelectorAll('.cite-ref')).toHaveLength(0);
+    el.remove();
+  });
+
+  it('mutes rather than strips even when a source list would resolve the ref', async () => {
+    // THE FRAME BOUNDARY, stated rather than left to the default. `sourceCount` is what makes a ref
+    // resolvable, and the strip is off here anyway: this frame's predicate cannot tell a ref from a
+    // bracketed number (`(2)` is muted beside `[1]`), and a predicate that broad may grey text, never
+    // delete it. The text the model wrote is still all there.
+    const el = await mounted({
+      text: 'JustSearch uses a 4-tier strategy [1] and chaos testing (2).',
+      frame: 'ungrounded',
+      sourceCount: 5,
+    });
+    expect(muted(el).map((s) => s.textContent)).toEqual(['[1]', '(2)']);
+    expect(text(el)).toBe('JustSearch uses a 4-tier strategy [1] and chaos testing (2).\n');
     el.remove();
   });
 });
@@ -373,7 +385,7 @@ describe('the tier ink is a POSITIVE class — absence is neutral, not strongest
 
 /* ── VERBATIM CONTENT — neither pass may edit or annotate what the reader must read exactly ──── */
 
-describe('code is not prose — the mute and the weave both stop at a fence (869 F1/F3)', () => {
+describe('code is not prose — the strip and the weave both stop at a fence (869 F1/F3)', () => {
   /** An inline code span and a fenced block, each carrying a subscript the language wrote. */
   const CODE_ANSWER = [
     'Use `argv[1]` here, and the model wrote [1] in prose.',
@@ -383,24 +395,20 @@ describe('code is not prose — the mute and the weave both stop at a fence (869
     '```',
   ].join('\n');
 
-  it('F1: leaves a subscript inside code alone while muting the same token in prose', async () => {
-    // `sourceCount: 5` makes 1 and 2 both "resolvable", and nothing verified either — so the mute's
+  it('F1: leaves a subscript inside code alone while removing the same token from prose', async () => {
+    // `sourceCount: 5` makes 1 and 2 both "resolvable", and nothing verified either — so the strip's
     // predicate is TRUE for `argv[1]` and `items[2]` as surely as for the prose `[1]`. What has to
     // stop it is the walker's skip, not the predicate: a frame is a statement about the answer's
-    // prose, and a code sample is quoted, not asserted. Before this the renderer wrapped a fragment
-    // of the reader's own code in "this citation was not verified".
+    // prose, and a code sample is quoted, not asserted. Under 869's mute this wrapped a fragment of
+    // the reader's own code in "not verified"; under 867's strip the same miss would DELETE it.
     const el = await mounted({ text: CODE_ANSWER, sourceCount: 5 });
 
-    for (const scope of content(el).querySelectorAll('pre, code')) {
-      expect(scope.querySelectorAll('.pseudo-cite'), 'a muted span inside code').toHaveLength(0);
-    }
-    expect(content(el).textContent).toContain('argv[1]');
-    expect(content(el).textContent).toContain('items[2]');
+    expect(content(el).querySelector('code')!.textContent).toContain('argv[1]');
+    expect(content(el).querySelector('pre')!.textContent).toContain('items[2]');
 
-    // …and the prose token in the SAME answer is muted, so this is a skip, not a dead pass.
-    const spans = muted(el);
-    expect(spans.map((s) => s.textContent)).toEqual(['[1]']);
-    expect(spans[0]!.closest('pre, code')).toBeNull();
+    // …and the prose token in the SAME answer is gone, so this is a skip, not a dead pass.
+    expect(muted(el)).toHaveLength(0);
+    expect(text(el)).toContain('Use argv[1] here, and the model wrote in prose.');
     el.remove();
   });
 
@@ -433,9 +441,10 @@ describe('code is not prose — the mute and the weave both stop at a fence (869
 describe('the cited sentence ends where the verifier stopped reading (869 F2)', () => {
   it('closes the span before a skipped literal, and lands the mark after it', async () => {
     // The literal-transparent extension moved ONE number, and the span rode along on it: the mark
-    // correctly cleared `[9].`, and the `.cite-sentence` grew to cover the literal too. The muted
-    // span the neutralizer then made of `[9]` rendered INSIDE the grounded sentence — one span
-    // saying "the cross-encoder scored this text" wrapped around another saying "not verified".
+    // correctly cleared `[9].`, and the `.cite-sentence` grew to cover the literal too — a span
+    // saying "the cross-encoder scored this text" over text it never saw. 867 §7 removes the `[9]`
+    // rather than muting it, and the span boundary is still the verifier's: what it wraps is the
+    // scored sentence, with or without a literal sitting after it.
     const el = await mounted({
       text: 'The kernel is a shared substrate [9]. Next.',
       citations: [mark('The kernel is a shared substrate', 1, 0)],
@@ -444,18 +453,15 @@ describe('the cited sentence ends where the verifier stopped reading (869 F2)', 
 
     const sentence = content(el).querySelector<HTMLElement>('.cite-sentence')!;
     expect(sentence.textContent).toBe('The kernel is a shared substrate');
-    expect(sentence.querySelectorAll('.pseudo-cite'), 'a mute inside a grounded span').toHaveLength(
-      0,
-    );
 
-    const claimed = content(el).querySelector<HTMLElement>('.pseudo-cite[data-claimed-label="9"]')!;
-    expect(claimed, 'the unverified ref is still muted').toBeTruthy();
-    expect(claimed.closest('.cite-sentence')).toBeNull();
+    // The unverified ref is GONE, and it took its own leading space so the period closes the word.
+    expect(muted(el)).toHaveLength(0);
+    expect(text(el)).toBe('The kernel is a shared substrate.1 Next.\n');
 
-    // The mark keeps its 847 position: after the sentence's own period, past the literal.
+    // The mark keeps its 847 position: after the sentence's own period, past where the literal was.
     const ref = content(el).querySelector<HTMLElement>('.cite-ref')!;
     expect(ref.textContent).toBe('1');
-    expect(content(el).textContent).toContain('.1 Next.');
+    expect(ref.closest('.cite-sentence')).toBeNull();
     el.remove();
   });
 
@@ -486,39 +492,40 @@ describe('the cited sentence ends where the verifier stopped reading (869 F2)', 
   });
 });
 
-/* ── F4b — the mute is a claim about the CURRENT inputs, so it must be withdrawable ───────────── */
+/* ── F4b — the strip is a claim about the CURRENT inputs, so it must be undoable ───────────────── */
 
-describe('every settle re-derives the muting from scratch (869 F4b)', () => {
+describe('every settle re-derives the strip from scratch (869 F4b, 867 §7)', () => {
   /** The cold-load shape: five sources known, the matcher's citations not attached yet. */
   const COLD: Mount = { text: 'Alpha [4] beta [2].', sourceCount: 5 };
   /** The same block once the evidence lands: label 4 verified, label 2 never was. */
   const EVIDENCE = (): MarkdownCitation[] => [mark(UNANCHORED, 4, 0)];
 
-  it('withdraws a mute when the citation that answers it arrives', async () => {
+  it('restores a stripped literal and mints its mark when the citation that answers it arrives', async () => {
     const el = await mounted(COLD);
-    expect(muted(el).map((s) => s.textContent)).toEqual(['[4]', '[2]']);
+    // Both refs resolve and neither is verified yet, so the cold answer carries neither.
+    expect(text(el)).toBe('Alpha beta.\n');
 
     el.citations = EVIDENCE();
     await settled(el);
 
-    // THE INVARIANT. The mute is an assertion about the citation set the block holds NOW; a mute
-    // that cannot be withdrawn is an assertion about a state the block has already left. Worse, the
-    // tier-2 upgrade then rewrote the literal in place — inside the span it was wrapped in — so a
-    // live, clickable mark shipped nested in "this citation was not verified".
+    // THE INVARIANT, and what makes a strip harder than a mute: the removed text is not in the DOM
+    // to be un-removed, so the settle has to re-derive the content from `text` before the tier-2
+    // upgrade can find the literal at all. A strip that could not be undone would silently cost the
+    // reader the very mark the newly-arrived evidence had earned.
     const refs = [...content(el).querySelectorAll<HTMLElement>('.cite-ref')];
     expect(refs.map((r) => r.textContent)).toEqual(['4']);
     expect(refs[0]!.dataset.citeTier).toBe('source');
-    expect(refs[0]!.closest('.pseudo-cite'), 'a live mark inside a muted span').toBeNull();
-    expect(content(el).textContent).not.toContain('[4]');
-    // `[2]` is still unverified, so it is still muted — the pass re-derived, it did not just clear.
-    expect(muted(el).map((s) => s.textContent)).toEqual(['[2]']);
+    // `[2]` is still unverified, so it is still stripped — the pass re-derived, it did not just
+    // restore the text.
+    expect(text(el)).toBe('Alpha 4 beta.\n');
+    expect(muted(el)).toHaveLength(0);
     el.remove();
   });
 
   it('F9: a block that receives its evidence late renders identically to one that had it at mount', async () => {
     // The cold-load parity check. Two arrival orders, one DOM — which is the whole content of
     // "the settled passes are a pure function of the current inputs". Before F4b the late arrivals
-    // carried the first paint's muting forward, so the reloaded turn and the live one disagreed
+    // carried the first paint's edits forward, so the reloaded turn and the live one disagreed
     // about the same answer: the 561 P-A divergence shape, one layer down.
     const atMount = await mounted({ ...COLD, citations: EVIDENCE() });
     const expected = content(atMount).innerHTML;
@@ -531,9 +538,10 @@ describe('every settle re-derives the muting from scratch (869 F4b)', () => {
     expect(content(textFirst).innerHTML).toBe(expected);
 
     // (b) the real cold load: the retrieval's source list is known at first paint, the matcher's
-    // citations only at AgentDone — so the first settle DOES mute, and the second must undo it.
+    // citations only at AgentDone — so the first settle DOES strip, and the second must take it
+    // back. NON-VACUITY: that first settle removed both literals before the evidence landed.
     const countFirst = await mounted(COLD);
-    expect(muted(countFirst).length).toBeGreaterThan(0);
+    expect(text(countFirst)).toBe('Alpha beta.\n');
     countFirst.citations = EVIDENCE();
     await settled(countFirst);
     expect(content(countFirst).innerHTML).toBe(expected);
@@ -598,27 +606,28 @@ describe('a decoration input that changes after the settle re-derives the conten
   const ONE = (): MarkdownCitation[] => [mark(ANCHORED, 1, 0)];
   const BOTH = (): MarkdownCitation[] => [mark(ANCHORED, 1, 0), mark(UNANCHORED, 2, 1)];
 
-  it('R2a: mints the mark for evidence that lands after its literal was muted', async () => {
+  it('R2a: mints the mark for evidence that lands after its literal was stripped', async () => {
     const el = await mounted({ text: ANSWER, citations: ONE(), sourceCount: 5 });
-    // The cold-load shape: label 2 resolves to a source and nothing verified it, so it is muted.
-    expect(muted(el).map((s) => s.textContent)).toEqual(['[2]']);
+    // The cold-load shape: label 2 resolves to a source and nothing verified it, so it is removed.
+    expect(text(el)).toBe(`${ANCHORED}1 The model also wrote here.\n`);
 
     el.citations = BOTH();
     await settled(el);
 
-    // THE INVARIANT, and the half that was missing: the mute is withdrawn AND the mark it stood in
-    // for is minted. Withdrawing alone is what shipped — `decorateCitations` early-returns on a
-    // root that already carries a mark, so the tier-2 upgrade never saw the literal and `[2]` went
-    // out as bare prose in an answer that by then held the very evidence it names.
+    // THE INVARIANT, and the half that was missing: the edit is taken back AND the mark it stood in
+    // for is minted. Taking it back alone is what shipped — `decorateCitations` early-returns on a
+    // root that already carries a mark, so the tier-2 upgrade never saw the literal. Under a strip
+    // the failure is worse than a stale grey: the literal is not in the DOM to be re-read, so the
+    // rebuild from `text` is the only thing that can hand it back.
     const late = content(el).querySelector<HTMLElement>('.cite-ref[data-cite-tier="source"]');
     expect(late, 'the late citation never got a mark').toBeTruthy();
     expect(late!.textContent).toBe('2');
     expect(muted(el)).toHaveLength(0);
-    expect(text(el)).not.toContain('[2]');
+    expect(text(el)).toBe(`${ANCHORED}1 The model also wrote 2 here.\n`);
     el.remove();
   });
 
-  it('R2b: withdraws the marks and restores the literal when the evidence goes away', async () => {
+  it('R2b: withdraws the marks and strips the restored literal when the evidence goes away', async () => {
     const el = await mounted({
       text: `${ANCHORED} The model wrote [1] too.`,
       citations: ONE(),
@@ -631,15 +640,15 @@ describe('a decoration input that changes after the settle re-derives the conten
     el.citations = [];
     await settled(el);
 
-    // A mark and a `.cite-sentence` are claims about a citation set the block no longer holds; the
-    // strip of the model's literal was a consequence of the same set. All three go together.
+    // A mark and a `.cite-sentence` are claims about a citation set the block no longer holds, so
+    // both go. The literal comes BACK with the rebuild and is then stripped again for the other
+    // reason — label 1 still resolves against the five sources, and now nothing verifies it. Same
+    // absent `[1]` on screen, arrived at from the opposite fact, which is why the marks are what
+    // this asserts and not just the text.
     expect(content(el).querySelectorAll('.cite-ref')).toHaveLength(0);
     expect(content(el).querySelectorAll('.cite-sentence')).toHaveLength(0);
-    expect(text(el)).toContain('[1]');
-    expect(
-      content(el).querySelector('.pseudo-cite[data-claimed-label="1"]'),
-      'the restored literal is unverified now, so it is muted',
-    ).toBeTruthy();
+    expect(muted(el)).toHaveLength(0);
+    expect(text(el)).toBe(`${ANCHORED} The model wrote too.\n`);
     el.remove();
   });
 
@@ -665,12 +674,13 @@ describe('a decoration input that changes after the settle re-derives the conten
       citations: [mark('Alpha beta gamma', 1, 0)],
       sourceCount: 5,
     });
-    expect(muted(el).map((s) => s.textContent)).toEqual(['[2]']);
+    expect(text(el)).toBe('Alpha beta gamma1\n  indented line');
 
     el.citations = [mark('Alpha beta gamma', 1, 0), mark(UNANCHORED, 2, 1)];
     await settled(el);
 
     expect(muted(el)).toHaveLength(0);
+    // The indent is the reader's content and survives both the strip and the rebuild.
     expect(text(el)).toBe('Alpha beta gamma1\n  indented 2 line');
     el.remove();
   });
@@ -707,11 +717,12 @@ describe('F9 generalised — a first settle that ALREADY decorated is corrected 
     const expected = content(atMount).innerHTML;
 
     const late = await mounted({ text: TEXT, citations: PARTIAL(), sourceCount: 5 });
-    // NON-VACUITY: the first settle really did decorate — a mark AND two mutes stand before the
-    // rest of the evidence lands. The original F9 fixture started from an undecorated first settle,
-    // where the unwrap-only pass was enough; this one is the case it could not correct.
+    // NON-VACUITY: the first settle really did decorate — a mark stands and BOTH literals are gone
+    // before the rest of the evidence lands. The original F9 fixture started from an undecorated
+    // first settle, where the unwrap-only pass was enough; this one is the case it could not
+    // correct, and under 867's strip the DOM no longer even shows that an edit was made.
     expect(content(late).querySelectorAll('.cite-ref')).toHaveLength(1);
-    expect(muted(late).map((s) => s.textContent)).toEqual(['[2]', '[4]']);
+    expect(text(late)).toBe(`${ANCHORED}1 The model wrote and.\n`);
 
     late.citations = FULL();
     await settled(late);
@@ -734,7 +745,7 @@ describe('the highlight pass keeps its place ahead of the weave on a rebuilt tre
     await loadHighlighter();
     const el = await mounted({ text: answer, sourceCount: 5 });
     expect(content(el).querySelector('pre code .hljs-keyword'), 'the first settle').toBeTruthy();
-    expect(muted(el).map((s) => s.textContent)).toEqual(['[2]']);
+    expect(text(el)).toContain('And closes it.');
 
     el.citations = [mark(ANCHORED, 1, 0)];
     await settled(el);
@@ -753,29 +764,33 @@ describe('the highlight pass keeps its place ahead of the weave on a rebuilt tre
   });
 });
 
-/* ── R1 — the override case: a muted ref inside the sentence the verifier scored ──────────────── */
+/* ── R1 — the override case: the model's ref inside the sentence the verifier scored ────────── */
 
-describe('a literal the model wrote INSIDE a verified sentence stays inside it (869 R1)', () => {
-  it('nests the mute in the grounding span and leaves the mark outside', async () => {
-    // Both spans are true at once: the outer says the cross-encoder scored this text (the literal
-    // included — it is part of what was scored), the inner says THIS ref was not verified. F2's
-    // rule is about EXTENSION — the span never grows over a TRAILING literal — not containment.
+describe('the OVERRIDE case: the model cited one source mid-sentence, the verifier another (867 S3)', () => {
+  it('removes the model ref from inside the scored sentence and leaves the span whole', async () => {
+    // 869 rendered this as a mute NESTED in the grounding span — both statements true at once, the
+    // outer "the cross-encoder scored this text", the inner "this ref was not verified". 867 §7 is
+    // the owner's disposition of exactly that shape: the reader gets the scored sentence and the
+    // verifier's mark, and the model's failed claim is not in the prose to be decoded. The span
+    // itself does not move — F2's rule is about EXTENSION over a TRAILING literal, not containment.
     const el = await mounted({
       text: 'Alpha beta [2] gamma delta.',
       citations: [mark('Alpha beta [2] gamma delta.', 1, 0)],
       sourceCount: 5,
     });
 
-    const claimed = content(el).querySelector<HTMLElement>('.pseudo-cite[data-claimed-label="2"]');
-    expect(claimed, 'the unverified ref is muted').toBeTruthy();
-    expect(claimed!.closest('.cite-sentence'), 'the mute belongs to the scored text').not.toBeNull();
+    expect(muted(el)).toHaveLength(0);
+    const sentence = content(el).querySelector<HTMLElement>('.cite-sentence')!;
+    expect(sentence.textContent, 'the scored sentence, minus the claim').toBe(
+      'Alpha beta gamma delta.',
+    );
 
     const ref = content(el).querySelector<HTMLElement>('.cite-ref')!;
     expect(ref.textContent).toBe('1');
     expect(ref.dataset.citeTier).toBe('sentence');
     // The mark sits after the sentence's period, outside the span it labels (847 §2.1e).
     expect(ref.closest('.cite-sentence')).toBeNull();
-    expect(text(el)).toBe('Alpha beta [2] gamma delta.1\n');
+    expect(text(el)).toBe('Alpha beta gamma delta.1\n');
     el.remove();
   });
 });
