@@ -38,14 +38,26 @@ export function parseUiWebGateCommands(register) {
     }
     const idx = line.indexOf(': ');
     if (idx < 0 || !/scripts\/ci\/<name>\.mjs\)|additionally:/.test(line)) continue;
+    // A parenthetical naming a self-test (`(with its self-test: node scripts/ci/X.test.mjs)`)
+    // is a command too — hoist it before stripping the rest of the parentheticals.
+    const selfTests = [...line.matchAll(/node (scripts\/ci\/[a-z0-9-]+\.test\.mjs)/g)].map((m) => m[1]);
     const list = line.slice(idx + 2).replace(/\s*\([^)]*\)/g, '').replace(/\.\s*$/, '');
     for (const item of list.split(',').map((s) => s.trim()).filter(Boolean)) {
       const [name, ...args] = item.split(/\s+/);
       cmds.push(['node', `scripts/ci/${name}.mjs`, ...args]);
     }
+    for (const t of selfTests) cmds.push(['node', t]);
   }
   return cmds;
 }
+
+/**
+ * Silent-green guard. The parser reads prose; an ordinary editorial reword of the recipe
+ * (e.g. dropping the `(node scripts/ci/<name>.mjs)` marker) would shrink the parse and this
+ * runner would print `6/6 passed` — the exact failure it exists to prevent. The floor is the
+ * count on the day it was set; raise it when the recipe grows, never lower it silently.
+ */
+export const EXPECTED_MIN = 40;
 
 function main() {
   const register = JSON.parse(fs.readFileSync(REGISTER, 'utf8'));
@@ -53,6 +65,12 @@ function main() {
   if (process.argv.includes('--list')) {
     for (const c of cmds) console.log(c.join(' '));
     return;
+  }
+  if (cmds.length < EXPECTED_MIN) {
+    console.log(`run-ui-web-gates: parsed only ${cmds.length} command(s) from the ui-web-gates recipe ` +
+      `(floor ${EXPECTED_MIN}). The recipe prose in governance/consult-register.v1.json no longer parses — ` +
+      'fix the recipe or the parser (parseUiWebGateCommands); do not lower the floor to make this green.');
+    process.exit(1);
   }
   const failed = [];
   for (const c of cmds) {

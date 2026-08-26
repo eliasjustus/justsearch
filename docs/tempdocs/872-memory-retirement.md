@@ -117,8 +117,16 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
 **Make the recurring reds impossible instead of remembered**
 - `scripts/ci/run-ui-web-gates.mjs` — runs the ui-web gate set by **parsing the
   `ui-web-gates` recipe** (one list, no fork); wired into `ci.yml`. Found on the way: the recipe's
-  `run.mjs --gate a,b,c` syntax is not accepted by `run.mjs` (single id) — the runner expands it;
-  all 34 commands green locally.
+  `run.mjs --gate a,b,c` syntax is not accepted by `run.mjs` (single id) — the runner expands it.
+  **Review fix (refuter obj. 1):** a prose parser can silently shrink — dropping the
+  `(node scripts/ci/<name>.mjs)` marker parsed 6 commands and printed `6/6 passed`. Now:
+  `EXPECTED_MIN = 40` floor (exit 1 below it), the self-test parenthetical is parsed as a
+  command, and `run-ui-web-gates.test.mjs` (also in CI) string-diffs every name in the recipe
+  against the parse. 40/40 green.
+- `scripts/dev/prepare-worktree.cjs` regenerates the hooks block when it drifts from the
+  manifest (`.worktreeinclude` copies the parent's real `settings.local.json` in, so a new
+  worktree otherwise inherits a wiring for a deleted hook and its Stop hook exits 1 visibly).
+  Existing trees: run `node scripts/codegen/gen-agent-hooks-wiring.mjs` once after merge.
 - `scripts/agent-analytics/expected-state-probe.mjs` (`--gate` in `ci.yml`): a pin must carry an
   exit (`exitProbe` and/or `reviewBy`); past `reviewBy` or a fired exit fails. The pin contract
   comment now states *a pin is a dated exception, not a steady state*.
@@ -149,6 +157,13 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
   `npm run test:unit:run` → both vitest pins; `vitest run PluginLoader` → pluginloader only.
 - `./gradlew.bat spotlessApply` + `build -x test -PskipWebBuild=true` — see PR.
 - Live: the hint fired on this session's own commands (680's open assumption #1, resolved twice).
+- **Review pass (refute-first, Opus, 2026-08-26):** 15 claims — 10 confirmed, 4 partial, 1 refuted
+  (the runner parsed 39 not 34 and dropped the keybinding self-test). 11 objections; all fixed in
+  the same PR except the ui-web vitest CI lane (§6). Anchored outside the tempdoc: CI run
+  32921552074 job log (`ui-web gates: 39/39 passed`; probe `5 pin(s); 0 problems`),
+  `note-observation.mjs` live CLI (exit 2, `git status` clean), the Stop hook in a stale tree
+  (`MODULE_NOT_FOUND`, exit 1, visible non-blocking), all 40 shard notes present in
+  `7b85a5a6:docs/observations.md`.
 
 ## §6 Open items (routed here, per the rule)
 
@@ -156,24 +171,31 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
   reconnect under full-suite load (deterministic timer control); `PluginLoader.test.ts` module-mode
   5000 ms timeout on a cold run. Delete the pin in the fixing PR (the probe gate will demand it
   after 2026-09-30 anyway).
+- **The ui-web vitest suite (`npm run test:unit:run`) runs in no CI lane** — the recipe's last
+  line names it, but hosted CI has no step (typecheck is pinned RED on TS5101; the suite carries
+  two pinned flakes). Adding the lane now would make the shared merge queue intermittently red,
+  so it is **not** added in 872 — owner call, tied to fixing the two flakes above. Until then this
+  is a state main can hold silently, i.e. the class 872 exists to remove.
 - **30 tempdocs with unparseable front matter**, now reported by `docs-validate` instead of
   crashing it: 565, 567, 570, 571, 585, 586, 587, 589, 591, 592, 594, 600, 603, 655, 665, 669,
   680, 681, 686, 687, 740, 749, 754, 763, 764, 765, 811, 852, 857, 863. Dated history; fix
   opportunistically (quote the offending value) or exclude tempdocs from front-matter parsing.
   `docs-validate` itself is not a CI gate and is red on main for other pre-existing reasons
   (Title Case, tags/aliases) — its exit code is not a signal today.
-- **Unrouted content of the 7 deleted shards** (2 sessions, 2026-08-25/26; text at `7b85a5a6`):
-  ~20 product findings (sv3 a11y: composer edge 1.21:1, `sidebar-grip` 16 px target, double focus
-  ring; `[jf-control] no accessible name` on every session; `SES_UNHANDLED_REJECTION` on sv3 load;
-  no stop affordance during answer streaming; late-cancel live/record divergence; agent
-  `budget.remaining` negative after a raise; `NO_TOOLS` on a non-empty selection; availability-gated
-  tools dropped until `/api/status` is polled; `OperationPolicy.retry()` has no consumer;
-  `BrowseTool` ignores caller `max_files`; standard-profile delegate fails at n_ctx 4096) — these
-  belong to 859/860/864/868's open-items sections; the orchestrators of those tempdocs should pull
-  them from the commit. One scheduling note (`STANDING TAKEOVER …860 P1+P2 / P4+P5`) belongs in
-  860. `WorkerMethvinWatcherTest` (flaky once) and the `OnnxEmbeddingEncoder` long-doc forensic
-  test (local env) — pin if they recur. **`WatchedRootScanCollectionTest` recurred** in this
-  PR's post-merge full run (2372 tests, 1 failed; passes on `--rerun` in isolation) → pinned
+- **The 6 deleted shards' content is routed** (review fix, refuter obj. 6; shard *content* is
+  folded into `observations.md` at `7b85a5a6` — the shard files themselves are not there).
+  Appended verbatim under `## Open items routed from the retired observations store` in
+  859 (12 notes: sv3 a11y/console/cancel/stop-affordance/budget), 860 (1: the
+  `STANDING TAKEOVER … P1+P2 / P4+P5` dispatch), 868 (10: `NO_TOOLS`, availability-gated tools,
+  `OperationPolicy.retry()`, `BrowseTool` `max_files`, `path_prefix`, GPU runtime in worktrees,
+  n_ctx 4096, banner copy, api-contract-map claim, javadoc warning). 5 handled by 872 itself
+  (two doc fixes, three pins). **Unowned — no active tempdoc** (named here so they are not a
+  hidden pile; whoever reopens the area takes them): `remove-worktree` blocked by a CWD-inside
+  holder with no registry record (861 closed); 861 W3's F5 test writing into the production
+  `agent-spawns/` register (861 closed); GitHub merge queue silently dropping an enqueued PR
+  (#549, #559 — no 829 open item); `WorkerMethvinWatcherTest` flaky once; `OnnxEmbeddingEncoder`
+  long-doc forensic test flaky on one machine. **`WatchedRootScanCollectionTest` recurred** in
+  this PR's post-merge full run (2372 tests, 1 failed; passes on `--rerun`) → pinned
   `app-services-watched-root-scan-collection-flaky`; the fix (in-process gRPC scan racing the
   watcher under full-suite load) is owed to app-services.
 - **`check-tempdoc-numbers` cross-worktree blind spot** (retired `obs:check-tempdoc-numbers`, seen

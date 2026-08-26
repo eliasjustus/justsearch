@@ -1,7 +1,7 @@
 {
   "kind": "expected-state.v1",
   "version": 1,
-  "comment": "Known expected state of verification commands (tempdoc 680 environment lane; contract tightened by tempdoc 872). Consumed by the known-state-hint hook (PreToolUse Bash): when a command matches an entry's `match` regexes, the claim is surfaced BEFORE the command runs so a session recognises a pre-existing red instead of re-deriving it via stash-and-verify. A PIN IS A DATED EXCEPTION, NOT A STEADY STATE: main being red is a defect, and the pin exists only so the defect is not rediscovered while it is being fixed. DISCIPLINE: every pin carries an exit — an `exitProbe` (a command; exit 0 means the pinned red is GONE; `slow:` prefix = only run with --slow) and/or a `reviewBy` date after which the pin must be re-affirmed with evidence or deleted. `node scripts/agent-analytics/expected-state-probe.mjs --gate` fails on a pin with no exit, past reviewBy, or whose exitProbe fired. A pin whose red is gone is a lie; delete it in the fixing PR.",
+  "comment": "Known expected state of verification commands (tempdoc 680 environment lane; contract tightened by tempdoc 872). Consumed by the known-state-hint hook (PreToolUse Bash): when a command matches an entry's `match` regexes, the claim is surfaced BEFORE the command runs so a session recognises a pre-existing red instead of re-deriving it via stash-and-verify. A PIN IS A DATED EXCEPTION, NOT A STEADY STATE: main being red is a defect, and the pin exists only so the defect is not rediscovered while it is being fixed. DISCIPLINE: every pin carries an exit — an `exitProbe` (a command; exit 0 means the pinned red is GONE; `slow:` prefix = only run with --slow) and/or a `reviewBy` date after which the pin must be re-affirmed with evidence or deleted. `node scripts/agent-analytics/expected-state-probe.mjs --gate` fails on a pin with no exit, past reviewBy, or whose exitProbe fired. A pin whose red is gone is a lie; delete it in the fixing PR. CI runs the --gate form WITHOUT --slow, so exitProbes run only locally; the CI check is shape + reviewBy, and a pin past its reviewBy turns CI red for every PR by design.",
   "entries": [
     {
       "id": "ui-web-typecheck-ts5101",
@@ -18,7 +18,7 @@
     {
       "id": "vdu-pdf-fixtures-local-env",
       "match": [
-        "gradlew?(\\.bat)? (?!.*-x test)(?!.*--tests(?!.*VduEligibility))(?=.*\\btest\\b)"
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!worker-services))(?!.*--tests(?!.*VduEligibility))(?=.*\\btest\\b)"
       ],
       "claim": "VduEligibilityPdfFixturesTest can be RED on THIS machine only (Tesseract/tessdata + Tika PDF env; @DisabledIfEnvironmentVariable CI=true, CI is green) — a local failure there is environmental, not your change.",
       "evidence": "observations condition obs:vdu-pdf-fixtures-local-env (seen 9)",
@@ -29,7 +29,7 @@
     {
       "id": "app-services-watched-root-scan-collection-flaky",
       "match": [
-        "gradlew?(\\.bat)? (?!.*-x test)(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!app-services))(?!.*--tests)(?=.*\\btest\\b)",
         "gradlew?(\\.bat)? .*--tests .*WatchedRootScanCollection"
       ],
       "claim": "WatchedRootScanCollectionTest 'addWatchedRoot's scan reaches the wire with the root's collection set' is FLAKY under the full ./gradlew test run only (JUnitException/IOException in the in-process gRPC scan; passes in isolation and on --rerun). Seen 2026-08-25 (session bccfc163) and 2026-08-26 (872's post-merge full run). A failure ONLY there is pre-existing; re-run in isolation to confirm. The fix is a tracked item in tempdoc 872 §6.",
@@ -41,10 +41,8 @@
     {
       "id": "ui-web-envelopestream-heartbeat-flaky",
       "match": [
-        "test:unit(:run)?\\s*$",
-        "vitest( run)?\\s*$",
-        "test:unit.*EnvelopeStream",
-        "vitest.*EnvelopeStream"
+        "test:unit(?!.*PluginLoader)",
+        "vitest(?!.*PluginLoader)"
       ],
       "claim": "EnvelopeStream.test.ts heartbeat-watchdog reconnect case is FLAKY under full-suite parallel load only (expects >=2 source reconnects inside a fixed window; passes in isolation). Noted by 14 sessions 2026-08-06..25 before being pinned. A failure ONLY there is pre-existing; re-run in isolation to confirm. The fix (deterministic timer control) is a tracked item in tempdoc 872.",
       "evidence": "retired observations condition obs:envelopestream-test (seen 14, 2026-08-06..2026-08-25)",
@@ -55,10 +53,8 @@
     {
       "id": "ui-web-pluginloader-module-mode-timeout",
       "match": [
-        "test:unit(:run)?\\s*$",
-        "vitest( run)?\\s*$",
-        "test:unit.*PluginLoader",
-        "vitest.*PluginLoader"
+        "test:unit(?!.*EnvelopeStream)",
+        "vitest(?!.*EnvelopeStream)"
       ],
       "claim": "PluginLoader.test.ts 'module-mode: an ES-import plugin resolves @kernel/data and installs' times out at the 5000ms default on a cold full-suite run (330ms in isolation). A failure ONLY there is pre-existing; the fix (per-test timeout or warm import) is a tracked item in tempdoc 872.",
       "evidence": "retired observations condition obs:pluginloader-test (seen 7, all 2026-08-25)",

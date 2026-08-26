@@ -154,10 +154,17 @@ jobs:
       - name: ui-web pre-merge gate set
         run: node scripts/ci/run-ui-web-gates.mjs
 
-      # Tempdoc 872: expected-state pins are dated exceptions with exits. A pin with no exit,
-      # past its reviewBy, or whose red is gone fails here so the known-state-hint never
-      # delivers a stale claim.
-      - name: expected-state pins carry a live exit
+      # The runner parses recipe prose; this pins the parse against the names in the recipe
+      # and the floor guard, so a reworded recipe cannot shrink the set to a silent green.
+      - name: ui-web gate runner parses the whole recipe
+        run: node scripts/ci/run-ui-web-gates.test.mjs
+
+      # Tempdoc 872: expected-state pins are dated exceptions with exits. Checked here: every
+      # pin declares an exit (exitProbe and/or reviewBy) and none is past its reviewBy — so
+      # the known-state-hint cannot deliver a claim nobody has re-affirmed. exitProbes are
+      # `slow:` and run only locally (`--slow`); a pin past reviewBy turns this step red for
+      # every PR by design — re-affirm it with evidence or delete it.
+      - name: expected-state pins declare an exit and are not expired
         run: node scripts/agent-analytics/expected-state-probe.mjs --gate
 
       - name: Test dead-config scanner (config-surface gate)

@@ -18,7 +18,7 @@ The observations conditions store (`docs/observations.md` / `docs/observations.d
 | Routed finding | Owning tempdoc's open-items section, `expected-state.v1.json` pin, or `agent-lessons.md`, per the routing rule above | Low (route at discovery, no separate triage pass) | Until the destination item is resolved | Notice something mid-task |
 | Domain registers | `docs/reference/search-quality-register.md`, `docs/reference/inference-runtime-register.md` | High (ID, evidence, verification date) | Until the finding is superseded by shipped work | Empirical findings and standing trade-offs in a register's domain |
 
-The standing per-domain issue registers under `docs/reference/issues/` were **retired** (tempdoc 821 §7 D5, 2026-08-12) — most had not been stamped since 2026-02/04 and real tracking had already migrated to the (then-live, now also retired) observations store, the two domain registers, and tempdocs. The deleted files' content is recoverable from git history, as is the observations store's (last full snapshot: commit c5aa7ae2).
+The standing per-domain issue registers under `docs/reference/issues/` were **retired** (tempdoc 821 §7 D5, 2026-08-12) — most had not been stamped since 2026-02/04 and real tracking had already migrated to the (then-live, now also retired) observations store, the two domain registers, and tempdocs. The deleted files' content is recoverable from git history, as is the observations store's (last full snapshot: commit 7b85a5a6).
 
 Architectural trade-offs and conscious design tensions belong in an ADR (`docs/decisions/`) when the "why not X?" answer is worth preserving, or as a register entry with its revisit trigger. A trade-off that is neither belongs as a parked item in its owning tempdoc.
 
@@ -59,5 +59,5 @@ Without this, operators see "unset" when the runtime is silently using the defau
 - When you record an architectural decision with alternatives: create an ADR in `docs/decisions/`.
 - After adding/changing canonical docs: run `node scripts/docs/llmstxt-generate.mjs` to regenerate the index.
 - When the Gradle module graph changes (`settings.gradle.kts` or `modules/**/build.gradle.kts`): run `node scripts/architecture/module-deps.mjs --update-canonical` and verify with `--check-canonical`.
-- When you write notes/ideas: use `docs/tempdocs/` (noncanonical); for a one-line out-of-scope finding, use `node scripts/agent-analytics/note-observation.mjs`.
+- When you write notes/ideas: use `docs/tempdocs/` (noncanonical); an out-of-scope finding is routed per CLAUDE.md `rule:log-pre-existing-issues` (fix in place / expected-state pin / rules / owning tempdoc) — there is no inbox helper.
 - Full guide (frontmatter, CI checks, doc types): `docs/reference/contributing/writing-docs-for-ai.md`
