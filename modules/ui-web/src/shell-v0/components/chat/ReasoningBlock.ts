@@ -82,10 +82,6 @@ export class ReasoningBlock extends JfElement {
       display: block;
     }
     .container {
-      border-left: 3px solid var(--border-muted);
-      background: var(--surface-subtle);
-      border-radius: 6px;
-      padding: 0.5rem 0.75rem;
       font-size: var(--font-size-sm);
       /* Tempdoc 853 (F-07) — was '--text-muted', measured 4.11:1 (light) / 4.40:1 (hc-light) at 13px:
          below AA on the label AND the whole reasoning transcript. '--text-secondary' is the next
@@ -102,15 +98,33 @@ export class ReasoningBlock extends JfElement {
        contributes padding only: 0.25rem above and below the 24px WCAG target floor puts the collapsed
        row at 32px. The floor itself (F-09) and the '--text-secondary' grade (F-07) are untouched. */
     :host([inline]) .container {
+      border-left: 3px solid var(--border-muted);
       background: none;
       border-radius: 0;
       padding-block: 0.25rem;
       padding-inline: 0.75rem 0;
     }
+    /* Tempdoc 870 item 3 — the ASK-ARM form, which was the card the '[inline]' rule above already
+       walked away from: a filled, radiused, full-width box announcing "Thought for 7s" louder than
+       the answer it precedes. It is a slim text disclosure now — the same shape as the tail's
+       'Sources ›' trigger one row below it (Sv3Main.ts '.tail-sources'): muted 12px text, a trailing
+       chevron, no box. The card declarations moved OFF the base rule rather than being overridden
+       back off it, so neither form carries chrome it does not draw, and '[inline]' restates the one
+       thing it does keep — the hairline rule that says "aside".
+       The GRADE is deliberately NOT dropped to the muted rung with the chrome: tempdoc 853 F-07
+       measured '--text-muted' at 4.11:1 on this component's own label and moved it up, so "slimmer"
+       may not buy itself contrast an audit already spent. The de-emphasis this item wanted is bought
+       with SIZE and with the box, which cost no contrast at all. */
     .header {
       display: flex;
       align-items: center;
       gap: 0.5rem;
+    }
+    /* Sizes to its CONTENT, so the collapsed row is a line of text with a hit target around it and
+       not a full-width band painted across the column. */
+    :host(:not([inline])) .header {
+      display: inline-flex;
+      font-size: var(--font-size-xs);
     }
     /* Tempdoc 853 (F-08) — the disclosure is a REAL button and the copy control is its SIBLING, not
        its descendant. The header was 'role="button" tabindex="0"' wrapping a focusable
@@ -140,6 +154,11 @@ export class ReasoningBlock extends JfElement {
       cursor: pointer;
       user-select: none;
     }
+    /* The slim form's row is as wide as its own text (870 item 3); only the in-feed form still
+       stretches, where the copy control's 'margin-left: auto' is what puts it at the far edge. */
+    :host(:not([inline])) .disclosure {
+      flex: 0 0 auto;
+    }
     .disclosure:hover {
       color: var(--text-primary);
     }
@@ -154,6 +173,12 @@ export class ReasoningBlock extends JfElement {
     }
     .chevron.expanded {
       transform: rotate(90deg);
+    }
+    /* The chevron TRAILS the label in the slim form (t3code's disclosure shape), by flex order
+       rather than by DOM order: the label is what AT should reach first, and the run-timeline form
+       keeps its leading marker. */
+    :host(:not([inline])) .chevron {
+      order: 1;
     }
     .label {
       font-weight: 500;
@@ -191,6 +216,12 @@ export class ReasoningBlock extends JfElement {
     }
     .content.hidden {
       display: none;
+    }
+    /* The expanded trace keeps the hairline the collapsed header gave up (870 item 3), so an open
+       block is still visibly subordinate — the same treatment '[inline]' carries on its container. */
+    :host(:not([inline])) .content {
+      border-left: 3px solid var(--border-muted);
+      padding-left: 0.75rem;
     }
     .content jf-markdown-block {
       /* Tempdoc 853 (F-07) — the transcript body rode the same failing grade as the label. */
@@ -248,13 +279,18 @@ export class ReasoningBlock extends JfElement {
                control announced as "clipboard" (or as nothing) and `title` never won. `aria-label`
                names it outright and the glyph is removed from the a11y tree, matching the
                title + aria-label pairing UnifiedChatView's turn actions already use. */ ''}
-          ${!streaming && text
+          ${/* Tempdoc 870 item 4 — the copy control belongs to the TRACE, and the trace is what the
+               disclosure hides. It lived in `.header`, which is outside `.content`, so a collapsed
+               block offered "copy" for text the reader could not see: an action on hidden content,
+               and a second control competing with the one-line disclosure it sits beside. It is
+               gated on the same `showContent` the trace is now. */ ''}
+          ${showContent && !streaming && text
             ? html`<button
                 class="copy-btn"
                 @click=${() => void this.copyText()}
                 title="Copy reasoning"
                 aria-label="Copy reasoning"
-              ><span aria-hidden="true">${icon({ name: 'clipboard-copy', size: 14 })}</span></button>`
+              ><span aria-hidden="true">${icon({ name: 'copy', size: 14 })}</span></button>`
             : nothing}
         </div>
         <div class="content ${showContent ? '' : 'hidden'}">
