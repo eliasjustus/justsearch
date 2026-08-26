@@ -1,7 +1,7 @@
 # 869 — Citation mark carve-outs: the four mechanical defects that do not wait for 867
 
 ```
-status:  IMPLEMENTED (2026-08-26) — PR open; §4 implementation + verification record; measured audit partial (see §4.3).
+status:  IMPLEMENTED + PRODUCT-VALIDATED (2026-08-26) — PR #569; §4.4 before/after on the live product; tier-2 idiom still unit-only (see §4.4).
          implementation-eligible remainder; 867 itself stays no-implementation.
 created: 2026-08-26
 follows: 867 (species theorization — the decision this doc is NOT), 847 (marks follow the
@@ -703,3 +703,37 @@ Recorded because each is a gap in §2/§3's reasoning, not in the worker's execu
 - `MarkdownBlock`'s default `frame='grounded'` remains strongest-by-default (§2.2); inert with
   `sourceCount=0`, pinned by the T-sites test for every citation-passing site.
 - Handed to 867 unchanged: the S1–S4 counter, the species idiom, any per-source "claimed" state.
+
+### 4.4 Product validation — same prompts, `main`'s FE vs this branch's FE (2026-08-26)
+
+Owner asked whether the fixes were validated in the real product, not just unit tests. Method:
+one borrowed dev stack (compact profile), four prompts designed to elicit mid-sentence refs,
+multi-source sentences and over-citation, driven by a Playwright script through the v3 composer
+on **`main`'s FE** (`:5173`) and on **this branch's FE** (`:5174`), then a shadow-DOM probe of the
+settled block. Model output differs per ask, so the comparison is by shape, not by string.
+
+| | `main` FE (before) | this branch (after) |
+|---|---|---|
+| block `frame` / `sourceCount` | `grounded` (default) / `undefined` on every ask | `partially-grounded` / `5` |
+| unverified model literals | rendered as dead prose (`Document [3]: …`, `… [5].`) — 0 muted across 4 asks, 25 literals in raw | 16 muted across 3 asks, each with `data-claimed-label`, `title`/`aria-label` "…not verified"; none inside code; none nested in a mark |
+| marks | no `data-cite-tier`; base ink = strongest | `data-cite-tier="sentence"`, positive `cite-grounded`/`cite-weak` classes |
+| the 859 override shape (`[j]` + mark `k`) | not observed in this run | observed: `…confidence⟨[3]⟩⟨2⟩` — muted model ref inside the verified sentence, verified mark after it |
+| strip arm of C1 | — | `writer [1].` → `writer.¹` (mark after the period, literal stripped, no glue) on three asks |
+| tier-2 (source-tier) mark | not produced | **not produced** in 5 asks — the compact model's refs either anchored (tier 1) or were unverified (muted); the colourless tier-2 rendering remains unit-tested only |
+| **answer truncation** | **ask 2 rendered 87 of 2116 chars; ask 3 738 of 1861** | after the §4.4 fix below: ask-3-shaped answer rendered 1942 of 2116 (delta = stripped literals) |
+
+**New live finding, fixed in this PR (commit `a9b50c77`).** `stripTrailingCitationBlock`'s
+regex (565 §13.8 / 846) matched any paragraph that *starts with* "citation/source/reference" and
+cites anything later, and deleted it — and everything after it — as if it were a trailing
+bibliography. A prose paragraph "Citation verification scores supplied text … [4]." lost half
+the answer; on `main` one answer lost 96 % of its text. The heading word must now be followed by
+a colon, line break, `[n]` or list marker; test pinned with the live shape, old regex shown
+truncating it. Pre-existing and silent — it is in this PR because it was found validating this
+PR and lives in the function the PR already touched (`contentSource()`), and because it made C2
+un-validatable on exactly the answers users asking about citations get.
+
+**Still not validated in the product:** the tier-2 colourless mark (no compact-model ask produced
+one — needs a standard-profile run or a seeded record); light theme; the legacy chat surface.
+Two things noticed and logged, not fixed: a verified sentence the model quoted inside backticks
+gets its mark woven inside the `<code>` (847 anchoring into code spans — pre-existing); an ask
+with 8 verified refs rendered 1 mark (847 anchoring failure class on list-shaped answers).
