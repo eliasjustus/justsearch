@@ -24,7 +24,7 @@ import io.justsearch.app.api.knowledge.SearchTrace.TraceStage;
 import io.justsearch.app.api.mcp.McpContractVersions;
 import io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry;
 import io.justsearch.app.services.intent.PendingAuthorizationStore;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.ui.api.KnowledgeSearchController;
 import java.time.Clock;

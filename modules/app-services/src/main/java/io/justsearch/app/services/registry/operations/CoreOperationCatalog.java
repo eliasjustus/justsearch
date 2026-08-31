@@ -311,7 +311,8 @@ public final class CoreOperationCatalog implements OperationCatalog {
    *
    * <p>Tempdoc 560 WS4: only the ref constant lives here now (the handler registers under it). The
    * single canonical {@code core.navigate-to-surface} Operation declaration (superset executors
-   * {@code {UI, AGENT}}, audience {@code USER}) lives in {@link AgentToolsOperationCatalog}.
+   * {@code {UI, AGENT}}, audience {@code USER}) lives in {@link
+   * io.justsearch.agent.tools.AgentToolsOperationCatalog}.
    */
   public static final OperationRef NAVIGATE_TO_SURFACE =
       new OperationRef("core.navigate-to-surface");

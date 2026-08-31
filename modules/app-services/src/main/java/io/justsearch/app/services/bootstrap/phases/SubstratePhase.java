@@ -10,13 +10,9 @@ import io.justsearch.agent.api.registry.Operation;
 import io.justsearch.agent.api.registry.Surface;
 import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.RequiredCapability;
-import io.justsearch.agent.tools.BrowseTool;
-import io.justsearch.agent.tools.FileOperationsTool;
-import io.justsearch.agent.tools.IngestTool;
-import io.justsearch.agent.tools.SearchTool;
 import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.services.observability.rules.RuleRunner;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import io.justsearch.app.services.registry.preview.CapabilityAvailability;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
@@ -94,11 +90,7 @@ public final class SubstratePhase {
       Supplier<io.justsearch.app.api.PolicyService> policyServiceSupplier,
       Supplier<io.justsearch.app.services.runtimestate.RuntimeSpecStore> runtimeSpecStoreSupplier,
       Supplier<io.justsearch.app.services.runtimestate.RuntimeReconciler> runtimeReconcilerSupplier,
-      SearchTool searchTool,
-      BrowseTool browseTool,
-      IngestTool ingestTool,
-      FileOperationsTool fileOperationsTool,
-      io.justsearch.agent.tools.ReadDocumentTool readDocumentTool,
+      AgentToolFactory.Output agentTools,
       Function<RequiredCapability, Boolean> capabilityResolver,
       io.justsearch.app.api.OperationLeaseService operationLeaseService,
       List<McpServerConfig> mcpServers) {
@@ -119,11 +111,7 @@ public final class SubstratePhase {
               policyServiceSupplier,
               runtimeSpecStoreSupplier,
               runtimeReconcilerSupplier,
-              searchTool,
-              browseTool,
-              ingestTool,
-              fileOperationsTool,
-              readDocumentTool,
+              agentTools,
               capabilityResolver,
               operationLeaseService,
               mcpServers));
@@ -151,11 +139,7 @@ public final class SubstratePhase {
       Supplier<io.justsearch.app.api.PolicyService> policyServiceSupplier,
       Supplier<io.justsearch.app.services.runtimestate.RuntimeSpecStore> runtimeSpecStoreSupplier,
       Supplier<io.justsearch.app.services.runtimestate.RuntimeReconciler> runtimeReconcilerSupplier,
-      SearchTool searchTool,
-      BrowseTool browseTool,
-      IngestTool ingestTool,
-      FileOperationsTool fileOperationsTool,
-      io.justsearch.agent.tools.ReadDocumentTool readDocumentTool,
+      AgentToolFactory.Output agentTools,
       Function<RequiredCapability, Boolean> capabilityResolver,
       io.justsearch.app.api.OperationLeaseService operationLeaseService,
       List<McpServerConfig> mcpServers) {
@@ -176,8 +160,7 @@ public final class SubstratePhase {
         runtimeSpecStoreSupplier,
         runtimeReconcilerSupplier,
         operationLeaseService);
-    AgentToolHandlers.registerEager(
-        operationHandlers, searchTool, browseTool, ingestTool, fileOperationsTool, readDocumentTool);
+    AgentToolHandlers.registerEager(operationHandlers, agentTools);
     // Tempdoc 560 WS4 — the operation-catalog collapse + two-phase composition. Core + agent-tools +
     // the MCP-host's contributions compose into the ONE ContributionRegistry, and capability-derived
     // availability is applied ONCE over the full merged set (tempdoc 550 E3), closing the pre-WS4 gap

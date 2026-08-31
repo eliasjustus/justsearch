@@ -6,20 +6,10 @@ import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationRef;
 import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.api.OnlineAiService;
-import io.justsearch.agent.tools.BrowseTool;
-import io.justsearch.agent.tools.FileOperationsTool;
-import io.justsearch.agent.tools.IngestTool;
-import io.justsearch.agent.tools.ReadDocumentTool;
-import io.justsearch.agent.tools.SearchTool;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.services.gpl.LambdaMartReranker;
 import io.justsearch.app.services.lifecycle.WorkerCapability;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
-import io.justsearch.app.services.registry.operations.handlers.BrowseOperationHandler;
-import io.justsearch.app.services.registry.operations.handlers.FileOperationsHandler;
-import io.justsearch.app.services.registry.operations.handlers.IngestOperationHandler;
-import io.justsearch.app.services.registry.operations.handlers.ReadDocumentHandler;
-import io.justsearch.app.services.registry.operations.handlers.SearchOperationHandler;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
@@ -118,41 +108,30 @@ public final class AgentToolHandlers {
   /** Eager-path registration: register only the non-null tool instances, skipping any ref
    * already registered (idempotent, symmetric with {@link #registerLateBound}). */
   public static void registerEager(
-      HandlerRegistry operationHandlers,
-      SearchTool searchTool,
-      BrowseTool browseTool,
-      IngestTool ingestTool,
-      FileOperationsTool fileOperationsTool,
-      ReadDocumentTool readDocumentTool) {
-    if (searchTool != null) {
+      HandlerRegistry operationHandlers, AgentToolFactory.Output agentTools) {
+    if (agentTools.searchTool() != null) {
       registerIfAbsent(
-          operationHandlers,
-          AgentToolsOperationCatalog.SEARCH_INDEX,
-          new SearchOperationHandler(searchTool));
+          operationHandlers, AgentToolsOperationCatalog.SEARCH_INDEX, agentTools.searchTool());
     }
-    if (readDocumentTool != null) {
+    if (agentTools.readDocumentTool() != null) {
       registerIfAbsent(
           operationHandlers,
           AgentToolsOperationCatalog.READ_DOCUMENT,
-          new ReadDocumentHandler(readDocumentTool));
+          agentTools.readDocumentTool());
     }
-    if (browseTool != null) {
+    if (agentTools.browseTool() != null) {
       registerIfAbsent(
-          operationHandlers,
-          AgentToolsOperationCatalog.BROWSE_FOLDERS,
-          new BrowseOperationHandler(browseTool));
+          operationHandlers, AgentToolsOperationCatalog.BROWSE_FOLDERS, agentTools.browseTool());
     }
-    if (ingestTool != null) {
+    if (agentTools.ingestTool() != null) {
       registerIfAbsent(
-          operationHandlers,
-          AgentToolsOperationCatalog.INGEST_FILES,
-          new IngestOperationHandler(ingestTool));
+          operationHandlers, AgentToolsOperationCatalog.INGEST_FILES, agentTools.ingestTool());
     }
-    if (fileOperationsTool != null) {
+    if (agentTools.fileOperationsTool() != null) {
       registerIfAbsent(
           operationHandlers,
           AgentToolsOperationCatalog.FILE_OPERATIONS,
-          new FileOperationsHandler(fileOperationsTool));
+          agentTools.fileOperationsTool());
     }
   }
 
@@ -225,32 +204,26 @@ public final class AgentToolHandlers {
     // both facts: the two paths compose, and the log still names exactly what THIS call added.
     List<OperationRef> registered = new ArrayList<>();
     register(
-        operationHandlers,
-        registered,
-        AgentToolsOperationCatalog.SEARCH_INDEX,
-        new SearchOperationHandler(tools.searchTool()));
+        operationHandlers, registered, AgentToolsOperationCatalog.SEARCH_INDEX, tools.searchTool());
     if (tools.readDocumentTool() != null) {
       register(
           operationHandlers,
           registered,
           AgentToolsOperationCatalog.READ_DOCUMENT,
-          new ReadDocumentHandler(tools.readDocumentTool()));
+          tools.readDocumentTool());
     }
     register(
         operationHandlers,
         registered,
         AgentToolsOperationCatalog.BROWSE_FOLDERS,
-        new BrowseOperationHandler(tools.browseTool()));
+        tools.browseTool());
     register(
-        operationHandlers,
-        registered,
-        AgentToolsOperationCatalog.INGEST_FILES,
-        new IngestOperationHandler(tools.ingestTool()));
+        operationHandlers, registered, AgentToolsOperationCatalog.INGEST_FILES, tools.ingestTool());
     register(
         operationHandlers,
         registered,
         AgentToolsOperationCatalog.FILE_OPERATIONS,
-        new FileOperationsHandler(tools.fileOperationsTool()));
+        tools.fileOperationsTool());
     // Tempdoc 561 P-E: the learning producer — core_remember persists durable facts into the shared
     // single-authority MemoryStore (the same instance /api/memory reads).
     if (memoryStore != null) {

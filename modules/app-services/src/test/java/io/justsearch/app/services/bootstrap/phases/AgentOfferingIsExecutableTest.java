@@ -18,7 +18,7 @@ import io.justsearch.app.services.conversation.WorkflowOperationProjection;
 import io.justsearch.app.services.lifecycle.WorkerCapability;
 import io.justsearch.app.services.mcphost.McpHostService;
 import io.justsearch.app.services.registry.emitter.AgentOperationEmitter;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import io.justsearch.app.services.registry.operations.handlers.NavigateToSurfaceHandler;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
@@ -95,13 +95,7 @@ final class AgentOfferingIsExecutableTest {
             OnlineAiService.unavailable(),
             null,
             mock(DocumentService.class));
-    AgentToolHandlers.registerEager(
-        operationHandlers,
-        eagerTools.searchTool(),
-        eagerTools.browseTool(),
-        eagerTools.ingestTool(),
-        eagerTools.fileOperationsTool(),
-        eagerTools.readDocumentTool());
+    AgentToolHandlers.registerEager(operationHandlers, eagerTools);
 
     boolean lateBoundRan =
         AgentToolHandlers.registerLateBound(
