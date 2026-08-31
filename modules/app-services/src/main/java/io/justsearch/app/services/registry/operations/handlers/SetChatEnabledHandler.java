@@ -12,8 +12,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Handler for {@code core.set-chat-enabled} (tempdoc 737 §12b).
@@ -34,8 +32,6 @@ public final class SetChatEnabledHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(SetChatEnabledHandler.class);
 
-  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
-
   private final Supplier<RuntimeSpecStore> specStoreSupplier;
   private final Supplier<RuntimeReconciler> reconcilerSupplier;
 
@@ -51,14 +47,15 @@ public final class SetChatEnabledHandler implements OperationHandler {
     boolean enabled;
     try {
       JsonNode root =
-          MAPPER.readTree(argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
+          HandlerJson.MAPPER.readTree(
+              argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
       JsonNode enabledNode = root.get("enabled");
       if (enabledNode == null || !enabledNode.isBoolean()) {
         return OperationResult.failure("Missing required arg: enabled (boolean)");
       }
       enabled = enabledNode.asBoolean();
     } catch (Exception e) {
-      return OperationResult.failure("Invalid args: " + e.getMessage());
+      return HandlerJson.invalidArgs(e);
     }
     return RuntimeIntentWrite.apply(specStoreSupplier, reconcilerSupplier, enabled, log);
   }

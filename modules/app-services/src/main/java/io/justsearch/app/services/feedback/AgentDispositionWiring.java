@@ -2,6 +2,7 @@
 package io.justsearch.app.services.feedback;
 
 import io.justsearch.agent.api.encryption.StoreCipher;
+import io.justsearch.agent.api.registry.OperationResult;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -93,7 +94,8 @@ public final class AgentDispositionWiring {
     if (!(payload.get("structuredData") instanceof Map<?, ?> sd)) {
       return;
     }
-    if (!(sd.get("feedbackFeatures") instanceof List<?> feats) || feats.isEmpty()) {
+    if (!(sd.get(OperationResult.FEEDBACK_FEATURES_KEY) instanceof List<?> feats)
+        || feats.isEmpty()) {
       return; // not a search tool result
     }
     List<FeatureSnapshot.HitFeatures> hits = new ArrayList<>();

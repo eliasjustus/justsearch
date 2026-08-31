@@ -9,8 +9,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Handler for {@code core.reindex}.
@@ -30,8 +28,6 @@ import tools.jackson.databind.json.JsonMapper;
 public final class ReindexHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(ReindexHandler.class);
-
-  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
   private final Supplier<IndexingService> indexingSupplier;
 
@@ -73,7 +69,7 @@ public final class ReindexHandler implements OperationHandler {
       return false;
     }
     try {
-      JsonNode root = MAPPER.readTree(argumentsJson);
+      JsonNode root = HandlerJson.MAPPER.readTree(argumentsJson);
       JsonNode forceNode = root.get("force");
       return forceNode != null && forceNode.isBoolean() && forceNode.asBoolean();
     } catch (Exception e) {

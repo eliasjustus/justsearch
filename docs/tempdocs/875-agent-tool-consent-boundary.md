@@ -265,19 +265,34 @@ unavailable mid-run is denied rather than dispatched.
 stops the LLM invoking admin operations (`:70-76`) — after this change the claim is true, and the
 comment is rewritten to say where the enforcement actually is.
 
-### C.5 Move 4 — per-tool fail-closed, decided explicitly
+### C.5 Move 4 — per-tool degrade rule, and a premise that turned out to be false
 
-| Tool | Roots unavailable / empty | Rationale |
-|---|---|---|
-| `core.browse-folders` | **fail closed** | a directory-listing primitive is pure disclosure; nothing else bounds it |
-| `core.search-index` (`path_prefix`) | fail open (unchanged) | results are bounded by Lucene index membership, which the roots already determined |
-| `core.read-document` (`path`) | fail open (unchanged) | same bound — the Worker serves only indexed documents (868 §B.2) |
+**Withdrawn (2026-08-31, during the 877 merge).** This move originally made
+`core.browse-folders` fail CLOSED when the roots are unknown, on finding 4's premise that browse is
+"a directory-disclosure primitive" that, unlike search and read, has no second bound behind it. That
+premise is **wrong, and the source says so**: `BrowseTool`'s callback reaches the Worker's
+`FolderBrowseEngine.enumerateFolders`, which acquires an `IndexSearcher` and runs a path-prefix
+**Lucene query** over indexed documents (`modules/adapters-lucene/.../FolderBrowseEngine.java:77-95`)
+— there is no filesystem enumeration anywhere in that path. Browse can only ever list folders
+*derived from documents already in the index*, which is exactly the bound search and read rely on.
 
-Plus two semantic repairs kept deliberately in place (no structural refactor — 877 owns
-centralisation, finding 5): `validateAgainstRoots` canonicalizes both sides through the closest
-existing ancestor's real path before comparing, so a symlink or junction cannot straddle a root
-boundary; and `resolveRelativePath` refuses an ambiguous first component instead of silently taking
-the first of two identically-named roots.
+So all three tools have the same bound, and tempdoc 877's single `AgentToolPaths.RootsView` — which
+degrades OPEN uniformly, for that same stated reason — is correct, including for browse. Its version
+is taken whole; the fail-closed branch and the two adverse-precondition tests that pinned it are
+deleted rather than carried, because a test that pins a behaviour we no longer believe in is worse
+than no test.
+
+**What this cost, and the lesson.** The premise arrived in a handed-over finding with a `file:line`
+citation, and §B re-verified the *citation* (browse really did return null on a throwing supplier)
+without re-verifying the *claim it was used to justify* (that nothing else bounds browse). Verifying
+the quoted line is not verifying the argument. The check that would have caught it — following the
+callback one hop into the Worker — took four greps.
+
+**What survives from Move 4**, all orthogonal to the degrade rule and all kept:
+`validateAgainstRoots` canonicalizes both sides through the closest existing ancestor's real path, so
+a symlink or junction cannot straddle a root boundary; an unresolvable root is skipped rather than
+aborting the comparison (§E S4); and `resolveRelativePath` refuses an ambiguous first component
+instead of silently taking the first of two identically-named roots.
 
 ### C.6 Move 5 — undo is an operation, not an exemption
 

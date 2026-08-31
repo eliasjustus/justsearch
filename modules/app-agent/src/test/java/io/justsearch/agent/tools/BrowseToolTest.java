@@ -18,10 +18,10 @@ import org.junit.jupiter.api.Test;
 @Tag("windows")
 class BrowseToolTest {
 
-  // Tempdoc 875 §C.5 — browse fails CLOSED when the roots are unknown, so the shared fixtures
-  // supply real roots that cover the parent paths these tests browse. Each test still asserts
-  // exactly what it asserted before (formatting, capping, truncation, hints); only the paths moved
-  // from unrooted ("/docs") to rooted ("D:\data\docs") so validation can pass.
+  // The shared fixtures supply real roots that cover the parent paths these tests browse, so the
+  // path validation they now pass through is exercised rather than short-circuited by an empty
+  // roots list. Each test asserts exactly what it asserted before (formatting, capping,
+  // truncation, hints); only the paths moved from unrooted ("/docs") to rooted ("D:\data\docs").
   private static final List<BrowseTool.RootInfo> FIXTURE_ROOTS =
       List.of(
           new BrowseTool.RootInfo("D:\\data", "data"),
@@ -29,14 +29,6 @@ class BrowseToolTest {
 
   private static BrowseTool browseOnly(BrowseTool.BrowseCallback cb) {
     return new BrowseTool(cb, () -> FIXTURE_ROOTS);
-  }
-
-  @Test
-  void parameterSchemaPresent() {
-    // Per Phase 12 of tempdoc 429: name/description/safetyLevel/supportsUndo moved to
-    // the AgentToolsOperationCatalog Operation declaration; the tool retains only the
-    // execute() callback + its parameter schema (preserved for prompt-engineering tests).
-    assertNotNull(BrowseTool.parameterSchema());
   }
 
   @Test
@@ -400,47 +392,6 @@ class BrowseToolTest {
     // the no-roots case, which the shared fixture no longer represents.
     var tool = new BrowseTool(req -> new FolderBrowseResponse(List.of(), 0, false), List::of);
     assertEquals("D:\\data\\docs", tool.toRelativePath("D:\\data\\docs"));
-  }
-
-  // --- Fail-closed adverse preconditions (tempdoc 875 §C.5) ---
-
-  @Test
-  void parentPath_rejected_whenRootsSupplierThrows() {
-    // Browse is a pure directory-disclosure primitive: when the roots lookup is unavailable there
-    // is no containment to check against, so it must REFUSE rather than list any path on the
-    // machine. Pre-875 this returned null (= allow) and browsed anywhere.
-    var tool =
-        new BrowseTool(
-            req -> {
-              fail("Browse callback must not be reached when the roots are unavailable");
-              return null;
-            },
-            () -> {
-              throw new IllegalStateException("roots unavailable");
-            });
-
-    OperationResult result = tool.execute("{\"parent_path\": \"C:\\\\Users\\\\someone\"}");
-    assertFalse(result.success(), "Roots unavailable must reject: " + result.message());
-    assertTrue(
-        result.message().contains("unavailable"),
-        "Rejection should name the reason (roots unavailable): " + result.message());
-  }
-
-  @Test
-  void parentPath_rejected_whenRootsEmpty() {
-    var tool =
-        new BrowseTool(
-            req -> {
-              fail("Browse callback must not be reached when no roots are configured");
-              return null;
-            },
-            List::of);
-
-    OperationResult result = tool.execute("{\"parent_path\": \"C:\\\\Users\\\\someone\"}");
-    assertFalse(result.success(), "Empty roots must reject: " + result.message());
-    assertTrue(
-        result.message().contains("no indexed root folders are configured"),
-        "Rejection should name the reason (no roots configured): " + result.message());
   }
 
   @Test

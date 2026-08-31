@@ -155,6 +155,33 @@ public record OperationResult(
   public static final String GROUNDING_KEY = "grounding";
 
   /**
+   * Tempdoc 877 §2.3 — the other four {@code structuredData} keys that cross a producer/consumer
+   * seam, given the same treatment {@link #GROUNDING_KEY} got in 865: one constant the Java sides
+   * import, plus a per-key conformance test pinning the constant's VALUE to the literal its
+   * consumer holds.
+   *
+   * <p>A constant cannot unify a key that crosses a WIRE — the TypeScript readers necessarily spell
+   * it themselves. What the constants buy is the Java half (a rename now breaks the compile instead
+   * of silently producing a key nobody reads), and what the conformance tests buy is the other half
+   * (a rename that compiles still fails the build, naming the TS file that would have gone blind).
+   *
+   * <p>Not centralised, deliberately: {@code query}, {@code resultCount} and {@code searchMode}.
+   * Each has exactly one Java producer and no Java consumer, so a constant for them would name a
+   * fact that is already single. They join this set if a second producer ever appears.
+   */
+  public static final String SEARCH_RESULTS_KEY = "searchResults";
+
+  /**
+   * The read tool's producer key (868 §B.3). Deliberately NOT {@link #SEARCH_RESULTS_KEY}: the two
+   * keys are what decide a grounding source's {@code acquisition}, so a read tool emitting the
+   * search key would mint sources indistinguishable from search hits.
+   */
+  public static final String READ_RESULTS_KEY = "readResults";
+
+  /** The agent-citation feedback channel (580 §17 P4 Fix B). Never rendered by the tool card. */
+  public static final String FEEDBACK_FEATURES_KEY = "feedbackFeatures";
+
+  /**
    * Tempdoc 878 §D.5 — the {@code structuredData} key {@link #withLineage} stamps, and the ONLY
    * CLASSIFICATION stamp on this record.
    *

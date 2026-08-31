@@ -3,17 +3,13 @@ package io.justsearch.agent.tools;
 
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.app.api.DocumentService;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * Tempdoc 868 §B.2 — the delegate's content-bearing READ: a page of one indexed document's
@@ -38,9 +34,6 @@ import tools.jackson.databind.ObjectMapper;
  * confirm.
  */
 public final class ReadDocumentTool {
-
-  private static final Logger LOG = LoggerFactory.getLogger(ReadDocumentTool.class);
-  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   /** The page size at the default Layer-2 cap (4000): ≈750 tokens, well inside n_ctx 4096. */
   static final int DEFAULT_PAGE_CHARS = 3000;
@@ -78,15 +71,12 @@ public final class ReadDocumentTool {
               DEFAULT_PAGE_CHARS,
               io.justsearch.agent.ToolResultCarrier.layerTwoCapChars() - PAGE_HEADROOM_CHARS));
 
-  /** How long to wait on the Worker fetch before degrading to a failure result. */
-  private static final long FETCH_TIMEOUT_MS = 15_000;
-
   /** Shared tail for every unreadable-document failure: the two tools that could still find it. */
   private static final String RECOVERY_GUIDANCE =
-      "Use core_browse_folders to find the absolute path, or core_search_index to search inside it.";
+      "Use core_browse_folders to find the path, or core_search_index to search inside it.";
 
   private final SliceFetcher sliceFetcher;
-  private final Supplier<List<BrowseTool.RootInfo>> rootsSupplier; // nullable
+  private final AgentToolPaths.RootsView rootsView;
 
   public ReadDocumentTool(SliceFetcher sliceFetcher) {
     this(sliceFetcher, (Supplier<List<BrowseTool.RootInfo>>) null);
@@ -94,8 +84,13 @@ public final class ReadDocumentTool {
 
   public ReadDocumentTool(
       SliceFetcher sliceFetcher, Supplier<List<BrowseTool.RootInfo>> rootsSupplier) {
+    this(sliceFetcher, AgentToolPaths.RootsView.of(rootsSupplier));
+  }
+
+  /** Tempdoc 877 §2.4 — the shared roots view {@code AgentToolFactory.assemble} builds once. */
+  public ReadDocumentTool(SliceFetcher sliceFetcher, AgentToolPaths.RootsView rootsView) {
     this.sliceFetcher = sliceFetcher;
-    this.rootsSupplier = rootsSupplier;
+    this.rootsView = rootsView == null ? AgentToolPaths.RootsView.of(null) : rootsView;
   }
 
   public OperationResult execute(String argumentsJson) {
@@ -103,11 +98,10 @@ public final class ReadDocumentTool {
       return OperationResult.failure("No arguments provided");
     }
     try {
-      JsonNode args = MAPPER.readTree(argumentsJson);
+      JsonNode args = ToolArgs.parse(argumentsJson);
       return execute(args);
     } catch (Exception e) {
-      LOG.error("ReadDocumentTool execution failed", e);
-      return OperationResult.failure("Read error: " + e.getMessage());
+      return AgentToolErrors.classify("core_read_document", "Read error", e);
     }
   }
 
@@ -128,7 +122,7 @@ public final class ReadDocumentTool {
               + (MIN_PAGE_CHARS + PAGE_HEADROOM_CHARS)
               + ", or use core_search_index to find passages instead.");
     }
-    String path = args.has("path") ? args.get("path").asText() : null;
+    String path = ToolArgs.stringArg(args, "path");
     if (path == null || path.isBlank()) {
       return OperationResult.failure("A document path is required");
     }
@@ -136,27 +130,19 @@ public final class ReadDocumentTool {
 
     // Same resolve-then-validate shape as SearchTool's path_prefix (SearchTool.java:222-236), with
     // the same degrade-open semantics: no roots configured / roots unavailable ⇒ do not reject.
-    if (!AgentToolPaths.looksAbsolute(path) && rootsSupplier != null) {
-      String resolved = AgentToolPaths.resolveRelativePath(path, roots());
+    if (!AgentToolPaths.looksAbsolute(path)) {
+      String resolved = rootsView.resolveRelative(path);
       if (resolved != null) {
         path = resolved;
       }
     }
-    String rejection = validatePath(path);
+    String rejection = rootsView.validate(path, "path");
     if (rejection != null) {
       return OperationResult.failure(rejection);
     }
 
-    Integer offsetArg = intArg(args, "offset_chars", 0);
-    if (offsetArg == null) {
-      return badIntArg(args, "offset_chars");
-    }
-    Integer maxArg = intArg(args, "max_chars", READ_PAGE_CHARS);
-    if (maxArg == null) {
-      return badIntArg(args, "max_chars");
-    }
-    int offsetChars = Math.max(0, offsetArg);
-    int maxChars = maxArg <= 0 ? READ_PAGE_CHARS : Math.min(maxArg, READ_PAGE_CHARS);
+    int offsetChars = ToolArgs.intArg(args, "offset_chars", 0, 0, Integer.MAX_VALUE);
+    int maxChars = ToolArgs.intArg(args, "max_chars", READ_PAGE_CHARS, 1, READ_PAGE_CHARS);
 
     DocumentService.DocumentSlice slice;
     try {
@@ -165,10 +151,16 @@ public final class ReadDocumentTool {
       if (stage == null) {
         return notFound(path);
       }
-      slice = stage.toCompletableFuture().get(FETCH_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+      slice =
+          stage
+              .toCompletableFuture()
+              .get(io.justsearch.agent.AgentTimeouts.toolFetchMs(), TimeUnit.MILLISECONDS);
     } catch (Exception e) {
-      LOG.warn("Document slice fetch failed for {}: {}", path, e.toString());
-      return OperationResult.failure("Could not read \"" + path + "\": " + e.getMessage());
+      // Tempdoc 877 §2.6 — the prefix is preserved verbatim (it names the document, which the
+      // generic classifier cannot); what is new is the typed code: a fetch that timed out or hit an
+      // unreachable Worker now reports itself RETRYABLE instead of as an untyped string.
+      return AgentToolErrors.classify(
+          "core_read_document", "Could not read \"" + path + "\"", e);
     }
     if (slice == null || !slice.found()) {
       // Tempdoc 878: an unusable slice is not automatically a MISSING one. The producers set
@@ -318,7 +310,7 @@ public final class ReadDocumentTool {
     item.put("endChar", endChar);
     item.put("truncated", truncated);
     var evidence = new LinkedHashMap<String, Object>();
-    evidence.put("readResults", List.<Map<String, Object>>of(Map.copyOf(item)));
+    evidence.put(OperationResult.READ_RESULTS_KEY, List.<Map<String, Object>>of(Map.copyOf(item)));
     return Map.copyOf(evidence);
   }
 
@@ -345,103 +337,6 @@ public final class ReadDocumentTool {
     }
     int cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
     return cut >= 0 && cut + 1 < path.length() ? path.substring(cut + 1) : path;
-  }
-
-  /**
-   * Tempdoc 878 — three outcomes, not two: the value, the default (field absent), and {@code null}
-   * for "present but unusable", which the caller turns into a loud refusal via {@link
-   * #badIntArg(JsonNode, String)}.
-   *
-   * <p>A stringified number is COERCED rather than ignored, because small models emit {@code
-   * {"offset_chars": "3000"}} constantly and the old fallback-to-default silently re-served page 1 —
-   * a duplicate page that looks to the model like progress, which is the worst failure shape
-   * available here. Anything else (a non-numeric string, an object, an array, a boolean) is refused
-   * out loud so the model can correct the call instead of reading the same page forever.
-   *
-   * <p>A NON-INTEGRAL number is refused on the same terms as {@code "3000.9"} (878 review). The
-   * refusal message says "must be a whole number", and a branch that silently floored {@code 3000.9}
-   * while refusing its stringified twin would make that sentence false in one of the two cases — a
-   * small version of the exact defect this method exists to remove.
-   *
-   * <p>Tempdoc 877 is building a shared {@code ToolArgs} helper with this same contract; fold this
-   * into it when it lands.
-   */
-  private static Integer intArg(JsonNode args, String field, int fallback) {
-    if (!args.has(field) || args.get(field).isNull()) {
-      return fallback;
-    }
-    JsonNode node = args.get(field);
-    if (node.isIntegralNumber()) {
-      return node.asInt(fallback);
-    }
-    if (node.isNumber()) {
-      return null;
-    }
-    if (node.isString()) {
-      try {
-        return Integer.valueOf(node.asString().strip());
-      } catch (NumberFormatException e) {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * The loud refusal. Names the field AND the offending value, because a model that cannot see what
-   * it sent cannot correct it — but the value is BOUNDED: a model that passes a large object as
-   * {@code offset_chars} would otherwise get an error message the size of that object, and an error
-   * is not a channel for returning content.
-   */
-  private static OperationResult badIntArg(JsonNode args, String field) {
-    String offending = String.valueOf(args.get(field));
-    if (offending.length() > BAD_ARG_ECHO_CHARS) {
-      offending = offending.substring(0, BAD_ARG_ECHO_CHARS) + "…";
-    }
-    return OperationResult.failure(
-        field
-            + " must be a whole number, but was "
-            + offending
-            + ". Call core_read_document again with "
-            + field
-            + " as a number, e.g. \"offset_chars\": 3000.");
-  }
-
-  /** How much of an unusable argument is echoed back — enough to recognise, not enough to carry. */
-  private static final int BAD_ARG_ECHO_CHARS = 120;
-
-  private List<BrowseTool.RootInfo> roots() {
-    if (rootsSupplier == null) {
-      return List.of();
-    }
-    try {
-      List<BrowseTool.RootInfo> got = rootsSupplier.get();
-      return got == null ? List.of() : got;
-    } catch (Exception e) {
-      LOG.warn("Failed to get roots for read path validation", e);
-      return List.of();
-    }
-  }
-
-  /**
-   * Validates that {@code path} is absolute and under an indexed root. Returns null when valid.
-   * Degrades OPEN exactly as {@code SearchTool.validatePathPrefix} does — no roots supplier, no
-   * roots configured, or a throwing supplier all mean "cannot say", and the Worker's own
-   * index-membership check is the real boundary regardless.
-   */
-  private String validatePath(String path) {
-    if (rootsSupplier == null) {
-      return null;
-    }
-    List<BrowseTool.RootInfo> rootInfos = roots();
-    if (rootInfos.isEmpty()) {
-      return null;
-    }
-    List<String> rootPaths = new ArrayList<>(rootInfos.size());
-    for (BrowseTool.RootInfo r : rootInfos) {
-      rootPaths.add(r.path());
-    }
-    return AgentToolPaths.validateAgainstRoots(path, rootPaths, "path");
   }
 
   /**

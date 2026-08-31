@@ -362,13 +362,17 @@ final class AgentLlmCaller {
     try {
       boolean completed;
       try {
-        completed = latch.await(5, TimeUnit.MINUTES);
+        completed = latch.await(AgentTimeouts.llmCallMs(), TimeUnit.MILLISECONDS);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         throw new RuntimeException("Agent LLM call interrupted", e);
       }
       if (!completed) {
-        throw new RuntimeException("Agent LLM call timed out after 5 minutes");
+        // Derived from AgentTimeouts.llmCallMs() so the message and the actual wait cannot disagree.
+        throw new RuntimeException(
+            "Agent LLM call timed out after "
+                + TimeUnit.MILLISECONDS.toMinutes(AgentTimeouts.llmCallMs())
+                + " minutes");
       }
 
       if (!reasoningBuilder.isEmpty()) {

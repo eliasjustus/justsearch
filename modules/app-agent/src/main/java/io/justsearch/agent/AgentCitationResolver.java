@@ -31,8 +31,6 @@ final class AgentCitationResolver {
    */
   private static final double DEFAULT_SIMILARITY_THRESHOLD =
       DocumentService.DEFAULT_CITATION_SIMILARITY_THRESHOLD;
-  /** The agent loop blocks at most this long on the matcher before citing sources without marks. */
-  private static final long MATCH_TIMEOUT_MS = 4000L;
 
   private final DocumentService documentService;
 
@@ -114,7 +112,7 @@ final class AgentCitationResolver {
           documentService
               .matchCitationsAgainst(answer, verificationSources, similarityThreshold)
               .toCompletableFuture()
-              .get(MATCH_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+              .get(AgentTimeouts.citationMatchMs(), TimeUnit.MILLISECONDS);
       List<AgentEvent.AgentSentenceCite> out = new ArrayList<>();
       for (DocumentService.CitationMatchEntry m : result.matches()) {
         // Tempdoc 822 §3b — the match's `sourceIndex` IS the position in the list handed to the

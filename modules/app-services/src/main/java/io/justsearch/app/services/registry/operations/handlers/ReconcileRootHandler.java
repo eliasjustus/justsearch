@@ -9,8 +9,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Handler for {@code core.reconcile-root} (tempdoc 626 §Recency, Move C).
@@ -29,8 +27,6 @@ import tools.jackson.databind.json.JsonMapper;
 public final class ReconcileRootHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(ReconcileRootHandler.class);
-
-  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
   private final Supplier<IndexingService> indexingSupplier;
 
@@ -74,7 +70,7 @@ public final class ReconcileRootHandler implements OperationHandler {
       return null;
     }
     try {
-      JsonNode root = MAPPER.readTree(argumentsJson);
+      JsonNode root = HandlerJson.MAPPER.readTree(argumentsJson);
       JsonNode node = root.get("pathHash");
       return node != null && node.isString() ? node.asString() : null;
     } catch (Exception e) {
