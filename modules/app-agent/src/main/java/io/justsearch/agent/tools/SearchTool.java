@@ -543,6 +543,16 @@ public final class SearchTool {
   /**
    * Validates that path_prefix is an absolute path under one of the indexed roots. Returns null if
    * valid, or an error message string if rejected.
+   *
+   * <p><b>Degrades OPEN, deliberately (tempdoc 875 §C.5).</b> No roots supplier, a throwing
+   * supplier, or no configured roots all mean "cannot say", and search answers that with "allow"
+   * rather than "refuse": whatever {@code path_prefix} says, the results are still bounded by
+   * Lucene index membership — which the indexed roots already determined — so an unvalidated prefix
+   * can only narrow a set the user already granted, never widen it. That is precisely what
+   * {@code core.browse-folders} lacks: a directory listing is a pure disclosure primitive with no
+   * second bound behind it, so browse now fails CLOSED on the same preconditions. Same reasoning as
+   * {@code ReadDocumentTool.validatePath}. Do not "harmonize" these three without re-deciding which
+   * bound each tool actually has.
    */
   private String validatePathPrefix(String pathPrefix) {
     if (rootsSupplier == null) {
@@ -553,10 +563,10 @@ public final class SearchTool {
       rootInfos = rootsSupplier.get();
     } catch (Exception e) {
       LOG.warn("Failed to get roots for path validation", e);
-      return null; // Degrade gracefully
+      return null; // Cannot say ⇒ allow; the index-membership bound still holds (see javadoc)
     }
     if (rootInfos == null || rootInfos.isEmpty()) {
-      return null; // No roots configured — allow any path
+      return null; // No roots configured ⇒ nothing to bound against here; the index still bounds it
     }
     List<String> roots = rootInfos.stream().map(BrowseTool.RootInfo::path).toList();
     return AgentToolPaths.validateAgainstRoots(pathPrefix, roots, "path_prefix");

@@ -278,9 +278,13 @@ export class AuthorizationHost extends JfElement {
    * would be a control that lies: the user checks it, a grant is minted, and the next invocation
    * prompts anyway. The control is hidden instead — and `decide` re-applies the rule so the decision
    * can never carry `allowAlways: true` even if the flag were set by some other path.
+   *
+   * <p>The second clause is the same rule from the other side: a caller whose approval route cannot
+   * carry `allowAlways` at all declares `allowAlwaysSupported: false`, so the checkbox is not
+   * offered rather than rendered and silently dropped.
    */
   private static honoursAllowAlways(prompt: AuthorizationPrompt): boolean {
-    return prompt.riskTier !== 'HIGH';
+    return prompt.riskTier !== 'HIGH' && prompt.allowAlwaysSupported !== false;
   }
 
   private decide(approved: boolean): void {

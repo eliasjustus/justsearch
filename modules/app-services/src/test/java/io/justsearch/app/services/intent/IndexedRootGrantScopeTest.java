@@ -19,11 +19,15 @@ import io.justsearch.agent.api.registry.Provenance;
 import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.TrustTier;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -156,6 +160,65 @@ class IndexedRootGrantScopeTest {
     assertFalse(
         scope.coversArguments(op(GOVERNED), argsFor(secret)),
         "startsWith is path-element-wise after realpath, not a string prefix");
+  }
+
+  @Test
+  @DisplayName("a link straddling the root boundary is not covered — realpath, not normalize()")
+  void linkOutOfRootIsNotCovered(@TempDir Path base) throws Exception {
+    // Without this case, both containment tests above pass under a plain normalize()+startsWith,
+    // so the toRealPath() defense this class hand-copies is asserted only in its javadoc and a
+    // later edit could drop it with nothing red (`green-masked-destructive`). Ported from
+    // AgentToolPathsTest#rejectsPathThatOnlyLooksInRootBeforeSymlinkResolution.
+    Path root = Files.createDirectory(base.resolve("indexed"));
+    Path outside = Files.createDirectory(base.resolve("elsewhere"));
+    Path secret = Files.createFile(outside.resolve("secret.txt"));
+
+    Path link = root.resolve("link");
+    linkDirectory(link, outside);
+
+    Path escaping = link.resolve("secret.txt");
+    assertTrue(Files.exists(escaping), "Precondition: the escaping path resolves to the secret");
+    assertTrue(
+        escaping.normalize().startsWith(root),
+        "Precondition: the escaping path looks in-root before link resolution");
+
+    IndexedRootGrantScope scope = scopeBoundTo(root);
+
+    assertFalse(
+        scope.coversArguments(op(GOVERNED), argsFor(escaping)),
+        "A link cannot straddle a root boundary into a durable grant: " + secret);
+  }
+
+  /**
+   * Creates {@code link} pointing at {@code target}. Windows refuses {@code createSymbolicLink}
+   * without developer mode / SeCreateSymbolicLink, so it falls back to a directory JUNCTION, which
+   * needs no privilege and is the escape vector a real user is most likely to have on disk. Aborts
+   * only the calling test if neither is available.
+   */
+  private static void linkDirectory(Path link, Path target) {
+    try {
+      Files.createSymbolicLink(link, target);
+      return;
+    } catch (IOException | UnsupportedOperationException e) {
+      if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+        Assumptions.abort("Platform cannot create symbolic links: " + e.getMessage());
+      }
+    }
+    try {
+      Process p =
+          new ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toString())
+              .redirectErrorStream(true)
+              .start();
+      if (!p.waitFor(30, TimeUnit.SECONDS) || p.exitValue() != 0) {
+        p.destroy();
+        Assumptions.abort("Platform cannot create a directory junction either");
+      }
+    } catch (IOException e) {
+      Assumptions.abort("Platform cannot create a directory junction either: " + e.getMessage());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      Assumptions.abort("Interrupted while creating a directory junction");
+    }
   }
 
   @Test

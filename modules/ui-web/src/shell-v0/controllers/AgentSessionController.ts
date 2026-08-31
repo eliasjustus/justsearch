@@ -1010,6 +1010,11 @@ export class AgentSessionController implements CoreAgentRunHandlers {
             : 'INLINE_CONFIRM',
         // Tempdoc 550 P1: give the ceremony the decision context it already has from the event.
         riskTier: risk,
+        // Tempdoc 875 — this route posts the verdict to /api/chat/approve, which carries no
+        // `allowAlways` field, so an "always allow" tick here would be silently dropped. Declare
+        // that rather than render a control that does nothing. Making agent-loop approvals able to
+        // mint a durable grant is a product decision, tracked in 875 §C.9.
+        allowAlwaysSupported: false,
         ...(argsSummary ? { argsSummary } : {}),
       }).then((decision) => {
         // Tempdoc 605 — the ceremony was drained because its run concluded (not a human deny):

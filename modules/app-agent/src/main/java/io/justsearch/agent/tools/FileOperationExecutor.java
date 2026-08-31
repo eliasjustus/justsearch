@@ -113,10 +113,24 @@ final class FileOperationExecutor {
    * pipeline — specifically undo's direct COPY reversal, which deletes and must therefore re-prove
    * containment the way the forward operation did (tempdoc 875 §C.6). Reading the live roots is the
    * point: a root the user removed between the operation and the undo makes the target out of
-   * bounds. Fails closed — empty roots or an IOException while canonicalizing yields false.
+   * bounds. Fails closed — a supplier that throws or returns null, empty roots, or an IOException
+   * while canonicalizing all yield false. Reading the roots is inside the guard deliberately: the
+   * supplier is the live indexing service, so "the Worker is down" must read as "containment cannot
+   * be proven", not as an exception escaping into the undo path.
    */
   boolean isWithinIndexedRoots(Path path) {
-    return isWithinRoots(path, indexedRootsSupplier.get());
+    List<Path> roots;
+    try {
+      roots = indexedRootsSupplier.get();
+    } catch (RuntimeException e) {
+      LOG.warn("Indexed-root lookup failed; containment not proven for: {}", path, e);
+      return false;
+    }
+    if (roots == null) {
+      LOG.warn("Indexed-root lookup returned null; containment not proven for: {}", path);
+      return false;
+    }
+    return isWithinRoots(path, roots);
   }
 
   private boolean isWithinRoots(Path path, List<Path> roots) {
@@ -125,7 +139,17 @@ final class FileOperationExecutor {
       // yet. Resolve the closest existing ancestor instead.
       Path resolved = resolveClosestExistingAncestor(path);
       for (Path root : roots) {
-        Path rootReal = root.toRealPath();
+        // Tempdoc 875 §E S4: canonicalize per root and skip the ones that cannot be resolved (a
+        // detached network share, an ACL-blocked mount). Letting one such root abort the loop would
+        // deny a path that sits squarely inside a later, perfectly good root. Skipping only ever
+        // shrinks the accepted set, so it cannot loosen the sandbox.
+        Path rootReal;
+        try {
+          rootReal = root.toRealPath();
+        } catch (IOException | RuntimeException e) {
+          LOG.warn("Skipping unresolvable indexed root during sandboxing: {}", root);
+          continue;
+        }
         if (resolved.startsWith(rootReal)) {
           return true;
         }

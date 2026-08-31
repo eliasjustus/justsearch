@@ -11,6 +11,7 @@ import io.justsearch.agent.AgentLoopServiceTest.ScriptedAiService;
 import io.justsearch.agent.AgentLoopServiceTest.ScriptedResponse;
 import io.justsearch.agent.AgentLoopServiceTest.StubTool;
 import io.justsearch.agent.api.AgentEvent;
+import io.justsearch.agent.api.AgentProfile;
 import io.justsearch.agent.api.AgentRequest;
 import io.justsearch.agent.api.registry.AgentToolEmitter;
 import io.justsearch.agent.api.registry.Audience;
@@ -152,7 +153,58 @@ class AgentToolAuthorityBoundaryTest {
   }
 
   // ---------------------------------------------------------------------------
-  // 5. offeredWireNames is a projection of emit, not a second list
+  // 5. A STEERING list that names a tool outside the run selection still dispatches
+  // ---------------------------------------------------------------------------
+
+  @Test
+  @DisplayName("a tool offered by a per-iteration steering list is authorized even when the run "
+      + "selection excludes it")
+  void steeringOfferedTool_isNotRefused() {
+    // Review finding S1. The per-iteration tool lists REPLACE the run selection rather than
+    // intersect with it: a profile's toolSubset (and E0a's first-turn narrowing) can offer a tool
+    // `request.selectedToolNames()` does not name. Refusing it would strand the run on a tool the
+    // product itself just put in front of the model. Offering and then refusing is never right.
+    var fileOps = new StubTool("file_operations", RiskTier.LOW, "moved");
+    var search = new StubTool("search_index", RiskTier.LOW, "hits");
+    var catalog = catalogOf(fileOps.toOperation(), search.toOperation());
+    var profiles =
+        List.of(
+            new AgentProfile("primary", "Primary", null, List.of("core_file_operations")));
+
+    var ai =
+        new ScriptedAiService(
+            ScriptedResponse.toolCall("call-1", "core_file_operations", "{}"),
+            ScriptedResponse.textOnly("done"));
+    var service =
+        AgentLoopServiceTest.observed(
+            new AgentLoopService(
+                ai,
+                catalog,
+                AgentLoopServiceTest.stubExecutor(fileOps, search),
+                filteringEmitter(alwaysFiring()),
+                null,
+                null));
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.runAgent(
+        new AgentRequest(
+            List.of(Map.of("role", "user", "content", "go")),
+            // The run authorized search only — but the active profile's subset offers file-ops.
+            List.of("core_search_index"),
+            3,
+            profiles,
+            "primary"),
+        events::add);
+
+    assertNull(
+        firstOfType(events, AgentEvent.ToolCallRejected.class),
+        "a tool the model was actually offered this turn must not be refused");
+    assertEquals(1, fileOps.callCount.get(), "the steering-offered tool's handler should have run");
+    assertNotNull(
+        firstOfType(events, AgentEvent.AgentDone.class), "the run should complete");
+  }
+
+  // ---------------------------------------------------------------------------
+  // 6. offeredWireNames is a projection of emit, not a second list
   // ---------------------------------------------------------------------------
 
   @Test

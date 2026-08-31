@@ -157,7 +157,16 @@ public final class IndexedRootGrantScope implements DurableGrantScope {
     try {
       Path resolved = resolveClosestExistingAncestor(Path.of(candidate));
       for (Path root : roots) {
-        Path rootReal = root.toRealPath();
+        // Tempdoc 875 §E S4: canonicalize per root and skip the unresolvable ones (a detached
+        // share, an ACL-blocked mount). Aborting the loop on one such root would cost a confirm for
+        // a path sitting squarely inside a later, good root. Skipping only shrinks the covered set.
+        Path rootReal;
+        try {
+          rootReal = root.toRealPath();
+        } catch (IOException | RuntimeException e) {
+          LOG.warn("Skipping unresolvable indexed root while scoping a durable grant: {}", root);
+          continue;
+        }
         if (resolved.startsWith(rootReal)) {
           return true;
         }

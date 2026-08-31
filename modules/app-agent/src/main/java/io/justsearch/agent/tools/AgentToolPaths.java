@@ -73,13 +73,14 @@ final class AgentToolPaths {
           + "\" is not an absolute path. Use one of the indexed root folders: "
           + formatRootsList(rootPaths);
     }
+    // The two canonicalization failures are NOT the same failure and must not share a catch.
+    //
+    // CANDIDATE side (below): containment could not be PROVEN for the path being checked, so it is
+    // not granted — an unreadable link or mount point on the way up must never resolve to "allowed"
+    // (tempdoc 875 §C.5). Fail closed with the "could not be resolved" message.
+    Path candidate;
     try {
-      Path candidate = canonicalizeForContainment(Path.of(path));
-      for (String root : rootPaths) {
-        if (candidate.startsWith(canonicalizeForContainment(Path.of(root)))) {
-          return null; // Valid — under this root
-        }
-      }
+      candidate = canonicalizeForContainment(Path.of(path));
     } catch (InvalidPathException e) {
       return "Invalid "
           + paramName
@@ -88,8 +89,6 @@ final class AgentToolPaths {
           + "\" is not a valid path. Use one of the indexed root folders: "
           + formatRootsList(rootPaths);
     } catch (IOException e) {
-      // Containment could not be PROVEN, so it is not granted: an unreadable link or mount point
-      // on the way up must never resolve to "allowed" (tempdoc 875 §C.5).
       return "Invalid "
           + paramName
           + ": \""
@@ -97,6 +96,25 @@ final class AgentToolPaths {
           + "\" could not be resolved for containment checking. Use one of the indexed root"
           + " folders: "
           + formatRootsList(rootPaths);
+    }
+    // ROOT side: one unresolvable root (a detached network share, an ACL-blocked mount, a
+    // malformed configured entry) is SKIPPED, not fatal. Canonicalizing inside the loop and
+    // letting the IOException escape it meant the first bad root rejected every path under every
+    // other, still-perfectly-valid root. Skipping is safe: a root that cannot be canonicalized can
+    // never prove containment for anything, so it contributes nothing either way. If EVERY root is
+    // unresolvable the loop simply finds no match, and the outcome is the ordinary "not under any
+    // indexed root folder" rejection below — the honest verdict, distinct from the candidate-side
+    // "could not be resolved" above.
+    for (String root : rootPaths) {
+      Path rootReal;
+      try {
+        rootReal = canonicalizeForContainment(Path.of(root));
+      } catch (IOException | InvalidPathException e) {
+        continue;
+      }
+      if (candidate.startsWith(rootReal)) {
+        return null; // Valid — under this root
+      }
     }
     return "Invalid "
         + paramName

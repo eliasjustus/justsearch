@@ -106,6 +106,66 @@ class AgentToolPathsTest {
         "A path in a sibling directory must be rejected");
   }
 
+  /**
+   * A root string that cannot become a {@link Path} at all — the deterministic, cross-platform
+   * stand-in for the real-world unresolvable root (a detached network share, an ACL-blocked mount):
+   * both reach {@code validateAgainstRoots} as "this root cannot be canonicalized". The NUL
+   * character is rejected by the Windows and Unix path parsers alike.
+   */
+  private static String unresolvableRoot() {
+    return "\0no-such-root";
+  }
+
+  @Test
+  void oneUnresolvableRootDoesNotRejectPathsUnderTheOtherRoots() throws IOException {
+    // The defect: canonicalizing each root INSIDE the shared try meant the first root that could
+    // not be resolved aborted the whole loop, so a path under a later, perfectly valid root was
+    // rejected. Order matters — the bad root is listed FIRST, before the real one.
+    Path root = Files.createDirectories(tempDir.resolve("indexed"));
+    Path inRoot = Files.writeString(root.resolve("doc.txt"), "hello");
+
+    List<String> roots = List.of(unresolvableRoot(), root.toString());
+
+    assertNull(
+        AgentToolPaths.validateAgainstRoots(inRoot.toString(), roots, "path"),
+        "An unresolvable root listed first must be skipped, not abort the containment loop");
+    assertNotNull(
+        AgentToolPaths.validateAgainstRoots(
+            tempDir.resolve("sibling").resolve("doc.txt").toString(), roots, "path"),
+        "Skipping a bad root must not turn into skipping containment altogether");
+  }
+
+  @Test
+  void allRootsUnresolvableIsAnOrdinaryNotUnderAnyRootRejection() throws IOException {
+    // The two canonicalization failures are different verdicts. Every ROOT unresolvable is simply
+    // "no root matched" — the candidate itself resolved fine, so the honest message is the ordinary
+    // one, not the fail-closed "could not be resolved for containment checking".
+    Path somewhere = Files.createDirectories(tempDir.resolve("somewhere"));
+    List<String> roots = List.of(unresolvableRoot());
+
+    String rejection =
+        AgentToolPaths.validateAgainstRoots(
+            somewhere.resolve("doc.txt").toString(), roots, "path");
+
+    assertNotNull(rejection, "No usable root means nothing is contained");
+    assertTrue(
+        rejection.contains("not under any indexed root folder"),
+        "Unexpected message: " + rejection);
+  }
+
+  @Test
+  void candidateThatCannotBeResolvedStillFailsClosed() throws IOException {
+    // The other half of the distinction: skipping an unusable ROOT must not loosen the CANDIDATE
+    // side. A candidate that cannot be resolved never proved containment, so it stays refused even
+    // when every configured root is perfectly fine.
+    Path root = Files.createDirectories(tempDir.resolve("indexed"));
+
+    assertNotNull(
+        AgentToolPaths.validateAgainstRoots(
+            root.toString() + "\0bad", List.of(root.toString()), "path"),
+        "An unresolvable candidate is never granted containment");
+  }
+
   @Test
   void nonExistentPathsCompareConsistentlyOnBothSides() {
     // Canonicalization must not make a not-yet-existing root un-comparable: candidate and root are

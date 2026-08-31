@@ -327,6 +327,20 @@ the principle is redundant.
   a second check would be the fork this tempdoc's principle argues against. Sized as its own change
   because it moves a shipped HTTP surface onto the operation substrate.
 
+- **An agent-loop approval cannot mint a durable grant.** `/api/chat/{approve,reject}` — the ONE
+  approval endpoint every run shape posts to (565 §15.C) — carries no `allowAlways` field, so the
+  "always allow" gesture is unavailable on the agent surface. The ceremony now says so instead of
+  offering a control that does nothing (§E S2), but the underlying question is a product decision:
+  should approving an agent tool call be able to record a standing consent at all? If yes, the field
+  and the mint belong on that endpoint; if no, the checkbox's absence there is the final answer and
+  this item closes.
+
+- **`OperationExecutorImpl.undo(...)` is dispatched without the trust gate.** It checks
+  `undoSupported` and delegates; `enforceTrustLattice` never runs. Move 5 hardens the one operation
+  that supports undo today at the tool, but the substrate-level gap stands — the reverse of an
+  operation is an operation (§C.7's second principle) and should meet the same lattice its forward
+  form did.
+
 ---
 
 ## §D. Plan
@@ -392,3 +406,44 @@ Ordered; each step lists its own verification. Items 1–5 are the moves; 6–8 
 | 2 | `FileOperationsToolTest` directory-undo out-of-roots + nested-edit cases |
 | 3 | step-runner/dispatcher test: audience-, availability- and selection-withheld tools all rejected |
 | 4 | `BrowseToolTest` throwing-supplier + empty-roots rejection; `AgentToolPathsTest` realpath + ambiguous-root |
+
+---
+
+## §E. Independent review + dispositions (2026-08-26)
+
+An independent refute-first reviewer (≠ implementer) attacked each §C claim: bypass hunt over every
+`isAllowed` / `setDurableGrantStore` / dispatch path, wrong-gate checks against set-sites,
+test-precision checks ("would this still pass with the production change reverted?"), adverse
+preconditions, and residue. **No blockers.** One claim was genuinely refuted (S1) and one was refuted
+in a direction the design had not considered (S2); both are fixed here.
+
+| # | Finding | Disposition |
+|---|---|---|
+| **S1** | **§C.4's claim refuted from the other side.** `buildE0aTools` selects `core_ingest_files` outright and `buildIterationTools` substitutes a profile's `toolSubset` *for* the run selection instead of intersecting. So a run whose `tools` selection excludes that tool would have it **offered** by the steering list and its use **refused** by the authority check — the "strand a run on a steering list" failure §C.4 set out to avoid, arrived at from the opposite direction. API-reachable, not FE-reachable. | **Fixed.** The authority set is now the UNION of the run-level offered set and what the model was actually offered this iteration. Both sides are emitter output, so both already passed audience + availability — the union can only differ on *selection* and never widens the boundary. Corrected principle: **offering a tool and then refusing it is never right**; honour what was offered rather than make steering authoritative. Pinned by `AgentToolAuthorityBoundaryTest.steeringOfferedTool_isNotRefused`. |
+| **S2** | **A lying control survived, on the surface this tempdoc is about.** `AgentSessionController` discards `decision.allowAlways` and `/api/chat/approve` carries no such field, so for every agent tool-call ceremony the "Always allow" checkbox renders and does nothing. Pre-existing, but the same defect class C.2 claims to sweep. | **Fixed** (the honest half). `AuthorizationPrompt.allowAlwaysSupported` lets a caller declare that its approval route cannot carry the flag; the agent route declares `false` and the checkbox is not offered. Making an agent-loop approval able to mint a durable grant is a product decision, not a bug fix — §C.9 open item. |
+| **S3** | `IndexedRootGrantScope`'s symlink defense was asserted only in a comment: both containment tests passed under plain `normalize()+startsWith`, so a later edit could drop `toRealPath` with nothing red. | **Fixed** — the link test is ported from `AgentToolPathsTest` (with its `mklink /J` fallback). |
+| **S4** | One unresolvable root (detached share, ACL-blocked mount) aborted the whole loop in `validateAgainstRoots`, rejecting paths under every *other* root. Fail-closed, but a denial of service. | **Fixed** — per-root catch; an unresolvable root is skipped, the candidate's own failure stays fail-closed. |
+| **S5** | `isWithinIndexedRoots`'s javadoc promised fail-closed on a throwing/null roots supplier; the supplier read sat outside the try. | **Fixed** — code made to match the stated contract (the outer `catch (Exception)` already prevented any delete, so this was contract drift, not a live hole). |
+| N1 | `offeredWireNames`'s "projection, not fork" claim was unpinned against the *real* emitter. | **Fixed** — an app-services test asserts the default method equals the real `AgentOperationEmitter.emit`'s function names. |
+| N4, N5 | Residue: `DurableGrantStore`'s "args-independent" javadoc did not mention `DurableGrantScope`; `SearchTool` kept the bare "Degrade gracefully" comment §A.3 singled out while `ReadDocumentTool` got the rationale. | **Fixed** (comments). |
+| N3 | An ambiguous root name is refused (correct) but the resulting message says "not an absolute path" and lists two identically-named roots, inviting a retry loop. | **Accepted as-is.** The honest fix distinguishes "unresolvable" from "ambiguous" in the helper's return type — a shape change to exactly the helpers tempdoc 877 is centralising. Deliberately left to that merge rather than restructured twice. |
+| N6 | `riskTier` is optional, so an absent value shows the checkbox. | **Accepted as-is.** The 428 path always carries it, the backend refuses regardless, and `handleApprove` echoes the honoured value — so the FE is not lying, it is at worst offering a control the backend then declines. Defaulting absent-to-HIGH would hide a legitimate control on every route that omits the field. |
+| N7 | `CONFLICT_TOLERANCE` is 2s and destination directories are created fresh, so a tree copy taking >2s can report a spurious "changed since". | **Accepted as-is.** Pre-existing for the top-level directory; the walk widens the exposure but the failure mode is a *refused* undo (safe side), and narrowing it means changing the conflict baseline, which belongs with 577 §2.14's tolerance, not here. |
+| N2 | `offeredWireNames` re-runs the full `emit` (JSON building) per tool call. | **Accepted as-is.** Recomputation is the design (mid-run availability changes must bite); the catalog is ~7–20 operations and a tool call is already an LLM round-trip. Caching would reintroduce the staleness the recomputation exists to prevent. |
+| N8 | The branch was one commit behind `origin/main`, making the diff *read* as if it reverted the 872 inbox retirement. | **Fixed** — merged. |
+
+**Could not refute** (the reviewer's own list, kept as verified): only one production caller of
+`isAllowed` and one wiring site of `setDurableGrantStore`; `enforceTrustLattice` is the single gate
+and the `AUTO` arm cannot carry HIGH; every `true` in `coversArguments` is either the ungoverned-op
+exit or the all-entries-proved exit; the scope is genuinely wired (the ingest handler cannot exist
+before the roots binding, both happening in the same memo); the `vop_`/handoff branches are
+untouched; the `BrowseToolTest` fixture rewrite relaxed no assertion; both COPY-undo arms are behind
+the containment check and the out-of-roots reporting is distinct from the conflict reporting, so the
+new test cannot pass by tripping the wrong guard.
+
+**One pre-existing hole the reviewer surfaced and this tempdoc does not close:**
+`OperationExecutorImpl.undo(...)` skips `enforceTrustLattice` entirely — undo is dispatched without
+a gate. Move 5 answers it for the one operation that supports undo today (containment re-proved at
+the tool), but the *substrate* still has no gate on the reverse of an operation. That is the
+"reversal is an operation and inherits its risk class" principle in §C.7 meeting its first real
+instance; recorded there, not built here.

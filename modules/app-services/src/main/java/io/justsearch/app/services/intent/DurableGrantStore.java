@@ -33,8 +33,10 @@ import tools.jackson.databind.json.JsonMapper;
  * the two positions of the {@link Grant} model's caveat:
  *
  * <ul>
- *   <li>an <b>operation grant</b> {@code (operationId, sourceTier)} — args-independent allow-always for
- *       exactly one operation (the per-op position);
+ *   <li>an <b>operation grant</b> {@code (operationId, sourceTier)} — allow-always for exactly one
+ *       operation (the per-op position). Args-independent <em>in this store</em> only: the executor
+ *       additionally consults {@link DurableGrantScope}, so a grant does not cover an invocation
+ *       reaching outside the containment it was granted against (tempdoc 875 C.3);
  *   <li>a <b>family grant</b> {@code (capabilityFamily, sourceTier)} — allow-always for every operation
  *       declaring that {@link io.justsearch.agent.api.registry.OperationPolicy#capabilityFamily() family}
  *       (the {@link Grant.CapabilityFamily} position, now realized — wider than one operation). The bare
@@ -60,7 +62,12 @@ public final class DurableGrantStore {
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
   static final int CURRENT_SCHEMA_VERSION = 1;
 
-  /** An operation grant: args-independent allow-always for one operation from a source tier. */
+  /**
+   * An operation grant: allow-always for one operation from a source tier. The key is
+   * args-independent because this store answers only "was a grant issued?"; whether the grant
+   * reaches THESE arguments is {@link DurableGrantScope}'s question, asked by the executor
+   * (tempdoc 875 C.3).
+   */
   private record OperationKey(String operationId, SourceTier sourceTier) {}
 
   /** A family grant: allow-always for every operation in a capability family from a source tier. */

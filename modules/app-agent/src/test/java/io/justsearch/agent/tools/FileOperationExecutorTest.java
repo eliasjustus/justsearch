@@ -523,4 +523,64 @@ class FileOperationExecutorTest {
         report.summary().contains("DEST_NOT_SANDBOXED"),
         "Should specifically fail sandbox check: " + report.summary());
   }
+
+  // ===== isWithinIndexedRoots: the undo-path containment check (tempdoc 875 §C.6) =====
+  // Its javadoc promises it fails closed for every root unavailability. The roots supplier is the
+  // live indexing service, so "the Worker is down" arrives here as a throwing or null-returning
+  // supplier — the adverse preconditions the happy-path tests can never reach
+  // (`green-masked-destructive`).
+
+  private FileOperationExecutor executorWithRootsSupplier(
+      java.util.function.Supplier<List<Path>> supplier) throws IOException {
+    return new FileOperationExecutor(
+        supplier,
+        pathMappings -> pathMappings.size(),
+        new FileOperationLog(dataDir.resolve("file-operations-adverse")));
+  }
+
+  @Test
+  void isWithinIndexedRootsAcceptsAnInRootPath() throws IOException {
+    Path file = root.resolve("a.txt");
+    Files.writeString(file, "data");
+
+    assertTrue(
+        executor.isWithinIndexedRoots(file),
+        "Precondition: an in-root path is accepted, so the adverse cases below fail for the "
+            + "supplier, not for the path");
+  }
+
+  @Test
+  void isWithinIndexedRootsFailsClosedWhenTheRootsSupplierThrows() throws IOException {
+    Path file = root.resolve("a.txt");
+    Files.writeString(file, "data");
+    FileOperationExecutor adverse =
+        executorWithRootsSupplier(
+            () -> {
+              throw new IllegalStateException("Worker unavailable");
+            });
+
+    assertFalse(
+        adverse.isWithinIndexedRoots(file),
+        "A throwing roots supplier must read as 'containment not proven', not propagate");
+  }
+
+  @Test
+  void isWithinIndexedRootsFailsClosedWhenTheRootsSupplierReturnsNull() throws IOException {
+    Path file = root.resolve("a.txt");
+    Files.writeString(file, "data");
+    FileOperationExecutor adverse = executorWithRootsSupplier(() -> null);
+
+    assertFalse(
+        adverse.isWithinIndexedRoots(file),
+        "A null roots list must read as 'containment not proven', not NPE");
+  }
+
+  @Test
+  void isWithinIndexedRootsFailsClosedWhenNoRootsAreConfigured() throws IOException {
+    Path file = root.resolve("a.txt");
+    Files.writeString(file, "data");
+    FileOperationExecutor adverse = executorWithRootsSupplier(List::of);
+
+    assertFalse(adverse.isWithinIndexedRoots(file), "No roots means nothing is contained");
+  }
 }

@@ -168,6 +168,24 @@ describe('<jf-authorization-host> (tempdoc 550 C3)', () => {
     await expect(decision).resolves.toEqual({ approved: true, allowAlways: true });
   });
 
+  it('875: hides the allow-always checkbox when the route cannot carry it (agent tool-call ceremony)', async () => {
+    // /api/chat/approve has no `allowAlways` field, so a tick there would be silently dropped.
+    // A control that does nothing is the same defect as one that lies — it is not offered.
+    const decision = requestAuthorization({
+      pendingId: 'pa-agent',
+      operationId: 'core.ingest-files',
+      gateBehavior: 'INLINE_CONFIRM',
+      riskTier: 'MEDIUM',
+      allowAlwaysSupported: false,
+    });
+    await settle();
+    expect(
+      host.shadowRoot!.querySelector('[data-testid="authorization-allow-always"]'),
+    ).toBeNull();
+    await activateJfButton(host.shadowRoot!.querySelector('[data-testid="authorization-approve"]'));
+    await expect(decision).resolves.toEqual({ approved: true, allowAlways: false });
+  });
+
   it('resolves false on Deny', async () => {
     const decision = requestAuthorization({ pendingId: 'pa-2', operationId: 'core.x', gateBehavior: 'INLINE_CONFIRM' });
     await settle();
