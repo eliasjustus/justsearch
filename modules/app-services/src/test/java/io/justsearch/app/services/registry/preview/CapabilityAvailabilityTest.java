@@ -159,7 +159,6 @@ final class CapabilityAvailabilityTest {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             caps,
             false),
         availability,

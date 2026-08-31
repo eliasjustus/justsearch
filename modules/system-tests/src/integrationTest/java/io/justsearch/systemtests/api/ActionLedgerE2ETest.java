@@ -24,9 +24,12 @@ import tools.jackson.databind.ObjectMapper;
  * attributed, chronological stream — the read-view the receipt / timeline / undo /
  * trust-audit are meant to read from (FE re-pointing is the remaining flagged cutover).
  *
- * <p>Invoking {@code core.navigate-to-surface} is a single action that produces BOTH an
- * Operation record (the invocation itself) AND a Navigation record (the forwarded
- * navigation) — so one call exercises the merge across both per-kind stores.
+ * <p>Tempdoc 879: the merge is now exercised by two invocations rather than one.
+ * {@code core.navigate-to-surface} declares {@code AuditPolicy.NONE}, and since the audit
+ * axis is enforced at dispatch it contributes only the Navigation record — no Operation
+ * record. {@code core.set-chat-enabled} (LOW · no-confirm · no capability gate ·
+ * {@code METADATA_ONLY}) supplies the Operation record. What the test asserts is unchanged:
+ * both kinds land in ONE attributed, chronological read-view.
  */
 @DisplayName("Unified Action Ledger E2E (tempdoc 550 Slice C1)")
 @Timeout(value = 2, unit = TimeUnit.MINUTES)
@@ -50,8 +53,9 @@ class ActionLedgerE2ETest {
   @Test
   @DisplayName("Operation and Navigation records merge into one attributed ledger")
   void operationAndNavigationMergeIntoOneLedger() throws Exception {
-    // Trigger an action that records BOTH an operation entry and a navigation entry.
-    HttpResponse<String> invoke =
+    // Navigation record: core.navigate-to-surface forwards the navigation. It declares
+    // AuditPolicy.NONE, so (tempdoc 879) it deliberately leaves no Operation record.
+    HttpResponse<String> navigate =
         CLIENT.send(
             HttpRequest.newBuilder(
                     URI.create(base() + "/api/operations/core.navigate-to-surface/invoke"))
@@ -62,7 +66,21 @@ class ActionLedgerE2ETest {
                         "{\"args\":{\"surfaceId\":\"core.library\"}}"))
                 .build(),
             HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, invoke.statusCode(), "navigate-to-surface invoked: " + invoke.body());
+    assertEquals(200, navigate.statusCode(), "navigate-to-surface invoked: " + navigate.body());
+
+    // Operation record: core.set-chat-enabled is METADATA_ONLY, so it IS recorded. LOW risk,
+    // no confirm, no capability gate — deliberately ungatable (tempdoc 737 §12b), which makes
+    // it the reliable operation-row producer on an isolated fixture backend.
+    HttpResponse<String> invoke =
+        CLIENT.send(
+            HttpRequest.newBuilder(
+                    URI.create(base() + "/api/operations/core.set-chat-enabled/invoke"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"args\":{\"enabled\":false}}"))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, invoke.statusCode(), "set-chat-enabled invoked: " + invoke.body());
 
     HttpResponse<String> ledger =
         CLIENT.send(
@@ -82,7 +100,7 @@ class ActionLedgerE2ETest {
     String prev = null;
     for (JsonNode e : entries) {
       String kind = e.path("kind").asText();
-      if ("operation".equals(kind) && "core.navigate-to-surface".equals(e.path("operationId").asText())) {
+      if ("operation".equals(kind) && "core.set-chat-enabled".equals(e.path("operationId").asText())) {
         hasOperation = true;
       }
       if ("navigation".equals(kind) && "core.library".equals(e.path("targetSurface").asText())) {

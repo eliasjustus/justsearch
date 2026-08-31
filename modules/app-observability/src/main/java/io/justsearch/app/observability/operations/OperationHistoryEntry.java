@@ -15,13 +15,12 @@ import java.util.Optional;
  * completion. Append-only; bounded retention via {@link OperationHistoryStore}'s ring
  * buffer.
  *
- * <p>{@code argumentsSummary} is an optional redacted summary of the input payload —
- * never the raw arguments. Per the slice's privacy flag: "the Operation declaration's
- * {@code policy.audit} axis should drive what gets logged. Don't dump raw arguments
- * without consulting the audit policy." For the substrate landing, this is
- * {@link Optional#empty()} until audit-policy plumbing lands; per slice 444b §B.D,
- * forcing a literal {@code "(redacted)"} placeholder was uninformative and pretended
- * to carry data when there was none.
+ * <p>Tempdoc 879: whether an entry exists at all is now the
+ * {@code OperationPolicy.audit} axis's job — {@code AuditPolicy.NONE} suppresses the entry
+ * in {@code OperationExecutorImpl.emitHistory}. The former {@code argumentsSummary}
+ * component was removed with {@code AuditPolicy.FULL_PAYLOAD}: it could only ever be
+ * {@link Optional#empty()}, since no producer summarised arguments and no consumer read it.
+ * Every surviving component is metadata, matching {@code METADATA_ONLY}'s contract.
  *
  * <p>{@code diagnosticsLink} is an optional pointer (URL or i18n key) to richer
  * diagnostics for this invocation — typically a HealthEvent id when the failure mapped
@@ -55,7 +54,6 @@ import java.util.Optional;
 public record OperationHistoryEntry(
     OperationRef operationId,
     String actor,
-    Optional<String> argumentsSummary,
     Instant startTime,
     Instant endTime,
     OperationOutcome outcome,
@@ -66,7 +64,6 @@ public record OperationHistoryEntry(
   public OperationHistoryEntry {
     Objects.requireNonNull(operationId, "operationId");
     Objects.requireNonNull(actor, "actor");
-    Objects.requireNonNull(argumentsSummary, "argumentsSummary");
     Objects.requireNonNull(startTime, "startTime");
     Objects.requireNonNull(endTime, "endTime");
     Objects.requireNonNull(outcome, "outcome");

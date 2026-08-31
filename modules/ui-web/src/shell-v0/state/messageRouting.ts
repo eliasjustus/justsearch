@@ -126,25 +126,23 @@ export function isRoutineActivity(kind: string, originator: string, effectKind?:
 export interface OperationSignificance {
   readonly risk: string; // RiskTier: LOW | MEDIUM | HIGH
   readonly confirmKind: string; // NONE | INLINE | TYPED
-  readonly audit: string; // NONE | METADATA_ONLY | FULL_PAYLOAD
   readonly affectsCount: number;
 }
 
 /**
  * Tempdoc 612 §3 — is a direct-user OPERATION row routine (insignificant) by its DECLARED facets? An
  * operation is routine only when it is read-only-ish and accountability-free: LOW risk, no confirmation,
- * not fully audited, and mutating no Resource. Anything destructive / confirmed / fully-audited /
- * Resource-mutating is causal or audit-relevant and stays foreground (the "user did X → system did Y"
- * chain). The caller resolves the facets from the registry and applies the user-originator + non-FAILURE
- * guards; this predicate is pure over the facet bundle.
+ * and mutating no Resource. Anything destructive / confirmed / Resource-mutating is causal or
+ * audit-relevant and stays foreground (the "user did X → system did Y" chain). The caller resolves the
+ * facets from the registry and applies the user-originator + non-FAILURE guards; this predicate is pure
+ * over the facet bundle.
+ *
+ * Tempdoc 879 dropped the `audit` facet. It only ever discriminated `FULL_PAYLOAD`, which no Operation
+ * declared and which is now deleted from `AuditPolicy`; the surviving values (`NONE` / `METADATA_ONLY`)
+ * both graded routine, so the clause could never change a verdict.
  */
 export function isRoutineOperation(s: OperationSignificance): boolean {
-  return (
-    s.risk === 'LOW' &&
-    s.confirmKind === 'NONE' &&
-    s.audit !== 'FULL_PAYLOAD' &&
-    s.affectsCount === 0
-  );
+  return s.risk === 'LOW' && s.confirmKind === 'NONE' && s.affectsCount === 0;
 }
 
 /**

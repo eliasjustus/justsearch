@@ -36,13 +36,12 @@ export interface OperationWire {
     supersedes: string[];
   };
   policy: {
-    audit: "NONE" | "METADATA_ONLY" | "FULL_PAYLOAD";
+    audit: "NONE" | "METADATA_ONLY";
     confirm: {
       confirmTextKey?: string;
       kind: string;
     };
     inverseOperationId: string | null;
-    rateLimitMs?: number;
     risk: "LOW" | "MEDIUM" | "HIGH";
     undoSupported: boolean;
   };
@@ -82,13 +81,12 @@ export const operationWireSchema = z.strictObject({
     "supersedes": z.array(z.string()),
   }),
   "policy": z.strictObject({
-    "audit": z.enum(["NONE", "METADATA_ONLY", "FULL_PAYLOAD"]),
+    "audit": z.enum(["NONE", "METADATA_ONLY"]),
     "confirm": z.strictObject({
       "confirmTextKey": z.string().optional(),
       "kind": z.string(),
     }),
     "inverseOperationId": z.string().nullable(),
-    "rateLimitMs": z.number().int().optional(),
     "risk": z.enum(["LOW", "MEDIUM", "HIGH"]),
     "undoSupported": z.boolean(),
   }),

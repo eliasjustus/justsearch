@@ -486,7 +486,7 @@ describe('projectBackend — 612 routine curation', () => {
 
   it('keeps a significant user operation foreground (destructive / mutates a Resource)', () => {
     seedOperationCatalog(
-      catalogOf(op('core.index-gc', { policy: { risk: 'HIGH', confirm: { kind: 'TYPED' }, audit: 'FULL_PAYLOAD', undoSupported: false }, lineage: { affects: ['core.index'], supersedes: [] } })),
+      catalogOf(op('core.index-gc', { policy: { risk: 'HIGH', confirm: { kind: 'TYPED' }, audit: 'METADATA_ONLY', undoSupported: false }, lineage: { affects: ['core.index'], supersedes: [] } })),
     );
     const row = projectBackend(backendEntry({ kind: 'operation', operationId: 'core.index-gc', originator: 'user', outcome: 'SUCCESS' }));
     expect(row.isRoutine).toBeUndefined();

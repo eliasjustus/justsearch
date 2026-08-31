@@ -233,6 +233,149 @@ final class OperationExecutorImplTest {
     assertTrue(result.success(), "emitter failure must not propagate to dispatch caller");
   }
 
+  // ----------------------------------------------------------------------------------
+  // Tempdoc 879 — the declared AuditPolicy axis drives history emission.
+  //
+  // Acceptance criterion: flipping ONLY the audit declaration flips the behaviour. Each
+  // pair below uses the same handler, same wiring, same everything — the operations differ
+  // in exactly the OperationPolicy.audit field.
+  // ----------------------------------------------------------------------------------
+
+  @Test
+  void metadataOnlyAuditEmitsHistoryEntry() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis");
+    handlers.register(id, args -> OperationResult.success("ok"));
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(handlers, emitted::add, Clock.systemUTC());
+
+    OperationResult result =
+        executor.dispatch(makeOp(id, TrustTier.CORE, false, AuditPolicy.METADATA_ONLY), "{}");
+
+    assertTrue(result.success());
+    assertEquals(
+        1, emitted.size(), "METADATA_ONLY must record exactly one history entry per dispatch");
+    assertEquals(OperationOutcome.SUCCESS, emitted.get(0).outcome());
+  }
+
+  @Test
+  void noneAuditSuppressesHistoryEntry() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis");
+    handlers.register(id, args -> OperationResult.success("ok"));
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(handlers, emitted::add, Clock.systemUTC());
+
+    OperationResult result =
+        executor.dispatch(makeOp(id, TrustTier.CORE, false, AuditPolicy.NONE), "{}");
+
+    assertTrue(result.success(), "suppressing the audit record must not affect the dispatch");
+    assertTrue(
+        emitted.isEmpty(),
+        "AuditPolicy.NONE means 'no audit record' — no history entry may be emitted");
+  }
+
+  @Test
+  void noneAuditSuppressesHistoryOnValidationFailure() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis-validation");
+    handlers.register(id, args -> OperationResult.success("unreached"));
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(handlers, emitted::add, Clock.systemUTC());
+
+    Operation op =
+        new Operation(
+            id,
+            Presentation.of(new I18nKey("test." + id.value()), new I18nKey("test.desc")),
+            Interface.of(
+                "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}",
+                "{\"type\":\"object\"}"),
+            new OperationPolicy(
+                RiskTier.LOW,
+                ConfirmStrategy.None.INSTANCE,
+                AuditPolicy.NONE,
+                RetryPolicy.noRetry(),
+                Set.of(),
+                false),
+            OperationAvailability.empty(),
+            OperationLineage.empty(),
+            Binding.of(id),
+            new Provenance(TrustTier.CORE, "test", "1.0"),
+            Set.of(ExecutorTag.AGENT));
+
+    OperationResult result = executor.dispatch(op, "{}");
+
+    assertFalse(result.success());
+    assertEquals("BAD_REQUEST", result.errorCode().orElse(null));
+    assertTrue(
+        emitted.isEmpty(),
+        "the validation-failure branch calls emitHistory too — it must respect NONE");
+  }
+
+  @Test
+  void noneAuditSuppressesHistoryOnThrownDispatch() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis-throw");
+    handlers.register(
+        id,
+        args -> {
+          throw new RuntimeException("boom");
+        });
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(handlers, emitted::add, Clock.systemUTC());
+
+    assertThrows(
+        RuntimeException.class,
+        () -> executor.dispatch(makeOp(id, TrustTier.CORE, false, AuditPolicy.NONE), "{}"));
+
+    assertTrue(
+        emitted.isEmpty(),
+        "the uncaught-exception branch calls emitHistory too — it must respect NONE");
+  }
+
+  /**
+   * Precision test for the wrong-gate hazard in {@code emitHistory}: the per-Operation
+   * advisory emission lives INSIDE that method, after the history block. Suppressing the
+   * audit record with an early {@code return} would silently kill the advisory pipeline.
+   *
+   * <p>This is not hypothetical — {@code core.ping-backend} (CoreOperationCatalog) is the
+   * real operation that declares {@code AuditPolicy.NONE} together with advisoryClass
+   * {@code core.advisory-operation-completed}, and it is the advisory substrate's canary
+   * producer. Audit policy governs history retention, not advisory delivery.
+   */
+  @Test
+  void noneAuditSuppressesHistoryButStillFiresAdvisory() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis-advisory");
+    handlers.register(id, args -> OperationResult.success("ok"));
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    List<OperationCompletionEvent> advisories = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(
+            handlers,
+            emitted::add,
+            Map.of(TEST_ADVISORY_CLASS, (Consumer<OperationCompletionEvent>) advisories::add),
+            Clock.systemUTC());
+
+    Operation op =
+        makeOpWithAdvisoryClass(id, Optional.of(TEST_ADVISORY_CLASS), AuditPolicy.NONE);
+
+    OperationResult result = executor.dispatch(op, "{}");
+
+    assertTrue(result.success());
+    assertTrue(emitted.isEmpty(), "AuditPolicy.NONE must suppress the history entry");
+    assertEquals(
+        1,
+        advisories.size(),
+        "advisory emission is a separate axis — NONE must NOT suppress it (core.ping-backend)");
+    assertEquals(id, advisories.get(0).operationId());
+    assertEquals(OperationOutcome.SUCCESS, advisories.get(0).outcome());
+  }
+
   // -------------------- Slice 3a-2-c Phase C: schema validation --------------------
 
   /**
@@ -265,7 +408,6 @@ final class OperationExecutorImplTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.NONE,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),
@@ -312,7 +454,6 @@ final class OperationExecutorImplTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.NONE,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),
@@ -350,7 +491,6 @@ final class OperationExecutorImplTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.NONE,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),
@@ -407,9 +547,8 @@ final class OperationExecutorImplTest {
             new OperationPolicy(
                 RiskTier.LOW,
                 ConfirmStrategy.None.INSTANCE,
-                AuditPolicy.NONE,
+                AuditPolicy.METADATA_ONLY,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),
@@ -702,6 +841,11 @@ final class OperationExecutorImplTest {
 
   private static Operation makeOpWithAdvisoryClass(
       OperationRef id, Optional<ResourceRef> advisoryClass) {
+    return makeOpWithAdvisoryClass(id, advisoryClass, AuditPolicy.METADATA_ONLY);
+  }
+
+  private static Operation makeOpWithAdvisoryClass(
+      OperationRef id, Optional<ResourceRef> advisoryClass, AuditPolicy audit) {
     return new Operation(
         id,
         Presentation.of(
@@ -710,9 +854,8 @@ final class OperationExecutorImplTest {
         new OperationPolicy(
             RiskTier.LOW,
             ConfirmStrategy.None.INSTANCE,
-            AuditPolicy.NONE,
+            audit,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false,
             advisoryClass),
@@ -816,7 +959,6 @@ final class OperationExecutorImplTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.NONE,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(RequiredCapability.WorkerOnline.INSTANCE),
                 true),
             OperationAvailability.empty(),
@@ -841,7 +983,6 @@ final class OperationExecutorImplTest {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(cap),
             false),
         OperationAvailability.empty(),
@@ -1123,7 +1264,6 @@ final class OperationExecutorImplTest {
             new ConfirmStrategy.Typed(new I18nKey("test.confirm")),
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
@@ -1144,7 +1284,6 @@ final class OperationExecutorImplTest {
             new ConfirmStrategy.Typed(new I18nKey("test.confirm")),
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
@@ -1154,7 +1293,18 @@ final class OperationExecutorImplTest {
         Set.of(ExecutorTag.AGENT));
   }
 
+  /**
+   * Default test Operation. Declares {@link AuditPolicy#METADATA_ONLY} — the production
+   * default (35 of the 41 catalog declarations) and, since tempdoc 879 wired the axis, the
+   * declaration that actually asks for a history entry. Tests that need the suppressing
+   * declaration pass it explicitly via the 4-arg overload.
+   */
   private static Operation makeOp(OperationRef id, TrustTier tier, boolean undoSupported) {
+    return makeOp(id, tier, undoSupported, AuditPolicy.METADATA_ONLY);
+  }
+
+  private static Operation makeOp(
+      OperationRef id, TrustTier tier, boolean undoSupported, AuditPolicy audit) {
     return new Operation(
         id,
         Presentation.of(
@@ -1163,9 +1313,8 @@ final class OperationExecutorImplTest {
         new OperationPolicy(
             RiskTier.LOW,
             ConfirmStrategy.None.INSTANCE,
-            AuditPolicy.NONE,
+            audit,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             undoSupported),
         OperationAvailability.empty(),

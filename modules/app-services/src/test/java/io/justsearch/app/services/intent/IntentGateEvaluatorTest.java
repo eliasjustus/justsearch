@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.registry.AutonomyLevel;
+import io.justsearch.agent.api.registry.ConfirmStrategy;
 import io.justsearch.agent.api.registry.GateBehavior;
+import io.justsearch.agent.api.registry.I18nKey;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
 import io.justsearch.agent.api.registry.TransportTag;
@@ -135,6 +137,46 @@ class IntentGateEvaluatorTest {
   }
 
   @Test
+  @DisplayName(
+      "agentGate — the op's declared ConfirmStrategy is a FLOOR the dial cannot loosen (879)")
+  void agentGateConfirmStrategyIsAFloor() {
+    var e = evaluator();
+    var typed = new ConfirmStrategy.Typed(new I18nKey("ops.test.confirm"));
+
+    // Baseline: a REVERSIBLE MEDIUM write under AUTO auto-fires when the op declares no confirm.
+    assertEquals(
+        GateBehavior.AUTO,
+        e.agentGate(RiskTier.MEDIUM, AutonomyLevel.AUTO, true, ConfirmStrategy.None.INSTANCE));
+    // The acceptance criterion: flipping ONLY the declaration flips the verdict. Before 879 the
+    // declared strategy decided nothing on the agent path, so this same call returned AUTO —
+    // auto-approving an operation whose own declaration asked for a confirmation.
+    assertEquals(
+        GateBehavior.INLINE_CONFIRM,
+        e.agentGate(RiskTier.MEDIUM, AutonomyLevel.AUTO, true, ConfirmStrategy.Inline.INSTANCE));
+    // Typed raises the same call one step further.
+    assertEquals(
+        GateBehavior.TYPED_CONFIRM, e.agentGate(RiskTier.MEDIUM, AutonomyLevel.AUTO, true, typed));
+
+    // A READ whose operation asks to confirm still confirms — the floor is not risk-conditional.
+    assertEquals(
+        GateBehavior.INLINE_CONFIRM,
+        e.agentGate(RiskTier.LOW, AutonomyLevel.AUTO, true, ConfirmStrategy.Inline.INSTANCE));
+
+    // The floor never LOOSENS a verdict the dial already tightened: WATCH + LOW + None stays
+    // INLINE_CONFIRM even though a None declaration's floor is AUTO.
+    assertEquals(
+        GateBehavior.INLINE_CONFIRM,
+        e.agentGate(RiskTier.LOW, AutonomyLevel.WATCH, true, ConfirmStrategy.None.INSTANCE));
+    // ...nor does it weaken the HIGH floor.
+    assertEquals(
+        GateBehavior.TYPED_CONFIRM,
+        e.agentGate(RiskTier.HIGH, AutonomyLevel.AUTO, true, ConfirmStrategy.Inline.INSTANCE));
+
+    // The 3-arg form is unchanged: no declaration in scope ⇒ no floor.
+    assertEquals(GateBehavior.AUTO, e.agentGate(RiskTier.MEDIUM, AutonomyLevel.AUTO, true));
+  }
+
+  @Test
   @DisplayName("agentGate — an engaged hard stop DENIES regardless of the dial (561 P-D safety floor)")
   void agentGateHardStopDominates() {
     var e = evaluator();
@@ -143,5 +185,10 @@ class IntentGateEvaluatorTest {
     // Even AUTO + LOW (the most permissive dial) is DENY while the hard stop is engaged.
     assertEquals(GateBehavior.DENY, e.agentGate(RiskTier.LOW, AutonomyLevel.AUTO));
     assertEquals(GateBehavior.DENY, e.agentGate(RiskTier.MEDIUM, AutonomyLevel.AUTO));
+    // 879: a DENY short-circuits before the declared-confirm floor, so a floor can never WEAKEN a
+    // hard stop — even the most permissive declaration (None) leaves DENY standing.
+    assertEquals(
+        GateBehavior.DENY,
+        e.agentGate(RiskTier.LOW, AutonomyLevel.AUTO, true, ConfirmStrategy.None.INSTANCE));
   }
 }
