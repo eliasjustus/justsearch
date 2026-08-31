@@ -54,9 +54,12 @@ final class AgentEventPayloadConformanceTest {
           // Tempdoc 565 §30 — the DIRECTION authority's mid-run steer acknowledgement.
           new AgentEvent.DirectiveAcknowledged("Focus only on Q3."),
           new AgentEvent.ToolExecutionStarted("id", "tool"),
-          // non-empty structuredData → the conditional `structuredData` key is emitted.
+          // non-empty structuredData → the conditional `structuredData` key is emitted; a MEASURED
+          // char count (878 §D.4) → the conditional `outputCharsToModel`/`truncatedForModel` pair
+          // is emitted too. Both must be present here or this test would keep passing while the
+          // emitter produced keys the descriptor never declared — the drift class it exists to close.
           new AgentEvent.ToolExecutionCompleted(
-              "id", OperationResult.success("msg", Map.of("k", "v"))),
+              "id", OperationResult.success("msg", Map.of("k", "v")), 2),
           new AgentEvent.ToolCallRejected("id", "reason"),
           new AgentEvent.ToolCallVirtual("id", "wire", "args"),
           // non-empty sources + citations → those keys are emitted.

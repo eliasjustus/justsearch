@@ -195,7 +195,14 @@ public final class AgentInteractionMapper {
                       "output", payload.get("output"),
                       // Tempdoc 561 #6: carry the producer evidence onto the record event so the
                       // record render shows the same evidence cards as the live overlay.
-                      "structuredData", payload.get("structuredData"))));
+                      "structuredData", payload.get("structuredData"),
+                      // Tempdoc 878 §D.4 — and carry the model-visibility label for the same
+                      // reason. `attrs` drops nulls, so an unmeasured completion writes neither key
+                      // and the reloaded card stays silent exactly as the live one does. Omitting
+                      // them here would make a run say less on reload than it said while running —
+                      // the live-vs-record divergence 867 built one renderer to prevent.
+                      "outputCharsToModel", payload.get("outputCharsToModel"),
+                      "truncatedForModel", payload.get("truncatedForModel"))));
       case "tool_call_rejected" ->
           Optional.of(
               toolActivity(
@@ -530,7 +537,7 @@ public final class AgentInteractionMapper {
    * {@code InteractionEvent}'s compact constructor does {@code Map.copyOf}, so the map the delegate
    * returned is immutable and {@code put} on it would throw at runtime.
    */
-  static InteractionEvent withReasoning(
+  public static InteractionEvent withReasoning(
       InteractionEvent event, List<Map<String, Object>> blocks) {
     Map<String, Object> merged = new LinkedHashMap<>(event.attributes());
     // Tempdoc 859 §A — APPEND, never replace. Under the flush rule a carrier can be written twice:

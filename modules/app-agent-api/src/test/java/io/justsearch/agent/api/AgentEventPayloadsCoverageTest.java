@@ -172,6 +172,92 @@ final class AgentEventPayloadsCoverageTest {
     assertEquals(42L, park.get("sinceEpochMs"));
   }
 
+  /**
+   * Tempdoc 878 §D.4 — the wire says how much of a tool's output the MODEL received, and stays
+   * SILENT when nobody measured.
+   *
+   * <p>The defect: {@code output} carried the tool's whole answer while the loop appended a
+   * Layer-2-truncated copy to the prompt, so one field quietly answered two different questions and
+   * a reader debugging a wrong answer was looking at evidence the model never had.
+   *
+   * <p>The absent case is asserted first because it is the one a "helpful" default would break. An
+   * emitter that did not measure must produce NO key — never {@code truncatedForModel: false},
+   * which would retroactively describe every record written before this field as complete.
+   */
+  @Test
+  @DisplayName("878 §D.4: tool_exec_completed reports what the model saw, and says nothing when unmeasured")
+  void toolCompletedReportsWhatReachedTheModel() {
+    var full =
+        io.justsearch.agent.api.registry.OperationResult.success("0123456789ABCDEFGHIJ");
+
+    Map<String, Object> unmeasured =
+        AgentEventPayloads.base(new AgentEvent.ToolExecutionCompleted("c1", full));
+    assertFalse(
+        unmeasured.containsKey("outputCharsToModel"),
+        "an emitter that did not measure writes NO key — absent is 'unknown', not 'all of it'");
+    assertFalse(unmeasured.containsKey("truncatedForModel"), "and neither half appears alone");
+
+    Map<String, Object> truncated =
+        AgentEventPayloads.base(new AgentEvent.ToolExecutionCompleted("c1", full, 8));
+    assertEquals(
+        "0123456789ABCDEFGHIJ",
+        truncated.get("output"),
+        "`output` stays the tool's WHOLE answer: the reader is not context-bound, and showing less"
+            + " than the tool returned would be a new dishonesty rather than a fix for the old one");
+    assertEquals(8, truncated.get("outputCharsToModel"), "and beside it, what the prompt got");
+    assertEquals(
+        true,
+        truncated.get("truncatedForModel"),
+        "derived from the count, never carried independently — two fields can contradict each other");
+
+    Map<String, Object> whole =
+        AgentEventPayloads.base(
+            new AgentEvent.ToolExecutionCompleted("c1", full, full.message().length()));
+    assertEquals(
+        false,
+        whole.get("truncatedForModel"),
+        "measured-and-complete is a real, DIFFERENT answer from unmeasured — a consumer can tell"
+            + " 'the model got everything' from 'nobody said', which is the whole point of the pair");
+  }
+
+  /**
+   * Tempdoc 878 review B1 — the count is a fraction OF THE OUTPUT, so it can never exceed it.
+   *
+   * <p>The first implementation measured the string {@code AgentContextCompressor.truncate}
+   * RETURNS, which is the prefix plus a {@code [... truncated, N chars omitted]} marker. For an
+   * output just over the cap that number was LARGER than the output itself, which flipped the
+   * derived {@code truncatedForModel} to {@code false} — a measured "the model got all of it" on an
+   * output it demonstrably did not get all of, which is the exact mixed signal the one-component
+   * design was chosen to make impossible.
+   *
+   * <p>Asserted as an INVARIANT over the boundary rather than against a magic number, so it stays
+   * true if the cap or the marker's wording ever changes.
+   */
+  @Test
+  @DisplayName("878 B1: outputCharsToModel never exceeds the output it is a fraction of")
+  void theModelCountIsAFractionOfTheOutput() {
+    String output = "x".repeat(9000);
+    var result = io.justsearch.agent.api.registry.OperationResult.success(output);
+
+    // The value a producer measuring the TRUNCATED string would have reported: prefix + marker.
+    int naive = 4000 + "\n[... truncated, 5000 chars omitted]".length();
+    assertTrue(naive < output.length(), "this fixture must be big enough for the naive value to fit");
+
+    var honest = new AgentEvent.ToolExecutionCompleted("c1", result, 4000);
+    assertTrue(
+        honest.outputCharsToModel() <= output.length(),
+        "the count is characters OF THE OUTPUT — the truncation marker is in the prompt but it is"
+            + " not the tool's answer, and this field counts the answer");
+    assertTrue(honest.truncatedForModel(), "and a genuinely truncated output says so");
+
+    // The inversion, stated directly: a count that includes the marker can exceed a small overflow.
+    var overflowed = new AgentEvent.ToolExecutionCompleted("c2", result, output.length() + 1);
+    assertFalse(
+        overflowed.truncatedForModel(),
+        "a count larger than the output silently reads as 'not truncated' — which is why the"
+            + " producer must measure the output, not the envelope it was wrapped in");
+  }
+
   private static Set<String> componentsOf(AgentEvent event) {
     RecordComponent[] components = event.getClass().getRecordComponents();
     return java.util.Arrays.stream(components)

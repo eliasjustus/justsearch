@@ -194,19 +194,50 @@ final class AgentContextCompressor {
   }
 
   /**
-   * Search-specific compression: strips excerpt lines from search_index output. Excerpts are the
-   * longest per-result field (~200 chars each) and are only useful for the current iteration.
+   * Search-specific compression: strips excerpt lines and read pages from a tool result. They are
+   * the longest per-result fields and are only useful for the iteration that produced them.
+   *
+   * <p>Tempdoc 865 §7.5 — {@code STRIPPABLE_LINE}, not {@code CARRIER_LINE}. Preview lines are a
+   * dense-only hit's whole text and were never part of Layer 3; widening the strip to match the
+   * reader's pattern would silently delete them from the prompt.
+   *
+   * <p><b>Tempdoc 878 §D.2 — this SUBSTITUTES; it used to DELETE.</b> The removed lines are replaced
+   * by one {@link ToolResultCarrier#elidedLine} scar naming how much went. Deleting outright left a
+   * read result as a bare {@code [read] … More: offset_chars=N} header: an instruction to fetch the
+   * next page, sitting on a message whose page had just been removed, with nothing on the artifact
+   * saying so. Layer 2 marks its cut and {@link #compressToolOutput} marks its own; this was the one
+   * elision in the loop that left the model no way to know it had happened.
+   *
+   * <p>Idempotent by construction: the scar matches neither pattern in {@link ToolResultCarrier}, so
+   * a second pass finds nothing strippable and adds no second scar.
+   *
+   * <p>HONEST LIMIT: when the stripped remainder still clears {@code minChars}, {@link
+   * #compressToolOutput} runs over this output and its keep-budget can clip the scar's tail. The
+   * elision stays marked in that case — {@link #COMPRESSED_MARKER} is itself a mark, and it is what
+   * the receipt reads — but the scar's behaviour-shaping second half may not survive verbatim. Two
+   * marks, of which one may be clipped, is the trade for keeping the strip honest as a function
+   * rather than deferring its mark until after a later, unrelated pass.
    */
   static String stripSearchExcerpts(String content) {
     if (!ToolResultCarrier.mayHaveStrippableLine(content)) {
       return content;
     }
-    // Tempdoc 865 §7.5 — STRIPPABLE_LINE, not CARRIER_LINE: this removes excerpt lines only, exactly
-    // as before. Preview lines are a dense-only hit's whole text and were never part of Layer 3.
-    return ToolResultCarrier.STRIPPABLE_LINE
-        .matcher(content)
-        .replaceAll("")
-        .replaceAll("\n{2,}", "\n");
+    var matcher = ToolResultCarrier.STRIPPABLE_LINE.matcher(content);
+    int lines = 0;
+    int chars = 0;
+    while (matcher.find()) {
+      lines++;
+      // +1 for the line's own newline: `.*$` stops before it, but the strip removes it too, and a
+      // scar that under-reports what it removed is a small version of the defect it exists to fix.
+      chars += matcher.end() - matcher.start() + 1;
+    }
+    if (lines == 0) {
+      return content;
+    }
+    String stripped =
+        ToolResultCarrier.STRIPPABLE_LINE.matcher(content).replaceAll("").replaceAll("\n{2,}", "\n");
+    String separator = stripped.isEmpty() || stripped.endsWith("\n") ? "" : "\n";
+    return stripped + separator + ToolResultCarrier.elidedLine(lines, chars);
   }
 
   private String compressToolOutput(String content) {

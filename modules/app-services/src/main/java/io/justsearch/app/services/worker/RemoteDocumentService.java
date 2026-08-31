@@ -126,7 +126,7 @@ public final class RemoteDocumentService implements DocumentService {
   public CompletionStage<DocumentSlice> fetchSlice(String docId, int offsetChars, int maxChars) {
     if (docId == null || docId.isBlank()) {
       return CompletableFuture.completedFuture(
-          new DocumentSlice("", "", Map.of(), false, false, 0, "missing_doc_id"));
+          new DocumentSlice("", "", Map.of(), false, false, 0, 0, "missing_doc_id"));
     }
     int offset = Math.max(0, offsetChars);
     int max = maxChars <= 0 ? 20_000 : maxChars;
@@ -158,6 +158,7 @@ public final class RemoteDocumentService implements DocumentService {
                 response.getFound(),
                 response.getTruncated(),
                 response.getNextOffsetChars(),
+                response.getTotalChars(),
                 error);
 
           } catch (Exception e) {

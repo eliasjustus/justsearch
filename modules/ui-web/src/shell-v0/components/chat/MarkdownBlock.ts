@@ -244,13 +244,13 @@ interface MatchedRun {
    * closes it, and never a model literal the walk stepped over PAST the run's end. The span asserts
    * "the cross-encoder scored THIS text"; a `[n]` written after that text is not text it scored.
    * Before this split the two were one number, so the `.cite-sentence` underline swallowed a
-   * trailing literal — and with it the muted `.pseudo-cite` the neutralizer later made of it.
+   * trailing literal — and with it whatever the later pass made of that literal.
    *
    * The rule is about EXTENSION, not containment (869 R1): a literal the model wrote INSIDE the
    * sentence (`Alpha beta [2] gamma delta.`) falls between two matched tokens, so it is part of the
-   * text the verifier scored and stays inside the span — muted there if nothing verified label 2.
-   * That nesting is the honest rendering of the override case, and both spans are true at once: the
-   * outer one says the verifier scored this sentence, the inner one says THIS ref was not verified.
+   * text the verifier scored and the span keeps its place around it. Tempdoc 867 §7 then REMOVES an
+   * unverified ref from inside that span rather than muting it there, so the reader meets the scored
+   * sentence with the model's failed claim taken out and the verifier's mark after it.
    */
   spanEnd: number;
   /** Where the MARK goes: after any skipped literal and the sentence's own closing punctuation. */
@@ -426,11 +426,54 @@ const BLOCK_TAGS = new Set([
 /**
  * Tempdoc 577 §2.12 Move 3 — the citation-SHAPED token: `[n]` or `(n)`, three digits at most. The
  * split form keeps the token as its own part (a capturing group), so one walk yields both the prose
- * between tokens and the tokens themselves; the anchored form tests a single part. Which of those
- * tokens is actually MUTED is the frame's decision, not this shape's (`pseudoCiteRule`).
+ * between tokens and the tokens themselves; the anchored form tests a single part.
+ *
+ * Tempdoc 867 §7 — this shape is now the UNGROUNDED frame's alone. Every other frame settles a
+ * model-authored `[n]` in {@link MarkdownBlock.normalizeLiteralCitationTokens}, which reads the
+ * bracketed literal only: there is no second notion of "citation-shaped" for a sourced answer.
  */
 const PSEUDO_CITE_SPLIT = /([[(]\d{1,3}[\])])/;
 const PSEUDO_CITE_TOKEN = /^[[(]\d{1,3}[\])]$/;
+
+/**
+ * Tempdoc 867 F1 — the character on one side of a removed literal, read ACROSS the text node's edge.
+ * `closeLiteralGap` takes its neighbours from the two halves of the split text node, and an empty
+ * half used to read as "end of prose". It is not: `Cited [2]*ital* tail` ends the text node at the
+ * literal because an inline ELEMENT follows, so the strip took the preceding space and rendered
+ * `Citedital tail` — two words glued by the renderer. Only a literal with nothing after it inside
+ * its own block sits at an end; an element or a further text node beside it is prose the space
+ * still separates.
+ *
+ * A `.cite-ref` / `.pseudo-cite` span is skipped over as an END rather than a word: it is the
+ * renderer's own glyph, not text the model wrote, and a marker that inherited a glued literal's
+ * place (`word [1][2].` → `word2.1`) must keep that place.
+ */
+function edgeChar(from: Node, dir: 'previous' | 'next'): string {
+  let cur: Node | null = from;
+  while (cur !== null) {
+    let sib: Node | null = dir === 'next' ? cur.nextSibling : cur.previousSibling;
+    while (sib !== null) {
+      // A COMMENT renders nothing and is skipped — lit's own `<!--?lit$…-->` part markers sit
+      // between these nodes, and reading one's data as text made every block-leading strip look
+      // like it had a word before it.
+      if (sib.nodeType === Node.ELEMENT_NODE) {
+        const el = sib as Element;
+        if (el.tagName === 'BR') return '';
+        if (el.classList.contains('cite-ref') || el.classList.contains('pseudo-cite')) return '';
+        const rendered = el.textContent ?? '';
+        if (rendered.length > 0) return dir === 'next' ? rendered[0]! : rendered[rendered.length - 1]!;
+      } else if (sib.nodeType === Node.TEXT_NODE) {
+        const data = (sib as Text).data;
+        if (data.length > 0) return dir === 'next' ? data[0]! : data[data.length - 1]!;
+      }
+      sib = dir === 'next' ? sib.nextSibling : sib.previousSibling;
+    }
+    const parent: HTMLElement | null = cur.parentElement;
+    if (parent === null || BLOCK_TAGS.has(parent.tagName)) return '';
+    cur = parent;
+  }
+  return '';
+}
 
 /** The nearest block-level ancestor of `node` inside `root` (the root itself when there is none). */
 function blockAncestor(node: Node, root: Element): Element {
@@ -461,21 +504,24 @@ export class MarkdownBlock extends JfElement {
    * citation-shaped text is neutralized to a muted, non-credible span so the LLM cannot borrow the
    * index's citation credibility (the §2.11 #4 fabricated-citations defect).
    *
-   * Tempdoc 869 §2.2 — the frame chooses the PREDICATE, it no longer gates the pass. `ungrounded`
-   * keeps the broad rule (the whole answer is framed, so nothing in it is a reference: any
-   * `[n]`/`(n)`); every other frame mutes only what {@link sourceCount} makes resolvable and the
-   * verifier did not confirm. Default `grounded` with the default `sourceCount = 0` is still a no-op.
+   * Tempdoc 867 §7 — the frame now chooses between two DISPOSITIONS of a model ref, not two
+   * predicates for one mute. `ungrounded` keeps 577's broad rule (the whole answer is framed, so
+   * nothing in it is a reference: any `[n]`/`(n)` is muted and named). Every other frame STRIPS an
+   * unverified ref that {@link sourceCount} makes resolvable — the reader is left the verifier's
+   * marks and nothing else. Default `grounded` with the default `sourceCount = 0` is still a no-op.
    */
   declare frame: AnswerFrame;
   /**
    * Tempdoc 869 §2.2 — the LENGTH of the turn's source list. Labels are `index + 1` over that one
    * list (`citationResolve.ts:76/:155`), so the count IS the set of model refs that resolve to a
    * source: `[n]` with `1 <= n <= sourceCount` names a real source, and anything above it names
-   * nothing the reader could open. That is what lets the mute (see {@link frame}) reach a SOURCED
-   * answer without swallowing ordinary prose — an unresolvable `[7]` or a `(2)` is left alone.
+   * nothing the reader could open. That is what lets the strip (867 §7, see {@link frame}) reach a
+   * SOURCED answer without swallowing ordinary prose — an unresolvable `[7]` or a `(2)` is left
+   * alone, because deleting a reader's text over a number the model did not mean as a ref is the one
+   * error a strip cannot take back.
    *
-   * Default `0` makes the sourced arm vacuous by construction, so a consumer that passes no count
-   * mutes nothing: the weakest claim is the default (869 §2.8).
+   * Default `0` makes the strip vacuous by construction, so a consumer that passes no count removes
+   * nothing: the weakest claim is the default (869 §2.8).
    */
   declare sourceCount: number;
   /**
@@ -490,6 +536,16 @@ export class MarkdownBlock extends JfElement {
   private pendingText: string | null = null;
   private renderedText = '';
   private selectedSourceUnsub: (() => void) | null = null;
+  /**
+   * Tempdoc 867 §7 — did a settled pass REMOVE a model ref from this content? The one edit the
+   * passes make that leaves no class behind, and {@link contentIsDecorated} has to answer for it:
+   * an answer whose only decoration was a strip looks parser-fresh in the DOM, so without this a
+   * late citation would find no rebuild, and the literal it was supposed to upgrade would already
+   * be gone for good. Tracked rather than asked of the DOM because absence is not a question the
+   * DOM can be asked; a stale `true` only costs one redundant rebuild to the same content, which
+   * is the direction of error a purity claim may take.
+   */
+  private strippedModelRef = false;
 
   constructor() {
     super();
@@ -611,19 +667,26 @@ export class MarkdownBlock extends JfElement {
     // Tempdoc 565 §3.C — weave inline citation marks into the freshly-rendered markdown. Citations
     // attach post-stream (the matcher runs at AgentDone), so only decorate the settled answer. Lit's
     // unsafeHTML re-render wipes prior markers, so re-decorating on every render keeps them correct.
-    if (!this.isStreaming && this.citations.length > 0) {
-      this.decorateCitations();
-    }
-    // Tempdoc 577 Move 3 — neutralize model-authored citation-shaped text so it cannot pose as a
-    // verifiable reference. Runs on the settled answer (post-stream), uniformly for plain + markdown
-    // (both produce `.md-content` text nodes), mirroring decorateCitations.
     //
-    // Tempdoc 869 §2.2 — for EVERY frame, and always AFTER the weave above. The frame chooses the
-    // predicate (`pseudoCiteRule`), it does not gate the pass: keying the pass on `ungrounded` made
-    // the mute unreachable in exactly the answers that need it, where an unverified `[n]` sits beside
-    // verified ones. The order is load-bearing, not incidental: tier 2 upgrades a literal the model
-    // wrote for a VERIFIED label, so muting first would mute a mark the weave was about to earn.
+    // Tempdoc 867 §7 — and when there are NO citations, the literal pass still runs. The strip's
+    // reach is not a consequence of holding evidence: the fail-closed answer (sources retrieved,
+    // nothing verified) is precisely where every model ref is unverified, and `decorateCitations`
+    // returns before minting anything there. One authority settles a literal either way.
     if (!this.isStreaming) {
+      if (this.citations.length > 0) this.decorateCitations();
+      else this.stripModelRefs();
+    }
+    // Tempdoc 577 Move 3 — the UNGROUNDED frame's mute, unchanged: an answer that does not stand on
+    // the index has no reference inside it, so every citation-shaped token is muted and named. Runs
+    // on the settled answer (post-stream), uniformly for plain + markdown (both produce
+    // `.md-content` text nodes), mirroring decorateCitations.
+    //
+    // Tempdoc 867 §7 — and it is the ONLY arm left. 869 widened this pass to mute a resolvable,
+    // unverified ref on a sourced answer; the owner's decision is that such a ref is REMOVED
+    // instead, which the literal pass above does at the same place it strips and upgrades the
+    // others. The frame that carries no sources to resolve against keeps the mute, because its
+    // predicate (any `[n]`/`(n)`, prose numbers included) is too broad to delete text on.
+    if (!this.isStreaming && this.frame === 'ungrounded') {
       this.neutralizePseudoCitations();
     }
   }
@@ -647,11 +710,17 @@ export class MarkdownBlock extends JfElement {
    * be true of: Lit re-renders the content whenever the SOURCE STRING changes, which is neither
    * "the text property changed" (two texts can strip to one source) nor "it did not" — and a flag
    * would have to predict that. Every edit the passes make comes with one of these three classes:
-   * the weave mints `.cite-ref` (and only then strips a literal or wraps a `.cite-sentence`), the
-   * neutralizer mints `.pseudo-cite`. None present ⇒ the content is exactly what the parser
-   * produced, and the passes below are additive on it.
+   * the weave mints `.cite-ref` (and only then wraps a `.cite-sentence`), the neutralizer mints
+   * `.pseudo-cite`. None present ⇒ the content is exactly what the parser produced, and the passes
+   * below are additive on it.
+   *
+   * Tempdoc 867 §7 — with ONE exception the DOM cannot report, so it is carried beside it: a strip
+   * that removed an unverified model ref and minted nothing (see {@link strippedModelRef}). Asking
+   * the DOM alone would answer "undecorated" about content that is missing text the rebuild has to
+   * put back before a late citation can upgrade it.
    */
   private contentIsDecorated(): boolean {
+    if (this.strippedModelRef) return true;
     const root = this.renderRoot.querySelector('.md-content');
     return root !== null && root.querySelector('.cite-ref, .cite-sentence, .pseudo-cite') !== null;
   }
@@ -671,6 +740,9 @@ export class MarkdownBlock extends JfElement {
   private rebuildContent(): void {
     const root = this.renderRoot.querySelector('.md-content');
     if (!root) return;
+    // The content is about to be the parser's again, so the record of what the passes took out of it
+    // goes with it; the passes that follow this rebuild set it afresh (867 §7).
+    this.strippedModelRef = false;
     // Lit's ChildPart addresses its content relative to marker COMMENTS, so those survive: removing
     // one detaches the binding, and the next `text` change would then render into a detached node.
     // The sanitizer strips comments, so nothing this rebuild appends can accumulate among them.
@@ -688,61 +760,29 @@ export class MarkdownBlock extends JfElement {
   }
 
   /**
-   * Tempdoc 869 §2.2 — WHICH citation-shaped token this answer's frame says is not a reference, and
-   * what the muted span must then say it is. Returns the span's note for a token that must be muted,
-   * `null` for one that is ordinary prose.
+   * Tempdoc 577 §2.12 Move 3 — wrap every citation-shaped token of an UNGROUNDED answer in a muted,
+   * non-interactive span, so a model-authored marker reads as plain text and not as the index's
+   * clickable citation. Idempotent (skips already-wrapped runs). The caller owns the frame check.
    *
-   * Two arms, one mechanism (the walker below is shared):
+   * Tempdoc 867 §7 — the ONE frame this pass still serves. The answer does not stand on the index,
+   * so nothing in it can be a reference and the predicate is deliberately broad: any `[n]` or `(n)`,
+   * three digits at most. That breadth is exactly why the disposition here is a mute and not the
+   * strip a SOURCED answer gets — the predicate cannot tell the model's ref from a number the prose
+   * happened to bracket, and there is no source list to resolve one against. Deleting on a guess is
+   * the error a reader cannot recover from; muting on a guess costs a grey.
    *
-   *  - `ungrounded` (577 Move 3, unchanged): the WHOLE answer is framed as not standing on the
-   *    index, so nothing inside it can be a reference — any `[n]` or `(n)` is muted. The over-reach
-   *    on a parenthesised number is confined to the one frame where it is harmless.
-   *  - every other frame: only a ref that RESOLVES and was NOT verified — `[n]` with
-   *    `1 <= n <= sourceCount` and `n` not among the labels this block actually rendered. `(n)` and
-   *    an out-of-range `[n]` are prose here and stay untouched. With the default `sourceCount = 0`
-   *    this arm mutes nothing at all.
-   */
-  private pseudoCiteRule(): (token: string) => string | null {
-    if (this.frame === 'ungrounded') {
-      return () => 'Citation-shaped text in an answer that is not grounded in your files';
-    }
-    // The labels the verifier stood behind. A literal carrying one of them is EVIDENCE, not a claim:
-    // by the time this runs it has either anchored a tier-1 mark or been upgraded in place by tier 2
-    // (which is why the pass runs after the weave), and a label the model never wrote as a literal
-    // has nothing here to mute anyway.
-    const rendered = new Set(this.citations.map((c) => Number(c.label)));
-    return (token: string): string | null => {
-      if (!token.startsWith('[')) return null;
-      const n = Number(token.slice(1, -1));
-      // Written as the POSITIVE condition so the pass fails CLOSED: an absent or non-numeric count
-      // makes every comparison false and mutes nothing, where `n > count` would mute everything.
-      if (!(n >= 1 && n <= this.sourceCount) || rendered.has(n)) return null;
-      // Tempdoc 869 F4a — "was not verified", NOT "the verifier did not confirm it". The second
-      // wording asserts an EXAMINATION that returned a negative verdict; the frames this arm reaches
-      // include the ones where nothing examined the sentence at all (a matcher that ran out of
-      // budget, a producer the 836 §4 gate refused). The honest claim is the absence of a
-      // verification, which is the only fact the renderer holds.
-      return `The model cited source ${n}; this citation was not verified`;
-    };
-  }
-
-  /**
-   * Tempdoc 577 §2.12 Move 3 — wrap the citation-shaped tokens {@link pseudoCiteRule} refuses with a
-   * muted, non-interactive span so a model-authored marker reads as plain text, not as the index's
-   * clickable citation. Idempotent (skips already-wrapped runs).
-   *
-   * Tempdoc 869 §2.2 — the span SAYS what it is (`title` + `aria-label`) and carries the label the
-   * model claimed (`data-claimed-label`). Colour alone carrying the meaning is the documented defect
-   * of the shipped prior art; a mute the reader cannot name is a mark with no author. It stays
-   * NON-INTERACTIVE by construction — no role, no tabindex, no handler: there is nothing to open.
+   * Tempdoc 869 §2.2 — the span SAYS what it is (`title` + `aria-label`). Colour alone carrying the
+   * meaning is the documented defect of the shipped prior art; a mute the reader cannot name is a
+   * mark with no author. It stays NON-INTERACTIVE by construction — no role, no tabindex, no
+   * handler: there is nothing to open.
    */
   private neutralizePseudoCitations(): void {
     const root = this.shadowRoot?.querySelector('.md-content');
     if (!root) return;
-    const noteFor = this.pseudoCiteRule();
+    const note = 'Citation-shaped text in an answer that is not grounded in your files';
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    // Only the nodes that actually CHANGE: the pass runs on every settled render now, and rebuilding
-    // a node whose tokens the frame accepts would churn the DOM of every answer for nothing.
+    // Only the nodes that actually CHANGE — rebuilding a node that carries no citation-shaped token
+    // would churn the DOM of every ungrounded answer for nothing.
     const targets: Array<{ node: Text; parts: string[] }> = [];
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const t = n as Text;
@@ -757,20 +797,17 @@ export class MarkdownBlock extends JfElement {
       if (parent?.closest('pre, code, .pseudo-cite, .cite-ref')) continue;
       if (!PSEUDO_CITE_SPLIT.test(t.data)) continue;
       const parts = t.data.split(PSEUDO_CITE_SPLIT);
-      if (parts.some((part) => PSEUDO_CITE_TOKEN.test(part) && noteFor(part) !== null)) {
+      if (parts.some((part) => PSEUDO_CITE_TOKEN.test(part))) {
         targets.push({ node: t, parts });
       }
     }
     for (const { node, parts } of targets) {
       const frag = document.createDocumentFragment();
       for (const part of parts) {
-        const note = PSEUDO_CITE_TOKEN.test(part) ? noteFor(part) : null;
-        if (note !== null) {
+        if (PSEUDO_CITE_TOKEN.test(part)) {
           const span = document.createElement('span');
           span.className = 'pseudo-cite';
           span.textContent = part;
-          // Only a bracketed token claims a LABEL; `(2)` is a number the model happened to bracket.
-          if (part.startsWith('[')) span.dataset.claimedLabel = part.slice(1, -1);
           span.title = note;
           span.setAttribute('aria-label', note);
           frag.appendChild(span);
@@ -968,16 +1005,17 @@ export class MarkdownBlock extends JfElement {
       background: var(--md-cite-selected-bg, var(--accent-tint));
       box-shadow: inset 0 0 0 1px var(--md-cite-selected-edge, transparent);
     }
-    /* Tempdoc 577 §2.12 Move 3 — a model-authored citation-shaped token the answer's frame refuses:
-       muted inline text (NOT the accent superscript of a real cite-ref), so it cannot pose as a
-       verifiable reference. Non-interactive by construction (a plain span, no handlers).
+    /* Tempdoc 577 §2.12 Move 3 — a citation-shaped token in an UNGROUNDED answer: muted inline text
+       (NOT the accent superscript of a real cite-ref), so it cannot pose as a verifiable reference.
+       Non-interactive by construction (a plain span, no handlers). Tempdoc 867 §7 — that frame is
+       now the idiom's whole reach: a sourced answer's unverified ref is REMOVED, not greyed, so no
+       rule here paints it.
 
        Tempdoc 869 §3.6 — the 'opacity: 0.7' is GONE and the ink is tokenized, mirroring the
        '--md-cite-weak-color' hook above. The opacity was a second, invisible authority over the
        composite: on the v3 window, which re-points '--text-secondary' to '--muted-foreground', the
        muted token measured ~3.0:1 dark / ~2.7:1 light — a contrast FAILURE, in the one idiom whose
-       whole job is to be read as text. 869 C2 widens this idiom from the ungrounded frame to every
-       sourced answer, so the value had to move with the reach, not after it. */
+       whole job is to be read as text. */
     .pseudo-cite {
       color: var(--md-pseudo-cite-color, var(--text-secondary));
     }
@@ -1029,7 +1067,8 @@ export class MarkdownBlock extends JfElement {
    * absence of a mark is always an acceptable outcome, a mark that outruns its evidence never is.
    *
    * TIER 2 ({@link normalizeLiteralCitationTokens}) then upgrades a literal `[n]` the model wrote,
-   * for a verified label tier 1 could not place. TIER 3 is no mark at all.
+   * for a verified label tier 1 could not place — and removes the literals no label answers for
+   * (867 §7). TIER 3 is no mark at all.
    */
   private decorateCitations(): void {
     const root = this.renderRoot.querySelector('.md-content') as HTMLElement | null;
@@ -1141,8 +1180,8 @@ export class MarkdownBlock extends JfElement {
       anchors.push(group);
     }
 
-    // Tempdoc 687 R3a — labels that get a real rendered marker below; the literal-token
-    // normalizer strips duplicates of these and upgrades the rest.
+    // Tempdoc 687 R3a — labels that get a real rendered marker below; the literal-token normalizer
+    // strips duplicates of these, upgrades the rest, and (867 §7) removes what nothing verified.
     const insertedLabels = new Set<number>();
     if (anchors.length === 0) {
       this.normalizeLiteralCitationTokens(root, insertedLabels);
@@ -1221,6 +1260,19 @@ export class MarkdownBlock extends JfElement {
   }
 
   /**
+   * Tempdoc 867 §7 — the literal pass for an answer holding NO citations: the fail-closed shape
+   * (sources retrieved, the verifier standing behind nothing), which is where every model ref in the
+   * prose is an unverified claim and where {@link decorateCitations} does not run at all. The set is
+   * empty because no label was rendered, so every literal the count resolves is stripped and none is
+   * upgraded — the same call the weave makes at its end, reached by the other road.
+   */
+  private stripModelRefs(): void {
+    const root = this.renderRoot.querySelector('.md-content') as HTMLElement | null;
+    if (!root) return;
+    this.normalizeLiteralCitationTokens(root, new Set());
+  }
+
+  /**
    * Tempdoc 847 §2.1c (H4) — THE SPAN GUARD. A matched run must not cross a rendered block
    * boundary; when it does, the span is clamped to the FIRST block and the marker is placed at the
    * clamp.
@@ -1261,8 +1313,19 @@ export class MarkdownBlock extends JfElement {
    * often write literal "[n]" tokens in prose ALONGSIDE the renderer's superscript marks. Any
    * literal [n] whose n matches a real citation label is normalized: stripped when that citation
    * already carries a rendered marker (dedupe), upgraded to the same marker span otherwise.
-   * Tokens inside code/pre are untouched (verbatim content), as are numbers with no matching
-   * citation (e.g. "[3]" in quoted document text with 2 sources).
+   * Tokens inside code/pre are untouched (verbatim content).
+   *
+   * Tempdoc 867 §7 (the owner's decision, family A) — and a literal that RESOLVES to a source the
+   * verifier never stood behind (`1 <= n <= sourceCount`, no citation for that label) is REMOVED,
+   * with the same whitespace rule the dedupe strip uses. It is a claim, and the one authority on
+   * this surface is the verifier: an unverified claim rendered as text next to verified marks reads
+   * as a citation the reader cannot open and cannot tell apart. 869's mute preserved that claim
+   * trail in a `.pseudo-cite`; the owner judged the ink not worth what it bought, and the
+   * industry's uniform answer (867 §5/§5b — presence/absence, everywhere) is this one.
+   *
+   * The strip is deliberately NARROW: an out-of-range `[7]` and a parenthesised `(2)` are prose and
+   * stay. It is also off in the `ungrounded` frame, where there is no source list to resolve
+   * against and 577's mute keeps its broad predicate.
    *
    * Tempdoc 847 §2.1 TIER 2, and its honesty invariant H3: this upgrade asserts SOURCE-level
    * attribution the MODEL placed, where tier 1 asserts SENTENCE-level attribution the cross-encoder
@@ -1280,7 +1343,14 @@ export class MarkdownBlock extends JfElement {
    */
   private normalizeLiteralCitationTokens(root: HTMLElement, insertedLabels: Set<number>): void {
     const byLabel = new Map<number, Citation>(this.citations.map((c) => [Number(c.label), c]));
-    if (byLabel.size === 0) return;
+    // Tempdoc 867 §7 — written as the POSITIVE condition so the strip fails CLOSED: an absent or
+    // non-numeric count makes this false and removes nothing, where a `n > count` test would remove
+    // everything. The `ungrounded` frame is excluded here rather than at the call site because this
+    // is where the disposition is chosen — that frame's refs are muted by the neutralizer instead.
+    const stripsUnverified = this.frame !== 'ungrounded' && this.sourceCount > 0;
+    const resolves = (label: number): boolean =>
+      stripsUnverified && label >= 1 && label <= this.sourceCount;
+    if (byLabel.size === 0 && !stripsUnverified) return;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const nodes: Text[] = [];
     let n: Node | null;
@@ -1297,20 +1367,28 @@ export class MarkdownBlock extends JfElement {
       // `updated()` means no muted span survives into this walk, but an upgrade nesting a live mark
       // inside a span that says "not verified" is the one outcome no ordering may produce.
       if ((node.parentElement)?.closest('pre, code, .cite-ref, .pseudo-cite')) continue;
-      const matches = [...node.data.matchAll(re)].filter((m) => byLabel.has(Number(m[1])));
+      const matches = [...node.data.matchAll(re)].filter((m) => {
+        const label = Number(m[1]);
+        return byLabel.has(label) || resolves(label);
+      });
       // Right-to-left so earlier offsets stay valid across splits.
       for (const m of matches.reverse()) {
         const label = Number(m[1]);
         const start = m.index ?? 0;
         const token = node.splitText(start);
         const rest = token.splitText(m[0].length);
-        if (insertedLabels.has(label)) {
+        const cite = byLabel.get(label);
+        // Three fates, one whitespace rule: a label the weave already rendered is a DUPLICATE, a
+        // label nothing verified is an unverified CLAIM (867 §7), and both leave the prose closed
+        // the same way. Only the middle case — a verified label with no mark yet — mints one.
+        if (cite === undefined || insertedLabels.has(label)) {
           token.remove();
           this.closeLiteralGap(node, rest);
+          if (cite === undefined) this.strippedModelRef = true;
         } else {
           // The marker inherits the literal's position exactly; the model's own spacing survives
           // (`word [4]` → `word ⁴`, `word[4]` → `word⁴`).
-          const marker = this.makeMarker(byLabel.get(label)!, 'source');
+          const marker = this.makeMarker(cite, 'source');
           token.parentNode?.replaceChild(marker, token);
           insertedLabels.add(label);
         }
@@ -1326,7 +1404,7 @@ export class MarkdownBlock extends JfElement {
    *  - preceded by a space or tab and followed by punctuation, whitespace or nothing → the
    *    PRECEDING one goes, so the period closes on the word (`word [1].` → `word.`) and a
    *    mid-sentence strip leaves a single space (`a [1] b` → `a b`);
-   *  - at the node's start OR at a line's start (869 F7) → the FOLLOWING space goes, which is the
+   *  - at the block's start OR at a line's start (869 F7) → the FOLLOWING space goes, which is the
    *    block-leading `[1] The kernel…` orphan (a leading space is invisible in the DOM and shifts
    *    the first word by a space width);
    *  - flanked by word characters → neither, because the model wrote no space to reclaim
@@ -1335,8 +1413,12 @@ export class MarkdownBlock extends JfElement {
    * A newline is never the whitespace that goes — see the F7 note in the body.
    */
   private closeLiteralGap(before: Text, after: Text): void {
-    const prev = before.data.slice(-1);
-    const next = after.data.slice(0, 1);
+    // Tempdoc 867 F1 — an EMPTY half is an edge, not an end: read the neighbour across it
+    // ({@link edgeChar}). Reading `''` as "nothing follows" deleted the space between a word and the
+    // inline element that followed the literal (`Cited [2]*ital* tail` → `Citedital tail`), and the
+    // mirror hole read a literal after `**bold**` as block-leading and ate the space after it.
+    const prev = before.data.length > 0 ? before.data.slice(-1) : edgeChar(before, 'previous');
+    const next = after.data.length > 0 ? after.data.slice(0, 1) : edgeChar(after, 'next');
     // Tempdoc 869 F7 — the removable whitespace is a SPACE or a TAB, never a newline. `/\s/` also
     // matches `\n`, so a literal opening a line (`… gamma\n[1] next`) had the line break deleted and
     // the two lines ran together — in `plain` format, where `white-space: pre-wrap` renders it, that
@@ -1344,10 +1426,24 @@ export class MarkdownBlock extends JfElement {
     // is not a gap: at a line start it is the space AFTER the literal that goes, exactly as at a
     // node start.
     if (/[ \t]/.test(prev)) {
-      if (next === '' || !/[\p{L}\p{N}]/u.test(next)) before.data = before.data.slice(0, -1);
+      // Followed by a word: the space separates two words the model wrote, not a gap the literal
+      // held open — whatever side of a node edge that word sits on.
+      if (next !== '' && /[\p{L}\p{N}]/u.test(next)) return;
+      if (before.data.length > 0) {
+        before.data = before.data.replace(/[ \t]+$/, '');
+        // Tempdoc 867 F1 — a literal the model spaced on BOTH sides closes to ONE space, not to the
+        // two-plus the two runs would leave (`a  [2]  b` → `a b`; visible under `plain`'s pre-wrap).
+        if (/[ \t]/.test(next) && after.data.length > 0) {
+          after.data = after.data.replace(/^[ \t]+/, ' ');
+        }
+      } else if (/[ \t]/.test(next) && after.data.length > 0) {
+        // The whitespace to reclaim sits in a node across the edge, which this pass does not own;
+        // taking the following one closes the same gap to the same single space.
+        after.data = after.data.replace(/^[ \t]+/, '');
+      }
       return;
     }
-    if ((prev === '' || /[\n\r]/.test(prev)) && /[ \t]/.test(next)) {
+    if ((prev === '' || /[\n\r]/.test(prev)) && /[ \t]/.test(next) && after.data.length > 0) {
       after.data = after.data.slice(1);
     }
   }

@@ -586,18 +586,17 @@ public final class AgentLoopService implements AgentService {
 
       // Max iterations reached
       agentSuccess = true;
-      // Tempdoc 859 §D §2.6 — the OTHER truncating terminal. It produces no answer text at all, so
-      // the model cannot disclose the truncation even in principle; the disposition on the wire is
-      // the only thing that can. Emitted through the ungrounded factory (see AgentDone.ofDisposition)
-      // rather than the canonical constructor, which the grounding seam audit reserves for
-      // AgentStepRunner.groundedDone.
-      sink.accept(
-          AgentEvent.AgentDone.ofDisposition(
-              "",
-              session.iterationsUsed(),
-              session.toolCallsExecuted(),
-              session.totalTokens(),
-              TerminalDisposition.MAX_ITERATIONS.name()));
+      // Tempdoc 878 §D.1 — the OTHER truncating terminal, and the SECOND involuntary one. Like the
+      // budget wall it now gets one no-tools synthesis attempt before it stops, so the work the run
+      // already paid for reaches the reader; unlike the budget wall it names the STEP limit in the
+      // instruction (859 D5: the two limits have different remedies and must not borrow each
+      // other's sentence). The disposition is stamped regardless of what the model produced, which
+      // is what keeps the truncation disclosed even when the answer is empty.
+      //
+      // The event is built by the runner because AgentGroundingSeamAuditTest reserves
+      // grounding-carrying AgentDone construction to AgentStepRunner.groundedDone; this loop keeps
+      // the state transition it owns for every other terminal.
+      sink.accept(stepRunner.finalizeAtIterationCeiling(request, session, sink));
       // F1: state-first, durability-second.
       session.markTerminated(TerminalDisposition.MAX_ITERATIONS, null, null);
       checkpoint(sessionId, session, LifecycleState.DONE.name(), "Max iterations reached");
@@ -849,6 +848,12 @@ public final class AgentLoopService implements AgentService {
   public List<InteractionEvent> threadEvents(
       String conversationId, java.util.Set<String> answeredRunIds) {
     return queries.threadEvents(conversationId, answeredRunIds);
+  }
+
+  @Override
+  public io.justsearch.agent.api.interaction.ThreadProjection threadProjection(
+      String conversationId, java.util.Set<String> answeredRunIds) {
+    return queries.threadProjection(conversationId, answeredRunIds);
   }
 
   @Override

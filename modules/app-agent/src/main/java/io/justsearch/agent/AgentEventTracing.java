@@ -33,7 +33,8 @@ final class AgentEventTracing {
       case AgentEvent.ToolExecutionStarted e ->
           new AgentEvent.ToolExecutionStarted(e.callId(), e.toolName(), trace);
       case AgentEvent.ToolExecutionCompleted e ->
-          new AgentEvent.ToolExecutionCompleted(e.callId(), e.result(), trace);
+          new AgentEvent.ToolExecutionCompleted(
+              e.callId(), e.result(), e.outputCharsToModel(), trace);
       case AgentEvent.ToolCallRejected e ->
           new AgentEvent.ToolCallRejected(e.callId(), e.reason(), trace);
       case AgentEvent.ToolCallVirtual e ->

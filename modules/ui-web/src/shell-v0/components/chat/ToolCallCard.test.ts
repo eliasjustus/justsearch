@@ -51,16 +51,36 @@ describe('ToolCallCard', () => {
     el.remove();
   });
 
-  it('renders the humanized tool name + target in the header, never the raw wire name', async () => {
+  // Tempdoc 871 §3b (owner, 2026-08-26) — the header is the model's ACT + the query it ran, not the
+  // catalog's noun: "Searched “x”", never "Search Index x" and never the raw wire name.
+  it('renders the VERB + the quoted query in the header, never the catalog noun or the wire name', async () => {
     const el = document.createElement('jf-tool-call-card') as ToolCallCard;
     el.toolCall = fake({ status: 'executing' });
     document.body.appendChild(el);
     await settle(el);
+    const verb = el.shadowRoot?.querySelector('[data-testid="tool-card-verb"]');
+    expect(verb?.textContent?.trim()).toBe('Searched');
+    expect(
+      el.shadowRoot?.querySelector('[data-testid="tool-card-target"]')?.textContent?.trim(),
+    ).toBe('“x”');
     const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
-    // Tempdoc 565 §12.3.B — the header renders the HUMANIZED label (+ target) via composeToolLabel,
-    // not the raw wire `core_search_index`. fake()'s args `{"query":"x"}` surface as the target.
-    expect(text).toContain('Search Index');
+    expect(text).not.toContain('Search Index');
     expect(text).not.toContain('core_search_index');
+    el.remove();
+  });
+
+  // Right-reason guard on the quoting rule: quotes mark a QUERY, so a path target keeps none.
+  it('does not quote a non-query target (a path is a name, not a literal)', async () => {
+    const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+    el.toolCall = fake({ toolName: 'core_read_document', arguments: '{"path":"/docs/taxes.md"}' });
+    document.body.appendChild(el);
+    await settle(el);
+    expect(
+      el.shadowRoot?.querySelector('[data-testid="tool-card-verb"]')?.textContent?.trim(),
+    ).toBe('Read');
+    expect(
+      el.shadowRoot?.querySelector('[data-testid="tool-card-target"]')?.textContent?.trim(),
+    ).toBe('taxes.md');
     el.remove();
   });
 
@@ -268,6 +288,78 @@ describe('ToolCallCard', () => {
     el.remove();
   });
 
+  it('878 §D.4 — says when the MODEL received less of the output than the reader is seeing', async () => {
+    // The panel shows what the tool returned; the agent loop appends a truncated copy to the prompt.
+    // Both are honest answers to "what was the output", and until the backend labelled them the card
+    // silently gave the first while the agent worked from the second — so a reader debugging a wrong
+    // answer was looking at evidence the model never had.
+    const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+    el.toolCall = fake({
+      status: 'completed',
+      output: 'x'.repeat(9000),
+      outputCharsToModel: 4000,
+      truncatedForModel: true,
+    });
+    document.body.appendChild(el);
+    await settle(el);
+    const note = el.shadowRoot?.querySelector('[data-testid="tool-output-model-note"]');
+    expect(note, 'a truncated-for-the-model output must say so').not.toBeNull();
+    expect(note?.textContent).toContain('4,000');
+    expect(note?.textContent, 'and name the whole, so the gap is legible').toContain('9,000');
+    // The panel itself is unchanged: shrinking it to the model's view would be a NEW dishonesty.
+    expect(el.shadowRoot?.querySelector('.tool-output')?.textContent?.length).toBe(9000);
+    el.remove();
+  });
+
+  it('878 §D.4 — the note reaches a SEARCH card too, whose body is not the raw-output panel', async () => {
+    // The search card renders `renderSearchBody`, not the lineage-framed raw output. Riding the note
+    // on that panel left the bulkiest output — the one most likely to be cut — the only card that
+    // could be truncated silently. The note is a fact about the RESULT, so it sits outside both
+    // body branches.
+    const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+    el.toolCall = fake({
+      toolName: 'core_search_index',
+      arguments: '{"query":"runbook"}',
+      status: 'completed',
+      output: 'z'.repeat(9000),
+      structuredData: { searchResults: [{ path: '/a.md', title: 'A', excerpt: 'x' }] },
+      outputCharsToModel: 4000,
+      truncatedForModel: true,
+    });
+    document.body.appendChild(el);
+    await settle(el);
+    // Assert the SEARCH body actually rendered: without this the fixture could fall through to the
+    // raw-output path (if agentSearchCardProjection ever returned null) and pass for the old reason.
+    expect(
+      el.shadowRoot?.querySelector('[data-testid="tool-search-body"]'),
+      'this fixture must exercise the search branch, not the raw-output panel',
+    ).not.toBeNull();
+    const note = el.shadowRoot?.querySelector('[data-testid="tool-output-model-note"]');
+    expect(note, 'a truncated search result must disclose it too').not.toBeNull();
+    expect(note?.textContent).toContain('4,000');
+    el.remove();
+  });
+
+  it('878 §D.4 — says NOTHING when the model got all of it, and nothing when nobody measured', async () => {
+    // Two distinct silences, and conflating them is the defect. An unmeasured record (everything
+    // written before the backend carried this field, and any emitter that does not measure) must
+    // not be retroactively described as complete.
+    for (const tc of [
+      { outputCharsToModel: 12, truncatedForModel: false },
+      {},
+    ]) {
+      const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+      el.toolCall = fake({ status: 'completed', output: 'short output', ...tc });
+      document.body.appendChild(el);
+      await settle(el);
+      expect(
+        el.shadowRoot?.querySelector('[data-testid="tool-output-model-note"]'),
+        `no note for ${JSON.stringify(tc)}`,
+      ).toBeNull();
+      el.remove();
+    }
+  });
+
   it('falls back to the raw output when there is no structured search evidence', async () => {
     const el = document.createElement('jf-tool-call-card') as ToolCallCard;
     el.toolCall = fake({ status: 'completed', output: 'plain text result' });
@@ -365,29 +457,31 @@ describe('ToolCallCard', () => {
       el.remove();
     });
 
-    it('the accessory reads "N results · M in evidence" once evidencePaths is wired', async () => {
+    it('the accessory reads "N results · M used" once evidencePaths is wired', async () => {
       const el = document.createElement('jf-tool-call-card') as ToolCallCard;
       el.toolCall = searchCall();
       el.evidencePaths = new Set(['C:/docs/taxes.md']);
       document.body.appendChild(el);
       await settle(el);
       const accessory = el.shadowRoot?.querySelector('[data-testid="tool-card-accessory"]');
-      expect(accessory?.textContent?.trim()).toBe('2 results · 1 in evidence');
+      expect(accessory?.textContent?.trim()).toBe('2 results · 1 used');
       el.remove();
     });
 
-    it('an empty (but WIRED) evidence set reads "0 in evidence", not the unavailable case', async () => {
+    it('an empty (but WIRED) evidence set reads "0 used", not the unavailable case', async () => {
       const el = document.createElement('jf-tool-call-card') as ToolCallCard;
       el.toolCall = searchCall();
       el.evidencePaths = new Set();
       document.body.appendChild(el);
       await settle(el);
       const accessory = el.shadowRoot?.querySelector('[data-testid="tool-card-accessory"]');
-      expect(accessory?.textContent?.trim()).toBe('2 results · 0 in evidence');
+      expect(accessory?.textContent?.trim()).toBe('2 results · 0 used');
       el.remove();
     });
 
-    it('renders ONLY the in-evidence hits as rows; the rest are counted, not shown', async () => {
+    // Tempdoc 871 §3b (owner, 2026-08-26) — REVERSES 867's used-only summary: level 2 is the model's
+    // whole ranked list, and "used" is a MARK on a row, not a filter over the rows.
+    it('renders the FULL ranked list, marking only the rows the run actually used', async () => {
       const el = document.createElement('jf-tool-call-card') as ToolCallCard;
       el.expanded = true;
       el.toolCall = searchCall();
@@ -395,33 +489,42 @@ describe('ToolCallCard', () => {
       document.body.appendChild(el);
       await settle(el);
       const rows = el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]');
-      expect(rows).toHaveLength(1);
-      const rowText = (rows?.[0]?.textContent ?? '').replace(/\s+/g, ' ');
-      expect(rowText).toContain('Taxes 2025');
-      expect(rowText).toContain('C:/docs/taxes.md');
-      expect(rowText).toContain('Line 42');
-      // The retrieved-but-not-in-evidence hit is NOT rendered as a row...
-      expect(el.shadowRoot?.textContent).not.toContain('budget.txt');
-      // ...but IS counted in the footer (right-reason vs wrong-reason: the count must come from the
-      // hits the card actually suppressed, not from a stale total).
-      const more = el.shadowRoot?.querySelector('[data-testid="tool-search-more"]');
-      expect(more?.textContent).toContain('1 more retrieved, not in evidence');
+      expect(rows, 'the retrieved-but-unused hit is a ROW now, not a footer count').toHaveLength(2);
+      // The mark is on the used row and ONLY on it (right-reason: not "some row has a tag").
+      expect(rows?.[0]?.getAttribute('data-used')).toBe('true');
+      expect(rows?.[0]?.querySelector('[data-testid="tool-search-row-used"]')?.textContent).toBe('used');
+      expect(rows?.[1]?.getAttribute('data-used')).toBe('false');
+      expect(rows?.[1]?.querySelector('[data-testid="tool-search-row-used"]')).toBeNull();
+      // Nothing is hidden, so nothing is counted.
+      expect(el.shadowRoot?.querySelector('[data-testid="tool-search-more"]')).toBeNull();
       el.remove();
     });
 
-    it('omits the footer when every hit is in evidence', async () => {
+    // The two-line row (871 §3b): title on line 1, path + locator on line 2 — the one-line jam is
+    // what ellipsized paths mid-way against a right-floated locator.
+    it('splits each row into a title line and a path/locator line', async () => {
       const el = document.createElement('jf-tool-call-card') as ToolCallCard;
       el.expanded = true;
       el.toolCall = searchCall();
-      el.evidencePaths = new Set(['C:/docs/taxes.md', '/home/u/notes/budget.txt']);
+      el.evidencePaths = new Set(['C:/docs/taxes.md']);
       document.body.appendChild(el);
       await settle(el);
-      expect(el.shadowRoot?.querySelector('[data-testid="tool-search-more"]')).toBeNull();
-      expect(el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]')).toHaveLength(2);
+      const row = el.shadowRoot?.querySelector('[data-testid="tool-search-row"]');
+      const titleLine = (row?.querySelector('[data-testid="tool-search-row-title"]')?.textContent ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const pathLine = (row?.querySelector('[data-testid="tool-search-row-path"]')?.textContent ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      expect(titleLine).toBe('Taxes 2025 used');
+      expect(titleLine, 'the path belongs to line 2, never line 1').not.toContain('C:/docs');
+      expect(pathLine).toBe('C:/docs/taxes.md Line 42');
+      // No snippets in the card (871 §1) — the excerpt stays in the search window.
+      expect(el.shadowRoot?.textContent).not.toContain('WARN deductible limits');
       el.remove();
     });
 
-    // Tempdoc 871 §1 + live finding — the L2 row cap. `manyHits` builds N distinct-path hits so the
+    // Tempdoc 871 §3b — the L2 row cap (raised 5 → 6). `manyHits` builds N distinct-path hits so the
     // evidence set can select an exact subset by path.
     function manyHits(n: number): Array<{ title: string; path: string; excerpt: string; line: number }> {
       return Array.from({ length: n }, (_, i) => ({
@@ -432,21 +535,21 @@ describe('ToolCallCard', () => {
       }));
     }
 
-    it('871 row cap — exactly 5 in evidence renders all 5 rows, no hidden-in-evidence segment', async () => {
+    it('871 row cap — exactly 6 results renders all 6 rows and no footer', async () => {
       const el = document.createElement('jf-tool-call-card') as ToolCallCard;
       el.expanded = true;
       el.toolCall = searchCall({
-        structuredData: { query: 'taxes', resultCount: 5, searchResults: manyHits(5) },
+        structuredData: { query: 'taxes', resultCount: 6, searchResults: manyHits(6) },
       });
-      el.evidencePaths = new Set(manyHits(5).map((h) => h.path));
+      el.evidencePaths = new Set(manyHits(6).map((h) => h.path));
       document.body.appendChild(el);
       await settle(el);
-      expect(el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]')).toHaveLength(5);
+      expect(el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]')).toHaveLength(6);
       expect(el.shadowRoot?.querySelector('[data-testid="tool-search-more"]')).toBeNull();
       el.remove();
     });
 
-    it('871 row cap — 10 in evidence renders 5 rows + "5 more in evidence"', async () => {
+    it('871 row cap — 10 results all used renders exactly 6 rows + "4 more used"', async () => {
       const el = document.createElement('jf-tool-call-card') as ToolCallCard;
       el.expanded = true;
       el.toolCall = searchCall({
@@ -456,38 +559,83 @@ describe('ToolCallCard', () => {
       document.body.appendChild(el);
       await settle(el);
       const rows = el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]');
-      expect(rows).toHaveLength(5);
+      expect(rows).toHaveLength(6);
       const more = el.shadowRoot?.querySelector('[data-testid="tool-search-more"]');
-      expect(more?.textContent?.trim()).toBe('5 more in evidence');
+      expect(more?.textContent?.trim()).toBe('4 more used');
       el.remove();
     });
 
-    it('871 row cap — mixed case (12 results, 7 in evidence) renders 5 rows + both footer segments', async () => {
+    it('871 row cap — mixed case (12 results, first 7 used) counts the hidden split honestly', async () => {
       const el = document.createElement('jf-tool-call-card') as ToolCallCard;
       el.expanded = true;
       el.toolCall = searchCall({
         structuredData: { query: 'taxes', resultCount: 12, searchResults: manyHits(12) },
       });
-      // First 7 of the 12 hits are in evidence: hiddenInEvidence = 7-5=2, retrievedNotInEvidence = 12-7=5.
+      // Rows 0-5 render (all used); hidden = 6 hits, of which exactly ONE (hit 6) is used.
       el.evidencePaths = new Set(manyHits(7).map((h) => h.path));
       document.body.appendChild(el);
       await settle(el);
       const rows = el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]');
-      expect(rows).toHaveLength(5);
+      expect(rows).toHaveLength(6);
       const more = el.shadowRoot?.querySelector('[data-testid="tool-search-more"]');
-      expect(more?.textContent?.trim()).toBe('2 more in evidence · 5 more retrieved, not in evidence');
+      expect(more?.textContent?.trim()).toBe('1 more used · 5 more retrieved, not used');
       el.remove();
     });
 
-    it('renders the muted scope line, including the path_prefix scope when the call carried one', async () => {
+    // Honesty: with no evidence set wired the card cannot know which hidden hits were used, so the
+    // footer must not claim any of them went UNused (the pre-871 wording did).
+    it('the footer says "N more results" when the run evidence set was never wired', async () => {
       const el = document.createElement('jf-tool-call-card') as ToolCallCard;
       el.expanded = true;
-      el.toolCall = searchCall({ arguments: '{"path_prefix":"C:/docs"}' });
+      el.toolCall = searchCall({
+        structuredData: { query: 'taxes', resultCount: 10, searchResults: manyHits(10) },
+      });
+      document.body.appendChild(el);
+      await settle(el);
+      expect(el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]')).toHaveLength(6);
+      const more = el.shadowRoot?.querySelector('[data-testid="tool-search-more"]');
+      expect(more?.textContent?.trim()).toBe('4 more results');
+      expect(el.shadowRoot?.querySelector('[data-testid="tool-search-row-used"]')).toBeNull();
+      el.remove();
+    });
+
+    // Tempdoc 871 §3b — the scope/filters line: facts of the CALL, always rendered at level 2.
+    it('renders "all folders" when the call carried no folder restriction', async () => {
+      const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+      el.expanded = true;
+      el.toolCall = searchCall();
       document.body.appendChild(el);
       await settle(el);
       const scope = el.shadowRoot?.querySelector('[data-testid="tool-search-scope"]');
-      expect(scope?.textContent).toContain('taxes');
-      expect(scope?.textContent).toContain('C:/docs');
+      expect(scope?.textContent?.trim()).toBe('all folders');
+      // The query lives in the header now, and the count in the accessory — neither repeats here.
+      expect(scope?.textContent).not.toContain('taxes');
+      expect(scope?.textContent).not.toContain('result');
+      el.remove();
+    });
+
+    it('renders the folder restriction and the explicit limit when the call carried them', async () => {
+      const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+      el.expanded = true;
+      el.toolCall = searchCall({ arguments: '{"query":"taxes","path_prefix":"C:/docs","limit":10}' });
+      document.body.appendChild(el);
+      await settle(el);
+      const scope = el.shadowRoot?.querySelector('[data-testid="tool-search-scope"]');
+      expect(scope?.textContent?.trim()).toBe('C:/docs · limit 10');
+      el.remove();
+    });
+
+    // The effective default limit is a config fact (SearchTool.DEFAULT_LIMIT ← ConfigStore) the
+    // record does not carry, so a call that asked for none renders none — never a guessed number.
+    it('omits the limit segment when the call asked for no limit', async () => {
+      const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+      el.expanded = true;
+      el.toolCall = searchCall({ arguments: '{"query":"taxes"}' });
+      document.body.appendChild(el);
+      await settle(el);
+      expect(
+        el.shadowRoot?.querySelector('[data-testid="tool-search-scope"]')?.textContent,
+      ).not.toContain('limit');
       el.remove();
     });
 
@@ -540,6 +688,24 @@ describe('ToolCallCard', () => {
       el.addEventListener('card-open', (e) => opened.push((e as CustomEvent<{ id: string }>).detail.id));
       (el.shadowRoot?.querySelector('[data-testid="tool-search-row"]') as HTMLButtonElement).click();
       expect(opened).toEqual(['C:/docs/taxes.md']);
+      el.remove();
+    });
+
+    // Tempdoc 871 §3b — an UNUSED row is still a document the reader may want to open; the mark
+    // grades the row, it does not disable it.
+    it('a retrieved-but-unused row is clickable on the same contract', async () => {
+      const el = document.createElement('jf-tool-call-card') as ToolCallCard;
+      el.expanded = true;
+      el.toolCall = searchCall();
+      el.evidencePaths = new Set(['C:/docs/taxes.md']);
+      document.body.appendChild(el);
+      await settle(el);
+      const rows = el.shadowRoot?.querySelectorAll('[data-testid="tool-search-row"]');
+      expect(rows?.[1]?.getAttribute('data-used')).toBe('false');
+      const opened: string[] = [];
+      el.addEventListener('card-open', (e) => opened.push((e as CustomEvent<{ id: string }>).detail.id));
+      (rows?.[1] as HTMLButtonElement).click();
+      expect(opened).toEqual(['/home/u/notes/budget.txt']);
       el.remove();
     });
 

@@ -354,11 +354,10 @@ describe('the three imported components read NO token the window leaves unbridge
           ['--md-pseudo-cite-color'],
           'the MUTED-ref ink (tempdoc 869 §3.6) is UNREACHABLE here for the same reason one step ' +
             'further out: `ReasoningBlock.ts:181` passes no `.citations`, no `frame` and no ' +
-            '`.sourceCount`, so the block frames itself `grounded` over zero sources and BOTH mute ' +
-            'arms are vacuous — the ungrounded arm because the frame is not it, the sourced arm ' +
-            'because nothing resolves. No `.pseudo-cite` element exists in the trace to ink. The ' +
-            'ANSWER blocks, which do reach it, are inside the `.sv3-markdown` bridge, where it is ' +
-            're-pointed.',
+            '`.sourceCount`, so the block frames itself `grounded` and the mute — the ungrounded ' +
+            'frame\'s alone since 867 §7 — never runs. No `.pseudo-cite` element exists in the ' +
+            'trace to ink. The ANSWER blocks, which do reach it, are inside the `.sv3-markdown` ' +
+            'bridge, where it is re-pointed.',
         ),
         ...reasons(
           MD_CITE,
@@ -512,6 +511,12 @@ describe('every text/surface pair those components can paint clears WCAG AA on t
       { what: 'tool target, risk tier, risk-why, because, accessory, search scope/path/locator/footer', text: 'var(--text-secondary)', on: ['var(--surface-secondary)'] },
       { what: 'args / output text in a well', text: 'var(--foreground)', on: ['var(--surface-secondary)', 'var(--surface-tertiary)'] },
       { what: 'Open in Search pill label', text: 'var(--text-primary)', on: ['var(--surface-secondary)', 'var(--surface-tertiary)'] },
+      // Tempdoc 871 §3b — the level-2 "used" marking paints a tinted wash UNDER the row and a
+      // deeper one behind the tag, so both stacks are measured on top of the card fill.
+      // A used row's path/locator inherit the row colour rather than staying `--text-secondary`:
+      // this oracle measured that pair at 4.31:1 on the tint, which is why the rule exists.
+      { what: 'used-row title and path/locator on the tinted row', text: 'var(--text-primary)', on: ['var(--surface-secondary)', 'var(--accent-tint-08)'] },
+      { what: 'the "used" tag on its own tint', text: 'var(--text-tint)', on: ['var(--surface-secondary)', 'var(--accent-tint-08)', 'var(--accent-tint-16)'] },
       { what: 'lineage frame label on the quoted frame', text: 'var(--text-secondary)', on: ['var(--surface-secondary)', 'var(--surface-2)'] },
       { what: 'rejected reason', text: 'var(--text-warning)', on: ['var(--surface-secondary)'] },
       { what: 'resource link', text: 'var(--accent)', on: ['var(--surface-secondary)'] },

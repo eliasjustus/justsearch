@@ -702,7 +702,7 @@ public interface DocumentService {
         .thenApply(
             record -> {
               if (record == null) {
-                return new DocumentSlice(docId, "", Map.of(), false, false, 0, "not_found");
+                return new DocumentSlice(docId, "", Map.of(), false, false, 0, 0, "not_found");
               }
               String content = record.content() == null ? "" : record.content();
               int totalLen = content.length();
@@ -717,11 +717,19 @@ public interface DocumentService {
                   true,
                   truncated,
                   end,
+                  totalLen,
                   null);
             });
   }
 
-  /** Immutable carrier for a paged slice of extracted text content. */
+  /**
+   * Immutable carrier for a paged slice of extracted text content.
+   *
+   * <p>{@code totalChars} is the full length of the extracted text, or {@code 0} when the producer
+   * cannot say (a not-found slice, or a Worker predating tempdoc 878's {@code total_chars} field).
+   * Zero therefore means UNKNOWN, never "an empty document" — a consumer must not render it as a
+   * denominator.
+   */
   record DocumentSlice(
       String docId,
       String content,
@@ -729,12 +737,14 @@ public interface DocumentService {
       boolean found,
       boolean truncated,
       int nextOffsetChars,
+      int totalChars,
       String error) {
     public DocumentSlice {
       Objects.requireNonNull(docId, "docId");
       content = content == null ? "" : content;
       metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
       nextOffsetChars = Math.max(0, nextOffsetChars);
+      totalChars = Math.max(0, totalChars);
       error = error == null || error.isBlank() ? null : error;
     }
   }
