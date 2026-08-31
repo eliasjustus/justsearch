@@ -319,6 +319,12 @@ final class ChatControllerLockedDispatchTest {
       return List.of();
     }
 
+    /** No catalog to filter, so the offering is the (empty) available set. */
+    @Override
+    public List<io.justsearch.agent.api.registry.Operation> offeredOperations() {
+      return availableOperations();
+    }
+
     @Override
     public List<Map<String, Object>> sessionEvents(String sessionId) {
       return List.of();

@@ -383,6 +383,72 @@ final class AgentOperationEmitterTest {
         "Not(absent-condition) evaluates true → the op is offered when the index is serving");
   }
 
+  // === Tempdoc 876 §B.1: offer(...) is the ONE authority on membership ===
+
+  @Test
+  void offerAppliesSelectionAndAvailabilityTogether() {
+    // The uncovered combination (876 finding 2): every prior test exercises selection OR an
+    // availability probe, never both. 868 §C.3's live NO_TOOLS was exactly this composition —
+    // the selection matched, then availability dropped the survivor — so the two filters
+    // composing is the behaviour under test, not either one alone.
+    //
+    // Catalog: three AGENT ops. core.gated is Not(ConditionMatches("index.unavailable")) and the
+    // probe reports that condition FIRING, so it is unavailable. Selection names core.gated +
+    // core.picked (NOT core.unpicked). Only core.picked is both selected and available.
+    AgentOperationEmitter emitter =
+        new AgentOperationEmitter()
+            .withAvailabilityProbe(conditionId -> "index.unavailable".equals(conditionId));
+    OperationCatalog catalog =
+        OperationCatalog.of(
+            "core",
+            List.of(
+                makeOpUnlessCondition("core.gated", "index.unavailable"),
+                makeOp("core.picked", "p", Set.of(ExecutorTag.AGENT)),
+                makeOp("core.unpicked", "u", Set.of(ExecutorTag.AGENT))));
+
+    List<Operation> offered = emitter.offer(catalog, List.of("core_gated", "core_picked"));
+
+    assertEquals(
+        List.of("core.picked"),
+        offered.stream().map(op -> op.id().value()).toList(),
+        "Selection and availability must COMPOSE: a selected-but-unavailable op is dropped, and an"
+            + " available-but-unselected op is never added back");
+  }
+
+  @Test
+  void offerAndEmitAgreeOnMembershipAndOrder() {
+    // The split in §B.1 is only safe while emit() is offer()'s wire projection. This pins that:
+    // the same catalog + selection + probe must produce the same names in the same order on both
+    // faces, so a future edit to one filter chain cannot silently fork the other.
+    AgentOperationEmitter emitter =
+        new AgentOperationEmitter()
+            .withAvailabilityProbe(conditionId -> "index.unavailable".equals(conditionId));
+    OperationCatalog catalog =
+        OperationCatalog.of(
+            "core",
+            List.of(
+                makeOp("core.first", "a", Set.of(ExecutorTag.AGENT)),
+                makeOpUnlessCondition("core.gated", "index.unavailable"),
+                makeOp("core.second", "b", Set.of(ExecutorTag.AGENT), Audience.AGENT),
+                makeOp("core.operator", "o", Set.of(ExecutorTag.AGENT), Audience.OPERATOR),
+                makeOp("core.ui-only", "u", Set.of(ExecutorTag.UI))));
+
+    List<String> offeredNames =
+        emitter.offer(catalog, List.of()).stream()
+            .map(op -> OperationCatalog.toWireName(op.id()))
+            .toList();
+    List<String> emittedNames =
+        emitter.emit(catalog, List.of()).stream()
+            .map(tool -> ((Map<?, ?>) tool.get("function")).get("name").toString())
+            .toList();
+
+    assertEquals(
+        List.of("core_first", "core_second"),
+        offeredNames,
+        "offer() applies executor + audience + availability, preserving catalog order");
+    assertEquals(offeredNames, emittedNames, "emit() must be offer()'s wire projection, not a fork");
+  }
+
   // === Tempdoc 875 Move 3 — offeredWireNames is a PROJECTION of emit, not a fork ===
   // AgentToolEmitter's default derives the authority set from emit(). Nothing else pins that the
   // default agrees with the REAL emitter over the REAL catalog: AgentToolAuthorityBoundaryTest

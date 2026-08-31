@@ -726,19 +726,30 @@ class AgentBatteryTest {
     private static final tools.jackson.databind.ObjectMapper MAPPER =
         new tools.jackson.databind.ObjectMapper();
 
+    /** Tempdoc 876 §B.1 — the membership half; {@link #emit} is its wire projection. */
     @Override
-    public List<Map<String, Object>> emit(
+    public List<Operation> offer(
         OperationCatalog catalog, java.util.Collection<String> selectedNames) {
-      List<Map<String, Object>> result = new ArrayList<>();
+      List<Operation> offered = new ArrayList<>();
       for (Operation op : catalog.definitions()) {
         if (!op.executors().contains(ExecutorTag.AGENT)) continue;
         String wire = OperationCatalog.toWireName(op.id());
         if (selectedNames != null && !selectedNames.isEmpty() && !selectedNames.contains(wire)) {
           continue;
         }
+        offered.add(op);
+      }
+      return List.copyOf(offered);
+    }
+
+    @Override
+    public List<Map<String, Object>> emit(
+        OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+      List<Map<String, Object>> result = new ArrayList<>();
+      for (Operation op : offer(catalog, selectedNames)) {
         try {
           var function = MAPPER.createObjectNode();
-          function.put("name", wire);
+          function.put("name", OperationCatalog.toWireName(op.id()));
           function.put("description", op.presentation().descriptionKey().value());
           function.set("parameters", MAPPER.readTree(op.intf().inputs()));
           var toolObj = MAPPER.createObjectNode();

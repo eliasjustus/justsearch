@@ -563,9 +563,9 @@ public final class HeadAssembly implements AutoCloseable {
           .setSampler(io.justsearch.app.services.mcphost.McpSamplingAdapter.of(() -> mcpSamplerAi));
     }
 
-    java.util.Properties registryOperationMessages =
-        io.justsearch.app.services.bootstrap.phases.BootstrapHelpers.loadRegistryOperationMessages();
-    this.operationMessageResolver = key -> registryOperationMessages.getProperty(key, key);
+    java.util.Properties registryMessages =
+        io.justsearch.app.services.bootstrap.phases.BootstrapHelpers.loadRegistryMessages();
+    this.operationMessageResolver = key -> registryMessages.getProperty(key, key);
 
     Supplier<List<String>> agentRootPaths =
         this.knowledgeClient != null
@@ -697,7 +697,9 @@ public final class HeadAssembly implements AutoCloseable {
     this.substrateGraph = assembleSubstrateGraph();
     // Tempdoc 541 §5.2 + fix-pass A.1: wrap the agent-tool late-bind registration in a
     // Memoized<Boolean>. Body invokes AgentToolHandlers.registerLateBound at first resolve;
-    // result is whether registration ran (true) or was skipped (false — idempotence or
+    // result is whether the prerequisites were met (true — including the case where every ref
+    // was already registered, 876 B.5) or not (false — missing worker capability, knowledge
+    // server, or data dir)
     // missing prerequisites). connectKnowledgeServer triggers the resolve when the Worker
     // becomes available; the original symbolic lambdamart-load LAZY entry is replaced by a
     // real "agent-tools-registration" LAZY/PENDING entry that flips to READY via Tier 4's
@@ -1284,7 +1286,9 @@ public final class HeadAssembly implements AutoCloseable {
     // (worker not yet available), caching a premature false so the agent's server-side tools
     // were NEVER registered ("No handler registered for binding core.search-index"). Resolve
     // only when the worker is available (caching success, never a premature false) and forward
-    // later transitions. registerLateBound is idempotent (skips if SEARCH_INDEX present).
+    // later transitions. registerLateBound is idempotent PER REF (tempdoc 876 §B.5): a ref the
+    // eager path already registered is left alone, so the two paths compose. It no longer
+    // short-circuits the whole call on SEARCH_INDEX standing proxy for the rest.
     if (localCap != null && localCap.available()) {
       this.agentToolsRegistration.get();
     } else if (localCap != null) {
@@ -1373,6 +1377,15 @@ public final class HeadAssembly implements AutoCloseable {
         substrateOut.operationOut().scanRollupLedger().close();
       } catch (RuntimeException e) {
         log.warn("Failed to close ScanRollupLedger", e);
+      }
+    }
+    // Tempdoc 876 §B.2a: stop the readiness-reconciliation daemon thread (same precedent as the
+    // sweeper above — a substrate-owned thread is torn down with the substrate).
+    if (substrateOut != null && substrateOut.healthOut() != null) {
+      try {
+        substrateOut.healthOut().readinessReconciliationTrigger().close();
+      } catch (RuntimeException e) {
+        log.warn("Failed to close ReadinessReconciliationTrigger", e);
       }
     }
     io.justsearch.app.services.bootstrap.OrchestrationHandles handles = this.orchestration;

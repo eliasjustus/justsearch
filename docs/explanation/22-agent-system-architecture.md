@@ -110,11 +110,22 @@ Key classes:
 |-------|------|
 | `OperationCatalog` | Canonical catalog of available operations and metadata. |
 | `OperationDispatcher` | Dispatches operation calls to registered handlers. |
-| `AgentToolEmitter` | Projects catalog operations into model-visible tool definitions. |
+| `AgentToolEmitter` | Projects catalog operations into model-visible tool definitions. `offer(...)` is the one authority on *which* operations the model is shown; `emit(...)` is its wire projection. |
 | `AgentToolsOperationCatalog` | Registers the built-in agent operations in `app-services`. |
 | Operation handlers | Implement concrete behavior under `modules/app-services/.../registry/operations/handlers/`. |
 
 Wire-name projection is deliberate. Dotted operation IDs such as `core.search-index` are projected to model-visible tool names such as `core_search_index`.
+
+### The offering
+
+The set of tools a run puts in front of the model — the *offering* — is produced in exactly one place, `AgentToolEmitter.offer(...)`, by filtering the composed catalog through executor tag, an audience allow-list (`USER`/`AGENT`), the caller's optional tool selection, and each operation's evaluated availability. `GET /api/chat/agent/tools` and the build-time registry snapshot are projections of that same call, not independent re-derivations, so the trust panel and the governance witness cannot disagree with what the model was sent.
+
+Two properties are deliberate:
+
+- **Availability filtering is live, and the reconciliation behind it no longer requires a request.** An operation may declare an availability expression over health conditions (`core.search-index` and `core.read-document` are offered only while the index is serving). Those conditions are reconciled on worker and inference capability transitions as well as on `/api/status`, so a client that never polls is no longer stuck with whatever the last request left behind. It is a second *trigger*, not full coverage: a condition whose only input is the Worker-reported operational view (rather than a capability transition) still moves on the next readiness snapshot, whenever that is taken.
+- **Within a single-agent run the offering grows but never shrinks.** It is re-evaluated each iteration and adopted only when it gained a tool, so a subsystem that recovers mid-run becomes usable, while a tool the model has already been shown never vanishes underneath it. A multi-agent run (one carrying agent profiles) instead re-derives its list per *active profile*, because a handoff is meant to change which tools are on offer; monotonicity there would have to be per-profile and is not yet implemented. The asymmetry is intentional: an offered-but-broken tool returns an error the model can read and adapt to, whereas a withheld tool is not experienced as a missing capability at all — it is experienced as a reason to improvise.
+
+Every offered tool is executable: the offering is a subset of the registered operation handlers, the workflow-runner routes, and the FE-published virtual tools.
 
 Current built-in agent-facing tool names include:
 
@@ -127,6 +138,8 @@ Current built-in agent-facing tool names include:
 | `core_ingest_files` | Write | Request ingestion of files or folders. Takes an optional `collection` tag; omitted, a path inherits its containing indexed root's collection, or `mcp-ingest` when it is under no indexed root (tempdoc 811 C-2a). |
 | `core_remember` | Write (low risk, no approval) | Persist a durable fact or user preference to the single-authority memory record, inspectable and forgettable via the Memory surface / `/api/memory`. |
 | `core_navigate_to_surface` | Low risk, no approval | Open a named app surface for the user. Presentation-layer only; also exposed to the UI executor. |
+
+Beyond the built-ins, the offering also carries anything else composed into the agent partition of the catalog: tools contributed by connected MCP servers, and declared workflows projected onto agent-callable operations (`core.<name>` becomes `core_workflow_<name>`). A projected workflow inherits the availability of the operations it composes, and one whose steps reference an operation the running install does not have is not projected at all — so a workflow is never offered as a tool the model cannot actually run.
 
 Safety metadata lives with the operation definitions and handlers. The approval posture is the operation's `ConfirmStrategy`, not its read/write character: `core_ingest_files` and `core_file_operations` pause for explicit user approval before execution; every other tool above runs unattended.
 

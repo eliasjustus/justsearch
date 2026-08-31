@@ -160,10 +160,28 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         // Tempdoc 550 Preview face (F3): the first real producer of availability. Search is
         // offered to the agent only when the index is serving. The health model is
         // absence=healthy: "index.unavailable" fires ONLY when INDEX_SERVING is unhealthy
-        // (LifecycleSnapshotTap) and is reliably cleared when it returns to READY (reconcileDim
-        // → clearPrior). So Not(ConditionMatches("index.unavailable")) = "available unless the
-        // index is not serving" — shown when ready, hidden when down, re-shown on recovery. The
-        // emitter (AgentOperationEmitter) and the preview endpoint both evaluate this live.
+        // (LifecycleSnapshotTap). So Not(ConditionMatches("index.unavailable")) = "available
+        // unless the index is not serving" — shown when ready, hidden when down, re-shown on
+        // recovery. The emitter (AgentOperationEmitter) and the preview endpoint both evaluate
+        // this live.
+        //
+        // Tempdoc 876 §B.2c corrects what this comment used to claim. "Reliably cleared when it
+        // returns to READY" was true of reconcileDim in isolation and FALSE of the system: the
+        // tap's only production caller was StatusLifecycleHandler.buildStatusMap, so the clear
+        // happened only when something requested GET /api/status. A client that does not poll
+        // inherited a stale assertion for the life of the process and was silently offered
+        // neither this tool nor core.read-document (868 §C.3 recorded the model improvising a
+        // nonsense call in its place). The guarantee now rests on
+        // ReadinessReconciliationTrigger, which re-runs the readiness snapshot on worker and
+        // inference capability transitions as well as on request — name THAT if this comment is
+        // ever revisited, because it is the thing that makes the clear reliable. It is a second
+        // TRIGGER, not total coverage: this condition is also asserted from the INDEX_SERVING
+        // NOT_READY / "index.not_healthy" row (LifecycleSnapshotTap's MAPPING_TABLE), whose reason
+        // code comes from the Worker-reported operational view rather than from a capability
+        // transition, so that arm still moves only when a snapshot is taken. Belt and braces,
+        // 876 §B.2b: within a SINGLE-AGENT run the offering may grow but never shrink, so a trigger
+        // regression can no longer amputate a tool mid-conversation there. A run carrying agent
+        // profiles re-derives its list per active profile and does not yet get that guarantee.
         new OperationAvailability(
             Optional.of(
                 new AvailabilityExpression.Not(

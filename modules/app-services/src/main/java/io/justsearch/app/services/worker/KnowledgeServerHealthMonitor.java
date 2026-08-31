@@ -79,6 +79,8 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
    */
   private volatile Consumer<KnowledgeServerBootstrap> onRecoveryConnected;
 
+  private volatile Runnable onTick = () -> {};
+
   // --- boot-recovery arm state. Mutated only by the single executor thread (the CAS below admits
   // one attempt at a time), but READ by requestRecoveryNow on the caller's thread, so volatile. ---
   private volatile int recoveryAttemptsMade;
@@ -186,6 +188,28 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
             "Health monitor tick exception: " + e.getMessage());
       }
     }
+    // Tempdoc 876 §C.8: the worker's operational view has just been refreshed, so this is the
+    // moment the readiness snapshot can change WITHOUT a capability transition — INDEX_SERVING
+    // settling from NOT_READY to DEGRADED/index.dense_unavailable is exactly that, and it is what
+    // left core.search-index gated off until a browser called GET /api/status. Reconciling here
+    // reuses the poll the head already runs rather than adding a timer, so the head keeps its
+    // health honest at the same cadence whether or not anyone is watching. Outside the catch: a
+    // failed check is precisely when the snapshot most needs re-deriving. Fail-soft — the trigger
+    // coalesces and swallows, but a broken callback must never stop the monitor.
+    try {
+      onTick.run();
+    } catch (RuntimeException e) {
+      log.debug("Readiness reconcile request from monitor tick failed: {}", e.getMessage());
+    }
+  }
+
+  /**
+   * Install a callback run after every tick, once the worker's health has been re-checked.
+   * Composition-root wiring, like {@link #onRecoveryConnected}; defaults to a no-op so every
+   * existing construction site is unaffected.
+   */
+  public void onTick(Runnable callback) {
+    this.onTick = callback == null ? () -> {} : callback;
   }
 
   /**

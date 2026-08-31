@@ -22,12 +22,32 @@ import java.util.Set;
  * {@code AgentOperationEmitterRegressionTest} (Phase 11) asserts deep-equality against
  * the captured baseline after Jackson normalization.
  */
-@FunctionalInterface
 public interface AgentToolEmitter {
+
+  /**
+   * Tempdoc 876 §B.1 — THE authority on membership in the model's tool list. Returns the
+   * {@link Operation} entries this catalog + selection actually puts in front of the model:
+   * the full filter chain (target executor, audience allow-list, the caller's selection, and
+   * the operation's availability expression evaluated against current state), and nothing else.
+   *
+   * <p>{@link #emit} is this method's WIRE PROJECTION — same membership, OpenAI-shaped, plus
+   * the virtual-operation merge. Any other view of "what the model is offered" (the trust
+   * panel's {@code GET /api/chat/agent/tools}, governance witnesses) must derive from THIS
+   * method rather than re-deriving from raw catalog declarations; a second derivation is a
+   * fork that will drift, which is precisely the defect 876 exists to close.
+   *
+   * @param catalog the operation catalog to filter
+   * @param selectedNames wire names (or raw {@code OperationRef} values) the caller restricts the
+   *     offering to; empty / null means "everything that survives the other filters"
+   */
+  List<Operation> offer(OperationCatalog catalog, Collection<String> selectedNames);
 
   /**
    * Project the catalog into the OpenAI function-calling tools array, optionally filtered
    * to a subset of operation ids (empty / null filter returns all AGENT-targeted entries).
+   *
+   * <p>Membership is {@link #offer}'s; this method only decides the wire shape (and merges
+   * FE-published virtual tools, which have no {@link Operation} to project).
    */
   List<Map<String, Object>> emit(OperationCatalog catalog, Collection<String> selectedNames);
 

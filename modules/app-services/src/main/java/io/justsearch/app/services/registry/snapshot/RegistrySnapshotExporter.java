@@ -4,15 +4,20 @@ package io.justsearch.app.services.registry.snapshot;
 import io.justsearch.agent.api.registry.Audience;
 import io.justsearch.agent.api.registry.ConsumerDeclaring;
 import io.justsearch.agent.api.registry.ConsumerHook;
+import io.justsearch.agent.api.registry.ContributionRegistry;
 import io.justsearch.agent.api.registry.ExecutorTag;
 import io.justsearch.agent.api.registry.Operation;
+import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.Prompt;
 import io.justsearch.agent.api.registry.PromptCatalog;
 import io.justsearch.agent.api.registry.Resource;
 import io.justsearch.agent.api.registry.ResourceCatalog;
 import io.justsearch.app.services.bootstrap.phases.BootstrapHelpers;
+import io.justsearch.app.services.bootstrap.phases.OperationCatalogComposition;
 import io.justsearch.app.services.bootstrap.phases.ResourceSubstrateInit;
+import io.justsearch.app.services.mcphost.McpHostService;
 import io.justsearch.app.services.registry.SurfaceConsumerIndex;
+import io.justsearch.app.services.registry.emitter.AgentOperationEmitter;
 import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import java.io.IOException;
@@ -56,11 +61,58 @@ public final class RegistrySnapshotExporter {
       String audience,
       String provenance) {}
 
-  /** Build the snapshot rows for every static Operation declaration (core + agent-tools). */
+  /**
+   * The operation set this snapshot describes, composed the way production composes it
+   * ({@code SubstratePhase.run}, the two-phase {@link OperationCatalogComposition}): the two static
+   * base catalogs install into ONE {@link ContributionRegistry}, the workflow projection resolves
+   * against that registry and installs its {@code core.workflow-*} tools into the SAME registry, and
+   * {@code deriveAndPartition} then derives capability-availability once over the merged set. The
+   * order is mirrored rather than re-invented — the projection resolves each workflow's
+   * {@code ToolStep}s against what the registry already holds, so installing the bases first is
+   * load-bearing (tempdoc 876 B.4/B.6).
+   *
+   * <p><b>Offline by construction.</b> The exporter has no MCP host, so
+   * {@code new McpHostService(List.of())} connects to nothing and contributes nothing. That is the
+   * intended reading: the snapshot describes the SHIPPED static + projected set — what every install
+   * has before an operator configures an MCP server. {@code core.demo-compose}, whose ToolSteps
+   * compose {@code vendor.mcphost.*}, is therefore correctly not projected. The dev-gated
+   * {@code ExamplePlugin} is likewise omitted: a build artifact must not vary with a
+   * {@code -Djustsearch.demo.plugin} system property.
+   *
+   * <p>Public because it is the ONE build-tier composition: {@link #buildOperationEntries()}, the
+   * runtime witness and the shape-validator harness all read it rather than each re-deriving a
+   * composition of their own (the representation-drift class this tempdoc closes).
+   */
+  public static List<Operation> composedOperations() {
+    CoreOperationCatalog coreBase = new CoreOperationCatalog();
+    AgentToolsOperationCatalog agentToolsBase = new AgentToolsOperationCatalog();
+    try (McpHostService mcpHost = new McpHostService(List.of())) {
+      ContributionRegistry contributions = mcpHost.contributionRegistry();
+      OperationCatalogComposition.installBaseCatalogs(contributions, coreBase, agentToolsBase);
+      mcpHost.connect();
+      OperationCatalogComposition.installWorkflowOps(
+          contributions,
+          io.justsearch.app.services.conversation.WorkflowOperationProjection.project(
+              io.justsearch.app.services.conversation.CoreWorkflowCatalog.catalog(),
+              contributions.operations()));
+      OperationCatalogComposition.Result composed =
+          OperationCatalogComposition.deriveAndPartition(
+              contributions, coreBase.namespace(), agentToolsBase.namespace());
+      List<Operation> ops = new ArrayList<>(composed.operationCatalog().definitions());
+      ops.addAll(composed.agentToolsCatalog().definitions());
+      return List.copyOf(ops);
+    }
+  }
+
+  /**
+   * Build the snapshot rows for every Operation the composed substrate holds: the core and
+   * agent-tools base catalogs plus the projected {@code core.workflow-*} tools
+   * ({@link #composedOperations()}). Both this and {@link #agentWitnessDeliveredIds()} read that one
+   * composition, so the two sides the {@code runtime-witness} gate cross-checks cannot describe
+   * different sets.
+   */
   public static List<Entry> buildOperationEntries() {
-    List<Operation> ops = new ArrayList<>();
-    ops.addAll(new CoreOperationCatalog().definitions());
-    ops.addAll(new AgentToolsOperationCatalog().definitions());
+    List<Operation> ops = composedOperations();
 
     List<Entry> entries = new ArrayList<>();
     for (Operation op : ops) {
@@ -265,17 +317,23 @@ public final class RegistrySnapshotExporter {
    * delivery channel (the constructed tool list) never carries it (e.g. the op is audience-filtered).
    *
    * <p>This is the second, non-static half of the keystone: it runs the genuine emitter (not a
-   * re-derivation of the same executor tags) and compares declared-vs-delivered. The emitter applies
-   * its own audience allow-list ({@code USER}/{@code AGENT}), so OPERATOR-audience ops that merely
-   * carry {@link ExecutorTag#AGENT} are correctly absent.
+   * re-derivation of the same executor tags) over the same composed set {@link #buildOperationEntries()}
+   * describes, and compares declared-vs-delivered. The emitter applies its own audience allow-list
+   * ({@code USER}/{@code AGENT}), so OPERATOR-audience ops that merely carry {@link ExecutorTag#AGENT}
+   * are correctly absent.
    */
   public static java.util.Set<String> agentWitnessDeliveredIds() {
-    List<Operation> ops = new ArrayList<>();
-    ops.addAll(new CoreOperationCatalog().definitions());
-    ops.addAll(new AgentToolsOperationCatalog().definitions());
-    var catalog = io.justsearch.agent.api.registry.OperationCatalog.of("core", ops);
+    List<Operation> ops = composedOperations();
+    var catalog = OperationCatalog.of("core", ops);
+    // Tempdoc 876 B.6 — the healthy-stack assumption is STATED, not inherited from a null check. A
+    // bare AgentOperationEmitter leaves conditionFiring null, which the emitter reads as "do not
+    // filter on availability at all"; the explicit conditionId -> false probe says what the witness
+    // actually means ("with a healthy stack, nothing firing, the offering is this"). Same set today,
+    // but a future condition that fires by default now changes this artifact loudly instead of
+    // silently, because it goes through the real evaluator rather than around it.
     var emitted =
-        new io.justsearch.app.services.registry.emitter.AgentOperationEmitter()
+        new AgentOperationEmitter()
+            .withAvailabilityProbe(conditionId -> false)
             .emit(catalog, List.of());
     java.util.Set<String> deliveredWireNames = new java.util.LinkedHashSet<>();
     for (Map<String, Object> tool : emitted) {
@@ -289,8 +347,7 @@ public final class RegistrySnapshotExporter {
     }
     java.util.Set<String> ids = new java.util.LinkedHashSet<>();
     for (Operation op : ops) {
-      if (deliveredWireNames.contains(
-          io.justsearch.agent.api.registry.OperationCatalog.toWireName(op.id()))) {
+      if (deliveredWireNames.contains(OperationCatalog.toWireName(op.id()))) {
         ids.add(op.id().value());
       }
     }

@@ -385,9 +385,32 @@ class ConsentCapsuleRecoveryE2ETest {
     JsonNode json = MAPPER.readTree(resp.body());
     assertEquals(
         "Not", json.path("availabilityKind").asText(), "search-index declares a Not(...) gate: " + resp.body());
-    assertTrue(
-        json.path("availableNow").asBoolean(),
-        "in the ready state the index is serving → search-index is available (not wrongly hidden): " + resp.body());
+
+    // Tempdoc 876 §C.8 — this AWAITS instead of sampling once, and the change strengthens it.
+    // Availability is now genuinely reconciled rather than accidentally absent. Before 876 nothing
+    // reconciled the ConditionStore unless something called GET /api/status, and this test calls
+    // none — so the old instantaneous assertion passed because the store was EMPTY, not because the
+    // index was serving. It would have passed with the worker on fire.
+    //
+    // Reconciliation is asynchronous by construction (a capability transition, or the worker-health
+    // poll the head already runs), so the honest assertion is that it CONVERGES without a request,
+    // which is precisely 876's claim. Sampling at one arbitrary instant tests a race, not the
+    // invariant. The fixture's terminal state is INDEX_SERVING DEGRADED / index.dense_unavailable —
+    // the dense leg is down, keyword search works — which §C.8 maps to its own condition so it no
+    // longer holds core.search-index's Not(index.unavailable) gate shut.
+    awaitUntil(
+        () -> {
+          try {
+            return MAPPER
+                .readTree(get("/api/operations/core.search-index/preview").body())
+                .path("availableNow")
+                .asBoolean();
+          } catch (Exception e) {
+            return false;
+          }
+        },
+        "core.search-index must become available with NO /api/status call — a degraded-but-serving"
+            + " index must not leave the model's primary search tool hidden");
   }
 
   private static HttpResponse<String> get(String path) throws Exception {

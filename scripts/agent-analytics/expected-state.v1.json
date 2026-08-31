@@ -39,6 +39,18 @@
       "exitProbe": "slow: ./gradlew.bat :modules:app-services:test --tests \"*WatchedRootScanCollectionTest*\" --rerun"
     },
     {
+      "id": "app-inference-external-server-config-store-flaky",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!app-inference))(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*InferenceLifecycleManagerExternalServer"
+      ],
+      "claim": "InferenceLifecycleManagerExternalServerTest 'startLlamaServerCanAdoptHealthOnlyWhenExplicitlyEnabled' can fail with 'IllegalStateException: ConfigStore not initialized - call setGlobal() at startup' under a full ./gradlew test run; it passes in isolation. INTERMITTENT, not deterministic - it failed one full run and did not reproduce on a later one, so it is an ordering/isolation defect (a sibling test in the same module JVM leaves the ConfigStore global unset), not a product defect and not your change. A failure ONLY there is pre-existing; re-run in isolation to confirm.",
+      "evidence": "tempdoc 876 session f6617483 (2026-08-26): first full-suite run had :modules:app-inference:test FAILED (1 of 6 cases in that class); the class re-run with --tests in the same tree was BUILD SUCCESSFUL; a later full-suite run in the same tree passed app-inference outright (266 tests, 0 failures). app-inference depends only on gpu-bridge/app-api/configuration/telemetry/core-contracts, none of whose code 876 touches.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:app-inference:test"
+    },
+    {
       "id": "ui-web-envelopestream-heartbeat-flaky",
       "match": [
         "test:unit(?!.*(?:PluginLoader|resourceRegistry))",
@@ -107,6 +119,18 @@
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: node scripts/docs/docs-validate.mjs"
+    },
+    {
+      "id": "worker-core-onnx-longdoc-forensic-timeout",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!worker-core))(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*OnnxEmbeddingEncoderLongDocForensic"
+      ],
+      "claim": "OnnxEmbeddingEncoderLongDocForensicTest 'longDocEmbedWithSpansMatchesBaseEmbed' can exceed its 30s JUnit timeout under machine load (it runs real ONNX embedding over a long document, so it is load- and model-load-sensitive). LOAD-DEPENDENT, not a persistent red: it passed twice and failed twice on the same tree in one session, varying only with how many agents were building concurrently. A TimeoutException ONLY there is environmental, not your change; re-run when the machine is quiet.",
+      "evidence": "tempdoc 876 session f6617483 (2026-08-31): two full-suite runs on this tree were green including worker-core (8407 then 8476 tests, 0 failures); two later runs during concurrent multi-agent Gradle load hit the 30s timeout, once in the full suite and once with only worker-core + system-tests running. The test predates this work (PRs #133/#135) and modules/worker-core has ZERO files in tempdoc 876's diff.",
+      "added": "2026-08-31",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:worker-core:test --tests \"*OnnxEmbeddingEncoderLongDocForensicTest*\""
     }
   ]
 }

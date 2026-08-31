@@ -20,11 +20,13 @@ import io.justsearch.agent.api.registry.ExecutorTag;
 import io.justsearch.agent.api.registry.Operation;
 import io.justsearch.agent.api.registry.OperationAvailability;
 import io.justsearch.agent.api.registry.OperationCatalog;
+import io.justsearch.agent.api.registry.OperationRef;
 import io.justsearch.agent.api.registry.RiskTier;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Collection;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -204,6 +206,96 @@ class AgentToolAuthorityBoundaryTest {
   }
 
   // ---------------------------------------------------------------------------
+  // 5b. A tool whose availability flips AFTER it was offered still dispatches (876 x 875)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  @DisplayName("a tool already handed to the model, whose availability flips before it is called, "
+      + "reaches the executor instead of being refused as unresolvable")
+  void availabilityFlippedAfterOffer_isNotRefused() {
+    // Where 876 and 875 compose. 875's authority is a UNION: the emitter's CURRENT offering, or the
+    // list the model was actually handed this turn. 876 §B.2b re-evaluates availability within a
+    // run, so those two arms can now disagree — a tool offered at t=0 whose backing subsystem goes
+    // down before the model calls it is in arm 2 but not arm 1.
+    //
+    // Arm 2 must win, and 876's asymmetry is the reason: offering fails open, EXECUTION fails
+    // closed. A dispatch reaches the executor and returns a typed result the model reads and adapts
+    // to; refusing it as unresolvable tells the model its own tool does not exist, which is what
+    // makes a model improvise (868 §C.3). Offering and then refusing is never right.
+    //
+    // The flip is driven off the emitter itself: the first emit (the run's t=0 offering) sees the
+    // condition clear, every later evaluation sees it firing. That is the live sequence, without a
+    // timer or a sleep.
+    var search = new StubTool("search_index", RiskTier.LOW, "hits");
+    var catalog = catalogOf(gatedOn(search, "index.unavailable"));
+
+    java.util.concurrent.atomic.AtomicBoolean firing =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    java.util.concurrent.atomic.AtomicBoolean firstEmitDone =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    AgentToolEmitter delegate = filteringEmitter(id -> firing.get());
+    AgentToolEmitter flipping =
+        new AgentToolEmitter() {
+          @Override
+          public List<Operation> offer(OperationCatalog c, Collection<String> selected) {
+            return delegate.offer(c, selected);
+          }
+
+          @Override
+          public List<Map<String, Object>> emit(OperationCatalog c, Collection<String> selected) {
+            List<Map<String, Object>> out = delegate.emit(c, selected);
+            if (firstEmitDone.compareAndSet(false, true)) {
+              firing.set(true); // the subsystem goes down right after the run's opening offer
+            }
+            return out;
+          }
+        };
+
+    var ai =
+        new ScriptedAiService(
+            ScriptedResponse.toolCall("call-1", "core_search_index", "{}"),
+            ScriptedResponse.textOnly("done"));
+    var service =
+        AgentLoopServiceTest.observed(
+            new AgentLoopService(
+                ai, catalog, AgentLoopServiceTest.stubExecutor(search), flipping, null, null));
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.runAgent(
+        new AgentRequest(
+            List.of(Map.of("role", "user", "content", "go")), List.of(), 3, List.of(), null),
+        events::add);
+
+    assertTrue(firing.get(), "precondition: availability must actually have flipped mid-run");
+    assertNull(
+        firstOfType(events, AgentEvent.ToolCallRejected.class),
+        "a tool the model was already handed must reach the executor once availability flips —"
+            + " execution decides, not resolution");
+    assertEquals(1, search.callCount.get(), "the handler should have run");
+    assertNotNull(firstOfType(events, AgentEvent.AgentDone.class), "the run should complete");
+  }
+
+  /** {@code op} re-declared with a Not(ConditionMatches(conditionId)) availability gate. */
+  private static Operation gatedOn(StubTool tool, String conditionId) {
+    Operation base = tool.toOperation();
+    return new Operation(
+        base.id(),
+        base.presentation(),
+        base.intf(),
+        base.policy(),
+        new OperationAvailability(
+            Optional.of(
+                new AvailabilityExpression.Not(
+                    new AvailabilityExpression.ConditionMatches(conditionId))),
+            Optional.empty()),
+        base.lineage(),
+        base.binding(),
+        base.provenance(),
+        base.executors(),
+        base.audience(),
+        base.consumers());
+  }
+
+  // ---------------------------------------------------------------------------
   // 6. offeredWireNames is a projection of emit, not a second list
   // ---------------------------------------------------------------------------
 
@@ -230,8 +322,20 @@ class AgentToolAuthorityBoundaryTest {
   @Test
   @DisplayName("offeredWireNames() skips malformed entries instead of throwing")
   void offeredWireNames_skipsMalformedEntries() {
+    // Tempdoc 876 §B.1 made AgentToolEmitter two-faced (offer/emit), so these stubs are anonymous
+    // classes rather than lambdas. offer() returns empty deliberately: this test is about
+    // offeredWireNames' projection of emit over MALFORMED entries, which have no backing Operation
+    // to return — and offeredWireNames reads emit, never offer.
     AgentToolEmitter malformed =
-        (catalog, selected) -> {
+        new AgentToolEmitter() {
+          @Override
+          public List<Operation> offer(OperationCatalog catalog, Collection<String> selected) {
+            return List.of();
+          }
+
+          @Override
+          public List<Map<String, Object>> emit(
+              OperationCatalog catalog, Collection<String> selected) {
           List<Map<String, Object>> out = new ArrayList<>();
           out.add(Map.<String, Object>of("type", "function")); // no `function` object
           out.add(Map.<String, Object>of("type", "function", "function", "not-a-map"));
@@ -241,6 +345,7 @@ class AgentToolAuthorityBoundaryTest {
           out.add(
               Map.<String, Object>of("type", "function", "function", Map.of("name", "core_ok")));
           return out;
+          }
         };
 
     assertEquals(Set.of("core_ok"), malformed.offeredWireNames(catalogOf(), List.of()));
@@ -315,7 +420,34 @@ class AgentToolAuthorityBoundaryTest {
    */
   private static AgentToolEmitter filteringEmitter(Predicate<String> conditionFiring) {
     Set<Audience> allowed = EnumSet.of(Audience.USER, Audience.AGENT);
-    return (catalog, selectedNames) -> {
+    return new AgentToolEmitter() {
+      /**
+       * Tempdoc 876 §B.1: offer() is the membership authority and emit() its wire projection, so
+       * this stub applies ONE filter chain to both faces. Returning something different here would
+       * make the stub disagree with itself and quietly invalidate every test built on it.
+       */
+      @Override
+      public List<Operation> offer(OperationCatalog catalog, Collection<String> selectedNames) {
+        List<Operation> offered = new ArrayList<>();
+        for (Operation op : catalog.definitions()) {
+          if (!op.executors().contains(ExecutorTag.AGENT)) continue;
+          if (!allowed.contains(op.audience())) continue;
+          if (!evaluate(op.availability().expression().orElse(null), conditionFiring)) continue;
+          String wire = OperationCatalog.toWireName(op.id());
+          if (selectedNames != null
+              && !selectedNames.isEmpty()
+              && !selectedNames.contains(wire)
+              && !selectedNames.contains(op.id().value())) {
+            continue;
+          }
+          offered.add(op);
+        }
+        return List.copyOf(offered);
+      }
+
+      @Override
+      public List<Map<String, Object>> emit(
+          OperationCatalog catalog, Collection<String> selectedNames) {
       var mapper = new tools.jackson.databind.ObjectMapper();
       List<Map<String, Object>> result = new ArrayList<>();
       for (Operation op : catalog.definitions()) {
@@ -345,6 +477,7 @@ class AgentToolAuthorityBoundaryTest {
         }
       }
       return List.copyOf(result);
+      }
     };
   }
 

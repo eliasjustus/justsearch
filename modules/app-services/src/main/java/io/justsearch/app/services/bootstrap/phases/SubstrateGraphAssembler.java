@@ -110,7 +110,8 @@ public final class SubstrateGraphAssembler {
             healthOut.lifecycleSnapshotTap(),
             healthOut.workerSnapshotTap(),
             healthOut.headHealthEventsEmitter(),
-            ruleRunner),
+            ruleRunner,
+            healthOut.readinessReconciliationTrigger()),
         new SubstrateGraph.ChannelSubstrate(
             resourceOut.headLogDiagnosticChannelCatalog(),
             // Tempdoc 560 §10.4: the composed plugin-contributed channels as one catalog. Empty unless

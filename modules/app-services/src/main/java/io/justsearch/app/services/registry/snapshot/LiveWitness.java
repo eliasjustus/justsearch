@@ -16,12 +16,15 @@ import java.util.List;
  *   <li>the {@code consumer-presence} gate — a STATIC referencer scan over {@link
  *       RegistrySnapshotExporter}'s snapshot (a declaration NAMES a consumer);
  *   <li>the {@code runtime-witness} gate — STILL static, but bidirectional for the AGENT channel (the
- *       declared agent consumers match what {@code AgentOperationEmitter} would deliver, from the
- *       static catalogs);
+ *       declared agent consumers match what {@code AgentOperationEmitter} would deliver). Since
+ *       tempdoc 876 §B.6 it composes what production composes, so it now also covers the projected
+ *       workflow ops ({@code core.workflow-*}) it used to miss — but only those a BUILD can derive:
+ *       what a running install actually connects (MCP tools, plugin contributions) stays outside it
+ *       by construction;
  *   <li>this LIVE-REGISTRY witness — the only tier that examines the running {@link
- *       ContributionRegistry}, so it covers the contributions composed at RUNTIME that BOTH static
- *       tiers are blind to: projected workflow ops ({@code core.workflow-*}), MCP tools, plugin
- *       contributions. That is the empirically-demonstrated DR-D blind spot (tempdoc 560 §11.6); the
+ *       ContributionRegistry}, so it covers the contributions composed at RUNTIME that no static
+ *       tier can see: MCP tools and plugin contributions, and any workflow projection that depends
+ *       on them. That is the empirically-demonstrated DR-D blind spot (tempdoc 560 §11.6); the
  *       build-tier witness is structurally static (§11.2/DR-A) and cannot see runtime composition.
  * </ul>
  *

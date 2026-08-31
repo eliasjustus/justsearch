@@ -3793,6 +3793,225 @@ class AgentLoopServiceTest {
   }
 
   // ===========================================================================
+  // Tempdoc 876 §B.2b — the offering re-evaluates within a run, monotonically
+  // ===========================================================================
+
+  @Test
+  @DisplayName("876 B.2b: a tool that becomes available mid-run reaches the model")
+  void offeringGrowsMidRun_newToolIsAdopted() {
+    var search = new StubTool("search", RiskTier.LOW, "hit");
+    var read = new StubTool("read_document", RiskTier.LOW, "text");
+    var ai =
+        new ScriptedAiService(
+            ScriptedResponse.toolCall("c1", "core_search", "{}"),
+            ScriptedResponse.textOnly("done"));
+    // Iteration 1 sees only core_search; by iteration 2 the backend behind core_read_document has
+    // recovered (this is the Worker-restart-mid-run case the once-per-run emit could never see).
+    var emitter =
+        new ScriptedOfferingEmitter(
+            List.of(Set.of("core_search"), Set.of("core_search", "core_read_document")));
+    var service = serviceWithEmitter(ai, emitter, search, read);
+
+    run(service, userMessage("Read the file"), 5);
+
+    assertEquals(2, ai.recordedTools.size(), "expected a two-iteration run");
+    assertTrue(
+        emitter.emitCalls.get() >= 2,
+        // Tempdoc 875 added a SECOND emit consumer — AgentStepRunner authorizes a tool call
+        // against offeredWireNames(), which projects emit(). So the exact total is now a
+        // function of another workstream's dispatch checks, not of this one's re-evaluation.
+        // A LOWER BOUND still witnesses what 876 B.2b is about: 1 would mean the offering was
+        // sampled once per run. What the model actually saw each iteration is asserted below,
+        // and that is the sharper check.
+        "the offering must be re-evaluated per iteration, not sampled once per run; emits="
+            + emitter.emitCalls.get());
+    assertEquals(List.of("core_search"), toolNamesOf(ai.recordedTools.get(0)),
+        "iteration 1 sees the t=0 offering");
+    assertEquals(
+        List.of("core_search", "core_read_document"),
+        toolNamesOf(ai.recordedTools.get(1)),
+        "iteration 2 must see the recovered tool, in catalog order");
+    // Wholesale replacement, not an append: EVERY entry comes from ONE fresh emit. An append would
+    // leave core_search stamped with the FIRST emit's sequence number while the newcomer carried a
+    // later one, so a mixed list is the failure this detects.
+    //
+    // Asserted as "all equal, and later than iteration 1's" rather than "== 2": tempdoc 875 added a
+    // second emit consumer (AgentStepRunner authorizes a tool call through offeredWireNames, which
+    // projects emit), so the adopting emit's ordinal is no longer a fixed number. The invariant —
+    // one emit produced the whole list — is what this is about, and it is now stated directly.
+    Object firstSeq = ai.recordedTools.get(0).get(0).get(ScriptedOfferingEmitter.EMIT_SEQ);
+    Object adoptedSeq = ai.recordedTools.get(1).get(0).get(ScriptedOfferingEmitter.EMIT_SEQ);
+    assertNotEquals(
+        firstSeq, adoptedSeq, "iteration 2 must be served by a LATER emit than iteration 1");
+    for (Map<String, Object> tool : ai.recordedTools.get(1)) {
+      assertEquals(
+          adoptedSeq,
+          tool.get(ScriptedOfferingEmitter.EMIT_SEQ),
+          "adoption replaces the whole list from one emit: " + getToolFunctionName(tool));
+    }
+  }
+
+  @Test
+  @DisplayName("876 B.2b: a tool that becomes unavailable mid-run does NOT disappear")
+  void offeringShrinksMidRun_toolStaysOffered() {
+    var search = new StubTool("search", RiskTier.LOW, "hit");
+    var read = new StubTool("read_document", RiskTier.LOW, "text");
+    var ai =
+        new ScriptedAiService(
+            ScriptedResponse.toolCall("c1", "core_read_document", "{}"),
+            ScriptedResponse.textOnly("done"));
+    // The backend behind core_read_document goes down after iteration 1 — the model has already
+    // been shown (and called) that tool, so withdrawing it would only invite improvisation.
+    var emitter =
+        new ScriptedOfferingEmitter(
+            List.of(Set.of("core_search", "core_read_document"), Set.of("core_search")));
+    var service = serviceWithEmitter(ai, emitter, search, read);
+
+    run(service, userMessage("Read the file"), 5);
+
+    assertEquals(2, ai.recordedTools.size(), "expected a two-iteration run");
+    assertTrue(
+        emitter.emitCalls.get() >= 2,
+        // Tempdoc 875 added a SECOND emit consumer — AgentStepRunner authorizes a tool call
+        // against offeredWireNames(), which projects emit(). So the exact total is now a
+        // function of another workstream's dispatch checks, not of this one's re-evaluation.
+        // A LOWER BOUND still witnesses what 876 B.2b is about: 1 would mean the offering was
+        // sampled once per run. What the model actually saw each iteration is asserted below,
+        // and that is the sharper check.
+        "the offering must still be re-evaluated; emits=" + emitter.emitCalls.get());
+    // Right-reason guard: the second emit really did drop the tool — the test is not passing
+    // because the emitter kept offering it.
+    assertEquals(
+        List.of("core_search"),
+        emitter.emittedNames.get(1),
+        "the second emit must be the shrunken one");
+    assertEquals(
+        List.of("core_search", "core_read_document"),
+        toolNamesOf(ai.recordedTools.get(1)),
+        "a shrunken offering must not be adopted");
+    for (Map<String, Object> tool : ai.recordedTools.get(1)) {
+      assertEquals(
+          Integer.valueOf(1),
+          tool.get(ScriptedOfferingEmitter.EMIT_SEQ),
+          "the run keeps the list it already had: " + getToolFunctionName(tool));
+    }
+  }
+
+  @Test
+  @DisplayName("876 B.2b: an unchanged offering is re-evaluated but not churned")
+  void offeringUnchangedMidRun_listIsNotChurned() {
+    var search = new StubTool("search", RiskTier.LOW, "hit");
+    var read = new StubTool("read_document", RiskTier.LOW, "text");
+    var ai =
+        new ScriptedAiService(
+            ScriptedResponse.toolCall("c1", "core_search", "{}"),
+            ScriptedResponse.textOnly("done"));
+    // One entry ⇒ every call sees the same set.
+    var emitter =
+        new ScriptedOfferingEmitter(List.of(Set.of("core_search", "core_read_document")));
+    var service = serviceWithEmitter(ai, emitter, search, read);
+
+    run(service, userMessage("Search"), 5);
+
+    assertEquals(2, ai.recordedTools.size(), "expected a two-iteration run");
+    assertTrue(
+        emitter.emitCalls.get() >= 2,
+        // Tempdoc 875 added a SECOND emit consumer — AgentStepRunner authorizes a tool call
+        // against offeredWireNames(), which projects emit(). So the exact total is now a
+        // function of another workstream's dispatch checks, not of this one's re-evaluation.
+        // A LOWER BOUND still witnesses what 876 B.2b is about: 1 would mean the offering was
+        // sampled once per run. What the model actually saw each iteration is asserted below,
+        // and that is the sharper check.
+        "the offering is re-evaluated every iteration; emits=" + emitter.emitCalls.get());
+    assertEquals(
+        List.of("core_search", "core_read_document"),
+        emitter.emittedNames.get(1),
+        "the second emit really did produce the same set");
+    assertEquals(
+        toolNamesOf(ai.recordedTools.get(0)),
+        toolNamesOf(ai.recordedTools.get(1)),
+        "an equal set changes nothing the model sees");
+    for (Map<String, Object> tool : ai.recordedTools.get(1)) {
+      assertEquals(
+          Integer.valueOf(1),
+          tool.get(ScriptedOfferingEmitter.EMIT_SEQ),
+          "an equal set must not replace the list: " + getToolFunctionName(tool));
+    }
+  }
+
+  private static List<String> toolNamesOf(List<Map<String, Object>> tools) {
+    return tools.stream().map(AgentLoopServiceTest::getToolFunctionName).toList();
+  }
+
+  private static AgentLoopService serviceWithEmitter(
+      OnlineAiService ai,
+      io.justsearch.agent.api.registry.AgentToolEmitter emitter,
+      StubTool... tools) {
+    return observed(
+        new AgentLoopService(
+            ai, stubCatalog(tools), stubExecutor(tools), emitter, null, null, null, null));
+  }
+
+  /**
+   * Tempdoc 876 §B.2b — an emitter whose OFFERING changes between calls: the Nth call gets the Nth
+   * name set, the last entry repeating once exhausted (the {@code perCallStructuredData} idiom).
+   * That is how a backend recovering — or failing — mid-run reaches the loop.
+   *
+   * <p>Every emitted tool carries the sequence number of the emit it came from, so an assertion can
+   * tell "the loop kept the list it had" apart from "the loop re-adopted an identical-looking one",
+   * and a wholesale replacement apart from an append.
+   */
+  private static final class ScriptedOfferingEmitter
+      implements io.justsearch.agent.api.registry.AgentToolEmitter {
+    static final String EMIT_SEQ = "__emit_seq";
+
+    private final io.justsearch.agent.api.registry.AgentToolEmitter delegate = stubEmitter();
+    private final List<Set<String>> perCall;
+    /** The names each emit call actually returned — the right-reason witness. */
+    final List<List<String>> emittedNames = new ArrayList<>();
+
+    final java.util.concurrent.atomic.AtomicInteger emitCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+    final java.util.concurrent.atomic.AtomicInteger offerCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    ScriptedOfferingEmitter(List<Set<String>> perCall) {
+      this.perCall = List.copyOf(perCall);
+    }
+
+    private Set<String> availableOn(int nth) {
+      return perCall.get(Math.min(nth - 1, perCall.size() - 1));
+    }
+
+    @Override
+    public List<Operation> offer(
+        OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+      Set<String> available = availableOn(offerCalls.incrementAndGet());
+      return delegate.offer(catalog, selectedNames).stream()
+          .filter(op -> available.contains(OperationCatalog.toWireName(op.id())))
+          .toList();
+    }
+
+    @Override
+    public List<Map<String, Object>> emit(
+        OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+      int nth = emitCalls.incrementAndGet();
+      Set<String> available = availableOn(nth);
+      List<Map<String, Object>> emitted = new ArrayList<>();
+      for (Map<String, Object> tool : delegate.emit(catalog, selectedNames)) {
+        if (!available.contains(getToolFunctionName(tool))) {
+          continue;
+        }
+        var stamped = new java.util.LinkedHashMap<String, Object>(tool);
+        stamped.put(EMIT_SEQ, nth);
+        emitted.add(Map.copyOf(stamped));
+      }
+      emittedNames.add(toolNamesOf(emitted));
+      return List.copyOf(emitted);
+    }
+  }
+
+  // ===========================================================================
   // Multi-agent handoff scenarios
   // ===========================================================================
 
@@ -4584,31 +4803,48 @@ class AgentLoopServiceTest {
     // app-agent live in the same JVM as app-services classes (test classpath only). To
     // keep app-agent tests independent of app-services, we provide an inline emitter
     // mirroring AgentOperationEmitter's deterministic-transliteration + identity-resolver behavior.
-    return (catalog, selectedNames) -> {
-      tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
-      List<Map<String, Object>> result = new ArrayList<>();
-      for (Operation op : catalog.definitions()) {
-        if (!op.executors().contains(ExecutorTag.AGENT)) continue;
-        String wire = OperationCatalog.toWireName(op.id());
-        if (selectedNames != null && !selectedNames.isEmpty() && !selectedNames.contains(wire)) {
-          continue;
+    // Tempdoc 876 §B.1: AgentToolEmitter is no longer a @FunctionalInterface (it gained offer()),
+    // so this stub is a class whose emit() projects its own offer() — mirroring the split the real
+    // emitter now has, so the stub cannot disagree with itself either.
+    return new io.justsearch.agent.api.registry.AgentToolEmitter() {
+      @Override
+      public List<Operation> offer(
+          OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+        List<Operation> offered = new ArrayList<>();
+        for (Operation op : catalog.definitions()) {
+          if (!op.executors().contains(ExecutorTag.AGENT)) continue;
+          String wire = OperationCatalog.toWireName(op.id());
+          if (selectedNames != null && !selectedNames.isEmpty() && !selectedNames.contains(wire)) {
+            continue;
+          }
+          offered.add(op);
         }
-        try {
-          var function = mapper.createObjectNode();
-          function.put("name", wire);
-          function.put("description", op.presentation().descriptionKey().value());
-          function.set("parameters", mapper.readTree(op.intf().inputs()));
-          var toolObj = mapper.createObjectNode();
-          toolObj.put("type", "function");
-          toolObj.set("function", function);
-          @SuppressWarnings("unchecked")
-          Map<String, Object> entry = mapper.convertValue(toolObj, Map.class);
-          result.add(new java.util.LinkedHashMap<>(entry));
-        } catch (Exception e) {
-          throw new IllegalStateException("Failed to emit " + op.id(), e);
-        }
+        return List.copyOf(offered);
       }
-      return result;
+
+      @Override
+      public List<Map<String, Object>> emit(
+          OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+        tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Operation op : offer(catalog, selectedNames)) {
+          try {
+            var function = mapper.createObjectNode();
+            function.put("name", OperationCatalog.toWireName(op.id()));
+            function.put("description", op.presentation().descriptionKey().value());
+            function.set("parameters", mapper.readTree(op.intf().inputs()));
+            var toolObj = mapper.createObjectNode();
+            toolObj.put("type", "function");
+            toolObj.set("function", function);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> entry = mapper.convertValue(toolObj, Map.class);
+            result.add(new java.util.LinkedHashMap<>(entry));
+          } catch (Exception e) {
+            throw new IllegalStateException("Failed to emit " + op.id(), e);
+          }
+        }
+        return result;
+      }
     };
   }
 

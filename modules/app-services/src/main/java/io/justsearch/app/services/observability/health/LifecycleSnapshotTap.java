@@ -180,6 +180,18 @@ public final class LifecycleSnapshotTap {
     // gpu utilization) are declared at the recipe level but not yet shipped as
     // producer-attached instances; relatedMetrics references only the ID that
     // resolves to a registered Resource for V1.
+    // Tempdoc 876 §C.8: the dense/semantic leg is down but the index still SERVES — AUTO has
+    // degraded to keyword (StatusLifecycleHandler.denseUnavailableReason). This row exists so the
+    // reason is MAPPED rather than unmapped-unhealthy: reconcileDim preserves the prior assertion
+    // for an unmapped unhealthy reason (correct — unknown is not healthy), which meant a boot-time
+    // `index.unavailable` from worker.starting was never cleared once the dimension settled here,
+    // and core.search-index — gated on Not(index.unavailable) — stayed hidden for the life of the
+    // process even though keyword search worked. Mapping to its OWN id clears that stale gate
+    // (reconcileDim step 1 swaps a differing prior) while keeping the degradation visible.
+    // WARNING, not ERROR: search works, it is just keyword-only.
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.INDEX_SERVING, "DEGRADED", "index.dense_unavailable"),
+        new ConditionMapping("index.dense-unavailable", "worker", Severity.WARNING));
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.INDEX_SERVING, "DEGRADED", "worker.throughput_stalled"),
         new ConditionMapping(

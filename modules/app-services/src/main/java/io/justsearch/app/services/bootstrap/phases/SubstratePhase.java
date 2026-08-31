@@ -196,13 +196,6 @@ public final class SubstratePhase {
         mcpHostService.contributionRegistry();
     // Phase 1: install the base catalogs (collision-free after the navigate-to-surface reconcile).
     OperationCatalogComposition.installBaseCatalogs(contributions, coreBase, agentToolsBase);
-    // Phase 1c (tempdoc 560 WS5): project declared workflows onto agent-facing tools and install them
-    // into the SAME registry, so the model sees workflows in the one merged tool list. The agent loop
-    // routes their invocation through the streaming WorkflowToolRunner (wired in LocalApiServer).
-    OperationCatalogComposition.installWorkflowOps(
-        contributions,
-        io.justsearch.app.services.conversation.WorkflowOperationProjection.project(
-            io.justsearch.app.services.conversation.CoreWorkflowCatalog.catalog()));
     // Tempdoc 560 §10.4 declaration-completeness demo: optionally install the example vendor plugin
     // that contributes a DiagnosticChannel + a RAIL Surface + a ConversationShape through the new axes
     // (proves plugin→endpoint→UI; the plugin surface renders in the rail). Dev-gated
@@ -214,6 +207,22 @@ public final class SubstratePhase {
     if (!mcpHostService.operations().isEmpty()) {
       mcpHostService.installShutdownHook();
     }
+    // Phase 1c (tempdoc 560 WS5): project declared workflows onto agent-facing tools and install them
+    // into the SAME registry, so the model sees workflows in the one merged tool list. The agent loop
+    // routes their invocation through the streaming WorkflowToolRunner (wired in LocalApiServer).
+    //
+    // ORDER IS LOAD-BEARING (tempdoc 876 B.4): this runs AFTER the MCP-host connect and the example
+    // plugin, because a projected op now inherits the availability of the operations its ToolSteps
+    // compose — and a workflow composing an operation absent from the registry is not projected at
+    // all. Projecting before the MCP-host installed its contributions would make every vendor.* ref
+    // look unresolvable and silently drop those workflows from the agent offering. It still runs
+    // BEFORE deriveAndPartition, so the projected ops pass through the one capability-derivation.
+    // Ref-uniqueness is unaffected: core.workflow-* cannot collide with vendor.mcphost.*.
+    OperationCatalogComposition.installWorkflowOps(
+        contributions,
+        io.justsearch.app.services.conversation.WorkflowOperationProjection.project(
+            io.justsearch.app.services.conversation.CoreWorkflowCatalog.catalog(),
+            contributions.operations()));
     // Phase 2: derive availability once over the full composed set, then partition by owner back into
     // the dual-catalog shape every downstream consumer still reads.
     OperationCatalogComposition.Result composed =
