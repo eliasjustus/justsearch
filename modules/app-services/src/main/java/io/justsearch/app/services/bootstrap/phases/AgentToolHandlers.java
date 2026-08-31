@@ -27,8 +27,8 @@ import org.slf4j.LoggerFactory;
  * <p>Two entry points:
  * <ul>
  *   <li>{@link #registerEager} — constructor-time registration when the KnowledgeServer is
- *       provided up front (typical of test paths). Registers only the tool instances supplied
- *       (each may be null).
+ *       provided up front (typical of test paths). Registers only the non-null tools carried by
+ *       the supplied {@link AgentToolFactory.Output} bundle.
  *   <li>{@link #registerLateBound} — connect-time registration after the worker channel comes
  *       up. Delegates composition of the tool bundle to {@link AgentToolFactory} (tempdoc 832: one
  *       construction authority) and registers what it returns. Idempotent PER REF (tempdoc 876
@@ -105,7 +105,7 @@ public final class AgentToolHandlers {
     return true;
   }
 
-  /** Eager-path registration: register only the non-null tool instances, skipping any ref
+  /** Eager-path registration: register only the bundle's non-null tools, skipping any ref
    * already registered (idempotent, symmetric with {@link #registerLateBound}). */
   public static void registerEager(
       HandlerRegistry operationHandlers, AgentToolFactory.Output agentTools) {
