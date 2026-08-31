@@ -587,9 +587,16 @@ public final class AgentLoopService implements AgentService {
         // whereas a withheld tool is not experienced as a missing capability at all — it is
         // experienced as a reason to improvise (868 §C.3 recorded the model inventing
         // core_file_operations {"operations":[{"operation":"read"}]} while core_read_document was
-        // withheld). So growth is adopted and shrinkage is not; nothing the model has already been
+        // withheld). So growth is adopted and shrinkage is not; on this path nothing the model has already been
         // shown — and possibly already called — vanishes underneath it.
-        if (iteration > 0) {
+        //
+        // SCOPE (876 C.6): this governs the SINGLE-AGENT path, which is the only one that consumes
+        // baseTools. With agentProfiles present, AgentStepRunner.buildIterationTools discards
+        // baseTools and re-emits per ACTIVE PROFILE, because a profile switch is meant to change
+        // the tool set; re-emitting here would burn an emit per iteration for a list nobody reads.
+        // That path's own availability-driven shrink is an open item, not something this guard
+        // silently covers — see the tempdoc.
+        if (iteration > 0 && request.agentProfiles().isEmpty()) {
           baseTools = adoptGrownOffering(sessionId, request, baseTools);
         }
         IterationOutcome outcome =

@@ -73,9 +73,14 @@ public final class AgentToolHandlers {
 
   /**
    * True when every ref {@link #registerLateBound} could register already resolves. REMEMBER counts
-   * only when a {@code memoryStore} exists to back it, and READ_DOCUMENT counts unconditionally: the
-   * factory may return a null read tool, in which case there is nothing this path can add for that
-   * ref either way, so treating it as outstanding would defeat the check on every call.
+   * only when a {@code memoryStore} exists to back it — without one there is nothing this path
+   * could add for that ref.
+   *
+   * <p>READ_DOCUMENT counts unconditionally because this check runs BEFORE {@code
+   * AgentToolFactory.assemble}, so it cannot yet know whether the factory will return a null read
+   * tool. When it does (no {@code DocumentService}), that ref never resolves and this guard returns
+   * false on every call — the check is simply inert there, which costs a repeated assemble but
+   * never skips a ref that was still registerable.
    */
   private static boolean allLateBoundRefsPresent(
       HandlerRegistry operationHandlers, io.justsearch.agent.api.memory.MemoryStore memoryStore) {

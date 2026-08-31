@@ -454,7 +454,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
       try {
         tap.accept(readiness);
       } catch (RuntimeException e) {
-        log.warn("LifecycleSnapshotTap failed during /api/status; substrate broadcast suppressed", e);
+        log.warn("LifecycleSnapshotTap failed during a readiness snapshot; substrate broadcast suppressed", e);
       }
     }
 
@@ -468,7 +468,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
       try {
         workerTap.accept(workerView, workerRpcStale);
       } catch (RuntimeException e) {
-        log.warn("WorkerSnapshotTap failed during /api/status; substrate broadcast suppressed", e);
+        log.warn("WorkerSnapshotTap failed during a readiness snapshot; substrate broadcast suppressed", e);
       }
     }
 
@@ -479,7 +479,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
       try {
         driftTap.accept();
       } catch (RuntimeException e) {
-        log.warn("IndexDriftHealthTap failed during /api/status; substrate broadcast suppressed", e);
+        log.warn("IndexDriftHealthTap failed during a readiness snapshot; substrate broadcast suppressed", e);
       }
     }
 
@@ -491,7 +491,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
       try {
         atRest.accept();
       } catch (RuntimeException e) {
-        log.warn("AtRestHealthTap failed during /api/status; substrate broadcast suppressed", e);
+        log.warn("AtRestHealthTap failed during a readiness snapshot; substrate broadcast suppressed", e);
       }
     }
 
@@ -503,7 +503,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         convTap.accept();
       } catch (RuntimeException e) {
         log.warn(
-            "ConversationProtectionHealthTap failed during /api/status; broadcast suppressed", e);
+            "ConversationProtectionHealthTap failed during a readiness snapshot; broadcast suppressed", e);
       }
     }
 
@@ -516,7 +516,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         metricsPublisher.accept(workerView, workerRpcStale);
       } catch (RuntimeException e) {
         log.warn(
-            "Worker-metrics publisher failed during /api/status; metric snapshots not refreshed",
+            "Worker-metrics publisher failed during a readiness snapshot; metric snapshots not refreshed",
             e);
       }
     }

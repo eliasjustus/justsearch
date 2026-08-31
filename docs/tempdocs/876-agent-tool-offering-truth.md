@@ -935,3 +935,40 @@ This is the one place this tempdoc changed a pre-existing test's assertion rathe
 Recorded explicitly because "the test is probably right and your code is wrong" is the default, and
 departing from it needs a reason in writing: here the test encoded a coverage boundary that the
 tempdoc's own reviewed design moved on purpose, and §B.6 named that move before any test ran.
+
+### C.6 Second independent review (post-merge delta)
+
+Refute-first, read-only, opus, reviewer ≠ implementer, over the delta the first reviewer never saw
+(the review-response commit, the `origin/main` merge carrying #576/878, the `LiveWitnessTest`
+rewrite, and the new tests). Verdict: **safe to merge, one should-fix.** It explicitly could not
+refute the two calls most at risk — the `LiveWitnessTest` rewrite and the exporter change behind it
+— and found **no semantic merge damage from 878**.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | **The monotonicity invariant is a no-op on the multi-agent path, and three prose sites claimed it universally.** `AgentStepRunner.buildIterationTools` returns `baseTools` only when `request.agentProfiles().isEmpty()`; with profiles present it discards it and re-emits per active profile, so `adoptGrownOffering` paid an emit per iteration for a list nobody read, and availability could still subtract there. | **Fixed, and scoped honestly.** Verified at `AgentStepRunner.java:1020-1032` before acting. The guard now runs only when `agentProfiles()` is empty (the wasted emit is gone), and docs/22, the loop comment and `AgentToolsOperationCatalog`'s §B.2c block all say *single-agent* run. The residual — per-profile monotonicity — is open item 6 below, named rather than papered over. |
+| 2 | `LiveWitnessTest` assertion (b) was a tautology: `staticOpIds` was captured before the test minted its own literal ref, so no production change could fail it. | **Fixed.** The snapshot is now recomputed *after* the install, which asserts the structural property (a build-time composition cannot see a runtime install) instead of a fixture. |
+| 6 | `allLateBoundRefsPresent`'s javadoc stated the inverse of what the code does. | **Fixed** — the real reason is that the check runs *before* `assemble()`, so it cannot know whether the factory will return a null read tool. |
+| 7 | `HeadAssembly`'s caller comment still described the pre-876 boolean ("registration ran / was skipped"). | **Fixed** — it now means "prerequisites met", including the all-refs-present case. Reviewer confirmed the flip is harmless for both consumers. |
+| 11 | Five `StatusLifecycleHandler` tap log strings say "failed during /api/status"; since §B.2a `buildStatusMap` also runs on the `readiness-reconcile` daemon thread with no request in flight. | **Fixed** — all six now say "during a readiness snapshot". |
+| 8 | `ReadinessTriggerCompositionTest`'s javadoc claims it covers `CoreApiAssembly`'s `attach(...)` line; deleting that line leaves it green. | **Already recorded** as the residual gap in C.4 finding 2, in these words. No further change. |
+| 10 | `WitnessController` now runs the full composition per request. | **Accepted.** Reviewer measured the cost: an empty `McpHostService` allocates a registry, connects over an empty list, closes zero clients — no threads, no files. Worth memoising only if that endpoint is ever polled. |
+| 12 | `AgentOfferingIsExecutableTest` decides "is a workflow" by id prefix rather than consulting `WorkflowToolRunner`, so the workflow-routes half of *offered ⊆ executable* is asserted by naming convention. | **Open item 7** below. Pre-existing shape, but it is the gap in the invariant that test exists to close. |
+
+Additional open items:
+
+6. **Per-profile monotonicity on the multi-agent path.** `AgentStepRunner.buildIterationTools`
+   (`modules/app-agent/src/main/java/io/justsearch/agent/AgentStepRunner.java:1020-1032`) re-emits
+   the offering for the active profile each iteration, so a tool can still vanish mid-run there when
+   its availability flips — the amputation §B.2b exists to prevent. It is deliberately *not* fixed
+   by extending `adoptGrownOffering`: a handoff is *meant* to change the tool set, so monotonicity
+   there has to be per-profile ("never shrink within one profile's tenure"), and that raises design
+   questions this tempdoc has not answered — whether a handoff back to a profile resets its floor,
+   and how that interacts with `AgentState.DECIDING` and E0a, which narrow the list on purpose. A
+   design question, not an implementation detail, which is why it is named rather than guessed at.
+7. **The workflow-routes half of *offered ⊆ executable* is unasserted.**
+   `modules/app-services/src/test/java/io/justsearch/app/services/bootstrap/phases/AgentOfferingIsExecutableTest.java:161-166`
+   classifies a projected workflow by its `core.workflow-` prefix instead of checking that
+   `WorkflowToolRunner` has a route for it, so that arm of the §B.5 invariant passes by naming
+   convention. The same test injects a mock `DocumentService`, so the one configuration where
+   `core.read-document` could be offered with no handler on either path is never exercised.

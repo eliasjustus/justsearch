@@ -177,8 +177,9 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         // NOT_READY / "index.not_healthy" row (LifecycleSnapshotTap's MAPPING_TABLE), whose reason
         // code comes from the Worker-reported operational view rather than from a capability
         // transition, so that arm still moves only when a snapshot is taken. Belt and braces,
-        // 876 §B.2b: within a run the offering may grow but never shrink, so a trigger regression
-        // can no longer amputate a tool mid-conversation.
+        // 876 §B.2b: within a SINGLE-AGENT run the offering may grow but never shrink, so a trigger
+        // regression can no longer amputate a tool mid-conversation there. A run carrying agent
+        // profiles re-derives its list per active profile and does not yet get that guarantee.
         new OperationAvailability(
             Optional.of(
                 new AvailabilityExpression.Not(

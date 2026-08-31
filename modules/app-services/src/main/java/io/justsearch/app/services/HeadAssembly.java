@@ -697,7 +697,9 @@ public final class HeadAssembly implements AutoCloseable {
     this.substrateGraph = assembleSubstrateGraph();
     // Tempdoc 541 §5.2 + fix-pass A.1: wrap the agent-tool late-bind registration in a
     // Memoized<Boolean>. Body invokes AgentToolHandlers.registerLateBound at first resolve;
-    // result is whether registration ran (true) or was skipped (false — idempotence or
+    // result is whether the prerequisites were met (true — including the case where every ref
+    // was already registered, 876 B.5) or not (false — missing worker capability, knowledge
+    // server, or data dir)
     // missing prerequisites). connectKnowledgeServer triggers the resolve when the Worker
     // becomes available; the original symbolic lambdamart-load LAZY entry is replaced by a
     // real "agent-tools-registration" LAZY/PENDING entry that flips to READY via Tier 4's

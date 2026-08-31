@@ -110,12 +110,21 @@ class LiveWitnessTest {
     assertTrue(
         live.operations().stream().anyMatch(o -> o.id().equals(runtimeRef)),
         "the runtime-installed op must be in the live registry");
+    // Recomputed AFTER the install, deliberately: asserting against the snapshot captured above
+    // would be a tautology (the ref is a literal minted in this method, so no production change
+    // could put it there). Re-deriving proves the structural property — a build-time composition
+    // cannot see a contribution that only a running process installed.
+    Set<String> staticOpIdsAfterInstall =
+        RegistrySnapshotExporter.buildOperationEntries().stream()
+            .map(RegistrySnapshotExporter.Entry::id)
+            .collect(Collectors.toSet());
     assertFalse(
-        staticOpIds.contains(runtimeRef.value()),
+        staticOpIdsAfterInstall.contains(runtimeRef.value()),
         "runtime-installed op "
             + runtimeRef.value()
-            + " must be absent from the static snapshot (the DR-D blind spot the live-registry"
-            + " witness covers — no build can know what a running install connects)");
+            + " must be absent from the static snapshot even when it is recomputed while the op is"
+            + " live (the DR-D blind spot the live-registry witness covers — no build can know what"
+            + " a running install connects)");
   }
 
   /** An Operation with one executor, so it derives a consumer and is not itself an orphan. */
