@@ -351,8 +351,13 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
                 RetryPolicy.noRetry(),
                 Set.of(),
                 false)
-            // Tempdoc 560 §28 (4d): a coherent capability family — a durable allow-always grant for
-            // "file-operations" auto-approves both the ingest and the file-mutation tools at once.
+            // Tempdoc 560 §28 (4d): a coherent capability family. A durable allow-always grant for
+            // "file-operations" auto-approves THIS (MEDIUM) member. Tempdoc 875 C.2: it does NOT
+            // auto-approve the HIGH member `core.file-operations` — DurableGrantStore.isAllowed
+            // refuses HIGH outright, so destructive work always costs a fresh, args-bound gesture.
+            // Tempdoc 875 C.3: and even for this member the grant only covers invocations whose
+            // `paths` canonicalize inside an indexed root (IndexedRootGrantScope); an out-of-root
+            // ingest still runs, it just costs an approval that names the path (811 C-2a preserved).
             .withCapabilityFamily("file-operations"),
         OperationAvailability.empty(),
         // Tempdoc 879: lineage is not inert — the FE renders `affects` in the operation button and
@@ -431,7 +436,12 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
                 true,
                 Optional.of(new io.justsearch.agent.api.registry.ResourceRef(
                     "core.advisory-operation-completed")))
-            // Tempdoc 560 §28 (4d): same "file-operations" family as ingest (a HIGH-risk member).
+            // Tempdoc 560 §28 (4d): same "file-operations" family as ingest (a HIGH-risk member) —
+            // the family axis is real, the membership stands. Tempdoc 875 C.2: but NO durable grant
+            // (family OR per-operation) can satisfy this operation's gate, because
+            // DurableGrantStore.isAllowed refuses RiskTier.HIGH before consulting either grant set.
+            // The family membership is therefore about coherence and revocation scope, not about
+            // blanket destructive approval — which the product never asked for.
             .withCapabilityFamily("file-operations"),
         OperationAvailability.empty(),
         // Tempdoc 879: same reading as remember() — `empty()` means "the affected thing has no

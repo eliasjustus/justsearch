@@ -4,8 +4,11 @@ package io.justsearch.agent.tools;
 import tools.jackson.databind.JsonNode;
 import io.justsearch.agent.api.registry.OperationResult;
 import java.io.IOException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -17,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -237,6 +241,9 @@ public final class FileOperationsTool {
       StringBuilder result = new StringBuilder();
       int undoneCount = 0;
       int skippedCount = 0;
+      // Tempdoc 875 §C.6 — COPY-undo targets that no longer sit inside an indexed root. Skipped
+      // rather than deleted, and named in the summary so the user knows what was left behind.
+      List<Path> outOfRoots = new ArrayList<>();
 
       // Execute reverse MOVE/RENAME through executor for index updates
       if (!reverseMovesAndRenames.isEmpty()) {
@@ -263,12 +270,22 @@ public final class FileOperationsTool {
             }
           } else if (action.opType == FileOperation.OpType.COPY) {
             if (Files.exists(action.path)) {
-              if (Files.isDirectory(action.path)) {
+              // Tempdoc 875 §C.6 — undoing a COPY is a DELETE (recursive for a directory), which
+              // is strictly more dangerous than the forward operation. The MOVE/RENAME arm above
+              // re-validates through executor.validate(...); this arm must re-prove containment
+              // too, because the indexed roots can shrink between the operation and the undo.
+              if (!executor.isWithinIndexedRoots(action.path)) {
+                skippedCount++;
+                outOfRoots.add(action.path);
+                LOG.warn(
+                    "Skipping COPY undo: target is outside the indexed roots: {}", action.path);
+              } else if (Files.isDirectory(action.path)) {
                 executor.deleteDirectory(action.path);
+                undoneCount++;
               } else {
                 Files.delete(action.path);
+                undoneCount++;
               }
-              undoneCount++;
             } else {
               skippedCount++;
             }
@@ -285,6 +302,13 @@ public final class FileOperationsTool {
       }
       if (skippedCount > 0) {
         result.append(String.format(", %d skipped", skippedCount));
+      }
+      if (!outOfRoots.isEmpty()) {
+        result.append(
+            String.format(
+                ", %d outside the indexed root folders — not deleted: %s",
+                outOfRoots.size(),
+                outOfRoots.stream().map(Path::toString).collect(Collectors.joining(", "))));
       }
       // Tempdoc 577 §2.14 Root III (#16) — surface the conflict-skipped targets so the user knows
       // exactly what was NOT reverted (and why), instead of a silent partial undo.
@@ -317,18 +341,68 @@ public final class FileOperationsTool {
    * so reverting would destroy that change). A small tolerance absorbs the gap between the
    * filesystem write and the log's {@code Instant.now()} record, avoiding false positives. A
    * missing target or unknown baseline is NOT a conflict (a different skip path handles those).
+   *
+   * <p>Tempdoc 875 §C.6 — a DIRECTORY target is walked, not stat'ed: a directory's own mtime tracks
+   * entry add/remove only, so an edit to a file nested inside a copied tree left the tree looking
+   * untouched and the undo deleted it recursively.
    */
   private boolean modifiedSince(Path target, Instant actionTime) {
     if (actionTime == null) return false;
+    // Tempdoc 877 §2.x owns the tolerance value (one authority per fact); tempdoc 875 §C.6 owns
+    // walking a directory target rather than stat'ing it.
+    Instant threshold =
+        actionTime.plus(
+            Duration.ofMillis(io.justsearch.agent.AgentTimeouts.fileOpConflictToleranceMs()));
     try {
       if (!Files.exists(target)) return false;
-      Instant mtime = Files.getLastModifiedTime(target).toInstant();
-      return mtime.isAfter(
-          actionTime.plus(
-              Duration.ofMillis(io.justsearch.agent.AgentTimeouts.fileOpConflictToleranceMs())));
+      if (Files.isDirectory(target)) {
+        return directoryModifiedSince(target, threshold);
+      }
+      return Files.getLastModifiedTime(target).toInstant().isAfter(threshold);
     } catch (IOException e) {
       return false; // cannot determine ⇒ do not block the undo
     }
+  }
+
+  /**
+   * True iff {@code dir} itself or any entry beneath it was modified after {@code threshold}. Walks
+   * with early exit — the first newer entry terminates the walk, so a large tree costs only as much
+   * as it takes to find one conflict.
+   */
+  private boolean directoryModifiedSince(Path dir, Instant threshold) {
+    var newerFound = new AtomicBoolean(false);
+    try {
+      Files.walkFileTree(
+          dir,
+          new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
+              return recordIfNewer(attrs, threshold, newerFound);
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+              return recordIfNewer(attrs, threshold, newerFound);
+            }
+          });
+    } catch (IOException e) {
+      // WHY the asymmetry with the non-existence case above: there, "cannot determine" costs
+      // nothing (there is no file to lose). Here the action being guarded is a RECURSIVE DELETE,
+      // so an unreadable subtree means we cannot clear the tree for deletion — the safe side is to
+      // treat the unknown as a conflict and leave the tree alone.
+      LOG.warn("Cannot verify whether {} changed since the agent acted; treating as changed", dir, e);
+      return true;
+    }
+    return newerFound.get();
+  }
+
+  private static FileVisitResult recordIfNewer(
+      BasicFileAttributes attrs, Instant threshold, AtomicBoolean newerFound) {
+    if (attrs.lastModifiedTime().toInstant().isAfter(threshold)) {
+      newerFound.set(true);
+      return FileVisitResult.TERMINATE;
+    }
+    return FileVisitResult.CONTINUE;
   }
 
   /**

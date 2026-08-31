@@ -18,8 +18,10 @@ import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.SamplingParams;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -871,6 +873,52 @@ final class AgentStepRunner {
           sink.accept(
               new AgentEvent.ToolCallProposed(call, op.policy().risk()));
 
+          // Tempdoc 875 Move 3 — offering IS authorization. resolveByWireName above iterates the
+          // RAW catalog, so on its own it will happily hand back an operation the emitter withheld
+          // (OPERATOR audience, availability expression false, or not in the run's selection). The
+          // offered set is therefore consulted here, and a tool outside it is denied rather than
+          // dispatched.
+          //
+          // The authority set is the UNION of the run-level offered set and what the model was
+          // actually offered THIS iteration. Both sides are emitter output, so both have already
+          // passed audience + availability — the union can only differ on selection, and so can
+          // never widen the boundary this move exists to close.
+          //
+          // WHY a union and not the run-level set alone (review finding S1): the per-iteration
+          // lists are prompt STEERING (E0a's first-turn narrowing, a profile's toolSubset), and
+          // they are built by REPLACING the run selection rather than intersecting with it —
+          // buildE0aTools selects `core_ingest_files` outright. A run whose selection excludes that
+          // tool would then have it offered and its use refused: the "strand a run on a steering
+          // list" failure this move set out to avoid, arrived at from the other side. Offering a
+          // tool and then refusing it is never right, so the fix is to honour what was offered
+          // rather than to make steering authoritative.
+          //
+          // WHY recomputed here rather than derived from `baseTools` (the run-start snapshot): a
+          // tool whose availability went false mid-run must be denied, not dispatched on the
+          // strength of having been offered at minute zero.
+          if (!isAuthorizedThisIteration(op, request, tools)) {
+            String notOffered =
+                "Tool \"" + call.toolName() + "\" is not available in this session.";
+            LOG.warn(
+                "AgentLoop: refusing un-offered tool '{}' (resolved to {}) — not in the offered set",
+                call.toolName(),
+                op.id().value());
+            sink.accept(new AgentEvent.ToolCallRejected(call.id(), notOffered));
+            // role:"tool" keeps the OpenAI format contract (every tool_call needs a matching tool
+            // response) — same idiom as the loop guard below.
+            session.appendMessage(
+                Map.of(
+                    "role",
+                    "tool",
+                    "tool_call_id",
+                    call.id(),
+                    "content",
+                    notOffered + " Use one of the tools you were offered."));
+            checkpointer.checkpoint(
+                sessionId, session, "READY_FOR_LLM", "Tool not offered: " + call.toolName());
+            continue;
+          }
+
           // Safety gate
           if (op.policy().risk() != RiskTier.LOW) {
             checkpointer.checkpoint(sessionId, session, "WAITING_APPROVAL", "Waiting for tool approval: " + call.toolName());
@@ -1014,6 +1062,41 @@ final class AgentStepRunner {
         }
 
         return IterationOutcome.cont();
+  }
+
+  /**
+   * Tempdoc 875 Move 3 — may the model dispatch {@code op} on this iteration? True iff the emitter
+   * would offer it at run level, OR it appears in the list the model was actually handed this turn.
+   * Both sides are emitter output, so audience- and availability-withheld operations are in neither
+   * and stay denied; the union only forgives a steering list that named a tool the run's own
+   * selection did not.
+   */
+  private boolean isAuthorizedThisIteration(
+      Operation op, AgentRequest request, List<Map<String, Object>> offeredThisIteration) {
+    String wire = OperationCatalog.toWireName(op.id());
+    if (agentToolEmitter
+        .offeredWireNames(operationCatalog, request.selectedToolNames())
+        .contains(wire)) {
+      return true;
+    }
+    return wireNamesOf(offeredThisIteration).contains(wire);
+  }
+
+  /** The OpenAI function names in an emitted tool list; malformed entries are skipped. */
+  private static Set<String> wireNamesOf(List<Map<String, Object>> tools) {
+    if (tools == null || tools.isEmpty()) {
+      return Set.of();
+    }
+    Set<String> names = new LinkedHashSet<>(tools.size());
+    for (Map<String, Object> tool : tools) {
+      if (tool != null && tool.get("function") instanceof Map<?, ?> function) {
+        Object name = function.get("name");
+        if (name != null && !name.toString().isEmpty()) {
+          names.add(name.toString());
+        }
+      }
+    }
+    return names;
   }
 
   /** Builds the per-iteration tool list: active-agent registered tools + handoff tools. */

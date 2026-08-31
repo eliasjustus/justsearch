@@ -3587,7 +3587,9 @@ class AgentLoopServiceTest {
    * observer; a test double for evict-on-throw + bounded replay would be a reimplementation of the
    * exact mechanism the attach and park tests exist to pin.
    */
-  private static AgentLoopService observed(AgentLoopService service) {
+  // Package-private (tempdoc 875 Move 3): AgentToolAuthorityBoundaryTest reuses this harness
+  // rather than standing up a parallel one.
+  static AgentLoopService observed(AgentLoopService service) {
     service.setRunObservation(
         new io.justsearch.app.observability.stream.run.RunChannelObservation(
             new io.justsearch.app.observability.stream.run.RunChannelRegistry()));
@@ -3813,23 +3815,39 @@ class AgentLoopServiceTest {
     run(service, userMessage("Read the file"), 5);
 
     assertEquals(2, ai.recordedTools.size(), "expected a two-iteration run");
-    assertEquals(
-        2,
-        emitter.emitCalls.get(),
-        "the offering must be re-evaluated once per iteration, not sampled once per run");
+    assertTrue(
+        emitter.emitCalls.get() >= 2,
+        // Tempdoc 875 added a SECOND emit consumer — AgentStepRunner authorizes a tool call
+        // against offeredWireNames(), which projects emit(). So the exact total is now a
+        // function of another workstream's dispatch checks, not of this one's re-evaluation.
+        // A LOWER BOUND still witnesses what 876 B.2b is about: 1 would mean the offering was
+        // sampled once per run. What the model actually saw each iteration is asserted below,
+        // and that is the sharper check.
+        "the offering must be re-evaluated per iteration, not sampled once per run; emits="
+            + emitter.emitCalls.get());
     assertEquals(List.of("core_search"), toolNamesOf(ai.recordedTools.get(0)),
         "iteration 1 sees the t=0 offering");
     assertEquals(
         List.of("core_search", "core_read_document"),
         toolNamesOf(ai.recordedTools.get(1)),
         "iteration 2 must see the recovered tool, in catalog order");
-    // Wholesale replacement, not an append: EVERY entry comes from the fresh emit. An append would
-    // leave core_search stamped with the first emit's sequence number.
+    // Wholesale replacement, not an append: EVERY entry comes from ONE fresh emit. An append would
+    // leave core_search stamped with the FIRST emit's sequence number while the newcomer carried a
+    // later one, so a mixed list is the failure this detects.
+    //
+    // Asserted as "all equal, and later than iteration 1's" rather than "== 2": tempdoc 875 added a
+    // second emit consumer (AgentStepRunner authorizes a tool call through offeredWireNames, which
+    // projects emit), so the adopting emit's ordinal is no longer a fixed number. The invariant —
+    // one emit produced the whole list — is what this is about, and it is now stated directly.
+    Object firstSeq = ai.recordedTools.get(0).get(0).get(ScriptedOfferingEmitter.EMIT_SEQ);
+    Object adoptedSeq = ai.recordedTools.get(1).get(0).get(ScriptedOfferingEmitter.EMIT_SEQ);
+    assertNotEquals(
+        firstSeq, adoptedSeq, "iteration 2 must be served by a LATER emit than iteration 1");
     for (Map<String, Object> tool : ai.recordedTools.get(1)) {
       assertEquals(
-          Integer.valueOf(2),
+          adoptedSeq,
           tool.get(ScriptedOfferingEmitter.EMIT_SEQ),
-          "adoption replaces the whole list: " + getToolFunctionName(tool));
+          "adoption replaces the whole list from one emit: " + getToolFunctionName(tool));
     }
   }
 
@@ -3852,7 +3870,15 @@ class AgentLoopServiceTest {
     run(service, userMessage("Read the file"), 5);
 
     assertEquals(2, ai.recordedTools.size(), "expected a two-iteration run");
-    assertEquals(2, emitter.emitCalls.get(), "the offering must still be re-evaluated");
+    assertTrue(
+        emitter.emitCalls.get() >= 2,
+        // Tempdoc 875 added a SECOND emit consumer — AgentStepRunner authorizes a tool call
+        // against offeredWireNames(), which projects emit(). So the exact total is now a
+        // function of another workstream's dispatch checks, not of this one's re-evaluation.
+        // A LOWER BOUND still witnesses what 876 B.2b is about: 1 would mean the offering was
+        // sampled once per run. What the model actually saw each iteration is asserted below,
+        // and that is the sharper check.
+        "the offering must still be re-evaluated; emits=" + emitter.emitCalls.get());
     // Right-reason guard: the second emit really did drop the tool — the test is not passing
     // because the emitter kept offering it.
     assertEquals(
@@ -3888,7 +3914,15 @@ class AgentLoopServiceTest {
     run(service, userMessage("Search"), 5);
 
     assertEquals(2, ai.recordedTools.size(), "expected a two-iteration run");
-    assertEquals(2, emitter.emitCalls.get(), "the offering is re-evaluated every iteration");
+    assertTrue(
+        emitter.emitCalls.get() >= 2,
+        // Tempdoc 875 added a SECOND emit consumer — AgentStepRunner authorizes a tool call
+        // against offeredWireNames(), which projects emit(). So the exact total is now a
+        // function of another workstream's dispatch checks, not of this one's re-evaluation.
+        // A LOWER BOUND still witnesses what 876 B.2b is about: 1 would mean the offering was
+        // sampled once per run. What the model actually saw each iteration is asserted below,
+        // and that is the sharper check.
+        "the offering is re-evaluated every iteration; emits=" + emitter.emitCalls.get());
     assertEquals(
         List.of("core_search", "core_read_document"),
         emitter.emittedNames.get(1),
@@ -4873,7 +4907,7 @@ class AgentLoopServiceTest {
   // ScriptedAiService — replays pre-defined responses synchronously
   // ===========================================================================
 
-  private static final class ScriptedAiService implements OnlineAiService {
+  static final class ScriptedAiService implements OnlineAiService {
     private final List<ScriptedResponse> responses;
     final List<List<Map<String, Object>>> recordedMessages = new ArrayList<>();
     final List<SamplingParams> recordedSampling = new ArrayList<>();
@@ -5073,7 +5107,7 @@ class AgentLoopServiceTest {
   // ScriptedResponse — describes what one LLM call returns
   // ===========================================================================
 
-  private record ScriptedResponse(
+  record ScriptedResponse(
       String text, String reasoning, List<String> toolCallDeltas, OnlineAiService.AiUsage usage) {
 
     static ScriptedResponse textOnly(String text) {

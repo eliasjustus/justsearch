@@ -1017,3 +1017,71 @@ Verification after reconciliation: `build -x test` green; full suite **8476 test
 0 failures, 0 errors**; `check-live-witness`, `runtime-witness`, `operation-surface`,
 `execution-surface`, `register-guard-resolution`, `check-tempdoc-numbers`,
 `expected-state-probe --gate` and `agent-analytics 49/49` all green.
+
+### C.8 The offering was hidden by a degraded-but-serving index (found by CI, not by the local suite)
+
+CI's system-tests tier failed `ConsentCapsuleRecoveryE2ETest` — *"core.search-index declares
+availability that evaluates live (available when index ready)"*. The local `test` task never runs
+that tier, so this is the first defect in this tempdoc that only a live backend could surface.
+
+**Diagnosed by probing a live isolated backend, not by reading.** `indexServing` settles at
+`DEGRADED` / `index.dense_unavailable` — the dense/semantic leg is down (no embedding model in the
+fixture) while the index still SERVES: `StatusLifecycleHandler.denseUnavailableReason`'s own javadoc
+says AUTO has degraded to keyword. That reason had **no row** in `LifecycleSnapshotTap`'s
+`MAPPING_TABLE`, so `reconcileDim` took its unmapped-unhealthy branch and *preserved* the boot-time
+`index.unavailable` assertion. That branch is correct in itself — unknown is not healthy — but the
+consequence was that `core.search-index`, gated on `Not(index.unavailable)`, stayed hidden from the
+model for the life of the process. The amputation of 868 §C.3, reached by a new road: §B.2a made
+reconciliation actually happen, and the state it reconciled *to* had no mapping.
+
+Two fixes, both necessary:
+
+1. **Map the known reason.** `(INDEX_SERVING, DEGRADED, index.dense_unavailable)` →
+   `index.dense-unavailable`, WARNING. Being *mapped* is the whole point: `reconcileDim` step 1 then
+   swaps a differing prior instead of preserving it, so the stale gate clears while the degradation
+   stays visible under its own id. Without this the gate never clears — not even with a status poll.
+2. **Reconcile on the worker-health poll.** `KnowledgeServerHealthMonitor.onTick` (a new callback in
+   the same idiom as its existing `onRecoveryConnected`) requests a reconcile after every tick. The
+   trigger's capability-transition arm structurally cannot see a dimension that settles *without* a
+   transition, which is what left the gate shut until a browser called `/api/status`. This reuses
+   the poll the head already runs rather than adding a timer of ours: the head keeps its health
+   honest at the same cadence whether or not anyone is watching.
+
+**The E2E now awaits convergence rather than sampling once, and that strengthens it.** The old
+instantaneous assertion passed because nothing reconciled the store without a `/api/status` call —
+which this test never makes — so it was asserting against an EMPTY store. It would have passed with
+the worker on fire. Reconciliation is asynchronous by construction, so the honest claim is that the
+offering *converges* with no request, which is exactly §B.2a's thesis. Fail-probed: removing the
+mapping row makes it never converge.
+
+**Considered and reverted:** splitting `worker.starting` onto its own condition so the boot window
+also fails open. Correct by §B.9's P3, and it would narrow the window further — but unnecessary once
+the system converges, and a late, unreviewed change to a health vocabulary other work owns. Recorded
+because the narrower diff was a deliberate choice, not an oversight.
+
+### C.9 Reconciling with 875
+
+PR #581 (875, the consent boundary) merged while this branch was open and composes directly: 875
+makes *resolution* run against the offered set, so 876's availability work now decides what is
+dispatchable as well as what is visible.
+
+- **The authorities compose rather than fork.** 875's `AgentToolEmitter.offeredWireNames` derives
+  from `emit()`, and §B.1 made `emit()` derive from `offer()`. One authority, two derived views.
+- **One real compile-level interaction.** 875 added stub emitters as *lambdas*; §B.1's second
+  abstract method makes `AgentToolEmitter` non-functional. Converted both to anonymous classes, with
+  `filteringEmitter` applying ONE filter chain to both faces — a stub that disagreed with itself
+  would quietly invalidate every test built on it.
+- **Mid-run availability flips yield a typed refusal, not a resolution miss.**
+  `AgentStepRunner.isAuthorizedThisIteration` is a UNION: the emitter's *current* offering, or the
+  list the model was actually handed this turn. §B.2b makes those two arms disagree mid-run, and arm
+  2 is what must win — offering fails open, execution fails closed. Extended 875's
+  `AgentToolAuthorityBoundaryTest` (rather than duplicating it) with the case its steering-list test
+  does not reach: a tool offered at t=0 whose availability flips before the model calls it. The flip
+  is driven off the emitter itself, so there is no timer. Fail-probed by disabling arm 2.
+  §B.2b's monotonicity strengthens 875 here — arm 2 never shrinks within a run.
+- **Three of this tempdoc's own assertions counted `emit` calls** as the witness for
+  "re-evaluated per iteration". 875 legitimately adds an emit at the dispatch-authorization site, so
+  an exact count now measures another workstream's behaviour. Converted to a lower bound (1 still
+  fails, which is the invariant), and the wholesale-replacement check now asserts what it actually
+  means — every entry in the adopted list carries the SAME emit ordinal, later than the previous
+  list's — instead of a fixed number.

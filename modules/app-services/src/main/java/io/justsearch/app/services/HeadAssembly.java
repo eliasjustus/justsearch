@@ -778,25 +778,44 @@ public final class HeadAssembly implements AutoCloseable {
     this.memoryStore = memStore;
     this.agentToolsRegistration =
         io.justsearch.app.services.bootstrap.Memoized.of(
-            () ->
-                io.justsearch.app.services.bootstrap.phases.AgentToolHandlers.registerLateBound(
-                    this.substrateOut.operationHandlers(),
-                    this.knowledgeServerBootstrap,
-                    this.knowledgeClient,
-                    this.capabilities.worker(),
-                    this.dataDir,
-                    this.services.worker().indexing(),
-                    this.services.inference().onlineAi(),
-                    this.lambdaMartReranker,
-                    this.agentSearchAdapter,
-                    this.memoryStore,
-                    this.scanProgressRegistry,
-                    scanRollupLedgerOrNull(),
-                    // Tempdoc 868 §B.2: read at RESOLVE time, like indexing() above — the memo body
-                    // runs after connectKnowledgeServer reassembles the graph with the fresh
-                    // Worker-backed services, so capturing a value here would bind the pre-connect
-                    // (index-less) DocumentService.
-                    this.services.worker().documents()));
+            () -> {
+              // Tempdoc 868 §B.2: read at RESOLVE time — the memo body runs after
+              // connectKnowledgeServer reassembles the graph with the fresh Worker-backed services,
+              // so capturing a value at composition time would bind the pre-connect (index-less)
+              // IndexingService / DocumentService.
+              var indexing = this.services.worker().indexing();
+              // Tempdoc 875 C.3: bind the durable-grant argument scope to the LIVE indexed roots,
+              // here — the same resolve-time point that owns the Worker-backed IndexingService, and
+              // the same projection AgentToolFactory.assemble uses for the tools' own roots supplier.
+              // WHY here and not at substrate init: the scope is constructed before the Worker exists.
+              // It fails CLOSED until bound (unbound roots ⇒ containment unprovable ⇒ the gate falls
+              // through to a confirm), so a wiring regression costs a prompt, never a silent grant.
+              var operationOut = this.substrateOut.operationOut();
+              if (operationOut != null && operationOut.durableGrantScope() != null) {
+                operationOut
+                    .durableGrantScope()
+                    .bindIndexedRoots(
+                        () ->
+                            indexing.getWatchedRoots().stream()
+                                .filter(r -> r != null && r.path() != null)
+                                .map(r -> r.path().toAbsolutePath().normalize())
+                                .toList());
+              }
+              return io.justsearch.app.services.bootstrap.phases.AgentToolHandlers.registerLateBound(
+                  this.substrateOut.operationHandlers(),
+                  this.knowledgeServerBootstrap,
+                  this.knowledgeClient,
+                  this.capabilities.worker(),
+                  this.dataDir,
+                  indexing,
+                  this.services.inference().onlineAi(),
+                  this.lambdaMartReranker,
+                  this.agentSearchAdapter,
+                  this.memoryStore,
+                  this.scanProgressRegistry,
+                  scanRollupLedgerOrNull(),
+                  this.services.worker().documents());
+            });
     bootTraceBuilder.record(
         io.justsearch.app.services.bootstrap.PhaseRecord.lazyPending(
             "agent-tools-registration",

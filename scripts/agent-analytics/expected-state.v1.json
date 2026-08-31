@@ -119,6 +119,18 @@
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: node scripts/docs/docs-validate.mjs"
+    },
+    {
+      "id": "worker-core-onnx-longdoc-forensic-timeout",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!worker-core))(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*OnnxEmbeddingEncoderLongDocForensic"
+      ],
+      "claim": "OnnxEmbeddingEncoderLongDocForensicTest 'longDocEmbedWithSpansMatchesBaseEmbed' can exceed its 30s JUnit timeout under machine load (it runs real ONNX embedding over a long document, so it is load- and model-load-sensitive). LOAD-DEPENDENT, not a persistent red: it passed twice and failed twice on the same tree in one session, varying only with how many agents were building concurrently. A TimeoutException ONLY there is environmental, not your change; re-run when the machine is quiet.",
+      "evidence": "tempdoc 876 session f6617483 (2026-08-31): two full-suite runs on this tree were green including worker-core (8407 then 8476 tests, 0 failures); two later runs during concurrent multi-agent Gradle load hit the 30s timeout, once in the full suite and once with only worker-core + system-tests running. The test predates this work (PRs #133/#135) and modules/worker-core has ZERO files in tempdoc 876's diff.",
+      "added": "2026-08-31",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:worker-core:test --tests \"*OnnxEmbeddingEncoderLongDocForensicTest*\""
     }
   ]
 }
