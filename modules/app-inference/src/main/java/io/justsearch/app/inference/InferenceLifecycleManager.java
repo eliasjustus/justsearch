@@ -1169,8 +1169,18 @@ public class InferenceLifecycleManager
     return tokenOps.applyTemplate(messages);
   }
 
+  public Optional<String> applyTemplate(
+      List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
+    return tokenOps.applyTemplate(messages, tools);
+  }
+
   public Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
     return tokenOps.countPromptTokens(messages);
+  }
+
+  public Optional<Integer> countPromptTokens(
+      List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
+    return tokenOps.countPromptTokens(messages, tools);
   }
 
   public boolean supportsTokenize() {

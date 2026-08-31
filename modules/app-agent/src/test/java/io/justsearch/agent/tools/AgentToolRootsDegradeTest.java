@@ -156,7 +156,7 @@ final class AgentToolRootsDegradeTest {
             seen[0] = docId;
             return CompletableFuture.completedFuture(
                 new DocumentService.DocumentSlice(
-                    docId, "page text", Map.of(), true, false, 9, null));
+                    docId, "page text", Map.of(), true, false, 9, 9, null));
           };
       ReadDocumentTool tool = new ReadDocumentTool(fetch, suppliers.get(i));
 

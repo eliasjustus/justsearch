@@ -71,6 +71,10 @@ public final class ReadDocumentTool {
               DEFAULT_PAGE_CHARS,
               io.justsearch.agent.ToolResultCarrier.layerTwoCapChars() - PAGE_HEADROOM_CHARS));
 
+  /** Shared tail for every unreadable-document failure: the two tools that could still find it. */
+  private static final String RECOVERY_GUIDANCE =
+      "Use core_browse_folders to find the path, or core_search_index to search inside it.";
+
   private final SliceFetcher sliceFetcher;
   private final AgentToolPaths.RootsView rootsView;
 
@@ -159,7 +163,13 @@ public final class ReadDocumentTool {
           "core_read_document", "Could not read \"" + path + "\"", e);
     }
     if (slice == null || !slice.found()) {
-      return notFoundOrWorkerError(path, slice == null ? null : slice.error());
+      // Tempdoc 878: an unusable slice is not automatically a MISSING one. The producers set
+      // `error` ("not_found", "missing_doc_id", the Worker's own prose), and reporting a read
+      // failure as "not found in the index" sends the model hunting for a path that exists. The
+      // PRESENCE of a reason is the discriminator — never the reason's wording, which would make
+      // the Worker's message text a contract.
+      String reason = slice == null ? null : slice.error();
+      return reason == null ? notFound(path) : unreadable(path, reason);
     }
 
     String text = slice.content() == null ? "" : slice.content();
@@ -186,16 +196,23 @@ public final class ReadDocumentTool {
     }
 
     return OperationResult.success(
-        formatPage(path, pageText, startChar, endChar, truncated, nextOffset),
+        formatPage(path, pageText, startChar, endChar, truncated, nextOffset, slice.totalChars()),
         buildReadEvidence(path, titleOf(slice, path), pageText, startChar, endChar, truncated));
   }
 
   /**
    * The extraction-dropout arm. Fails rather than succeeding with an empty page, because an empty
    * page is worse than useless downstream: it mints an opened source with a BLANK literal, and a
-   * blank literal makes {@code DocumentService.matchCitationsAgainst} fall back to an index lookup
-   * whose {@code -1} chunk ordinal is clamped to {@code 0} — an opened source silently verified
-   * against a chunk nobody read.
+   * blank literal makes {@code DocumentService.matchCitationsAgainst} fall back to an index lookup —
+   * an opened source silently verified against text nobody read, instead of against the page the
+   * model was shown.
+   *
+   * <p>Tempdoc 878 §D.9 corrects the reason this used to give. It said the fallback's {@code -1}
+   * chunk ordinal was "clamped to {@code 0}", which was true when written and has not been since:
+   * {@code ContextCitation.CHUNK_INDEX_ABSENT} PRESERVES {@code -1} (the 836 §8.4 fix) exactly so
+   * "no chunk position" stops reading as "the first chunk". The refusal is still right; only its
+   * stated cause had gone stale — the more dangerous of the two states, because a reader checks the
+   * reason and not the guard.
    */
   private static OperationResult noExtractedText(
       String path, DocumentService.DocumentSlice slice) {
@@ -226,15 +243,34 @@ public final class ReadDocumentTool {
    * ({@code ToolResultCarrier.readLine}) so Layer-3 compression can strip the body in a later
    * iteration while the header — the fact that this document WAS read, and where the next page
    * starts — survives.
+   *
+   * <p>Tempdoc 878: the span is stated OUT OF the whole whenever the producer knows the whole.
+   * Without a denominator a model at n_ctx 4096 cannot choose between paging and sampling a ~27 KB
+   * document, so it pages to exhaustion. {@code totalChars == 0} means the producer could not say
+   * (an older Worker, a source with no total) — the header then reads exactly as it did before,
+   * because inventing a total is worse than omitting one.
    */
   private static String formatPage(
-      String path, String pageText, int startChar, int endChar, boolean truncated, int nextOffset) {
+      String path,
+      String pageText,
+      int startChar,
+      int endChar,
+      boolean truncated,
+      int nextOffset,
+      int totalChars) {
     var sb = new StringBuilder();
     sb.append("[read] ").append(path).append(" — chars ").append(startChar).append('–')
         .append(endChar);
+    if (totalChars > 0) {
+      sb.append(" of ").append(totalChars);
+    }
     if (truncated) {
-      sb.append(" of more; More: call core_read_document again with offset_chars=")
-          .append(nextOffset);
+      // "of more" is the DEGRADED denominator — it exists only for the case where no real one is
+      // available, so it is dropped the moment the real total is in the header.
+      if (totalChars <= 0) {
+        sb.append(" of more");
+      }
+      sb.append("; More: call core_read_document again with offset_chars=").append(nextOffset);
     }
     sb.append(System.lineSeparator());
     sb.append(io.justsearch.agent.ToolResultCarrier.readLine(pageText));
@@ -280,38 +316,17 @@ public final class ReadDocumentTool {
 
   private static OperationResult notFound(String path) {
     return OperationResult.failure(
-        "Document not found in the index: "
-            + path
-            + ". Use core_browse_folders to find the path, or core_search_index to search"
-            + " inside it.");
+        "Document not found in the index: " + path + ". " + RECOVERY_GUIDANCE);
   }
 
   /**
-   * Tempdoc 877 §2.6 — {@code found=false} carries a REASON, and the tool used to throw it away:
-   * every unsuccessful fetch was reported as "Document not found in the index", including one where
-   * the Worker said something else entirely. A reason that says the document is absent keeps the
-   * not-found message (it is the one with the actionable remedy); any other reason is the Worker
-   * telling us something we must not overwrite with a guess.
-   *
-   * <p>The absent-markers are recognised by CONTENT, not by provenance: {@code "not_found"} comes
-   * from {@code DocumentService.fetchSlice}'s in-process default and {@code "missing_doc_id"} from
-   * {@code RemoteDocumentService}, but the Worker itself answers a missing document with the prose
-   * {@code "Document not found in index"} ({@code GrpcSearchService.fetchDocumentSlice}). Keying on
-   * "ours vs theirs" would turn the single most common real case into an opaque relay of the
-   * Worker's wording, losing the browse/search remedy the model needs.
+   * The slice was unusable AND said why. The reason is passed through verbatim rather than mapped,
+   * because the vocabulary belongs to the producers and a map would silently stale; the recovery
+   * guidance is still attached, so the model gets a next step either way.
    */
-  private static OperationResult notFoundOrWorkerError(String path, String error) {
-    if (error == null || isAbsentMarker(error)) {
-      return notFound(path);
-    }
-    return OperationResult.failure("Could not read \"" + path + "\": " + error);
-  }
-
-  private static boolean isAbsentMarker(String error) {
-    String normalized = error.strip().toLowerCase(java.util.Locale.ROOT);
-    return normalized.equals("not_found")
-        || normalized.equals("missing_doc_id")
-        || normalized.contains("not found");
+  private static OperationResult unreadable(String path, String reason) {
+    return OperationResult.failure(
+        "Could not read \"" + path + "\": " + reason + ". " + RECOVERY_GUIDANCE);
   }
 
   /** Stored {@code title} metadata when present, else the file name. */

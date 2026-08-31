@@ -73,24 +73,55 @@ public final class ToolArgs {
       return fallback;
     }
     int value;
-    if (node.isNumber()) {
+    if (node.isIntegralNumber()) {
       value = node.asInt(fallback);
-    } else {
-      String raw = node.asText("").strip();
+    } else if (node.isNumber()) {
+      // Tempdoc 878 — a non-integral number is refused on the SAME terms as its stringified twin.
+      // Silently flooring 3000.9 while refusing "3000.9" would make the refusal message ("must be a
+      // whole number") false in one of the two cases, which is a small version of the exact defect
+      // this method exists to remove.
+      throw new BadArgument(refusal(field, node));
+    } else if (node.isString()) {
+      String raw = node.asString().strip();
       if (raw.isEmpty()) {
         return fallback;
       }
       try {
         value = Integer.parseInt(raw);
       } catch (NumberFormatException e) {
-        throw new BadArgument(
-            "\"" + field + "\" must be a number, got \"" + raw + "\"");
+        throw new BadArgument(refusal(field, node));
       }
+    } else {
+      throw new BadArgument(refusal(field, node));
     }
     if (value > max) {
       return max;
     }
     return value < min ? fallback : value;
+  }
+
+  /** How much of an unusable argument is echoed back — enough to recognise, not enough to carry. */
+  private static final int BAD_ARG_ECHO_CHARS = 120;
+
+  /**
+   * Tempdoc 878's refusal wording, folded in here at its request. It names the field AND the
+   * offending value, because a model that cannot see what it sent cannot correct it — but the value
+   * is BOUNDED: a model that passes a large object where an int belongs would otherwise get an
+   * error message the size of that object, and an error is not a channel for returning content.
+   */
+  private static String refusal(String field, JsonNode node) {
+    String offending = String.valueOf(node);
+    if (offending.length() > BAD_ARG_ECHO_CHARS) {
+      offending = offending.substring(0, BAD_ARG_ECHO_CHARS) + "…";
+    }
+    return field
+        + " must be a whole number, but was "
+        + offending
+        + ". Call the tool again with "
+        + field
+        + " as a number, e.g. \""
+        + field
+        + "\": 3000.";
   }
 
   /**

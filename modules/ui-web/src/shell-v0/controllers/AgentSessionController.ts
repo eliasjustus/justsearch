@@ -89,6 +89,20 @@ export interface ToolCall {
    * text/image/resource blocks). Carried so the card can render non-text content, not only `output`.
    */
   structuredData?: Record<string, unknown>;
+  /**
+   * Tempdoc 878 §D.4 — how many characters of {@link output} the MODEL actually received.
+   *
+   * `output` is the tool's WHOLE answer; the agent loop appends a Layer-2-truncated copy to the
+   * prompt. Those were the same field for the reader until now, so a tool card could show a page of
+   * text the model never saw and say nothing about it.
+   *
+   * `undefined` means NOT MEASURED, which is deliberately distinct from "not truncated": every
+   * record persisted before this field, and any emitter that does not measure, must stay silent
+   * rather than be retroactively described as complete.
+   */
+  outputCharsToModel?: number;
+  /** Backend-derived companion to {@link outputCharsToModel}; absent when nothing was measured. */
+  truncatedForModel?: boolean;
   /** Tempdoc 561 P-D1: the backend gate verdict, when the loop supplied it. */
   gateBehavior?: BackendGateBehavior;
 }
@@ -355,6 +369,22 @@ export interface BudgetUpdate {
 export type AgentTab = 'chat' | 'sessions' | 'timeline' | 'history';
 
 const AVAILABILITY_POLL_MS = 10_000;
+/**
+ * How many steps a delegate run is allowed. Sent on every request, for every effort rung.
+ *
+ * **Tempdoc 878 §D.8 — do not change this number alone.** The backend's Thorough budget multiplier
+ * (`AgentBudgetPolicy.THOROUGH_MULTIPLIER`) is derived from it: the rung's whole meaning is "tokens
+ * can never be what stops this run — the iteration cap is", and that holds only while
+ * `multiplier >= maxIterations * (1 + maxCompletionTokens / n_ctx)`. Raising the cap without
+ * re-deriving the multiplier silently turns Thorough into a rung tokens CAN stop.
+ * `AgentBudgetPolicyTest.thoroughMultiplierStillClearsItsStructuralBound` computes that bound and
+ * fails the build — but it holds its own copy of this number, so update it in the same change.
+ *
+ * 878 designed an effort-scaled cap (a rung → cap table beside the rung → multiplier one) and
+ * deliberately shipped no number: at n_ctx 4096 more steps means the context gate compacts sooner,
+ * so extra iterations are self-defeating until the paging disclosures land. That is an owner call
+ * on spend, not a frontend constant.
+ */
 const DEFAULT_MAX_ITERATIONS = 10;
 const SESSIONS_LIMIT = 50;
 const HISTORY_LIMIT = 100;
@@ -441,10 +471,13 @@ export class AgentSessionController implements CoreAgentRunHandlers {
    * deduped across the run before stamping each delta, so concatenating them reproduces the terminal
    * source list exactly — same members, same positions. This field only keeps them.
    *
-   * <p>Its reason to exist is the run that reaches NO grounded terminal: cancelled, errored, or
-   * MAX_ITERATIONS (whose `AgentDone.ofDisposition` carries an empty source list by contract). For
+   * <p>Its reason to exist is the run that reaches NO grounded terminal: cancelled or errored. For
    * those, `onDone` never writes {@link answerSources} and this is the only record of what the run
-   * drew on.
+   * drew on. (Until tempdoc 878 §D.1 that list also included `MAX_ITERATIONS`, whose terminal was
+   * built by an ungrounded factory and carried an empty source list by contract; the step ceiling
+   * now finalizes through the same grounded seam as every other terminal, so it carries its
+   * evidence. This field is unchanged by that — it was never the terminal's substitute, and a
+   * cancelled run still has nothing else.)
    */
   groundingDeltas: AgentSource[] = [];
   /**
@@ -1065,6 +1098,13 @@ export class AgentSessionController implements CoreAgentRunHandlers {
         (result?.structuredData as Record<string, unknown>) ??
         (data.structuredData as Record<string, unknown>) ??
         undefined,
+      // Tempdoc 878 §D.4 — read both keys or neither. The backend writes them together and omits
+      // both when nothing was measured, so a card can distinguish "the model got all of it" from
+      // "nobody said" instead of assuming the first.
+      outputCharsToModel:
+        (result?.outputCharsToModel as number) ?? (data.outputCharsToModel as number) ?? undefined,
+      truncatedForModel:
+        (result?.truncatedForModel as boolean) ?? (data.truncatedForModel as boolean) ?? undefined,
     });
     this.accumulateGroundingDelta(
       (result?.structuredData as Record<string, unknown> | undefined) ??

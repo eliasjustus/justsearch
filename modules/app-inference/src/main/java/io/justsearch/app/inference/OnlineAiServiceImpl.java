@@ -495,6 +495,12 @@ public final class OnlineAiServiceImpl
     return manager.countPromptTokens(messages);
   }
 
+  @Override
+  public java.util.Optional<Integer> countPromptTokens(
+      List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
+    return manager.countPromptTokens(messages, tools);
+  }
+
   // ==================== Mode Control Methods ====================
 
   @Override

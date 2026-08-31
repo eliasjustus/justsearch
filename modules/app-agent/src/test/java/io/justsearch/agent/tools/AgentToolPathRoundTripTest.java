@@ -122,7 +122,7 @@ final class AgentToolPathRoundTripTest {
           seen.set(docId);
           return CompletableFuture.completedFuture(
               new DocumentService.DocumentSlice(
-                  docId, "page text", Map.of(), true, false, 9, null));
+                  docId, "page text", Map.of(), true, false, 9, 9, null));
         };
     OperationResult result =
         new ReadDocumentTool(fetch, rootsView).execute("{\"path\":\"" + emitted + "\"}");

@@ -305,10 +305,12 @@ final class AgentSessionGroundingTest {
   void readResultWithBlankExcerpt_isSkipped() {
     var session = session();
     // A blank-literal opened source is worse than no source. `matchCitationsAgainst` treats a blank
-    // literalText as "look this up from the index", and `ContextCitation`'s compact constructor
-    // clamps the document-level -1 chunk ordinal to 0 — so the source would be verified against
-    // chunk 0 of whatever the path resolves to, which is the re-fetch an opened source must never
-    // do. `ReadDocumentTool` already refuses to emit one; this is the second gate.
+    // literalText as "look this up from the index", so the source would be verified against whatever
+    // the index returns rather than against the page the model was shown — the re-fetch an opened
+    // source must never do. `ReadDocumentTool` already refuses to emit one; this is the second gate.
+    // (878 §D.9: this comment used to blame `ContextCitation` clamping -1 to 0. It does not — and
+    // has not since 836 §8.4 made CHUNK_INDEX_ABSENT preserve -1. The gate is right; the old reason
+    // was not.)
     session.recordExecution(
         readCall("call-1"),
         OperationResult.success(
