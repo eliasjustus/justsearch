@@ -184,7 +184,7 @@ public final class IngestTool {
   /**
    * Resolves a path string to an absolute Path: absolute input is normalized; a root-relative one
    * goes through the ONE relative→absolute algorithm ({@code AgentToolPaths.RootsView#resolveRelative}
-   * — first component matched against a root NAME); anything it misses falls back to the
+   * — first component matched against a root NAME), and whatever that misses falls back to the
    * existence-probe of resolving under each root in turn. {@code null} when nothing resolves, which
    * {@link #execute} reports as a skipped path.
    *
@@ -192,6 +192,15 @@ public final class IngestTool {
    * unmatched relative path against the JVM's working directory. That is never what the model meant
    * (it has no idea what the Head's cwd is) and it is the one behaviour in this cluster that could
    * address a file outside every indexed root. Removed: fail closed and say "skipped" instead.
+   *
+   * <p><b>Every arm is existence-checked, including the name-match one.</b>
+   * {@code resolveRelative} matches the first component against a root NAME and returns WITHOUT
+   * touching the filesystem, so its answer is a candidate, not a verdict. Returning it
+   * unconditionally lets a root-name collision beat a path that actually exists: with roots
+   * {@code ("C:\A\docs","docs")} and {@code ("C:\B","B")}, the input {@code "docs/x.md"} names the
+   * first root while the file lives at {@code C:\B\docs\x.md} — the model's file is real, addressed
+   * correctly, and reported as "1 paths skipped". So the name match is probed like any other
+   * candidate and falls through when it misses.
    */
   private Path resolvePath(String raw) {
     try {
@@ -201,7 +210,10 @@ public final class IngestTool {
       }
       String resolved = rootsView.resolveRelative(raw);
       if (resolved != null) {
-        return Path.of(resolved).normalize();
+        Path named = Path.of(resolved).normalize();
+        if (Files.exists(named)) {
+          return named;
+        }
       }
       for (BrowseTool.RootInfo root : rootsView.roots()) {
         Path candidate = Path.of(root.path()).resolve(p).normalize();

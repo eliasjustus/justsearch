@@ -40,6 +40,8 @@ class AgentToolStructuredDataKeysTest {
       "modules/ui-web/src/shell-v0/components/chat/toolOutputLineage.ts";
   private static final String DISPOSITION_WIRING_JAVA =
       "modules/app-services/src/main/java/io/justsearch/app/services/feedback/AgentDispositionWiring.java";
+  private static final String AGENT_SESSION_JAVA =
+      "modules/app-agent/src/main/java/io/justsearch/agent/AgentSession.java";
 
   @Test
   @DisplayName("searchResults: value pinned, and the hand-written FE card still reads that literal")
@@ -64,6 +66,13 @@ class AgentToolStructuredDataKeysTest {
     assertTrue(
         !OperationResult.READ_RESULTS_KEY.equals(OperationResult.SEARCH_RESULTS_KEY),
         "opened and retrieved must not share a producer key");
+    // §2.3's promise is "a producer emits it AND a consumer reads it" — pinning the value alone
+    // leaves this key the one of the four with no named reader, i.e. unfalsifiable if the consumer
+    // stopped reading it. AgentSession#contributeGroundingSources is that reader, and being Java it
+    // gets the same treatment feedbackFeatures gets: it must use the CONSTANT, with no raw literal
+    // beside it.
+    assertJavaConsumerUsesConstant(
+        AGENT_SESSION_JAVA, "READ_RESULTS_KEY", OperationResult.READ_RESULTS_KEY);
   }
 
   @Test

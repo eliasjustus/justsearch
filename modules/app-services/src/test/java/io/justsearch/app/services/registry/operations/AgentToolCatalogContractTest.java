@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.justsearch.agent.api.registry.Operation;
 import io.justsearch.agent.api.registry.OperationRef;
 import io.justsearch.agent.tools.FileOperation;
-import io.justsearch.agent.tools.FileOperationsTool;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -41,9 +40,17 @@ import tools.jackson.databind.ObjectMapper;
  *
  * <p>Two assertions per tool. (1) The declared property set equals an explicitly written expected
  * set — any addition or removal has to be made deliberately, here. (2) Every argument key the tool
- * source reads is either declared or listed in {@link #UNDECLARED_ON_PURPOSE} with the reason. The
- * read set is extracted by regex over the tool's {@code .java} file, which is the point: it sees a
- * newly read key the moment it is written.
+ * source reads is either declared or listed in {@link #UNDECLARED_ON_PURPOSE} with the reason.
+ *
+ * <p><b>What the source scan actually reaches</b>, stated honestly because a subset check that goes
+ * vacuous is worse than no check: it matches the CONVENTIONAL spellings only — reads off a node
+ * named {@code args} (a tool's top-level arguments) or {@code opNode} (one file-operations item),
+ * directly or through a helper taking that node as its first argument. A read off any other
+ * {@code JsonNode} variable is invisible to it: {@code SearchTool.parsePipelineArg} reads nine keys
+ * off a parameter named {@code node} and this scan sees none of them (they are withheld from the
+ * model anyway — see {@code pipeline} in {@link #UNDECLARED_ON_PURPOSE}). So the scan is a
+ * convention check, not a proof, and the ANCHOR assertions are what keep a rename of {@code args}
+ * or {@code opNode} from turning the whole subset check silently green.
  */
 final class AgentToolCatalogContractTest {
 
@@ -149,7 +156,8 @@ final class AgentToolCatalogContractTest {
         AgentToolsOperationCatalog.FILE_OPERATIONS,
         "FileOperationsTool.java",
         Set.of("operations", "conflict_strategy", "explanation"),
-        "operations");
+        "operations",
+        "op");
   }
 
   @Test
@@ -204,21 +212,22 @@ final class AgentToolCatalogContractTest {
   }
 
   @Test
-  @DisplayName("877 §2.1 — the declared operations description states MAX_BATCH_SIZE")
-  void fileOperationsBatchLimitMatchesConstant() {
-    // Moved from FileOperationsToolTest#schemaBatchLimitMatchesConstant: the tool-local schema that
-    // used to carry this number is deleted, so the coupling has to be pinned against the catalog.
-    // The number rides the DESCRIPTION rather than a `maxItems` keyword on purpose — this schema is
-    // enforced before dispatch, and FileOperationsTool.execute already refuses an oversized batch
-    // with an actionable "split into smaller batches" message a validator error would pre-empt.
+  @DisplayName("877 §2.1 — the operations batch limit rides the description, not a `maxItems`")
+  void fileOperationsBatchLimitRidesTheDescription() {
+    // What FileOperationsToolTest#schemaBatchLimitMatchesConstant used to assert — that the schema
+    // states MAX_BATCH_SIZE — cannot be asserted here: the catalog description is BUILT by
+    // interpolating that same constant (AgentToolsOperationCatalog.fileOperations()), so a
+    // `contains(String.valueOf(MAX_BATCH_SIZE))` check is true for every possible value of it. That
+    // is the same tautology shape as the deleted `MAX_EXPANDED_FILES >= 1000` assertion, and a
+    // tautology in a contract test is worse than a gap: it reads as coverage. Interpolation is the
+    // stronger guarantee anyway — one author, no second speller to drift.
+    //
+    // The real, falsifiable invariant is the choice of MECHANISM: the limit rides the DESCRIPTION
+    // rather than a `maxItems` keyword, because this schema is enforced before dispatch and
+    // FileOperationsTool.execute already refuses an oversized batch with an actionable "split into
+    // smaller batches" message that a generic validator error would pre-empt.
     JsonNode operations =
         inputs(AgentToolsOperationCatalog.FILE_OPERATIONS).get("properties").get("operations");
-    assertTrue(
-        operations.get("description").asText().contains(String.valueOf(FileOperationsTool.MAX_BATCH_SIZE)),
-        "the declared description must state the batch size the tool actually enforces ("
-            + FileOperationsTool.MAX_BATCH_SIZE
-            + "); got: "
-            + operations.get("description").asText());
     assertTrue(
         operations.get("maxItems") == null,
         "no `maxItems` keyword: it is enforced, and would replace the tool's actionable"
@@ -231,6 +240,22 @@ final class AgentToolCatalogContractTest {
 
   private void assertContract(
       OperationRef ref, String toolSourceFile, Set<String> expectedTopLevel, String anchorKey) {
+    assertContract(ref, toolSourceFile, expectedTopLevel, anchorKey, null);
+  }
+
+  /**
+   * @param itemAnchorKey a key the tool must be seen reading off an ARRAY ELEMENT, or {@code null}
+   *     for tools with no item schema. The top-level anchor cannot stand in for it: the item
+   *     patterns are keyed to the literal identifier {@code opNode}, so renaming that loop variable
+   *     would make both item patterns match nothing while the top-level anchor still passed — and
+   *     the item half of the subset check would go vacuous without a red test anywhere.
+   */
+  private void assertContract(
+      OperationRef ref,
+      String toolSourceFile,
+      Set<String> expectedTopLevel,
+      String anchorKey,
+      String itemAnchorKey) {
     JsonNode intf = inputs(ref); // parses, or this throws — a malformed schema is a real failure
     Set<String> declaredTopLevel = propertyNames(intf.get("properties"));
     assertEquals(
@@ -255,6 +280,19 @@ final class AgentToolCatalogContractTest {
             + " — the extraction patterns no longer match this tool (a renamed arguments variable?),"
             + " so the subset check below would pass vacuously");
 
+    if (itemAnchorKey != null) {
+      Set<String> itemRead = readKeys(body, DIRECT_ITEM_READ, HELPER_ITEM_READ);
+      assertTrue(
+          itemRead.contains(itemAnchorKey),
+          "the source-scan found no ITEM read of '"
+              + itemAnchorKey
+              + "' in "
+              + toolSourceFile
+              + " — the item extraction patterns no longer match (a renamed `opNode` loop"
+              + " variable?), so the item half of the subset check below would pass vacuously"
+              + " while the top-level anchor kept it looking green");
+    }
+
     Map<String, String> undeclared = new LinkedHashMap<>();
     for (String key : read) {
       if (!declared.contains(key) && !UNDECLARED_ON_PURPOSE.containsKey(key)) {
@@ -274,9 +312,12 @@ final class AgentToolCatalogContractTest {
   }
 
   private static Set<String> readKeys(String source) {
+    return readKeys(source, DIRECT_ARG_READ, HELPER_ARG_READ, DIRECT_ITEM_READ, HELPER_ITEM_READ);
+  }
+
+  private static Set<String> readKeys(String source, Pattern... patterns) {
     Set<String> keys = new LinkedHashSet<>();
-    for (Pattern p :
-        List.of(DIRECT_ARG_READ, HELPER_ARG_READ, DIRECT_ITEM_READ, HELPER_ITEM_READ)) {
+    for (Pattern p : List.of(patterns)) {
       Matcher m = p.matcher(source);
       while (m.find()) {
         keys.add(m.group(1));

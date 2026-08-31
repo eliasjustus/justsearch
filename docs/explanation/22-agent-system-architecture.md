@@ -88,7 +88,7 @@ Current built-in agent-facing tool names include:
 
 | Tool | Safety | Purpose |
 |------|--------|---------|
-| `core_search_index` | Read-only | Search indexed knowledge. Accepts `path_prefix` to restrict results to an absolute folder path. |
+| `core_search_index` | Read-only | Search indexed knowledge. Accepts `path_prefix` to restrict results to a folder, given as `core_browse_folders` returns it (root-relative or absolute — the tool resolves a relative prefix against the indexed roots before validating it). |
 | `core_read_document` | Read-only | Read one indexed document's extracted text, paged by character offset (`path`, `offset_chars`, `max_chars`). Served by the Worker's `FetchDocumentSlice`, so the readable universe is exactly the indexed corpus and the Head never opens the file. A page is capped below the per-tool-result context cap, and the result names the offset to continue from. |
 | `core_browse_folders` | Read-only | Discover indexed folders and paths. Optional `list_files`, `max_folders`, `max_files`. |
 | `core_file_operations` | Destructive | Move, rename, copy, or create directories (`FileOperation.OpType`: MOVE / RENAME / MKDIR / COPY — there is no delete), as a batch with an explanation and a conflict strategy. Requires approval, and the batch is undoable. |

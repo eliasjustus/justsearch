@@ -233,9 +233,13 @@ class FileOperationsToolTest {
     assertTrue(result.success(), "Exactly MAX_BATCH_SIZE should succeed: " + result.message());
   }
 
-  // Tempdoc 877 §2.1: `schemaBatchLimitMatchesConstant` moved to AgentToolCatalogContractTest
-  // (app-services) — the catalog Interface is now the only declared schema, so that is where
-  // `operations.maxItems == MAX_BATCH_SIZE` has to be pinned.
+  // Tempdoc 877 §2.1: `schemaBatchLimitMatchesConstant` is gone, not relocated intact. The
+  // tool-local schema constant it asserted against is deleted, and the catalog description that
+  // replaced it INTERPOLATES MAX_BATCH_SIZE — so "the schema states the constant" is true by
+  // construction and cannot be tested. What survives, in AgentToolCatalogContractTest
+  // (app-services), is the falsifiable half: `operations.maxItems == null`, i.e. the limit rides
+  // the description so this tool's own over-size message is the one the model sees. The limit
+  // itself is enforced HERE, by executeBatchSizeLimitExceeded above.
 
   // ===== Undo tests =====
 

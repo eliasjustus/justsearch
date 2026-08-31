@@ -701,6 +701,68 @@ class SearchToolTest {
     }
   }
 
+  @Test
+  void formatResultsUnderASmallCapKeepsEveryHitsIdentity() {
+    // Recovers the small-cap coverage origin/main had as `executeEnforcesPerResultCharBudget` with
+    // `justsearch.agent.max_tool_result_chars=600`. That property can no longer be set at test time:
+    // §2.2 moved the cap to ToolResultCarrier.layerTwoCapChars() -> AgentContextCompressor's
+    // `static final MAX_TOOL_RESULT_CHARS`, frozen at class-init, so a runtime System.setProperty
+    // would only take effect if this test happened to run before anything else touched that class —
+    // an order-dependent green, which is worse than no test. The cap is a PARAMETER of the renderer
+    // instead, so the constrained path is exercised directly.
+    KnowledgeSearchResponse response = threeHitsWithLongExcerpts();
+
+    String output = SearchTool.formatResults(response, 600);
+
+    assertTrue(output.length() <= 600, "over the 600-char cap: " + output.length());
+    assertTrue(output.contains("[1]"), output);
+    assertTrue(output.contains("[2]"), output);
+    assertTrue(output.contains("[3]"), output);
+    assertTrue(output.contains("Path: /d1.pdf"), output);
+    assertTrue(output.contains("..."), "excerpts must be clipped at this cap: " + output);
+    assertTrue(output.contains("Found 3 results"), output);
+  }
+
+  @Test
+  void formatResultsUnderATightCapDropsTheTailAndSaysSo() {
+    // The head-cut regression, at the altitude where it is cheapest to see. A budget that cannot
+    // carry all three identity blocks must render the TOP hits and STATE the rest — not silently
+    // skip the hits whose header overran their slice and spend the freed budget on lower-ranked
+    // ones, which is what a per-hit-slice budget with a "skip if the header doesn't fit" arm does.
+    KnowledgeSearchResponse response = threeHitsWithLongExcerpts();
+
+    String output = SearchTool.formatResults(response, 140);
+
+    assertTrue(output.length() <= 140, "over the 140-char cap: " + output.length());
+    assertTrue(output.contains("[1] Doc 1"), "the top hit must survive a tight cap: " + output);
+    assertFalse(output.contains("[3]"), "the TAIL is what a tight cap drops: " + output);
+    assertTrue(
+        output.contains("further results omitted (context budget)"),
+        "a dropped hit must be stated, not silently missing: " + output);
+    assertTrue(output.contains("Found 3 results"), output);
+  }
+
+  private static KnowledgeSearchResponse threeHitsWithLongExcerpts() {
+    String longText = "A".repeat(1200);
+    return KnowledgeSearchResponseBuilder.builder()
+        .totalHits(3)
+        .tookMs(12)
+        .results(List.of(
+            KnowledgeSearchResponseHitBuilder.builder()
+                .id("d1").score(0.9).fields(Map.of("title", "Doc 1", "path", "/d1.pdf"))
+                .excerptRegions(List.of(new KnowledgeSearchResponse.ExcerptRegion(longText, 0, 500, 1, List.of())))
+                .build(),
+            KnowledgeSearchResponseHitBuilder.builder()
+                .id("d2").score(0.8).fields(Map.of("title", "Doc 2", "path", "/d2.pdf"))
+                .excerptRegions(List.of(new KnowledgeSearchResponse.ExcerptRegion(longText, 0, 500, 1, List.of())))
+                .build(),
+            KnowledgeSearchResponseHitBuilder.builder()
+                .id("d3").score(0.7).fields(Map.of("title", "Doc 3", "path", "/d3.pdf"))
+                .excerptRegions(List.of(new KnowledgeSearchResponse.ExcerptRegion(longText, 0, 500, 1, List.of())))
+                .build()))
+        .build();
+  }
+
   // ---------------------------------------------------------------------------
   // modeToPreset() unit tests (256: Phase G2)
   // ---------------------------------------------------------------------------

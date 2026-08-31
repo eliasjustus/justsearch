@@ -216,6 +216,54 @@ class AgentTimeoutsTest {
   }
 
   @Test
+  @DisplayName("877 §2.8: an interrupted wait restores the interrupt flag and rethrows")
+  void call_restoresTheInterruptFlagWhenTheWaitIsInterrupted() throws Exception {
+    // `outcome.get(...)` throws InterruptedException, and only TimeoutException and
+    // ExecutionException were caught — so the flag the throw CLEARS was never put back. Every other
+    // blocking wait in this package restores it (AgentLlmCaller:275, AgentRetryPolicy:78,
+    // AgentSessionRegistry:216, AgentStepRunner:236/335/487/1138); a wait that swallows it leaves
+    // the loop thread looking un-interrupted, so a shutdown that relies on the flag never lands.
+    var entered = new CountDownLatch(1);
+    var thrown = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+    var flagAfterThrow = new java.util.concurrent.atomic.AtomicBoolean();
+
+    Thread caller =
+        new Thread(
+            () -> {
+              try {
+                AgentTimeouts.call(
+                    "core_search_index",
+                    60_000L,
+                    () -> {
+                      entered.countDown();
+                      new CountDownLatch(1).await();
+                      return "unreachable";
+                    });
+              } catch (Throwable t) {
+                thrown.set(t);
+                // Read the flag INSIDE the interrupted thread: that is the only place the
+                // difference between restored and swallowed is observable.
+                flagAfterThrow.set(Thread.currentThread().isInterrupted());
+              }
+            },
+            "agent-timeouts-interrupt-probe");
+    caller.start();
+    assertTrue(entered.await(5, TimeUnit.SECONDS), "the callable never started");
+    caller.interrupt();
+    caller.join(TimeUnit.SECONDS.toMillis(5));
+
+    assertFalse(caller.isAlive(), "the interrupted wait never returned");
+    assertTrue(
+        thrown.get() instanceof InterruptedException,
+        "the interrupt must surface as itself, not as a timeout or an execution failure: "
+            + thrown.get());
+    assertTrue(
+        flagAfterThrow.get(),
+        "the interrupt flag must be restored before rethrowing — otherwise the caller is told"
+            + " nothing happened and cooperative cancellation stops here");
+  }
+
+  @Test
   @DisplayName("877 §2.8: a fetch that returns in time is passed through untouched")
   void call_returnsTheValueWhenInsideTheBudget() throws Exception {
     assertEquals("ok", AgentTimeouts.call("core_browse_folders", 5_000L, () -> "ok"));

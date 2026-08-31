@@ -1,8 +1,9 @@
 # 877 — Agent-tool centralisation: one authority per fact
 
 ```
-status:  IMPLEMENTING (2026-08-26) — §1 theorized, §2 designed against re-verified
-         source, §3 planned. Was THEORIZING.
+status:  IMPLEMENTED (2026-08-26) — nine of ten census findings shipped, one refuted
+         with a recorded boundary (§2.9). Independently reviewed refute-first; nine
+         confirmed defects fixed (§3.4). Was THEORIZING, then IMPLEMENTING.
 created: 2026-08-26
 follows: 868 (§D — the agent tool surface investigation this remediation comes out of),
          865 §7.5 (ToolResultCarrier — the worked example of the pattern this tempdoc
@@ -189,7 +190,7 @@ Every line reference below was re-verified in this worktree at
 | 1 | `PARAMETER_SCHEMA` ×4 | `SearchTool.java:153-193`, `BrowseTool.java:51-79`, `IngestTool.java:36-59`, `FileOperationsTool.java:51-93` | confirmed |
 | 1 | only test callers | 7 test sites (`BrowseToolTest:30`, `FileOperationsToolTest:44,248`, `IngestToolTest:75,464`, `SearchToolTest:45,396`) | confirmed |
 | 1 | catalog declares `operations: array` untyped | `AgentToolsOperationCatalog.java:320-321` | confirmed |
-| 1 | `explanation` always the literal | `FileOperationsTool.java:136-137`; journalled and surfaced at `AgentRunQueryService.java:568` | confirmed |
+| 1 | `explanation` always the literal | `FileOperationsTool.java:136-137`; journalled and surfaced at `AgentRunQueryService.java:568` | **partly wrong** — the tool always READ the key (`args.has("explanation") ? … : "File operations"`). It was constant only because the key was undeclared, so no model could send it. Promoting it is still the right fix; the census's phrasing described the effect as if the tool ignored the key. |
 | 1 | `MAX_EXPANDED_FILES` unreachable | `MAX_PATHS = 100` (`IngestTool.java:33`) caps the array; `singleFileCount ≤ 100 < 10_000` (`:172`) | confirmed |
 | 2 | two readers of the cap | `AgentContextCompressor.java:74` (floor 100) vs `SearchTool.java:54-57` (no floor) | confirmed |
 | 2 | budget ignores framing | `SearchTool.java:447-448` divides by `hits.size()` and counts only `excerpt.length()` (`:479`) | confirmed |
@@ -590,17 +591,125 @@ This is what turned finding 7 from "browse is wrong" into "the prose is wrong".
 | # | Finding | Outcome |
 |---|---|---|
 | 1 | Dead `PARAMETER_SCHEMA` ×4 | **Done.** All four constants + accessors + the 7 test call sites deleted; the three SUBSTANTIVE assertions relocated to `AgentToolCatalogContractTest` (schema-parses, `maxItems`↔`MAX_BATCH_SIZE`, ingest advertises `collection`) rather than dropped. File-op item shape + `conflict_strategy` + `explanation` and browse `max_folders`/`max_files` promoted into the catalog `Interface`. `mode`/`pipeline` settled as delete-the-prose, keep-the-code, with the authorship of every key stated once in `SearchTool.execute`. `MAX_EXPANDED_FILES` + its unreachable guard + the tautological test deleted. |
-| 2 | Two readers of `agent.maxToolResultChars` | See §3.3. |
+| 2 | Two readers of `agent.maxToolResultChars` | **Done.** `SearchTool.resolveMaxToolResultChars` deleted; `ToolResultCarrier.layerTwoCapChars()` is the one reader outside `AgentContextCompressor`. `formatResults` now budgets against EMITTED length (headers, `Path:` lines, carrier framing, reserved summary) instead of excerpt chars, so the result is ≤ the cap by construction. The first cut of this shipped a worse bug than it fixed — see §3.4 F1. |
 | 3 | Bilateral `structuredData` literals | **Done.** Four constants beside `GROUNDING_KEY`; `AgentSession`, `AgentDispositionWiring` and `withLineage` adopt them; `AgentToolStructuredDataKeysTest` pins each key's value and checks the consumer that cannot import it. |
-| 4 | Roots access forked 13 ways | See §3.3. |
-| 5 | Two arg-parsing helpers | `ToolArgs` + tests shipped; adoption in §3.3. Note the correction in §3.1(c). |
+| 4 | Roots access forked 13 ways | **Done.** `AgentToolPaths.RootsView` (one guarded accessor, one `validate`, one `resolveRelative`) adopted by all five tools; `AgentToolFactory.assemble` builds ONE and injects it. Six forks deleted: `SearchTool.validatePathPrefix`, `BrowseTool.validateParentPath`, `BrowseTool.resolveRelativeParent`, `ReadDocumentTool.roots()`, `ReadDocumentTool.validatePath`, and `IngestTool.resolvePath`'s cwd fall-through. Degrade-open preserved in all four states (null / null-returning / throwing supplier, empty list). |
+| 5 | Two arg-parsing helpers | **Done.** `ToolArgs` adopted in all five tools; `ReadDocumentTool.intArg`, `SearchTool.boolField`, `FileOperationsTool.textField` and five per-tool `ObjectMapper` fields deleted. Bounds reproduce every prior call site exactly; the non-numeric arm deliberately diverges (throw, not silently default). Note the reachability correction in §3.1(c). |
 | 6 | Error handling | `AgentToolErrors` + tests shipped (adoption in §3.3). The handler-side half is **done**: `HandlerJson` holds one mapper for 19 handlers and one `invalidArgs` for the 9 byte-identical sites, with a regression test that fails if a per-handler mapper reappears. `NavigateToSurfaceHandler` and four `"Invalid arguments JSON: "` handlers were deliberately left alone — different text, different shape, not the same fact. |
-| 7 | Path convention | Redesigned (§2.7); see §3.3. |
-| 8 | Nine timeout constants | **Done for the holder.** `AgentTimeouts` declares all nine in one unit; the five non-tool sites adopt it; `AgentLlmCaller`'s "5 minutes" message is derived from the constant it waits on; the 10×-stale "aligns with INLINE_CONFIRM" comment is replaced with the real relationship, and `AgentTimeoutsTest` asserts `virtualToolMs() < approvalGateMs()` — the assertion that would have caught it. Tool-side adoption in §3.3. |
+| 7 | Path convention | **Done**, redesigned (§2.7): root-relative is the real convention, so `FileOperationsTool` gained the `resolveRelative` pre-pass the other four tools already had, and the prose was corrected in the prompt, the search hint and the read-document schema. `BrowseTool.toRelativePath` deliberately kept — it is a measured 227 §A.6 decision. |
+| 8 | Nine timeout constants | **Done.** `AgentTimeouts` declares all nine in one unit; the five non-tool sites adopt it; `AgentLlmCaller`'s "5 minutes" message is derived from the constant it waits on; the 10×-stale "aligns with INLINE_CONFIRM" comment is replaced with the real relationship, and `AgentTimeoutsTest` asserts `virtualToolMs() < approvalGateMs()` — the assertion that would have caught it. Tool-side adoption done too: `ReadDocumentTool.FETCH_TIMEOUT_MS` and `FileOperationsTool.CONFLICT_TOLERANCE` deleted in favour of the holder, and the three previously-unguarded synchronous fetches (search, browse, ingest-scan) now run under `AgentTimeouts.call` on a virtual thread. A tenth duration, `toolScanMs`, was added rather than reusing `toolFetchMs`: a directory scan legitimately runs minutes, and abandoning it at 15s would be a worse failure than the unbounded block it replaces. |
 | 9 | MCP "bypass" | **Refuted, not deferred** (§2.9). No MCP file touched. |
 | 10 | Stale comments/docs | **Done.** The false "handler does not yet read list_files" note corrected; drifted line-number citations replaced with method names; `AgentToolHandlers`' hand-listed completion log derived from what it actually registered; `docs/explanation/22`'s tool table completed (7 rows) with the non-existent "delete" capability removed and the approval paragraph corrected. `ServicePhase` needed no change — 868 had already fixed it. |
 
-### 3.3 Deliberately not done
+### 3.3 Verification record (2026-08-26)
+
+Session resumed after an account-limit termination; the worktree survived intact and the
+merge with a moved `main` was completed by hand (two conflicts, both in files this tempdoc
+owns — see below).
+
+| Check | Verdict |
+|---|---|
+| `gradle-locked.sh spotlessApply build -x test -x integrationTest` (post-merge) | `BUILD SUCCESSFUL in 36s` |
+| `gradle-locked.sh test` (full unit suite) | `260 tests completed, 2 failed` — both in `app-inference` |
+| forced re-run: `:modules:app-agent:cleanTest test`, `app-agent-api`, `app-services`, **and `app-inference`** | `BUILD SUCCESSFUL in 46s`, 0 failures — the two `app-inference` failures did NOT reproduce |
+| `check-tempdoc-numbers` | `OK — 584 distinct numbers, no collisions across 25 worktrees + origin/main` |
+| `expected-state-probe --gate` | `5 pins; 0 shape/review problems` |
+| governance kernel `--mode gate` | 6 gates fail; see the triage below — none attributable to this change |
+
+**The two `app-inference` failures are not this change's.** `modules/app-inference/build.gradle.kts:9-15`
+declares no dependency on `app-agent`, `app-agent-api` or `app-services`, so nothing in this
+diff is on its classpath. Both failed once and passed on a forced clean re-run, i.e. they are
+flaky, not red: `InferenceLifecycleManagerExternalServerTest.startLlamaServerCanAdoptHealthOnlyWhenExplicitlyEnabled`
+(`InferenceLifecycleManagerExternalServerTest.java:144`) and
+`NdjsonInferenceTransitionLogTest` "retention prunes entries older than the cutoff"
+(`NdjsonInferenceTransitionLogTest.java:95`). Neither is covered by an expected-state pin.
+Routed to the orchestrator rather than pinned here — a pin is a claim about `main`, and this
+branch is not where that claim should be made.
+
+**Governance-gate triage.** Four of the six failures are missing *preflight inputs*, not
+violations: `module-deps` and `config-surface` both passed as soon as their generator was run
+(`scripts/architecture/module-deps.mjs`, `scripts/docs/generate-runtime-config-matrix.mjs`),
+and `dead-code` / `dead-code-jvm` ask for artifacts produced by `npm run knip:report` and
+`:modules:dead-code-audit:test`. The remaining two are pre-existing violations in files this
+change never touches: `ts-any/silent-growth` in
+`modules/ui-web/src/shell-v0/components/chat/citationResolve.test.ts` and
+`contract-projection/undeclared-consumer` for
+`modules/ui-web/src/shell-v0/controllers/AgentSessionController.ts`, both arriving with the
+`869` work merged from `main`. Notably `module-deps` PASSING is the load-bearing one here: it
+confirms the catalog's new `io.justsearch.agent.tools.FileOperationsTool` import (used to make
+`MAX_BATCH_SIZE` single-authored) is a legal module dependency rather than a boundary
+violation.
+
+`dead-code-jvm` could not be evaluated locally: its input generator
+(`:modules:dead-code-audit:test` → `WholeProgramDeadCodeTest`) fails with a
+`TimeoutException` on this machine, where three or four agent worktrees compete for CPU. That
+is the whole-program analysis timing out, not a dead-code violation, and CI evaluates it
+properly. Checked by hand in its place: all ten `AgentTimeouts` accessors, both `ToolArgs`
+overloads and every new `RootsView` member have at least one production caller, so this change
+introduces no unreferenced declaration.
+
+**A reusable platform finding, routed rather than pinned.** Three separate whole-program /
+source-scanning tests failed with the SAME signature —
+`java.util.concurrent.TimeoutException at ArrayList.java:1604` — and all three passed on an
+isolated re-run: `WholeProgramDeadCodeTest`, `AgentGroundingSeamAuditTest` (ArchUnit
+`ClassFileImporter`), and the `app-inference` pair. The common factor is CPU starvation while
+three or four agent worktrees build concurrently on one machine, which is the normal operating
+mode for this repo's parallel-agent workflow. That makes it a substrate lesson, not a defect in
+any one test: a red from a class-scanning test during multi-worktree work should be re-run
+isolated before it is believed. Reported to the orchestrator for routing rather than pinned
+here, since an expected-state pin is a claim about `main` and this branch is not where that
+claim belongs.
+
+**Merge conflicts, both resolved toward the more accurate text.** `main` had independently
+made two of the same corrections this tempdoc's finding 10 lists — the false
+"handler does not yet read list_files" comment, and the `core_file_operations` "delete" claim
+in `docs/explanation/22`. Independent rediscovery of the same two defects is itself evidence
+for finding 10's premise. Resolution kept this branch's superset in both cases, except that
+`main`'s `FileOperation.OpType` citation was better than ours and was merged in. One
+disagreement was resolved AGAINST `main`: it labels `core_file_operations` "Write/destructive
+depending on action", but the operation is uniformly `RiskTier.HIGH` with an inline confirm
+regardless of which op is in the batch, so "Destructive" is the honest column value.
+
+### 3.4 Independent review and dispositions (2026-08-26)
+
+Reviewer ≠ implementer (`slice-execution.md`'s `independent-review-required`), briefed
+refute-first and read-only. It returned nine confirmed defects and a list of what it tried to
+break and could not. The findings that mattered were the ones neither the implementing worker
+nor this orchestrator's own critical-analysis pass had caught — including one where the fix was
+worse than the bug.
+
+| # | Finding | Disposition |
+|---|---|---|
+| F1 | `SearchTool.formatResults` DROPPED whole hits when a hit's identity block alone exceeded its slice — and because a dropped hit forfeits nothing, the budget re-spread and the model saw the LOW-ranked hits while the top of the ranking vanished silently. | **Fixed.** Identity lines are always emitted; an omission is stated, not silent. The test now counts `[n]` markers and uses realistic long titles/paths, plus a restored small-cap case. |
+| F2 | Declaring `"type":"integer"` on the newly-promoted `max_folders`/`max_files` is itself a NARROWING — an undeclared key was previously unvalidated, so a string that `BrowseTool` used to coerce now hard-fails pre-dispatch. Also re-opened the 655 drift with `McpToolSurface`'s browse schema. | **Fixed.** Both keys are description-only. §3.1(b)'s rule is corrected: on a NEWLY declared key, `type` is a constraint, not shape. |
+| F3 | `AgentTimeouts.call` swallowed `InterruptedException` without restoring the flag (every other blocking wait in the module restores it), and lost the OTel context across the virtual-thread boundary, detaching agent search spans from the tool span. | **Fixed.** Interrupt restored and rethrown; callable wrapped in the current OTel context. |
+| F4 | `IngestTool.resolvePath`'s reordering let a root-NAME collision beat a path that actually exists, silently converting an ingestable file into "1 paths skipped". | **Fixed.** Step 1's result is existence-checked before it wins. |
+| F5 | A relocated assertion became a tautology (it asserted a description contains a constant that is interpolated into that description), and its breadcrumb stated the opposite of what the new test asserts. | **Fixed.** Tautology deleted, breadcrumb corrected. |
+| F6 | The §2.10 prose sweep missed three live falsehoods — one of them MINTED by the sweep (a rewritten comment cites `SearchTool.validatePathPrefix`, which the same PR deleted). | **Fixed.** All three corrected. |
+| F7 | `AgentToolCatalogContractTest`'s item-key scan could go vacuous: renaming one loop variable makes both item regexes match zero times while the vacuity anchor still passes. | **Fixed.** Item patterns anchored; the javadoc's reach claim softened to what the scan actually sees. |
+| F8 | `ToolArgs`' javadoc claimed the semantics reproduce every call site "exactly" — true of the bounds, false of the non-numeric arm, which deliberately throws where `main` silently defaulted. | **Fixed.** Claim scoped; the divergence named. |
+| F9 | `ReadDocumentTool`'s new Worker-error branch has no production producer today, and its `contains("not found")` classifier would misclassify plausible future fault strings. | **Recorded, not "fixed"** — see below. |
+
+**F9's disposition, stated rather than quietly closed.** Both current producers of
+`found=false` with an error carry an absent-marker string, and a genuine Worker fault throws
+and is already routed to `SERVICE_UNAVAILABLE` by the fetch `catch`. So the new branch is
+unreachable in production today and its test proves it only with a hand-built slice. That is
+the same shape as §3.1(c), and it earns the same honesty: the branch is correct defensive
+handling for a case the Worker does not currently produce, NOT a demonstrated bug fix. The
+`contains("not found")` heuristic stays because the one real producer's message
+(`"Document not found in index"`) is prose, not a code — tightening to exact matches would
+misclassify it as a fault. If the Worker ever gains a reason code for this, that code replaces
+the substring.
+
+**What the reviewer could not break** (recorded because it says what is load-bearing): the
+`≤ cap` bound in `formatResults` genuinely holds by construction, including the `+3` an
+ellipsis adds; `ToolArgs`' bounds match all five prior call sites line by line; `RootsView`
+degrades open in all four failure states across all five tools with no path newly rejected;
+the `enum`/`maxItems` restraint is real and `AgentToolCatalogContractTest` would go red if
+someone re-tightened it; `MAX_EXPANDED_FILES` was genuinely unreachable; and §2.9's refusal of
+the MCP unification holds on inspection of both payload shapes.
+
+### 3.5 Deliberately not done
 
 **Not doing** (with reasons, per §2.9 and §2.3): the MCP evidence unification (refuted —
 two governed projections of one canonical record, not a fork); `query`/`resultCount`/

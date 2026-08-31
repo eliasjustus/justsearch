@@ -145,16 +145,34 @@ public final class AgentTimeouts {
     return call(label, toolFetchMs(), work);
   }
 
-  /** {@link #call(String, Callable)} with an explicit budget ({@link #toolScanMs()}, or a test's). */
+  /**
+   * {@link #call(String, Callable)} with an explicit budget ({@link #toolScanMs()}, or a test's).
+   *
+   * <p><b>Known limitation — abandonment is one-sided.</b> The timeout releases the agent-loop
+   * thread; it does not stop the Worker. {@code IngestTool.scanRoot} is the case that matters: a
+   * {@link TimeoutException} there is classified RETRYABLE, so the model may reissue the call while
+   * the original directory walk is still running Worker-side, and a large root can be scanned twice.
+   * The alternative — blocking the loop until an unresponsive Worker answers — is the failure this
+   * guard exists to end, so the duplicate scan is accepted rather than fixed here; closing it needs a
+   * cancellation token on the {@code ScanRoot} RPC, which is a Worker-contract change.
+   */
   public static <T> T call(String label, long timeoutMs, Callable<T> work) throws Exception {
     CompletableFuture<T> outcome = new CompletableFuture<>();
+    // Carry the CURRENT OTel context onto the virtual thread. Without this wrap a span started
+    // inside the callable (KnowledgeSearchEngine's `search`, say) would find no current context —
+    // Thread.ofVirtual().start does not inherit the ThreadLocal-backed Scope that
+    // AgentToolDispatcher opened with toolSpan.makeCurrent() — and would begin a DETACHED ROOT
+    // trace, silently unlinking agent tool work from the run that caused it. ReadDocumentTool runs
+    // its fetch on the caller thread, so without the wrap the one authority would have two
+    // behaviours depending on which tool called it.
+    Callable<T> contextual = io.opentelemetry.context.Context.current().wrap(work);
     Thread worker =
         Thread.ofVirtual()
             .name("agent-tool-fetch-" + label)
             .start(
                 () -> {
                   try {
-                    outcome.complete(work.call());
+                    outcome.complete(contextual.call());
                   } catch (Throwable t) {
                     outcome.completeExceptionally(t);
                   }
@@ -167,6 +185,14 @@ public final class AgentTimeouts {
       worker.interrupt();
       throw new TimeoutException(
           label + " did not respond within " + timeoutMs + "ms; the Worker may be unavailable");
+    } catch (InterruptedException e) {
+      // The agent loop is being torn down, not the Worker failing: restore the flag the throw
+      // cleared (the convention every other blocking wait in this package follows — AgentLlmCaller,
+      // AgentRetryPolicy, AgentSessionRegistry, AgentStepRunner) and rethrow, so the shutdown is not
+      // reported to the model as an INTERNAL_ERROR with a stack trace by AgentToolErrors.
+      worker.interrupt();
+      Thread.currentThread().interrupt();
+      throw e;
     } catch (ExecutionException e) {
       Throwable cause = e.getCause();
       if (cause instanceof Exception checked) {

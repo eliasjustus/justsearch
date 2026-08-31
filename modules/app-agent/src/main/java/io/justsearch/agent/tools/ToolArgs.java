@@ -19,13 +19,20 @@ import tools.jackson.databind.ObjectMapper;
  * {@code BAD_REQUEST} failure naming the field — loud, and self-correcting for the model. Falling
  * back to a default on garbage is what made the read bug invisible.
  *
- * <p><b>Bounds semantics</b>, chosen to reproduce every existing call site exactly rather than to
- * be tidy: a value ABOVE {@code max} clamps to {@code max}; a value BELOW {@code min} is treated as
- * unusable and yields the {@code fallback} (not {@code min}). That is what
- * {@code SearchTool}'s {@code if (limit < 1) limit = DEFAULT_LIMIT} and {@code BrowseTool}'s
+ * <p><b>Bounds semantics</b> reproduce every existing call site exactly rather than being tidied: a
+ * value ABOVE {@code max} clamps to {@code max}; a value BELOW {@code min} is treated as unusable
+ * and yields the {@code fallback} (not {@code min}). That is what {@code SearchTool}'s
+ * {@code if (limit < 1) limit = DEFAULT_LIMIT} and {@code BrowseTool}'s
  * {@code if (maxFolders < 1) maxFolders = DEFAULT_MAX_FOLDERS} already did, and what
  * {@code ReadDocumentTool}'s {@code requested <= 0 ? READ_PAGE_CHARS : min(requested, …)} already
  * did. Absent, JSON-null and blank all yield the fallback.
+ *
+ * <p>The exactness claim is scoped to the BOUNDS. One arm diverges deliberately: a present,
+ * non-numeric value. {@code SearchTool} read {@code limit} with {@code asInt(DEFAULT_LIMIT)}, so
+ * {@code {"limit":"lots"}} silently became 3; here it raises {@link BadArgument} and the tool
+ * answers {@code BAD_REQUEST} naming the field. That is the "loud, not silent" rule above applied
+ * to the one case where it changes an observable answer — the model can fix a named bad argument,
+ * and cannot fix a default it was never told it got.
  */
 public final class ToolArgs {
 

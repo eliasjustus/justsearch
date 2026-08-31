@@ -30,8 +30,9 @@ import java.util.function.Supplier;
  */
 public final class SearchTool {
   // Three-layer truncation for search results delivered to the LLM (see tempdocs 208, 213):
-  // Layer 1 (formatResults): per-result budget = MAX_TOOL_RESULT_CHARS / hits.size()
-  //   — accumulates excerpt chars per hit; breaks when budget exhausted.
+  // Layer 1 (formatResults): sizes the WHOLE emitted string under MAX_TOOL_RESULT_CHARS by
+  //   construction — summary reserved first, then every hit's identity block, then excerpts with
+  //   whatever is left, spread top-down so a dropped hit is always a tail hit and is announced.
   //   — 800-char per-region cap preserved as safety net for very long individual regions.
   // Layer 2 (AgentLoopService.truncateForContext): hard cut at MAX_TOOL_RESULT_CHARS.
   // Layer 3 (AgentLoopService.compressToolMessagesForContext): strips Excerpt: lines from
@@ -394,45 +395,99 @@ public final class SearchTool {
    * trace. Here the summary is reserved first, and every hit is charged the FULL length of every
    * line it writes, so the returned string is {@code <= layerTwoCapChars()} rather than
    * approximately so.
+   *
+   * <p><b>Identity is never the part that gets cut.</b> A first version of this budget let a hit
+   * whose {@code [n] title} + {@code Path:} block alone overran its slice emit NOTHING — and since a
+   * dropped hit forfeited no budget, the slack rolled forward and LOWER-ranked hits rendered while
+   * the top of the ranking vanished, with a gap in the {@code [n]} numbering and a summary still
+   * claiming all N. A head-cut is strictly worse than the tail-cut it replaced. So the identity
+   * blocks are priced FIRST: however many whole hits fit are emitted from the top, in rank order,
+   * each guaranteed its header and path with the excerpt budget free to fall to zero, and whatever
+   * did not fit is STATED by {@link #omittedNotice} rather than silently missing.
    */
-  private String formatResults(KnowledgeSearchResponse response) {
+  private static String formatResults(KnowledgeSearchResponse response) {
+    return formatResults(response, io.justsearch.agent.ToolResultCarrier.layerTwoCapChars());
+  }
+
+  /**
+   * {@link #formatResults(KnowledgeSearchResponse)} with the cap as a parameter. The cap it is
+   * called with in production ({@code ToolResultCarrier.layerTwoCapChars()}) is a {@code static
+   * final} frozen at class-init, so a constrained-budget test cannot set it at runtime without
+   * becoming order-dependent on whichever test first touched {@code AgentContextCompressor}. Passing
+   * it makes the constrained path directly testable.
+   */
+  static String formatResults(KnowledgeSearchResponse response, int capChars) {
     List<KnowledgeSearchResponse.Hit> hits = response.results();
     if (hits.isEmpty()) {
       return "No results found (took " + response.tookMs() + "ms).";
     }
 
     String summary = summaryLine(response);
-    int budget =
-        Math.max(0, io.justsearch.agent.ToolResultCarrier.layerTwoCapChars() - summary.length());
+    int budget = Math.max(0, capChars - summary.length());
+
+    // Price the identity blocks up front; prefix[i] is what the first i hits cost in headers alone.
+    var identity = new ArrayList<String>(hits.size());
+    int[] prefix = new int[hits.size() + 1];
+    for (int i = 0; i < hits.size(); i++) {
+      identity.add(identityBlock(hits.get(i), i));
+      prefix[i + 1] = prefix[i] + identity.get(i).length();
+    }
+
+    // The largest prefix of the ranking whose identity blocks — plus the notice naming what is left
+    // out — fit the budget. Walking DOWN from the full list keeps the emitted set top-anchored.
+    int shown = hits.size();
+    while (shown > 0 && prefix[shown] + omittedNotice(hits.size() - shown).length() > budget) {
+      shown--;
+    }
+    String notice = omittedNotice(hits.size() - shown);
+    if (prefix[shown] + notice.length() > budget) {
+      notice = ""; // shown == 0 and not even the notice fits; the summary alone still must.
+    }
 
     var sb = new StringBuilder();
-    for (int i = 0; i < hits.size(); i++) {
-      // Spread what is LEFT across the hits that are left, so an under-spending hit hands its
-      // slack forward instead of forfeiting it.
-      int perResultBudget = Math.max(0, (budget - sb.length()) / (hits.size() - i));
-      appendHit(sb, hits.get(i), i, perResultBudget);
+    for (int i = 0; i < shown; i++) {
+      // Reserve the identity of every hit still to come, plus the notice, before this hit may spend
+      // anything on excerpts. That reservation is what makes the slice always cover this hit's own
+      // identity block, so no emitted hit can lose its header, and the total stays under the cap.
+      int reserved = (prefix[shown] - prefix[i + 1]) + notice.length();
+      int slice = Math.max(0, budget - sb.length() - reserved);
+      appendHit(sb, hits.get(i), identity.get(i), slice);
     }
+    sb.append(notice);
     sb.append(summary);
     return sb.toString();
   }
 
-  /** One hit's block — header, path, carrier lines — or nothing at all when it cannot fit. */
-  private static void appendHit(
-      StringBuilder out, KnowledgeSearchResponse.Hit hit, int index, int budget) {
+  /** The {@code [n] title (score)} + {@code Path:} lines: what identifies a hit at all. */
+  private static String identityBlock(KnowledgeSearchResponse.Hit hit, int index) {
     var fields = hit.fields();
     String title = fields.getOrDefault("title", fields.getOrDefault("filename", "(untitled)"));
     String path = fields.getOrDefault("path", "");
-
     var block = new StringBuilder();
     block.append(String.format("[%d] %s (score: %.2f)%n", index + 1, title, hit.score()));
     if (!path.isEmpty()) {
       block.append(String.format("    Path: %s%n", path));
     }
-    if (block.length() > budget) {
-      // Not even the identity of this hit fits; emitting a half-header would be worse than nothing.
-      return;
-    }
-    int remaining = budget - block.length();
+    return block.toString();
+  }
+
+  /** What the model is told about hits the budget could not carry; empty when none were dropped. */
+  private static String omittedNotice(int omitted) {
+    return omitted <= 0
+        ? ""
+        : String.format("... %d further results omitted (context budget)%n", omitted);
+  }
+
+  /**
+   * One hit's block: its identity lines ALWAYS, then as much carrier text as {@code budget} leaves.
+   * The caller guarantees {@code budget >= identity.length()}, so the excerpt allowance may fall to
+   * zero but the header and path never do.
+   */
+  private static void appendHit(
+      StringBuilder out, KnowledgeSearchResponse.Hit hit, String identity, int budget) {
+    var fields = hit.fields();
+    var block = new StringBuilder(identity);
+    int remaining = Math.max(0, budget - block.length());
 
     // Include excerpt regions up to the per-result budget (backend computes up to 3 regions).
     // The 800-char per-region cap is a secondary guard for large-k queries where the per-result

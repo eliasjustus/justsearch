@@ -135,9 +135,9 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         Presentation.forId(SEARCH_INDEX),
         // Tempdoc 868 §B.4 (from §A.2): `path_prefix` is DECLARED here because this Interface is
         // what AgentOperationEmitter projects to the model (AgentOperationEmitter.toOpenAiTool
-        // reads op.intf().inputs()). SearchTool.execute honours the key (resolve-then-validate
-        // against the indexed roots, SearchTool.validatePathPrefix) and the system prompt
-        // instructs the model to use it, but the
+        // reads op.intf().inputs()). SearchTool.execute honours the key — resolve-then-validate
+        // against the indexed roots, via AgentToolPaths.RootsView#resolveRelative then #validate —
+        // and the system prompt instructs the model to use it, but the
         // in-app delegate could never see it: across 37 recorded runs it was used 0 times. The
         // outward MCP surface (McpToolSurface) already declared it, so external agents had scoping
         // the delegate did not. `mode`/`pipeline` stay undeclared on purpose — they are internal
@@ -146,7 +146,7 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"},"
                 + "\"limit\":{\"type\":\"integer\"},"
                 + "\"path_prefix\":{\"type\":\"string\",\"description\":\"Restrict results to files"
-                + " under this absolute folder path (get it from core_browse_folders)\"}},"
+                + " under this folder, as returned by core_browse_folders.\"}},"
                 + "\"required\":[\"query\"]}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(
@@ -266,19 +266,33 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         // when a folder has no subfolders.
         // Tempdoc 877 §2.1 — max_folders/max_files promoted: BrowseTool.execute honours both, and
         // the truncation message tells the model to "increase max_folders", an instruction it
-        // could not follow while the key was undeclared. The 200 ceiling is stated in the
-        // description but NOT declared as `maximum`, deliberately: this schema is ENFORCED before
-        // dispatch (OperationExecutorImpl -> OperationInputSchemaValidator), while BrowseTool
-        // CLAMPS an over-large value — a `maximum` keyword would turn a harmless over-ask on a
-        // read-only tool into a rejected call. Same reason `limit` on searchIndex() has none.
+        // could not follow while the key was undeclared. They are declared DESCRIPTION-ONLY — no
+        // `type`, no `default` — and the reason is the §3.1(b) rule read correctly:
+        //   · `type` is safe to declare on a key that was ALREADY declared, because the model was
+        //     already being held to that shape. On a NEWLY declared key it is itself a NARROWING:
+        //     `additionalProperties` is unset here, so before this promotion an undeclared
+        //     `max_folders` was simply UNVALIDATED and reached the tool as-is. Adding
+        //     `"type":"integer"` makes `{"max_folders":"50"}` — which small local models emit, and
+        //     which ToolArgs.intArg exists to coerce — a hard BAD_REQUEST at
+        //     OperationExecutorImpl's pre-dispatch validation, before BrowseTool ever runs. The
+        //     narrowing is not hypothetical for the outward surface either: McpToolSurface declares
+        //     `justsearch_browse` with only parent_path + list_files and routes it through
+        //     callOperation("core.browse-folders", ...) — the same validator — so an MCP client is
+        //     shown a schema without these keys while being held to one that types them.
+        //   · No `default`: BrowseTool.DEFAULT_MAX_FOLDERS is config-derived
+        //     (ConfigStore ... agent().browseDefaultMaxFolders()), so a literal in this static,
+        //     model-visible schema states the wrong default on any machine that configured it.
+        // The 200 ceiling rides the description for the same reason it is not a `maximum` keyword:
+        // BrowseTool CLAMPS an over-large value, and a `maximum` would turn a harmless over-ask on
+        // a read-only tool into a rejected call. Same shape as fileOperations() below, whose value
+        // constraints all ride descriptions.
         Interface.of(
             "{\"type\":\"object\",\"properties\":{\"parent_path\":{\"type\":\"string\"},"
                 + "\"list_files\":{\"type\":\"boolean\"},"
-                + "\"max_folders\":{\"type\":\"integer\",\"default\":20,"
-                + "\"description\":\"Maximum folders to return (default 20, capped at 200).\"},"
-                + "\"max_files\":{\"type\":\"integer\",\"default\":20,"
-                + "\"description\":\"Maximum files to return when listing files (default 20,"
-                + " capped at 200).\"}}}",
+                + "\"max_folders\":{\"description\":\"Maximum folders to return;"
+                + " capped at 200 server-side.\"},"
+                + "\"max_files\":{\"description\":\"Maximum files to return when listing files;"
+                + " capped at 200 server-side.\"}}}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(
             RiskTier.LOW,
@@ -354,9 +368,10 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         //     actionable "...exceeds limit of 50. Split into smaller batches."
         // The allowed values and the limit therefore ride the DESCRIPTIONS, which is what the model
         // reads anyway. The limit is INTERPOLATED from the enforcing constant so it has one author;
-        // contrast browseFolders() above, whose 200 is a literal because its default comes from
-        // ConfigStore at class-init and interpolating it would bake one machine's configured value
-        // into a static, model-visible schema.
+        // contrast browseFolders() above, whose 200 has to stay a literal only because the constant
+        // enforcing it (BrowseTool.MAX_MAX_FOLDERS) is private to that tool. Its per-call DEFAULT
+        // is deliberately not stated at all: that one is config-derived, so any literal here would
+        // bake one machine's configured value into a static, model-visible schema.
         Interface.of(
             "{\"type\":\"object\",\"properties\":{\"operations\":{\"type\":\"array\","
                 + "\"description\":\"File operations to execute sequentially, at most "

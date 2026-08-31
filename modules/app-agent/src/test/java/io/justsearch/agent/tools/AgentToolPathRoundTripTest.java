@@ -156,4 +156,48 @@ final class AgentToolPathRoundTripTest {
         "a root-relative destination straight out of browse must not be refused: "
             + result.message());
   }
+
+  @Test
+  @DisplayName("ingest: a root NAME collision must not beat the path that actually exists")
+  void ingestPrefersTheExistingPathOverANameMatchThatMisses() throws IOException {
+    // AgentToolPaths.RootsView#resolveRelative matches the first component against a root NAME and
+    // returns WITHOUT checking the filesystem. Here root "docs" claims the "docs/..." namespace but
+    // holds nothing, while the file really lives under the OTHER root. Returning the name match
+    // unconditionally makes IngestTool report the model's real, correctly-addressed file as
+    // "1 paths skipped"; origin/main probed existence on every arm and ingested it.
+    Path emptyDocsRoot = tempDir.resolve("A").resolve("docs");
+    Path otherRoot = tempDir.resolve("B");
+    Files.createDirectories(emptyDocsRoot);
+    Path realFile = otherRoot.resolve("docs").resolve("x.md");
+    Files.createDirectories(realFile.getParent());
+    Files.writeString(realFile, "the file the model named");
+
+    var accepted = new java.util.ArrayList<Path>();
+    IngestTool.IngestCallback ingest =
+        (files, collection) -> {
+          accepted.addAll(files);
+          return new io.justsearch.app.api.knowledge.KnowledgeIngestResponse(files.size(), null);
+        };
+    IngestTool tool =
+        new IngestTool(
+            ingest,
+            (rootPath, collection, excludeGlobs) ->
+                new io.justsearch.app.api.knowledge.KnowledgeIngestResponse(0, "no scan expected"),
+            () ->
+                List.of(
+                    new BrowseTool.RootInfo(emptyDocsRoot.toString(), "docs"),
+                    new BrowseTool.RootInfo(otherRoot.toString(), "B")));
+
+    OperationResult result = tool.execute("{\"paths\":[\"docs/x.md\"]}");
+
+    assertTrue(result.success(), result.message());
+    assertFalse(
+        result.message().contains("skipped"),
+        "the named file exists under an indexed root; skipping it is the name-collision bug: "
+            + result.message());
+    assertEquals(
+        List.of(realFile.normalize()),
+        accepted,
+        "resolution must fall through a name match that does not exist, to the path that does");
+  }
 }

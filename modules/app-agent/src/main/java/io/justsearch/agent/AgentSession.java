@@ -567,9 +567,9 @@ final class AgentSession {
    *
    * <p><b>Why no {@code included}, and this is the honesty constraint, not a shortcut.</b> There are
    * THREE truncation layers and 849's vocabulary models only the third. Layer 1 is {@code
-   * SearchTool.formatResults}' per-result budget ({@code MAX_TOOL_RESULT_CHARS / hits.size()}),
-   * which clips — or omits outright — a later hit's carrier line while that hit is still minted as a
-   * source from the untruncated {@code structuredData}. Layer 2 is {@code
+   * SearchTool.formatResults}' rendering budget (the whole emitted string sized under {@code
+   * MAX_TOOL_RESULT_CHARS}), which clips — or omits outright — a TAIL hit's carrier line while that
+   * hit is still minted as a source from the untruncated {@code structuredData}. Layer 2 is {@code
    * AgentContextCompressor.truncate}'s hard per-message cut. Neither is visible here. So "this
    * message still carries hit text" cannot mean "THIS source's text reached the model", and stamping
    * {@code included} would fabricate exactly the claim 849 exists to remove.
