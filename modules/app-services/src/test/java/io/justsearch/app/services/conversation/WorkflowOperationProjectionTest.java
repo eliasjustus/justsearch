@@ -19,6 +19,7 @@ import io.justsearch.agent.api.registry.OperationPolicy;
 import io.justsearch.agent.api.registry.OperationRef;
 import io.justsearch.agent.api.registry.Presentation;
 import io.justsearch.agent.api.registry.Provenance;
+import io.justsearch.agent.api.registry.RequiredCapability;
 import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.WorkflowRef;
@@ -56,6 +57,31 @@ final class WorkflowOperationProjectionTest {
             Set.of(),
             false),
         new OperationAvailability(Optional.ofNullable(expression), Optional.empty()),
+        OperationLineage.empty(),
+        Binding.of(id),
+        Provenance.core("1.0"),
+        Set.of(ExecutorTag.AGENT));
+  }
+
+  /**
+   * A referenced operation that declares a {@link RequiredCapability} but NO availability
+   * expression — the shape {@code CapabilityAvailability.withCapabilityDerivedAvailability} would
+   * normally fill in later, over the composed set.
+   */
+  private static Operation stubOpRequiring(OperationRef id, RequiredCapability capability) {
+    return new Operation(
+        id,
+        Presentation.of(new I18nKey("stub.label"), new I18nKey("stub.description")),
+        Interface.of("{\"type\":\"object\"}", "{\"type\":\"object\"}"),
+        new OperationPolicy(
+            RiskTier.LOW,
+            ConfirmStrategy.None.INSTANCE,
+            AuditPolicy.METADATA_ONLY,
+            RetryPolicy.noRetry(),
+            Optional.empty(),
+            Set.of(capability),
+            false),
+        OperationAvailability.empty(),
         OperationLineage.empty(),
         Binding.of(id),
         Provenance.core("1.0"),
@@ -157,5 +183,44 @@ final class WorkflowOperationProjectionTest {
     assertTrue(
         WorkflowOperationProjection.workflowRefFor(new OperationRef("core.restart-worker")).isEmpty(),
         "a normal operation ref is not a projected workflow");
+  }
+
+  @Test
+  void aComposedOperationsRequiredCapabilityIsInheritedAsAvailability() {
+    // Tempdoc 876 C.4 finding 3. A composed op may gate on a CAPABILITY rather than on a hand-written
+    // expression. Relying on the later withCapabilityDerivedAvailability pass cannot cover this: that
+    // pass fills only ops with NO expression, so a projection already carrying a sibling's explicit
+    // expression would silently never receive this one's capability gate — and the workflow would be
+    // offered while the operation it runs is capability-blocked.
+    List<Operation> known =
+        List.of(
+            stubOp(MCP_ADD, new AvailabilityExpression.ConditionMatches("index.unavailable")),
+            stubOpRequiring(MCP_GET_IMAGE, new RequiredCapability.WorkerOnline()));
+
+    List<Operation> projected =
+        WorkflowOperationProjection.project(CoreWorkflowCatalog.catalog(), known);
+
+    Operation demo =
+        byId(projected, DEMO_OP).orElseThrow(() -> new AssertionError("demo-compose must project"));
+    AvailabilityExpression expression =
+        demo.availability()
+            .expression()
+            .orElseThrow(() -> new AssertionError("expected a conjoined availability expression"));
+
+    assertTrue(
+        expression instanceof AvailabilityExpression.AllOf,
+        "two gated steps must conjoin into an AllOf; got " + expression);
+    List<AvailabilityExpression> terms = ((AvailabilityExpression.AllOf) expression).children();
+    assertEquals(2, terms.size(), "both the explicit and the capability-derived term must survive");
+    assertTrue(
+        terms.contains(new AvailabilityExpression.ConditionMatches("index.unavailable")),
+        "the sibling's EXPLICIT expression must survive; got " + terms);
+    assertTrue(
+        terms.contains(
+            new AvailabilityExpression.Not(
+                new AvailabilityExpression.ConditionMatches("worker.capability"))),
+        "the CAPABILITY-derived term must be inherited too — this is the term that was dropped"
+            + " before 876 C.4 finding 3; got "
+            + terms);
   }
 }
