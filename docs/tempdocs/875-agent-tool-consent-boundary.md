@@ -1,6 +1,10 @@
 ---
 title: "875 — Agent-tool consent boundary: grants, containment, undo"
-status: IMPLEMENTING
+status: "IMPLEMENTED (2026-08-31, PR #581) — §C.1–C.6 shipped, independently reviewed (§E, no
+         blockers; S1/S2 refutations fixed). Open items in §C.9: the second ingest surface
+         (KnowledgeSearchController.handleIngest) is still uncontained, OperationExecutorImpl.undo
+         skips the trust gate, and whether an agent-loop approval may mint a durable grant is an
+         open product decision. Not live-verified — the orchestrator owns that phase."
 created: 2026-08-26
 follows: [868, "560 §28", "811 C-2a", "577 §2.14"]
 owner: session f6617483
