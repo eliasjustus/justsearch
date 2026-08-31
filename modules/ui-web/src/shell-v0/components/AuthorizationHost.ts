@@ -271,9 +271,27 @@ export class AuthorizationHost extends JfElement {
     this.requestUpdate();
   }
 
+  /**
+   * Tempdoc 875 C.2 — whether the backend would actually keep an "always allow" promise for this
+   * prompt. `DurableGrantStore.isAllowed` refuses `RiskTier.HIGH` before consulting any grant set, so
+   * a durable grant on a HIGH-risk operation can never satisfy its gate. Offering the checkbox there
+   * would be a control that lies: the user checks it, a grant is minted, and the next invocation
+   * prompts anyway. The control is hidden instead — and `decide` re-applies the rule so the decision
+   * can never carry `allowAlways: true` even if the flag were set by some other path.
+   *
+   * <p>The second clause is the same rule from the other side: a caller whose approval route cannot
+   * carry `allowAlways` at all declares `allowAlwaysSupported: false`, so the checkbox is not
+   * offered rather than rendered and silently dropped.
+   */
+  private static honoursAllowAlways(prompt: AuthorizationPrompt): boolean {
+    return prompt.riskTier !== 'HIGH' && prompt.allowAlwaysSupported !== false;
+  }
+
   private decide(approved: boolean): void {
     const current = this.active;
-    const allowAlways = approved && this.allowAlways;
+    const honoured =
+      current?.kind === 'authorize' ? AuthorizationHost.honoursAllowAlways(current.prompt) : true;
+    const allowAlways = approved && honoured && this.allowAlways;
     this.active = null;
     this.typed = '';
     this.allowAlways = false;
@@ -370,16 +388,18 @@ export class AuthorizationHost extends JfElement {
               }}
             />`
         : ''}
-      <label class="allow-always" data-testid="authorization-allow-always">
-        <input
-          type="checkbox"
-          .checked=${this.allowAlways}
-          @change=${(e: Event) => {
-            this.allowAlways = (e.target as HTMLInputElement).checked;
-          }}
-        />
-        Always allow this action (don't ask again)
-      </label>
+      ${AuthorizationHost.honoursAllowAlways(prompt)
+        ? html`<label class="allow-always" data-testid="authorization-allow-always">
+            <input
+              type="checkbox"
+              .checked=${this.allowAlways}
+              @change=${(e: Event) => {
+                this.allowAlways = (e.target as HTMLInputElement).checked;
+              }}
+            />
+            Always allow this action (don't ask again)
+          </label>`
+        : ''}
       <div class="actions">
         <jf-button class="deny" variant="danger" data-testid="authorization-deny" label="Deny" .onActivate=${() => this.decide(false)}>
           Deny

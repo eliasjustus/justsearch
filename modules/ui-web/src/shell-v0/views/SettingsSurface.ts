@@ -2895,6 +2895,8 @@ export class SettingsSurface extends JfElement {
         <p class="help" style="margin: 0 0 0.5rem">
           "Allow always" approvals the trust gate honors without re-prompting — per operation, or for a
           whole capability family (e.g. <code>file-operations</code>). They persist across restarts.
+          Destructive (high-risk) actions are never covered: they ask every time. Nor is a file action
+          that reaches outside your indexed folders — that one asks, naming the path.
         </p>
         ${this.durableGrants.length === 0
           ? html`<p class="help" style="margin: 0">No durable grants.</p>`

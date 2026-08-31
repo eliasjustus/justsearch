@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.intent;
 
+import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
 import io.justsearch.app.observability.ledger.ActionEvent;
 import io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode;
@@ -32,8 +33,10 @@ import tools.jackson.databind.json.JsonMapper;
  * the two positions of the {@link Grant} model's caveat:
  *
  * <ul>
- *   <li>an <b>operation grant</b> {@code (operationId, sourceTier)} — args-independent allow-always for
- *       exactly one operation (the per-op position);
+ *   <li>an <b>operation grant</b> {@code (operationId, sourceTier)} — allow-always for exactly one
+ *       operation (the per-op position). Args-independent <em>in this store</em> only: the executor
+ *       additionally consults {@link DurableGrantScope}, so a grant does not cover an invocation
+ *       reaching outside the containment it was granted against (tempdoc 875 C.3);
  *   <li>a <b>family grant</b> {@code (capabilityFamily, sourceTier)} — allow-always for every operation
  *       declaring that {@link io.justsearch.agent.api.registry.OperationPolicy#capabilityFamily() family}
  *       (the {@link Grant.CapabilityFamily} position, now realized — wider than one operation). The bare
@@ -43,6 +46,9 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>It is revocable (operation, family, or — for the Global Hard Stop — every non-user grant at once)
  * and audited via the one action-event log.
+ *
+ * <p><b>Risk ceiling (tempdoc 875 C.2).</b> Neither scope can cover a {@link RiskTier#HIGH} operation —
+ * see {@link #isAllowed(String, Optional, RiskTier, SourceTier)}.
  *
  * <p><b>Persistence (560 §28).</b> Grants are persisted to {@code $JUSTSEARCH_HOME/ui/durable-grants.json}
  * so an allow-always survives a restart (previously process-lifetime only — a restart silently dropped
@@ -56,7 +62,12 @@ public final class DurableGrantStore {
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
   static final int CURRENT_SCHEMA_VERSION = 1;
 
-  /** An operation grant: args-independent allow-always for one operation from a source tier. */
+  /**
+   * An operation grant: allow-always for one operation from a source tier. The key is
+   * args-independent because this store answers only "was a grant issued?"; whether the grant
+   * reaches THESE arguments is {@link DurableGrantScope}'s question, asked by the executor
+   * (tempdoc 875 C.3).
+   */
   private record OperationKey(String operationId, SourceTier sourceTier) {}
 
   /** A family grant: allow-always for every operation in a capability family from a source tier. */
@@ -144,9 +155,9 @@ public final class DurableGrantStore {
 
   // ── Gate query ────────────────────────────────────────────────────────────────────────────────────
 
-  /** True if an operation grant covers {@code operationId} from {@code sourceTier} (no family check). */
-  public boolean isAllowed(String operationId, SourceTier sourceTier) {
-    return isAllowed(operationId, Optional.empty(), sourceTier);
+  /** True if an operation grant covers {@code operationId} at {@code risk} from {@code sourceTier}. */
+  public boolean isAllowed(String operationId, RiskTier risk, SourceTier sourceTier) {
+    return isAllowed(operationId, Optional.empty(), risk, sourceTier);
   }
 
   /**
@@ -154,9 +165,28 @@ public final class DurableGrantStore {
    * grant, or (when the operation declares one) a grant for its {@code capabilityFamily}. The executor
    * resolves the family off the operation's policy and passes it here; this is the consumer that makes
    * the {@link Grant.CapabilityFamily} scope real.
+   *
+   * <p><b>Risk ceiling (tempdoc 875 C.2).</b> A durable grant NEVER covers a {@link RiskTier#HIGH}
+   * operation, whatever grant exists — destructive work always costs a fresh, args-bound gesture. This
+   * restores agreement between issuance and enforcement: {@link IntentGateEvaluator#agentGate} already
+   * carries the identical floor on the ISSUANCE side ("HIGH/destructive never auto-fires"), while
+   * enforcement — this store, read by the executor's durable short-circuit — had none, so the two
+   * disagreed. That is exactly the drift class tempdoc 550 thesis III exists to make impossible: ONE
+   * verdict, no second computation that can diverge. The rule lives HERE rather than only at the
+   * executor call-site so a future second consumer cannot re-open it, and so this store's own tests
+   * pin it.
+   *
+   * <p><b>What is preserved.</b> 560 §28 (4d)'s {@code "file-operations"} family axis is untouched: a
+   * family grant still auto-approves {@code core.ingest-files} (MEDIUM). Only the HIGH member
+   * ({@code core.file-operations}) re-prompts — that member was added "so the axis is real", not
+   * because the product wanted blanket destructive approval.
    */
   public boolean isAllowed(
-      String operationId, Optional<String> capabilityFamily, SourceTier sourceTier) {
+      String operationId, Optional<String> capabilityFamily, RiskTier risk, SourceTier sourceTier) {
+    Objects.requireNonNull(risk, "risk");
+    if (risk == RiskTier.HIGH) {
+      return false;
+    }
     if (grantedOps.contains(new OperationKey(operationId, sourceTier))) {
       return true;
     }

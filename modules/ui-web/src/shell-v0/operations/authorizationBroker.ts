@@ -41,6 +41,14 @@ export interface AuthorizationPrompt {
   /** Human rationale / message: why this needs approval. */
   readonly purpose?: string;
   /**
+   * Tempdoc 875 — whether this ceremony's approval route can actually record an "allow always"
+   * durable grant. Absent = yes (the `/api/authorizations/approve` route, which carries
+   * `allowAlways`). The agent tool-call route posts to `/api/chat/{approve,reject}`, which has no
+   * `allowAlways` field, so it passes `false` and the checkbox is not offered rather than rendered
+   * and silently dropped. A control that does nothing is the same defect as a control that lies.
+   */
+  readonly allowAlwaysSupported?: boolean;
+  /**
    * Tempdoc 655 — the calling MCP client's self-reported name (from its `initialize` handshake's
    * `clientInfo`), when this gate fired via MCP. Display-only, transparency-only — absent for a
    * browser-originated gate or an MCP client that omitted `clientInfo`; never used for any trust

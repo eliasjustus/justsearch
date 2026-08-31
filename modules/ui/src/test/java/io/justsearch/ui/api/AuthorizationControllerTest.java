@@ -375,4 +375,102 @@ class AuthorizationControllerTest {
 
     verify(ctx).status(404);
   }
+
+  // ── Tempdoc 875 C.2 — the durable grant's risk ceiling, at the issuance surface ────────────────
+  // The gate already refuses to honour a durable grant on a HIGH-risk operation. These pin the
+  // complementary property: such a grant is not RECORDED either, so the management surface never
+  // lists an active-looking row that can never fire.
+
+  @Test
+  void grantOperation_highRiskOperation_isRefusedAndNotRecorded() {
+    var store = new DurableGrantStore(FIXED_CLOCK);
+    OperationDispatcher dispatcher = mock(OperationDispatcher.class);
+    var controller =
+        new AuthorizationController(
+            capsuleService, pendingStore, store, dispatcher, catalogs, FIXED_CLOCK);
+
+    Context ctx =
+        mockContextWithBody(
+            "{\"kind\":\"OPERATION\",\"target\":\"core.file-operations\",\"sourceTier\":\"UNTRUSTED\"}");
+    controller.handleGrant(ctx);
+
+    verify(ctx).status(400);
+    assertTrue(store.snapshot().isEmpty(), "a HIGH-risk operation grant must not be recorded");
+  }
+
+  @Test
+  void grantOperation_mediumRiskOperation_isStillRecorded() {
+    var store = new DurableGrantStore(FIXED_CLOCK);
+    OperationDispatcher dispatcher = mock(OperationDispatcher.class);
+    var controller =
+        new AuthorizationController(
+            capsuleService, pendingStore, store, dispatcher, catalogs, FIXED_CLOCK);
+
+    Context ctx =
+        mockContextWithBody(
+            "{\"kind\":\"OPERATION\",\"target\":\"core.ingest-files\",\"sourceTier\":\"UNTRUSTED\"}");
+    controller.handleGrant(ctx);
+
+    verify(ctx, never()).status(400);
+    assertEquals(1, store.snapshot().size(), "the MEDIUM sibling is unaffected by the ceiling");
+    assertEquals("core.ingest-files", store.snapshot().get(0).target());
+  }
+
+  @Test
+  void grantFamily_isStillAcceptedEvenThoughTheFamilyHasAHighMember() {
+    // 560 §28's "file-operations" family contains the HIGH core.file-operations. The family grant
+    // stays useful for the family's MEDIUM members, so it is accepted; the ceiling bites per
+    // operation at the gate, not on the family as a whole.
+    var store = new DurableGrantStore(FIXED_CLOCK);
+    OperationDispatcher dispatcher = mock(OperationDispatcher.class);
+    var controller =
+        new AuthorizationController(
+            capsuleService, pendingStore, store, dispatcher, catalogs, FIXED_CLOCK);
+
+    Context ctx =
+        mockContextWithBody(
+            "{\"kind\":\"FAMILY\",\"target\":\"file-operations\",\"sourceTier\":\"UNTRUSTED\"}");
+    controller.handleGrant(ctx);
+
+    verify(ctx, never()).status(400);
+    assertEquals(1, store.snapshot().size());
+    assertEquals(
+        DurableGrantStore.GrantKind.FAMILY, store.snapshot().get(0).kind());
+  }
+
+  @Test
+  void approve_allowAlways_isNotHonouredForAHighRiskOperation() throws Exception {
+    var store = new DurableGrantStore(FIXED_CLOCK);
+    OperationDispatcher dispatcher = mock(OperationDispatcher.class);
+    var controller =
+        new AuthorizationController(
+            capsuleService, pendingStore, store, dispatcher, catalogs, FIXED_CLOCK);
+    String pendingId = createPending("core.file-operations");
+
+    Context ctx =
+        mockContextWithBody("{\"pendingId\":\"" + pendingId + "\",\"allowAlways\":true}");
+    controller.handleApprove(ctx);
+
+    Map<String, Object> body = capturedJson(ctx);
+    assertEquals(Boolean.FALSE, body.get("allowAlways"), "the response must report what was done");
+    assertTrue(store.snapshot().isEmpty(), "no durable grant for a HIGH-risk operation");
+  }
+
+  @Test
+  void approve_allowAlways_isHonouredForAMediumRiskOperation() throws Exception {
+    var store = new DurableGrantStore(FIXED_CLOCK);
+    OperationDispatcher dispatcher = mock(OperationDispatcher.class);
+    var controller =
+        new AuthorizationController(
+            capsuleService, pendingStore, store, dispatcher, catalogs, FIXED_CLOCK);
+    String pendingId = createPending("core.ingest-files");
+
+    Context ctx =
+        mockContextWithBody("{\"pendingId\":\"" + pendingId + "\",\"allowAlways\":true}");
+    controller.handleApprove(ctx);
+
+    Map<String, Object> body = capturedJson(ctx);
+    assertEquals(Boolean.TRUE, body.get("allowAlways"));
+    assertEquals(1, store.snapshot().size());
+  }
 }
