@@ -841,13 +841,19 @@ Not fixed here; recorded where they are acted on rather than in a retired inbox.
    (`.../mcphost/McpHostService.java:141`), so the condition is always true and the hook is
    installed even with zero MCP servers configured. Harmless today; the guard means nothing.
    Pre-existing, unrelated to the offering, left for the MCP-host owner.
-3. **`tmp/agent-orchestration/gradle-locked.sh` can never release its lock** (orchestration
-   scratch, not repo code). It `mkdir`s the lock dir, writes `$LOCK/owner` *inside* it, then
-   releases with `rmdir`, which fails on a non-empty directory with the error swallowed by
-   `2>/dev/null` — so the first build to acquire wedges the shared Gradle lane for every agent
-   permanently. Observed live 2026-08-26 (two workers blocked ~15 min). Reported to the
-   orchestrator; this session used a corrected copy that releases with `rm -rf` and steals a lock
-   whose owner file has not been touched for 45 minutes.
+3. **`tmp/agent-orchestration/gradle-locked.sh` could never release its lock — fixed mid-session,
+   with a lesson.** (Orchestration scratch, not repo code.) v1 `mkdir`ed the lock dir, wrote
+   `$LOCK/owner` *inside* it, then released with `rmdir`, which fails on a non-empty directory with
+   the error swallowed by `2>/dev/null` — so the first build to acquire wedged the shared Gradle
+   lane for every agent permanently. Observed live 2026-08-26: the lane sat dead from 14:35 to
+   15:17 with six agents queued. A v2 landed at 15:20 moving the owner file to the sibling path
+   `gradle.lock.owner` and releasing with `rm -rf`; that is correct and is what this session's
+   later runs used. **The lesson is the mixed-version window, not the original bug:** this session
+   had been running a private corrected copy that still read `$LOCK/owner`, so against a v2 holder
+   it saw an ownerless lock dir and blocked for the full 45-minute steal window — roughly 15
+   wasted minutes. A private fix to shared coordination scaffolding buys a local unblock at the
+   cost of a protocol fork; the shared script is the one to fix, and every agent should then use
+   it.
 
 ### C.4 Independent review — findings and dispositions
 
