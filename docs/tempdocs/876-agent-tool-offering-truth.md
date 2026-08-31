@@ -897,3 +897,41 @@ Additional open item from the review, recorded here rather than fixed:
    `modules/app-inference/src/test/**` case clears or fails to set the `ConfigStore` global should
    restore it in an `@AfterEach`, or the class should set it in `@BeforeEach` rather than inheriting
    another test's. The pin is a dated exception and must be deleted by the PR that fixes it.
+
+### C.5 The W7 coverage boundary moved, and one test encoded the old one
+
+Found by the post-merge full suite (2026-08-26, after merging PR #576 / tempdoc 878).
+`LiveWitnessTest.liveRegistryCoversRuntimeComposedOpsTheStaticSnapshotMisses` asserted that every
+projected `core.workflow-*` op is **absent** from `RegistrySnapshotExporter.buildOperationEntries()`
+— it used those ops as its worked example of the DR-D blind spot. §B.6 deliberately made the
+exporter compose what production composes, which pulls exactly those ops into the static tier, so
+the assertion and the shipped design were in direct contradiction.
+
+Two things are worth recording about how this surfaced and how it was resolved.
+
+**It was not a merge conflict, and the earlier "full suite" had not actually run it.** Main never
+touched this file (`git log 12291828..origin/main -- LiveWitnessTest.java` is empty); the predecessor
+touched only the `composed()` helper, to match the projection's new signature. The failure has been
+latent since W7 landed. The first full-suite run reported only `:modules:app-inference:test FAILED`
+and stopped there — Gradle halts at the first failing task without `--continue`, so
+`:modules:app-services:test` never ran. A red module can therefore mask an arbitrary number of
+later ones, and "the full suite was green except the known pin" is not a safe reading of a run that
+stopped early. That is `subset-isnt-the-suite` arriving through a side door: the command was the
+full suite, but the *execution* was a prefix of it.
+
+**The invariant was kept; only the witness changed.** The test's intent — the live tier catches what
+no static tier can see — is still correct and still valuable. What changed is which contribution
+instantiates it. Projected workflow ops are derivable from a compile-time catalog, so a build *can*
+see them and after §B.6 does. What no build can derive is what a running install actually connects:
+MCP tools and plugin contributions arriving through `ContributionRegistry.install(Installation)`.
+The test now witnesses that, and additionally pins the §B.6 win in the positive direction (those
+workflow ops **must** now be in the static snapshot), so an exporter regression to the static base
+catalogs turns it red. The rewrite therefore has strictly more teeth than the original, and its
+teeth are not assumed: the original assertion is the exact logical inverse of the new one and was
+observed failing, which is the evidence the new assertion tests a real, load-bearing fact rather
+than a tautology.
+
+This is the one place this tempdoc changed a pre-existing test's assertion rather than its naming.
+Recorded explicitly because "the test is probably right and your code is wrong" is the default, and
+departing from it needs a reason in writing: here the test encoded a coverage boundary that the
+tempdoc's own reviewed design moved on purpose, and §B.6 named that move before any test ran.
