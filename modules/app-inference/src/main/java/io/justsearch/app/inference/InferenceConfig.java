@@ -93,7 +93,9 @@ public record InferenceConfig(
    *   <li>JUSTSEARCH_SERVER_EXE - path to llama-server.exe</li>
    *   <li>JUSTSEARCH_MODELS_DIR - directory containing model files</li>
    *   <li>JUSTSEARCH_SERVER_PORT - HTTP port (default: 8080)</li>
-   *   <li>JUSTSEARCH_CONTEXT_SIZE - context window size (default: 4096)</li>
+   *   <li>JUSTSEARCH_CONTEXT_SIZE - context window size (default: 8192, resolved by
+   *       {@code ResolvedConfigBuilder}; the 4096 below is only the floor applied when the
+   *       resolved value is non-positive)</li>
    *   <li>JUSTSEARCH_GPU_LAYERS - GPU layers to offload (default: 0)</li>
    * </ul>
    *
