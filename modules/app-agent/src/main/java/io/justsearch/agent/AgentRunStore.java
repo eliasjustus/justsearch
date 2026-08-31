@@ -201,6 +201,21 @@ public final class AgentRunStore {
     }
   }
 
+  /**
+   * Tempdoc 878 §D.4 — the checkpoint's {@code messages} are WHAT THE MODEL SAW, and this store is
+   * the one that answers that question.
+   *
+   * <p>Two durable records of one run exist and they answer different questions. {@code
+   * events.ndjson} is the record of what each TOOL RETURNED: {@code tool_exec_completed.output}
+   * carries the untruncated result, because the reader is not context-bound. The list below is the
+   * conversation as the loop actually holds it — Layer-2 truncated on append, Layer-3 compressed and
+   * compacted in place — so it is the prompt side of the same run.
+   *
+   * <p>Neither used to say which it was, and the difference is exactly what a reader debugging a
+   * wrong answer needs. The wire now carries {@code outputCharsToModel} so the two are joinable
+   * per tool call; this javadoc is the other half — naming which question each store answers, so a
+   * consumer does not have to infer it from a truncation constant.
+   */
   synchronized void updateCheckpoint(
       String sessionId,
       String state,

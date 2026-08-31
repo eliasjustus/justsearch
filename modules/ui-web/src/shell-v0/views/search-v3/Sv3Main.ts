@@ -268,6 +268,43 @@ function terminalTextItemId(items: readonly Sv3RunFeedItem[]): string | null {
   return null;
 }
 
+/**
+ * Tempdoc 878 §D.1 — did this turn end up with an answer the reader can see?
+ *
+ * The cut-short notice needs it because the step ceiling now ATTEMPTS a synthesis and may or may not
+ * get one, and either sentence is a false statement in the other case.
+ *
+ * It has to ask the same two places the ANSWER is rendered from, which is the whole subtlety: an
+ * agent turn's prose is the run feed's terminal text item, not `turn.answer` — that field is filled
+ * only on the RECORD path (`sv3-record`'s `answers.join`). Reading `turn.answer` alone would report
+ * every live delegate run as answerless and print "before reaching an answer" directly above the
+ * answer the reader is looking at.
+ *
+ * TERMINAL item, not any text item — see {@link hasTerminalText}.
+ */
+function turnHasAnswerText(turn: Sv3Turn, run: Sv3RunView | null): boolean {
+  if (run !== null) return hasTerminalText(run.feed.items);
+  if (turn.answer.trim() !== '') return true;
+  return hasTerminalText(turn.activity);
+}
+
+/**
+ * Does this feed's ANSWER — its terminal text item — carry prose?
+ *
+ * Deliberately not `.some(kind === 'text')`. A run that produced interim prose and then ended
+ * without an answer would satisfy that, and the notice would say "this answer is based on what the
+ * run had gathered" while pointing at a mid-run remark that is not the answer. `terminalTextItemId`
+ * is the same authority both render iterators use to decide which item wears the inline marks, and
+ * for the same reason: the grounding — and the notice — describe the ANSWER, not the transcript.
+ */
+function hasTerminalText(items: readonly Sv3RunFeedItem[]): boolean {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item?.kind === 'text') return item.text.trim() !== '';
+  }
+  return false;
+}
+
 export class Sv3Main extends JfElement {
   static styles = [
     sv3Shared,
@@ -1920,6 +1957,14 @@ export class Sv3Main extends JfElement {
     const live = this.run;
     const run =
       turn.kind === 'agent' && live?.turnId === turn.id && live.phase !== 'ended' ? live : null;
+    // Tempdoc 878 §D.1 — the cut-short notice reads THIS one, not `run`. Same id match, WITHOUT the
+    // phase filter: `run` is deliberately null for an ended run because its feed was attention and
+    // the receipt is what survives, but the feed still holds the answer text. Between the terminal
+    // and the record catching up, asking `run` would find nothing and print "the run used all its
+    // steps before reaching an answer" over an answer the reader just watched stream — and if the
+    // record fetch never lands, permanently. The notice is a claim about the RUN, not about which
+    // half of the window is currently drawing it.
+    const liveForTurn = turn.kind === 'agent' && live?.turnId === turn.id ? live : null;
     // Tempdoc 610 (852 S2) — what the EFFECTIVE context does with this turn. A turn the window has
     // no context frame for renders exactly as it did before the port: nothing about the prompt is
     // claimed for a conversation whose `/history` has not been read.
@@ -1967,7 +2012,7 @@ export class Sv3Main extends JfElement {
                     ></jf-markdown-block>`}
               </div>
             `}
-        ${this.cutShortNotice(turn)}${this.tail(turn)}${this.citations(turn)}
+        ${this.cutShortNotice(turn, liveForTurn)}${this.tail(turn)}${this.citations(turn)}
       </div>
     `;
   }
@@ -1987,8 +2032,12 @@ export class Sv3Main extends JfElement {
    * stopped by the step ceiling with most of its budget unspent named the wrong limit — and the two
    * limits have different remedies.
    */
-  private cutShortNotice(turn: Sv3Turn): TemplateResult | typeof nothing {
-    const notice = sv3CutShortNotice(turn.disposition);
+  private cutShortNotice(turn: Sv3Turn, run: Sv3RunView | null): TemplateResult | typeof nothing {
+    // Tempdoc 878 §D.1 — the step ceiling now attempts a synthesis, so the sentence depends on
+    // whether it produced one. The notice sits directly under the text it qualifies, and saying
+    // "before reaching an answer" above a paragraph of answer is the kind of contradiction the
+    // reader notices immediately. `turnHasAnswerText` asks the same places the answer renders from.
+    const notice = sv3CutShortNotice(turn.disposition, turnHasAnswerText(turn, run));
     if (notice === null) return nothing;
     return html`<p class="cut-short" role="note" data-testid="sv3-turn-cut-short">${notice}</p>`;
   }

@@ -189,4 +189,71 @@ final class AgentToolsOperationCatalogTest {
           () -> "retry declaration changed for " + declaredOp.id().value());
     }
   }
+
+  /**
+   * Tempdoc 878 §D.9 — bind {@code OutputLineage.CORPUS_READERS} to the catalog it describes.
+   *
+   * <p>That set is a private copy of three operation ids, living in {@code app-agent-api} where the
+   * catalog is not visible, and it FAILS OPEN: an id that no longer matches classifies {@code
+   * RUNTIME}, and a runtime-classified output gets no quoting frame on the FE. So both ways of
+   * getting it wrong — renaming an operation, and adding a corpus reader without touching that file
+   * — produce corpus text rendered as the agent's own voice, silently, which is the exact failure
+   * {@code OutputLineage} exists to prevent.
+   *
+   * <p>A copy bound to its authority by a test is not drift; an unbound copy is. Deriving the set
+   * instead would need a "reads the corpus" flag on {@code Operation} that nothing else would use —
+   * structure for a three-element set. This test is the cheaper half of the same guarantee, and it
+   * covers the case a mere existence check would miss: a NEW agent tool must be classified either
+   * way, deliberately, before it can ship.
+   */
+  @Test
+  @DisplayName("878 §D.9 — every agent operation is classified corpus-quoted or runtime, on purpose")
+  void everyAgentOperationIsClassifiedByOutputLineage() {
+    // The agent tools whose OUTPUT is a runtime/computed value, not the user's documents quoted
+    // back. Listing them is the point: a new agent tool fails this test until someone decides.
+    java.util.Set<String> declaredRuntimeReaders =
+        java.util.Set.of(
+            "core.ingest-files",
+            "core.remember",
+            "core.navigate-to-surface",
+            "core.file-operations");
+
+    for (Operation operation : new AgentToolsOperationCatalog().definitions()) {
+      if (!operation.executors().contains(ExecutorTag.AGENT)) {
+        continue;
+      }
+      String id = operation.id().value();
+      boolean corpusReader =
+          io.justsearch.agent.api.registry.OutputLineage.forOperationId(id)
+              == io.justsearch.agent.api.registry.OutputLineage.CORPUS_QUOTED;
+      assertTrue(
+          corpusReader || declaredRuntimeReaders.contains(id),
+          "agent operation '"
+              + id
+              + "' is classified RUNTIME by OutputLineage.forOperationId, but this test does not"
+              + " list it as a deliberate runtime reader. If its output quotes the user's documents,"
+              + " add it to OutputLineage.CORPUS_READERS — otherwise its text renders unframed, as"
+              + " the agent's own words. If it really is a computed value, add it here.");
+    }
+
+    // The other direction, read from the AUTHORITY rather than restated here — a third hand-written
+    // copy of these ids would check nothing. An id in CORPUS_READERS that no operation answers to is
+    // a rename that already broke the classification, and it downgrades silently to RUNTIME.
+    java.util.Set<String> declaredIds =
+        new AgentToolsOperationCatalog()
+            .definitions().stream()
+                .map(o -> o.id().value())
+                .collect(java.util.stream.Collectors.toSet());
+    java.util.Set<String> readers =
+        io.justsearch.agent.api.registry.OutputLineage.corpusReaderIds();
+    assertFalse(readers.isEmpty(), "the authority must actually name some corpus readers");
+    for (String reader : readers) {
+      assertTrue(
+          declaredIds.contains(reader),
+          "OutputLineage.CORPUS_READERS names '"
+              + reader
+              + "', which this catalog no longer declares — the classifier fails OPEN, so the"
+              + " renamed operation's corpus text would render with no quoting frame at all");
+    }
+  }
 }

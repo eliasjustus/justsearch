@@ -53,4 +53,19 @@ public enum OutputLineage {
         ? CORPUS_QUOTED
         : RUNTIME;
   }
+
+  /**
+   * Tempdoc 878 §D.9 — the corpus-reading operation ids, exposed so a test can BIND this copy to the
+   * catalog it describes instead of restating it.
+   *
+   * <p>This set lives here, where the catalog is not visible, and it FAILS OPEN: an id that no
+   * longer matches classifies {@code RUNTIME}, and a runtime-classified output gets no quoting frame
+   * on the FE. So both ways of getting it wrong — renaming an operation, and adding a corpus reader
+   * without touching this file — end in the user's own documents rendered as the agent's own words.
+   * A copy bound to its authority by a test is not drift; an unbound copy is, and a test that
+   * re-declared these three ids to check them would have been a third copy rather than a binding.
+   */
+  public static Set<String> corpusReaderIds() {
+    return CORPUS_READERS;
+  }
 }

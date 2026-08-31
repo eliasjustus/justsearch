@@ -79,6 +79,12 @@ export function recordToolCall(item: UnifiedTurnItem): ToolCall {
         : undefined,
     gateBehavior:
       typeof a.gateBehavior === 'string' ? (a.gateBehavior as ToolCall['gateBehavior']) : undefined,
+    // Tempdoc 878 §D.4 — the model-visibility label, carried onto the record by
+    // `AgentInteractionMapper`'s `tool_exec_completed` case. Absent stays absent: a completion
+    // nobody measured must read as silent on reload, not as "the model got everything". Reading it
+    // here is what keeps ONE card saying the same thing live and reloaded.
+    outputCharsToModel: typeof a.outputCharsToModel === 'number' ? a.outputCharsToModel : undefined,
+    truncatedForModel: typeof a.truncatedForModel === 'boolean' ? a.truncatedForModel : undefined,
   };
 }
 
@@ -448,8 +454,10 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
         : turn.activity.some((entry) => entry.kind === 'tool' || entry.kind === 'note');
     // Tempdoc 865 §7.1 / §7.9 A9 — PLANE AUTHORITY. The terminal is authoritative when it arrived;
     // the per-call deltas fill the gap when it did not. A run that ends without a grounded terminal
-    // — cancelled, errored, MAX_ITERATIONS — establishes real evidence and then has nothing to
-    // report it, which is exactly why the mint moved onto the tool events. The deltas are never
+    // — cancelled, errored (878 §D.1 removed MAX_ITERATIONS from that list: the step ceiling now
+    // finalizes through the grounded seam and carries its evidence) — establishes real evidence and
+    // then has nothing to report it, which is exactly why the mint moved onto the tool events. The
+    // deltas are never
     // ADDED to a terminal that spoke: they are the same set, so accumulating both would double every
     // source and break the positional index the inline marks resolve through.
     //
