@@ -972,3 +972,48 @@ Additional open items:
    `WorkflowToolRunner` has a route for it, so that arm of the §B.5 invariant passes by naming
    convention. The same test injects a mock `DocumentService`, so the one configuration where
    `core.read-document` could be offered with no handler on either path is never exercised.
+
+### C.7 Reconciling with 877 and 879
+
+PRs #583 (877, agent-tool centralisation) and #582 (879, declared-but-inert policy axes) merged on
+top of #576 while this branch was open. Three conflicts; one of them was the genuinely dangerous
+kind and is worth recording as a worked example of the class.
+
+**`AgentToolHandlers` — two correct fixes that are broken together.** 877 §2.10 independently found
+the same defect §B.5 did on one axis — the completion log hand-listed tool names, a second authority
+that drifts the moment a conditional registration is skipped — and fixed it with a
+`register(handlers, registered, ref, handler)` helper that calls `HandlerRegistry.register`
+directly, recording each ref as it goes. That helper **throws on a duplicate**, and it is safe in
+877's tree for exactly one reason: 877 kept the `resolve(SEARCH_INDEX).isPresent()` sentinel that
+returns early from `registerLateBound`. That sentinel is precisely what §B.5 deletes, because one
+ref standing proxy for all of them is what left `core.remember` permanently unhandled.
+
+Every naive resolution regresses something:
+
+| Resolution | Outcome |
+|---|---|
+| Take 877's side | The sentinel returns; `core_remember` is offered and unhandled again — 876's defect, restored. |
+| Take 876's side | The derived log line is lost; the hand-listed names come back — 877's defect, restored. |
+| Take 877's helper onto 876's sentinel-free path | Both paths run, `register` throws on the first ref the eager path already claimed — a **boot failure** neither side would have produced alone. |
+
+Converged instead: 877's call sites and log formatting, with §B.5's skip-if-present folded *into*
+the helper, so a ref already present is a no-op and is not recorded (this call did not add it).
+Both facts survive — the two registration paths compose, and the log still names exactly what this
+call registered. 877's duplicate helper at the file tail, which auto-merged in cleanly, is removed.
+
+This is the `subset-isnt-the-suite` hook's warning arriving for real: the third variant produces a
+clean auto-merge with no marker anywhere, and only running the thing catches it. Note also that git
+*did* flag this hunk — the semantic trap was in how one resolved it, not in whether one noticed it.
+
+**`WorkflowOperationProjection`** — 879 deleted the inert `rateLimit` axis from `OperationPolicy`.
+Kept §B.4's Optional-returning projection and composed availability with 879's shorter constructor;
+the same argument drop applied to four `OperationPolicy` constructions across three test fixtures.
+
+**`docs/22`** — both sides added `core_remember` / `core_navigate_to_surface` rows. Took 877's
+phrasing (it owns the catalog census; its `core_navigate_to_surface` row is also more accurate, naming
+the UI executor) and kept §B.8's paragraph on what else the offering composes.
+
+Verification after reconciliation: `build -x test` green; full suite **8476 tests across 33 modules,
+0 failures, 0 errors**; `check-live-witness`, `runtime-witness`, `operation-surface`,
+`execution-surface`, `register-guard-resolution`, `check-tempdoc-numbers`,
+`expected-state-probe --gate` and `agent-analytics 49/49` all green.
