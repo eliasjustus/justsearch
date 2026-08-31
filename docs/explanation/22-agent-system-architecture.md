@@ -130,6 +130,29 @@ Safety metadata lives with the operation definitions and handlers. Write/destruc
 
 **Offering is authorization.** The emitter withholds operations from the model's tool list for three reasons — audience (admin/operator surfaces), availability (a declared condition is firing), and the request's tool selection. Those filters are not presentation-only: `AgentStepRunner` resolves a model-named tool against the *offered* set, derived from the same `AgentToolEmitter.emit` call rather than recomputed, so a tool that was withheld is refused with a typed rejection instead of dispatched (tempdoc 875). The per-iteration narrowings that steer the model — the handoff-only DECIDING list, the Organizer's first-turn list — are deliberately *not* part of that authority set: steering nudges, authority binds.
 
+### What an operation's declared policy actually decides
+
+`OperationPolicy` is enforced, not advisory — that is the premise of
+[ADR-0030](../decisions/0030-policy-on-operations-vs-mcp-hints.md)'s divergence from MCP's
+"annotations are hints" discipline. Tempdoc 879 closed the gap between that claim and the code, so
+each surviving axis now has a consumer whose behaviour the declaration changes:
+
+| axis | what changes when you change the declaration |
+|---|---|
+| `risk` | the `(SourceTier × RiskTier)` lattice verdict, the agent gate's floors, and whether a durable allow-always grant may satisfy the gate at all — `HIGH` never can (tempdoc 875) |
+| `confirm` | a floor on the agent gate. The lattice still decides the *baseline* verdict from source × risk × the autonomy dial (see `GateBehavior`'s javadoc); the declaration may only tighten it — so an operation declaring `Inline` or `Typed` can force a confirmation the dial would have auto-approved, but can never suppress one the lattice required. An engaged hard stop's `DENY` short-circuits before the floor applies. No `ExecutorTag.AGENT` operation may declare `Typed`: the agent authorization ceremony renders the operation id as the phrase and cannot carry a declared one, so a registry test fails the build rather than letting the phrase be silently substituted at runtime. |
+| `audit` | `NONE` emits no operation-history record; `METADATA_ONLY` emits one. Advisory emission is independent of this and still fires either way |
+| `retry` | whether the agent dispatcher may transparently re-issue the call, and how many times. The axis declares *permission* to replay (hence `RetryPolicy`'s refusal of `allowAutoRetry` without an `idempotencyKey`); the caller's loop supplies the timing |
+| `requiredCapabilities` | the executor's capability gate and the derived availability expression |
+| `undoSupported` / `inverseOperationRef` | the executor's undo path, and the reversibility signal that stops an irreversible MEDIUM write auto-firing under the `AUTO` dial |
+| `capabilityFamily` | which durable allow-always grants cover the operation — bounded by the risk ceiling above and by `DurableGrantScope`, so a family grant never reaches a `HIGH` member or an invocation whose path arguments leave the indexed roots (tempdoc 875) |
+| `advisoryClass` | which typed advisory Resource the completion emits into |
+
+`scripts/ci/check-policy-axis-liveness.mjs` fails the build if an axis loses its consumer, or if an
+`Optional` axis is declared by no operation. There is no opt-out: an axis that cannot pass is wired
+to a real consumer or deleted outright, because a declaration nothing can contradict reads as a
+constraint while being a comment.
+
 ## Query Pre-Processing
 
 Search operations can use backend query helpers before retrieval:

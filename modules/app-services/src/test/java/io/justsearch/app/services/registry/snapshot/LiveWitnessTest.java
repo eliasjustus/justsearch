@@ -31,7 +31,6 @@ import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import io.justsearch.app.services.registry.snapshot.LiveWitness.Orphan;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
@@ -108,7 +107,6 @@ class LiveWitnessTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.METADATA_ONLY,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),

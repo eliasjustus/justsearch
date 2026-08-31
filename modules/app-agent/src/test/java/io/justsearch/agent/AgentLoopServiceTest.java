@@ -2005,7 +2005,7 @@ class AgentLoopServiceTest {
         Interface.of("{\"type\":\"object\",\"properties\":{}}", "{\"type\":\"object\"}"),
         new OperationPolicy(
             RiskTier.LOW, ConfirmStrategy.None.INSTANCE, AuditPolicy.NONE,
-            RetryPolicy.noRetry(), Optional.empty(), Set.of(), false),
+            RetryPolicy.noRetry(), Set.of(), false),
         OperationAvailability.empty(),
         OperationLineage.empty(),
         Binding.of(failingOpId),
@@ -4545,7 +4545,6 @@ class AgentLoopServiceTest {
               ConfirmStrategy.None.INSTANCE,
               AuditPolicy.NONE,
               RetryPolicy.noRetry(),
-              Optional.empty(),
               Set.of(),
               false),
           OperationAvailability.empty(),

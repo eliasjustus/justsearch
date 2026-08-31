@@ -120,7 +120,6 @@ final class AgentOperationEmitterRegressionTest {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),

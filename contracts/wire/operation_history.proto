@@ -27,9 +27,13 @@ message OperationHistoryEntry {
   // compact constructor.
   string actor = 2 [(buf.validate.field).string.min_len = 1];
 
-  // Optional redacted summary of the input payload. Per slice 444b §B.D:
-  // never raw arguments; absent until audit-policy plumbing lands.
-  optional string arguments_summary = 3 [json_name = "argumentsSummary"];
+  // Field 3 (arguments_summary) was removed in tempdoc 879 together with
+  // AuditPolicy.FULL_PAYLOAD. It could only ever be absent: no producer ever
+  // summarised arguments and no consumer read it, so it promised redaction
+  // machinery that did not exist. Reserve the field number + name to prevent
+  // reuse and to keep deserializers that previously accepted it wire-compatible.
+  reserved 3;
+  reserved "arguments_summary", "argumentsSummary";
 
   // ISO-8601 timestamps. Java emits Instant via DateMapping.asString.
   string start_time = 4 [json_name = "startTime", (buf.validate.field).string.min_len = 1];

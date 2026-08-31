@@ -271,7 +271,6 @@ final class ValidatorRunnerTest {
     return Stream.of(
         new RiskAuditValidator(),
         new ConfirmValidator(),
-        new RetryRateLimitValidator(),
         new ExecutorBindingValidator(),
         new NamespacingValidator(),
         // Tempdoc 564 facet 4c: i18n keys are now DERIVED from the operation id by construction

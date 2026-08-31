@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.registry.executor;
 
+import io.justsearch.agent.api.registry.AuditPolicy;
 import io.justsearch.agent.api.registry.ConfirmationRequiredException;
 import io.justsearch.agent.api.registry.GateBehavior;
 import io.justsearch.agent.api.registry.HandlerRegistry;
@@ -387,7 +388,19 @@ public final class OperationExecutorImpl implements OperationDispatcher {
       InvocationProvenance provenance,
       Optional<String> executionId) {
     Instant completedAt = clock.instant();
-    if (historyEmitter != null) {
+    // Tempdoc 879: the declared {@code OperationPolicy.audit} axis is the authority for
+    // whether an invocation is recorded. AuditPolicy.NONE means "no audit record", so the
+    // history entry is suppressed; METADATA_ONLY emits the metadata-shaped entry below
+    // (id / actor / timestamps / outcome / provenance — never arguments).
+    //
+    // WHY this is a scoped guard and NOT an early `return`: the per-Operation advisory
+    // emission below lives inside this same method, and core.ping-backend declares
+    // AuditPolicy.NONE *together with* advisoryClass core.advisory-operation-completed.
+    // An early return here would silently kill the advisory pipeline for its only
+    // NONE-declaring producer. Audit policy governs history retention, not advisory
+    // delivery — keep the suppression wrapped around the historyEmitter block only.
+    boolean auditSuppressed = op.policy().audit() == AuditPolicy.NONE;
+    if (!auditSuppressed && historyEmitter != null) {
       try {
         historyEmitter.accept(
             new OperationHistoryEntry(
@@ -399,9 +412,6 @@ public final class OperationExecutorImpl implements OperationDispatcher {
                 // would be a silent contract change for FE / MCP / audit consumers that
                 // grep on the value.
                 "head",
-                // Slice 444b §B.D: empty until the Operation.policy.audit axis drives
-                // redaction. The previous "(redacted)" literal was uninformative.
-                Optional.empty(),
                 startTime,
                 completedAt,
                 outcome,

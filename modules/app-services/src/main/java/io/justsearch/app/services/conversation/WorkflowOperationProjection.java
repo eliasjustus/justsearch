@@ -81,7 +81,6 @@ public final class WorkflowOperationProjection {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.METADATA_ONLY,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),

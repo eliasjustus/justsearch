@@ -19,6 +19,7 @@ import io.justsearch.agent.api.registry.OperationAvailability;
 import io.justsearch.agent.api.registry.OperationLineage;
 import io.justsearch.agent.api.registry.Presentation;
 import io.justsearch.agent.api.registry.Provenance;
+import io.justsearch.agent.api.registry.ResourceRef;
 import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
 import java.util.List;
@@ -152,7 +153,6 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.autoRetry(2, "core.search-index"),
-            Optional.empty(),
             Set.of(),
             false),
         // Tempdoc 550 Preview face (F3): the first real producer of availability. Search is
@@ -178,9 +178,9 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
    * #searchIndex()} and for the same reason: both are served by the Worker's index, so both are
    * offered only while the index is serving ({@code Not(ConditionMatches("index.unavailable"))} —
    * absence=healthy, re-shown on recovery). Declares {@code noRetry}, matching the intent that a
-   * paged read should not be transparently repeated; note that {@code RetryPolicy} is DECLARATIVE
-   * today — {@code OperationPolicy.retry()} has no reader anywhere in the tree, so nothing
-   * auto-retries any agent tool and this declaration documents intent rather than enforcing it.
+   * paged read should not be transparently repeated — and since tempdoc 879 wired the dispatcher
+   * to this axis, that intent is now enforced: a failed read is surfaced, not silently replayed
+   * behind a different offset.
    *
    * <p>Deliberately absent from the outward MCP surface ({@code McpToolSurface}), and the asymmetry
    * is the point: tempdoc 770 §4 withdrew a `fetch` tool there because an external MCP client is a
@@ -210,7 +210,6 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         new OperationAvailability(
@@ -244,10 +243,13 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
+        // Tempdoc 879: `empty()` here means "the affected thing has no ResourceRef" — remember writes
+        // the MemoryStore, and there is no Resource for agent memory — NOT "nothing is affected".
+        // Those two meanings share one encoding today; minting a Resource just to populate a tooltip
+        // would be the antipattern, so the distinction is recorded here instead.
         OperationLineage.empty(),
         Binding.of(REMEMBER),
         Provenance.core("1.0"),
@@ -270,8 +272,10 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             RiskTier.LOW,
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
+            // A directory listing is idempotent: replaying it observes the filesystem again rather
+            // than changing it, so a transient FS/index hiccup is exactly what auto-retry is for.
+            // Since tempdoc 879 this declaration is what the dispatcher acts on, not decoration.
             RetryPolicy.autoRetry(2, "core.browse-folders"),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
@@ -298,7 +302,6 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
                 ConfirmStrategy.Inline.INSTANCE,
                 AuditPolicy.METADATA_ONLY,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false)
             // Tempdoc 560 §28 (4d): a coherent capability family. A durable allow-always grant for
@@ -310,7 +313,12 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             // ingest still runs, it just costs an approval that names the path (811 C-2a preserved).
             .withCapabilityFamily("file-operations"),
         OperationAvailability.empty(),
-        OperationLineage.empty(),
+        // Tempdoc 879: lineage is not inert — the FE renders `affects` in the operation button and
+        // hover preview — and ingest queues indexing work, so it affects the indexing-jobs Resource
+        // exactly as core.rebuild-index declares. NOT core.indexed-roots: that Resource is the list
+        // of WATCHED roots, changed only by the add/remove-watched-root gestures; ingest dispatches a
+        // one-shot ScanRoot over a path (IngestTool.scanRootCallback) and registers nothing.
+        new OperationLineage(Set.of(new ResourceRef("core.indexing-jobs")), Set.of()),
         Binding.of(INGEST_FILES),
         Provenance.core("1.0"),
         Set.of(ExecutorTag.AGENT));
@@ -329,7 +337,6 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.Inline.INSTANCE,
             AuditPolicy.METADATA_ONLY,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
                 true,
                 Optional.of(new io.justsearch.agent.api.registry.ResourceRef(
@@ -342,6 +349,9 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             // blanket destructive approval — which the product never asked for.
             .withCapabilityFamily("file-operations"),
         OperationAvailability.empty(),
+        // Tempdoc 879: same reading as remember() — `empty()` means "the affected thing has no
+        // ResourceRef" (file-operations mutates the FILE SYSTEM, which is not modelled as a
+        // Resource), not "nothing is affected".
         OperationLineage.empty(),
         Binding.of(FILE_OPERATIONS),
         Provenance.core("1.0"),
@@ -375,7 +385,6 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
