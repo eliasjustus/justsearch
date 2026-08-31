@@ -16,10 +16,4 @@ import java.util.List;
  *     that was wrong (measured: {@code stop} at 35–55 of 1024 completion tokens) and that sent
  *     868 §D.3 chasing the token budget. A terminal that reports a cause must be holding one.
  */
-record LlmCallResult(String textContent, List<ToolCallRequest> toolCalls, String finishReason) {
-
-  /** Result with no runtime-reported finish reason. */
-  LlmCallResult(String textContent, List<ToolCallRequest> toolCalls) {
-    this(textContent, toolCalls, null);
-  }
-}
+record LlmCallResult(String textContent, List<ToolCallRequest> toolCalls, String finishReason) {}

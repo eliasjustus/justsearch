@@ -305,6 +305,65 @@ Verification list: `spotlessApply` → `build -x test` → full `test` → the a
 named in §E. Live end-to-end confirmation of the *fixed* loop is explicitly **not** in this
 agent's reach (see §F).
 
+## §E. What shipped, and what verified it
+
+Shipped (commit `fix(881): recover the tool call the model leaks into its reasoning channel`):
+
+| Plan item | Landed as |
+|---|---|
+| D1/D2 | `LlmCallResult.finishReason`; the stream's terminal callback stores it instead of discarding it (`AgentLlmCaller.java`) |
+| D3 | `ToolSchemas` (name + declared parameter types, projected from the same tool list the loop sends) and the XML grammar in `scanToolCallSpans`; the wrapper span wins over an inner JSON object so no `<tool_call>` husk survives a strip |
+| D4 | `recoverCommittedToolCalls` on the reasoning channel, gated on wrapper + otherwise-empty turn |
+| D5 | `callLlmWithRetries` retries with `enableThinking(false)` |
+| D6 | `AgentStepRunner.emptyResponseMessage(finishReason)`; the "reasoning token exhaustion" string is deleted |
+| D7 | 868 §D.3 and its routed open item annotated as refuted |
+
+**Two things the ArchUnit dead-code gate caught, and what they were worth.** `app-launcher`'s
+`UnreferencedCodeTest` failed with *"Method callLlmWithTools in AgentLlmCaller is never
+referenced"* and *"Method ofNames in ToolSchemas is never referenced"*. Neither was
+gate-noise:
+
+- The sampling-resolving 3-argument `callLlmWithTools` overload really had become dead once D5
+  made `callLlmWithRetries` resolve sampling itself. Deleting it is not tidying — it makes 878
+  review B2's invariant structural: there is now exactly one tool-bearing entry point and it
+  cannot be called without stating its sampling. The retry *needs* different sampling on its
+  second attempt, which the overload could not express.
+- `ToolSchemas.ofNames` was a names-only convenience that existed **only so the pre-existing
+  tests would not have to change** — production-code scaffolding for a test, which is the thing
+  the gate is for. Deleted; those tests now build a real tool payload and go through the same
+  `ToolSchemas.of` projection production uses, which is a better test than it was before.
+
+Verification run:
+
+| Command | Result |
+|---|---|
+| `gradle-locked.sh spotlessApply` | BUILD SUCCESSFUL |
+| `gradle-locked.sh build -x test` (compile + Spotless + PMD) | BUILD SUCCESSFUL in 34s |
+| `gradle-locked.sh :modules:app-agent:test` | BUILD SUCCESSFUL — `AgentLlmCallerTest` 19/0/0/0, `AgentLoopServiceTest` 125/0/0/0 |
+| `gradle-locked.sh :modules:app-launcher:test` | BUILD SUCCESSFUL (the two ArchUnit violations above, fixed) |
+| `gradle-locked.sh test` (full suite) | BUILD FAILED in 10m 27s on **two** classes, both environmental — see below |
+| `node scripts/governance/run.mjs --gate register-guard-resolution --mode gate` | pass |
+| `node scripts/governance/run.mjs --gate hook-integrity --mode gate` | pass |
+
+The two full-suite failures, interrogated rather than waved through:
+
+- `worker-core` `OnnxEmbeddingEncoderLongDocForensicTest.longDocEmbedWithSpansMatchesBaseEmbed`
+  — `TimeoutException` after 30 s. This is **already a dated pin**
+  (`expected-state.v1.json` → `worker-core-onnx-longdoc-forensic-timeout`, added 2026-08-31):
+  load-dependent, and this run had llama-server holding the GPU plus a second worktree holding
+  the Gradle lane, which is exactly the pinned condition. `modules/worker-core` has no
+  dependency on `modules/app-agent` and zero files in this diff.
+- `app-services` `WatchedRootScanCollectionTest$ProductionWireForwarding` — failed at **close**,
+  not at assert (`IOException: Failed to delete temp directory …junit-…`), i.e. every assertion
+  passed and Windows still held the handle. Green on an immediate targeted re-run (3/0/0/0 +
+  1/0/0/0) on the same tree. New dated pin added:
+  `expected-state.v1.json` → `app-services-junit-tempdir-delete-race`.
+
+No pre-merge check in CLAUDE.md's table has this diff's subjects (`modules/app-agent/**`,
+one javadoc line in `modules/app-inference`) — no contracts, SSOT, ui-web, workflow, catalog,
+seam-registered, or surface-registry file is touched; `governance/logic-seams.v1.json` names
+neither changed class.
+
 ## §F. What this slice does NOT do, and what still needs a live pass
 
 **The after-fix end-to-end run is not in this agent's reach, and is not claimed.** The shared

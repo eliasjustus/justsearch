@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.ToolCallRequest;
 import java.util.List;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -19,8 +18,29 @@ import org.junit.jupiter.api.Test;
  */
 class AgentLlmCallerTest {
 
-  private static final AgentLlmCaller.ToolSchemas SEARCH_SCHEMAS =
-      AgentLlmCaller.ToolSchemas.ofNames(Set.of("core_search_index"));
+  /**
+   * A tool payload in the exact shape {@code AgentOperationEmitter.toOpenAiTool} emits and the loop
+   * sends, projected through the same {@code ToolSchemas.of} production uses — so these tests
+   * exercise the real projection rather than a names-only stand-in for it.
+   */
+  private static AgentLlmCaller.ToolSchemas schemasFor(String... names) {
+    List<java.util.Map<String, Object>> tools = new java.util.ArrayList<>();
+    for (String name : names) {
+      tools.add(
+          java.util.Map.of(
+              "type", "function",
+              "function",
+                  java.util.Map.of(
+                      "name", name,
+                      "parameters",
+                          java.util.Map.of(
+                              "type", "object",
+                              "properties", java.util.Map.of()))));
+    }
+    return AgentLlmCaller.ToolSchemas.of(tools);
+  }
+
+  private static final AgentLlmCaller.ToolSchemas SEARCH_SCHEMAS = schemasFor("core_search_index");
 
   /** The EXACT observed leak: two `;`-separated OpenAI-style spans, no structured calls in this turn. */
   @Test
@@ -53,7 +73,7 @@ class AgentLlmCallerTest {
             + "{\"type\":\"function\",\"name\":\"core_search_index\",\"parameters\":"
             + "{\"query\":\"search ranking\",\"limit\":\"10\"}}";
 
-    AgentLlmCaller.RecoveredText rt = AgentLlmCaller.recoverInlineToolCalls(leak, structured, SEARCH);
+    AgentLlmCaller.RecoveredText rt = AgentLlmCaller.recoverInlineToolCalls(leak, structured, SEARCH_SCHEMAS);
 
     assertEquals(1, rt.recovered().size(), "only the non-echo span is recovered");
     assertTrue(rt.recovered().get(0).arguments().contains("search ranking"));
@@ -104,7 +124,7 @@ class AgentLlmCallerTest {
 
     AgentLlmCaller.RecoveredText rt =
         AgentLlmCaller.recoverInlineToolCalls(
-            prose, List.of(), AgentLlmCaller.ToolSchemas.ofNames(Set.of("John", "core_search_index")));
+            prose, List.of(), schemasFor("John", "core_search_index"));
 
     assertTrue(rt.recovered().isEmpty());
     assertEquals(prose, rt.text());

@@ -282,13 +282,16 @@ final class AgentLlmCaller {
         .withEnableThinking(false);
   }
 
-  LlmCallResult callLlmWithTools(
-      AgentSession session,
-      List<Map<String, Object>> tools,
-      Consumer<AgentEvent> eventConsumer) {
-    return callLlmWithTools(session, tools, eventConsumer, resolveAgentSampling(session));
-  }
-
+  /**
+   * The ONE entry point for a tool-bearing LLM call, and sampling is always an argument.
+   *
+   * <p>Tempdoc 881 §C.2 retired the sampling-resolving overload that used to sit here. 878 review B2
+   * had already recorded what implicit resolution costs — a finalize call silently picked up
+   * {@code tool_choice=required} plus a grammar and streamed the raw tool-call blob out as the
+   * answer — and the retry now needs a DIFFERENT sampling on its second attempt than on its first,
+   * which an overload that derives sampling from the session cannot express. With the overload gone
+   * the invariant is structural rather than remembered: no call site can leave sampling implicit.
+   */
   LlmCallResult callLlmWithTools(
       AgentSession session,
       List<Map<String, Object>> tools,
@@ -502,11 +505,6 @@ final class AgentLlmCaller {
    * about the name.
    */
   record ToolSchemas(Set<String> names, Map<String, Map<String, String>> parameterTypes) {
-
-    /** Names only — for callers that have no schema (the JSON grammars carry their own types). */
-    static ToolSchemas ofNames(Set<String> names) {
-      return new ToolSchemas(names, Map.of());
-    }
 
     /** Project the OpenAI-shaped tool list the loop sends: {@code function.name} + parameter types. */
     static ToolSchemas of(List<Map<String, Object>> tools) {
