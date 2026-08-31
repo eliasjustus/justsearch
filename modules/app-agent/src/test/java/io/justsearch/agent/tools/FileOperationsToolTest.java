@@ -37,14 +37,6 @@ class FileOperationsToolTest {
   }
 
   @Test
-  void parameterSchemaPresent() {
-    // Per Phase 12 of tempdoc 429: name/description/safetyLevel/supportsUndo moved to
-    // the AgentToolsOperationCatalog Operation declaration. The undoSupported policy is
-    // verified at the Operation level (FILE_OPERATIONS has undoSupported=true).
-    assertNotNull(FileOperationsTool.parameterSchema());
-  }
-
-  @Test
   void executeMoveWithValidJson() throws IOException {
     Path src = root.resolve("source.txt");
     Files.writeString(src, "data");
@@ -241,17 +233,13 @@ class FileOperationsToolTest {
     assertTrue(result.success(), "Exactly MAX_BATCH_SIZE should succeed: " + result.message());
   }
 
-  @Test
-  void schemaBatchLimitMatchesConstant() throws Exception {
-    var schema =
-        new tools.jackson.databind.ObjectMapper()
-            .readTree(FileOperationsTool.parameterSchema());
-    int schemaMaxItems = schema.get("properties").get("operations").get("maxItems").asInt();
-    assertEquals(
-        FileOperationsTool.MAX_BATCH_SIZE,
-        schemaMaxItems,
-        "Schema maxItems must match MAX_BATCH_SIZE constant");
-  }
+  // Tempdoc 877 §2.1: `schemaBatchLimitMatchesConstant` is gone, not relocated intact. The
+  // tool-local schema constant it asserted against is deleted, and the catalog description that
+  // replaced it INTERPOLATES MAX_BATCH_SIZE — so "the schema states the constant" is true by
+  // construction and cannot be tested. What survives, in AgentToolCatalogContractTest
+  // (app-services), is the falsifiable half: `operations.maxItems == null`, i.e. the limit rides
+  // the description so this tool's own over-size message is the one the model sees. The limit
+  // itself is enforced HERE, by executeBatchSizeLimitExceeded above.
 
   // ===== Undo tests =====
 

@@ -353,6 +353,57 @@ final class ReadDocumentToolTest {
   }
 
   @Test
+  @DisplayName("877 §2.6: a Worker failure is reported as a Worker failure, not as 'not found'")
+  void workerErrorIsNotReportedAsNotFound() {
+    // found=false carries a REASON and the tool used to discard it, so a Worker that answered
+    // "index is rebuilding" told the model the document did not exist — a lie that sends it
+    // browsing for a path that is already correct.
+    var workerFailure =
+        new DocumentService.DocumentSlice(
+            PATH, "", Map.of(), false, false, 0, 0, "index segment unreadable: rebuild in progress");
+    OperationResult result =
+        new ReadDocumentTool(new FakeFetch(workerFailure)).execute("{\"path\":\"" + PATH + "\"}");
+
+    assertFalse(result.success());
+    assertTrue(
+        result.message().contains("index segment unreadable: rebuild in progress"),
+        "the Worker's own reason must reach the model: " + result.message());
+    assertFalse(
+        result.message().startsWith("Document not found in the index"),
+        "a Worker failure must not be relabelled as an absent document: " + result.message());
+  }
+
+  @Test
+  @DisplayName("877 §2.6 + 878: every unreadable-slice branch still names the recovery path")
+  void everyUnreadableBranchNamesTheRecoveryPath() {
+    // 877 and 878 both fixed the discard-the-reason defect, independently and differently. 877
+    // sniffed the reason's CONTENT for absent-markers so the Worker's own "Document not found in
+    // index" prose could keep the not-found message; 878 keyed on the PRESENCE of a reason and
+    // attached the recovery guidance to both branches instead. The merge converged on 878's,
+    // because a discriminator that reads the Worker's wording makes that wording a contract — the
+    // exact coupling this tempdoc exists to remove, and the one 877's own independent reviewer
+    // flagged (§3.4 F9).
+    //
+    // So the assertion is the property the test is NAMED for, not the prefix 877 happened to emit:
+    // whichever branch fires, the model is told which two tools can still find the document. That
+    // now holds for BOTH branches, where 877's wording-keyed version held it for one.
+    for (String reason : new String[] {"Document not found in index", "missing_doc_id", null}) {
+      var slice =
+          new DocumentService.DocumentSlice(PATH, "", Map.of(), false, false, 0, 0, reason);
+      OperationResult result =
+          new ReadDocumentTool(new FakeFetch(slice)).execute("{\"path\":\"" + PATH + "\"}");
+
+      assertFalse(result.success(), "reason=" + reason);
+      assertTrue(
+          result.message().contains("core_browse_folders")
+              && result.message().contains("core_search_index"),
+          "an unreadable slice must always name the recovery path (reason=" + reason + "): "
+              + result.message());
+      assertTrue(result.message().contains(PATH), "reason=" + reason);
+    }
+  }
+
+  @Test
   @DisplayName("868: an indexed document with NO extracted text fails and names the reason — never an empty page")
   void emptyExtractionAtOffsetZeroFails() {
     // The Worker answers found=true with empty content for an extraction dropout (tempdoc 790), so
