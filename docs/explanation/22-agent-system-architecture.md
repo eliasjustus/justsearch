@@ -58,6 +58,38 @@ The loop follows a tool-using ReAct-style flow:
 5. Stop on completion, cancellation, safety limits, budget exhaustion, or unsupported state.
 ```
 
+### Run-honesty invariants
+
+Two invariants bind how a run reports itself. Both are structural: they hold whatever the model
+says, because the model's own text is never the thing that carries them.
+
+**An involuntary terminal owes the run one synthesis attempt.** When the loop walks into a limit —
+the token budget, or the iteration ceiling — it makes one final LLM call with no tools, instructing
+the model to write a partial answer from what it already gathered and to disclose that the run was
+cut short. `AgentLlmCaller` holds one shared obligation block for both, and a per-terminal sentence
+naming the limit that actually fired: a run stopped by the step ceiling routinely has budget to
+spare, so telling it (or the reader) that tokens stopped it is a specific false statement about the
+remedy. The attempt is best-effort — a compact model can decline — so the fail-closed guarantee is
+`AgentEvent.AgentDone.disposition`, which is decided by the call site and written independently of
+the answer text. A *voluntary* terminal owes nothing: a cancelled run is deliberately answerless.
+
+**Every layer that removes information leaves a mark, addressed to a named consumer.** A run has
+two consumers reading two different artifacts — the MODEL reads the prompt, the READER reads the
+wire and the persisted record — and a mark aimed at one is not a mark for the other. The layers and
+their marks:
+
+| Layer | What it removes | The mark it leaves | Consumer |
+|---|---|---|---|
+| Layer-2 per-result cut (`AgentContextCompressor.truncate`) | the tail of one tool output | `[... truncated, N chars omitted]` in the prompt; `outputCharsToModel` / `truncatedForModel` on `tool_exec_completed` | model + reader |
+| Layer-3 strip (`stripSearchExcerpts`) | excerpt and read-page carrier lines | one `Elided:` line naming how much went and that re-calling the tool will not return it | model |
+| Layer-3 compression (`compressToolOutput`) | most of an older tool message | `[compressed-tool-output originalChars=… keptChars=…]` | model |
+| Compaction (`AgentSession.compactOlderTurns`) | whole messages | the dropped calls enter the inclusion ledger, so their sources report `dropped` | reader |
+| A truncating terminal | the rest of the run | `AgentDone.disposition` | reader |
+
+`tool_exec_completed.output` is deliberately the tool's WHOLE answer — the reader is not
+context-bound — with `outputCharsToModel` beside it saying how much reached the prompt. Both keys
+are absent when no emitter measured, and absent means *unknown*, never *nothing was truncated*.
+
 Current defaults are intentionally modest:
 
 | Constant / setting | Current behavior |
@@ -78,23 +110,63 @@ Key classes:
 |-------|------|
 | `OperationCatalog` | Canonical catalog of available operations and metadata. |
 | `OperationDispatcher` | Dispatches operation calls to registered handlers. |
-| `AgentToolEmitter` | Projects catalog operations into model-visible tool definitions. |
+| `AgentToolEmitter` | Projects catalog operations into model-visible tool definitions. `offer(...)` is the one authority on *which* operations the model is shown; `emit(...)` is its wire projection. |
 | `AgentToolsOperationCatalog` | Registers the built-in agent operations in `app-services`. |
 | Operation handlers | Implement concrete behavior under `modules/app-services/.../registry/operations/handlers/`. |
 
 Wire-name projection is deliberate. Dotted operation IDs such as `core.search-index` are projected to model-visible tool names such as `core_search_index`.
 
+### The offering
+
+The set of tools a run puts in front of the model — the *offering* — is produced in exactly one place, `AgentToolEmitter.offer(...)`, by filtering the composed catalog through executor tag, an audience allow-list (`USER`/`AGENT`), the caller's optional tool selection, and each operation's evaluated availability. `GET /api/chat/agent/tools` and the build-time registry snapshot are projections of that same call, not independent re-derivations, so the trust panel and the governance witness cannot disagree with what the model was sent.
+
+Two properties are deliberate:
+
+- **Availability filtering is live, and the reconciliation behind it no longer requires a request.** An operation may declare an availability expression over health conditions (`core.search-index` and `core.read-document` are offered only while the index is serving). Those conditions are reconciled on worker and inference capability transitions as well as on `/api/status`, so a client that never polls is no longer stuck with whatever the last request left behind. It is a second *trigger*, not full coverage: a condition whose only input is the Worker-reported operational view (rather than a capability transition) still moves on the next readiness snapshot, whenever that is taken.
+- **Within a single-agent run the offering grows but never shrinks.** It is re-evaluated each iteration and adopted only when it gained a tool, so a subsystem that recovers mid-run becomes usable, while a tool the model has already been shown never vanishes underneath it. A multi-agent run (one carrying agent profiles) instead re-derives its list per *active profile*, because a handoff is meant to change which tools are on offer; monotonicity there would have to be per-profile and is not yet implemented. The asymmetry is intentional: an offered-but-broken tool returns an error the model can read and adapt to, whereas a withheld tool is not experienced as a missing capability at all — it is experienced as a reason to improvise.
+
+Every offered tool is executable: the offering is a subset of the registered operation handlers, the workflow-runner routes, and the FE-published virtual tools.
+
 Current built-in agent-facing tool names include:
 
 | Tool | Safety | Purpose |
 |------|--------|---------|
-| `core_search_index` | Read-only | Search indexed knowledge. Accepts `path_prefix` to restrict results to an absolute folder path. |
-| `core_read_document` | Read-only | Read one indexed document's extracted text, paged by character offset (`path`, `offset_chars`, `max_chars`). Served by the Worker's `FetchDocumentSlice`, so the readable universe is exactly the indexed corpus and the Head never opens the file. A page is capped below the per-tool-result context cap, and the result names the offset to continue from. |
-| `core_browse_folders` | Read-only | Discover indexed folders and paths. |
-| `core_file_operations` | Write/destructive depending on action | Move, rename, copy, or create directories (`FileOperation.OpType`: MOVE / RENAME / MKDIR / COPY — there is no delete) with approval where required. |
+| `core_search_index` | Read-only | Search indexed knowledge. Accepts `path_prefix` to restrict results to a folder, given as `core_browse_folders` returns it (root-relative or absolute — the tool resolves a relative prefix against the indexed roots before validating it). |
+| `core_read_document` | Read-only | Read one indexed document's extracted text, paged by character offset (`path`, `offset_chars`, `max_chars`). Served by the Worker's `FetchDocumentSlice`, so the readable universe is exactly the indexed corpus and the Head never opens the file. A page is capped below the per-tool-result context cap; the result names the span read, the document's total length when the Worker reports one, and the offset to continue from. One page per document is the declared default — at a small context window, paging one document to the end costs the steps the other documents needed. |
+| `core_browse_folders` | Read-only | Discover indexed folders and paths. Optional `list_files`, `max_folders`, `max_files`. |
+| `core_file_operations` | Destructive | Move, rename, copy, or create directories (`FileOperation.OpType`: MOVE / RENAME / MKDIR / COPY — there is no delete), as a batch with an explanation and a conflict strategy. Requires approval, and the batch is undoable. |
 | `core_ingest_files` | Write | Request ingestion of files or folders. Takes an optional `collection` tag; omitted, a path inherits its containing indexed root's collection, or `mcp-ingest` when it is under no indexed root (tempdoc 811 C-2a). |
+| `core_remember` | Write (low risk, no approval) | Persist a durable fact or user preference to the single-authority memory record, inspectable and forgettable via the Memory surface / `/api/memory`. |
+| `core_navigate_to_surface` | Low risk, no approval | Open a named app surface for the user. Presentation-layer only; also exposed to the UI executor. |
 
-Safety metadata lives with the operation definitions and handlers. Write/destructive operations pause for explicit user approval before execution.
+Beyond the built-ins, the offering also carries anything else composed into the agent partition of the catalog: tools contributed by connected MCP servers, and declared workflows projected onto agent-callable operations (`core.<name>` becomes `core_workflow_<name>`). A projected workflow inherits the availability of the operations it composes, and one whose steps reference an operation the running install does not have is not projected at all — so a workflow is never offered as a tool the model cannot actually run.
+
+Safety metadata lives with the operation definitions and handlers. The approval posture is the operation's `ConfirmStrategy`, not its read/write character: `core_ingest_files` and `core_file_operations` pause for explicit user approval before execution; every other tool above runs unattended.
+
+**Offering is authorization.** The emitter withholds operations from the model's tool list for three reasons — audience (admin/operator surfaces), availability (a declared condition is firing), and the request's tool selection. Those filters are not presentation-only: `AgentStepRunner` resolves a model-named tool against the *offered* set, derived from the same `AgentToolEmitter.emit` call rather than recomputed, so a tool that was withheld is refused with a typed rejection instead of dispatched (tempdoc 875). The per-iteration narrowings that steer the model — the handoff-only DECIDING list, the Organizer's first-turn list — are deliberately *not* part of that authority set: steering nudges, authority binds.
+
+### What an operation's declared policy actually decides
+
+`OperationPolicy` is enforced, not advisory — that is the premise of
+[ADR-0030](../decisions/0030-policy-on-operations-vs-mcp-hints.md)'s divergence from MCP's
+"annotations are hints" discipline. Tempdoc 879 closed the gap between that claim and the code, so
+each surviving axis now has a consumer whose behaviour the declaration changes:
+
+| axis | what changes when you change the declaration |
+|---|---|
+| `risk` | the `(SourceTier × RiskTier)` lattice verdict, the agent gate's floors, and whether a durable allow-always grant may satisfy the gate at all — `HIGH` never can (tempdoc 875) |
+| `confirm` | a floor on the agent gate. The lattice still decides the *baseline* verdict from source × risk × the autonomy dial (see `GateBehavior`'s javadoc); the declaration may only tighten it — so an operation declaring `Inline` or `Typed` can force a confirmation the dial would have auto-approved, but can never suppress one the lattice required. An engaged hard stop's `DENY` short-circuits before the floor applies. No `ExecutorTag.AGENT` operation may declare `Typed`: the agent authorization ceremony renders the operation id as the phrase and cannot carry a declared one, so a registry test fails the build rather than letting the phrase be silently substituted at runtime. |
+| `audit` | `NONE` emits no operation-history record; `METADATA_ONLY` emits one. Advisory emission is independent of this and still fires either way |
+| `retry` | whether the agent dispatcher may transparently re-issue the call, and how many times. The axis declares *permission* to replay (hence `RetryPolicy`'s refusal of `allowAutoRetry` without an `idempotencyKey`); the caller's loop supplies the timing |
+| `requiredCapabilities` | the executor's capability gate and the derived availability expression |
+| `undoSupported` / `inverseOperationRef` | the executor's undo path, and the reversibility signal that stops an irreversible MEDIUM write auto-firing under the `AUTO` dial |
+| `capabilityFamily` | which durable allow-always grants cover the operation — bounded by the risk ceiling above and by `DurableGrantScope`, so a family grant never reaches a `HIGH` member or an invocation whose path arguments leave the indexed roots (tempdoc 875) |
+| `advisoryClass` | which typed advisory Resource the completion emits into |
+
+`scripts/ci/check-policy-axis-liveness.mjs` fails the build if an axis loses its consumer, or if an
+`Optional` axis is declared by no operation. There is no opt-out: an axis that cannot pass is wired
+to a real consumer or deleted outright, because a declaration nothing can contradict reads as a
+constraint while being a comment.
 
 ## Query Pre-Processing
 
@@ -170,7 +242,7 @@ Every action an actor takes — whether the user clicked it, the agent proposed 
 
 **One intent verdict.** `IntentGateEvaluator` (in `app-services`) computes `(sourceTier × riskTier) → gateBehavior`, the lattice, and the Global Hard-Stop state into one `IntentVerdict`. The enforcement chokepoint (`OperationExecutorImpl.enforceTrustLattice`) and the Preview face (`/api/operations/{id}/preview`) read the *same* evaluator instance — the preview is the structural-prediction read of the one verdict (no args/token; args-bound capsule verification stays enforcement-only). A consumer cannot disagree with enforcement because there is one computation.
 
-**One grant model.** A `Grant` is a caveat-bearing, attenuable, revocable token. Two members exist: the single-use, args-bound, short-TTL **consent capsule** (`ConsentCapsuleService`, an HMAC token minted on user approval) and the **durable allow-always grant** (`DurableGrantStore`, keyed `(operationId, sourceTier)`). The autonomy dial is the *issuance policy* (which grants auto-issue per source×risk), and the **Global Hard Stop** is a *global revocation* over all non-user (UNTRUSTED) grants — a user-mediated approval survives an emergency stop. Grant lifecycle is recorded as `Grant` ActionEvents → one audit, one revocation path, one ceremony (`<jf-authorization-host>` on the FE). That one ceremony posts its verdict to **one** backend endpoint — `POST /api/chat/{approve,reject}` (tempdoc 565 §15.C) — which dispatches the agent tool-call gate (`AgentSession.approvalGates`, keyed by `sessionId`+`callId`) → the workflow GateStep/ToolStep gate (`WorkflowGateRegistry`, keyed by `callId`) → 404. "A run is a run" all the way down: the FE no longer branches the approval URL by run shape, and the forked `/api/chat/agent/{approve,reject}` + `/api/chat/workflow/{approve,reject}` routes were retired. The run-substrate differences that remain (session cancel/resume, the autonomy dial) are legitimately agent-only — workflows are stateless/deterministic — so the unification stops at the genuinely-shared *approval* concept.
+**One grant model.** A `Grant` is a caveat-bearing, attenuable, revocable token. Two members exist: the single-use, args-bound, short-TTL **consent capsule** (`ConsentCapsuleService`, an HMAC token minted on user approval) and the **durable allow-always grant** (`DurableGrantStore`, keyed `(operationId, sourceTier)` or `(capabilityFamily, sourceTier)`). A durable grant carries two caveats, because it is a standing consent and may only cover invocations the user could foresee when granting it (tempdoc 875): a **risk ceiling** — it never satisfies a gate on a HIGH-risk operation, so destructive work always costs a fresh args-bound gesture, which is the same floor `IntentGateEvaluator.agentGate` already applies on the issuance side; and an **argument scope** (`DurableGrantScope`) — it never covers an invocation whose path arguments reach outside the indexed roots, so an out-of-root ingest still happens, but behind a confirm that names the path rather than behind a blanket grant. Both caveats are enforced at the one durable short-circuit in `OperationExecutorImpl.enforceTrustLattice`, the only place that knows a confirmation was skipped; the `file-operations` capability family (tempdoc 560 §28) is unchanged and still auto-approves its MEDIUM member. The autonomy dial is the *issuance policy* (which grants auto-issue per source×risk), and the **Global Hard Stop** is a *global revocation* over all non-user (UNTRUSTED) grants — a user-mediated approval survives an emergency stop. Grant lifecycle is recorded as `Grant` ActionEvents → one audit, one revocation path, one ceremony (`<jf-authorization-host>` on the FE). That one ceremony posts its verdict to **one** backend endpoint — `POST /api/chat/{approve,reject}` (tempdoc 565 §15.C) — which dispatches the agent tool-call gate (`AgentSession.approvalGates`, keyed by `sessionId`+`callId`) → the workflow GateStep/ToolStep gate (`WorkflowGateRegistry`, keyed by `callId`) → 404. "A run is a run" all the way down: the FE no longer branches the approval URL by run shape, and the forked `/api/chat/agent/{approve,reject}` + `/api/chat/workflow/{approve,reject}` routes were retired. The run-substrate differences that remain (session cancel/resume, the autonomy dial) are legitimately agent-only — workflows are stateless/deterministic — so the unification stops at the genuinely-shared *approval* concept.
 
 **Structural verification.** Per thesis V, a substrate-shipping change is best treated as "done" only with an independent reviewer (≠ implementer) and live verification, not just compile + unit tests. This was briefly encoded as the `independent-review` discipline gate, since retired (tempdoc 530 §Remediation; the audit-dependent gates were judged not worth their cost) — it remains recommended honor-system practice rather than gate-enforced.
 

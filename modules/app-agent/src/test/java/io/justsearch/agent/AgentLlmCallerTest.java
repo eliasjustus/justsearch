@@ -1,6 +1,7 @@
 package io.justsearch.agent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.ToolCallRequest;
@@ -170,6 +171,44 @@ class AgentLlmCallerTest {
     assertTrue(
         instruction.contains("Do not call any more tools."),
         "the original no-tools constraint survives the rewrite (the finalize call passes no tools)");
+  }
+
+  /**
+   * Tempdoc 878 §D.1 — the step ceiling gets the SAME obligation and a DIFFERENT limit sentence.
+   *
+   * <p>859 D5 recorded what one shared string costs on the FE: a run stopped by the step ceiling
+   * with most of its budget unspent told the reader that tokens had stopped it — a specific false
+   * statement, made where the reader is deciding what to do next. The same argument applies to the
+   * text handed to the MODEL, which is the one that ends up paraphrased in the answer.
+   *
+   * <p>The obligation half must be shared by CONSTRUCTION, not by two copies that happen to agree
+   * today: the four disclosure rules were written for a compact model that declines when it is not
+   * given explicit permission to be partial, and an edit that improved them on one terminal only
+   * would leave the other with the wording 859 §7 watched fail.
+   */
+  @Test
+  void theStepCeilingInstructionSharesTheObligationAndNamesItsOwnLimit() {
+    String budget = AgentLlmCaller.BUDGET_EDGE_FINALIZE_INSTRUCTION;
+    String steps = AgentLlmCaller.STEP_CEILING_FINALIZE_INSTRUCTION;
+
+    assertTrue(steps.contains("step limit"), "the step ceiling names the limit that actually fired");
+    assertFalse(
+        steps.contains("token budget"),
+        "and must NOT mention the token budget: a MAX_ITERATIONS run routinely stops with most of"
+            + " its budget unspent, so naming it would invite the model to state a false cause");
+    assertTrue(
+        budget.contains("token budget") && !budget.contains("step limit"),
+        "and the budget wall keeps naming its own, unchanged");
+
+    int budgetSplit = budget.indexOf(" Write your answer");
+    int stepsSplit = steps.indexOf(" Write your answer");
+    assertTrue(budgetSplit > 0 && stepsSplit > 0, "both instructions carry the obligation block");
+    assertEquals(
+        budget.substring(budgetSplit),
+        steps.substring(stepsSplit),
+        "everything after the limit sentence is IDENTICAL — the obligation is the same, only the"
+            + " reason the run stopped differs, and a future edit to the four rules must not be able"
+            + " to land on one terminal and miss the other");
   }
 
   /**

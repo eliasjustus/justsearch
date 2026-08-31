@@ -10,7 +10,6 @@ import io.justsearch.agent.api.registry.OperationRef;
 import io.justsearch.agent.api.registry.ResourceRef;
 import io.justsearch.agent.api.registry.UIHint;
 import io.justsearch.agent.api.registry.UIOperationView;
-import java.time.Duration;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -107,7 +106,6 @@ public final class UIOperationEmitter implements OperationEmitter {
             confirm,
             op.policy().audit(),
             op.policy().undoSupported(),
-            op.policy().rateLimit().map(Duration::toMillis).orElse(null),
             // Tempdoc 560 WS3: the backend-declared inverse op as a bare OperationRef string, always
             // present (null when none) so the wire field matches the FE `inverseOperationId?`.
             op.policy().inverseOperationRef().map(OperationRef::value).orElse(null));

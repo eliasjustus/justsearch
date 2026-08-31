@@ -10,8 +10,6 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Tempdoc 561 P-E — the agent's learning producer. Handles {@code core.remember}: persists a durable
@@ -21,8 +19,6 @@ import tools.jackson.databind.json.JsonMapper;
  * was learned (the P-E provenance seed).
  */
 public final class RememberFactHandler implements OperationHandler {
-
-  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
   private final MemoryStore memoryStore;
 
@@ -51,7 +47,7 @@ public final class RememberFactHandler implements OperationHandler {
       Map<String, Object> args =
           argumentsJson == null || argumentsJson.isBlank()
               ? Map.of()
-              : MAPPER.readValue(argumentsJson, Map.class);
+              : HandlerJson.MAPPER.readValue(argumentsJson, Map.class);
       Object contentObj = args.get("content");
       String content = contentObj instanceof String s ? s.trim() : "";
       if (content.isEmpty()) {

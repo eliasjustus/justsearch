@@ -72,7 +72,7 @@ final class RunChannelPolicyTest {
   }
 
   @Test
-  @DisplayName("a tool result is evidence only when it carries structuredData, and is keyed per call")
+  @DisplayName("a tool result is evidence only when it carries BULK, and is keyed per call")
   void toolResultsAreEvidenceOnlyWhenBulky() {
     Map<String, Object> bulky = new LinkedHashMap<>();
     bulky.put("callId", "call-7");
@@ -92,11 +92,58 @@ final class RunChannelPolicyTest {
         "keying every tool result latest-wins would COLLAPSE several tool calls into the last one");
   }
 
+  /**
+   * Tempdoc 878 §D.5 — "carries structuredData at all" stopped separating bulk from narrative.
+   *
+   * <p>Since 577, {@code OperationResult.withLineage} stamps a text-provenance classification onto
+   * EVERY successful tool result, so a bare "ok" arrives carrying a key. The discriminator kept
+   * saying yes, and narrative frames began drawing on the evidence slot's separate byte budget —
+   * the budget that exists so one passage-bearing frame cannot evict a whole narrative ring.
+   *
+   * <p>The rule is the inverse of listing the bulk keys, which rots silently the first time a
+   * producer adds one: a CLASSIFICATION stamp is not bulk, and anything else is. That fails in the
+   * visible direction if a new stamp is ever added (it reads as bulk — today's behaviour, so no
+   * regression is possible), rather than in the silent one.
+   */
+  @Test
+  @DisplayName("878 §D.5: a lineage stamp alone is narrative; a grounding delta is evidence")
+  void aClassificationStampIsNotBulk() {
+    Map<String, Object> stampedOnly = new LinkedHashMap<>();
+    stampedOnly.put("callId", "call-9");
+    stampedOnly.put("output", "ok");
+    stampedOnly.put("structuredData", Map.of("lineage", "runtime"));
+
+    assertEquals(
+        Optional.empty(),
+        RunChannelPolicy.evidenceKey(new RunFrame("tool_exec_completed", stampedOnly).asPayload()),
+        "a plain success message does not become evidence by being classified");
+
+    Map<String, Object> grounded = new LinkedHashMap<>();
+    grounded.put("callId", "call-10");
+    grounded.put("structuredData", Map.of("lineage", "corpus-quoted", "grounding", java.util.List.of(Map.of("path", "/a.md"))));
+    assertEquals(
+        Optional.of("tool_exec_completed:call-10"),
+        RunChannelPolicy.evidenceKey(new RunFrame("tool_exec_completed", grounded).asPayload()),
+        "a grounding delta carries the excerpts it established — content, not classification");
+
+    assertFalse(RunChannelPolicy.carriesBulk(Map.of()), "an empty payload carries nothing");
+    assertFalse(RunChannelPolicy.carriesBulk(null), "and neither does an absent one");
+    assertTrue(
+        RunChannelPolicy.carriesBulk(Map.of("searchResults", java.util.List.of())),
+        "an unrecognised key is BULK by default — a new producer key must not silently become"
+            + " narrative, which is what listing the bulk keys instead would have caused");
+  }
+
   @Test
   @DisplayName("evidence keys are per-call, so two bulky tool results do not evict each other")
   void twoBulkyToolResultsKeepDistinctKeys() {
-    Map<String, Object> first = new LinkedHashMap<>(Map.of("callId", "a", "structuredData", Map.of()));
-    Map<String, Object> second = new LinkedHashMap<>(Map.of("callId", "b", "structuredData", Map.of()));
+    // Genuinely bulky fixtures (878 §D.5). These used to carry an EMPTY structuredData and passed
+    // only because the discriminator asked whether the key was present — so the test named "two
+    // bulky tool results" was exercising two results that carried nothing.
+    Map<String, Object> first =
+        new LinkedHashMap<>(Map.of("callId", "a", "structuredData", Map.of("rows", 1)));
+    Map<String, Object> second =
+        new LinkedHashMap<>(Map.of("callId", "b", "structuredData", Map.of("rows", 2)));
 
     assertEquals(
         Optional.of("tool_exec_completed:a"),

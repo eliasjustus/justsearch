@@ -132,7 +132,11 @@ public record SubstrateGraph(
       io.justsearch.app.services.observability.health.LifecycleSnapshotTap lifecycleSnapshotTap,
       io.justsearch.app.services.observability.health.WorkerSnapshotTap workerSnapshotTap,
       io.justsearch.app.services.observability.health.HeadHealthEventsEmitter headHealthEventsEmitter,
-      io.justsearch.app.services.observability.rules.RuleRunner ruleRunner) {}
+      io.justsearch.app.services.observability.rules.RuleRunner ruleRunner,
+      // Tempdoc 876 §B.2a: the non-request trigger that re-runs the readiness snapshot (and hence
+      // every tap above) on a capability transition instead of only on GET /api/status.
+      io.justsearch.app.services.observability.health.ReadinessReconciliationTrigger
+              readinessReconciliationTrigger) {}
 
   /**
    * Diagnostic channel catalogs (core head-log + the composed plugin-contributed channels, tempdoc

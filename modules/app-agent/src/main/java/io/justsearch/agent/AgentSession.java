@@ -145,8 +145,11 @@ final class AgentSession {
   private final AtomicInteger promptTokensConsumed;
   private final AtomicInteger completionTokensConsumed;
   // Tempdoc 859 §D §2.7(c) — the provider-REPORTED size of the latest prompt (the same figure the
-  // `llm_response` budget event carries), which the context-pressure trigger reads instead of the
-  // schema-blind projection. 0 until the first LLM response reports usage.
+  // `llm_response` budget event carries), which the context-pressure trigger reads ALONGSIDE the
+  // projection. It corrects a different error: the projection describes the messages as they stand
+  // now, this describes the last call, so each is stale in the direction the other is not.
+  // (Pre-878 it also stood in for the projection's schema-blindness; §D.6 fixed that at the source.)
+  // 0 until the first LLM response reports usage.
   private final AtomicInteger lastReportedPromptTokens = new AtomicInteger(0);
   // Tempdoc 859 §D §3.2(7) — tokens granted but NOT YET NARRATED. Accumulates (two grants between
   // step boundaries produce one note for the total) and is drained by whichever site observes it
@@ -347,10 +350,10 @@ final class AgentSession {
       String toolCallId, OperationResult result) {
     Map<String, Object> data = result == null ? Map.of() : result.structuredData();
     var delta = new ArrayList<AgentEvent.AgentSource>();
-    if (data.get("searchResults") instanceof List<?> results) {
+    if (data.get(OperationResult.SEARCH_RESULTS_KEY) instanceof List<?> results) {
       contributeSearchSources(toolCallId, results, delta);
     }
-    if (data.get("readResults") instanceof List<?> reads) {
+    if (data.get(OperationResult.READ_RESULTS_KEY) instanceof List<?> reads) {
       contributeReadSources(toolCallId, reads, delta);
     }
     return List.copyOf(delta);
@@ -432,10 +435,17 @@ final class AgentSession {
    * model reads with is usually a path a search result just handed it.
    *
    * <p>A blank excerpt is skipped. A source whose literal text is blank falls back to an index
-   * lookup in {@code DocumentService.matchCitationsAgainst}, with {@code ContextCitation}'s compact
-   * constructor clamping the document-level {@code -1} chunk ordinal to {@code 0} — so a blank
-   * opened source would be silently verified against chunk 0 of some other document, which is
-   * exactly the re-fetch an opened source must never do.
+   * lookup in {@code DocumentService.matchCitationsAgainst} — so an opened source with no literal
+   * would be verified against whatever the index returns for its key rather than against the page
+   * the model was shown, which is exactly the re-fetch an opened source must never do.
+   *
+   * <p>Tempdoc 878 §D.9 corrects the reason this guard used to give. It cited {@code
+   * ContextCitation}'s compact constructor "clamping the document-level {@code -1} chunk ordinal to
+   * {@code 0}", which was true when written and has not been since: {@code
+   * ContextCitation.CHUNK_INDEX_ABSENT} PRESERVES {@code -1} ({@code DocumentService}, the 836 §8.4
+   * fix) precisely so "no chunk position" stops being readable as "the first chunk". The guard is
+   * still right; only its stated cause had gone stale — the more dangerous of the two states,
+   * because a reader checks the reason and not the guard.
    *
    * <p>Read hits are NOT added to {@code groundingSearchHits}: nothing searched, so counting them
    * would inflate a retrieval statistic with documents no ranker ever saw.
@@ -560,16 +570,18 @@ final class AgentSession {
    * per source. So this producer states exactly one thing:
    *
    * <ul>
-   *   <li><b>DROPPED</b> — every tool message that carried this source has lost its {@code Excerpt:}
-   *       lines (or has left the prompt entirely). Its passage text is not in the prompt.
+   *   <li><b>DROPPED</b> — every tool message that carried this source has lost its carrier lines
+   *       (or has left the prompt entirely — tempdoc 878 §D.3 made that second clause true in code;
+   *       until then only the compressor wrote to the ledger and a compacted-away carrier read back
+   *       as ABSENT). Its passage text is not in the prompt.
    *   <li><b>ABSENT</b> — anything else. Say nothing.
    * </ul>
    *
    * <p><b>Why no {@code included}, and this is the honesty constraint, not a shortcut.</b> There are
    * THREE truncation layers and 849's vocabulary models only the third. Layer 1 is {@code
-   * SearchTool.formatResults}' per-result budget ({@code MAX_TOOL_RESULT_CHARS / hits.size()}),
-   * which clips — or omits outright — a later hit's carrier line while that hit is still minted as a
-   * source from the untruncated {@code structuredData}. Layer 2 is {@code
+   * SearchTool.formatResults}' rendering budget (the whole emitted string sized under {@code
+   * MAX_TOOL_RESULT_CHARS}), which clips — or omits outright — a TAIL hit's carrier line while that
+   * hit is still minted as a source from the untruncated {@code structuredData}. Layer 2 is {@code
    * AgentContextCompressor.truncate}'s hard per-message cut. Neither is visible here. So "this
    * message still carries hit text" cannot mean "THIS source's text reached the model", and stamping
    * {@code included} would fabricate exactly the claim 849 exists to remove.
@@ -604,10 +616,11 @@ final class AgentSession {
    * <p><b>Tempdoc 865 §7.1 — this DRAINS an accumulator; it no longer computes one.</b> The mint
    * runs incrementally in {@link #contributeGroundingSources}, once per executed tool call, and each
    * call's delta is stamped onto its own {@code tool_exec_completed} event at the dispatch seam. So
-   * "the run's evidence is what the terminal computed" is a RETIRED model: a cancelled, errored or
-   * iteration-exhausted run keeps everything it established even though it reaches no grounded
-   * terminal and calls this method never. This method's remaining job is to report, at the two
-   * {@code groundedDone} terminals, the same ordered list the deltas already delivered.
+   * "the run's evidence is what the terminal computed" is a RETIRED model: a cancelled or errored
+   * run keeps everything it established even though it reaches no grounded terminal and calls this
+   * method never. This method's remaining job is to report, at the {@code groundedDone} terminals,
+   * the same ordered list the deltas already delivered — THREE of them since tempdoc 878 §D.1 routed
+   * the iteration ceiling through the same seam.
    *
    * <p><b>Tempdoc 865 §7.5 — plus the one thing only a terminal knows.</b> Because it runs at the
    * terminals and nowhere else, this is also where each source's {@code ContextInclusion} is
@@ -915,6 +928,23 @@ final class AgentSession {
       dropEnd++;
     }
     int dropped = dropEnd - start;
+    // Tempdoc 878 §D.3 — REPORT what leaves. `inclusionFor`'s contract already said a source is
+    // dropped when every carrier "has lost its Excerpt: lines (or has left the prompt entirely)",
+    // but only the compressor ever wrote to the ledger, so a source whose carrier was DELETED here
+    // read back as ABSENT — say-nothing — and rendered as ordinary evidence. Deletion is the
+    // stronger removal of the two, and it is recorded at the writer rather than inferred at the
+    // reader, which is how the two halves diverged in the first place.
+    for (Map<String, Object> message : messages.subList(start, dropEnd)) {
+      if ("tool".equals(message.get("role"))
+          && message.get("tool_call_id") instanceof String id
+          && !id.isBlank()) {
+        carriersWithTextRemoved.add(id);
+        // A compaction that dropped a carrier IS an observation about the prompt. Arming here means
+        // the producer's silence is a statement about evidence rather than an artefact of which
+        // passes happened to run.
+        compressionObserved = true;
+      }
+    }
     messages.subList(start, dropEnd).clear();
     return dropped;
   }
@@ -1030,6 +1060,35 @@ final class AgentSession {
   /** Returns true if any executed tool result was successful. */
   boolean hasSuccessfulToolResult() {
     return executedTools.stream().anyMatch(e -> e.result().success());
+  }
+
+  /**
+   * Tempdoc 878 §D.7 — the documents this run OPENED by name, oldest first, deduplicated.
+   *
+   * <p>The finalize instruction requires the model to "name what you had gathered and what you had
+   * not gotten to yet", and until now gave it nothing factual to name it from. This is that fact,
+   * and it is the one this run can actually support.
+   *
+   * <p><b>Why a count of what was opened and not "1 of 3 files."</b> 859 §2.3 asked for
+   * per-document progress in that shape, and the denominator is not recoverable: how many documents
+   * the USER meant lives in their prose, not in anything the loop holds. Stating "1 of 3" would put
+   * a fabricated number on the surface this tempdoc exists to make honest. What the run knows
+   * exactly is which documents it opened — so that is what it says.
+   *
+   * <p>OPENED only, not every source: a search hit was not "gotten to", it was returned. Mixing the
+   * two would let a run that opened nothing claim it had worked through documents.
+   */
+  synchronized List<String> openedDocumentPaths() {
+    var paths = new LinkedHashSet<String>();
+    for (GroundingEntry entry : grounding.values()) {
+      AgentEvent.AgentSource source = entry.source();
+      if (AgentEvent.AgentSource.ACQUISITION_OPENED.equals(source.acquisition())
+          && source.path() != null
+          && !source.path().isBlank()) {
+        paths.add(source.path());
+      }
+    }
+    return List.copyOf(paths);
   }
 
   private static String normalizeArgs(String json) {
@@ -1250,9 +1309,10 @@ final class AgentSession {
       this.promptTokensConsumed.addAndGet(promptTokens);
       this.budgetRemaining.addAndGet(-promptTokens);
       // Tempdoc 859 §D §2.7(c) — remember the PROVIDER-REPORTED prompt size. The context-pressure
-      // trigger used only `countPromptTokens`, which is schema-blind and measured ~40% low (577), so
-      // it could fire after the real prompt already exceeded n_ctx. This is the same figure the
-      // `budget_update` phase `llm_response` puts on the wire, kept for the trigger to read.
+      // trigger used only `countPromptTokens`, which was schema-blind and measured ~40% low (577)
+      // until 878 §D.6 threaded the tool list through it, so it could fire after the real prompt
+      // already exceeded n_ctx. The trigger still reads this, for the staleness axis threading tools
+      // does not touch. Same figure the `budget_update` phase `llm_response` puts on the wire.
       this.lastReportedPromptTokens.set(promptTokens);
     }
     if (completionTokens != null) {

@@ -10,7 +10,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Handler for {@code core.resolve-path-hash} (slice 445 §A.9).
@@ -36,7 +35,6 @@ import tools.jackson.databind.json.JsonMapper;
 public final class ResolvePathHashHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(ResolvePathHashHandler.class);
-  private static final JsonMapper MAPPER = new JsonMapper();
 
   private final Supplier<IndexingService> indexingSupplier;
 
@@ -48,7 +46,7 @@ public final class ResolvePathHashHandler implements OperationHandler {
   public OperationResult execute(String argumentsJson) {
     String pathHash;
     try {
-      JsonNode root = MAPPER.readTree(argumentsJson);
+      JsonNode root = HandlerJson.MAPPER.readTree(argumentsJson);
       JsonNode hashNode = root.get("pathHash");
       if (hashNode == null || hashNode.isNull() || hashNode.asString().isBlank()) {
         return OperationResult.failure("Missing required argument: pathHash");

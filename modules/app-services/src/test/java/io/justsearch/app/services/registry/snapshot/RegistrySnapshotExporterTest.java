@@ -67,6 +67,46 @@ class RegistrySnapshotExporterTest {
   }
 
   @Test
+  void projectedWorkflowToolsLandOnBothSidesOfTheRuntimeWitness() {
+    // Tempdoc 876 B.6: the snapshot is built from the COMPOSED set (base catalogs + projected
+    // core.workflow-* tools), so the projected tools must appear on BOTH sides the runtime-witness
+    // enforcer cross-checks — delivered-but-not-declared fails as phantom-agent-offering, the
+    // reverse as over-claimed-agent-consumer. The equality test above would also catch a one-sided
+    // landing, but only as "two sets differ"; this names what has to be there.
+    String projected = "core.workflow-research-brief";
+    Entry entry =
+        RegistrySnapshotExporter.buildOperationEntries().stream()
+            .filter(e -> e.id().equals(projected))
+            .findFirst()
+            .orElse(null);
+    org.junit.jupiter.api.Assertions.assertNotNull(
+        entry, "the composed operation rows must include the projected workflow tool " + projected);
+    assertTrue(
+        entry.consumers().contains("agent-loop"),
+        "projected workflow tool must merge the agent-loop consumer, got " + entry.consumers());
+    org.junit.jupiter.api.Assertions.assertEquals("AGENT", entry.audience());
+    assertTrue(
+        RegistrySnapshotExporter.agentWitnessDeliveredIds().contains(projected),
+        "the runtime witness must deliver the projected workflow tool");
+    // core.demo-compose composes vendor.mcphost.* ToolSteps and there is no MCP host offline, so it
+    // is correctly NOT projected (tempdoc 876 B.4) — absent from both sides, not half-present.
+    assertFalse(
+        RegistrySnapshotExporter.agentWitnessDeliveredIds().contains("core.workflow-demo-compose"),
+        "core.demo-compose must not be offered when the operations it composes are absent");
+  }
+
+  @Test
+  void workflowManifestAxisStillListsEveryDeclaredWorkflow() {
+    // The projected `operation` rows and the `workflow` Manifest rows are different axes: a workflow
+    // that is not projected as an agent tool is still a first-class workflow a human can run, so the
+    // Manifest axis must keep listing BOTH — narrowing it to the projected ones would silently drop
+    // core.demo-compose from the keystone gate's coverage.
+    List<String> ids = RegistrySnapshotExporter.buildWorkflowEntries().stream().map(Entry::id).toList();
+    assertTrue(ids.contains("core.research-brief"), "workflow axis missing core.research-brief: " + ids);
+    assertTrue(ids.contains("core.demo-compose"), "workflow axis missing core.demo-compose: " + ids);
+  }
+
+  @Test
   void snapshotCoversOperationResourcePromptAndManifestAxes() {
     List<Entry> all = RegistrySnapshotExporter.buildEntries();
     assertTrue(all.stream().anyMatch(e -> e.kind().equals("operation")), "operation axis");

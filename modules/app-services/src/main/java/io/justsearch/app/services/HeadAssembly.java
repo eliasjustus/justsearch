@@ -563,9 +563,9 @@ public final class HeadAssembly implements AutoCloseable {
           .setSampler(io.justsearch.app.services.mcphost.McpSamplingAdapter.of(() -> mcpSamplerAi));
     }
 
-    java.util.Properties registryOperationMessages =
-        io.justsearch.app.services.bootstrap.phases.BootstrapHelpers.loadRegistryOperationMessages();
-    this.operationMessageResolver = key -> registryOperationMessages.getProperty(key, key);
+    java.util.Properties registryMessages =
+        io.justsearch.app.services.bootstrap.phases.BootstrapHelpers.loadRegistryMessages();
+    this.operationMessageResolver = key -> registryMessages.getProperty(key, key);
 
     Supplier<List<String>> agentRootPaths =
         this.knowledgeClient != null
@@ -697,7 +697,9 @@ public final class HeadAssembly implements AutoCloseable {
     this.substrateGraph = assembleSubstrateGraph();
     // Tempdoc 541 §5.2 + fix-pass A.1: wrap the agent-tool late-bind registration in a
     // Memoized<Boolean>. Body invokes AgentToolHandlers.registerLateBound at first resolve;
-    // result is whether registration ran (true) or was skipped (false — idempotence or
+    // result is whether the prerequisites were met (true — including the case where every ref
+    // was already registered, 876 B.5) or not (false — missing worker capability, knowledge
+    // server, or data dir)
     // missing prerequisites). connectKnowledgeServer triggers the resolve when the Worker
     // becomes available; the original symbolic lambdamart-load LAZY entry is replaced by a
     // real "agent-tools-registration" LAZY/PENDING entry that flips to READY via Tier 4's
@@ -776,25 +778,44 @@ public final class HeadAssembly implements AutoCloseable {
     this.memoryStore = memStore;
     this.agentToolsRegistration =
         io.justsearch.app.services.bootstrap.Memoized.of(
-            () ->
-                io.justsearch.app.services.bootstrap.phases.AgentToolHandlers.registerLateBound(
-                    this.substrateOut.operationHandlers(),
-                    this.knowledgeServerBootstrap,
-                    this.knowledgeClient,
-                    this.capabilities.worker(),
-                    this.dataDir,
-                    this.services.worker().indexing(),
-                    this.services.inference().onlineAi(),
-                    this.lambdaMartReranker,
-                    this.agentSearchAdapter,
-                    this.memoryStore,
-                    this.scanProgressRegistry,
-                    scanRollupLedgerOrNull(),
-                    // Tempdoc 868 §B.2: read at RESOLVE time, like indexing() above — the memo body
-                    // runs after connectKnowledgeServer reassembles the graph with the fresh
-                    // Worker-backed services, so capturing a value here would bind the pre-connect
-                    // (index-less) DocumentService.
-                    this.services.worker().documents()));
+            () -> {
+              // Tempdoc 868 §B.2: read at RESOLVE time — the memo body runs after
+              // connectKnowledgeServer reassembles the graph with the fresh Worker-backed services,
+              // so capturing a value at composition time would bind the pre-connect (index-less)
+              // IndexingService / DocumentService.
+              var indexing = this.services.worker().indexing();
+              // Tempdoc 875 C.3: bind the durable-grant argument scope to the LIVE indexed roots,
+              // here — the same resolve-time point that owns the Worker-backed IndexingService, and
+              // the same projection AgentToolFactory.assemble uses for the tools' own roots supplier.
+              // WHY here and not at substrate init: the scope is constructed before the Worker exists.
+              // It fails CLOSED until bound (unbound roots ⇒ containment unprovable ⇒ the gate falls
+              // through to a confirm), so a wiring regression costs a prompt, never a silent grant.
+              var operationOut = this.substrateOut.operationOut();
+              if (operationOut != null && operationOut.durableGrantScope() != null) {
+                operationOut
+                    .durableGrantScope()
+                    .bindIndexedRoots(
+                        () ->
+                            indexing.getWatchedRoots().stream()
+                                .filter(r -> r != null && r.path() != null)
+                                .map(r -> r.path().toAbsolutePath().normalize())
+                                .toList());
+              }
+              return io.justsearch.app.services.bootstrap.phases.AgentToolHandlers.registerLateBound(
+                  this.substrateOut.operationHandlers(),
+                  this.knowledgeServerBootstrap,
+                  this.knowledgeClient,
+                  this.capabilities.worker(),
+                  this.dataDir,
+                  indexing,
+                  this.services.inference().onlineAi(),
+                  this.lambdaMartReranker,
+                  this.agentSearchAdapter,
+                  this.memoryStore,
+                  this.scanProgressRegistry,
+                  scanRollupLedgerOrNull(),
+                  this.services.worker().documents());
+            });
     bootTraceBuilder.record(
         io.justsearch.app.services.bootstrap.PhaseRecord.lazyPending(
             "agent-tools-registration",
@@ -1062,8 +1083,25 @@ public final class HeadAssembly implements AutoCloseable {
   private final java.util.List<io.justsearch.agent.api.encryption.StoreDescriptor> authoredStores =
       new java.util.concurrent.CopyOnWriteArrayList<>();
 
-  /** Register an AUTHORED store descriptor (called at each store's construction; assembly-time only). */
+  /**
+   * Register an AUTHORED store descriptor (called at each store's construction; assembly-time only).
+   *
+   * <p>Tempdoc 879: the registration list and {@link
+   * io.justsearch.agent.api.encryption.StoreCatalog#isAuthored()} were two independent answers to the
+   * same question — the catalog named the authority, the list did the enumerating, and nothing made
+   * the list ask. It asks here, so a DERIVED store enrolled in the encrypted backup fails at assembly
+   * instead of silently widening what the backup claims to protect.
+   */
   public void registerAuthoredStore(io.justsearch.agent.api.encryption.StoreDescriptor descriptor) {
+    java.util.Objects.requireNonNull(descriptor, "descriptor");
+    if (!descriptor.store().isAuthored()) {
+      throw new IllegalArgumentException(
+          "StoreCatalog."
+              + descriptor.store().name()
+              + " is "
+              + descriptor.store().recoverability()
+              + ", not AUTHORED; it cannot be registered as an authored store.");
+    }
     this.authoredStores.add(descriptor);
   }
 
@@ -1248,7 +1286,9 @@ public final class HeadAssembly implements AutoCloseable {
     // (worker not yet available), caching a premature false so the agent's server-side tools
     // were NEVER registered ("No handler registered for binding core.search-index"). Resolve
     // only when the worker is available (caching success, never a premature false) and forward
-    // later transitions. registerLateBound is idempotent (skips if SEARCH_INDEX present).
+    // later transitions. registerLateBound is idempotent PER REF (tempdoc 876 §B.5): a ref the
+    // eager path already registered is left alone, so the two paths compose. It no longer
+    // short-circuits the whole call on SEARCH_INDEX standing proxy for the rest.
     if (localCap != null && localCap.available()) {
       this.agentToolsRegistration.get();
     } else if (localCap != null) {
@@ -1337,6 +1377,15 @@ public final class HeadAssembly implements AutoCloseable {
         substrateOut.operationOut().scanRollupLedger().close();
       } catch (RuntimeException e) {
         log.warn("Failed to close ScanRollupLedger", e);
+      }
+    }
+    // Tempdoc 876 §B.2a: stop the readiness-reconciliation daemon thread (same precedent as the
+    // sweeper above — a substrate-owned thread is torn down with the substrate).
+    if (substrateOut != null && substrateOut.healthOut() != null) {
+      try {
+        substrateOut.healthOut().readinessReconciliationTrigger().close();
+      } catch (RuntimeException e) {
+        log.warn("Failed to close ReadinessReconciliationTrigger", e);
       }
     }
     io.justsearch.app.services.bootstrap.OrchestrationHandles handles = this.orchestration;

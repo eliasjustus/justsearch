@@ -344,8 +344,8 @@ describe('865 PR-0 — the record replays "the grounding pass did not complete"'
  * Tempdoc 865 §7.1 / §7.9 A9 — PLANE AUTHORITY on the record, and the unhappy terminals it saves.
  *
  * A delegate run that ends without an answer writes NO persisted assistant row (863 §4.A.5), so the
- * store plane has no carrier at all — and `AgentDone.ofDisposition` carries an empty source list by
- * contract, so the run plane has nothing either. Everything the run drew on used to die there. The
+ * store plane has no carrier at all — and an answerless terminal carries an empty source list, so
+ * the run plane has nothing either. Everything the run drew on used to die there. The
  * per-call deltas stamped onto each `tool_exec_completed` are what survives, and the mapper already
  * copies `structuredData` onto the record event verbatim.
  *

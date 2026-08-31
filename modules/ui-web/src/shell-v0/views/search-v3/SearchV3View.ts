@@ -2871,21 +2871,26 @@ export class SearchV3View extends JfElement {
       ctrl.answerEvidenceRunId === ctrl.sessionId;
     // Tempdoc 865 §7.1 / §7.9 A9 — PLANE AUTHORITY. The terminal is authoritative when it MADE A
     // GROUNDING CLAIM; the per-call deltas fill the gap when it did not. A run that ends without a
-    // grounded terminal — cancelled, errored, MAX_ITERATIONS — establishes real evidence and then
-    // has nothing to report it, which is exactly why the mint moved onto the tool events. The deltas
-    // are never ADDED to a terminal that spoke: they are the same set, so accumulating both would
-    // double every source and break the positional index the inline marks resolve through.
+    // grounded terminal — cancelled, errored — establishes real evidence and then has nothing to
+    // report it, which is exactly why the mint moved onto the tool events. The deltas are never
+    // ADDED to a terminal that spoke: they are the same set, so accumulating both would double every
+    // source and break the positional index the inline marks resolve through.
     //
     // OWNERSHIP IS NOT A CLAIM, and separating the two is the whole correctness of this gate.
     // `terminalBelongsToThisRun` answers "whose evidence is this" — it stays exactly as it was, and
-    // the disposition write below still reads it, because a MAX_ITERATIONS run must keep saying it
-    // was cut short. But `AgentDone.ofDisposition` DOES emit a `done`, its payload always carries a
-    // `sources` key (`AgentEventPayloads` puts it unconditionally), and `onDone` writes
-    // `answerEvidenceRunId` unconditionally — so ownership alone is TRUE for the very terminals that
-    // report nothing, and an empty terminal would win over the deltas that hold the run's real
-    // evidence. The extra clause is the record plane's own rule, mirrored: `AgentInteractionMapper`
-    // attaches `sources` only `&& !srcs.isEmpty()`. Two planes, one test for "this terminal said
-    // something about grounding".
+    // the disposition write below still reads it, because a cut-short run must keep saying so. But
+    // an answerless terminal still emits a `done` whose payload always carries a `sources` key
+    // (`AgentEventPayloads` puts it unconditionally), and `onDone` writes `answerEvidenceRunId`
+    // unconditionally — so ownership alone is TRUE for a terminal that reports nothing, and an empty
+    // terminal would win over the deltas that hold the run's real evidence. The extra clause is the
+    // record plane's own rule, mirrored: `AgentInteractionMapper` attaches `sources` only
+    // `&& !srcs.isEmpty()`. Two planes, one test for "this terminal said something about grounding".
+    //
+    // Tempdoc 878 §D.1 — MAX_ITERATIONS has LEFT that list. The step ceiling now finalizes through
+    // the same grounded seam as every other terminal, so it carries its evidence and this gate
+    // simply resolves TRUE for it. Nothing here changes: the gate always asked what the terminal
+    // said, never which disposition it wore, which is why the behaviour follows the backend fix
+    // without an edit.
     const terminalMadeAGroundingClaim =
       terminalBelongsToThisRun && ctrl !== null && ctrl.answerSources.length > 0;
     if (terminalMadeAGroundingClaim) {

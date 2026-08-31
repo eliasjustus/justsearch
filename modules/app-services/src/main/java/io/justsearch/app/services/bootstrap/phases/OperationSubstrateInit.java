@@ -31,6 +31,7 @@ import io.justsearch.agent.api.registry.ConsentCapsuleAuthority;
 import io.justsearch.app.services.intent.ConsentCapsuleService;
 import io.justsearch.app.services.intent.CoreTrustEvaluator;
 import io.justsearch.app.services.registry.executor.OperationExecutorImpl;
+import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import io.justsearch.app.services.registry.operations.handlers.NavigateToSurfaceHandler;
 import java.time.Clock;
@@ -87,6 +88,9 @@ public final class OperationSubstrateInit {
       io.justsearch.app.services.intent.IntentGateEvaluator intentGateEvaluator,
       // Tempdoc 550 thesis IV: durable allow-always grants, exposed for the approve endpoint.
       io.justsearch.app.services.intent.DurableGrantStore durableGrantStore,
+      // Tempdoc 875 C.3: the argument scope bounding those grants, exposed so HeadAssembly can bind
+      // the live indexed-root supplier once the Worker-backed IndexingService exists.
+      io.justsearch.app.services.intent.IndexedRootGrantScope durableGrantScope,
       // Tempdoc 655: shared across REST (OperationsController/AuthorizationController) and MCP
       // (McpToolSurface) so a gate fired from either transport creates a pending record either
       // caller's approve endpoint can consume — one store, not two independently-wired copies.
@@ -261,8 +265,15 @@ public final class OperationSubstrateInit {
             authorizationOutcomeStore::append);
     operationExecutorImpl.setGlobalHardStop(globalHardStop);
     // Tempdoc 550 thesis IV: the gate consults the durable allow-always grants before requiring a
-    // fresh capsule.
-    operationExecutorImpl.setDurableGrantStore(durableGrantStore);
+    // fresh capsule. Tempdoc 875 C.3: paired with the argument scope that bounds them — the wiring
+    // API requires both, so grants can never be installed without a containment answer. The scope
+    // governs `core.ingest-files` (the one agent tool that takes filesystem paths as arguments); the
+    // governed set is injected so the scope carries no catalog knowledge. It stays UNBOUND (⇒ every
+    // governed invocation confirms) until HeadAssembly binds the live indexed roots.
+    io.justsearch.app.services.intent.IndexedRootGrantScope durableGrantScope =
+        new io.justsearch.app.services.intent.IndexedRootGrantScope(
+            java.util.Set.of(AgentToolsOperationCatalog.INGEST_FILES));
+    operationExecutorImpl.setDurableGrantStore(durableGrantStore, durableGrantScope);
     // Tempdoc 550 thesis III: expose the executor's ONE intent-gate evaluator (built from the same
     // TrustEvaluator + IntentSourceCatalog, with the hard stop now forwarded) so the Preview
     // endpoint reads the SAME instance — preview and enforcement cannot drift.
@@ -317,6 +328,7 @@ public final class OperationSubstrateInit {
         globalHardStop,
         intentGateEvaluator,
         durableGrantStore,
+        durableGrantScope,
         pendingAuthorizationStore,
         pendingAuthorizationChangeRegistry);
   }

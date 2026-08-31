@@ -1233,9 +1233,10 @@ class AgentLoopServiceTest {
    * holds BY CONSTRUCTION; this test exists precisely because a later refactor could re-derive
    * either side independently and nothing else would notice.
    *
-   * <p>SCOPED to the two {@code groundedDone} terminals ({@code COMPLETED},
-   * {@code BUDGET_EDGE_FINALIZE}) — see {@link #maxIterationsTerminal_keepsTheEvidenceItEstablished}
-   * for why {@code ofDisposition} is exempt rather than fixed.
+   * <p>Tempdoc 878 §D.1 — this used to be SCOPED to two terminals, because the max-iterations
+   * ceiling emitted through an ungrounded factory that could not carry sources. The ceiling now
+   * finalizes through {@code groundedDone} like the other two, so the property covers all THREE
+   * dispositions; {@link #maxIterationsTerminal_carriesTheEvidenceItEstablished} asserts it there.
    */
   @Test
   @DisplayName("865 §7.1 A5: on a COMPLETED terminal the concatenated deltas equal done.sources(), in order")
@@ -1262,7 +1263,7 @@ class AgentLoopServiceTest {
     assertEquals(
         TerminalDisposition.COMPLETED.name(),
         done.disposition(),
-        "this fixture must exercise a groundedDone terminal, not ofDisposition");
+        "this fixture must exercise the COMPLETED terminal specifically");
     assertEquals(
         List.of("d1", "d2", "d3"),
         done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList());
@@ -1325,21 +1326,27 @@ class AgentLoopServiceTest {
   }
 
   /**
-   * Tempdoc 865 §7.1 / §3.8b — the sharpest unhappy terminal. A run that exhausts its iterations
-   * emits {@code AgentDone.ofDisposition}, whose sources are a hardcoded {@code List.of()}, yet the
-   * evidence it established is intact on the tool events that delivered it.
+   * Tempdoc 865 §7.1 / §3.8b, extended by 878 §D.1 — the sharpest unhappy terminal.
    *
-   * <p>{@code ofDisposition} is EXEMPT from terminal equivalence by construction, and deliberately
-   * not "fixed": its canonical constructor takes {@code List} arguments and {@code
-   * AgentGroundingSeamAuditTest}'s discriminator is a {@code java.util.List} SIGNATURE SUBSTRING, so
-   * draining the accumulator there would trip the grounding-seam audit for a reason that has nothing
-   * to do with grounding (which is the whole reason the delegating factory exists). Under this
-   * design it no longer needs to: the empty list stops being a loss and becomes the true statement
-   * "this terminal makes no grounding claim".
+   * <p>865 could only assert that the run's evidence survived on the TOOL events, because the
+   * ceiling emitted {@code AgentDone.ofDisposition} — an ungrounded factory whose sources were a
+   * hardcoded {@code List.of()}. It was exempt from terminal equivalence by construction: the
+   * canonical constructor takes {@code List} arguments and {@code AgentGroundingSeamAuditTest}'s
+   * discriminator is a {@code java.util.List} SIGNATURE SUBSTRING, so draining the accumulator there
+   * would have tripped the grounding-seam audit for a reason unrelated to grounding.
+   *
+   * <p>878 §D.1 removed the exemption's cause rather than the exemption: the ceiling finalizes
+   * through {@code AgentStepRunner.groundedDone}, so it carries the evidence like every other
+   * terminal, and the factory is deleted. This test therefore asserts the STRONGER property — the
+   * terminal's sources ARE the concatenated deltas — where it used to assert their absence.
+   *
+   * <p>The finalize call here fails (the script is exhausted), which is deliberate: it pins the
+   * FAIL-OPEN half. An unanswerable ceiling still lands on an empty answer stamped {@code
+   * MAX_ITERATIONS}, exactly the behaviour this replaced, and still carries its evidence.
    */
   @Test
-  @DisplayName("865 §7.1: a MAX_ITERATIONS run keeps the evidence it established (the terminal claims none)")
-  void maxIterationsTerminal_keepsTheEvidenceItEstablished() {
+  @DisplayName("878 §D.1: a MAX_ITERATIONS terminal carries the evidence it established (865 §7.1 equivalence, third disposition)")
+  void maxIterationsTerminal_carriesTheEvidenceItEstablished() {
     var ai =
         new ScriptedAiService(
             List.of(
@@ -1357,14 +1364,186 @@ class AgentLoopServiceTest {
     var done = lastEventOfType(events, AgentEvent.AgentDone.class);
     assertNotNull(done);
     assertEquals(TerminalDisposition.MAX_ITERATIONS.name(), done.disposition());
-    assertTrue(
-        done.sources().isEmpty(),
-        "ofDisposition makes no grounding claim — that is its contract, not a regression");
+    assertEquals(
+        "",
+        done.finalResponse(),
+        "the finalize attempt failed (script exhausted), so the terminal is answerless — the"
+            + " fail-open floor is byte-for-byte the pre-878 behaviour, never worse");
     assertEquals(
         List.of("d1", "d2", "d3"),
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
+        "878 §D.1: the ceiling terminal now CARRIES the run's evidence. RED BEFORE: ofDisposition"
+            + " hardcoded an empty list, so a reader reloading this run saw a terminal that claimed"
+            + " nothing while the deltas said otherwise.");
+    assertEquals(
+        done.sources().stream().map(AgentEvent.AgentSource::parentDocId).toList(),
         deltaDocIds(events),
-        "RED BEFORE 865: the run's evidence died with the terminal that could not carry it."
-            + " GREEN AFTER: the deltas already rode the tool events, so the whole set survives.");
+        "and terminal equivalence (865 §7.1 A5) now covers this disposition too — same members,"
+            + " same order, so a sentence cite's sourceIndex resolves correctly here as well");
+  }
+
+  /**
+   * Tempdoc 878 review B2 — a NO-TOOLS finalize must never inherit a TOOL-FORCING sampling profile.
+   *
+   * <p>{@code attemptFinalize} used the 3-argument {@code callLlmWithTools}, which resolves sampling
+   * from the SESSION via {@code resolveAgentSampling}. In the E0a forced-tool state that returns
+   * {@code tool_choice=required} PLUS {@code TOOL_CALL_GRAMMAR} — and the server applies a grammar
+   * exactly when the tools list is empty, which it always is for a finalize. The model would be
+   * CONSTRAINED to emit {@code <tool_call>{…}</tool_call>} with no tools to call, and
+   * {@code recoverInlineToolCalls} cannot strip it (its name set is empty when tools is empty), so
+   * the raw JSON blob streams out as the ANSWER of a truncated run.
+   *
+   * <p>Reachable, not theoretical: {@code recordHandoff} zeroes {@code agentIterationsSinceHandoff}
+   * and the counter only increments AFTER the LLM call, so a handoff on the last allowed iteration
+   * leaves the session forced when the loop falls through to the ceiling.
+   *
+   * <p>The budget wall never met this because its outer gate excludes forced-tool turns for an
+   * unrelated reason. Asserted here at the FINALIZE, because that is where the fix lives: a no-tools
+   * call pins its own unconstrained profile instead of every call site remembering a guard.
+   */
+  @Test
+  @DisplayName("878 B2: the ceiling finalize is never grammar-constrained, even from a forced-tool session")
+  void theFinalizeNeverInheritsATellingToolForcingProfile() {
+    var session = new AgentSession(new ArrayList<>(userMessage("q")), 8000);
+    // E0a: a handoff to a non-primary agent, whose very next turn is forced to call a tool.
+    session.recordHandoff("primary", "organizer", "delegating the ingest");
+    assertTrue(
+        AgentTurnPolicy.shouldForceToolCall(session),
+        "precondition: this session IS in the forced-tool state, or the test proves nothing");
+    var forced = AgentLlmCaller.resolveAgentSampling(session);
+    assertEquals(
+        "required",
+        forced.toolChoice(),
+        "precondition: session-resolved sampling really does force a tool call here — this is the"
+            + " half a reader cannot check by reading attemptFinalize");
+    assertNotNull(forced.grammar(), "and really does carry the tool-call grammar");
+
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("Partial answer.")));
+    new AgentLlmCaller(ai, AgentTelemetry.noop(), new AgentContextCompressor(true, 200, 1))
+        .attemptStepCeilingFinalize(session, event -> {});
+
+    assertEquals(1, ai.recordedSampling.size(), "the finalize made exactly one call");
+    var used = ai.recordedSampling.get(0);
+    assertNull(
+        used.grammar(),
+        "RED BEFORE the B2 fix: the finalize resolved sampling from the session and inherited"
+            + " TOOL_CALL_GRAMMAR, so the model was constrained to emit a <tool_call> blob with no"
+            + " tools to call — machine syntax presented as the run's answer");
+    assertNotEquals(
+        "required",
+        used.toolChoice(),
+        "and it must not force a tool choice either: there are no tools in this call to choose");
+    assertTrue(ai.recordedTools.get(0).isEmpty(), "the finalize is a no-tools call by construction");
+  }
+
+  /**
+   * Tempdoc 878 review B1 — the END-TO-END measurement, through the real Layer-2 cut.
+   *
+   * <p>The two unit-level tests hand-pass a count, so neither could see that the PRODUCER was
+   * measuring the wrong string: {@code AgentContextCompressor.truncate} returns the prefix plus a
+   * {@code [... truncated, N chars omitted]} marker, and measuring its return value reported ~35
+   * characters MORE than the model received. This runs a real over-cap tool result through the real
+   * loop and asserts the relationship that must hold — the count is what the prompt got, and it is
+   * a fraction of what the tool returned.
+   */
+  @Test
+  @DisplayName("878 B1: an over-cap tool result reports the chars the PROMPT got, not the marker's length")
+  void anOverCapToolResultReportsWhatThePromptActuallyGot() {
+    String bigOutput = "y".repeat(9000);
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.textOnly("done")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, bigOutput));
+
+    var events = run(service, userMessage("big result"), 4);
+
+    var completed =
+        events.stream()
+            .filter(AgentEvent.ToolExecutionCompleted.class::isInstance)
+            .map(AgentEvent.ToolExecutionCompleted.class::cast)
+            .filter(e -> "call_1".equals(e.callId()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no completion for call_1"));
+
+    assertEquals(
+        bigOutput.length(),
+        completed.result().message().length(),
+        "`output` on the wire stays the tool's WHOLE answer — the reader is not context-bound");
+    assertTrue(
+        completed.outputCharsToModel() < bigOutput.length(),
+        "and the model got strictly less: "
+            + completed.outputCharsToModel()
+            + " vs "
+            + bigOutput.length());
+    assertEquals(
+        AgentContextCompressor.MAX_TOOL_RESULT_CHARS,
+        completed.outputCharsToModel(),
+        "RED BEFORE the B1 fix: the producer measured truncate()'s RETURN, which carries the"
+            + " `[... truncated, N chars omitted]` marker, so it reported ~35 chars more than the"
+            + " prompt received — a number larger than the output for a small overflow, which"
+            + " inverted truncatedForModel into a measured 'the model got all of it'");
+    assertTrue(completed.truncatedForModel(), "and the derived flag agrees with the count");
+  }
+
+  /**
+   * Tempdoc 878 §D.1 — the ceiling ATTEMPTS synthesis, and the attempt is a real no-tools LLM call.
+   *
+   * <p>The defect: {@code AgentLoopService} emitted an empty answer and returned, so a run that had
+   * done all its work and hit the step ceiling threw that work away. The budget wall has always made
+   * this call; the ceiling never did.
+   *
+   * <p>The assertions are split deliberately. That a THIRD call happened, with NO tools and the
+   * step-limit instruction, is the structural claim — it is what "attempted synthesis" means and it
+   * cannot be talked out of. That the returned text reaches the terminal is the visible consequence.
+   * What is NOT claimed anywhere: that a real model produces useful text here (859 §7 watched one
+   * decline). The disposition is asserted independently for exactly that reason.
+   */
+  @Test
+  @DisplayName("878 §D.1: the iteration ceiling makes one no-tools finalize call and its answer reaches the terminal")
+  void maxIterationsTerminal_attemptsFinalizeAndCarriesItsAnswer() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}"),
+                ScriptedResponse.textOnly("Partial: I found d1 and d2 but ran out of steps.")));
+    var service =
+        buildService(
+            ai,
+            new StubTool("search", RiskTier.LOW, "r")
+                .returningStructuredData(List.of(searchEvidence("d1", "d2"))));
+
+    var events = run(service, userMessage("loop"), 2);
+
+    assertEquals(
+        3,
+        ai.recordedTools.size(),
+        "two iterations plus ONE finalize call — the ceiling no longer stops without asking");
+    assertTrue(
+        ai.recordedTools.get(2).isEmpty(),
+        "the finalize call passes NO tools: it is a synthesis turn, not another step");
+    List<Map<String, Object>> finalizePrompt = ai.recordedMessages.get(2);
+    String lastUserMessage =
+        String.valueOf(finalizePrompt.get(finalizePrompt.size() - 1).get("content"));
+    assertTrue(
+        lastUserMessage.startsWith(AgentLlmCaller.STEP_CEILING_FINALIZE_INSTRUCTION),
+        "and it names the STEP limit, not the token budget — 859 D5's rule (a run stopped by the"
+            + " ceiling with budget to spare must not be told tokens stopped it) applied to the"
+            + " text handed to the MODEL, not only to the FE notice");
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done);
+    assertEquals(
+        "Partial: I found d1 and d2 but ran out of steps.",
+        done.finalResponse(),
+        "RED BEFORE 878: the ceiling emitted \"\" with no LLM call at all, so 8/8 recorded"
+            + " MAX_ITERATIONS runs answered nothing despite having done the work");
+    assertEquals(
+        TerminalDisposition.MAX_ITERATIONS.name(),
+        done.disposition(),
+        "the truncation stays disclosed: a partial answer does not make this a COMPLETED run");
   }
 
   /**
@@ -1485,6 +1664,30 @@ class AgentLoopServiceTest {
     assertNotNull(
         lastEventOfType(events, AgentEvent.ToolCallVirtual.class),
         "the vop_ branch must have been taken");
+
+    // Tempdoc 878 §D.5 — the virtual channel's result carries a text-provenance stamp, like the
+    // synchronous channel's has since 577. RED BEFORE: this seam skipped `withLineage` entirely, and
+    // the FE's fail-open default (unknown ⇒ runtime ⇒ no frame) rendered the result exactly as an
+    // unstamped one, so nothing downstream could tell "classified runtime" from "never classified".
+    var virtualCompletion =
+        events.stream()
+            .filter(AgentEvent.ToolExecutionCompleted.class::isInstance)
+            .map(AgentEvent.ToolExecutionCompleted.class::cast)
+            .filter(e -> "call_v".equals(e.callId()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no completion for the virtual call"));
+    assertEquals(
+        io.justsearch.agent.api.registry.OutputLineage.RUNTIME.wireToken(),
+        virtualCompletion.result().structuredData().get(OperationResult.LINEAGE_KEY),
+        "a vop_ tool's output is a runtime value by classification — which is a DIFFERENT fact from"
+            + " being unclassified, even though the two render identically");
+
+    // And the same seam reports what the model received (878 §D.4).
+    assertEquals(
+        "opened".length(),
+        virtualCompletion.outputCharsToModel(),
+        "the virtual seam measures too — a measurement present at some seams and absent at others"
+            + " leaves the FE unable to tell 'not truncated' from 'not measured'");
   }
 
   /**
@@ -1802,7 +2005,7 @@ class AgentLoopServiceTest {
         Interface.of("{\"type\":\"object\",\"properties\":{}}", "{\"type\":\"object\"}"),
         new OperationPolicy(
             RiskTier.LOW, ConfirmStrategy.None.INSTANCE, AuditPolicy.NONE,
-            RetryPolicy.noRetry(), Optional.empty(), Set.of(), false),
+            RetryPolicy.noRetry(), Set.of(), false),
         OperationAvailability.empty(),
         OperationLineage.empty(),
         Binding.of(failingOpId),
@@ -2911,10 +3114,16 @@ class AgentLoopServiceTest {
   @Test
   @DisplayName("859 §D T4 — hitting the iteration ceiling declares MAX_ITERATIONS")
   void iterationCeilingDeclaresItsDisposition() {
-    // The other truncating terminal, and the one where the model CANNOT disclose even in principle:
-    // it produces no answer text at all. Closing this in the same PR is the point — the FE derives
-    // cut-short from both values, so leaving one unstamped would leave the same hole under a
+    // The other truncating terminal. Closing this in the same PR was the point — the FE derives
+    // cut-short from both values, so leaving one unstamped would have left the same hole under a
     // different name.
+    //
+    // Tempdoc 878 §D.1 — this used to say the ceiling "produces no answer text at all", and the
+    // empty-response assertion below rested on that. It no longer does: the ceiling now makes one
+    // no-tools synthesis call. THIS FIXTURE deliberately exercises the ANSWERLESS arm — the
+    // two-response script is exhausted by the time the finalize runs, so the call fails and the
+    // terminal falls back to exactly the pre-878 behaviour. That is the fail-open floor, and
+    // asserting it here is what keeps the floor from silently rising.
     var ai =
         new ScriptedAiService(
             List.of(
@@ -2924,7 +3133,11 @@ class AgentLoopServiceTest {
     var done = lastEventOfType(events, AgentEvent.AgentDone.class);
     assertNotNull(done, "the ceiling terminal still emits a done");
     assertEquals("MAX_ITERATIONS", done.disposition());
-    assertEquals("", done.finalResponse(), "with no answer text for the model to disclose in");
+    assertEquals(
+        "",
+        done.finalResponse(),
+        "the finalize could not run (script exhausted), so the terminal is answerless — and the"
+            + " disposition is stamped anyway, which is the whole fail-closed guarantee");
   }
 
   // ---------------------------------------------------------------------------
@@ -3374,7 +3587,9 @@ class AgentLoopServiceTest {
    * observer; a test double for evict-on-throw + bounded replay would be a reimplementation of the
    * exact mechanism the attach and park tests exist to pin.
    */
-  private static AgentLoopService observed(AgentLoopService service) {
+  // Package-private (tempdoc 875 Move 3): AgentToolAuthorityBoundaryTest reuses this harness
+  // rather than standing up a parallel one.
+  static AgentLoopService observed(AgentLoopService service) {
     service.setRunObservation(
         new io.justsearch.app.observability.stream.run.RunChannelObservation(
             new io.justsearch.app.observability.stream.run.RunChannelRegistry()));
@@ -3575,6 +3790,225 @@ class AgentLoopServiceTest {
 
   private static String getToolFunctionName(Map<String, Object> tool) {
     return ((Map<String, Object>) tool.get("function")).get("name").toString();
+  }
+
+  // ===========================================================================
+  // Tempdoc 876 §B.2b — the offering re-evaluates within a run, monotonically
+  // ===========================================================================
+
+  @Test
+  @DisplayName("876 B.2b: a tool that becomes available mid-run reaches the model")
+  void offeringGrowsMidRun_newToolIsAdopted() {
+    var search = new StubTool("search", RiskTier.LOW, "hit");
+    var read = new StubTool("read_document", RiskTier.LOW, "text");
+    var ai =
+        new ScriptedAiService(
+            ScriptedResponse.toolCall("c1", "core_search", "{}"),
+            ScriptedResponse.textOnly("done"));
+    // Iteration 1 sees only core_search; by iteration 2 the backend behind core_read_document has
+    // recovered (this is the Worker-restart-mid-run case the once-per-run emit could never see).
+    var emitter =
+        new ScriptedOfferingEmitter(
+            List.of(Set.of("core_search"), Set.of("core_search", "core_read_document")));
+    var service = serviceWithEmitter(ai, emitter, search, read);
+
+    run(service, userMessage("Read the file"), 5);
+
+    assertEquals(2, ai.recordedTools.size(), "expected a two-iteration run");
+    assertTrue(
+        emitter.emitCalls.get() >= 2,
+        // Tempdoc 875 added a SECOND emit consumer — AgentStepRunner authorizes a tool call
+        // against offeredWireNames(), which projects emit(). So the exact total is now a
+        // function of another workstream's dispatch checks, not of this one's re-evaluation.
+        // A LOWER BOUND still witnesses what 876 B.2b is about: 1 would mean the offering was
+        // sampled once per run. What the model actually saw each iteration is asserted below,
+        // and that is the sharper check.
+        "the offering must be re-evaluated per iteration, not sampled once per run; emits="
+            + emitter.emitCalls.get());
+    assertEquals(List.of("core_search"), toolNamesOf(ai.recordedTools.get(0)),
+        "iteration 1 sees the t=0 offering");
+    assertEquals(
+        List.of("core_search", "core_read_document"),
+        toolNamesOf(ai.recordedTools.get(1)),
+        "iteration 2 must see the recovered tool, in catalog order");
+    // Wholesale replacement, not an append: EVERY entry comes from ONE fresh emit. An append would
+    // leave core_search stamped with the FIRST emit's sequence number while the newcomer carried a
+    // later one, so a mixed list is the failure this detects.
+    //
+    // Asserted as "all equal, and later than iteration 1's" rather than "== 2": tempdoc 875 added a
+    // second emit consumer (AgentStepRunner authorizes a tool call through offeredWireNames, which
+    // projects emit), so the adopting emit's ordinal is no longer a fixed number. The invariant —
+    // one emit produced the whole list — is what this is about, and it is now stated directly.
+    Object firstSeq = ai.recordedTools.get(0).get(0).get(ScriptedOfferingEmitter.EMIT_SEQ);
+    Object adoptedSeq = ai.recordedTools.get(1).get(0).get(ScriptedOfferingEmitter.EMIT_SEQ);
+    assertNotEquals(
+        firstSeq, adoptedSeq, "iteration 2 must be served by a LATER emit than iteration 1");
+    for (Map<String, Object> tool : ai.recordedTools.get(1)) {
+      assertEquals(
+          adoptedSeq,
+          tool.get(ScriptedOfferingEmitter.EMIT_SEQ),
+          "adoption replaces the whole list from one emit: " + getToolFunctionName(tool));
+    }
+  }
+
+  @Test
+  @DisplayName("876 B.2b: a tool that becomes unavailable mid-run does NOT disappear")
+  void offeringShrinksMidRun_toolStaysOffered() {
+    var search = new StubTool("search", RiskTier.LOW, "hit");
+    var read = new StubTool("read_document", RiskTier.LOW, "text");
+    var ai =
+        new ScriptedAiService(
+            ScriptedResponse.toolCall("c1", "core_read_document", "{}"),
+            ScriptedResponse.textOnly("done"));
+    // The backend behind core_read_document goes down after iteration 1 — the model has already
+    // been shown (and called) that tool, so withdrawing it would only invite improvisation.
+    var emitter =
+        new ScriptedOfferingEmitter(
+            List.of(Set.of("core_search", "core_read_document"), Set.of("core_search")));
+    var service = serviceWithEmitter(ai, emitter, search, read);
+
+    run(service, userMessage("Read the file"), 5);
+
+    assertEquals(2, ai.recordedTools.size(), "expected a two-iteration run");
+    assertTrue(
+        emitter.emitCalls.get() >= 2,
+        // Tempdoc 875 added a SECOND emit consumer — AgentStepRunner authorizes a tool call
+        // against offeredWireNames(), which projects emit(). So the exact total is now a
+        // function of another workstream's dispatch checks, not of this one's re-evaluation.
+        // A LOWER BOUND still witnesses what 876 B.2b is about: 1 would mean the offering was
+        // sampled once per run. What the model actually saw each iteration is asserted below,
+        // and that is the sharper check.
+        "the offering must still be re-evaluated; emits=" + emitter.emitCalls.get());
+    // Right-reason guard: the second emit really did drop the tool — the test is not passing
+    // because the emitter kept offering it.
+    assertEquals(
+        List.of("core_search"),
+        emitter.emittedNames.get(1),
+        "the second emit must be the shrunken one");
+    assertEquals(
+        List.of("core_search", "core_read_document"),
+        toolNamesOf(ai.recordedTools.get(1)),
+        "a shrunken offering must not be adopted");
+    for (Map<String, Object> tool : ai.recordedTools.get(1)) {
+      assertEquals(
+          Integer.valueOf(1),
+          tool.get(ScriptedOfferingEmitter.EMIT_SEQ),
+          "the run keeps the list it already had: " + getToolFunctionName(tool));
+    }
+  }
+
+  @Test
+  @DisplayName("876 B.2b: an unchanged offering is re-evaluated but not churned")
+  void offeringUnchangedMidRun_listIsNotChurned() {
+    var search = new StubTool("search", RiskTier.LOW, "hit");
+    var read = new StubTool("read_document", RiskTier.LOW, "text");
+    var ai =
+        new ScriptedAiService(
+            ScriptedResponse.toolCall("c1", "core_search", "{}"),
+            ScriptedResponse.textOnly("done"));
+    // One entry ⇒ every call sees the same set.
+    var emitter =
+        new ScriptedOfferingEmitter(List.of(Set.of("core_search", "core_read_document")));
+    var service = serviceWithEmitter(ai, emitter, search, read);
+
+    run(service, userMessage("Search"), 5);
+
+    assertEquals(2, ai.recordedTools.size(), "expected a two-iteration run");
+    assertTrue(
+        emitter.emitCalls.get() >= 2,
+        // Tempdoc 875 added a SECOND emit consumer — AgentStepRunner authorizes a tool call
+        // against offeredWireNames(), which projects emit(). So the exact total is now a
+        // function of another workstream's dispatch checks, not of this one's re-evaluation.
+        // A LOWER BOUND still witnesses what 876 B.2b is about: 1 would mean the offering was
+        // sampled once per run. What the model actually saw each iteration is asserted below,
+        // and that is the sharper check.
+        "the offering is re-evaluated every iteration; emits=" + emitter.emitCalls.get());
+    assertEquals(
+        List.of("core_search", "core_read_document"),
+        emitter.emittedNames.get(1),
+        "the second emit really did produce the same set");
+    assertEquals(
+        toolNamesOf(ai.recordedTools.get(0)),
+        toolNamesOf(ai.recordedTools.get(1)),
+        "an equal set changes nothing the model sees");
+    for (Map<String, Object> tool : ai.recordedTools.get(1)) {
+      assertEquals(
+          Integer.valueOf(1),
+          tool.get(ScriptedOfferingEmitter.EMIT_SEQ),
+          "an equal set must not replace the list: " + getToolFunctionName(tool));
+    }
+  }
+
+  private static List<String> toolNamesOf(List<Map<String, Object>> tools) {
+    return tools.stream().map(AgentLoopServiceTest::getToolFunctionName).toList();
+  }
+
+  private static AgentLoopService serviceWithEmitter(
+      OnlineAiService ai,
+      io.justsearch.agent.api.registry.AgentToolEmitter emitter,
+      StubTool... tools) {
+    return observed(
+        new AgentLoopService(
+            ai, stubCatalog(tools), stubExecutor(tools), emitter, null, null, null, null));
+  }
+
+  /**
+   * Tempdoc 876 §B.2b — an emitter whose OFFERING changes between calls: the Nth call gets the Nth
+   * name set, the last entry repeating once exhausted (the {@code perCallStructuredData} idiom).
+   * That is how a backend recovering — or failing — mid-run reaches the loop.
+   *
+   * <p>Every emitted tool carries the sequence number of the emit it came from, so an assertion can
+   * tell "the loop kept the list it had" apart from "the loop re-adopted an identical-looking one",
+   * and a wholesale replacement apart from an append.
+   */
+  private static final class ScriptedOfferingEmitter
+      implements io.justsearch.agent.api.registry.AgentToolEmitter {
+    static final String EMIT_SEQ = "__emit_seq";
+
+    private final io.justsearch.agent.api.registry.AgentToolEmitter delegate = stubEmitter();
+    private final List<Set<String>> perCall;
+    /** The names each emit call actually returned — the right-reason witness. */
+    final List<List<String>> emittedNames = new ArrayList<>();
+
+    final java.util.concurrent.atomic.AtomicInteger emitCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+    final java.util.concurrent.atomic.AtomicInteger offerCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    ScriptedOfferingEmitter(List<Set<String>> perCall) {
+      this.perCall = List.copyOf(perCall);
+    }
+
+    private Set<String> availableOn(int nth) {
+      return perCall.get(Math.min(nth - 1, perCall.size() - 1));
+    }
+
+    @Override
+    public List<Operation> offer(
+        OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+      Set<String> available = availableOn(offerCalls.incrementAndGet());
+      return delegate.offer(catalog, selectedNames).stream()
+          .filter(op -> available.contains(OperationCatalog.toWireName(op.id())))
+          .toList();
+    }
+
+    @Override
+    public List<Map<String, Object>> emit(
+        OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+      int nth = emitCalls.incrementAndGet();
+      Set<String> available = availableOn(nth);
+      List<Map<String, Object>> emitted = new ArrayList<>();
+      for (Map<String, Object> tool : delegate.emit(catalog, selectedNames)) {
+        if (!available.contains(getToolFunctionName(tool))) {
+          continue;
+        }
+        var stamped = new java.util.LinkedHashMap<String, Object>(tool);
+        stamped.put(EMIT_SEQ, nth);
+        emitted.add(Map.copyOf(stamped));
+      }
+      emittedNames.add(toolNamesOf(emitted));
+      return List.copyOf(emitted);
+    }
   }
 
   // ===========================================================================
@@ -4330,7 +4764,6 @@ class AgentLoopServiceTest {
               ConfirmStrategy.None.INSTANCE,
               AuditPolicy.NONE,
               RetryPolicy.noRetry(),
-              Optional.empty(),
               Set.of(),
               false),
           OperationAvailability.empty(),
@@ -4370,31 +4803,48 @@ class AgentLoopServiceTest {
     // app-agent live in the same JVM as app-services classes (test classpath only). To
     // keep app-agent tests independent of app-services, we provide an inline emitter
     // mirroring AgentOperationEmitter's deterministic-transliteration + identity-resolver behavior.
-    return (catalog, selectedNames) -> {
-      tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
-      List<Map<String, Object>> result = new ArrayList<>();
-      for (Operation op : catalog.definitions()) {
-        if (!op.executors().contains(ExecutorTag.AGENT)) continue;
-        String wire = OperationCatalog.toWireName(op.id());
-        if (selectedNames != null && !selectedNames.isEmpty() && !selectedNames.contains(wire)) {
-          continue;
+    // Tempdoc 876 §B.1: AgentToolEmitter is no longer a @FunctionalInterface (it gained offer()),
+    // so this stub is a class whose emit() projects its own offer() — mirroring the split the real
+    // emitter now has, so the stub cannot disagree with itself either.
+    return new io.justsearch.agent.api.registry.AgentToolEmitter() {
+      @Override
+      public List<Operation> offer(
+          OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+        List<Operation> offered = new ArrayList<>();
+        for (Operation op : catalog.definitions()) {
+          if (!op.executors().contains(ExecutorTag.AGENT)) continue;
+          String wire = OperationCatalog.toWireName(op.id());
+          if (selectedNames != null && !selectedNames.isEmpty() && !selectedNames.contains(wire)) {
+            continue;
+          }
+          offered.add(op);
         }
-        try {
-          var function = mapper.createObjectNode();
-          function.put("name", wire);
-          function.put("description", op.presentation().descriptionKey().value());
-          function.set("parameters", mapper.readTree(op.intf().inputs()));
-          var toolObj = mapper.createObjectNode();
-          toolObj.put("type", "function");
-          toolObj.set("function", function);
-          @SuppressWarnings("unchecked")
-          Map<String, Object> entry = mapper.convertValue(toolObj, Map.class);
-          result.add(new java.util.LinkedHashMap<>(entry));
-        } catch (Exception e) {
-          throw new IllegalStateException("Failed to emit " + op.id(), e);
-        }
+        return List.copyOf(offered);
       }
-      return result;
+
+      @Override
+      public List<Map<String, Object>> emit(
+          OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+        tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Operation op : offer(catalog, selectedNames)) {
+          try {
+            var function = mapper.createObjectNode();
+            function.put("name", OperationCatalog.toWireName(op.id()));
+            function.put("description", op.presentation().descriptionKey().value());
+            function.set("parameters", mapper.readTree(op.intf().inputs()));
+            var toolObj = mapper.createObjectNode();
+            toolObj.put("type", "function");
+            toolObj.set("function", function);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> entry = mapper.convertValue(toolObj, Map.class);
+            result.add(new java.util.LinkedHashMap<>(entry));
+          } catch (Exception e) {
+            throw new IllegalStateException("Failed to emit " + op.id(), e);
+          }
+        }
+        return result;
+      }
     };
   }
 
@@ -4457,7 +4907,7 @@ class AgentLoopServiceTest {
   // ScriptedAiService — replays pre-defined responses synchronously
   // ===========================================================================
 
-  private static final class ScriptedAiService implements OnlineAiService {
+  static final class ScriptedAiService implements OnlineAiService {
     private final List<ScriptedResponse> responses;
     final List<List<Map<String, Object>>> recordedMessages = new ArrayList<>();
     final List<SamplingParams> recordedSampling = new ArrayList<>();
@@ -4657,7 +5107,7 @@ class AgentLoopServiceTest {
   // ScriptedResponse — describes what one LLM call returns
   // ===========================================================================
 
-  private record ScriptedResponse(
+  record ScriptedResponse(
       String text, String reasoning, List<String> toolCallDeltas, OnlineAiService.AiUsage usage) {
 
     static ScriptedResponse textOnly(String text) {

@@ -41,5 +41,7 @@ class HealthSubstrateInitTest {
     assertNotNull(out.lifecycleSnapshotTap());
     assertNotNull(out.workerSnapshotTap());
     assertNotNull(out.headHealthEventsEmitter());
+    assertNotNull(out.readinessReconciliationTrigger());
+    out.readinessReconciliationTrigger().close();
   }
 }

@@ -284,6 +284,17 @@ public final class AgentEventPayloads {
 
   /**
    * Tool-completed payload, widened to carry {@code structuredData} when present (tempdoc 560 Phase 1).
+   *
+   * <p>Tempdoc 878 §D.4 — and widened again to say how much of {@code output} reached the MODEL.
+   * {@code output} stays the tool's WHOLE answer: the reader is not context-bound, and a tool card
+   * that showed less than the tool returned would be a new dishonesty rather than a fix for the old
+   * one. What was missing was the label — the loop appends a Layer-2-truncated copy to the prompt,
+   * so one field was quietly answering two different questions.
+   *
+   * <p>The two keys are written ONLY when an emitter measured. An absent key means "nothing was
+   * measured", never "nothing was truncated" — the same absent-emits-no-key discipline {@code
+   * structuredData} and {@code contextInclusion} already apply, so every record persisted before
+   * this field stays readable as what it is: silent.
    */
   private static Map<String, Object> toolCompletedPayload(AgentEvent.ToolExecutionCompleted e) {
     var payload = new LinkedHashMap<String, Object>();
@@ -291,6 +302,10 @@ public final class AgentEventPayloads {
     payload.put("success", e.result().success());
     payload.put("output", e.result().message());
     payload.put("executionId", e.result().executionId().orElse(""));
+    if (e.outputCharsToModel() > AgentEvent.ToolExecutionCompleted.CHARS_TO_MODEL_UNMEASURED) {
+      payload.put("outputCharsToModel", e.outputCharsToModel());
+      payload.put("truncatedForModel", e.truncatedForModel());
+    }
     if (!e.result().structuredData().isEmpty()) {
       payload.put("structuredData", e.result().structuredData());
     }

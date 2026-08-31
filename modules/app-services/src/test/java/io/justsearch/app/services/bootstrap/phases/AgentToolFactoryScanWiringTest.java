@@ -10,11 +10,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import io.justsearch.agent.api.memory.MemoryStore;
 import io.justsearch.agent.api.registry.HandlerRegistry;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.observability.ledger.ScanRollupLedger;
 import io.justsearch.app.services.lifecycle.WorkerCapability;
+import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
@@ -23,6 +25,7 @@ import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.TestResolvedConfigHelper;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -138,6 +141,13 @@ final class AgentToolFactoryScanWiringTest {
    * to assemble the bundle independently, so a wiring added to one silently missed the other. These
    * assert they now compose the same bundle: same tool set, same adapter-identity semantics, same
    * scan bindings.
+   *
+   * <p><b>Tempdoc 876 §B.5 — this assertion is vacuous on REMEMBER.</b> {@code eager} and
+   * {@code lateBound} are two SEPARATE registries, and this call passes {@code null} for
+   * {@code memoryStore}, so neither path ever registers {@code core.remember} — the
+   * {@code registeredIds()} sets are equal only because both are missing the same ref, not because
+   * REMEMBER made it onto both. {@link #eagerThenLateBoundRegistersAllSixOnTheSameRegistry} is the
+   * test with teeth: same registry, both paths, non-null MemoryStore.
    */
   @Test
   @DisplayName("both paths register the same operation set")
@@ -186,6 +196,85 @@ final class AgentToolFactoryScanWiringTest {
         eager.registeredIds(),
         lateBound.registeredIds(),
         "the eager and late-bound paths must expose the same agent tools");
+  }
+
+  /**
+   * Tempdoc 876 §B.5 — the actual regression guard for finding 4. On {@code main},
+   * {@code registerLateBound} short-circuits on {@code resolve(SEARCH_INDEX).isPresent()}: once
+   * {@code registerEager} has registered SEARCH_INDEX on this SAME registry (the production shape
+   * — {@code SubstratePhase} always eager-registers into the one {@code HandlerRegistry} that
+   * {@code registerLateBound} is later called on via the Memoized field in {@code HeadAssembly}),
+   * the late-bound call returns {@code false} at its very first line and registers NOTHING —
+   * including {@code core.remember}, which the eager path never registers (it has no
+   * {@code MemoryStore} parameter). {@code core_remember} is offered to the model unconditionally
+   * (no availability guard in {@code AgentToolsOperationCatalog}), so this leaves an offered tool
+   * with no handler for the lifetime of the process. This test fails on {@code main} because the
+   * sentinel makes {@code lateBound.registeredIds()} come back with only the 5 eager refs, missing
+   * REMEMBER; the fix (per-ref idempotent registration, no whole-call short-circuit) makes the two
+   * calls compose instead of the second excluding itself.
+   */
+  @Test
+  @DisplayName("eager then late-bound on the SAME registry registers all six handlers (fails on main)")
+  void eagerThenLateBoundRegistersAllSixOnTheSameRegistry(@TempDir Path dataDir) {
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    WorkerCapability capability = mock(WorkerCapability.class);
+    when(capability.available()).thenReturn(true);
+
+    HandlerRegistry registry = new HandlerRegistry();
+
+    // Step 1: the eager path, exactly as SubstratePhase.run calls it at construction time.
+    AgentToolFactory.Output eagerTools =
+        AgentToolFactory.build(
+            dataDir,
+            mock(KnowledgeServerBootstrap.class),
+            client,
+            client,
+            OnlineAiService.unavailable(),
+            null,
+            mock(DocumentService.class));
+    AgentToolHandlers.registerEager(
+        registry,
+        eagerTools.searchTool(),
+        eagerTools.browseTool(),
+        eagerTools.ingestTool(),
+        eagerTools.fileOperationsTool(),
+        eagerTools.readDocumentTool());
+    assertTrue(
+        registry.resolve(AgentToolsOperationCatalog.SEARCH_INDEX).isPresent(),
+        "eager registration must have registered SEARCH_INDEX (the sentinel ref on main)");
+
+    // Step 2: the late-bound path, on the SAME registry, with a non-null MemoryStore — the only
+    // producer of core.remember. This is what HeadAssembly's Memoized field triggers on worker
+    // connect (876 §A.0 finding 4 confirmation: "any eager registration of SEARCH_INDEX therefore
+    // permanently suppresses REMEMBER").
+    boolean lateBoundRan =
+        AgentToolHandlers.registerLateBound(
+            registry,
+            mock(KnowledgeServerBootstrap.class),
+            client,
+            capability,
+            dataDir,
+            client,
+            OnlineAiService.unavailable(),
+            null,
+            null,
+            MemoryStore.noop(),
+            null,
+            null,
+            mock(DocumentService.class));
+    assertTrue(lateBoundRan, "late-bound registration must run: all prerequisites are satisfied");
+
+    assertEquals(
+        Set.of(
+            AgentToolsOperationCatalog.SEARCH_INDEX,
+            AgentToolsOperationCatalog.READ_DOCUMENT,
+            AgentToolsOperationCatalog.BROWSE_FOLDERS,
+            AgentToolsOperationCatalog.INGEST_FILES,
+            AgentToolsOperationCatalog.FILE_OPERATIONS,
+            AgentToolsOperationCatalog.REMEMBER),
+        registry.registeredIds(),
+        "all six agent-tool handlers must be registered once both paths have run, including "
+            + "REMEMBER — which only the late-bound path ever registers");
   }
 
   @Test

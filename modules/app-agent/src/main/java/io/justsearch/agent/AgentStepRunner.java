@@ -18,8 +18,10 @@ import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.SamplingParams;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -241,7 +243,11 @@ final class AgentStepRunner {
         }
 
         // Check token budget before next iteration
-        var projectedTokens = onlineAiService.countPromptTokens(session.messages());
+        // Tempdoc 878 §D.6 — project the prompt the next call will ACTUALLY send: messages AND the
+        // tool schemas this iteration will pass. The chat template renders those schemas into the
+        // prompt, so counting messages alone measured a different prompt, not an approximation of
+        // this one. `tools` is the list built a few lines above and handed to the LLM call below.
+        var projectedTokens = onlineAiService.countPromptTokens(session.messages(), tools);
         if (projectedTokens.isPresent()) {
           int tokens = projectedTokens.get();
           int budgetSnapshot;
@@ -257,9 +263,11 @@ final class AgentStepRunner {
                     budgetSnapshot,
                     session.totalTokens(),
                     // Tempdoc 859 D live-defect (minor) — `promptTokens` stays 0 HONESTLY: this
-                    // phase has no provider-reported prompt, and putting the schema-blind projection
-                    // in the field documented as "the latest LLM call's prompt size" would make the
-                    // context meter read a number no call ever had. The WINDOW, though, is known
+                    // phase has no provider-reported prompt, and putting the PROJECTION in the field
+                    // documented as "the latest LLM call's prompt size" would make the context meter
+                    // read a number no call ever had. (878 §D.6 made the projection schema-aware; it
+                    // is still a forecast of a prompt not yet sent, which is why it does not belong
+                    // in a field that reports a measurement.) The WINDOW, though, is known
                     // here exactly as it is on `llm_response`, and shipping 0 for it made two frames
                     // of one run disagree about the model they were describing.
                     0,
@@ -281,11 +289,15 @@ final class AgentStepRunner {
           // interactive runs with a known n_ctx; a watcherless/undecided gate falls back to CONTINUE
           // (no surprise park). Compaction emits a first-class ContextCompacted narratable event.
           int contextWindow = session.contextWindow();
-          // Tempdoc 859 §D §2.7(c) — the TRIGGER quantity. `tokens` is countPromptTokens, which is
-          // schema-blind and measured ~40% low (577), so on its own the trigger can fire only after
-          // the real prompt already exceeds n_ctx. The provider-REPORTED prompt is the honest figure
-          // but is one tool-result stale. Taking the larger uses the reported prompt without ever
-          // triggering later than the projection alone would have.
+          // Tempdoc 859 §D §2.7(c) — the TRIGGER quantity. `tokens` is countPromptTokens, which was
+          // schema-blind and measured ~40% low (577) until 878 §D.6 threaded the iteration's tool
+          // list through it; it now projects the prompt this call will actually send.
+          //
+          // The `max` STAYS, because it never was about schema-blindness. The projection is built
+          // from the messages as they stand NOW, while the provider-REPORTED prompt is the honest
+          // figure for the last call and is one tool-result stale. Taking the larger uses the
+          // reported prompt without ever triggering later than the projection alone would have —
+          // an independent correction, in the one direction threading tools cannot cover.
           int pressureTokens = Math.max(tokens, session.lastReportedPromptTokens());
           boolean underContextPressure =
               contextWindow > 0
@@ -328,7 +340,7 @@ final class AgentStepRunner {
                 AgentSession.ContextGateDecision.CONTINUE;
             boolean gateWentUnanswered = false;
             try {
-              ctxDecision = contextGateFuture.get(contextGateTimeoutSeconds(), TimeUnit.SECONDS);
+              ctxDecision = contextGateFuture.get(AgentTimeouts.contextGateMs(), TimeUnit.MILLISECONDS);
             } catch (TimeoutException | java.util.concurrent.ExecutionException undecided) {
               ctxDecision = AgentSession.ContextGateDecision.CONTINUE; // watcherless ⇒ proceed
               gateWentUnanswered = true;
@@ -431,7 +443,9 @@ final class AgentStepRunner {
                       request.maxIterations()));
               // Proceed THIS iteration with the compacted (smaller) prompt; recompute the budget
               // check below against the now-shorter message history so it reflects reality.
-              var recomputed = onlineAiService.countPromptTokens(session.messages());
+              // Same tool list as the projection above (878 §D.6): a recompute that measured a
+              // different prompt than the check it is correcting would be its own defect.
+              var recomputed = onlineAiService.countPromptTokens(session.messages(), tools);
               if (recomputed.isPresent()) {
                 tokens = recomputed.get();
                 synchronized (session) {
@@ -481,7 +495,7 @@ final class AgentStepRunner {
               checkpointer.checkpoint(
                   sessionId, session, "WAITING_BUDGET", "Token budget exhausted — awaiting decision");
               try {
-                decision = budgetGateFuture.get(budgetGateTimeoutSeconds(), TimeUnit.SECONDS);
+                decision = budgetGateFuture.get(AgentTimeouts.budgetGateMs(), TimeUnit.MILLISECONDS);
               } catch (TimeoutException | java.util.concurrent.ExecutionException timedOut) {
                 decision = AgentSession.BudgetGateDecision.FINALIZE; // undecided ⇒ legacy behavior
               } catch (InterruptedException interrupted) {
@@ -772,12 +786,24 @@ final class AgentStepRunner {
             // Swap the trace Sequencer AFTER HandoffExecuted so it carries fromId
             traceSequencerRef.set(new AgentEventTracing.Sequencer(sessionId, toId));
 
+            // Tempdoc 878 §D.4/§D.5 — the handoff confirmation is the THIRD producer of this event,
+            // and it gets the same two stamps as the other two. The measurement, because the FE must
+            // never have to distinguish "not truncated" from "not measured" by guessing which seam
+            // produced the event (a handoff line is far under the Layer-2 cap, so this always reports
+            // "all of it" — that is the point, not a triviality). And the lineage, because the FE's
+            // default is fail-open: unstamped renders exactly as a runtime value, so "classified
+            // runtime" and "never classified" are indistinguishable unless every producer stamps.
+            String handoffText = "Handoff to " + toId + " confirmed.";
+            String handoffContent = AgentContextCompressor.truncate(handoffText);
             sink.accept(new AgentEvent.ToolExecutionCompleted(
-                call.id(), OperationResult.success("Handoff to " + toId + " confirmed.")));
+                call.id(),
+                OperationResult.success(handoffText)
+                    .withLineage(io.justsearch.agent.api.registry.OutputLineage.RUNTIME),
+                charsToModel(handoffText)));
             session.appendMessage(Map.of(
                 "role", "tool",
                 "tool_call_id", call.id(),
-                "content", "Handoff to " + toId + " confirmed."));
+                "content", handoffContent));
 
             AgentHandoff.pruneHandoffMessages(session);
             promptSwapper.swap(session, toProfile);
@@ -846,6 +872,52 @@ final class AgentStepRunner {
           var op = ((RecoveryAction.Proceed<Operation>) action).entry();
           sink.accept(
               new AgentEvent.ToolCallProposed(call, op.policy().risk()));
+
+          // Tempdoc 875 Move 3 — offering IS authorization. resolveByWireName above iterates the
+          // RAW catalog, so on its own it will happily hand back an operation the emitter withheld
+          // (OPERATOR audience, availability expression false, or not in the run's selection). The
+          // offered set is therefore consulted here, and a tool outside it is denied rather than
+          // dispatched.
+          //
+          // The authority set is the UNION of the run-level offered set and what the model was
+          // actually offered THIS iteration. Both sides are emitter output, so both have already
+          // passed audience + availability — the union can only differ on selection, and so can
+          // never widen the boundary this move exists to close.
+          //
+          // WHY a union and not the run-level set alone (review finding S1): the per-iteration
+          // lists are prompt STEERING (E0a's first-turn narrowing, a profile's toolSubset), and
+          // they are built by REPLACING the run selection rather than intersecting with it —
+          // buildE0aTools selects `core_ingest_files` outright. A run whose selection excludes that
+          // tool would then have it offered and its use refused: the "strand a run on a steering
+          // list" failure this move set out to avoid, arrived at from the other side. Offering a
+          // tool and then refusing it is never right, so the fix is to honour what was offered
+          // rather than to make steering authoritative.
+          //
+          // WHY recomputed here rather than derived from `baseTools` (the run-start snapshot): a
+          // tool whose availability went false mid-run must be denied, not dispatched on the
+          // strength of having been offered at minute zero.
+          if (!isAuthorizedThisIteration(op, request, tools)) {
+            String notOffered =
+                "Tool \"" + call.toolName() + "\" is not available in this session.";
+            LOG.warn(
+                "AgentLoop: refusing un-offered tool '{}' (resolved to {}) — not in the offered set",
+                call.toolName(),
+                op.id().value());
+            sink.accept(new AgentEvent.ToolCallRejected(call.id(), notOffered));
+            // role:"tool" keeps the OpenAI format contract (every tool_call needs a matching tool
+            // response) — same idiom as the loop guard below.
+            session.appendMessage(
+                Map.of(
+                    "role",
+                    "tool",
+                    "tool_call_id",
+                    call.id(),
+                    "content",
+                    notOffered + " Use one of the tools you were offered."));
+            checkpointer.checkpoint(
+                sessionId, session, "READY_FOR_LLM", "Tool not offered: " + call.toolName());
+            continue;
+          }
 
           // Safety gate
           if (op.policy().risk() != RiskTier.LOW) {
@@ -953,14 +1025,20 @@ final class AgentStepRunner {
           if (!grounding.isEmpty()) {
             toolResult = toolResult.withGrounding(grounding);
           }
+
+          // Tempdoc 878 §D.4 — cut FIRST, so the event can say how much reached the model. This used
+          // to happen after the emit, which is why the wire carried the untruncated output beside no
+          // statement that the prompt got less.
+          String modelContent = AgentContextCompressor.truncate(toolResult.message());
           sink.accept(
-              new AgentEvent.ToolExecutionCompleted(call.id(), toolResult));
+              new AgentEvent.ToolExecutionCompleted(
+                  call.id(), toolResult, charsToModel(toolResult.message())));
 
           // Append tool result to conversation for next iteration (truncated to save context)
           session.appendMessage(Map.of(
               "role", "tool",
               "tool_call_id", call.id(),
-              "content", AgentContextCompressor.truncate(toolResult.message())));
+              "content", modelContent));
           // Tempdoc 865 §7.5 — the compressor reports what it left standing, and the session holds
           // the LATEST report. Every site that compresses must record, because a stale receipt would
           // describe a prompt the answer was not written from — which is the one way this producer
@@ -984,6 +1062,41 @@ final class AgentStepRunner {
         }
 
         return IterationOutcome.cont();
+  }
+
+  /**
+   * Tempdoc 875 Move 3 — may the model dispatch {@code op} on this iteration? True iff the emitter
+   * would offer it at run level, OR it appears in the list the model was actually handed this turn.
+   * Both sides are emitter output, so audience- and availability-withheld operations are in neither
+   * and stay denied; the union only forgives a steering list that named a tool the run's own
+   * selection did not.
+   */
+  private boolean isAuthorizedThisIteration(
+      Operation op, AgentRequest request, List<Map<String, Object>> offeredThisIteration) {
+    String wire = OperationCatalog.toWireName(op.id());
+    if (agentToolEmitter
+        .offeredWireNames(operationCatalog, request.selectedToolNames())
+        .contains(wire)) {
+      return true;
+    }
+    return wireNamesOf(offeredThisIteration).contains(wire);
+  }
+
+  /** The OpenAI function names in an emitted tool list; malformed entries are skipped. */
+  private static Set<String> wireNamesOf(List<Map<String, Object>> tools) {
+    if (tools == null || tools.isEmpty()) {
+      return Set.of();
+    }
+    Set<String> names = new LinkedHashSet<>(tools.size());
+    for (Map<String, Object> tool : tools) {
+      if (tool != null && tool.get("function") instanceof Map<?, ?> function) {
+        Object name = function.get("name");
+        if (name != null && !name.toString().isEmpty()) {
+          names.add(name.toString());
+        }
+      }
+    }
+    return names;
   }
 
   /** Builds the per-iteration tool list: active-agent registered tools + handoff tools. */
@@ -1058,6 +1171,29 @@ final class AgentStepRunner {
             maxIterations));
   }
 
+  /**
+   * Tempdoc 878 §D.4 — how many characters OF THE TOOL'S OUTPUT were placed in the prompt.
+   *
+   * <p>ONE helper for all three emit sites (main dispatch, handoff confirmation, virtual tool),
+   * because a measurement present at some seams and absent at others is worse than none: the FE
+   * could not tell "this output was not truncated" from "whoever emitted this did not measure", and
+   * would have to guess which — on a field whose entire purpose is to stop guessing.
+   *
+   * <p><b>Measured from the ORIGINAL, not from the truncated string, and that is the whole
+   * correctness of it.</b> {@code AgentContextCompressor.truncate} does not return a prefix — it
+   * returns the prefix PLUS a {@code [... truncated, N chars omitted]} marker, ~35 characters of
+   * framing that are not output. Measuring the returned string therefore reported MORE characters
+   * than the tool produced for any output just over the cap, which inverted the derived {@code
+   * truncatedForModel} into "the model got all of it" on an output it demonstrably did not, and put
+   * a number on the tool card larger than the output it was a fraction of. The marker is in the
+   * prompt; it is not the tool's answer, and this field counts the answer.
+   */
+  private static int charsToModel(String output) {
+    return output == null
+        ? 0
+        : Math.min(output.length(), AgentContextCompressor.MAX_TOOL_RESULT_CHARS);
+  }
+
   private AgentEvent.AgentDone groundedDone(
       AgentSession session, String response, TerminalDisposition disposition) {
     List<AgentEvent.AgentSource> sources = session.collectGroundingSources();
@@ -1084,28 +1220,50 @@ final class AgentStepRunner {
   }
 
   /**
-   * Tempdoc 508 §11.5 / §13.5 Phase B — virtual tool-call dispatcher.
-   * The LLM has called a {@code vop_*} tool name; emit the event for
-   * the FE to handle, register a future, block until the FE responds
-   * (or the timeout fires), and append the result to the conversation
-   * so the agent loop continues.
+   * Tempdoc 878 §D.1 — the ITERATION-CEILING terminal: one no-tools synthesis attempt before the
+   * run stops, then {@code MAX_ITERATIONS} either way.
    *
-   * <p>Timeout default is 30 seconds (aligns with INLINE_CONFIRM
-   * approval-gate timeout). On timeout, the conversation gets a
-   * synthetic failure message and the loop continues without aborting
-   * the session.
+   * <p><b>The defect this closes.</b> The budget wall has always given the model one last call to
+   * write down what it gathered ({@link AgentLlmCaller#attemptBudgetEdgeFinalize}, above). The step
+   * ceiling did not: it emitted an empty answer and returned, throwing away everything the run had
+   * already paid for. Both are INVOLUNTARY terminals — the run walked into them — and an
+   * involuntary terminal owes the run a synthesis attempt. (A voluntary one does not: a cancelled
+   * run is deliberately answerless, per the neutral-cancel decision of 2026-08-26, and is not
+   * swept up by this.)
+   *
+   * <p><b>Why it lives on the runner rather than in the driver loop that detects the ceiling.</b>
+   * {@code AgentGroundingSeamAuditTest} permits a grounding-carrying {@code AgentDone} to be
+   * constructed in exactly two places, one of which is {@link #groundedDone}. A ceiling terminal
+   * that carries the run's evidence therefore has to be emitted from here. {@code AgentLoopService}
+   * keeps the state transition ({@code markTerminated} + checkpoint) it owns for every other
+   * terminal and calls this for the event — which is also what retires {@code
+   * AgentDone.ofDisposition}, the ungrounded factory 865 §7.1 kept only because the ceiling had no
+   * route through the seam.
+   *
+   * <p><b>FAIL-OPEN by construction.</b> {@code attemptStepCeilingFinalize} returns {@code null} on
+   * any failure and the disposition is decided here, never read back from the model's text — so the
+   * worst case is byte-for-byte the behaviour this replaces: an empty answer stamped {@code
+   * MAX_ITERATIONS}. What is NOT claimed: that the answer will be non-empty. 859 §7 watched a
+   * compact model answer a finalize instruction with a confident, content-free non-answer. The
+   * guarantee is that synthesis is ATTEMPTED and the truncation is DISCLOSED, not that the model
+   * takes the offer.
    */
-  private static final long VIRTUAL_TOOL_TIMEOUT_SECONDS = 30L;
-
-  /**
-   * Tempdoc 577 §2.12 Move 2 — how long the budget gate holds an interactive run awaiting the
-   * human's decision before falling back to the legacy finalize-else-error behavior. Long enough
-   * to notice and click; short enough that an unattended run still completes on its own. System
-   * property override ({@code justsearch.agent.budgetGateTimeoutSec}) exists for tests — 0 makes
-   * the gate fall through immediately (exactly the legacy behavior).
-   */
-  private static long budgetGateTimeoutSeconds() {
-    return Long.getLong("justsearch.agent.budgetGateTimeoutSec", 120L);
+  AgentEvent.AgentDone finalizeAtIterationCeiling(
+      AgentRequest request, AgentSession session, Consumer<AgentEvent> sink) {
+    String answer = "";
+    if (session.hasSuccessfulToolResult()) {
+      LOG.info("Iteration ceiling reached — attempting finalize with available tool results");
+      // The same narration the budget wall uses, so the user sees the run synthesizing rather than
+      // a bare "Thinking" followed by silence.
+      sink.accept(
+          new AgentEvent.AgentProgress(
+              "finalizing", "Wrapping up", session.iterationsUsed(), request.maxIterations()));
+      String finalized = llmCaller.attemptStepCeilingFinalize(session, sink);
+      if (finalized != null && !finalized.isBlank()) {
+        answer = finalized;
+      }
+    }
+    return groundedDone(session, answer, TerminalDisposition.MAX_ITERATIONS);
   }
 
   // Tempdoc 577 §2.14 Root II (#14) — the context-pressure gate fires when the projected next prompt
@@ -1125,16 +1283,6 @@ final class AgentStepRunner {
   // compacting older turns (the system prompt is preserved separately as an anchor).
   private static final int CONTEXT_COMPACT_KEEP_RECENT = 6;
 
-  /**
-   * Tempdoc 577 §2.14 Root II — how long the context gate holds an interactive run awaiting the
-   * human's decision before falling back to CONTINUE (proceed with the large prompt — the safe,
-   * non-destructive default, so a watcherless run is never silently truncated). The
-   * {@code justsearch.agent.contextGateTimeoutSec} override exists for tests (0 = fall through).
-   */
-  private static long contextGateTimeoutSeconds() {
-    return Long.getLong("justsearch.agent.contextGateTimeoutSec", 120L);
-  }
-
   // Tempdoc 577 §2.14 Root I (#13) — how often the zero-observer park re-checks for a re-attached
   // watcher, and how long it waits before proceeding unsupervised (a safety net; never a deadlock).
   private static final long ZERO_OBSERVER_POLL_MS = 250L;
@@ -1143,6 +1291,13 @@ final class AgentStepRunner {
     return Long.getLong("justsearch.agent.zeroObserverParkTimeoutSec", 120L);
   }
 
+  /**
+   * Tempdoc 508 §11.5 / §13.5 Phase B — virtual tool-call dispatcher. The LLM has called a {@code
+   * vop_*} tool name; emit the event for the FE to handle, register a future, block until the FE
+   * responds (or {@link AgentTimeouts#virtualToolMs()} elapses), and append the result to the
+   * conversation so the agent loop continues. On timeout, the conversation gets a synthetic
+   * failure message and the loop continues without aborting the session.
+   */
   private void handleVirtualToolCall(
       AgentSession session,
       String sessionId,
@@ -1157,11 +1312,12 @@ final class AgentStepRunner {
 
     AgentSession.VirtualToolResult vtr;
     try {
-      vtr = future.get(VIRTUAL_TOOL_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+      vtr = future.get(AgentTimeouts.virtualToolMs(), java.util.concurrent.TimeUnit.MILLISECONDS);
     } catch (java.util.concurrent.TimeoutException te) {
       vtr = AgentSession.VirtualToolResult.failure(
           "virtual tool '" + call.toolName() + "' timed out after "
-              + VIRTUAL_TOOL_TIMEOUT_SECONDS + "s (FE never responded)");
+              + TimeUnit.MILLISECONDS.toSeconds(AgentTimeouts.virtualToolMs())
+              + "s (FE never responded)");
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
       vtr = AgentSession.VirtualToolResult.failure("interrupted");
@@ -1178,6 +1334,20 @@ final class AgentStepRunner {
       String detail = vtr.errorDetail() == null ? "virtual tool failed" : vtr.errorDetail();
       opResult = OperationResult.failure(detail);
     }
+    // Tempdoc 878 §D.5 — the SAME text-provenance stamp the main dispatch seam applies, which this
+    // seam had been skipping since 577 §2.14 Root III called it "the single authoritative stamp".
+    // Unstamped, the FE's fail-open default framed a virtual tool's output as a runtime value by
+    // ACCIDENT rather than by classification, and the two are indistinguishable downstream.
+    //
+    // Recorded limit: a `vop_*` id is not in OutputLineage.CORPUS_READERS, so this classifies
+    // RUNTIME — correct for a shell/plugin command's computed output, and a real limit for a plugin
+    // that returns document text. An operation-id classifier cannot see inside an FE-supplied tool;
+    // naming that beats guessing at it.
+    if (opResult.success()) {
+      opResult =
+          opResult.withLineage(
+              io.justsearch.agent.api.registry.OutputLineage.forOperationId(call.toolName()));
+    }
     // Tempdoc 865 §7.1 — the SAME mint-and-stamp pair as the main dispatch seam. A recorded
     // execution whose delta never reaches the wire is a silent terminal-equivalence trap: the
     // accumulator would count it into the terminal list while the deltas skipped it, so the
@@ -1189,15 +1359,13 @@ final class AgentStepRunner {
     if (!grounding.isEmpty()) {
       opResult = opResult.withGrounding(grounding);
     }
-    sink.accept(new AgentEvent.ToolExecutionCompleted(call.id(), opResult));
+    // Tempdoc 878 §D.4 — cut first, then report what reached the model (see the main seam).
+    String modelContent = AgentContextCompressor.truncate(opResult.message());
+    sink.accept(
+        new AgentEvent.ToolExecutionCompleted(
+            call.id(), opResult, charsToModel(opResult.message())));
     session.appendMessage(
-        Map.of(
-            "role",
-            "tool",
-            "tool_call_id",
-            call.id(),
-            "content",
-            AgentContextCompressor.truncate(opResult.message())));
+        Map.of("role", "tool", "tool_call_id", call.id(), "content", modelContent));
     session.recordCompression(compressor.compressToolMessages(session.messages()));
     checkpointer.checkpoint(sessionId, session, "AFTER_TOOL_RESULT", "Virtual tool completed: " + call.toolName());
   }

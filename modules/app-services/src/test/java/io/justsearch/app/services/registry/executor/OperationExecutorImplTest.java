@@ -233,6 +233,149 @@ final class OperationExecutorImplTest {
     assertTrue(result.success(), "emitter failure must not propagate to dispatch caller");
   }
 
+  // ----------------------------------------------------------------------------------
+  // Tempdoc 879 — the declared AuditPolicy axis drives history emission.
+  //
+  // Acceptance criterion: flipping ONLY the audit declaration flips the behaviour. Each
+  // pair below uses the same handler, same wiring, same everything — the operations differ
+  // in exactly the OperationPolicy.audit field.
+  // ----------------------------------------------------------------------------------
+
+  @Test
+  void metadataOnlyAuditEmitsHistoryEntry() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis");
+    handlers.register(id, args -> OperationResult.success("ok"));
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(handlers, emitted::add, Clock.systemUTC());
+
+    OperationResult result =
+        executor.dispatch(makeOp(id, TrustTier.CORE, false, AuditPolicy.METADATA_ONLY), "{}");
+
+    assertTrue(result.success());
+    assertEquals(
+        1, emitted.size(), "METADATA_ONLY must record exactly one history entry per dispatch");
+    assertEquals(OperationOutcome.SUCCESS, emitted.get(0).outcome());
+  }
+
+  @Test
+  void noneAuditSuppressesHistoryEntry() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis");
+    handlers.register(id, args -> OperationResult.success("ok"));
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(handlers, emitted::add, Clock.systemUTC());
+
+    OperationResult result =
+        executor.dispatch(makeOp(id, TrustTier.CORE, false, AuditPolicy.NONE), "{}");
+
+    assertTrue(result.success(), "suppressing the audit record must not affect the dispatch");
+    assertTrue(
+        emitted.isEmpty(),
+        "AuditPolicy.NONE means 'no audit record' — no history entry may be emitted");
+  }
+
+  @Test
+  void noneAuditSuppressesHistoryOnValidationFailure() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis-validation");
+    handlers.register(id, args -> OperationResult.success("unreached"));
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(handlers, emitted::add, Clock.systemUTC());
+
+    Operation op =
+        new Operation(
+            id,
+            Presentation.of(new I18nKey("test." + id.value()), new I18nKey("test.desc")),
+            Interface.of(
+                "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}",
+                "{\"type\":\"object\"}"),
+            new OperationPolicy(
+                RiskTier.LOW,
+                ConfirmStrategy.None.INSTANCE,
+                AuditPolicy.NONE,
+                RetryPolicy.noRetry(),
+                Set.of(),
+                false),
+            OperationAvailability.empty(),
+            OperationLineage.empty(),
+            Binding.of(id),
+            new Provenance(TrustTier.CORE, "test", "1.0"),
+            Set.of(ExecutorTag.AGENT));
+
+    OperationResult result = executor.dispatch(op, "{}");
+
+    assertFalse(result.success());
+    assertEquals("BAD_REQUEST", result.errorCode().orElse(null));
+    assertTrue(
+        emitted.isEmpty(),
+        "the validation-failure branch calls emitHistory too — it must respect NONE");
+  }
+
+  @Test
+  void noneAuditSuppressesHistoryOnThrownDispatch() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis-throw");
+    handlers.register(
+        id,
+        args -> {
+          throw new RuntimeException("boom");
+        });
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(handlers, emitted::add, Clock.systemUTC());
+
+    assertThrows(
+        RuntimeException.class,
+        () -> executor.dispatch(makeOp(id, TrustTier.CORE, false, AuditPolicy.NONE), "{}"));
+
+    assertTrue(
+        emitted.isEmpty(),
+        "the uncaught-exception branch calls emitHistory too — it must respect NONE");
+  }
+
+  /**
+   * Precision test for the wrong-gate hazard in {@code emitHistory}: the per-Operation
+   * advisory emission lives INSIDE that method, after the history block. Suppressing the
+   * audit record with an early {@code return} would silently kill the advisory pipeline.
+   *
+   * <p>This is not hypothetical — {@code core.ping-backend} (CoreOperationCatalog) is the
+   * real operation that declares {@code AuditPolicy.NONE} together with advisoryClass
+   * {@code core.advisory-operation-completed}, and it is the advisory substrate's canary
+   * producer. Audit policy governs history retention, not advisory delivery.
+   */
+  @Test
+  void noneAuditSuppressesHistoryButStillFiresAdvisory() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.audit-axis-advisory");
+    handlers.register(id, args -> OperationResult.success("ok"));
+    List<OperationHistoryEntry> emitted = new ArrayList<>();
+    List<OperationCompletionEvent> advisories = new ArrayList<>();
+    OperationDispatcher executor =
+        new OperationExecutorImpl(
+            handlers,
+            emitted::add,
+            Map.of(TEST_ADVISORY_CLASS, (Consumer<OperationCompletionEvent>) advisories::add),
+            Clock.systemUTC());
+
+    Operation op =
+        makeOpWithAdvisoryClass(id, Optional.of(TEST_ADVISORY_CLASS), AuditPolicy.NONE);
+
+    OperationResult result = executor.dispatch(op, "{}");
+
+    assertTrue(result.success());
+    assertTrue(emitted.isEmpty(), "AuditPolicy.NONE must suppress the history entry");
+    assertEquals(
+        1,
+        advisories.size(),
+        "advisory emission is a separate axis — NONE must NOT suppress it (core.ping-backend)");
+    assertEquals(id, advisories.get(0).operationId());
+    assertEquals(OperationOutcome.SUCCESS, advisories.get(0).outcome());
+  }
+
   // -------------------- Slice 3a-2-c Phase C: schema validation --------------------
 
   /**
@@ -265,7 +408,6 @@ final class OperationExecutorImplTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.NONE,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),
@@ -312,7 +454,6 @@ final class OperationExecutorImplTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.NONE,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),
@@ -350,7 +491,6 @@ final class OperationExecutorImplTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.NONE,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),
@@ -407,9 +547,8 @@ final class OperationExecutorImplTest {
             new OperationPolicy(
                 RiskTier.LOW,
                 ConfirmStrategy.None.INSTANCE,
-                AuditPolicy.NONE,
+                AuditPolicy.METADATA_ONLY,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),
@@ -702,6 +841,11 @@ final class OperationExecutorImplTest {
 
   private static Operation makeOpWithAdvisoryClass(
       OperationRef id, Optional<ResourceRef> advisoryClass) {
+    return makeOpWithAdvisoryClass(id, advisoryClass, AuditPolicy.METADATA_ONLY);
+  }
+
+  private static Operation makeOpWithAdvisoryClass(
+      OperationRef id, Optional<ResourceRef> advisoryClass, AuditPolicy audit) {
     return new Operation(
         id,
         Presentation.of(
@@ -710,9 +854,8 @@ final class OperationExecutorImplTest {
         new OperationPolicy(
             RiskTier.LOW,
             ConfirmStrategy.None.INSTANCE,
-            AuditPolicy.NONE,
+            audit,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false,
             advisoryClass),
@@ -816,7 +959,6 @@ final class OperationExecutorImplTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.NONE,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(RequiredCapability.WorkerOnline.INSTANCE),
                 true),
             OperationAvailability.empty(),
@@ -841,7 +983,6 @@ final class OperationExecutorImplTest {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(cap),
             false),
         OperationAvailability.empty(),
@@ -1123,7 +1264,6 @@ final class OperationExecutorImplTest {
             new ConfirmStrategy.Typed(new I18nKey("test.confirm")),
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
@@ -1144,7 +1284,6 @@ final class OperationExecutorImplTest {
             new ConfirmStrategy.Typed(new I18nKey("test.confirm")),
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
@@ -1154,7 +1293,18 @@ final class OperationExecutorImplTest {
         Set.of(ExecutorTag.AGENT));
   }
 
+  /**
+   * Default test Operation. Declares {@link AuditPolicy#METADATA_ONLY} — the production
+   * default (35 of the 41 catalog declarations) and, since tempdoc 879 wired the axis, the
+   * declaration that actually asks for a history entry. Tests that need the suppressing
+   * declaration pass it explicitly via the 4-arg overload.
+   */
   private static Operation makeOp(OperationRef id, TrustTier tier, boolean undoSupported) {
+    return makeOp(id, tier, undoSupported, AuditPolicy.METADATA_ONLY);
+  }
+
+  private static Operation makeOp(
+      OperationRef id, TrustTier tier, boolean undoSupported, AuditPolicy audit) {
     return new Operation(
         id,
         Presentation.of(
@@ -1163,9 +1313,8 @@ final class OperationExecutorImplTest {
         new OperationPolicy(
             RiskTier.LOW,
             ConfirmStrategy.None.INSTANCE,
-            AuditPolicy.NONE,
+            audit,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             undoSupported),
         OperationAvailability.empty(),
@@ -1173,5 +1322,217 @@ final class OperationExecutorImplTest {
         Binding.of(id),
         new Provenance(tier, "test", "1.0"),
         Set.of(ExecutorTag.AGENT));
+  }
+
+  // ----------------------------------------------------------------------------------
+  // Tempdoc 875 — the durable-grant narrowing rules, enforced at the ONE place that knows a
+  // confirmation was skipped: the durable short-circuit in enforceTrustLattice.
+  // ----------------------------------------------------------------------------------
+
+  private static final String FAMILY = "file-operations";
+  private static final OperationRef INGEST = new OperationRef("core.ingest-files");
+  private static final OperationRef MUTATE = new OperationRef("core.file-operations");
+
+  /** A lattice executor with durable grants wired, plus the argument scope that bounds them. */
+  private static OperationExecutorImpl latticeExecutorWithGrants(
+      HandlerRegistry handlers,
+      io.justsearch.app.services.intent.DurableGrantStore grants,
+      io.justsearch.app.services.intent.DurableGrantScope scope) {
+    OperationExecutorImpl executor =
+        new OperationExecutorImpl(
+            handlers,
+            null,
+            Map.of(),
+            Clock.systemUTC(),
+            new CoreTrustEvaluator(),
+            CoreIntentSourceCatalog.catalog(),
+            null,
+            new ConsentCapsuleService());
+    executor.setDurableGrantStore(grants, scope);
+    return executor;
+  }
+
+  private static InvocationProvenance agentLoop() {
+    return InvocationProvenance.fromTransport(
+        TransportTag.AGENT_LOOP, Optional.empty(), Instant.now());
+  }
+
+  private static Operation makeFamilyOp(OperationRef id, RiskTier risk) {
+    return new Operation(
+        id,
+        Presentation.of(
+            new I18nKey("test." + id.value()), new I18nKey("test." + id.value() + ".desc")),
+        Interface.of("{\"type\":\"object\"}", "{\"type\":\"object\"}"),
+        new OperationPolicy(
+                risk,
+                new ConfirmStrategy.Typed(new I18nKey("test.confirm")),
+                AuditPolicy.NONE,
+                RetryPolicy.noRetry(),
+                Set.of(),
+                false)
+            .withCapabilityFamily(FAMILY),
+        OperationAvailability.empty(),
+        OperationLineage.empty(),
+        Binding.of(id),
+        new Provenance(TrustTier.CORE, "test", "1.0"),
+        Set.of(ExecutorTag.AGENT));
+  }
+
+  /**
+   * Tempdoc 875 C.2 — the risk ceiling, observed at the gate rather than at the store. One family
+   * grant on "file-operations", one agent-loop dispatch each: the MEDIUM member proceeds (560 §28's
+   * axis preserved), the HIGH member is gated. Before this change both were satisfied identically
+   * (UNTRUSTED × MEDIUM and UNTRUSTED × HIGH are BOTH TYPED_CONFIRM), so a single family grant
+   * durably reduced the strongest ceremony the system has to nothing.
+   */
+  @Test
+  void durableFamilyGrantSatisfiesMediumButNeverHigh() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    handlers.register(INGEST, args -> OperationResult.success("ingested"));
+    handlers.register(MUTATE, args -> OperationResult.success("mutated"));
+    var grants = new io.justsearch.app.services.intent.DurableGrantStore();
+    grants.grantFamilyAllowAlways(FAMILY, io.justsearch.agent.api.registry.SourceTier.UNTRUSTED);
+    // A permissive scope isolates the risk ceiling from the argument-scope rule under test below.
+    OperationExecutorImpl executor =
+        latticeExecutorWithGrants(handlers, grants, (op, args) -> true);
+
+    OperationResult medium =
+        executor.dispatch(makeFamilyOp(INGEST, RiskTier.MEDIUM), "{}", agentLoop(), Optional.empty());
+    assertTrue(medium.success(), "the MEDIUM family member is still auto-approved by the grant");
+
+    assertThrows(
+        ConfirmationRequiredException.class,
+        () ->
+            executor.dispatch(
+                makeFamilyOp(MUTATE, RiskTier.HIGH), "{}", agentLoop(), Optional.empty()),
+        "a durable grant never satisfies a HIGH-risk gate — destructive work costs a fresh gesture");
+  }
+
+  /** The per-operation grant carries the same payload, so it must hit the same ceiling. */
+  @Test
+  void durablePerOperationGrantDoesNotSatisfyHighRiskGate() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    handlers.register(MUTATE, args -> OperationResult.success("mutated"));
+    var grants = new io.justsearch.app.services.intent.DurableGrantStore();
+    grants.grantAllowAlways(
+        MUTATE.value(), io.justsearch.agent.api.registry.SourceTier.UNTRUSTED);
+    OperationExecutorImpl executor =
+        latticeExecutorWithGrants(handlers, grants, (op, args) -> true);
+
+    assertThrows(
+        ConfirmationRequiredException.class,
+        () ->
+            executor.dispatch(
+                makeFamilyOp(MUTATE, RiskTier.HIGH), "{}", agentLoop(), Optional.empty()),
+        "'Always allow this action' cannot durably suppress a HIGH-risk gate");
+    // Right-reason check: the SAME grant, on the same op at MEDIUM, does satisfy the gate — so the
+    // throw above is the risk ceiling firing, not a missing/mismatched grant.
+    assertTrue(
+        executor
+            .dispatch(makeFamilyOp(MUTATE, RiskTier.MEDIUM), "{}", agentLoop(), Optional.empty())
+            .success(),
+        "the refusal is risk-driven, not grant-absence");
+  }
+
+  /**
+   * Tempdoc 875 C.3 — the argument scope. With a durable grant on the ingest op, in-root `paths`
+   * proceed and out-of-root `paths` fall through to the capsule path (a confirm that names the path).
+   * The out-of-root capability is preserved (811 C-2a); only the blanket-consent shortcut is gone.
+   */
+  @Test
+  void durableGrantCoversInRootIngestButNotOutOfRoot(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path base) throws Exception {
+    java.nio.file.Path root = java.nio.file.Files.createDirectory(base.resolve("indexed"));
+    java.nio.file.Path outside = java.nio.file.Files.createDirectory(base.resolve("elsewhere"));
+    java.nio.file.Path inside = java.nio.file.Files.createFile(root.resolve("notes.txt"));
+    java.nio.file.Path secret = java.nio.file.Files.createFile(outside.resolve("id_rsa"));
+    HandlerRegistry handlers = new HandlerRegistry();
+    handlers.register(INGEST, args -> OperationResult.success("ingested"));
+    var grants = new io.justsearch.app.services.intent.DurableGrantStore();
+    grants.grantAllowAlways(
+        INGEST.value(), io.justsearch.agent.api.registry.SourceTier.UNTRUSTED);
+    var scope =
+        new io.justsearch.app.services.intent.IndexedRootGrantScope(Set.of(INGEST));
+    scope.bindIndexedRoots(() -> List.of(root));
+    OperationExecutorImpl executor = latticeExecutorWithGrants(handlers, grants, scope);
+    Operation ingest = makeFamilyOp(INGEST, RiskTier.MEDIUM);
+
+    assertTrue(
+        executor.dispatch(ingest, pathsArgs(inside), agentLoop(), Optional.empty()).success(),
+        "an in-root ingest is inside the containment the grant was granted against");
+    assertThrows(
+        ConfirmationRequiredException.class,
+        () -> executor.dispatch(ingest, pathsArgs(secret), agentLoop(), Optional.empty()),
+        "an out-of-root ingest is outside it ⇒ the grant does not apply ⇒ a fresh confirm");
+  }
+
+  /**
+   * Adverse preconditions (`green-masked-destructive`): the in-root green above depends on the roots
+   * lookup being available. Each way it can be unavailable must produce a CONFIRM, not a silent
+   * proceed — the failure mode of the scope is a prompt, never an unforeseen ingest.
+   */
+  @Test
+  void durableGrantFailsClosedWhenRootsAreUnavailable(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+    java.nio.file.Path inside = java.nio.file.Files.createFile(root.resolve("notes.txt"));
+    var grants = new io.justsearch.app.services.intent.DurableGrantStore();
+    grants.grantAllowAlways(
+        INGEST.value(), io.justsearch.agent.api.registry.SourceTier.UNTRUSTED);
+    Operation ingest = makeFamilyOp(INGEST, RiskTier.MEDIUM);
+
+    // (a) never bound — a wiring regression must cost a prompt, not a silent grant.
+    var unbound = new io.justsearch.app.services.intent.IndexedRootGrantScope(Set.of(INGEST));
+    assertThrows(
+        ConfirmationRequiredException.class,
+        () ->
+            executorFor(grants, unbound)
+                .dispatch(ingest, pathsArgs(inside), agentLoop(), Optional.empty()),
+        "(a) roots supplier never bound ⇒ confirm");
+
+    // (b) the lookup throws — e.g. the Worker is unavailable.
+    var throwing = new io.justsearch.app.services.intent.IndexedRootGrantScope(Set.of(INGEST));
+    throwing.bindIndexedRoots(
+        () -> {
+          throw new IllegalStateException("Worker unavailable");
+        });
+    assertThrows(
+        ConfirmationRequiredException.class,
+        () ->
+            executorFor(grants, throwing)
+                .dispatch(ingest, pathsArgs(inside), agentLoop(), Optional.empty()),
+        "(b) roots supplier throws ⇒ confirm");
+
+    // (c) no roots configured — the "nothing is contained" reading, not the "everything is" one.
+    var empty = new io.justsearch.app.services.intent.IndexedRootGrantScope(Set.of(INGEST));
+    empty.bindIndexedRoots(List::of);
+    assertThrows(
+        ConfirmationRequiredException.class,
+        () ->
+            executorFor(grants, empty)
+                .dispatch(ingest, pathsArgs(inside), agentLoop(), Optional.empty()),
+        "(c) empty roots ⇒ confirm");
+
+    // Right-reason control: the SAME grant + args DO proceed once the roots are actually bound, so
+    // the three throws above are the adverse precondition firing, not a broken fixture.
+    var bound = new io.justsearch.app.services.intent.IndexedRootGrantScope(Set.of(INGEST));
+    bound.bindIndexedRoots(() -> List.of(root));
+    assertTrue(
+        executorFor(grants, bound)
+            .dispatch(ingest, pathsArgs(inside), agentLoop(), Optional.empty())
+            .success());
+  }
+
+  private static OperationExecutorImpl executorFor(
+      io.justsearch.app.services.intent.DurableGrantStore grants,
+      io.justsearch.app.services.intent.DurableGrantScope scope) {
+    HandlerRegistry handlers = new HandlerRegistry();
+    handlers.register(INGEST, args -> OperationResult.success("ingested"));
+    return latticeExecutorWithGrants(handlers, grants, scope);
+  }
+
+  private static String pathsArgs(java.nio.file.Path path) {
+    return "{\"paths\":[\""
+        + path.toAbsolutePath().toString().replace("\\", "\\\\")
+        + "\"]}";
   }
 }

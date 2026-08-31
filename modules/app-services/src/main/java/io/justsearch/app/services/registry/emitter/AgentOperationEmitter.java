@@ -70,10 +70,22 @@ public final class AgentOperationEmitter implements OperationEmitter, AgentToolE
    * are admin / debug surfaces the agent must not invoke without explicit user delegation.
    *
    * <p>Verified hazard motivating this filter: {@code core.bulk-reindex} ships
-   * {@code executors = {UI, AGENT}} + {@code audience = OPERATOR}; without this filter the
-   * LLM can invoke admin operations purely on the strength of {@code ExecutorTag.AGENT}
-   * membership. Allow-list (rather than deny-list) is intentional: future audience values
-   * are denied by default, which is the safer side.
+   * {@code executors = {UI, AGENT}} + {@code audience = OPERATOR}; an OPERATOR-audience
+   * operation must not reach the LLM's tool list purely on the strength of
+   * {@code ExecutorTag.AGENT} membership. Allow-list (rather than deny-list) is intentional:
+   * future audience values are denied by default, which is the safer side.
+   *
+   * <p><strong>Correction (tempdoc 875 finding 3, 2026-08-26): this filter does not, by itself,
+   * stop the LLM invoking anything.</strong> The javadoc previously claimed it did. It is applied
+   * only on the {@link #emit} path, so before 875 it merely <em>hid</em> an operation: the agent
+   * loop resolved tool calls through {@code OperationCatalog.resolveByWireName}, which iterates the
+   * raw {@code definitions()} and applies none of these filters, so a hidden operation stayed
+   * dispatchable. (What actually kept {@code core.bulk-reindex} away from the agent was the
+   * unrelated owner partition in {@code OperationCatalogComposition} — a boundary nobody had
+   * written down as one.) The enforcement now lives in {@code AgentStepRunner}, at the tool-call
+   * resolution site: it consults {@link io.justsearch.agent.api.registry.AgentToolEmitter#offeredWireNames}
+   * — a projection of this emitter's own output — and refuses a call naming an operation this
+   * filter chain withheld. So the claim is true because of that check, not because of this set.
    *
    * <p>Per tempdoc 491 §5.5 (2026-05-12) audience-filter hoist: this set is now surfaced
    * via {@link OperationEmitter#allowedAudiences()} so the {@link OperationEmitter#filterForTarget}
@@ -156,25 +168,40 @@ public final class AgentOperationEmitter implements OperationEmitter, AgentToolE
     return AGENT_INVOCABLE_AUDIENCES;
   }
 
+  /**
+   * Tempdoc 876 §B.1 — the offering itself: executor target, audience allow-list, the caller's
+   * selection, and the availability expression evaluated against current state. This is the one
+   * authority on WHICH operations the model is shown; {@link #emit} is its wire projection and
+   * {@code AgentRunQueries.offeredOperations()} its read-side projection. Virtual operations are
+   * deliberately absent — they are FE-published OpenAI envelopes with no backing {@link Operation},
+   * so they join at the wire layer, not here.
+   */
+  @Override
+  public List<Operation> offer(OperationCatalog catalog, Collection<String> selectedNames) {
+    return filterForTarget(catalog).stream()
+        .filter(op -> matchesSelection(op, selectedNames))
+        .filter(this::isAvailableNow)
+        .toList();
+  }
+
   @Override
   public List<Map<String, Object>> emit(
       OperationCatalog catalog, Collection<String> selectedNames) {
-    List<Map<String, Object>> core = filterForTarget(catalog).stream()
-        .filter(op -> matchesSelection(op, selectedNames))
-        .filter(this::isAvailableNow)
-        .map(this::toOpenAiTool)
-        .toList();
+    List<Map<String, Object>> core =
+        offer(catalog, selectedNames).stream().map(this::toOpenAiTool).toList();
     if (virtualStore == null) {
       return core;
     }
     // §11.5 / §13.5 — append FE-published virtual operations.
     // Conflicts (same wire-name) resolve in favor of core (no
     // shadowing — virtual entries with a colliding name are
-    // dropped silently).
-    List<Map<String, Object>> virtual = virtualStore.snapshot().stream()
+    // dropped silently, per VirtualOperationStore.withoutCollisions).
+    List<Map<String, Object>> selectedVirtual = virtualStore.snapshot().stream()
         .filter(tool -> matchesVirtualSelection(tool, selectedNames))
-        .filter(tool -> !collidesWithCore(tool, core))
         .toList();
+    List<Map<String, Object>> virtual =
+        VirtualOperationStore.withoutCollisions(
+            selectedVirtual, VirtualOperationStore.wireNames(core));
     if (virtual.isEmpty()) {
       return core;
     }
@@ -191,23 +218,6 @@ public final class AgentOperationEmitter implements OperationEmitter, AgentToolE
     if (!(fn instanceof Map<?, ?> fnMap)) return false;
     Object name = fnMap.get("name");
     return name != null && selectedNames.contains(name.toString());
-  }
-
-  private static boolean collidesWithCore(
-      Map<String, Object> virtualTool, List<Map<String, Object>> core) {
-    Object fn = virtualTool.get("function");
-    if (!(fn instanceof Map<?, ?> fnMap)) return true;
-    Object name = fnMap.get("name");
-    if (name == null) return true;
-    String wireName = name.toString();
-    for (Map<String, Object> coreTool : core) {
-      Object coreFn = coreTool.get("function");
-      if (coreFn instanceof Map<?, ?> coreFnMap) {
-        Object coreName = coreFnMap.get("name");
-        if (wireName.equals(coreName)) return true;
-      }
-    }
-    return false;
   }
 
   private static boolean matchesSelection(Operation op, Collection<String> selectedNames) {

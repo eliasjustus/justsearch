@@ -43,6 +43,11 @@ enum UnavailableAgentService implements AgentService {
   }
 
   @Override
+  public List<Operation> offeredOperations() {
+    return List.of();
+  }
+
+  @Override
   public OperationResult undoOperation(String toolName, String executionId) {
     return OperationResult.failure("Agent capability is not available");
   }

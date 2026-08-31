@@ -39,10 +39,22 @@
       "exitProbe": "slow: ./gradlew.bat :modules:app-services:test --tests \"*WatchedRootScanCollectionTest*\" --rerun"
     },
     {
+      "id": "app-inference-external-server-config-store-flaky",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!app-inference))(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*InferenceLifecycleManagerExternalServer"
+      ],
+      "claim": "InferenceLifecycleManagerExternalServerTest 'startLlamaServerCanAdoptHealthOnlyWhenExplicitlyEnabled' can fail with 'IllegalStateException: ConfigStore not initialized - call setGlobal() at startup' under a full ./gradlew test run; it passes in isolation. INTERMITTENT, not deterministic - it failed one full run and did not reproduce on a later one, so it is an ordering/isolation defect (a sibling test in the same module JVM leaves the ConfigStore global unset), not a product defect and not your change. A failure ONLY there is pre-existing; re-run in isolation to confirm.",
+      "evidence": "tempdoc 876 session f6617483 (2026-08-26): first full-suite run had :modules:app-inference:test FAILED (1 of 6 cases in that class); the class re-run with --tests in the same tree was BUILD SUCCESSFUL; a later full-suite run in the same tree passed app-inference outright (266 tests, 0 failures). app-inference depends only on gpu-bridge/app-api/configuration/telemetry/core-contracts, none of whose code 876 touches.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:app-inference:test"
+    },
+    {
       "id": "ui-web-envelopestream-heartbeat-flaky",
       "match": [
-        "test:unit(?!.*PluginLoader)",
-        "vitest(?!.*PluginLoader)"
+        "test:unit(?!.*(?:PluginLoader|resourceRegistry))",
+        "vitest(?!.*(?:PluginLoader|resourceRegistry))"
       ],
       "claim": "EnvelopeStream.test.ts heartbeat-watchdog reconnect case is FLAKY under full-suite parallel load only (expects >=2 source reconnects inside a fixed window; passes in isolation). Noted by 14 sessions 2026-08-06..25 before being pinned. A failure ONLY there is pre-existing; re-run in isolation to confirm. The fix (deterministic timer control) is a tracked item in tempdoc 872.",
       "evidence": "retired observations condition obs:envelopestream-test (seen 14, 2026-08-06..2026-08-25)",
@@ -53,14 +65,72 @@
     {
       "id": "ui-web-pluginloader-module-mode-timeout",
       "match": [
-        "test:unit(?!.*EnvelopeStream)",
-        "vitest(?!.*EnvelopeStream)"
+        "test:unit(?!.*(?:EnvelopeStream|resourceRegistry))",
+        "vitest(?!.*(?:EnvelopeStream|resourceRegistry))"
       ],
       "claim": "PluginLoader.test.ts 'module-mode: an ES-import plugin resolves @kernel/data and installs' times out at the 5000ms default on a cold full-suite run (330ms in isolation). A failure ONLY there is pre-existing; the fix (per-test timeout or warm import) is a tracked item in tempdoc 872.",
       "evidence": "retired observations condition obs:pluginloader-test (seen 7, all 2026-08-25)",
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: npm --prefix modules/ui-web run test:unit:run -- PluginLoader"
+    },
+    {
+      "id": "store-recoverability-acquisitionstage-unclassified",
+      "match": [
+        "check-store-recoverability",
+        "governance/run\\.mjs .*--gate .*store-recoverability"
+      ],
+      "claim": "`node scripts/ci/check-store-recoverability.mjs` is RED on main: \"coverage: persistence write site is unclassified: modules/app-services/.../ai/install/AcquisitionStage.java\". The only write the scanner sees there is Files.createDirectories(targetFile.getParent()) (AcquisitionStage.java:113), preparing the model-download directory — directory preparation for re-acquirable model blobs, not a durable store. It needs a deliberate classification in governance/store-recoverability.v1.json (nonDurableWriteSites is the likely bucket, beside TempFileManager), which belongs to PR #483's authors rather than to a guess. A failure ONLY on this line is pre-existing, not your change.",
+      "evidence": "Introduced by 3af0e859 (feat(install): staged, component-level model acquisition, #483). Confirmed 2026-08-26 from worktree agent-aa51999fa41f5fdf9 (tempdoc 878): `git diff origin/main` is EMPTY for the gate script, StoreCatalog.java, governance/store-recoverability.v1.json and AcquisitionStage.java, so the red is main’s and not the branch’s.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node scripts/ci/check-store-recoverability.mjs"
+    },
+    {
+      "id": "ui-web-resourceregistry-defaults-timeout",
+      "match": [
+        "test:unit(?!.*(?:PluginLoader|EnvelopeStream))",
+        "vitest(?!.*(?:PluginLoader|EnvelopeStream))"
+      ],
+      "claim": "resourceRegistry.test.ts 'produces the four expected registrations and leaves HISTORY unsupported' times out at the 5000ms default on a full ui-web suite run (1.5s in isolation). It calls vi.resetModules() and then dynamically re-imports the registry plus its defaults module, so the whole re-transform lands inside one test's budget. A failure ONLY there is pre-existing; re-run in isolation to confirm. Same shape as ui-web-pluginloader-module-mode-timeout.",
+      "evidence": "Seen 3x on full-suite runs from worktree agent-aa51999fa41f5fdf9 (tempdoc 878) on 2026-08-26, and passing in isolation each time (14/14). Not change-induced: the import graph of resourceRegistryDefaults.ts is StatusCard/Table/TimeseriesPolyline/TimeseriesSparkline/HealthLitView, none of which 878 touches.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30"
+    },
+    {
+      "id": "app-services-integrationtest-wallclock-flaky",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?=.*\\bbuild\\b)",
+        "gradlew?(\\.bat)? (?!.*--tests).*integrationTest"
+      ],
+      "claim": "app-services integrationTest cases assert WALL-CLOCK budgets and spawn a real Worker, so they flake when the machine is busy (several agent worktrees building at once) — and `./gradlew build` runs integrationTest. Observed: LambdaMartBenchmarkTest's 5ms p50 threshold (seen at 5.41ms, then 8.08ms under heavier load), KnowledgeServerIntegrationTest and RichDocumentIntegrationTest (worker spawn starved: 'Timeout waiting for worker port after 30000ms', gRPC DEADLINE_EXCEEDED, 'Worker should be healthy'). Treat the SHAPE as pre-existing, not just these three names: a timeout/deadline failure here on a loaded box says nothing about the property asserted. Re-run with --tests to confirm.",
+      "evidence": "Seen twice from worktree agent-aa51999fa41f5fdf9 (tempdoc 878) on 2026-08-26 while three sibling worktrees were building, with the LambdaMART overshoot growing with load (5.41ms -> 8.08ms). Both cases passed immediately when re-run in isolation (`:modules:app-services:integrationTest --tests \"*LambdaMartBenchmarkTest*\" --tests \"*KnowledgeServerIntegrationTest*\"` -> BUILD SUCCESSFUL in 33s). The same runs' unit-test tasks were green.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat build"
+    },
+    {
+      "id": "docs-validate-heading-case-repo-wide",
+      "match": [
+        "docs-validate\\.mjs"
+      ],
+      "claim": "`node scripts/docs/docs-validate.mjs` exits 1 REPO-WIDE: 6751 `heading-case` findings across docs/, plus per-file `[tags] Few tags (0)`, `[aliases] Few aliases (0)` and `[heading] H1 does not match front matter title` advisories. It is not wired into CI and is not a pre-merge gate for any subject in CLAUDE.md's table, so editing a canonical doc does not make its red yours. A docs-validate failure is only yours if it names a heading or frontmatter key your diff actually touched.",
+      "evidence": "Reproduced 2026-08-26 from worktree agent-aa51999fa41f5fdf9 (tempdoc 878): exit 1, 6751 heading-case lines. Confirmed not branch-induced — `git diff 7ef5df6f HEAD -- docs/explanation/22-agent-system-architecture.md` shows no change to the H1 or to any frontmatter key, yet that file carries three of the advisories.",
+      "added": "2026-08-26",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node scripts/docs/docs-validate.mjs"
+    },
+    {
+      "id": "worker-core-onnx-longdoc-forensic-timeout",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!worker-core))(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*OnnxEmbeddingEncoderLongDocForensic"
+      ],
+      "claim": "OnnxEmbeddingEncoderLongDocForensicTest 'longDocEmbedWithSpansMatchesBaseEmbed' can exceed its 30s JUnit timeout under machine load (it runs real ONNX embedding over a long document, so it is load- and model-load-sensitive). LOAD-DEPENDENT, not a persistent red: it passed twice and failed twice on the same tree in one session, varying only with how many agents were building concurrently. A TimeoutException ONLY there is environmental, not your change; re-run when the machine is quiet.",
+      "evidence": "tempdoc 876 session f6617483 (2026-08-31): two full-suite runs on this tree were green including worker-core (8407 then 8476 tests, 0 failures); two later runs during concurrent multi-agent Gradle load hit the 30s timeout, once in the full suite and once with only worker-core + system-tests running. The test predates this work (PRs #133/#135) and modules/worker-core has ZERO files in tempdoc 876's diff.",
+      "added": "2026-08-31",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:worker-core:test --tests \"*OnnxEmbeddingEncoderLongDocForensicTest*\""
     }
   ]
 }

@@ -2,6 +2,7 @@
 package io.justsearch.app.services.intent;
 
 import io.justsearch.agent.api.registry.AutonomyLevel;
+import io.justsearch.agent.api.registry.ConfirmStrategy;
 import io.justsearch.agent.api.registry.GateBehavior;
 import io.justsearch.agent.api.registry.IntentSource;
 import io.justsearch.agent.api.registry.IntentSourceCatalog;
@@ -117,6 +118,31 @@ public final class IntentGateEvaluator {
    *     when the signal is unknown (the safe side).
    */
   public GateBehavior agentGate(RiskTier risk, AutonomyLevel autonomyLevel, boolean reversible) {
+    // No declared confirm strategy in scope → no floor; the dial verdict stands unchanged.
+    return agentGate(risk, autonomyLevel, reversible, ConfirmStrategy.None.INSTANCE);
+  }
+
+  /**
+   * Tempdoc 879 — the issuance verdict with the operation's declared {@link ConfirmStrategy} as an
+   * absolute FLOOR: the returned gate is never weaker than what the operation itself asked for
+   * ({@code None} → no floor, {@code Inline} → at least {@code INLINE_CONFIRM}, {@code Typed} → at
+   * least {@code TYPED_CONFIRM}).
+   *
+   * <p>WHY: the lattice/strategy split described on {@link GateBehavior} was TOTAL on the agent path
+   * — the declared strategy decided nothing and never reached the dispatcher, while {@code
+   * ConfirmValidator} explicitly permits any strategy at MEDIUM. So a <em>reversible</em> MEDIUM
+   * operation declaring {@code Inline} returned {@code AUTO} under the {@code AUTO} dial: the loop
+   * auto-approved something whose own declaration asked for a confirmation. Making the declaration a
+   * floor closes that hole the same way the HIGH floor above closes the destructive one. The dial may
+   * still TIGHTEN (WATCH raising a read to {@code INLINE_CONFIRM} is unchanged); it may no longer
+   * loosen below the declaration. A hard-stop {@code DENY} short-circuits before the floor applies —
+   * a floor must never weaken a denial.
+   *
+   * @param confirm the operation's declared confirmation mechanism; {@code null} is treated as {@code
+   *     None} (no floor).
+   */
+  public GateBehavior agentGate(
+      RiskTier risk, AutonomyLevel autonomyLevel, boolean reversible, ConfirmStrategy confirm) {
     Objects.requireNonNull(risk, "risk");
     AutonomyLevel level = autonomyLevel == null ? AutonomyLevel.DEFAULT : autonomyLevel;
     // The base (UNTRUSTED × risk) lattice + hard-stop. An engaged hard stop already produced DENY.
@@ -127,16 +153,38 @@ public final class IntentGateEvaluator {
     if (risk == RiskTier.HIGH) {
       return GateBehavior.TYPED_CONFIRM; // safety floor: destructive never auto-fires
     }
-    return switch (level) {
-      // WATCH — review everything; even a read-only call surfaces a lightweight acknowledgement.
-      case WATCH -> risk == RiskTier.LOW ? GateBehavior.INLINE_CONFIRM : GateBehavior.TYPED_CONFIRM;
-      // ASSIST — the safe default: reads auto-run; writes require typed confirmation (the base gate).
-      case ASSIST -> base;
-      // AUTO — trust the agent for reads and REVERSIBLE writes; an IRREVERSIBLE MEDIUM write still
-      // confirms even in AUTO (C-4). HIGH already handled above.
-      case AUTO ->
-          (risk == RiskTier.MEDIUM && !reversible) ? GateBehavior.TYPED_CONFIRM : GateBehavior.AUTO;
+    GateBehavior dialVerdict =
+        switch (level) {
+          // WATCH — review everything; even a read-only call surfaces a lightweight acknowledgement.
+          case WATCH ->
+              risk == RiskTier.LOW ? GateBehavior.INLINE_CONFIRM : GateBehavior.TYPED_CONFIRM;
+          // ASSIST — the safe default: reads auto-run; writes require typed confirmation (base gate).
+          case ASSIST -> base;
+          // AUTO — trust the agent for reads and REVERSIBLE writes; an IRREVERSIBLE MEDIUM write
+          // still confirms even in AUTO (C-4). HIGH already handled above.
+          case AUTO ->
+              (risk == RiskTier.MEDIUM && !reversible)
+                  ? GateBehavior.TYPED_CONFIRM
+                  : GateBehavior.AUTO;
+        };
+    return strictest(dialVerdict, declaredFloor(confirm));
+  }
+
+  /** The weakest gate the operation's own declaration permits (AUTO ⇒ no floor at all). */
+  private static GateBehavior declaredFloor(ConfirmStrategy confirm) {
+    if (confirm == null) {
+      return GateBehavior.AUTO;
+    }
+    return switch (confirm) {
+      case ConfirmStrategy.None ignored -> GateBehavior.AUTO;
+      case ConfirmStrategy.Inline ignored -> GateBehavior.INLINE_CONFIRM;
+      case ConfirmStrategy.Typed ignored -> GateBehavior.TYPED_CONFIRM;
     };
+  }
+
+  /** Declaration order is the strictness order: AUTO &lt; INLINE_CONFIRM &lt; TYPED_CONFIRM &lt; DENY. */
+  private static GateBehavior strictest(GateBehavior left, GateBehavior right) {
+    return left.ordinal() >= right.ordinal() ? left : right;
   }
 
   /** The structural facets of one intent evaluation (tempdoc 550 thesis III). */

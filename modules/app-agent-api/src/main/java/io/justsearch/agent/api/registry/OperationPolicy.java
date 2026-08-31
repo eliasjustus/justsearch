@@ -1,20 +1,23 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.agent.api.registry;
 
-import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
 /**
- * Seven-axis policy for an Operation invocation.
+ * Six-axis policy for an Operation invocation.
  *
- * <p>Per tempdoc 429 §6 + §C.D: six core axes (risk, confirm, audit, retry, rateLimit,
+ * <p>Per tempdoc 429 §6 + §C.D: five core axes (risk, confirm, audit, retry,
  * requiredCapabilities) drive the executor's gating, retry, audit recording, and
  * capability resolution. Revision 4 added the {@code undoSupported} flag (declarative
- * per §E.3) as a seventh axis to mark operations whose handlers override
- * {@link OperationHandler#undo(String)}; the doc-comment was updated to "seven-axis"
- * to match the record's actual shape (observations.md `#222`).
+ * per §E.3) as a sixth axis to mark operations whose handlers override
+ * {@link OperationHandler#undo(String)}.
+ *
+ * <p>Tempdoc 879 removed the former {@code rateLimit} axis: every declaration site in the
+ * tree passed {@code Optional.empty()}, nothing throttled anything, and its only validator
+ * rule was therefore unreachable. An axis no operation ever declares is not a policy — it is
+ * residue that reads as one.
  *
  * <p>Validators (per §A.7 trimmed list) enforce structural invariants across axes —
  * e.g., {@code risk == HIGH && audit == NONE} is an ERROR; {@code confirm == TYPED &&
@@ -27,7 +30,6 @@ public record OperationPolicy(
     ConfirmStrategy confirm,
     AuditPolicy audit,
     RetryPolicy retry,
-    Optional<Duration> rateLimit,
     Set<RequiredCapability> requiredCapabilities,
     boolean undoSupported,
     Optional<ResourceRef> advisoryClass,
@@ -39,7 +41,6 @@ public record OperationPolicy(
     Objects.requireNonNull(confirm, "confirm");
     Objects.requireNonNull(audit, "audit");
     Objects.requireNonNull(retry, "retry");
-    Objects.requireNonNull(rateLimit, "rateLimit");
     Objects.requireNonNull(advisoryClass, "advisoryClass");
     Objects.requireNonNull(inverseOperationRef, "inverseOperationRef");
     Objects.requireNonNull(capabilityFamily, "capabilityFamily");
@@ -68,7 +69,6 @@ public record OperationPolicy(
         confirm,
         audit,
         retry,
-        rateLimit,
         requiredCapabilities,
         undoSupported,
         advisoryClass,
@@ -91,7 +91,6 @@ public record OperationPolicy(
         confirm,
         audit,
         retry,
-        rateLimit,
         requiredCapabilities,
         undoSupported,
         advisoryClass,
@@ -100,17 +99,16 @@ public record OperationPolicy(
   }
 
   /**
-   * Backwards-compat constructor (the pre-560-§28 canonical 9-arg shape). Defaults
+   * Backwards-compat constructor (the pre-560-§28 canonical 8-arg shape). Defaults
    * {@link #capabilityFamily} to {@link Optional#empty()} so Operations declared before 4d compile
    * unchanged and belong to no capability family until their authors opt in via
-   * {@link #withCapabilityFamily} or the 10-arg canonical constructor.
+   * {@link #withCapabilityFamily} or the 9-arg canonical constructor.
    */
   public OperationPolicy(
       RiskTier risk,
       ConfirmStrategy confirm,
       AuditPolicy audit,
       RetryPolicy retry,
-      Optional<Duration> rateLimit,
       Set<RequiredCapability> requiredCapabilities,
       boolean undoSupported,
       Optional<ResourceRef> advisoryClass,
@@ -120,7 +118,6 @@ public record OperationPolicy(
         confirm,
         audit,
         retry,
-        rateLimit,
         requiredCapabilities,
         undoSupported,
         advisoryClass,
@@ -139,7 +136,6 @@ public record OperationPolicy(
       ConfirmStrategy confirm,
       AuditPolicy audit,
       RetryPolicy retry,
-      Optional<Duration> rateLimit,
       Set<RequiredCapability> requiredCapabilities,
       boolean undoSupported,
       Optional<ResourceRef> advisoryClass) {
@@ -148,7 +144,6 @@ public record OperationPolicy(
         confirm,
         audit,
         retry,
-        rateLimit,
         requiredCapabilities,
         undoSupported,
         advisoryClass,
@@ -174,7 +169,6 @@ public record OperationPolicy(
       ConfirmStrategy confirm,
       AuditPolicy audit,
       RetryPolicy retry,
-      Optional<Duration> rateLimit,
       Set<RequiredCapability> requiredCapabilities,
       boolean undoSupported) {
     this(
@@ -182,7 +176,6 @@ public record OperationPolicy(
         confirm,
         audit,
         retry,
-        rateLimit,
         requiredCapabilities,
         undoSupported,
         Optional.empty(),

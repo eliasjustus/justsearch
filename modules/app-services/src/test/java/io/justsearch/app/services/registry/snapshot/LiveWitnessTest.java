@@ -9,6 +9,7 @@ import io.justsearch.agent.api.registry.Binding;
 import io.justsearch.agent.api.registry.ConfirmStrategy;
 import io.justsearch.agent.api.registry.ConsumerHook;
 import io.justsearch.agent.api.registry.ContributionRegistry;
+import io.justsearch.agent.api.registry.ExecutorTag;
 import io.justsearch.agent.api.registry.I18nKey;
 import io.justsearch.agent.api.registry.Interface;
 import io.justsearch.agent.api.registry.Operation;
@@ -31,7 +32,6 @@ import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import io.justsearch.app.services.registry.snapshot.LiveWitness.Orphan;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
@@ -40,9 +40,14 @@ import org.junit.jupiter.api.Test;
  * The live-registry witness (ADR-0042 / tempdoc 560 §4b/§5). Composes the live {@link
  * ContributionRegistry} exactly as {@code SubstratePhase} does (static base catalogs + the
  * runtime-projected workflow ops), then asserts {@link LiveWitness#orphanedDeliveries} over it. This is
- * the only tier that sees runtime composition — both the static {@code consumer-presence} snapshot and
- * the static {@code runtime-witness} (AGENT-channel) gate are structurally blind to it (DR-A), so a
- * runtime-composed contribution with no consumer is invisible to them but caught here.
+ * the only tier that sees what a RUNNING install connects.
+ *
+ * <p>Tempdoc 876 B.6 narrowed what "blind" means here. The static snapshot now composes what
+ * production composes, so the projected {@code core.workflow-*} ops it used to miss are covered by
+ * the build tier — they are derivable from a compile-time workflow catalog. What remains structurally
+ * invisible to every static tier (DR-A) is what only a running process learns: MCP tools and plugin
+ * contributions arriving via {@code ContributionRegistry.install(Installation)}. A contribution of
+ * that kind with no consumer is caught here and nowhere else.
  */
 class LiveWitnessTest {
 
@@ -51,15 +56,33 @@ class LiveWitnessTest {
     ContributionRegistry registry = new ContributionRegistry();
     OperationCatalogComposition.installBaseCatalogs(
         registry, new CoreOperationCatalog(), new AgentToolsOperationCatalog());
+    // Tempdoc 876 B.4: the projection resolves ToolStep refs against the composed registry, so the
+    // already-installed operations are the known set (no MCP host here — demo-compose drops out).
     OperationCatalogComposition.installWorkflowOps(
-        registry, WorkflowOperationProjection.project(CoreWorkflowCatalog.catalog()));
+        registry,
+        WorkflowOperationProjection.project(CoreWorkflowCatalog.catalog(), registry.operations()));
     return registry;
   }
 
   @Test
   void liveRegistryCoversRuntimeComposedOpsTheStaticSnapshotMisses() {
+    // Tempdoc 876 B.6 MOVED the coverage boundary this test pins, so the exemplar changed while the
+    // invariant did not. Before 876 the static snapshot ran a bare emitter over the two static base
+    // catalogs, so the projected core.workflow-* ops were the readiest instance of the DR-D blind
+    // spot. RegistrySnapshotExporter now builds from the SAME composition production uses, which
+    // deliberately pulls those ops into the static tier (they are build-derivable: the workflow
+    // catalog is a compile-time constant). What no BUILD can derive is what a running install
+    // actually connects — MCP tools and plugin contributions, which arrive through
+    // ContributionRegistry.install(Installation). That is the surviving blind spot, and it is what
+    // this test must witness if it is to keep meaning anything.
     ContributionRegistry live = composed();
-    // A projected workflow op (core.workflow-*) is composed at RUNTIME and present in the live registry...
+    Set<String> staticOpIds =
+        RegistrySnapshotExporter.buildOperationEntries().stream()
+            .map(RegistrySnapshotExporter.Entry::id)
+            .collect(Collectors.toSet());
+
+    // (a) The 876 B.6 win, pinned so it cannot silently regress: projected workflow ops now ARE in
+    // the static snapshot. If the exporter ever reverts to the static base catalogs, this fails.
     List<String> liveWorkflowOps =
         live.operations().stream()
             .map(o -> o.id().value())
@@ -68,18 +91,75 @@ class LiveWitnessTest {
     assertFalse(
         liveWorkflowOps.isEmpty(),
         "expected runtime-composed core.workflow-* ops in the live registry");
-    // ...but ABSENT from the static snapshot the build-tier consumer-presence gate reads (the DR-D gap).
-    Set<String> staticOpIds =
+    for (String id : liveWorkflowOps) {
+      assertTrue(
+          staticOpIds.contains(id),
+          "tempdoc 876 B.6: the static snapshot composes what production composes, so projected op "
+              + id
+              + " must be present in it. Its absence means buildOperationEntries() regressed to the"
+              + " static base catalogs, which is the drift 876 closed.");
+    }
+
+    // (b) The surviving DR-D blind spot: an op installed the way MCP tools and plugins install is
+    // in the live registry and cannot be in any static snapshot.
+    OperationRef runtimeRef = new OperationRef("vendor.runtime-only.op");
+    live.install(
+        new ContributionRegistry.Installation(
+            runtimeSourcePlugin("vendor.runtime-only.source"), List.of(runtimeOp(runtimeRef)), Map.of()));
+    assertTrue(
+        live.operations().stream().anyMatch(o -> o.id().equals(runtimeRef)),
+        "the runtime-installed op must be in the live registry");
+    // Recomputed AFTER the install, deliberately: asserting against the snapshot captured above
+    // would be a tautology (the ref is a literal minted in this method, so no production change
+    // could put it there). Re-deriving proves the structural property — a build-time composition
+    // cannot see a contribution that only a running process installed.
+    Set<String> staticOpIdsAfterInstall =
         RegistrySnapshotExporter.buildOperationEntries().stream()
             .map(RegistrySnapshotExporter.Entry::id)
             .collect(Collectors.toSet());
-    for (String id : liveWorkflowOps) {
-      assertFalse(
-          staticOpIds.contains(id),
-          "runtime-composed op "
-              + id
-              + " must be absent from the static snapshot (the DR-D blind spot the live-registry witness covers)");
-    }
+    assertFalse(
+        staticOpIdsAfterInstall.contains(runtimeRef.value()),
+        "runtime-installed op "
+            + runtimeRef.value()
+            + " must be absent from the static snapshot even when it is recomputed while the op is"
+            + " live (the DR-D blind spot the live-registry witness covers — no build can know what"
+            + " a running install connects)");
+  }
+
+  /** An Operation with one executor, so it derives a consumer and is not itself an orphan. */
+  private static Operation runtimeOp(OperationRef ref) {
+    return new Operation(
+        ref,
+        Presentation.of(
+            new I18nKey("op." + ref.value() + ".label"),
+            new I18nKey("op." + ref.value() + ".description")),
+        Interface.of("{\"type\":\"object\",\"properties\":{}}", "{\"type\":\"object\"}"),
+        new OperationPolicy(
+            RiskTier.LOW,
+            ConfirmStrategy.None.INSTANCE,
+            AuditPolicy.METADATA_ONLY,
+            RetryPolicy.noRetry(),
+            Set.of(),
+            false),
+        OperationAvailability.empty(),
+        OperationLineage.empty(),
+        Binding.of(ref),
+        Provenance.core("1.0"),
+        Set.of(ExecutorTag.AGENT));
+  }
+
+  /** The installing plugin, carrying a realized consumer hook so the installation is not orphaned. */
+  private static Plugin runtimeSourcePlugin(String id) {
+    PluginRef owner = new PluginRef(id);
+    return new Plugin(
+        owner,
+        Presentation.of(
+            new I18nKey("plugin." + owner.value() + ".label"),
+            new I18nKey("plugin." + owner.value() + ".description")),
+        Provenance.core("1.0"),
+        Audience.OPERATOR,
+        PluginContributions.empty(),
+        List.of(new ConsumerHook.Realized(owner.value(), Audience.OPERATOR)));
   }
 
   @Test
@@ -108,7 +188,6 @@ class LiveWitnessTest {
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.METADATA_ONLY,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             OperationAvailability.empty(),

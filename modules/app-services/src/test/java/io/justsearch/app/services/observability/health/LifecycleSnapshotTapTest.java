@@ -649,4 +649,34 @@ final class LifecycleSnapshotTapTest {
       return now;
     }
   }
+
+  @Test
+  @DisplayName(
+      "876 C.8: settling to DEGRADED/index.dense_unavailable CLEARS a boot-time index.unavailable")
+  void denseUnavailableClearsTheBootTimeIndexUnavailable() {
+    // The live sequence this pins: the worker is starting (NOT_READY/worker.starting → asserts
+    // index.unavailable), then settles with the index SERVING but the dense leg down. Before 876
+    // C.8 that reason was unmapped, so reconcileDim took the unmapped-unhealthy branch and
+    // PRESERVED the boot-time assertion forever — leaving core.search-index, gated on
+    // Not(index.unavailable), hidden for the life of the process even though keyword search
+    // worked. It went unnoticed because nothing reconciled the store without a GET /api/status.
+    tap.accept(
+        singleDim(ReadinessDimension.INDEX_SERVING, component("NOT_READY", "worker.starting")));
+    assertTrue(
+        conditions.find("index.unavailable", "worker").isPresent(),
+        "a starting worker must assert index.unavailable");
+    listener.events.clear();
+
+    tap.accept(
+        singleDim(
+            ReadinessDimension.INDEX_SERVING, component("DEGRADED", "index.dense_unavailable")));
+
+    assertTrue(
+        conditions.find("index.unavailable", "worker").isEmpty(),
+        "a degraded-but-serving index must NOT keep the search tool gated off");
+    assertTrue(
+        conditions.find("index.dense-unavailable", "worker").isPresent(),
+        "the degradation stays visible under its own id rather than vanishing");
+  }
+
 }

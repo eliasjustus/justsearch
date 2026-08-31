@@ -101,20 +101,42 @@ public final class BootstrapHelpers {
     }
   }
 
-  /** Load the registry-operation i18n properties file from the classpath. */
-  public static Properties loadRegistryOperationMessages() {
+  /**
+   * The i18n catalogs the ONE registry message resolver reads. Tempdoc 876 §B.3: the emitter
+   * resolves {@code presentation().descriptionKey()} for every operation it offers the model, and
+   * the offering includes operations PROJECTED from workflows ({@code WorkflowOperationProjection}
+   * carries the Workflow's own Presentation through), whose keys live in the workflow catalog. A
+   * resolver over only the operation catalog handed the model the literal key
+   * {@code registry-workflow.research-brief.description} as a tool description. The two key
+   * namespaces are disjoint ({@code ops.*} vs {@code registry-workflow.*}), so this is a union.
+   */
+  private static final java.util.List<String> REGISTRY_MESSAGE_RESOURCES =
+      java.util.List.of(
+          "/messages/registry-operation.en.properties", "/messages/registry-workflow.en.properties");
+
+  /**
+   * Load the union of the registry i18n properties files the agent offering resolves against. A
+   * catalog missing from the classpath fails loudly at boot rather than degrading every one of its
+   * descriptions into a raw key.
+   */
+  public static Properties loadRegistryMessages() {
     Properties p = new Properties();
-    try (InputStream is =
-            BootstrapHelpers.class.getResourceAsStream("/messages/registry-operation.en.properties");
-        InputStreamReader r =
-            new InputStreamReader(
-                Objects.requireNonNull(is, "registry-operation.en.properties not on classpath"),
-                StandardCharsets.UTF_8)) {
-      p.load(r);
-    } catch (IOException e) {
-      throw new IllegalStateException("Failed to load registry-operation messages", e);
+    for (String resource : REGISTRY_MESSAGE_RESOURCES) {
+      loadInto(p, resource);
     }
     return p;
+  }
+
+  private static void loadInto(Properties into, String resource) {
+    try (InputStream is = BootstrapHelpers.class.getResourceAsStream(resource);
+        InputStreamReader r =
+            new InputStreamReader(
+                Objects.requireNonNull(is, resource + " not on classpath"),
+                StandardCharsets.UTF_8)) {
+      into.load(r);
+    } catch (IOException e) {
+      throw new IllegalStateException("Failed to load registry messages from " + resource, e);
+    }
   }
 
   /** Initial {@link RuntimeContext} read from system property (eval mode) + ConfigStore. */

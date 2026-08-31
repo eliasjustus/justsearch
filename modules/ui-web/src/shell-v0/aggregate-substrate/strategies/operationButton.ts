@@ -97,7 +97,7 @@ const DEFAULT_VIEWER_AUDIENCE: Audience = 'USER';
  * invocation. The strategy layers on:
  *   - audience gate (operationVisibleTo) — returns nothing on deny
  *   - data attributes for every metadata field (provenance.tier,
- *     audit, undoSupported, rateLimitMs, executors, availability,
+ *     audit, undoSupported, executors, availability,
  *     consumers, interface, confirm.kind, lineage) so future styling
  *     passes have the wire metadata on the DOM
  *   - tooltip aggregation (description + lineage.affects/supersedes)

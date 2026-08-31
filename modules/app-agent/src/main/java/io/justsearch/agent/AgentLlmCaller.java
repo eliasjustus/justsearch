@@ -62,6 +62,30 @@ final class AgentLlmCaller {
     this.compressor = compressor;
   }
 
+  /** Names the limit that fired, for the budget wall. */
+  private static final String BUDGET_LIMIT_SENTENCE =
+      "This run has reached its token budget and is stopping now, before you finished working.";
+
+  /** Names the limit that fired, for the iteration ceiling (tempdoc 878 §D.1). */
+  private static final String STEP_LIMIT_SENTENCE =
+      "This run has reached its step limit and is stopping now, before you finished working.";
+
+  /**
+   * Everything after the limit sentence — identical for both terminals, because the OBLIGATION is
+   * identical: only the reason the run stopped differs. Shared by construction so a future edit to
+   * the disclosure rules cannot land on one terminal and miss the other.
+   */
+  private static final String FINALIZE_OBLIGATION =
+      " Write your answer from what you already gathered, and follow all four rules:\n"
+          + "1. Say plainly, in your first sentence, that the run was cut short before it finished"
+          + " and that this answer is partial.\n"
+          + "2. Give whatever partial findings you do have. A partial answer is the goal here — do"
+          + " not decline, and do not withhold what you found because it is incomplete.\n"
+          + "3. Name what you had gathered and what you had not gotten to yet.\n"
+          + "4. Do not say you lack access to anything already present in this conversation. Tool"
+          + " results above are yours to use.\n"
+          + "Do not call any more tools.";
+
   /**
    * Tempdoc 859 §D §2.6 layer 1 — the budget-edge finalize instruction.
    *
@@ -76,40 +100,107 @@ final class AgentLlmCaller {
    * wire ({@code AgentEvent.AgentDone#disposition}), which is written independently of this text.
    */
   static final String BUDGET_EDGE_FINALIZE_INSTRUCTION =
-      "This run has reached its token budget and is stopping now, before you finished working."
-          + " Write your answer from what you already gathered, and follow all four rules:\n"
-          + "1. Say plainly, in your first sentence, that the run was cut short before it finished"
-          + " and that this answer is partial.\n"
-          + "2. Give whatever partial findings you do have. A partial answer is the goal here — do"
-          + " not decline, and do not withhold what you found because it is incomplete.\n"
-          + "3. Name what you had gathered and what you had not gotten to yet.\n"
-          + "4. Do not say you lack access to anything already present in this conversation. Tool"
-          + " results above are yours to use.\n"
-          + "Do not call any more tools.";
+      BUDGET_LIMIT_SENTENCE + FINALIZE_OBLIGATION;
 
   /**
-   * Budget-edge finalize: compress history, ask the model for its best answer with no tools, and
-   * return that text (or {@code null} if it returns nothing or the call fails).
+   * Tempdoc 878 §D.1 — the same obligation, for the OTHER involuntary terminal: the run ran out of
+   * STEPS, not tokens.
+   *
+   * <p>The limit sentence is the only difference, and it is not cosmetic. 859 D5 recorded the cost
+   * of one shared string across these two terminals on the FE: a run stopped by the step ceiling
+   * with most of its budget unspent told the reader that TOKENS had stopped it, which is a specific
+   * false statement made where the reader is deciding what to do next. The same argument applies to
+   * the text handed to the MODEL — an instruction that opens "you have reached your token budget"
+   * during a step-ceiling finalize invites the model to repeat that falsehood in its answer.
+   */
+  static final String STEP_CEILING_FINALIZE_INSTRUCTION =
+      STEP_LIMIT_SENTENCE + FINALIZE_OBLIGATION;
+
+  /**
+   * Budget-edge finalize: the graceful terminal at the TOKEN wall. Delegates to {@link
+   * #attemptFinalize} and owns the {@code agent.budget_edge_finalize.total} counter, which is named
+   * for this terminal and therefore counts only this one.
    */
   String attemptBudgetEdgeFinalize(AgentSession session, Consumer<AgentEvent> sink) {
+    String text = attemptFinalize(session, sink, BUDGET_EDGE_FINALIZE_INSTRUCTION);
+    agentTelemetry.recordBudgetEdgeFinalize(text != null);
+    return text;
+  }
+
+  /**
+   * Tempdoc 878 §D.1 — the same graceful terminal at the STEP ceiling.
+   *
+   * <p>It deliberately does NOT increment {@code agent.budget_edge_finalize.total}: that counter is
+   * named for the budget wall, and folding a second terminal into it would silently change what a
+   * recorded number means — the class of defect this tempdoc exists to close, committed while
+   * closing it. The ceiling's own counter is a metric-schema change and is logged as follow-up.
+   */
+  String attemptStepCeilingFinalize(AgentSession session, Consumer<AgentEvent> sink) {
+    return attemptFinalize(session, sink, STEP_CEILING_FINALIZE_INSTRUCTION);
+  }
+
+  /**
+   * Tempdoc 878 §D.7 — the run's factual inventory of documents it OPENED, appended to whichever
+   * finalize instruction is being sent.
+   *
+   * <p>Rule 3 of that instruction requires the model to "name what you had gathered and what you had
+   * not gotten to yet". A compact model at a truncating terminal, under maximal compression
+   * pressure, is being asked to recall that from a transcript whose evidence has just been stripped
+   * — which is how 859 §7's run came to claim no access to files sitting in its own context. This
+   * hands it the list rather than asking it to remember one.
+   *
+   * <p>EMPTY appends nothing. A run that opened no documents has nothing to inventory, and a line
+   * saying so would be noise on every search-only run — which is most of them.
+   */
+  private static String openedInventory(AgentSession session) {
+    java.util.List<String> opened = session.openedDocumentPaths();
+    if (opened.isEmpty()) {
+      return "";
+    }
+    return "\nDocuments you opened in this run, in order: "
+        + String.join(", ", opened)
+        + ". You opened no others.";
+  }
+
+  /**
+   * Compress history, ask the model for its best answer with no tools under {@code instruction},
+   * and return that text (or {@code null} if it returns nothing or the call fails).
+   *
+   * <p>Returning {@code null} on every failure is what lets both callers be FAIL-OPEN: a terminal
+   * that cannot synthesise lands on exactly the answerless behaviour it replaced, never worse.
+   */
+  private String attemptFinalize(
+      AgentSession session, Consumer<AgentEvent> sink, String instruction) {
     try {
       // Compress tool messages to maximize context space for the finalize call.
       //
       // Tempdoc 865 §7.5 — and RECORD the receipt, like every other compression site. This one
-      // matters most: it is the last pass before `groundedDone(BUDGET_EDGE_FINALIZE)`, so it builds
-      // the exact prompt that terminal's answer is written from, under maximal compression pressure.
+      // matters most: it is the last pass before the terminal's `groundedDone`, so it builds the
+      // exact prompt that terminal's answer is written from, under maximal compression pressure.
       // Compressing bare here left the terminal resolving inclusion against a one-pass-stale
       // picture — silently withholding the badge precisely where the most text had been dropped.
       session.recordCompression(compressor.compressToolMessages(session.messages()));
-      session.appendMessage(Map.of("role", "user", "content", BUDGET_EDGE_FINALIZE_INSTRUCTION));
-      LlmCallResult result = callLlmWithTools(session, List.of(), sink);
+      session.appendMessage(Map.of("role", "user", "content", instruction + openedInventory(session)));
+      // Tempdoc 878 review B2 — SAMPLING IS PASSED EXPLICITLY, never resolved from the session.
+      //
+      // The 3-argument overload resolves it via `resolveAgentSampling`, which returns
+      // `tool_choice=required` PLUS `TOOL_CALL_GRAMMAR` whenever `shouldForceToolCall` holds — and
+      // `OnlineModeOps` forwards a grammar exactly when the tools list is empty, which it always is
+      // here. A finalize sampled that way is constrained to emit `<tool_call>{…}</tool_call>` with no
+      // tools to call, and `recoverInlineToolCalls` cannot strip it (its name set is empty), so the
+      // raw blob streams out AS THE ANSWER of a truncated run.
+      //
+      // The budget wall never hit this because its OUTER gate already excludes the forced-tool state
+      // for its own reason (E0a must not be stranded). The iteration ceiling has no such gate and
+      // must not grow one: at a hard ceiling the run is over either way, and a synthesis attempt is
+      // still the right thing. Fixing it HERE makes the invariant structural — a no-tools call is
+      // never tool-forced — instead of a guard every future call site has to remember.
+      LlmCallResult result =
+          callLlmWithTools(session, List.of(), sink, SamplingParams.AGENT);
       String text = result.textContent();
-      boolean success = text != null && !text.isBlank();
-      agentTelemetry.recordBudgetEdgeFinalize(success);
-      return success ? text : null;
+      return text != null && !text.isBlank() ? text : null;
     } catch (Exception e) {
-      LOG.warn("Budget-edge finalize LLM call failed", e);
-      agentTelemetry.recordBudgetEdgeFinalize(false);
+      LOG.warn("Finalize LLM call failed", e);
       return null;
     }
   }
@@ -271,13 +362,17 @@ final class AgentLlmCaller {
     try {
       boolean completed;
       try {
-        completed = latch.await(5, TimeUnit.MINUTES);
+        completed = latch.await(AgentTimeouts.llmCallMs(), TimeUnit.MILLISECONDS);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         throw new RuntimeException("Agent LLM call interrupted", e);
       }
       if (!completed) {
-        throw new RuntimeException("Agent LLM call timed out after 5 minutes");
+        // Derived from AgentTimeouts.llmCallMs() so the message and the actual wait cannot disagree.
+        throw new RuntimeException(
+            "Agent LLM call timed out after "
+                + TimeUnit.MILLISECONDS.toMinutes(AgentTimeouts.llmCallMs())
+                + " minutes");
       }
 
       if (!reasoningBuilder.isEmpty()) {

@@ -354,6 +354,7 @@ message FetchDocumentSliceResponse {
   map<string, string> metadata = 5;
   bool truncated = 6;         // true if there is more content beyond this slice
   int32 next_offset_chars = 7; // where to resume; equals offset_chars + content.length()
+  int32 total_chars = 8;      // full length of the extracted text; 0 when not found / unknown
 }
 
 // === RAG Context Retrieval ===

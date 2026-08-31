@@ -30,6 +30,12 @@ public interface IntentPreviewer {
    * <p>Tempdoc 561 §19/C-4: {@code reversible} (the op declares undo or a backend inverse) refines
    * the {@code AUTO} dial — an irreversible MEDIUM write confirms even under {@code AUTO}. Callers
    * pass {@code false} when the signal is unknown (the safe side).
+   *
+   * <p>Tempdoc 879: {@code confirm} (the operation's declared {@link ConfirmStrategy}) is an absolute
+   * FLOOR — the verdict is never weaker than the operation's own declaration, so a {@code
+   * ConfirmStrategy.Inline} operation can no longer be auto-approved by the dial. Callers pass {@code
+   * ConfirmStrategy.None.INSTANCE} when there is no declaration in scope.
    */
-  GateBehavior previewAgentGate(RiskTier risk, AutonomyLevel autonomyLevel, boolean reversible);
+  GateBehavior previewAgentGate(
+      RiskTier risk, AutonomyLevel autonomyLevel, boolean reversible, ConfirmStrategy confirm);
 }

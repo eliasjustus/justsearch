@@ -12,7 +12,7 @@ import java.util.Optional;
  * <p>Per slice 447 §X.3.1 + §X.11.5 follow-up Phase 3: this is one of the three
  * sub-records produced by partitioning the formerly-monolithic OperationPolicy along
  * consumer-model lines. {@link OperationPolicy} keeps invocation-time axes (risk,
- * confirm, audit, retry, rateLimit, capabilities, undo); {@code OperationAvailability}
+ * confirm, audit, retry, capabilities, undo); {@code OperationAvailability}
  * holds discovery-time axes; {@link OperationLineage} holds post-execution axes.
  *
  * <p>Fields:

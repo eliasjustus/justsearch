@@ -67,6 +67,12 @@ final class BackgroundRunServiceTest {
       return List.of();
     }
 
+    /** No catalog to filter, so the offering is the (empty) available set. */
+    @Override
+    public List<Operation> offeredOperations() {
+      return availableOperations();
+    }
+
     @Override
     public boolean isAvailable() {
       return true;

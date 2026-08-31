@@ -14,6 +14,7 @@ import io.justsearch.app.observability.health.OccurrenceLog;
 import io.justsearch.app.observability.health.Source;
 import io.justsearch.app.services.observability.health.HeadHealthEventsEmitter;
 import io.justsearch.app.services.observability.health.LifecycleSnapshotTap;
+import io.justsearch.app.services.observability.health.ReadinessReconciliationTrigger;
 import io.justsearch.app.services.observability.health.WorkerSnapshotTap;
 import java.time.Clock;
 import java.util.Map;
@@ -37,7 +38,11 @@ public final class HealthSubstrateInit {
       Source headSource,
       LifecycleSnapshotTap lifecycleSnapshotTap,
       WorkerSnapshotTap workerSnapshotTap,
-      HeadHealthEventsEmitter headHealthEventsEmitter) {}
+      HeadHealthEventsEmitter headHealthEventsEmitter,
+      // Tempdoc 876 §B.2a: the non-request trigger for the taps above. Constructed here (they are
+      // all substrate-owned), wired to capability transitions in OrchestrationPhase, given its
+      // thunk by CoreApiAssembly, closed with the substrate in HeadAssembly.close().
+      ReadinessReconciliationTrigger readinessReconciliationTrigger) {}
 
   /**
    * Initializes the health substrate. Subscribes:
@@ -86,6 +91,8 @@ public final class HealthSubstrateInit {
     HeadHealthEventsEmitter headHealthEventsEmitter =
         new HeadHealthEventsEmitter(
             occurrenceLog, healthEventChangeRegistry, headSource, Clock.systemUTC());
+    ReadinessReconciliationTrigger readinessReconciliationTrigger =
+        new ReadinessReconciliationTrigger();
     return new Output(
         conditionStore,
         occurrenceLog,
@@ -93,6 +100,7 @@ public final class HealthSubstrateInit {
         headSource,
         lifecycleSnapshotTap,
         workerSnapshotTap,
-        headHealthEventsEmitter);
+        headHealthEventsEmitter,
+        readinessReconciliationTrigger);
   }
 }

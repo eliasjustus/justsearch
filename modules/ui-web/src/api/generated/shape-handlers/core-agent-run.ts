@@ -78,6 +78,8 @@ export interface CoreAgentRunToolExecCompletedPayload {
   output: string;
   executionId: string;
   structuredData?: Record<string, unknown>;
+  outputCharsToModel?: number;
+  truncatedForModel?: boolean;
   trace?: TracePayload;
 }
 

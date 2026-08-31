@@ -1,6 +1,7 @@
 package io.justsearch.app.services.registry.emitter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.registry.Audience;
@@ -21,6 +22,8 @@ import io.justsearch.agent.api.registry.Presentation;
 import io.justsearch.agent.api.registry.Provenance;
 import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
+import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,7 +62,6 @@ final class AgentOperationEmitterTest {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
@@ -261,7 +263,6 @@ final class AgentOperationEmitterTest {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         new OperationAvailability(
@@ -337,7 +338,6 @@ final class AgentOperationEmitterTest {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         new OperationAvailability(
@@ -381,5 +381,136 @@ final class AgentOperationEmitterTest {
         1,
         emitter.emit(catalog, List.of()).size(),
         "Not(absent-condition) evaluates true → the op is offered when the index is serving");
+  }
+
+  // === Tempdoc 876 §B.1: offer(...) is the ONE authority on membership ===
+
+  @Test
+  void offerAppliesSelectionAndAvailabilityTogether() {
+    // The uncovered combination (876 finding 2): every prior test exercises selection OR an
+    // availability probe, never both. 868 §C.3's live NO_TOOLS was exactly this composition —
+    // the selection matched, then availability dropped the survivor — so the two filters
+    // composing is the behaviour under test, not either one alone.
+    //
+    // Catalog: three AGENT ops. core.gated is Not(ConditionMatches("index.unavailable")) and the
+    // probe reports that condition FIRING, so it is unavailable. Selection names core.gated +
+    // core.picked (NOT core.unpicked). Only core.picked is both selected and available.
+    AgentOperationEmitter emitter =
+        new AgentOperationEmitter()
+            .withAvailabilityProbe(conditionId -> "index.unavailable".equals(conditionId));
+    OperationCatalog catalog =
+        OperationCatalog.of(
+            "core",
+            List.of(
+                makeOpUnlessCondition("core.gated", "index.unavailable"),
+                makeOp("core.picked", "p", Set.of(ExecutorTag.AGENT)),
+                makeOp("core.unpicked", "u", Set.of(ExecutorTag.AGENT))));
+
+    List<Operation> offered = emitter.offer(catalog, List.of("core_gated", "core_picked"));
+
+    assertEquals(
+        List.of("core.picked"),
+        offered.stream().map(op -> op.id().value()).toList(),
+        "Selection and availability must COMPOSE: a selected-but-unavailable op is dropped, and an"
+            + " available-but-unselected op is never added back");
+  }
+
+  @Test
+  void offerAndEmitAgreeOnMembershipAndOrder() {
+    // The split in §B.1 is only safe while emit() is offer()'s wire projection. This pins that:
+    // the same catalog + selection + probe must produce the same names in the same order on both
+    // faces, so a future edit to one filter chain cannot silently fork the other.
+    AgentOperationEmitter emitter =
+        new AgentOperationEmitter()
+            .withAvailabilityProbe(conditionId -> "index.unavailable".equals(conditionId));
+    OperationCatalog catalog =
+        OperationCatalog.of(
+            "core",
+            List.of(
+                makeOp("core.first", "a", Set.of(ExecutorTag.AGENT)),
+                makeOpUnlessCondition("core.gated", "index.unavailable"),
+                makeOp("core.second", "b", Set.of(ExecutorTag.AGENT), Audience.AGENT),
+                makeOp("core.operator", "o", Set.of(ExecutorTag.AGENT), Audience.OPERATOR),
+                makeOp("core.ui-only", "u", Set.of(ExecutorTag.UI))));
+
+    List<String> offeredNames =
+        emitter.offer(catalog, List.of()).stream()
+            .map(op -> OperationCatalog.toWireName(op.id()))
+            .toList();
+    List<String> emittedNames =
+        emitter.emit(catalog, List.of()).stream()
+            .map(tool -> ((Map<?, ?>) tool.get("function")).get("name").toString())
+            .toList();
+
+    assertEquals(
+        List.of("core_first", "core_second"),
+        offeredNames,
+        "offer() applies executor + audience + availability, preserving catalog order");
+    assertEquals(offeredNames, emittedNames, "emit() must be offer()'s wire projection, not a fork");
+  }
+
+  // === Tempdoc 875 Move 3 — offeredWireNames is a PROJECTION of emit, not a fork ===
+  // AgentToolEmitter's default derives the authority set from emit(). Nothing else pins that the
+  // default agrees with the REAL emitter over the REAL catalog: AgentToolAuthorityBoundaryTest
+  // re-implements the filter chain in a stub (the app-agent module boundary is real), so a future
+  // override computing the names "some cheaper way" would leave the boundary as two lists again —
+  // exactly the drift this design removed. These assertions are that pin.
+
+  /** The {@code function.name} of every emitted tool, in emission order. */
+  private static Set<String> emittedFunctionNames(List<Map<String, Object>> tools) {
+    Set<String> names = new LinkedHashSet<>();
+    for (Map<String, Object> tool : tools) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> function = (Map<String, Object>) tool.get("function");
+      names.add(String.valueOf(function.get("name")));
+    }
+    return names;
+  }
+
+  @Test
+  void offeredWireNamesEqualsTheEmittedFunctionNamesOfTheRealCatalog() {
+    AgentOperationEmitter emitter = new AgentOperationEmitter();
+    OperationCatalog catalog = new AgentToolsOperationCatalog();
+
+    List<Map<String, Object>> all = emitter.emit(catalog, List.of());
+    assertFalse(all.isEmpty(), "Precondition: the real catalog offers agent tools");
+    assertEquals(
+        emittedFunctionNames(all),
+        emitter.offeredWireNames(catalog, List.of()),
+        "no selection: the projection must be exactly what the emitter handed the model");
+
+    // A non-empty selection, taken from the emitter's own output so the equality cannot pass by
+    // both sides being empty.
+    List<String> selection = List.of(emittedFunctionNames(all).iterator().next());
+    List<Map<String, Object>> selected = emitter.emit(catalog, selection);
+    assertEquals(1, selected.size(), "Precondition: a one-name selection narrows the tool list");
+    assertEquals(
+        emittedFunctionNames(selected),
+        emitter.offeredWireNames(catalog, selection),
+        "with a selection: the projection must narrow with emit");
+  }
+
+  @Test
+  void offeredWireNamesShrinksWithAnAvailabilityProbeThatWithholdsTools() {
+    // The real catalog gates core.search-index and core.read-document on
+    // Not(ConditionMatches("index.unavailable")) (AgentToolsOperationCatalog.java:165, :215), so a
+    // probe reporting that condition firing withholds them from emit(). The projection must follow.
+    OperationCatalog catalog = new AgentToolsOperationCatalog();
+    AgentOperationEmitter serving =
+        new AgentOperationEmitter().withAvailabilityProbe(conditionId -> false);
+    AgentOperationEmitter unavailable =
+        new AgentOperationEmitter()
+            .withAvailabilityProbe(conditionId -> "index.unavailable".equals(conditionId));
+
+    Set<String> offeredWhileServing = serving.offeredWireNames(catalog, List.of());
+    Set<String> offeredWhileUnavailable = unavailable.offeredWireNames(catalog, List.of());
+
+    assertTrue(
+        offeredWhileUnavailable.size() < offeredWhileServing.size(),
+        "Precondition: the probe actually withholds something — otherwise this proves nothing");
+    assertEquals(
+        emittedFunctionNames(unavailable.emit(catalog, List.of())),
+        offeredWhileUnavailable,
+        "a withheld tool must be absent from the authority set, not just from the tool list");
   }
 }

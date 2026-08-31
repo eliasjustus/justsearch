@@ -2,8 +2,10 @@ package io.justsearch.app.inference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.justsearch.app.api.Mode;
@@ -24,11 +26,23 @@ class TokenEndpointOpsTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
+  private static final List<Map<String, Object>> MESSAGES =
+      List.of(Map.of("role", "user", "content", "test"));
+
+  private static final List<Map<String, Object>> TOOLS =
+      List.of(
+          Map.of(
+              "type",
+              "function",
+              "function",
+              Map.of("name", "read_document", "description", "Reads a document")));
+
   private HttpServer server;
   private int port;
   private AtomicReference<Mode> mode;
   private AtomicInteger tokenizeHitCount;
   private AtomicInteger applyTemplateHitCount;
+  private AtomicReference<String> lastApplyTemplateBody;
   private TokenEndpointOps ops;
 
   @BeforeEach
@@ -36,6 +50,7 @@ class TokenEndpointOpsTest {
     mode = new AtomicReference<>(Mode.ONLINE);
     tokenizeHitCount = new AtomicInteger(0);
     applyTemplateHitCount = new AtomicInteger(0);
+    lastApplyTemplateBody = new AtomicReference<>(null);
 
     server =
         HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
@@ -55,6 +70,8 @@ class TokenEndpointOpsTest {
         "/apply-template",
         exchange -> {
           applyTemplateHitCount.incrementAndGet();
+          lastApplyTemplateBody.set(
+              new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
           byte[] body =
               "{\"prompt\":\"<|user|>\\ntest<|end|>\\n<|assistant|>\\n\"}"
                   .getBytes(StandardCharsets.UTF_8);
@@ -122,6 +139,60 @@ class TokenEndpointOpsTest {
   void applyTemplate_emptyMessagesReturnsEmptyString() {
     Optional<String> result = ops.applyTemplate(List.of());
     assertEquals(Optional.of(""), result);
+  }
+
+  // ==================== applyTemplate: tool threading (tempdoc 878 finding 6) ====================
+
+  @Test
+  void applyTemplate_sendsToolsWhenListNonEmpty() throws Exception {
+    assertTrue(ops.applyTemplate(MESSAGES, TOOLS).isPresent());
+
+    JsonNode body = MAPPER.readTree(lastApplyTemplateBody.get());
+    JsonNode tools = body.get("tools");
+    assertNotNull(tools, "request body must carry a tools key when tools were supplied");
+    assertTrue(tools.isArray());
+    assertEquals(1, tools.size());
+    assertEquals(
+        "read_document",
+        tools.get(0).get("function").get("name").asText(),
+        "the tool schema itself must reach the template, not just the key");
+  }
+
+  @Test
+  void applyTemplate_emptyToolsProducesBodyIdenticalToNoToolsForm() throws Exception {
+    ops.applyTemplate(MESSAGES);
+    String withoutToolsArg = lastApplyTemplateBody.get();
+    assertNotNull(withoutToolsArg);
+    assertFalse(
+        MAPPER.readTree(withoutToolsArg).has("tools"),
+        "single-argument form must not introduce a tools key");
+
+    ops.applyTemplate(MESSAGES, List.of());
+    assertEquals(
+        withoutToolsArg,
+        lastApplyTemplateBody.get(),
+        "an empty tool list must send byte-identical JSON to the pre-threading body");
+  }
+
+  @Test
+  void applyTemplate_nullToolsProducesBodyIdenticalToNoToolsForm() throws Exception {
+    ops.applyTemplate(MESSAGES);
+    String withoutToolsArg = lastApplyTemplateBody.get();
+
+    ops.applyTemplate(MESSAGES, null);
+    assertEquals(
+        withoutToolsArg,
+        lastApplyTemplateBody.get(),
+        "a null tool list must send byte-identical JSON to the pre-threading body");
+    assertFalse(MAPPER.readTree(lastApplyTemplateBody.get()).has("tools"));
+  }
+
+  @Test
+  void countPromptTokens_threadsToolsIntoTemplate() throws Exception {
+    assertEquals(Optional.of(5), ops.countPromptTokens(MESSAGES, TOOLS));
+    assertTrue(
+        MAPPER.readTree(lastApplyTemplateBody.get()).has("tools"),
+        "countPromptTokens must project the same prompt the generation call will send");
   }
 
   // ==================== countPromptTokens ====================

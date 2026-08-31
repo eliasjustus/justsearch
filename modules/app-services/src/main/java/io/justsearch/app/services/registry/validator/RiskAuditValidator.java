@@ -14,7 +14,6 @@ import java.util.stream.Stream;
  * <ul>
  *   <li>{@code risk == HIGH && audit == NONE} → ERROR (destructive operations must be audited)
  *   <li>{@code risk == LOW && !capabilities.isEmpty()} → WARN (low-risk usually doesn't gate on capabilities)
- *   <li>{@code audit == FULL_PAYLOAD} on operations with file-path inputs → WARN (PII retention)
  * </ul>
  */
 public final class RiskAuditValidator implements RegistryShapeValidator {

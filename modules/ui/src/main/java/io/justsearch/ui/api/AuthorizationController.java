@@ -164,7 +164,12 @@ public final class AuthorizationController {
               pending.get().operationId(), pending.get().argsJson(), pending.get().sourceTier());
       // Tempdoc 550 thesis IV: an explicit "allow always" gesture records a durable grant for this
       // (operation, sourceTier), so future invocations auto-approve at the gate without re-prompting.
-      boolean allowAlways = body.has("allowAlways") && body.get("allowAlways").asBoolean(false);
+      // Tempdoc 875 C.2: NOT for a HIGH-risk operation — the gate's risk ceiling would ignore such a
+      // grant, so minting one would leave an active-looking row that never fires. The FE already
+      // hides the checkbox for a HIGH prompt; this is the backend saying the same thing, because the
+      // backend is the authority and a direct API caller can still ask.
+      boolean allowAlwaysRequested = body.has("allowAlways") && body.get("allowAlways").asBoolean(false);
+      boolean allowAlways = allowAlwaysRequested && !isHighRisk(pending.get().operationId());
       if (allowAlways && durableGrantStore != null) {
         durableGrantStore.grantAllowAlways(pending.get().operationId(), pending.get().sourceTier());
       }
@@ -262,14 +267,7 @@ public final class AuthorizationController {
       payload.put("executeMessage", "Server-side execution is not available in this deployment.");
       return;
     }
-    io.justsearch.agent.api.registry.Operation op = null;
-    for (var catalog : catalogs) {
-      var hit = catalog.findByWireName(pending.operationId());
-      if (hit.isPresent()) {
-        op = hit.get();
-        break;
-      }
-    }
+    io.justsearch.agent.api.registry.Operation op = resolveOperation(pending.operationId()).orElse(null);
     if (op == null) {
       payload.put("executed", false);
       payload.put("executeMessage", "Operation not available: " + pending.operationId());
@@ -328,6 +326,22 @@ public final class AuthorizationController {
   public void handleGrant(Context ctx) {
     GrantRequest req = parseGrantRequest(ctx);
     if (req == null) return; // parseGrantRequest already wrote the error
+    // Tempdoc 875 C.2: an operation grant on a HIGH-risk operation is inert at the gate (the risk
+    // ceiling refuses it), so recording one would list an active-looking grant that never fires —
+    // exactly the lying control this tempdoc removed from the approve dialog. Refuse it here instead.
+    // A FAMILY grant is still accepted even when the family contains a HIGH member: it keeps working
+    // for the family's MEDIUM members, which is what 560 §28's axis is for.
+    if (!req.family() && isHighRisk(req.target())) {
+      ctx.status(400)
+          .json(
+              Map.of(
+                  "error",
+                  "\""
+                      + req.target()
+                      + "\" is a HIGH-risk operation; a durable allow-always grant never covers one."
+                      + " Destructive operations require a fresh confirmation each time."));
+      return;
+    }
     if (req.family()) {
       durableGrantStore.grantFamilyAllowAlways(req.target(), req.tier());
     } else {
@@ -382,6 +396,37 @@ public final class AuthorizationController {
   private static String textField(JsonNode node, String field) {
     var v = node.get(field);
     return v != null && v.isTextual() && !v.asText().isBlank() ? v.asText() : null;
+  }
+
+  /**
+   * Resolve an operation by wire name or dotted id across the injected catalogs. {@code
+   * findByWireName} already falls back to {@code findByIdValue}, so both forms work.
+   */
+  private java.util.Optional<io.justsearch.agent.api.registry.Operation> resolveOperation(
+      String idOrWireName) {
+    if (idOrWireName == null || idOrWireName.isBlank()) {
+      return java.util.Optional.empty();
+    }
+    for (var catalog : catalogs) {
+      var hit = catalog.findByWireName(idOrWireName);
+      if (hit.isPresent()) {
+        return hit;
+      }
+    }
+    return java.util.Optional.empty();
+  }
+
+  /**
+   * Tempdoc 875 C.2 — is this operation one a durable grant can never cover? Unresolvable is NOT
+   * treated as HIGH: a grant may legitimately be recorded for an operation this process cannot see
+   * yet (a late-registered handler, an MCP contribution), and the gate applies the real ceiling from
+   * the live {@code OperationPolicy} at dispatch time regardless of what was recorded here. So this
+   * check removes the lying control where the risk IS known; the enforcement itself is the gate's.
+   */
+  private boolean isHighRisk(String idOrWireName) {
+    return resolveOperation(idOrWireName)
+        .map(op -> op.policy().risk() == io.justsearch.agent.api.registry.RiskTier.HIGH)
+        .orElse(false);
   }
 
   private static SourceTier parseTier(String raw) {

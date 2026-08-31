@@ -38,9 +38,11 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Scope;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ConcurrentHashMap;
@@ -575,6 +577,28 @@ public final class AgentLoopService implements AgentService {
       }
 
       for (int iteration = 0; iteration < request.maxIterations(); iteration++) {
+        // Tempdoc 876 §B.2b — the offering re-evaluates WITHIN a run, monotonically. The emit above
+        // is a t=0 sample and a ten-iteration run easily outlives a Worker recovery, so without this
+        // a tool that came back mid-run could never reach the model. Iteration 0 runs on the emit
+        // taken immediately above (same instant, nothing to re-evaluate); every later iteration
+        // re-asks the emitter and adopts the answer only when its NAME SET is a strict superset of
+        // what the model already has. The asymmetry is the point: offering fails open, execution
+        // fails closed. An offered-but-broken tool returns an error the model can read and adapt to,
+        // whereas a withheld tool is not experienced as a missing capability at all — it is
+        // experienced as a reason to improvise (868 §C.3 recorded the model inventing
+        // core_file_operations {"operations":[{"operation":"read"}]} while core_read_document was
+        // withheld). So growth is adopted and shrinkage is not; on this path nothing the model has already been
+        // shown — and possibly already called — vanishes underneath it.
+        //
+        // SCOPE (876 C.6): this governs the SINGLE-AGENT path, which is the only one that consumes
+        // baseTools. With agentProfiles present, AgentStepRunner.buildIterationTools discards
+        // baseTools and re-emits per ACTIVE PROFILE, because a profile switch is meant to change
+        // the tool set; re-emitting here would burn an emit per iteration for a list nobody reads.
+        // That path's own availability-driven shrink is an open item, not something this guard
+        // silently covers — see the tempdoc.
+        if (iteration > 0 && request.agentProfiles().isEmpty()) {
+          baseTools = adoptGrownOffering(sessionId, request, baseTools);
+        }
         IterationOutcome outcome =
             stepRunner.executeIteration(
                 iteration, request, session, sessionId, baseTools, traceSequencerRef, sink);
@@ -586,18 +610,17 @@ public final class AgentLoopService implements AgentService {
 
       // Max iterations reached
       agentSuccess = true;
-      // Tempdoc 859 §D §2.6 — the OTHER truncating terminal. It produces no answer text at all, so
-      // the model cannot disclose the truncation even in principle; the disposition on the wire is
-      // the only thing that can. Emitted through the ungrounded factory (see AgentDone.ofDisposition)
-      // rather than the canonical constructor, which the grounding seam audit reserves for
-      // AgentStepRunner.groundedDone.
-      sink.accept(
-          AgentEvent.AgentDone.ofDisposition(
-              "",
-              session.iterationsUsed(),
-              session.toolCallsExecuted(),
-              session.totalTokens(),
-              TerminalDisposition.MAX_ITERATIONS.name()));
+      // Tempdoc 878 §D.1 — the OTHER truncating terminal, and the SECOND involuntary one. Like the
+      // budget wall it now gets one no-tools synthesis attempt before it stops, so the work the run
+      // already paid for reaches the reader; unlike the budget wall it names the STEP limit in the
+      // instruction (859 D5: the two limits have different remedies and must not borrow each
+      // other's sentence). The disposition is stamped regardless of what the model produced, which
+      // is what keeps the truncation disclosed even when the answer is empty.
+      //
+      // The event is built by the runner because AgentGroundingSeamAuditTest reserves
+      // grounding-carrying AgentDone construction to AgentStepRunner.groundedDone; this loop keeps
+      // the state transition it owns for every other terminal.
+      sink.accept(stepRunner.finalizeAtIterationCeiling(request, session, sink));
       // F1: state-first, durability-second.
       session.markTerminated(TerminalDisposition.MAX_ITERATIONS, null, null);
       checkpoint(sessionId, session, LifecycleState.DONE.name(), "Max iterations reached");
@@ -649,6 +672,51 @@ public final class AgentLoopService implements AgentService {
     }
   }
 
+
+  /**
+   * Tempdoc 876 §B.2b — re-emit the offering and adopt it only when its name set is a STRICT
+   * SUPERSET of what the run is already offering. Equal set ⇒ keep the current list (a needless
+   * replacement churns the prompt and invalidates caching for no gain); subset or disjoint ⇒ keep it
+   * as well, because a tool may APPEAR mid-run but must never DISAPPEAR. Adoption replaces the list
+   * wholesale rather than appending the new entries, which preserves the emitter's catalog ordering
+   * — {@code AgentOperationEmitter}'s javadoc calls that stability load-bearing, since a model may
+   * weight earlier tools differently.
+   *
+   * <p>The emit is a few object allocations over ~10 operations, i.e. nothing against an LLM
+   * round-trip, so it is deliberately neither cached nor throttled.
+   */
+  private List<Map<String, Object>> adoptGrownOffering(
+      String sessionId, AgentRequest request, List<Map<String, Object>> current) {
+    List<Map<String, Object>> refreshed =
+        agentToolEmitter.emit(operationCatalog, request.selectedToolNames());
+    Set<String> currentNames = toolNames(current);
+    Set<String> refreshedNames = toolNames(refreshed);
+    if (refreshedNames.size() <= currentNames.size() || !refreshedNames.containsAll(currentNames)) {
+      return current;
+    }
+    Set<String> appeared = new LinkedHashSet<>(refreshedNames);
+    appeared.removeAll(currentNames);
+    LOG.info("Agent tools grew mid-run (session={}): +{}", sessionId, appeared);
+    return refreshed;
+  }
+
+  /**
+   * The wire names in an emitted tool list, in emission order. An envelope carrying no name
+   * contributes nothing rather than a shared sentinel: two nameless entries collapsing to one set
+   * element would make the strict-superset comparison reason about the wrong cardinality. Nothing
+   * emits one today (the OpenAI projection always names its tool and {@code
+   * VirtualOperationStore.withoutCollisions} drops nameless virtual entries), which is exactly why
+   * a sentinel here would be a silent landmine rather than a visible bug.
+   */
+  private static Set<String> toolNames(List<Map<String, Object>> tools) {
+    Set<String> names = new LinkedHashSet<>();
+    for (Map<String, Object> tool : tools) {
+      if (tool.get("function") instanceof Map<?, ?> function && function.get("name") != null) {
+        names.add(function.get("name").toString());
+      }
+    }
+    return names;
+  }
 
   // Tempdoc 584 §B.4 — the live-run control surface delegates to AgentSessionRegistry. Bodies (the
   // uniform get-session-then-mutate shape) moved there; new per-run control verbs attach to that
@@ -783,6 +851,17 @@ public final class AgentLoopService implements AgentService {
   @Override
   public List<Operation> availableOperations() {
     return queries.availableOperations();
+  }
+
+  /**
+   * Tempdoc 876 §B.1 — deliberately NOT delegated to {@code queries}: the offering is the emitter's
+   * to decide, and the emitter is held here (the read collaborator has only the catalog). Same call
+   * the run loop makes at {@code runAgent}, minus a run's tool selection, so the trust panel and the
+   * model read one authority.
+   */
+  @Override
+  public List<Operation> offeredOperations() {
+    return agentToolEmitter.offer(operationCatalog, List.of());
   }
 
   @Override

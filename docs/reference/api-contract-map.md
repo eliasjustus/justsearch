@@ -299,7 +299,7 @@ Agent endpoints:
 - `POST /api/chat/reject` (reject a pending gate: `callId`, optional `sessionId`, optional `reason`) — reject sibling of `/api/chat/approve` (same unified dispatch)
 - `POST /api/chat/agent/autonomy` (set the live autonomy dial for a running session: `{sessionId, level: "watch"|"assist"|"auto"}`) — tempdoc 561 P-D; takes effect at the next gated tool call (the `set-posture` directive of the 565 §30 DIRECTION authority)
 - `POST /api/chat/agent/steer` (queue a mid-run human steering directive: `{sessionId, text}`) — tempdoc 565 §30, the DIRECTION authority's `interject`: the agent loop drains it at the next step boundary and folds it into the next LLM call; echoed back as a `directive_acknowledged` SSE event. 404 if the session is unknown/finished
-- `GET /api/chat/agent/tools` (envelope `{ tools, available }`; each tool: `name`, `description` (i18n key), `risk` (`low`/`medium`/`high`), `supportsUndo`, `parameterSchema`)
+- `GET /api/chat/agent/tools` (envelope `{ tools, available }`; each tool: `name`, `description` (i18n key), `risk` (`low`/`medium`/`high`), `supportsUndo`, `parameterSchema`, `tier`, `provenance`, `kind`) — the tools the model is **offered**, i.e. `AgentToolEmitter.offer(...)`'s set (executor + audience + evaluated availability), not the raw catalog (tempdoc 876 §B.1)
 - `POST /api/chat/agent/undo` (undo reversible tool execution: `toolName`, `executionId`)
 - `GET /api/chat/agent/history?limit=<1..100>` (recent operation batches)
 - `GET /api/chat/agent/history/{batchId}` (batch detail)

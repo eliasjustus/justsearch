@@ -2,8 +2,6 @@
 package io.justsearch.app.services.registry.operations.handlers;
 
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Shared helpers for {@link StartAiInstallHandler} + {@link RepairAiInstallHandler}.
@@ -12,13 +10,13 @@ import tools.jackson.databind.json.JsonMapper;
  */
 final class BrainInstallHandlerSupport {
 
-  static final ObjectMapper MAPPER = JsonMapper.builder().build();
-
   private BrainInstallHandlerSupport() {}
 
   static boolean parseAcceptTerms(String argumentsJson) {
     try {
-      JsonNode root = MAPPER.readTree(argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
+      JsonNode root =
+          HandlerJson.MAPPER.readTree(
+              argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
       JsonNode v = root.get("acceptTerms");
       return v != null && v.isBoolean() && v.asBoolean();
     } catch (Exception e) {

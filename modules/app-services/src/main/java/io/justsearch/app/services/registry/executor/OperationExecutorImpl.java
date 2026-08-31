@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.registry.executor;
 
+import io.justsearch.agent.api.registry.AuditPolicy;
 import io.justsearch.agent.api.registry.ConfirmationRequiredException;
 import io.justsearch.agent.api.registry.GateBehavior;
 import io.justsearch.agent.api.registry.HandlerRegistry;
@@ -106,12 +107,26 @@ public final class OperationExecutorImpl implements OperationDispatcher {
   }
 
   // Tempdoc 550 thesis IV: optional durable "allow-always" grants. When a durable grant covers
-  // (operation, sourceTier), a non-AUTO gate is satisfied WITHOUT a fresh capsule. Late-bind
-  // (null = no durable grants wired; legacy/test paths).
+  // (operation, risk, sourceTier) AND the scope covers this invocation's arguments, a non-AUTO gate is
+  // satisfied WITHOUT a fresh capsule. Late-bind (null = no durable grants wired; legacy/test paths).
   private volatile io.justsearch.app.services.intent.DurableGrantStore durableGrantStore;
+  // Tempdoc 875 C.3: the argument-scope collaborator supplied WITH the store — never null while the
+  // store is set, so durable grants cannot be wired without a scope.
+  private volatile io.justsearch.app.services.intent.DurableGrantScope durableGrantScope;
 
-  /** Wire the durable allow-always grant store the gate consults (tempdoc 550 thesis IV). */
-  public void setDurableGrantStore(io.justsearch.app.services.intent.DurableGrantStore store) {
+  /**
+   * Wire the durable allow-always grant store the gate consults (tempdoc 550 thesis IV) together with
+   * the argument scope that bounds it (tempdoc 875 C.3).
+   *
+   * <p>The scope is REQUIRED: a durable grant is args-independent by model, which is only defensible
+   * for an operation whose reach is fixed. Requiring the scope at the wiring site makes
+   * "grants wired without a containment answer" unrepresentable rather than merely discouraged.
+   */
+  public void setDurableGrantStore(
+      io.justsearch.app.services.intent.DurableGrantStore store,
+      io.justsearch.app.services.intent.DurableGrantScope scope) {
+    Objects.requireNonNull(scope, "scope");
+    this.durableGrantScope = scope;
     this.durableGrantStore = store;
   }
   // Slice 3a-2-c Phase C: declarative input-schema validation. The validator
@@ -373,7 +388,19 @@ public final class OperationExecutorImpl implements OperationDispatcher {
       InvocationProvenance provenance,
       Optional<String> executionId) {
     Instant completedAt = clock.instant();
-    if (historyEmitter != null) {
+    // Tempdoc 879: the declared {@code OperationPolicy.audit} axis is the authority for
+    // whether an invocation is recorded. AuditPolicy.NONE means "no audit record", so the
+    // history entry is suppressed; METADATA_ONLY emits the metadata-shaped entry below
+    // (id / actor / timestamps / outcome / provenance — never arguments).
+    //
+    // WHY this is a scoped guard and NOT an early `return`: the per-Operation advisory
+    // emission below lives inside this same method, and core.ping-backend declares
+    // AuditPolicy.NONE *together with* advisoryClass core.advisory-operation-completed.
+    // An early return here would silently kill the advisory pipeline for its only
+    // NONE-declaring producer. Audit policy governs history retention, not advisory
+    // delivery — keep the suppression wrapped around the historyEmitter block only.
+    boolean auditSuppressed = op.policy().audit() == AuditPolicy.NONE;
+    if (!auditSuppressed && historyEmitter != null) {
       try {
         historyEmitter.accept(
             new OperationHistoryEntry(
@@ -385,9 +412,6 @@ public final class OperationExecutorImpl implements OperationDispatcher {
                 // would be a silent contract change for FE / MCP / audit consumers that
                 // grep on the value.
                 "head",
-                // Slice 444b §B.D: empty until the Operation.policy.audit axis drives
-                // redaction. The previous "(redacted)" literal was uninformative.
-                Optional.empty(),
                 startTime,
                 completedAt,
                 outcome,
@@ -611,9 +635,18 @@ public final class OperationExecutorImpl implements OperationDispatcher {
         // Tempdoc 550 thesis IV + 560 §28 (4d): a durable "allow-always" grant satisfies the gate
         // without a fresh capsule — either a per-operation grant, or a grant for this operation's
         // declared capability family (the wider caveat). Checked BEFORE the capsule; recorded APPROVED.
+        // Tempdoc 875 C.1: this is the ONE place that knows a confirmation was skipped, so it is where
+        // both narrowing rules land. (1) Risk ceiling — the store refuses HIGH outright, matching
+        // IntentGateEvaluator.agentGate's issuance floor. (2) Argument scope — the grant covers this
+        // invocation only if its arguments fall inside the containment it was granted against. When the
+        // scope says no, we do NOT deny and do NOT emit APPROVED: we fall through to the capsule path,
+        // so the user gets the ordinary confirm dialog, which names the arguments.
         var durable = this.durableGrantStore;
+        var scope = this.durableGrantScope;
         if (durable != null
-            && durable.isAllowed(op.id().value(), op.policy().capabilityFamily(), sourceTier)) {
+            && durable.isAllowed(
+                op.id().value(), op.policy().capabilityFamily(), op.policy().risk(), sourceTier)
+            && scope.coversArguments(op, argumentsJson)) {
           emitGateOutcome(op, provenance, sourceTier, gate,
               io.justsearch.app.observability.operations.AuthorizationDisposition.APPROVED);
           return; // durable-grant-satisfied

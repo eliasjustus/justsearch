@@ -15,7 +15,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Handler for {@code core.index-gc}.
@@ -39,7 +38,6 @@ import tools.jackson.databind.json.JsonMapper;
 public final class IndexGcHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(IndexGcHandler.class);
-  private static final JsonMapper MAPPER = new JsonMapper();
 
   /** Default {@code keepLatest=0} — proto convention: "use server-side default policy". */
   private static final int DEFAULT_KEEP_LATEST = 0;
@@ -63,7 +61,7 @@ public final class IndexGcHandler implements OperationHandler {
     boolean pruneMarkedOnly = DEFAULT_PRUNE_MARKED_ONLY;
     if (argumentsJson != null && !argumentsJson.isBlank()) {
       try {
-        JsonNode root = MAPPER.readTree(argumentsJson);
+        JsonNode root = HandlerJson.MAPPER.readTree(argumentsJson);
         JsonNode keepNode = root.get("keepLatest");
         if (keepNode != null && !keepNode.isNull() && keepNode.canConvertToInt()) {
           int parsed = keepNode.asInt();
