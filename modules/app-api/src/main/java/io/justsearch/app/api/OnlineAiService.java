@@ -439,6 +439,19 @@ public interface OnlineAiService {
     return java.util.Optional.empty();
   }
 
+  /**
+   * Counts prompt tokens for messages plus the tool schemas the generation call will carry.
+   *
+   * <p>A chat template renders tool schemas into the prompt, so counting messages alone measures a
+   * prompt that will never be sent (tempdoc 878 finding 6). Pass the same {@code tools} list given
+   * to the streaming call. The default delegates to {@link #countPromptTokens(List)} so an
+   * implementor that only knows the schema-blind form still answers.
+   */
+  default java.util.Optional<Integer> countPromptTokens(
+      List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
+    return countPromptTokens(messages);
+  }
+
   // ==================== Mode Control Methods ====================
 
   /**

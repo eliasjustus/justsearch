@@ -165,6 +165,23 @@ public interface AgentRunQueries {
   }
 
   /**
+   * Tempdoc 871 §3b — the same projection, plus the trailing reasoning whose carrier this plane
+   * suppressed (see {@link io.justsearch.agent.api.interaction.ThreadProjection}). Callers that can
+   * see BOTH planes should prefer this over {@link #threadEvents(String, java.util.Set)}: it is the
+   * only form that lets the orphaned block reach the answer it was thought for, instead of being
+   * re-homed onto an event that happened before it.
+   *
+   * <p>The default DELEGATES for the same reason the two-argument {@code threadEvents} does — an
+   * implementor that overrides only the older form keeps answering with its own events, and simply
+   * hands nothing across.
+   */
+  default io.justsearch.agent.api.interaction.ThreadProjection threadProjection(
+      String conversationId, java.util.Set<String> answeredRunIds) {
+    return io.justsearch.agent.api.interaction.ThreadProjection.of(
+        threadEvents(conversationId, answeredRunIds));
+  }
+
+  /**
    * Tempdoc 561 P-A / P-A2: the typed {@link io.justsearch.agent.api.lifecycle.AgentLifecycle} loop
    * objects (Session ⊃ Turn ⊃ Iteration + state + budget) for every agent run of {@code
    * conversationId}, projected from the durable {@code AgentRunStore} record. Default empty for the

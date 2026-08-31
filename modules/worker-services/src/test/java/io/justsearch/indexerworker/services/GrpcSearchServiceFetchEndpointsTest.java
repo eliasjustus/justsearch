@@ -194,10 +194,28 @@ class GrpcSearchServiceFetchEndpointsTest {
       assertEquals("56789a", response.getContent());
       assertTrue(response.getTruncated());
       assertEquals(11, response.getNextOffsetChars());
+      // Tempdoc 878: the total is the denominator the caller needs to choose between paging and
+      // sampling. It was computed here already and thrown away.
+      assertEquals(content.length(), response.getTotalChars());
       assertEquals("Slice Test", response.getMetadataOrDefault("title", ""));
       assertEquals("text/plain", response.getMetadataOrDefault("mime", ""));
       assertEquals("done", response.getMetadataOrDefault("vdu_status", ""));
       assertEquals("3", response.getMetadataOrDefault("vdu_page_count", ""));
+    }
+
+    @Test
+    @DisplayName("878: an unknown doc_id leaves total_chars at 0 — unknown, not 'empty document'")
+    void unknownDocIdReportsNoTotal() {
+      FetchDocumentSliceResponse response =
+          callFetchDocumentSlice(
+              FetchDocumentSliceRequest.newBuilder()
+                  .setDocId("doc-that-was-never-indexed")
+                  .setOffsetChars(0)
+                  .setMaxChars(10)
+                  .build());
+
+      assertFalse(response.getFound());
+      assertEquals(0, response.getTotalChars());
     }
 
     @Test

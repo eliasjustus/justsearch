@@ -256,9 +256,11 @@ final class AgentSessionBudgetTest {
   @Test
   @DisplayName("859 §D §2.7(c) — the session remembers the provider-REPORTED prompt size")
   void recordUsageRemembersTheReportedPromptSize() {
-    // The context-pressure trigger reads this instead of countPromptTokens, which is schema-blind
+    // The context-pressure trigger reads this ALONGSIDE countPromptTokens, which was schema-blind
     // and ~40% low (577) — low enough that the trigger could fire only after the real prompt had
-    // already exceeded n_ctx, i.e. after the damage.
+    // already exceeded n_ctx, i.e. after the damage. Tempdoc 878 §D.6 fixed the schema-blindness at
+    // the source; this figure is still read, because it corrects the OTHER error: the projection
+    // describes the messages as they stand now, this describes the call that actually happened.
     var s = session(50_000);
     assertEquals(0, s.lastReportedPromptTokens(), "nothing reported before the first response");
     s.recordUsage(3200, 150);

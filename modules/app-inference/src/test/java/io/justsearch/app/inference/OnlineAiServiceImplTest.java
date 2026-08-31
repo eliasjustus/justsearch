@@ -436,4 +436,61 @@ final class OnlineAiServiceImplTest {
             eq(InferenceLifecycleManager.RestartPolicy.RESTART_IF_ONLINE),
             eq(io.justsearch.app.inference.telemetry.TransitionReason.CONFIG_APPLY));
   }
+
+  // ==================== prompt-token projection tool threading (tempdoc 878 finding 6) ====================
+
+  @Test
+  void countPromptTokens_withTools_threadsToolListToManager() {
+    List<Map<String, Object>> messages = List.of(Map.of("role", "user", "content", "hi"));
+    List<Map<String, Object>> tools = List.of(Map.of("type", "function"));
+    when(manager.countPromptTokens(messages, tools)).thenReturn(java.util.Optional.of(1234));
+
+    assertEquals(java.util.Optional.of(1234), service.countPromptTokens(messages, tools));
+    verify(manager).countPromptTokens(messages, tools);
+  }
+
+  /**
+   * The two-argument form is a {@code default} on the interface precisely so implementors that only
+   * know the schema-blind form keep answering instead of failing to compile or returning empty.
+   */
+  @Test
+  void countPromptTokens_interfaceDefault_delegatesToSingleArgumentForm() {
+    List<List<Map<String, Object>>> seen = new java.util.ArrayList<>();
+    OnlineAiService legacyImplementor =
+        new OnlineAiService() {
+          @Override
+          public java.util.Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
+            seen.add(messages);
+            return java.util.Optional.of(77);
+          }
+
+          @Override
+          public CompletableFuture<String> summarize(String content) {
+            throw new UnsupportedOperationException();
+          }
+
+          @Override
+          public CompletableFuture<String> askQuestion(String question, String context) {
+            throw new UnsupportedOperationException();
+          }
+
+          @Override
+          public boolean isAvailable() {
+            return true;
+          }
+
+          @Override
+          public boolean isStartingUp() {
+            return false;
+          }
+        };
+
+    List<Map<String, Object>> messages = List.of(Map.of("role", "user", "content", "hi"));
+
+    assertEquals(
+        java.util.Optional.of(77),
+        legacyImplementor.countPromptTokens(messages, List.of(Map.of("type", "function"))),
+        "default overload must fall through to the single-argument override");
+    assertEquals(List.of(messages), seen, "the single-argument form must be the one invoked");
+  }
 }

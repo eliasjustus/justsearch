@@ -264,12 +264,16 @@ export function agentAnswerEvidence(
  * Tempdoc 865 §7.1 — what a run established, RECONSTRUCTED from the per-call grounding deltas, for
  * a run that reached no grounded terminal.
  *
- * <p>This is the read side of the incremental mint. A cancelled, errored or iteration-exhausted run
- * emits no grounded `done` — `AgentDone.ofDisposition` hardcodes an empty source list and that is
- * its contract, not a bug — but every tool call already stamped what it established onto its own
+ * <p>This is the read side of the incremental mint. A cancelled or errored run emits no grounded
+ * `done` at all — but every tool call already stamped what it established onto its own
  * `tool_exec_completed`. Concatenating those deltas in call order reproduces the terminal list
  * exactly (pinned by `AgentLoopServiceTest.concatenatedDeltas_equalTheGroundedTerminalsSources`), so
  * the reader keeps the evidence the run really drew on instead of an empty pane.
+ *
+ * <p>Tempdoc 878 §D.1 — the iteration ceiling has LEFT this list. It now finalizes through the
+ * grounded seam and carries its sources like any other terminal, so this arm is reached for it only
+ * when the finalize established nothing. The reader is unchanged: it always keyed on whether the
+ * terminal made a claim, never on which disposition wore it.
  *
  * <p>The scorer is `SCORER_NONE`, which is the truth and not a fallback: no answer existed, so no
  * matcher ran, so nothing judged these sources. That lands them in `grounding-incomplete` —

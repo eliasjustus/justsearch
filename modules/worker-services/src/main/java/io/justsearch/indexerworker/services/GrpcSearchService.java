@@ -693,6 +693,9 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
       response.setContent(slice);
       response.setTruncated(truncated);
       response.setNextOffsetChars(end);
+      // Tempdoc 878: the caller cannot choose between paging and sampling without a denominator,
+      // and the Worker is the only place that knows one. It was already computed above.
+      response.setTotalChars(totalLen);
 
       // Add common metadata fields if available
       String title = documentFieldOps.getDocumentField(normalizedDocId, "title");
