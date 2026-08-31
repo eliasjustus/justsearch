@@ -23,14 +23,6 @@ class BrowseToolTest {
   }
 
   @Test
-  void parameterSchemaPresent() {
-    // Per Phase 12 of tempdoc 429: name/description/safetyLevel/supportsUndo moved to
-    // the AgentToolsOperationCatalog Operation declaration; the tool retains only the
-    // execute() callback + its parameter schema (preserved for prompt-engineering tests).
-    assertNotNull(BrowseTool.parameterSchema());
-  }
-
-  @Test
   void executeWithParentPath() {
     var capturedParent = new AtomicReference<String>();
     var tool =

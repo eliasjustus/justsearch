@@ -15,7 +15,7 @@ import java.util.Map;
  * <p>The shape mirrors the historical hand-built emitter output byte-for-byte (pinned by {@code
  * UIOperationViewConformanceTest}): field order is declaration order; enums serialize as their
  * uppercase {@code name()} (the registry enums carry no transforming {@code @JsonValue}); {@code
- * iconHint}/{@code category}/{@code rateLimitMs}/availability fields are omitted when absent;
+ * iconHint}/{@code category}/availability fields are omitted when absent;
  * {@code inverseOperationId} is always present (null when the op declares no inverse). The {@code
  * intf} inputs/result and availability expressions are arbitrary JSON (a JSON-Schema source / an
  * availability AST), carried as {@code Object} (a Jackson tree node at runtime; {@code app-agent-api}
@@ -53,8 +53,8 @@ public record UIOperationView(
       implements PreciseWire {}
 
   /**
-   * Policy axes. {@code rateLimitMs} is omitted when absent; {@code inverseOperationId} is always
-   * present (null when the op declares no inverse, matching the FE {@code inverseOperationId?} field)
+   * Policy axes. {@code inverseOperationId} is always present (null when the op declares no
+   * inverse, matching the FE {@code inverseOperationId?} field)
    * — present-as-null, so {@link Nullable} keeps it {@code required} + nullable in the schema.
    */
   public record PolicyView(
@@ -62,7 +62,6 @@ public record UIOperationView(
       ConfirmView confirm,
       AuditPolicy audit,
       boolean undoSupported,
-      @JsonInclude(JsonInclude.Include.NON_NULL) Long rateLimitMs,
       @Nullable String inverseOperationId)
       implements PreciseWire {}
 

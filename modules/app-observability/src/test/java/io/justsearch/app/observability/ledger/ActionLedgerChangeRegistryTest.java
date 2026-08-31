@@ -49,7 +49,6 @@ final class ActionLedgerChangeRegistryTest {
         new OperationHistoryEntry(
             new OperationRef("core.reindex"),
             "head",
-            Optional.empty(),
             Instant.parse("2026-05-26T00:00:00Z"),
             Instant.parse("2026-05-26T00:00:01Z"),
             OperationOutcome.SUCCESS,
@@ -136,7 +135,6 @@ final class ActionLedgerChangeRegistryTest {
         new OperationHistoryEntry(
             new OperationRef("core.reindex"),
             "head",
-            Optional.empty(),
             t,
             t,
             OperationOutcome.SUCCESS,
@@ -147,7 +145,6 @@ final class ActionLedgerChangeRegistryTest {
         new OperationHistoryEntry(
             new OperationRef("core.reindex"),
             "head",
-            Optional.empty(),
             t,
             t,
             OperationOutcome.SUCCESS,
@@ -230,7 +227,6 @@ final class ActionLedgerChangeRegistryTest {
         new OperationHistoryEntry(
             new OperationRef("core.reindex"),
             "head",
-            Optional.empty(),
             Instant.parse("2026-05-26T00:00:00Z"),
             Instant.parse("2026-05-26T00:00:01Z"),
             OperationOutcome.SUCCESS,

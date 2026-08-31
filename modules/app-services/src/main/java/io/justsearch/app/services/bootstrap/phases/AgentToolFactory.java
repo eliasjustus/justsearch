@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.bootstrap.phases;
 
+import io.justsearch.agent.tools.AgentToolPaths;
 import io.justsearch.agent.tools.BrowseTool;
 import io.justsearch.agent.tools.FileOperationLog;
 import io.justsearch.agent.tools.FileOperationsTool;
@@ -110,11 +111,6 @@ public final class AgentToolFactory {
             : new KnowledgeHttpApiAdapter(knowledgeServer, onlineAiService, lambdaMartReranker);
     bindScanObservability(agentSearchAdapter, scanProgressRegistry, scanRollupLedger);
     FileOperationLog fileOperationLog = new FileOperationLog(dataDir.resolve("file-operations"));
-    FileOperationsTool fileOperationsTool =
-        new FileOperationsTool(
-            indexingService::getWatchedPaths,
-            knowledgeClient::updateDocumentPaths,
-            fileOperationLog);
     Supplier<List<BrowseTool.RootInfo>> rootsSupplier =
         () ->
             indexingService.getWatchedRoots().stream()
@@ -124,23 +120,36 @@ public final class AgentToolFactory {
                             r.path().toAbsolutePath().normalize().toString(),
                             r.path().getFileName().toString()))
                 .toList();
-    SearchTool searchTool = new SearchTool(agentSearchAdapter::search, rootsSupplier);
+    // Tempdoc 877 §2.4: ONE roots view for the whole bundle. Every tool that resolves or validates a
+    // path reads the indexed roots through it, so there is one guarded accessor, one degrade-open
+    // rule and one relative→absolute algorithm rather than the five near-copies this replaced.
+    AgentToolPaths.RootsView rootsView = AgentToolPaths.RootsView.of(rootsSupplier);
+    // Tempdoc 877 §2.7: file-operations takes the roots view too — NOT as a second sandbox (that
+    // stays `indexingService::getWatchedPaths`, one argument earlier) but so a root-relative path
+    // the model echoed back from a browse result resolves instead of failing DEST_NOT_SANDBOXED.
+    FileOperationsTool fileOperationsTool =
+        new FileOperationsTool(
+            indexingService::getWatchedPaths,
+            knowledgeClient::updateDocumentPaths,
+            fileOperationLog,
+            rootsView);
+    SearchTool searchTool = new SearchTool(agentSearchAdapter::search, rootsView);
     BrowseTool browseTool =
         new BrowseTool(
-            agentSearchAdapter::listFolders, agentSearchAdapter::listFolderFiles, rootsSupplier);
+            agentSearchAdapter::listFolders, agentSearchAdapter::listFolderFiles, rootsView);
     IngestTool ingestTool =
         new IngestTool(
             agentSearchAdapter::ingest,
             agentSearchAdapter::scanRoot,
-            rootsSupplier,
+            rootsView,
             () -> rootBindings(indexingService));
-    // Tempdoc 868 §B.2: the read tool rides the SAME rootsSupplier as search, so `path` validation
+    // Tempdoc 868 §B.2: the read tool rides the SAME roots view as search, so `path` validation
     // and `path_prefix` validation share one authority and one degrade-open rule. The fetch is the
     // Worker's FetchDocumentSlice via DocumentService — the Head still never reads document bytes.
     ReadDocumentTool readDocumentTool =
         documentService == null
             ? null
-            : new ReadDocumentTool(documentService::fetchSlice, rootsSupplier);
+            : new ReadDocumentTool(documentService::fetchSlice, rootsView);
     return new Output(
         agentSearchAdapter,
         fileOperationLog,

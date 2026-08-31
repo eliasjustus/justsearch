@@ -68,7 +68,6 @@ final class AgentToolsControllerOfferingTest {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         new OperationAvailability(availability, Optional.empty()),

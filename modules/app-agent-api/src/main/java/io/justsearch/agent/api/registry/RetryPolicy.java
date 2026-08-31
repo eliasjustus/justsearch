@@ -7,12 +7,15 @@ import java.util.Optional;
 /**
  * Retry contract for an Operation invocation.
  *
- * <p>Per tempdoc 429 §A.7 RetryRateLimitValidator: {@code allowAutoRetry &&
- * !idempotencyKey.isPresent()} fails the build (auto-retry without idempotency is unsafe).
+ * <p>{@code allowAutoRetry && !idempotencyKey.isPresent()} is rejected by the compact
+ * constructor: auto-retry without idempotency is unsafe, so the axis is unrepresentable in that
+ * shape rather than merely linted against.
  *
- * <p>Bit-for-bit-preserves the existing agent loop's retry behavior per §A.2:
- * READ_ONLY (LOW risk) tools auto-retry on transient failures; WRITE/DESTRUCTIVE
- * (MEDIUM/HIGH) do not.
+ * <p>The axis declares PERMISSION to replay, not a schedule. Tempdoc 879 wired
+ * {@code AgentToolDispatcher} to it: the tool-retry loop replays only when the operation declares
+ * {@code allowAutoRetry}, up to {@code maxRetries}, while the back-off delays stay the caller's
+ * timing policy ({@code AgentRetryPolicy}). Before that the dispatcher hard-coded
+ * {@code risk == LOW}, so this record was declarative only and the two could disagree.
  */
 public record RetryPolicy(
     boolean allowAutoRetry,

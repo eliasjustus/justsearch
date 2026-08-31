@@ -12,6 +12,7 @@ import io.justsearch.agent.api.registry.IntentPreviewer;
 import io.justsearch.agent.api.registry.Operation;
 import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Span;
@@ -32,8 +33,8 @@ import tools.jackson.databind.node.ObjectNode;
 /**
  * Tool-dispatch cluster for the agent loop (tempdoc 240 W5 — extracted from
  * {@code AgentLoopService}). Owns the path from an approved tool call to an
- * {@link OperationResult}: the safety/approval gate, the read-only retry
- * policy + tool span, and the routed-or-direct dispatch. Coupled to
+ * {@link OperationResult}: the safety/approval gate, the declaration-driven
+ * retry loop + tool span, and the routed-or-direct dispatch. Coupled to
  * {@code operationExecutor}, {@code agentTelemetry}, and a {@code Supplier} for
  * the late-bound {@link BackendIntentRouter} (resolved per-call so a router
  * wired after construction via {@code HeadAssembly.setBackendIntentRouter} is
@@ -45,7 +46,6 @@ import tools.jackson.databind.node.ObjectNode;
 final class AgentToolDispatcher {
 
   private static final Logger LOG = LoggerFactory.getLogger(AgentToolDispatcher.class);
-  private static final long APPROVAL_TIMEOUT_SECONDS = 300;
 
   private final OperationDispatcher operationExecutor;
   private final AgentTelemetry agentTelemetry;
@@ -89,7 +89,15 @@ final class AgentToolDispatcher {
         .setAttribute("gen_ai.tool.call.id", call.id())
         .startSpan();
     try (Scope ignored = toolSpan.makeCurrent()) {
-      AgentRetryPolicy.RetryDecision decision =
+      // Tempdoc 879: the operation's own RetryPolicy decides WHETHER and HOW OFTEN to replay; the
+      // caller's AgentRetryPolicy table decides only the back-off SCHEDULE. The split is the design
+      // rule: the axis declares *permission* to replay — which is why RetryPolicy's constructor
+      // refuses allowAutoRetry without an idempotencyKey — while timing is a property of this
+      // call-site, not of the operation. Before this, the loop hard-coded `risk == LOW`, so
+      // core.search-index's declared autoRetry(2) got one attempt and core.read-document's declared
+      // noRetry() was retried anyway; the declaration and the behaviour could not be made to agree.
+      RetryPolicy retryPolicy = op.policy().retry();
+      AgentRetryPolicy.RetryDecision backoff =
           AgentRetryPolicy.forCode(AgentErrorCode.TOOL_TRANSIENT_READ_ONLY);
       int attempt = 0;
       while (true) {
@@ -99,16 +107,15 @@ final class AgentToolDispatcher {
           return result;
         } catch (Exception e) {
           LOG.error("Tool execution failed: {} - {}", call.toolName(), e.getMessage(), e);
-          // Per §A.2 SafetyLevel→RiskTier mapping: only LOW (formerly READ_ONLY) auto-retries.
           boolean canRetry =
-              op.policy().risk() == RiskTier.LOW && attempt < decision.maxRetries();
+              retryPolicy.allowAutoRetry() && attempt < retryPolicy.maxRetries();
           if (canRetry) {
             attempt++;
             agentTelemetry.recordRetry(AgentErrorCode.TOOL_TRANSIENT_READ_ONLY, attempt);
-            AgentRetryPolicy.sleepRetryDelay(decision.delayMsForAttempt(attempt));
+            AgentRetryPolicy.sleepRetryDelay(backoff.delayMsForAttempt(attempt));
             continue;
           }
-          if (op.policy().risk() == RiskTier.LOW && attempt > 0) {
+          if (retryPolicy.allowAutoRetry() && attempt > 0) {
             agentTelemetry.recordRetryExhausted(AgentErrorCode.TOOL_TRANSIENT_READ_ONLY);
           }
           toolSpan.recordException(e);
@@ -232,10 +239,13 @@ final class AgentToolDispatcher {
     // irreversible MEDIUM write then confirms even under AUTO (closes the hallucinated-write hazard).
     boolean reversible =
         op.policy().undoSupported() || op.policy().inverseOperationRef().isPresent();
+    // Tempdoc 879: the op's declared ConfirmStrategy rides in as an absolute FLOOR — the dial can
+    // tighten the verdict but can no longer approve past what the operation itself asked for.
     GateBehavior gateBehavior =
         previewer == null
             ? null
-            : previewer.previewAgentGate(risk, session.autonomyLevel(), reversible);
+            : previewer.previewAgentGate(
+                risk, session.autonomyLevel(), reversible, op.policy().confirm());
 
     // Capsule-free fast path: a base-AUTO read-only dispatch needs neither approval nor a consent
     // capsule (UNTRUSTED × LOW = AUTO in the enforcement lattice). Auto-run it. (WATCH tightens reads
@@ -282,7 +292,7 @@ final class AgentToolDispatcher {
         new AgentEvent.ToolCallPendingApproval(
             call.id(), call.toolName(), call.arguments(), risk, gateBehavior));
     try {
-      return gate.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+      return gate.get(AgentTimeouts.approvalGateMs(), TimeUnit.MILLISECONDS);
     } catch (Exception e) {
       LOG.warn("Approval gate timeout/error for call {}", call.id(), e);
       return false;

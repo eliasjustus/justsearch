@@ -19,7 +19,6 @@ final class OperationHistoryStoreTest {
     return new OperationHistoryEntry(
         new OperationRef("core.test-" + seq),
         "head",
-        Optional.empty(),
         Instant.parse("2026-04-30T12:00:00Z"),
         Instant.parse("2026-04-30T12:00:01Z"),
         OperationOutcome.SUCCESS,
@@ -113,7 +112,6 @@ final class OperationHistoryStoreTest {
             new OperationHistoryEntry(
                 null,
                 "head",
-                Optional.empty(),
                 Instant.now(),
                 Instant.now(),
                 OperationOutcome.SUCCESS,
@@ -131,7 +129,6 @@ final class OperationHistoryStoreTest {
             new OperationHistoryEntry(
                 new OperationRef("core.test"),
                 "  ",
-                Optional.empty(),
                 Instant.now(),
                 Instant.now(),
                 OperationOutcome.SUCCESS,
@@ -149,7 +146,6 @@ final class OperationHistoryStoreTest {
             new OperationHistoryEntry(
                 new OperationRef("core.test"),
                 "head",
-                Optional.empty(),
                 Instant.now(),
                 Instant.now(),
                 OperationOutcome.SUCCESS,

@@ -163,12 +163,12 @@ public final class WorkflowOperationProjection {
             // streaming runner sets the workflow body itself. An empty object schema keeps the tool
             // callable with `{}`.
             Interface.of("{\"type\":\"object\",\"properties\":{}}", "{\"type\":\"object\"}"),
+            // Tempdoc 879 removed the inert rateLimit axis from OperationPolicy.
             new OperationPolicy(
                 RiskTier.LOW,
                 ConfirmStrategy.None.INSTANCE,
                 AuditPolicy.METADATA_ONLY,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false),
             // Tempdoc 876 B.4: inherited from what the workflow composes, not hardcoded empty.

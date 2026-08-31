@@ -338,7 +338,7 @@ final class AgentStepRunner {
                 AgentSession.ContextGateDecision.CONTINUE;
             boolean gateWentUnanswered = false;
             try {
-              ctxDecision = contextGateFuture.get(contextGateTimeoutSeconds(), TimeUnit.SECONDS);
+              ctxDecision = contextGateFuture.get(AgentTimeouts.contextGateMs(), TimeUnit.MILLISECONDS);
             } catch (TimeoutException | java.util.concurrent.ExecutionException undecided) {
               ctxDecision = AgentSession.ContextGateDecision.CONTINUE; // watcherless ⇒ proceed
               gateWentUnanswered = true;
@@ -493,7 +493,7 @@ final class AgentStepRunner {
               checkpointer.checkpoint(
                   sessionId, session, "WAITING_BUDGET", "Token budget exhausted — awaiting decision");
               try {
-                decision = budgetGateFuture.get(budgetGateTimeoutSeconds(), TimeUnit.SECONDS);
+                decision = budgetGateFuture.get(AgentTimeouts.budgetGateMs(), TimeUnit.MILLISECONDS);
               } catch (TimeoutException | java.util.concurrent.ExecutionException timedOut) {
                 decision = AgentSession.BudgetGateDecision.FINALIZE; // undecided ⇒ legacy behavior
               } catch (InterruptedException interrupted) {
@@ -1183,31 +1183,6 @@ final class AgentStepRunner {
     return groundedDone(session, answer, TerminalDisposition.MAX_ITERATIONS);
   }
 
-  /**
-   * Tempdoc 508 §11.5 / §13.5 Phase B — virtual tool-call dispatcher.
-   * The LLM has called a {@code vop_*} tool name; emit the event for
-   * the FE to handle, register a future, block until the FE responds
-   * (or the timeout fires), and append the result to the conversation
-   * so the agent loop continues.
-   *
-   * <p>Timeout default is 30 seconds (aligns with INLINE_CONFIRM
-   * approval-gate timeout). On timeout, the conversation gets a
-   * synthetic failure message and the loop continues without aborting
-   * the session.
-   */
-  private static final long VIRTUAL_TOOL_TIMEOUT_SECONDS = 30L;
-
-  /**
-   * Tempdoc 577 §2.12 Move 2 — how long the budget gate holds an interactive run awaiting the
-   * human's decision before falling back to the legacy finalize-else-error behavior. Long enough
-   * to notice and click; short enough that an unattended run still completes on its own. System
-   * property override ({@code justsearch.agent.budgetGateTimeoutSec}) exists for tests — 0 makes
-   * the gate fall through immediately (exactly the legacy behavior).
-   */
-  private static long budgetGateTimeoutSeconds() {
-    return Long.getLong("justsearch.agent.budgetGateTimeoutSec", 120L);
-  }
-
   // Tempdoc 577 §2.14 Root II (#14) — the context-pressure gate fires when the projected next prompt
   // reaches this fraction of the model's context window (n_ctx). Below the hard budget wall
   // (budget = n_ctx − margin ≈ 99%), so compaction is offered PROACTIVELY before the wall.
@@ -1225,16 +1200,6 @@ final class AgentStepRunner {
   // compacting older turns (the system prompt is preserved separately as an anchor).
   private static final int CONTEXT_COMPACT_KEEP_RECENT = 6;
 
-  /**
-   * Tempdoc 577 §2.14 Root II — how long the context gate holds an interactive run awaiting the
-   * human's decision before falling back to CONTINUE (proceed with the large prompt — the safe,
-   * non-destructive default, so a watcherless run is never silently truncated). The
-   * {@code justsearch.agent.contextGateTimeoutSec} override exists for tests (0 = fall through).
-   */
-  private static long contextGateTimeoutSeconds() {
-    return Long.getLong("justsearch.agent.contextGateTimeoutSec", 120L);
-  }
-
   // Tempdoc 577 §2.14 Root I (#13) — how often the zero-observer park re-checks for a re-attached
   // watcher, and how long it waits before proceeding unsupervised (a safety net; never a deadlock).
   private static final long ZERO_OBSERVER_POLL_MS = 250L;
@@ -1243,6 +1208,13 @@ final class AgentStepRunner {
     return Long.getLong("justsearch.agent.zeroObserverParkTimeoutSec", 120L);
   }
 
+  /**
+   * Tempdoc 508 §11.5 / §13.5 Phase B — virtual tool-call dispatcher. The LLM has called a {@code
+   * vop_*} tool name; emit the event for the FE to handle, register a future, block until the FE
+   * responds (or {@link AgentTimeouts#virtualToolMs()} elapses), and append the result to the
+   * conversation so the agent loop continues. On timeout, the conversation gets a synthetic
+   * failure message and the loop continues without aborting the session.
+   */
   private void handleVirtualToolCall(
       AgentSession session,
       String sessionId,
@@ -1257,11 +1229,12 @@ final class AgentStepRunner {
 
     AgentSession.VirtualToolResult vtr;
     try {
-      vtr = future.get(VIRTUAL_TOOL_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+      vtr = future.get(AgentTimeouts.virtualToolMs(), java.util.concurrent.TimeUnit.MILLISECONDS);
     } catch (java.util.concurrent.TimeoutException te) {
       vtr = AgentSession.VirtualToolResult.failure(
           "virtual tool '" + call.toolName() + "' timed out after "
-              + VIRTUAL_TOOL_TIMEOUT_SECONDS + "s (FE never responded)");
+              + TimeUnit.MILLISECONDS.toSeconds(AgentTimeouts.virtualToolMs())
+              + "s (FE never responded)");
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
       vtr = AgentSession.VirtualToolResult.failure("interrupted");

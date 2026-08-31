@@ -73,14 +73,14 @@ describe('isRoutineActivity', () => {
 
 /**
  * Tempdoc 612 §3 — an OPERATION row is routine only when its DECLARED facets say it is insignificant:
- * LOW risk, no confirmation, not fully audited, mutating no Resource. Anything else is causal/audit-relevant.
+ * LOW risk, no confirmation, mutating no Resource. Anything else is causal/audit-relevant. (Tempdoc 879
+ * dropped the `audit` facet: it only discriminated `FULL_PAYLOAD`, which is deleted from `AuditPolicy`.)
  */
 describe('isRoutineOperation', () => {
-  const insignificant = { risk: 'LOW', confirmKind: 'NONE', audit: 'METADATA_ONLY', affectsCount: 0 };
+  const insignificant = { risk: 'LOW', confirmKind: 'NONE', affectsCount: 0 };
 
-  it('is routine for a read-only-ish op (LOW · no-confirm · not-fully-audited · no-affects)', () => {
+  it('is routine for a read-only-ish op (LOW · no-confirm · no-affects)', () => {
     expect(isRoutineOperation(insignificant)).toBe(true);
-    expect(isRoutineOperation({ ...insignificant, audit: 'NONE' })).toBe(true);
   });
 
   it('is NOT routine when any significance facet trips', () => {
@@ -88,7 +88,6 @@ describe('isRoutineOperation', () => {
     expect(isRoutineOperation({ ...insignificant, risk: 'MEDIUM' })).toBe(false); // write
     expect(isRoutineOperation({ ...insignificant, confirmKind: 'TYPED' })).toBe(false); // confirmed
     expect(isRoutineOperation({ ...insignificant, confirmKind: 'INLINE' })).toBe(false);
-    expect(isRoutineOperation({ ...insignificant, audit: 'FULL_PAYLOAD' })).toBe(false); // audited
     expect(isRoutineOperation({ ...insignificant, affectsCount: 1 })).toBe(false); // mutates a Resource
   });
 });

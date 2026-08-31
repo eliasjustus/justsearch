@@ -8,8 +8,6 @@ import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponseBuilder;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponseHitBuilder;
 import io.justsearch.app.api.knowledge.PipelineConfig;
-import io.justsearch.configuration.resolved.ConfigStore;
-import io.justsearch.configuration.resolved.TestResolvedConfigHelper;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -36,13 +34,6 @@ class SearchToolTest {
               capturedRequest.set(req);
               return stubbedResponse;
             });
-  }
-
-  @Test
-  void parameterSchemaPresent() {
-    // Per Phase 12 of tempdoc 429: name/description/safetyLevel/supportsUndo moved to
-    // the AgentToolsOperationCatalog Operation declaration.
-    assertNotNull(SearchTool.parameterSchema());
   }
 
   @Test
@@ -128,7 +119,7 @@ class SearchToolTest {
 
   @Test
   void executeWithDocIds() {
-    // Tempdoc S7 — docIds is not part of the LLM-facing PARAMETER_SCHEMA (AgentToolDispatcher
+    // Tempdoc S7 — docIds is not declared on the catalog Interface (AgentToolDispatcher
     // merges it in server-side), but SearchTool must still honor it when present in the parsed
     // arguments, threading it into KnowledgeSearchRequest.Filters.docIds (QueryFilterBuilder
     // matches it against SchemaFields.PATH).
@@ -389,12 +380,8 @@ class SearchToolTest {
     assertTrue(result.message().contains("corrected query"), result.message());
   }
 
-  @Test
-  void schemaIsValidJson() {
-    assertDoesNotThrow(
-        () -> new tools.jackson.databind.ObjectMapper()
-            .readTree(SearchTool.parameterSchema()));
-  }
+  // Tempdoc 877 §2.1: `schemaIsValidJson` moved to AgentToolCatalogContractTest (app-services),
+  // which parses the catalog Interface of every agent tool — the only schema the model is shown.
 
   // ---------------------------------------------------------------------------
   // File-path query sanitization
@@ -443,11 +430,62 @@ class SearchToolTest {
     assertTrue(result.success(), result.message());
     assertTrue(result.message().contains("HINT"), "Should contain HINT: " + result.message());
     assertTrue(
-        result.message().contains("relative"),
-        "Should mention relative: " + result.message());
-    assertTrue(
         result.message().contains("docs/how-to"),
         "Should echo the path_prefix: " + result.message());
+    // Tempdoc 877 §2.7 — this tool has no roots supplier, so the hint cannot name root names and
+    // points at the tool that can. It used to say "use an absolute path from browse_folders", which
+    // is advice browse cannot follow: browse emits ROOT-RELATIVE paths (a measured 227 §A.6
+    // decision), so the old wording sent the model looking for something no tool produces.
+    assertTrue(
+        result.message().contains("core_browse_folders"),
+        "Should point at the tool that lists the roots: " + result.message());
+  }
+
+  @Test
+  void relativePathPrefix_withRootsKnown_isRejectedAndNamesTheRoots() {
+    // Tempdoc 877 §2.7 — the empty-result HINT above is reachable only when the roots are unknown.
+    // With roots known, an unresolvable relative path_prefix never reaches the index at all:
+    // RootsView.validate rejects it first, and THAT is the message that has to name the roots the
+    // model can recover with. Pinned here so the two branches cannot be confused for one another.
+    SearchTool.SearchCallback search = req -> emptyResponse();
+    var toolWithRoots =
+        new SearchTool(
+            search,
+            () ->
+                List.of(
+                    new BrowseTool.RootInfo("D:\\data\\docs", "docs"),
+                    new BrowseTool.RootInfo("D:\\data\\notes", "notes")));
+
+    OperationResult result =
+        toolWithRoots.execute("{\"query\": \"test\", \"path_prefix\": \"nowhere/at/all\"}");
+
+    assertFalse(result.success(), result.message());
+    assertTrue(
+        result.message().contains("nowhere/at/all"),
+        "Should echo the offending prefix: " + result.message());
+    assertTrue(
+        result.message().contains("D:\\data\\docs") && result.message().contains("D:\\data\\notes"),
+        "Should name the indexed roots: " + result.message());
+  }
+
+  @Test
+  void relativePathPrefix_thatMatchesARootName_resolvesInsteadOfBeingRejected() {
+    // The other half of the same convention: a path starting with a root NAME — exactly the form
+    // core_browse_folders emits — resolves to the absolute path and is NOT rejected.
+    var captured = new AtomicReference<KnowledgeSearchRequest>();
+    SearchTool.SearchCallback search =
+        req -> {
+          captured.set(req);
+          return emptyResponse();
+        };
+    var toolWithRoots =
+        new SearchTool(search, () -> List.of(new BrowseTool.RootInfo("D:\\data\\docs", "docs")));
+
+    OperationResult result =
+        toolWithRoots.execute("{\"query\": \"test\", \"path_prefix\": \"docs/how-to\"}");
+
+    assertTrue(result.success(), result.message());
+    assertEquals("D:\\data\\docs\\how-to", captured.get().filters().pathPrefix());
   }
 
   @Test
@@ -612,12 +650,13 @@ class SearchToolTest {
 
   @Test
   void executeEnforcesPerResultCharBudget() {
-    // Set small total budget so per-result budget = max(200, 600/3) = 200 chars
-    System.setProperty("justsearch.agent.max_tool_result_chars", "600");
-    ConfigStore prev = ConfigStore.globalOrNull();
-    TestResolvedConfigHelper.storeFromEnvironment();
-    try {
-      String longText = "A".repeat(500);
+    // Tempdoc 877 §2.2 — the budget is taken from ToolResultCarrier.layerTwoCapChars(), the ONE
+    // reader of agent.maxToolResultChars, frozen at class-init alongside the Layer-2 cut it must
+    // stay under. This test used to set justsearch.agent.max_tool_result_chars at runtime and rely
+    // on SearchTool's own per-call re-read of the config — the second reader §2.2 deletes. The
+    // excerpt is sized past the 800-char per-region guard so truncation is certain at any cap.
+    {
+      String longText = "A".repeat(1200);
       stubbedResponse =
           KnowledgeSearchResponseBuilder.builder()
               .totalHits(3)
@@ -645,14 +684,83 @@ class SearchToolTest {
       assertTrue(output.contains("[1]"));
       assertTrue(output.contains("[2]"));
       assertTrue(output.contains("[3]"));
-      // Excerpts are truncated (500 chars > 200 budget)
+      // Excerpts are truncated by the per-result budget
       assertTrue(output.contains("..."), "Excerpts should be truncated by budget");
-      // The full 500-char text should NOT appear for any single result
+      // The full excerpt should NOT appear for any single result
       assertFalse(output.contains(longText), "Full excerpt should be truncated by per-result budget");
-    } finally {
-      System.clearProperty("justsearch.agent.max_tool_result_chars");
-      TestResolvedConfigHelper.restoreGlobal(prev);
+      // Tempdoc 877 §2.2 — and the WHOLE emitted string fits the Layer-2 cap by construction, which
+      // is the half the old per-result-only budget never checked: headers, Path: lines, carrier
+      // framing and the trailing summary were all uncounted, so the tail died inside Layer 2.
+      assertTrue(
+          output.length() <= io.justsearch.agent.ToolResultCarrier.layerTwoCapChars(),
+          "emitted "
+              + output.length()
+              + " chars, over the Layer-2 cap of "
+              + io.justsearch.agent.ToolResultCarrier.layerTwoCapChars());
+      assertTrue(output.contains("Found 3 results"), "the summary must survive: " + output);
     }
+  }
+
+  @Test
+  void formatResultsUnderASmallCapKeepsEveryHitsIdentity() {
+    // Recovers the small-cap coverage origin/main had as `executeEnforcesPerResultCharBudget` with
+    // `justsearch.agent.max_tool_result_chars=600`. That property can no longer be set at test time:
+    // §2.2 moved the cap to ToolResultCarrier.layerTwoCapChars() -> AgentContextCompressor's
+    // `static final MAX_TOOL_RESULT_CHARS`, frozen at class-init, so a runtime System.setProperty
+    // would only take effect if this test happened to run before anything else touched that class —
+    // an order-dependent green, which is worse than no test. The cap is a PARAMETER of the renderer
+    // instead, so the constrained path is exercised directly.
+    KnowledgeSearchResponse response = threeHitsWithLongExcerpts();
+
+    String output = SearchTool.formatResults(response, 600);
+
+    assertTrue(output.length() <= 600, "over the 600-char cap: " + output.length());
+    assertTrue(output.contains("[1]"), output);
+    assertTrue(output.contains("[2]"), output);
+    assertTrue(output.contains("[3]"), output);
+    assertTrue(output.contains("Path: /d1.pdf"), output);
+    assertTrue(output.contains("..."), "excerpts must be clipped at this cap: " + output);
+    assertTrue(output.contains("Found 3 results"), output);
+  }
+
+  @Test
+  void formatResultsUnderATightCapDropsTheTailAndSaysSo() {
+    // The head-cut regression, at the altitude where it is cheapest to see. A budget that cannot
+    // carry all three identity blocks must render the TOP hits and STATE the rest — not silently
+    // skip the hits whose header overran their slice and spend the freed budget on lower-ranked
+    // ones, which is what a per-hit-slice budget with a "skip if the header doesn't fit" arm does.
+    KnowledgeSearchResponse response = threeHitsWithLongExcerpts();
+
+    String output = SearchTool.formatResults(response, 140);
+
+    assertTrue(output.length() <= 140, "over the 140-char cap: " + output.length());
+    assertTrue(output.contains("[1] Doc 1"), "the top hit must survive a tight cap: " + output);
+    assertFalse(output.contains("[3]"), "the TAIL is what a tight cap drops: " + output);
+    assertTrue(
+        output.contains("further results omitted (context budget)"),
+        "a dropped hit must be stated, not silently missing: " + output);
+    assertTrue(output.contains("Found 3 results"), output);
+  }
+
+  private static KnowledgeSearchResponse threeHitsWithLongExcerpts() {
+    String longText = "A".repeat(1200);
+    return KnowledgeSearchResponseBuilder.builder()
+        .totalHits(3)
+        .tookMs(12)
+        .results(List.of(
+            KnowledgeSearchResponseHitBuilder.builder()
+                .id("d1").score(0.9).fields(Map.of("title", "Doc 1", "path", "/d1.pdf"))
+                .excerptRegions(List.of(new KnowledgeSearchResponse.ExcerptRegion(longText, 0, 500, 1, List.of())))
+                .build(),
+            KnowledgeSearchResponseHitBuilder.builder()
+                .id("d2").score(0.8).fields(Map.of("title", "Doc 2", "path", "/d2.pdf"))
+                .excerptRegions(List.of(new KnowledgeSearchResponse.ExcerptRegion(longText, 0, 500, 1, List.of())))
+                .build(),
+            KnowledgeSearchResponseHitBuilder.builder()
+                .id("d3").score(0.7).fields(Map.of("title", "Doc 3", "path", "/d3.pdf"))
+                .excerptRegions(List.of(new KnowledgeSearchResponse.ExcerptRegion(longText, 0, 500, 1, List.of())))
+                .build()))
+        .build();
   }
 
   // ---------------------------------------------------------------------------

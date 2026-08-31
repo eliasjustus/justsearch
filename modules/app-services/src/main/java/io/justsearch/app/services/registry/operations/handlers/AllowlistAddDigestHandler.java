@@ -10,8 +10,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Handler for {@code core.allowlist-add-digest}.
@@ -28,8 +26,6 @@ public final class AllowlistAddDigestHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(AllowlistAddDigestHandler.class);
 
-  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
-
   private final Supplier<PolicyService> supplier;
 
   public AllowlistAddDigestHandler(Supplier<PolicyService> supplier) {
@@ -40,14 +36,16 @@ public final class AllowlistAddDigestHandler implements OperationHandler {
   public OperationResult execute(String argumentsJson) {
     String manifestSha256;
     try {
-      JsonNode root = MAPPER.readTree(argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
+      JsonNode root =
+          HandlerJson.MAPPER.readTree(
+              argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
       JsonNode v = root.get("manifestSha256");
       if (v == null || !v.isTextual() || v.asString().isBlank()) {
         return OperationResult.failure("Missing required arg: manifestSha256");
       }
       manifestSha256 = v.asString();
     } catch (Exception e) {
-      return OperationResult.failure("Invalid args: " + e.getMessage());
+      return HandlerJson.invalidArgs(e);
     }
 
     PolicyService svc;

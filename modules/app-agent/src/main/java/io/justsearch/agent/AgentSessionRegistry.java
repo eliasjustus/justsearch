@@ -24,10 +24,6 @@ import java.util.function.Consumer;
  */
 final class AgentSessionRegistry {
 
-  // Tempdoc 577 §2.14 Root I (#13) — the attach handler blocks while streaming a run; this caps how
-  // long it waits for a terminal event before releasing (a safety net, not the normal exit path).
-  private static final long ATTACH_MAX_MINUTES = 30L;
-
   private final ConcurrentHashMap<String, AgentSession> sessions = new ConcurrentHashMap<>();
 
   /** Register a starting run's session (called by the loop at run start). */
@@ -216,7 +212,7 @@ final class AgentSessionRegistry {
     try {
       // Block the attach (SSE) handler thread while streaming. The timeout is a safety net against a
       // run that never terminates (it then falls back like a closed stream).
-      done.await(ATTACH_MAX_MINUTES, java.util.concurrent.TimeUnit.MINUTES);
+      done.await(AgentTimeouts.sessionAttachMs(), java.util.concurrent.TimeUnit.MILLISECONDS);
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
     } finally {

@@ -2,7 +2,6 @@
 package io.justsearch.agent.tools;
 
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import io.justsearch.agent.api.registry.OperationResult;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -41,59 +40,21 @@ import org.slf4j.LoggerFactory;
  */
 public final class FileOperationsTool {
   private static final Logger LOG = LoggerFactory.getLogger(FileOperationsTool.class);
-  private static final ObjectMapper MAPPER = new ObjectMapper();
-  static final int MAX_BATCH_SIZE = 50;
-  // Tempdoc 577 §2.14 Root III (#16) — conflict-detection tolerance: the slack between an op's
-  // filesystem write and the log's Instant.now() record, so the agent's own write never reads as a
-  // user since-edit. A real user edit is seconds-to-minutes later, well outside this window.
-  private static final Duration CONFLICT_TOLERANCE = Duration.ofSeconds(2);
-
-  private static final String PARAMETER_SCHEMA =
-      """
-      {
-        "type": "object",
-        "properties": {
-          "operations": {
-            "type": "array",
-            "description": "List of file operations to execute sequentially",
-            "maxItems": 50,
-            "items": {
-              "type": "object",
-              "properties": {
-                "op": {
-                  "type": "string",
-                  "enum": ["MOVE", "RENAME", "MKDIR", "COPY"],
-                  "description": "Operation type"
-                },
-                "source": {
-                  "type": "string",
-                  "description": "Source file or folder path (not needed for MKDIR)"
-                },
-                "destination": {
-                  "type": "string",
-                  "description": "Destination file or folder path"
-                }
-              },
-              "required": ["op", "destination"]
-            }
-          },
-          "explanation": {
-            "type": "string",
-            "description": "Human-readable explanation of what these operations accomplish"
-          },
-          "conflict_strategy": {
-            "type": "string",
-            "enum": ["FAIL", "SKIP", "AUTO_SUFFIX"],
-            "default": "FAIL",
-            "description": "How to handle destination conflicts: FAIL (default) aborts on conflict, SKIP skips conflicting operations, AUTO_SUFFIX renames to a unique name like file (1).txt"
-          }
-        },
-        "required": ["operations"]
-      }
-      """;
+  // Tempdoc 877 §2.1 — public because AgentToolsOperationCatalog.fileOperations() interpolates it
+  // into the model-visible `operations` description. The deleted tool-local schema constant used to
+  // spell the same number a second time; interpolating leaves one author for it.
+  public static final int MAX_BATCH_SIZE = 50;
 
   private final FileOperationExecutor executor;
   private final FileOperationLog transactionLog;
+
+  /**
+   * The indexed roots BY NAME, used only to re-resolve a root-relative path the model echoed back
+   * from a browse result (tempdoc 877 §2.7). Deliberately NOT the same thing as {@code
+   * indexedRootsSupplier}, which is the executor's sandbox: that one decides what may be written,
+   * this one only decides what a path string means.
+   */
+  private final AgentToolPaths.RootsView rootsView;
 
   /**
    * Creates a new FileOperationsTool.
@@ -106,19 +67,27 @@ public final class FileOperationsTool {
       Supplier<List<Path>> indexedRootsSupplier,
       IndexUpdateCallback indexUpdateCallback,
       FileOperationLog transactionLog) {
+    this(indexedRootsSupplier, indexUpdateCallback, transactionLog, null);
+  }
+
+  /**
+   * Tempdoc 877 §2.7 — adds the root-name view the other four tools already have. Null-tolerant: a
+   * null {@code rootsView} resolves nothing, which is exactly the pre-877 behaviour.
+   */
+  public FileOperationsTool(
+      Supplier<List<Path>> indexedRootsSupplier,
+      IndexUpdateCallback indexUpdateCallback,
+      FileOperationLog transactionLog,
+      AgentToolPaths.RootsView rootsView) {
     this.transactionLog = transactionLog;
+    this.rootsView = rootsView == null ? AgentToolPaths.RootsView.of(null) : rootsView;
     this.executor =
         new FileOperationExecutor(indexedRootsSupplier, indexUpdateCallback, transactionLog);
   }
 
-  /** Per tempdoc 429 §C.G: parameter schema preserved as a constant for unit tests. */
-  public static String parameterSchema() {
-    return PARAMETER_SCHEMA;
-  }
-
   public OperationResult execute(String argumentsJson) {
     try {
-      JsonNode args = MAPPER.readTree(argumentsJson);
+      JsonNode args = ToolArgs.parse(argumentsJson);
       JsonNode opsNode = args.get("operations");
       if (opsNode == null || !opsNode.isArray() || opsNode.isEmpty()) {
         return OperationResult.failure("No operations specified");
@@ -133,18 +102,16 @@ public final class FileOperationsTool {
       }
 
       List<FileOperation> operations = parseOperations(opsNode);
-      String explanation =
-          args.has("explanation") ? args.get("explanation").asText() : "File operations";
+      String explanation = ToolArgs.stringArg(args, "explanation", "File operations");
 
       ConflictStrategy strategy = ConflictStrategy.FAIL;
-      if (args.has("conflict_strategy") && !args.get("conflict_strategy").isNull()) {
+      String requestedStrategy = ToolArgs.stringArg(args, "conflict_strategy");
+      if (requestedStrategy != null) {
         try {
-          strategy =
-              ConflictStrategy.valueOf(
-                  args.get("conflict_strategy").asText().toUpperCase(Locale.ROOT));
+          strategy = ConflictStrategy.valueOf(requestedStrategy.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-          return OperationResult.failure(
-              "Invalid conflict_strategy: " + args.get("conflict_strategy").asText());
+          return AgentToolErrors.badRequest(
+              "core_file_operations", "Invalid conflict_strategy: " + requestedStrategy);
         }
       }
 
@@ -168,10 +135,9 @@ public final class FileOperationsTool {
       // self-correcting message for the agent, not an "Execution error". Scoped to
       // THIS exception so a genuine IllegalArgumentException from validate/execute
       // still falls through to the logged generic handler below.
-      return OperationResult.failure(e.getMessage());
+      return AgentToolErrors.badRequest("core_file_operations", e.getMessage());
     } catch (Exception e) {
-      LOG.error("FileOperationsTool execution failed", e);
-      return OperationResult.failure("Execution error: " + e.getMessage());
+      return AgentToolErrors.classify("core_file_operations", "Execution error", e);
     }
   }
 
@@ -357,7 +323,9 @@ public final class FileOperationsTool {
     try {
       if (!Files.exists(target)) return false;
       Instant mtime = Files.getLastModifiedTime(target).toInstant();
-      return mtime.isAfter(actionTime.plus(CONFLICT_TOLERANCE));
+      return mtime.isAfter(
+          actionTime.plus(
+              Duration.ofMillis(io.justsearch.agent.AgentTimeouts.fileOpConflictToleranceMs())));
     } catch (IOException e) {
       return false; // cannot determine ⇒ do not block the undo
     }
@@ -373,7 +341,7 @@ public final class FileOperationsTool {
     List<FileOperation> operations = new ArrayList<>();
     int index = 0;
     for (JsonNode opNode : opsNode) {
-      String opStr = textField(opNode, "op");
+      String opStr = ToolArgs.stringArg(opNode, "op");
       if (opStr == null || opStr.isBlank()) {
         throw new OperationArgException("operation " + index + ": missing required field 'op'");
       }
@@ -385,30 +353,42 @@ public final class FileOperationsTool {
             "operation " + index + ": unknown op '" + opStr + "' (expected one of MOVE, RENAME, MKDIR, COPY)");
       }
 
-      String sourceStr = textField(opNode, "source");
+      String sourceStr = resolveAgainstRoots(ToolArgs.stringArg(opNode, "source"));
       Path source = (sourceStr != null && !sourceStr.isEmpty()) ? Path.of(sourceStr) : null;
 
       // Accept `path` as an alias for the schema's canonical `destination`: smaller
       // local models routinely emit `path` (notably for mkdir).
-      String destStr = textField(opNode, "destination");
+      String destStr = ToolArgs.stringArg(opNode, "destination");
       if (destStr == null || destStr.isBlank()) {
-        destStr = textField(opNode, "path");
+        destStr = ToolArgs.stringArg(opNode, "path");
       }
       if (destStr == null || destStr.isBlank()) {
         throw new OperationArgException(
             "operation " + index + " (" + opStr + "): missing required field 'destination'");
       }
 
-      operations.add(new FileOperation(opType, source, Path.of(destStr)));
+      operations.add(new FileOperation(opType, source, Path.of(resolveAgainstRoots(destStr))));
       index++;
     }
     return operations;
   }
 
-  /** Null-safe text extraction: returns null when the field is absent or JSON null. */
-  private static String textField(JsonNode node, String field) {
-    JsonNode value = node.get(field);
-    return (value == null || value.isNull()) ? null : value.asText();
+  /**
+   * Tempdoc 877 §2.7 — the pre-pass the other four tools already had, and this one's absence was the
+   * whole of finding 7: {@code core_browse_folders} emits ROOT-RELATIVE paths (a measured 227 §A.6
+   * decision), and a model echoing one back as a destination hit a bare {@code Path.of} here and was
+   * refused with {@code DEST_NOT_SANDBOXED} for naming a file the browse tool had just shown it.
+   *
+   * <p>Absolute in, absolute out. A root-relative path resolves. One that matches NO root is passed
+   * through unchanged so {@code FileOperationExecutor}'s sandbox check still rejects it with its own
+   * message — degrade-open on resolution, fail-closed on sandboxing, the split the other tools use.
+   */
+  private String resolveAgainstRoots(String raw) {
+    if (raw == null || raw.isBlank() || AgentToolPaths.looksAbsolute(raw)) {
+      return raw;
+    }
+    String resolved = rootsView.resolveRelative(raw);
+    return resolved == null ? raw : resolved;
   }
 
   /**

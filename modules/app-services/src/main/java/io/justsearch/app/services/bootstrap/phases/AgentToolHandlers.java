@@ -26,6 +26,7 @@ import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,22 +54,33 @@ public final class AgentToolHandlers {
   private AgentToolHandlers() {}
 
   /**
-   * Registers {@code handler} at {@code ref} unless {@code ref} is already registered.
+   * Registers {@code handler} at {@code ref} and records the ref, so the completion log cannot
+   * drift from the fact (tempdoc 877 §2.10) — unless {@code ref} is already registered, in which
+   * case this is a no-op and the ref is NOT recorded, because this call did not add it.
    *
-   * <p>Tempdoc 876 §B.5: this is the one call site where "skip if already present" belongs.
-   * {@link HandlerRegistry#register} keeps its throw-on-duplicate contract for every other
-   * caller — the eager and late-bound agent-tool paths are the only pair designed to both run
-   * against the same registry, so the skip lives here, not in the registry itself.
-   *
-   * @return true if this call registered the handler; false if {@code ref} was already present.
+   * <p>Tempdoc 876 §B.5: skip-if-present belongs here and only here. {@link
+   * HandlerRegistry#register} keeps its throw-on-duplicate contract for every other caller — the
+   * eager and late-bound agent-tool paths are the only pair designed to both run against the same
+   * registry. Before 876 they did not compose: {@code registerLateBound} returned early whenever
+   * SEARCH_INDEX was already present, one ref standing proxy for all of them, which left {@code
+   * core.remember} permanently unhandled.
    */
-  private static boolean registerIfAbsent(
-      HandlerRegistry operationHandlers, OperationRef ref, OperationHandler handler) {
+  private static void register(
+      HandlerRegistry operationHandlers,
+      List<OperationRef> registered,
+      OperationRef ref,
+      OperationHandler handler) {
     if (operationHandlers.resolve(ref).isPresent()) {
-      return false;
+      return;
     }
     operationHandlers.register(ref, handler);
-    return true;
+    registered.add(ref);
+  }
+
+  /** Eager-path convenience: register if absent, without a ref ledger. */
+  private static void registerIfAbsent(
+      HandlerRegistry operationHandlers, OperationRef ref, OperationHandler handler) {
+    register(operationHandlers, new ArrayList<>(), ref, handler);
   }
 
   /**
@@ -202,49 +214,57 @@ public final class AgentToolHandlers {
             scanProgressRegistry,
             scanRollupLedger,
             documentService);
+    // Tempdoc 877 §2.10: the log line is DERIVED from what this method actually registered. It
+    // used to hand-list the names, which is a second authority that drifts the moment a
+    // conditional registration is skipped (READ_DOCUMENT and REMEMBER both are, below).
+    //
+    // Tempdoc 876 §B.5 converges with that: register(...) skips a ref already present rather than
+    // throwing, because 876 deleted the SEARCH_INDEX sentinel that used to make the whole method
+    // return early. 877's helper was safe only BECAUSE of that sentinel — with it gone, a throwing
+    // register would blow up the moment the eager path had already claimed a ref. Skipping keeps
+    // both facts: the two paths compose, and the log still names exactly what THIS call added.
     List<OperationRef> registered = new ArrayList<>();
-    if (registerIfAbsent(
+    register(
         operationHandlers,
+        registered,
         AgentToolsOperationCatalog.SEARCH_INDEX,
-        new SearchOperationHandler(tools.searchTool()))) {
-      registered.add(AgentToolsOperationCatalog.SEARCH_INDEX);
+        new SearchOperationHandler(tools.searchTool()));
+    if (tools.readDocumentTool() != null) {
+      register(
+          operationHandlers,
+          registered,
+          AgentToolsOperationCatalog.READ_DOCUMENT,
+          new ReadDocumentHandler(tools.readDocumentTool()));
     }
-    if (tools.readDocumentTool() != null
-        && registerIfAbsent(
-            operationHandlers,
-            AgentToolsOperationCatalog.READ_DOCUMENT,
-            new ReadDocumentHandler(tools.readDocumentTool()))) {
-      registered.add(AgentToolsOperationCatalog.READ_DOCUMENT);
-    }
-    if (registerIfAbsent(
+    register(
         operationHandlers,
+        registered,
         AgentToolsOperationCatalog.BROWSE_FOLDERS,
-        new BrowseOperationHandler(tools.browseTool()))) {
-      registered.add(AgentToolsOperationCatalog.BROWSE_FOLDERS);
-    }
-    if (registerIfAbsent(
+        new BrowseOperationHandler(tools.browseTool()));
+    register(
         operationHandlers,
+        registered,
         AgentToolsOperationCatalog.INGEST_FILES,
-        new IngestOperationHandler(tools.ingestTool()))) {
-      registered.add(AgentToolsOperationCatalog.INGEST_FILES);
-    }
-    if (registerIfAbsent(
+        new IngestOperationHandler(tools.ingestTool()));
+    register(
         operationHandlers,
+        registered,
         AgentToolsOperationCatalog.FILE_OPERATIONS,
-        new FileOperationsHandler(tools.fileOperationsTool()))) {
-      registered.add(AgentToolsOperationCatalog.FILE_OPERATIONS);
-    }
+        new FileOperationsHandler(tools.fileOperationsTool()));
     // Tempdoc 561 P-E: the learning producer — core_remember persists durable facts into the shared
     // single-authority MemoryStore (the same instance /api/memory reads).
-    if (memoryStore != null
-        && registerIfAbsent(
-            operationHandlers,
-            AgentToolsOperationCatalog.REMEMBER,
-            new io.justsearch.app.services.registry.operations.handlers.RememberFactHandler(
-                memoryStore))) {
-      registered.add(AgentToolsOperationCatalog.REMEMBER);
+    if (memoryStore != null) {
+      register(
+          operationHandlers,
+          registered,
+          AgentToolsOperationCatalog.REMEMBER,
+          new io.justsearch.app.services.registry.operations.handlers.RememberFactHandler(
+              memoryStore));
     }
-    log.info("AgentTools operation handlers registered: {}", registered);
+    log.info(
+        "AgentTools operation handlers registered: {}",
+        registered.stream().map(OperationRef::value).collect(Collectors.joining(", ")));
     return true;
   }
+
 }

@@ -19,8 +19,10 @@ import io.justsearch.agent.api.registry.OperationAvailability;
 import io.justsearch.agent.api.registry.OperationLineage;
 import io.justsearch.agent.api.registry.Presentation;
 import io.justsearch.agent.api.registry.Provenance;
+import io.justsearch.agent.api.registry.ResourceRef;
 import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
+import io.justsearch.agent.tools.FileOperationsTool;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -132,10 +134,11 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
     return new Operation(
         SEARCH_INDEX,
         Presentation.forId(SEARCH_INDEX),
-        // Tempdoc 868 §B.4 (from §A.2): `path_prefix` is DECLARED here because this Interface — not
-        // SearchTool.PARAMETER_SCHEMA — is what AgentOperationEmitter projects to the model
-        // (AgentOperationEmitter.java:252 reads op.intf().inputs()). SearchTool honours the key
-        // (SearchTool.java:222-236) and the system prompt instructs the model to use it, but the
+        // Tempdoc 868 §B.4 (from §A.2): `path_prefix` is DECLARED here because this Interface is
+        // what AgentOperationEmitter projects to the model (AgentOperationEmitter.toOpenAiTool
+        // reads op.intf().inputs()). SearchTool.execute honours the key — resolve-then-validate
+        // against the indexed roots, via AgentToolPaths.RootsView#resolveRelative then #validate —
+        // and the system prompt instructs the model to use it, but the
         // in-app delegate could never see it: across 37 recorded runs it was used 0 times. The
         // outward MCP surface (McpToolSurface) already declared it, so external agents had scoping
         // the delegate did not. `mode`/`pipeline` stay undeclared on purpose — they are internal
@@ -144,7 +147,7 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"},"
                 + "\"limit\":{\"type\":\"integer\"},"
                 + "\"path_prefix\":{\"type\":\"string\",\"description\":\"Restrict results to files"
-                + " under this absolute folder path (get it from core_browse_folders)\"}},"
+                + " under this folder, as returned by core_browse_folders.\"}},"
                 + "\"required\":[\"query\"]}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(
@@ -152,7 +155,6 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.autoRetry(2, "core.search-index"),
-            Optional.empty(),
             Set.of(),
             false),
         // Tempdoc 550 Preview face (F3): the first real producer of availability. Search is
@@ -196,9 +198,9 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
    * #searchIndex()} and for the same reason: both are served by the Worker's index, so both are
    * offered only while the index is serving ({@code Not(ConditionMatches("index.unavailable"))} —
    * absence=healthy, re-shown on recovery). Declares {@code noRetry}, matching the intent that a
-   * paged read should not be transparently repeated; note that {@code RetryPolicy} is DECLARATIVE
-   * today — {@code OperationPolicy.retry()} has no reader anywhere in the tree, so nothing
-   * auto-retries any agent tool and this declaration documents intent rather than enforcing it.
+   * paged read should not be transparently repeated — and since tempdoc 879 wired the dispatcher
+   * to this axis, that intent is now enforced: a failed read is surfaced, not silently replayed
+   * behind a different offset.
    *
    * <p>Deliberately absent from the outward MCP surface ({@code McpToolSurface}), and the asymmetry
    * is the point: tempdoc 770 §4 withdrew a `fetch` tool there because an external MCP client is a
@@ -212,7 +214,7 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         Presentation.forId(READ_DOCUMENT),
         Interface.of(
             "{\"type\":\"object\",\"properties\":{"
-                + "\"path\":{\"type\":\"string\",\"description\":\"Absolute path of the document to"
+                + "\"path\":{\"type\":\"string\",\"description\":\"Path of the document to"
                 + " read, as returned by core_browse_folders or a core_search_index result.\"},"
                 + "\"offset_chars\":{\"type\":\"integer\",\"description\":\"Character offset to"
                 + " start reading from (default 0). Use the offset the previous page's 'More:' line"
@@ -228,7 +230,6 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         new OperationAvailability(
@@ -262,10 +263,13 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
+        // Tempdoc 879: `empty()` here means "the affected thing has no ResourceRef" — remember writes
+        // the MemoryStore, and there is no Resource for agent memory — NOT "nothing is affected".
+        // Those two meanings share one encoding today; minting a Resource just to populate a tooltip
+        // would be the antipattern, so the distinction is recorded here instead.
         OperationLineage.empty(),
         Binding.of(REMEMBER),
         Provenance.core("1.0"),
@@ -279,17 +283,46 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         // Tempdoc 655: list_files added so this declared schema matches the MCP-visible schema
         // for justsearch_browse (McpToolSurface) — the two were independently authored and had
         // drifted (list_files was accepted by MCP callers but never declared here). BrowseTool
-        // reads list_files (see BrowseTool#execute) and falls back to auto-detect when absent.
+        // does read it (BrowseTool.execute), switching to the file listing; it also auto-detects
+        // when a folder has no subfolders.
+        // Tempdoc 877 §2.1 — max_folders/max_files promoted: BrowseTool.execute honours both, and
+        // the truncation message tells the model to "increase max_folders", an instruction it
+        // could not follow while the key was undeclared. They are declared DESCRIPTION-ONLY — no
+        // `type`, no `default` — and the reason is the §3.1(b) rule read correctly:
+        //   · `type` is safe to declare on a key that was ALREADY declared, because the model was
+        //     already being held to that shape. On a NEWLY declared key it is itself a NARROWING:
+        //     `additionalProperties` is unset here, so before this promotion an undeclared
+        //     `max_folders` was simply UNVALIDATED and reached the tool as-is. Adding
+        //     `"type":"integer"` makes `{"max_folders":"50"}` — which small local models emit, and
+        //     which ToolArgs.intArg exists to coerce — a hard BAD_REQUEST at
+        //     OperationExecutorImpl's pre-dispatch validation, before BrowseTool ever runs. The
+        //     narrowing is not hypothetical for the outward surface either: McpToolSurface declares
+        //     `justsearch_browse` with only parent_path + list_files and routes it through
+        //     callOperation("core.browse-folders", ...) — the same validator — so an MCP client is
+        //     shown a schema without these keys while being held to one that types them.
+        //   · No `default`: BrowseTool.DEFAULT_MAX_FOLDERS is config-derived
+        //     (ConfigStore ... agent().browseDefaultMaxFolders()), so a literal in this static,
+        //     model-visible schema states the wrong default on any machine that configured it.
+        // The 200 ceiling rides the description for the same reason it is not a `maximum` keyword:
+        // BrowseTool CLAMPS an over-large value, and a `maximum` would turn a harmless over-ask on
+        // a read-only tool into a rejected call. Same shape as fileOperations() below, whose value
+        // constraints all ride descriptions.
         Interface.of(
             "{\"type\":\"object\",\"properties\":{\"parent_path\":{\"type\":\"string\"},"
-                + "\"list_files\":{\"type\":\"boolean\"}}}",
+                + "\"list_files\":{\"type\":\"boolean\"},"
+                + "\"max_folders\":{\"description\":\"Maximum folders to return;"
+                + " capped at 200 server-side.\"},"
+                + "\"max_files\":{\"description\":\"Maximum files to return when listing files;"
+                + " capped at 200 server-side.\"}}}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(
             RiskTier.LOW,
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
+            // A directory listing is idempotent: replaying it observes the filesystem again rather
+            // than changing it, so a transient FS/index hiccup is exactly what auto-retry is for.
+            // Since tempdoc 879 this declaration is what the dispatcher acts on, not decoration.
             RetryPolicy.autoRetry(2, "core.browse-folders"),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
@@ -316,14 +349,18 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
                 ConfirmStrategy.Inline.INSTANCE,
                 AuditPolicy.METADATA_ONLY,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false)
             // Tempdoc 560 §28 (4d): a coherent capability family — a durable allow-always grant for
             // "file-operations" auto-approves both the ingest and the file-mutation tools at once.
             .withCapabilityFamily("file-operations"),
         OperationAvailability.empty(),
-        OperationLineage.empty(),
+        // Tempdoc 879: lineage is not inert — the FE renders `affects` in the operation button and
+        // hover preview — and ingest queues indexing work, so it affects the indexing-jobs Resource
+        // exactly as core.rebuild-index declares. NOT core.indexed-roots: that Resource is the list
+        // of WATCHED roots, changed only by the add/remove-watched-root gestures; ingest dispatches a
+        // one-shot ScanRoot over a path (IngestTool.scanRootCallback) and registers nothing.
+        new OperationLineage(Set.of(new ResourceRef("core.indexing-jobs")), Set.of()),
         Binding.of(INGEST_FILES),
         Provenance.core("1.0"),
         Set.of(ExecutorTag.AGENT));
@@ -333,8 +370,56 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
     return new Operation(
         FILE_OPERATIONS,
         Presentation.forId(FILE_OPERATIONS, Optional.of("warning"), Optional.of("destructive")),
+        // Tempdoc 877 §2.1 — the item shape FileOperationsTool.parseOperations actually parses,
+        // promoted from an untyped `array` the model had to guess at; `conflict_strategy` and
+        // `explanation` are promoted for the same reason (the tool honours both, but undeclared
+        // they were pinned to FAIL and the literal "File operations" in the undo journal).
+        // Item-level `required` is ["op"] ONLY, deliberately: this schema is ENFORCED before
+        // dispatch (OperationExecutorImpl -> OperationInputSchemaValidator), and parseOperations
+        // accepts `path` as an alias for `destination` because small models emit it — requiring
+        // `destination` here would reject those calls before the alias could resolve. The
+        // destination is still required, in parseOperations, which reports it per-operation.
+        // Tempdoc 877 §3.1 — the rule these promotions follow, because this schema is BOTH shown to
+        // the model AND enforced before dispatch: DECLARE the shape (which keys exist, their JSON
+        // type, which are required), DESCRIBE the value constraints in prose, and ENFORCE them in
+        // the tool. A value-constraint keyword — `enum`, `maximum`, `maxItems` — pre-empts the
+        // tool's own check with a generic validator string and, worse, narrows behaviour the tool
+        // deliberately accepts:
+        //   · `op` has NO `enum`. parseOperations upper-cases it (FileOperationsTool.parseOperations)
+        //     because small local models emit "mkdir"; FileOperationsToolTest#executeCaseInsensitiveOpType
+        //     pins that as intended behaviour. An `enum` here would reject those calls at the
+        //     dispatch boundary while that unit test — which calls execute() directly, bypassing the
+        //     validator — stayed green: a live regression with a green suite over it. Same for
+        //     `conflict_strategy`, upper-cased at the same altitude.
+        //   · No `maxItems`. FileOperationsTool.execute already refuses an oversized batch with an
+        //     actionable "...exceeds limit of 50. Split into smaller batches."
+        // The allowed values and the limit therefore ride the DESCRIPTIONS, which is what the model
+        // reads anyway. The limit is INTERPOLATED from the enforcing constant so it has one author;
+        // contrast browseFolders() above, whose 200 has to stay a literal only because the constant
+        // enforcing it (BrowseTool.MAX_MAX_FOLDERS) is private to that tool. Its per-call DEFAULT
+        // is deliberately not stated at all: that one is config-derived, so any literal here would
+        // bake one machine's configured value into a static, model-visible schema.
         Interface.of(
-            "{\"type\":\"object\",\"properties\":{\"operations\":{\"type\":\"array\"}},"
+            "{\"type\":\"object\",\"properties\":{\"operations\":{\"type\":\"array\","
+                + "\"description\":\"File operations to execute sequentially, at most "
+                + FileOperationsTool.MAX_BATCH_SIZE
+                + " per call.\","
+                + "\"items\":{\"type\":\"object\",\"properties\":{"
+                + "\"op\":{\"type\":\"string\",\"description\":\"Operation type: one of MOVE,"
+                + " RENAME, MKDIR, COPY (case-insensitive).\"},"
+                + "\"source\":{\"type\":\"string\",\"description\":\"Source file or folder path"
+                + " (not needed for MKDIR).\"},"
+                + "\"destination\":{\"type\":\"string\",\"description\":\"Destination file or"
+                + " folder path. Required for every operation.\"}},"
+                + "\"required\":[\"op\"]}},"
+                + "\"conflict_strategy\":{\"type\":\"string\",\"default\":\"FAIL\","
+                + "\"description\":\"How to handle destination conflicts (case-insensitive), one"
+                + " of FAIL, SKIP, AUTO_SUFFIX: FAIL aborts the batch,"
+                + " SKIP skips the conflicting operations, AUTO_SUFFIX renames to a unique name"
+                + " like file (1).txt.\"},"
+                + "\"explanation\":{\"type\":\"string\",\"description\":\"One line saying what"
+                + " these operations accomplish. Recorded in the undo journal and shown in the"
+                + " user's undo history.\"}},"
                 + "\"required\":[\"operations\"]}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(
@@ -342,7 +427,6 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.Inline.INSTANCE,
             AuditPolicy.METADATA_ONLY,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
                 true,
                 Optional.of(new io.justsearch.agent.api.registry.ResourceRef(
@@ -350,6 +434,9 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             // Tempdoc 560 §28 (4d): same "file-operations" family as ingest (a HIGH-risk member).
             .withCapabilityFamily("file-operations"),
         OperationAvailability.empty(),
+        // Tempdoc 879: same reading as remember() — `empty()` means "the affected thing has no
+        // ResourceRef" (file-operations mutates the FILE SYSTEM, which is not modelled as a
+        // Resource), not "nothing is affected".
         OperationLineage.empty(),
         Binding.of(FILE_OPERATIONS),
         Provenance.core("1.0"),
@@ -383,7 +470,6 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             ConfirmStrategy.None.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),

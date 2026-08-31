@@ -3,12 +3,15 @@ package io.justsearch.app.services;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpContext;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpPrincipal;
+import io.justsearch.agent.api.encryption.StoreCatalog;
+import io.justsearch.agent.api.encryption.StoreDescriptor;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.TestResolvedConfigHelper;
 import io.justsearch.app.api.SearchRequest;
@@ -68,6 +71,33 @@ class HeadAssemblyTest {
     try (HeadAssembly bootstrap = HeadAssembly.bootForSearchPortOnly(searchPort, telemetry)) {
       // Tempdoc 519 §5 / Step 4: bootstrap is itself the AppFacade (no separate accessor).
       assertNotNull(bootstrap);
+    }
+  }
+
+  /**
+   * Tempdoc 879: the authored-store registration list must ask {@link StoreCatalog#isAuthored()}
+   * rather than trust its callers, so enrolling a DERIVED store in the encrypted backup fails at
+   * assembly instead of silently widening what the backup claims to protect.
+   */
+  @Test
+  void registerAuthoredStoreRefusesADerivedCatalogEntry() throws Exception {
+    SearchPort searchPort = intent -> new Result(List.of(), Map.of(), null, Map.of());
+
+    try (HeadAssembly bootstrap =
+        HeadAssembly.bootForSearchPortOnly(searchPort, new NoopTelemetry())) {
+      StoreDescriptor derived =
+          new StoreDescriptor(StoreCatalog.INDEX, tempDir, List::of, entries -> 0);
+      IllegalArgumentException thrown =
+          assertThrows(
+              IllegalArgumentException.class, () -> bootstrap.registerAuthoredStore(derived));
+      assertTrue(thrown.getMessage().contains("INDEX"), thrown.getMessage());
+      assertTrue(thrown.getMessage().contains("DERIVED"), thrown.getMessage());
+      assertTrue(bootstrap.authoredStores().isEmpty());
+
+      StoreDescriptor authored =
+          new StoreDescriptor(StoreCatalog.MEMORIES, tempDir, List::of, entries -> 0);
+      bootstrap.registerAuthoredStore(authored);
+      assertEquals(1, bootstrap.authoredStores().size());
     }
   }
 

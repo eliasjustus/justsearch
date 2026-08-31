@@ -131,17 +131,40 @@ Current built-in agent-facing tool names include:
 
 | Tool | Safety | Purpose |
 |------|--------|---------|
-| `core_search_index` | Read-only | Search indexed knowledge. Accepts `path_prefix` to restrict results to an absolute folder path. |
+| `core_search_index` | Read-only | Search indexed knowledge. Accepts `path_prefix` to restrict results to a folder, given as `core_browse_folders` returns it (root-relative or absolute — the tool resolves a relative prefix against the indexed roots before validating it). |
 | `core_read_document` | Read-only | Read one indexed document's extracted text, paged by character offset (`path`, `offset_chars`, `max_chars`). Served by the Worker's `FetchDocumentSlice`, so the readable universe is exactly the indexed corpus and the Head never opens the file. A page is capped below the per-tool-result context cap; the result names the span read, the document's total length when the Worker reports one, and the offset to continue from. One page per document is the declared default — at a small context window, paging one document to the end costs the steps the other documents needed. |
-| `core_browse_folders` | Read-only | Discover indexed folders and paths. |
-| `core_file_operations` | Write/destructive depending on action | Move, rename, copy, or create directories (`FileOperation.OpType`: MOVE / RENAME / MKDIR / COPY — there is no delete) with approval where required. |
+| `core_browse_folders` | Read-only | Discover indexed folders and paths. Optional `list_files`, `max_folders`, `max_files`. |
+| `core_file_operations` | Destructive | Move, rename, copy, or create directories (`FileOperation.OpType`: MOVE / RENAME / MKDIR / COPY — there is no delete), as a batch with an explanation and a conflict strategy. Requires approval, and the batch is undoable. |
 | `core_ingest_files` | Write | Request ingestion of files or folders. Takes an optional `collection` tag; omitted, a path inherits its containing indexed root's collection, or `mcp-ingest` when it is under no indexed root (tempdoc 811 C-2a). |
-| `core_remember` | Write (LOW, no approval) | Persist one durable fact or user preference to the single-authority memory record, inspectable and forgettable from the Memory surface. |
-| `core_navigate_to_surface` | Read-only | Activate a top-level UI surface, dispatched as a Navigation Intent rather than emitted as a URL in chat text. |
+| `core_remember` | Write (low risk, no approval) | Persist a durable fact or user preference to the single-authority memory record, inspectable and forgettable via the Memory surface / `/api/memory`. |
+| `core_navigate_to_surface` | Low risk, no approval | Open a named app surface for the user. Presentation-layer only; also exposed to the UI executor. |
 
 Beyond the built-ins, the offering also carries anything else composed into the agent partition of the catalog: tools contributed by connected MCP servers, and declared workflows projected onto agent-callable operations (`core.<name>` becomes `core_workflow_<name>`). A projected workflow inherits the availability of the operations it composes, and one whose steps reference an operation the running install does not have is not projected at all — so a workflow is never offered as a tool the model cannot actually run.
 
-Safety metadata lives with the operation definitions and handlers. Write/destructive operations pause for explicit user approval before execution.
+Safety metadata lives with the operation definitions and handlers. The approval posture is the operation's `ConfirmStrategy`, not its read/write character: `core_ingest_files` and `core_file_operations` pause for explicit user approval before execution; every other tool above runs unattended.
+
+### What an operation's declared policy actually decides
+
+`OperationPolicy` is enforced, not advisory — that is the premise of
+[ADR-0030](../decisions/0030-policy-on-operations-vs-mcp-hints.md)'s divergence from MCP's
+"annotations are hints" discipline. Tempdoc 879 closed the gap between that claim and the code, so
+each surviving axis now has a consumer whose behaviour the declaration changes:
+
+| axis | what changes when you change the declaration |
+|---|---|
+| `risk` | the `(SourceTier × RiskTier)` lattice verdict, and the agent gate's floors |
+| `confirm` | a floor on the agent gate. The lattice still decides the *baseline* verdict from source × risk × the autonomy dial (see `GateBehavior`'s javadoc); the declaration may only tighten it — so an operation declaring `Inline` or `Typed` can force a confirmation the dial would have auto-approved, but can never suppress one the lattice required. An engaged hard stop's `DENY` short-circuits before the floor applies. No `ExecutorTag.AGENT` operation may declare `Typed`: the agent authorization ceremony renders the operation id as the phrase and cannot carry a declared one, so a registry test fails the build rather than letting the phrase be silently substituted at runtime. |
+| `audit` | `NONE` emits no operation-history record; `METADATA_ONLY` emits one. Advisory emission is independent of this and still fires either way |
+| `retry` | whether the agent dispatcher may transparently re-issue the call, and how many times. The axis declares *permission* to replay (hence `RetryPolicy`'s refusal of `allowAutoRetry` without an `idempotencyKey`); the caller's loop supplies the timing |
+| `requiredCapabilities` | the executor's capability gate and the derived availability expression |
+| `undoSupported` / `inverseOperationRef` | the executor's undo path, and the reversibility signal that stops an irreversible MEDIUM write auto-firing under the `AUTO` dial |
+| `capabilityFamily` | which durable allow-always grants cover the operation |
+| `advisoryClass` | which typed advisory Resource the completion emits into |
+
+`scripts/ci/check-policy-axis-liveness.mjs` fails the build if an axis loses its consumer, or if an
+`Optional` axis is declared by no operation. There is no opt-out: an axis that cannot pass is wired
+to a real consumer or deleted outright, because a declaration nothing can contradict reads as a
+constraint while being a comment.
 
 ## Query Pre-Processing
 
