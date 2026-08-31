@@ -1368,7 +1368,6 @@ final class OperationExecutorImplTest {
                 new ConfirmStrategy.Typed(new I18nKey("test.confirm")),
                 AuditPolicy.NONE,
                 RetryPolicy.noRetry(),
-                Optional.empty(),
                 Set.of(),
                 false)
             .withCapabilityFamily(FAMILY),

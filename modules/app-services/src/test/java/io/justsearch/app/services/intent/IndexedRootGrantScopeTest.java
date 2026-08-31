@@ -247,7 +247,6 @@ class IndexedRootGrantScopeTest {
             ConfirmStrategy.Inline.INSTANCE,
             AuditPolicy.NONE,
             RetryPolicy.noRetry(),
-            Optional.empty(),
             Set.of(),
             false),
         OperationAvailability.empty(),
