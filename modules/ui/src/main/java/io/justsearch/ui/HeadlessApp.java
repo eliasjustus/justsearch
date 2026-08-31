@@ -508,6 +508,18 @@ public class HeadlessApp {
       HeadAssembly bootstrap, LocalApiServer apiServer, KnowledgeServerBootstrap knowledgeServer) {
     KnowledgeServerHealthMonitor monitor = new KnowledgeServerHealthMonitor(knowledgeServer);
     monitor.onRecoveryConnected(recovered -> connectAndBind(bootstrap, apiServer, recovered, null));
+    // Tempdoc 876 §C.8: reconcile the readiness snapshot on the poll the head already runs, so a
+    // dimension that settles WITHOUT a capability transition (INDEX_SERVING → DEGRADED /
+    // index.dense_unavailable) still reaches the ConditionStore for a client that never calls
+    // GET /api/status. Without this the trigger's capability-transition arm can leave a boot-time
+    // index.unavailable standing, and core.search-index — gated on Not(index.unavailable) — stays
+    // hidden from the model for the life of the process.
+    if (bootstrap != null && bootstrap.substrate() != null && bootstrap.substrate().health() != null) {
+      var readinessTrigger = bootstrap.substrate().health().readinessReconciliationTrigger();
+      if (readinessTrigger != null) {
+        monitor.onTick(readinessTrigger::request);
+      }
+    }
     apiServer.bindWorkerRecovery(monitor);
     monitor.start();
     return monitor;
