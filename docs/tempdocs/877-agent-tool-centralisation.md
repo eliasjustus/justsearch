@@ -3,7 +3,8 @@
 ```
 status:  IMPLEMENTED (2026-08-26) — nine of ten census findings shipped, one refuted
          with a recorded boundary (§2.9). Independently reviewed refute-first; nine
-         confirmed defects fixed (§3.4). Was THEORIZING, then IMPLEMENTING.
+         confirmed defects fixed (§3.4). Converged with 878 at the merge (§3.5).
+         Was THEORIZING, then IMPLEMENTING.
 created: 2026-08-26
 follows: 868 (§D — the agent tool surface investigation this remediation comes out of),
          865 §7.5 (ToolResultCarrier — the worked example of the pattern this tempdoc
@@ -709,7 +710,42 @@ the `enum`/`maxItems` restraint is real and `AgentToolCatalogContractTest` would
 someone re-tightened it; `MAX_EXPANDED_FILES` was genuinely unreachable; and §2.9's refusal of
 the MCP unification holds on inspection of both payload shapes.
 
-### 3.5 Deliberately not done
+### 3.5 Converging with 878 (merged 2026-08-26, PR #576)
+
+878 landed while this branch was paused and touched the same four files. Four conflicts, and
+one of them is the most interesting result in this tempdoc: **878 independently built the same
+fix twice over, and its own code left a note asking 877 to absorb it** —
+"Tempdoc 877 is building a shared `ToolArgs` helper with this same contract; fold this into it
+when it lands." Two agents converging on one contract from opposite directions is the strongest
+evidence available that the contract is the right one. It is also, precisely, the duplication
+this tempdoc exists to prevent: for a few days the repo had two private `intArg`s again.
+
+Resolution was convergence, never both:
+
+| Overlap | Kept | Why |
+|---|---|---|
+| `intArg` numeric-string coercion | **878's semantics inside 877's `ToolArgs`** | 878's contract is stricter and better: it refuses a NON-INTEGRAL number (`3000.9`) on the same terms as its stringified twin, and it BOUNDS the echoed offending value at 120 chars so a model that passes a large object does not get an error message the size of that object. Both properties are now in the shared helper; 878's private copy is deleted. `ToolArgs` keeps throwing `BadArgument`, so `AgentToolErrors` still types the refusal `BAD_REQUEST` — which 878's version did not. |
+| `DocumentSlice.error` handling | **878's** | 877 sniffed the reason's CONTENT for absent-markers so the Worker's own "Document not found in index" prose kept the not-found message. 878 keys on the PRESENCE of a reason and attaches the recovery guidance to BOTH branches. 878's is right: a discriminator that reads the Worker's wording makes that wording a contract — and this is exactly what 877's own independent reviewer flagged as F9. The converged branch resolves F9 rather than merely documenting it. |
+| `FETCH_TIMEOUT_MS` (878 re-added it) | **877's `AgentTimeouts.toolFetchMs()`** | one holder for every agent duration. |
+| `ReadDocumentTool.roots()` / `validatePath()` | **877's `RootsView`** | the forks this tempdoc replaced; `main` still carried them because 878 had no reason to touch them. |
+| `AgentStepRunner` `VIRTUAL_TOOL_TIMEOUT_SECONDS` / `budgetGateTimeoutSeconds()` | **877's `AgentTimeouts`** | 878's side still carried the 10×-stale "aligns with INLINE_CONFIRM approval-gate timeout" comment §2.8 corrects. |
+| `LINEAGE_KEY` javadoc | **878's** | 878 gave the key a second job (`RunChannelPolicy`'s evidence-vs-narrative discriminator) and documented it far better than 877's one-liner. 877's three sibling constants sit above it unchanged. |
+| `docs/explanation/22` tool table | **row by row** | 877 owns the path-convention wording, the browse optional args, and the file-operations risk tier; 878 owns the read-document row (it adds `total_chars` and the one-page-per-document default). |
+
+One test had to change rather than be preserved, and it is worth stating why that is not
+test-weakening. `ReadDocumentToolTest`'s "the Worker's own absent-document wording keeps the
+not-found remedy" asserted the message PREFIX 877 happened to emit. Converging on 878 changes
+that prefix. The property the test is *named* for — the model is always told which two tools can
+still find the document — is preserved, and now holds for BOTH branches where 877's
+wording-keyed version held it for one. So the test now asserts that property, across all three
+reason shapes (`"Document not found in index"`, `"missing_doc_id"`, `null`), which is a stronger
+assertion than the one it replaces. Ride-along while in there: `RECOVERY_GUIDANCE` said "find the
+absolute path", which §2.7 established is not what `core_browse_folders` returns.
+
+`DocumentSlice` also gained a `totalChars` component in 878, so four of this branch's test
+fixtures needed the new arity — mechanical, no behaviour change.
+
+### 3.6 Deliberately not done
 
 **Not doing** (with reasons, per §2.9 and §2.3): the MCP evidence unification (refuted —
 two governed projections of one canonical record, not a fork); `query`/`resultCount`/
