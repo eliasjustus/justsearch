@@ -609,3 +609,32 @@ Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from
 - [ ] path_prefix honoured by SearchTool but absent from the LLM-facing catalog Interface (system prompt still tells the model to use it); SV3 sends docIds scope empty by construction — AgentToolsOperationCatalog.java:123-127, AgentPromptComposer.java:43, sv3-ask.ts:340 (2026-08-25)
 - [ ] Worktree dev stacks cannot activate the GPU runtime: RuntimeActivationService.resolveVariantsRoot falls back to RepoRootLocator (the WORKTREE root), which has no modules/ui/native-bin; the dev-runner's JUSTSEARCH_SERVER_EXE (shared main cuda12) is not consulted by ai_activate — 'Variant not installed: cuda12'. Workaround used 2026-08-26: copy main's variants/cuda12 into the worktree (1.1 GB) — RuntimeActivationService.java:1688-1705, dev-runner.cjs:494 (2026-08-26)
 - [ ] CI javadoc warning MissingSummary at AgentEvent.java:500 (AgentSource acquisition javadoc opens with a @see-style fragment) — cosmetic, from PR #566 (2026-08-26)
+
+---
+
+## §E. Follow-up settlement (2026-09-01 — all §D items landed or routed)
+
+The §D follow-ups and the two critical-analysis passes over the tool subsystem (structural,
+sprawl) were executed as seven orchestrated workstreams, each with its own tempdoc, an
+independent refute-first review, and a squash-merged PR:
+
+| Tempdoc | PR | Outcome |
+|---|---|---|
+| 875 consent boundary | #581 | grant risk ceiling (HIGH never durable-grantable), ingest argument-scope containment, offered=resolvable, undo containment |
+| 876 offering truth | #584 | availability reconciled off the worker-health poll (no `/api/status` dependency — §D.1 settled), guards witness the real offering, `core_remember` registration, i18n resolution, demo-compose gated |
+| 877 centralisation | #583 | dead PARAMETER_SCHEMAs deleted, one cap accessor, structuredData key constants, `RootsView`, `ToolArgs`/`AgentToolErrors`/`AgentTimeouts` |
+| 878 run honesty & paging | #576 | MAX_ITERATIONS synthesizes (§D.2's empty-answer half settled), Layer-3 `Elided:` scar, compaction feeds the inclusion ledger, `total_chars` in the read header, model-visibility on the wire, `SourceAcquisition` enum |
+| 879 policy axes | #582 | retry/confirm/audit wired with flip-tests; rateLimit deleted; store registers reconciled |
+| 880 re-homing | #585 | catalog home in `io.justsearch.agent.tools`, adapters deleted, byte-exact catalog wire baseline, `HeldGate` |
+| 881 standard profile | #586 | §D.3's diagnosis REFUTED — it was an XML tool-call grammar leaking into the reasoning channel; recovery + thinking-off retry shipped; live: 0/3 → 2/3 answered (881 §H) |
+
+Live-verified post-merge by the orchestrator: zero-status-poll runs offer search+read; trust
+panel matches the offering; the rank-1 prompt returns honest partials at the step cap.
+
+Still open (owner levers, unchanged): 878 §D.8's effort-scaled iteration cap / n_ctx default
+(run 2 of 881 §H hit the 16-token context-margin class); journal-by-reference (879 §
+OWNER-DECISION); E0a/vop_* channel retirement (880 routed evidence to 532 + an owner call).
+Dev-infra: worktree stacks cannot activate cuda12 without copying main's variant
+(RuntimeActivationService resolves variants from the worktree root; the dev-runner's
+JUSTSEARCH_SERVER_EXE is not consulted by activation) — hit twice this arc, workaround is a
+1.1 GB copy; owns its fix with the dev-runner/runtime-activation seam.
