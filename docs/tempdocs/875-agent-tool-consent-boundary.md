@@ -466,3 +466,15 @@ a gate. Move 5 answers it for the one operation that supports undo today (contai
 the tool), but the *substrate* still has no gate on the reverse of an operation. That is the
 "reversal is an operation and inherits its risk class" principle in §C.7 meeting its first real
 instance; recorded there, not built here.
+
+## Open items routed from the 868 §I live-validation campaign (2026-09-01)
+
+- [ ] `/api/chat/agent/undo`'s JSON response mojibakes non-ASCII (the undo summary's em-dash
+  renders `â€"`); the SSE plane is clean UTF-8 — the undo route's response charset is the fault.
+- [ ] Out-of-root ingested documents are unremovable by every normal cleanup path: reindex
+  re-syncs roots only, `/api/indexing/excludes/apply` walks roots only, GC is generation-scoped.
+  Pairs with §C.9's second-uncontained-ingest-surface item: containment should come with an
+  eviction story.
+- [ ] Stale comments in `OperationsController` (~:35-53) still describe `confirmationToken` as
+  "FE-trust in V1 … dispatcher ignores it" — enforcement is real now (a bogus token is refused,
+  verified live 2026-09-01); sweep the comment.
