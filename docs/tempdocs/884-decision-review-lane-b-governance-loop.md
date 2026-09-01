@@ -31,20 +31,21 @@ before lane F rewrites ADR-0001/0002 so those get premise probes from day one.
 
 | # | Item | This lane does | Not this lane |
 |---|---|---|---|
-| 25 | ADR premise probes | a probe register + gate in the governance kernel: each ADR names 1–3 mechanical probes (grep count, file-absent, JSON path, named test) that fail when its premise drifts; wired into `scripts/governance/run.mjs`; seeded for every ADR with a verifiable premise | frontmatter `status:` fixes (lane 0 did them) |
+| 25 | ADR premise probes | a probe register + new rule ids on the existing `adr-coverage` kernel gate: each ADR names 1–3 mechanical probes (named test/gate id, absence, or count where the premise is the count) that fail when its premise drifts; seeded for every ADR with a verifiable premise | frontmatter `status:` fixes (lane 0 did them); a second ADR gate |
 | 25 | risk register | restore `docs/reference/architectural-risks.md` (deleted 2026-03-18, `55a3e07cf` in the pre-cutover repo) with one trigger **and one instrument** (metric name, gate, or test) per risk; migrate RISK-001..007 from 269 and add the review's new risks | building the instruments that do not exist yet (each becomes a tracked item on the owning lane) |
-| 25 | reassess cadence | `reassess_when` + `last_reviewed` frontmatter on every ADR; a `check-adr-review-age` warning (not a block) when `last_reviewed` exceeds 6 months; a `/adr-review` skill that reruns the 269 procedure | a cron; a second review this lane does not run itself |
+| 25 | reassess cadence | `last_reviewed` frontmatter on every ADR ("Reassess When" stays a body section); `adr-coverage/review-stale` warning plus a session-start hint when `last_reviewed` exceeds 6 months; the 269 procedure written into `docs/decisions/README.md` | a cron; a separate skill; a second review this lane does not run itself |
 | 25 | drifted ADRs | amend 0015 (tool count), 0018 (VDU routing is default-on, tiered, not PDF-only; `JUSTSEARCH_LAYOUT_ENABLED` is gone), 0039 (narrow to the one Category that exists, or schedule the others), 0006 (record 847/867/869 as the trigger check); retire 0011 (never built, no desktop need); mark 0001/0002 "under re-examination, lane F" | rewriting 0001/0002 (lane F) |
 | 23 | local trust model | new ADR "Local API trust boundary" stating the actual posture (loopback bind + Host allowlist + MCP Origin check + session token on mutating methods; same-user native processes are inside the boundary; the token bootstrap route is by design); rewrite CLAUDE.md hard invariant #2 to match; make token enforcement **fail closed** when prod mode has no token | new auth mechanisms; anything in `modules/ui-web` or the Tauri shell |
 
 ## File ownership (no other wave-1 lane edits these)
 
 `docs/decisions/**`, `docs/reference/architectural-risks.md` (new), `governance/adr-probes.v1.json`
-(new), `scripts/ci/check-adr-probes.mjs` + `check-adr-review-age.mjs` (new), the kernel wiring in
-`scripts/governance/**` and `governance/consult-register.v1.json`, `.claude/skills/adr-review/**`
-(new), `docs/reference/security/threat-model.md`, `CLAUDE.md` hard-invariant #2 line and the
-Pre-merge table row for the new checks, `modules/ui/.../api/ApiSecurityFilters.java` (token
-fail-closed only) + its tests.
+(new), `scripts/governance/gates/adr-coverage/**` and `scripts/governance/lib/frontmatter.mjs`,
+`governance/consult-register.v1.json` (new `docs/decisions/**` region),
+`scripts/agent-analytics/world-state.mjs` (staleness hint), `docs/reference/security/threat-model.md`,
+`CLAUDE.md` hard-invariant #2 line, `modules/ui/.../api/ApiSecurityFilters.java` (token
+fail-closed only) + a new `ApiSecurityFiltersTest`, JSON Schemas for the four Surface records +
+their `contract-surfaces.v1.json` entries (the FE build wiring is a cross-lane request).
 
 Lane 0 already edited ADR frontmatter, the ADR README and CLAUDE.md; branch after #592 merges.
 
@@ -60,8 +61,9 @@ regions are shared across lanes (lane A owns structure only).
 ### The mechanism gap
 
 - Reassess sections exist only on 0001, 0002, 0003, 0006 (all added by 269, 2026-03-11).
-- ADRs referenced from `governance/` or `scripts/ci/`: 0014, 0024, 0026, 0028, 0036, 0042, 0043,
-  0044, 0045. The other 28 have no mechanism that can notice drift.
+- ADRs referenced from `governance/` or `scripts/ci/` as enforcement: 0014, 0024, 0026, 0030,
+  0032, 0036, 0042, 0043, 0044, 0045 (10; review-corrected). The rest have no mechanism that can
+  notice drift.
 - 742 §D5 (`742-history-survivorship-audit.md:212-216`): "No fingerprint lint now — build it if a
   second accepted-but-unimplemented ADR ever surfaces." 0010 and 0041 (status/body contradiction,
   fixed by lane 0) and 0011 (accepted 2026-03-16, zero `RemoteShard` symbols) are that second case.
@@ -100,32 +102,85 @@ regions are shared across lanes (lane A owns structure only).
 - CLAUDE.md hard invariant #2 says "Local API binds to 127.0.0.1 only"; true but no longer the
   posture. The ADR names the posture; the invariant line points at the ADR.
 
+## Independent review fold (2026-09-01, session justsearch-public-9a)
+
+Accepted findings, each re-read by this contract's author; the decisions below carry **[R#]**:
+
+- **[R1]** Lane 0 already rewrote `status:` on 0010/0013/0038/0039/0041 with compound strings
+  ("accepted - mechanism superseded by tempdoc 564", …); post-882 the vocabulary is 9 distinct
+  strings over 46 ADRs. Amendments build on 882's text; any status logic prefix-matches
+  (`startsWith('accepted')`), never equality. No gate validates the vocabulary today;
+  `llmstxt-generate.mjs` only filters `stable|in-progress|advisory` for inclusion.
+- **[R2]** The first draft named two incompatible mechanisms (standalone `scripts/ci/check-*.mjs`
+  lint vs the kernel). The kernel already has an ADR gate: `adr-coverage`
+  (`governance/registry.v1.json:315-318`, `scripts/governance/gates/adr-coverage/{enforcer,classifications,rule-descriptions,truth-table}.mjs`,
+  tempdoc 530 §2.7) that parses every ADR's frontmatter and validates `Covers:` globs. A second
+  ADR gate with its own register is the 553 register-drift shape.
+- **[R3]** `scripts/governance/lib/frontmatter.mjs:16-29` is a per-line `key: value` regex; a YAML
+  list parses as empty. `llmstxt-generate.mjs` already uses `gray-matter`.
+- **[R4]** "Reassess When" is a body `##` section on 0001/0002/0003/0006, not frontmatter.
+- **[R5]** The fail-open token branch is unreachable today: `HeadlessApp.java:364-365` pairs
+  `prodMode` with `generateSessionToken()` on the only production path; dev-runner, jseval and
+  ui-shot never set prod mode. No `ApiSecurityFiltersTest` exists;
+  `LocalApiUiTokenPolicyTest.java:229` tests a double that duplicates the logic.
+- **[R6]** A JSON-Schema→TypeScript emitter exists: `scripts/codegen/gen-wire-schema-types.mjs`
+  driven by `governance/contract-surfaces.v1.json` (25 records, output
+  `modules/ui-web/src/api/generated/schema-types`), checked by `check-wire-schema-types-regen.mjs`
+  and the `contract-projection` kernel gate.
+- **[R7]** Verified counts: MCP tools 6; registry categories 1; `RemoteShard` 0;
+  `JUSTSEARCH_LAYOUT_ENABLED` 0; ADR-0029 tempdoc citations 0; gate-referenced ADRs **10** (add
+  0030 via consult-register and 0032; 0028 in `observed-happening.v1.json:172` is a note, not
+  enforcement). `\b0005\b` false-positives on a float literal in `check-contrast-matrix.mjs:115`.
+- **[R8]** The deleted risk register is recoverable:
+  `git -C /f/JustSearch show 55a3e07cf^:docs/reference/architectural-risks.md` (137 lines,
+  RISK-001..007). The consult register's `workflow-agent-tool` region → ADR-0030
+  (`consult-register.v1.json:154-172`) is the code-path→ADR template; both hooks consume the one
+  compiled `GOVERNED_REGIONS` (`governed-regions.mjs:33-42`). Ride-along: `maintain-doc-hint.mjs:15`
+  still says "currently shell-v0 only".
+
 ## Design decisions this lane must make (recommendation in bold)
 
-1. **Probe register shape.** **`governance/adr-probes.v1.json`**: `{ adr, premise, probes: [ {type, ...}, … ] }`
-   with types `grep-count` (pattern, paths, expect `==|>=|<=`), `path-absent`, `path-present`,
-   `json-path` (file, pointer, expect), `test-present` (FQCN + method). Keep it to what a gate can
-   evaluate without a build. Follow the `/governance` skill's changeset + classification grammar;
-   the gate id is `adr-probes`, mode `gate`, tier row added to `tier-register.md`.
-2. **Where the probe lives.** **In the register, referenced from the ADR frontmatter by id**, not
-   inline in the ADR, so the doc stays prose and the gate stays data. ADR frontmatter gains
-   `probes: [ids]`, `reassess_when: [...]`, `last_reviewed: YYYY-MM-DD`.
-3. **What to do with an ADR that cannot have a probe.** **Say so in frontmatter** (`probes: none —
-   reason`). The gate warns on missing probes for `accepted`/`stable` ADRs created after this lane
-   lands; it does not block old ones.
-4. **Risk register instrument rule.** Every risk row names an instrument that exists on `main`
-   (a metric id in a MetricCatalog, a gate id, a test FQCN) or an item on a lane tempdoc that will
-   create it, with the lane named. A risk with neither is not a risk row; it is a note, and notes
-   have no home (872).
-5. **Fail-closed token.** **Refuse to start the API server** in prod mode without a token; the
-   shell always supplies one via the manifest, so the only way to hit this is a broken launch,
-   which should be loud. Add the readiness reason code via `check-readiness-reason-codes`.
+1. **Mechanism [R2, R3].** **Extend the existing `adr-coverage` kernel gate**, no new gate: rule
+   ids `adr-coverage/probe-failed`, `adr-coverage/no-probe` (warn), `adr-coverage/review-stale`
+   (warn), with changeset classifications and truth-table fixtures per the `/governance` grammar.
+   Switch the gate's frontmatter parsing to `gray-matter`. Register shape:
+   `governance/adr-probes.v1.json` `{ adr, premise, probes: [...] }`, referenced from ADR
+   frontmatter as `probes: [ids]`; keep "Reassess When" as the body section it already is
+   **[R4]**; add only `probes:` and `last_reviewed:` as frontmatter keys.
+2. **Probe kinds, in preference order (T1).** (1) an existing named test or gate id (ArchUnit
+   rules already are premise probes); (2) absence probes (symbol / flag / file must not exist);
+   (3) counts only where the premise *is* the count (0015), never as a general ratchet. The
+   failure message quotes the premise and names the amendment procedure, so the fix is "amend
+   the ADR" and not "edit the number".
+3. **An ADR that cannot have a probe** says so in frontmatter (`probes: none - <reason>`); the
+   gate warns for `accepted*`/`stable*` ADRs created after this lane lands and does not block
+   old ones.
+4. **Review staleness surfaces where agents look (T2).** `last_reviewed` older than 6 months is
+   emitted by `world-state.mjs` / `known-state-hint` at session start, and by the gate as a
+   warning; a CI-only warning is the 872 pile again.
+5. **Risk register instrument rule (T4).** Every row names an instrument that exists on `main`
+   (metric id, gate id, test FQCN) **or** a lane tempdoc + item id; the gate checks the referenced
+   item heading exists, so a row dies loudly if a lane closes without building it. Add a
+   `docs/decisions/**` governed region to the consult register on the `workflow-agent-tool`
+   template so editing an ADR pushes the review procedure.
+6. **0038's mirror [R6].** **Generate `surface.ts`** from JSON Schemas for the four records via the
+   existing emitter and register them in `contract-surfaces.v1.json`; the FE build wiring is a
+   one-line cross-lane request (UI files are out of scope for this lane). The exception-list
+   amendment is the fallback only if schema authoring is judged out of scope, and then 0038 must
+   say so.
+7. **Fail-closed token [R5], stated honestly.** Defensive hardening with no live path to break:
+   refuse to bind in prod mode without a token and raise a readiness reason code. The test
+   exercises the real `setupSessionTokenEnforcement` (`ApiSecurityFilters.java:412-421`) with
+   `prodMode = true`, `sessionToken = null`, not a double.
+8. **The `/adr-review` skill (T5)** becomes a "how to re-examine an ADR" section of
+   `docs/decisions/README.md`; the probe gate plus the staleness hint *are* the schedule.
 
 ## Acceptance criteria
 
-- `node scripts/governance/run.mjs --gate adr-probes --mode gate` green on `main` + this branch;
-  proved to bite by seeding one drift (e.g. register a 7th MCP tool in a scratch commit) → red,
-  then removed. Wired into the kernel so CI runs it.
+- `node scripts/governance/run.mjs --gate adr-coverage --mode gate` green on `main` + this
+  branch with the new rule ids; proved to bite by seeding one drift (register a 7th MCP tool in a
+  scratch commit) → `adr-coverage/probe-failed`, then removed. Truth-table fixtures cover
+  probe-failed, no-probe, review-stale, and a list-valued `probes:` key parsed correctly (R3).
 - Every ADR has `last_reviewed`; every `accepted`/`stable` ADR either has ≥1 probe or a stated
   reason. Amended ADRs 0006/0015/0018/0039 read true against `main`; 0011 retired; 0001/0002
   carry the "under re-examination (lane F)" banner.
@@ -136,15 +191,26 @@ regions are shared across lanes (lane A owns structure only).
   (lane D), single-connection job queue (instrument: throughput metric, lane C).
 - `check-premerge-table`, `check-root-readme` (if README touched), `check-readiness-reason-codes`,
   `check-repo-history-policy` green; `docs/llms.txt` regenerated via `/docs-maintenance`.
-- `ApiSecurityFiltersTest` (or sibling) has a test: prod mode + blank token → server refuses /
-  every mutating request 503; the old `TOKEN_ENFORCEMENT_DISABLED` warning path is gone.
+- A new `ApiSecurityFiltersTest` drives the real `setupSessionTokenEnforcement` with
+  `prodMode = true` + null token → refuses to bind (or 503s every mutating call) and the
+  `TOKEN_ENFORCEMENT_DISABLED` warning path is gone; `LocalApiUiTokenPolicyTest`'s duplicated
+  double is retired or made to delegate.
+- `surface.ts` is generated (or 0038 records the exception with the reason);
+  `check-wire-schema-types-regen` green; the ride-along fix at `maintain-doc-hint.mjs:15`.
+- Session-start hint: `node scripts/agent-analytics/world-state.mjs` (or the known-state hint)
+  lists ADRs with `last_reviewed` older than 6 months.
 - `./gradlew.bat build -x test`, `:modules:ui:test`; full `./gradlew.bat test` before closing.
-- Independent review by a session other than the implementer.
+- Independent review by a **named** other session (T6): the orchestrator wrote this contract, so
+  the closing reviewer should be lane A's or lane C's session, not "someone else".
 
 ## Takeover checklist
 
-1. Branch after `882-decision-review-lane0-hygiene` (#592) merges; lane 0 edited six ADRs,
-   the ADR README, CLAUDE.md, and the readiness/store registers.
+0. **First PR, immediately after #592 (T3):** the 46-ADR frontmatter sweep (`probes:` +
+   `last_reviewed:`, gray-matter parsing in `adr-coverage`) lands **before** lanes A and C file
+   ADR-0047/0048, so they write the new shape from the start. Everything else in this lane follows.
+1. Branch after `882-decision-review-lane0-hygiene` (#592) merges; lane 0 edited six ADRs
+   (compound `status:` strings — build on them, R1), the ADR README, CLAUDE.md, and the
+   readiness/store registers.
 2. Load `/governance` before creating the gate; load `/docs-maintenance` before editing canonical docs.
 3. Recover the deleted risk register's text from the pre-cutover repo:
    `cd /f/JustSearch && git show 55a3e07cf^:docs/reference/architectural-risks.md` (read-only).

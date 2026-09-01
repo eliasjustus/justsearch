@@ -14,16 +14,23 @@ follows:
 
 # 885 — Decision review, lane C: runtime lifecycle and isolation
 
-**Thesis.** Four lifecycle decisions from November–December 2025 still run the Worker exactly as
-first written, and each has a defect the project already knows about. Indexing pauses whenever
-*any* foreground request arrived in the last two seconds, so agents and evals throttle the index
-they depend on. The out-of-process extraction sandbox that would make a wedged native parser
-survivable is built but unreachable as shipped. The health substrate advances only when a client
-polls `/api/status`, and each poll blocks on a Worker RPC. The job queue permanently fails a file
-after three transient errors. This lane re-decides each with the long-term shape in mind: the
-extraction sandbox becomes a persistent process pool (the correct home for crash isolation, and
-the precondition for lane F's single-JVM engine), pacing becomes contention-based and
-process-agnostic, health sampling becomes internal, and failure classes become explicit.
+**Thesis.** Four lifecycle decisions from November–December 2025 still run the Worker as first
+written, and each encodes a policy as a **proxy signal** instead of the quantity the policy is
+about: recent-activity wall clock → pause (instead of in-flight load → throttle); client poll →
+health truth (instead of state change → health truth); attempt count → failure (instead of
+failure class → failure); wall clock → NRT reopen (instead of staleness → reopen). The
+out-of-process extraction sandbox that would make a wedged parser survivable is built but
+unreachable as shipped, and because the in-process extractor is a single-thread executor, one
+wedged parser stops **all** extraction, not one file. This lane replaces each proxy with the real
+quantity, with the long-term shape in mind: the sandbox becomes a persistent process pool (the
+correct home for crash isolation and the precondition for lane F's single-JVM engine), pacing
+becomes a duty cycle driven by Worker-observed foreground load, health sampling becomes
+internal, and the failure ladder that already exists is completed rather than rebuilt.
+
+> **Independent review fold (2026-09-01, session justsearch-public-9a).** Two of this
+> contract's original premises were wrong and are corrected below, marked **[R#]**: the eval
+> escape hatch never reached the Worker, so no measurement of its effect exists; and job-failure
+> classification already ships. Both were verified by this author before folding.
 
 Lane C is on the critical path (see `882-…lane0-hygiene.md` for the split and cross-lane rules).
 Lane D (index identity + migration) and lane F (engine merge) branch after it merges. Design
@@ -35,10 +42,10 @@ signals; the Worker observes its own foreground load.
 | # | Item | This lane does | Not this lane |
 |---|---|---|---|
 | 14 | extraction isolation | ship the `process` sandbox mode as a **persistent child process pool** (1 process by default, restart on crash/timeout, bounded queue) with a shipped launch command built from the running JVM + Worker classpath; make it the default for the parser families that can wedge (PDF, Office, archives) and measurable for all; keep `in_process` as an explicit opt-out | changing Tika policy, OCR routing, VDU (790), file-size limits |
-| 3 | breath-holding | replace "recent activity" pacing with a Worker-local **foreground-load gauge** (in-flight search / rerank / retrieveContext / fetch RPCs) plus the existing GPU arbitration slot; delete the `justsearch.eval.disable_breath_holding` hatch and the `activity_epoch_ms` yield sites | the MMF layout (lane 0 fixed it; lane F deletes it); LoopPacingPolicy's commit cadence numbers |
-| 6 | health sampling | an internal scheduler samples Worker health and feeds `ConditionStore` + `HealthEventChangeRegistry`; `/api/status` returns the latest snapshot without a Worker RPC on the request thread; the health SSE stream advances with no client polling | the frontend's 10 s poll (`modules/ui-web/.../statusPoll.ts`, out of scope; it becomes cheap and can be retired by a UI lane later) |
-| 21 | job queue failures | classify errors transient vs permanent; time-based retry with backoff for transient (AV lock, sync-client lock, network drive); permanent-fail only on parser/policy outcomes; single source for max-attempts; a throughput metric (RISK-002's missing instrument) | replacing SQLite; schema ladder |
-| 19 | NRT + commit cadence | **measure first**: jseval indexing throughput + search p95 at the current 50/500 ms reopen and 10 s/1000-doc commit versus on-demand reopen + 2–5 s background cadence; change the defaults only if the measurement says so, and record it either way | the Lucene writer config beyond cadence (lane D owns codec/schema) |
+| 3 | breath-holding | replace the Head-written wall-clock activity byte with a Worker-local **foreground-load gauge** (in-flight search-family RPCs) driving a **duty cycle** (bounded throttle, never a full pause) plus the existing GPU arbitration slot; remove the 16 `isUserActive` call sites and the dead eval hatch; state the MMF residue lane F inherits | the MMF layout (lane 0 fixed it; lane F deletes it); `main_gpu_active` (stays, see residue) |
+| 6 | health sampling | the existing `KnowledgeServerHealthMonitor` schedule performs the one `IndexStatus` unary and feeds `ConditionStore` + `HealthEventChangeRegistry`; `/api/status` returns the latest snapshot without a Worker RPC on the request thread; the health SSE stream advances with no client polling; a `FetchDocuments` byte budget for the 50-document GPL batches | a streaming health RPC (wasted under lane F); the frontend's 10 s poll (`modules/ui-web`, out of scope; it becomes cheap) |
+| 21 | job queue failures | **complete** the shipped `IngestionRetryPolicy` ladder: transients no longer count against `MAX_ATTEMPTS`, the backoff ladder extends from ~17 min to days with a visible terminal state that a rescan resets, the real exception text is preserved in `error_message`, single source for max-attempts, queue throughput metrics (RISK-002's missing instrument) | replacing SQLite; the schema ladder; rebuilding classification (it exists, **[R4]**) |
+| 19 | NRT + commit cadence | fix the live defect first (**[R5]**: `ComponentsFactory` hardcodes 0.5/0.05 while `CommitOps` rebuilds the reopen thread from the configured `index.nrt.*` values after every backfill, so cadence silently changes mid-run); then **measure**: jseval throughput + search p95 + p95 of the first search after N new segments, current vs on-demand reopen + background cadence; ship only what the numbers justify | the Lucene writer config beyond cadence (lane D owns codec/schema) |
 
 ## File ownership (no other wave-1 lane edits these)
 
@@ -50,8 +57,12 @@ ExtractionSandboxChild, ExtractionSandboxFactory, DefaultWorkerAppServices sandb
 construction + health sampler wiring, `modules/worker-services/.../services/GrpcSearchService.java`
 (in-flight gauge instrumentation only), `modules/ui/.../api/StatusLifecycleHandler.java`,
 `CoreApiAssembly.java` (taps), `modules/app-services/.../worker/KnowledgeServerBootstrap.java`
-(`signalUserActivity` retirement), `modules/adapters-lucene/.../CommitOps.java` +
-`RuntimeSession.java` NRT stale-time defaults (item 19 only), the affected MetricCatalogs,
+(`signalUserActivity` retirement), `modules/adapters-lucene/.../CommitOps.java`, `ComponentsFactory.java:324` +
+`RuntimeSession.java` NRT stale-time defaults (item 19 only), the affected MetricCatalogs
+(`ExtractionMetricCatalog`, `WorkerOpsMetricCatalog`), `modules/app-services/.../gpl/GplJobCoordinator.java`
+and `.../worker/RemoteDocumentService.java` (the four `fetchDocuments` callers, granted for the
+byte-budget item only **[R6b]**), `modules/app-services/.../worker/KnowledgeServerHealthMonitor.java`
+(sampler host **[R8]**), the `systemTest` chaos suite (`ChaosSuiteTest` "Time Lord" rewrite),
 `docs/explanation/02-process-coordination.md` §breath-holding, `03-knowledge-server.md`
 §extraction + §job queue, `08-observability.md` health sampling.
 
@@ -80,28 +91,57 @@ indexing pacing"** (number reserved) and lane B indexes it.
   `PolicyDrivenTikaExtractor`, writes one response). It is one-shot: per-file JVM start (AOT
   helps, still hundreds of ms + Tika class-loading) is why nobody shipped it.
 - `ContentExtractor.MAX_FILE_SIZE` duplicated in `StructuredContentExtractor.java:43` (equal today).
-- Runtime pieces for a shipped command already exist: the Worker locates its own JVM via
-  `java.home` (`WorkerSpawner.java:921-929`), and the Worker classpath is `lib/*`
-  (`WorkerSpawner.java:576-586`); the child can be launched with the same pair from inside the Worker.
+- **[R7] Severity is larger than first stated:** `TimeboxedContentExtractor.java:122` is a
+  `newSingleThreadExecutor`, so one wedged parser stops **all** extraction until Worker restart.
+  No existing fixture wedges a parser (the nasty corpus fails fast); the chaos criterion needs a
+  synthetic hanging child.
+- **[R7] The shipped-command recipe already exists in tests:** `ProcessExtractionSandboxTest`
+  has seven stub children (incl. polluted-stdout and sleeping cases) and builds the child command
+  from `java.home` + `java.class.path` (`:119-122`). The Worker runs from a plain `-cp lib\*`
+  classpath (`WorkerSpawner.java:586-588`), no jlink, so the same pair works in production.
+  Polluted stdout is a proven failure mode: the persistent child must capture `System.out` at
+  startup and redirect it to bounded stderr, keeping the original stream for frames.
+- Metrics: `extraction.sandbox_restart_total` must live in `ExtractionMetricCatalog` (its static
+  initializer throws on a foreign prefix); `IndexingPipelineWireFormatRegressionTest.java:57,80-84`
+  pins the metric wire format.
+- **[R6a] Module boundary:** `WindowsJobObject` lives in `modules/app-util`, which
+  `worker-services` does not depend on; the Worker cannot create a nested job object without a
+  `/module-arch` change. The Head's job (`WorkerSpawner.java:200,435-437`, kill-on-close, no
+  breakaway) already kills the grandchild on Head exit but not on a Worker restart.
 
 ### Item 3 — breath-holding
 
-- `MmfWorkerSignalBus.java:215-229`: `isUserActive()` = `activity_epoch_ms` written within 2000 ms;
-  the eval hatch `justsearch.eval.disable_breath_holding` (`:219`) is read in the **Worker** JVM
-  but set only as a Gradle sysprop on the **Head** (`modules/ui/build.gradle.kts:2183`) and is not
-  in `WORKER_FORWARDED_PROPS` (`WorkerSpawner.java:71-…`), so it is very likely dead. Verify with
-  a jseval run before deleting; if it is dead, tempdoc 326's fix never worked either.
-- Pause site: `IndexingLoop.java:604-610` (`transitionToPaused`, sleep `BREATH_HOLD_MS = 500`,
-  `LoopPacingPolicy.java:8`); 11 more yield sites in `BackfillScheduler.java:239,430,612`,
-  `JobBatchExtractor.java:128`, and the six `*BackfillOps` classes.
-- Writers of the activity slot: `WorkerSpawner.signalUserActivity()` (`:334-338`) via
-  `KnowledgeServerBootstrap.signalUserActivity()` (`:698`), called from
-  `KnowledgeSearchController.java:304,849,887,931` (search/answer paths) and
-  `CoreApiAssembly.java:110` (preview). So every search, every agent tool call that searches,
-  every eval query, pauses indexing for a 2 s window. "User activity" and "foreground request"
-  were conflated in 2025-11 and never separated.
-- The GPU arbitration slot (`OFFSET_MAIN_GPU_ACTIVE`, `MainSignalBus.java:176` →
-  `MmfWorkerSignalBus.java:234`) already models the one contention that is real: VRAM.
+- `MmfWorkerSignalBus.java:215-229`: `isUserActive()` = `activity_epoch_ms` written within 2000 ms.
+- **[R1] The eval hatch never reached the Worker.** The reader (`:219`) is `Boolean.getBoolean`
+  in the Worker JVM; the only setter is a Gradle `systemProperty` on the Head `JavaExec`
+  (`modules/ui/build.gradle.kts:2183`); the key is absent from `WORKER_FORWARDED_PROPS`, is not an
+  env var (the `JUSTSEARCH_*` forwarding at `WorkerSpawner.java:418-425` cannot carry it), is not
+  an `EnvRegistry` key, and the ordinal-450 snapshot loads into `ConfigStore`, not sysprops. The
+  "~5 → ~1 doc/s" figure exists only as a code comment (`MmfWorkerSignalBus.java:217-218`,
+  `build.gradle.kts:2181-2182`); tempdoc 326 records no such measurement (326:399 says only
+  "disabled breath-holding in runHeadlessEval"). Deleting the hatch is free; **no baseline for
+  its effect exists**, so this lane measures fresh.
+- **[R2] The status poll does not throttle indexing.** `StatusLifecycleHandler` never calls
+  `signalUserActivity` (0 hits). The five writers are `KnowledgeSearchController.java:304` (search),
+  `:849` (suggest), `:887` (folders), `:931` (folder-files) and `PreviewController` via
+  `CoreApiAssembly.java:110`, through `KnowledgeServerBootstrap.signalUserActivity()` (`:698`) →
+  `WorkerSpawner.signalUserActivity()` (`:334-338`). So breath-holding already means "a foreground
+  request happened"; the defects are (a) the signal is a Head-written MMF byte (lane F blocker),
+  (b) a 2 s wall-clock window instead of in-flight state, (c) a **pause** instead of a bounded
+  throttle, which starves indexing under a continuous agent search loop.
+- **[R3] Sixteen** main-source call sites, not twelve: `IndexingLoop:605`;
+  `BackfillScheduler:239,430,612`; `JobBatchExtractor:128`; `SpladeBackfillOps:236,242`;
+  `NerBackfillOps:69,75`; `EmbeddingBackfillOps:187`; `DisambiguationBackfillOps:68,74`;
+  `CombinedEnrichmentBackfillOps:591`; `SyncDirectoryOps:227,299`; `GrpcIngestService:1082,1142`.
+  Pause verb: `IndexingLoop.java:604-610` (`transitionToPaused`, sleep `BREATH_HOLD_MS = 500`,
+  `LoopPacingPolicy.java:8`). `ChaosSuiteTest` "Time Lord" (`:283-346`) asserts the activity
+  breath-hold via `harness.writeActivity` and lives in the `systemTest` source set, which
+  `gradlew test` does not run; it must be rewritten and run explicitly.
+- **MMF residue lane F inherits (state it, do not fix it here):** `main_gpu_active` (byte 24,
+  `MmfWorkerSignalLayoutV1.java:44`) has five live readers (`KnowledgeServer.java:996,1632`,
+  `IndexingDocumentOps.java:219`, `EmbeddingBackfillOps.java:191`, `BgeM3BackfillOps.java:335`) and
+  stays; `IndexStatusOps.java:428` puts `signalBus.readActivity()` on the status wire and must be
+  retired with the activity byte.
 - Constants unchanged since 2025-11-27 through 627 and 630: `HEARTBEAT_STALE_MS = 5000`,
   `STARTUP_GRACE_MS = 15_000` (`MmfWorkerSignalBus.java:44-48`). Keep them; they are not this
   lane's defect.
@@ -119,6 +159,15 @@ indexing pacing"** (number reserved) and lane B indexes it.
   into `/api/shell-events/stream` because they starved this poll. A health SSE endpoint exists
   (`ResourceApiModule.java:401`).
 - `StatusLifecycleHandler.java:388-393` also reads Head heap per hit; keep, it is cheap.
+- **[R8] A scheduler already exists:** `KnowledgeServerHealthMonitor` (app-services,
+  `scheduleWithFixedDelay` at `:145`, 10 s default, started at `HeadlessApp.java:509`, already
+  handles OS-resume gaps). Ten mock sites across `LifecycleContractTest`,
+  `StatusReadinessStalenessTest`, `ReadinessTriggerCompositionTest` stub
+  `getWorkerOperationalView()` and need updating.
+- **[R6b] `FetchDocuments` overflow is a count problem, not a size problem:** per-document content
+  is capped at 200k chars (`GrpcSearchService.java:77,603`), but `GplJobCoordinator.BATCH_SIZE = 50`
+  (`:58`) × 200k ≈ 30 MB against the 32 MiB server limit. All four callers are in `app-services`
+  (`GplJobCoordinator.java:306,670`, `RemoteDocumentService.java:96,476`).
 
 ### Item 21 — job queue
 
@@ -127,17 +176,30 @@ indexing pacing"** (number reserved) and lane B indexes it.
   passes a bare `3` (the only construction site). One dequeue caller (`IndexingLoop.java:613`),
   ≥6 enqueue callers on other threads. No throughput metric; 269 §A9 set RISK-002 to "Monitor"
   with the trigger ">2× throughput regression / >30 min bulk imports" and no instrument.
-- Retry is attempt-counted, not error-classified: a file locked by an AV scanner or a sync client
-  three times in a row is permanently failed the same as a corrupt PDF.
+- **[R4] Classification already ships** (the first draft said otherwise): `IngestionRetryPolicy
+  {NONE, RETRY_WITH_BACKOFF, DEFER_WITHOUT_ATTEMPT}` and 14 `IngestionOutcomeClass` values in
+  `modules/worker-core/.../ingest/`; exponential backoff with jitter capped ~17 min and a
+  `retry_after` column (`SqliteJobQueue.java:378,640-652`); `markFailedWithOutcome` (`:779-855`)
+  branches on `outcome.retryPolicy()`; catch-site wiring in `JobBatchExtractor.java:250-340`
+  (`IOException` → `IO_FAILED` → RETRY, parser failure → NONE); cloud placeholders → DEFER
+  (`CloudPlaceholderRecorder.java:61`); `IndexingJobView` carries `attempts` + `retryAfterMs`;
+  schema `TARGET_VERSION 9`. **Genuine gaps:** transients still count against `MAX_ATTEMPTS`; the
+  ladder caps at ~17 min; `error_message` stores fixed literals ("I/O failure") and the exception
+  text reaches only the log.
 
 ### Item 19 — cadence
 
-- `ComponentsFactory.java:326` `ControlledRealTimeReopenThread(w, mgr, 0.5, 0.05)`;
-  `RuntimeSession.java:103-105` default 50 ms "must match the hardcoded 0.05s";
-  `CommitOps.java:34` 10 s timer; `ResolvedConfigBuilder.java:1123-1124` `commit_interval_ms`
-  10 000 / `max_docs_before_commit` 1000; `IndexingLoop.java:673-689` the trigger. Unchanged since
-  the root commit; 402 fixed writer coordination, never cadence. Each reopen during bulk indexing
-  builds a new searcher and re-touches HNSW per new segment.
+- `ComponentsFactory.java:324-326` `ControlledRealTimeReopenThread(w, mgr, 0.5, 0.05)` hardcoded;
+  **[R5] `CommitOps.java:274-279` rebuilds the reopen thread from
+  `session.nrtTargetMaxStaleMs / nrtHardMaxStaleMs` after every bulk-backfill suspend/resume**, so
+  when `index.nrt.*` is configured (`ResolvedConfigBuilder.java:366,1443`) the cadence silently
+  changes after the first backfill. That is a live defect independent of any benchmark.
+  `RuntimeSession.java:103-105` "default 50L must match the hardcoded 0.05s" documents the
+  coupling by comment only. `CommitOps.java:34` 10 s timer; `ResolvedConfigBuilder.java:1123-1124`
+  `commit_interval_ms` 10 000 / `max_docs_before_commit` 1000; `IndexingLoop.java:673-689` the
+  trigger. Unchanged since the root commit; 402 fixed writer coordination, never cadence.
+  Reopen-on-demand moves the HNSW reopen cost onto the first query after new segments, so the
+  benchmark table needs that column.
 
 ## Design decisions this lane must make (recommendation in bold)
 
@@ -145,58 +207,93 @@ indexing pacing"** (number reserved) and lane B indexes it.
    stdin/stdout, one in flight at a time per child, pool size 1 by default (`justsearch.extraction.sandbox.pool`).**
    On timeout: kill the child, mark the file `FAILED/TIMEOUT` (already a status), respawn lazily.
    On crash: same, with the child's exit code and bounded stderr in the failure reason. The child
-   command is built in-process: `<java.home>/bin/java -cp <worker lib/*> io.justsearch.indexerworker.extract.ExtractionSandboxChild --serve`;
-   `JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` remains an operator override. Reuse the existing
-   JSON records; add a `--serve` loop to `ExtractionSandboxChild`. Memory: child heap fixed
-   (`-Xmx512m` default, key `justsearch.extraction.sandbox.heap`), AOT cache reused if present.
+   command is built in-process from `java.home` + `java.class.path`, exactly as
+   `ProcessExtractionSandboxTest:119-122` already does **[R7]**:
+   `<java.home>/bin/java -Xmx<heap> -cp <java.class.path> io.justsearch.indexerworker.extract.ExtractionSandboxChild --serve`;
+   `JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` remains an operator override. Reuse the existing JSON
+   records; add a `--serve` loop to `ExtractionSandboxChild`; capture `System.out` at child startup
+   and redirect it to bounded stderr. **Child heap is load-bearing (T2):** pure-Java parsers loop
+   or OOM rather than segfault, so tie the default (`justsearch.extraction.sandbox.heap`) to
+   `MAX_FILE_SIZE` (≥ 4× the largest accepted file, floor 512m) and classify a child OOM as a
+   permanent parse failure. **Grandchild lifetime without a module change [R6a]:** the Worker
+   kills the child in its shutdown hook and the child polls the Worker PID (630's PID-gate
+   pattern); no `WindowsJobObject` dependency is added to `worker-services`.
 2. **Default routing.** **`process` for PDF, Office, archives, and any OCR route; `in_process` for
    plain text, markdown, code, CSV/JSON.** One switch to force all-process for measurement. Record
    per-family p50/p95 extraction latency before/after; the round-trip cost must stay under 10 ms
    per file for the in-process families to justify keeping the split.
-3. **Pacing signal.** **A Worker-local `ForegroundLoad` gauge**: a counter of in-flight
-   foreground RPCs incremented/decremented by a gRPC `ServerInterceptor` for the search-family
-   methods (Search, Rerank, RetrieveContext, FetchDocuments, FetchDocumentSlice, Suggest) plus the
-   existing GPU-active slot. Pacing: while the gauge is >0 the loop yields between batches (no
-   sleep-based pause); while GPU-active, GPU-bound backfills yield (as today). Delete
-   `isUserActive`, the 12 yield sites' calls to it, `signalUserActivity` and its callers, and the
-   eval hatch. This needs no Head signal, so it survives lane F unchanged.
-4. **Health sampler.** **A `HealthSampler` in the Head** on a scheduled executor (default 2 s,
-   backoff to 10 s when the Worker is down) that performs the one `IndexStatus` unary and feeds
-   the existing taps; `StatusLifecycleHandler` reads the sampler's last snapshot + age and never
-   calls the Worker. A `?fresh=true` query parameter forces one synchronous sample for debug
-   tooling (`/api/debug/state` consumers). Under lane F the sampler becomes an in-process call;
-   the shape does not change.
-5. **Failure classes.** **`JobFailureClass { TRANSIENT_IO, PERMANENT_PARSE, PERMANENT_POLICY }`**
-   derived from the exception type / `ExtractionStatus`; TRANSIENT retries with exponential
-   backoff (1 min → 1 h, cap 24 h, unlimited attempts, visible in the jobs stream), PERMANENT
-   fails on first occurrence (a second attempt at a corrupt file is wasted work). Attempts cap
-   lives in one place (`SqliteJobQueue` constant exposed to `KnowledgeServer`). Metric:
-   `queue.dequeue_rate_per_min` + `queue.enqueue_rate_per_min` in the Worker MetricCatalog; that
-   is RISK-002's instrument.
-6. **Cadence.** **Decide by measurement**, not opinion. Candidate: reopen on demand (searcher
+3. **Pacing signal and verb.** **A Worker-local `ForegroundLoad` gauge as a `worker-services`
+   type** (so it survives lane F; the gRPC `ServerInterceptor` at `KnowledgeServerGrpcWiring.java:32-34`
+   that feeds it is a thin adapter lane F throws away): a counter of in-flight foreground RPCs for
+   the search-family methods (Search, Rerank, RetrieveContext, FetchDocuments, FetchDocumentSlice,
+   Suggest) plus the existing GPU-active slot. **The verb is a duty cycle, not a pause (T1):**
+   while the gauge is >0 the loop runs at a minimum duty (default 20%, key
+   `justsearch.indexing.foreground_duty_pct`) between batches, and the cheaper lever of lowering
+   ORT intra-op threads under load is tried first for the enrichment backfills; while GPU-active,
+   GPU-bound backfills yield as today. Delete `isUserActive`, its **16** call sites,
+   `signalUserActivity` and its five callers, `IndexStatusOps.java:428`'s activity field, and the
+   dead eval hatch. **Land this as its own PR (T3)** so lane F rebases over one clean commit.
+4. **Health sampler [R8].** **Host it on `KnowledgeServerHealthMonitor`'s existing schedule** (no
+   new executor): its tick performs the one `IndexStatus` unary and feeds the existing taps;
+   `StatusLifecycleHandler` reads the last snapshot + age and never calls the Worker. Default
+   period stays 10 s until measured; `?fresh=true` forces one synchronous sample for debug
+   tooling. Keep it minimal: under lane F it collapses to a direct call; do not build a
+   streaming RPC. **`FetchDocuments` budget [R6b]:** route GPL batches to `FetchDocumentSlice` or
+   add a request-level `max_total_bytes`; the proto change waits for the lane F decision (no
+   gRPC boundary after a merge), the caller fix does not.
+5. **Complete the failure ladder [R4], do not rebuild it.** (a) `RETRY_WITH_BACKOFF` outcomes stop
+   incrementing `attempts` against `MAX_ATTEMPTS`; (b) the ladder extends 1 min → 1 h → 6 h →
+   24 h, bounded at **7 days**, then a visible terminal state (`RETRY_EXHAUSTED`) that a rescan
+   or file change resets; (c) `error_message` stores the exception's message (bounded) instead
+   of a literal; (d) the attempts cap lives in one place (`SqliteJobQueue` constant exposed to
+   `KnowledgeServer`); (e) metrics `queue.dequeue_rate_per_min` + `queue.enqueue_rate_per_min` in
+   `WorkerOpsMetricCatalog`, which is RISK-002's instrument. Schema bump to `TARGET_VERSION 10`
+   only if (b) needs a column.
+6. **Cadence.** **Fix the coupling first [R5]:** `ComponentsFactory` reads the same
+   `nrtTargetMaxStaleMs / nrtHardMaxStaleMs` the rebuild path uses, so configured values apply
+   from the first open. Then **decide by measurement**: candidate = reopen on demand (searcher
    refreshed at query time if stale > 1 s) + background reopen every 2 s during bulk indexing;
-   commit at 30 s / 5000 docs / idle. Ship only what the jseval numbers justify.
+   commit at 30 s / 5000 docs / idle. The table carries throughput, search p95, **p95 of the
+   first search after N new segments**, commit count, reopen count. Ship only what the numbers
+   justify.
+
+**Lane F interaction (R9), so nobody builds throwaway work:** survives the merge = the sandbox
+pool (more valuable in one JVM), the gauge (as a worker-services type), the queue changes, the NRT
+fix. Mostly wasted under a merge = anything beyond the minimal sampler, and a `FetchDocuments`
+proto change. Residue lane F must delete = `main_gpu_active` byte + its five readers, the
+activity field on the status wire if not removed here.
 
 ## Acceptance criteria
 
-- **Chaos (live):** a poison PDF that wedges the parser (the chaos harness has one; if not, a
-  synthetic infinite-loop parser behind a test policy) → child killed at the timeout, file marked
-  `FAILED/TIMEOUT` with the reason, the next file extracts normally, Worker never restarts. A child
-  crash (`kill -9`) → same outcome with the exit code in the reason. `extraction.sandbox.restart_total`
-  increments.
-- **Throughput (live, jseval):** `jseval run --pipeline` on the standard corpus with a concurrent
-  search loop (10 queries/min) shows indexing throughput within 10% of the no-search run; today's
-  ~5 → ~1 doc/s collapse (326) is gone. Search p95 during bulk indexing is recorded before/after
-  and does not regress by more than 20%.
+- **Chaos (live, `systemTest` source set run explicitly):** a **synthetic hanging child** (no
+  existing fixture wedges a parser, R7) → child killed at the timeout, file marked
+  `FAILED/TIMEOUT` with the reason, the **next file extracts normally** (this is the assertion
+  that the single-thread-executor defect is gone), Worker never restarts. A child crash
+  (`kill -9`) → same outcome with the exit code in the reason; a child OOM → permanent parse
+  failure. `extraction.sandbox_restart_total` increments and the wire-format regression test is
+  updated. Worker shutdown leaves no orphan child (PID poll).
+- **Throughput (live, jseval), fresh before/after since no prior baseline exists [R1]:** measure
+  `jseval run --pipeline` on the standard corpus (a) alone, (b) with 10 queries/min, (c) under a
+  **continuous** MCP-style search loop (T1). Acceptance: (b) within 10% of (a); (c) achieves at
+  least the configured minimum duty of (a)'s rate, where today it starves; search p95 in (b) and
+  (c) recorded before/after and not regressed by more than 20%.
 - **Health (live):** subscribe to `/api/health/events/stream`, issue **no** `/api/status` calls,
-  stop the Worker → the stream carries the transition within one sampler period. `/api/status`
-  p50 latency drops below 5 ms (no RPC on the request thread) and reports `sampledAt` age.
-- **Queue (unit + live):** a file failing with a lock error three times stays `PENDING` with a
-  backoff, not `FAILED`; a corrupt file fails on the first attempt; the throughput metrics appear
-  in `/api/telemetry` (or the catalog's surface) and in the Worker MetricCatalog test.
-- **Cadence:** a jseval comparison table (throughput, search p95, commit count, reopen count) for
-  current vs candidate defaults is in this tempdoc; the shipped defaults match the winner.
-- `grep -rn "isUserActive\|signalUserActivity\|disable_breath_holding" modules/*/src/main` → no hits.
+  stop the Worker → the stream carries the transition within one monitor period. `/api/status`
+  p50 latency drops below 5 ms (no RPC on the request thread) and reports `sampledAt` age. The
+  ten mock sites (R8) updated; `LifecycleContractTest` green.
+- **`FetchDocuments` (unit):** a 50-document GPL batch of 200k-char documents no longer exceeds
+  the client/server limit (slice routing or byte budget), with a test at the caller.
+- **Queue (unit + live):** a file failing with an `IO_FAILED` outcome three times stays `PENDING`
+  with `retry_after` set and `attempts` unchanged; a parser failure fails on the first attempt;
+  after the 7-day bound the job shows `RETRY_EXHAUSTED` and a rescan resets it; `error_message`
+  carries the exception text; the throughput metrics appear in `WorkerOpsMetricCatalog` and its
+  test.
+- **NRT:** a unit test proves the initial reopen thread uses the configured `index.nrt.*` values
+  (today it cannot, R5). Then the jseval comparison table (throughput, search p95, first-search
+  p95 after N segments, commit count, reopen count) for current vs candidate defaults is in this
+  tempdoc; the shipped defaults match the winner.
+- `grep -rn "isUserActive\|signalUserActivity\|disable_breath_holding\|readActivity" modules/*/src/main`
+  → no hits; `ChaosSuiteTest` "Time Lord" rewritten to the gauge and run.
 - Gates: `--gate operation-surface` if any job-lifecycle surface changed; `check-readiness-reason-codes`
   if a reason code was added; MetricCatalog tests; `check-runtime-manifest-closure` if a new
   runtime file appears. Docs regenerated (`/docs-maintenance`): `02-process-coordination.md` no
@@ -208,30 +305,37 @@ indexing pacing"** (number reserved) and lane B indexes it.
 
 ## Verification tier and dev-stack rules
 
-Every live criterion above needs the shared dev stack; jseval campaigns are long holds. Lease
-explicitly (`leaseDurationSec`), run the throughput comparisons as detached drivers with
-self-terminating polls (agent-lessons: 60-minute task kill), and coordinate windows with lane A
-through the user. Never take over another lane's lease. `/jseval` and `/dev-stack` must be loaded
-before live work.
+Every live criterion above needs the shared dev stack; jseval campaigns are long holds.
+**Default schedule (T5):** lane C holds daytime windows during items 14/3/6; lane A's live checks
+run in C's gaps; C's cadence campaign runs detached overnight with self-terminating polls
+(agent-lessons: 60-minute task kill). Lease explicitly (`leaseDurationSec`); never take over
+another lane's lease. `/jseval` and `/dev-stack` must be loaded before live work; `/module-arch`
+before any dependency change (none is planned, R6a).
 
 ## Takeover checklist
 
 1. Branch after `882-decision-review-lane0-hygiene` (#592) merges; lane 0 touched
    `WorkerSpawner` (flags), `MmfWorkerSignalLayoutV1`, `KnowledgeServerConfig`.
-2. First live act: confirm whether the eval hatch is dead (run `runHeadlessEval` with polling and
-   watch `IndexingLoop` pause logs). Record the answer in this tempdoc; it changes what 326 proved.
-3. Implement in the order 14 → 3 → 6 → 21 → 19: 14 is the precondition for lane F, 3 removes the
-   dependency 6 would otherwise have on the poll, 19 is measurement-gated and last.
-4. Before deleting `isUserActive`, grep the 12 yield sites and replace each with the gauge check;
-   `wrong-gate` is the failure mode here — assert in a test that the loop yields when the gauge
-   is >0 and does not yield on a `/api/status` call.
+2. First live act: the fresh throughput baseline (a)/(b)/(c) above, before any code change; there
+   is no prior measurement to compare against (R1).
+3. Implement in the order 19-fix → 14 → 3 → 6 → 21 → 19-measure: the NRT coupling fix is a
+   one-day defect fix that de-risks every later measurement; 14 is the precondition for lane F; 3
+   removes the dependency 6 would otherwise have on the poll; 19's cadence change is
+   measurement-gated and last. Item 3 ships as its own PR (T3).
+4. Before deleting `isUserActive`, grep the 16 call sites (list in the evidence) and replace each
+   with the gauge/duty check; `wrong-gate` is the failure mode here — assert in a test that the
+   loop throttles when the gauge is >0 and does not on a `/api/status` call.
 5. Write the six design decisions into this tempdoc as §B with `path:line` before coding; run the
    post-impl critical-analysis pass; keep the diff inside the ownership list.
+6. Independent reviewer at closure is a **named** other session (lane A's or lane B's), and it
+   reruns the chaos and throughput checks itself.
 
 ## Open questions for the owner
 
 - Pool size 1 is the conservative default; on machines with ≥8 cores a pool of 2 would overlap
   extraction with embedding. Decide after the per-family latency numbers exist, or set it now?
-- Should transient retries be unlimited with a 24 h cap, or give up after N days and surface the
-  file in the UI as "could not be indexed"? Recommendation: unlimited with backoff plus a visible
-  `RETRYING` state in the jobs stream, so nothing is silently dropped.
+- Transient retries bounded at 7 days then `RETRY_EXHAUSTED` (review's recommendation, adopted)
+  versus the first draft's unlimited-with-backoff: confirm the bound, and whether the exhausted
+  state should surface in the UI as "could not be indexed" (UI work is out of this lane).
+- Minimum indexing duty under continuous foreground load: 20% is a guess to be measured; is a
+  user-facing "index faster / index quieter" preference wanted later, or is one default enough?
