@@ -266,19 +266,20 @@ public final class CommitOps {
 
   /**
    * Resumes the background NRT refresh thread after bulk backfill completes. Creates a new
-   * CRTRT instance with the same parameters as the original (50-500ms refresh interval).
+   * CRTRT instance with the same parameters as the original — both go through
+   * {@code NrtReopenThreads.create} on the session's configured staleness bounds.
    */
   public void resumeNrtRefresh() {
     LifecycleSnapshot snap = session.snapshot;
     if (snap == null || snap.writer() == null || snap.searcherManager() == null) return;
     if (session.crtrt != null) return; // Already running
 
-    var thread = new org.apache.lucene.search.ControlledRealTimeReopenThread<>(
-        snap.writer(), snap.searcherManager(),
-        session.nrtTargetMaxStaleMs / 1000.0,
-        session.nrtHardMaxStaleMs / 1000.0);
-    thread.setName("crtrt");
-    thread.setDaemon(true);
+    var thread =
+        NrtReopenThreads.create(
+            snap.writer(),
+            snap.searcherManager(),
+            session.nrtTargetMaxStaleMs,
+            session.nrtHardMaxStaleMs);
     thread.start();
     session.crtrt = thread;
     log.info("NRT refresh thread resumed after bulk backfill");

@@ -66,17 +66,24 @@ Near Real-Time (NRT) search uses `ControlledRealTimeReopenThread`:
 ```java
 SearcherManager searcherManager = new SearcherManager(writer, new SearcherFactory());
 
-// CRTRT: background thread that refreshes searchers
+// CRTRT: background thread that refreshes searchers. Both construction sites — the
+// initial open (ComponentsFactory) and the rebuild after a bulk-backfill suspend
+// (CommitOps.resumeNrtRefresh) — go through NrtReopenThreads.create, which is the only
+// place the ms→seconds conversion and Lucene's argument order live.
 ControlledRealTimeReopenThread<IndexSearcher> crtrt =
     new ControlledRealTimeReopenThread<>(writer, searcherManager,
-        nrtHardMaxStaleMs / 1000.0,   // max stale (seconds)
-        nrtTargetMaxStaleMs / 1000.0  // target stale (seconds)
+        nrtTargetMaxStaleMs / 1000.0,  // targetMaxStaleSec: background reopen target
+        nrtHardMaxStaleMs / 1000.0     // targetMinStaleSec: reopen target while a caller waits
     );
 ```
 
 **Configuration**:
 - `index.nrt.target_max_stale_ms`: 500ms (default)
-- `index.nrt.hard_max_stale_ms`: Long.MAX_VALUE (default)
+- `index.nrt.max_stale_ms`: 50ms (default)
+
+Lucene rejects `targetMaxStaleSec < targetMinStaleSec`, so a configured `index.nrt.max_stale_ms`
+larger than `index.nrt.target_max_stale_ms` is clamped to the target (with a WARN) rather than
+failing the open.
 
 ### 2.3 Read-After-Write Consistency
 
