@@ -32,7 +32,7 @@ import org.junit.jupiter.api.io.TempDir;
  * The per-call deadline override on {@code getHealthCheck(long)} must actually reach the wire.
  *
  * <p>Without this, the PID-validation retry loop's attempt schedule would be inert: it would hand
- * out 1s/2s per-attempt budgets that the client silently replaced with the 5s STANDARD deadline —
+ * out 1s/2s per-attempt budgets that the client silently replaced with the STANDARD base deadline —
  * exactly the defect the schedule exists to fix.
  */
 @DisplayName("RemoteKnowledgeClient health-check per-call deadline")
@@ -40,7 +40,7 @@ final class RemoteKnowledgeClientHealthDeadlineTest {
 
   private static final long WORKER_PID = 8556;
   /** Base deadline; every category-driven health call would get at least this much. */
-  private static final long BASE_DEADLINE_MS = 5_000;
+  private static final long BASE_DEADLINE_MS = KnowledgeServerConfig.defaultDeadlineMs();
 
   private Server server;
   private MainSignalBus signalBus;
@@ -111,7 +111,7 @@ final class RemoteKnowledgeClientHealthDeadlineTest {
 
     assertTrue(
         elapsedMs < BASE_DEADLINE_MS,
-        "the 1s override must bound the call, not the 5s STANDARD deadline (took "
+        "the 1s override must bound the call, not the STANDARD base deadline (took "
             + elapsedMs
             + "ms)");
 

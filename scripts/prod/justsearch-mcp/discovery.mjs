@@ -17,7 +17,8 @@ import {findRunningManifest as findManifestShared, isPidAlive} from '../../lib/p
  * modules/configuration/src/main/java/io/justsearch/configuration/PlatformPaths.java
  *
  * Priority: JUSTSEARCH_DATA_DIR env var -> platform default.
- * JVM-only legacy sysprops (justsearch.data_dir, app.data_dir) are skipped.
+ * The JVM-only canonical sysprop (justsearch.data.dir) does not apply outside a JVM
+ * process and is skipped here.
  */
 export function resolveDataDir() {
   const env = process.env.JUSTSEARCH_DATA_DIR;

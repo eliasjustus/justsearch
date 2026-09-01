@@ -541,7 +541,6 @@ class TestOrphanWorkerSweep:
         data_dir = (tmp_path / "data").resolve()
         forward = str(data_dir).replace("\\", "/")
         assert _cmdline_matches_data_dir([f"-Djustsearch.data.dir={forward}"], data_dir)
-        assert _cmdline_matches_data_dir([f"-Djustsearch.data_dir={data_dir}"], data_dir)
         assert not _cmdline_matches_data_dir(
             [f"-Djustsearch.data.dir={data_dir}-other-suffix"], data_dir
         )

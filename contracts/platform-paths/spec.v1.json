@@ -7,8 +7,6 @@
     "description": "Precedence chain. Each source is checked in order; the first non-blank value wins. If none match, fall through to platformDefault for the current OS.",
     "sources": [
       {"id": "sysprop_canonical", "kind": "sysprop", "key": "justsearch.data.dir", "note": "Java only; Node + Rust have no sysprops and skip this source"},
-      {"id": "sysprop_legacy_underscore", "kind": "sysprop", "key": "justsearch.data_dir", "deprecated": true},
-      {"id": "sysprop_legacy_app", "kind": "sysprop", "key": "app.data_dir", "deprecated": true},
       {"id": "env_canonical", "kind": "env", "key": "JUSTSEARCH_DATA_DIR"}
     ],
     "platformDefault": {

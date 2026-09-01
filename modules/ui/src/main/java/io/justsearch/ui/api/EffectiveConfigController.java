@@ -282,8 +282,6 @@ public final class EffectiveConfigController {
 
   private Map<String, Object> keyJustsearchDataDir() {
     String canonical = sysProp(EnvRegistry.DATA_DIR.sysProp());
-    String legacy = sysProp("justsearch.data_dir");
-    String legacyApp = sysProp("app.data_dir");
     String env = envVar(EnvRegistry.DATA_DIR.envVar());
     Path platformDefault = PlatformPaths.getPlatformDefault();
 
@@ -295,14 +293,6 @@ public final class EffectiveConfigController {
       chosenRaw = canonical;
       chosenSource = "system_property";
       chosenKey = EnvRegistry.DATA_DIR.sysProp();
-    } else if (legacy != null) {
-      chosenRaw = legacy;
-      chosenSource = "system_property";
-      chosenKey = "justsearch.data_dir";
-    } else if (legacyApp != null) {
-      chosenRaw = legacyApp;
-      chosenSource = "system_property";
-      chosenKey = "app.data_dir";
     } else if (env != null) {
       chosenRaw = env;
       chosenSource = "environment_variable";
@@ -316,13 +306,10 @@ public final class EffectiveConfigController {
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("sysprop", EnvRegistry.DATA_DIR.sysProp());
     details.put("envVar", EnvRegistry.DATA_DIR.envVar());
-    details.put("legacySyspropsChecked", List.of("justsearch.data_dir", "app.data_dir"));
     details.put("winnerKey", chosenKey);
 
     List<Map<String, Object>> conflicts = new ArrayList<>();
     addConflictIfDifferent(conflicts, "system_property", canonical, chosenRaw);
-    addConflictIfDifferent(conflicts, "system_property", legacy, chosenRaw);
-    addConflictIfDifferent(conflicts, "system_property", legacyApp, chosenRaw);
     addConflictIfDifferent(conflicts, "environment_variable", env, chosenRaw);
     if (!conflicts.isEmpty()) {
       details.put("conflicts", conflicts);

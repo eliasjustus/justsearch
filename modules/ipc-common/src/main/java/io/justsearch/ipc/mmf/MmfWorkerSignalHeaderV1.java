@@ -4,12 +4,12 @@ package io.justsearch.ipc.mmf;
 /**
  * Header constants for MMF v1 signal bus.
  *
- * <p>Uses reserved bytes [25-31] from {@link MmfWorkerSignalLayoutV1}:
+ * <p>Occupies bytes [25-28] of {@link MmfWorkerSignalLayoutV1} (byte 29 is the dev reload
+ * signal; [30-63] is reserved):
  * <ul>
  *   <li>[25-26] MAGIC_BYTES (short) — 0x534A ("JS" in little-endian)</li>
  *   <li>[27] FORMAT_VERSION (byte) — 1</li>
  *   <li>[28] COMPAT_FLAGS (byte) — 0x00 (new) or 0x01 (legacy marker)</li>
- *   <li>[29-31] reserved for future use</li>
  * </ul>
  *
  * <p>Backward compatibility: Files with all-zero header bytes are treated as legacy v1,

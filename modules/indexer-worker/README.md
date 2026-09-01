@@ -116,7 +116,7 @@ Self-Checks:
 - Startup: Check logs for "KnowledgeServer started on port X".
 
 Logs & Metrics:
-- Log File: app.data_dir/logs/indexer-worker.log (or worker-{date}.log).
+- Log File: justsearch.data.dir/logs/indexer-worker.log (or worker-{date}.log).
 - Console Output: DISABLED by default (via logback.xml) to prevent pipe buffer deadlocks in headless production mode.
 - Success Pattern: "Indexed successfully: ... in Xms"
 - Failure Pattern: "Circuit breaker tripped", "Failed to load embedding model".

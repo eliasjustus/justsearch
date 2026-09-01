@@ -109,11 +109,8 @@ Precedence note:
 | - | JUSTSEARCH_AGENT_MAX_TOOL_RESULT_CHARS | justsearch.agent.max_tool_result_chars | AGENT_MAX_TOOL_RESULT_CHARS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_AGENT_SEARCH_DEFAULT_LIMIT | justsearch.agent.search.default_limit | AGENT_SEARCH_DEFAULT_LIMIT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_AGENT_SEARCH_DEFAULT_MODE | justsearch.agent.search.default_mode | AGENT_SEARCH_DEFAULT_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| justsearch.ai.deadlineMs | JUSTSEARCH_AI_DEADLINE_MS | justsearch.ai.deadlineMs | AI_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_AI_DISABLED | justsearch.ai.disabled | AI_DISABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_AI_EMBED_ENABLED | justsearch.ai.embed.enabled | AI_EMBED_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| justsearch.ai.host | JUSTSEARCH_AI_HOST | justsearch.ai.host | AI_HOST | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| justsearch.ai.port | JUSTSEARCH_AI_PORT | justsearch.ai.port | AI_PORT | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_API_PORT | justsearch.api.port | API_PORT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_APP_VERSION | justsearch.app.version | APP_VERSION | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BACKFILL_BGE_M3_BATCH_SIZE | justsearch.backfill.bge_m3_batch_size | BACKFILL_BGE_M3_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -312,6 +309,5 @@ Precedence note:
 | search.mcp_framing.weak_score_floor | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | worker.limits.max_content_length | JUSTSEARCH_WORKER_MAX_CONTENT_LENGTH | worker.limits.max_content_length | WORKER_MAX_CONTENT_LENGTH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_file_size | JUSTSEARCH_WORKER_MAX_FILE_SIZE | worker.limits.max_file_size | WORKER_MAX_FILE_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| workers.ai.enabled | JUSTSEARCH_AI_ENABLED | workers.ai.enabled | AI_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | workers.indexer.backpressure_mode | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | workers.indexer.enabled | JUSTSEARCH_INDEXER_ENABLED | workers.indexer.enabled | INDEXER_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

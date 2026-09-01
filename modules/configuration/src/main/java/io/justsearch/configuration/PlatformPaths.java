@@ -69,12 +69,8 @@ public final class PlatformPaths {
         //   -Djustsearch.data.dir  (system property)
         //   JUSTSEARCH_DATA_DIR    (environment variable)
         //
-        // Back-compat aliases (legacy):
-        //   -Djustsearch.data_dir  (older underscore variant)
-        //   -Dapp.data_dir         (historically used for logback + some launchers)
-        //
         // Precedence:
-        //   canonical sysprop > legacy sysprops > env var > platform default
+        //   canonical sysprop > env var > platform default
 
         String canonical =
             assertNoUnexpandedPlaceholders(
@@ -82,31 +78,6 @@ public final class PlatformPaths {
                 "-D" + EnvRegistry.DATA_DIR.sysProp());
         if (canonical != null && !canonical.isBlank()) {
             return Path.of(canonical);
-        }
-
-        String legacy =
-            assertNoUnexpandedPlaceholders(
-                expandUserHomePlaceholders(System.getProperty("justsearch.data_dir")), // SYS-PROP-LEGACY-COMPAT
-                "-Djustsearch.data_dir");
-        if (legacy != null && !legacy.isBlank()) {
-            log.warn(
-                "Using legacy data dir override -Djustsearch.data_dir (deprecated). "
-                    + "Please migrate to -D{}",
-                EnvRegistry.DATA_DIR.sysProp());
-            return Path.of(legacy);
-        }
-
-        String appDataDir =
-            assertNoUnexpandedPlaceholders(
-                expandUserHomePlaceholders(System.getProperty("app.data_dir")),
-                "-Dapp.data_dir");
-        if (appDataDir != null && !appDataDir.isBlank()) {
-            log.warn(
-                "Using legacy data dir override -Dapp.data_dir (deprecated for data dir resolution). "
-                    + "Please migrate to -D{} or {}",
-                EnvRegistry.DATA_DIR.sysProp(),
-                EnvRegistry.DATA_DIR.envVar());
-            return Path.of(appDataDir);
         }
 
         String env =

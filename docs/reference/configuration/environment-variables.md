@@ -191,6 +191,7 @@ Scope:
 | :--- | :--- | :--- | :--- |
 | **JVM & Worker** | | | |
 | `JUSTSEARCH_WORKER_HEAP` | `justsearch.worker.heap` | String | Worker JVM max heap size (default `1g`; raised from `512m` on measured evidence, tempdoc 682). The spawner pins `-Xms` = `-Xmx`, so the full amount is resident from boot. Example: `1g`, `2048m`. |
+| `JUSTSEARCH_WORKER_DEADLINE_MS` | `justsearch.worker.deadline_ms` | Long | Base Head->Worker RPC deadline; per-RPC categories multiply it (default 15000 ms; raised from 5000 in tempdoc 882 per tempdoc 251). |
 | `JUSTSEARCH_JVM_OPTS` | N/A | String | Custom JVM options passed to worker process. Useful for GC logging (`-Xlog:gc*`), NMT (`-XX:NativeMemoryTracking=summary`), or profiling. Multiple options separated by whitespace. **Limitation:** Options are split on whitespace; file paths with spaces are not supported. |
 | **Dev Hot-Reload** | | | |
 | `JUSTSEARCH_DEV_HOTRELOAD` | `justsearch.dev.hotreload` | Bool | Enables dev hot-reload: JDWP agent on Worker + `DevReloadManager` for service reconstruction on signal. Use with MCP `start(hotReload: true)` or set env var before starting the dev stack. Default `false`. |
@@ -257,9 +258,6 @@ These keys are configurable only via `application.yaml`. They do not have env va
 | YAML Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `search.chunk_aware.enabled` | Bool | `true` | Enables chunk-aware merge in the search pipeline (stages 13a–13c). When enabled and chunk documents exist in the index, a parallel chunk branch retrieves and fuses chunk-level evidence before merging with whole-doc results. |
-
-Legacy note:
-- Some bundled runs also set `justsearch.data_dir` and/or `app.data_dir` as back-compat aliases for the data directory (primarily for older logback templates).
 
 Ownership notes:
 - LLM runtime keys (`WorkerConfig`/`LlmSettings`) are backed by `EnvRegistry` (with `PlatformPaths.resolveDataDir()` for canonical data-dir precedence).

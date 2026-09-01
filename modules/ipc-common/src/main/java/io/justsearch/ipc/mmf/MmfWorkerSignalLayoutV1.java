@@ -43,9 +43,12 @@ public final class MmfWorkerSignalLayoutV1 {
   public static final int OFFSET_WORKER_GRPC_PORT = 20;
   public static final int OFFSET_MAIN_GPU_ACTIVE = 24;
 
-  /** Dev hot-reload signal (byte, 1=reload requested). Written by Gradle task, read by Worker. */
+  /**
+   * Dev hot-reload signal (byte, 1=reload requested). Written by the dev MCP server
+   * (scripts/dev/justsearch-dev-mcp/server.mjs), read by Worker.
+   */
   public static final int OFFSET_RELOAD_SIGNAL = 29;
 
-  public static final int OFFSET_RESERVED1_START = 25;
+  public static final int OFFSET_RESERVED1_START = 30;
   public static final int RESERVED1_LENGTH_BYTES = MMF_SIZE_BYTES - OFFSET_RESERVED1_START;
 }

@@ -32,11 +32,13 @@
       "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/settings/UiSettingsStorePersistenceModeTest.java",
       "writeMode": "FULL_REWRITE",
       "atomicity": "ATOMIC_REPLACE",
-      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "corruptionPolicy": "PRESERVE_AND_RECOVER_DEFAULTS",
+      "corruptionNote": "Unparseable file is moved to settings.json.corrupt-<timestamp>, defaults are loaded, and LifecycleReasonCode.SETTINGS_RESET_FROM_CORRUPT is raised as a WARN condition (ADR-0008, tempdoc 882 item 24). A future schemaVersion still fails loud (futureVersionRefusalTest). Test methods: readWrite_malformedStateIsQuarantinedAndDefaulted and readWrite_saveAfterRecoveryClearsRecoveryAndFiresCallback in the tests file below; the refusal is readWrite_futureVersionIsRefusedWithoutOverwrite.",
       "reconciliation": "READ_V0_OR_V1_AND_WRITE_V1",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/settings/UiSettingsStore.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/settings/UiSettingsStore.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/settings/SettingsRecoveryNotice.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/settings/UiSettingsStorePersistenceModeTest.java"

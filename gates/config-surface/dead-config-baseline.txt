@@ -10,11 +10,12 @@ key:search.facets.enabled
 key:search.hybrid.ann_k
 key:search.hybrid.auto_embed
 key:search.hybrid.bm25_k
-key:search.rerank.enabled
-key:search.rerank.k
-key:search.rerank.reduced_k
 #
 # ---- history ----
+#
+# 2026-09-01 (882 item 22) - key:search.rerank.{enabled,k,reduced_k} REMOVED: the yaml group and its
+# putYaml lines were deleted (the reranker reads justsearch.rerank.*), so the keys no longer exist to
+# be dead.
 #
 # 2026-07-31 (799 §R) — `component:simulatedLatencyMs` REMOVED, and the block that used to list ~10
 # settings as "undetectable by the scanner" is gone with it. The whole ResolvedConfig.Llm record was

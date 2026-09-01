@@ -14,18 +14,41 @@ import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.SerializationFeature;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Clock;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Loads and saves UI settings to {@code $JUSTSEARCH_HOME/ui/settings.json} (or
  * {@code ~/.config/justsearch/ui/settings.json} on Linux).
+ *
+ * <p>Corruption policy (ADR-0008, restored by tempdoc 882 item 24): an UNREADABLE settings file is
+ * preserved, not destroyed and not fatal. The bytes are moved to a timestamped
+ * {@code settings.json.corrupt-<UTC>} sibling, defaults are loaded, and the reset is published as a
+ * lifecycle condition ({@code settings.reset_from_corrupt}) so the user learns their preferences
+ * were reset instead of the Head refusing to start over a preferences file. A FUTURE
+ * {@code schemaVersion} is a different question and stays fail-loud: {@link
+ * StoreFormatVersions#requireReadable} still throws, because refusing to touch state a newer build
+ * wrote is the safe answer, while defaulting over it would silently downgrade it on the next save.
  */
 public final class UiSettingsStore {
 
+  private static final Logger log = LoggerFactory.getLogger(UiSettingsStore.class);
+
   static final int CURRENT_SCHEMA_VERSION = 1;
+
+  private static final DateTimeFormatter BACKUP_STAMP =
+      DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT).withZone(ZoneOffset.UTC);
+
   private static final ObjectMapper MAPPER =
       JsonMapper.builder()
           .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
@@ -34,6 +57,14 @@ public final class UiSettingsStore {
 
   private final Path settingsFile;
   private final PersistenceMode mode;
+  private volatile RecoveredFromCorrupt lastRecovery;
+  private volatile Runnable onRecoveryCleared;
+
+  /**
+   * What {@link #load()} did when it found an unreadable settings file: where the original bytes
+   * were preserved, and the parse failure that sent them there.
+   */
+  public record RecoveredFromCorrupt(Path backupPath, String detail) {}
 
   public UiSettingsStore(PersistenceMode mode) {
     this(mode, resolveSettingsFile());
@@ -51,6 +82,30 @@ public final class UiSettingsStore {
     if (!Files.exists(settingsFile)) {
       return new UiSettings();
     }
+    try {
+      return parseOrThrow();
+    } catch (CorruptDurableStoreException e) {
+      lastRecovery = quarantineCorruptFile(e);
+      return new UiSettings();
+    }
+  }
+
+  /** The last unreadable-file recovery this store performed, until the next successful save. */
+  public Optional<RecoveredFromCorrupt> lastRecovery() {
+    return Optional.ofNullable(lastRecovery);
+  }
+
+  /**
+   * Called once the first time {@link #save(UiSettings)} succeeds after a quarantine, whoever
+   * performs that save - the user re-authoring settings via the Settings UI, or a runtime
+   * component such as the AI autostart seed writing its own defaults - because a rewritten file is
+   * no longer the quarantined one, so the reset condition no longer describes anything true.
+   */
+  public void setOnRecoveryCleared(Runnable r) {
+    this.onRecoveryCleared = r;
+  }
+
+  private UiSettings parseOrThrow() {
     try {
       JsonNode root = MAPPER.readTree(settingsFile.toFile());
       if (root == null || !root.isObject()) {
@@ -83,6 +138,40 @@ public final class UiSettingsStore {
     }
   }
 
+  /**
+   * Move the unreadable file aside so its bytes survive, then let the caller load defaults.
+   *
+   * <p>If the move itself fails the original exception is rethrown with the IO failure attached:
+   * a file we could not preserve must not be reported as preserved.
+   */
+  private RecoveredFromCorrupt quarantineCorruptFile(CorruptDurableStoreException e) {
+    Path backup = nextBackupPath();
+    try {
+      try {
+        Files.move(settingsFile, backup, StandardCopyOption.ATOMIC_MOVE);
+      } catch (AtomicMoveNotSupportedException unsupported) {
+        Files.move(settingsFile, backup);
+      }
+    } catch (IOException io) {
+      e.addSuppressed(io);
+      throw e;
+    }
+    String detail = e.getMessage();
+    log.warn(
+        "ui-settings file was unreadable ({}); moved to {} and defaults loaded", detail, backup);
+    return new RecoveredFromCorrupt(backup, detail);
+  }
+
+  private Path nextBackupPath() {
+    String base =
+        settingsFile.getFileName() + ".corrupt-" + BACKUP_STAMP.format(Clock.systemUTC().instant());
+    Path candidate = settingsFile.resolveSibling(base);
+    for (int suffix = 2; Files.exists(candidate); suffix++) {
+      candidate = settingsFile.resolveSibling(base + "-" + suffix);
+    }
+    return candidate;
+  }
+
   public void save(UiSettings settings) {
     if (settings == null || mode == PersistenceMode.IN_MEMORY) {
       return;
@@ -96,6 +185,13 @@ public final class UiSettingsStore {
       AtomicFileWrites.replace(settingsFile, bytes);
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to persist UI settings to " + settingsFile, e);
+    }
+    if (lastRecovery != null) {
+      lastRecovery = null;
+      Runnable cleared = onRecoveryCleared;
+      if (cleared != null) {
+        cleared.run();
+      }
     }
   }
 

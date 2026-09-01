@@ -4,6 +4,7 @@ import io.grpc.Channel;
 import io.grpc.ClientInterceptors;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.justsearch.ipc.grpc.GrpcMessageLimits;
 import io.justsearch.ipc.grpc.RequestIdClientInterceptor;
 import io.justsearch.ipc.grpc.TraceClientInterceptor;
 import io.justsearch.ipc.BatchRequest;
@@ -322,6 +323,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
                 .keepAliveWithoutCalls(true)
                 .enableRetry()
                 .defaultServiceConfig(grpcServiceConfig)
+                .maxInboundMessageSize(GrpcMessageLimits.MAX_INBOUND_MESSAGE_BYTES)
                 .build();
 
         // 250 Phase 5c: Propagate OTel trace context and request ID to the Worker via gRPC metadata

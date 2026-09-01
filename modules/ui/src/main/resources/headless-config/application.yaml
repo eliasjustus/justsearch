@@ -1,5 +1,4 @@
 app:
-  package_base: io.justsearch
   # data_dir is resolved automatically via PlatformPaths defaults.
   # Override with: JUSTSEARCH_DATA_DIR or -Djustsearch.data.dir
 
@@ -7,17 +6,6 @@ app:
 # 363: Enabled for QU eval; actual model must be present in models/ dir.
 llm:
   enabled: true
-
-workers:
-  ai:
-    enabled: false
-
-plugins:
-  pipeline:
-    enabled: true
-    egress:
-      # Desktop default: deny by default.
-      default_policy: deny
 
 search:
   pipeline:
@@ -32,8 +20,6 @@ index:
   recovery:
     policy: BACKUP_REBUILD
   integrity_check: STRUCTURAL
-  language_detection:
-    enabled: true
   watcher:
     strategy: auto
     debounce_ms: 50

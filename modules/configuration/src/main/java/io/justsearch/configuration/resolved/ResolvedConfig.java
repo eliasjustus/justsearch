@@ -61,7 +61,6 @@ public record ResolvedConfig(
     HybridSearch hybridSearch,
     Worker worker,
     Collections collections,
-    WorkerAi workerAi,
     WorkerIndexer workerIndexer,
     InfraHealth infraHealth,
     InfraGrpc infraGrpc,
@@ -84,7 +83,6 @@ public record ResolvedConfig(
     Objects.requireNonNull(hybridSearch, "hybridSearch");
     Objects.requireNonNull(worker, "worker");
     Objects.requireNonNull(collections, "collections");
-    Objects.requireNonNull(workerAi, "workerAi");
     Objects.requireNonNull(workerIndexer, "workerIndexer");
     Objects.requireNonNull(infraHealth, "infraHealth");
     Objects.requireNonNull(infraGrpc, "infraGrpc");
@@ -707,9 +705,6 @@ public record ResolvedConfig(
     }
   }
 
-  /** AI worker gRPC client connection config (Head→AI worker). */
-  public record WorkerAi(boolean enabled, String host, int port, long deadlineMs) {}
-
   /** Indexer worker gRPC client connection config (Head→Body). */
   public record WorkerIndexer(
       boolean enabled, String host, int port, long deadlineMs,
@@ -774,7 +769,7 @@ public record ResolvedConfig(
    * @param bm25LowSignalTotalHitsThreshold low-signal BM25 total-hits threshold
    * @param vectorOnlyCapLowSignal max vector-only docs in low-signal fusion
    * @param vectorRrfWeightLowSignal vector RRF weight for low-signal queries
-   * @param fusionStrategy fusion algorithm: "rrf" (default) or "cc" (convex combination)
+   * @param fusionStrategy fusion algorithm: "cc" (convex combination, default) or "rrf"
    * @param ccAlpha CC dense weight (0.0=pure sparse, 1.0=pure dense, default 0.5)
    * @param ccZeroExclude if true, single-leg docs use only that leg's weight as denominator
    *     instead of being penalized with 0.0 for the missing leg (default false)
