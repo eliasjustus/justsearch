@@ -6,7 +6,7 @@ description: "LLM-generated citations backed by RAG metadata, supplemented by CP
 date: 2026-02-07
 probes:
   - adr-0006-citation-scorer-wired
-  - adr-0006-citation-scorer-exists
+  - adr-0006-citation-match-ops-wired
 last_reviewed: 2026-09-02
 ---
 

@@ -6,6 +6,7 @@ description: "gRPC for structured data transfer, MMF for sub-millisecond signali
 date: 2026-02-03
 probes:
   - adr-0002-mmf-layout-pinned
+  - adr-0002-mmf-constants-pinned
   - adr-0002-grpc-present
 last_reviewed: 2026-09-02
 ---

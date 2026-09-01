@@ -91,6 +91,9 @@ function daysSince(isoDate, nowMs) {
 
 function isLiveStatus(status) {
   const s = String(status ?? '').trim().toLowerCase();
+  // A missing status is not an exemption: an ADR that declares nothing is exactly the kind
+  // that goes unexamined, so it owes a probe or a stated reason like any live one.
+  if (s === '') return true;
   return LIVE_STATUS_PREFIXES.some((p) => s.startsWith(p));
 }
 
@@ -147,6 +150,16 @@ export async function enforceAdrCoverage(options) {
   const register = loadProbeRegister(sourceRoot, gate.config?.probeRegister);
   const claimedProbeIds = new Set();
 
+  if (register?.parseError) {
+    verdict = 'fail';
+    findings.push({
+      ruleId: 'adr-coverage/probe-failed',
+      level: 'error',
+      message: `${register.registerPath} is not parseable JSON (${register.parseError}); no premise probe could run`,
+      uri: register.registerPath,
+    });
+  }
+
   const emit = (v, uri) => {
     if (v.status === 'pass') return;
     const level = v.status === 'fail' ? 'error' : 'warning';
@@ -161,25 +174,33 @@ export async function enforceAdrCoverage(options) {
     if (!stat.isFile()) continue;
     const content = readFileSync(path, 'utf8');
     const uri = `${adrDirRel}/${adr}`;
+    let data = {};
+    let parsed = true;
+    let hadFrontmatter = true;
     if (!content.startsWith('---')) {
+      hadFrontmatter = false;
+      // No frontmatter at all is not an exemption: the cadence and probe rules below still
+      // apply, and a decision with no status is exactly the kind that goes unexamined.
       findings.push({ ruleId: 'adr-coverage/no-covers-field', level: 'note', message: `${adr}: no frontmatter`, uri });
-      continue;
+    } else {
+      try {
+        data = matter(content).data ?? {};
+      } catch (e) {
+        // Unparseable frontmatter is a gate failure, not a crashed kernel run.
+        verdict = 'fail';
+        findings.push({ ruleId: 'adr-coverage/probe-failed', level: 'error', message: `${adr}: frontmatter is not parseable YAML (${e.message})`, uri });
+        parsed = false;
+      }
     }
-    let data;
-    try {
-      data = matter(content).data ?? {};
-    } catch (e) {
-      // Unparseable frontmatter is a gate failure, not a crashed kernel run.
-      verdict = 'fail';
-      findings.push({ ruleId: 'adr-coverage/probe-failed', level: 'error', message: `${adr}: frontmatter is not parseable YAML (${e.message})`, uri });
-      continue;
-    }
+    if (!parsed) continue;
 
     // --- Covers: path validation (tempdoc 530 §2.7; behaviour unchanged) ---
     const coversRaw = data.covers ?? data.Covers;
     const covers = Array.isArray(coversRaw) ? coversRaw.join(' ') : (coversRaw == null ? '' : String(coversRaw));
     if (covers.trim() === '') {
-      findings.push({ ruleId: 'adr-coverage/no-covers-field', level: 'note', message: `${adr}: missing Covers field (informational; add Covers: glob list)`, uri });
+      if (hadFrontmatter) {
+        findings.push({ ruleId: 'adr-coverage/no-covers-field', level: 'note', message: `${adr}: missing Covers field (informational; add Covers: glob list)`, uri });
+      }
     } else {
       const globs = covers.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
       const files = repoFilesRel();

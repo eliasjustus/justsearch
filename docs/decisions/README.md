@@ -32,17 +32,25 @@ last_reviewed: 2026-09-02
 
 - **`probes:`** is a YAML list of ids in [`governance/adr-probes.v1.json`](../../governance/adr-probes.v1.json).
   Each register entry carries the ADR's `premise` in prose plus one mechanical restatement
-  of it. Kinds, in preference order: `test` / `gate` (a named test, ArchUnit rule, kernel
-  gate id or `scripts/ci` check already pins the premise) → `grep-absent` / `grep-present`
+  of it. Kinds, in preference order: `test` / `gate` → `grep-absent` / `grep-present`
   (a symbol, flag or file must / must not exist) → `json-path` (a value in a register is the
-  premise) → `file-set` (every file in a directory is generated, registered, or a reasoned
-  exception). A **count** (`expect: N`) is legitimate only where the premise *is* the count —
-  ADR-0015 is the one instance — never as a general growth ratchet.
+  premise) → `file-set` (every self-declared hand-written mirror under a tree is generated,
+  registered, or a reasoned exception). A **count** (`expect: N`) is legitimate only where
+  the premise *is* the count — ADR-0015's six MCP tools is the instance — never as a general
+  growth ratchet.
+- **What a `test` / `gate` probe actually checks is existence, not correctness.** It asserts
+  that the named test file still declares the pinned member, that the kernel gate id is still
+  registered, or that the `scripts/ci` check still exists *and is still named* by the
+  pre-merge table or a `.github/workflows/` file (a textual reference — the probe reads those
+  files, it does not trace execution). It does **not** run the test or the check — a disabled
+  or gutted test satisfies it. Its job is to notice that an ADR's enforcement was deleted or
+  renamed out from under it; running the enforcement is the enforcement's own job.
 - When a premise has no cheap mechanical form, say so instead of leaving the key off:
-  `probes: none - <reason>`. A live (`accepted…` / `stable…`) ADR with neither raises
-  `adr-coverage/no-probe` (warning).
-- **`last_reviewed:`** older than 183 days raises `adr-coverage/review-stale` (warning).
-  Update it when you re-read the decision, not when you edit the file.
+  `probes: none - <reason>`. A live (`accepted…` / `stable…`) ADR with neither — and a bare
+  `probes: none` with no reason counts as neither — raises `adr-coverage/no-probe` (warning).
+- **`last_reviewed:`** older than 183 days raises `adr-coverage/review-stale` (warning), and
+  so does a *missing* `last_reviewed`. Update it when you re-read the decision, not when you
+  edit the file.
 
 **When a probe fails**, the code has drifted away from the decision. The fix is to
 re-examine and amend the ADR (below) — never to edit the probe until it goes green. That

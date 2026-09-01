@@ -89,11 +89,39 @@ function evaluateTest(root, probe) {
   return { ok: true, detail: `'${file}' still declares '${member}'` };
 }
 
+/**
+ * Where a `scripts/ci` check has to be *invoked* from for its existence to mean anything:
+ * the root pre-merge table (which is where an agent is told to run it) or a workflow.
+ * A check nobody invokes is a layer that is dead regardless of its quality (tempdoc 745).
+ */
+const SCRIPT_INVOCATION_SITES = ['CLAUDE.md', '.github/workflows'];
+
 function evaluateGate(root, probe) {
   if (probe.script) {
-    return existsSync(resolve(root, probe.script))
-      ? { ok: true, detail: `check '${probe.script}' exists` }
-      : { ok: false, detail: `check '${probe.script}' no longer exists` };
+    if (!existsSync(resolve(root, probe.script))) {
+      return { ok: false, detail: `check '${probe.script}' no longer exists` };
+    }
+    const name = probe.script.split('/').pop().replace(/\.mjs$/, '');
+    const sites = [];
+    for (const site of probe.invokedFrom ?? SCRIPT_INVOCATION_SITES) {
+      const files = collectFiles(root, site, null, []);
+      for (const f of files) {
+        let content;
+        try { content = readFileSync(f, 'utf8'); } catch { continue; }
+        if (content.includes(name)) {
+          sites.push(f.replace(root, '').replaceAll('\\', '/').replace(/^\//, ''));
+          break;
+        }
+      }
+    }
+    if (sites.length === 0) {
+      return {
+        ok: false,
+        detail: `check '${probe.script}' exists but nothing invokes it — not in the root `
+          + `pre-merge table and not in any .github/workflows file, so it cannot notice drift`,
+      };
+    }
+    return { ok: true, detail: `check '${probe.script}' exists and is invoked from ${sites.join(', ')}` };
   }
   const registryPath = resolve(root, probe.registry ?? 'governance/registry.v1.json');
   if (!existsSync(registryPath)) {
@@ -159,29 +187,51 @@ function evaluateFileSet(root, probe) {
   const dirAbs = resolve(root, probe.dir);
   if (!existsSync(dirAbs)) return { ok: false, detail: `'${probe.dir}' does not exist` };
   const ext = probe.extension ?? '.ts';
-  const present = readdirSync(dirAbs, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith(ext))
-    .map((e) => `${probe.dir}/${e.name}`);
+  const skip = probe.excludePathContains ?? [];
+  const all = collectFiles(root, probe.dir, [ext], []);
+  const present = all
+    .map((f) => f.replace(root, '').replaceAll('\\', '/').replace(/^\//, ''))
+    .filter((f) => !skip.some((s) => f.includes(s)));
+
   let registeredText = '';
   if (probe.registeredIn && existsSync(resolve(root, probe.registeredIn))) {
     registeredText = readFileSync(resolve(root, probe.registeredIn), 'utf8');
   }
   const exceptions = new Set((probe.exceptions ?? []).map((x) => x.file));
+
+  // Self-declared mirrors are the detectable population: a file that says in its own header
+  // that it hand-mirrors a backend type. Scanning every .ts under the tree and demanding each
+  // be "registered" would need ~1000 exceptions; scanning for the marker keeps the probe honest
+  // over the whole tree (tempdoc 884 review B2). Known mirrors that carry no marker are
+  // declared in `exceptions` with a reason, which is what makes them visible at all.
+  const marker = probe.mirrorMarker ? new RegExp(probe.mirrorMarker, 'i') : null;
+  const flagged = [];
+  for (const rel of marker ? present : []) {
+    let content;
+    try { content = readFileSync(resolve(root, rel), 'utf8'); } catch { continue; }
+    if (marker.test(content)) flagged.push(rel);
+  }
+
   // Match the full repo-relative path, never the basename: a basename match would call
   // a new hand-mirror "registered" because some unrelated entry shares its filename.
-  const unaccounted = present.filter((f) => !exceptions.has(f) && !registeredText.includes(f));
+  const unaccounted = flagged.filter((f) => !exceptions.has(f) && !registeredText.includes(f));
   if (unaccounted.length > 0) {
     return {
       ok: false,
-      detail: `${unaccounted.join(', ')} under '${probe.dir}' is neither registered in `
-        + `'${probe.registeredIn}' nor a declared exception in governance/adr-probes.v1.json`,
+      detail: `${unaccounted.join(', ')} under '${probe.dir}' self-declares a hand-written mirror `
+        + `but is neither registered in '${probe.registeredIn}' nor a declared exception in `
+        + `governance/adr-probes.v1.json`,
     };
   }
   const stale = [...exceptions].filter((f) => !present.includes(f));
   if (stale.length > 0) {
     return { ok: false, detail: `declared exception(s) ${stale.join(', ')} no longer exist — drop them from the register` };
   }
-  return { ok: true, detail: `${present.length} file(s) under '${probe.dir}', all registered or declared exceptions` };
+  return {
+    ok: true,
+    detail: `${present.length} file(s) scanned under '${probe.dir}', ${flagged.length} self-declared mirror(s), `
+      + `${exceptions.size} declared exception(s); none unaccounted for`,
+  };
 }
 
 /**
@@ -214,7 +264,13 @@ export function evaluateProbe(probe, root) {
 export function loadProbeRegister(root, registerPath = 'governance/adr-probes.v1.json') {
   const abs = resolve(root, registerPath);
   if (!existsSync(abs)) return null;
-  const doc = JSON.parse(readFileSync(abs, 'utf8'));
+  let doc;
+  try {
+    doc = JSON.parse(readFileSync(abs, 'utf8'));
+  } catch (e) {
+    // A broken register must fail the gate, not crash the whole kernel run.
+    return { probes: [], byId: new Map(), registerPath, parseError: e.message };
+  }
   const byId = new Map();
   for (const p of doc.probes ?? []) byId.set(p.id, p);
   return { ...doc, byId, registerPath };

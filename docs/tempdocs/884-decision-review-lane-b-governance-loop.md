@@ -394,8 +394,11 @@ The scratch `.ts` was deleted; `git status --porcelain modules/ui-web` is empty.
    Under basename matching, a *new* hand-mirror named `registry.ts` anywhere would have
    been silently accepted. Fixed to full repo-relative path matching; the two genuinely
    registered files then need no exception entry, so their (redundant) exceptions were
-   dropped and the register carries a note instead. The exception list is now exactly the
-   three hand-written mirrors the ADR's premise contradicts.
+   dropped and the register carries a note instead. ~~The exception list is now exactly the
+   three hand-written mirrors the ADR's premise contradicts.~~ **FALSE — corrected in §D.2
+   (2026-09-02, review B2):** the probe scoped one directory, so it could not see the
+   mirrors ADR-0038's own Rationale names outside it. There are seven declared exceptions,
+   not three.
 3. **Malformed ADR frontmatter crashed the whole kernel run.** `gray-matter` throws on bad
    YAML where the old per-line parser returned `null`; an unparseable ADR would have taken
    down every gate in the same `run.mjs` invocation. Fixed: caught, and reported as an
@@ -457,11 +460,15 @@ rules did not exist yet. So the honest answer to "which ADRs did the unchanged t
 The list PR 2 owes therefore comes from the probes this PR wrote plus the reasons it
 recorded, not from a gate run:
 
-1. **0038** — `surface.ts`, `conversation-shape.ts` and `selection.ts` are declared
-   exceptions in the register today; the ADR says hand-written mirrors are *forbidden*.
-   PR 2 generates `surface.ts` (contract §6) and drops its exception — the probe fails on a
-   stale exception, so the handshake is mechanical. `conversation-shape.ts` / `selection.ts`
-   need either the same treatment or an ADR amendment that admits them.
+1. **0038** — SEVEN declared exceptions (corrected by review B2, see §D.2), not three:
+   `api/types/{surface,conversation-shape,selection}.ts`,
+   `shell-v0/handshake/capabilities-types.ts`, `api/domains/indexing.ts`, `api/schemas.ts`
+   and the marker false-positive `shell-v0/utils/aiInstallPoll.ts`. The ADR says
+   hand-written mirrors are *forbidden*. PR 2 generates `surface.ts` (contract §6) and drops
+   its exception — the probe fails on a stale exception, so the handshake is mechanical. The
+   other five each need the same treatment or an ADR amendment that admits them. PR 2 also
+   owns the four unregistered generated-wire consumers the kernel's `contract-projection`
+   gate flags (§D.8), which is the same register drift on the other side.
 2. **0018** — the probe pins the code fact (`JUSTSEARCH_LAYOUT_ENABLED` does not exist); the
    ADR body still names the flag and says "PDFs only". Amend. Same drift in two canonical
    docs and one skill mirror, listed at §B.3.
@@ -476,3 +483,217 @@ recorded, not from a gate run:
    0035 / 0037** — carry a stated `probes: none - <reason>`; each reason names why. The
    candidates worth revisiting in PR 2 are 0023 (an ArchUnit pin would work) and 0027 (a
    javadoc-aware absence probe).
+
+## §D — PR 1 independent-review response (2026-09-02, NEEDS-FIXES → fixed)
+
+An independent review of #594 returned NEEDS-FIXES with two blockers, four should-fixes,
+four nits and a ride-along. All are applied on `worktree-lane-B`. §C.2 and §C.6 are
+corrected in place where they were wrong; this section records what changed and why.
+
+### D.1 [B1] The probe engine had no test that could fail — fixed
+
+The review's proof was exact: stubbing `evaluateProbe` to return `{ok:true}` left both
+self-test fixtures "expected", because the negative fixture already failed on the
+pre-existing `stale-coverage` rule (`negative/docs/decisions/0001-sample.md:3`) and
+`run.mjs:206-222` compares only the verdict. §C.3 argued the positive fixture's orphan rule
+covered this; it covers *list parsing*, not probe evaluation. The review is right.
+
+Three changes:
+
+1. **`scripts/governance/gates/adr-coverage/probes.test.mjs`** (41 checks) — every kind
+   through **both** branches: `test` (member present / renamed / file deleted), `gate`
+   (registered id / unknown id / script invoked from the pre-merge table / from a workflow /
+   invoked by nothing / deleted), `grep-present` (match, no match, exact count, count up,
+   count down, multiline regex), `grep-absent` (absent, reintroduced, include-filter both
+   ways, zero-files-scanned), `json-path` (count, count drift, nested equals, value change,
+   missing segment, contains, unparseable JSON, no `expect` declared), `file-set`
+   (excepted, registered, new unregistered mirror, **a mirror outside `api/types`**,
+   basename-vs-path laundering, stale exception, generated/tests excluded, missing dir),
+   plus the pointer resolver, `PROBE_KINDS` as a closed vocabulary, `loadProbeRegister`
+   (absent / broken JSON / id index), and a shape check over the shipped register.
+2. **`scripts/governance/gates/adr-coverage/enforcer.test.mjs`** (22 checks) — asserts on
+   **findings**, not verdicts, which is what the self-test cannot do: `stale-coverage`
+   (including a list-valued `covers:`), `probe-failed` (premise quoted verbatim + amendment
+   procedure named), the R3 list-parsing guard, unknown probe id, orphan register entry,
+   unparseable register, unparseable frontmatter, `no-probe` (warning level, compound
+   status, superseded exempt, stated reason, bare `none`, no frontmatter at all, README
+   exempt), `review-stale` (in-window, out-of-window, missing date, `Date` normalization,
+   configurable window).
+3. **The negative fixture now fails for `probe-failed` ONLY** — the `covers:` line is gone
+   from `negative/…/0001-sample.md`. `stale-coverage` keeps its regression coverage in
+   `enforcer.test.mjs`, at finding level, which is strictly stronger than the verdict-only
+   fixture it replaces.
+
+**Wiring.** There was no runner: 17 `*.test.mjs` files under `scripts/governance/` ran
+nowhere — not in `package.json`, not in any workflow (grep of `.github/workflows/*.yml`
+finds only the `config-surface` gate invocation at `ci.yml:211`). That is the tempdoc 745 D6
+shape the repo already named once. Added
+**`scripts/governance/run-all-tests.mjs`** (auto-discovering, modelled on
+`scripts/agent-analytics/run-all-tests.mjs`), `npm run test:governance`, and three CI steps
+in the job that already runs a root `npm ci` (`ci.yml:111`): the kernel tests, the fixture
+self-test, and the `adr-coverage` gate. All 16 pre-existing test files were run first and
+are green, so the wiring does not import a red.
+
+**One thing the review's own command would have missed.** `node …/run.mjs --self-test`
+exits **0** on a mismatch — `run.mjs:312` is `process.exit(args.mode === 'gate' ? 1 : 0)`
+and the default mode is `warn`. And the full-kernel self-test precondition at `run.mjs:320`
+is guarded by `!args.gate`, so `--gate adr-coverage --mode gate` never runs fixtures at all.
+The discriminating command is **`--self-test --mode gate`**; that is what CI now runs, and
+the CI step carries the reason inline.
+
+**Discrimination proof** (stub applied, then reverted):
+
+```
+$ node scripts/governance/run.mjs --gate adr-coverage --self-test --mode gate
+self-test: adr-coverage/positive: pass (expected)
+self-test mismatch: adr-coverage/negative expected fail, got pass
+  - adr-coverage/no-covers-field (note): 0001-sample.md: missing Covers field …
+  - adr-coverage/no-covers-field (note): 0002-probe-failed-sample.md: missing Covers field …
+self-test failed; gate machinery may be broken
+exit=1
+```
+
+`probes.test.mjs` and `enforcer.test.mjs` also went red under the stub (`'pass' !== 'fail'`
+on the premise-drift and list-parsing checks). After reverting: 41 + 22 checks pass,
+self-test green, exit 0.
+
+### D.2 [B2] ADR-0038's probe scoped one directory — fixed, and §C.2 was wrong
+
+The review is right and the §C.2 claim ("exactly the three hand-written mirrors") was false.
+ADR-0038's own Rationale (`0038-wire-contract-source-of-truth.md:61-65`) names three drift
+sites, and the probe could see none of them:
+`modules/ui-web/src/shell-v0/handshake/capabilities-types.ts:3-10` self-declares a
+hand-written mirror of `CapabilitiesService.CapabilitiesView` and is absent from
+`contract-surfaces.v1.json`; `modules/ui-web/src/api/domains/indexing.ts:95,100` is mirrored
+*by* `ExcludesService.ExcludesResult`, whose javadoc says so
+(`ExcludesService.java:35-38` — "Mirrors the pre-existing … FE-side ApplyExcludesResponse");
+`modules/ui-web/src/api/schemas.ts` is the hand-written Zod half.
+
+**Why not a plain recursive file-set.** `modules/ui-web/src` holds 1,028 `.ts` files (522
+after excluding `generated/`, tests and fixtures). Demanding each be "registered or
+excepted" would need ~500 exception entries — residue, not a probe. The probe now scans the
+**whole tree recursively** and flags files that **self-declare** a hand-written mirror
+(`mirrorMarker` regex over file content); a flagged file must be registered by full path in
+`contract-surfaces.v1.json` or be a declared, reasoned exception. Known mirrors that carry
+no marker are declared explicitly, which is the only thing that makes them visible.
+
+Current probe result:
+`522 file(s) scanned under 'modules/ui-web/src', 7 self-declared mirror(s), 7 declared exception(s); none unaccounted for`.
+
+| Declared exception | Reason |
+|---|---|
+| `api/types/surface.ts` | Hand-written mirror of Surface/SurfaceRef/Audience/Placement/SurfaceConsumes (slice 449 phase 5). PR 2 generates it via `gen-wire-schema-types.mjs` — PR 2 / 0038 amendment decides. |
+| `api/types/conversation-shape.ts` | Hand-written mirror of ConversationShape/ConversationShapeRef (slice 491 §9.D) — PR 2 / 0038 amendment decides. |
+| `api/types/selection.ts` | Hand-written mirror of the app-api sealed sums (tempdoc 526); sealed-sum unions are not expressible by the current emitter — PR 2 / 0038 amendment decides. |
+| `shell-v0/handshake/capabilities-types.ts` | Hand-written TS view of `/infra/capabilities` (`:3-10`), mirrors `CapabilitiesService.CapabilitiesView`, unregistered — PR 2 / 0038 amendment decides. **Found by the review.** |
+| `api/domains/indexing.ts` | No marker, but a mirror: `ApplyExcludesResponse`/`PatternMatch` (`:95,:100`) are what `ExcludesService.java:35-38` mirrors — PR 2 / 0038 amendment decides. **Found by the review.** |
+| `api/schemas.ts` | Named by 0038's Rationale as the hand-written Zod half; tempdoc 683 reduced it to one deliberately `.loose()` agent-session schema — PR 2 / 0038 amendment decides. **Found by the review.** |
+| `shell-v0/utils/aiInstallPoll.ts` | Marker **false positive**: `:27` says it *used to be* a hand-written mirror, retired by tempdoc 840 Phase 4. Listed so the scan stays green without weakening the regex. |
+
+`api/types/registry.ts` and `api/types/diagnostic.ts` still need no exception — both appear
+by full path in `contract-surfaces.v1.json:145,151,157,163,169` as declared consumers.
+
+**Honest limit, stated rather than papered over:** a hand-written mirror that carries no
+marker and is not in the exception list is invisible to this probe. Two such were found by
+human reading, not by the scan. The probe's real guarantee is narrower than ADR-0038's
+premise: *no NEW self-declared mirror appears unregistered*, plus a fixed list of known ones.
+
+### D.3 [S1] `test` / `gate` probes check existence — README corrected, `gate` strengthened
+
+`docs/decisions/README.md` said these kinds "already pin the premise", which overstates what
+`probes.mjs` does (`evaluateTest` checks the file exists and still declares the member;
+`evaluateGate` checked only that a file exists). Both fixed:
+
+- The README now states plainly that a `test`/`gate` probe is **existence-only**, that a
+  disabled or gutted test satisfies it, and that its job is to notice the enforcement being
+  deleted or renamed — not to run it.
+- `evaluateGate` for `kind: gate` + `script:` now additionally requires the check to be
+  **invoked** from the root pre-merge table or a `.github/workflows/` file. The review's
+  count was right: of the five script probes, `check-installer-execution-level.mjs` (ADR-0024)
+  is referenced by **nothing** — not `CLAUDE.md`, not any workflow (the only hits are three
+  tempdocs, one of which, 799, already names it as an uninvoked check). The other four
+  resolve: `check-workflow-triggers` (CLAUDE.md + `ci.yml`), `check-live-witness`,
+  `check-language-agnostic-analysis`, `check-repo-history-policy` (CLAUDE.md).
+- ADR-0024 therefore **stops using a script probe**. Its premise is now checked directly:
+  `json-path` on `modules/shell/src-tauri/tauri.conf.json` `/bundle/windows/nsis/installMode`
+  `=== "currentUser"` — a stronger probe than "a file exists". That an existing check runs
+  nowhere is routed as a finding, not fixed here.
+
+### D.4 [S2] ADR-0002 — layout constants pinned, gRPC probe moved to real consumers
+
+- The named-test probe now pins `reserved1EndsAtMmfSize`
+  (`MmfWorkerSignalLayoutV1Test.java:87`) instead of
+  `namedFieldRangesArePairwiseDisjoint` — the reserved tail running exactly to the end of
+  the region is what makes a new signal an explicit layout change.
+- New `adr-0002-mmf-constants-pinned`: `grep-present` `expect: 2` over
+  `(MMF_SIZE_BYTES = 64|OFFSET_WORKER_GRPC_PORT = 20)` in
+  `MmfWorkerSignalLayoutV1.java:31,43`. Moving either is a Head↔Worker wire break.
+- `adr-0002-grpc-present` moved off `gradle/libs.versions.toml` (a version catalog entry
+  proves nothing about use) onto `modules/**/build.gradle.kts` — 24 matches across 10 module
+  build files, so the *consumers* are the evidence.
+
+### D.5 [S3] ADR-0028 — pins the premise, not the allowlist's name
+
+Was: the string `APPROVED_CALLERS` appears in the pin file — true of an 11-entry allowlist
+regardless of what is in it. Now: `expect: 1` on
+`"io\.justsearch\.ui\.api\.\w*Controller"` in `LibraryResolveHashOnlyCallerPin.java:60-70`.
+Verified: exactly one entry matches (`io.justsearch.ui.api.IndexingController`), which *is*
+ADR-0028's decision — one HTTP entry point may resolve a path hash. A second controller
+added to the allowlist now fails the gate.
+
+### D.6 [S4] ADR-0016 — exact count plus the forbidden shape
+
+- `adr-0016-soft-boost-not-filter` gains `expect: 2` — the whole boost population
+  (`QueryFilterBuilder.java:364` term boost, `:422` range boost). The register carries a note
+  saying why this count is the population and not a ratchet.
+- New `adr-0016-no-hard-filter-boost`: `grep-absent` on
+  `new BoostQuery\(.*Occur\.(FILTER|MUST)\b`, scoped to `QueryFilterBuilder.java`. This is
+  the anti-pattern the ADR's Decision forbids in its own words ("Never apply QU output as
+  hard filters"), and it is greppable because both current boost sites add on a single line.
+  `MUST_NOT` does not match (`\b` after `MUST`). Currently 0 matches. A whole-file
+  `Occur.FILTER` absence probe would false-fail — the file legitimately uses FILTER for
+  caller-supplied hard filters (`applyRuntimeFilters`), which the ADR explicitly permits.
+
+### D.7 Nits
+
+- `loadProbeRegister` no longer throws on a broken register: it returns `{parseError}` and
+  the enforcer emits `adr-coverage/probe-failed` naming the file. A broken register used to
+  take down every gate in the same `run.mjs` invocation.
+- An ADR with **no frontmatter at all** now still gets `no-probe` and `review-stale`
+  (`isLiveStatus('')` is true — a decision that declares nothing is exactly the kind that
+  goes unexamined), and gets exactly one `no-covers-field` note, not two.
+- ADR-0006's second probe was tautological (`class CitationScorer` inside
+  `CitationScorer.java`). Replaced with the wiring site:
+  `expect: 2` on `citationMatchOps.execute(|citationMatchOps.setCitationScorer(` in
+  `GrpcSearchService.java:231,846` — the RPC path plus the injection point. A CitationScorer
+  nothing calls now fails.
+- README: `review-stale` is documented as firing on a **missing** `last_reviewed` too, and
+  a bare `probes: none` is documented as not counting as a stated reason.
+
+### D.8 Ride-along — expected-state pins for pre-existing kernel reds
+
+Reproduced on this branch with `node scripts/governance/run.mjs --mode warn --skip-self-test`
+(35 gates, 7 fail). Two pins added to `scripts/agent-analytics/expected-state.v1.json`
+(`reviewBy: 2026-09-30`, each with an exit probe;
+`node scripts/agent-analytics/expected-state-probe.mjs --gate` → 14 pins, 0 problems):
+
+- **`governance-kernel-inputs-unbuilt`** — `npm-audit`, `module-deps`, `dead-code`,
+  `dead-code-jvm` and `config-surface` all report `kernel/input-missing`. These are *unbuilt
+  reports*, not reds: each names its producer, and `--produce-inputs` builds them. Pinned as
+  one entry rather than five near-identical ones.
+- **`wire-gate-buf-cli-missing`** — the buf CLI is a local devDependency of
+  `scripts/wire-contract/`, absent until `npm install` runs there.
+
+**Not pinned, because they are real defects (routed instead):**
+
+- `contract-projection/undeclared-consumer` — four FE files import a generated wire module
+  and are not declared consumers in `governance/contract-surfaces.v1.json`:
+  `shell-v0/controllers/AgentSessionController.ts` (agent-sessions-response),
+  `shell-v0/state/installComponents.ts`, `shell-v0/substrates/ai/aiInstallBridge.ts` and
+  `shell-v0/substrates/tasks/aiInstallTasksBridge.ts` (all ai-install-status). This is
+  register drift of exactly the class ADR-0038 governs — it belongs with lane B's 0038
+  amendment (PR 2) or the owning FE lane, not in a pin.
+- `ts-any/silent-growth` — 5 files gained `any`-casts with no changeset
+  (`chat/citationResolve.test.ts`, `chat/MarkdownBlock.ts`, `state/indexingProgress.ts`,
+  `search-v3/sv3-sessions.test.ts`, `searchResultViewModel.ts`). Pre-existing on `main`;
+  this PR changes no `.ts` file. Owned by whoever lands the ui-web work, not pinnable.
