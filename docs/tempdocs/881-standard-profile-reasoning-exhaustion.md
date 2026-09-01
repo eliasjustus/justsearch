@@ -474,3 +474,25 @@ tool description or schema).
 
 Remaining: the live end-to-end after-fix pass on `chatProfile: "standard"` (§F). The dev stack was
 left on the compact profile, as briefed.
+
+---
+
+## §H. Orchestrator's end-to-end acceptance pass (2026-09-01, post-review, pre-merge)
+
+Run by the orchestrating session against THIS branch's dist (`justsearch_dev_start
+{distFrom: agent worktree, skipBuild: true}`), main's 666-doc tempdocs index copied in,
+`ai_activate {chatProfile:"standard"}` (Qwen3.5-9B, cuda12, n_ctx 4096). Prompt: the rank-1
+"Read three of the indexed help documents and summarize each one in two sentences.",
+`maxIterations: 12`, effort thorough, 3 runs via `POST /api/chat/agent`.
+
+| Run | Outcome |
+|---|---|
+| 1 | `MAX_ITERATIONS`, honest partial answer (939 chars), 0 errors, 36 tool calls |
+| 2 | aborted iter 5: `LLM_TRANSIENT` — llama-server 400 `exceed_context_size_error` (4112 > 4096) |
+| 3 | `MAX_ITERATIONS`, honest partial answer (1139 chars), 0 errors, 36 tool calls |
+
+Shipped baseline (§A): 0/3 answered, ERROR at iteration 2–3, all the XML-in-reasoning class.
+Branch: **2/3 answered, 0/3 XML-class failures; the recovery fired 7 times in the head log.**
+Run 2's failure is a DIFFERENT, pre-existing class — the context-gate margin at n_ctx 4096
+(prompt overshot the window by 16 tokens between projection and send) — already named in 878
+§D.8's owner-decision lever set, not reopened here. Acceptance met; merged as PR #586.

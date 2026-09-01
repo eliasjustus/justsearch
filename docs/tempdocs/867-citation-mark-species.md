@@ -522,3 +522,9 @@ Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from
 closeout shard found on a local `main` (the inbox was retired before it could be folded).
 
 - [ ] 869 closeout: (1) tempdoc 867 needs a §7 pointer that 869 shipped (PR #569 / 7e0498bc) and what it hands 867 — data-claimed-label hook, S1–S4 counter need, tier-2 idiom never observed live on compact; (2) the Playwright drive/probe scripts behind 869 §4.4 (sv3 ask driver + shadow-DOM citation probe) were scratchpad-only — worth landing under scripts/jseval as a 'cite-probe' verb so the before/after is re-runnable; (3) local main's merge of origin is blocked by other sessions' untracked shards bccfc163/f6617483 (older than origin's copies) — `docs/observations.d/` (2026-08-26)
+
+## 8. Hand-off pointer (routed from a stray session shard, 2026-09-01)
+
+Tempdoc 869 shipped as PR #569 (`7e0498bc`) and hands this tempdoc: the data-claimed-label
+hook, the S1–S4 counter need, and the observation that the tier-2 idiom was never observed
+live on the compact profile. See 869 for the carve-out details.

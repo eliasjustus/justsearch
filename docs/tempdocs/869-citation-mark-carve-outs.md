@@ -789,3 +789,7 @@ identically there; this section is the surviving copy. 881 checked the first not
 its own duplicate and found 867 already carries the substance of that pointer at `867:8` and
 `867:486-496` — so what remains open there is whether 867 wants it as an explicit §7, not whether
 the fact is recorded anywhere (2026-09-01).
+
+- [ ] Routed from a stray session shard (2026-09-01): the Playwright drive/probe scripts
+  behind §4.4 (sv3 ask driver + shadow-DOM citation probe) were scratchpad-only — worth
+  landing under `scripts/jseval` as a `cite-probe` verb so the before/after is re-runnable.
