@@ -44,8 +44,9 @@ import org.slf4j.LoggerFactory;
  */
 public final class FileOperationsTool implements OperationHandler {
   private static final Logger LOG = LoggerFactory.getLogger(FileOperationsTool.class);
-  // Tempdoc 877 §2.1 — public because AgentToolsOperationCatalog.fileOperations() interpolates it
-  // into the model-visible `operations` description. The deleted tool-local schema constant used to
+  // Tempdoc 877 §2.1 — public (now same-package: AgentToolsOperationCatalog lives in this
+  // io.justsearch.agent.tools package too) so fileOperations() can interpolate it into the
+  // model-visible `operations` description. The deleted tool-local schema constant used to
   // spell the same number a second time; interpolating leaves one author for it.
   public static final int MAX_BATCH_SIZE = 50;
 

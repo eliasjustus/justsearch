@@ -5,13 +5,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.justsearch.agent.api.registry.AuditPolicy;
 import io.justsearch.agent.api.registry.Audience;
+import io.justsearch.agent.api.registry.AvailabilityExpression;
 import io.justsearch.agent.api.registry.Binding;
 import io.justsearch.agent.api.registry.ConfirmStrategy;
 import io.justsearch.agent.api.registry.ExecutorTag;
+import io.justsearch.agent.api.registry.I18nKey;
 import io.justsearch.agent.api.registry.Operation;
+import io.justsearch.agent.api.registry.OperationAvailability;
 import io.justsearch.agent.api.registry.OperationLineage;
 import io.justsearch.agent.api.registry.OperationPolicy;
 import io.justsearch.agent.api.registry.OperationRef;
+import io.justsearch.agent.api.registry.Presentation;
 import io.justsearch.agent.api.registry.Provenance;
 import io.justsearch.agent.api.registry.ResourceRef;
 import io.justsearch.agent.api.registry.RetryPolicy;
@@ -89,12 +93,15 @@ final class AgentToolCatalogBaselineTest {
       assertEquals(
           baseline,
           actual,
-          "The model-facing agent-tool surface changed. If the change is DELIBERATE, copy\n  "
+          "The model-facing agent-tool surface changed: a wire name, an input schema, or a\n"
+              + "description KEY (this emitter uses the identity resolver, so the prose itself is\n"
+              + "resolved elsewhere and checked by AgentOfferingProseTest). If the change is\n"
+              + "DELIBERATE, copy\n  "
               + dump
               + "\nover src/test/resources"
               + BASELINE_RESOURCE
-              + " and say why in the PR. If it is not deliberate, the\n"
-              + "delegate is being offered a different tool catalog than it was before.");
+              + " and say why in the PR. If it is not deliberate,\n"
+              + "the delegate is being offered a different tool catalog than it was before.");
     }
   }
 
@@ -132,7 +139,8 @@ final class AgentToolCatalogBaselineTest {
         Set.of(ExecutorTag.AGENT),
         Audience.USER,
         OperationLineage.empty(),
-        true);
+        GATED_ON_INDEX_SERVING,
+        Presentation.forId(new OperationRef("core.search-index")));
 
     // core.read-document — LOW, no confirm, NO retry (a paged read must not be replayed behind a
     // different offset), same index-serving gate.
@@ -149,7 +157,8 @@ final class AgentToolCatalogBaselineTest {
         Set.of(ExecutorTag.AGENT),
         Audience.USER,
         OperationLineage.empty(),
-        true);
+        GATED_ON_INDEX_SERVING,
+        Presentation.forId(new OperationRef("core.read-document")));
 
     // core.browse-folders — LOW, auto-retry (a listing is idempotent), always available.
     assertPolicy(
@@ -165,7 +174,8 @@ final class AgentToolCatalogBaselineTest {
         Set.of(ExecutorTag.AGENT),
         Audience.USER,
         OperationLineage.empty(),
-        false);
+        OperationAvailability.empty(),
+        Presentation.forId(new OperationRef("core.browse-folders")));
 
     // core.ingest-files — MEDIUM, inline confirm, metadata audit, "file-operations" family,
     // affects the indexing-jobs Resource.
@@ -183,7 +193,8 @@ final class AgentToolCatalogBaselineTest {
         Set.of(ExecutorTag.AGENT),
         Audience.USER,
         new OperationLineage(Set.of(new ResourceRef("core.indexing-jobs")), Set.of()),
-        false);
+        OperationAvailability.empty(),
+        Presentation.forId(new OperationRef("core.ingest-files")));
 
     // core.file-operations — HIGH, inline confirm, undo SUPPORTED, advisory class set, same family.
     assertPolicy(
@@ -201,7 +212,11 @@ final class AgentToolCatalogBaselineTest {
         Set.of(ExecutorTag.AGENT),
         Audience.USER,
         OperationLineage.empty(),
-        false);
+        OperationAvailability.empty(),
+        Presentation.forId(
+            new OperationRef("core.file-operations"),
+            Optional.of("warning"),
+            Optional.of("destructive")));
 
     // core.navigate-to-surface — the one entry carrying the UI executor as well as AGENT.
     assertPolicy(
@@ -217,7 +232,8 @@ final class AgentToolCatalogBaselineTest {
         Set.of(ExecutorTag.UI, ExecutorTag.AGENT),
         Audience.USER,
         OperationLineage.empty(),
-        false);
+        OperationAvailability.empty(),
+        Presentation.forId(new OperationRef("core.navigate-to-surface")));
 
     // core.remember — LOW, no confirm, no lineage (memory has no ResourceRef).
     assertPolicy(
@@ -233,8 +249,29 @@ final class AgentToolCatalogBaselineTest {
         Set.of(ExecutorTag.AGENT),
         Audience.USER,
         OperationLineage.empty(),
-        false);
+        OperationAvailability.empty(),
+        new Presentation(
+            new I18nKey("ops.remember.label"),
+            new I18nKey("ops.remember.description"),
+            Optional.empty(),
+            Optional.empty()));
   }
+
+  /**
+   * Availability gated on the index serving: {@code Not(ConditionMatches("index.unavailable"))}.
+   *
+   * <p>Asserted as a VALUE, not as {@code expression().isPresent()}. Presence is one boolean short of
+   * covering the axis that decides whether the delegate is offered its two read tools: dropping the
+   * {@code Not} keeps presence true and inverts the meaning — search and read-document would be
+   * offered only while the index is DOWN and withheld while it serves. {@code AvailabilityExpression}
+   * variants are records, so equality here pins the whole tree.
+   */
+  private static final OperationAvailability GATED_ON_INDEX_SERVING =
+      new OperationAvailability(
+          Optional.of(
+              new AvailabilityExpression.Not(
+                  new AvailabilityExpression.ConditionMatches("index.unavailable"))),
+          Optional.empty());
 
   private static void assertPolicy(
       Map<String, Operation> byId,
@@ -243,17 +280,19 @@ final class AgentToolCatalogBaselineTest {
       Set<ExecutorTag> expectedExecutors,
       Audience expectedAudience,
       OperationLineage expectedLineage,
-      boolean expectsAvailabilityExpression) {
+      OperationAvailability expectedAvailability,
+      Presentation expectedPresentation) {
     Operation op = byId.get(id);
     Objects.requireNonNull(op, id + " missing from AgentToolsOperationCatalog");
     assertEquals(expectedPolicy, op.policy(), id + ": declared policy changed");
     assertEquals(expectedExecutors, op.executors(), id + ": executor tags changed");
     assertEquals(expectedAudience, op.audience(), id + ": audience changed");
     assertEquals(expectedLineage, op.lineage(), id + ": lineage changed");
-    assertEquals(
-        expectsAvailabilityExpression,
-        op.availability().expression().isPresent(),
-        id + ": presence of an availability expression changed");
+    assertEquals(expectedAvailability, op.availability(), id + ": declared availability changed");
+    // The wire projection carries only the description KEY, so the label key and the confirm/danger
+    // presentation hints reach no other assertion in the tree. Losing `warning`/`destructive` off the
+    // one HIGH-risk destructive tool would otherwise be invisible.
+    assertEquals(expectedPresentation, op.presentation(), id + ": presentation changed");
     assertEquals(
         Binding.of(new OperationRef(id)), op.binding(), id + ": binding changed");
     assertEquals(Provenance.core("1.0"), op.provenance(), id + ": provenance changed");

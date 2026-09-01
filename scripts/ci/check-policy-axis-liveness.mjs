@@ -44,6 +44,13 @@ const POLICY_SOURCE =
  * wrong reason — `capabilityFamily` is declared only by that catalog, so the gate reported the axis
  * as undeclared when in truth it had merely become invisible. A path literal that outlives its
  * subject reports absence as fact, which is the failure this gate exists to catch, turned on itself.
+ *
+ * <p>Two things here are load-bearing and are asserted by the self-test, because both fail SILENTLY
+ * (fewer declaration sites, still exit 0) rather than loudly:
+ * <ul>
+ *   <li>every entry must be a directory that EXISTS — `existsSync` below skips a stale path;
+ *   <li>a catalog file must END in `OperationCatalog.java` — a differently-named catalog is skipped.
+ * </ul>
  */
 const CATALOG_DIRS = [
   'modules/app-services/src/main/java/io/justsearch/app/services/registry/operations',
@@ -306,7 +313,7 @@ function splitTopLevel(body) {
   return parts;
 }
 
-export { stripComments, splitTopLevel, parseComponents };
+export { stripComments, splitTopLevel, parseComponents, CATALOG_DIRS, catalogSources };
 
 if (
   process.argv[1] &&

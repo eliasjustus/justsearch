@@ -292,7 +292,10 @@ is marked CONFIRMED, STALE (true once, now wrong), or REJECTED (never true — a
   `CompositionRootGuardrailsTest.java:64` still pins 26, but `ServicePhase.Output` now carries the
   agent tools as ONE component (`ServicePhase.java:129`, javadoc `:120-128`) and has **21**
   components; `SubstratePhase.Output` has 16. Five components of headroom. DONE-BY-868 (§B.2). Its
-  javadoc at `:59-63` still claims "26 components" and is now wrong — fixed as a ride-along.
+  javadoc at `:59-63` still claimed "26 components"; the record now has 21 (counted at source). The
+  javadoc is corrected as a ride-along and reworded so `MAX_OUTPUT_FIELDS` reads as a ceiling rather
+  than a description of the current value. The constant itself is NOT changed — retightening a
+  guardrail pin is a decision on its own merits, not a consequence of counting.
 - **STALE — the `19-module-architecture.md` wording.** The doc does not say "agent-facing
   contracts"; `:34` says **"Agent-facing request/response contracts"**, which is more wrong, not
   less. Measured: `modules/app-agent-api/src/main/java/io/justsearch/agent/api/` holds **171** Java
@@ -310,7 +313,7 @@ is marked CONFIRMED, STALE (true once, now wrong), or REJECTED (never true — a
 The composition-path audit reported that `AgentToolEmitter` is a **phantom class name** appearing in
 four canonical docs, and proposed a rename sweep as a ride-along. **That is wrong.**
 `modules/app-agent-api/src/main/java/io/justsearch/agent/api/registry/AgentToolEmitter.java` exists
-(4,765 bytes) and is a live SPI with ten referencers — `AgentRunQueries`, `AgentLoopService`,
+(4,765 bytes) and is a live SPI with nine referencers besides its own declaration — `AgentRunQueries`, `AgentLoopService`,
 `AgentStepRunner`, `AgentRunQueryService`, `AgentOperationEmitter` (its implementation),
 `AgentToolAuthorityBoundaryTest`, `AgentLoopServiceTest`, `AgentOperationEmitterTest`,
 `AgentBatteryTest`. Its `offer(...)` is 876 §B.1's authority method. Every doc naming it is correct
@@ -600,7 +603,7 @@ from the re-homing.
 | 2 | **Move 2**: `git mv` the catalog to `io.justsearch.agent.tools`; update 4 main + ~13 test imports; fix cross-module `{@link}`s; update `consult-register.v1.json` `pathIncludes` + recipe prose | ~20 files | full `test`; `check-live-witness` (RegistrySnapshotExporter edited); `--gate register-guard-resolution`; `check-tempdoc-numbers` |
 | 3 | **Move 2b** (optional, abandon rule): collapse `SubstratePhase`'s five tool params into `AgentToolFactory.Output`, 22 → 18 | `SubstratePhase`, `AgentToolHandlers`, `HeadAssembly`, 3 test call sites | full `test`; `CompositionRootGuardrailsTest` pins unchanged |
 | 4 | **Docs**: `22-agent-system-architecture.md` (rows + §Safe Extension Path 6→4), `api-contract-map.md` (path literal + byte-stability claim), `common-workflows.md` (recipe 6→4), `19-module-architecture.md` (two cells) | 4 docs | grep for stale paths; no `AgentToolEmitter` renamed |
-| 5 | **Ride-alongs**: `.claude/rules/agent-lessons.md` line + declared budget bump; `CompositionRootGuardrailsTest` javadoc "26 components" → 21 | 3 files | `check-always-loaded-budget` |
+| 5 | **Ride-alongs**: `.claude/rules/agent-lessons.md` line + declared budget bump; `CompositionRootGuardrailsTest` javadoc "26 components" → 21 (comment only, pin unchanged); `AgentToolEmitter` and `FileOperationsTool` comments whose stated reason the move invalidated | 5 files | `check-always-loaded-budget` |
 | — | **Not done**: i18n split (§A.6), roots fold (§A.5), `vop_*` retraction (§B.5), E0a retraction (§B.5) | — | recorded, with the evidence to decide |
 | 6 | **`HeldGate<T>`** (§B.6, the safe subset only): the two singleton gates delegate arm/resolve/held/clear to one private primitive; every public method keeps its exact signature, so no caller changes | `AgentSession` only | `:modules:app-agent:test` (`AgentSessionBudgetTest` covers both gates); full `test` |
 | — | **Not done**: the `executeIteration` split — see §C.2b for the section map and the reason | — | groundwork delivered instead |
@@ -694,6 +697,19 @@ Run against the diff before review, per `rule:critical-analysis-pass`:
   `ServicePhase.Output.agentTools`, so `serviceOut.agentTools()` cannot be null at
   `SubstratePhase.java:163`. The per-tool null guards inside the method are unchanged, which is what
   the degraded boot actually relies on.
+- **Two things only CI caught, both worth naming.** (a) `git add docs/` swept in
+  `docs/observations.d/e9f135ac-….md` — a shard written 2026-08-26 that survived 872's retirement on
+  a local branch and reached this worktree through its BASE, not through any commit here. None of my
+  commits touched it and it is not on `origin/main`, so `git log` looked innocent; merging would
+  nonetheless have resurrected the retired inbox. `check-no-observations-shards` is exactly the gate
+  for that. Its two notes were routed to tempdoc 869's open items before deletion. The lesson is the
+  one `branch-safety.md` already states — stage explicit paths, not directories — and the reason it
+  bites here is that a worktree inherits local `main`'s unpushed commits.
+  (b) `skills-sync --check` failed: `.claude/skills/module-arch/SKILL.md` is GENERATED from
+  `docs/explanation/19-module-architecture.md`, so correcting that doc left the generated copy stale.
+  Regenerated with `node scripts/docs/skills-sync.mjs`, never hand-edited. Both are the
+  no-hooks-in-subagents consequence CLAUDE.md warns about: a subagent edited canonical docs, so the
+  regen step was the orchestrator's to run and was missed until CI said so.
 - **The environmental red was tested, not asserted.** The full-suite run finished with 9 failures
   across three `worker-services` classes and one in `worker-core`, every one a
   `TimeoutException … after 30 seconds`. Rather than wave at "known flake": the three
@@ -703,7 +719,69 @@ Run against the diff before review, per `rule:critical-analysis-pass`:
   so no edit in this diff can reach those tests. The worker-core one reproduces isolated and matches
   `expected-state.v1.json`'s existing `worker-core-onnx-longdoc-forensic-timeout` pin verbatim; the
   three worker-services classes had no pin, so one was added
-  (`worker-services-search-suite-30s-timeout-under-load`, dated, with an `exitProbe`).
+  (`worker-services-30s-timeout-under-load`, dated, with an `exitProbe`). Review of that pin then
+  widened it: the same 30s TimeoutException shape also hit four EXTRACTION classes
+  (`ContentExtractorTest`, `AdversarialCorpusIngestionTest`, `OfficeMarkerSearchabilityTest`,
+  `PolicyDrivenTikaExtractorTest`), so the claim now matches the SHAPE rather than a name list —
+  and a second pin, `ui-readiness-trigger-composition-5s-wait-under-load`, covers a `modules/ui`
+  test that waits 5000 ms on a background reconciliation. Widening a pin the day it is written is
+  itself a risk (a broad pin can later hide a real failure), so both carry `reviewBy 2026-09-30`
+  and should get an owner glance rather than a silent renewal.
+
+### D.3 Independent review (refute-first, reviewer ≠ committer)
+
+One opus reviewer, read-only, briefed to assume the zero-behaviour-change claim is FALSE and break it.
+**It survived: no blockers, and no reachable behaviour change could be constructed.** What the
+reviewer did break was the oracle *backing* the claim, and the public record *stating* it — which is
+the more useful outcome, and the reason the pass is worth its cost.
+
+Claims it attacked and could not break, recorded so the coverage is legible rather than assumed:
+handler identity is unobservable (no `instanceof`, no class name in telemetry/ledger/witness/MCP, the
+`undo` default unreachable behind `OperationExecutorImpl`'s policy check); the package move leaves no
+residue outside `docs/tempdocs/` and touches no `META-INF/services`, `Class.forName`, package-scan
+allowlist or serialized class name; `agentTools` is provably non-null and the collapsed parameter
+slot is contiguous so a reorder could not compile; `HeldGate` is line-for-line order-equivalent to
+the code it replaces, with the same volatility and the same stale-`sinceEpochMs` behaviour on
+`clear()`; the four deleted adapter tests asserted nothing about tool behaviour, and
+`FileOperationsTool.undo` is covered *more* strongly by nine real round-trips in
+`FileOperationsToolTest`; and the policy-axis gate got strictly *stricter*, verified by recomputing
+the full per-axis reader index under both rule versions and diffing (byte-identical), plus mutation
+tests that the old rule catches and the new one does too.
+
+Findings accepted and fixed:
+
+| # | Finding | Disposition |
+|---|---|---|
+| S1 | The oracle asserted availability by `expression().isPresent()`, not by value | **Fixed, and it mattered most.** Dropping the `Not` from `Not(ConditionMatches("index.unavailable"))` keeps presence `true` and *inverts* the meaning — search and read-document would be offered only while the index is DOWN. Now asserts the whole `OperationAvailability` record. Verified by mutation: the test fails with `core.search-index: declared availability changed`. |
+| N5 | `presentation()` was never asserted, so the `warning`/`destructive` hints on the one HIGH-risk destructive tool were uncovered tree-wide | **Fixed.** Verified by mutation: fails with `core.file-operations: presentation changed`. |
+| S3 | The new docs claimed a clean agent/non-agent handler split — false for 2 of the 7 operations (`core.remember` → `RememberFactHandler`, `core.navigate-to-surface` → `NavigateToSurfaceHandler`, both still in app-services) | **Fixed** in `22-agent-system-architecture.md`, `common-workflows.md` and the `consult-register` recipe. A contributor following the old wording for `core.remember` would have gone to the wrong module. |
+| S2 | §A.2 claimed the `CompositionRootGuardrailsTest` javadoc fix had shipped; it had not | **Fixed** — the javadoc now states 21 and reads as a ceiling. The record asserting a fix that did not exist is `retire-with-a-sweep` in documentary form. |
+| S4 | §D named a pin id that `d7216c19` had renamed, and never mentioned the second pin | **Fixed.** |
+| S5 | `check-policy-axis-liveness.test.mjs` never reached the changed code, and both new failure modes (stale directory, missed filename suffix) fail SILENTLY | **Fixed** — four assertions over `CATALOG_DIRS` and the resolved catalog sources. Verified by probe: pointing a directory at a non-existent path fails two assertions loudly where the gate itself stays green. |
+| N1 | The new `modules/ui` pin's `(?!ui\b)` also matched `:modules:ui-web:test` | **Fixed** to `(?!ui:)`; verified by evaluating the regex against four command strings. |
+| N2, N3 | `AgentToolEmitter`'s javadoc repeated the byte-stability claim this PR corrected elsewhere; `FileOperationsTool`'s `MAX_BATCH_SIZE` comment justified `public` by a package boundary the move removed | **Fixed** (comments only; no modifier changed). |
+| N6 | The oracle's failure message said "the model-facing surface changed" while the wire half pins description *keys* | **Fixed** — the message now says so and points at `AgentOfferingProseTest` for the prose. |
+| N7 | The pin said the classes "carry 30s JUnit timeouts"; it is the repo-wide default | **Fixed** — the claim now names `JvmBaseConventionsPlugin.kt:117` so a future agent does not go looking for an `@Timeout` and conclude the pin is wrong. |
+| N11 | "ten referencers" counted the declaration file | **Fixed** — nine. |
+
+One more thing the verification-after-fixes run turned up, which is worth recording because the pin
+written earlier in this same tempdoc would have got it wrong. The final full suite failed
+`AdversarialCorpusIngestionTest` with a plain `AssertionFailedError` — *"Malformed ZIP should map to
+PARSER_FAILED, BUDGET_EXCEEDED, or … SUCCESS_EMPTY. Got: **PARSER_TIMEOUT**"*. The pin's carve-out
+said "only a NON-timeout assertion failure here is yours", which would have claimed this one, because
+the exception type is an assertion. But the *value the assertion saw* is Tika's own timeout under the
+same starvation. Re-ran isolated: BUILD SUCCESSFUL in 14s. The pin now tests for "does the failure
+name a timeout **anywhere**, including as an observed enum value" rather than for the exception type.
+A carve-out written from one symptom shape misclassifies the next one; the fix is to describe the
+cause, not the stack trace.
+
+Findings acknowledged and deliberately not changed: **N4** — the old code evaluated
+`new SearchOperationHandler(tools.searchTool())` (and its `requireNonNull`) *before* the
+skip-if-present short-circuit, so *null tool + ref already registered* was an NPE and is now a silent
+no-op. Unreachable, because `assemble` constructs all four unconditionally — but it is a genuine
+divergence in a PR billed as having none, so it is recorded rather than waved away. **N8** (the two
+tests left in a package whose subject moved) and **N10** (2 bytes of always-loaded headroom) are
+noted; **N9** is answered by S5's new assertions plus a comment naming the suffix as load-bearing.
 
 ## §C. Open items
 

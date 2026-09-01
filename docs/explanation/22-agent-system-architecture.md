@@ -112,7 +112,7 @@ Key classes:
 | `OperationDispatcher` | Dispatches operation calls to registered handlers. |
 | `AgentToolEmitter` | Projects catalog operations into model-visible tool definitions. `offer(...)` is the one authority on *which* operations the model is shown; `emit(...)` is its wire projection. |
 | `AgentToolsOperationCatalog` | Registers the built-in agent operations, in `app-agent` (`modules/app-agent/src/main/java/io/justsearch/agent/tools/AgentToolsOperationCatalog.java`), next to the tools it declares. |
-| Operation handlers | The built-in agent tools (`modules/app-agent/src/main/java/io/justsearch/agent/tools/`) are themselves `OperationHandler` implementations. Other, non-agent operation handlers still live under `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/`. |
+| Operation handlers | The five knowledge/file agent tools (`core.search-index`, `core.read-document`, `core.browse-folders`, `core.ingest-files`, `core.file-operations`) are themselves `OperationHandler` implementations in `modules/app-agent/src/main/java/io/justsearch/agent/tools/`. Two agent operations — `core.remember` and `core.navigate-to-surface` — keep dedicated handlers under `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/`, alongside the non-agent operation handlers that also live there. |
 
 Wire-name projection is deliberate. Dotted operation IDs such as `core.search-index` are projected to model-visible tool names such as `core_search_index`.
 
@@ -265,7 +265,7 @@ Prompt changes should be evaluated against current tool behavior. Expanding the 
 |--------|---------|
 | `modules/app-agent-api` | Public agent API, events, error types, trace context, and operation-facing contracts. |
 | `modules/app-agent` | Agent loop, session state, retry policy, run store, telemetry, and prompt assembly. |
-| `modules/app-services` | Operation catalog composition/dispatch and non-agent operation handlers. The agent-tool catalog and the agent tools themselves live in `modules/app-agent`. |
+| `modules/app-services` | Operation catalog composition/dispatch and non-agent operation handlers, plus dedicated handlers for two agent operations (`core.remember`, `core.navigate-to-surface`). The agent-tool catalog and the five knowledge/file agent tools themselves live in `modules/app-agent`. |
 | `modules/app-inference` | Online AI runtime lifecycle used by the agent. |
 | `modules/ui` | HTTP/SSE agent routes. |
 
@@ -273,7 +273,7 @@ Prompt changes should be evaluated against current tool behavior. Expanding the 
 
 To add or change an agent capability:
 
-1. Add or update the operation entry (including its `OperationPolicy` — risk tier, confirm strategy, audit policy) and its `OperationHandler` implementation together, in `modules/app-agent/src/main/java/io/justsearch/agent/tools/` — for a built-in agent tool these are the same file pair in the same package.
+1. Add or update the operation entry (including its `OperationPolicy` — risk tier, confirm strategy, audit policy) and its `OperationHandler` implementation together. For a new knowledge/file-shaped agent tool, these are the same file pair in the same package, `modules/app-agent/src/main/java/io/justsearch/agent/tools/`. When the work isn't tool-shaped — as `core.remember` and `core.navigate-to-surface` show — the operation entry stays in that catalog but the handler instead goes under `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/`.
 2. Confirm `AgentToolEmitter` projects the intended model-visible wire name and schema; `AgentToolCatalogBaselineTest` (`modules/app-services/src/test/java/io/justsearch/app/services/registry/emitter/AgentToolCatalogBaselineTest.java`) pins the real catalog's projection against a checked-in baseline (`modules/app-services/src/test/resources/agent-tools-wire-baseline.json`), so a deliberate schema or policy change requires updating that baseline.
 3. Register any REST endpoint through route classes in `modules/ui` when the capability also needs HTTP exposure.
 4. Update canonical docs and generated skills after code behavior is verified.
