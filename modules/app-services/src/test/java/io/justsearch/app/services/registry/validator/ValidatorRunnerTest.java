@@ -10,7 +10,7 @@ import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.api.registry.Severity;
 import io.justsearch.app.services.bootstrap.phases.BootstrapHelpers;
 import io.justsearch.app.services.conversation.WorkflowOperationProjection;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import io.justsearch.app.services.registry.operations.handlers.BulkReindexHandler;
 import io.justsearch.app.services.registry.operations.handlers.ClearFailedJobsHandler;
@@ -102,7 +102,7 @@ final class ValidatorRunnerTest {
     // late-bound registration), which this test does not exercise — so a green run here says the
     // DECLARATION is well-shaped and says nothing about whether production actually bound it.
     handlers.register(
-        io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog.REMEMBER,
+        io.justsearch.agent.tools.AgentToolsOperationCatalog.REMEMBER,
         new io.justsearch.app.services.registry.operations.handlers.RememberFactHandler(
             io.justsearch.agent.api.memory.MemoryStore.noop()));
     // Slice 3a-2-c LibraryView Add/Remove cluster: core.add-watched-root +

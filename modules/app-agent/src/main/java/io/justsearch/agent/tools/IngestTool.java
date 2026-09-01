@@ -2,6 +2,7 @@
 package io.justsearch.agent.tools;
 
 import tools.jackson.databind.JsonNode;
+import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.app.api.knowledge.IngestCollectionPolicy;
 import io.justsearch.app.api.knowledge.KnowledgeIngestResponse;
@@ -22,11 +23,11 @@ import org.slf4j.LoggerFactory;
  * ingestion, the Worker processes files for indexing, text extraction, and embedding.
  */
 /**
- * Write-tier ingest tool. Per Phase 12 of tempdoc 429: previously implemented
- * {@code ToolDefinition}; now a plain class invoked via
- * {@link io.justsearch.app.services.registry.operations.handlers.IngestOperationHandler}.
+ * Write-tier ingest tool. It is its own
+ * {@link io.justsearch.agent.api.registry.OperationHandler}: the substrate dispatches
+ * {@code execute(String): OperationResult} directly against this class.
  */
-public final class IngestTool {
+public final class IngestTool implements OperationHandler {
   private static final Logger LOG = LoggerFactory.getLogger(IngestTool.class);
   static final int MAX_PATHS = 100;
 
@@ -77,6 +78,7 @@ public final class IngestTool {
     this.rootBindingsSupplier = rootBindingsSupplier;
   }
 
+  @Override
   public OperationResult execute(String argumentsJson) {
     if (argumentsJson == null || argumentsJson.isBlank()) {
       return OperationResult.failure("No arguments provided");

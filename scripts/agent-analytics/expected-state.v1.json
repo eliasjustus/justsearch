@@ -131,6 +131,30 @@
       "added": "2026-08-31",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: ./gradlew.bat :modules:worker-core:test --tests \"*OnnxEmbeddingEncoderLongDocForensicTest*\""
+    },
+    {
+      "id": "worker-services-30s-timeout-under-load",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!worker-services))(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*(FacetRegressionMatrix|RagContextOpsHybridCollectionScope|SearchExecutorLegSetMatrix|ContentExtractor|AdversarialCorpusIngestion|OfficeMarkerSearchability|PolicyDrivenTikaExtractor)"
+      ],
+      "claim": "Match the SHAPE, not the name list: a worker-services test that fails as `java.util.concurrent.TimeoutException: <method>() timed out after 30 seconds` is CPU-starved, not broken. The 30s is the REPO-WIDE default (`junit.jupiter.execution.timeout.default` in build-logic/src/main/kotlin/conventions/JvmBaseConventionsPlugin.kt:117) — do not go looking for an @Timeout annotation on these classes and conclude the pin is wrong when you find none. They stand up a real Lucene index, the search executor or a real Tika extraction, so concurrent multi-agent Gradle starves them; a timeout in setUp() then cascades every case in the class. Observed across two families — search (FacetRegressionMatrixTest, RagContextOpsHybridCollectionScopeTest, SearchExecutorLegSetMatrixTest) and extraction (ContentExtractorTest, AdversarialCorpusIngestionTest, OfficeMarkerSearchabilityTest, PolicyDrivenTikaExtractorTest) — so treat a NEW name with the same shape as the same thing rather than as a new defect. IMPORTANT: starvation does not always surface as a JUnit TimeoutException. AdversarialCorpusIngestionTest fails as a plain AssertionFailedError reading `Malformed ZIP should map to PARSER_FAILED, BUDGET_EXCEEDED, or ... SUCCESS_EMPTY. Got: PARSER_TIMEOUT` — the assertion is real, but the value it saw is Tika's OWN timeout under the same starvation. So the test to apply is 'does the failure name a timeout ANYWHERE, including as an observed enum value', not 'is the exception a TimeoutException'. Re-run isolated before believing any of it; a failure here that names no timeout at all is yours. Same species as worker-core-onnx-longdoc-forensic-timeout.",
+      "evidence": "tempdoc 880 session f6617483 (2026-09-01): one full-suite run under concurrent multi-agent Gradle produced 9 failures across the three search classes, every one a 30s TimeoutException; re-run isolated on the same tree minutes later, BUILD SUCCESSFUL in 10s with zero failures. A separate full-suite run in the same session hit the four extraction classes with the identical TimeoutException-in-setUp shape. A third full-suite run produced the PARSER_TIMEOUT assertion variant in AdversarialCorpusIngestionTest, which likewise passed isolated (BUILD SUCCESSFUL in 14s) — that run is why the claim now tests for 'names a timeout anywhere' rather than for the exception type. modules/worker-services declares no dependency on app-agent or app-services (modules/worker-services/build.gradle.kts:12-26), and tempdoc 880's diff touches only app-agent, app-services, ui tests, docs and scripts — there is no path by which that change could reach these tests.",
+      "added": "2026-09-01",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:worker-services:test --tests \"*FacetRegressionMatrixTest*\" --tests \"*RagContextOpsHybridCollectionScopeTest*\" --tests \"*SearchExecutorLegSetMatrixTest*\" --tests \"*ContentExtractorTest*\""
+    },
+    {
+      "id": "ui-readiness-trigger-composition-5s-wait-under-load",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!ui:))(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*ReadinessTriggerComposition"
+      ],
+      "claim": "ReadinessTriggerCompositionTest waits up to 5000 ms for a readiness condition to clear and fails as `index.unavailable was still asserted after 5000ms` when the machine is saturated by concurrent multi-agent Gradle. It is a wall-clock wait on a background reconciliation, so the failure says the box was busy, not that the trigger regressed. Re-run isolated before believing it; a failure with a DIFFERENT message here is yours.",
+      "evidence": "tempdoc 880 session f6617483 (2026-09-01): failed in a full-suite run under concurrent load, passed isolated on the same tree in 11s.",
+      "added": "2026-09-01",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:ui:test --tests \"*ReadinessTriggerCompositionTest*\""
     }
   ]
 }

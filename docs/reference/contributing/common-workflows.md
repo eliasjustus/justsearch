@@ -49,12 +49,10 @@ explicitly with `cd modules/ui-web && npm install`, then commit the updated
 `node scripts/dev/serve-worktree-fe.cjs` (§7).
 
 ## Add an agent tool
-1. Add or update the operation definition in `OperationCatalog` / `AgentToolsOperationCatalog`
-2. Implement or update the operation handler in `modules/app-services/.../registry/operations/handlers/`
-3. Confirm `AgentToolEmitter` projects the intended model-visible wire name and schema
-4. Add safety/approval metadata at the operation layer
-5. Update `docs/explanation/22-agent-system-architecture.md`
-6. Verify: `./gradlew.bat :modules:app-agent:test :modules:app-services:test`
+1. Add or update the operation entry in `AgentToolsOperationCatalog` (including its `OperationPolicy` — risk tier, confirm strategy, audit policy) and implement it as an `OperationHandler`. For a new knowledge/file-shaped tool, these are the same file pair in the same package, `modules/app-agent/src/main/java/io/justsearch/agent/tools/`. When the work isn't tool-shaped — as `core.remember` and `core.navigate-to-surface` show — the handler instead goes under `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/`
+2. Confirm `AgentToolEmitter` projects the intended model-visible wire name and schema; a deliberate schema/policy change also requires updating `modules/app-services/src/test/resources/agent-tools-wire-baseline.json` (pinned by `AgentToolCatalogBaselineTest`)
+3. Update `docs/explanation/22-agent-system-architecture.md`
+4. Verify: `./gradlew.bat :modules:app-agent:test :modules:app-services:test`
 
 ## Modify SSOT catalogs (fields, analyzers, synonyms)
 Load `/ssot-catalog` for the dual-copy checklist and field role reference.

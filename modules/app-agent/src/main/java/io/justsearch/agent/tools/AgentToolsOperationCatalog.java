@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-package io.justsearch.app.services.registry.operations;
+package io.justsearch.agent.tools;
 
 import io.justsearch.agent.api.registry.AliasRegistry;
 import io.justsearch.agent.api.registry.AuditPolicy;
@@ -22,7 +22,6 @@ import io.justsearch.agent.api.registry.Provenance;
 import io.justsearch.agent.api.registry.ResourceRef;
 import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
-import io.justsearch.agent.tools.FileOperationsTool;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -48,7 +47,7 @@ import java.util.Set;
  * agent-only behavior); UI exposure is a future slice's concern.
  *
  * <p>Namespace is {@code "core"} (these are core JustSearch tools, not plugins).
- * Both {@link CoreOperationCatalog} and this catalog share the namespace; entry
+ * Both {@code CoreOperationCatalog} and this catalog share the namespace; entry
  * IDs are disjoint.
  */
 public final class AgentToolsOperationCatalog implements OperationCatalog {
@@ -103,7 +102,7 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
 
   /**
    * Slice 491 §9.D Phase E (E3 + E17 probe fix): navigation tool in the agent's palette.
-   * Re-declares the same OperationRef as {@link CoreOperationCatalog#NAVIGATE_TO_SURFACE};
+   * Re-declares the same OperationRef as {@code CoreOperationCatalog.NAVIGATE_TO_SURFACE};
    * the handler is registered in HeadAssembly after backendIntentRouter is initialized.
    * The LLM sees this as {@code core_navigate_to_surface} (wire-name transliteration).
    */
@@ -459,7 +458,7 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
    *
    * <p>Tempdoc 560 WS4 (catalog collapse): this is now the <em>single canonical</em>
    * {@code core.navigate-to-surface} declaration. The duplicate that previously lived in
-   * {@link CoreOperationCatalog} (executors {@code {UI, AGENT}}, audience {@code USER}) was
+   * {@code CoreOperationCatalog} (executors {@code {UI, AGENT}}, audience {@code USER}) was
    * removed so core + agent-tools can install into the one {@link
    * io.justsearch.agent.api.registry.ContributionRegistry} without a ref collision. This entry
    * carries the <em>superset</em> executor set {@code {UI, AGENT}} + {@code USER} audience, so

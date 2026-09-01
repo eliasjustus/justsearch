@@ -1,0 +1,169 @@
+[ {
+  "type" : "function",
+  "function" : {
+    "name" : "core_search_index",
+    "description" : "ops.search-index.description",
+    "parameters" : {
+      "type" : "object",
+      "properties" : {
+        "query" : {
+          "type" : "string"
+        },
+        "limit" : {
+          "type" : "integer"
+        },
+        "path_prefix" : {
+          "type" : "string",
+          "description" : "Restrict results to files under this folder, as returned by core_browse_folders."
+        }
+      },
+      "required" : [ "query" ]
+    }
+  }
+}, {
+  "type" : "function",
+  "function" : {
+    "name" : "core_read_document",
+    "description" : "ops.read-document.description",
+    "parameters" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string",
+          "description" : "Path of the document to read, as returned by core_browse_folders or a core_search_index result."
+        },
+        "offset_chars" : {
+          "type" : "integer",
+          "description" : "Character offset to start reading from (default 0). Use the offset the previous page's 'More:' line gives you to continue. Paging costs one step per page and the header tells you the document's total length — check it before deciding to continue."
+        },
+        "max_chars" : {
+          "type" : "integer",
+          "description" : "Maximum characters to return in this page. Capped server-side so one page always fits the context window."
+        }
+      },
+      "required" : [ "path" ]
+    }
+  }
+}, {
+  "type" : "function",
+  "function" : {
+    "name" : "core_browse_folders",
+    "description" : "ops.browse-folders.description",
+    "parameters" : {
+      "type" : "object",
+      "properties" : {
+        "parent_path" : {
+          "type" : "string"
+        },
+        "list_files" : {
+          "type" : "boolean"
+        },
+        "max_folders" : {
+          "description" : "Maximum folders to return; capped at 200 server-side."
+        },
+        "max_files" : {
+          "description" : "Maximum files to return when listing files; capped at 200 server-side."
+        }
+      }
+    }
+  }
+}, {
+  "type" : "function",
+  "function" : {
+    "name" : "core_ingest_files",
+    "description" : "ops.ingest-files.description",
+    "parameters" : {
+      "type" : "object",
+      "properties" : {
+        "paths" : {
+          "type" : "array",
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "collection" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "paths" ]
+    }
+  }
+}, {
+  "type" : "function",
+  "function" : {
+    "name" : "core_file_operations",
+    "description" : "ops.file-operations.description",
+    "parameters" : {
+      "type" : "object",
+      "properties" : {
+        "operations" : {
+          "type" : "array",
+          "description" : "File operations to execute sequentially, at most 50 per call.",
+          "items" : {
+            "type" : "object",
+            "properties" : {
+              "op" : {
+                "type" : "string",
+                "description" : "Operation type: one of MOVE, RENAME, MKDIR, COPY (case-insensitive)."
+              },
+              "source" : {
+                "type" : "string",
+                "description" : "Source file or folder path (not needed for MKDIR)."
+              },
+              "destination" : {
+                "type" : "string",
+                "description" : "Destination file or folder path. Required for every operation."
+              }
+            },
+            "required" : [ "op" ]
+          }
+        },
+        "conflict_strategy" : {
+          "type" : "string",
+          "default" : "FAIL",
+          "description" : "How to handle destination conflicts (case-insensitive), one of FAIL, SKIP, AUTO_SUFFIX: FAIL aborts the batch, SKIP skips the conflicting operations, AUTO_SUFFIX renames to a unique name like file (1).txt."
+        },
+        "explanation" : {
+          "type" : "string",
+          "description" : "One line saying what these operations accomplish. Recorded in the undo journal and shown in the user's undo history."
+        }
+      },
+      "required" : [ "operations" ]
+    }
+  }
+}, {
+  "type" : "function",
+  "function" : {
+    "name" : "core_navigate_to_surface",
+    "description" : "ops.navigate-to-surface.description",
+    "parameters" : {
+      "type" : "object",
+      "properties" : {
+        "surfaceId" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "surfaceId" ]
+    }
+  }
+}, {
+  "type" : "function",
+  "function" : {
+    "name" : "core_remember",
+    "description" : "ops.remember.description",
+    "parameters" : {
+      "type" : "object",
+      "properties" : {
+        "content" : {
+          "type" : "string",
+          "description" : "The durable fact or user preference to remember, in one concise sentence."
+        },
+        "kind" : {
+          "type" : "string",
+          "description" : "Optional category, e.g. \"fact\" or \"preference\"."
+        }
+      },
+      "required" : [ "content" ]
+    }
+  }
+} ]

@@ -31,7 +31,7 @@ Representative leaf modules that other modules depend on:
 | Module | Purpose |
 |--------|---------|
 | `app-api` | Application facade interfaces (`AppFacade`, `IndexingService`, `DocumentService`, `OnlineAiService`) |
-| `app-agent-api` | Agent-facing request/response contracts |
+| `app-agent-api` | Operation/registry substrate (Operation, OperationHandler, OperationCatalog, the `AgentToolEmitter` SPI) plus agent-facing request/response contracts |
 | `ipc-common` | gRPC proto definitions and generated stubs |
 
 ### Application Services Layer
@@ -41,7 +41,7 @@ Representative leaf modules that other modules depend on:
 | `app-services` | `HeadAssembly` composition root + typed bootstrap graphs, orchestration hub |
 | `app-search` | Search clients (gRPC, Lucene) |
 | `app-indexing` | Indexing service, file watchers |
-| `app-agent` | Agent runtime/service orchestration |
+| `app-agent` | Agent runtime/service orchestration; also owns the built-in agent tools and their `AgentToolsOperationCatalog` |
 | `app-inference` | Online inference lifecycle management, including llama-server start/adopt/health/reload/stop |
 
 ### Worker Processes

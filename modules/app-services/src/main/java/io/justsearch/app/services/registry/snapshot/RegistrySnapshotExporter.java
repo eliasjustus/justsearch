@@ -18,7 +18,7 @@ import io.justsearch.app.services.bootstrap.phases.ResourceSubstrateInit;
 import io.justsearch.app.services.mcphost.McpHostService;
 import io.justsearch.app.services.registry.SurfaceConsumerIndex;
 import io.justsearch.app.services.registry.emitter.AgentOperationEmitter;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import java.io.IOException;
 import java.nio.file.Files;

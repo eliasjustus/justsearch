@@ -348,9 +348,10 @@ Verification run:
 |---|---|
 | `gradle-locked.sh spotlessApply` | BUILD SUCCESSFUL |
 | `gradle-locked.sh build -x test` (compile + Spotless + PMD) | BUILD SUCCESSFUL in 34s |
-| `gradle-locked.sh :modules:app-agent:test` | BUILD SUCCESSFUL — `AgentLlmCallerTest` 19/0/0/0, `AgentLoopServiceTest` 125/0/0/0 |
+| `gradle-locked.sh :modules:app-agent:test` | BUILD SUCCESSFUL — `AgentLlmCallerTest` **22**/0/0/0, `AgentLoopServiceTest` **126**/0/0/0 (after §G) |
+| `gradle-locked.sh :modules:app-inference:test` | BUILD SUCCESSFUL — `OnlineModeOpsTest` 56/0/0/0 (after §G finding 12) |
 | `gradle-locked.sh :modules:app-launcher:test` | BUILD SUCCESSFUL (the two ArchUnit violations above, fixed) |
-| `gradle-locked.sh test` (full suite) | BUILD FAILED in 10m 27s on **two** classes, both environmental — see below |
+| `gradle-locked.sh test` (full suite, twice — before and after the §G review fixes) | BUILD FAILED both times on the **same two** classes, both environmental and both in modules this diff does not touch — see below. Everything else green. |
 | `node scripts/governance/run.mjs --gate register-guard-resolution --mode gate` | pass |
 | `node scripts/governance/run.mjs --gate hook-integrity --mode gate` | pass |
 

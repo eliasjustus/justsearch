@@ -737,10 +737,11 @@ final class AgentSession {
    */
   AgentEvent.ParkSnapshot parkSnapshot() {
     if (budgetGateHeld()) {
-      return new AgentEvent.ParkSnapshot("budget", budgetGateSinceEpochMs, "budget gate held");
+      return new AgentEvent.ParkSnapshot("budget", budgetGate.sinceEpochMs(), "budget gate held");
     }
     if (contextGateHeld()) {
-      return new AgentEvent.ParkSnapshot("context", contextGateSinceEpochMs, "context gate held");
+      return new AgentEvent.ParkSnapshot(
+          "context", contextGate.sinceEpochMs(), "context gate held");
     }
     var held =
         approvalGates.values().stream()
@@ -771,10 +772,9 @@ final class AgentSession {
     STOP
   }
 
-  private volatile CompletableFuture<BudgetGateDecision> budgetGate;
-  // Tempdoc 834 §6.2 — when the current budget park began, so the snapshot's ParkSnapshot can say
+  // Tempdoc 834 §6.2 — the gate also records when the park began, so ParkSnapshot can say
   // "parked since", not just "parked".
-  private volatile long budgetGateSinceEpochMs;
+  private final HeldGate<BudgetGateDecision> budgetGate = new HeldGate<>();
 
   /**
    * Tempdoc 577 Move 2 — park the run at the budget boundary as a HELD decision (the budget
@@ -783,10 +783,7 @@ final class AgentSession {
    * endpoint (CONTINUE), the decision endpoint (FINALIZE/STOP), or the loop's own timeout.
    */
   CompletableFuture<BudgetGateDecision> createBudgetGate() {
-    var gate = new CompletableFuture<BudgetGateDecision>();
-    budgetGate = gate;
-    budgetGateSinceEpochMs = System.currentTimeMillis();
-    return gate;
+    return budgetGate.arm();
   }
 
   /**
@@ -794,24 +791,17 @@ final class AgentSession {
    * endpoint surfaces that as 404, mirroring approve/reject on an unknown callId.
    */
   boolean resolveBudgetGate(BudgetGateDecision decision) {
-    var gate = budgetGate;
-    if (gate == null || gate.isDone()) {
-      return false;
-    }
-    budgetGate = null;
-    gate.complete(decision);
-    return true;
+    return budgetGate.resolve(decision);
   }
 
   /** Whether a budget gate is currently held (the run is parked awaiting a decision). */
   boolean budgetGateHeld() {
-    var gate = budgetGate;
-    return gate != null && !gate.isDone();
+    return budgetGate.held();
   }
 
   /** Clear the gate reference after the loop consumed it (timeout path). */
   void clearBudgetGate() {
-    budgetGate = null;
+    budgetGate.clear();
   }
 
   // --- Context gate (tempdoc 577 §2.14 Root II #14 — the COGNITIVE sibling of the budget gate) ---
@@ -826,9 +816,7 @@ final class AgentSession {
     STOP
   }
 
-  private volatile CompletableFuture<ContextGateDecision> contextGate;
-  // Tempdoc 834 §6.2 — the context park's start, mirroring budgetGateSinceEpochMs.
-  private volatile long contextGateSinceEpochMs;
+  private final HeldGate<ContextGateDecision> contextGate = new HeldGate<>();
   // The context gate ASKS at most once per run: once the user decides (continue/summarize), the run
   // is not re-parked every iteration.
   //
@@ -850,28 +838,21 @@ final class AgentSession {
    * future until the context-decision endpoint resolves it or the loop's timeout fires.
    */
   CompletableFuture<ContextGateDecision> createContextGate() {
-    var gate = new CompletableFuture<ContextGateDecision>();
-    contextGate = gate;
-    contextGateSinceEpochMs = System.currentTimeMillis();
+    var gate = contextGate.arm();
+    // Not part of HeldGate: arming the CONTEXT gate additionally latches "already asked this run".
+    // The budget gate has no analogue, which is why gate CREATION stayed per-gate (tempdoc 880 §B.6).
     contextGateFired = true;
     return gate;
   }
 
   /** Resolve a held context gate. Returns false when no gate is held (surfaced as 404). */
   boolean resolveContextGate(ContextGateDecision decision) {
-    var gate = contextGate;
-    if (gate == null || gate.isDone()) {
-      return false;
-    }
-    contextGate = null;
-    gate.complete(decision);
-    return true;
+    return contextGate.resolve(decision);
   }
 
   /** Whether a context gate is currently held (the run is parked awaiting a decision). */
   boolean contextGateHeld() {
-    var gate = contextGate;
-    return gate != null && !gate.isDone();
+    return contextGate.held();
   }
 
   /** Whether the context gate has already fired this run (park at most once). */
@@ -881,7 +862,73 @@ final class AgentSession {
 
   /** Clear the gate reference after the loop consumed it (timeout path). */
   void clearContextGate() {
-    contextGate = null;
+    contextGate.clear();
+  }
+
+  /**
+   * Tempdoc 880 §B.6 — one HELD singleton decision gate: the run parks on a future and a human (or
+   * the loop's own timeout) resolves it. Extracted because {@code createBudgetGate} /
+   * {@code createContextGate} and their resolve/held/clear siblings had byte-identical bodies
+   * differing only in the decision type.
+   *
+   * <p>Scoped deliberately to arm/resolve/held/clear, and NOT to the other three things that look
+   * like they belong here:
+   *
+   * <ul>
+   *   <li><b>Gate creation policy</b> stays per-gate: arming the context gate also latches
+   *       {@code contextGateFired}, the two gates use different timeouts
+   *       ({@code AgentTimeouts.contextGateMs()} vs {@code budgetGateMs()}) with different timeout
+   *       FALLBACKS (context → CONTINUE plus a {@code PHASE_CONTEXT_GATE_UNANSWERED} narration;
+   *       budget → FINALIZE, silent), and the background-run guard sits around gate creation for
+   *       budget but inside the trigger predicate for context. All in {@code AgentStepRunner}.
+   *   <li><b>The two map-keyed gates</b> (approval, virtual-tool) are not members: approval carries
+   *       a {@link PendingGate} with detail + timestamp and appears in {@link #parkSnapshot()},
+   *       virtual-tool is a bare future map that does not, and {@link #cancel()} clears one map but
+   *       not the other.
+   * </ul>
+   *
+   * Those are real behaviour differences, not duplication — unifying them would silently change a
+   * memory model, two timeout behaviours and a park-visibility surface.
+   */
+  private static final class HeldGate<T> {
+
+    // Volatile for the same reason the two raw fields were: armed on the loop thread, read and
+    // resolved from HTTP endpoint threads.
+    private volatile CompletableFuture<T> gate;
+    private volatile long sinceEpochMs;
+
+    /** Park: install a fresh future and stamp the park's start. */
+    CompletableFuture<T> arm() {
+      var fresh = new CompletableFuture<T>();
+      gate = fresh;
+      sinceEpochMs = System.currentTimeMillis();
+      return fresh;
+    }
+
+    /** Complete a held gate. False when nothing is held — the endpoints surface that as 404. */
+    boolean resolve(T decision) {
+      var current = gate;
+      if (current == null || current.isDone()) {
+        return false;
+      }
+      gate = null;
+      current.complete(decision);
+      return true;
+    }
+
+    boolean held() {
+      var current = gate;
+      return current != null && !current.isDone();
+    }
+
+    /** When the current park began; 0 if this gate has never been armed. */
+    long sinceEpochMs() {
+      return sinceEpochMs;
+    }
+
+    void clear() {
+      gate = null;
+    }
   }
 
   /**

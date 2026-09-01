@@ -773,4 +773,19 @@ Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from
 - [ ] The live agent streaming answer block binds no ?is-streaming, so MarkdownBlock treats every mid-stream frame as settled (weave + neutralizer run) — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:4634` (2026-08-26)
 - [ ] MarkdownBlock in `plain` format: the citation weave splits Lit's ChildPart text node, so a later `text` change hits lit-html's primitive fast path (`startNode.nextSibling.data = value`) and can write to a `.cite-sentence` span instead of a text node — stale content. Pre-existing, unrelated to 869 R2 — `modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts:1010` (2026-08-26)
 - [ ] stripTrailingCitationBlock (565 §13.8) treats any PROSE paragraph starting with 'Citation…/Source…/Reference…' that contains a [n] as a trailing bibliography and deletes it to EOF — live: a 2202-char answer rendered 1020 chars (half the answer silently gone). Heading must be its own line — `modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts:161` (2026-08-26)
-- [ ] The Playwright drive/probe scripts behind §4.4 (the sv3 ask driver + the shadow-DOM citation probe) were scratchpad-only, so §4.4's before/after cannot be re-run by anyone else — worth landing under `scripts/jseval` as a `cite-probe` verb (2026-08-26; carried in from a session shard that survived the 872 retirement sweep on a local branch and was routed here by tempdoc 881 on 2026-09-01. The shard's other two notes are settled: 867 already records what 869 shipped and orphaned, §§ at `867:8` and `867:486-496`; and "local main's merge is blocked by other sessions' untracked shards" is moot now that the store is gone.)
+
+### Routed from a straggler shard (tempdoc 880, 2026-09-01)
+
+One `docs/observations.d/` shard (session `e9f135ac`, written 2026-08-26) survived 872's retirement on
+a local branch and reached tempdoc 880's worktree through its base. Its notes are its author's 869
+closeout list, so they belong here; the shard itself was deleted, which is what
+`check-no-observations-shards` asks for.
+
+- [ ] 869 closeout: tempdoc 867 needs a §7 pointer saying that 869 shipped (PR #569 / `7e0498bc`) and what it hands 867 — the data-claimed-label hook, the S1–S4 counter need, and the fact that the tier-2 idiom was never observed live on the compact profile (2026-08-26)
+- [ ] The Playwright drive/probe scripts behind 869 §4.4 (the sv3 ask driver and the shadow-DOM citation probe) were scratchpad-only. Worth landing under `scripts/jseval` as a `cite-probe` verb so the before/after measurement is re-runnable rather than re-authored (2026-08-26)
+
+The same shard reached tempdoc 881's worktree through the same local-`main` base and was routed
+identically there; this section is the surviving copy. 881 checked the first note before deleting
+its own duplicate and found 867 already carries the substance of that pointer at `867:8` and
+`867:486-496` — so what remains open there is whether 867 wants it as an explicit §7, not whether
+the fact is recorded anywhere (2026-09-01).

@@ -12,7 +12,7 @@
  * Usage: `node scripts/ci/check-policy-axis-liveness.test.mjs`. Exit 0 = OK, 1 = failure.
  */
 
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -20,6 +20,8 @@ import {
   stripComments,
   splitTopLevel,
   parseComponents,
+  CATALOG_DIRS,
+  catalogSources,
 } from './check-policy-axis-liveness.mjs';
 
 let failures = 0;
@@ -155,8 +157,28 @@ try {
   rmSync(dir, { recursive: true, force: true });
 }
 
+// Tempdoc 880 — the path literals themselves. Both failure modes below are SILENT: the gate skips
+// a stale directory via existsSync and skips a file whose name misses the suffix, so it keeps
+// exiting 0 while attributing Optional axes from fewer declaration sites. That is exactly how a
+// re-home broke this gate: AgentToolsOperationCatalog moved out of the one hard-coded directory and
+// `capabilityFamily` was reported undeclared when it had only become invisible.
+for (const dir of CATALOG_DIRS) {
+  ok(`catalog directory exists: ${dir}`, existsSync(dir) && statSync(dir).isDirectory());
+}
+ok(
+  'both known Operation catalogs are picked up as declaration sites',
+  catalogSources.some((f) => f.endsWith('/CoreOperationCatalog.java')) &&
+    catalogSources.some((f) => f.endsWith('/AgentToolsOperationCatalog.java')),
+);
+ok(
+  'every catalog source actually declares an OperationPolicy',
+  catalogSources.length > 0 &&
+    catalogSources.every((f) => readFileSync(f, 'utf8').includes('new OperationPolicy(')),
+);
+
 if (failures > 0) {
   console.error(`check-policy-axis-liveness.test FAIL — ${failures} assertion(s) failed.`);
   process.exit(1);
 }
-console.log('check-policy-axis-liveness.test OK - 8 assertions passed.');
+// 8 mechanism assertions + one per catalog directory + 2 over the resolved catalog sources.
+console.log(`check-policy-axis-liveness.test OK - ${10 + CATALOG_DIRS.length} assertions passed.`);
