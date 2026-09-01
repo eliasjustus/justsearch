@@ -33,7 +33,7 @@
         "gradlew?(\\.bat)? .*--tests .*WatchedRootScanCollection"
       ],
       "claim": "WatchedRootScanCollectionTest 'addWatchedRoot's scan reaches the wire with the root's collection set' is FLAKY under the full ./gradlew test run only (JUnitException/IOException in the in-process gRPC scan; passes in isolation and on --rerun). Seen 2026-08-25 (session bccfc163) and 2026-08-26 (872's post-merge full run). A failure ONLY there is pre-existing; re-run in isolation to confirm. The fix is a tracked item in tempdoc 872 §6.",
-      "evidence": "retired shard bccfc163…agent-ae33cee35818e8403 (2026-08-25, 'failed once and passed on rerun'); tempdoc 872 post-merge full-suite run 2026-08-26 (2372 tests, this one failed; --rerun in isolation passed)",
+      "evidence": "retired shard bccfc163…agent-ae33cee35818e8403 (2026-08-25, 'failed once and passed on rerun'); tempdoc 872 post-merge full-suite run 2026-08-26 (2372 tests, this one failed; --rerun in isolation passed); tempdoc 881 session f6617483 (2026-09-01, worktree agent-a184dcdde8b9073b3) — third sighting, and it pins down the shape: the failure is at CLOSE, not at assert ('JUnitException: Failed to close extension context' / 'IOException: Failed to delete temp directory …Temp\\\\junit-…'), so every assertion had already passed and Windows still held a handle. Load-correlated: it fell out of a full suite run with llama-server holding the GPU and a second worktree holding the Gradle lane, and the immediate targeted re-run was 3/0/0/0 + 1/0/0/0.",
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: ./gradlew.bat :modules:app-services:test --tests \"*WatchedRootScanCollectionTest*\" --rerun"
@@ -131,18 +131,6 @@
       "added": "2026-08-31",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: ./gradlew.bat :modules:worker-core:test --tests \"*OnnxEmbeddingEncoderLongDocForensicTest*\""
-    },
-    {
-      "id": "app-services-junit-tempdir-delete-race",
-      "match": [
-        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!app-services))(?!.*--tests)(?=.*\\btest\\b)",
-        "gradlew?(\\.bat)? .*--tests .*WatchedRootScanCollection"
-      ],
-      "claim": "A test using JUnit's @TempDir can fail at CLOSE, not at assert, with 'JUnitException: Failed to close extension context / IOException: Failed to delete temp directory C:\\\\Users\\\\...\\\\Temp\\\\junit-...' — the assertions all passed and Windows still held a handle on the directory. LOAD-DEPENDENT: seen once on app-services' WatchedRootScanCollectionTest$ProductionWireForwarding during a full suite run with the dev stack live and a second agent building, then green on an immediate re-run of the same class on the same tree. A close-time IOException with zero assertion failures is environmental, not your change; re-run the single class before investigating.",
-      "evidence": "tempdoc 881 session f6617483 (2026-09-01): full `test` on worktree agent-a184dcdde8b9073b3 failed only this class (close-time IOException, no assertion failure) while llama-server held the GPU and a second worktree held the Gradle lane; the immediate targeted re-run reported 3/0/0/0 + 1/0/0/0. 881's diff touches modules/app-agent and one javadoc line in modules/app-inference — no app-services file, and this test exercises the worker wire, not the agent loop.",
-      "added": "2026-09-01",
-      "reviewBy": "2026-09-30",
-      "exitProbe": "slow: ./gradlew.bat :modules:app-services:test --tests \"*WatchedRootScanCollectionTest*\""
     }
   ]
 }
