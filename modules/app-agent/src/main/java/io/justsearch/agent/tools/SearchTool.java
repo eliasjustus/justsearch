@@ -2,6 +2,7 @@
 package io.justsearch.agent.tools;
 
 import tools.jackson.databind.JsonNode;
+import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequest;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequestFiltersBuilder;
@@ -22,13 +23,11 @@ import java.util.function.Supplier;
  * scores, and excerpt snippets.
  */
 /**
- * Read-only knowledge-index search tool. Per Phase 12 of tempdoc 429: previously
- * implemented {@code ToolDefinition}; now a plain class invoked via
- * {@link io.justsearch.app.services.registry.operations.handlers.SearchOperationHandler}
- * which adapts {@code execute(String): OperationResult} to the substrate's
- * {@link io.justsearch.agent.api.registry.OperationHandler} contract.
+ * Read-only knowledge-index search tool. It is its own
+ * {@link io.justsearch.agent.api.registry.OperationHandler}: the substrate dispatches
+ * {@code execute(String): OperationResult} directly against this class.
  */
-public final class SearchTool {
+public final class SearchTool implements OperationHandler {
   // Three-layer truncation for search results delivered to the LLM (see tempdocs 208, 213):
   // Layer 1 (formatResults): sizes the WHOLE emitted string under MAX_TOOL_RESULT_CHARS by
   //   construction — summary reserved first, then every hit's identity block, then excerpts with
@@ -158,6 +157,7 @@ public final class SearchTool {
     this.rootsView = rootsView == null ? AgentToolPaths.RootsView.of(null) : rootsView;
   }
 
+  @Override
   public OperationResult execute(String argumentsJson) {
     // Tempdoc 877 §2.1 — the argument keys, and who authors each one. Model-visible: `query`,
     // `limit`, `path_prefix` — exactly what AgentToolsOperationCatalog.searchIndex() declares, which

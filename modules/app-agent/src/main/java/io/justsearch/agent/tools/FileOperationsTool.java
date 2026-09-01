@@ -2,6 +2,7 @@
 package io.justsearch.agent.tools;
 
 import tools.jackson.databind.JsonNode;
+import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationResult;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -35,17 +36,17 @@ import org.slf4j.LoggerFactory;
  * <p>Safety level is WRITE — requires user approval before execution.
  */
 /**
- * Destructive file-operations tool. Per Phase 12 of tempdoc 429: previously implemented
- * {@code ToolDefinition}; now a plain class invoked via
- * {@link io.justsearch.app.services.registry.operations.handlers.FileOperationsHandler}.
- * The handler delegates {@code execute(...)} and {@code undo(...)} to this class; the
+ * Destructive file-operations tool. It is its own
+ * {@link io.justsearch.agent.api.registry.OperationHandler}: the substrate dispatches
+ * {@code execute(...)} and {@code undo(...)} directly against this class, and the
  * substrate's {@code OperationPolicy.undoSupported()} replaces the deleted
  * {@code supportsUndo()} contract.
  */
-public final class FileOperationsTool {
+public final class FileOperationsTool implements OperationHandler {
   private static final Logger LOG = LoggerFactory.getLogger(FileOperationsTool.class);
-  // Tempdoc 877 §2.1 — public because AgentToolsOperationCatalog.fileOperations() interpolates it
-  // into the model-visible `operations` description. The deleted tool-local schema constant used to
+  // Tempdoc 877 §2.1 — public (now same-package: AgentToolsOperationCatalog lives in this
+  // io.justsearch.agent.tools package too) so fileOperations() can interpolate it into the
+  // model-visible `operations` description. The deleted tool-local schema constant used to
   // spell the same number a second time; interpolating leaves one author for it.
   public static final int MAX_BATCH_SIZE = 50;
 
@@ -89,6 +90,7 @@ public final class FileOperationsTool {
         new FileOperationExecutor(indexedRootsSupplier, indexUpdateCallback, transactionLog);
   }
 
+  @Override
   public OperationResult execute(String argumentsJson) {
     try {
       JsonNode args = ToolArgs.parse(argumentsJson);
@@ -145,6 +147,7 @@ public final class FileOperationsTool {
     }
   }
 
+  @Override
   public OperationResult undo(String executionId) {
     try {
       Map<String, Object> batch = transactionLog.readBatch(executionId);

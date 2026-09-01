@@ -4,11 +4,7 @@ package io.justsearch.app.services;
 import io.grpc.Server;
 import io.justsearch.agent.AgentRunStore;
 import io.justsearch.agent.api.AgentService;
-import io.justsearch.agent.tools.BrowseTool;
 import io.justsearch.agent.tools.FileOperationLog;
-import io.justsearch.agent.tools.FileOperationsTool;
-import io.justsearch.agent.tools.IngestTool;
-import io.justsearch.agent.tools.SearchTool;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.api.OnlineAiService;
@@ -417,12 +413,6 @@ public final class HeadAssembly implements AutoCloseable {
     this.agentSearchAdapter = serviceOut.agentTools().agentSearchAdapter();
     this.excludes = serviceOut.excludes();
     FileOperationLog fileOperationLog = serviceOut.agentTools().fileOperationLog();
-    FileOperationsTool fileOperationsToolInstance = serviceOut.agentTools().fileOperationsTool();
-    SearchTool searchToolInstance = serviceOut.agentTools().searchTool();
-    BrowseTool browseToolInstance = serviceOut.agentTools().browseTool();
-    IngestTool ingestToolInstance = serviceOut.agentTools().ingestTool();
-    io.justsearch.agent.tools.ReadDocumentTool readDocumentToolInstance =
-        serviceOut.agentTools().readDocumentTool();
 
     // Tempdoc 629 (LAYER): seal agent-run meta.json + events.ndjson with the data key (lazy reads → no
     // reload-listener needed; while locked the ledger is empty until unlock).
@@ -512,12 +502,8 @@ public final class HeadAssembly implements AutoCloseable {
 
     // §4 Phase 4 — SubstratePhase: composes operation registry + catalogs + resource/metric/
     // operation/health substrate init + indexing-jobs bridge + rule runner.
-    final SearchTool searchToolFinal = searchToolInstance;
-    final BrowseTool browseToolFinal = browseToolInstance;
-    final IngestTool ingestToolFinal = ingestToolInstance;
-    final FileOperationsTool fileOperationsToolFinal = fileOperationsToolInstance;
-    final io.justsearch.agent.tools.ReadDocumentTool readDocumentToolFinal =
-        readDocumentToolInstance;
+    final io.justsearch.app.services.bootstrap.phases.AgentToolFactory.Output agentToolsFinal =
+        serviceOut.agentTools();
     this.substrateOut =
         tracedPhase(
                 "substrate",
@@ -541,11 +527,7 @@ public final class HeadAssembly implements AutoCloseable {
                     ? null
                     : this.serviceOut.inferenceRuntimeHandles().runtimeSpecStore(),
             () -> this.runtimeReconciler,
-                    searchToolFinal,
-                    browseToolFinal,
-                    ingestToolFinal,
-                    fileOperationsToolFinal,
-                    readDocumentToolFinal,
+                    agentToolsFinal,
                     buildCapabilityResolver(),
                     this.serviceOut.operationLeaseService(),
                     // MCP-host servers (tempdoc 560 §6): resolved by the config authority here at

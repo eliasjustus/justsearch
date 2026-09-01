@@ -14,7 +14,7 @@ import io.justsearch.agent.api.registry.SourceTier;
 import io.justsearch.app.services.intent.ConsentCapsuleService;
 import io.justsearch.app.services.intent.DurableGrantStore;
 import io.justsearch.app.services.intent.PendingAuthorizationStore;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;

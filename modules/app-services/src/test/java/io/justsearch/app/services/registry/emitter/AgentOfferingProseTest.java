@@ -12,7 +12,7 @@ import io.justsearch.agent.api.registry.OperationRef;
 import io.justsearch.app.services.bootstrap.phases.BootstrapHelpers;
 import io.justsearch.app.services.conversation.CoreWorkflowCatalog;
 import io.justsearch.app.services.conversation.WorkflowOperationProjection;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

@@ -2,6 +2,7 @@
 package io.justsearch.agent.tools;
 
 import tools.jackson.databind.JsonNode;
+import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.app.api.knowledge.FolderBrowseRequest;
 import io.justsearch.app.api.knowledge.FolderBrowseResponse;
@@ -22,11 +23,11 @@ import java.util.function.Supplier;
  * and sizes.
  */
 /**
- * Read-only folder-browse tool. Per Phase 12 of tempdoc 429: previously implemented
- * {@code ToolDefinition}; now a plain class invoked via
- * {@link io.justsearch.app.services.registry.operations.handlers.BrowseOperationHandler}.
+ * Read-only folder-browse tool. It is its own
+ * {@link io.justsearch.agent.api.registry.OperationHandler}: the substrate dispatches
+ * {@code execute(String): OperationResult} directly against this class.
  */
-public final class BrowseTool {
+public final class BrowseTool implements OperationHandler {
   private static final int DEFAULT_MAX_FOLDERS =
       Math.max(1, Math.min(200, resolveBrowseDefaultMaxFolders()));
 
@@ -69,6 +70,7 @@ public final class BrowseTool {
     this(browseCallback, null, rootsSupplier);
   }
 
+  @Override
   public OperationResult execute(String argumentsJson) {
     try {
       // --- shared setup: parse all args ---

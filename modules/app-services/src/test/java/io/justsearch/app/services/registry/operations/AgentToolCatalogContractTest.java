@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.registry.Operation;
 import io.justsearch.agent.api.registry.OperationRef;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.agent.tools.FileOperation;
 import java.io.File;
 import java.io.IOException;

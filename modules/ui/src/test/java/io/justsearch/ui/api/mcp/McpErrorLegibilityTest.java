@@ -13,7 +13,7 @@ import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.WorkerServices;
 import io.justsearch.app.services.HeadAssembly;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.ui.api.KnowledgeSearchController;
 import java.time.Clock;

@@ -31,7 +31,7 @@ import io.justsearch.agent.api.registry.ConsentCapsuleAuthority;
 import io.justsearch.app.services.intent.ConsentCapsuleService;
 import io.justsearch.app.services.intent.CoreTrustEvaluator;
 import io.justsearch.app.services.registry.executor.OperationExecutorImpl;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import io.justsearch.app.services.registry.operations.handlers.NavigateToSurfaceHandler;
 import java.time.Clock;

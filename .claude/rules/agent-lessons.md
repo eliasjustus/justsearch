@@ -24,6 +24,7 @@ Cross-cutting platform constraints. Project workflow lessons live in canonical d
 - **Time-to-complete is an architecture signal.** A delegated fix landing in minutes is probably safe to take; an hour-plus for a "simple" request is telling you about the code, not the agent — read the diff and architecture before merging.
 - **Tracked background tasks are killed at ~60 minutes, and `TaskStop` does not kill child bash loops** (2026-07-22, certification campaign: caused concurrent-driver corruption). The pattern that held: a detached `Start-Process` driver plus self-terminating (<590s) polls.
 - **Session cwd drifts into pub/agent worktrees after `cd`-in-compound-commands and persists across turns** — four incidents in one arc, including a worktree removed from inside itself and a possible cause of a locked sibling worktree's mid-run destruction. Remedy that held: prefix repo-root-dependent commands with an absolute `cd`, and run `remove-worktree` only from the repo root.
+- **A class-scanning test that reds with `TimeoutException` under parallel-agent load has not failed yet** (2026-08-31). Whole-classpath scanners — `WholeProgramDeadCodeTest`, `UnreferencedCodeTest`, `AgentGroundingSeamAuditTest`, any ArchUnit importer — are CPU-starved by concurrent worktree builds, and a timeout says nothing about the property asserted. Re-run the single test with `--tests` before believing it, reporting it, or acting on it.
 
 ## Verifying Claude Code claims (evidence chain, best to worst)
 
