@@ -638,3 +638,48 @@ Dev-infra: worktree stacks cannot activate cuda12 without copying main's variant
 (RuntimeActivationService resolves variants from the worktree root; the dev-runner's
 JUSTSEARCH_SERVER_EXE is not consulted by activation) — hit twice this arc, workaround is a
 1.1 GB copy; owns its fix with the dev-runner/runtime-activation seam.
+
+---
+
+## §I. Post-merge end-to-end validation campaign (2026-09-01, orchestrating session)
+
+Method: a falsification matrix — one live experiment per merged claim, run against merged main
+(`8d03de3a`+) on the shared dev stack (compact Qwen3.5-4B unless stated, 666-doc tempdocs
+index), each with a stated falsifier. Raw artifacts: the session scratchpad's `c1–c5.sse`,
+`std1–3.sse`, driver scripts.
+
+| # | Claim (PR) | Result |
+|---|---|---|
+| E1 | HIGH never durable-grantable (#581) | **PASS** — with a real `file-operations` family grant installed, `core.file-operations` still demanded TYPED_CONFIRM and created nothing; MEDIUM in-root ingest auto-approved via the same grant |
+| E2 | Ingest argument scope (#581) | **PASS at reachable layers** — agent-loop out-of-root ingests always prompted with the path visible; the executor's grant-scope refusal arm is unit-pinned (`OperationExecutorImplTest:~1385`); NOT falsified live because REST=TRUSTED×MEDIUM=AUTO by lattice design (a direct user gesture is its own consent) — no production surface reaches the arm as UNTRUSTED-with-grant-no-capsule |
+| E3 | Undo containment (#581) | **PASS** — a file edited inside a COPY'd directory made undo refuse the recursive delete: "1 changed since the agent acted — not reverted"; the copy survived (pre-fix: tree deleted; dir-mtime blind) |
+| E4 | Outage resilience (#584/#583/#582) | **PASS** — `/api/worker/restart` mid-run: 7 fast tool failures (no hang), offering never vanished, 2 calls succeeded after recovery, honest MAX_ITERATIONS partial (1766 chars); bounded retries observed ("attempt 1/1") |
+| E5 | limit:20 search un-clipped (#583) | **PASS** — 20/20 entries + footer in 3997 chars via the live tool path |
+| E6 | Model-visibility on the wire (#576) | **PASS** — `outputCharsToModel`/`truncatedForModel` on every tool event, values honest (True-case unit-pinned; live search self-caps below Layer-2) |
+| E7 | Budget projection sees tools (#576) | **PASS (behavioral)** — across ~10 runs the only window overshoot was 16 tokens (0.4%) vs the pre-fix ~40% documented undercount; gates fire near true thresholds |
+| E8 | AuditPolicy.NONE suppression (#582) | **PASS** — audited ingest → exactly one `kind:operation` ledger row; NONE-audited search invocations → zero rows |
+| E9 | Compaction feeds inclusion (#576) | **PASS** — a 7-compaction run labels 16/17 terminal sources `dropped` (pre-fix: ABSENT → rendered as ordinary evidence) |
+| E10 | Rank-1 completion, compact (#576/#586/…) | **5/5 answered** (1 COMPLETED at 6 calls; 4 honest partials 853–1181 chars; 0 errors) vs the 868 baseline of 0/16 clean and empty answers at the cap |
+| E11 | Live catalog = wire baseline (#585) | **PASS** — 7/7 catalog tools byte-name match; the workflow projection is additive by design |
+| E13 | Declared retry wired (#582) | **Observed bounded live**; per-declaration mapping rests on 879's flip-tests (stated at that strength) |
+
+Also confirmed live along the way: a **bogus REST confirmationToken is refused** (the "FE-trust
+V1 / dispatcher ignores it" comments in `OperationsController` are stale — enforcement is real
+now; comment sweep routed to 875), and `DurableGrantStore` resolves `%APPDATA%\justsearch\ui\`
+(not the dev dataDir), which any future grant experiment needs to know.
+
+New findings routed (this PR, into the owning tempdocs' open items):
+- **877**: tool-level typed error codes never reach the wire (`toolCompletedPayload` omits
+  `errorCode`/`retryable`), and the worker-outage path leaks the raw internal message
+  "No valid port in signal bus" to the model — the typed mapping misses the signal-bus-down class.
+- **875**: `/api/chat/agent/undo`'s JSON response mojibakes non-ASCII (em-dash → `â€"`; the SSE
+  plane is clean UTF-8); and **out-of-root ingested documents are unremovable by every normal
+  cleanup path** — reindex re-syncs roots only, excludes/apply walks roots only, GC is
+  generation-scoped — pairing with 875 §C.9's "second uncontained ingest surface" item.
+  (Disclosure: this campaign's E2 probe left `c:\windows\win.ini` in the dev index; it dies with
+  the next dev clean.)
+
+Not live-falsified (stated honestly): un-offered-tool dispatch rejection (cannot make the model
+call one on demand; unit-pinned by 875), the `index.dense_unavailable` degraded-offering path
+(needs dense-leg fault injection; covered by 876's system-tests E2E), FE copy for the cut-short
+notice (pinned by ui-web unit tests; panel labels were browser-verified earlier in the arc).
