@@ -33,7 +33,7 @@
         "gradlew?(\\.bat)? .*--tests .*WatchedRootScanCollection"
       ],
       "claim": "WatchedRootScanCollectionTest 'addWatchedRoot's scan reaches the wire with the root's collection set' is FLAKY under the full ./gradlew test run only (JUnitException/IOException in the in-process gRPC scan; passes in isolation and on --rerun). Seen 2026-08-25 (session bccfc163) and 2026-08-26 (872's post-merge full run). A failure ONLY there is pre-existing; re-run in isolation to confirm. The fix is a tracked item in tempdoc 872 §6.",
-      "evidence": "retired shard bccfc163…agent-ae33cee35818e8403 (2026-08-25, 'failed once and passed on rerun'); tempdoc 872 post-merge full-suite run 2026-08-26 (2372 tests, this one failed; --rerun in isolation passed)",
+      "evidence": "retired shard bccfc163…agent-ae33cee35818e8403 (2026-08-25, 'failed once and passed on rerun'); tempdoc 872 post-merge full-suite run 2026-08-26 (2372 tests, this one failed; --rerun in isolation passed); tempdoc 881 session f6617483 (2026-09-01, worktree agent-a184dcdde8b9073b3) — third sighting, and it pins down the shape: the failure is at CLOSE, not at assert ('JUnitException: Failed to close extension context' / 'IOException: Failed to delete temp directory …Temp\\\\junit-…'), so every assertion had already passed and Windows still held a handle. Load-correlated: it fell out of a full suite run with llama-server holding the GPU and a second worktree holding the Gradle lane, and the immediate targeted re-run was 3/0/0/0 + 1/0/0/0.",
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: ./gradlew.bat :modules:app-services:test --tests \"*WatchedRootScanCollectionTest*\" --rerun"

@@ -466,11 +466,7 @@ final class OnlineModeOps {
                               try {
                                 String jsonData = line.substring(6);
                                 JsonNode node = objectMapper.readTree(jsonData);
-                                String fr =
-                                    node.path("choices")
-                                        .path(0)
-                                        .path("finish_reason")
-                                        .asText(null);
+                                String fr = finishReasonOf(node.path("choices").path(0));
                                 if (fr != null) {
                                   lastFinishReason[0] = fr;
                                 }
@@ -802,11 +798,7 @@ final class OnlineModeOps {
                               try {
                                 String jsonData = line.substring(6);
                                 JsonNode node = objectMapper.readTree(jsonData);
-                                String fr =
-                                    node.path("choices")
-                                        .path(0)
-                                        .path("finish_reason")
-                                        .asText(null);
+                                String fr = finishReasonOf(node.path("choices").path(0));
                                 if (fr != null) {
                                   lastFinishReason[0] = fr;
                                 }
@@ -1026,10 +1018,7 @@ final class OnlineModeOps {
       JsonNode root = objectMapper.readTree(response.body());
       JsonNode choice = root.path("choices").path(0);
       String result = choice.path("message").path("content").asText();
-      String finishReason =
-          choice.path("finish_reason").isMissingNode()
-              ? null
-              : choice.path("finish_reason").asText(null);
+      String finishReason = finishReasonOf(choice);
 
       // Strip leaked <think> tags (llama.cpp #13189 defense)
       String stripped = THINK_TAGS.matcher(result).replaceAll("").strip();
@@ -1213,6 +1202,21 @@ final class OnlineModeOps {
       LOG.debug("Failed to read LLM error body: {}", e.getMessage());
       return null;
     }
+  }
+
+  /**
+   * The {@code finish_reason} of a chat choice, or {@code null} when the runtime did not report one.
+   *
+   * <p>Tempdoc 881 (independent review §G finding 12): {@code path("finish_reason").asText(null)}
+   * does NOT yield {@code null} for an explicit JSON {@code null} — {@code NullNode.asText()}
+   * returns the four-character string {@code "null"}, and every non-terminal streaming chunk carries
+   * {@code "finish_reason": null}. That was inert while nothing read the value; 881 puts it in a
+   * user-facing sentence, where a stream that ends without a terminal reason would say
+   * "finish_reason=null" instead of admitting the runtime reported nothing.
+   */
+  static String finishReasonOf(JsonNode choice) {
+    JsonNode node = choice == null ? null : choice.path("finish_reason");
+    return node == null || node.isMissingNode() || node.isNull() ? null : node.asText(null);
   }
 
   static AiUsage extractUsageFromChatChunk(JsonNode root) {

@@ -1766,12 +1766,143 @@ class AgentLoopServiceTest {
     assertEquals("TRANSIENT", error.errorClass());
     assertEquals("ABORT", error.retryAction());
     assertEquals(1, error.retryAttempt());
-    assertTrue(error.error().contains("failed to generate"),
-        "Error should describe the failure: " + error.error());
+    // Tempdoc 881 §C.3 — the fake reports no finish reason, so the message must SAY that rather
+    // than fill the gap with the old "possible reasoning token exhaustion" hypothesis.
+    assertTrue(error.error().contains("no finish reason"),
+        "an unknown cause must be reported as unknown: " + error.error());
+    assertFalse(error.error().contains("exhaustion"),
+        "the refuted diagnosis must not come back — 881 §A.2 measured finish_reason=stop at 35-55"
+            + " of 1024 completion tokens, so 'exhaustion' was never the cause: " + error.error());
 
     // Should NOT emit AgentDone with empty text
     var done = lastEventOfType(events, AgentEvent.AgentDone.class);
     assertNull(done, "Should not emit AgentDone on empty response");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tempdoc 881 — the standard profile's leaked tool call
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The whole 881 defect, end to end through the loop: the model answers a tool-planning turn by
+   * putting a well-formed tool call inside its thinking block and stopping. Before this slice the
+   * loop saw an empty turn, retried it identically, and errored the run — measured 0/3 on the
+   * standard profile (881 §A.1). The call must now be recovered and EXECUTED.
+   *
+   * <p>The reasoning string is verbatim from the live capture (881 §A.2), down to the newlines.
+   */
+  @Test
+  void executesTheToolCallTheModelLeakedIntoItsReasoningChannel() {
+    var tool = new StubTool("search", RiskTier.LOW, "found it");
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.reasoningOnly(
+            "I need to first see what's at the top level of the indexed folders before I can list"
+                + " files. Let me call core_search without the list_files parameter.\n\n"
+                + "<tool_call>\n<function=core_search>\n</function>\n</tool_call>",
+            "stop"),
+        ScriptedResponse.textOnly("Here is the summary.")));
+    var service = buildService(ai, tool);
+
+    var events = run(service, userMessage("read three documents"), 3);
+
+    assertEquals(1, tool.callCount.get(),
+        "the leaked call is the model's actual decision and must run, not be discarded");
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "the run completes instead of erroring");
+    assertEquals("Here is the summary.", done.finalResponse());
+    assertNull(lastEventOfType(events, AgentEvent.AgentError.class),
+        "no EMPTY_RESPONSE error is emitted for a turn that in fact expressed a call");
+  }
+
+  /**
+   * The other half of the gate, and the one claim 881 §C.1's safety rests on: reasoning-channel
+   * recovery runs ONLY when the turn would otherwise be discarded. A turn that produced an ANSWER
+   * must not have a tool call pulled out of its thinking — that is a model weighing an option while
+   * writing prose, and executing it would be worse than the bug the recovery fixes.
+   *
+   * <p>881 review §G finding 5: only the positive branch had a loop-level test.
+   */
+  @Test
+  void doesNotRecoverFromReasoningWhenTheTurnAlsoProducedText() {
+    var tool = new StubTool("search", RiskTier.LOW, "found it");
+    var ai = new ScriptedAiService(List.of(
+        new ScriptedResponse(
+            "Here is the answer, and I decided not to search.",
+            "I considered searching.\n<tool_call>\n<function=core_search>\n</function>\n</tool_call>",
+            List.of(),
+            null,
+            "stop")));
+    var service = buildService(ai, tool);
+
+    var events = run(service, userMessage("q"), 3);
+
+    assertEquals(0, tool.callCount.get(),
+        "a wrapped call inside the thinking of a turn that ANSWERED must not execute");
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done);
+    assertEquals("Here is the answer, and I decided not to search.", done.finalResponse(),
+        "and the answer is delivered untouched");
+  }
+
+  /**
+   * The retry has to CHANGE something (881 §C.2). An empty turn is a property of the prompt shape,
+   * not of transient server state — an identical re-issue failed 3/3 on replay and 2/2 end-to-end in
+   * 868 — so the second attempt suppresses the thinking prompt, the one change measured to move it
+   * (40/40 turns returned a structured call under {@code enable_thinking:false}, 881 §A.3).
+   */
+  @Test
+  void emptyResponseRetrySuppressesThinkingInsteadOfReissuingIdentically() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.empty(),
+        ScriptedResponse.textOnly("Success after the thinking-suppressed retry")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    run(service, userMessage("hi"), 3);
+
+    assertEquals(2, ai.recordedSampling.size(), "original + retry");
+    assertNull(ai.recordedSampling.get(0).enableThinking(),
+        "the FIRST attempt keeps the model's reasoning — that is why the standard profile exists");
+    assertEquals(Boolean.FALSE, ai.recordedSampling.get(1).enableThinking(),
+        "the retry is the one that gives it up, because the alternative is a known-deterministic"
+            + " repeat of the same empty turn");
+  }
+
+  /** A truncated completion says so, and names the remedy that would actually work. */
+  @Test
+  void aLengthTruncatedEmptyTurnIsReportedAsATokenLimitNotAsAModelChoice() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.empty().withFinishReason("length"),
+        ScriptedResponse.empty().withFinishReason("length")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var events = run(service, userMessage("q"), 3);
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error);
+    assertTrue(error.error().contains("finish_reason=length"),
+        "the runtime's own reason is quoted, not paraphrased: " + error.error());
+    assertTrue(error.error().contains("max_completion_tokens"),
+        "and THIS is the branch where raising the token budget is the right advice: " + error.error());
+  }
+
+  /** A model that simply stopped is not described as having hit a limit. */
+  @Test
+  void aStoppedEmptyTurnIsNotBlamedOnTheTokenBudget() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.empty().withFinishReason("stop"),
+        ScriptedResponse.empty().withFinishReason("stop")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var events = run(service, userMessage("q"), 3);
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error);
+    assertTrue(error.error().contains("finish_reason=stop"), error.error());
+    assertTrue(error.error().contains("not a token limit"),
+        "the reader must be steered AWAY from the budget lever here — following it is what 868 §D.3"
+            + " did: " + error.error());
+    assertFalse(error.error().contains("max_completion_tokens"),
+        "and must not be handed the lever that cannot help: " + error.error());
   }
 
   // ---------------------------------------------------------------------------
@@ -4984,7 +5115,9 @@ class AgentLoopServiceTest {
         callbacks.onUsage().accept(response.usage);
       }
 
-      callbacks.onComplete().accept(null);
+      // Tempdoc 881 §C.3 — the terminal callback carries the runtime's finish_reason; the loop
+      // reads it now, so the fake has to be able to report one.
+      callbacks.onComplete().accept(response.finishReason);
     }
 
     @Override
@@ -5108,7 +5241,17 @@ class AgentLoopServiceTest {
   // ===========================================================================
 
   record ScriptedResponse(
-      String text, String reasoning, List<String> toolCallDeltas, OnlineAiService.AiUsage usage) {
+      String text,
+      String reasoning,
+      List<String> toolCallDeltas,
+      OnlineAiService.AiUsage usage,
+      String finishReason) {
+
+    /** Tempdoc 881 — a response that reports no finish reason, the pre-881 fake's only shape. */
+    ScriptedResponse(
+        String text, String reasoning, List<String> toolCallDeltas, OnlineAiService.AiUsage usage) {
+      this(text, reasoning, toolCallDeltas, usage, null);
+    }
 
     static ScriptedResponse textOnly(String text) {
       return new ScriptedResponse(text, null, List.of(), null);
@@ -5116,6 +5259,19 @@ class AgentLoopServiceTest {
 
     static ScriptedResponse empty() {
       return new ScriptedResponse(null, null, List.of(), null);
+    }
+
+    /**
+     * Tempdoc 881 §A.2 — the shape the standard profile actually produces on a failing turn: no
+     * text, no structured call, everything in the reasoning channel, and {@code finish_reason=stop}.
+     */
+    static ScriptedResponse reasoningOnly(String reasoning, String finishReason) {
+      return new ScriptedResponse(null, reasoning, List.of(), null, finishReason);
+    }
+
+    /** The runtime's terminal reason for this scripted completion. */
+    ScriptedResponse withFinishReason(String finishReason) {
+      return new ScriptedResponse(text, reasoning, toolCallDeltas, usage, finishReason);
     }
 
     static ScriptedResponse withReasoning(String text, String reasoning) {
@@ -5155,7 +5311,8 @@ class AgentLoopServiceTest {
       int total = promptTokens + completionTokens;
       return new ScriptedResponse(
           this.text, this.reasoning, this.toolCallDeltas,
-          new OnlineAiService.AiUsage(promptTokens, completionTokens, total));
+          new OnlineAiService.AiUsage(promptTokens, completionTokens, total),
+          this.finishReason);
     }
 
     /**

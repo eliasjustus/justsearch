@@ -647,14 +647,16 @@ final class AgentStepRunner {
         }
 
         if (result.toolCalls().isEmpty()) {
-          // Check for empty response (text empty AND no tool calls) — likely reasoning
-          // token exhaustion or model failure. Emit error instead of silent empty AgentDone.
+          // Empty response (text empty AND no tool calls) — emit an error instead of a silent
+          // empty AgentDone.
           if (result.textContent() == null || result.textContent().isBlank()) {
-            LOG.warn("Empty response after retry — model produced no text and no tool calls");
+            LOG.warn(
+                "Empty response after retry — model produced no text and no tool calls"
+                    + " (finish_reason={})",
+                result.finishReason());
             errorEmitter.emitError(
                 sink,
-                "Model failed to generate a response (possible reasoning token exhaustion)."
-                    + " Try simplifying the query or increasing the token budget.",
+                emptyResponseMessage(result.finishReason()),
                 AgentErrorCode.EMPTY_RESPONSE,
                 AgentErrorClass.TRANSIENT,
                 RetryAction.ABORT,
@@ -1080,6 +1082,34 @@ final class AgentStepRunner {
       return true;
     }
     return wireNamesOf(offeredThisIteration).contains(wire);
+  }
+
+  /**
+   * Tempdoc 881 §C.3 — what to tell the reader when a turn produced nothing, from the runtime's own
+   * {@code finish_reason} instead of a hypothesis.
+   *
+   * <p>The text this replaced said "possible reasoning token exhaustion … try increasing the token
+   * budget" on every empty turn, whatever the cause. Measured (881 §A.2), the cause on the standard
+   * profile was {@code finish_reason=stop} after 35–55 of 1024 completion tokens: nothing was
+   * exhausted, and the remedy it named could not have worked. A wrong cause is worse than an unknown
+   * one because it is actionable — 868 §D.3 acted on it, and this tempdoc's own brief inherited it.
+   * So each branch says only what the finish reason licenses, and the {@code null} branch says the
+   * runtime reported nothing rather than filling the gap.
+   */
+  static String emptyResponseMessage(String finishReason) {
+    if ("length".equals(finishReason)) {
+      return "The model hit its completion-token limit before producing an answer or a tool call"
+          + " (finish_reason=length). Simplifying the query, or raising"
+          + " justsearch.agent.max_completion_tokens, would give it room to finish.";
+    }
+    if (finishReason == null || finishReason.isBlank()) {
+      return "The model ended its turn without producing an answer or a tool call, and the runtime"
+          + " reported no finish reason. Try rephrasing the question.";
+    }
+    return "The model ended its turn without producing an answer or a tool call (finish_reason="
+        + finishReason
+        + "). That is how the model ended, not a token limit — rephrasing the question is more"
+        + " likely to help than raising the token budget.";
   }
 
   /** The OpenAI function names in an emitted tool list; malformed entries are skipped. */

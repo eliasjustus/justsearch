@@ -33,7 +33,7 @@ Primary entry point: `AgentLoopService.runAgent()` in `modules/app-agent` (the `
 | Collaborator | Owns |
 |---|---|
 | `AgentStepRunner` | one loop iteration — per-iteration tool selection, dispatch orchestration, handoff, virtual tools |
-| `AgentLlmCaller` | the LLM round-trip: `callLlmWithTools`, retry policy, `DEFAULT_MAX_TOKENS`, Hermes-format fallback parse, `<think>`-tag stripping |
+| `AgentLlmCaller` | the LLM round-trip: `callLlmWithTools` (one entry point — sampling is always an argument, never resolved implicitly), `DEFAULT_MAX_TOKENS`, the `EMPTY_RESPONSE` retry (attempt 2 suppresses thinking), `finish_reason` capture, and leaked-tool-call recovery |
 | `AgentToolDispatcher` | tool execution + policy + `handleSafetyGate` approval gate (the sole direct `OperationDispatcher.dispatch` site) |
 | `AgentContextCompressor` | tool-result truncation/compression (`MAX_TOOL_RESULT_CHARS`) |
 | `AgentEventTracing` | `TraceContext` / OTel span decoration |
@@ -43,6 +43,30 @@ Primary entry point: `AgentLoopService.runAgent()` in `modules/app-agent` (the `
 | `AgentPromptComposer` | system-prompt assembly — `DEFAULT_SYSTEM_PROMPT`, the indexed-root preamble, and the condition-recovery context (tempdoc 584) |
 | `AgentSessionRegistry` | the live-run session map + per-run control surface — approve/reject, cancel, autonomy dial, steering interject, budget/context-gate resolution, attach, virtual-tool completion (tempdoc 584) |
 | `AgentRunQueryService` | the read-time query/projection surface behind the `AgentRunQueries` interface — session snapshots/lists, event/thread/lifecycle/presence projections over `AgentRunStore`, operation history, and resume (tempdoc 584) |
+
+### Recovering a tool call the model put in the wrong channel
+
+A local model does not always put its tool call in the structured `tool_calls` channel. It leaks
+into the assistant text as JSON, or — measured at 40 % of tool-planning turns on the standard 9B
+profile (tempdoc 881) — into an unterminated *thinking* block as
+`<tool_call><function=NAME><parameter=K>V</parameter></function></tool_call>`, which
+`--reasoning-format deepseek` routes wholly to `reasoning_content` where llama-server's own parser
+cannot reach it. `AgentLlmCaller` recovers such calls rather than discarding the turn, under two
+deliberately different rules:
+
+- **Text channel** — permissive: every recognised grammar is recovered and the span is *stripped*,
+  because an unrecovered leak there renders as the answer.
+- **Reasoning channel** — strict: only a span inside the model's own `<tool_call>` wrapper, only
+  when the turn has no structured call and no text, only the LAST such wrapper, and nothing is
+  stripped. Thinking routinely weighs calls it then retracts; the wrapper is the commit marker, the
+  empty-turn gate means the only alternative is discarding the turn, and taking the last wrapper
+  defers a batch by one iteration rather than executing something the model changed its mind about.
+
+Recovery cannot widen the tool surface: names are checked against the list actually offered that
+iteration, and a recovered call goes through `isAuthorizedThisIteration` and the safety gate like any
+other. Arguments from the XML grammar are untyped and are coerced against the tool's declared JSON
+schema. If a turn is still empty afterwards, the error names the runtime's `finish_reason` — it does
+not guess at a cause.
 
 The loop follows a tool-using ReAct-style flow:
 

@@ -783,3 +783,9 @@ closeout list, so they belong here; the shard itself was deleted, which is what
 
 - [ ] 869 closeout: tempdoc 867 needs a §7 pointer saying that 869 shipped (PR #569 / `7e0498bc`) and what it hands 867 — the data-claimed-label hook, the S1–S4 counter need, and the fact that the tier-2 idiom was never observed live on the compact profile (2026-08-26)
 - [ ] The Playwright drive/probe scripts behind 869 §4.4 (the sv3 ask driver and the shadow-DOM citation probe) were scratchpad-only. Worth landing under `scripts/jseval` as a `cite-probe` verb so the before/after measurement is re-runnable rather than re-authored (2026-08-26)
+
+The same shard reached tempdoc 881's worktree through the same local-`main` base and was routed
+identically there; this section is the surviving copy. 881 checked the first note before deleting
+its own duplicate and found 867 already carries the substance of that pointer at `867:8` and
+`867:486-496` — so what remains open there is whether 867 wants it as an explicit §7, not whether
+the fact is recorded anywhere (2026-09-01).
