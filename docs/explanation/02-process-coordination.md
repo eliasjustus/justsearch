@@ -263,7 +263,6 @@ See [ADR-0021](../decisions/0021-build-stamp-content-hash.md) for the design rat
 | `vdu_status` (string field) | Deprecated | `outcome` enum | Back-compat shim in `computeEffectiveOutcome()` |
 | `PruneMissing` RPC | Deprecated | `SyncDirectory` | Deletion-only vs. bidirectional sync |
 | `Cursor.legacy(String)` | Active bridge | - | gRPC wire format returns raw string token |
-| `justsearch.data_dir` (underscore) | Alias | `justsearch.data.dir` | Back-compat for historical inconsistency |
 
 ## Known Edge Cases & Mitigations
 

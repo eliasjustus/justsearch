@@ -19,16 +19,17 @@ import java.util.Set;
  *   <li>Default value (if provided)</li>
  * </ol>
  *
- * <p><strong>Important:</strong> Most application configuration uses YAML-first precedence
- * in {@code RuntimeConfig}, which wraps EnvRegistry:
+ * <p><strong>Important:</strong> {@link io.justsearch.configuration.resolved.ResolvedConfigBuilder}
+ * is the authority on precedence across all sources, not this class. It registers every source at
+ * an ordinal and the highest ordinal wins:
  * <ol>
- *   <li>YAML configuration (e.g., {@code config.yaml})</li>
- *   <li>System property (via EnvRegistry)</li>
- *   <li>Environment variable (via EnvRegistry)</li>
- *   <li>Default value</li>
+ *   <li>System property, ordinal 500 (highest)</li>
+ *   <li>Environment variable, ordinal 400</li>
+ *   <li>YAML configuration (e.g., {@code config.yaml}), ordinal 200</li>
+ *   <li>Code default, ordinal 100 (lowest)</li>
  * </ol>
- * This means YAML values take priority over env/sysprop for most settings. EnvRegistry
- * values are used as fallbacks when YAML values are absent.
+ * So a system property or environment variable set for a key overrides its YAML value; YAML only
+ * wins when no system property or environment variable is set for that key.
  *
  * <p>Usage:
  * <pre>{@code
@@ -895,20 +896,6 @@ public enum EnvRegistry {
     /** GPL revalidation size factor (default 2.0). */
     GPL_REEVAL_SIZE_FACTOR(
         "justsearch.gpl.reeval_size_factor", "JUSTSEARCH_GPL_REEVAL_SIZE_FACTOR"),
-
-    // ==================== Worker AI Connection (tempdoc 314 C1) ====================
-
-    /** Whether the AI worker gRPC client is enabled. */
-    AI_ENABLED("workers.ai.enabled", "JUSTSEARCH_AI_ENABLED"),
-
-    /** AI worker client host (gRPC connection from Head). */
-    AI_HOST("justsearch.ai.host", "JUSTSEARCH_AI_HOST"),
-
-    /** AI worker client port (gRPC connection from Head). */
-    AI_PORT("justsearch.ai.port", "JUSTSEARCH_AI_PORT"),
-
-    /** AI worker client deadline (ms). */
-    AI_DEADLINE_MS("justsearch.ai.deadlineMs", "JUSTSEARCH_AI_DEADLINE_MS"),
 
     // ==================== Worker Indexer Connection (tempdoc 314 C1) ====================
 

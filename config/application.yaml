@@ -1,42 +1,13 @@
 app:
-  package_base: io.justsearch
   # data_dir: Resolved automatically via PlatformPaths (platform-specific defaults).
   #   - Windows: %LOCALAPPDATA%\JustSearch
-  #   - macOS: ~/Library/Application Support/JustSearch  
+  #   - macOS: ~/Library/Application Support/JustSearch
   #   - Linux: ~/.justsearch
   # Override with: JUSTSEARCH_DATA_DIR env var or -Djustsearch.data.dir system property
-  timezone: Europe/Berlin
 
 llm:
   enabled: true
   # model_path: override via JUSTSEARCH_LLM_MODEL_PATH if needed (defaults resolved from models dir)
-
-workers:
-  ai:
-    enabled: true
-    host: 127.0.0.1
-    port: 50061
-    deadlineMs: 1500
-    features:
-      embed: true
-      classify: true
-
-telemetry:
-  metrics:
-    flush_ms: 15000
-    retention:
-      days: 7
-  pipeline:
-    stage_metrics:
-      enabled: true
-  capabilities:
-    refresh_interval_ms: 60000
-
-plugins:
-  pipeline:
-    enabled: true
-    egress:
-      default_policy: deny
 
 infra:
   health:
@@ -52,9 +23,6 @@ infra:
 search:
   pipeline:
     profile: desktop-default
-  rerank:
-    enabled: false
-    k: 50
   facets:
     enabled: true
     fields:
@@ -72,8 +40,6 @@ search:
 
 index:
   auto_recovery: true  # Automatically delete corrupted index and rebuild (data loss on recovery)
-  language_detection:
-    enabled: true
   commit:
     debounce_ms: 0
   pipeline:
@@ -100,20 +66,3 @@ index:
       render_dpi: 300
     # 0 = auto (min(cores/2, 8))
     workers: 0
-  export:
-    otlp:
-      # Dormant since inception — no collector exists in this repo; aspirational
-      # config, see tempdoc 742.
-      traces:
-        enabled: false
-        endpoint: http://collector:4317
-        tls:
-          insecure: true
-      metrics:
-        enabled: false
-        endpoint: http://collector:4318/v1/metrics
-      # Dormant since inception — no collector exists in this repo; aspirational
-      # config, see tempdoc 742.
-      logs:
-        enabled: false
-        endpoint: http://collector:4317

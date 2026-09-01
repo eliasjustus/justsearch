@@ -681,11 +681,11 @@ def _normalize_path(value: str) -> str:
     return os.path.normcase(os.path.normpath(value))
 
 
-_DATA_DIR_SYSPROPS = ("-djustsearch.data.dir=", "-djustsearch.data_dir=")
+_DATA_DIR_SYSPROPS = ("-djustsearch.data.dir=",)
 
 
 def _cmdline_matches_data_dir(cmdline: list[str], data_dir: Path) -> bool:
-    """True if cmdline carries -Djustsearch.data.dir=<data_dir> (either spelling),
+    """True if cmdline carries -Djustsearch.data.dir=<data_dir>,
     normalized-path-equal to the given data_dir (not a substring match — a data_dir
     that happens to prefix another path must not false-positive)."""
     target = _normalize_path(str(data_dir))

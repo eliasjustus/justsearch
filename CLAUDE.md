@@ -178,7 +178,6 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 
 | Pitfall | Solution |
 |---------|----------|
-| Windows env vars unreliable | Pass config via `-D` system properties |
 | Windows memory pressure | Use `-PskipWebBuild=true` for backend-only runs |
 | Flaky IPC tests | Use state polling (`awaitPort`), not `Thread.sleep()` |
 | Local installer build fails on a dev machine | `package-installer-win.ps1` self-diagnoses and refuses to start when Windows Smart App Control is enforcing — SAC blocks unsigned cargo build-scripts, failing the Rust compile with `os error 4551`; `JUSTSEARCH_SKIP_SAC_CHECK=1` only skips the warning, not the actual block. Use CI instead: `gh workflow run build-installer.yml --ref main` (no tag needed, no Release created against a non-tag ref), then `gh run download`. See `docs/how-to/cut-a-release.md` step 1. |

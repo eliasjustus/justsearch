@@ -11,6 +11,7 @@
     "table": "CAUSE_ROWS"
   },
   "noWordingExempt": [
+    { "code": "settings.reset_from_corrupt", "why": "Head-owned ConditionStore condition (SettingsRecoveryNotice, tempdoc 882 item 24); never on the readiness envelope, so never reaches wordCauses. The user sees it on the Health surface, which renders conditions with the Java-side message." },
     { "code": "worker.not_configured", "why": "NOT_CONFIGURED state on INDEX_SERVING -> verdict 'checking', never rendered by wordCauses (PART X)" },
     { "code": "worker.not_started", "why": "NOT_CONFIGURED state on INDEX_SERVING -> verdict 'checking'" },
     { "code": "worker.unavailable", "why": "NOT_READY state on INDEX_SERVING -> verdict 'checking' (reproduced live: no banner)" },

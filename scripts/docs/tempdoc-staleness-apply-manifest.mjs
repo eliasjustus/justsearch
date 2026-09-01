@@ -85,7 +85,7 @@ const MANIFEST = [
   { file: 'docs/tempdocs/356-inference-observability.md', target: 'done',
     reason: 'Inference observability tempdoc (681 lines) with dependencies on 334, 354, 357. ADR-0027 (MetricCatalog as telemetry contract) is the structural consumer of this work — observability infrastructure now flows through MetricCatalog.' },
   { file: 'docs/tempdocs/347-gpu-env-var-propagation.md', target: 'done',
-    reason: 'GPU env-var propagation issue for runHeadless. CLAUDE.md captures the lesson ("Windows env vars unreliable — pass config via -D"); the immediate issue is documented as guidance rather than open work.' },
+    reason: 'GPU env-var propagation issue for runHeadless. Root cause was Gradle configuration-cache capture plus per-call fresh shells, not Windows; the CLAUDE.md pitfall row that misattributed it was removed in tempdoc 882.' },
   { file: 'docs/tempdocs/348-runheadless-ram-explosion.md', target: 'done',
     reason: 'Head-side reranker BFCArena OOM investigation. Investigation reached its findings; related tempdocs (309, 346, 347, 349) consumed the cross-cutting recommendations.' },
   { file: 'docs/tempdocs/353-agent-friction-log.md', target: 'done',

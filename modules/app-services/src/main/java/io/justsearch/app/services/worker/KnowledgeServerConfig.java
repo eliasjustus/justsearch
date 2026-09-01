@@ -57,7 +57,13 @@ public record KnowledgeServerConfig(
         }
     }
 
-    private static final long DEFAULT_DEADLINE_MS = 5000;
+    /**
+     * Tempdoc 251 (2026-03) measured the prior 5000ms default tripping the circuit breaker on
+     * long documents and recommended 15000ms; the {@code JUSTSEARCH_WORKER_DEADLINE_MS} /
+     * {@code justsearch.worker.deadline_ms} escape hatch remains for operators who need a
+     * different value.
+     */
+    private static final long DEFAULT_DEADLINE_MS = 15_000;
     private static final long DEFAULT_PORT_DISCOVERY_TIMEOUT_MS = 15_000;
     private static final int DEFAULT_MAX_RETRIES = 3;
     /**
@@ -313,6 +319,16 @@ public record KnowledgeServerConfig(
             return env;
         }
         return System.getProperty(propKey);
+    }
+
+    /**
+     * Returns the default Head-to-Worker RPC deadline in milliseconds, absent an
+     * env/sysprop override (tempdoc 882 item 5, tempdoc 251).
+     *
+     * @return the default deadline in milliseconds
+     */
+    public static long defaultDeadlineMs() {
+        return DEFAULT_DEADLINE_MS;
     }
 
     /**

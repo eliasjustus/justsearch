@@ -9,6 +9,7 @@ import io.justsearch.indexerworker.grpc.DelegatingHealthService;
 import io.justsearch.indexerworker.grpc.DelegatingIngestService;
 import io.justsearch.indexerworker.grpc.DelegatingSearchService;
 import io.justsearch.indexerworker.server.WorkerAppServices;
+import io.justsearch.ipc.grpc.GrpcMessageLimits;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
@@ -27,7 +28,8 @@ public final class KnowledgeServerGrpcWiring {
       throws IOException {
     InetSocketAddress address = new InetSocketAddress(config.host(), 0);
     NettyServerBuilder builder =
-        NettyServerBuilder.forAddress(address).maxInboundMessageSize(32 * 1024 * 1024);
+        NettyServerBuilder.forAddress(address)
+            .maxInboundMessageSize(GrpcMessageLimits.MAX_INBOUND_MESSAGE_BYTES);
 
     for (ServerInterceptor interceptor : interceptors) {
       builder.intercept(interceptor);

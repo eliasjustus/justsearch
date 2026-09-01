@@ -97,8 +97,7 @@ Current hardening (important):
 
 ### Data directory contract (and logging)
 * **Canonical override:** `-Djustsearch.data.dir=<path>` (sysprop) or `JUSTSEARCH_DATA_DIR=<path>` (env).
-* **Legacy aliases (back-compat):** `justsearch.data_dir` and `app.data_dir` may be set to the same value to keep older configs and logback templates working.
-* **Bootstrap ordering:** `modules/app-launcher` uses a tiny bootstrap main (`LauncherBootstrap`) to set data-dir properties **before** SLF4J/logback initialization, preventing `app.data_dir_IS_UNDEFINED/` log folders.
+* **Bootstrap ordering:** `modules/app-launcher` uses a tiny bootstrap main (`LauncherBootstrap`) to set the data-dir property **before** SLF4J/logback initialization, so log files land in the real data directory instead of the `build/...` fallback baked into the logback config.
 
 ## `JustSearchConfigurationLoader`
 Configuration loading and SSOT discovery are centralized in `modules/configuration`. `JustSearchConfigurationLoader` is the primary “gatekeeper” for loading SSOT artifacts; other modules should not re-implement SSOT scanning/parsing.

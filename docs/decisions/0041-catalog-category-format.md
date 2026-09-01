@@ -1,7 +1,7 @@
 ---
 title: "Catalog Category format — protobuf enums + companion metadata"
 type: decision
-status: accepted
+status: accepted - format superseded in part by tempdoc 564
 description: "The catalog Category of the contract substrate used protobuf enums + a companion metadata message. Superseded in part by tempdoc 564 (proto demoted to a derived view)."
 date: 2026-06-09
 ---

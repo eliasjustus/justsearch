@@ -44,9 +44,6 @@ final class SmokeDriver implements Launcher.SmokeDriverHandle {
     List<String> failures = new ArrayList<>();
 
     ResolvedConfig rc = ConfigStore.global().get();
-    if (!rc.workerAi().enabled()) {
-      diagnostics.add("LAUNCHER/WORKER_MISSING kind=ai");
-    }
     if (!rc.workerIndexer().enabled()) {
       diagnostics.add("LAUNCHER/WORKER_MISSING kind=indexer");
     }

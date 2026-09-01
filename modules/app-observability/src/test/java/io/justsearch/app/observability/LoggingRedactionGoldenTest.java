@@ -29,7 +29,7 @@ class LoggingRedactionGoldenTest {
   void warnLogMatchesSchemaAndRedacts() throws Exception {
     Path tmp = Files.createTempDirectory("logs");
     Path target = tmp.resolve("app.log");
-    System.setProperty("app.data_dir", tmp.toString());
+    System.setProperty("justsearch.data.dir", tmp.toString());
 
     // Configure Logback programmatically with LogstashEncoder
     Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);

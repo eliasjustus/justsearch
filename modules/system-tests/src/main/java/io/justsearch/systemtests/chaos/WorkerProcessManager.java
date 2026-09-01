@@ -201,6 +201,7 @@ public final class WorkerProcessManager extends ManagedProcess {
     List<String> command = new ArrayList<>();
     command.add(getJavaExecutable());
     command.add("-Xmx256m");
+    command.add("--enable-native-access=ALL-UNNAMED");
 
     // Add extra JVM args (e.g., NMT for soak tests, or custom config)
     if (extraJvmArgs != null && !extraJvmArgs.isBlank()) {
@@ -211,7 +212,6 @@ public final class WorkerProcessManager extends ManagedProcess {
 
     command.add("-Djustsearch.worker.signal_path=" + signalFilePath.toAbsolutePath());
     command.add("-Djustsearch.data.dir=" + dataDir.toAbsolutePath());
-    command.add("-Djustsearch.data_dir=" + dataDir.toAbsolutePath()); // back-compat
     command.add("-jar");
     command.add(workerPath.toAbsolutePath().toString());
 
@@ -249,8 +249,7 @@ public final class WorkerProcessManager extends ManagedProcess {
       javaOpts.append(extraJvmArgs).append(" ");
     }
     javaOpts.append("-Djustsearch.worker.signal_path=").append(signalFilePath.toAbsolutePath()).append(" ");
-    javaOpts.append("-Djustsearch.data.dir=").append(dataDir.toAbsolutePath()).append(" ");
-    javaOpts.append("-Djustsearch.data_dir=").append(dataDir.toAbsolutePath());
+    javaOpts.append("-Djustsearch.data.dir=").append(dataDir.toAbsolutePath());
 
     pb.environment().put("JAVA_OPTS", javaOpts.toString());
 
@@ -319,6 +318,7 @@ public final class WorkerProcessManager extends ManagedProcess {
     Path argFile = dataDir.resolve("worker_args.txt");
     StringBuilder args = new StringBuilder();
     args.append("-Xmx256m\n");
+    args.append("--enable-native-access=ALL-UNNAMED\n");
     if (extraJvmArgs != null && !extraJvmArgs.isBlank()) {
       for (String arg : extraJvmArgs.split("\\s+")) {
         args.append(arg).append("\n");
@@ -326,7 +326,6 @@ public final class WorkerProcessManager extends ManagedProcess {
     }
     args.append("-Djustsearch.worker.signal_path=").append(signalFilePath.toAbsolutePath()).append("\n");
     args.append("-Djustsearch.data.dir=").append(dataDir.toAbsolutePath()).append("\n");
-    args.append("-Djustsearch.data_dir=").append(dataDir.toAbsolutePath()).append("\n"); // back-compat
     if (Files.exists(configFile)) {
       args.append("-Djustsearch.config=").append(configFile.toAbsolutePath()).append("\n");
     }

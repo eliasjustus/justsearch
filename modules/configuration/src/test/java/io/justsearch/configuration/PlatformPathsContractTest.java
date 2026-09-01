@@ -83,9 +83,7 @@ final class PlatformPathsContractTest {
     // env contribution are runnable here. Env-driven fixtures are exercised by the
     // Node contract test (which can freely override process.env).
 
-    if (!env.isEmpty() && !sysprops.containsKey("justsearch.data.dir")
-        && !sysprops.containsKey("justsearch.data_dir")
-        && !sysprops.containsKey("app.data_dir")) {
+    if (!env.isEmpty() && !sysprops.containsKey("justsearch.data.dir")) {
       // Java can't override System.getenv hermetically; this fixture is the Node side's
       // responsibility. Record a passing test that documents the split.
       return;
@@ -93,7 +91,7 @@ final class PlatformPathsContractTest {
 
     Map<String, String> savedProps = new HashMap<>();
     for (String key : List.of(
-        "justsearch.data.dir", "justsearch.data_dir", "app.data_dir",
+        "justsearch.data.dir",
         "user.home", "os.name")) {
       savedProps.put(key, System.getProperty(key));
     }

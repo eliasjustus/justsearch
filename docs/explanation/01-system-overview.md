@@ -41,7 +41,7 @@ graph TD
 ### 1. The Main Process ("The Head")
 *   **Entry Point:** `io.justsearch.ui.HeadlessApp`
 *   **Modules:** `modules/ui` (Headless backend), `modules/ui-web` (Lit web-components frontend), `modules/shell` (Tauri desktop shell)
-*   **JVM Heap:** Typically small (128MB-256MB).
+*   **JVM Heap:** capped at 512 MB in the packaged shell (`-Xmx512m`, `modules/shell/src-tauri/src/lib.rs`); the dev-runner sets no cap unless `JUSTSEARCH_HEAD_HEAP` is given.
 *   **Role:** User Interface, Application Orchestration, and API Gateway.
 *   **Key Responsibilities:**
     *   **Sidecar Host:** Runs as a child process of the Tauri shell.

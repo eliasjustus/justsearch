@@ -305,14 +305,9 @@ public final class Launcher {
 
   private void ensureDataDir() {
     try {
-      // Keep canonical + legacy aliases in sync (best-effort).
       // Note: logback may initialize during class loading, so this method alone is not sufficient
       // to prevent `${..._IS_UNDEFINED}` paths — use LauncherBootstrap for a hard guarantee.
-      String resolved =
-          firstNonBlank(
-              EnvRegistry.DATA_DIR.get().orElse(null),
-              System.getProperty("justsearch.data_dir"), // SYS-PROP-LEGACY-COMPAT
-              System.getProperty("app.data_dir"));
+      String resolved = EnvRegistry.DATA_DIR.get().orElse(null);
 
       Path dataDir =
           resolved == null || resolved.isBlank()
@@ -322,10 +317,8 @@ public final class Launcher {
       String normalized = dataDir.toString();
 
       setIfBlank("justsearch.data.dir", normalized);
-      setIfBlank("justsearch.data_dir", normalized); // legacy underscore alias
-      setIfBlank("app.data_dir", normalized); // legacy logback alias
     } catch (IOException e) {
-      throw new IllegalStateException("Failed to initialize app.data_dir", e);
+      throw new IllegalStateException("Failed to initialize data dir", e);
     }
   }
 
@@ -334,16 +327,6 @@ public final class Launcher {
     if (existing == null || existing.isBlank()) {
       System.setProperty(key, value);
     }
-  }
-
-  private static String firstNonBlank(String... candidates) {
-    if (candidates == null) return null;
-    for (String c : candidates) {
-      if (c != null && !c.isBlank()) {
-        return c;
-      }
-    }
-    return null;
   }
 
   record SmokeOptions(String profile, String diagnosticsRunId) {}

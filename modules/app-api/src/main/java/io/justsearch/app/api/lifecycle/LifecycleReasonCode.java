@@ -150,6 +150,13 @@ public enum LifecycleReasonCode {
   LAMBDAMART_TRAINING("lambdamart.training"),
   LAMBDAMART_FAILED("lambdamart.failed"),
 
+  // --- Settings ---
+  // Tempdoc 882 item 24: the user's ui/settings.json could not be read, so it was moved aside to a
+  // timestamped .corrupt- sibling and defaults were loaded (ADR-0008). Not a fault to recover from:
+  // the preferences are already gone, and the only thing left to do is tell the user so they can
+  // re-author them. Deliberately NOT emitted for a FUTURE schemaVersion, which stays fail-loud.
+  SETTINGS_RESET_FROM_CORRUPT("settings.reset_from_corrupt"),
+
   // --- GPU saturation (419 C3 V2 P3) ---
   // GPU pinned at high utilization with no current workload (idle leak detection). Monitored
   // by GpuSaturationMonitor + sampler in modules/ui (head-side NVML probe).
@@ -199,6 +206,11 @@ public enum LifecycleReasonCode {
     return switch (this) {
       // Unrepeatable: the fatal-reason marker is deleted as it is read (tempdoc 628/837 §3.1).
       case WORKER_INDEX_CORRUPT -> RetentionClass.STICKY;
+
+      // Tempdoc 882 item 24: observed exactly once, at load, and never re-derived. The file that
+      // proved it has already been moved aside. A later TRANSIENT write must not erase the only
+      // notice the user gets that their preferences were reset.
+      case SETTINGS_RESET_FROM_CORRUPT -> RetentionClass.STICKY;
 
       // Real causes. WORKER_SPAWN_FAILED is deliberately NOT generic even though
       // resolveWorkerReasonCode uses it as a consumer-side fallback: fallback-ness is a property of

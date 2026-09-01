@@ -2,7 +2,7 @@
 title: "Settings Are Ephemeral, Defaults Are Safe"
 type: decision
 status: stable
-description: "User settings (settings.json) are not migration-protected. Incompatible settings files are silently replaced with defaults."
+description: "User settings (settings.json) are not migration-protected. An incompatible settings file is preserved as a timestamped .corrupt- sibling, replaced with defaults, and the reset is surfaced as a lifecycle condition."
 date: 2026-02-10
 ---
 
@@ -11,6 +11,8 @@ date: 2026-02-10
 ## Status
 
 Accepted
+
+Amended 2026-09-01 (tempdoc 882 item 24): the implementation had drifted to fail-loud-and-exit (register policy `FAIL_LOUD_AND_PRESERVE`, tempdoc 617); restored to preserve-then-default with a visible condition.
 
 ## Context
 
@@ -26,7 +28,7 @@ The question: should settings survive structural changes across upgrades, or is 
 
 **Settings are ephemeral. Defaults are always safe.**
 
-If a user's `settings.json` becomes incompatible with the current version, it is silently replaced with defaults. This is acceptable because:
+If a user's `settings.json` becomes incompatible with the current version, it is moved aside to a timestamped `.corrupt-` sibling, replaced with defaults, and the reset is surfaced as a lifecycle condition (`settings.reset_from_corrupt`). This is acceptable because:
 
 1. Settings control UI preferences (theme, layout, sort order, view state) — not user content.
 2. User content lives in the Lucene index, which has its own migration mechanism.
