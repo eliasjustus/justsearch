@@ -368,10 +368,60 @@ The two full-suite failures, interrogated rather than waved through:
   1/0/0/0) on the same tree. New dated pin added:
   `expected-state.v1.json` → `app-services-junit-tempdir-delete-race`.
 
+**Hosted CI: PR #586, all required checks green** (`run-gh checks-wait 586 --required-only`
+→ PASS). Two things it caught that local runs did not, both worth naming:
+
+- The `expected-state.v1.json` pin added above was a **duplicate** —
+  `app-services-watched-root-scan-collection-flaky` already covers that test with the same
+  match patterns and has a tracked fix in 872 §6, so `known-state-hint`'s ambiguity check
+  refused two entries resolving to one probe. Correct refusal. The pin was withdrawn and the one
+  new fact (the failure is at *close*, with every assertion already passed) folded into the
+  existing pin's evidence as its third dated sighting. Recorded here because the first instinct
+  — pin it — was the wrong instinct: the register already knew.
+- `check-no-observations-shards` failed on `docs/observations.d/`, a file **origin/main does not
+  carry**. It rode in on this branch's local-`main` base from a commit that never reached
+  origin, so merging would have re-added a file the 872 retirement had removed. Its three notes
+  were routed (the cite-probe scripts note → 869's open items; the other two already settled or
+  moot) and the directory removed. Worth noting for the next agent: `git rev-list --count
+  HEAD..origin/main` said **0 behind**, and the branch still carried a file main had deleted —
+  "not behind" is not "same content".
+
 No pre-merge check in CLAUDE.md's table has this diff's subjects (`modules/app-agent/**`,
 one javadoc line in `modules/app-inference`) — no contracts, SSOT, ui-web, workflow, catalog,
 seam-registered, or surface-registry file is touched; `governance/logic-seams.v1.json` names
 neither changed class.
+
+## §G. Independent refute-first review (reviewer ≠ implementer)
+
+An independent opus reviewer was given the diff and told to break the claims. It found **two
+blockers, five should-fixes and five nits**, and could not refute nine claims it names explicitly.
+Every finding is dispositioned below; the ones marked *fixed* landed in a follow-up commit with
+tests.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | **The refuted diagnosis survives in canonical truth.** `docs/explanation/05-ai-architecture.md:252` and the `inference-runtime` register both said the `EMPTY_RESPONSE` retry handles empties *"e.g. when reasoning tokens consume the context window, leaving no budget for the answer"* — the exact hypothesis §A.2 refutes, stated as fact in the doc CLAUDE.md requires this tempdoc to update. §C's sweep claim ("no second copy") was a grep for the user-facing STRING and missed the diagnosis. | **Fixed.** Both rewritten: the retry paragraph now describes what it does (attempt 2 suppresses thinking), a new paragraph names the real mechanism, and it says in words *do not describe this as reasoning-token exhaustion*, with the measurement. `skills-sync` propagated it to the register. The lesson is the finding's own: a sweep grep for a string is not a sweep for the claim. |
+| 2 | **The consult register's governing doc was not touched.** `governance/consult-register.v1.json` maps `modules/app-agent/` → `docs/explanation/22-agent-system-architecture.md`, whose `AgentLlmCaller` row still described a `<think>`-tag strip that 835 removed. §E's governance paragraph checked only CLAUDE.md's pre-merge table. | **Fixed.** Row corrected, and a new section documents the two-channel recovery rule, the wrapper/empty-turn/last-wrapper gates, and that recovery cannot widen the tool surface. |
+| 3 | **The "no husk" claim was false**, with a counterexample: `Here.<tool_call>I will call {…}</tool_call>` — the wrapper body is prose *plus* JSON, so it did not parse as a call, only the JSON was deleted, and `Here.<tool_call>I will call </tool_call>` rendered as the answer. The existing test used a pure-JSON body and never reached that branch. | **Fixed.** Span widening now keys on **containment in a wrapper range**, not on the wrapper body parsing cleanly — so it holds for body shapes nobody has seen yet. Test added with the reviewer's exact input. |
+| 4 | **Overlapping spans / test passed for the wrong reason.** The disjointness filter added in the self-review does hold on the reviewer's straddling input (a `<tool_call>` inside a JSON string value) — but the test *claiming* to pin it fed spans that were already disjoint by construction, so it proved nothing. | **Partly refuted, test fixed.** The corruption the finding describes (`StringBuilder.delete` clamping and swallowing the answer) is prevented by the filter. The criticism of the test was correct and is the more valuable half: it now uses the straddling input and asserts that prose *before* every span survives — an oracle that fails loudly if a clamped over-delete ever happens. |
+| 5 | **The D4 safety gate had no test.** The plan promised "does not recover a hypothetical when text is present"; only the positive branch had a loop-level test, and the gate is what claim 2's safety rests on. | **Fixed.** `doesNotRecoverFromReasoningWhenTheTurnAlsoProducedText`: a turn that answers, with a `<tool_call>` in its thinking, must execute nothing and deliver its answer untouched. |
+| 6 | **Two `<function>` blocks in one wrapper merged**: the name came from the first, the parameters were scanned over the whole wrapper, so the second block's arguments were smuggled into the first call and the second was dropped. | **Fixed.** Parameters are scoped to their own `<function>…</function>` block; a multi-function wrapper resolves like a multi-wrapper block (last wins). Test added. |
+| 7 | **A retracted call still executed.** Recovering every wrapper ran both A and B in "`<tool_call>A</tool_call>` — wait, that needs a parent_path I don't have, instead `<tool_call>B</tool_call>`". The samples do not say how often a block holds more than one wrapper, so this was unmeasured, not measured-safe. | **Fixed — last wrapper wins.** A batch and a revision are indistinguishable from the text, so the question is which error to make: deferring a batched call costs one iteration and loses nothing, executing a retracted one takes an action the model decided against. The test that endorsed multi-recovery was replaced by one that pins the retraction case. |
+| 8 | **On forced-tool turns the retry is still byte-identical**, because `resolveAgentSampling` already returns `withEnableThinking(false)` there — §B.2's "a retry that changes nothing" survives in that subset. | **Accepted, recorded, not coded.** True, and there is no measured lever for it: those turns already run without thinking, so the leak §A diagnoses cannot be what emptied them, and inventing a second remedy for an unobserved cause is guessing. Stated here so the next person does not have to rediscover it. |
+| 9 | An in-code comment said "every one of the **9** empty turns" while §A.3 says 42 of 129 — the 9 was the pre-extension figure, and a future reader greps the code. | **Fixed** (comment). |
+| 10 | **Recovered call ids collide across iterations.** `reasoning-tool-0` / `text-tool-0` restart at 0 every turn, and `AgentSession.virtualToolFutures` keys on the id and overwrites rather than rejecting — silent while recovery was never observed, not silent at 40 % of turns. | **Fixed.** One run-monotonic sequence for both recovery paths. |
+| 11 | `argumentsJson` sends a fractional value to a declared `integer` un-truncated, and `array`/`object` params arrive as raw strings — defensible, but the javadoc said "parsed" without saying which. | **Fixed in the javadoc, behaviour unchanged.** The tool's own schema validation is the authority; inventing a parse for an unobserved shape is where a recovery layer starts guessing. |
+| 12 | **`finish_reason` could reach the user as the literal string `"null"`.** `path("finish_reason").asText(null)` returns `"null"` for an explicit JSON null (`NullNode.asText()`), and every non-terminal chunk carries one — inert while nothing read the value, load-bearing now that §C.3 puts it in a sentence. | **Fixed at the source.** `OnlineModeOps.finishReasonOf` guards `isNull()`/`isMissingNode()` at all three extraction sites, with a unit test. The honest "the runtime reported no finish reason" branch is now reachable. |
+| 13 | The PR diff carried an unrelated observations shard from another session, resurrecting a file 872 deleted. | **Already fixed** before the review returned — CI caught it; see §E. |
+
+Could not refute (the reviewer names what it attacked and failed to break): double execution across
+channels; consent-boundary bypass — a recovered call still goes through `isAuthorizedThisIteration`
+and the safety gate and cannot widen the tool surface; tool-name prefix/substring false positives;
+the `BOOLEAN_TRUE` regex precedence and `matches()` anchoring; catastrophic backtracking;
+`finishReasonHolder` lifecycle and the callback-ordering happens-before; `withEnableThinking`
+preserving every other sampling field; a finalize call producing tool calls (provably impossible —
+empty schemas); `executesTheToolCallTheModelLeakedIntoItsReasoningChannel` passing for a wrong
+reason; the 42/42 arithmetic; and the JS-classifier-vs-Java-rule question §A.3 raises.
 
 ## §F. What this slice does NOT do, and what still needs a live pass
 

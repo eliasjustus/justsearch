@@ -437,8 +437,9 @@ final class AgentLlmCaller {
       // well-formed tool call INSIDE an unterminated thinking block, in the XML grammar, and
       // stops. `--reasoning-format deepseek` routes the whole block to reasoning_content, so
       // llama-server's native parser finds no call and the loop used to discard the turn and
-      // report "possible reasoning token exhaustion". Every one of the 9 empty turns sampled
-      // across both profiles carried a recoverable call; none was genuinely content-free.
+      // report "possible reasoning token exhaustion". Of 129 completions sampled across both
+      // profiles, 42 turns came back empty and ALL 42 carried a recoverable call; not one was
+      // genuinely content-free.
       //
       // The gate is deliberately stricter than the text channel's. Thinking DISCUSSES calls it
       // then decides against, so acting on a hypothetical would be worse than the bug: recovery
@@ -539,6 +540,14 @@ final class AgentLlmCaller {
      * declared type. An undeclared key, or a value that will not parse as its declared type, keeps
      * the raw string: the tool's own validation is the authority on whether that is acceptable, and
      * dropping the argument here would turn a recoverable call into a differently-wrong one.
+     *
+     * <p>Exactly what is coerced, stated so nobody has to infer it (881 review §G finding 11):
+     * {@code boolean} accepts {@code true/yes/1} and {@code false/no/0} case-insensitively;
+     * {@code integer} and {@code number} both go through {@code BigDecimal}, so a fractional value
+     * against a declared {@code integer} arrives as the number it was written as, not truncated —
+     * the tool's schema validation is what rejects it. Every other declared type, {@code array} and
+     * {@code object} included, arrives as the raw string; no observed leak has carried one, and
+     * inventing a parse for an unobserved shape is how a recovery layer starts guessing.
      */
     String argumentsJson(String name, java.util.LinkedHashMap<String, String> rawValues) {
       Map<String, String> declared = parameterTypes.getOrDefault(name, Map.of());
@@ -604,14 +613,15 @@ final class AgentLlmCaller {
     }
     var recovered = new ArrayList<ToolCallRequest>();
     var deletions = new ArrayList<InlineToolCall>();
-    int callIndex = 0;
     for (InlineToolCall span : spans) { // forward pass → first-occurrence order + correct echo dedup
       if (!schemas.has(span.name())) {
         continue; // unknown tool → could be legitimate content; leave it in the text
       }
       deletions.add(span);
       if (seen.add(dedupKey(span.name(), span.arguments()))) {
-        recovered.add(new ToolCallRequest("text-tool-" + callIndex++, span.name(), span.arguments()));
+        recovered.add(
+            new ToolCallRequest(
+                "text-tool-" + RECOVERED_CALL_SEQ.incrementAndGet(), span.name(), span.arguments()));
       }
     }
     var sb = new StringBuilder(text);
@@ -638,31 +648,69 @@ final class AgentLlmCaller {
    * signal that separates "I am calling this" from "I could call this". Pure.
    */
   static List<ToolCallRequest> recoverCommittedToolCalls(String prose, ToolSchemas schemas) {
-    var recovered = new ArrayList<ToolCallRequest>();
-    var seen = new LinkedHashSet<String>();
+    InlineToolCall last = null;
     java.util.regex.Matcher m = TOOL_CALL_WRAPPER.matcher(prose);
-    int callIndex = 0;
     while (m.find()) {
       InlineToolCall call = parseWrappedToolCall(m.group(1), m.start(), m.end(), schemas);
-      if (call == null || !schemas.has(call.name())) {
-        continue;
-      }
-      if (seen.add(dedupKey(call.name(), call.arguments()))) {
-        recovered.add(
-            new ToolCallRequest("reasoning-tool-" + callIndex++, call.name(), call.arguments()));
+      if (call != null && schemas.has(call.name())) {
+        last = call;
       }
     }
-    return List.copyOf(recovered);
+    // LAST wrapper wins, and only that one runs.
+    //
+    // Independent review, 881 §G finding 7: recovering every wrapper executes a call the model
+    // RETRACTED — "<tool_call>A</tool_call> … wait, that needs a parent_path I don't have, instead
+    // <tool_call>B</tool_call>" ran both A and B. Nothing in the samples says whether a
+    // multi-wrapper thinking block is a batch or a revision, and the two are indistinguishable from
+    // the text, so the choice is which error to make. Deferring a batched call costs one turn (the
+    // loop simply asks again next iteration, and nothing is lost); executing a retracted one is an
+    // action the model decided against. The wrapper is a commit marker only while there is one of
+    // them, which is what every sample showed; the last is the intent the model settled on.
+    return last == null
+        ? List.of()
+        : List.of(
+            new ToolCallRequest(
+                "reasoning-tool-" + RECOVERED_CALL_SEQ.incrementAndGet(),
+                last.name(),
+                last.arguments()));
   }
 
-  /** Parse one {@code <tool_call>} body — XML {@code <function=…>} form first, then JSON. */
+  /**
+   * Monotonic across the whole run, because a recovered call id reaches the wire.
+   *
+   * <p>Independent review, 881 §G finding 10: a per-turn index restarts at 0 every iteration, so a
+   * run that recovers on two turns emits two calls with the SAME id — and {@code
+   * AgentSession.virtualToolFutures} keys on it and overwrites rather than rejecting, so the
+   * collision would be silent. Harmless while recovery was a never-observed fallback; not harmless
+   * at 40 % of turns.
+   */
+  private static final java.util.concurrent.atomic.AtomicLong RECOVERED_CALL_SEQ =
+      new java.util.concurrent.atomic.AtomicLong();
+
+  /**
+   * Parse one {@code <tool_call>} body — XML {@code <function=…>} form first, then JSON.
+   *
+   * <p>Independent review, 881 §G finding 6: parameters are scoped to their OWN {@code <function>}
+   * block. Scanning them across the whole wrapper let a second {@code <function=…>} donate its
+   * arguments to the first while itself being dropped. A wrapper holding more than one function is
+   * treated the same way a reasoning block holding more than one wrapper is (see {@link
+   * #recoverCommittedToolCalls}): the last one is the intent.
+   */
   private static InlineToolCall parseWrappedToolCall(
       String inner, int start, int end, ToolSchemas schemas) {
     java.util.regex.Matcher fn = XML_FUNCTION.matcher(inner);
-    if (fn.find()) {
-      String name = fn.group(1);
+    String name = null;
+    int bodyFrom = -1;
+    int bodyTo = -1;
+    while (fn.find()) {
+      name = fn.group(1);
+      bodyFrom = fn.end();
+      int close = inner.indexOf("</function>", bodyFrom);
+      bodyTo = close < 0 ? inner.length() : close;
+    }
+    if (name != null) {
       var values = new LinkedHashMap<String, String>();
-      java.util.regex.Matcher pm = XML_PARAMETER.matcher(inner);
+      java.util.regex.Matcher pm = XML_PARAMETER.matcher(inner.substring(bodyFrom, bodyTo));
       while (pm.find()) {
         values.put(pm.group(1), pm.group(2));
       }
@@ -676,14 +724,24 @@ final class AgentLlmCaller {
 
   /**
    * Every tool-call span in {@code text}, in forward order and non-overlapping: the balanced-brace JSON
-   * scan plus the wrapper-delimited XML/JSON spans. Where a wrapper encloses a JSON object both scans
-   * would find, the WRAPPER span wins — deleting only the inner object would leave a bare
-   * {@code <tool_call></tool_call>} husk in the answer text. Pure.
+   * scan plus the wrapper-delimited XML/JSON spans. A tool call found ANYWHERE inside a
+   * {@code <tool_call>…</tool_call>} wrapper is reported with the WRAPPER's span, so a strip removes
+   * the markers with it. Pure.
+   *
+   * <p>Independent review, 881 §G finding 3: the earlier rule only widened to the wrapper when the
+   * wrapper's ENTIRE body parsed as a call, so {@code Here.<tool_call>I will call {…}</tool_call>}
+   * deleted just the JSON and left {@code Here.<tool_call>I will call </tool_call>} in the answer —
+   * the husk the design said could not happen. Widening on containment rather than on a clean parse
+   * closes it, and does so for every future body shape rather than for the ones observed so far.
    */
   static List<InlineToolCall> scanToolCallSpans(String text, ToolSchemas schemas) {
+    // Every wrapper's char range, whether or not its body parses — the range is what a strip must
+    // remove, and it is knowable even when the call inside has to come from the JSON scan.
+    var wrapperRanges = new ArrayList<int[]>();
     var wrapped = new ArrayList<InlineToolCall>();
     java.util.regex.Matcher m = TOOL_CALL_WRAPPER.matcher(text);
     while (m.find()) {
+      wrapperRanges.add(new int[] {m.start(), m.end()});
       InlineToolCall call = parseWrappedToolCall(m.group(1), m.start(), m.end(), schemas);
       if (call != null) {
         wrapped.add(call);
@@ -691,11 +749,20 @@ final class AgentLlmCaller {
     }
     var merged = new ArrayList<>(wrapped);
     for (InlineToolCall bare : scanInlineToolCallJson(text)) {
-      boolean insideWrapper =
+      boolean alreadyClaimed =
           wrapped.stream().anyMatch(w -> bare.start() >= w.start() && bare.end() <= w.end());
-      if (!insideWrapper) {
-        merged.add(bare);
+      if (alreadyClaimed) {
+        continue;
       }
+      int[] host =
+          wrapperRanges.stream()
+              .filter(r -> bare.start() >= r[0] && bare.end() <= r[1])
+              .findFirst()
+              .orElse(null);
+      merged.add(
+          host == null
+              ? bare
+              : new InlineToolCall(host[0], host[1], bare.name(), bare.arguments()));
     }
     merged.sort(java.util.Comparator.comparingInt(InlineToolCall::start));
 

@@ -32,6 +32,28 @@ class OnlineModeOpsTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
+  /**
+   * Tempdoc 881 (review §G finding 12) — an explicit JSON {@code null} finish_reason must read back
+   * as absent, not as the four-character string "null".
+   *
+   * <p>{@code NullNode.asText()} returns "null", and llama-server puts {@code "finish_reason": null}
+   * on every non-terminal streaming chunk. That was inert while nothing consumed the value; 881 puts
+   * it into a sentence shown to the user, where a stream ending without a terminal reason would
+   * claim "finish_reason=null" instead of admitting the runtime reported nothing.
+   */
+  @Test
+  @DisplayName("finishReasonOf: explicit JSON null reads as absent, not as the string \"null\"")
+  void finishReasonOfDistinguishesJsonNullFromAValue() {
+    JsonNode nullChoice = MAPPER.readTree("{\"finish_reason\":null}");
+    JsonNode missing = MAPPER.readTree("{}");
+    JsonNode stop = MAPPER.readTree("{\"finish_reason\":\"stop\"}");
+
+    assertNull(OnlineModeOps.finishReasonOf(nullChoice), "explicit JSON null is NOT a finish reason");
+    assertNull(OnlineModeOps.finishReasonOf(missing));
+    assertNull(OnlineModeOps.finishReasonOf(null));
+    assertEquals("stop", OnlineModeOps.finishReasonOf(stop), "a real reason still comes through");
+  }
+
   private HttpServer server;
   private int port;
   private AtomicReference<Mode> mode;

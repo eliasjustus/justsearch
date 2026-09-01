@@ -1815,6 +1815,36 @@ class AgentLoopServiceTest {
   }
 
   /**
+   * The other half of the gate, and the one claim 881 §C.1's safety rests on: reasoning-channel
+   * recovery runs ONLY when the turn would otherwise be discarded. A turn that produced an ANSWER
+   * must not have a tool call pulled out of its thinking — that is a model weighing an option while
+   * writing prose, and executing it would be worse than the bug the recovery fixes.
+   *
+   * <p>881 review §G finding 5: only the positive branch had a loop-level test.
+   */
+  @Test
+  void doesNotRecoverFromReasoningWhenTheTurnAlsoProducedText() {
+    var tool = new StubTool("search", RiskTier.LOW, "found it");
+    var ai = new ScriptedAiService(List.of(
+        new ScriptedResponse(
+            "Here is the answer, and I decided not to search.",
+            "I considered searching.\n<tool_call>\n<function=core_search>\n</function>\n</tool_call>",
+            List.of(),
+            null,
+            "stop")));
+    var service = buildService(ai, tool);
+
+    var events = run(service, userMessage("q"), 3);
+
+    assertEquals(0, tool.callCount.get(),
+        "a wrapped call inside the thinking of a turn that ANSWERED must not execute");
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done);
+    assertEquals("Here is the answer, and I decided not to search.", done.finalResponse(),
+        "and the answer is delivered untouched");
+  }
+
+  /**
    * The retry has to CHANGE something (881 §C.2). An empty turn is a property of the prompt shape,
    * not of transient server state — an identical re-issue failed 3/3 on replay and 2/2 end-to-end in
    * 868 — so the second attempt suppresses the thinking prompt, the one change measured to move it

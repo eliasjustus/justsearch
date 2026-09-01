@@ -281,21 +281,51 @@ class AgentLlmCallerTest {
         "availability is still the gate — recovery cannot widen the tool surface");
   }
 
-  /** Two committed calls in one thinking block come back in order; an exact repeat is deduped. */
+  /**
+   * A thinking block that wraps a call and then CHANGES ITS MIND runs only the call it settled on.
+   *
+   * <p>881 review §G finding 7: recovering every wrapper executed the retracted one too. A batch and
+   * a revision are indistinguishable from the text, so the choice is which error to make —
+   * deferring a batched call costs one turn (the loop asks again next iteration), executing a
+   * retracted one takes an action the model decided against.
+   */
   @Test
-  void recoversEveryCommittedCallOnceInOrder() {
+  void recoversOnlyTheCallTheReasoningSETTLEDOn() {
     String reasoning =
-        "<tool_call>\n<function=core_browse_folders>\n</function>\n</tool_call>\n"
-            + "then\n<tool_call>\n<function=core_read_document>\n<parameter=path>\na.md\n</parameter>\n"
+        "<tool_call>\n<function=core_browse_folders>\n<parameter=list_files>\nTrue\n</parameter>\n"
             + "</function>\n</tool_call>\n"
-            + "<tool_call>\n<function=core_browse_folders>\n</function>\n</tool_call>";
+            + "Wait — list_files needs a parent_path I do not have yet. Let me read instead.\n"
+            + "<tool_call>\n<function=core_read_document>\n<parameter=path>\na.md\n</parameter>\n"
+            + "</function>\n</tool_call>";
 
     List<ToolCallRequest> recovered =
         AgentLlmCaller.recoverCommittedToolCalls(reasoning, READ_AND_BROWSE);
 
-    assertEquals(2, recovered.size(), "the repeated browse is not executed twice");
-    assertEquals("core_browse_folders", recovered.get(0).toolName());
-    assertEquals("core_read_document", recovered.get(1).toolName());
+    assertEquals(1, recovered.size(), "the retracted browse must not run");
+    assertEquals("core_read_document", recovered.get(0).toolName());
+    assertTrue(recovered.get(0).arguments().contains("a.md"));
+  }
+
+  /**
+   * Two {@code <function>} blocks in one wrapper: the arguments of the second must not be smuggled
+   * into the first (881 review §G finding 6 — parameters used to be scanned over the whole wrapper).
+   */
+  @Test
+  void scopesXmlParametersToTheirOwnFunctionBlock() {
+    String reasoning =
+        "<tool_call><function=core_read_document><parameter=path>\na.md\n</parameter></function>"
+            + "<function=core_browse_folders><parameter=parent_path>\nx\n</parameter></function>"
+            + "</tool_call>";
+
+    List<ToolCallRequest> recovered =
+        AgentLlmCaller.recoverCommittedToolCalls(reasoning, READ_AND_BROWSE);
+
+    assertEquals(1, recovered.size());
+    assertEquals("core_browse_folders", recovered.get(0).toolName(), "the settled call is the last");
+    assertEquals(
+        "{\"parent_path\":\"x\"}",
+        recovered.get(0).arguments(),
+        "and it carries ONLY its own parameters — no 'path' donated by the block before it");
   }
 
   /**
@@ -339,27 +369,54 @@ class AgentLlmCallerTest {
   }
 
   /**
-   * The span list handed to the deletion loop must be disjoint — two overlapping spans would delete
-   * each other's characters out of the answer. Nothing observed produces an overlap; this pins that
-   * the guard holds if something ever does, by feeding a wrapper and a JSON object that share text.
+   * The span list handed to the deletion loop must be disjoint — the loop deletes back-to-front and
+   * two overlapping spans would delete each other's characters out of the answer. {@code
+   * StringBuilder.delete} silently clamps an out-of-range end, so the failure mode is a truncated
+   * answer, not an exception.
+   *
+   * <p>881 review §G finding 4 supplied the input: a JSON tool call whose STRING VALUE contains
+   * {@code <tool_call>}, so the wrapper regex opens inside the JSON object and closes after it —
+   * two spans that overlap without either containing the other. The earlier version of this test
+   * fed spans that were already disjoint by construction and so proved nothing.
    */
   @Test
   void spansHandedToTheDeletionLoopAreAlwaysDisjoint() {
-    String tangled =
-        "<tool_call>{\"name\":\"core_browse_folders\",\"arguments\":{}}</tool_call>"
-            + "{\"name\":\"core_read_document\",\"arguments\":{\"path\":\"a.md\"}}";
+    String straddling =
+        "KEEP THIS SENTENCE. "
+            + "{\"name\":\"core_browse_folders\",\"arguments\":{\"note\":\"<tool_call>\"}}"
+            + "<function=core_read_document><parameter=path>a.md</parameter></function></tool_call>";
 
-    var spans = AgentLlmCaller.scanToolCallSpans(tangled, READ_AND_BROWSE);
-
+    var spans = AgentLlmCaller.scanToolCallSpans(straddling, READ_AND_BROWSE);
     for (int i = 1; i < spans.size(); i++) {
       assertTrue(
           spans.get(i - 1).end() <= spans.get(i).start(),
-          "span " + (i - 1) + " overlaps span " + i + " — the deletion loop would corrupt the text");
+          "span " + (i - 1) + " overlaps span " + i + " — the deletion loop would eat the answer");
     }
+
     AgentLlmCaller.RecoveredText rt =
-        AgentLlmCaller.recoverInlineToolCalls(tangled, List.of(), READ_AND_BROWSE);
-    assertEquals(2, rt.recovered().size(), "both calls recovered");
-    assertTrue(rt.text().isEmpty(), "and the whole span set is consumed, leaving no husk");
+        AgentLlmCaller.recoverInlineToolCalls(straddling, List.of(), READ_AND_BROWSE);
+    assertTrue(
+        rt.text().startsWith("KEEP THIS SENTENCE."),
+        "prose BEFORE every span must survive; an overlapping pair makes StringBuilder.delete clamp"
+            + " its end and swallow the answer instead of the span. Got: " + rt.text());
+  }
+
+  /** A wrapper whose body is prose PLUS a JSON call is stripped whole — no husk in the answer. */
+  @Test
+  void stripsTheWholeWrapperWhenItsBodyIsProseAroundTheCall() {
+    String leaked =
+        "Here.<tool_call>I will call {\"name\":\"core_browse_folders\",\"arguments\":{}}</tool_call>";
+
+    AgentLlmCaller.RecoveredText rt =
+        AgentLlmCaller.recoverInlineToolCalls(leaked, List.of(), READ_AND_BROWSE);
+
+    assertEquals(1, rt.recovered().size(), "the call inside the wrapper is still recovered");
+    assertEquals("core_browse_folders", rt.recovered().get(0).toolName());
+    assertEquals(
+        "Here.",
+        rt.text(),
+        "881 review §G finding 3: deleting only the JSON left 'Here.<tool_call>I will call"
+            + " </tool_call>' — the husk the design claimed could not happen");
   }
 
   /**
