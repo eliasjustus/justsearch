@@ -48,6 +48,13 @@ fail-closed only) + its tests.
 
 Lane 0 already edited ADR frontmatter, the ADR README and CLAUDE.md; branch after #592 merges.
 
+Cross-lane rules from the independent review (2026-09-01, apply to A, B, C): ADR numbers are
+reserved now — **0046 local trust model (this lane)**, 0047 context window (lane A), 0048
+extraction isolation + pacing (lane C). A and C create only their own numbered file; this lane
+owns `docs/decisions/README.md`, the index and every existing ADR, and adds 0047/0048 to the
+index and the probe register when they land. `EnvRegistry`/`ResolvedConfigBuilder` append
+regions are shared across lanes (lane A owns structure only).
+
 ## Evidence (verified 2026-09-01 on `main` at 8e148b3b; lane 0 may have moved lines)
 
 ### The mechanism gap

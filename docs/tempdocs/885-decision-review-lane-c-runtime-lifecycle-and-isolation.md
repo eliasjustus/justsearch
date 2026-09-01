@@ -55,9 +55,13 @@ construction + health sampler wiring, `modules/worker-services/.../services/Grpc
 `docs/explanation/02-process-coordination.md` §breath-holding, `03-knowledge-server.md`
 §extraction + §job queue, `08-observability.md` health sampling.
 
-Lane A owns `configuration/**` and the Head config phase; lane B owns `docs/decisions/**`. New
-config keys this lane needs go in through `EnvRegistry` as a one-line request to lane A, or land
-after lane A merges.
+Lane A owns the *structure* of `configuration/**` (ordinals, contributors, promotions) and the
+Head config phase; the `EnvRegistry` enum and `ResolvedConfigBuilder` **append regions are shared**
+(cross-lane rule from the 2026-09-01 review), so this lane adds its own keys
+(`justsearch.extraction.sandbox.{mode,pool,heap,command}`, `justsearch.health.sample_ms`,
+`justsearch.queue.retry.*`) at the end of the enum / builder method without asking. Lane B owns
+existing `docs/decisions/**`; this lane creates only **ADR-0048 "Extraction isolation and
+indexing pacing"** (number reserved) and lane B indexes it.
 
 ## Evidence (verified 2026-09-01 on `main` at 8e148b3b; lane 0 moved some lines)
 
