@@ -752,3 +752,14 @@ two governed projections of one canonical record, not a fork); `query`/`resultCo
 `searchMode` constants (one producer each); a tool-definition DSL (§1.2); a governance gate
 for tool-schema coverage (§1.2 — the unit test is the cheaper instrument, with a stated
 retirement condition).
+
+## Open items routed from the 868 §I live-validation campaign (2026-09-01)
+
+- [ ] `AgentToolErrors`' typed codes never reach the wire: `AgentEventPayloads.toolCompletedPayload`
+  omits `errorCode`/`retryable`, so the FE cannot distinguish model-input errors from
+  worker-unavailable. Project the two fields (absent when unset), mirroring the
+  `outputCharsToModel` pattern.
+- [ ] The worker-outage path leaks a raw internal message to the model ("Browse error: No valid
+  port in signal bus", observed live during a `/api/worker/restart` chaos run) — the typed
+  mapping misses the signal-bus-down class; map it to the WORKER_UNAVAILABLE code with the
+  actionable "the index is restarting, retry shortly" phrasing.
