@@ -158,7 +158,7 @@
     {
       "id": "wire-gate-buf-cli-missing",
       "match": [
-        "scripts/governance/run\\.mjs(?!.*--self-test)"
+        "scripts/governance/run\\.mjs(?!.*--self-test)(?!.*--produce-inputs)"
       ],
       "claim": "The wire gate reports contract-governance/buf-cli-missing until \"npm install\" has run in scripts/wire-contract/ (the buf CLI is a local devDependency, not committed). Environmental on a fresh worktree; not a contract regression.",
       "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431): the finding names scripts/wire-contract/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe as absent.",
