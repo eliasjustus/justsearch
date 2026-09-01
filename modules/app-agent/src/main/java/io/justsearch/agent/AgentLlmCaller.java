@@ -17,7 +17,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -217,7 +216,20 @@ final class AgentLlmCaller {
     int emptyAttempt = 0;
     while (true) {
       try {
-        LlmCallResult result = callLlmWithTools(session, tools, eventConsumer);
+        // Tempdoc 881 §C.2 — the retry has to CHANGE something.
+        //
+        // An empty result here is not transient server state; it is a property of this prompt
+        // shape (measured: the same turn returns empty 3/3 on replay, and 868 saw 2/2 end-to-end).
+        // Re-issuing the identical request, which is what this loop used to do, is a 250 ms pause
+        // before the same answer. Suppressing the thinking prompt is the one change that moves it:
+        // 40/40 sampled turns across both chat profiles returned a structured tool call under
+        // `enable_thinking:false`, at lower latency. It is applied ONLY on the retry — the first
+        // attempt keeps the model's reasoning, which is why the standard profile exists.
+        SamplingParams sampling = resolveAgentSampling(session);
+        if (emptyAttempt > 0) {
+          sampling = sampling.withEnableThinking(false);
+        }
+        LlmCallResult result = callLlmWithTools(session, tools, eventConsumer, sampling);
         boolean emptyResult =
             result.toolCalls().isEmpty()
                 && (result.textContent() == null || result.textContent().isBlank());
@@ -270,13 +282,16 @@ final class AgentLlmCaller {
         .withEnableThinking(false);
   }
 
-  LlmCallResult callLlmWithTools(
-      AgentSession session,
-      List<Map<String, Object>> tools,
-      Consumer<AgentEvent> eventConsumer) {
-    return callLlmWithTools(session, tools, eventConsumer, resolveAgentSampling(session));
-  }
-
+  /**
+   * The ONE entry point for a tool-bearing LLM call, and sampling is always an argument.
+   *
+   * <p>Tempdoc 881 §C.2 retired the sampling-resolving overload that used to sit here. 878 review B2
+   * had already recorded what implicit resolution costs — a finalize call silently picked up
+   * {@code tool_choice=required} plus a grammar and streamed the raw tool-call blob out as the
+   * answer — and the retry now needs a DIFFERENT sampling on its second attempt than on its first,
+   * which an overload that derives sampling from the session cannot express. With the overload gone
+   * the invariant is structural rather than remembered: no call site can leave sampling implicit.
+   */
   LlmCallResult callLlmWithTools(
       AgentSession session,
       List<Map<String, Object>> tools,
@@ -294,6 +309,7 @@ final class AgentLlmCaller {
     var parser = new ToolCallParser();
     var latch = new CountDownLatch(1);
     var errorHolder = new CompletableFuture<Throwable>();
+    var finishReasonHolder = new java.util.concurrent.atomic.AtomicReference<String>();
 
     onlineAiService.streamChatWithTools(
         session.messages(),
@@ -352,7 +368,12 @@ final class AgentLlmCaller {
                     session.budgetRemaining());
               }
             },
-            fr -> latch.countDown(),
+            fr -> {
+              // Tempdoc 881 §B.3 — KEEP the runtime's terminal reason. This callback used to
+              // discard it, which is why the empty-response terminal had to guess at a cause.
+              finishReasonHolder.set(fr);
+              latch.countDown();
+            },
             error -> {
               errorHolder.complete(error);
               latch.countDown();
@@ -396,15 +417,9 @@ final class AgentLlmCaller {
       // one is only stripped (no double execution), and only spans naming an AVAILABLE tool are recovered
       // (legitimate JSON-looking prose is left untouched).
       String rawText = textBuilder.toString();
+      ToolSchemas schemas = ToolSchemas.of(tools);
       if (!rawText.isBlank()) {
-        Set<String> availableNames = tools.stream()
-            .map(t -> {
-              Object fn = t.get("function");
-              return (fn instanceof Map<?, ?> m) ? String.valueOf(m.get("name")) : null;
-            })
-            .filter(Objects::nonNull)
-            .collect(java.util.stream.Collectors.toSet());
-        RecoveredText rt = recoverInlineToolCalls(rawText, toolCalls, availableNames);
+        RecoveredText rt = recoverInlineToolCalls(rawText, toolCalls, schemas);
         rawText = rt.text();
         if (!rt.recovered().isEmpty()) {
           LOG.warn(
@@ -416,12 +431,53 @@ final class AgentLlmCaller {
         }
       }
 
+      // Tempdoc 881 §C.1 — the REASONING channel, and only when the turn is otherwise a dead end.
+      //
+      // Measured on Qwen3.5-9B (881 §A.3): on 40% of tool-planning turns the model emits a
+      // well-formed tool call INSIDE an unterminated thinking block, in the XML grammar, and
+      // stops. `--reasoning-format deepseek` routes the whole block to reasoning_content, so
+      // llama-server's native parser finds no call and the loop used to discard the turn and
+      // report "possible reasoning token exhaustion". Of 129 completions sampled across both
+      // profiles, 42 turns came back empty and ALL 42 carried a recoverable call; not one was
+      // genuinely content-free.
+      //
+      // The gate is deliberately stricter than the text channel's. Thinking DISCUSSES calls it
+      // then decides against, so acting on a hypothetical would be worse than the bug: recovery
+      // requires the model's own `<tool_call>` commit wrapper, and only runs when the alternative
+      // is discarding the turn entirely (no structured calls AND no text). Nothing is stripped —
+      // the reasoning has already streamed to the reader, and rewriting it would make the
+      // transcript disagree with what they saw.
+      if (toolCalls.isEmpty() && rawText.isBlank() && !reasoningBuilder.isEmpty()) {
+        List<ToolCallRequest> fromReasoning =
+            recoverCommittedToolCalls(reasoningBuilder.toString(), schemas);
+        if (!fromReasoning.isEmpty()) {
+          LOG.warn(
+              "Recovered {} tool call(s) the model emitted inside its reasoning channel"
+                  + " (not structured tool_calls); finish_reason={}",
+              fromReasoning.size(),
+              finishReasonHolder.get());
+          toolCalls = fromReasoning;
+        }
+      }
+
+      // Tempdoc 881 §C.3 — when the turn is STILL empty, record what the model actually produced.
+      // The next reader of this log should not have to run a measurement campaign to find out that
+      // the model wrote something the loop could not use; 868 §D.3 did, and got the wrong answer.
+      if (toolCalls.isEmpty() && rawText.isBlank()) {
+        LOG.warn(
+            "LLM turn produced no text and no tool calls (finish_reason={}, reasoning_chars={}):"
+                + " reasoning tail={}",
+            finishReasonHolder.get(),
+            reasoningBuilder.length(),
+            reasoningBuilder.substring(Math.max(0, reasoningBuilder.length() - 400)));
+      }
+
       // Think-tag hygiene is upstream now (tempdoc 835 §5.3): OnlineModeOps' streaming parse runs a
       // stateful, frame-straddle-safe filter over content and reroutes captured thinking to the
       // reasoning channel, so the accumulator here never sees tags. The strip that used to live at
       // this point was the second authority over the same fact.
       chatSpan.setStatus(StatusCode.OK);
-      return new LlmCallResult(rawText, toolCalls);
+      return new LlmCallResult(rawText, toolCalls, finishReasonHolder.get());
     } catch (RuntimeException e) {
       chatSpan.recordException(e);
       chatSpan.setStatus(StatusCode.ERROR, "llm-call-failed");
@@ -433,23 +489,121 @@ final class AgentLlmCaller {
     }
   }
 
-  /** A tool-call JSON object the model leaked into assistant text, with its [start,end) char span. */
-  private record InlineToolCall(int start, int end, String name, String arguments) {}
+  /** A tool call the model leaked into a prose channel, with its [start,end) char span. */
+  record InlineToolCall(int start, int end, String name, String arguments) {}
 
   /** The assistant text with leaked tool-call JSON removed, plus the calls recovered from it. */
   record RecoveredText(String text, List<ToolCallRequest> recovered) {}
 
   /**
+   * The LLM-facing tool payload, reduced to what the recovery layer needs: which names exist, and
+   * what type each declared parameter has.
+   *
+   * <p>Tempdoc 881 §C.1 — the XML grammar carries argument VALUES with no types
+   * ({@code <parameter=list_files>True</parameter>}), so turning one back into JSON arguments is
+   * only sound against the tool's own declared schema. Building this from the same {@code tools}
+   * list that was sent to the model keeps the recovery honest: nothing is coerced by guesswork
+   * about the name.
+   */
+  record ToolSchemas(Set<String> names, Map<String, Map<String, String>> parameterTypes) {
+
+    /** Project the OpenAI-shaped tool list the loop sends: {@code function.name} + parameter types. */
+    static ToolSchemas of(List<Map<String, Object>> tools) {
+      var names = new LinkedHashSet<String>();
+      var types = new LinkedHashMap<String, Map<String, String>>();
+      for (Map<String, Object> tool : tools) {
+        if (!(tool.get("function") instanceof Map<?, ?> fn) || fn.get("name") == null) {
+          continue;
+        }
+        String name = String.valueOf(fn.get("name"));
+        names.add(name);
+        var perParam = new LinkedHashMap<String, String>();
+        if (fn.get("parameters") instanceof Map<?, ?> params
+            && params.get("properties") instanceof Map<?, ?> props) {
+          for (Map.Entry<?, ?> e : props.entrySet()) {
+            if (e.getValue() instanceof Map<?, ?> spec && spec.get("type") != null) {
+              perParam.put(String.valueOf(e.getKey()), String.valueOf(spec.get("type")));
+            }
+          }
+        }
+        types.put(name, perParam);
+      }
+      return new ToolSchemas(Set.copyOf(names), Map.copyOf(types));
+    }
+
+    boolean has(String name) {
+      return names.contains(name);
+    }
+
+    /**
+     * Build a JSON arguments object from untyped XML parameter values, coercing each against its
+     * declared type. An undeclared key, or a value that will not parse as its declared type, keeps
+     * the raw string: the tool's own validation is the authority on whether that is acceptable, and
+     * dropping the argument here would turn a recoverable call into a differently-wrong one.
+     *
+     * <p>Exactly what is coerced, stated so nobody has to infer it (881 review §G finding 11):
+     * {@code boolean} accepts {@code true/yes/1} and {@code false/no/0} case-insensitively;
+     * {@code integer} and {@code number} both go through {@code BigDecimal}, so a fractional value
+     * against a declared {@code integer} arrives as the number it was written as, not truncated —
+     * the tool's schema validation is what rejects it. Every other declared type, {@code array} and
+     * {@code object} included, arrives as the raw string; no observed leak has carried one, and
+     * inventing a parse for an unobserved shape is how a recovery layer starts guessing.
+     */
+    String argumentsJson(String name, java.util.LinkedHashMap<String, String> rawValues) {
+      Map<String, String> declared = parameterTypes.getOrDefault(name, Map.of());
+      var node = MAPPER.createObjectNode();
+      for (Map.Entry<String, String> e : rawValues.entrySet()) {
+        String raw = e.getValue().strip();
+        String type = declared.get(e.getKey());
+        if ("boolean".equals(type) && BOOLEAN_TRUE.matcher(raw).matches()) {
+          node.put(e.getKey(), true);
+        } else if ("boolean".equals(type) && BOOLEAN_FALSE.matcher(raw).matches()) {
+          node.put(e.getKey(), false);
+        } else if ("integer".equals(type) || "number".equals(type)) {
+          try {
+            node.put(e.getKey(), new java.math.BigDecimal(raw));
+          } catch (NumberFormatException nfe) {
+            node.put(e.getKey(), raw);
+          }
+        } else {
+          node.put(e.getKey(), raw);
+        }
+      }
+      return node.toString();
+    }
+  }
+
+  private static final java.util.regex.Pattern BOOLEAN_TRUE =
+      java.util.regex.Pattern.compile("(?i)true|yes|1");
+  private static final java.util.regex.Pattern BOOLEAN_FALSE =
+      java.util.regex.Pattern.compile("(?i)false|no|0");
+
+  /** The model's own commit wrapper around a tool call it emitted into a prose channel. */
+  private static final java.util.regex.Pattern TOOL_CALL_WRAPPER =
+      java.util.regex.Pattern.compile("<tool_call>(.*?)</tool_call>", java.util.regex.Pattern.DOTALL);
+
+  /** {@code <function=core_read_document>} — the XML grammar's call head. */
+  private static final java.util.regex.Pattern XML_FUNCTION =
+      java.util.regex.Pattern.compile("<function\\s*=\\s*([A-Za-z0-9_.-]+)\\s*>");
+
+  /** {@code <parameter=path>\n…\n</parameter>} — one XML argument. */
+  private static final java.util.regex.Pattern XML_PARAMETER =
+      java.util.regex.Pattern.compile(
+          "<parameter\\s*=\\s*([A-Za-z0-9_.-]+)\\s*>(.*?)</parameter>", java.util.regex.Pattern.DOTALL);
+
+  /**
    * Recover tool calls the model emitted as TEXT content (instead of structured {@code tool_calls}) and
-   * strip them from the text. Accepts both grammars local models use — {@code {"name":..,"arguments":..}}
-   * and {@code {"type":"function",…,"parameters":..}} / nested {@code {"type":"function","function":..}}
-   * — found anywhere via a balanced-brace scan (inline, {@code ';'}-separated, newline). Only spans
+   * strip them from the text. Accepts every grammar local models leak: the two JSON ones —
+   * {@code {"name":..,"arguments":..}} and {@code {"type":"function",…,"parameters":..}} / nested
+   * {@code {"type":"function","function":..}}, found anywhere via a balanced-brace scan (inline,
+   * {@code ';'}-separated, newline) — and (tempdoc 881) the wrapper-delimited XML one,
+   * {@code <tool_call><function=NAME><parameter=K>V</parameter></function></tool_call>}. Only spans
    * naming an AVAILABLE tool are acted on (JSON-looking prose is left untouched); an exact (name,args)
    * echo of an already-present structured call is stripped but NOT re-added (no double execution). Pure.
    */
   static RecoveredText recoverInlineToolCalls(
-      String text, List<ToolCallRequest> structured, Set<String> availableNames) {
-    List<InlineToolCall> spans = scanInlineToolCallJson(text);
+      String text, List<ToolCallRequest> structured, ToolSchemas schemas) {
+    List<InlineToolCall> spans = scanToolCallSpans(text, schemas);
     if (spans.isEmpty()) {
       return new RecoveredText(text, List.of());
     }
@@ -459,14 +613,15 @@ final class AgentLlmCaller {
     }
     var recovered = new ArrayList<ToolCallRequest>();
     var deletions = new ArrayList<InlineToolCall>();
-    int callIndex = 0;
     for (InlineToolCall span : spans) { // forward pass → first-occurrence order + correct echo dedup
-      if (!availableNames.contains(span.name())) {
+      if (!schemas.has(span.name())) {
         continue; // unknown tool → could be legitimate content; leave it in the text
       }
       deletions.add(span);
       if (seen.add(dedupKey(span.name(), span.arguments()))) {
-        recovered.add(new ToolCallRequest("text-tool-" + callIndex++, span.name(), span.arguments()));
+        recovered.add(
+            new ToolCallRequest(
+                "text-tool-" + RECOVERED_CALL_SEQ.incrementAndGet(), span.name(), span.arguments()));
       }
     }
     var sb = new StringBuilder(text);
@@ -480,6 +635,153 @@ final class AgentLlmCaller {
         .replaceAll("[\\s;]+$", "")
         .strip();
     return new RecoveredText(cleaned, recovered);
+  }
+
+  /**
+   * Tempdoc 881 §C.1 — recover the tool calls the model COMMITTED TO inside a prose channel: only
+   * spans wrapped in the model's own {@code <tool_call>…</tool_call>} marker, in either the XML or a
+   * JSON body, naming an available tool. Nothing is stripped and nothing is inferred from bare prose.
+   *
+   * <p>This is the strict sibling of {@link #recoverInlineToolCalls}. The permissive rule is right for
+   * the text channel, where an unrecovered leak renders AS the answer; it is wrong for the reasoning
+   * channel, which routinely weighs calls the model then decides against. The wrapper is the only
+   * signal that separates "I am calling this" from "I could call this". Pure.
+   */
+  static List<ToolCallRequest> recoverCommittedToolCalls(String prose, ToolSchemas schemas) {
+    InlineToolCall last = null;
+    java.util.regex.Matcher m = TOOL_CALL_WRAPPER.matcher(prose);
+    while (m.find()) {
+      InlineToolCall call = parseWrappedToolCall(m.group(1), m.start(), m.end(), schemas);
+      if (call != null && schemas.has(call.name())) {
+        last = call;
+      }
+    }
+    // LAST wrapper wins, and only that one runs.
+    //
+    // Independent review, 881 §G finding 7: recovering every wrapper executes a call the model
+    // RETRACTED — "<tool_call>A</tool_call> … wait, that needs a parent_path I don't have, instead
+    // <tool_call>B</tool_call>" ran both A and B. Nothing in the samples says whether a
+    // multi-wrapper thinking block is a batch or a revision, and the two are indistinguishable from
+    // the text, so the choice is which error to make. Deferring a batched call costs one turn (the
+    // loop simply asks again next iteration, and nothing is lost); executing a retracted one is an
+    // action the model decided against. The wrapper is a commit marker only while there is one of
+    // them, which is what every sample showed; the last is the intent the model settled on.
+    return last == null
+        ? List.of()
+        : List.of(
+            new ToolCallRequest(
+                "reasoning-tool-" + RECOVERED_CALL_SEQ.incrementAndGet(),
+                last.name(),
+                last.arguments()));
+  }
+
+  /**
+   * Monotonic across the whole run, because a recovered call id reaches the wire.
+   *
+   * <p>Independent review, 881 §G finding 10: a per-turn index restarts at 0 every iteration, so a
+   * run that recovers on two turns emits two calls with the SAME id — and {@code
+   * AgentSession.virtualToolFutures} keys on it and overwrites rather than rejecting, so the
+   * collision would be silent. Harmless while recovery was a never-observed fallback; not harmless
+   * at 40 % of turns.
+   */
+  private static final java.util.concurrent.atomic.AtomicLong RECOVERED_CALL_SEQ =
+      new java.util.concurrent.atomic.AtomicLong();
+
+  /**
+   * Parse one {@code <tool_call>} body — XML {@code <function=…>} form first, then JSON.
+   *
+   * <p>Independent review, 881 §G finding 6: parameters are scoped to their OWN {@code <function>}
+   * block. Scanning them across the whole wrapper let a second {@code <function=…>} donate its
+   * arguments to the first while itself being dropped. A wrapper holding more than one function is
+   * treated the same way a reasoning block holding more than one wrapper is (see {@link
+   * #recoverCommittedToolCalls}): the last one is the intent.
+   */
+  private static InlineToolCall parseWrappedToolCall(
+      String inner, int start, int end, ToolSchemas schemas) {
+    java.util.regex.Matcher fn = XML_FUNCTION.matcher(inner);
+    String name = null;
+    int bodyFrom = -1;
+    int bodyTo = -1;
+    while (fn.find()) {
+      name = fn.group(1);
+      bodyFrom = fn.end();
+      int close = inner.indexOf("</function>", bodyFrom);
+      bodyTo = close < 0 ? inner.length() : close;
+    }
+    if (name != null) {
+      var values = new LinkedHashMap<String, String>();
+      java.util.regex.Matcher pm = XML_PARAMETER.matcher(inner.substring(bodyFrom, bodyTo));
+      while (pm.find()) {
+        values.put(pm.group(1), pm.group(2));
+      }
+      return new InlineToolCall(start, end, name, schemas.argumentsJson(name, values));
+    }
+    InlineToolCall json = parseToolCallObject(inner.strip(), start, end);
+    return json == null
+        ? null
+        : new InlineToolCall(start, end, json.name(), json.arguments());
+  }
+
+  /**
+   * Every tool-call span in {@code text}, in forward order and non-overlapping: the balanced-brace JSON
+   * scan plus the wrapper-delimited XML/JSON spans. A tool call found ANYWHERE inside a
+   * {@code <tool_call>…</tool_call>} wrapper is reported with the WRAPPER's span, so a strip removes
+   * the markers with it. Pure.
+   *
+   * <p>Independent review, 881 §G finding 3: the earlier rule only widened to the wrapper when the
+   * wrapper's ENTIRE body parsed as a call, so {@code Here.<tool_call>I will call {…}</tool_call>}
+   * deleted just the JSON and left {@code Here.<tool_call>I will call </tool_call>} in the answer —
+   * the husk the design said could not happen. Widening on containment rather than on a clean parse
+   * closes it, and does so for every future body shape rather than for the ones observed so far.
+   */
+  static List<InlineToolCall> scanToolCallSpans(String text, ToolSchemas schemas) {
+    // Every wrapper's char range, whether or not its body parses — the range is what a strip must
+    // remove, and it is knowable even when the call inside has to come from the JSON scan.
+    var wrapperRanges = new ArrayList<int[]>();
+    var wrapped = new ArrayList<InlineToolCall>();
+    java.util.regex.Matcher m = TOOL_CALL_WRAPPER.matcher(text);
+    while (m.find()) {
+      wrapperRanges.add(new int[] {m.start(), m.end()});
+      InlineToolCall call = parseWrappedToolCall(m.group(1), m.start(), m.end(), schemas);
+      if (call != null) {
+        wrapped.add(call);
+      }
+    }
+    var merged = new ArrayList<>(wrapped);
+    for (InlineToolCall bare : scanInlineToolCallJson(text)) {
+      boolean alreadyClaimed =
+          wrapped.stream().anyMatch(w -> bare.start() >= w.start() && bare.end() <= w.end());
+      if (alreadyClaimed) {
+        continue;
+      }
+      int[] host =
+          wrapperRanges.stream()
+              .filter(r -> bare.start() >= r[0] && bare.end() <= r[1])
+              .findFirst()
+              .orElse(null);
+      merged.add(
+          host == null
+              ? bare
+              : new InlineToolCall(host[0], host[1], bare.name(), bare.arguments()));
+    }
+    merged.sort(java.util.Comparator.comparingInt(InlineToolCall::start));
+
+    // Non-overlap is a PRECONDITION of the caller's back-to-front deletion, not a nicety: two
+    // overlapping spans would delete each other's characters and corrupt the answer text. Each scan
+    // is internally non-overlapping and the containment test above drops a JSON object nested in a
+    // wrapper, so a survivor pair would need a JSON span that STRADDLES a wrapper boundary — which
+    // needs `</tool_call>` inside a JSON string literal, and that same literal makes the wrapper's
+    // own body unparseable, so no wrapper span is produced. No input was found that overlaps. This
+    // filter is here so the deletion loop rests on an enforced invariant instead of that argument.
+    var disjoint = new ArrayList<InlineToolCall>(merged.size());
+    int consumedTo = 0;
+    for (InlineToolCall span : merged) {
+      if (span.start() >= consumedTo) {
+        disjoint.add(span);
+        consumedTo = span.end();
+      }
+    }
+    return List.copyOf(disjoint);
   }
 
   /**

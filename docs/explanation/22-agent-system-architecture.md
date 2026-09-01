@@ -33,7 +33,7 @@ Primary entry point: `AgentLoopService.runAgent()` in `modules/app-agent` (the `
 | Collaborator | Owns |
 |---|---|
 | `AgentStepRunner` | one loop iteration — per-iteration tool selection, dispatch orchestration, handoff, virtual tools |
-| `AgentLlmCaller` | the LLM round-trip: `callLlmWithTools`, retry policy, `DEFAULT_MAX_TOKENS`, Hermes-format fallback parse, `<think>`-tag stripping |
+| `AgentLlmCaller` | the LLM round-trip: `callLlmWithTools` (one entry point — sampling is always an argument, never resolved implicitly), `DEFAULT_MAX_TOKENS`, the `EMPTY_RESPONSE` retry (attempt 2 suppresses thinking), `finish_reason` capture, and leaked-tool-call recovery |
 | `AgentToolDispatcher` | tool execution + policy + `handleSafetyGate` approval gate (the sole direct `OperationDispatcher.dispatch` site) |
 | `AgentContextCompressor` | tool-result truncation/compression (`MAX_TOOL_RESULT_CHARS`) |
 | `AgentEventTracing` | `TraceContext` / OTel span decoration |
@@ -43,6 +43,30 @@ Primary entry point: `AgentLoopService.runAgent()` in `modules/app-agent` (the `
 | `AgentPromptComposer` | system-prompt assembly — `DEFAULT_SYSTEM_PROMPT`, the indexed-root preamble, and the condition-recovery context (tempdoc 584) |
 | `AgentSessionRegistry` | the live-run session map + per-run control surface — approve/reject, cancel, autonomy dial, steering interject, budget/context-gate resolution, attach, virtual-tool completion (tempdoc 584) |
 | `AgentRunQueryService` | the read-time query/projection surface behind the `AgentRunQueries` interface — session snapshots/lists, event/thread/lifecycle/presence projections over `AgentRunStore`, operation history, and resume (tempdoc 584) |
+
+### Recovering a tool call the model put in the wrong channel
+
+A local model does not always put its tool call in the structured `tool_calls` channel. It leaks
+into the assistant text as JSON, or — measured at 40 % of tool-planning turns on the standard 9B
+profile (tempdoc 881) — into an unterminated *thinking* block as
+`<tool_call><function=NAME><parameter=K>V</parameter></function></tool_call>`, which
+`--reasoning-format deepseek` routes wholly to `reasoning_content` where llama-server's own parser
+cannot reach it. `AgentLlmCaller` recovers such calls rather than discarding the turn, under two
+deliberately different rules:
+
+- **Text channel** — permissive: every recognised grammar is recovered and the span is *stripped*,
+  because an unrecovered leak there renders as the answer.
+- **Reasoning channel** — strict: only a span inside the model's own `<tool_call>` wrapper, only
+  when the turn has no structured call and no text, only the LAST such wrapper, and nothing is
+  stripped. Thinking routinely weighs calls it then retracts; the wrapper is the commit marker, the
+  empty-turn gate means the only alternative is discarding the turn, and taking the last wrapper
+  defers a batch by one iteration rather than executing something the model changed its mind about.
+
+Recovery cannot widen the tool surface: names are checked against the list actually offered that
+iteration, and a recovered call goes through `isAuthorizedThisIteration` and the safety gate like any
+other. Arguments from the XML grammar are untyped and are coerced against the tool's declared JSON
+schema. If a turn is still empty afterwards, the error names the runtime's `finish_reason` — it does
+not guess at a cause.
 
 The loop follows a tool-using ReAct-style flow:
 
@@ -111,8 +135,8 @@ Key classes:
 | `OperationCatalog` | Canonical catalog of available operations and metadata. |
 | `OperationDispatcher` | Dispatches operation calls to registered handlers. |
 | `AgentToolEmitter` | Projects catalog operations into model-visible tool definitions. `offer(...)` is the one authority on *which* operations the model is shown; `emit(...)` is its wire projection. |
-| `AgentToolsOperationCatalog` | Registers the built-in agent operations in `app-services`. |
-| Operation handlers | Implement concrete behavior under `modules/app-services/.../registry/operations/handlers/`. |
+| `AgentToolsOperationCatalog` | Registers the built-in agent operations, in `app-agent` (`modules/app-agent/src/main/java/io/justsearch/agent/tools/AgentToolsOperationCatalog.java`), next to the tools it declares. |
+| Operation handlers | The five knowledge/file agent tools (`core.search-index`, `core.read-document`, `core.browse-folders`, `core.ingest-files`, `core.file-operations`) are themselves `OperationHandler` implementations in `modules/app-agent/src/main/java/io/justsearch/agent/tools/`. Two agent operations — `core.remember` and `core.navigate-to-surface` — keep dedicated handlers under `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/`, alongside the non-agent operation handlers that also live there. |
 
 Wire-name projection is deliberate. Dotted operation IDs such as `core.search-index` are projected to model-visible tool names such as `core_search_index`.
 
@@ -265,7 +289,7 @@ Prompt changes should be evaluated against current tool behavior. Expanding the 
 |--------|---------|
 | `modules/app-agent-api` | Public agent API, events, error types, trace context, and operation-facing contracts. |
 | `modules/app-agent` | Agent loop, session state, retry policy, run store, telemetry, and prompt assembly. |
-| `modules/app-services` | Operation catalog wiring, operation dispatch, and built-in operation handlers. |
+| `modules/app-services` | Operation catalog composition/dispatch and non-agent operation handlers, plus dedicated handlers for two agent operations (`core.remember`, `core.navigate-to-surface`). The agent-tool catalog and the five knowledge/file agent tools themselves live in `modules/app-agent`. |
 | `modules/app-inference` | Online AI runtime lifecycle used by the agent. |
 | `modules/ui` | HTTP/SSE agent routes. |
 
@@ -273,9 +297,7 @@ Prompt changes should be evaluated against current tool behavior. Expanding the 
 
 To add or change an agent capability:
 
-1. Add or update the operation definition in the operation catalog wiring.
-2. Implement or update the operation handler.
-3. Ensure `AgentToolEmitter` projects the intended model-visible wire name and schema.
-4. Add approval/safety metadata at the operation layer.
-5. Register any REST endpoint through route classes in `modules/ui` when the capability also needs HTTP exposure.
-6. Update canonical docs and generated skills after code behavior is verified.
+1. Add or update the operation entry (including its `OperationPolicy` — risk tier, confirm strategy, audit policy) and its `OperationHandler` implementation together. For a new knowledge/file-shaped agent tool, these are the same file pair in the same package, `modules/app-agent/src/main/java/io/justsearch/agent/tools/`. When the work isn't tool-shaped — as `core.remember` and `core.navigate-to-surface` show — the operation entry stays in that catalog but the handler instead goes under `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/`.
+2. Confirm `AgentToolEmitter` projects the intended model-visible wire name and schema; `AgentToolCatalogBaselineTest` (`modules/app-services/src/test/java/io/justsearch/app/services/registry/emitter/AgentToolCatalogBaselineTest.java`) pins the real catalog's projection against a checked-in baseline (`modules/app-services/src/test/resources/agent-tools-wire-baseline.json`), so a deliberate schema or policy change requires updating that baseline.
+3. Register any REST endpoint through route classes in `modules/ui` when the capability also needs HTTP exposure.
+4. Update canonical docs and generated skills after code behavior is verified.

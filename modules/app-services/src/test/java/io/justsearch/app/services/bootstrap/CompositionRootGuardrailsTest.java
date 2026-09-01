@@ -56,11 +56,13 @@ import org.junit.jupiter.api.Test;
 @DisplayName("Tempdoc 541 §4.3 — composition-root discipline gate")
 class CompositionRootGuardrailsTest {
 
-  /** Pin — ServicePhase.Output has 26 components after tempdoc 542's OperationLeaseService
-   * addition (the always-available op-lease SPI for the dev-runner ownership model). Pinned at
-   * 26; reductions welcome, growth requires a 530-kernel changeset row. The next addition
-   * should trigger a decomposition pass (bundling settings/policy/diagnostics into CoreServices
-   * in Output) rather than another ceiling bump. */
+  /** Ceiling, not a live count — ServicePhase.Output currently has 21 components (tempdoc 868
+   * §B.2 bundled the six agent-tool fields into one {@code AgentToolFactory.Output} component,
+   * dropping it below this pin). The ceiling itself stays at 26, set after tempdoc 542's
+   * OperationLeaseService addition (the always-available op-lease SPI for the dev-runner
+   * ownership model); reductions welcome, growth requires a 530-kernel changeset row. The next
+   * addition should trigger a decomposition pass (bundling settings/policy/diagnostics into
+   * CoreServices in Output) rather than another ceiling bump. */
   static final int MAX_OUTPUT_FIELDS = 26;
 
   /** Pin — Head process currently has 5 phases. Pinned at 8. */

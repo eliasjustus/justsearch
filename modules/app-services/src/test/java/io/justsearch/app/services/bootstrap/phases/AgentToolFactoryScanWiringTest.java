@@ -16,7 +16,7 @@ import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.observability.ledger.ScanRollupLedger;
 import io.justsearch.app.services.lifecycle.WorkerCapability;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
@@ -166,13 +166,7 @@ final class AgentToolFactoryScanWiringTest {
             OnlineAiService.unavailable(),
             null,
             mock(DocumentService.class));
-    AgentToolHandlers.registerEager(
-        eager,
-        eagerTools.searchTool(),
-        eagerTools.browseTool(),
-        eagerTools.ingestTool(),
-        eagerTools.fileOperationsTool(),
-        eagerTools.readDocumentTool());
+    AgentToolHandlers.registerEager(eager, eagerTools);
 
     HandlerRegistry lateBound = new HandlerRegistry();
     assertTrue(
@@ -232,13 +226,7 @@ final class AgentToolFactoryScanWiringTest {
             OnlineAiService.unavailable(),
             null,
             mock(DocumentService.class));
-    AgentToolHandlers.registerEager(
-        registry,
-        eagerTools.searchTool(),
-        eagerTools.browseTool(),
-        eagerTools.ingestTool(),
-        eagerTools.fileOperationsTool(),
-        eagerTools.readDocumentTool());
+    AgentToolHandlers.registerEager(registry, eagerTools);
     assertTrue(
         registry.resolve(AgentToolsOperationCatalog.SEARCH_INDEX).isPresent(),
         "eager registration must have registered SEARCH_INDEX (the sentinel ref on main)");

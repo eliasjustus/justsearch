@@ -249,7 +249,9 @@ Suppression avoids the "long-wrong trajectory" problem where thinking chains deg
 
 ### Empty Output Recovery
 
-`AgentLlmCaller.callLlmWithRetries` retries on empty content (no text and no tool calls) with bounded backoff per `AgentRetryPolicy` (the `EMPTY_RESPONSE` decision). This handles transient empty responses — e.g. when reasoning tokens consume the context window, leaving no budget for the answer. (There is no `/no_think` injection on this path.)
+`AgentLlmCaller.callLlmWithRetries` retries on empty content (no text and no tool calls) per `AgentRetryPolicy`'s `EMPTY_RESPONSE` decision, and the retry **changes the request**: attempt 2 goes out with `enableThinking=false`. An empty turn is usually not transient server state — a local model that returns nothing on a given prompt shape returns nothing again — so a byte-identical re-issue was a delay, not a second chance. Suppressing the thinking prompt is the one change measured to move it (tempdoc 881 §A.3). (There is no `/no_think` injection on this path.)
+
+An empty turn is usually the model emitting its tool call *inside* an unterminated thinking block, in the XML `<tool_call><function=NAME>` grammar, which `--reasoning-format deepseek` routes wholly to `reasoning_content` where llama-server's tool-call parser cannot see it. `AgentLlmCaller` therefore recovers a wrapper-delimited call from the reasoning channel when a turn has no structured call and no text, and reports the runtime's `finish_reason` rather than guessing at a cause. Do **not** describe this failure as reasoning-token exhaustion: measured on Qwen3.5-9B at n_ctx 4096, it is `finish_reason=stop` after 35–55 of 1024 completion tokens, with the prompt at half the window (tempdoc 881 §A.2 refutes 868 §D.3).
 
 ### Reasoning Budget
 

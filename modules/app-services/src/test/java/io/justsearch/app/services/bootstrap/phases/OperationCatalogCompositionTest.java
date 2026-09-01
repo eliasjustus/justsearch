@@ -27,7 +27,7 @@ import io.justsearch.agent.api.registry.RequiredCapability;
 import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.TrustTier;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import java.util.List;
 import java.util.Map;

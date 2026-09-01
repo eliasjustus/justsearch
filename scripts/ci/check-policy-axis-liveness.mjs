@@ -34,7 +34,28 @@ import { join } from 'node:path';
 
 const POLICY_SOURCE =
   'modules/app-agent-api/src/main/java/io/justsearch/agent/api/registry/OperationPolicy.java';
-const CATALOG_DIR = 'modules/app-services/src/main/java/io/justsearch/app/services/registry/operations';
+/**
+ * Directories that hold Operation CATALOGS — the declaration sites this gate attributes `Optional`
+ * axis values to. Scanned non-recursively and filtered to `*OperationCatalog.java`, so a directory
+ * may hold non-catalog code without contributing to (or being excluded from) the scan.
+ *
+ * Tempdoc 880: this was a single hard-coded app-services path until `AgentToolsOperationCatalog`
+ * moved next to the tools it declares. The move made the gate FAIL for the right shape and the
+ * wrong reason — `capabilityFamily` is declared only by that catalog, so the gate reported the axis
+ * as undeclared when in truth it had merely become invisible. A path literal that outlives its
+ * subject reports absence as fact, which is the failure this gate exists to catch, turned on itself.
+ *
+ * <p>Two things here are load-bearing and are asserted by the self-test, because both fail SILENTLY
+ * (fewer declaration sites, still exit 0) rather than loudly:
+ * <ul>
+ *   <li>every entry must be a directory that EXISTS — `existsSync` below skips a stale path;
+ *   <li>a catalog file must END in `OperationCatalog.java` — a differently-named catalog is skipped.
+ * </ul>
+ */
+const CATALOG_DIRS = [
+  'modules/app-services/src/main/java/io/justsearch/app/services/registry/operations',
+  'modules/app-agent/src/main/java/io/justsearch/agent/tools',
+];
 const VALIDATOR_MARKER = '/registry/validator/';
 const MODULES_ROOT = 'modules';
 
@@ -122,6 +143,19 @@ function collectMainSources(dir, acc) {
 }
 
 const sources = collectMainSources(MODULES_ROOT, []);
+
+/**
+ * Catalog sources — where declarations live. Computed BEFORE the reader scan because the reader
+ * scan excludes exactly this set: one authority on "which files are declaration sites", rather than
+ * a path substring in one place and a directory literal in another that can disagree after a move.
+ */
+const catalogSources = CATALOG_DIRS.filter((d) => existsSync(d)).flatMap((dir) =>
+  readdirSync(dir)
+    .filter((f) => f.endsWith('OperationCatalog.java'))
+    .map((f) => join(dir, f).split('\\').join('/')),
+);
+const catalogFiles = new Set(catalogSources);
+
 const readerIndex = new Map(); // axis name -> [files]
 /**
  * Strip comments before matching. Without this the gate is trivially satisfied by prose: the
@@ -135,7 +169,14 @@ function stripComments(src) {
 for (const file of sources) {
   // A catalog is a DECLARATION site, not a consumer. Counting one as a reader would let an axis
   // satisfy the gate by being declared, which is the exact state this gate exists to reject.
-  if (file.includes('/registry/operations/')) continue;
+  //
+  // Two clauses, deliberately. The substring clause is the ORIGINAL rule and is kept verbatim so
+  // this refactor does not quietly widen the reader set: it matches `/registry/operations/` and so
+  // also covers that tree's `handlers/` subdirectory. The set clause adds the catalogs that no
+  // longer live under that path (tempdoc 880 moved `AgentToolsOperationCatalog` to `app-agent`).
+  // Narrowing the first clause to catalogs only would ADMIT the app-services handlers as readers —
+  // a real weakening of the gate — so it is left as it was and the question routed, not decided.
+  if (file.includes('/registry/operations/') || catalogFiles.has(file)) continue;
   const src = stripComments(readFileSync(file, 'utf8'));
   // Records expose components as no-arg accessors, so a read is `.name()`. That alone is far too
   // loose across a tree this size (`.risk()`, `.confirm()` and friends exist on other types), so a
@@ -152,12 +193,6 @@ for (const file of sources) {
   }
 }
 
-/** Catalog sources — where declarations live. */
-const catalogSources = existsSync(CATALOG_DIR)
-  ? readdirSync(CATALOG_DIR)
-      .filter((f) => f.endsWith('.java'))
-      .map((f) => join(CATALOG_DIR, f).split('\\').join('/'))
-  : [];
 // Comments stripped here too: a `withX(` mentioned in prose would otherwise satisfy the wither
 // branch of the declaration rule the same way a comment comma satisfied the positional branch.
 const catalogText = catalogSources
@@ -278,7 +313,7 @@ function splitTopLevel(body) {
   return parts;
 }
 
-export { stripComments, splitTopLevel, parseComponents };
+export { stripComments, splitTopLevel, parseComponents, CATALOG_DIRS, catalogSources };
 
 if (
   process.argv[1] &&

@@ -129,7 +129,7 @@ public final class RegistryController {
    * Multi-catalog constructor (per tempdoc 429 §F.11 closure). Aggregates definitions
    * across all catalogs when emitting; supports the dual-catalog setup
    * ({@link io.justsearch.app.services.registry.operations.CoreOperationCatalog} +
-   * {@link io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog}),
+   * {@link io.justsearch.agent.tools.AgentToolsOperationCatalog}),
    * and likewise the dual-Resource setup
    * (HealthResourceCatalog + RuntimeContextResourceCatalog from slice 440).
    *

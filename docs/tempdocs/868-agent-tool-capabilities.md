@@ -569,6 +569,15 @@ Candidates for their own tempdoc:
 3. **Standard-profile reasoning exhaustion.** Qwen3.5-9B fails 2/2 on the turn after
    `browse` at n_ctx 4096 / max_tokens 1024 ("possible reasoning token exhaustion"), before
    any read — the user-facing profile cannot run the delegate tier at defaults.
+   → **Taken up and REFUTED by tempdoc 881.** The failure is real and reproduces 3/3, but the
+   name this item gives it is wrong, and the wrong name is this item's own product: the loop
+   discarded `finish_reason` and the terminal guessed. Measured (881 §A.2): `finish_reason=stop`
+   after 35–55 of 1024 completion tokens — nothing was exhausted. The model emits a well-formed
+   tool call *inside* an unterminated thinking block, in the XML `<tool_call><function=…>`
+   grammar, which `--reasoning-format deepseek` routes wholly to `reasoning_content` where the
+   loop's text-channel-only, JSON-only recovery could not see it. Raising `max_tokens` to 4096
+   changes nothing; n_ctx is not implicated (2174 / 4096 at the failing turn). Also corrected:
+   "compact 4B does not hit it" — it does, at 5 % of turns against the 9B's 40 % (881 §A.3).
 
 Small, no tempdoc needed:
 
@@ -594,7 +603,7 @@ Routed at retirement per CLAUDE.md `rule:log-pre-existing-issues`; verbatim from
 - [ ] api-contract-map.md claims AgentOperationEmitter output is byte-stable per AgentOperationEmitterRegressionTest, but that test deep-equals a baseline built from four HAND-WRITTEN stub ops, not the real AgentToolsOperationCatalog — the shipped LLM-facing tool surface has no baseline guard (found while adding path_prefix, 868 §B.4) — `docs/reference/api-contract-map.md:248` / `modules/app-services/src/test/java/io/justsearch/app/services/registry/emitter/AgentOperationEmitterRegressionTest.java:56` (2026-08-25)
 - [ ] POST /api/chat/agent with a non-empty tools selection (either wire name core_search_index or id core.search-index) errors NO_TOOLS even though AgentOperationEmitter.matchesSelection accepts both forms — selection path broken or body key mismatch; found during 868 live verification — ToolIteratingShapeRunner.java:251, AgentLoopService.java:546 (2026-08-25)
 - [ ] Availability-gated agent tools (core_search_index, core_read_document) are silently dropped from the model's tool list until something polls /api/status: LifecycleSnapshotTap.accept only reconciles conditions from StatusLifecycleHandler, so the boot-time index.unavailable (worker.starting) persists in the ConditionStore for API-only/headless clients; observed live 2026-08-26 via the new 'Agent tools offered' log — LifecycleSnapshotTap.java:373, AgentOperationEmitter.isAvailableNow (2026-08-26)
-- [ ] Standard profile (Qwen3.5-9B) delegate run fails 2/2 at the LLM turn after core_browse_folders with 'Model failed to generate a response (possible reasoning token exhaustion)' at n_ctx 4096 / max_tokens 1024 — before any read tool call; compact 4B does not hit it. Seen live 2026-08-26 during 868 FE verification — AgentLlmCaller.java:50, AgentStepRunner.java:302 (2026-08-26)
+- [x] ~~Standard profile (Qwen3.5-9B) delegate run fails 2/2 at the LLM turn after core_browse_folders with 'Model failed to generate a response (possible reasoning token exhaustion)' at n_ctx 4096 / max_tokens 1024 — before any read tool call; compact 4B does not hit it. Seen live 2026-08-26 during 868 FE verification — AgentLlmCaller.java:50, AgentStepRunner.java:302 (2026-08-26)~~ — **fixed in tempdoc 881, with the diagnosis corrected: not token exhaustion (`finish_reason=stop` at 35–55 of 1024 tokens), but a tool call leaked into the reasoning channel in an unrecognised grammar; and the compact 4B does hit it, at 5 % of turns.**
 - [ ] OperationPolicy.retry() / RetryPolicy.autoRetry on agent operations has no production consumer — declarative only; javadocs that claim retry semantics (e.g. core.search-index autoRetry(2)) describe behaviour nothing implements — AgentToolsOperationCatalog.java:152 (2026-08-26)
 - [ ] BrowseTool folder-list auto-fallback to file listing ignores the caller's max_files and hardcodes DEFAULT_MAX_FILES — `modules/app-agent/src/main/java/io/justsearch/agent/tools/BrowseTool.java:189` (2026-08-25)
 - [ ] path_prefix honoured by SearchTool but absent from the LLM-facing catalog Interface (system prompt still tells the model to use it); SV3 sends docIds scope empty by construction — AgentToolsOperationCatalog.java:123-127, AgentPromptComposer.java:43, sv3-ask.ts:340 (2026-08-25)

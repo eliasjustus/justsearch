@@ -18,9 +18,13 @@ import java.util.Set;
  * and is injected at boot time by {@code HeadAssembly}.
  *
  * <p>Replaces the legacy {@code ToolRegistry.toOpenAiToolsArray(...)} contract. Output
- * is byte-stable for a given catalog state per §C.G — the regression test
- * {@code AgentOperationEmitterRegressionTest} (Phase 11) asserts deep-equality against
- * the captured baseline after Jackson normalization.
+ * is byte-stable for a given catalog state per §C.G. {@code AgentOperationEmitterRegressionTest}
+ * (Phase 11) deep-equals the emitter's output against a baseline built from four hand-written
+ * stub operations, after Jackson normalization — it pins the emitter's projection algorithm, not
+ * the real catalog. The real agent-tool catalog is pinned separately by {@code
+ * AgentToolCatalogBaselineTest} (in {@code app-services}, {@code
+ * registry/emitter/AgentToolCatalogBaselineTest.java}) against the checked-in {@code
+ * agent-tools-wire-baseline.json}.
  */
 public interface AgentToolEmitter {
 

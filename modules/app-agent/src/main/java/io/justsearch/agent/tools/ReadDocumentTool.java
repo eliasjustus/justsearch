@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.agent.tools;
 
+import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.app.api.DocumentService;
 import java.util.LinkedHashMap;
@@ -33,7 +34,7 @@ import tools.jackson.databind.JsonNode;
  * needs no new consent posture; un-indexed content stays behind the MEDIUM {@code core_ingest_files}
  * confirm.
  */
-public final class ReadDocumentTool {
+public final class ReadDocumentTool implements OperationHandler {
 
   /** The page size at the default Layer-2 cap (4000): ≈750 tokens, well inside n_ctx 4096. */
   static final int DEFAULT_PAGE_CHARS = 3000;
@@ -93,6 +94,7 @@ public final class ReadDocumentTool {
     this.rootsView = rootsView == null ? AgentToolPaths.RootsView.of(null) : rootsView;
   }
 
+  @Override
   public OperationResult execute(String argumentsJson) {
     if (argumentsJson == null || argumentsJson.isBlank()) {
       return OperationResult.failure("No arguments provided");

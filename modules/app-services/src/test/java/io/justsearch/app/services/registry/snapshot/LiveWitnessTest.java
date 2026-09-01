@@ -27,7 +27,7 @@ import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.app.services.bootstrap.phases.OperationCatalogComposition;
 import io.justsearch.app.services.conversation.CoreWorkflowCatalog;
 import io.justsearch.app.services.conversation.WorkflowOperationProjection;
-import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.agent.tools.AgentToolsOperationCatalog;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import io.justsearch.app.services.registry.snapshot.LiveWitness.Orphan;
 import java.util.List;

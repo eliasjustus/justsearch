@@ -226,7 +226,7 @@ HTTP semantics: `200` for any state (meta-endpoint reports its own health, not a
 - `modules/app-observability/src/main/java/io/justsearch/app/observability/CapabilitiesController.java` (LSP-shape handshake)
 - `modules/app-agent-api/src/main/java/io/justsearch/agent/api/registry/Operation.java` (Operation primitive record)
 - `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/CoreOperationCatalog.java` (admin seed catalog)
-- `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/AgentToolsOperationCatalog.java` (agent-tool catalog)
+- `modules/app-agent/src/main/java/io/justsearch/agent/tools/AgentToolsOperationCatalog.java` (agent-tool catalog)
 
 Substrate endpoints:
 
@@ -245,7 +245,7 @@ Substrate endpoints:
 
 Soft-fail discipline (per LSP 3.17): unknown client capability declarations are ignored; `serverCapabilities` is unchanged whether or not the client declares dynamic-registration intentions. Verified by `CapabilitiesSoftFailTest`.
 
-Wire-format projection (per tempdoc 429 §F.21 C1): `AgentOperationEmitter` projects Operations into the OpenAI function-calling tools array consumed by the agent loop. Names are deterministic transliterations of `OperationId` via `OperationCatalog.toWireName(id)` (e.g., `core.search-index` → `core_search_index`); descriptions resolve via `registry-operation.en.properties`. The `OperationId` is the single identity for any invocable surface; the wire form is pure projection. Output is byte-stable for a given catalog state per `AgentOperationEmitterRegressionTest` (deep-equal vs captured baseline).
+Wire-format projection (per tempdoc 429 §F.21 C1): `AgentOperationEmitter` projects Operations into the OpenAI function-calling tools array consumed by the agent loop. Names are deterministic transliterations of `OperationId` via `OperationCatalog.toWireName(id)` (e.g., `core.search-index` → `core_search_index`); descriptions resolve via `registry-operation.en.properties`. The `OperationId` is the single identity for any invocable surface; the wire form is pure projection. `AgentOperationEmitterRegressionTest` pins the emitter's projection algorithm against a captured legacy baseline built from four hand-written stub operations (deep-equal). The **real** agent-tool catalog's projection — plus its declared policy, lineage, and executor tags — is separately pinned by `AgentToolCatalogBaselineTest` against `modules/app-services/src/test/resources/agent-tools-wire-baseline.json`.
 
 ### Agent Action Lifecycle API (tempdoc 550)
 
