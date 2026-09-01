@@ -4,6 +4,8 @@ type: decision
 status: accepted
 description: "The frontend framework is built on three registry primitives — Operation (do), Resource (observe), Prompt (ask) — mirroring the MCP split. All UI affordances project from these."
 date: 2026-06-09
+probes: none - the three-primitive split is the shape of the registry itself; the contribution-surface and operation-surface gates already fail a fourth primitive.
+last_reviewed: 2026-09-02
 ---
 
 

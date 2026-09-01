@@ -4,6 +4,8 @@ type: decision
 status: stable
 description: "Remove pipeline DAG definitions, budget profiles, and pipeline-schema module."
 date: 2026-03-16
+probes: none - a removal decision; its premise is carried by the consumer-drift gate, whose slot-retraction classification cites ADR-0014 (scripts/governance/gates/consumer-drift/classifications.mjs).
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0014: Pipeline Definition and Schema Removal

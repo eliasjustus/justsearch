@@ -4,6 +4,9 @@ type: decision
 status: stable
 description: "Consolidate MCP tools from 7 capability-oriented to 4 task-oriented for higher agent accuracy."
 date: 2026-04-01
+probes:
+  - adr-0015-six-mcp-tools
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0015: MCP Tool Surface Design

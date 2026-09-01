@@ -4,6 +4,9 @@ type: decision
 status: accepted
 description: "The frontend is authored as Lit web components (the React stack was retired in the rewrite). Components are projected from typed catalogs."
 date: 2026-06-09
+probes:
+  - adr-0032-no-react
+last_reviewed: 2026-09-02
 ---
 
 

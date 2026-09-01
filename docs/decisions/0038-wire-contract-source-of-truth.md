@@ -4,6 +4,9 @@ type: decision
 status: accepted - mechanism superseded by tempdoc 564
 description: "The FE↔backend wire contract is a first-class, versioned artifact; hand-written per-language mirrors are forbidden; every consumer-side type is mechanically generated."
 date: 2026-06-09
+probes:
+  - adr-0038-no-unregistered-fe-mirror
+last_reviewed: 2026-09-02
 ---
 
 

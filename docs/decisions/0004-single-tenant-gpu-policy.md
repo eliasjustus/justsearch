@@ -5,6 +5,9 @@ status: superseded
 description: "Mutual exclusion between embedding and generative models for VRAM safety."
 date: 2026-02-03
 superseded_by: "GGUF→ONNX embedding migration (tempdocs 268, 286, 327)"
+probes:
+  - adr-0004-gpu-mutual-exclusion
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0004: Single-Tenant GPU Policy

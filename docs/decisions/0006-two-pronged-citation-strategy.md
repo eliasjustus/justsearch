@@ -4,6 +4,10 @@ type: decision
 status: stable
 description: "LLM-generated citations backed by RAG metadata, supplemented by CPU cross-encoder post-hoc matching."
 date: 2026-02-07
+probes:
+  - adr-0006-citation-scorer-wired
+  - adr-0006-citation-scorer-exists
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0006: Two-Pronged Citation Strategy
