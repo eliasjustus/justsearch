@@ -1,7 +1,7 @@
 ---
 title: "Local-First Workflow Quality Observability"
 type: decision
-status: stable
+status: superseded
 description: "Keep repo-owned NDJSON workflow evidence canonical and treat Opik/Inspect as optional overlays."
 date: 2026-03-07
 ---
@@ -12,7 +12,7 @@ date: 2026-03-07
 
 ## Status
 
-Accepted
+Superseded (tempdoc 638); frontmatter aligned 2026-09-01 (tempdoc 882 item 25).
 
 ## Context
 

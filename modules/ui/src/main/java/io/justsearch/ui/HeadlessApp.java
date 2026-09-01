@@ -694,6 +694,13 @@ public class HeadlessApp {
       ConfigPhaseResult configPhase = resolveConfig();
       settingsStore = configPhase.settingsStore();
       configStore = configPhase.configStore();
+      // Tempdoc 882 item 24: snapshot the quarantine record NOW. buildApi() can save settings
+      // before the condition substrate exists (the AI autostart seed writes chatEnabled on a fresh
+      // profile), and a successful save clears the store's own record; the user was still reset
+      // and must still be told.
+      final java.util.Optional<
+              io.justsearch.app.services.settings.UiSettingsStore.RecoveredFromCorrupt>
+          settingsRecovery = settingsStore.lastRecovery();
 
       // Tempdoc 501 Phase 3: acquire AppInstanceLock at the Head BEFORE binding HTTP or
       // spawning the Worker. The lock is OS-level (FileChannel.tryLock) with PID+startedAt
@@ -775,6 +782,25 @@ public class HeadlessApp {
         } catch (Exception e) {
           log.warn("Unclean-shutdown-recovered narration failed (non-fatal)", e);
         }
+      }
+
+      // Tempdoc 882 item 24: resolveConfig() found an unreadable ui/settings.json, preserved it and
+      // loaded defaults instead of killing the boot (ADR-0008). Tell the user now that the
+      // condition substrate exists, and take the notice back down when they re-author settings.
+      if (bootstrap != null && bootstrap.substrate() != null && bootstrap.substrate().health() != null) {
+        var settingsHealth = bootstrap.substrate().health();
+        settingsRecovery.ifPresent(
+                recovery ->
+                    io.justsearch.app.services.settings.SettingsRecoveryNotice.publish(
+                        settingsHealth.conditionStore(),
+                        settingsHealth.changes(),
+                        recovery,
+                        settingsHealth.headSource(),
+                        java.time.Clock.systemUTC()));
+        settingsStore.setOnRecoveryCleared(
+            () ->
+                io.justsearch.app.services.settings.SettingsRecoveryNotice.clear(
+                    settingsHealth.conditionStore(), settingsHealth.changes()));
       }
 
       // Tempdoc 501 Phase 1: first manifest write — head-only readiness. The lock file
@@ -1317,11 +1343,7 @@ public class HeadlessApp {
   }
 
   /**
-   * Best-effort: keep legacy and canonical data-dir properties in sync for this JVM process.
-   *
-   * <p>Some subsystems still use {@code app.data_dir} (e.g., logback config), while the SSOT
-   * path resolution prefers {@code justsearch.data.dir}. This method reduces surprise by
-   * ensuring both properties are set when possible.
+   * Best-effort: ensure the canonical data-dir system property is set for this JVM process.
    */
   private static void harmonizeDataDirProperties(Path resolvedDataDir) {
     if (resolvedDataDir == null) {
@@ -1333,18 +1355,6 @@ public class HeadlessApp {
     String canonical = System.getProperty(EnvRegistry.DATA_DIR.sysProp());
     if (canonical == null || canonical.isBlank()) {
       System.setProperty("justsearch.data.dir", resolved);
-    }
-
-    // Legacy underscore variant (still used by some scripts/tests)
-    String legacy = System.getProperty("justsearch.data_dir"); // SYS-PROP-LEGACY-COMPAT
-    if (legacy == null || legacy.isBlank()) {
-      System.setProperty("justsearch.data_dir", resolved);
-    }
-
-    // Legacy app.data_dir used by logback and some launchers
-    String appDataDir = System.getProperty("app.data_dir");
-    if (appDataDir == null || appDataDir.isBlank()) {
-      System.setProperty("app.data_dir", resolved);
     }
   }
 }

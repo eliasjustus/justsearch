@@ -28,15 +28,15 @@ final class LauncherInternalsTest {
 
   @BeforeEach
   void captureProperty() {
-    previousDataDir = System.getProperty("app.data_dir");
+    previousDataDir = System.getProperty("justsearch.data.dir");
   }
 
   @AfterEach
   void restoreProperty() throws Exception {
     if (previousDataDir == null) {
-      System.clearProperty("app.data_dir");
+      System.clearProperty("justsearch.data.dir");
     } else {
-      System.setProperty("app.data_dir", previousDataDir);
+      System.setProperty("justsearch.data.dir", previousDataDir);
     }
     Path defaultDir = Path.of("build", "applauncher-data");
     if (Files.exists(defaultDir)) {
@@ -56,12 +56,12 @@ final class LauncherInternalsTest {
 
   @Test
   void ensureDataDirCreatesDefaultDirectory() throws Exception {
-    System.clearProperty("app.data_dir");
+    System.clearProperty("justsearch.data.dir");
     Launcher launcher = new Launcher();
     Method method = Launcher.class.getDeclaredMethod("ensureDataDir");
     method.setAccessible(true);
     method.invoke(launcher);
-    String configured = System.getProperty("app.data_dir");
+    String configured = System.getProperty("justsearch.data.dir");
     Path configuredPath = Path.of(configured);
     assertTrue(configuredPath.endsWith(Path.of("build", "applauncher-data")));
     assertTrue(Files.isDirectory(configuredPath));
@@ -70,13 +70,14 @@ final class LauncherInternalsTest {
   @Test
   void ensureDataDirHonoursExistingProperty() throws Exception {
     Path custom = tempDir.resolve("custom-data");
-    System.setProperty("app.data_dir", custom.toString());
+    System.setProperty("justsearch.data.dir", custom.toString());
     Launcher launcher = new Launcher();
     Method method = Launcher.class.getDeclaredMethod("ensureDataDir");
     method.setAccessible(true);
     method.invoke(launcher);
-    assertEquals(custom.toString(), System.getProperty("app.data_dir"));
-    assertFalse(Files.exists(custom));
+    assertEquals(custom.toString(), System.getProperty("justsearch.data.dir"));
+    // The configured directory is honoured, not replaced, and "ensure" means it now exists.
+    assertTrue(Files.isDirectory(custom));
   }
 
   @Test

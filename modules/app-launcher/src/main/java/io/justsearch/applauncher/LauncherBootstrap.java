@@ -24,11 +24,7 @@ public final class LauncherBootstrap {
   }
 
   private static void bootstrapDataDirProperties() {
-    String resolved =
-        firstNonBlank(
-            EnvRegistry.DATA_DIR.get().orElse(null),
-            System.getProperty("justsearch.data_dir"), // SYS-PROP-LEGACY-COMPAT
-            System.getProperty("app.data_dir"));
+    String resolved = EnvRegistry.DATA_DIR.get().orElse(null);
 
     if (resolved == null || resolved.isBlank()) {
       resolved = Paths.get("build", "applauncher-data").toAbsolutePath().normalize().toString();
@@ -45,8 +41,6 @@ public final class LauncherBootstrap {
     }
 
     setIfBlank("justsearch.data.dir", normalized);
-    setIfBlank("justsearch.data_dir", normalized); // legacy underscore alias
-    setIfBlank("app.data_dir", normalized); // legacy logback alias
   }
 
   private static void setIfBlank(String key, String value) {
@@ -54,15 +48,5 @@ public final class LauncherBootstrap {
     if (existing == null || existing.isBlank()) {
       System.setProperty(key, value);
     }
-  }
-
-  private static String firstNonBlank(String... candidates) {
-    if (candidates == null) return null;
-    for (String c : candidates) {
-      if (c != null && !c.isBlank()) {
-        return c;
-      }
-    }
-    return null;
   }
 }

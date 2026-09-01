@@ -309,7 +309,8 @@ public final class ResolvedConfigBuilder {
     contributeYamlWorkers(root);
     contributeYamlCollections(root);
     contributeYamlInfra(root);
-    // app.data_dir → justsearch.data.dir (EnvRegistry key for paths resolution)
+    // YAML key app.data_dir -> justsearch.data.dir (a yaml-tier source for paths resolution; the
+    // retired sysprop aliases of the same name are a different thing, tempdoc 882 item 26)
     putYaml(EnvRegistry.DATA_DIR.sysProp(), root, "app.data_dir");
     return this;
   }
@@ -526,9 +527,6 @@ public final class ResolvedConfigBuilder {
     putYamlIntFromNode("search.hybrid.bm25_k", searchRoot, "hybrid.bm25_k");
     putYamlIntFromNode("search.hybrid.ann_k", searchRoot, "hybrid.ann_k");
     putYamlFromNode("search.hybrid.auto_embed", searchRoot, "hybrid.auto_embed");
-    putYamlFromNode("search.rerank.enabled", searchRoot, "rerank.enabled");
-    putYamlIntFromNode("search.rerank.k", searchRoot, "rerank.k");
-    putYamlIntFromNode("search.rerank.reduced_k", searchRoot, "rerank.reduced_k");
     putYamlFromNode("search.facets.enabled", searchRoot, "facets.enabled");
     putYamlFromNode("search.corrections.enabled", searchRoot, "corrections.enabled");
     putYamlIntFromNode("search.corrections.df_threshold", searchRoot, "corrections.df_threshold");
@@ -636,12 +634,6 @@ public final class ResolvedConfigBuilder {
   }
 
   private void contributeYamlWorkers(JsonNode root) {
-    // workers.ai.* — enabled is YAML-only; host/port/deadline use EnvRegistry sysProp keys
-    putYamlBoolean("workers.ai.enabled", root, "workers.ai.enabled");
-    putYaml("justsearch.ai.host", root, "workers.ai.host");
-    putYamlInt("justsearch.ai.port", root, "workers.ai.port");
-    putYamlLong("justsearch.ai.deadlineMs", root, "workers.ai.deadlineMs");
-
     // workers.indexer.*
     putYamlBoolean("workers.indexer.enabled", root, "workers.indexer.enabled");
     putYaml("justsearch.indexer.host", root, "workers.indexer.host");
@@ -930,7 +922,6 @@ public final class ResolvedConfigBuilder {
     ResolvedConfig.HybridSearch hybridSearch = buildHybridSearch();
     ResolvedConfig.Worker worker = buildWorker();
     ResolvedConfig.Collections collections = buildCollections();
-    ResolvedConfig.WorkerAi workerAi = buildWorkerAi();
     ResolvedConfig.WorkerIndexer workerIndexer = buildWorkerIndexer();
     ResolvedConfig.InfraHealth infraHealth = buildInfraHealth();
     ResolvedConfig.InfraGrpc infraGrpc = buildInfraGrpc();
@@ -940,7 +931,7 @@ public final class ResolvedConfigBuilder {
             paths, ports, ai, agent, summary,
             search, telemetry, policy, ui,
             watcher, ocr, index, rag, hybridSearch, worker,
-            collections, workerAi, workerIndexer,
+            collections, workerIndexer,
             infraHealth, infraGrpc,
             allResolutions);
 
@@ -1497,14 +1488,6 @@ public final class ResolvedConfigBuilder {
       LOG.warn("Failed to parse index.collections JSON: {}", e.getMessage());
       return new ResolvedConfig.Collections(List.of());
     }
-  }
-
-  private ResolvedConfig.WorkerAi buildWorkerAi() {
-    return new ResolvedConfig.WorkerAi(
-        resolveBoolean("workers.ai.enabled", false),
-        resolveString("justsearch.ai.host", "127.0.0.1"),
-        resolveInt("justsearch.ai.port", 50061),
-        resolveLong("justsearch.ai.deadlineMs", 1_500L));
   }
 
   private ResolvedConfig.WorkerIndexer buildWorkerIndexer() {

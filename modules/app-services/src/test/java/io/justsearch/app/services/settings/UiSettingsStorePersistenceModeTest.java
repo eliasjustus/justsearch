@@ -4,14 +4,18 @@ import io.justsearch.app.api.UiSettings;
 import static io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.IN_MEMORY;
 import static io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.READ_WRITE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode;
-import io.justsearch.configuration.persistence.CorruptDurableStoreException;
 import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -336,15 +340,59 @@ class UiSettingsStorePersistenceModeTest {
     }
 
     @Test
-    @DisplayName("malformed state is fail-loud and retained")
-    void readWrite_malformedStateIsRetained() throws Exception {
+    @DisplayName("malformed state is quarantined beside the file and defaults are loaded")
+    void readWrite_malformedStateIsQuarantinedAndDefaulted() throws Exception {
       Path settingsFile = tempDir.resolve("settings.json");
       String malformed = "{not-json";
       Files.writeString(settingsFile, malformed);
 
       UiSettingsStore store = new UiSettingsStore(READ_WRITE, settingsFile);
-      assertThrows(CorruptDurableStoreException.class, store::load);
-      assertEquals(malformed, Files.readString(settingsFile));
+      UiSettings loaded = store.load();
+
+      UiSettings defaults = new UiSettings();
+      assertEquals(defaults.getMaxTokens(), loaded.getMaxTokens());
+      assertEquals(defaults.getTheme(), loaded.getTheme());
+      // Preserve-then-default: the unreadable bytes moved, so nothing stands at the live path until
+      // the next save. Asserting non-existence (not "exists but empty") is the point: a zero-byte
+      // settings.json would be a second corrupt state, not a recovery.
+      assertFalse(Files.exists(settingsFile), "the unreadable file must be moved, not left behind");
+
+      List<Path> backups;
+      try (Stream<Path> siblings = Files.list(tempDir)) {
+        backups =
+            siblings
+                .filter(p -> p.getFileName().toString().startsWith("settings.json.corrupt-"))
+                .toList();
+      }
+      assertEquals(1, backups.size(), "exactly one quarantined sibling: " + backups);
+      assertEquals(malformed, Files.readString(backups.get(0)));
+
+      Optional<UiSettingsStore.RecoveredFromCorrupt> recovery = store.lastRecovery();
+      assertTrue(recovery.isPresent(), "load() must report the recovery it performed");
+      assertEquals(backups.get(0), recovery.get().backupPath());
+      assertTrue(recovery.get().detail().contains("cannot parse"),
+          "detail must be the parse-failure reason, not some other default cause: "
+              + recovery.get().detail());
+    }
+
+    @Test
+    @DisplayName("a save after recovery clears lastRecovery and fires the cleared callback")
+    void readWrite_saveAfterRecoveryClearsRecoveryAndFiresCallback() throws Exception {
+      Path settingsFile = tempDir.resolve("settings.json");
+      Files.writeString(settingsFile, "{not-json");
+
+      UiSettingsStore store = new UiSettingsStore(READ_WRITE, settingsFile);
+      AtomicBoolean cleared = new AtomicBoolean(false);
+      store.setOnRecoveryCleared(() -> cleared.set(true));
+
+      UiSettings recovered = store.load();
+      assertTrue(store.lastRecovery().isPresent());
+      assertFalse(cleared.get(), "nothing is cleared until the user re-authors settings");
+
+      store.save(recovered);
+
+      assertTrue(store.lastRecovery().isEmpty(), "a successful save supersedes the recovery");
+      assertTrue(cleared.get(), "the condition-clearing callback must fire exactly on that save");
     }
   }
 

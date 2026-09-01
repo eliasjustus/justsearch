@@ -70,10 +70,10 @@ Superseded ADRs are retained for historical context but must include a note dire
 | [0007](0007-entity-faceting-over-knowledge-graph.md) | Entity faceting over full knowledge graph | Accepted | 2026-01-22 |
 | [0008](0008-settings-ephemeral-defaults-safe.md) | Settings are ephemeral, defaults are safe | Accepted | 2026-02-10 |
 | [0009](0009-custom-dag-engine-ci-orchestration.md) | Custom DAG engine for CI orchestration | Accepted | 2026-02-23 |
-| [0010](0010-local-first-workflow-quality-observability.md) | Local-first workflow quality observability | Accepted | 2026-03-07 |
+| [0010](0010-local-first-workflow-quality-observability.md) | Local-first workflow quality observability | Superseded (tempdoc 638) | 2026-03-07 |
 | [0011](0011-distributed-readiness-spi.md) | Distributed Readiness — Remote Shard SPI | Accepted | 2026-03-16 |
 | [0012](0012-ui-stack-and-doc-tooling.md) | UI Stack and Documentation Tooling | Superseded | 2026-03-16 |
-| [0013](0013-synonyms-fst-placeholder.md) | Synonyms FST Placeholder | Accepted | 2025-10-15 |
+| [0013](0013-synonyms-fst-placeholder.md) | Synonyms FST Placeholder | Accepted (partially superseded by ADR-0043) | 2025-10-15 |
 | [0014](0014-pipeline-definition-removal.md) | Pipeline Definition Removal | Accepted | 2026-03-16 |
 | [0015](0015-mcp-tool-surface-design.md) | MCP tool surface design | Accepted | 2026-04-01 |
 | [0016](0016-query-understanding-soft-boost.md) | Query understanding soft-boost over hard-filter | Accepted | 2026-03-28 |

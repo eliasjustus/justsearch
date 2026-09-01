@@ -961,7 +961,6 @@ val createHeadlessRuntime by tasks.registering(Exec::class) {
       // - java.xml: XML parsing (config files, Tika metadata)
       // - java.desktop: AWT/Swing (image handling, clipboard in UI scenarios)
       // - jdk.httpserver: Lightweight HTTP server for local API
-      // - jdk.incubator.vector: SIMD vectorization for Lucene HNSW, embeddings
       listOf(
               "java.base",
               "java.logging",
@@ -973,8 +972,7 @@ val createHeadlessRuntime by tasks.registering(Exec::class) {
               "java.security.sasl",
               "java.xml",
               "java.desktop",
-              "jdk.httpserver",
-              "jdk.incubator.vector")
+              "jdk.httpserver")
           .joinToString(","),
       "--output",
       outDir.absolutePath)
@@ -1758,8 +1756,6 @@ tasks.register("smokeSidecarBundle") {
         javaBin.absolutePath,
         "-Djustsearch.prod=true",
         "-Djustsearch.data.dir=${dataDir.absolutePath}",
-        // Ensure logs/settings/index roots stay inside this smoke sandbox.
-        "-Dapp.data_dir=${dataDir.absolutePath}",
         "-Djustsearch.ui.settings.mode=IN_MEMORY",
         "-Djustsearch.index.base_path=$indexBasePath",
         "-Djustsearch.config=$configPath",
@@ -2169,7 +2165,6 @@ fun JavaExec.applyHeadlessEvalContract() {
 
   systemProperty("justsearch.api.port", apiPort)
   systemProperty("justsearch.data.dir", dataDir)
-  systemProperty("app.data_dir", dataDir)
   systemProperty("justsearch.home", dataDir)
   systemProperty("justsearch.ui.settings.mode", "IN_MEMORY")
   systemProperty("justsearch.index.base_path", indexBasePath)

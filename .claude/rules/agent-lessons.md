@@ -10,7 +10,7 @@ Cross-cutting platform constraints. Project workflow lessons live in canonical d
 - **Parent session hooks do NOT fire inside subagents** ([#237](https://github.com/anthropics/claude-code/issues/237), [#21460](https://github.com/anthropics/claude-code/issues/21460)). **Verified exception (2026-07-12 probe):** a parent PreToolUse/`Agent` hook DOES fire on a subagent's *nested* spawn — `subagent-model-guard.mjs` blocked a sonnet subagent's unpinned child. Unverified for other tools/events; re-probe first. (Observability caveat, tempdoc 622: subagent *interiors* are nonetheless visible via native Claude Code OpenTelemetry — the Task subagent's spans nest under the parent's `claude_code.tool` span and its cost attributes carry `query_source:subagent`+`agent.name`, empirically confirmed — so the hook-layer blind spot is closeable at the OTel layer, not at the hook layer.) <!-- rule:parent-hooks-dont-fire-in-subagents -->
 - **`additionalContext` from SessionStart hooks is unreliable** for persistent state — use `.claude/rules/` files instead.
 - **`.claude/agents/` custom agents cannot override built-in agents** ([#8697](https://github.com/anthropics/claude-code/issues/8697), [#18212](https://github.com/anthropics/claude-code/issues/18212), [#16594](https://github.com/anthropics/claude-code/issues/16594)).
-- **Agent tool `model` parameter works** (restored v2.1.72) — `model: "haiku"` for cheap search, `model: "sonnet"` for moderate work.
+- **Agent tool `model` parameter works** — `haiku` for cheap search, `sonnet` for moderate work.
 - **`Read` tool has silent truncation layers**: 2000 chars/line, 2000 lines, 25k tokens (varies by model). Use offset/limit explicitly when reading rules/guardrail content.
 - **`Edit` tool validates `~/.claude/settings.json`** against the canonical schema. Probe via Edit if you're unsure whether a documented setting exists — the validator returns the schema on rejection.
 - **A worktree-copy and main-checkout copy of the "same" file don't share `Edit`'s read-state** — re-read the exact path before editing it (tempdoc 618 §11e / 727 F-7a; `edit-reread-hint` flags this). <!-- rule:edit-reread-cross-root -->
@@ -43,7 +43,8 @@ which is the authority — read it there. Only the handle list lives here, so th
 `audit-without-test` · `wrong-gate` · `substrate-without-consumer-flavors` ·
 `independent-review-required` · `static-green ≠ live-working` · `verdict-is-gate` ·
 `catalog-verbatim` · `wire-emitter-elision` · `ai-offline-isnt-a-wall` ·
-`standalone-capability-stays-stuck` · `unreachable-seed-green` · `green-masked-destructive`
+`standalone-capability-stays-stuck` · `unreachable-seed-green` · `green-masked-destructive` ·
+`shared-worktree-checkout`
 
 - **`subset-isnt-the-suite`** — A hand-picked subset of gates/tests passing is not "the gates passed"; run the full kernel + full suite before declaring done, not at merge. Also delivered at the moment of relevance by the non-blocking `merge-full-suite-hint` (PostToolUse/Bash `git merge`); the worked case is postmortem #13. <!-- rule:subset-isnt-the-suite -->
 - **`green-masked-destructive`** — When a passing verification depends on an environment precondition, test the adverse precondition too; a green the environment happened to satisfy can hide the destructive branch.

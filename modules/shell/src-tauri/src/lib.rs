@@ -743,7 +743,9 @@ fn spawn_headless_backend<R: tauri::Runtime>(
         .arg("-XX:+UseSerialGC")
         .arg("-XX:TieredStopAtLevel=1")
         .arg("-XX:-UsePerfData")
-        .arg("--sun-misc-unsafe-memory-access=warn");
+        .arg("--sun-misc-unsafe-memory-access=warn")
+        // FFM downcalls (NVML, the Windows job object, the GPU driver probe); JDK 25 warns without this, a later JDK (JEP 472) refuses.
+        .arg("--enable-native-access=ALL-UNNAMED");
     if aot_cache.exists() {
         cmd.arg(format!("-XX:AOTCache={}", aot_cache.to_string_lossy()));
     }

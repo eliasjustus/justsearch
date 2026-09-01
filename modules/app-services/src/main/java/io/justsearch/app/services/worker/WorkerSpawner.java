@@ -493,8 +493,6 @@ public final class WorkerSpawner implements Closeable {
 
         // Add data directory
         cmd.add("-Djustsearch.data.dir=" + config.dataDir().toAbsolutePath());
-        // Back-compat: older components used underscore variant
-        cmd.add("-Djustsearch.data_dir=" + config.dataDir().toAbsolutePath());
 
         // Tempdoc 630: forward THIS (Head) process's PID so the Worker can probe Head liveness and
         // distinguish a real Head death from a benign OS-resume stale heartbeat. Computed live from
@@ -565,8 +563,10 @@ public final class WorkerSpawner implements Closeable {
         // Vector API finalizes (est. JDK 28-29). See tempdoc 269 §D4a.
         cmd.add("--sun-misc-unsafe-memory-access=warn");
 
-        // Enable MMapDirectory unmap hack — prevents "pending deleted files" errors on Windows
-        cmd.add("--add-opens=java.base/java.nio=ALL-UNNAMED");
+        // Both the Head and Worker JVMs make FFM downcalls (NVML, the Windows job object,
+        // the GPU driver probe); JDK 25 warns without this flag and a later JDK (JEP 472)
+        // refuses outright.
+        cmd.add("--enable-native-access=ALL-UNNAMED");
 
         // 371: Pass distribution build stamp for stale-JVM detection.
         Path stampFile = config.workerLibDir().getParent().resolve("build-stamp.txt");
