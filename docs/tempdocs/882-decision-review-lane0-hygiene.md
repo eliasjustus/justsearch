@@ -1,5 +1,5 @@
 ---
-status: IMPLEMENTED (branch ready; PR not yet opened)
+status: IMPLEMENTED (draft PR #592, not yet published)
 created: 2026-09-01
 updated: 2026-09-01
 owner_session: 7471486e
