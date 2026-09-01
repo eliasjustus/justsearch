@@ -351,7 +351,7 @@ Verification run:
 | `gradle-locked.sh :modules:app-agent:test` | BUILD SUCCESSFUL — `AgentLlmCallerTest` **22**/0/0/0, `AgentLoopServiceTest` **126**/0/0/0 (after §G) |
 | `gradle-locked.sh :modules:app-inference:test` | BUILD SUCCESSFUL — `OnlineModeOpsTest` 56/0/0/0 (after §G finding 12) |
 | `gradle-locked.sh :modules:app-launcher:test` | BUILD SUCCESSFUL (the two ArchUnit violations above, fixed) |
-| `gradle-locked.sh test` (full suite, twice — before and after the §G review fixes) | BUILD FAILED both times on the **same two** classes, both environmental and both in modules this diff does not touch — see below. Everything else green. |
+| `gradle-locked.sh test` (full suite, ×3 — before §G, after §G, after merging `origin/main` incl. 880's agent-tool re-homing) | Runs 1–2 failed on the **same two** environmental classes; run 3 (post-merge) failed on **one** — `app-services` passed, which is itself the evidence that it is the flake the pin says it is. Everything else green each time. |
 | `node scripts/governance/run.mjs --gate register-guard-resolution --mode gate` | pass |
 | `node scripts/governance/run.mjs --gate hook-integrity --mode gate` | pass |
 
@@ -464,4 +464,13 @@ Open items this slice found and did not take (routed here, per `log-pre-existing
 
 ## Status
 
-Implementing.
+**IMPLEMENTED — PR #586, all required CI checks green, not merged.** Merged `origin/main` after
+880's agent-tool re-homing landed (#585); the only conflict was tempdoc 869's open-items section,
+where 880 and this tempdoc had independently routed the same straggler shard — 880's fuller version
+is the surviving copy. `AgentToolsOperationCatalog` moving package and the handler adapters being
+deleted do not touch this diff's surface; full suite re-run green after the merge apart from the
+pinned ONNX timeout, and 880's new byte-exact catalog wire baseline passes (this slice changes no
+tool description or schema).
+
+Remaining: the live end-to-end after-fix pass on `chatProfile: "standard"` (§F). The dev stack was
+left on the compact profile, as briefed.
