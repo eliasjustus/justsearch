@@ -148,6 +148,15 @@ difference in kind. The 4B leaks at 5 % per turn, which a 10-step run survives ~
 time, while the 9B's 40 % kills a 10-step run ~99.4 % of the time. Same defect, different rate
 — so the fix must be profile-blind, and a per-profile knob would have been the wrong shape.
 
+**Does the measurement describe the shipped code?** The classifier in `tmp/881/matrix.mjs`
+(`recoverCommitted`) implements the same rule as the Java `recoverCommittedToolCalls`: the
+`<tool_call>…</tool_call>` wrapper, then the XML `<function=NAME>` head, then a JSON body, with
+the name checked against the offered tool list. One difference exists — the JS accepts a JSON
+body of `{"name":X}` with no arguments while `parseToolCallObject` requires arguments or
+`type:"function"` — and it cannot affect the counts, because **all 42 recovered samples took the
+XML branch**, which the two implement identically. So "42/42 recoverable" is a claim about the
+rule that shipped, not about a more permissive measuring stick.
+
 The leaked grammar is stable across models and turns (8 + 1 samples,
 `tmp/881/matrix-*.json`) — arguments included:
 

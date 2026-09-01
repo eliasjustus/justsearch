@@ -339,6 +339,30 @@ class AgentLlmCallerTest {
   }
 
   /**
+   * The span list handed to the deletion loop must be disjoint — two overlapping spans would delete
+   * each other's characters out of the answer. Nothing observed produces an overlap; this pins that
+   * the guard holds if something ever does, by feeding a wrapper and a JSON object that share text.
+   */
+  @Test
+  void spansHandedToTheDeletionLoopAreAlwaysDisjoint() {
+    String tangled =
+        "<tool_call>{\"name\":\"core_browse_folders\",\"arguments\":{}}</tool_call>"
+            + "{\"name\":\"core_read_document\",\"arguments\":{\"path\":\"a.md\"}}";
+
+    var spans = AgentLlmCaller.scanToolCallSpans(tangled, READ_AND_BROWSE);
+
+    for (int i = 1; i < spans.size(); i++) {
+      assertTrue(
+          spans.get(i - 1).end() <= spans.get(i).start(),
+          "span " + (i - 1) + " overlaps span " + i + " — the deletion loop would corrupt the text");
+    }
+    AgentLlmCaller.RecoveredText rt =
+        AgentLlmCaller.recoverInlineToolCalls(tangled, List.of(), READ_AND_BROWSE);
+    assertEquals(2, rt.recovered().size(), "both calls recovered");
+    assertTrue(rt.text().isEmpty(), "and the whole span set is consumed, leaving no husk");
+  }
+
+  /**
    * Tempdoc 859 §D §2.6 layer 1 / §3.3 T5 — the budget-edge finalize instruction.
    *
    * <p><b>What this pins, and what it deliberately does NOT.</b> It pins the SEAM: that the message

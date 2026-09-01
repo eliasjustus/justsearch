@@ -488,8 +488,8 @@ final class AgentLlmCaller {
     }
   }
 
-  /** A tool-call JSON object the model leaked into assistant text, with its [start,end) char span. */
-  private record InlineToolCall(int start, int end, String name, String arguments) {}
+  /** A tool call the model leaked into a prose channel, with its [start,end) char span. */
+  record InlineToolCall(int start, int end, String name, String arguments) {}
 
   /** The assistant text with leaked tool-call JSON removed, plus the calls recovered from it. */
   record RecoveredText(String text, List<ToolCallRequest> recovered) {}
@@ -698,7 +698,23 @@ final class AgentLlmCaller {
       }
     }
     merged.sort(java.util.Comparator.comparingInt(InlineToolCall::start));
-    return List.copyOf(merged);
+
+    // Non-overlap is a PRECONDITION of the caller's back-to-front deletion, not a nicety: two
+    // overlapping spans would delete each other's characters and corrupt the answer text. Each scan
+    // is internally non-overlapping and the containment test above drops a JSON object nested in a
+    // wrapper, so a survivor pair would need a JSON span that STRADDLES a wrapper boundary — which
+    // needs `</tool_call>` inside a JSON string literal, and that same literal makes the wrapper's
+    // own body unparseable, so no wrapper span is produced. No input was found that overlaps. This
+    // filter is here so the deletion loop rests on an enforced invariant instead of that argument.
+    var disjoint = new ArrayList<InlineToolCall>(merged.size());
+    int consumedTo = 0;
+    for (InlineToolCall span : merged) {
+      if (span.start() >= consumedTo) {
+        disjoint.add(span);
+        consumedTo = span.end();
+      }
+    }
+    return List.copyOf(disjoint);
   }
 
   /**
