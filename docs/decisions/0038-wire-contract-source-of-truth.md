@@ -269,11 +269,20 @@ The mirror named in the 2026-09-01 review is retired end to end:
 
 **Why a barrel rather than deletion.** The obvious reading of this ADR — delete the mirror, point
 its importers at the generated module — does not survive contact with the file. `surface.ts`
-exports two runtime **values** (`AUDIENCES`, `PLACEMENTS`) that a type projection cannot provide;
-`PLACEMENTS` is additionally parsed by `scripts/ci/check-a11y-closure.mjs` to assert every
-placement has a landmark role. It exports two interfaces with no Java counterpart at all
-(`SurfaceFactory`, the 478 §4.A dispatch token minted client-side; `SurfaceCatalog`, the response
-envelope). And the FE `Surface` carries two fields the backend never sends: `factory`, stamped by
+exports a runtime **value** a type projection cannot provide: `PLACEMENTS`, the closed `Placement`
+list, which `scripts/ci/check-a11y-closure.mjs` parses out of this exact file by regex (`:60`,
+against the path pinned at `:40`) to assert every placement has a landmark role. Deleting the file
+would break that gate. (`AUDIENCES` is declared in the same shape at `surface.ts:49` but has **no
+consumer** — `grep -rn AUDIENCES modules/ui-web/src` returns only that declaration and the header
+comment naming it. It is not a reason to keep the file; it is a retirement candidate for the UI
+lane.) The file also exports `SurfaceFactory` — the 478 §4.A dispatch token minted client-side,
+with no Java counterpart at all — and `SurfaceCatalog`, the response envelope, whose Java
+counterpart is not a *type*: `RegistryController.handleSurfaces` (`:281`) ends in `writeEnvelope`
+(`:397-412`), which composes the envelope as an inline `LinkedHashMap`. There is no record for the
+emitter to project, which is why the file's own header says the shape "mirrors
+`RegistryController.handleSurfaces`" (`surface.ts:237-238`) rather than a Java class. Generating it
+would first require the envelope to become a declared type on the Java side.
+And the FE `Surface` carries two fields the backend never sends: `factory`, stamped by
 the catalog on receipt, and `splitPairing`, a plugin contribution merged client-side with **zero**
 Java source. Deleting the file would have relocated those into consumers — turning one honest
 composition point into many. The barrel keeps the *field set* mechanically derived from Java while

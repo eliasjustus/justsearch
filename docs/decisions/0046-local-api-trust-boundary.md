@@ -6,7 +6,9 @@ description: "The local HTTP API's trust boundary is the same-user native proces
 date: 2026-09-02
 probes:
   - adr-0046-loopback-bind-literal
+  - adr-0046-no-wildcard-bind
   - adr-0046-token-fails-closed
+  - adr-0046-token-refusal-asserted
 last_reviewed: 2026-09-02
 ---
 
@@ -50,17 +52,19 @@ privilege section) records this residual with its verified caller inventory.
 **The trust boundary is the same-user native process. Everything inside it is trusted; the browser
 is outside it, and the network does not reach it.**
 
-Five controls implement that boundary. All five live in
-`modules/ui/src/main/java/io/justsearch/ui/api/ApiSecurityFilters.java`, installed as before-filters
-by `install(Javalin)` (`:104-112`) in a fixed order.
+Five controls implement that boundary. The first is the bind address itself, in
+`modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java`; the other four live in
+`modules/ui/src/main/java/io/justsearch/ui/api/ApiSecurityFilters.java` and are installed as
+before-filters, in a fixed order, by `install(Javalin)` (`:138-145`) — which the server calls
+immediately before it binds (`LocalApiServer.java:579`).
 
 | # | Control | Site | What it excludes |
 |---|---|---|---|
-| 1 | **Loopback bind** | `LocalApiServer.java:581` — `this.app.start("127.0.0.1", bindPort)` | Every remote host. The address is a literal, not a setting: there is no configuration path to `0.0.0.0`. |
-| 2 | **Host-header allowlist** | `setupHostValidation` (`:160-166`), predicate `isAllowedHost` (`:664`) | DNS rebinding. After a rebind the request is *same-origin* with the attacker's domain, so CORS no longer applies — but the attacker's domain is still in the `Host` header, and only `127.0.0.1` / `localhost` / `::1` are accepted. Applies to every method, including token-exempt GETs. |
-| 3 | **MCP Origin validation** | `setupMcpOriginValidation` (`:205-217`), predicate `isAllowedMcpOrigin` (`:262`) | A browser reaching `/mcp` or `/api/mcp/token`. Absent `Origin` is admitted (native MCP hosts are not browsers); a present `Origin` is parsed as a URI and its host component compared for equality, so `http://127.0.0.1.evil.com` does not pass. This is the MCP Streamable-HTTP spec's own MUST, and is deliberately independent of `prodMode`. |
-| 4 | **CORS pinned to the shell origin** | `setupCors` (`:337-350`), `resolveAllowedOrigin` (`:687`) | A cross-origin page *reading* a response. In prod only the desktop origins (`tauri://localhost`, `http(s)://tauri.localhost`) are granted. CORS is not a request-blocker, which is why control 2 exists. |
-| 5 | **Per-boot session token on mutating routes** | `setupSessionTokenEnforcement` (`:413`), route predicate `requiresSessionToken` (`:403-411`) | A foreign caller performing a mutation. Required on `POST`/`PUT`/`DELETE` **and on every method under `/api/runs/**`** — the run family is prefix-matched rather than enumerated, so a future read route under it inherits the requirement instead of silently shipping open. The token is minted per Head boot (`HeadlessApp.java:364-365`) and delivered to the shell through the Tauri bridge; a restart mints a new one, so a stale client fails **closed** with 401. |
+| 1 | **Loopback bind** | `LocalApiServer.java:582` — `this.app.start("127.0.0.1", bindPort)` | Every remote host. The address is a literal, not a setting: there is no configuration path to `0.0.0.0`. |
+| 2 | **Host-header allowlist** | `setupHostValidation` (`:193-207`), predicate `isAllowedHost` (`:685`) | DNS rebinding. After a rebind the request is *same-origin* with the attacker's domain, so CORS no longer applies — but the attacker's domain is still in the `Host` header, and only `127.0.0.1` / `localhost` / `::1` are accepted. Applies to every method, including token-exempt GETs. |
+| 3 | **MCP Origin validation** | `setupMcpOriginValidation` (`:238-241`) via `enforceLoopbackOrigin` (`:248`), predicate `isAllowedMcpOrigin` (`:295`) | A browser reaching `/mcp` or `/api/mcp/token`. Absent `Origin` is admitted (native MCP hosts are not browsers); a present `Origin` is parsed as a URI and its host component compared for equality, so `http://127.0.0.1.evil.com` does not pass. This is the MCP Streamable-HTTP spec's own MUST, and is deliberately independent of `prodMode`. |
+| 4 | **CORS pinned to the shell origin** | `setupCors` (`:370-397`), `resolveAllowedOrigin` (`:708`) | A cross-origin page *reading* a response. In prod only the desktop origins (`tauri://localhost`, `http(s)://tauri.localhost`) are granted. CORS is not a request-blocker, which is why control 2 exists. |
+| 5 | **Per-boot session token on mutating routes** | `setupSessionTokenEnforcement` (`:441`), route predicate `requiresSessionToken` (`:422-430`) | A foreign caller performing a mutation. Required on `POST`/`PUT`/`DELETE` **and on every method under `/api/chat/runs`** — the run family's prefix is `RunRoutes.PATH_PREFIX` (`RunRoutes.java:29`), read by the predicate rather than re-spelled, and matched as a prefix rather than enumerated, so a future read route under it inherits the requirement instead of silently shipping open. `OPTIONS` is exempt on every path (`:423-425`): a CORS preflight cannot carry the header, so demanding it there would break every browser call it precedes — control 4 answers preflights, and the token is then demanded on the actual request. The token is minted per Head boot (`HeadlessApp.java:364-365`) and delivered to the shell through the Tauri bridge; a restart mints a new one, so a stale client fails **closed** with 401. |
 
 **`GET /api/mcp/token` is token-exempt by construction and that is correct.** It is how a legitimate
 external MCP client obtains the token in the first place, so it cannot itself demand one. It is not

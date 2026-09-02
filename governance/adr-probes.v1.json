@@ -351,10 +351,12 @@
         },
         {
           "file": "modules/ui-web/src/api/domains/indexing.ts",
+          "unmarked": true,
           "reason": "DECLARED EXCEPTION, owner: the UI lane. Carries no mirror marker but is one, and the drift runs BACKWARDS: ApplyExcludesResponse/PatternMatch (:95,:100) are mirrored FROM the FE by ExcludesService.ExcludesResult (modules/.../ExcludesService.java:35-38 says so in its javadoc). Generating it would invert the authority, which is a product decision about who owns the excludes contract, not a codegen chore. Recorded per the ADR-0038 amendment 2026-09-02."
         },
         {
           "file": "modules/ui-web/src/api/schemas.ts",
+          "unmarked": true,
           "reason": "DECLARED EXCEPTION, owner: the UI lane. Named by ADR-0038's Rationale as the hand-written Zod half of the drift; tempdoc 683 already reduced it to ONE deliberately permissive .loose() agent-session schema, and the rest now validate against generated projections. The residue is a deliberate fail-open parse boundary, so retiring it is a decision about that boundary rather than a mirror to generate. Recorded per the ADR-0038 amendment 2026-09-02."
         },
         {
@@ -416,12 +418,34 @@
       "note": "expect 1 is the population, not a ratchet: there is exactly one bind call site. The pattern requires the 'this.app.' receiver so it pins the real call and not the javadoc at the same file's :773, which quotes 'app.start(\"127.0.0.1\", bindPort)' as prose."
     },
     {
+      "id": "adr-0046-no-wildcard-bind",
+      "adr": "0046",
+      "premise": "The bind address is never widened to a wildcard. ADR-0046's whole control set assumes the network cannot reach the port, so a start() on 0.0.0.0 voids the decision rather than extending it.",
+      "kind": "grep-absent",
+      "pattern": "start\\(\"0\\.0\\.0\\.0\"",
+      "paths": [
+        "modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java"
+      ],
+      "note": "Scoped to the start() CALL, not the bare address: the file's javadoc at :774 and :811 deliberately discusses what a 0.0.0.0 bind would expose, and evaluateGrep does not strip comments, so a bare-address absence probe would go red on the prose that exists to warn against the very thing it checks. Paired with adr-0046-loopback-bind-literal, which pins the positive side."
+    },
+    {
       "id": "adr-0046-token-fails-closed",
       "adr": "0046",
-      "premise": "Session-token enforcement fails CLOSED: prod mode with a null or blank token refuses to construct the API and raises LOCAL_API_SESSION_TOKEN_MISSING, rather than logging that enforcement is disabled and serving mutations unguarded. The named test drives the real ApiSecurityFilters constructor, not a double.",
+      "premise": "Session-token enforcement fails CLOSED: prod mode with a null or blank token refuses to construct the API and raises LOCAL_API_SESSION_TOKEN_MISSING, rather than logging that enforcement is disabled and serving mutations unguarded. HONEST LIMIT: this probe is kind 'test', which checks only that the named file still declares the pinned method - a gutted or @Disabled body satisfies it. The sibling probe adr-0046-token-refusal-asserted is what pins the assertion itself.",
       "kind": "test",
       "file": "modules/ui/src/test/java/io/justsearch/ui/api/ApiSecurityFiltersTest.java",
       "test": "io.justsearch.ui.api.ApiSecurityFiltersTest#prodModeWithoutSessionTokenRefusesToConstruct"
+    },
+    {
+      "id": "adr-0046-token-refusal-asserted",
+      "adr": "0046",
+      "premise": "The fail-closed test still ASSERTS a refusal, not merely that a method by that name exists: ApiSecurityFiltersTest expects an IllegalStateException from the production constructor. Gutting the body to a no-op keeps adr-0046-token-fails-closed green and fails this one.",
+      "kind": "grep-present",
+      "pattern": "assertThrows\\(\\s*IllegalStateException",
+      "paths": [
+        "modules/ui/src/test/java/io/justsearch/ui/api/ApiSecurityFiltersTest.java"
+      ],
+      "note": "Deliberately no 'expect' count: the claim is 'at least one refusal is still asserted', not a fixed number of cases, so adding a case must not fail the gate. Pairs with the kind:test probe, which pins the method NAME; this one pins that the method still asserts something."
     }
   ]
 }

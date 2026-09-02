@@ -118,10 +118,8 @@
       "outFile": "agent-sessions-response.ts",
       "consumers": [
         "modules/ui-web/src/api/domains/agent.ts",
-        "modules/ui-web/src/api/schemas.ts",
-        "modules/ui-web/src/shell-v0/controllers/AgentSessionController.ts"
-      ],
-      "note": "HONEST LIMIT on the third entry: AgentSessionController.ts does NOT import this projection. Its only occurrence is a doc comment at :217 naming 'generated/schema-types/agent-sessions-response.ts' as prose (verified: the file's import block has no schema-types/agent-sessions-response import). The contract-projection enforcer's undeclared-consumer check is a raw substring test over whole file text, not an import parse, so a comment mentioning the path is indistinguishable from an import. Listed here rather than left red because the alternative was rewording a comment to dodge a matcher, and modules/ui-web is out of scope for tempdoc 884 lane B. The real fix - make the check parse imports rather than substrings - is tracked in tempdoc 884's residue list and owned by the FE/kernel lane. Until then this row overstates the consumer set by one documentation reference."
+        "modules/ui-web/src/api/schemas.ts"
+      ]
     },
     {
       "name": "AgentHistoryResponse",
@@ -187,7 +185,8 @@
       "name": "SettingsV2",
       "schema": "SSOT/schemas/settings-v2.v1.json",
       "outFile": "settings-v2.ts",
-      "consumers": ["modules/ui-web/src/api/domains/settings.ts", "modules/ui-web/src/api/schemas.ts"]
+      "consumers": ["modules/ui-web/src/api/domains/settings.ts"],
+      "note": "api/schemas.ts was listed here until tempdoc 884 review S5 taught the gate to parse imports: its only occurrence of the module is the tempdoc-683 tombstone comment at :20-22 recording that the hand SettingsV2 schemas were DELETED and that the parse boundary moved to api/domains/settings.ts. It never imported this projection; the raw-substring matcher could not tell the difference."
     },
     {
       "name": "SurfaceWire",
