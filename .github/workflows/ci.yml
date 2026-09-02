@@ -236,6 +236,44 @@ jobs:
             --gate config-surface --gate dead-code --gate npm-audit --gate module-deps \
             --mode gate
 
+      # Tempdoc 913 T1/T2, the same shape as the block below it. The dev-MCP surface's doc-sync
+      # gate and the two pure suites that cover its verdict logic ran in no workflow at all, which
+      # is why an allowlist could lose an endpoint and the ownership verdict could report
+      # `rebuildFirst` on every distFrom launch with nothing to contradict either. All three are
+      # pure (no dev stack, no Gradle): check-dev-mcp-doc-sync spawns the MCP server over stdio and
+      # calls tools/list, which touches no run state.
+      - name: Dev-MCP surface (doc sync + pure unit suites)
+        run: |
+          node scripts/ci/check-dev-mcp-doc-sync.mjs
+          node scripts/dev/test-dev-mcp-surface-honesty.mjs
+          node scripts/dev/test-ownership-verdict.mjs
+
+      # Tempdoc 913 D1, the same shape a fourth time, one register-family out. The
+      # operation-surface gate ran NOWHERE: not in any workflow, not in build.gradle.kts.
+      # The self-test step below does exercise it, but only against its fixtures -- it never
+      # applies the enforcer to the repo tree, so the enforcer being green says nothing about
+      # main being green. #614 typed IndexingController onto the canonical IndexingJobView and
+      # landed with the register missing a row for it; PR CI and the merge group both passed
+      # and main was red on `--gate operation-surface` from that merge onward.
+      #
+      # These three are input-free (they read the register JSONs + walk the source tree, no
+      # produced artifact), so they cost nothing to run here. Scoped to the register family
+      # implicated by D1 rather than "the rest of the kernel": ts-any is red on main behind an
+      # expected-state pin, and `wire` is environment-sensitive (needs the buf CLI installed),
+      # so a blanket full-kernel step would land CI red for reasons unrelated to the fix.
+      #
+      # Census (corrected by review of #617 -- the first count missed the six kernel gates the
+      # "ui-web pre-merge gate set" step above runs via run-ui-web-gates.mjs, which expands the
+      # `ui-web-gates` recipe: ambient-purity, style-literal-ratchet, atom-fork-ratchet,
+      # modality-contract, transient-arbitration, modal-arbitration). Of 35 registered gates,
+      # 12 ran in CI before this step and 15 do with it -- so 20 remain unwired, tracked in
+      # tempdoc 913 open items with the full list.
+      - name: Register-family gates (operation-surface, execution-surface, guard resolution)
+        run: |
+          node scripts/governance/run.mjs \
+            --gate operation-surface --gate execution-surface --gate register-guard-resolution \
+            --mode gate
+
       # Tempdoc 884 review B1, same shape as the note above: the kernel's own gate tests
       # (18 *.test.mjs files) ran NOWHERE -- standalone `node <file>` scripts nobody
       # invoked. The runner auto-discovers them so a new one is covered the moment it lands.

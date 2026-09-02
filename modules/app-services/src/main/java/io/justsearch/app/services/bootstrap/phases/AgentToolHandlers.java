@@ -154,6 +154,7 @@ public final class AgentToolHandlers {
       OnlineAiService onlineAiService,
       LambdaMartReranker lambdaMartReranker,
       KnowledgeHttpApiAdapter existingAdapter,
+      io.justsearch.agent.tools.FileOperationLog existingFileOperationLog,
       io.justsearch.agent.api.memory.MemoryStore memoryStore,
       io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry,
       io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger,
@@ -174,7 +175,10 @@ public final class AgentToolHandlers {
     // different thing from the sentinel it replaced — that one let SEARCH_INDEX stand proxy for the
     // rest and so permanently suppressed REMEMBER. This one skips only when every ref is already
     // handled, so the two paths still compose. It matters because assemble() is not side-effect
-    // free: it constructs a FileOperationLog, whose constructor runs a diagnostic retention prune.
+    // free: it builds a KnowledgeHttpApiAdapter and, when the caller passes no journal to reuse, a
+    // FileOperationLog whose constructor runs a diagnostic retention prune. (Tempdoc 913 D5: on the
+    // normal boot the eager path now hands its journal down via existingFileOperationLog, so that
+    // second construction — and its second prune — no longer happens.)
     if (allLateBoundRefsPresent(operationHandlers, memoryStore)) {
       return true;
     }
@@ -190,6 +194,7 @@ public final class AgentToolHandlers {
             onlineAiService,
             lambdaMartReranker,
             existingAdapter,
+            existingFileOperationLog,
             scanProgressRegistry,
             scanRollupLedger,
             documentService);

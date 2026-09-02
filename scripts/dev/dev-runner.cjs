@@ -155,6 +155,7 @@ function parseArgs(argv) {
     sessionId: null,
     leaseDurationSec: DEFAULT_LEASE_DURATION_SEC,
     chatProfile: null,
+    distFromRoot: null,
   };
 
   const args = [...argv];
@@ -226,6 +227,13 @@ function parseArgs(argv) {
         // backend spawn env as JUSTSEARCH_CHAT_PROFILE. Validated below.
         out.chatProfile = String(takeValue() || '');
         break;
+      case '--dist-from':
+        // Tempdoc 913 T1: the checkout the CALLER asked to launch from (already resolved by the
+        // MCP server). Recorded verbatim into the run's provenance so a reader can tell "launched
+        // where asked" from "running a checkout nobody asked for" — the two the mismatch check
+        // used to conflate. Not a launch input: this process already runs in that tree.
+        out.distFromRoot = String(takeValue() || '') || null;
+        break;
       case '--help':
       case '-h':
         out.cmd = 'help';
@@ -255,6 +263,7 @@ function printUsage() {
       '  start   [--ui-port 5173] [--api-port 0|33221] [--data-dir <path>] [--clean soft|hard|none] [--json]',
       '          [--lease-duration-sec 30-7200]  (campaign-length ownership hold; default 30, clamped)',
       '          [--chat-profile compact|standard]  (backend JUSTSEARCH_CHAT_PROFILE; dev default compact)',
+      '          [--dist-from <root>]  (record-only: the checkout the MCP caller asked to launch from)',
       '  status  [--run <runId>|--active] [--json]',
       '  stop    [--run <runId>|--active] [--force] [--json]',
       '  cleanup [--run <runId>|--active] [--force] [--clean soft|hard|none] [--json]',
@@ -786,10 +795,18 @@ function computeHeadDistStamp() {
   } catch { return null; }
 }
 
-/** The provenance block stamped on the lease/run at spawn. */
-function resolveProvenance() {
+/**
+ * The provenance block stamped on the lease/run at spawn.
+ *
+ * Tempdoc 913 T1: `distFromRoot` is the checkout the CALLER requested (`start { distFrom }`),
+ * null when it just ran in the caller's own tree. `repoRoot` is where this process actually is,
+ * so the two together answer "was it launched where it was asked to be" — which is what separates
+ * a deliberate worktree launch from a stack running code nobody asked for.
+ */
+function resolveProvenance(distFromRoot = null) {
   return {
     repoRoot: toPosix(repoRoot),
+    distFromRoot: distFromRoot ? toPosix(path.resolve(distFromRoot)) : null,
     gitHead: resolveGitHead(),
     headDistStamp: computeHeadDistStamp(),
   };
@@ -1641,7 +1658,7 @@ async function cmdStart(opts) {
 
   // Tempdoc 606 Piece 2: capture provenance of the dist we are about to launch.
   // installDist has run by now, so the lib dir exists for the content stamp.
-  const devStackProvenance = resolveProvenance();
+  const devStackProvenance = resolveProvenance(opts.distFromRoot);
 
   // Tempdoc 844 §4.2 R3: hot-reload facts are RECORDED per run instead of being a constant
   // three code sites agreed on by coincidence. The MCP `reload` tool reads the port and the

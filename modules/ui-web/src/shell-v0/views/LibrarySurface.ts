@@ -42,7 +42,12 @@ import {
   type IndexedRootView,
 } from '../../api/generated/schema-types/indexed-root-view.js';
 // Tempdoc 599 §9.1 — the ONE per-folder status derivation; the row glyph + meta line project from it.
-import { folderStatus } from '../state/folderStatus.js';
+import {
+  folderStatus,
+  rememberFailedCounts,
+  failedChipCopy,
+  type FolderStatus,
+} from '../state/folderStatus.js';
 // Tempdoc 813 §4 — the index-wide progress authority supplies enrichment-stage applicability, which
 // the per-root wire row cannot carry (counts only, no enabled flags).
 import {
@@ -55,6 +60,9 @@ import {
   deriveOtherSources,
   facetScanCapFor,
   EMPTY_OTHER_SOURCES,
+  // Tempdoc 914 D4 — the FE mirror of IngestCollectionPolicy's reserved names, so the Add Folder
+  // collection field refuses one with a reachable reason instead of creating the root.
+  isReservedCollection,
   type OtherSource,
   type OtherSourcesSnapshot,
 } from '../state/otherSources.js';
@@ -66,6 +74,8 @@ import { UNKNOWN, type Maybe } from '../state/known.js';
 import { openFailedJobs } from '../state/failedJobsDrawer.js';
 // Tempdoc 599 §9.4 — gate the Add button with a reachable reason (596 operability authority).
 import { unavailableBecause, AVAILABLE } from '../state/availability.js';
+// Tempdoc 914 D3 — the failed chip's shared look (one authority for both render sites).
+import { failedChipStyles } from '../components/failedChipPresentation.js';
 
 /** Tempdoc 599 §9.4 — add-time path validation result from /api/indexing-roots/preview. */
 interface FolderPreview {
@@ -135,6 +145,7 @@ export class LibrarySurface extends JfElement {
     excludesText: { state: true },
     excludesLoaded: { state: true },
     pendingPath: { state: true },
+    pendingCollection: { state: true },
     pendingPreview: { state: true },
     showManualInput: { state: true },
     isTauri: { state: true },
@@ -155,6 +166,14 @@ export class LibrarySurface extends JfElement {
   declare excludesText: string;
   declare excludesLoaded: boolean;
   declare pendingPath: string;
+  /**
+   * Tempdoc 914 D4 — the optional collection the new watched root's documents are tagged with.
+   * Blank ⟹ the argument is omitted and the backend's own default ("default", the untagged bucket)
+   * applies; the field exists because until now the Add Folder flow sent `{path}` only, so the label
+   * that `Library > Folders` shows on every row and that search results filter on was unreachable
+   * from the one surface that creates roots.
+   */
+  declare pendingCollection: string;
   /** Tempdoc 599 §9.4 — add-time validation result for the typed path (null = not yet checked). */
   declare pendingPreview: FolderPreview | null;
   declare showManualInput: boolean;
@@ -202,6 +221,13 @@ export class LibrarySurface extends JfElement {
    * it only feeds the next probe's request, never the render.
    */
   private defaultScopeDocuments: Maybe<number> = UNKNOWN;
+  /**
+   * Tempdoc 914 D3 — pathHash → the failed count last observed while that root's queue was settled.
+   * Not reactive state: it is folded from each poll's rows in `refresh()` (which already re-renders)
+   * and only ever feeds `folderStatus`. Bounded by `rememberFailedCounts`, which drops a root the
+   * moment a SETTLED poll reports it has no failures — see its javadoc for the retention rule.
+   */
+  private lastKnownFailed: Record<string, number> = {};
   // Tempdoc 599 §9.4 — debounce the add-time preview while typing.
   private previewTimer: number | null = null;
   private previewSeq = 0;
@@ -217,6 +243,7 @@ export class LibrarySurface extends JfElement {
     this.excludesText = '';
     this.excludesLoaded = false;
     this.pendingPath = '';
+    this.pendingCollection = '';
     this.pendingPreview = null;
     this.showManualInput = false;
     this.isTauri = false;
@@ -316,12 +343,6 @@ export class LibrarySurface extends JfElement {
       color: var(--text-secondary);
       margin-top: 0.25rem;
     }
-    /* Tempdoc 599 §16/B1 — the clickable "N failed" chip (danger tone) opens the failed-files drawer. */
-    .failed-chip {
-      margin-left: 0.4rem;
-      --jf-button-color: var(--text-danger);
-      color: var(--text-danger);
-    }
     .status-icon {
       flex-shrink: 0;
     }
@@ -370,6 +391,7 @@ export class LibrarySurface extends JfElement {
     }
     .add-row {
       display: flex;
+      flex-wrap: wrap;
       gap: 0.5rem;
       margin-bottom: 0.5rem;
     }
@@ -398,6 +420,14 @@ export class LibrarySurface extends JfElement {
       color: var(--text-primary);
       font-family: monospace;
       font-size: var(--font-size-sm);
+      min-inline-size: 12rem;
+    }
+    /* Tempdoc 914 D4 — the path is the long field; the optional collection takes a fixed smaller
+       share (and the row wraps) so adding it cannot squeeze the path — the D2 failure mode. */
+    .add-row input.add-collection {
+      flex: 0 1 11rem;
+      min-inline-size: 8rem;
+      font-family: inherit;
     }
     /* Tempdoc 811 C-2a — "Other sources" reuses the excludes panel's chrome and the folder-row card
        verbatim; no new idiom, only a second section in the same visual language. */
@@ -450,6 +480,9 @@ export class LibrarySurface extends JfElement {
       animation: jf-spin 1s linear infinite;
     }
   `,
+    // Tempdoc 914 D3 — the failed chip's look is shared with the declared FolderCardRenderer so the
+    // two render sites cannot drift; see failedChipPresentation.ts.
+    failedChipStyles,
   ];
 
   // 569 §14 — re-render when the active presentation changes (the declared cards region appears
@@ -575,6 +608,9 @@ export class LibrarySurface extends JfElement {
         enrichmentStages: this.enrichmentStages,
         enrichmentPending: this.enrichmentPending,
         enrichmentBlocked: this.enrichmentBlocked,
+        // Tempdoc 914 D3 — keeps the failed chip (and its drill-down) reachable across a retry
+        // re-queue window, when the wire row reports the failures as in-flight instead.
+        lastKnownFailed: this.lastKnownFailed[pathHash],
       });
       return {
         pathHash,
@@ -588,6 +624,9 @@ export class LibrarySurface extends JfElement {
         // output field), not `failedCount`, to stay clear of the folder-status-derivation gate's
         // raw-wire-field scan (only the seam reads `row.failedCount`).
         failed: fs.failed,
+        // Tempdoc 914 D3 — `failed` is being carried across a retry window, so the chip's
+        // accessible name says "last known" instead of asserting it as this tick's count.
+        failedLastKnown: fs.failedIsLastKnown === true,
       };
     });
     return html`<jf-declared-surface
@@ -640,6 +679,13 @@ export class LibrarySurface extends JfElement {
           return known != null && known >= 0 ? { ...r, fileCount: known } : r;
         });
       }
+      // Tempdoc 914 D3 — fold the newest counts into the bounded last-known-failed memory BEFORE
+      // the rows render, so a poll that lands mid-retry (failures re-queued ⟹ `failedCount` 0,
+      // `inFlightCount` > 0) still renders a reachable "N failed" chip. The retention rule lives in
+      // the pure fold next to the seam that reads it.
+      this.lastKnownFailed = rememberFailedCounts(this.lastKnownFailed, items, {
+        provisional: this.provisional,
+      });
       this.roots = items;
       // Lazy-resolve hashes via core.resolve-path-hash (slice 450 §1.1).
       for (const r of this.roots) {
@@ -777,29 +823,55 @@ export class LibrarySurface extends JfElement {
     }
   }
 
-  private async handleAddRoot(): Promise<void> {
+  /**
+   * The HEADER's "Add Folder" — open the add flow. Distinct from {@link handleAddRoot}, which is the
+   * form's submit (tempdoc 914 D4): with one method for both, the header button submitted whenever
+   * the form happened to be open, and in Tauri mode it would then never re-open the picker.
+   *
+   * The native picker answers WHICH folder, not which collection, so it now fills the same add form
+   * the browser flow uses (path pre-filled, preview fetched) and the user confirms with Add — that is
+   * where the collection field lives, in both modes. A cancelled picker still just opens the form.
+   */
+  private async handleAddFolderClick(): Promise<void> {
     if (this.host_.platform.capabilities.has('folder-picker')) {
       const picked = await this.host_.platform.pickFolder();
+      this.showManualInput = true;
       if (picked) {
-        await this.invoke(OP_ADD, { path: picked });
-        return;
+        this.pendingPath = picked;
+        this.pendingPreview = null;
+        void this.fetchPreview(picked);
       }
-      this.showManualInput = true;
       return;
     }
-    // Browser mode: use the inline manual-input flow.
-    if (!this.showManualInput) {
-      this.showManualInput = true;
-      return;
-    }
+    this.showManualInput = true;
+  }
+
+  /** Submit the add form (its Add button, or Enter in either field). */
+  private async handleAddRoot(): Promise<void> {
     const path = this.pendingPath.trim();
     if (!path) return;
     // Tempdoc 599 §9.4 — don't create the job if the preview already says it can't be added.
     if (this.addAvailability().kind !== 'available') return;
-    await this.invoke(OP_ADD, { path });
+    await this.invoke(OP_ADD, this.addRootArgs(path));
     this.pendingPath = '';
+    this.pendingCollection = '';
     this.pendingPreview = null;
     this.showManualInput = false;
+  }
+
+  /**
+   * Tempdoc 914 D4 — the `core.add-watched-root` arguments.
+   *
+   * `collection` is OMITTED when blank rather than sent as `""` or as a literal `"default"`. Not
+   * because the stored result would differ — `AddWatchedRootHandler` and `RootLifecycleOps` both
+   * normalize absent/blank to `DEFAULT_COLLECTION`, so all three spellings converge (review nit) —
+   * but because the request should say what the USER said. Omitting keeps the backend's default the
+   * backend's to choose; hard-coding `"default"` here would pin another component's decision in the
+   * FE, and `""` is a value `IngestCollectionPolicy.normalizeRequested` explicitly rejects.
+   */
+  private addRootArgs(path: string): Record<string, unknown> {
+    const collection = this.pendingCollection.trim();
+    return collection ? { path, collection } : { path };
   }
 
   /** Tempdoc 599 §9.4 — typed-path input: update the path + (debounced) validate it. */
@@ -848,6 +920,16 @@ export class LibrarySurface extends JfElement {
   private addAvailability() {
     const path = this.pendingPath.trim();
     if (!path) return unavailableBecause('Enter a folder path', true);
+    // Tempdoc 914 D4 — a supplied collection must not name an app-internal corpus. The AUTHORITY is
+    // `IngestCollectionPolicy`, enforced by the REST route and, since tempdoc 913 D6, by the
+    // Operation handler this surface actually invokes (`AddWatchedRootHandler.java:72-77` routes the
+    // value through `normalizeRequested` and returns INVALID_REQUEST). This check is defence in
+    // depth, not the enforcement: it gives the reason at the keystroke, in the field, with Add
+    // disabled — instead of a round trip that returns an error banner after the user has committed.
+    const collection = this.pendingCollection.trim();
+    if (collection && isReservedCollection(collection)) {
+      return unavailableBecause(`"${collection}" is reserved for JustSearch's own documents`);
+    }
     const p = this.pendingPreview;
     if (!p || p.path !== path) return AVAILABLE; // checking — don't block prematurely
     if (!p.exists) return unavailableBecause('Path not found');
@@ -924,6 +1006,28 @@ export class LibrarySurface extends JfElement {
     >`;
   }
 
+  /**
+   * Tempdoc 599 §16/B1 — the clickable "N failed" chip. Tempdoc 914 D3 / review S2-2: when the count
+   * is being carried across a window with no settled answer, the chip says so ON SCREEN (the shared
+   * `failedChipCopy` text plus the muted-italic treatment) and not only to a screen reader. The
+   * `label` it sets always STARTS with that visible text, which is what WCAG 2.5.3 asks for (see
+   * `failedChipCopy` for why the label cannot simply be dropped here).
+   */
+  private renderFailedChip(pathHash: string, status: FolderStatus): TemplateResult {
+    const lastKnown = status.failedIsLastKnown === true;
+    const copy = failedChipCopy(status.failed, lastKnown);
+    return html`<jf-button
+      class="failed-chip"
+      data-last-known=${lastKnown ? 'true' : 'false'}
+      variant="ghost"
+      size="sm"
+      label=${copy.label}
+      title=${copy.title || nothing}
+      .onActivate=${() => openFailedJobs(pathHash)}
+      >${icon({ name: 'alert-circle', size: 12 })} ${copy.text}</jf-button
+    >`;
+  }
+
   private renderCard(root: IndexedRootView): TemplateResult {
     const pathHash = root.pathHash ?? '';
     // Tempdoc 804 §B9 (F8) — the row's NAME is its folder name (full path on hover), or an honest
@@ -944,6 +1048,8 @@ export class LibrarySurface extends JfElement {
       enrichmentStages: this.enrichmentStages,
       enrichmentPending: this.enrichmentPending,
       enrichmentBlocked: this.enrichmentBlocked,
+      // Tempdoc 914 D3 — see the declared-renderer projection above: same memory, same reason.
+      lastKnownFailed: this.lastKnownFailed[pathHash],
     });
     return html`
       <div class="card">
@@ -959,14 +1065,7 @@ export class LibrarySurface extends JfElement {
           </div>
           <div class="card-meta">
             ${status.metaText}${status.failed > 0
-              ? html`<jf-button
-                  class="failed-chip"
-                  variant="ghost"
-                  size="sm"
-                  label=${`Show ${status.failed} failed file${status.failed === 1 ? '' : 's'}`}
-                  .onActivate=${() => openFailedJobs(pathHash)}
-                  >${icon({ name: 'alert-circle', size: 12 })} ${status.failed} failed</jf-button
-                >`
+              ? this.renderFailedChip(pathHash, status)
               : nothing}${status.state === 'unverified'
               ? html`<jf-button
                   class="reindex-chip"
@@ -1078,7 +1177,7 @@ export class LibrarySurface extends JfElement {
           <jf-button
             variant="primary"
             label="Add Folder"
-            .onActivate=${() => this.handleAddRoot()}
+            .onActivate=${() => this.handleAddFolderClick()}
           >
             ${icon({ name: 'folder-plus', size: 14 })} Add Folder
           </jf-button>
@@ -1171,6 +1270,7 @@ export class LibrarySurface extends JfElement {
             <div class="add-row">
               <input
                 type="text"
+                aria-label="Folder path"
                 placeholder="C:\\path\\to\\folder"
                 .value=${this.pendingPath}
                 @keydown=${(e: KeyboardEvent) => {
@@ -1178,6 +1278,21 @@ export class LibrarySurface extends JfElement {
                 }}
                 @input=${(e: Event) =>
                   this.onPendingPathInput((e.target as HTMLInputElement).value)}
+              />
+              <!-- Tempdoc 914 D4 — the collection this folder's documents are tagged with. Optional:
+                   left blank, the argument is omitted and the backend applies its own default. -->
+              <input
+                class="add-collection"
+                type="text"
+                aria-label="Collection (optional)"
+                data-testid="library-add-collection"
+                placeholder="Collection (optional)"
+                .value=${this.pendingCollection}
+                @keydown=${(e: KeyboardEvent) => {
+                  if (e.key === 'Enter') void this.handleAddRoot();
+                }}
+                @input=${(e: Event) =>
+                  (this.pendingCollection = (e.target as HTMLInputElement).value)}
               />
               <jf-button
                 variant="primary"

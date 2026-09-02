@@ -70,6 +70,16 @@ export const EMPTY_OTHER_SOURCES: OtherSourcesSnapshot = { sources: [], truncate
  */
 const RESERVED_COLLECTIONS: ReadonlySet<string> = new Set(['justsearch-help', 'agent-history']);
 
+/**
+ * FE mirror of `IngestCollectionPolicy.isReserved` — trimmed, case-insensitive, same two names.
+ * Exported so an ADD-time surface (Library's Add Folder collection field, tempdoc 914 D4) refuses a
+ * reserved name with a reachable reason rather than letting the user create a watched root whose
+ * documents impersonate an app-internal corpus.
+ */
+export function isReservedCollection(name: string): boolean {
+  return RESERVED_COLLECTIONS.has(name.trim().toLowerCase());
+}
+
 /** `IngestCollectionPolicy.DEFAULT_COLLECTION` — the untagged bucket, likewise not deletable. */
 const DEFAULT_COLLECTION = 'default';
 

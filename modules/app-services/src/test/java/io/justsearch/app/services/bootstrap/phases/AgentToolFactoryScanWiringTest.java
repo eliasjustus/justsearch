@@ -126,6 +126,7 @@ final class AgentToolFactoryScanWiringTest {
               null,
               adapter,
               null,
+              null,
               registry,
               ledger,
               mock(DocumentService.class));
@@ -178,6 +179,7 @@ final class AgentToolFactoryScanWiringTest {
             dataDir,
             client,
             OnlineAiService.unavailable(),
+            null,
             null,
             null,
             null,
@@ -246,6 +248,7 @@ final class AgentToolFactoryScanWiringTest {
             OnlineAiService.unavailable(),
             null,
             null,
+            null,
             MemoryStore.noop(),
             null,
             null,
@@ -282,6 +285,7 @@ final class AgentToolFactoryScanWiringTest {
             existing,
             null,
             null,
+            null,
             mock(DocumentService.class));
     assertSame(existing, reused.agentSearchAdapter(), "a supplied adapter is reused, not replaced");
 
@@ -292,6 +296,7 @@ final class AgentToolFactoryScanWiringTest {
             client,
             client,
             OnlineAiService.unavailable(),
+            null,
             null,
             null,
             null,
@@ -314,6 +319,7 @@ final class AgentToolFactoryScanWiringTest {
               client,
               client,
               OnlineAiService.unavailable(),
+              null,
               null,
               null,
               registry,
@@ -348,9 +354,25 @@ final class AgentToolFactoryScanWiringTest {
     assertNotNull(out.readDocumentTool());
   }
 
+  /**
+   * The eager guard, restated at its real scope by tempdoc 913 D5.
+   *
+   * <p>What the guard is FOR: no Worker, no Worker-backed tool. Every tool below reaches the
+   * Worker (search/browse/ingest/read through the adapter, file-operations through
+   * {@code knowledgeClient::updateDocumentPaths}), so building one without a client is either an
+   * NPE or a tool that lies about what it can do. That part is unchanged and still asserted.
+   *
+   * <p>What changed: {@code fileOperationLog} was swept into the same all-null arm despite
+   * depending on neither collaborator — it reads and writes {@code dataDir/file-operations} and
+   * nothing else. Because this arm is the one the REAL boot takes ({@code HeadlessApp} constructs
+   * {@code HeadAssembly} with a null knowledgeServer), that made the agent-history endpoint
+   * permanently empty. The narrower assertion is the point of the fix: the guard covers the tools,
+   * not the journal. The end-to-end proof lives in
+   * {@code HeadAssemblyTest#agentOperationHistoryReadsTheJournalAtBootstrapBeforeAnyWorkerConnects}.
+   */
   @Test
-  @DisplayName("the eager guard is preserved: no knowledgeClient yields an all-null Output")
-  void eagerGuardStillYieldsAllNull(@TempDir Path dataDir) {
+  @DisplayName("the eager guard covers the Worker-backed tools — and only those (913 D5)")
+  void eagerGuardNullsTheWorkerBackedToolsButNotTheJournal(@TempDir Path dataDir) {
     AgentToolFactory.Output out =
         AgentToolFactory.build(
             dataDir,
@@ -361,12 +383,75 @@ final class AgentToolFactoryScanWiringTest {
             null,
             mock(DocumentService.class));
     assertNull(out.agentSearchAdapter());
-    assertNull(out.fileOperationLog());
     assertNull(out.fileOperationsTool());
     assertNull(out.searchTool());
     assertNull(out.browseTool());
     assertNull(out.ingestTool());
     assertNull(out.readDocumentTool());
+
+    assertNotNull(
+        out.fileOperationLog(),
+        "the file-operation journal has no Worker dependency — nulling it here is what left"
+            + " GET /api/chat/agent/history reporting no batches over full journals (913 D5)");
+    assertEquals(
+        dataDir.resolve("file-operations"),
+        logDirOf(out.fileOperationLog()),
+        "and it must be the SAME directory the late-bound write path uses, not a second location");
+  }
+
+  /** The journal's directory, so the two paths can be asserted to name one place. */
+  private static Path logDirOf(io.justsearch.agent.tools.FileOperationLog log) {
+    try {
+      var f = io.justsearch.agent.tools.FileOperationLog.class.getDeclaredField("logDir");
+      f.setAccessible(true);
+      return (Path) f.get(log);
+    } catch (ReflectiveOperationException e) {
+      throw new AssertionError("FileOperationLog.logDir is the journal's only location field", e);
+    }
+  }
+
+  /**
+   * Tempdoc 913 D5 — one journal instance for the process. The late-bound path reuses whatever the
+   * eager path already built (the same contract {@code existingAdapter} has), so the reader the
+   * agent-history endpoint holds is the writer {@code FileOperationsTool} appends through.
+   */
+  @Test
+  @DisplayName("assemble reuses a supplied file-operation journal instead of building a second")
+  void suppliedJournalIsReused(@TempDir Path dataDir) {
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    io.justsearch.agent.tools.FileOperationLog existing =
+        new io.justsearch.agent.tools.FileOperationLog(dataDir.resolve("file-operations"));
+
+    AgentToolFactory.Output reused =
+        AgentToolFactory.assemble(
+            dataDir,
+            mock(KnowledgeServerBootstrap.class),
+            client,
+            client,
+            OnlineAiService.unavailable(),
+            null,
+            null,
+            existing,
+            null,
+            null,
+            mock(DocumentService.class));
+    assertSame(existing, reused.fileOperationLog(), "a supplied journal is reused, not replaced");
+
+    AgentToolFactory.Output fresh =
+        AgentToolFactory.assemble(
+            dataDir,
+            mock(KnowledgeServerBootstrap.class),
+            client,
+            client,
+            OnlineAiService.unavailable(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            mock(DocumentService.class));
+    assertNotNull(fresh.fileOperationLog(), "a fresh journal is built when none is supplied");
+    assertNotSame(existing, fresh.fileOperationLog());
   }
 
   @Test

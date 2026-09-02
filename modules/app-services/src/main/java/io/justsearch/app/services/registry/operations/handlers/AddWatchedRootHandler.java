@@ -23,6 +23,13 @@ import tools.jackson.databind.JsonNode;
  *
  * <p>Args shape: {@code {"path": string, "collection"?: string}}. Path is
  * required; collection defaults to {@code "default"} when absent.
+ *
+ * <p>Tempdoc 913 D6: a supplied collection is validated through {@link IngestCollectionPolicy}, the
+ * same ONE authority {@code POST /api/indexing/roots} uses. It was not, and this handler — not the
+ * REST route — is the path every UI and agent invocation takes, so an agent could create a watched
+ * root tagged {@code agent-history} and every document that root's scan admits would inherit the
+ * transcript corpus's default-EXCLUDED search posture. A watched root's collection tags documents
+ * exactly as an ad-hoc ingest does, so it is subject to the same reserved-name guard.
  */
 public final class AddWatchedRootHandler implements OperationHandler {
 
@@ -54,6 +61,19 @@ public final class AddWatchedRootHandler implements OperationHandler {
               : "default";
     } catch (Exception e) {
       return HandlerJson.invalidArgs(e);
+    }
+
+    // Tempdoc 913 D6 — the reserved-name guard, routed through the ONE authority rather than a
+    // second copy of the rule (IndexingController does the same at its own boundary). Deliberately
+    // OUTSIDE the JSON try above: a rejected collection is a caller error with its own message, not
+    // a malformed-arguments failure. The typed INVALID_REQUEST code is the Operation-layer spelling
+    // of the 400 the REST route returns, so a consumer branching on the code sees one answer from
+    // both surfaces.
+    try {
+      collection = io.justsearch.app.api.knowledge.IngestCollectionPolicy.normalizeRequested(collection);
+    } catch (IllegalArgumentException e) {
+      return OperationResult.failure(
+          e.getMessage(), io.justsearch.app.api.ApiErrorCode.INVALID_REQUEST.name(), Map.of(), false);
     }
 
     IndexingService indexing;
