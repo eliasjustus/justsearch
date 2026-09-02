@@ -45,10 +45,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import {
-  discoverProjectDirs, listSubagentPaths, DEFAULT_PROJECTS_ROOT,
+  discoverProjectDirs, listSubagentPaths, DEFAULT_PROJECTS_ROOT, firstTranscriptTimestamp,
 } from './lib/transcript-store.mjs';
 import { parseTranscriptTokens } from './lib/transcript-cost.mjs';
 import {
@@ -121,54 +120,12 @@ const BUILTIN_COMMAND_EXCLUDE = new Set([
 
 // --- Discovery (ADAPTED to lib/transcript-store.mjs — see header note) ---
 
-/**
- * Stream a transcript just far enough to find the first parseable line
- * carrying a `timestamp` field, without slurping the whole (up to ~25MB)
- * file. Ported verbatim from baseline-economics.mjs — this IS the
- * definitional "session start" the original ~30.5B/220-session figure was
- * computed against, so it stays exact rather than being approximated via
- * transcript-store's cheaper mtime-based `listSessions`.
- */
-function firstTranscriptTimestamp(filePath, { maxLines = 200 } = {}) {
-  return new Promise((resolve) => {
-    let settled = false;
-    let lineCount = 0;
-    let stream;
-    try {
-      stream = fs.createReadStream(filePath, { encoding: 'utf8' });
-    } catch {
-      resolve(null);
-      return;
-    }
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-      rl.close();
-      stream.destroy();
-    };
-    rl.on('line', (line) => {
-      lineCount += 1;
-      const t = line.trim();
-      if (t) {
-        try {
-          const obj = JSON.parse(t);
-          if (obj.timestamp) {
-            const d = new Date(obj.timestamp);
-            if (!Number.isNaN(d.getTime())) {
-              finish(d);
-              return;
-            }
-          }
-        } catch { /* skip malformed line */ }
-      }
-      if (lineCount >= maxLines) finish(null);
-    });
-    rl.on('close', () => finish(null));
-    stream.on('error', () => finish(null));
-  });
-}
+// `firstTranscriptTimestamp` (the definitional "session start" the original
+// ~30.5B/220-session figure was computed against) is imported from
+// lib/transcript-store.mjs, not a private copy (tempdoc 886 §12 PR 5b —
+// this was the fourth hand-rolled copy of the same scan the PR 5a review
+// flagged; confirmed byte-identical to the private copy before deleting it,
+// so this is a pure de-duplication, not a behavior change).
 
 /**
  * Session discovery: project-dir + `.jsonl` + subagent-path enumeration

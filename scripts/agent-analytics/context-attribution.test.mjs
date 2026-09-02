@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import {
   aggregateResults, formatAggregate,
   MIN_ATTRIBUTION_SESSIONS, MIN_ATTRIBUTION_COVERAGE,
+  attributeFromArrays,
 } from './context-attribution.mjs';
 
 let passed = 0;
@@ -129,6 +130,28 @@ try {
     const agg = aggregateResults([unusable(1), unusable(2)]);
     assert.equal(agg.count, 0);
     assert.equal(agg.error, 'no_valid_sessions');
+  });
+
+  run('matching names/chars zip normally, one entry per tool', () => {
+    const byTool = attributeFromArrays(['Read', 'Read', 'Bash'], [100, 200, 50]);
+    assert.deepEqual(byTool.get('Read'), { count: 2, chars: 300 });
+    assert.deepEqual(byTool.get('Bash'), { count: 1, chars: 50 });
+    assert.equal(byTool.size, 2);
+  });
+
+  run('886 §12 PR 5b fix: a zip-mismatch attributes one count PER folded tool_result, not one carrying the summed total', () => {
+    // A length mismatch (3 local char-scans vs 2 ledger-resolved names) forces the fallback path.
+    const byTool = attributeFromArrays(['Read', 'Bash'], [100, 200, 50]);
+    const entry = byTool.get('(zip-mismatch)');
+    assert.equal(entry.count, 3, 'count must equal the number of folded tool_results, not 1');
+    assert.equal(entry.chars, 350, 'chars still sums the full total');
+    assert.equal(byTool.size, 1);
+  });
+
+  run('a zero-length zip-mismatch (0 vs 0 is not a mismatch, but a real 0-vs-N one) adds nothing when chars is empty', () => {
+    const byTool = attributeFromArrays(['Read'], []);
+    assert.equal(byTool.has('(zip-mismatch)'), false);
+    assert.equal(byTool.size, 0);
   });
 } finally {
   if (failures.length) {

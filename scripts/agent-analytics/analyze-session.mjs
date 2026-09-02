@@ -15,7 +15,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadEventsFromSource, groupBySession, TELEMETRY_DIR, EVENTS_FILE, SESSIONS_DIR, repoRoot } from './lib/telemetry-io.mjs';
+import { findSessionTranscript } from './baseline-economics.mjs';
+import { roleFor } from './lib/ledger/tool-roles.mjs';
 
 // File operation patterns in bash commands (word boundaries via regex).
 // Only flags BARE commands — piped (|), redirected (> <), or chained (&& || ;)
@@ -161,11 +164,11 @@ function analyzeSubagentToolCalls(subagentStopEvents) {
       subToolCount++;
       byType[tu.name] = (byType[tu.name] ?? 0) + 1;
 
-      if (tu.name === 'Edit' || tu.name === 'Write' || tu.name === 'NotebookEdit') {
+      if (roleFor('claude-code', tu.name) === 'edit') {
         subHasEdits = true;
       }
 
-      if (tu.name === 'Read') {
+      if (roleFor('claude-code', tu.name) === 'read') {
         const filePath = tu.input?.file_path;
         const file = relPath(filePath) ?? 'unknown';
         const isUnbounded = tu.input && tu.input.offset == null && tu.input.limit == null;
@@ -245,16 +248,13 @@ function estimateDataCompleteness(sessionId, events, hookToolCallCount) {
   const startEvent = events.find(e => e.event === 'session_start' && e.transcript_path);
   let transcriptPath = startEvent?.transcript_path ?? null;
 
-  // Fallback: infer from cwd-based project hash
+  // Fallback: discover the session's main transcript across every known
+  // project dir (tempdoc 886 §12 PR 5b — replaces a hand-rolled cwd -> project
+  // hash reconstruction with the ledger's own transcript-store-backed lookup,
+  // which already knows the real on-disk slugging rule).
   if (!transcriptPath) {
-    const homeDir = process.env.USERPROFILE || process.env.HOME;
-    const cwd = startEvent?.cwd ?? repoRoot;
-    if (homeDir && cwd) {
-      // Claude Code project hash: drive letter + path with separators replaced by --
-      const normalized = cwd.replace(/\\/g, '/').replace(/^\//, '');
-      const projectHash = normalized.replace(/[/:]/g, '-');
-      transcriptPath = path.join(homeDir, '.claude', 'projects', projectHash, `${sessionId}.jsonl`);
-    }
+    const found = findSessionTranscript(sessionId);
+    transcriptPath = found?.mainPath ?? null;
   }
 
   if (!transcriptPath) {
@@ -362,7 +362,7 @@ function analyzeCompactionRereads(events) {
 
     const filesBefore = new Set();
     for (const e of segBefore) {
-      if (e.event === 'pre_tool_use' && e.tool_name === 'Read') {
+      if (e.event === 'pre_tool_use' && roleFor('claude-code', e.tool_name) === 'read') {
         const file = relPath(e.input_summary?.file_path);
         if (file) filesBefore.add(file);
       }
@@ -370,7 +370,7 @@ function analyzeCompactionRereads(events) {
 
     const filesAfter = new Set();
     for (const e of segAfter) {
-      if (e.event === 'pre_tool_use' && e.tool_name === 'Read') {
+      if (e.event === 'pre_tool_use' && roleFor('claude-code', e.tool_name) === 'read') {
         const file = relPath(e.input_summary?.file_path);
         if (file) filesAfter.add(file);
       }
@@ -446,7 +446,7 @@ function detectFailureCascades(events) {
 function analyzeContextEfficiency(events, fileEditMap) {
   const readTimeline = []; // { file, ts }
   for (const e of events) {
-    if (e.event === 'pre_tool_use' && e.tool_name === 'Read') {
+    if (e.event === 'pre_tool_use' && roleFor('claude-code', e.tool_name) === 'read') {
       const file = relPath(e.input_summary?.file_path);
       if (file) readTimeline.push({ file, ts: e.ts, tsMs: new Date(e.ts).getTime() });
     }
@@ -629,7 +629,7 @@ function classifyReadRedundancy(events, fileEditMap, compactEvents) {
   let totalRereads = 0;
 
   for (const e of events) {
-    if (e.event !== 'pre_tool_use' || e.tool_name !== 'Read') continue;
+    if (e.event !== 'pre_tool_use' || roleFor('claude-code', e.tool_name) !== 'read') continue;
     const file = relPath(e.input_summary?.file_path);
     if (!file) continue;
 
@@ -688,7 +688,7 @@ function analyzeSession(sessionId, events) {
   const failureEvents = events.filter(e => e.event === 'post_tool_use_failure');
 
   // File reads analysis
-  const readEvents = toolCallEvents.filter(e => e.tool_name === 'Read');
+  const readEvents = toolCallEvents.filter(e => roleFor('claude-code', e.tool_name) === 'read');
   const fileReadMap = new Map(); // file -> { count, unbounded, unbounded_large }
   const SIZE_THRESHOLD = 12_000; // Match intervene.mjs threshold
 
@@ -725,6 +725,13 @@ function analyzeSession(sessionId, events) {
   const docReads = classifyDocReads(fileReadMap);
 
   // File edits analysis
+  // NOTE: deliberately still the literal 'Edit' check, not roleFor(...)==='edit' — that role also
+  // matches Write/NotebookEdit/MultiEdit, and broadening file_edits.total (the headline report
+  // metric consumed by re-read/proximity classification below) was not requested by tempdoc 886
+  // §12 PR 5b's scope; only the subagent-transcript edit check and the plain 'read' checks were
+  // in scope. Disclosure (PR 5b review): that subagent check went from a 3-way OR
+  // (Edit/Write/NotebookEdit) to the 'edit' role, which ALSO matches MultiEdit — so a
+  // MultiEdit-only subagent now counts as "has edits". Intended: MultiEdit is an edit.
   const editEvents = toolCallEvents.filter(e => e.tool_name === 'Edit');
   const fileEditMap = new Map(); // file -> { count, timestamps }
 
@@ -1034,4 +1041,5 @@ function main() {
   }
 }
 
-main();
+// Guarded entry point (886 PR 5b): importing for exports must not run a report.
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main();

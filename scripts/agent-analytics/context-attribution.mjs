@@ -105,17 +105,34 @@ function findTranscriptPaths(sessionEvents) {
  *   paragraph for the full measurement.
  *
  * The two joins are POSITIONALLY zippable: both walk the same file's
- * `tool_result` blocks in the same document order (verified: 0 file-level
- * count mismatches across this machine's full local corpus, one file at a
- * time, 886 §12 PR 5a diagnostic). A `<task-notification>` line surfaces on
- * the ledger as its own synthetic `ToolEvent` (role `wait`, name
+ * `tool_result` blocks in the same document order, and cannot disagree BY
+ * CONSTRUCTION — both predicates are structurally identical (`streamLines`
+ * over the file, filtering `entry.type === 'user'` +
+ * `Array.isArray(content)` + `b.type === 'tool_result'`; see
+ * `lib/ledger/claude-adapter.mjs`'s `processClaudeTranscript` vs this file's
+ * own `localToolResultChars`, which re-implements the identical line-scan by
+ * hand rather than calling `streamLines` itself). This is a structural
+ * guarantee, not an empirically-observed one (886 §12 PR 5b review nit —
+ * the prior wording here overstated a corpus scan as proof of an invariant
+ * the code shape already establishes). A `<task-notification>` line surfaces
+ * on the ledger as its own synthetic `ToolEvent` (role `wait`, name
  * `task-notification`) rather than a `tool_result` and is excluded from the
  * zip — it is not a Claude tool call; its text is still counted once, as
  * ordinary user text, by the text/thinking/user/system walk in
- * `analyzeTranscript`. If a file's counts ever DISAGREE (a future transcript
- * shape neither walk was written against), the zip refuses to guess: the
- * file's tool_results are attributed to `'(zip-mismatch)'` rather than
- * silently mis-paired by position, and a warning is printed once per file.
+ * `analyzeTranscript`. The `'(zip-mismatch)'` fallback below is therefore
+ * DEFENSIVE — it exists for a future transcript shape neither walk was
+ * written against, not a case expected to fire today — refusing to guess
+ * rather than silently mis-pairing by position, with a warning printed once
+ * per file.
+ *
+ * Orphan/forward-referenced tool_results (a `tool_use_id` with no matching
+ * `tool_use` block in this file, e.g. a subagent transcript whose spawning
+ * call lives in the parent's own file) are labelled `'(unknown)'` by the
+ * ledger adapter (`claude-adapter.mjs`'s `use?.name ?? '(unknown)'`) — NOT
+ * the bare `'unknown'` this module's own pre-PR-5a private join used. This
+ * module inherited the adapter's label as a side effect of the PR 5a
+ * migration; kept here deliberately (prefer the adapter's label as the one
+ * source of truth) rather than reintroducing a second, divergent spelling.
  */
 function localToolResultChars(filePath) {
   let content;
@@ -139,11 +156,13 @@ function localToolResultChars(filePath) {
   return chars;
 }
 
-function attributeToolEvents(filePath) {
-  const { toolEvents } = callsFromClaudeTranscript(filePath);
-  const names = toolEvents.filter((ev) => ev.name !== 'task-notification').map((ev) => ev.name);
-  const chars = localToolResultChars(filePath);
-
+/**
+ * Pure zip/aggregation step, split out from `attributeToolEvents` (886 §12
+ * PR 5b) so the zip-mismatch fallback is unit-testable without a real
+ * transcript file on disk — same "pure, entries-in" pattern
+ * `lib/ledger/codex-adapter.mjs`'s `processCodexEntries` uses.
+ */
+function attributeFromArrays(names, chars, { filePath = '(in-memory)' } = {}) {
   const byTool = new Map();
   const addTo = (name, c) => {
     if (!byTool.has(name)) byTool.set(name, { count: 0, chars: 0 });
@@ -154,13 +173,23 @@ function attributeToolEvents(filePath) {
 
   if (names.length !== chars.length) {
     console.error(`context-attribution: tool_result count mismatch in ${filePath} (ledger=${names.length}, local=${chars.length}) — attributing to '(zip-mismatch)'`);
-    const total = chars.reduce((s, c) => s + c, 0);
-    if (total > 0 || chars.length > 0) addTo('(zip-mismatch)', total);
+    // One addTo() call PER folded tool_result (886 §12 PR 5b fix), not one
+    // call carrying the summed total — the prior version left `count` stuck
+    // at 1 while `chars` already held the full sum, understating the
+    // mismatch's own reported call count.
+    for (const c of chars) addTo('(zip-mismatch)', c);
     return byTool;
   }
 
   for (let i = 0; i < names.length; i += 1) addTo(names[i], chars[i]);
   return byTool;
+}
+
+function attributeToolEvents(filePath) {
+  const { toolEvents } = callsFromClaudeTranscript(filePath);
+  const names = toolEvents.filter((ev) => ev.name !== 'task-notification').map((ev) => ev.name);
+  const chars = localToolResultChars(filePath);
+  return attributeFromArrays(names, chars, { filePath });
 }
 
 function analyzeTranscript(filePath) {
@@ -513,4 +542,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === __filename) main();
 export {
   aggregateResults, attributeSession, formatAggregate,
   MIN_ATTRIBUTION_SESSIONS, MIN_ATTRIBUTION_COVERAGE,
+  attributeFromArrays,
 };

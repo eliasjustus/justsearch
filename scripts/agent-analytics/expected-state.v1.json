@@ -175,6 +175,18 @@
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: python -m pytest -q scripts/jseval"
+    },
+    {
+      "id": "agent-analytics-spawn-sweep-test-flaky-under-load",
+      "match": [
+        "run-all-tests.mjs",
+        "861-w5-agent-spawn-sweep.test.mjs"
+      ],
+      "claim": "`node scripts/agent-analytics/run-all-tests.mjs` can report `861-w5-agent-spawn-sweep.test.mjs` (and, under parallel-agent load, `world-state.test.mjs` / `861-w5-remove-worktree-teardown.test.mjs`) as FAILED while every other file passes. The spawn-sweep case `CLI end-to-end: CLAUDE_CODE_SESSION_ID alone ... resolves the caller session` failed once standalone and passed on retry with no code change (2026-09-02, tempdoc 886 PR 5b review), so it is flaky on its own, not only under load. None of the three tests' subjects were touched by 886. Re-run the single file with `node scripts/agent-analytics/861-w5-agent-spawn-sweep.test.mjs` before believing a red; a second consecutive standalone failure is a real defect (owner: tempdoc 861 W5).",
+      "evidence": "tempdoc 886 §12 PR 5b outcome (2026-09-02): full suite 61/64 twice with other sessions active, 64/64 on the third run; standalone spawn-sweep failed once then passed; independent reviewer reproduced the standalone flake.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node -e \"for(let i=0;i<3;i++){const r=require('child_process').spawnSync(process.execPath,['scripts/agent-analytics/861-w5-agent-spawn-sweep.test.mjs'],{stdio:'inherit'});if(r.status)process.exit(1)}\""
     }
   ]
 }

@@ -21,7 +21,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { discoverProjectDirs, DEFAULT_PROJECTS_ROOT } from './lib/transcript-store.mjs';
 
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const repoRoot = path.resolve(SCRIPT_DIR, '..', '..');
@@ -40,17 +42,42 @@ function parseArgs() {
   return {
     limit: parseInt(get('--limit', '0'), 10),
     concurrency: parseInt(get('--concurrency', '6'), 10),
-    projectDir: get('--project-dir', defaultProjectDir()),
+    // No hand-picked default dir anymore (tempdoc 886 §12 PR 5b) — omitting
+    // --project-dir now discovers EVERY /justsearch/i-matching project dir on
+    // this machine via lib/transcript-store.mjs's discoverProjectDirs, the same
+    // multi-dir convention overhead-taxonomy.mjs already uses (main checkout +
+    // every worktree, each its own distinct project dir under Claude Code's
+    // slugging). --project-dir, when passed, still narrows to exactly one dir.
+    projectDir: get('--project-dir', null),
   };
 }
 
-// Claude Code's local project-transcript directory naming: colons and path
-// separators in the repo path are each replaced 1:1 with '-'.
-// e.g. F:\justsearch-public -> F--justsearch-public
-function defaultProjectDir() {
-  const home = process.env.HOME || process.env.USERPROFILE;
-  const slug = repoRoot.replace(/[:\\/]/g, '-');
-  return path.join(home, '.claude', 'projects', slug);
+/**
+ * Every `<sessionId>.jsonl` main transcript under `dirPath` (one flat
+ * directory, no subagent-path enumeration — mine-friction judges main
+ * transcripts only).
+ */
+function sessionFilesIn(dirPath) {
+  let files;
+  try {
+    files = fs.readdirSync(dirPath).filter(f => f.endsWith('.jsonl'));
+  } catch {
+    return [];
+  }
+  return files.map(f => ({ sessionId: f.replace(/\.jsonl$/, ''), transcriptPath: path.join(dirPath, f) }));
+}
+
+/**
+ * Resolve the set of (sessionId, transcriptPath) pairs to mine: an explicit
+ * `--project-dir` narrows to that one directory (old single-dir behaviour,
+ * kept for callers pointing at a fixture/test dir or a mismatched checkout
+ * path); otherwise every discovered justsearch project dir is unioned.
+ */
+function discoverSessionFiles(projectDir) {
+  if (projectDir) return { sessionFiles: sessionFilesIn(projectDir), dirsScanned: [projectDir] };
+  const dirs = discoverProjectDirs(DEFAULT_PROJECTS_ROOT);
+  const sessionFiles = dirs.flatMap((d) => sessionFilesIn(d.path));
+  return { sessionFiles, dirsScanned: dirs.map((d) => d.path) };
 }
 
 function resolveClaudeBin() {
@@ -225,32 +252,39 @@ async function main() {
   const opts = parseArgs();
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
-  if (!fs.existsSync(opts.projectDir)) {
+  if (opts.projectDir && !fs.existsSync(opts.projectDir)) {
     console.error(`Project transcript directory not found: ${opts.projectDir}`);
+    process.exit(1);
+  }
+
+  const { sessionFiles: allSessionFiles, dirsScanned } = discoverSessionFiles(opts.projectDir);
+  if (allSessionFiles.length === 0) {
+    console.error(opts.projectDir
+      ? `No transcripts found under ${opts.projectDir}`
+      : `No transcripts found under any justsearch project dir in ${DEFAULT_PROJECTS_ROOT}`);
     console.error('Pass --project-dir explicitly if this repo checkout path differs from the one the transcripts were recorded under.');
     process.exit(1);
   }
 
   const currentSessionId = process.env.CLAUDE_SESSION_ID || null;
-  let files = fs.readdirSync(opts.projectDir).filter(f => f.endsWith('.jsonl'));
-  if (currentSessionId) files = files.filter(f => !f.startsWith(currentSessionId));
-  if (opts.limit > 0) files = files.slice(0, opts.limit);
+  let sessionFiles = currentSessionId
+    ? allSessionFiles.filter((s) => s.sessionId !== currentSessionId)
+    : allSessionFiles;
+  if (opts.limit > 0) sessionFiles = sessionFiles.slice(0, opts.limit);
 
-  console.log(`Processing ${files.length} transcripts from ${opts.projectDir}, concurrency=${opts.concurrency}`);
+  console.log(`Processing ${sessionFiles.length} transcripts from ${dirsScanned.length} project dir(s), concurrency=${opts.concurrency}`);
 
   let idx = 0, done = 0;
   const worker = async () => {
-    while (idx < files.length) {
-      const file = files[idx++];
-      const sessionId = file.replace(/\.jsonl$/, '');
-      const transcriptPath = path.join(opts.projectDir, file);
+    while (idx < sessionFiles.length) {
+      const { sessionId, transcriptPath } = sessionFiles[idx++];
       try {
         const r = await processOne(sessionId, transcriptPath);
         done++;
-        console.log(`[${done}/${files.length}] ${sessionId} ${r.skipped ? '(cached)' : r.tooSmall ? '(too small)' : r.ok ? 'OK' : 'ERROR'}`);
+        console.log(`[${done}/${sessionFiles.length}] ${sessionId} ${r.skipped ? '(cached)' : r.tooSmall ? '(too small)' : r.ok ? 'OK' : 'ERROR'}`);
       } catch (e) {
         done++;
-        console.log(`[${done}/${files.length}] ${sessionId} EXCEPTION: ${e.message}`);
+        console.log(`[${done}/${sessionFiles.length}] ${sessionId} EXCEPTION: ${e.message}`);
       }
     }
   };
@@ -258,4 +292,7 @@ async function main() {
   console.log('DONE');
 }
 
-main();
+// Guarded entry point (886 PR 5b): importing this module for its exports must
+// never start a mining run — an unguarded main() here made two real `claude`
+// judge calls when a sanity `import()` touched the file.
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main();
