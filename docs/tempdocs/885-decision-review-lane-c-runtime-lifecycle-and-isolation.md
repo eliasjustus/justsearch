@@ -3424,7 +3424,15 @@ sampling evidence are in §"Item 6 live (2026-09-02)".
 * **UI lane:** `RETRY_EXHAUSTED` needs a display treatment ("Index gave up"), and the jobs drawer
   needs the backoff/exhausted states.
 * **Owner:** `POST /api/indexing/roots` drops the collection.
-* **Kernel:** (i) `git-base` gates resolve their PR base to `HEAD~1` with no explicit fallback
+* **Kernel:** (i)-(iii) **RESOLVED in PR #604** (wave-1 residue R1); (iv) is still open and belongs
+  to whoever next touches the extraction-sandbox command line. (i) the `git-base` ladder now
+  resolves the real merge-base, so a changeset from an earlier commit on the same branch stays in
+  scope; (ii) a changeset is no longer a tempdoc-number claimant, and the trade is a new orphan
+  check on `tempdoc:` pointing at a tempdoc that does not exist; (iii) `check-store-recoverability`
+  discovery is by write call in code rather than by anchor words in prose — which is what made
+  `ExtractionSandboxCommand`'s argfile invisible while a javadoc sentence discovered
+  `ExtractionSandboxFactory`. Original text follows.
+  (i) `git-base` gates resolve their PR base to `HEAD~1` with no explicit fallback
   (`scripts/governance/lib/git-utils.mjs:83-92`), so a committed changeset from an earlier commit on
   the same branch is invisible and the gate reports silent-growth — verify with
   `--preflight <real base>` before believing one. (ii) `check-tempdoc-numbers` keys on the tempdoc

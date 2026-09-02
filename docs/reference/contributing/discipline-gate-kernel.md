@@ -97,7 +97,7 @@ count (no git diff).
 
 ```bash
 node scripts/governance/run.mjs --mode warn|gate
-                                [--gate <id>]
+                                [--gate <id>]...   (repeatable)
                                 [--self-test]
                                 [--skip-self-test]
                                 [--produce-inputs]
@@ -161,8 +161,10 @@ evaluates the gate for real. A producer exiting non-zero is a runner error
 **Self-test on full gate-mode runs (D3).** A full-registry run in `--mode gate`
 first runs the `--self-test` fixture pass (so fixture rot is caught where it
 bites) and aborts with exit 1 before evaluation if any fixture mismatches. Pass
-`--skip-self-test` to bypass it; a single-gate run (`--gate <id>`) never triggers
-it.
+`--skip-self-test` to bypass it; a gate-scoped run (any `--gate <id>`) never
+triggers it. `--gate` is repeatable — `--gate a --gate b` evaluates both, and an
+id that resolves to no registered gate aborts with exit 2 rather than being
+dropped (a dropped id would report a pass for a gate that never ran).
 
 ## Gates currently registered
 
@@ -218,8 +220,23 @@ order-insensitively, text CRLF-normalized).
 
 ## Baseline-shift detection (tempdoc 530 §Layer 1 closure)
 
-Every ratchet-file gate also reads its baseline at the PR's baseline ref
-(`HEAD~1` locally; `origin/main` in CI). If the baseline file itself was
+Every ratchet-file gate also reads its baseline at the PR's baseline ref. That
+ref is resolved by the `git-base` ladder in `scripts/governance/lib/git-utils.mjs`:
+an explicit ref (`--preflight <ref>`) wins; otherwise `merge-base(HEAD, <default
+branch>)`, taking the branch from `GITHUB_BASE_REF` on a CI `pull_request` run and
+from `origin/HEAD` locally; otherwise `HEAD~1`. A merge-base equal to `HEAD` means
+nothing has diverged, so it falls through to `HEAD~1` — which keeps the
+post-squash case on the default branch behaving exactly as before.
+
+Until the wave-1 residue PR the ladder was `HEAD~1` and nothing else, despite the
+docstring promising a PR base. Every `git-base` gate therefore diffed a
+one-commit window, and a changeset committed earlier in a branch dropped out of
+scope as soon as another commit landed (tempdoc 884 §F row 11). If you are
+reading an older tempdoc that says to sanity-check a gate with
+`--preflight <real base>` before believing a `silent-growth` finding, that
+workaround is what it was working around.
+
+If the baseline file itself was
 relaxed in the PR — an npm-audit severity count increased, a
 prose-tier-register row's tier
 changed, a consumer-drift slot's `expectedMin` lowered or a slot removed
