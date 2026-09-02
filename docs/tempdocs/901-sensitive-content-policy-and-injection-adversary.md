@@ -171,7 +171,12 @@ persisted in settings (`ui.protectedContentOverrides`, a list of disabled rule i
 protected stub in search results shows "Protected — matched rule X" with an "Index anyway"
 action = `core.override-protected-rule` (MEDIUM, inline confirm, re-ingests the file with the
 rule disabled for that path). Predictable evasion to avoid: a hidden global "disable protection"
-switch — there is none; overrides are per rule or per path.
+switch — there is none; overrides are per rule or per path. **Every override implies re-ingest**
+(parallel audit, 2026-09-02): because D5 masks the span before storage, the original text is
+gone from the index, so toggling a rule off re-ingests every document tagged with that rule id
+(the tag is the work list) and a per-path override re-ingests that path; both go through the
+normal admission path so a *different* rule can still fire. The panel shows the affected-file
+count before the toggle takes effect, the same way `core.preview-excludes` previews.
 
 **D9. PII is not in scope.** Names, emails, phone numbers, IBANs, medical or tax content are the
 *product* — a personal-file search that hides personal data is useless. The NER encoder already
