@@ -370,7 +370,7 @@ Not an exhaustive list, but the metrics below are intentionally low-cardinality 
   - `worker.switch_buffer.write_failures` (counter; incremented on `putSwitchBuffer` SQL errors)
   - `worker.index.pending_embeddings`, `worker.index.pending_vdu` (backlog gauges)
   - `extraction.timeout_total` (counter; content extraction timeouts)
-  - `extraction.sandbox_restart_total` (counter, tag `reason` ∈ `timeout` | `crash` | `oom` | `request_budget` | `protocol`; extraction child JVM recycled)
+  - `extraction.sandbox_restart_total` (counter, tag `reason` ∈ `timeout` | `crash` | `oom` | `request_budget` | `protocol` | `interrupted`; extraction child JVM recycled)
   - `extraction.sandbox_spawn_total` (counter; extraction child JVMs started)
 
 - **Lucene runtime substrate (Worker, `index.runtime.*` namespace, tempdoc 406)**:

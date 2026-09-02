@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS — chunk 1 (item 19 NRT fix + baseline) and chunk 2 (item 14 extraction pool) landed; items 3/6/21/19-measure open
+status: IN PROGRESS — chunks 1, 2 and 2b landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green); items 3/6/21/19-measure open
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
@@ -963,3 +963,176 @@ source set, which this chunk was scoped out of. Listed so the orchestrator can s
 4. **Child OOM against a real hostile document**, rather than the unit test's deliberate allocator.
 5. **`extraction.sandbox_restart_total` observed on the live metrics stream** — the wire format is
    pinned by `IndexingPipelineWireFormatRegressionTest`, but no live run has emitted it yet.
+
+## §SC-chaos — chaos tier, 2026-09-02 (chunk 2b)
+
+Closes the item-14 acceptance block "**Chaos (live, `systemTest` source set run explicitly)**".
+Live window granted for the chaos tier only: no dev-runner stack, no jseval backend, no
+`ai_activate`. Run from the lane-C worktree while another agent worktree built concurrently under a
+separate Gradle home.
+
+### Commands and results
+
+```
+./gradlew.bat :modules:indexer-worker:installDist -PskipWebBuild=true
+./gradlew.bat :modules:system-tests:systemTest --tests '*Chaos*' \
+    -PincludeSystemTests=true -PskipWebBuild=true
+```
+
+Final run — **14 tests, 0 failures, BUILD SUCCESSFUL in 4m 23s**. The two new cases, and the
+twelve pre-existing `ChaosSuiteTest` cases that share the tier, all green; **no residue**:
+
+| Test | Result | Time |
+|---|---|---|
+| `ExtractionSandboxChaosTest` › Hanging, crashing and OOM children are each contained; the next file indexes and the Worker never restarts | PASSED | 205.5 s |
+| `ExtractionSandboxChaosTest` › Killing the Worker mid-parse leaves no orphaned extraction child | PASSED | 2.3 s |
+| `ChaosSuiteTest` › Watchdog (2), Time Lord (1), Disconnector (2), Signal Noise (1), Stale Port (3), Protocol Stress (1), Harness Unit (2) | 12 PASSED | — |
+
+The narrower class alone (`--tests '*ExtractionSandboxChaosTest*'`) runs in **3m 30s**; the whole
+suite in 4m 23s.
+
+### The harness, and why it is shaped this way
+
+`ExtractionSandboxChaosTest` boots a **real Worker distribution** and substitutes only the child's
+*parser*, through the production `JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` operator override pointing
+at `ChaosExtractionSandboxChild` (`modules/system-tests/src/systemTest/.../chaos/`). So the parent
+under test is production `PersistentExtractionSandbox` code end to end.
+
+* **Why a stub parser at all.** [R7] is right that no existing fixture wedges a parser — the
+  tempdoc-410 adversarial corpus fails fast — so a wedge has to be synthesised. The stub branches on
+  the requested file's name (`chaos-hang` / `chaos-crash` / `chaos-oom`) and runs the **real**
+  `PolicyDrivenTikaExtractor` for anything else, so "the next file extracts normally" is a real
+  extraction reaching the real index, not a canned answer.
+* **`JUSTSEARCH_EXTRACTION_SANDBOX_MODE=process`** is set because under the shipped `auto` default a
+  `.txt` file is parsed in-process and would never reach the pool.
+* **Two things are production code, not copies.** The orphan gate — `ExtractionSandboxChild
+  .startParentWatchdog(String[])` was made public precisely so the stub runs *that* code; a copied
+  watchdog would make the orphan assertion prove nothing about production. And the response records.
+  The **frame codec is deliberately re-implemented** in the stub: an independent implementation of
+  the wire format is stronger evidence that the format is real than reusing one codec on both ends.
+* **`WorkerProcessManager.withEnv(name, value)`** is new. `withJvmArgs` splits on whitespace to build
+  the JVM argument list, so a whitespace-separated argv like the sandbox command cannot be passed as
+  a `-D` property at all.
+* **Harness limit worth recording:** `JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` is whitespace-split by
+  the Worker, so an operator whose JDK or classpath path contains a space cannot use it inline. The
+  harness works around it with a JVM `@argfile` and asserts the JDK path is space-free rather than
+  failing obscurely. A quoted-argv form for that key is a real (small) gap; it belongs to whoever
+  next touches the key, not to this chunk.
+
+### The defect the chaos tier found (and the unit tests could not)
+
+Run 2 failed with `extraction.sandbox_restart_total{reason=timeout} never reached the metrics file;
+observed reasons=[crash, crash, …]`. The Worker log said exactly what happened:
+
+```
+Extraction sandbox child spawned (pid=3888)
+Extraction executor thread wedged past the timeout; replaced with generation 1
+Extraction timeout for chaos-hang-1.txt (total timeouts: 1)
+Extraction sandbox child recycled (reason=crash, pid=3888)
+```
+
+**Both layers enforced the same 60 s deadline, and the outer one starts its clock first, so it always
+won.** `TimeboxedContentExtractor` timed out, `replaceIfWedged` called `shutdownNow()`, that
+**interrupted** the pool's `pending.get(...)`, and the `InterruptedException` branch recycled the
+child as `crash`. Consequences, both real:
+
+1. The pool's own kill-at-the-deadline path — the mechanism design decision 1 exists to provide —
+   **never ran in production shape**. The child was still killed (by the interrupt branch), so the
+   containment property held; but it held by accident, through a path labelled as a crash.
+2. `extraction.sandbox_restart_total{reason}` was **wrong**: a deadline kill was indistinguishable
+   from a child that died on its own, which is exactly the discrimination the `reason` tag exists for.
+
+Why the unit tests missed it: they drive `PersistentExtractionSandbox` **directly**, with no timebox
+around it, so the race cannot occur there. A textbook `static-green ≠ live-working`.
+
+**Fixes (production, not test tweaks):**
+
+* `ExtractionSandboxFactory.PROCESS_TIMEBOX_GRACE = 15 s` — when a child pool is in play the outer
+  timebox waits the sandbox deadline **plus** a grace that covers the kill itself (`destroyForcibly`
+  + a 5 s `waitFor` + a 2 s stderr-drain join, plus slack). The sandbox owns the deadline; the
+  timebox is now what it was always meant to be — a backstop for a sandbox that itself wedges.
+* `PersistentExtractionSandbox.REASON_INTERRUPTED` — an interrupted wait is not a crash. It still
+  kills the child (correct), but it is tagged for what it is.
+
+**Regression test + falsification.** `PersistentExtractionSandboxTest
+.factoryLetsTheSandboxDeadlineFireBeforeTheTimeboxBackstop` builds the extractor *through the
+factory*, as production does, and asserts `reason=timeout` is 1 and `reason=interrupted` is 0.
+Restoring `Duration backstop = effectiveTimeout;` reds exactly that one test
+(`12 tests completed, 1 failed`). One subtlety the first attempt got wrong and the falsification
+caught: with a 2 s timeout the test passed even with the fix removed, because
+`TimeboxedContentExtractor.MIN_TIMEOUT` (5 s) clamps the timebox up and it beats a 2 s sandbox
+deadline for the wrong reason. The test now uses 6 s, above `MIN_TIMEOUT`, and discriminates.
+
+### Acceptance evidence (final run, `run-1788310605515`)
+
+Worker log of the hang/crash/OOM sequence, in order:
+
+```
+child spawned (pid=26436) → recycled (reason=timeout, pid=26436)      [x3, the retry ladder]
+child spawned (pid=29692) → recycled (reason=crash,   pid=29692)      [x3]
+   "Extraction sandbox failed for" + "exited with code 3"
+child spawned (pid=8436)  → recycled (reason=oom,     pid=8436)       [x1, no retry]
+   "Content extraction failed for" + "exhausted its heap"
+child spawned (pid=29564)                                             [serves after-oom.txt]
+```
+
+* **Child killed at the timeout, file `FAILED` with the timeout reason.** `failure.lastFailedPath`
+  is the hanging file (compared case-insensitively — the Worker lower-cases paths on Windows) and
+  `failure.lastFailedErrorMessage` contains "timed out". `reason=timeout` reached the live metrics
+  file — which also closes the separate open item "`extraction.sandbox_restart_total` observed on a
+  live metrics stream": it is read from a real Worker's
+  `<dataDir>/telemetry/metrics-worker.ndjson`, not from a unit registry.
+* **The next file extracts normally**, after each of the three failure classes: three healthy files
+  submitted and indexed (`awaitIndexing`), asserted per scenario and again at the end.
+* **The Worker never restarts.** Its PID is re-read from the gRPC health surface after every
+  scenario and asserted unchanged (4 assertions), plus `isProcessAlive` at the end. Independently:
+  `"Knowledge Server started"` appears **exactly once** in that run's `worker.log` — one boot for
+  the whole sequence.
+* **Crash carries the exit code**: `"exited with code 3"` in the failure reason, via the retryable
+  `SandboxExtractionException` branch.
+* **OOM is a permanent parse failure**: the assertion is on *which catch clause ran*, because that
+  IS the retry policy — `"Content extraction failed for"` is `JobBatchExtractor`'s plain
+  `ExtractionException` branch (`PARSER_FAILED` + `IngestionRetryPolicy.NONE`), and the test also
+  asserts the OOM did **not** take the `"Extraction sandbox failed for"` (RETRY_WITH_BACKOFF) branch.
+  Corroborated behaviourally: timeout and crash each produced three attempts, the OOM exactly one.
+  The OOM is a real JVM heap exhaustion in a real child (`-Xmx128m`, 8 MB blocks), not a simulated
+  stderr string.
+* **Worker shutdown leaves no orphan child.** The child is wedged **mid-parse** — the state where
+  the stdin-EOF exit cannot help, because the child is not reading stdin, so only the parent-PID
+  gate can reap it. The Worker is then `forceKill`ed (not shut down gracefully), so the assertion
+  cannot pass on the shutdown-hook path. The child's PID is captured from
+  `ProcessHandle.of(workerPid).descendants()` while the Worker is alive, and asserted gone within
+  30 s of the Worker's death.
+* **Post-run sweep:** no `java.exe` matching `IndexerWorker` / `ExtractionSandboxChild` /
+  `ChaosExtractionSandboxChild` / the chaos data dirs survives the run.
+
+### Test-shape notes
+
+* **Retry interference is real and had to be handled.** `PARSER_TIMEOUT` and `SANDBOX_FAILED` are
+  `RETRY_WITH_BACKOFF`, and with `pool=1` a retrying hang re-wedges the only child for another whole
+  deadline, so the next file queues behind the retry ladder. Each chaos file is deleted once its
+  failure has been recorded (`retireChaosFile`), which keeps the test measuring containment rather
+  than the ladder. The ladder itself is item 21's subject.
+* **A test bug the first run caught, worth recording because it is the same species as the unit
+  chunk's:** the follow-up files were named `after-hang.txt` / `after-crash.txt`, and the stub
+  branches on `contains("hang")` / `contains("crash")` — so the "next file succeeds" cases were
+  re-triggering the failure. Renamed to `after-timeout.txt` / `after-crash.txt` with the stub
+  markers changed to `chaos-hang` / `chaos-crash`.
+* **`lastFailedErrorMessage` does not carry the exit code** — `IngestionOutcomeJournal` stores a
+  fixed literal ("Sandbox failed"), so the exit code is only in the Worker log. That is item 21's
+  documented gap (c) ("`error_message` stores fixed literals … the exception text reaches only the
+  log"), not a defect of this chunk; the chaos test therefore asserts the exit code against the log
+  and the outcome against the wire.
+
+### Item 14 acceptance: what is closed and what remains
+
+**Closed by this run:** synthetic hanging child → child killed at the timeout, file `FAILED/TIMEOUT`
+with the reason, next file extracts normally, Worker never restarts · child crash → same with the
+exit code · child OOM → permanent parse failure · `extraction.sandbox_restart_total` increments and
+the wire-format regression test is updated · Worker shutdown leaves no orphan child.
+
+**Still open (needs the dev-stack window, not the chaos tier):** the real-corpus comparison —
+`jseval run --pipeline` on the standard corpus with `mode=auto` vs `mode=in_process`, to price the
+routing split on a real mixed corpus *including* the child spawn the unit benchmark excludes, and to
+confirm no ingestion regression. Optional refinement: an OOM driven by a genuinely hostile document
+rather than a deliberate allocator.
