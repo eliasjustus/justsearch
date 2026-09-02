@@ -38,8 +38,12 @@ final class RAGContextTest {
   @Test
   @DisplayName("799 N.2: configured top-K replaces the hardcoded default when body omits topK")
   void configuredTopKUsedWhenBodyOmitsIt() {
+    // Tempdoc 883 decision 3: the configured top_k is now an upper BOUND on a budget-derived
+    // default, so this test supplies a window wide enough to afford it — otherwise it would
+    // be asserting the budget rather than the config precedence it exists to pin. The bound
+    // itself is covered by defaultTopKIsDerivedFromTheBudget.
     var docs = new TrackingDocs();
-    var injector = new RAGContext(docs, 17);
+    var injector = new RAGContext(docs, 17, () -> stubAi(32768, 32768));
     injector.inject(stubCtx(Map.of("question", "what?")));
     assertEquals(17, docs.lastTopK, "configured default must reach the retrieval call");
   }
@@ -56,8 +60,13 @@ final class RAGContextTest {
   @Test
   @DisplayName("799 N.2: no configured value falls back to DEFAULT_TOP_K")
   void fallsBackToCompiledDefault() {
+    // Tempdoc 883 decision 3: the configured top_k is now an upper BOUND on a budget-derived
+    // default, so this test supplies a window wide enough to afford it — otherwise it would
+    // be asserting the budget rather than the config precedence it exists to pin. The bound
+    // itself is covered by defaultTopKIsDerivedFromTheBudget.
     var docs = new TrackingDocs();
-    var injector = new RAGContext(docs);
+    var injector =
+        new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(32768, 32768));
     injector.inject(stubCtx(Map.of("question", "what?")));
     assertEquals(RAGContext.DEFAULT_TOP_K, docs.lastTopK);
   }
@@ -65,8 +74,12 @@ final class RAGContextTest {
   @Test
   @DisplayName("799 N.2: a non-positive configured value is rejected, not propagated")
   void nonPositiveConfiguredValueRejected() {
+    // Tempdoc 883 decision 3: the configured top_k is now an upper BOUND on a budget-derived
+    // default, so this test supplies a window wide enough to afford it — otherwise it would
+    // be asserting the budget rather than the config precedence it exists to pin. The bound
+    // itself is covered by defaultTopKIsDerivedFromTheBudget.
     var docs = new TrackingDocs();
-    var injector = new RAGContext(docs, 0);
+    var injector = new RAGContext(docs, 0, () -> stubAi(32768, 32768));
     injector.inject(stubCtx(Map.of("question", "what?")));
     assertEquals(RAGContext.DEFAULT_TOP_K, docs.lastTopK);
   }
@@ -328,7 +341,12 @@ final class RAGContextTest {
     var docs = new TrackingDocs();
     docs.retrieveResult =
         new ContextResult("text", 1, 1, 1, List.of(), "BM25", "ok", false, List.of());
-    var injector = new RAGContext(docs);
+    // Tempdoc 883 decision 3: the configured top_k is now an upper BOUND on a budget-derived
+    // default, so this test supplies a window wide enough to afford it — otherwise it would
+    // be asserting the budget rather than the config precedence it exists to pin. The bound
+    // itself is covered by defaultTopKIsDerivedFromTheBudget.
+    var injector =
+        new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(32768, 32768));
     injector.inject(stubCtx(Map.of("question", "q", "docIds", List.of("a"))));
     assertEquals(RAGContext.DEFAULT_TOP_K, docs.lastTopK);
   }
@@ -433,6 +451,58 @@ final class RAGContextTest {
         460,
         docs.lastParams.maxContextTokens(),
         "(2048 - 1024 - 512) * 0.9 — unknown must not be treated as generous");
+  }
+
+  @Test
+  @DisplayName("883: the DEFAULT passage count is derived from the budget, bounded by top_k")
+  void defaultTopKIsDerivedFromTheBudget() {
+    // A 32768-token window affords 56 chunks of the corpus's 500-token chunk size, but rag.top_k is
+    // an upper bound, not a target: the ask stays at 5.
+    var wide = new CapturingParamsDocs();
+    var wideCtx = stubCtx(Map.of("question", "what?"));
+    wideCtx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 1024);
+    new RAGContext(wide, 5, () -> stubAi(32768, 32768)).inject(wideCtx);
+    assertEquals(5, wide.lastParams.topK(), "top_k bounds the derived shape from above");
+
+    // A 2048-token window affords 921/500 = 1. Asking for five passages there is what made 845's
+    // trimmer fire on every ask: the shape now asks for what the window can hold.
+    var narrow = new CapturingParamsDocs();
+    var narrowCtx = stubCtx(Map.of("question", "what?"));
+    narrowCtx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 1024);
+    new RAGContext(narrow, 5, () -> stubAi(null, 2048)).inject(narrowCtx);
+    assertEquals(
+        1,
+        narrow.lastParams.topK(),
+        "(2048 - 1024 - 512) * 0.9 = 460 tokens of input budget holds ONE 500-token chunk");
+  }
+
+  @Test
+  @DisplayName("883: an explicit body topK still wins verbatim, budget or no budget")
+  void explicitTopKIsNeverOverriddenByTheBudget() {
+    var docs = new CapturingParamsDocs();
+    var ctx = stubCtx(Map.of("question", "what?", "topK", 7));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 1024);
+    new RAGContext(docs, 5, () -> stubAi(null, 2048)).inject(ctx);
+
+    assertEquals(
+        7,
+        docs.lastParams.topK(),
+        "a caller that named a number gets that number; the derivation replaces the DEFAULT only");
+  }
+
+  @Test
+  @DisplayName("883: the derived shape and the wire budget come from ONE ContextBudget per request")
+  void shapeAndWireBudgetAgree() {
+    var docs = new CapturingParamsDocs();
+    var ctx = stubCtx(Map.of("question", "what?"));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 1024);
+    new RAGContext(docs, 5, () -> stubAi(8192, 8192)).inject(ctx);
+
+    io.justsearch.core.util.ContextBudget budget =
+        RAGContext.budgetFor(() -> stubAi(8192, 8192), 1024);
+    assertEquals(budget.inputBudget(), docs.lastParams.maxContextTokens());
+    assertEquals(
+        Math.max(1, Math.min(5, budget.inputBudget() / 500)), docs.lastParams.topK());
   }
 
   @Test

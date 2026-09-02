@@ -88,7 +88,8 @@ Scope:
 | `JUSTSEARCH_AGENT_CONTEXT_COMPRESSION_KEEP_LAST_RESULTS` | `justsearch.agent.context_compression.keep_last_results` | Int | Number of most recent tool outputs kept uncompressed in context. Default `0`. |
 | `JUSTSEARCH_AGENT_SEARCH_DEFAULT_LIMIT` | `justsearch.agent.search.default_limit` | Int | Default search result limit for agent search tool (1-20). Default `5`. |
 | `JUSTSEARCH_AGENT_BROWSE_DEFAULT_MAX_FOLDERS` | `justsearch.agent.browse.default_max_folders` | Int | Default max folders for agent browse tool (1-200). Default `20`. |
-| `JUSTSEARCH_AGENT_MAX_TOOL_RESULT_CHARS` | `justsearch.agent.max_tool_result_chars` | Int | Maximum characters preserved per tool result before truncation. Default `900`, min `100`. |
+| `JUSTSEARCH_AGENT_MAX_TOOL_RESULT_CHARS` | `justsearch.agent.max_tool_result_chars` | Int | Maximum characters preserved per tool result before truncation. Default `0` = derive from the live context window (`ContextBudget.toolResultCapChars()`); a positive value is an explicit operator ceiling, honoured verbatim, min `100`. |
+| `JUSTSEARCH_AGENT_MAX_COMPLETION_TOKENS` | `justsearch.agent.max_completion_tokens` | Int | Per-call completion-token cap for the agent loop. Default `0` = derive from the live context window: `min(1024, n_ctx / 4)`, floored at `256`. A positive value is an operator ceiling on that same window fraction, so a window too small to afford it still reduces it — the reduction is reported at INFO rather than applied silently. |
 | `JUSTSEARCH_RERANK_GPU_MEM_MB` | `justsearch.rerank.gpu_mem_mb` | Int | GPU memory arena size (MB) for the Worker-side ONNX reranker CUDA execution provider. Default `2048`. Minimum for GTE-ModernBERT at seq=512. See `docs/explanation/05-ai-architecture.md` §Reranker GPU Coordination. |
 | **Summary runtime** | | | |
 | `JUSTSEARCH_SUMMARY_MAX_TOKENS` | `justsearch.summary.max_tokens` | Int | Max summary estimated tokens before rejection (default `20000`, clamped `>= 1`). |

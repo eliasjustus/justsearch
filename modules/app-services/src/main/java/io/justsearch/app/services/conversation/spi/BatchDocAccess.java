@@ -45,7 +45,7 @@ public final class BatchDocAccess implements ContextInjector {
   /** Default fetch timeout for the batch operation. */
   static final Duration DEFAULT_FETCH_TIMEOUT = Duration.ofSeconds(30);
 
-  /** Soft character cap on injected content — mirrors legacy single-doc {@code MAX_CONTENT_CHARS}. */
+  /** Soft character cap on injected content — mirrors the Worker's gRPC transport cap. */
   static final int MAX_CONTENT_CHARS = 200_000;
 
   private final DocumentService documents;

@@ -41,7 +41,7 @@ final class AgentBudgetPolicyTest {
   /** {@link #gateIteration} returns this when the run finished without the budget stopping it. */
   private static final int NO_GATE = -1;
 
-  /** The loop's own per-call completion cap ({@code AgentLlmCaller.DEFAULT_MAX_TOKENS} default). */
+  /** The loop's own per-call completion cap ({@link AgentContextBudgets} default). */
   private static final int MAX_COMPLETION_TOKENS = 1024;
 
   /** The loop's iteration ceiling as the FE dispatches it (AgentSessionController). */
@@ -294,7 +294,11 @@ final class AgentBudgetPolicyTest {
   @Test
   @DisplayName("878 §D.8: THOROUGH_MULTIPLIER still clears the per-run spend bound at the current iteration cap")
   void thoroughMultiplierStillClearsItsStructuralBound() {
-    int maxCompletionTokens = AgentLlmCaller.DEFAULT_MAX_TOKENS;
+    // Tempdoc 883 decision 3 — resolved per call now, not a class-init constant. With no
+    // inference handle this is the FALLBACK window (4096), where the derived reserve is
+    // min(1024, 4096/4) = 1024, i.e. unchanged — which is why the bound below is still
+    // asserted at COMPACT_N_CTX, the same number by a different route.
+    int maxCompletionTokens = AgentContextBudgets.forCall(null).completionReserve();
     // spend(run) <= maxIterations * (n_ctx + maxTokens), expressed as a multiple of n_ctx. Kept as a
     // double and compared with >=, so the integer multiplier must CLEAR the exact worst case rather
     // than tie a rounded one. At today's constants the bound is 12.5 against a multiplier of 15, so

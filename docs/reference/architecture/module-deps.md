@@ -52,7 +52,7 @@ Legend: `A -> B` means `A` declares a direct Gradle project dependency on `B` in
 **With dependencies**
 - `:modules:adapters-lucene` -> `:modules:configuration`, `:modules:core`, `:modules:indexing`
 - `:modules:ai-backend` -> `:modules:app-api`
-- `:modules:app-agent` -> `:modules:app-agent-api`, `:modules:app-api`, `:modules:configuration`, `:modules:telemetry`
+- `:modules:app-agent` -> `:modules:app-agent-api`, `:modules:app-api`, `:modules:configuration`, `:modules:core`, `:modules:telemetry`
 - `:modules:app-agent-api` -> `:modules:extension-substrate`
 - `:modules:app-api` -> `:modules:api-contract-projection-java`, `:modules:app-agent-api`, `:modules:configuration`
 - `:modules:app-api-tck` -> `:modules:ai-backend`
@@ -98,6 +98,7 @@ graph TD
   app-agent --> app-agent-api
   app-agent --> app-api
   app-agent --> configuration
+  app-agent --> core
   app-agent --> telemetry
   app-agent-api --> extension-substrate
   app-api --> api-contract-projection-java

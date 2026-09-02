@@ -22,10 +22,6 @@ import org.slf4j.LoggerFactory;
 final class ServerPropsOps {
   private static final Logger LOG = LoggerFactory.getLogger(ServerPropsOps.class);
 
-  // Conservative estimate of tokens needed for summarization. Used only to warn when the
-  // server's actual n_ctx may be too small for summarization workflows.
-  private static final int SUMMARY_CONTROLLER_MAX_CONTEXT_TOKENS = 3000;
-
   // ==================== Vision Capability ====================
 
   private final AtomicBoolean hasVisionCapability = new AtomicBoolean(false);
@@ -207,7 +203,11 @@ final class ServerPropsOps {
       propsObserver.onContextTokensObserved(actualContextSize);
       LOG.info("llama-server context size: {} tokens", actualContextSize);
       warnOnContextWindowMismatch(actualContextSize);
-      warnIfSummaryBudgetExceedsActual(actualContextSize);
+      // Tempdoc 883 decision 3 — there used to be a second warning here, comparing a hardcoded
+      // 3000-token "summarization budget" against this window and naming a SummaryController that
+      // no longer exists. Every consumer budget is now DERIVED from this observed window
+      // (ContextBudget), so a consumer constant that exceeds it is unrepresentable and there is
+      // nothing left to warn about.
     } else {
       LOG.debug("llama-server /props did not include a parseable n_ctx value");
     }
@@ -326,17 +326,6 @@ final class ServerPropsOps {
    */
   static boolean isContextWindowMismatch(int requestedRung, int actualContextSize) {
     return requestedRung > 0 && actualContextSize < requestedRung;
-  }
-
-  private void warnIfSummaryBudgetExceedsActual(int actualContextSize) {
-    if (SUMMARY_CONTROLLER_MAX_CONTEXT_TOKENS > actualContextSize * 0.8) {
-      LOG.warn(
-          "SummaryController MAX_CONTEXT_TOKENS ({}) may be too large for server context ({})."
-              + " Consider reducing to {}.",
-          SUMMARY_CONTROLLER_MAX_CONTEXT_TOKENS,
-          actualContextSize,
-          (int) (actualContextSize * 0.7));
-    }
   }
 
   private boolean detectExternalModelMismatch(JsonNode root) {

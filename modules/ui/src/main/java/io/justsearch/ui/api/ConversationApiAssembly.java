@@ -235,11 +235,15 @@ final class ConversationApiAssembly {
                     : new io.justsearch.app.services.conversation.spi.RAGContext(
                         docs, ragCfgForCitations.ragTopK(), onlineAiSupplier),
                 io.justsearch.app.services.conversation.spi.UserPromptInjector.INSTANCE,
-                io.justsearch.app.services.conversation.spi.ExternalContextInjector.INSTANCE,
+                // Tempdoc 883 decision 3 — the same onlineAiSupplier RAGContext gets, so the
+                // history cap is a fraction of the window the running server actually has.
+                new io.justsearch.app.services.conversation.spi.ExternalContextInjector(
+                    onlineAiSupplier),
                 // Tempdoc 603 C2 — conversation-aware query decontextualization before RAG retrieval.
                 new io.justsearch.app.services.conversation.spi.QueryRewriteInjector(onlineAiSupplier),
                 // tempdoc 526 §12.4 — typed selection injector (core.selection).
-                new io.justsearch.app.services.conversation.spi.SelectionContextInjector(docs)));
+                new io.justsearch.app.services.conversation.spi.SelectionContextInjector(
+                    docs, onlineAiSupplier)));
     io.justsearch.app.services.conversation.IterationControllerRegistry iterationControllerRegistry =
         io.justsearch.app.services.conversation.IterationControllerRegistry.of(List.of(
             // SingleHopController for all ONE_SHOT shapes (including FreeChat).

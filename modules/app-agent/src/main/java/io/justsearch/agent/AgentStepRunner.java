@@ -796,7 +796,7 @@ final class AgentStepRunner {
             // default is fail-open: unstamped renders exactly as a runtime value, so "classified
             // runtime" and "never classified" are indistinguishable unless every producer stamps.
             String handoffText = "Handoff to " + toId + " confirmed.";
-            String handoffContent = AgentContextCompressor.truncate(handoffText);
+            String handoffContent = compressor.truncate(handoffText);
             sink.accept(new AgentEvent.ToolExecutionCompleted(
                 call.id(),
                 OperationResult.success(handoffText)
@@ -1031,7 +1031,7 @@ final class AgentStepRunner {
           // Tempdoc 878 §D.4 — cut FIRST, so the event can say how much reached the model. This used
           // to happen after the emit, which is why the wire carried the untruncated output beside no
           // statement that the prompt got less.
-          String modelContent = AgentContextCompressor.truncate(toolResult.message());
+          String modelContent = compressor.truncate(toolResult.message());
           sink.accept(
               new AgentEvent.ToolExecutionCompleted(
                   call.id(), toolResult, charsToModel(toolResult.message())));
@@ -1218,10 +1218,8 @@ final class AgentStepRunner {
    * a number on the tool card larger than the output it was a fraction of. The marker is in the
    * prompt; it is not the tool's answer, and this field counts the answer.
    */
-  private static int charsToModel(String output) {
-    return output == null
-        ? 0
-        : Math.min(output.length(), AgentContextCompressor.MAX_TOOL_RESULT_CHARS);
+  private int charsToModel(String output) {
+    return output == null ? 0 : Math.min(output.length(), compressor.toolResultCapChars());
   }
 
   private AgentEvent.AgentDone groundedDone(
@@ -1390,7 +1388,7 @@ final class AgentStepRunner {
       opResult = opResult.withGrounding(grounding);
     }
     // Tempdoc 878 §D.4 — cut first, then report what reached the model (see the main seam).
-    String modelContent = AgentContextCompressor.truncate(opResult.message());
+    String modelContent = compressor.truncate(opResult.message());
     sink.accept(
         new AgentEvent.ToolExecutionCompleted(
             call.id(), opResult, charsToModel(opResult.message())));
