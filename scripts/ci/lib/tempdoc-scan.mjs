@@ -131,6 +131,8 @@ export function collectClaims({ cwd = process.cwd() } = {}) {
 }
 
 const isOrigin = (label) => label === 'origin' || label.startsWith('origin:');
+/** The worktree a claim came from, dropping the `:gates/<id>` suffix a changeset label carries. */
+const worktreeOf = (label) => label.replace(/:gates\/[^:]+$/, '');
 
 /**
  * The merge-gate collision rule, UNCHANGED from pre-743 `check-tempdoc-numbers.mjs`: this repo's
@@ -151,8 +153,13 @@ export function divergentInFlightCollisions(claims) {
     // basenames for N that are NOT present on origin (in-flight additions only).
     const newBasenames = [...byName.entries()].filter(([, labels]) => ![...labels].some(isOrigin));
     if (newBasenames.length < 2) continue; // 0/1 distinct in-flight basename -> no divergent claim.
+    // Compare by WORKTREE, not by label: a changeset's label carries its gate
+    // (`worktree:lane-B:gates/ts-any`), so one agent authoring changesets for two different gates
+    // under one tempdoc number — which the frontmatter's `tempdoc: N` REQUIRES them to share —
+    // read as two claimants and tripped this rule. That is the single-author batch the next line
+    // has always meant to allow; only the label granularity disagreed.
     const worktrees = new Set();
-    for (const [, labels] of newBasenames) for (const l of labels) worktrees.add(l);
+    for (const [, labels] of newBasenames) for (const l of labels) worktrees.add(worktreeOf(l));
     if (worktrees.size < 2) continue; // all from one worktree -> an intentional single-author batch.
     const detail = newBasenames
       .map(([name, labels]) => `${name} [${[...labels].join(', ')}]`)

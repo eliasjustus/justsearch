@@ -14,7 +14,8 @@
  *
  * Safety rails (a blocking hook must be conservative — over-blocking is friction):
  *  - blocks AT MOST ONCE per stop (`stop_hook_active` guard → no loops);
- *  - narrow scope (only GOVERNED_REGIONS, currently shell-v0 only);
+ *  - narrow scope (only the GOVERNED_REGIONS rows that set `maintain: true` — a consult-only
+ *    delivery/recipe row never blocks);
  *  - explicit escape hatch in the reason (no behavior change → just say so);
  *  - honors JUSTSEARCH_DISABLE_HOOKS; FAIL-OPEN on any error (never blocks on a bug).
  */
@@ -82,6 +83,29 @@ function editedFiles(transcriptPath) {
   return files;
 }
 
+/**
+ * Did this session edit one of `region`'s governing docs?
+ *
+ * The transcript records the Edit/Write tool's `file_path`, which is ABSOLUTE
+ * (`F:/…/worktrees/lane-B/docs/decisions/README.md`), while a register row names its doc
+ * repo-relative (`docs/decisions/README.md`). An exact match between the two can never hold,
+ * so this compares by repo-relative suffix. Before tempdoc 884 PART E this was a `Set.has()`
+ * of the relative path against the absolute-path set: the escape hatch never opened, and a row
+ * whose governing doc lives INSIDE its own watched region (`architecture-decisions`) blocked
+ * even when the ONLY file edited was that governing doc. Strictly more permissive than the
+ * exact match it replaces — it can only stop a false block, never create one.
+ *
+ * @param {Set<string>|Iterable<string>} edited normalized (forward-slash) edited paths
+ * @param {{docs: Array<{path: string}>}} region
+ */
+export function governingDocTouched(edited, region) {
+  const files = [...edited];
+  return (region.docs ?? []).some((d) => {
+    const rel = normalizePath(d.path);
+    return files.some((f) => f === rel || f.endsWith(`/${rel}`));
+  });
+}
+
 async function main() {
   // Kill switch + fail-open are handled by runHook (see module bottom).
   const chunks = [];
@@ -108,8 +132,7 @@ async function main() {
   for (const region of GOVERNED_REGIONS) {
     if (!region.maintain) continue; // consult-only DELIVERY rows never block (tempdoc 620 Move 2)
     if (![...edited].some((f) => region.match(f))) continue;
-    const docTouched = region.docs.some((d) => edited.has(normalizePath(d.path)));
-    if (!docTouched) violations.push(region);
+    if (!governingDocTouched(edited, region)) violations.push(region);
   }
   if (violations.length === 0) return;
 

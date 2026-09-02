@@ -18,6 +18,14 @@ ADRs complement the explanation docs — they capture *why not* and *what else w
 - **Cross-references:** ADRs link to the explanation doc that covers the topic in depth.
 - **`probes:`** — every ADR names the mechanical probes that fail when its load-bearing premise drifts (see below).
 - **`last_reviewed:`** — the date the decision was last re-read against the code, `YYYY-MM-DD`.
+- **`status:` is the *doc-lifecycle* field, not the ADR-vocabulary one.** Write `stable` for a
+  live decision; the ADR words (Accepted / Superseded by ADR-XXXX / Rejected) belong in the body's
+  `## Status` section. This matters mechanically: `scripts/docs/llmstxt-generate.mjs:149` includes
+  a doc only when `status` is **exactly** `stable`, `in-progress` or `advisory`, so
+  `status: accepted` silently drops the ADR out of `docs/llms.txt` — the index agents actually
+  read. A retired decision (`superseded`, `rejected - …`) dropping out is intended; a live one
+  dropping out is not. The `adr-coverage` gate is unaffected either way: it prefix-matches
+  `accepted*`/`stable*` as live (`enforcer.mjs:77`), so the gate will not catch this for you.
 
 ### Frontmatter: `probes:` and `last_reviewed:`
 
@@ -153,7 +161,7 @@ probe fails, a lifecycle trigger fires, or `last_reviewed` goes stale.
 | [0008](0008-settings-ephemeral-defaults-safe.md) | Settings are ephemeral, defaults are safe | Accepted | 2026-02-10 |
 | [0009](0009-custom-dag-engine-ci-orchestration.md) | Custom DAG engine for CI orchestration | Accepted | 2026-02-23 |
 | [0010](0010-local-first-workflow-quality-observability.md) | Local-first workflow quality observability | Superseded (tempdoc 638) | 2026-03-07 |
-| [0011](0011-distributed-readiness-spi.md) | Distributed Readiness — Remote Shard SPI | Accepted | 2026-03-16 |
+| [0011](0011-distributed-readiness-spi.md) | Distributed Readiness — Remote Shard SPI | Rejected - never built (retired 2026-09-02) | 2026-03-16 |
 | [0012](0012-ui-stack-and-doc-tooling.md) | UI Stack and Documentation Tooling | Superseded | 2026-03-16 |
 | [0013](0013-synonyms-fst-placeholder.md) | Synonyms FST Placeholder | Accepted (partially superseded by ADR-0043) | 2025-10-15 |
 | [0014](0014-pipeline-definition-removal.md) | Pipeline Definition Removal | Accepted | 2026-03-16 |
@@ -188,6 +196,7 @@ probe fails, a lifecycle trigger fires, or `last_reviewed` goes stale.
 | [0043](0043-multilingual-by-construction-no-per-language-levers.md) | Multilingual by construction — no per-language levers | Accepted | 2026-06-15 |
 | [0044](0044-public-hosted-ci-fact-lanes.md) | Public hosted CI fact lanes | Accepted | 2026-06-27 |
 | [0045](0045-public-main-history-publication.md) | Public main history publication | Accepted | 2026-06-28 |
+| [0046](0046-local-api-trust-boundary.md) | Local API trust boundary | Accepted | 2026-09-02 |
 
 > ADRs 0031–0041 were graduated on 2026-06-09 from the retired `421` frontend-rewrite kernel
 > draft's `50-decisions/` set (authored ~2026-05; the rewrite shipped per tempdoc 563). The

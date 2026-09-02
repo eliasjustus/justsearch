@@ -5,7 +5,8 @@ status: stable
 description: "Selective adoption of NER entity extraction for Lucene keyword facets with SQLite sidecar disambiguation, deferring full knowledge graph."
 date: 2026-01-22
 updated: 2026-02-11
-probes: none - the premise is a scope judgement (facets now, knowledge graph later), not a code fact; the trigger for revisiting it is a product decision, not a drift a grep can see.
+probes:
+  - adr-0007-entity-boost-retired-or-off
 last_reviewed: 2026-09-02
 ---
 
@@ -72,3 +73,42 @@ Keep search purely keyword/vector-based with no entity awareness. **Rejected** �
 
 ### Reconsideration criteria
 Revisit full knowledge graph if: >20% of users request relationship queries, a stable Apache 2.0 embedded graph DB emerges, JustSearch targets enterprise/team use cases, or hardware improvements make 2-4s/doc acceptable.
+
+Added 2026-09-02: the retirement of the `entity_*_text` boost fields is owned by **decision-review lane D**, not by this ADR's criteria above. Lane D decides the field deletion; this ADR keeps the facet decision. See the amendment below.
+
+## Amendment 2026-09-02: facets live, `entity_*_text` boost fields retired by lane D
+
+Re-examined under decision-review lane B (tempdoc 884), outcome **still true, now probed**.
+
+The decision this ADR makes — entity extraction as **Lucene keyword facets**, no graph database —
+shipped and is live. Nothing below changes it.
+
+What has changed since 2026-01 is the *other* half of the entity surface: the ICU-analyzed
+**boost** fields `entity_persons_text` / `entity_organizations_text` / `entity_locations_text`,
+which feed a search-side score boost rather than a facet filter. Those are scheduled for
+retirement by **decision-review lane D**, and the search-side boost is **already off by default**:
+
+- `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java:1336`
+  resolves `justsearch.search.entity_boost` with a default of **`0.0`**.
+- `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/TextQueryOps.java:183-201`
+  only adds the entity disjuncts when `entityBoost > 0.0f`
+  (`hasEntities = entityQueries != null && !entityQueries.isEmpty() && entityBoost > 0.0f`).
+  At the shipped default the boost clauses are never constructed.
+- `SSOT/catalogs/fields.v1.json:388,404,420` still declares the three `entity_*_text` fields, so
+  they are indexed and inert — cost without effect, which is what lane D removes.
+
+The `entity_*_raw` keyword fields named in the Decision section are unaffected: they are the
+facet fields, and faceting is the shipped decision.
+
+### The probe spans the migration
+
+`adr-0007-entity-boost-retired-or-off` is an `any-of` probe with two alternatives — the boost
+default is `0.0`, **or** the `entity_*_text` fields are gone from `SSOT/catalogs/fields.v1.json`.
+Today the first holds; after lane D lands, the second holds too. It fails only if *both* fail:
+the boost re-enabled **and** the fields still present, i.e. someone turned the boost back on
+without re-reading this ADR. That is the drift worth catching; a probe that went red the day
+lane D shipped would only have taught the next agent to delete it.
+
+`any-of` was added to the probe engine for this case
+(`scripts/governance/gates/adr-coverage/probes.mjs`). It is for a premise that is true for two
+different reasons across a planned migration — never a way to give a failing probe a second chance.
