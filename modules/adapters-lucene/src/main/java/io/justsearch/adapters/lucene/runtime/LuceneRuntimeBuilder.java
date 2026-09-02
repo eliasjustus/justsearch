@@ -36,6 +36,19 @@ public final class LuceneRuntimeBuilder {
   private BuildState initialBuildState = BuildState.COMPLETE;
   private Components prebuiltComponentsForTests; // package-private test injection
 
+  /**
+   * Whether a foreground (user-facing) RPC is in flight. Gates the reopen-on-demand refresh in
+   * {@link SearcherBridge} so that background enrichment reads — which reach Lucene through the
+   * SAME bridge — cannot trigger one (tempdoc 885 item 19 live window: they tripled reopen count
+   * and cost 15% indexing throughput).
+   *
+   * <p>Defaults to "always foreground", i.e. the pre-fix behaviour: an unwired runtime errs
+   * toward freshness rather than toward serving a stale searcher. {@code index.nrt.mode} is
+   * {@code continuous} by default, where this predicate is not consulted at all, so an unwired
+   * runtime is unaffected until an operator opts in.
+   */
+  private java.util.function.BooleanSupplier foregroundActive = () -> true;
+
   // ==========================================================================
   // Package-private accessors for RuntimeSession ctor
   // ==========================================================================
@@ -62,6 +75,10 @@ public final class LuceneRuntimeBuilder {
 
   SoftDeletesMetrics softDeletesMetrics() {
     return softDeletesMetrics;
+  }
+
+  java.util.function.BooleanSupplier foregroundActive() {
+    return foregroundActive;
   }
 
   IndexOpenGuard indexOpenGuardOverride() {
@@ -105,6 +122,17 @@ public final class LuceneRuntimeBuilder {
 
   public LuceneRuntimeBuilder withSoftDeletesMetrics(SoftDeletesMetrics softDeletesMetrics) {
     this.softDeletesMetrics = softDeletesMetrics;
+    return this;
+  }
+
+  /**
+   * Supplies the foreground-RPC predicate the reopen-on-demand seam gates on. The Worker passes
+   * {@code () -> foregroundLoad.inFlight() > 0} — item 3's gauge, which is the only component
+   * that knows a search-family RPC is running. Null restores the default.
+   */
+  public LuceneRuntimeBuilder withForegroundActive(
+      java.util.function.BooleanSupplier foregroundActive) {
+    this.foregroundActive = foregroundActive != null ? foregroundActive : () -> true;
     return this;
   }
 

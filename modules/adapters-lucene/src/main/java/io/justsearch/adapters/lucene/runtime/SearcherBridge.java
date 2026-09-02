@@ -52,6 +52,13 @@ final class SearcherBridge {
    */
   private void refreshOnDemand(LifecycleSnapshot snap, SearcherManager mgr) {
     if (session.nrtMode != NrtMode.ON_DEMAND) return;
+    // Background enrichment reads (CombinedEnrichmentBackfillOps / BgeM3BackfillOps fetch every
+    // document they enrich through DocumentFieldOps) come through this same bridge. Checking the
+    // foreground predicate FIRST keeps them off the refresh path without a per-consumer opt-out
+    // list that the next new read path would silently miss.
+    java.util.function.BooleanSupplier fg = session.foregroundActive;
+    boolean foregroundActive = fg == null || fg.getAsBoolean();
+    if (!foregroundActive) return;
     IndexWriter writer = snap.writer();
     if (writer == null) return; // read-only runtime: no writer, nothing to reopen against
     long writerSeqNo = writer.getMaxCompletedSequenceNumber();
@@ -63,6 +70,7 @@ final class SearcherBridge {
     NrtOnDemandPolicy.Action action =
         NrtOnDemandPolicy.decide(
             session.nrtMode,
+            foregroundActive,
             writerSeqNo,
             session.nrtStats.seqNoAtLastReopen.get(),
             staleMs,

@@ -1556,6 +1556,11 @@ public final class KnowledgeServer implements Closeable {
           new io.justsearch.indexerworker.services.WorkerLuceneTelemetryAdapter(
               indexRuntimeCatalog));
     }
+    // Tempdoc 885 item 19: the reopen-on-demand seam must fire for user-facing reads only.
+    // ForegroundLoad is the one component that knows a search-family RPC is in flight (item 3's
+    // gauge, fed by ForegroundLoadInterceptor); adapters-lucene cannot see it, so it arrives as
+    // a predicate. Without this, enrichment-backfill document fetches reopened the searcher.
+    builder.withForegroundActive(() -> foregroundLoad.inFlight() > 0);
     return builder;
   }
 

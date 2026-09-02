@@ -24,6 +24,10 @@ final class NrtOnDemandPolicy {
 
   /**
    * @param mode resolved {@code index.nrt.mode}
+   * @param foregroundActive whether a user-facing RPC is in flight. Background enrichment reads
+   *     reach Lucene through the same {@code SearcherBridge} as searches do, so mode alone cannot
+   *     tell them apart; without this gate every backfill document fetch reopened the searcher
+   *     (tempdoc 885 live window: reopen count 193 -> 568, indexing throughput -15%).
    * @param writerSeqNo {@code IndexWriter.getMaxCompletedSequenceNumber()} now
    * @param seqNoAtLastReopen the sequence number the current searcher is known to cover, or -1 if
    *     it has never been reopened
@@ -33,11 +37,13 @@ final class NrtOnDemandPolicy {
    */
   static Action decide(
       NrtMode mode,
+      boolean foregroundActive,
       long writerSeqNo,
       long seqNoAtLastReopen,
       long staleMs,
       long onDemandMaxStaleMs) {
     if (mode != NrtMode.ON_DEMAND) return Action.SKIP;
+    if (!foregroundActive) return Action.SKIP;
     if (writerSeqNo == seqNoAtLastReopen) return Action.SKIP;
     return staleMs > onDemandMaxStaleMs ? Action.REFRESH_BLOCKING : Action.REFRESH;
   }

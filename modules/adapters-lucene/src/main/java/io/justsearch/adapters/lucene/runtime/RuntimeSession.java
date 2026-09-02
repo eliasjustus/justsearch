@@ -108,6 +108,14 @@ final class RuntimeSession implements AutoCloseable {
   // reopen onto the foreground acquire (SearcherBridge) and slows the background thread.
   volatile NrtMode nrtMode;
   volatile long nrtOnDemandMaxStaleMs;
+
+  /**
+   * Is a foreground (user-facing) RPC in flight? The reopen-on-demand seam gates on this so that
+   * enrichment-backfill reads, which reach Lucene through the same {@link SearcherBridge}, cannot
+   * trigger a refresh. Wired by the Worker from item 3's {@code ForegroundLoad}; defaults to
+   * always-true (see {@link LuceneRuntimeBuilder#withForegroundActive}).
+   */
+  volatile java.util.function.BooleanSupplier foregroundActive;
   volatile KnnVectorsFormat knnVectorsFormat;
   volatile Integer vectorEfSearchOverrideOrNull;
   volatile String softDeleteField;
@@ -248,6 +256,7 @@ final class RuntimeSession implements AutoCloseable {
     this.nrtHardMaxStaleMs = 50L;
     this.nrtMode = NrtMode.CONTINUOUS;
     this.nrtOnDemandMaxStaleMs = 1000L;
+    this.foregroundActive = () -> true;
     this.knnVectorsFormat = null;
     this.vectorEfSearchOverrideOrNull = null;
     this.softDeleteField = SchemaFields.SOFT_DELETE;
@@ -288,6 +297,7 @@ final class RuntimeSession implements AutoCloseable {
     this.indexPath = builder.indexPath();
     this.knnVectorsFormat = schema.knnVectorsFormatOverride();
     this.telemetryEvents = builder.telemetryEvents();
+    this.foregroundActive = builder.foregroundActive();
     this.softDeletesMetrics = builder.softDeletesMetrics();
     // Schema-fixed field names — same constants regardless of config.
     this.uidField = SchemaFields.DOC_UID;
@@ -305,6 +315,8 @@ final class RuntimeSession implements AutoCloseable {
     this.nrtHardMaxStaleMs = 50L;
     this.nrtMode = NrtMode.CONTINUOUS;
     this.nrtOnDemandMaxStaleMs = 1000L;
+    // foregroundActive is NOT reset here: it is builder-supplied above, and this block runs
+    // after it. The other knobs are config-derived and are overwritten again by applyComponents.
     this.softDeleteField = SchemaFields.SOFT_DELETE;
     this.vectorEfSearchOverrideOrNull = null;
 

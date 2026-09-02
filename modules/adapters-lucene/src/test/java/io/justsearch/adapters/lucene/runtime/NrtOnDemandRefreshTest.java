@@ -52,6 +52,12 @@ final class NrtOnDemandRefreshTest {
 
   /** Opens a runtime under the given NRT config with the background reopen thread suspended. */
   private static RunningRuntime openWithBackgroundReopenStopped(String nrtBlock) throws IOException {
+    return openWithBackgroundReopenStopped(nrtBlock, () -> true);
+  }
+
+  /** As above, with an explicit foreground predicate — the seam's gate. */
+  private static RunningRuntime openWithBackgroundReopenStopped(
+      String nrtBlock, java.util.function.BooleanSupplier foregroundActive) throws IOException {
     Path dataDir = Files.createTempDirectory("justsearch-nrt-ondemand-");
     Path cfg = Files.createTempFile("justsearch-nrt-ondemand-", ".yaml");
     Files.writeString(cfg, config(dataDir, nrtBlock));
@@ -62,6 +68,7 @@ final class NrtOnDemandRefreshTest {
                 new SsotCommitMetadataSource(),
                 new JsonSchemaCommitMetadataValidator())
             .ephemeral()
+            .withForegroundActive(foregroundActive)
             .open();
     runtime.commitOps().suspendNrtRefresh();
     return runtime;
@@ -237,5 +244,74 @@ final class NrtOnDemandRefreshTest {
   private static void restore(String prev) {
     if (prev == null) System.clearProperty("justsearch.config");
     else System.setProperty("justsearch.config", prev);
+  }
+
+  /**
+   * The polarity fix (885 live window). Enrichment backfill reads every document it enriches
+   * through {@code DocumentFieldOps}, i.e. through this same bridge, so before the foreground gate
+   * every backfill fetch reopened the searcher: reopen count 193 -> 568 and indexing throughput
+   * -15% on the live scifact arm. With the predicate false, the identical read must not reopen.
+   */
+  @Test
+  @DisplayName("on_demand: a BACKGROUND read does not refresh, even with new documents pending")
+  void onDemandBackgroundReadDoesNotRefresh() throws Exception {
+    String prev = System.getProperty("justsearch.config");
+    RunningRuntime runtime = null;
+    try {
+      runtime = openWithBackgroundReopenStopped(ON_DEMAND, () -> false);
+      index(runtime, 3);
+
+      assertEquals(
+          0L,
+          runtime.indexCountOps().docCount(),
+          "a background read must not reopen, so it sees the pre-write searcher");
+      assertEquals(0L, runtime.runtimeGaugesSnapshot().reopenCount());
+    } finally {
+      closeQuietly(runtime);
+      restore(prev);
+    }
+  }
+
+  /**
+   * The control for the test above: same mode, same writes, same suspended reopen thread, and the
+   * ONLY difference is the predicate. Without this pair, "background does not refresh" would also
+   * pass if the seam had stopped working altogether.
+   */
+  @Test
+  @DisplayName("on_demand: a FOREGROUND read refreshes under identical conditions")
+  void onDemandForegroundReadRefreshes() throws Exception {
+    String prev = System.getProperty("justsearch.config");
+    RunningRuntime runtime = null;
+    try {
+      runtime = openWithBackgroundReopenStopped(ON_DEMAND, () -> true);
+      index(runtime, 3);
+
+      assertEquals(3L, runtime.indexCountOps().docCount());
+      assertTrue(runtime.runtimeGaugesSnapshot().reopenCount() > 0);
+    } finally {
+      closeQuietly(runtime);
+      restore(prev);
+    }
+  }
+
+  /** A flipping predicate: the same runtime serves a background read then a foreground one. */
+  @Test
+  @DisplayName("on_demand: the gate is consulted per read, not once at open")
+  void onDemandGateIsConsultedPerRead() throws Exception {
+    String prev = System.getProperty("justsearch.config");
+    RunningRuntime runtime = null;
+    java.util.concurrent.atomic.AtomicBoolean foreground =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    try {
+      runtime = openWithBackgroundReopenStopped(ON_DEMAND, foreground::get);
+      index(runtime, 2);
+
+      assertEquals(0L, runtime.indexCountOps().docCount(), "background read: no reopen");
+      foreground.set(true);
+      assertEquals(2L, runtime.indexCountOps().docCount(), "foreground read: reopens and sees both");
+    } finally {
+      closeQuietly(runtime);
+      restore(prev);
+    }
   }
 }
