@@ -14,7 +14,7 @@ import io.justsearch.indexerworker.extract.ContentExtractor.ExtractionResult;
 import io.justsearch.indexerworker.extract.ContentExtractorProvider;
 import io.justsearch.indexerworker.extract.ExtractionArtifact;
 import io.justsearch.indexerworker.extract.ExtractionStatus;
-import io.justsearch.indexerworker.extract.ProcessExtractionSandbox;
+import io.justsearch.indexerworker.extract.SandboxExtractionException;
 import io.justsearch.indexerworker.extract.TikaExtractionPolicy;
 import io.justsearch.indexerworker.extract.TimeboxedContentExtractor;
 import io.justsearch.indexerworker.extract.ValidatedExtractionArtifact;
@@ -608,7 +608,7 @@ class IndexingLoopTest {
           newLoop(
               queue,
               providerThrowing(
-                  new ProcessExtractionSandbox.SandboxExtractionException(
+                  new SandboxExtractionException(
                       "stdout polluted", null)));
 
       Object extracted = invokeExtractJob(loop, file);

@@ -28,7 +28,8 @@ public final class InProcessExtractionSandbox implements ExtractionSandbox {
     return ExtractionArtifact.full(delegate.extract(file), parserId);
   }
 
-  TikaExtractionPolicy policy() {
+  @Override
+  public TikaExtractionPolicy policy() {
     return delegate instanceof PolicyDrivenTikaExtractor policyDriven
         ? policyDriven.policy()
         : TikaExtractionPolicy.defaults();

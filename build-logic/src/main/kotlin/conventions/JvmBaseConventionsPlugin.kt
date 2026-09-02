@@ -34,7 +34,8 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
     // that raising it to 2 would parallelise the critical-path unit lane; the hosted A/B refuted it:
     // app-ui wall-clock was 597s at 2 vs ~598s at 1 (zero gain — the 4-vCPU runner is already
     // CPU-saturated by one test task, so a second just time-slices), AND the contention blew a
-    // timing-sensitive test's timebox (worker-services ProcessExtractionSandboxTest ->
+    // timing-sensitive test's timebox (worker-services ProcessExtractionSandboxTest, now
+    // PersistentExtractionSandboxTest ->
     // ExtractionTimeoutException -> lane FAILED). So on a 4-vCPU runner, cross-module test
     // parallelism buys nothing and breaks timing-sensitive tests. Do not raise it without moving to
     // a runner with more vCPUs. Local stays 3 (measurement-backed on a 12-core box, tempdoc 390).

@@ -14,15 +14,15 @@ import io.justsearch.indexerworker.services.GrpcIngestService;
 
 @AnalyzeClasses(packages = "io.justsearch.indexerworker", importOptions = ImportOption.DoNotIncludeTests.class)
 class IndexerWorkerGuardrailsTest {
-  // `indexerWorkerMustNotReadEnvOrSystemProperties` and its four exemptions (DevReloadManager,
-  // IndexStatusOps, GrpcHealthService, TikaOcrRuntime) were retired in tempdoc 883 decision 5.
-  // The single repo-wide replacement is io.justsearch.deadcode.SystemAccessFunnelTest
-  // (modules/dead-code-audit); each exemption is now a line in
-  // gates/config-surface/sysaccess-allowlist.txt, which is a ratchet that only shrinks. The
-  // reasons those four were exempt (dev-only build stamp, a test-only synthetic-delay hook, and
-  // TikaOcrRuntime's native-resource DISCOVERY of Tesseract/tessdata on the worker host, which
-  // the head's config snapshot cannot know) are recorded in that file rather than here, so one
-  // list carries both the entries and their justifications.
+  // `indexerWorkerMustNotReadEnvOrSystemProperties` and its five exemptions (DevReloadManager,
+  // IndexStatusOps, GrpcHealthService, TikaOcrRuntime, ExtractionSandboxCommand) were retired in
+  // tempdoc 883 decision 5. The single repo-wide replacement is
+  // io.justsearch.deadcode.SystemAccessFunnelTest (modules/dead-code-audit); each exemption is now
+  // a line in gates/config-surface/sysaccess-allowlist.txt, a ratchet that only shrinks. The
+  // reasons they were exempt (a dev-only build stamp, a test-only synthetic-delay hook,
+  // TikaOcrRuntime's native-resource DISCOVERY of Tesseract/tessdata on the worker host, and
+  // ExtractionSandboxCommand's `java.home` fallback for the JVM's own launcher path) are recorded
+  // in that file rather than here, so one list carries both the entries and their justifications.
 
   @ArchTest
   static final ArchRule indexerWorkerMustNotDependOnTestSupport =

@@ -1388,11 +1388,15 @@ public final class ResolvedConfigBuilder {
         resolveInt("justsearch.agent.search.default_limit", 3),
         resolveString("justsearch.agent.search.default_mode", ""),
         resolveInt("justsearch.agent.browse.default_max_folders", 20),
-        // Tempdoc 883 decision 3 — 0 means DERIVE from the live context window (ContextBudget);
-        // a positive value is an explicit operator ceiling, honoured verbatim. The former positive
-        // defaults (4000 / 1024) always won the min() against a window-derived figure, so the
-        // derivation would have been invisible at every rung above 4096.
+        // Tempdoc 883 decision 3 — 0 means DERIVE from the live context window (ContextBudget).
+        // The former positive defaults (4000 / 1024) always won the min() against a window-derived
+        // figure, so the derivation would have been invisible at every rung above 4096.
+        //
+        // A positive value is an operator ceiling honoured VERBATIM.
         resolveInt("justsearch.agent.max_tool_result_chars", 0),
+        // A positive value here is a ceiling on a window FRACTION, not a verbatim value:
+        // AgentContextBudgets uses min(cap, window/4), so a window too small to afford it reduces
+        // it — and reports the reduction at INFO rather than applying it silently.
         resolveInt("justsearch.agent.max_completion_tokens", 0),
         resolveBoolean("justsearch.agent.context_compression.enabled", true),
         resolveInt("justsearch.agent.context_compression.min_chars", 200),

@@ -284,6 +284,94 @@ class ComponentsFactoryTest {
     }
   }
 
+  /**
+   * Tempdoc 885 item 19: the initially constructed reopen thread must use the configured
+   * {@code index.nrt.*} values. Before the fix {@code ComponentsFactory} hardcoded
+   * {@code (0.5, 0.05)} seconds regardless of config, so this asserted 250ms/30ms against a
+   * thread built at 500ms/50ms.
+   */
+  @Test
+  void initialReopenThreadUsesConfiguredNrtValues() throws Exception {
+    String yaml =
+        """
+        index:
+          nrt:
+            target_max_stale_ms: 250
+            max_stale_ms: 30
+        """;
+    Path idx = tempDir.resolve("nrt-thread-cfg-idx");
+    ResolvedConfig rc = resolveForTest(yaml);
+    Components c =
+        ComponentsFactory.build(
+            rc, null, idx, false, fieldMapper, analyzerRegistry,
+            null, null, null, new AtomicLong(), 500L, 50L);
+    try {
+      assertNotNull(c.crtrt(), "read-write open must produce a reopen thread");
+      assertEquals(
+          250_000_000L,
+          reopenThreadStaleNs(c.crtrt(), "targetMaxStaleNS"),
+          "initial reopen thread must use the configured index.nrt.target_max_stale_ms");
+      assertEquals(
+          30_000_000L,
+          reopenThreadStaleNs(c.crtrt(), "targetMinStaleNS"),
+          "initial reopen thread must use the configured index.nrt.max_stale_ms");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  /** The 500/50 defaults reproduce the previously hardcoded 0.5s/0.05s exactly. */
+  @Test
+  void initialReopenThreadUsesDefaultsWhenNrtUnconfigured() throws Exception {
+    String yaml = "index:\n  directory: {}";
+    Path idx = tempDir.resolve("nrt-thread-default-idx");
+    ResolvedConfig rc = resolveForTest(yaml);
+    Components c =
+        ComponentsFactory.build(
+            rc, null, idx, false, fieldMapper, analyzerRegistry,
+            null, null, null, new AtomicLong(), 500L, 50L);
+    try {
+      assertEquals(500_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMaxStaleNS"));
+      assertEquals(50_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMinStaleNS"));
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  /**
+   * Lucene rejects {@code targetMaxStaleSec < targetMinStaleSec}; the shared helper clamps the
+   * waiting-reopen bound instead of failing the index open.
+   */
+  @Test
+  void initialReopenThreadClampsInvertedNrtBounds() throws Exception {
+    String yaml =
+        """
+        index:
+          nrt:
+            target_max_stale_ms: 200
+            max_stale_ms: 5000
+        """;
+    Path idx = tempDir.resolve("nrt-thread-inverted-idx");
+    ResolvedConfig rc = resolveForTest(yaml);
+    Components c =
+        ComponentsFactory.build(
+            rc, null, idx, false, fieldMapper, analyzerRegistry,
+            null, null, null, new AtomicLong(), 500L, 50L);
+    try {
+      assertEquals(200_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMaxStaleNS"));
+      assertEquals(200_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMinStaleNS"));
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  private static long reopenThreadStaleNs(Object crtrt, String fieldName) throws Exception {
+    var field =
+        org.apache.lucene.search.ControlledRealTimeReopenThread.class.getDeclaredField(fieldName);
+    field.setAccessible(true);
+    return field.getLong(crtrt);
+  }
+
   // -- Merge policy with metrics tests --
 
   @Test
