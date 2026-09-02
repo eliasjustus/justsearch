@@ -66,12 +66,12 @@ final class WorkerStatusSamplerTest {
         new LifecycleSnapshotTap(
             conditions, new HealthEventChangeRegistry(), HEAD_SRC, Clock.systemUTC()));
 
-    // The only call in this test. No handleStatus, no buildStatusMap.
-    handler.sampleAndBuildStatusSnapshot();
+    // The only call in this test. No handleStatus, no status read.
+    StatusResponse sampled = handler.sampleAndBuildStatusSnapshot();
 
     verify(client, times(1)).getWorkerOperationalView();
-    assertNotNull(handler.lastWorkerSample(), "the tick must record a sample");
-    assertFalse(handler.lastWorkerSample().failed());
+    assertNotNull(sampled.meta(), "the tick must produce a snapshot");
+    assertFalse(sampled.meta().workerRpcStale(), "a reached Worker is not stale");
     // The tap ran: a READY worker view clears index.unavailable, so the store holds the
     // reconciliation the tap performed rather than the empty state it started in.
     assertTrue(
@@ -86,18 +86,18 @@ final class WorkerStatusSamplerTest {
     when(client.getWorkerOperationalView()).thenReturn(healthyWorkerView());
     StatusLifecycleHandler handler = reachableHandler(indexBase, client);
 
-    handler.sampleAndBuildStatusSnapshot();
+    StatusResponse sampled = handler.sampleAndBuildStatusSnapshot();
     verify(client, times(1)).getWorkerOperationalView();
 
-    StatusResponse first = handler.buildStatusMap();
-    StatusResponse second = handler.buildStatusMap();
-    StatusResponse third = handler.buildStatusMap();
+    StatusResponse first = handler.buildStatusSnapshot();
+    StatusResponse second = handler.buildStatusSnapshot();
+    StatusResponse third = handler.buildStatusSnapshot();
 
     verifyNoMoreInteractions(client);
     assertFalse(first.meta().workerRpcStale(), "a fresh sample is not stale");
     // workerRpcAtMs is the SAMPLE time, identical across reads — that identity is what proves the
     // reads did not re-observe (a per-request timestamp would differ).
-    assertEquals(handler.lastWorkerSample().sampledAtMs(), first.meta().workerRpcAtMs());
+    assertEquals(sampled.meta().workerRpcAtMs(), first.meta().workerRpcAtMs());
     assertEquals(first.meta().workerRpcAtMs(), second.meta().workerRpcAtMs());
     assertEquals(first.meta().workerRpcAtMs(), third.meta().workerRpcAtMs());
     assertTrue(
@@ -129,7 +129,7 @@ final class WorkerStatusSamplerTest {
               return java.util.List.of();
             }));
 
-    handler.buildStatusMap();
+    handler.buildStatusSnapshot();
     assertEquals(0, driftCalls[0], "a status read must not run the index-drift tap");
 
     handler.sampleAndBuildStatusSnapshot();
@@ -143,9 +143,9 @@ final class WorkerStatusSamplerTest {
     when(client.getWorkerOperationalView()).thenReturn(healthyWorkerView());
     StatusLifecycleHandler handler = reachableHandler(indexBase, client);
 
-    handler.buildStatusMap();
-    handler.buildStatusMap();
-    handler.buildStatusMap();
+    handler.buildStatusSnapshot();
+    handler.buildStatusSnapshot();
+    handler.buildStatusSnapshot();
 
     // The boot window fallback fires at most once per process: after it, every read is cached.
     verify(client, times(1)).getWorkerOperationalView();
@@ -158,13 +158,16 @@ final class WorkerStatusSamplerTest {
     when(client.getWorkerOperationalView()).thenThrow(new IllegalStateException("worker gone"));
     StatusLifecycleHandler handler = reachableHandler(indexBase, client);
 
-    handler.sampleAndBuildStatusSnapshot();
-    StatusResponse read = handler.buildStatusMap();
+    StatusResponse sampled = handler.sampleAndBuildStatusSnapshot();
+    StatusResponse read = handler.buildStatusSnapshot();
 
     verify(client, times(1)).getWorkerOperationalView();
     assertTrue(read.meta().workerRpcStale(), "a failed sample reads stale");
-    assertNotNull(handler.lastWorkerSample().failureReason());
-    assertTrue(handler.lastWorkerSample().failureReason().contains("worker gone"));
+    // The exception text reaches the emitted DTO, not just an internal field — that is what a
+    // consumer diagnosing a Worker outage actually sees.
+    assertNotNull(sampled.indexStatusReason());
+    assertTrue(sampled.indexStatusReason().contains("worker gone"), sampled.indexStatusReason());
+    assertEquals(sampled.indexStatusReason(), read.indexStatusReason(), "the read serves the same sample");
   }
 
   @Test

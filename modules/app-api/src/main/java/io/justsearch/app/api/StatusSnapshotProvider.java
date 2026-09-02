@@ -8,7 +8,9 @@ package io.justsearch.app.api;
  * app-services) takes this interface so it can capture status into the diagnostics zip
  * without depending on the ui-side {@code StatusLifecycleHandler}.
  *
- * <p>Production impl: {@code io.justsearch.ui.api.StatusLifecycleHandler.buildStatusMap()}.
+ * <p>Production impl: {@code io.justsearch.ui.api.StatusLifecycleHandler.buildStatusSnapshot()},
+ * which serves the internal health sampler's last observation (tempdoc 885 item 6) rather than
+ * calling the Worker on the caller's thread.
  *
  * <p>Stability: stable (API contract).
  */

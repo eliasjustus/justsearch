@@ -38,7 +38,7 @@ import org.slf4j.LoggerFactory;
  * <p>This is a HEAD-side tap (unlike {@link WorkerSnapshotTap}) because the per-root drift signal lives
  * Head-side: {@code WorkerOperationalView} is scalar/global and cannot carry per-root data, whereas the
  * flag already rides {@link IndexingService.WatchedRoot#deleteDetectionUnverified()} (set from the
- * reconcile response). Snapshot-triggered from {@code StatusLifecycleHandler.buildStatusMap()} alongside
+ * reconcile response). Snapshot-triggered from {@code StatusLifecycleHandler.sampleAndBuildStatusSnapshot()} alongside
  * the lifecycle / worker taps — no new threading.
  *
  * <p>Per-root subjects: unlike the worker tap's fixed subjects, each root gets its own condition keyed by
@@ -103,7 +103,8 @@ public final class IndexDriftHealthTap {
   }
 
   /**
-   * Snapshot hook called from {@code StatusLifecycleHandler.buildStatusMap()}: pulls the current
+   * Snapshot hook called from the health sampler (tempdoc 885 item 6 took it off the request
+   * thread — this tap performs its OWN Worker RPC, which is why that mattered): pulls the current
    * watched roots and reconciles their drift conditions. Decoupled from the handler (the tap owns its
    * input source); {@link #reconcile(List)} is the testable pure-ish core.
    */

@@ -986,16 +986,6 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
     }
   }
 
-  private int readAttempts(String normalizedPath) throws SQLException {
-    String checkSql = "SELECT attempts FROM jobs WHERE path = ?";
-    try (PreparedStatement stmt = connection.prepareStatement(checkSql)) {
-      stmt.setString(1, normalizedPath);
-      try (ResultSet rs = stmt.executeQuery()) {
-        return rs.next() ? rs.getInt(1) : 0;
-      }
-    }
-  }
-
   /**
    * Tempdoc 885 item 21b: the two facts a failure transition needs about the current failure run —
    * how many failures it has seen, and when it started. Read in one statement inside the same

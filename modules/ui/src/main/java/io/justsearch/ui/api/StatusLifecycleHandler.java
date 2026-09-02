@@ -454,11 +454,6 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     return SAMPLER_IDLE_PERIOD_MS;
   }
 
-  /** Visible for testing: the sampler's last observation, or {@code null} before the first one. */
-  WorkerViewSample lastWorkerSample() {
-    return lastWorkerSample;
-  }
-
   /**
    * Performs one Worker observation and caches it. Never throws — a failed observation is itself a
    * recorded sample, which is what keeps {@code workerRpcStale} honest when the Worker is gone.
@@ -487,11 +482,6 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
           e.getClass().getSimpleName() + ": " + e.getMessage(),
           sampledAtMs);
     }
-  }
-
-  /** Builds the status response (reusable outside HTTP context). */
-  StatusResponse buildStatusMap() {
-    return buildStatusMap(false);
   }
 
   /**

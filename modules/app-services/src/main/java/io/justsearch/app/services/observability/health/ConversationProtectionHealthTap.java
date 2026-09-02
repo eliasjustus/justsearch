@@ -31,7 +31,8 @@ import java.util.function.BooleanSupplier;
  *
  * <p>Deliberately verdict-independent (like the FLOOR tap): confidentiality legibility, not a retrieval
  * degradation, so it never drives the global "service degraded" verdict pill. Snapshot-triggered from
- * {@code StatusLifecycleHandler.buildStatusMap()} alongside the other taps — no new threading.
+ * {@code StatusLifecycleHandler.sampleAndBuildStatusSnapshot()} alongside the other taps — the
+ * internal health sampler's thread (tempdoc 885 item 6), not the request thread.
  */
 public final class ConversationProtectionHealthTap {
 
@@ -64,7 +65,7 @@ public final class ConversationProtectionHealthTap {
     this.unprotected = Objects.requireNonNull(unprotected, "unprotected");
   }
 
-  /** Snapshot hook called from {@code StatusLifecycleHandler.buildStatusMap()}. */
+  /** Snapshot hook called from the health sampler, never from a request thread (885 item 6). */
   public void accept() {
     reconcile(unprotected.getAsBoolean());
   }

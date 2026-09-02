@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Observes {@link ReadinessEnvelopeView} transitions on each
- * {@code StatusLifecycleHandler.buildStatusMap()} call and emits {@link HealthEvent}
+ * {@code StatusLifecycleHandler} health-sampler pass (885 item 6) and emits {@link HealthEvent}
  * records as {@link AssertedCondition} deltas through the substrate.
  *
  * <p>Per tempdoc 430 §A.10 Phase 4 (vertical proof) + §B.K (rev 3.1): the tap reads the

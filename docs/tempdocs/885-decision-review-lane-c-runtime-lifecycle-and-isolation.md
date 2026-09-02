@@ -2136,13 +2136,21 @@ seven-day bound and the attempts-cap behaviour are unit-tier by construction any
    `{"path": "…/docs/explanation", "collection": "lane-c4-live"}` returned `{"status":"ok"}`, and
    `GET /api/indexing/roots?counts=true` then reported that root with `"collection":"default"`. The
    contract (`docs/reference/api-contract-map.md`, Watched Roots API) says `collection` is optional
-   and defaults to `"default"` **when omitted** — it was not omitted. Not this lane's surface
-   (`IndexingController.handleAddRoot`, `IndexingController.java:156-175`); routed, not chased.
-2. **The stack was serving mutating routes with an empty session token.** `GET /api/mcp/token`
-   returned `{"token":""}` and an unauthenticated `POST /api/indexing/roots` succeeded. This is
-   presumably the dev-mode path of ADR-0046 control 5 rather than a hole in it, but it is worth a
-   deliberate confirmation by the ADR's owner (lane A) that dev mode is meant to mint no token
-   rather than mint one nobody delivered.
+   and defaults to `"default"` **when omitted** — it was not omitted. Not this lane's surface;
+   routed, not chased. **Owner: `IndexingController.handleAddRoot`
+   (`modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java:156-175`)** — either the
+   handler drops the field or `GET /api/indexing/roots` projects it wrong; a two-line reproduction
+   is `POST` with a `collection` then `GET …?counts=true`. Filed here as lane C residue because it
+   surfaced in this lane's live window; it belongs to whichever tempdoc owns the Library surface.
+2. **The stack was serving mutating routes with an empty session token — checked, and by design.**
+   `GET /api/mcp/token` returned `{"token":""}` and an unauthenticated `POST /api/indexing/roots`
+   succeeded. Verified rather than assumed: `ApiSecurityFilters.setupSessionTokenEnforcement`
+   (`ApiSecurityFilters.java:441-443`) returns early when `!prodMode`, so dev mode installs no
+   enforcement at all, and the production path fails **closed** — the constructor throws when
+   `prodMode && (sessionToken == null || sessionToken.isBlank())` (`ApiSecurityFilters.java:116`),
+   which is ADR-0046's stated trade ("a Head that will not start is a bug report, a Head serving
+   mutations without a token is not"). Not a finding; recorded so the next live run does not
+   re-raise it.
 
 ### UL.7 What is now closed on §UC.9, and what is not
 
@@ -2153,3 +2161,65 @@ Still open: item 4's per-outcome counter (needs a live failure), and item 5, whi
 downgraded from "not worth doing live" to "attempted, fault injection insufficient" — the note in
 §UC.9 that a live `RETRY_EXHAUSTED` is not reachable in wall clock still holds, but a live
 *`IO_FAILED` → PENDING with backoff* is reachable and has not yet been shown.
+
+### UL.8 Post-merge verification (2026-09-02, after merging origin/main)
+
+Full sequence on the merged tree, isolated Gradle home, another worker building concurrently.
+
+| Check | Result |
+|---|---|
+| `spotlessApply` | clean, no diff |
+| `build -x test -PskipWebBuild=true` | **green** |
+| `:modules:dead-code-audit:test` (sysaccess funnel) | **2/2 green**, allowlist unchanged — this chunk adds and removes no `System.getenv`/`getProperty` site |
+| Full `./gradlew.bat test -PskipWebBuild=true` | **8733 tests, 0 failed, 0 errors, 26 skipped, 33 modules** |
+| `--gate operation-surface` | pass |
+| `--gate config-surface --preflight origin/main` | "No gates affected by this diff" |
+| `--gate config-surface` (bare) | **fail — pre-existing on `main`, see below** |
+| docs regen `--check` (llms.txt, skills-sync, canonical links, module-deps, runtime-config-matrix) | all OK |
+| `npm run typecheck` + the three affected FE suites | clean, 70/70 |
+
+**The 13 sandbox failures this chunk had routed are gone.** `:modules:worker-services:test` is now
+**1122 tests, 0 failed** — chunk 2c's `@argfile` fallback fixed the `CreateProcess error=206` at the
+root, exactly as §TC.8 (main's version) says.
+
+**Three genuine dead-code items this chunk created, found by `UnreferencedCodeTest` and fixed, not
+suppressed.** The full suite's only real failure was
+`UnreferencedCodeTest > no_unreferenced_non_public_methods`, naming:
+
+* `SqliteJobQueue.readAttempts` — its only caller became `readFailureRun` (item 21b), so it was
+  residue of this chunk's own change. Deleted.
+* `StatusLifecycleHandler.buildStatusMap()` (the no-arg overload) — production reaches the read path
+  through `buildStatusSnapshot()`, so the overload was a test-only alias, i.e. a
+  backwards-compatibility shim. Deleted; the four `StatusReadinessStalenessTest` call sites and
+  `WorkerStatusSamplerTest` now use `buildStatusSnapshot()`, which is what production calls.
+* `StatusLifecycleHandler.lastWorkerSample()` — a test-only accessor onto handler internals.
+  Deleted, and the assertions that used it were rewritten against the emitted DTO
+  (`meta.workerRpcAtMs`, `meta.workerRpcStale`, `indexStatusReason`). That is strictly better: the
+  failed-sample case now proves the exception text reaches **the response a consumer sees** rather
+  than an internal field, and it matches the house style `StatusReadinessStalenessTest` already
+  states ("Assertions are on the emitted DTO … not on the handler's internals").
+
+The same pass swept the tap javadoc that still described reconciliation as happening inside the
+`GET /api/status` handler — `LifecycleSnapshotTap`, `WorkerSnapshotTap`, `IndexDriftHealthTap`,
+`AtRestHealthTap`, `ConversationProtectionHealthTap`, `StatusSnapshotProvider`, and
+`ReadinessReconciliationTrigger` (whose "The defect" paragraph is kept as 876's dated statement, with
+a new paragraph recording that item 6 inverted the relationship: `/api/status` now reads what the
+trigger left behind). Left uncorrected, those comments would have been false authority pointing the
+next reader at the request path.
+
+Also fixed: `WorkerOpsPacingWireFormatRegressionTest` arrived from `main` constructing
+`WorkerOpsMetricCatalog.Sources` with the pre-21e arity. Item 21e widened the record, so the four
+queue suppliers are appended there and zeroed — that case is about the pacing trio, and
+`WorkerOpsQueueMetricWireFormatTest` owns the queue wire assertions.
+
+**`--gate config-surface` bare failure is pre-existing on `main`, and is not being papered over.**
+The finding is `config-surface/silent-growth: env_sysprop_pairs 244 → 246 … without a declared
+changeset` (the other six findings are `dead-key-baselined`, i.e. informational). It is not this
+branch's: `git diff origin/main --name-only` lists no `EnvRegistry`, no `ResolvedConfig*`, no YAML
+schema and no `gates/config-surface/**` file, and `--preflight origin/main` reports "No gates
+affected by this diff". The baseline (`gates/config-surface/baseline.txt`, `env_sysprop_pairs 244`)
+is stale relative to what `main` already ships, while `verify-runtime-config-matrix` is content at
+246 — so the ratchet, not the surface, is what is behind. **Deliberately not advanced here:**
+editing another lane's baseline to turn a red green is the exact move that file's own header calls
+out ("appending a line is the one-line way to make the funnel test green without fixing anything").
+Routed for an `expected-state` pin plus a tracked baseline advance.
