@@ -25,6 +25,7 @@ import io.justsearch.ipc.UpdateVduResultResponse;
 import io.justsearch.ipc.VduUpdateOutcome;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.loop.IndexingLoop;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexerworker.queue.SqliteJobQueue;
 import io.justsearch.indexing.SchemaFields;
@@ -72,7 +73,9 @@ final class GrpcIngestServiceVduHardeningTest {
     Files.createDirectories(indexBasePath);
     Path indexPath = tempDir.resolve("index");
     Files.createDirectories(indexPath);
-    service = new GrpcIngestService(jobQueue, stubLoop, stubBus, indexBasePath, indexPath, lifecycle, lifecycle, null, 0L, null);
+    service = new GrpcIngestService(
+        jobQueue, stubLoop, stubBus, IndexingPacing.unthrottled(), indexBasePath, indexPath,
+        lifecycle, lifecycle, null, 0L, null);
   }
 
   @AfterEach
@@ -766,7 +769,8 @@ final class GrpcIngestServiceVduHardeningTest {
     Files.createDirectories(genDir);
     writeSwitchingState(indexBasePath);
     return new GrpcIngestService(
-        queue, new StubIndexingLoop(), new StubWorkerSignalBus(), indexBasePath, genDir, lifecycle, lifecycle, null, 0L, null);
+        queue, new StubIndexingLoop(), new StubWorkerSignalBus(), IndexingPacing.unthrottled(),
+        indexBasePath, genDir, lifecycle, lifecycle, null, 0L, null);
   }
 
   private static void writeSwitchingState(Path indexBasePath) throws Exception {
@@ -869,11 +873,9 @@ final class GrpcIngestServiceVduHardeningTest {
 
     @Override public void open() {}
     @Override public void writePort(int port) {}
-    @Override public long readActivity() { return 0; }
     @Override public long readHeartbeat() { return System.currentTimeMillis(); }
     @Override public boolean isShutdownRequested() { return false; }
     @Override public boolean shouldDie() { return false; }
-    @Override public boolean isUserActive() { return false; }
     @Override public boolean isMainGpuActive() { return false; }
     @Override public long startupTime() { return startupTime; }
     @Override public void close() {}

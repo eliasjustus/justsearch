@@ -24,6 +24,7 @@ import io.justsearch.indexerworker.ingest.IngestionOutcome;
 import io.justsearch.indexerworker.ingest.IngestionOutcomeClass;
 import io.justsearch.indexerworker.ingest.IngestionReasonCodes;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexing.SchemaFields;
@@ -1106,6 +1107,7 @@ class IndexingLoopTest {
               indexCountOps,
               () -> null,
               signalBus,
+              IndexingPacing.unthrottled(),
               null,
               null,
               null,
@@ -1181,6 +1183,7 @@ class IndexingLoopTest {
               indexCountOps,
               () -> null,
               signalBus,
+              IndexingPacing.unthrottled(),
               null,
               null,
               null,
@@ -1235,6 +1238,7 @@ class IndexingLoopTest {
           indexCountOps,
           () -> null,
           signalBus,
+          IndexingPacing.unthrottled(),
           null,
           null,
           null,
@@ -1500,6 +1504,7 @@ class IndexingLoopTest {
           indexCountOps,
           this::resolvedConfig,
           signalBus,
+          IndexingPacing.unthrottled(),
           null,
           null,
           null,
@@ -1576,11 +1581,6 @@ class IndexingLoopTest {
     public void writePort(int port) {}
 
     @Override
-    public long readActivity() {
-      return 0L;
-    }
-
-    @Override
     public long readHeartbeat() {
       return 0L;
     }
@@ -1592,11 +1592,6 @@ class IndexingLoopTest {
 
     @Override
     public boolean shouldDie() {
-      return false;
-    }
-
-    @Override
-    public boolean isUserActive() {
       return false;
     }
 

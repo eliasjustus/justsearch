@@ -114,7 +114,6 @@ io.justsearch.benchmarks.FilteredKnnBench#main
 io.justsearch.benchmarks.util.MachineFingerprint#capture
 io.justsearch.gpu.NvmlService#isWindows
 io.justsearch.gpu.NvmlService#preferredNvmlPath
-io.justsearch.indexerworker.coordination.MmfWorkerSignalBus#isUserActive
 io.justsearch.indexerworker.extract.ExtractionSandboxCommand#javaBinary
 io.justsearch.indexerworker.extract.TikaOcrRuntime#appDataHome
 io.justsearch.indexerworker.extract.TikaOcrRuntime#appOwnedRuntimeRoots

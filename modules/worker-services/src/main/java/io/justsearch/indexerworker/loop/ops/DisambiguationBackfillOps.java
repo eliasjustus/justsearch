@@ -2,7 +2,7 @@
 package io.justsearch.indexerworker.loop.ops;
 
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.disambiguation.DisambiguationService;
 import io.justsearch.indexing.SchemaFields;
 import java.util.ArrayList;
@@ -25,7 +25,7 @@ public final class DisambiguationBackfillOps {
 
   public record BackfillContext(
       DocumentFieldOps documentFieldOps,
-      WorkerSignalBus signalBus,
+      IndexingPacing pacing,
       Supplier<DisambiguationService> serviceSupplier,
       BooleanSupplier runningSupplier,
       int batchSize,
@@ -64,15 +64,10 @@ public final class DisambiguationBackfillOps {
       int docsScanned = 0;
 
       for (String docId : completedIds) {
-        boolean shouldInterrupt =
-            !context.runningSupplier().getAsBoolean() || context.signalBus().isUserActive();
-        if (shouldInterrupt) {
-          context
-              .log()
-              .debug(
-                  "Disambiguation backfill interrupted: user active={}, stopping={}",
-                  context.signalBus().isUserActive(),
-                  !context.runningSupplier().getAsBoolean());
+        // Tempdoc 885 item 3: pace against foreground load; only shutdown stops the scan.
+        context.pacing().pace();
+        if (!context.runningSupplier().getAsBoolean()) {
+          context.log().debug("Disambiguation backfill interrupted: loop stopping");
           break;
         }
 

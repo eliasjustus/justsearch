@@ -28,7 +28,6 @@ final class MmfSignalBusCompatibilityTest {
       main.open();
       main.clearShutdown();
       main.zeroPort();
-      main.writeActivity();
       main.writeHeartbeat();
       main.writeGpuActive(true);
     }
@@ -36,7 +35,6 @@ final class MmfSignalBusCompatibilityTest {
     // Worker reads initial signals and writes port back.
     try (MmfWorkerSignalBus worker = new MmfWorkerSignalBus(signalPath)) {
       worker.open();
-      assertTrue(worker.readActivity() > 0, "worker should observe activity timestamp");
       assertTrue(worker.readHeartbeat() > 0, "worker should observe heartbeat timestamp");
       assertFalse(worker.isShutdownRequested(), "shutdown should be clear");
       assertTrue(worker.isMainGpuActive(), "worker should observe gpu_active=true");

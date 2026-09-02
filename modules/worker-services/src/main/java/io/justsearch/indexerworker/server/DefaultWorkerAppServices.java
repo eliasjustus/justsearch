@@ -19,6 +19,7 @@ import io.justsearch.indexerworker.extract.TimeboxedContentExtractor;
 import io.justsearch.indexerworker.loop.IndexingLoop;
 import io.justsearch.indexerworker.loop.IndexingPipelineMetricCatalog;
 import io.justsearch.indexerworker.loop.IngestionOutcomeMetricCatalog;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexerworker.services.GrpcHealthService;
 import io.justsearch.indexerworker.services.GrpcIngestService;
@@ -50,6 +51,14 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
   private static final Logger log = LoggerFactory.getLogger(DefaultWorkerAppServices.class);
 
   private final IndexingLoop indexingLoop;
+  /**
+   * Tempdoc 885 item 3: the one pacing policy every indexing/backfill site throttles against.
+   * Owned by {@code KnowledgeServer}, not by this class: the app services are reconstructed on a
+   * deferred-runtime upgrade and on dev hot-reload while the gRPC server (and therefore the
+   * interceptor that feeds the gauge) is not, so a per-instance gauge would be silently orphaned
+   * from its only producer.
+   */
+  private final IndexingPacing indexingPacing;
   private final GrpcSearchService searchService;
   private final GrpcIngestService ingestService;
   private final GrpcHealthService healthService;
@@ -65,7 +74,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
    * post-ctor wireMigrationActiveSupplier/wireEmbeddingTelemetryEvents paths can go away.
    */
   public DefaultWorkerAppServices(InfraContext ctx) {
-    this(ctx, null, null);
+    this(ctx, null, null, IndexingPacing.unthrottled());
   }
 
   /**
@@ -81,7 +90,8 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
   public DefaultWorkerAppServices(
       InfraContext ctx,
       java.util.function.BooleanSupplier migrationActiveSupplier,
-      io.justsearch.indexerworker.embed.EmbeddingTelemetryEvents embeddingTelemetryEvents) {
+      io.justsearch.indexerworker.embed.EmbeddingTelemetryEvents embeddingTelemetryEvents,
+      IndexingPacing indexingPacing) {
     // Tempdoc 410 §13 Slice B — publish the operator-resolved IngestionSkipPolicy before any
     // ingestion path can call it. WorkerScanOps and WorkerIngestionAuthority fire during gRPC
     // handling that always happens after this constructor returns, so installing here is safe.
@@ -96,6 +106,8 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
     var ocrCatalog = new OcrMetricCatalog(ctx.metricRegistry());
     var ingestionOutcomeCatalog = new IngestionOutcomeMetricCatalog(ctx.metricRegistry());
     var contentExtractor = buildContentExtractor(ctx, extractionCatalog, ocrCatalog);
+
+    this.indexingPacing = java.util.Objects.requireNonNull(indexingPacing, "indexingPacing");
     // Tempdoc 406 Phase 4a: services capture the current runtime via ctx.suppliers.
     // If ingest is DeferredRuntime, construct in "deferred mode": indexingLoop and
     // ingestService are skipped (write side not available until upgrade); the
@@ -135,6 +147,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
               ingestRunning.indexCountOps(),
               ingestRunning::resolvedConfig,
               ctx.signalBus(),
+              indexingPacing,
               null, // embeddingService — wired by deferred init
               pipelineCatalog,
               extractionCatalog,
@@ -161,6 +174,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
             ctx.jobQueue(),
             indexingLoop,
             ctx.signalBus(),
+            indexingPacing,
             ctx.indexBasePath(),
             ctx.activeIndexPath(),
             ingestRunning,
@@ -279,6 +293,11 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
   @Override
   public String indexingLoopState() {
     return indexingLoop != null ? indexingLoop.getCurrentState() : "STARTING";
+  }
+
+  @Override
+  public IndexingPacing indexingPacing() {
+    return indexingPacing;
   }
 
   // ==================== Deferred model wiring ====================

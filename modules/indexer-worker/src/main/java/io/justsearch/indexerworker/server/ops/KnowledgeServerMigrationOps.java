@@ -13,6 +13,7 @@ import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.index.IndexGenerationManager;
 import io.justsearch.indexerworker.index.MigrationProgressSnapshot;
 import io.justsearch.indexerworker.index.MigrationProgressStore;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexerworker.queue.SwitchBufferCapableQueue;
 import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
@@ -68,6 +69,9 @@ public final class KnowledgeServerMigrationOps {
       JobQueue jobQueue,
       RunningRuntime ingestLifecycle,
       WorkerSignalBus signalBus,
+      // Tempdoc 885 item 3: the replayed sync/prune ops pace against foreground load like every
+      // other indexing path — a cutover drain is background work too.
+      IndexingPacing indexingPacing,
       Path indexBasePath,
       Path activeIndexPath,
       ObjectMapper json,
@@ -472,6 +476,7 @@ public final class KnowledgeServerMigrationOps {
                       context.jobQueue(),
                       null,
                       context.signalBus(),
+                      context.indexingPacing(),
                       context.indexBasePath(),
                       context.activeIndexPath(),
                       context.ingestLifecycle(),
@@ -655,6 +660,7 @@ public final class KnowledgeServerMigrationOps {
                       context.jobQueue(),
                       null,
                       context.signalBus(),
+                      context.indexingPacing(),
                       context.indexBasePath(),
                       context.activeIndexPath(),
                       context.ingestLifecycle(),

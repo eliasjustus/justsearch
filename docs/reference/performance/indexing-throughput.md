@@ -25,7 +25,8 @@ No env-var overrides exist for these values today.
 | `POLL_BATCH_SIZE` | 16 | `LoopPacingPolicy` | Max jobs dequeued per loop iteration |
 | `IDLE_SLEEP_MS` | 1000 ms | `LoopPacingPolicy` | Sleep between iterations when queue empty and no recent activity |
 | `ACTIVE_IDLE_SLEEP_MS` | 100 ms | `LoopPacingPolicy` | Sleep between iterations when recently active |
-| `BREATH_HOLD_MS` | 500 ms | `LoopPacingPolicy` | Pause when user activity detected |
+| `justsearch.indexing.foreground_duty_pct` | 20 | `IndexingPacing` | Minimum share of wall time indexing keeps while foreground search RPCs are in flight (a duty cycle; replaced the `BREATH_HOLD_MS` pause) |
+| `justsearch.indexing.foreground_cooldown_ms` | 500 ms | `IndexingPacing` | How long after the last foreground RPC the Worker still counts as contended |
 | **Commit policy** | | | |
 | `COMMIT_INTERVAL_MS` | 10000 ms | `LoopPacingPolicy` | Time-based Lucene commit trigger |
 | `MAX_DOCS_BEFORE_COMMIT` | 1000 | `LoopPacingPolicy` | Count-based Lucene commit trigger |

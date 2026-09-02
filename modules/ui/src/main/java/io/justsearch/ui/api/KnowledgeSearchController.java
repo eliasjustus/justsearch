@@ -298,10 +298,10 @@ public class KnowledgeSearchController {
         return;
       }
 
-      // Foreground responsiveness: mark UI activity so the Worker can breath-hold indexing during interactive use.
+      // Foreground responsiveness: record UI activity for the Head's idle checks (VDU pacing).
       // This is intentionally best-effort; it must never make search fail.
       try {
-        knowledgeServer.signalUserActivity();
+        knowledgeServer.recordUserActivity();
       } catch (Exception ignored) {
         // best-effort
       }
@@ -854,7 +854,7 @@ public class KnowledgeSearchController {
       log.info("Knowledge suggest: query='{}', limit={}", redact(new SensitiveQuery(query)), limit);
 
       try {
-        knowledgeServer.signalUserActivity();
+        knowledgeServer.recordUserActivity();
       } catch (Exception ignored) {
         // best-effort
       }
@@ -892,7 +892,7 @@ public class KnowledgeSearchController {
       Integer maxFolders = body.get("maxFolders") instanceof Number n ? n.intValue() : null;
 
       try {
-        knowledgeServer.signalUserActivity();
+        knowledgeServer.recordUserActivity();
       } catch (Exception ignored) {
         // best-effort
       }
@@ -936,7 +936,7 @@ public class KnowledgeSearchController {
           : List.of();
 
       try {
-        knowledgeServer.signalUserActivity();
+        knowledgeServer.recordUserActivity();
       } catch (Exception ignored) {
         // best-effort
       }

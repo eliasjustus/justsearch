@@ -5,6 +5,7 @@ import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexing.SchemaFields;
 import java.util.ArrayList;
@@ -23,6 +24,7 @@ public final class EmbeddingBackfillOps {
       IndexingCoordinator indexingCoordinator,
       CommitOps commitOps,
       WorkerSignalBus signalBus,
+      IndexingPacing pacing,
       Supplier<EmbeddingProvider> embeddingProviderSupplier,
       BooleanSupplier runningSupplier,
       BooleanSupplier allowEmbeddingWritesSupplier,
@@ -184,7 +186,8 @@ public final class EmbeddingBackfillOps {
 
   private static boolean checkInterrupt(
       BackfillContext context, EmbeddingProvider embeddingProvider, String label) {
-    boolean userActive = context.signalBus().isUserActive();
+    // Tempdoc 885 item 3: foreground load paces this stage boundary instead of interrupting it.
+    context.pacing().pace();
     // Tempdoc 630: defer backfill when Main claims the GPU (VRAM conflict, GPU only) OR the OS wants
     // reduced background work (energy saver, GPU+CPU). The two reasons are kept distinct so energy
     // throttles CPU backfill too.
@@ -193,7 +196,6 @@ public final class EmbeddingBackfillOps {
     boolean shouldInterrupt =
         LoopPacingPolicy.shouldInterruptBackfill(
             context.runningSupplier().getAsBoolean(),
-            userActive,
             mainGpuActive,
             energyReduced,
             embeddingProvider);
@@ -203,9 +205,8 @@ public final class EmbeddingBackfillOps {
       context
           .log()
           .debug(
-              "{} interrupted: user active={}, backfill blocked (GPU/energy)={}, stopping={}",
+              "{} interrupted: backfill blocked (GPU/energy)={}, stopping={}",
               label,
-              userActive,
               backfillBlocked,
               !context.runningSupplier().getAsBoolean());
     }

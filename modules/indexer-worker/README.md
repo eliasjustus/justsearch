@@ -33,7 +33,7 @@ Process Context:
 
 Execution Environment:
 - Main Loop: The IndexingLoop runs on a low-priority daemon thread ("indexing-loop").
-- Breath Holding: The loop checks WorkerSignalBus.isUserActive() before every job. If `now - lastActivity < 2000ms`, it sleeps (PAUSED state). This prevents background CPU usage from stuttering the UI.
+- Foreground duty cycle: after each batch (and each extracted file) the loop calls `IndexingPacing.pace()`. While search-family gRPC calls are in flight, it yields enough wall time to hold indexing at `justsearch.indexing.foreground_duty_pct` (default 20%) — reported as the PAUSED state for the duration of the yield only. This keeps the UI responsive without ever stopping indexing.
 - Tokenization Pool: The EmbeddingActor uses a dedicated "llama-embed-tokenize" thread pool. This separates CPU-bound tokenization/chunking from the inference thread.
 
 Blocking Policy:
@@ -89,9 +89,9 @@ Trigger: User queries "contract 2024".
   via `JustSearchConfigurationLoader.loadFieldCatalog().vectorDimension()` and injected
   into services. Do NOT hardcode dimensions in code. See modules/configuration/README.md.
 
-- Tune "Breath Holding" (Background Pause):
-  Edit: loop/IndexingLoop.java
-  Action: Adjust BREATH_HOLD_MS (default 500ms) or polling intervals.
+- Tune the foreground duty cycle (background throttling):
+  Edit: loop/pacing/IndexingPacing.java (policy) — but prefer configuration:
+  Action: Set justsearch.indexing.foreground_duty_pct / justsearch.indexing.foreground_cooldown_ms.
 
 - Modify SQLite Schema / Queue Logic:
   Edit: queue/JobQueue.java

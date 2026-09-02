@@ -1190,7 +1190,12 @@ public final class ResolvedConfigBuilder {
         resolveInt("justsearch.backfill.max_docs_before_commit", 1000),
         resolveInt("justsearch.backfill.chunk_slots_per_batch", 50),
         resolveInt("justsearch.backfill.bge_m3_batch_size", 50),
-        resolveInt("justsearch.backfill.bge_m3_interleave_batch_size", 10));
+        resolveInt("justsearch.backfill.bge_m3_interleave_batch_size", 10),
+        // Tempdoc 885 item 3: foreground-contention duty cycle. Resolved here (not read as a raw
+        // EnvRegistry sysprop in the Worker) so the value reaches the Worker through the ordinal-450
+        // config snapshot — the [R1] defect was a Worker-side key that only ever existed on the Head.
+        resolveInt("justsearch.indexing.foreground_duty_pct", 20),
+        resolveLong("justsearch.indexing.foreground_cooldown_ms", 500L));
   }
 
   /**

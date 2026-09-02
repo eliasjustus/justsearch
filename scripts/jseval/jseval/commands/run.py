@@ -78,10 +78,10 @@ log = logging.getLogger(__name__)
 @click.option("--search-load-qpm", "search_load_qpm", type=int, default=None,
               help="Tempdoc 885: drive N queries/minute (evenly spaced) against "
                    "POST /api/knowledge/search on a background thread DURING ingest + the "
-                   "enrichment wait, then record a `search_load` block in summary.json. That "
-                   "endpoint writes the Worker's MMF activity slot, so this is what makes the "
-                   "indexing loop breath-hold. Off by default; mutually exclusive with "
-                   "--search-load.")
+                   "enrichment wait, then record a `search_load` block in summary.json. Each "
+                   "request holds the Worker's foreground-load gauge up for its duration, which "
+                   "is what drives the indexing duty cycle. Off by default; mutually exclusive "
+                   "with --search-load.")
 @click.option("--search-load", "search_load_mode", type=click.Choice(["continuous"]), default=None,
               help="Tempdoc 885: as --search-load-qpm but back-to-back with one request in "
                    "flight (the continuous MCP-style agent loop).")

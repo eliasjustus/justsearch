@@ -28,7 +28,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 
 ### Explanation (Understanding the Architecture)
 - [System Overview](explanation/01-system-overview.md): The 3-process architecture pattern.
-- [Process Coordination](explanation/02-process-coordination.md): MMF signaling, "Suicide Pact", and "Breath Holding".
+- [Process Coordination](explanation/02-process-coordination.md): MMF signaling, the "Suicide Pact", and the indexing duty cycle.
 - [Knowledge Server](explanation/03-knowledge-server.md): Formatting logic, JobQueue, and Tika usage.
 - [Storage Engine](explanation/04-storage-engine.md): Lucene internals, schema (SSOT), and locking strategies.
 - [AI Architecture](explanation/05-ai-architecture.md): Hybrid Inference (CPU/GPU) and VRAM management.

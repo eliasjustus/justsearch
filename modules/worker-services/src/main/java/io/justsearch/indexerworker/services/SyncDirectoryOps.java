@@ -8,8 +8,8 @@ import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.adapters.lucene.runtime.PruneOps;
 import io.justsearch.adapters.lucene.runtime.ReadPathOps;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.ingest.IngestionSkipPolicy;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexerworker.util.PathNormalizer;
 import io.justsearch.indexing.SchemaFields;
@@ -62,7 +62,7 @@ final class SyncDirectoryOps {
   private final PruneOps pruneOps;
   private final CommitOps commitOps;
   private final JobQueue jobQueue;
-  private final WorkerSignalBus signalBus;
+  private final IndexingPacing indexingPacing;
   private final CloudPlaceholderRecorder cloudPlaceholderRecorder;
 
   SyncDirectoryOps(
@@ -70,12 +70,12 @@ final class SyncDirectoryOps {
       PruneOps pruneOps,
       CommitOps commitOps,
       JobQueue jobQueue,
-      WorkerSignalBus signalBus) {
+      IndexingPacing indexingPacing) {
     this.readPathOps = readPathOps;
     this.pruneOps = pruneOps;
     this.commitOps = commitOps;
     this.jobQueue = jobQueue;
-    this.signalBus = signalBus;
+    this.indexingPacing = indexingPacing;
     this.cloudPlaceholderRecorder = jobQueue == null ? null : new CloudPlaceholderRecorder(jobQueue);
   }
 
@@ -187,11 +187,6 @@ final class SyncDirectoryOps {
       responseObserver.onCompleted();
       return true;
     }
-    if (walk.walkAborted()) {
-      responseObserver.onNext(syncDirectorySkippedResponse(filesDeleted, filesAdded));
-      responseObserver.onCompleted();
-      return true;
-    }
     return false;
   }
 
@@ -223,8 +218,13 @@ final class SyncDirectoryOps {
           rootPath);
       return 0;
     }
+    // Tempdoc 885 item 3: the throttle callback the prune already invokes every N documents is now
+    // the pacing tick. It always returns false — under a duty cycle the prune is slowed, never
+    // abandoned half-done as it was when user activity aborted it.
     return pruneOps.pruneByPathPrefix(
-        rootPath, force ? () -> false : signalBus::isUserActive, SYNC_PRUNE_THROTTLE_BATCH_SIZE);
+        rootPath,
+        force ? () -> false : indexingPacing::paceAndContinue,
+        SYNC_PRUNE_THROTTLE_BATCH_SIZE);
   }
 
   private Set<String> indexedPathsForSync(String rootPath, boolean force) {
@@ -236,7 +236,7 @@ final class SyncDirectoryOps {
 
   // ==================== Walk logic ====================
 
-  record SyncWalkPhaseResult(int filesAdded, boolean walkAborted, boolean walkInterrupted) {}
+  record SyncWalkPhaseResult(int filesAdded, boolean walkInterrupted) {}
 
   @SuppressWarnings("PMD.CognitiveComplexity")
   private SyncWalkPhaseResult walkAndEnqueueMissingFiles(
@@ -260,7 +260,6 @@ final class SyncDirectoryOps {
     // doesn't rediscover the trade-off by accident.
     List<JobQueue.EnqueueEntry> collected = new ArrayList<>();
     int[] counters = {0}; // [0]=fileCount (for throttle)
-    boolean[] walkAborted = {false};
     boolean[] walkInterrupted = {false};
     final Set<String> indexedPathsFinal = indexedPaths;
 
@@ -296,10 +295,10 @@ final class SyncDirectoryOps {
                 walkInterrupted[0] = true;
                 return FileVisitResult.TERMINATE;
               }
-              if (!force && signalBus.isUserActive()) {
-                log.info("syncDirectory aborted during walk phase (user activity)");
-                walkAborted[0] = true;
-                return FileVisitResult.TERMINATE;
+              // Tempdoc 885 item 3: the walk yields to foreground load instead of terminating on
+              // it. The 1 ms courtesy sleep stays for the uncontended case.
+              if (!force) {
+                indexingPacing.pace();
               }
               try {
                 Thread.sleep(1);
@@ -350,10 +349,10 @@ final class SyncDirectoryOps {
     if (!batch.isEmpty()) {
       filesAdded += jobQueue.enqueueEntries(batch);
     }
-    if (!walkInterrupted[0] && !walkAborted[0] && filesAdded > 0) {
+    if (!walkInterrupted[0] && filesAdded > 0) {
       log.info("syncDirectory: enqueued {} missing files for indexing", filesAdded);
     }
-    return new SyncWalkPhaseResult(filesAdded, walkAborted[0], walkInterrupted[0]);
+    return new SyncWalkPhaseResult(filesAdded, walkInterrupted[0]);
   }
 
   // ==================== Index path query ====================

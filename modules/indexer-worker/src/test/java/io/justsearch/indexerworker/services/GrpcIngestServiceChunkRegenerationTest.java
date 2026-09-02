@@ -8,6 +8,7 @@ import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.loop.IndexingLoop;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.SqliteJobQueue;
 import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
 import io.justsearch.indexing.SchemaFields;
@@ -55,7 +56,9 @@ final class GrpcIngestServiceChunkRegenerationTest {
     Files.createDirectories(indexBasePath);
     Path indexPath = tempDir.resolve("index");
     Files.createDirectories(indexPath);
-    service = new GrpcIngestService(jobQueue, stubLoop, stubBus, indexBasePath, indexPath, lifecycle, lifecycle, null, 0L, null);
+    service = new GrpcIngestService(
+        jobQueue, stubLoop, stubBus, IndexingPacing.unthrottled(), indexBasePath, indexPath,
+        lifecycle, lifecycle, null, 0L, null);
   }
 
   @AfterEach
@@ -218,11 +221,6 @@ final class GrpcIngestServiceChunkRegenerationTest {
     public void writePort(int port) {}
 
     @Override
-    public long readActivity() {
-      return 0;
-    }
-
-    @Override
     public long readHeartbeat() {
       return System.currentTimeMillis();
     }
@@ -234,11 +232,6 @@ final class GrpcIngestServiceChunkRegenerationTest {
 
     @Override
     public boolean shouldDie() {
-      return false;
-    }
-
-    @Override
-    public boolean isUserActive() {
       return false;
     }
 

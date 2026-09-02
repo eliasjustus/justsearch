@@ -41,7 +41,7 @@ This approach reuses the existing llama-server infrastructure and mmproj vision 
 ### Negative
 - **Requires Brain process**: VLM extraction is only available when the Brain (llama-server) is running. Not available in headless/CPU-only deployments without LLM.
 - **Processing speed**: ~0.25s/page on CPU. Acceptable for the selective pipeline (only flagged pages), but not suitable for bulk full-document OCR.
-- **GPU contention**: VDU processing competes with chat/generation for llama-server capacity. Mitigated by the breath-holding protocol and selective page flagging.
+- **GPU contention**: VDU processing competes with chat/generation for llama-server capacity. Mitigated by the Head-side VDU pacing policy (`VduPacingPolicy`) and selective page flagging.
 
 ## Alternatives Considered
 

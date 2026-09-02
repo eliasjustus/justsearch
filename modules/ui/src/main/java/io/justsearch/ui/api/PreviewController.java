@@ -41,7 +41,7 @@ public final class PreviewController {
   // AppFacade.documents() already resolves laterally.
   private final Supplier<DocumentService> documentServiceSupplier;
   private final Duration timeout;
-  private final Runnable signalUserActivity;
+  private final Runnable recordUserActivity;
   private final Telemetry telemetry;
   private final HeadApiMetricCatalog apiCatalog;
 
@@ -53,23 +53,23 @@ public final class PreviewController {
     this(() -> documentService, timeout, null, null, null);
   }
 
-  PreviewController(DocumentService documentService, Duration timeout, Runnable signalUserActivity) {
-    this(() -> documentService, timeout, signalUserActivity, null, null);
+  PreviewController(DocumentService documentService, Duration timeout, Runnable recordUserActivity) {
+    this(() -> documentService, timeout, recordUserActivity, null, null);
   }
 
   PreviewController(
-      DocumentService documentService, Duration timeout, Runnable signalUserActivity, Telemetry telemetry) {
-    this(() -> documentService, timeout, signalUserActivity, telemetry, null);
+      DocumentService documentService, Duration timeout, Runnable recordUserActivity, Telemetry telemetry) {
+    this(() -> documentService, timeout, recordUserActivity, telemetry, null);
   }
 
   // Back-compat ctor — wraps the value with a fixed-supplier.
   PreviewController(
       DocumentService documentService,
       Duration timeout,
-      Runnable signalUserActivity,
+      Runnable recordUserActivity,
       Telemetry telemetry,
       HeadApiMetricCatalog apiCatalog) {
-    this(() -> documentService, timeout, signalUserActivity, telemetry, apiCatalog);
+    this(() -> documentService, timeout, recordUserActivity, telemetry, apiCatalog);
   }
 
   // Canonical ctor — Supplier captures the late-binding, so AppFacadeBootstrap's swap of
@@ -77,12 +77,12 @@ public final class PreviewController {
   public PreviewController(
       Supplier<DocumentService> documentServiceSupplier,
       Duration timeout,
-      Runnable signalUserActivity,
+      Runnable recordUserActivity,
       Telemetry telemetry,
       HeadApiMetricCatalog apiCatalog) {
     this.documentServiceSupplier = documentServiceSupplier;
     this.timeout = timeout == null ? DEFAULT_TIMEOUT : timeout;
-    this.signalUserActivity = signalUserActivity;
+    this.recordUserActivity = recordUserActivity;
     this.telemetry = telemetry;
     this.apiCatalog = apiCatalog;
   }
@@ -101,11 +101,12 @@ public final class PreviewController {
       return;
     }
 
-        // Foreground responsiveness: mark user activity so the Worker can breath-hold indexing during interactive preview.
+        // Foreground responsiveness: record interactive preview as user activity for the Head's
+        // own idle checks (VDU pacing); the Worker observes its own foreground load.
         // Best-effort only; preview must not fail if this throws.
         try {
-          if (signalUserActivity != null) {
-            signalUserActivity.run();
+          if (recordUserActivity != null) {
+            recordUserActivity.run();
           }
         } catch (Exception ignored) {
           // best-effort

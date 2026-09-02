@@ -22,6 +22,8 @@ import io.justsearch.indexerworker.embed.EmbeddingFingerprint;
 import io.justsearch.indexerworker.embed.EmbeddingConfig;
 import io.justsearch.indexerworker.embed.EmbeddingMetadataOverlay;
 import io.justsearch.indexerworker.embed.EmbeddingService;
+import io.justsearch.indexerworker.loop.pacing.ForegroundLoad;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.index.IndexGenerationManager;
 import io.justsearch.indexerworker.recovery.IndexRecoveryPolicy;
 import io.justsearch.indexerworker.index.MigrationProgressSnapshot;
@@ -146,6 +148,19 @@ public final class KnowledgeServer implements Closeable {
   EmbeddingService embeddingService;
   EmbeddingCompatibilityController embeddingCompatController;
   volatile WorkerAppServices appServices;
+
+  /**
+   * Tempdoc 885 item 3: the foreground-load gauge and the duty-cycle policy that reads it. Both are
+   * process-scoped and owned here rather than by {@code appServices}, because the app services are
+   * reconstructed (deferred-runtime upgrade, dev hot-reload) while the gRPC server — and therefore
+   * the single interceptor that feeds the gauge — is not. A per-appServices gauge would be orphaned
+   * from its only producer on the first reconstruction and silently stop throttling.
+   */
+  private final ForegroundLoad foregroundLoad =
+      new ForegroundLoad();
+
+  private volatile IndexingPacing indexingPacing =
+      IndexingPacing.unthrottled();
   DelegatingSearchService searchWrapper;
   DelegatingIngestService ingestWrapper;
   DelegatingHealthService healthWrapper;
@@ -680,6 +695,15 @@ public final class KnowledgeServer implements Closeable {
               MIGRATION_SWITCHING_MAX_DURATION_MS,
               this::initiateShutdown,
               pathResolutionStore);
+      // Tempdoc 885 item 3: build the duty-cycle policy from resolved config before the app
+      // services that consume it. The duty/cooldown arrive through the ordinal-450 worker config
+      // snapshot, not through a raw Worker sysprop — a key the Worker cannot see is the [R1]
+      // defect this item removes.
+      this.indexingPacing = buildIndexingPacing();
+      log.info(
+          "Indexing pacing: foreground duty {}%, cooldown {} ms",
+          indexingPacing.dutyPct(), indexingPacing.cooldownMs());
+
       // 516 P3 FINAL CUT: see newAppServices() — DWAS now pre-wires the migration
       // supplier + embedding telemetry at ctor time (last 2 setters eliminated).
       appServices = newAppServices();
@@ -711,7 +735,10 @@ public final class KnowledgeServer implements Closeable {
       // 4. Create and start gRPC server on ephemeral port (before model loading)
       List<ServerInterceptor> interceptors = List.of(
           new TracingServerInterceptor(),
-          new RequestMetadataInterceptor()
+          new RequestMetadataInterceptor(),
+          // Tempdoc 885 item 3: the only producer of the foreground-load gauge the indexing duty
+          // cycle reads. Ingest RPCs (IndexStatus above all) deliberately do not count.
+          new io.justsearch.indexerworker.server.ops.ForegroundLoadInterceptor(foregroundLoad)
       );
 
       grpcServer = createGrpcServer(interceptors);
@@ -790,7 +817,19 @@ public final class KnowledgeServer implements Closeable {
     return new DefaultWorkerAppServices(
         infraCtx,
         () -> buildingIndexPath != null && searchLifecycle != ingestLifecycle,
-        embeddingTelemetry);
+        embeddingTelemetry,
+        indexingPacing);
+  }
+
+  /** Tempdoc 885 item 3: the process-scoped duty-cycle policy, built from resolved config. */
+  private IndexingPacing buildIndexingPacing() {
+    ConfigStore store = ConfigStore.globalOrNull();
+    ResolvedConfig.Ai.BackfillPacing pacing =
+        store == null || store.get() == null
+            ? ResolvedConfig.Ai.BackfillPacing.DEFAULTS
+            : store.get().ai().backfillPacing();
+    return new IndexingPacing(
+        foregroundLoad, pacing.foregroundDutyPct(), pacing.foregroundCooldownMs());
   }
 
   /**
@@ -1295,7 +1334,13 @@ public final class KnowledgeServer implements Closeable {
               return io.justsearch.indexerworker.loop.IndexingLoop.LoopState.PAUSED.name().equals(st) ? 1L : 0L;
             },
             this::safePendingEmbeddings,
-            this::safePendingVdu);
+            this::safePendingVdu,
+            // Tempdoc 885 item 3: pacing attribution. Without these the duty cycle is
+            // unobservable in the field — the same gap that made the item's own baseline unable
+            // to count a single breath-hold (§B.2a).
+            () -> indexingPacing.pacedIntervalsTotal(),
+            () -> indexingPacing.observedDutyPct(),
+            () -> (long) foregroundLoad.inFlight());
     this.workerOpsCatalog =
         new io.justsearch.indexerworker.services.WorkerOpsMetricCatalog(
             lt.registry(), OperationalMetrics.getInstance(),
@@ -2058,7 +2103,14 @@ public final class KnowledgeServer implements Closeable {
     }
     KnowledgeServerMigrationOps.drainSwitchBufferBestEffort(
         new KnowledgeServerMigrationOps.DrainSwitchBufferContext(
-            jobQueue, running, signalBus, indexBasePath, activeIndexPath, JSON, log));
+            jobQueue,
+            running,
+            signalBus,
+            indexingPacing,
+            indexBasePath,
+            activeIndexPath,
+            JSON,
+            log));
   }
 
   private void startMigrationEnumeratorBestEffort(ResolvedConfig rc) {

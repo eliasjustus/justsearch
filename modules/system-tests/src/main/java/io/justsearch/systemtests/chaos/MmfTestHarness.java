@@ -81,45 +81,13 @@ public final class MmfTestHarness implements Closeable {
     log.info("MmfTestHarness opened: {}", signalFilePath);
   }
 
-  // ============== Activity Manipulation (Time Lord) ==============
-
-  /**
-   * Writes a custom activity timestamp to simulate user activity.
-   *
-   * @param epochMillis The timestamp to write
-   */
-  public void writeActivity(long epochMillis) {
-    ensureOpen();
-    segment.set(LE_LONG, MmfWorkerSignalLayoutV1.OFFSET_ACTIVITY_EPOCH_MS, epochMillis);
-    segment.force();
-    log.debug("Wrote activity timestamp: {}", epochMillis);
-  }
-
-  /**
-   * Simulates recent user activity (now - offsetMs).
-   *
-   * @param offsetMs Milliseconds before now
-   */
-  public void simulateRecentActivity(long offsetMs) {
-    writeActivity(System.currentTimeMillis() - offsetMs);
-  }
-
-  /**
-   * Simulates stale user activity (triggers worker to resume indexing).
-   *
-   * @param staleMs How stale the activity should be
-   */
-  public void simulateStaleActivity(long staleMs) {
-    writeActivity(System.currentTimeMillis() - staleMs);
-  }
-
-  /**
-   * Reads the current activity timestamp.
-   */
-  public long readActivity() {
-    ensureOpen();
-    return segment.get(LE_LONG, MmfWorkerSignalLayoutV1.OFFSET_ACTIVITY_EPOCH_MS);
-  }
+  // ============== Activity slot (retired, tempdoc 885 item 3) ==============
+  //
+  // The activity slot (OFFSET_ACTIVITY_EPOCH_MS) has no production writer or reader any more: the
+  // Head no longer signals user activity across the MMF and the Worker paces on its own in-flight
+  // foreground-RPC gauge. The harness accessors and the harness-against-itself test that exercised
+  // the slot were removed with them; the offset itself stays declared (and covered by
+  // MmfWorkerSignalLayoutV1Test) because lane F deletes the layout as a whole.
 
   // ============== Heartbeat Manipulation (Suicide Pact) ==============
 

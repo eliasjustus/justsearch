@@ -4,7 +4,7 @@ package io.justsearch.indexerworker.loop.ops;
 import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
 import io.justsearch.indexing.SchemaFields;
 import java.util.ArrayList;
@@ -33,7 +33,7 @@ public final class SpladeBackfillOps {
       DocumentFieldOps documentFieldOps,
       IndexingCoordinator indexingCoordinator,
       CommitOps commitOps,
-      WorkerSignalBus signalBus,
+      IndexingPacing pacing,
       Supplier<SpladeEncoder> spladeEncoderSupplier,
       BooleanSupplier runningSupplier,
       int batchSize,
@@ -77,7 +77,7 @@ public final class SpladeBackfillOps {
       int markedFailed = 0;
 
       // Check for interruption before batch work
-      if (shouldInterrupt(context)) {
+      if (paceAndCheckInterrupt(context)) {
         return StageOutcome.elapsedSince(t0);
       }
 
@@ -129,7 +129,7 @@ public final class SpladeBackfillOps {
       }
 
       // Re-check interruption after content collection
-      if (shouldInterrupt(context)) {
+      if (paceAndCheckInterrupt(context)) {
         return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
@@ -231,16 +231,16 @@ public final class SpladeBackfillOps {
     }
   }
 
-  private static boolean shouldInterrupt(BackfillContext context) {
-    boolean interrupt =
-        !context.runningSupplier().getAsBoolean() || context.signalBus().isUserActive();
+  /**
+   * Tempdoc 885 item 3: paces against foreground load, then answers whether to stop. Foreground
+   * contention is no longer a stop reason — it slows the stage through {@link
+   * IndexingPacing#pace()} instead of abandoning the batch.
+   */
+  private static boolean paceAndCheckInterrupt(BackfillContext context) {
+    context.pacing().pace();
+    boolean interrupt = !context.runningSupplier().getAsBoolean();
     if (interrupt) {
-      context
-          .log()
-          .debug(
-              "SPLADE backfill interrupted: userActive={}, stopping={}",
-              context.signalBus().isUserActive(),
-              !context.runningSupplier().getAsBoolean());
+      context.log().debug("SPLADE backfill interrupted: loop stopping");
     }
     return interrupt;
   }

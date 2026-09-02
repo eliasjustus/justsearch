@@ -33,7 +33,18 @@ final class GrpcIngestServiceCollectionTagTest {
   @TempDir Path tempDir;
 
   private static GrpcIngestService serviceWith(JobQueue queue) {
-    return new GrpcIngestService(queue, null, null, null, null, null, null, null, 0L, null);
+    return new GrpcIngestService(
+        queue,
+        null,
+        null,
+        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
+        null,
+        null,
+        null,
+        null,
+        null,
+        0L,
+        null);
   }
 
   private static BatchResponse submit(GrpcIngestService svc, BatchRequest request) {

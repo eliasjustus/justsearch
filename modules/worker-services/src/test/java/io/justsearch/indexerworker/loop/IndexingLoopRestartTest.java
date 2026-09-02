@@ -8,6 +8,7 @@ import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
 import java.lang.reflect.Field;
 import java.util.List;
@@ -100,7 +101,7 @@ final class IndexingLoopRestartTest {
     DocumentFieldOps documentFieldOps = mock(DocumentFieldOps.class);
     IndexCountOps indexCountOps = mock(IndexCountOps.class);
     WorkerSignalBus signalBus = mock(WorkerSignalBus.class);
-    // signalBus.isUserActive / isMainGpuActive default to false (Mockito boolean default).
+    // signalBus.isMainGpuActive defaults to false (Mockito boolean default).
     return new IndexingLoop(
         queue,
         coordinator,
@@ -109,6 +110,7 @@ final class IndexingLoopRestartTest {
         indexCountOps,
         () -> null,
         signalBus,
+        IndexingPacing.unthrottled(),
         null,
         null,
         null,

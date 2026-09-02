@@ -47,7 +47,18 @@ final class GrpcIngestServiceForceReindexWiringTest {
   @TempDir Path tempDir;
 
   private static GrpcIngestService serviceWith(JobQueue queue, IndexingLoop loop) {
-    return new GrpcIngestService(queue, loop, null, null, null, null, null, null, 0L, null);
+    return new GrpcIngestService(
+        queue,
+        loop,
+        null,
+        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
+        null,
+        null,
+        null,
+        null,
+        null,
+        0L,
+        null);
   }
 
   private void scan(GrpcIngestService svc, Path root, ScanMode mode) {

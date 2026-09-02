@@ -5,7 +5,6 @@ import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.embed.NoOpEmbeddingProvider;
 
 public final class LoopPacingPolicy {
-  private static final long BREATH_HOLD_MS = 500L;
   private static final long IDLE_SLEEP_MS = 1000L;
   private static final long ACTIVE_IDLE_SLEEP_MS = 100L;
 
@@ -18,10 +17,6 @@ public final class LoopPacingPolicy {
   // take the threshold as a parameter instead of a static field.
 
   private LoopPacingPolicy() {}
-
-  public static long breathHoldMs() {
-    return BREATH_HOLD_MS;
-  }
 
   public static long idleSleepMs() {
     return IDLE_SLEEP_MS;
@@ -63,14 +58,18 @@ public final class LoopPacingPolicy {
     return !mainGpuActive || !embeddingProvider.isUsingGpu(); // VRAM conflict: only when on GPU
   }
 
+  /**
+   * Tempdoc 885 item 3: {@code userActive} left this signature. Foreground contention is now a
+   * pacing decision ({@link io.justsearch.indexerworker.loop.pacing.IndexingPacing}), not an
+   * interrupt — a contended backfill runs slower, it does not stop.
+   */
   public static boolean shouldInterruptBackfill(
       boolean running,
-      boolean userActive,
       boolean mainGpuActive,
       boolean energyReduced,
       EmbeddingProvider embeddingProvider) {
     boolean backfillBlocked = !shouldRunBackfill(mainGpuActive, energyReduced, embeddingProvider);
-    return !running || userActive || backfillBlocked;
+    return !running || backfillBlocked;
   }
 
   /**

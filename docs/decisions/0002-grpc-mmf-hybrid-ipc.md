@@ -26,7 +26,7 @@ Accepted
 The three-process architecture ([ADR-0001](0001-three-process-architecture.md)) requires reliable IPC between the Head (Main Process) and Body (Knowledge Server). Two distinct communication needs exist:
 
 1. **Rich data transfer** — search results, document submission, health status. Requires structured payloads, type safety, and reasonable throughput.
-2. **Sub-millisecond signaling** — heartbeats (suicide pact), port discovery, GPU arbitration flags, user activity detection (breath holding). Requires near-zero latency and must work even during JVM GC pauses.
+2. **Sub-millisecond signaling** — heartbeats (suicide pact), port discovery, GPU arbitration flags, and (originally) user-activity detection. Requires near-zero latency and must work even during JVM GC pauses. The user-activity slot has since been retired: the Worker paces indexing on its own in-flight foreground-RPC gauge rather than on a Head-written timestamp, so that signal no longer crosses the MMF.
 
 No single IPC mechanism handles both well. REST/HTTP adds too much overhead for heartbeat signals. Named pipes or sockets require custom serialization for rich payloads. Shared memory alone lacks the structured RPC model needed for search operations.
 

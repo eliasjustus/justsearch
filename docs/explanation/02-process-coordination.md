@@ -2,7 +2,7 @@
 title: Process Coordination
 type: explanation
 status: stable
-description: 'MMF signaling, "Suicide Pact", and "Breath Holding".'
+description: 'MMF signaling, the "Suicide Pact", and the indexing duty cycle.'
 ---
 
 # 02. Process Coordination & The "Nervous System"
@@ -57,17 +57,39 @@ A common issue in desktop development is "zombie processes" staying alive after 
 *   **Rule:** After a startup grace period (~15s), if `CurrentTime - Heartbeat > 5000ms`, the Worker invokes `server.close()` and exits.
 *   **Result:** If Main crashes (blue screen, SIGKILL), Worker cleans itself up within 5 seconds.
 
-### 3. Breath Holding (Responsiveness)
-To ensure the UI never stutters during heavy indexing:
-*   **Main Process:** Detects user activity from the UI (mouse/keyboard) **and** from interactive foreground API routes (e.g., search/preview/AI streaming).
-*   **Main Process:** Updates `activity_epoch_ms` (MMF offset `0`, `MmfWorkerSignalLayoutV1.OFFSET_ACTIVITY_EPOCH_MS`).
-*   **Worker Process:** Checks this timestamp before processing every file in `IndexingLoop`.
-*   **Rule:** If `CurrentTime - LastActivity < 2000ms`, the Worker yields.
-*   **Result:** The user gets 100% CPU/Disk priority. Indexing only happens in micro-idle moments.
+### 3. Indexing Duty Cycle (Responsiveness)
 
-Benchmarking/automation note (important):
-- Do **not** use `POST /api/knowledge/search` in a tight polling loop to wait for indexing to finish: it can signal user activity and keep the Worker in breath-hold.
-- Prefer `GET /api/status` or `GET /api/knowledge/status` to wait for quiescence, then do a single sentinel search to validate searchability.
+The Worker throttles indexing while the user is waiting on a foreground request. There is **no
+Head→Worker input signal** for this: the Worker observes its own load.
+
+*   **Signal:** `ForegroundLoad` (`modules/worker-services/.../loop/pacing/ForegroundLoad.java`) is a
+    counter of in-flight **search-family gRPC calls**. A single `ServerInterceptor`
+    (`ForegroundLoadInterceptor`, registered in `KnowledgeServerGrpcWiring`) increments it when one
+    of the nine user-waiting `SearchService` methods starts and decrements it on completion, error
+    or cancellation. `IngestService` calls — `IndexStatus` above all — never count, so polling
+    status cannot throttle indexing.
+*   **Policy:** `IndexingPacing` turns that gauge into a duty cycle. While a foreground call is in
+    flight (plus a short cooldown after the last one completes), each unit of indexing or backfill
+    work is followed by a proportional yield, so indexing keeps at most `foregroundDutyPct` of the
+    wall clock.
+*   **Rule:** the verb is a **throttle, never a stop**. At the default 20% duty, indexing under a
+    continuous search loop still advances at a fifth of its idle rate.
+*   **Keys:** `justsearch.indexing.foreground_duty_pct` (default 20) and
+    `justsearch.indexing.foreground_cooldown_ms` (default 500). Both resolve onto
+    `ResolvedConfig.Ai.BackfillPacing` and reach the Worker through the config snapshot.
+*   **Observability:** `worker.indexing.paced_intervals_total`, `worker.indexing.duty_pct` and
+    `worker.indexing.foreground_in_flight`, plus one rate-limited INFO line per 30 s from
+    `IndexingPacing` while pacing is happening. `worker.indexing.paused` reads 1 only for the
+    duration of a yield.
+
+Benchmarking/automation note:
+- A tight `POST /api/knowledge/search` polling loop no longer stops indexing, but it does hold the
+  loop at the configured minimum duty, which slows a throughput measurement. Prefer
+  `GET /api/status` or `GET /api/knowledge/status` to wait for quiescence, then do a single
+  sentinel search to validate searchability.
+
+The MMF `activity_epoch_ms` slot (offset `0`) is a **retired** field: nothing writes it and nothing
+reads it. It stays declared in `MmfWorkerSignalLayoutV1` until the layout itself is retired.
 
 ### 4. GPU Arbitration (VRAM)
 We support running on cards with only 8GB VRAM, which creates a conflict between:
