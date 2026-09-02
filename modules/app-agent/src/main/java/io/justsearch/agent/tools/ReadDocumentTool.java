@@ -4,6 +4,7 @@ package io.justsearch.agent.tools;
 import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.app.api.DocumentService;
+import io.justsearch.core.util.ContextBudget;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,12 +22,11 @@ import tools.jackson.databind.JsonNode;
  * read a document — the agent searched, got budgeted excerpts, and summarized those. One run made
  * the gap explicit by inventing a {@code read} op on the HIGH-risk file-operations tool.
  *
- * <p>Why RANGED rather than whole-file (868 §A.5/§B.1): the default context window is 4096 tokens
- * while the median indexed document is ~27 KB, so a whole-file read cannot fit and would be
- * silently clipped to a 4000-char prefix by {@code AgentContextCompressor}'s Layer-2 cap — the
- * founding complaint reproduced. {@link #READ_PAGE_CHARS} sits below that cap by construction, so a
- * page is delivered whole and the model pages forward with the {@code More:} offset the header
- * gives it.
+ * <p>Why RANGED rather than whole-file (868 §A.5/§B.1): the median indexed document is ~27 KB,
+ * larger than the input budget of every window rung below the top, so a whole-file read would be
+ * silently clipped by {@code AgentContextCompressor}'s Layer-2 cap — the founding complaint
+ * reproduced. {@link #readPageChars} sits below that cap by construction, so a page is delivered
+ * whole and the model pages forward with the {@code More:} offset the header gives it.
  *
  * <p>Readable universe: whatever the Worker will serve, i.e. INDEXED documents only. The Head never
  * touches document bytes (Hard Invariant #1) — this rides {@code DocumentService.fetchSlice}, which
@@ -36,14 +36,11 @@ import tools.jackson.databind.JsonNode;
  */
 public final class ReadDocumentTool implements OperationHandler {
 
-  /** The page size at the default Layer-2 cap (4000): ≈750 tokens, well inside n_ctx 4096. */
-  static final int DEFAULT_PAGE_CHARS = 3000;
-
   /**
    * Headroom kept under the Layer-2 cap for the header line (path + span + {@code More:} offset)
    * and the carrier line's own framing. 600 covers a 400-char path with margin.
    */
-  static final int PAGE_HEADROOM_CHARS = 600;
+  public static final int PAGE_HEADROOM_CHARS = 600;
 
   /**
    * The smallest page worth serving. Below this the tool refuses rather than pages: a 100-char page
@@ -52,25 +49,37 @@ public final class ReadDocumentTool implements OperationHandler {
   static final int MIN_PAGE_CHARS = 200;
 
   /**
-   * The per-call page size. DERIVED from {@code AgentContextCompressor.MAX_TOOL_RESULT_CHARS}
-   * (config {@code agent.maxToolResultChars}, default 4000) rather than a bare literal, so a
-   * lowered cap shrinks the page instead of clipping it: Layer-2 truncation must never cut a page —
-   * a read that arrives clipped is exactly the excerpt-shaped result this tool exists to replace.
-   * {@code ReadDocumentToolTest} pins the arithmetic by running a full page through the real {@code
-   * truncate} and asserting it comes back unchanged.
+   * The per-call page size, DERIVED (tempdoc 883 decision 3) from the live context budget rather
+   * than the former 3000-char literal — which was sized "well inside n_ctx 4096" and stayed that
+   * size at a 32768-token window, i.e. seven eighths of the room went unused.
+   *
+   * <p>Two bounds, and both are load-bearing:
+   *
+   * <ul>
+   *   <li>{@link ContextBudget#readDocumentPageChars()} — half the input budget, capped for
+   *       agent-context hygiene (a page must not BE the prompt).
+   *   <li>the Layer-2 cut minus {@link #PAGE_HEADROOM_CHARS} — because Layer-2 truncation must
+   *       never cut a page: a read that arrives clipped is exactly the excerpt-shaped result this
+   *       tool exists to replace (868 §A.5). The page fraction is deliberately LARGER than the
+   *       tool-result fraction, so without this second bound every full page would be clipped.
+   * </ul>
+   *
+   * <p>{@code ReadDocumentToolTest} pins the arithmetic by running a full page through the real
+   * {@code truncate} and asserting it comes back unchanged.
    *
    * <p>The floor is ZERO, deliberately. A {@code Math.max(MIN_PAGE_CHARS, …)} floor would DEFEAT the
    * derivation at exactly the caps it was added for: under a cap of ~500 the floor wins, the page
-   * exceeds the cap, and Layer-2 clips it — the silent failure this constant exists to prevent,
+   * exceeds the cap, and Layer-2 clips it — the silent failure this value exists to prevent,
    * reintroduced by the guard meant to bound it. So the arithmetic is allowed to go small and
    * {@link #execute(JsonNode)} refuses out loud when it lands under {@link #MIN_PAGE_CHARS}.
    */
-  public static final int READ_PAGE_CHARS =
-      Math.max(
-          0,
-          Math.min(
-              DEFAULT_PAGE_CHARS,
-              io.justsearch.agent.ToolResultCarrier.layerTwoCapChars() - PAGE_HEADROOM_CHARS));
+  public static int readPageChars(ContextBudget budget) {
+    return Math.max(
+        0,
+        Math.min(
+            budget.readDocumentPageChars(),
+            io.justsearch.agent.ToolResultCarrier.layerTwoCapChars(budget) - PAGE_HEADROOM_CHARS));
+  }
 
   /** Shared tail for every unreadable-document failure: the two tools that could still find it. */
   private static final String RECOVERY_GUIDANCE =
@@ -78,6 +87,9 @@ public final class ReadDocumentTool implements OperationHandler {
 
   private final SliceFetcher sliceFetcher;
   private final AgentToolPaths.RootsView rootsView;
+
+  /** The live per-call budget (tempdoc 883 decision 3); null-safe via the constructor. */
+  private final Supplier<ContextBudget> budget;
 
   public ReadDocumentTool(SliceFetcher sliceFetcher) {
     this(sliceFetcher, (Supplier<List<BrowseTool.RootInfo>>) null);
@@ -90,8 +102,22 @@ public final class ReadDocumentTool implements OperationHandler {
 
   /** Tempdoc 877 §2.4 — the shared roots view {@code AgentToolFactory.assemble} builds once. */
   public ReadDocumentTool(SliceFetcher sliceFetcher, AgentToolPaths.RootsView rootsView) {
+    this(sliceFetcher, rootsView, null);
+  }
+
+  /**
+   * Tempdoc 883 decision 3 — the composition-root constructor: roots view plus the live context
+   * budget. A null budget supplier falls back to the no-server budget, which is what an
+   * inference-less caller (a test, a boot before activation) actually has.
+   */
+  public ReadDocumentTool(
+      SliceFetcher sliceFetcher,
+      AgentToolPaths.RootsView rootsView,
+      Supplier<ContextBudget> budget) {
     this.sliceFetcher = sliceFetcher;
     this.rootsView = rootsView == null ? AgentToolPaths.RootsView.of(null) : rootsView;
+    this.budget =
+        budget == null ? () -> io.justsearch.agent.AgentContextBudgets.forCall(null) : budget;
   }
 
   @Override
@@ -112,12 +138,13 @@ public final class ReadDocumentTool implements OperationHandler {
    * PreviewController}: "Treat docId as opaque"), so one {@code path} argument addresses both.
    */
   OperationResult execute(JsonNode args) {
-    if (READ_PAGE_CHARS < MIN_PAGE_CHARS) {
+    int pageChars = readPageChars(budget.get());
+    if (pageChars < MIN_PAGE_CHARS) {
       // A configuration refusal, not an argument one — checked before any work so the operator sees
       // the cause rather than a stream of uselessly small pages.
       return OperationResult.failure(
           "agent.maxToolResultChars is too small to page a document (it leaves "
-              + READ_PAGE_CHARS
+              + pageChars
               + " chars per page, minimum "
               + MIN_PAGE_CHARS
               + "). Raise it to at least "
@@ -144,7 +171,7 @@ public final class ReadDocumentTool implements OperationHandler {
     }
 
     int offsetChars = ToolArgs.intArg(args, "offset_chars", 0, 0, Integer.MAX_VALUE);
-    int maxChars = ToolArgs.intArg(args, "max_chars", READ_PAGE_CHARS, 1, READ_PAGE_CHARS);
+    int maxChars = ToolArgs.intArg(args, "max_chars", pageChars, 1, pageChars);
 
     DocumentService.DocumentSlice slice;
     try {

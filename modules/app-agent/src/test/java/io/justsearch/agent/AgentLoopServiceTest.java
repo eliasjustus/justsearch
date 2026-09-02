@@ -1478,7 +1478,7 @@ class AgentLoopServiceTest {
             + " vs "
             + bigOutput.length());
     assertEquals(
-        AgentContextCompressor.MAX_TOOL_RESULT_CHARS,
+        layerTwo().toolResultCapChars(),
         completed.outputCharsToModel(),
         "RED BEFORE the B1 fix: the producer measured truncate()'s RETURN, which carries the"
             + " `[... truncated, N chars omitted]` marker, so it reported ~35 chars more than the"
@@ -1949,31 +1949,45 @@ class AgentLoopServiceTest {
   // Tool result truncation
   // ---------------------------------------------------------------------------
 
+  /**
+   * A compressor budgeting against the no-server window, which is what these tests run under.
+   *
+   * <p>Tempdoc 883 decision 3 — the Layer-2 cap is no longer a class-init constant, so these
+   * assertions are written against {@code toolResultCapChars()} rather than the literal 4000 they
+   * used to hardcode. That is the stronger pin: it states the RELATIONSHIP (prefix kept, overflow
+   * counted) at whatever cap the window derives, instead of a number that silently stopped being
+   * the cap the moment the window changed.
+   */
+  private static AgentContextCompressor layerTwo() {
+    return new AgentContextCompressor(false, 200, 1);
+  }
+
   @Test
   void truncateForContext_shortOutput_passesThrough() {
     String shortOutput = "Found 3 results (took 15ms).";
-    assertEquals(shortOutput, AgentContextCompressor.truncate(shortOutput));
+    assertEquals(shortOutput, layerTwo().truncate(shortOutput));
   }
 
   @Test
   void truncateForContext_nullOutput_returnsNull() {
-    assertNull(AgentContextCompressor.truncate(null));
+    assertNull(layerTwo().truncate(null));
   }
 
   @Test
   void truncateForContext_longOutput_isTruncated() {
-    String longOutput = "x".repeat(5000);
-    String result = AgentContextCompressor.truncate(longOutput);
+    int cap = layerTwo().toolResultCapChars();
+    String longOutput = "x".repeat(cap + 1000);
+    String result = layerTwo().truncate(longOutput);
     assertTrue(result.length() < longOutput.length(), "Should be shorter than original");
-    assertTrue(result.startsWith("x".repeat(4000)), "Should preserve start of output");
+    assertTrue(result.startsWith("x".repeat(cap)), "Should preserve start of output");
     assertTrue(result.contains("[... truncated,"), "Should include truncation notice");
     assertTrue(result.contains("1000 chars omitted]"), "Should report omitted char count");
   }
 
   @Test
   void truncateForContext_exactlyAtLimit_passesThrough() {
-    String exactOutput = "x".repeat(4000);
-    assertEquals(exactOutput, AgentContextCompressor.truncate(exactOutput));
+    String exactOutput = "x".repeat(layerTwo().toolResultCapChars());
+    assertEquals(exactOutput, layerTwo().truncate(exactOutput));
   }
 
   @Test

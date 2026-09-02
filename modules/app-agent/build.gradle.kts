@@ -8,6 +8,10 @@ dependencies {
   api(project(":modules:app-agent-api"))
 
   api(project(":modules:app-api"))
+  // Tempdoc 883 decision 3 — ContextBudget + TokenEstimation live in modules/core (a leaf, no
+  // project deps, so this cannot cycle). `api` because the budget appears in the constructor
+  // signatures of the tools this module exports.
+  api(project(":modules:core"))
   implementation(project(":modules:configuration"))
   api(project(":modules:telemetry"))
 

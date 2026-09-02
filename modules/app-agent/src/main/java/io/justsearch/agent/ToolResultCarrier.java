@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.agent;
 
+import io.justsearch.core.util.ContextBudget;
 import java.util.regex.Pattern;
 
 /**
@@ -81,12 +82,17 @@ public final class ToolResultCarrier {
   }
 
   /**
-   * The Layer-2 per-tool-result cap ({@code AgentContextCompressor.MAX_TOOL_RESULT_CHARS}), exposed
-   * for the one writer that must size its output UNDER it — {@code ReadDocumentTool}'s page — so a
-   * lowered {@code agent.maxToolResultChars} shrinks the page instead of clipping it.
+   * The Layer-2 per-tool-result cap for a given budget, exposed for the writers that must size their
+   * output UNDER it — {@code ReadDocumentTool}'s page and {@code SearchTool}'s result list — so the
+   * cut shrinks their output instead of clipping it.
+   *
+   * <p>Tempdoc 883 decision 3: the cap is a fraction of the live context window
+   * ({@link ContextBudget#toolResultCapChars()}), or the operator's explicit
+   * {@code justsearch.agent.max_tool_result_chars} when one is set. It was a {@code static final}
+   * resolved at class-init, which is why a window change at runtime never reached it.
    */
-  public static int layerTwoCapChars() {
-    return AgentContextCompressor.MAX_TOOL_RESULT_CHARS;
+  public static int layerTwoCapChars(ContextBudget budget) {
+    return AgentContextBudgets.toolResultCapChars(budget);
   }
 
   /** Write one content-preview line (the vector/dense-only fallback: no excerpt regions exist). */

@@ -24,7 +24,7 @@ import tools.jackson.databind.ObjectMapper;
  * and yields the {@code fallback} (not {@code min}). That is what {@code SearchTool}'s
  * {@code if (limit < 1) limit = DEFAULT_LIMIT} and {@code BrowseTool}'s
  * {@code if (maxFolders < 1) maxFolders = DEFAULT_MAX_FOLDERS} already did, and what
- * {@code ReadDocumentTool}'s {@code requested <= 0 ? READ_PAGE_CHARS : min(requested, …)} already
+ * {@code ReadDocumentTool}'s {@code requested <= 0 ? pageChars : min(requested, …)} already
  * did. Absent, JSON-null and blank all yield the fallback.
  *
  * <p>The exactness claim is scoped to the BOUNDS. One arm diverges deliberately: a present,

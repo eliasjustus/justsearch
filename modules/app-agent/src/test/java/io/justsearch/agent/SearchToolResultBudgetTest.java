@@ -65,14 +65,14 @@ final class SearchToolResultBudgetTest {
 
     assertTrue(result.success(), message);
     assertTrue(
-        message.length() <= ToolResultCarrier.layerTwoCapChars(),
+        message.length() <= ToolResultCarrier.layerTwoCapChars(AgentContextBudgets.forCall(null)),
         "formatted result is "
             + message.length()
             + " chars, over the Layer-2 cap of "
-            + ToolResultCarrier.layerTwoCapChars());
+            + ToolResultCarrier.layerTwoCapChars(AgentContextBudgets.forCall(null)));
     assertEquals(
         message,
-        AgentContextCompressor.truncate(message),
+        new AgentContextCompressor(false, 200, 1).truncate(message),
         "Layer 2 must not fire on a result the producer already budgeted");
     assertTrue(
         message.contains("Found 20 results"),
@@ -98,14 +98,14 @@ final class SearchToolResultBudgetTest {
 
     assertTrue(result.success(), message);
     assertTrue(
-        message.length() <= ToolResultCarrier.layerTwoCapChars(),
+        message.length() <= ToolResultCarrier.layerTwoCapChars(AgentContextBudgets.forCall(null)),
         "formatted result is "
             + message.length()
             + " chars, over the Layer-2 cap of "
-            + ToolResultCarrier.layerTwoCapChars());
+            + ToolResultCarrier.layerTwoCapChars(AgentContextBudgets.forCall(null)));
     assertEquals(
         message,
-        AgentContextCompressor.truncate(message),
+        new AgentContextCompressor(false, 200, 1).truncate(message),
         "Layer 2 must not fire on a result the producer already budgeted");
     assertTrue(
         message.contains("[1] "),

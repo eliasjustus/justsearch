@@ -332,7 +332,10 @@ public final class AgentLoopService implements AgentService {
         new AgentContextCompressor(
             resolveFromConfig(rc -> rc.agent().contextCompressionEnabled(), true),
             Math.max(1, resolveFromConfig(rc -> rc.agent().contextCompressionMinChars(), 200)),
-            Math.max(0, resolveFromConfig(rc -> rc.agent().contextCompressionKeepLastResults(), 0)));
+            Math.max(0, resolveFromConfig(rc -> rc.agent().contextCompressionKeepLastResults(), 0)),
+            // Tempdoc 883 decision 3 — the Layer-2 cap is read from the LIVE window per truncation,
+            // not frozen at class-init. The supplier, not a value, is what makes that true.
+            () -> AgentContextBudgets.forCall(this.onlineAiService));
     this.llmCaller = new AgentLlmCaller(this.onlineAiService, this.agentTelemetry, this.compressor);
     this.toolDispatcher =
         new AgentToolDispatcher(
