@@ -110,6 +110,13 @@ public final class HeadAssembly implements AutoCloseable {
   // Tempdoc 629 (#E faithful import): held so the agent-run BackupSink can re-index a RESTORED run into
   // the searchable agent-history collection (import doesn't fire the live listener).
   private io.justsearch.app.services.agenthistory.AgentHistoryIndexer agentHistoryIndexer;
+
+  /**
+   * Tempdoc 909 item 1 — runs one agent-history reconciliation pass looks at. Matches
+   * {@code AgentRunReconciler.SCAN_LIMIT}: far above any plausible run count, and
+   * {@code listSessions} clamps below it.
+   */
+  private static final int AGENT_HISTORY_SCAN_LIMIT = 100_000;
   // Tempdoc 778 — the default-on local feedback-capture flag, shared by every capture site + the
   // /api/feedback/capture surface.
   private io.justsearch.app.services.feedback.FeedbackCaptureSettings feedbackCaptureSettings;
@@ -625,6 +632,29 @@ public final class HeadAssembly implements AutoCloseable {
               agentRunStore::addEventListener,
               dataDir.resolve("agent-history"),
               () -> this.knowledgeClient);
+      // Tempdoc 909 item 1 — a transcript is a DERIVED projection of the run's terminal event, but
+      // nothing re-derived one outside faithful backup import: a transcript lost to a torn write or
+      // a partial restore stayed un-searchable forever. Re-derive the missing/unreadable ones at
+      // boot, and AGAIN on unlock, because a locked store lists no sessions at all (the same 834 R5
+      // trap AgentRunReconciler names just above). The pass is idempotent and runs off the boot
+      // thread.
+      final io.justsearch.agent.AgentRunStore runStoreForHistory = agentRunStore;
+      final io.justsearch.app.services.agenthistory.AgentHistoryIndexer historyIndexer =
+          this.agentHistoryIndexer;
+      Runnable reindexMissingTranscripts =
+          () ->
+              historyIndexer.reconcile(
+                  () ->
+                      runStoreForHistory.listSessions(AGENT_HISTORY_SCAN_LIMIT).stream()
+                          .map(summary -> summary.get("sessionId"))
+                          .filter(String.class::isInstance)
+                          .map(String.class::cast)
+                          .toList(),
+                  sessionId -> runStoreForHistory.runEvents().readEvents(sessionId));
+      reindexMissingTranscripts.run();
+      new io.justsearch.app.services.encryption.UnlockDeferredScan(
+              "agent-history-reconciler", reindexMissingTranscripts)
+          .attachTo(this.dataKeyManager);
     }
 
     // §4 Phase 5 — OrchestrationPhase: composes CapabilityHealthBridge + AgentLoopWiring +

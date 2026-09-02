@@ -13,6 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +42,20 @@ public final class AgentHistoryIndexer {
 
   /** The reserved collection tag for indexed agent transcripts (shared with the D4b search scope). */
   public static final String COLLECTION = "agent-history";
+
+  /**
+   * The first characters of every transcript {@link #renderTranscript} produces, and therefore the
+   * readability probe {@link #reconcileNow} uses. One constant so the writer and the check cannot
+   * drift into a reconciliation that rebuilds every file forever (or none of them).
+   */
+  static final String TRANSCRIPT_HEADER = "# Agent run";
+
+  /**
+   * Transcripts one reconciliation pass will re-derive. Bounds the work a single start can do on an
+   * install whose history predates the transcript feature; the pass is idempotent, so the remainder
+   * is picked up by the next start (or the next unlock).
+   */
+  private static final int MAX_REBUILDS_PER_PASS = 200;
 
   private static final Logger LOG = LoggerFactory.getLogger(AgentHistoryIndexer.class);
 
@@ -78,17 +93,15 @@ public final class AgentHistoryIndexer {
    * The {@code RunEventStore} listener: on a terminal {@code done}/{@code error} record, schedule the
    * transcript write + ingest off the hot path. Non-terminal events are ignored.
    */
-  @SuppressWarnings("unchecked")
   public void onEvent(String sessionId, Map<String, Object> record) {
     if (record == null) {
       return;
     }
-    String eventType = String.valueOf(record.get("eventType"));
+    String eventType = eventTypeOf(record);
     if (!"done".equals(eventType) && !"error".equals(eventType)) {
       return;
     }
-    Map<String, Object> payload =
-        record.get("payload") instanceof Map<?, ?> p ? (Map<String, Object>) p : Map.of();
+    Map<String, Object> payload = payloadOf(record);
     boolean errored = "error".equals(eventType);
     executor.execute(() -> writeAndIndex(sessionId, payload, errored));
   }
@@ -114,10 +127,139 @@ public final class AgentHistoryIndexer {
     }
   }
 
+  /**
+   * Tempdoc 909 item 1 — re-derive the transcripts that are missing or unreadable, off the boot
+   * thread. Runs on the same single daemon thread the live path uses, so it can never delay boot or
+   * an agent run.
+   *
+   * @param sessionIds every persisted run id, newest-first (the caller bounds the scan)
+   * @param eventLoader loads one run's persisted events; may return null/empty when the run is gone
+   *     or the store is locked
+   */
+  public void reconcile(Supplier<List<String>> sessionIds, Function<String, List<?>> eventLoader) {
+    executor.execute(() -> reconcileNow(sessionIds, eventLoader));
+  }
+
+  /**
+   * The synchronous body of {@link #reconcile} — returns how many transcripts it re-derived.
+   *
+   * <p><b>The corruption policy this implements</b> (register row {@code agent-history-transcripts},
+   * {@code REGENERATE_FROM_RUN_EVENTS_OR_PRESERVE}): a transcript is a DERIVED projection of the
+   * sealed {@code agent-runs} terminal event, so a missing or unreadable one is re-derived from
+   * that event and re-indexed. When the run is NOT available — deleted, or the store is locked on an
+   * encrypted install — the bytes on disk are left exactly as they are and the transcript is simply
+   * not re-indexed. It is never deleted: an unreadable store is indistinguishable from an empty one
+   * here (the same trap {@code AgentRunReconciler} documents), so a "drop what cannot be rebuilt"
+   * rule would erase every good transcript on the first locked boot.
+   */
+  int reconcileNow(Supplier<List<String>> sessionIds, Function<String, List<?>> eventLoader) {
+    List<String> ids;
+    try {
+      ids = sessionIds.get();
+    } catch (RuntimeException e) {
+      LOG.warn("Agent-history reconciliation could not list runs", e);
+      return 0;
+    }
+    if (ids == null || ids.isEmpty()) {
+      return 0;
+    }
+    int rebuilt = 0;
+    int preserved = 0;
+    for (String sessionId : ids) {
+      if (sessionId == null || sessionId.isBlank() || isReadableTranscript(transcriptPath(sessionId))) {
+        continue;
+      }
+      if (rebuilt >= MAX_REBUILDS_PER_PASS) {
+        LOG.info(
+            "Agent-history reconciliation stopped at {} rebuilds; the rest resume next start",
+            MAX_REBUILDS_PER_PASS);
+        break;
+      }
+      Map<String, Object> terminal;
+      try {
+        terminal = terminalRecord(eventLoader.apply(sessionId));
+      } catch (RuntimeException e) {
+        LOG.debug("Agent-history reconciliation could not read run {}: {}", sessionId, e.toString());
+        terminal = null;
+      }
+      if (terminal == null) {
+        if (Files.exists(transcriptPath(sessionId))) {
+          preserved++;
+        }
+        continue; // nothing to re-derive from — preserve whatever is on disk
+      }
+      writeAndIndex(sessionId, payloadOf(terminal), "error".equals(eventTypeOf(terminal)));
+      rebuilt++;
+    }
+    if (rebuilt > 0) {
+      LOG.info("Re-derived {} agent-history transcript(s) from their runs", rebuilt);
+    }
+    if (preserved > 0) {
+      LOG.warn(
+          "{} agent-history transcript(s) are unreadable and their runs are unavailable; the files"
+              + " were left untouched and are not searchable",
+          preserved);
+    }
+    return rebuilt;
+  }
+
+  private Path transcriptPath(String sessionId) {
+    return historyDir.resolve(sessionId + ".md");
+  }
+
+  /**
+   * Whether {@code target} is a transcript this class wrote: a non-empty file starting with the
+   * header {@link #renderTranscript} always emits. A zero-length or foreign-content file is the
+   * observable shape of a torn write, and is treated as absent rather than left un-searchable
+   * forever.
+   */
+  private static boolean isReadableTranscript(Path target) {
+    try {
+      if (!Files.isRegularFile(target) || Files.size(target) == 0) {
+        return false;
+      }
+      try (var reader = Files.newBufferedReader(target, StandardCharsets.UTF_8)) {
+        char[] head = new char[TRANSCRIPT_HEADER.length()];
+        int read = reader.read(head);
+        return read == head.length && TRANSCRIPT_HEADER.equals(new String(head));
+      }
+    } catch (IOException | RuntimeException e) {
+      return false;
+    }
+  }
+
+  /** The run's terminal {@code done}/{@code error} record, or null when it has none. */
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> terminalRecord(List<?> events) {
+    if (events == null) {
+      return null;
+    }
+    Map<String, Object> terminal = null;
+    for (Object ev : events) {
+      if (ev instanceof Map<?, ?> record) {
+        Map<String, Object> typed = (Map<String, Object>) record;
+        String eventType = eventTypeOf(typed);
+        if ("done".equals(eventType) || "error".equals(eventType)) {
+          terminal = typed;
+        }
+      }
+    }
+    return terminal;
+  }
+
+  private static String eventTypeOf(Map<String, Object> record) {
+    return String.valueOf(record.get("eventType"));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> payloadOf(Map<String, Object> record) {
+    return record.get("payload") instanceof Map<?, ?> p ? (Map<String, Object>) p : Map.of();
+  }
+
   private void writeAndIndex(String sessionId, Map<String, Object> payload, boolean errored) {
     try {
       Files.createDirectories(historyDir);
-      Path target = historyDir.resolve(sessionId + ".md");
+      Path target = transcriptPath(sessionId);
       atomicWrite(target, renderTranscript(sessionId, payload, errored));
       RemoteKnowledgeClient client = clientSupplier.get();
       if (client != null) {
@@ -134,12 +276,12 @@ public final class AgentHistoryIndexer {
   static String renderTranscript(String sessionId, Map<String, Object> payload, boolean errored) {
     StringBuilder md = new StringBuilder();
     if (errored) {
-      md.append("# Agent run (error)\n\n");
+      md.append(TRANSCRIPT_HEADER).append(" (error)\n\n");
       md.append(str(payload.get("error"))).append("\n");
       return md.toString();
     }
     String answer = str(payload.get("finalResponse"));
-    md.append("# Agent run\n\n");
+    md.append(TRANSCRIPT_HEADER).append("\n\n");
     md.append(answer).append("\n");
 
     Object sourcesObj = payload.get("sources");
