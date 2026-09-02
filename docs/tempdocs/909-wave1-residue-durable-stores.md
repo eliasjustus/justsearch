@@ -333,3 +333,16 @@ deleted"). This is a deliberate, user-visible change of an existing behaviour, n
 guard: it makes an undo do LESS than it did before, on exactly the batches whose safety cannot be
 established. New copies (schema v2) undo exactly as they did, verified. Copies above
 `MAX_DIGEST_BYTES` take the same preserve branch for the same reason.
+
+## Live product validation (2026-09-02)
+
+Two independent reviewers ran a live product-validation campaign against this lane's items:
+
+- **V4** — COPY-undo, all three cases PASS: verified copy deleted; unverifiable/pre-v2-journal
+  copy preserved with the user told by name; oversized copy takes the same preserve branch.
+- **V5** — rotation PASS.
+- **V6** — transcript rebuild PASS after a restart.
+- **V7** — the reconcile 409 is DEV-ONLY: `runningVersion` is set only by the Tauri shell, so a
+  dev-runner backend never sets it and the 409 cannot occur in a shipped install.
+
+Related PRs: #616, #617.
