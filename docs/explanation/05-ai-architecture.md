@@ -95,6 +95,7 @@ The control plane and flags (e.g., `-ngl`) exist today, but GPU acceleration onl
     *   `-kvu`: Unified KV cache. Required *because* `-np` is explicit: passing `-np` at all disables llama-server's automatic `kv_unified`, and without `-kvu` two slots halve the window a request actually gets (`n_ctx_seq`) while `/props` still reports the full `n_ctx`.
     *   `-ctk <type> -ctv <type>`: KV cache type, `q8_0` by default (`JUSTSEARCH_LLM_KV_TYPE`).
     *   `-fa on`: Flash attention, explicitly on - a quantized V-cache aborts the launch without it, so this is never left at `auto`.
+    *   `-fit off`: Memory fitting off. llama-server defaults `--fit on` ("adjust unset arguments to fit in device memory") and it MAXIMIZES rather than fits - with `-c` omitted it chose 242,944 tokens and 4 GB of KV. JustSearch sets `-c` explicitly and needs a rung that does not fit to produce a hard, detectable abort, which is the signal the context ladder steps down on; a memory-adjusting heuristic running beside it could absorb that signal instead.
     *   `--mmproj`: Vision adapter path (for Qwen/Llava).
     *   `--port <port>`: HTTP port.
     *   `--jinja`, `--metrics`, `--host 127.0.0.1`, and (when thinking is enabled) `--reasoning-format deepseek --reasoning-budget N`.
@@ -114,14 +115,22 @@ outranked every other source. Since tempdoc 883 the window is a resource the run
   detection, so `/api/debug/effective-config` explains the window with the same mechanism that
   explains GPU detection.
 * If llama-server refuses a rung it exits immediately; `LlamaServerOps.waitForServerHealth` steps
-  down one rung and relaunches. A rung that does not fit costs context, not inference.
+  down one rung and relaunches. A rung that does not fit costs context, not inference. This is why
+  `-fit off` is passed: the step-down reads a hard abort, so llama-server's default memory-fitting
+  pass must not be running alongside it.
 * An explicit `justsearch.context.size` (env, `-D`, `settings.json`, YAML) is a **one-rung ladder**:
   honoured or the launch fails loud. `UiSettings.contextLength` `0` means auto.
 * What was launched is published on `/api/inference/status` as `contextWindow`
   (`{rung, reason, freeVramBytes, slots, kvType}`, where reason is `fit`, `override` or
-  `stepped-from:<n>`). That is the INTENT. What the server reports - `/props` `n_ctx`, and
+  `stepped-from:<n>`) and on the runtime manifest as `ai.contextWindow` - "what did this
+  installation end up with", which is a fact about the machine rather than a setting anyone can
+  read back out of config. That is the INTENT. What the server reports - `/props` `n_ctx`, and
   `n_ctx_seq` in its log - stays the authority for what a request actually gets, and is published
   separately as `llmContextTokens`.
+* Caveat on `/props.n_ctx`: it reports the server's TOTAL context even when `kv_unified` is off, in
+  which case each request actually gets `n_ctx / n_parallel`. A matching `n_ctx` is therefore NOT
+  evidence that a request gets the full window; the guarantee is the argv (`-kvu` always
+  accompanying an explicit `-np`) plus reading `n_ctx_seq` from the llama-server log.
 * No VRAM arithmetic and no GGUF reader: the packaged model is a Gated-Delta-Net hybrid whose KV
   footprint no dense-attention formula predicts within 4x, and `/props` does not expose
   `n_ctx_train`. Free VRAM is recorded for diagnosis, never used as an input.

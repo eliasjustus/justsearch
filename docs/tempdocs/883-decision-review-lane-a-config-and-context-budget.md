@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS — chunk 1 (PR 1: precedence slice 1 + derived context window) implemented; live window pending
+status: IN PROGRESS — chunk 1 (PR 1 #596: precedence slice 1 + derived context window) implemented, independent review folded (§D); live window pending
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: lane-A worker (branch worktree-lane-A, base 6c3ba431)
@@ -492,3 +492,122 @@ Decision 3 (`ContextBudget` and the item-9 constants), decision 5 (the `getenv` 
 reader gate), decision 4 slice 2 (the `server.exe` / `exclude_patterns` / `gpu.layers` promotions),
 and **ADR-0047 "Context window as a derived resource"** (number reserved; written in a later chunk,
 not this one).
+
+## §D — Independent review fold (PR #596, 2026-09-02): NEEDS-FIXES applied
+
+The reviewer returned one design-premise blocker and four should-fix items. All are applied on
+`worktree-lane-A`; two were refuted and are recorded as accepted-as-is.
+
+### D.1 — BLOCKER: the step-down premise was unmeasured. Fixed by `-fit off`.
+
+The ladder steps down only on `PROCESS_EXITED` (`LlamaServerOps.relaunchAtLowerContextRung` ←
+`awaitServerHealth`'s `!process.isAlive()` branch), which assumes an unfittable `-c` is a hard
+abort. But b8571 defaults `--fit on`, and the fold's [R4] measured that it MAXIMIZES rather than
+fits (242,944 tokens / 4 GB KV with `-c` omitted) and reallocates layers. The reviewer's read —
+that `--fit` only touches UNSET arguments, so our explicit `-c` and `-ngl` are outside its remit —
+is probably right but was inferred, not measured.
+
+Verified against the bundled binary rather than reasoned about
+(`modules/ui/native-bin/llama-server/variants/cuda12/llama-server.exe --help`, version
+`8571 (e397d3885)`):
+
+```
+-fit,  --fit [on|off]                   whether to adjust unset arguments to fit in device memory ('on' or
+                                        'off', default: 'on')
+                                        (env: LLAMA_ARG_FIT)
+```
+
+So the flag exists, is spelled `-fit off`, and IS on by default. The fix is to stop depending on
+the inference: the launch now passes `-fit off` unconditionally
+(`LlamaServerOps.memoryPlanFlags`). The premise the ladder rests on — a rung that does not fit
+produces a hard, detectable abort — is now a property of the launch line rather than of a
+heuristic's documented scope. Argv docs, `environment-variables.md` and register D-010 updated.
+The live window still measures an actual unfittable `-c` (exit code + log) before merge; this
+change makes that measurement mean something.
+
+### D.2 — The window is now on the runtime manifest, not only the status endpoint.
+
+Decision 1 says "record rung, reason and NVML free VRAM in the activation record **and the runtime
+manifest**"; PR 1 only did the former. `RuntimeManifest.AiInfo` gains a nullable additive
+`contextWindow` carrying the same `OnlineAiRuntimeIntrospection.ContextWindow` record the status
+endpoint publishes — a projection of one authority, not a second shape. Populated where
+`thinkingSupport` already is (`HeadAssembly.launchedContextWindow` → `publishAi` → both listener
+call sites), null when this process launched no server. No schema bump (nullable + `NON_NULL`),
+matching the tempdoc-682 build-pin and tempdoc-835 thinking-verdict precedents.
+
+Tests: `RuntimeManifestSchemaCompatibilityTest.aiContextWindowRoundTripsAndStaysOptional` (round
+trip, absent-stays-absent) and `RuntimeManifestControllerRedactionTest` (the window survives the
+public projection — it is a capability fact, and free VRAM is already public on
+`/api/inference/status.gpu`).
+
+`check-runtime-manifest-closure` still fails on `main` for two unrelated pre-existing
+`sibling-file` violations (`packaging/mcpb/server/index.js:33`,
+`scripts/sandbox/mcp-typed-confirm.mjs:109`, both reading `runtime/api-port.txt`, last touched in
+#468). This PR adds no `<dataDir>/runtime/` file and no new sibling; it adds a field to the
+existing manifest.
+
+### D.3 — Adopted external servers are no longer judged by our own rung.
+
+`ServerPropsOps` set `externalServerContextTooSmall` from `ctx < config.get().contextSize()`. Once
+that configured value became a derived 32768 rung, every adopted BYO llama-server below 32k — an
+entirely workable 8192, say — would have been flagged too small. The comparand is now
+`ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS` (4096, and defined AS the ladder's bottom rung so
+the two cannot drift): the smallest window this app will run its own engine at is the honest floor
+for one it adopts. Tests cover 8192 → false, 4096 → false, 2048 → true, null → false, and that the
+constant is the ladder's last rung.
+
+### D.4 — Ownership-matrix prose now says `settings.json`, matching the resolver.
+
+§B.c decided to report the resolver's own spelling; the new prose said `settings_json` in three
+places. Fixed at the source (`scripts/docs/runtime-config-matrix-lib.mjs`), not in the generated
+file, and regenerated. `grep -c settings_json docs/reference/configuration/runtime-config-ownership-matrix.md` → 0.
+
+### D.5 — Test precision.
+
+(a) `LlamaServerOps.buildLaunchCommand(cfg, rc, gpuLayers, plan)` is now a pure, package-private
+static that builds the FULL argv; `startLlamaServer` keeps only the side effects. The test asserts
+the complete ordered list. **Mutation-verified rather than assumed**: deleting
+`command.addAll(memoryPlanFlags(...))` fails 5 of the 11 tests in `LlamaServerLaunchFlagsTest`
+(exact-argv, memory-plan-block, CPU argv, VDU argv, thinking-off), re-run and restored.
+
+(b) `HeadlessAppContextWindowAutoDetectTest` gains two end-to-end cases over the real composition:
+`augmentDerivedContextWindow(augmentGpuAutoDetectionAndMirror(probe, 12GB))` yields the GPU rung,
+and the swapped order yields the CPU rung. Asserting the two orders DIFFER is what makes swapping
+the calls in `resolveConfig` a test failure rather than a silent 4x context loss on every GPU box.
+
+### D.6 — Nits.
+
+(a) `planContextWindow` now takes BOTH the provenance and the value from the same
+`ConfigResolution` (it previously read the ordinal from the resolution and the number from
+`InferenceConfig`, two reads of one fact that can disagree), with an unparseable or non-positive
+value falling back to the derived ladder rather than to a bad override. It no longer takes
+`InferenceConfig` at all.
+(b) An override that exhausts its one-rung ladder now logs at ERROR naming the override and the
+remedy ("set it lower, or set it to 0"), instead of the ladder-exhausted WARN which described
+something that had not happened.
+(c) `applyContextInsightsFromProps` javadoc records what `/props.n_ctx` cannot prove: it reports
+the TOTAL context even when `kv_unified` is off, so a matching `n_ctx` is not evidence a request
+gets the full window. The guarantee for [R1] is the argv-order test plus the live `n_ctx_seq` log
+check — with an explicit instruction not to add a check here that claims otherwise.
+(d) **Ownership exceptions taken by this lane**, named per §C.4: `InferenceStatusResponse.java`,
+`OnlineAiRuntimeIntrospection.java`, `RuntimeManifest.java` (app-api, additive fields);
+`InferenceHandlers.java`, `RuntimeManifestPublisher.java`, `RuntimeManifestListenerWiring.java`
+(modules/ui, wiring the additive fields); `HeadAssembly.java` (one delegating accessor);
+`SSOT/schemas/inference-status-response.v1.json` + its `modules/ui/src/main/resources` dual copy
+and `modules/ui-web/src/api/generated/schema-types/inference-status-response.ts` (all three
+REGENERATED, not hand-edited); `scripts/docs/runtime-config-matrix-lib.mjs` (the generator for a
+lane-owned doc). None is a lane-C or lane-B owned surface.
+
+### D.7 — Refuted by the reviewer, accepted as-is (no change)
+
+The `RuntimeActivationService` VRAM-delta probe literal (§B.c), override = one rung / fail loud
+(§B.c), the migration ordering, and `-c` always being explicit.
+
+### D.8 — Live-window items, updated
+
+§C.5 stands, with one addition and one sharpening:
+
+- **(new) `-fit off` is accepted by the running build** and appears in the launch line.
+- **(sharpened) item 5**: force an unfittable top rung and record the llama-server **exit code and
+  the log line**, not merely that the reason string changed — that is the measurement this PR's
+  `-fit off` change exists to make meaningful.

@@ -255,12 +255,16 @@ Design choices in the current inference runtime, with rationale.
   2, migrating the old 4096 default); the settings-to-sysprop promotion and the
   `justsearch.context.size.source` marker are deleted. An explicit
   `justsearch.context.size` above ordinal 150 is a ONE-RUNG ladder: honoured or failed loud.
-- **Slots + KV:** `-np 2 -kvu -ctk q8_0 -ctv q8_0 -fa on`, keys `justsearch.llm.slots` (default 2,
+- **Slots + KV + fit:** `-np 2 -kvu -ctk q8_0 -ctv q8_0 -fa on -fit off`, keys `justsearch.llm.slots` (default 2,
   clamped [1,8]) and `justsearch.llm.kv_type` (default `q8_0`, restricted to llama.cpp cache types).
   `-kvu` is mandatory next to an explicit `-np`: llama-server enables `kv_unified` only when the
   slot count is automatic, so `-c 32768 -np 2` alone gives `n_ctx_seq` 16384 while `/props` still
   reports `n_ctx` 32768. Two slots is a SCHEDULING choice (a background delegate must not evict the
-  foreground prompt-cache prefix, tempdoc 841), not a memory one.
+  foreground prompt-cache prefix, tempdoc 841), not a memory one. `-fit off` is what makes the
+  ladder mean anything: b8571 defaults `--fit on` (verified against the bundled binary's `--help`:
+  `-fit, --fit [on|off] ... default: on`) and it MAXIMIZES rather than fits, so leaving a
+  memory-adjusting pass running next to an explicit `-c` risks absorbing the hard abort the
+  step-down reads as its signal.
 - **Rationale:** the model trains at 262k; the app ran it at 4096 with four engine-chosen slots and
   an f16 KV cache. Measured on the bundled b8571 (tempdoc 883 independent review): `-fa auto`
   resolves to on for CUDA and for `-ngl 0` but is passed explicitly because a q8_0 V-cache aborts
@@ -270,11 +274,17 @@ Design choices in the current inference runtime, with rationale.
   layers carry KV, plus ~50 MiB/slot of recurrent state independent of n_ctx; 32 KiB/token f16,
   17 KiB/token q8_0), so any dense-attention formula is ~4x wrong, and `/props` on b8571 does not
   expose `n_ctx_train`. Free VRAM is recorded on the activation record, never used as an input.
-- **What is intent vs observation:** `/api/inference/status.contextWindow`
-  (`{rung, reason, freeVramBytes, slots, kvType}`) is the INTENT. `/props` `n_ctx` (published as
-  `llmContextTokens`) and `n_ctx_seq` in the llama-server log are the OBSERVATION and stay
-  authoritative. `ServerPropsOps` compares the readback against the LAUNCHED rung, not
-  `InferenceConfig.contextSize()` - the latter is stale by construction after a step-down.
+- **What is intent vs observation:** `/api/inference/status.contextWindow` and the runtime
+  manifest's `ai.contextWindow` (`{rung, reason, freeVramBytes, slots, kvType}`) are the INTENT.
+  `/props` `n_ctx` (published as `llmContextTokens`) and `n_ctx_seq` in the llama-server log are the
+  OBSERVATION and stay authoritative. `ServerPropsOps` compares the readback against the LAUNCHED
+  rung, not `InferenceConfig.contextSize()` - the latter is stale by construction after a step-down.
+  Note `/props.n_ctx` reports the TOTAL context even when `kv_unified` is off (each request then
+  gets `n_ctx / n_parallel`), so it cannot by itself prove a request gets the full window.
+- **Adopted servers are judged by the floor, not by our rung:** `externalServer.contextTooSmall`
+  compares an adopted BYO server's window against `ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS`
+  (4096, the ladder's bottom rung), not against the derived 32k we would have chosen for a server
+  we launched ourselves.
 - **Evidence:** tempdoc 883 (contract, independent review fold R1-R4, §B pre-impl pass, §C
   post-impl pass). Live-window acceptance (`n_ctx_seq`, `kv_unified=true`, forced step-down,
   q8_0 vs f16 tok/s) is scheduled separately and NOT yet measured as of PR 1.
@@ -483,6 +493,7 @@ The control plane and flags (e.g., `-ngl`) exist today, but GPU acceleration onl
     *   `-kvu`: Unified KV cache. Required *because* `-np` is explicit: passing `-np` at all disables llama-server's automatic `kv_unified`, and without `-kvu` two slots halve the window a request actually gets (`n_ctx_seq`) while `/props` still reports the full `n_ctx`.
     *   `-ctk <type> -ctv <type>`: KV cache type, `q8_0` by default (`JUSTSEARCH_LLM_KV_TYPE`).
     *   `-fa on`: Flash attention, explicitly on - a quantized V-cache aborts the launch without it, so this is never left at `auto`.
+    *   `-fit off`: Memory fitting off. llama-server defaults `--fit on` ("adjust unset arguments to fit in device memory") and it MAXIMIZES rather than fits - with `-c` omitted it chose 242,944 tokens and 4 GB of KV. JustSearch sets `-c` explicitly and needs a rung that does not fit to produce a hard, detectable abort, which is the signal the context ladder steps down on; a memory-adjusting heuristic running beside it could absorb that signal instead.
     *   `--mmproj`: Vision adapter path (for Qwen/Llava).
     *   `--port <port>`: HTTP port.
     *   `--jinja`, `--metrics`, `--host 127.0.0.1`, and (when thinking is enabled) `--reasoning-format deepseek --reasoning-budget N`.
@@ -502,14 +513,22 @@ outranked every other source. Since tempdoc 883 the window is a resource the run
   detection, so `/api/debug/effective-config` explains the window with the same mechanism that
   explains GPU detection.
 * If llama-server refuses a rung it exits immediately; `LlamaServerOps.waitForServerHealth` steps
-  down one rung and relaunches. A rung that does not fit costs context, not inference.
+  down one rung and relaunches. A rung that does not fit costs context, not inference. This is why
+  `-fit off` is passed: the step-down reads a hard abort, so llama-server's default memory-fitting
+  pass must not be running alongside it.
 * An explicit `justsearch.context.size` (env, `-D`, `settings.json`, YAML) is a **one-rung ladder**:
   honoured or the launch fails loud. `UiSettings.contextLength` `0` means auto.
 * What was launched is published on `/api/inference/status` as `contextWindow`
   (`{rung, reason, freeVramBytes, slots, kvType}`, where reason is `fit`, `override` or
-  `stepped-from:<n>`). That is the INTENT. What the server reports - `/props` `n_ctx`, and
+  `stepped-from:<n>`) and on the runtime manifest as `ai.contextWindow` - "what did this
+  installation end up with", which is a fact about the machine rather than a setting anyone can
+  read back out of config. That is the INTENT. What the server reports - `/props` `n_ctx`, and
   `n_ctx_seq` in its log - stays the authority for what a request actually gets, and is published
   separately as `llmContextTokens`.
+* Caveat on `/props.n_ctx`: it reports the server's TOTAL context even when `kv_unified` is off, in
+  which case each request actually gets `n_ctx / n_parallel`. A matching `n_ctx` is therefore NOT
+  evidence that a request gets the full window; the guarantee is the argv (`-kvu` always
+  accompanying an explicit `-np`) plus reading `n_ctx_seq` from the llama-server log.
 * No VRAM arithmetic and no GGUF reader: the packaged model is a Gated-Delta-Net hybrid whose KV
   footprint no dense-attention formula predicts within 4x, and `/props` does not expose
   `n_ctx_train`. Free VRAM is recorded for diagnosis, never used as an input.

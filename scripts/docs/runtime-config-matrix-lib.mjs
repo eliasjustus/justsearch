@@ -177,19 +177,19 @@ export function renderMatrixMarkdown(model) {
   lines.push(
     "The per-row notes above cover only the sources this table can derive from `EnvRegistry` /" +
       " `ConfigKey`. The full ordinal chain in `ResolvedConfigBuilder` has more: `jvm_arg` 500 >" +
-      " `worker_snapshot` 450 > `env_var` 400 > `ci_profile` 350 > `settings_json` 300 > `yaml`" +
+      " `worker_snapshot` 450 > `env_var` 400 > `ci_profile` 350 > `settings.json` 300 > `yaml`" +
       " 200 > `auto_detected` 150 > `default` 100. Two of those contributors are invisible here" +
       " because they are written by callers rather than declared as keys:",
   );
   lines.push("");
   lines.push(
-    "- **`settings_json` (300)** — `ConfigStoreRebuilder.contributeUiSettings` forwards a handful" +
+    "- **`settings.json` (300)** — `ConfigStoreRebuilder.contributeUiSettings` forwards a handful" +
       " of `UiSettings` fields, including `justsearch.gpu.layers` and `justsearch.context.size`.",
   );
   lines.push(
     "- **`auto_detected` (150, detail `hardware_probe`)** — the Head's startup probe contributes" +
       " GPU detection results and, since tempdoc 883, the DERIVED `justsearch.context.size`" +
-      " window rung. So `justsearch.context.size` resolves `settings_json` when the user set one" +
+      " window rung. So `justsearch.context.size` resolves `settings.json` when the user set one" +
       " and `auto_detected` otherwise — never `jvm_arg` merely because it came from the GUI, which" +
       " is what the deleted settings-to-sysprop promotion used to make it report.",
   );
