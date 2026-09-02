@@ -51,8 +51,12 @@
       "outFile": "ai-install-status.ts",
       "consumers": [
         "modules/ui-web/src/api/domains/packs.ts",
-        "modules/ui-web/src/shell-v0/utils/aiInstallPoll.ts"
-      ]
+        "modules/ui-web/src/shell-v0/utils/aiInstallPoll.ts",
+        "modules/ui-web/src/shell-v0/state/installComponents.ts",
+        "modules/ui-web/src/shell-v0/substrates/ai/aiInstallBridge.ts",
+        "modules/ui-web/src/shell-v0/substrates/tasks/aiInstallTasksBridge.ts"
+      ],
+      "note": "The last three were flagged by contract-projection/undeclared-consumer and are genuine parse boundaries: each carries 'import type { AiInstallStatus } from .../schema-types/ai-install-status.js' (installComponents.ts:35, aiInstallBridge.ts:19, aiInstallTasksBridge.ts:21). Registered by tempdoc 884 lane B PR 2 as ADR-0038 register drift on the generated side."
     },
     {
       "name": "FolderBrowseResponse",
@@ -112,7 +116,12 @@
       "name": "AgentSessionsResponse",
       "schema": "SSOT/schemas/agent-sessions-response.v1.json",
       "outFile": "agent-sessions-response.ts",
-      "consumers": ["modules/ui-web/src/api/domains/agent.ts", "modules/ui-web/src/api/schemas.ts"]
+      "consumers": [
+        "modules/ui-web/src/api/domains/agent.ts",
+        "modules/ui-web/src/api/schemas.ts",
+        "modules/ui-web/src/shell-v0/controllers/AgentSessionController.ts"
+      ],
+      "note": "HONEST LIMIT on the third entry: AgentSessionController.ts does NOT import this projection. Its only occurrence is a doc comment at :217 naming 'generated/schema-types/agent-sessions-response.ts' as prose (verified: the file's import block has no schema-types/agent-sessions-response import). The contract-projection enforcer's undeclared-consumer check is a raw substring test over whole file text, not an import parse, so a comment mentioning the path is indistinguishable from an import. Listed here rather than left red because the alternative was rewording a comment to dodge a matcher, and modules/ui-web is out of scope for tempdoc 884 lane B. The real fix - make the check parse imports rather than substrings - is tracked in tempdoc 884's residue list and owned by the FE/kernel lane. Until then this row overstates the consumer set by one documentation reference."
     },
     {
       "name": "AgentHistoryResponse",
@@ -179,6 +188,13 @@
       "schema": "SSOT/schemas/settings-v2.v1.json",
       "outFile": "settings-v2.ts",
       "consumers": ["modules/ui-web/src/api/domains/settings.ts", "modules/ui-web/src/api/schemas.ts"]
+    },
+    {
+      "name": "SurfaceWire",
+      "schema": "SSOT/schemas/surface.v1.json",
+      "outFile": "surface.ts",
+      "consumers": ["modules/ui-web/src/api/types/surface.ts"],
+      "note": "Tempdoc 884 / ADR-0038 amendment. api/types/surface.ts was a hand-written mirror of Surface/SurfaceRef/Audience/Placement/SurfaceConsumes and a declared exception on the adr-0038-no-unregistered-fe-mirror probe; it is now a composing barrel over this generated projection, so the exception is dropped. It stays a hand-authored file rather than disappearing because it also carries two FE-only fields the backend never sends (factory, splitPairing) and two runtime consts (AUDIENCES, PLACEMENTS) with no Java counterpart - the ResourceWire/OperationWire barrel pattern in api/types/registry.ts."
     }
   ]
 }

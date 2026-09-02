@@ -79,7 +79,7 @@ public record Surface(
     Optional<SurfaceStateSchema> stateSchema,
     RiskTier riskTier,
     Altitude altitude,
-    List<SurfaceRef> members) implements Provenanced {
+    List<SurfaceRef> members) implements Provenanced, PreciseWire {
 
   public Surface {
     Objects.requireNonNull(id, "id");

@@ -230,3 +230,95 @@ For Phase 1 of the implementing slice, four candidate formats are on the table:
 The implementing slice's Phase 1 spike picks one (or surfaces a fifth) based on
 hands-on evaluation against actual JustSearch records. Per user direction
 2026-05-05, this ADR does not pre-commit.
+
+## Amendment 2026-09-02: the Surface mirror is generated; the remaining five are declared exceptions
+
+Re-examined under decision-review lane B (tempdoc 884). The decision — *hand-written per-language
+mirrors are forbidden; every consumer-side type is mechanically generated* — is unchanged and was
+**not** being honoured. This amendment records what was fixed, and names, with an owner and a
+blocker each, every place where it still is not.
+
+### What the premise probe now checks
+
+`adr-0038-no-unregistered-fe-mirror` scans all 522 non-generated, non-test `.ts` files under
+`modules/ui-web/src` for a file that **self-declares** a hand-written mirror in its own header, and
+requires each one to be either registered in `governance/contract-surfaces.v1.json` or a declared,
+reasoned exception. **Its guarantee is narrower than this ADR's premise, deliberately:** a mirror
+that carries no marker and is not in the exception list is invisible to it. Two such were found by
+human reading, not by the scan (`api/domains/indexing.ts`, `api/schemas.ts`), and are listed
+explicitly for that reason. The probe catches *new* self-declared mirrors and the deletion of the
+generation that replaced an old one; it does not prove the absence of mirrors.
+
+### `api/types/surface.ts` — generated, exception dropped
+
+The mirror named in the 2026-09-01 review is retired end to end:
+
+1. `modules/app-agent-api/.../registry/Surface.java` now also implements `PreciseWire`. That marker
+   (see its own javadoc) is what makes the emitted schema *precise* — all eleven components
+   `required`, non-`Optional` references non-null — instead of the permissive all-optional default.
+   It is accurate rather than aspirational: the record's compact constructor `requireNonNull`s or
+   defaults every component. Verified that no other committed schema shifted: after regeneration,
+   `git status SSOT/schemas/` showed only the new file.
+2. `SubstrateSchemaGenTest#surfaceSchema` emits `SSOT/schemas/surface.v1.json` (capture-or-verify;
+   `./gradlew.bat :modules:app-api:updateSchemas` rewrites the baseline).
+3. `governance/contract-surfaces.v1.json` registers it as `SurfaceWire`, and
+   `scripts/codegen/gen-wire-schema-types.mjs` projects it to
+   `modules/ui-web/src/api/generated/schema-types/surface.ts`.
+4. `modules/ui-web/src/api/types/surface.ts` is now a **composing barrel** over that projection —
+   the `ResourceWire` / `OperationWire` pattern already used by `api/types/registry.ts`.
+
+**Why a barrel rather than deletion.** The obvious reading of this ADR — delete the mirror, point
+its importers at the generated module — does not survive contact with the file. `surface.ts`
+exports two runtime **values** (`AUDIENCES`, `PLACEMENTS`) that a type projection cannot provide;
+`PLACEMENTS` is additionally parsed by `scripts/ci/check-a11y-closure.mjs` to assert every
+placement has a landmark role. It exports two interfaces with no Java counterpart at all
+(`SurfaceFactory`, the 478 §4.A dispatch token minted client-side; `SurfaceCatalog`, the response
+envelope). And the FE `Surface` carries two fields the backend never sends: `factory`, stamped by
+the catalog on receipt, and `splitPairing`, a plugin contribution merged client-side with **zero**
+Java source. Deleting the file would have relocated those into consumers — turning one honest
+composition point into many. The barrel keeps the *field set* mechanically derived from Java while
+naming the client-side additions as exactly that.
+
+**The narrowing this ADR should absorb:** "every consumer-side type is mechanically generated" is
+right about the wire and wrong about the boundary. A consumer-side type is legitimately the wire
+projection **plus** client-side state, and the enforceable rule is that the wire half must be
+generated and the client-side half must be *named as client-side*. That is what the barrel does.
+
+### The five that are not fixed, each with an owner and a blocker
+
+All five stay declared exceptions in `governance/adr-probes.v1.json`, each carrying its reason
+there. **Owner: the UI lane** — `modules/ui-web` component work is outside decision-review lane B's
+scope, and every one of these needs consumer-side changes rather than codegen alone.
+
+| File | Why it is still a mirror |
+|---|---|
+| `api/types/conversation-shape.ts` | Structurally the same case `surface.ts` just resolved. Its FE consumers carry client-side state the wire does not, so it needs the same barrel treatment — component work, not codegen. |
+| `api/types/selection.ts` | **Blocked, not merely unscheduled.** Sealed-sum discriminated unions are not expressible by the emitter (it supports `type`/`properties`/`required`/`items`/`enum`/`const`/`anyOf` and `$ref` into `#/$defs`; it has no discriminator concept). The emitter must be extended first. |
+| `shell-v0/handshake/capabilities-types.ts` | Same recipe as `surface.ts` (`CapabilitiesService.CapabilitiesView` is a plain record), but the handshake payload is consumed during boot, before the generated-module graph loads. The ordering question was not investigated. |
+| `api/domains/indexing.ts` | The drift runs **backwards**: `ExcludesService.ExcludesResult` mirrors *from* the FE (its javadoc says so). Generating it would invert the authority — a product decision about who owns the excludes contract, not a codegen chore. |
+| `api/schemas.ts` | Tempdoc 683 already reduced it to one deliberately permissive `.loose()` agent-session schema. What is left is an intentional fail-open parse boundary; retiring it is a decision about that boundary. |
+
+`shell-v0/utils/aiInstallPoll.ts` is a sixth exception and a **marker false positive** — its header
+says it *used to be* a mirror (retired by tempdoc 840 Phase 4). It is listed so the scan stays green
+without weakening the regex.
+
+### The other side of the same register
+
+The `contract-projection` gate was failing on `contract-projection/undeclared-consumer`: four FE
+files import a generated wire module without being declared consumers. This is the same register
+drift, from the other direction, so it is fixed here. Three are genuine imports of
+`schema-types/ai-install-status` and are now registered. The fourth,
+`shell-v0/controllers/AgentSessionController.ts`, does **not** import anything — its only occurrence
+is a doc comment naming the generated file's path, and the gate's check is a raw substring test over
+whole file text rather than an import parse. It is registered with that overstatement recorded
+verbatim in the register's own `note`, because the alternative was rewording a comment to dodge a
+matcher. Making that check parse imports is routed as a tracked item.
+
+### Reassess When
+
+- **A new self-declared mirror appears unregistered** — the probe fails; decide here whether it is
+  generable, blocked, or legitimately client-side, and never silence it by deleting the marker.
+- **The emitter gains discriminated-union support** — `selection.ts`'s blocker disappears and its
+  exception must be re-argued or dropped.
+- **An exception's file stops existing** — the probe fails on a stale exception by construction, so
+  a deleted mirror forces this list to be re-read rather than rotting.

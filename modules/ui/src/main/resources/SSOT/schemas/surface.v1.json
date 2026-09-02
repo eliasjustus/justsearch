@@ -1,0 +1,156 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "I18nKey" : {
+      "type" : "string",
+      "minLength" : 1
+    },
+    "SurfaceRef" : {
+      "type" : "string",
+      "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "altitude" : {
+      "type" : "string",
+      "enum" : [ "PRODUCT", "DIAGNOSTIC", "TRUST", "TOOL" ]
+    },
+    "audience" : {
+      "type" : "string",
+      "enum" : [ "USER", "AGENT", "OPERATOR", "DEVELOPER" ]
+    },
+    "consumes" : {
+      "type" : "object",
+      "properties" : {
+        "conversationShapes" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string",
+            "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+          }
+        },
+        "diagnosticChannels" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string",
+            "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+          }
+        },
+        "operations" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string",
+            "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+          }
+        },
+        "prompts" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string",
+            "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+          }
+        },
+        "resources" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string",
+            "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+          }
+        }
+      }
+    },
+    "id" : {
+      "$ref" : "#/$defs/SurfaceRef"
+    },
+    "members" : {
+      "type" : "array",
+      "items" : {
+        "$ref" : "#/$defs/SurfaceRef"
+      }
+    },
+    "mountTag" : {
+      "type" : "string"
+    },
+    "placement" : {
+      "type" : "string",
+      "enum" : [ "COMMAND", "RAIL", "STAGE", "HUD", "STATUS", "DRAWER", "MODAL", "DEEPLINK", "HEADLESS_AGENT_TOOL" ]
+    },
+    "presentation" : {
+      "type" : "object",
+      "properties" : {
+        "category" : {
+          "type" : [ "string", "null" ]
+        },
+        "descriptionKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        },
+        "iconHint" : {
+          "type" : [ "string", "null" ]
+        },
+        "labelKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        }
+      },
+      "required" : [ "category", "descriptionKey", "iconHint", "labelKey" ]
+    },
+    "provenance" : {
+      "type" : "object",
+      "properties" : {
+        "contributorId" : {
+          "type" : "string"
+        },
+        "identity" : {
+          "type" : [ "object", "null" ],
+          "properties" : {
+            "signature" : {
+              "type" : [ "string", "null" ]
+            },
+            "verified" : {
+              "type" : "boolean"
+            }
+          },
+          "required" : [ "signature", "verified" ]
+        },
+        "tier" : {
+          "type" : "string",
+          "enum" : [ "CORE", "TRUSTED_PLUGIN", "UNTRUSTED_PLUGIN" ]
+        },
+        "version" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "contributorId", "identity", "tier", "version" ]
+    },
+    "riskTier" : {
+      "type" : "string",
+      "enum" : [ "LOW", "MEDIUM", "HIGH" ]
+    },
+    "stateSchema" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "bindings" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "object",
+            "properties" : {
+              "schemaPath" : {
+                "type" : [ "string", "null" ]
+              },
+              "storeId" : {
+                "type" : [ "string", "null" ]
+              },
+              "storeKey" : {
+                "type" : [ "string", "null" ]
+              }
+            }
+          }
+        },
+        "schema" : {
+          "type" : [ "string", "null" ]
+        }
+      }
+    }
+  },
+  "required" : [ "altitude", "audience", "consumes", "id", "members", "mountTag", "placement", "presentation", "provenance", "riskTier", "stateSchema" ]
+}
