@@ -450,7 +450,10 @@ final class CoreApiAssembly {
         var readinessTrigger =
             b.HeadAssembly.substrate().health().readinessReconciliationTrigger();
         if (readinessTrigger != null) {
-          readinessTrigger.attach(statusLifecycleHandler::buildStatusSnapshot);
+          // Tempdoc 885 item 6: the trigger's thunk IS the health sampler — it performs the one
+          // IndexStatus unary off the request thread and feeds every tap. attach() self-seeds one
+          // reconcile, so the first sample lands here, not at the first monitor tick.
+          readinessTrigger.attach(statusLifecycleHandler::sampleAndBuildStatusSnapshot);
         }
       }
     }

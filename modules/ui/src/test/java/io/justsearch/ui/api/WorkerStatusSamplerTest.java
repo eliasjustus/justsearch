@@ -1,0 +1,265 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.ui.api;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
+
+import io.justsearch.app.api.lifecycle.CapabilityHealth;
+import io.justsearch.app.api.status.CompatibilityStatusView;
+import io.justsearch.app.api.status.CoreIndexView;
+import io.justsearch.app.api.status.EnrichmentProgressView;
+import io.justsearch.app.api.status.FailureTrackingView;
+import io.justsearch.app.api.status.GpuDiagnosticsView;
+import io.justsearch.app.api.status.MigrationGenerationView;
+import io.justsearch.app.api.status.MigrationGenerationViewBuilder;
+import io.justsearch.app.api.status.QueueDbStatusView;
+import io.justsearch.app.api.status.SearchConfigView;
+import io.justsearch.app.api.status.StatusResponse;
+import io.justsearch.app.api.status.TelemetryMetricsView;
+import io.justsearch.app.api.status.VectorFormatView;
+import io.justsearch.app.api.status.VisualExtractionView;
+import io.justsearch.app.api.status.WorkerOperationalView;
+import io.justsearch.app.api.status.WorkerOperationalViewBuilder;
+import io.justsearch.app.observability.health.ConditionStore;
+import io.justsearch.app.observability.health.HealthEventChangeRegistry;
+import io.justsearch.app.observability.health.Source;
+import io.justsearch.app.services.observability.health.LifecycleSnapshotTap;
+import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
+import io.justsearch.app.services.worker.RemoteKnowledgeClient;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * Tempdoc 885 item 6 — the internal Worker status sampler.
+ *
+ * <p>The property under test is a negative one: {@code GET /api/status} must no longer perform the
+ * {@code IndexStatus} unary on the request thread. A test that only asserted "the response still
+ * has a worker view" would pass on the pre-item code, so every assertion here is on the
+ * <em>interaction count</em> with the mocked {@link RemoteKnowledgeClient}, which distinguishes
+ * "served from the sample" from "fetched again".
+ */
+@DisplayName("Worker status sampler (885 item 6)")
+final class WorkerStatusSamplerTest {
+
+  private static final Source HEAD_SRC = Source.forProcess("head", "instance-1", "1.0");
+
+  @Test
+  @DisplayName("a sampler tick feeds the health taps with no status request anywhere")
+  void samplerTickFeedsTapsWithoutAnyStatusRequest(@TempDir Path indexBase) {
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    when(client.getWorkerOperationalView()).thenReturn(healthyWorkerView());
+    StatusLifecycleHandler handler = reachableHandler(indexBase, client);
+
+    ConditionStore conditions = new ConditionStore();
+    handler.setLifecycleSnapshotTap(
+        new LifecycleSnapshotTap(
+            conditions, new HealthEventChangeRegistry(), HEAD_SRC, Clock.systemUTC()));
+
+    // The only call in this test. No handleStatus, no buildStatusMap.
+    handler.sampleAndBuildStatusSnapshot();
+
+    verify(client, times(1)).getWorkerOperationalView();
+    assertNotNull(handler.lastWorkerSample(), "the tick must record a sample");
+    assertFalse(handler.lastWorkerSample().failed());
+    // The tap ran: a READY worker view clears index.unavailable, so the store holds the
+    // reconciliation the tap performed rather than the empty state it started in.
+    assertTrue(
+        conditions.find("index.unavailable", "worker").isEmpty(),
+        "a healthy sample must leave index.unavailable unasserted");
+  }
+
+  @Test
+  @DisplayName("a status read after a sample performs zero Worker RPCs")
+  void statusReadPerformsNoWorkerRpc(@TempDir Path indexBase) {
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    when(client.getWorkerOperationalView()).thenReturn(healthyWorkerView());
+    StatusLifecycleHandler handler = reachableHandler(indexBase, client);
+
+    handler.sampleAndBuildStatusSnapshot();
+    verify(client, times(1)).getWorkerOperationalView();
+
+    StatusResponse first = handler.buildStatusMap();
+    StatusResponse second = handler.buildStatusMap();
+    StatusResponse third = handler.buildStatusMap();
+
+    verifyNoMoreInteractions(client);
+    assertFalse(first.meta().workerRpcStale(), "a fresh sample is not stale");
+    // workerRpcAtMs is the SAMPLE time, identical across reads — that identity is what proves the
+    // reads did not re-observe (a per-request timestamp would differ).
+    assertEquals(handler.lastWorkerSample().sampledAtMs(), first.meta().workerRpcAtMs());
+    assertEquals(first.meta().workerRpcAtMs(), second.meta().workerRpcAtMs());
+    assertEquals(first.meta().workerRpcAtMs(), third.meta().workerRpcAtMs());
+    assertTrue(
+        System.currentTimeMillis() - third.meta().workerRpcAtMs() >= 0,
+        "the response carries the sample's age");
+  }
+
+  @Test
+  @DisplayName("the taps do not reconcile on the read path")
+  void readPathDoesNotFeedTaps(@TempDir Path indexBase) {
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    when(client.getWorkerOperationalView()).thenReturn(healthyWorkerView());
+    StatusLifecycleHandler handler = reachableHandler(indexBase, client);
+    handler.sampleAndBuildStatusSnapshot();
+
+    // The index-drift tap is the second Worker RPC this item takes off the request thread: it
+    // pulls the watched roots itself. Wiring it as a throwing tap makes a read-path invocation
+    // observable — the handler swallows tap failures, so the counter is the witness.
+    int[] driftCalls = {0};
+    handler.setIndexDriftTap(
+        new io.justsearch.app.services.observability.health.IndexDriftHealthTap(
+            new ConditionStore(),
+            new io.justsearch.app.observability.health.OccurrenceLog(),
+            new HealthEventChangeRegistry(),
+            HEAD_SRC,
+            Clock.systemUTC(),
+            () -> {
+              driftCalls[0]++;
+              return java.util.List.of();
+            }));
+
+    handler.buildStatusMap();
+    assertEquals(0, driftCalls[0], "a status read must not run the index-drift tap");
+
+    handler.sampleAndBuildStatusSnapshot();
+    assertEquals(1, driftCalls[0], "the sampler must run the index-drift tap");
+  }
+
+  @Test
+  @DisplayName("the first read before any sample takes exactly one synchronous sample")
+  void firstReadBeforeAnySampleObservesOnce(@TempDir Path indexBase) {
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    when(client.getWorkerOperationalView()).thenReturn(healthyWorkerView());
+    StatusLifecycleHandler handler = reachableHandler(indexBase, client);
+
+    handler.buildStatusMap();
+    handler.buildStatusMap();
+    handler.buildStatusMap();
+
+    // The boot window fallback fires at most once per process: after it, every read is cached.
+    verify(client, times(1)).getWorkerOperationalView();
+  }
+
+  @Test
+  @DisplayName("a failed sample is still a sample, and reads report it stale without re-calling")
+  void failedSampleIsCachedAndReportedStale(@TempDir Path indexBase) {
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    when(client.getWorkerOperationalView()).thenThrow(new IllegalStateException("worker gone"));
+    StatusLifecycleHandler handler = reachableHandler(indexBase, client);
+
+    handler.sampleAndBuildStatusSnapshot();
+    StatusResponse read = handler.buildStatusMap();
+
+    verify(client, times(1)).getWorkerOperationalView();
+    assertTrue(read.meta().workerRpcStale(), "a failed sample reads stale");
+    assertNotNull(handler.lastWorkerSample().failureReason());
+    assertTrue(handler.lastWorkerSample().failureReason().contains("worker gone"));
+  }
+
+  @Test
+  @DisplayName("the sampling period is 2 s while index work is in flight and 10 s when idle")
+  void samplingPeriodTracksInFlightIndexWork(@TempDir Path indexBase) {
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    when(client.getWorkerOperationalView()).thenReturn(healthyWorkerView());
+    StatusLifecycleHandler handler = reachableHandler(indexBase, client);
+
+    assertEquals(
+        StatusLifecycleHandler.SAMPLER_IDLE_PERIOD_MS,
+        handler.samplingPeriodMs(),
+        "before any sample the period is the idle one");
+
+    handler.sampleAndBuildStatusSnapshot();
+    assertEquals(StatusLifecycleHandler.SAMPLER_IDLE_PERIOD_MS, handler.samplingPeriodMs());
+
+    when(client.getWorkerOperationalView()).thenReturn(busyWorkerView());
+    handler.sampleAndBuildStatusSnapshot();
+    assertEquals(
+        StatusLifecycleHandler.SAMPLER_BUSY_PERIOD_MS,
+        handler.samplingPeriodMs(),
+        "processing jobs in flight must shorten the period");
+
+    when(client.getWorkerOperationalView()).thenThrow(new IllegalStateException("worker gone"));
+    handler.sampleAndBuildStatusSnapshot();
+    assertEquals(
+        StatusLifecycleHandler.SAMPLER_IDLE_PERIOD_MS,
+        handler.samplingPeriodMs(),
+        "a failed sample must not pin the monitor at the fast cadence");
+  }
+
+  // ---------------------------------------------------------------- helpers
+
+  private static StatusLifecycleHandler reachableHandler(
+      Path indexBase, RemoteKnowledgeClient client) {
+    KnowledgeServerBootstrap ks = mock(KnowledgeServerBootstrap.class);
+    when(ks.client()).thenReturn(client);
+
+    io.justsearch.app.services.lifecycle.WorkerCapability worker =
+        mock(io.justsearch.app.services.lifecycle.WorkerCapability.class);
+    when(worker.available()).thenReturn(true);
+    when(worker.health()).thenReturn(CapabilityHealth.READY);
+    io.justsearch.app.services.lifecycle.InferenceCapability inference =
+        mock(io.justsearch.app.services.lifecycle.InferenceCapability.class);
+    when(inference.health()).thenReturn(CapabilityHealth.READY);
+
+    StatusLifecycleHandler handler =
+        new StatusLifecycleHandler(
+            mock(io.justsearch.app.api.OnlineAiService.class),
+            mock(io.justsearch.agent.api.AgentService.class),
+            () -> null,
+            null,
+            null,
+            indexBase,
+            Instant.now(),
+            () -> "OK",
+            null,
+            null,
+            null,
+            worker,
+            inference);
+    handler.setKnowledgeServer(ks, null);
+    return handler;
+  }
+
+  private static WorkerOperationalView healthyWorkerView() {
+    return workerView(MigrationGenerationView.empty());
+  }
+
+  private static WorkerOperationalView busyWorkerView() {
+    return workerView(
+        MigrationGenerationViewBuilder.builder()
+            .processingJobsCount(4L)
+            .pendingJobsCount(120L)
+            .migrationEnumerator(
+                new io.justsearch.app.api.status.MigrationEnumeratorView(
+                    false, false, 0, 0, 0, 0, 0, 0, ""))
+            .build());
+  }
+
+  private static WorkerOperationalView workerView(MigrationGenerationView migration) {
+    return WorkerOperationalViewBuilder.builder()
+        .core(new CoreIndexView(true, 10, 0, "SERVING", 0, 0))
+        .failure(FailureTrackingView.empty())
+        .migration(migration)
+        .compatibility(CompatibilityStatusView.empty())
+        .queueDb(QueueDbStatusView.healthy())
+        .enrichment(EnrichmentProgressView.empty())
+        .gpu(GpuDiagnosticsView.empty())
+        .vectorFormat(VectorFormatView.empty())
+        .telemetry(new TelemetryMetricsView(0.0, 0, 0, 0.25, "OK"))
+        .searchConfig(SearchConfigView.empty())
+        .visualExtraction(VisualExtractionView.empty())
+        .embeddingReady(Boolean.TRUE)
+        .build();
+  }
+}

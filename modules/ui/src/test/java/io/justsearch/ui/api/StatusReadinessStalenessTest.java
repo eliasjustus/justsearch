@@ -174,9 +174,11 @@ final class StatusReadinessStalenessTest {
     StatusResponse fresh = handler.buildStatusMap();
     assertFalse(fresh.meta().workerRpcStale(), "first call should reach the Worker");
 
-    // Contact is lost after that successful observation.
+    // Contact is lost after that successful observation. Tempdoc 885 item 6: contact loss is
+    // discovered by the internal sampler, not by a request — a request only reports what the last
+    // sample found, so the sampler is what has to run here.
     when(ks.client()).thenThrow(new IllegalStateException("worker gone"));
-    StatusResponse stale = handler.buildStatusMap();
+    StatusResponse stale = handler.sampleAndBuildStatusSnapshot();
     long afterFailure = System.currentTimeMillis();
 
     assertTrue(stale.meta().workerRpcStale());
