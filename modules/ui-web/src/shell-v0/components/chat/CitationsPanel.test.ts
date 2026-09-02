@@ -835,8 +835,10 @@ describe('CitationsPanel — 870 motion and type scale', () => {
  * panel (observed live on `278-decision-log.md`, when a page was the retired flat 3,000 characters).
  *
  * The page size is now WINDOW-DERIVED (tempdoc 883 decision 3): `ReadDocumentTool.readPageChars` is
- * the smaller of half the turn's input budget and the Layer-2 cut — 7,592 chars at a 32,768-token
- * window, 1,704 at 4,096 — and the `READ_PAGE_CHARS` literal is gone. So these tests deliberately
+ * the smaller of `ContextBudget.readDocumentPageChars()` (half the input budget, capped at 4096
+ * tokens) and the Layer-2 cut minus the 600-char page headroom — the latter arm being the one that
+ * binds, which is how a page measures 7,592 chars at a 32,768-token window and 1,704 at 4,096 —
+ * and the `READ_PAGE_CHARS` literal is gone. So these tests deliberately
  * assert against the CARD budget, which is a constant, and never against a page size, which is not.
  * The fixtures below are sized to sit either side of that card budget for the same reason.
  *

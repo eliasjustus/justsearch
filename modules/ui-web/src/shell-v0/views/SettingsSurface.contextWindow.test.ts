@@ -143,6 +143,15 @@ describe('SettingsSurface — context window (883 D-A.7 / ADR-0047)', () => {
     expect(readout(el)).toBe('Auto — derived when the assistant starts');
   });
 
+  it('AUTO before the first poll: says it is checking, never that there is no window', async () => {
+    // The third arm of the tri-state. `absent` (test above) and `unknown` are different facts: one
+    // is a polled engine reporting no window, the other is not having asked yet, and rendering the
+    // second as the first would be a fabricated settled case (594 §11.3 #3). No feedEngine() call
+    // here is the point — the store has never been fed.
+    const el = await mountSettings({ ui: {}, llm: { contextWindow: 0 } }, []);
+    expect(readout(el)).toBe('Auto — checking…');
+  });
+
   it('OVERRIDE: shows the stored value AND what actually launched', async () => {
     // The two can disagree — a stepped-down or refused launch is exactly what the user needs to
     // see next to their own number, so the readout carries both rather than either alone.
@@ -197,6 +206,42 @@ describe('SettingsSurface — context window (883 D-A.7 / ADR-0047)', () => {
     const posts = calls.filter((c) => c.method === 'POST' && c.path === '/api/settings/v2');
     expect(JSON.parse(posts[0]!.body)).toEqual({ llm: { contextWindow: 512 } });
     expect(overrideInput(el).value).toBe('512');
+  });
+
+  it('a floor that lands on the ALREADY-STORED value still resyncs the field', async () => {
+    // The dirty-check trap: stored 512, typed 300 -> the floor collapses back to 512, which is what
+    // `llm.contextWindow` already held, so a plain `.value=` binding sees no change and leaves "300"
+    // on screen next to a readout saying 512. Only a comparison against the live DOM property
+    // notices, which is why the binding uses `live()`.
+    const calls: FetchCall[] = [];
+    const el = await mountSettings({ ui: {}, llm: { contextWindow: 512 } }, calls);
+    expect(overrideInput(el).value).toBe('512');
+
+    const input = overrideInput(el);
+    input.value = '300';
+    input.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+
+    const posts = calls.filter((c) => c.method === 'POST' && c.path === '/api/settings/v2');
+    expect(JSON.parse(posts[0]!.body)).toEqual({ llm: { contextWindow: 512 } });
+    expect(overrideInput(el).value).toBe('512');
+  });
+
+  it('typing 0 resyncs the field to blank — it must not sit there as an invalid entry', async () => {
+    // Same trap from the other side: stored 0, typed 0 -> the state does not change, so without
+    // `live()` the field keeps showing "0" while the readout says Auto. `0` also violates
+    // `min="512"`, so the control would render `:invalid` for a value the app considers valid.
+    const calls: FetchCall[] = [];
+    const el = await mountSettings({ ui: {}, llm: { contextWindow: 0 } }, calls);
+    const input = overrideInput(el);
+    input.value = '0';
+    input.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+
+    const posts = calls.filter((c) => c.method === 'POST' && c.path === '/api/settings/v2');
+    expect(JSON.parse(posts[0]!.body)).toEqual({ llm: { contextWindow: 0 } });
+    expect(overrideInput(el).value).toBe('');
+    expect(readout(el)).toContain('Auto');
   });
 
   it('a REJECTED save reverts to the PREVIOUS value — not to the one the backend refused', async () => {

@@ -11,6 +11,20 @@ import { failedJobsResponseSchema } from '../generated/schema-types/failed-jobs-
 // Types
 // ============================================
 
+/**
+ * Tempdoc 885 item 21b — the terminal indexing-job state meaning "we retried for the whole
+ * seven-day window and never managed to read this file". Distinct from `FAILED`, which means the
+ * file itself is unreadable (a parse failure, or the untyped attempts cap).
+ *
+ * ONE spelling, because three surfaces classify on it — the Activity ledger
+ * (`operations/ActionLedgerClient.ts`), the tasks tray (`substrates/tasks/indexingJobsBridge.ts`)
+ * and the failed-files drawer (`components/FailedJobsDrawer.ts`) — and the backend record that
+ * owns the vocabulary (`IndexingJobView.STATE_RETRY_EXHAUSTED`, app-api) says in as many words that
+ * "a projection that must classify a state cannot invent its own spelling". Three literals is three
+ * chances to typo one into the silent `default` arm.
+ */
+export const JOB_STATE_RETRY_EXHAUSTED = 'RETRY_EXHAUSTED';
+
 
 // ============================================
 // API Functions

@@ -316,8 +316,11 @@ Design choices in the current inference runtime, with rationale.
   renders (`shell-v0/display/facts.ts`) - so the two readouts cannot word the derivation
   differently. The same fact now carries the derivation parenthetically beside the observed count,
   and `AiRuntime.contextWindowDerived` (`shell-v0/state/aiStateStore.ts`) is its projection of the
-  wire block; `RuntimeManifestView.ai.contextWindow` (`api/http.ts`) is typed to match, so the
-  browser-side manifest view is no longer a silently-narrower copy of `RuntimeManifest.AiInfo`.
+  wire block; `RuntimeManifestView.ai.contextWindow` (`api/http.ts`) mirrors the GENERATED schema
+  (`schema-types/inference-status-response.ts`, where every field is optional), so the
+  browser-side manifest view is no longer a silently-narrower copy of the AI block. It is not a
+  field-for-field mirror of the Java record: `ContextWindow.rung` and `.slots` are primitive
+  `int` there, optional here, which is the schema's nullability, not the record's.
   The section also carries the override field: blank/0 = Auto, >=512 explicit, written as
   `POST /api/settings/v2 {llm:{contextWindow:N}}` (the wire name `SettingsController.mergeV2Into`
   maps onto `UiSettings.contextLength`), with help text stating the override is honoured verbatim

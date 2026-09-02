@@ -810,11 +810,14 @@ function elideAtWordBoundary(text: string, maxChars: number, minKeep: number): s
  *     an acquisition-conditional rule would let the identical defect return the day a retrieval
  *     producer raises its cap.
  *   <li>The page has no fixed size to be a fraction of. It is WINDOW-DERIVED as of tempdoc 883
- *     decision 3 — `ReadDocumentTool.readPageChars(budget)` takes the smaller of half the turn's
- *     input budget and the Layer-2 cut, measured at 7,592 chars on a 32,768-token window and 1,704
- *     on 4,096 — so the retired flat `READ_PAGE_CHARS = 3000` literal it used to be stated against
- *     no longer exists. That is precisely why this budget is a property of the CARD: it holds at
- *     every window, including the ones where a page is more than twice what it used to be.
+ *     decision 3 — `ReadDocumentTool.readPageChars(budget)` takes the smaller of
+ *     `ContextBudget.readDocumentPageChars()` (half the input budget, itself capped at
+ *     `READ_PAGE_CAP_TOKENS` = 4096 tokens) and the Layer-2 cut minus the 600-char
+ *     `PAGE_HEADROOM_CHARS`. The headroom arm is the one that actually binds at every rung, which
+ *     is how a page measures 7,592 chars on a 32,768-token window and 1,704 on 4,096 — so the
+ *     retired flat `READ_PAGE_CHARS = 3000` literal it used to be stated against no longer exists.
+ *     That is precisely why this budget is a property of the CARD: it holds at every window,
+ *     including the ones where a page is more than twice what it used to be.
  * </ul>
  */
 const EXCERPT_DISPLAY_MAX_CHARS = 320;

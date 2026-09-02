@@ -25,19 +25,14 @@ import {
 import { resolvePathLazy } from '../hooks/resolvePathLazy.js';
 import { authorizedFetch } from '../api/authorizedFetch.js';
 import { getOperationClient } from '../operations/OperationClient.js';
+// Tempdoc 885 item 21b — the ONE spelling of the exhausted terminal state (see its javadoc). The
+// by-prefix listing defaults a blank state to `FAILED`, so an older backend keeps the old
+// rendering rather than falling into the exhausted arm.
+import { JOB_STATE_RETRY_EXHAUSTED } from '../../api/domains/indexing.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 
 const RESOURCE_ID = 'core.failed-indexing-jobs';
 const RETRY_OP = 'core.retry-indexing-job';
-
-/**
- * Tempdoc 885 item 21b — the terminal state the queue landed a job in. `FAILED` says the file is
- * unreadable (a parse failure, or the untyped attempts cap); `RETRY_EXHAUSTED` says we never
- * managed to read it — a transient error that kept recurring for the whole seven-day retry window.
- * The vocabulary is `IndexingJobView.STATE_*` (app-api); the by-prefix listing defaults a blank one
- * to `FAILED`, so an older backend keeps the old rendering rather than falling off a `switch`.
- */
-const STATE_RETRY_EXHAUSTED = 'RETRY_EXHAUSTED';
 
 interface FailedRow {
   readonly pathHash: string;
@@ -294,7 +289,7 @@ export class FailedJobsDrawer extends JfElement {
     // parser timeout), which on its own reads as a verdict about the file; the header says what
     // actually happened and what makes the queue try again, so the error stays as detail rather
     // than as the explanation.
-    const exhausted = r.state.toUpperCase() === STATE_RETRY_EXHAUSTED;
+    const exhausted = r.state.toUpperCase() === JOB_STATE_RETRY_EXHAUSTED;
     // Per-row retry/cancel reuse the shared <jf-row-actions> (tempdoc 599 §16.1 Move 1 + §17.2): it
     // reads the failed-jobs Resource's itemOperations and dispatches the user-invocable Operation with
     // {pathHash: rowKey} — no hand-rolled button or direct OperationClient call.

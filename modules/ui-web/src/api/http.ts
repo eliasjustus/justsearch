@@ -99,6 +99,12 @@ export interface RuntimeManifestView {
    * the transport the shell actually renders it from (`state/aiStateStore.ts` → the
    * `core.ai.contextWindow` fact → Brain / Settings); it is typed here so a consumer reading the
    * manifest sees the full AI block rather than a silently-narrower copy of it.
+   *
+   * Nullability follows the GENERATED schema
+   * (`api/generated/schema-types/inference-status-response.ts`), not the Java record: `rung` and
+   * `slots` are primitive `int` on `OnlineAiRuntimeIntrospection.ContextWindow` and optional here,
+   * so read them defensively — as `state/aiStateStore.ts` does, treating a missing or non-positive
+   * `rung` as "no derived window" rather than as a rung of zero.
    */
   ai?: {
     phase: string;

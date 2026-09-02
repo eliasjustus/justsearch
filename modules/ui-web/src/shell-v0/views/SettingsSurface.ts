@@ -19,6 +19,11 @@
  */
 
 import { html, css, nothing, type TemplateResult, type PropertyValues } from 'lit';
+// Tempdoc 883 D-A.7 — the override field must resync to STATE, not to Lit's memo of the last
+// committed value: a rejected/floored/collapsed write leaves the DOM value the user typed, and a
+// plain `.value=` binding sees no change and skips the update. `live()` compares against the live
+// DOM property, which is the only comparison that can notice.
+import { live } from 'lit/directives/live.js';
 import { JfElement } from '../primitives/JfElement.js';
 import { authorizedFetch } from '../api/authorizedFetch.js';
 // Tempdoc 511 §511-followup-B: reset-settings now routes through
@@ -2844,6 +2849,19 @@ export class SettingsSurface extends JfElement {
    * agent-safety control). The destructive-op gate is backend-enforced
    * regardless of the setting.
    */
+  private renderAutonomyDial(): TemplateResult {
+    return html`
+      <div class="section">
+        <h3>${icon({ name: 'layers', size: 12 })} Agent autonomy</h3>
+        <p class="toggle-desc">
+          How much the assistant acts on its own. Destructive actions are
+          always confirmed regardless of this setting (backend-enforced).
+        </p>
+        <jf-autonomy-dial></jf-autonomy-dial>
+      </div>
+    `;
+  }
+
   /**
    * Tempdoc 883 D-A.7 / ADR-0047 — the context window is a DERIVED resource, so this section is a
    * readout first and a control second.
@@ -2896,7 +2914,7 @@ export class SettingsSurface extends JfElement {
             placeholder="Auto"
             aria-describedby="context-window-help"
             ?disabled=${this.readOnly}
-            .value=${override > 0 ? String(override) : ''}
+            .value=${live(override > 0 ? String(override) : '')}
             @change=${(e: Event) =>
               void this.saveContextOverride((e.target as HTMLInputElement).value)}
           />
@@ -2953,19 +2971,6 @@ export class SettingsSurface extends JfElement {
     } finally {
       this.saving = false;
     }
-  }
-
-  private renderAutonomyDial(): TemplateResult {
-    return html`
-      <div class="section">
-        <h3>${icon({ name: 'layers', size: 12 })} Agent autonomy</h3>
-        <p class="toggle-desc">
-          How much the assistant acts on its own. Destructive actions are
-          always confirmed regardless of this setting (backend-enforced).
-        </p>
-        <jf-autonomy-dial></jf-autonomy-dial>
-      </div>
-    `;
   }
 
   /**
