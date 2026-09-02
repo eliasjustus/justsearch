@@ -862,11 +862,17 @@ the backend log only — they have no wire flag today, so an operator can see th
 answer cannot. Putting those two on the wire is tracked as open work in tempdoc 883, not claimed
 here.
 
-**Agent knobs.** `justsearch.agent.max_completion_tokens` and
-`justsearch.agent.max_tool_result_chars` both default to `0 = derive from the window`; a positive
-value is an explicit operator ceiling and is honoured verbatim. The agent's completion reserve is
-`min(1024, window / 4)` — an answer does not get longer because the window did, but at a window too
-small to afford 1024 a flat reserve starves the input instead.
+**Agent knobs.** `justsearch.agent.max_tool_result_chars` and
+`justsearch.agent.max_completion_tokens` both default to `0 = derive from the window`, but a
+positive value does NOT mean the same thing for the two:
+
+- `max_tool_result_chars` is an operator ceiling honoured **verbatim**.
+- `max_completion_tokens` is a ceiling on a window **fraction**: the reserve is
+  `min(cap, window / 4)`, where `cap` is the configured value when set and `1024` otherwise. An
+  answer does not get longer because the window did, but at a window too small to afford the cap a
+  flat reserve starves the input instead — so a small window reduces it. Because that reduces a
+  number an operator typed, `AgentContextBudgets` reports the reduction at INFO, deduplicated per
+  `(cap, window)` pair.
 
 **Retrieval shape.** The Head passes `inputBudget` to the Worker
 (`RetrieveContextRequest.max_context_tokens`) so the Worker can budget context during retrieval
