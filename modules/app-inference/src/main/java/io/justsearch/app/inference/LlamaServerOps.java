@@ -98,6 +98,14 @@ final class LlamaServerOps {
   private static final int CONSECUTIVE_FAILURES_BEFORE_RESTART =
       SUPERVISION_POLICY.consecutiveFailuresBeforeRestart();
 
+  /**
+   * Generations of {@code logs/llama-server.log} kept across launches (the live file plus two
+   * archived ones). A constant, not a config key: retention of a diagnostic the app writes about
+   * its own child process is a product decision, and the number matches the app's other supervised
+   * process log ({@code WorkerSpawner}'s {@code worker.log} → {@code .1} → {@code .2}).
+   */
+  private static final int RETAINED_LOG_GENERATIONS = 3;
+
   // Process and probe timeouts
   private static final long PROCESS_KILL_TIMEOUT_SECS = 5;
   private static final Duration ADOPTION_HEALTH_TIMEOUT = Duration.ofSeconds(2);
@@ -892,7 +900,7 @@ final class LlamaServerOps {
     Path serverExeDir = config.get().serverExecutable().getParent();
     configureProcessWorkingDirectory(pb, serverExeDir);
     adjustPathForRuntimeDlls(pb, serverExeDir);
-    Path logFile = configureServerLogRedirection(pb);
+    Path logFile = configureServerLogRedirection(pb, resolveLlamaServerLogFile());
     startManagedProcessAndMonitor(pb, logFile);
   }
 
@@ -932,16 +940,64 @@ final class LlamaServerOps {
     }
   }
 
-  private Path configureServerLogRedirection(ProcessBuilder pb) throws IOException {
-    // Persist llama-server logs to a file under the user-writable app home/data dir.
-    Path logFile = resolveLlamaServerLogFile();
+  /**
+   * Persist llama-server output to {@code <home|dataDir>/logs/llama-server.log}, retaining a bounded
+   * number of generations. Package-private (and taking the resolved path) so the retention policy is
+   * testable through the SAME method the launch path calls, rather than through a helper a future
+   * edit could stop calling.
+   */
+  Path configureServerLogRedirection(ProcessBuilder pb, Path logFile) throws IOException {
     Files.createDirectories(logFile.getParent());
+    rotateServerLogGenerations(logFile);
     // Remember where this launch starts writing, so launch-argument rejections are read from THIS
-    // run's output rather than a previous run's tail (the log is append-only across restarts).
+    // run's output rather than a previous run's tail. Read AFTER rotation: rotation moves the
+    // previous log aside, so this launch starts at offset 0 of a fresh file.
     lastLaunchLogOffset = Files.exists(logFile) ? Files.size(logFile) : 0L;
     pb.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
     pb.redirectError(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
     return logFile;
+  }
+
+  /**
+   * Rotate {@code llama-server.log} → {@code .1} → {@code .2} on each launch, deleting what falls
+   * off the end. Before this the file was appended to across every restart of the process's life
+   * with nothing pruning it — unbounded growth of a file whose verbosity belongs to llama-server,
+   * not to us, and which can therefore carry prompt-shaped diagnostics.
+   *
+   * <p>Rotate-on-start (rather than a size cap) mirrors the policy the app already runs for its
+   * other supervised process log — {@code WorkerSpawner}'s {@code worker.log} → {@code .1} →
+   * {@code .2}, itself mirroring the Shell's {@code lib.rs} rotation — so the app has ONE retention
+   * story for process logs instead of two. It also keeps the useful property for free: the previous
+   * launch's output survives exactly one restart, which is what post-mortem reading needs.
+   * Best-effort: a rotation that fails must never stop the server from starting.
+   */
+  private static void rotateServerLogGenerations(Path logFile) {
+    if (!Files.exists(logFile)) {
+      return;
+    }
+    try {
+      Files.deleteIfExists(logGeneration(logFile, RETAINED_LOG_GENERATIONS - 1));
+      for (int generation = RETAINED_LOG_GENERATIONS - 2; generation >= 1; generation--) {
+        Path older = logGeneration(logFile, generation);
+        if (Files.exists(older)) {
+          Files.move(
+              older,
+              logGeneration(logFile, generation + 1),
+              java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+      }
+      Files.move(
+          logFile,
+          logGeneration(logFile, 1),
+          java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    } catch (IOException e) {
+      LOG.debug("llama-server.log rotation failed (best-effort): {}", e.getMessage());
+    }
+  }
+
+  /** {@code llama-server.log.<n>} — generation 1 is the previous launch. */
+  private static Path logGeneration(Path logFile, int generation) {
+    return logFile.resolveSibling(logFile.getFileName() + "." + generation);
   }
 
   private void startManagedProcessAndMonitor(ProcessBuilder pb, Path logFile) throws IOException {
