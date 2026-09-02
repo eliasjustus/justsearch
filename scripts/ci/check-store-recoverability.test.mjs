@@ -357,7 +357,12 @@ test('an unknown storage root fails, so a root cannot be invented or misspelled'
   assert.ok(result.some((f) => f.includes('unknown root')), result.join(' | '));
 });
 
-for (const root of ['DATA_DIR', 'AI_HOME', 'PROGRAM_DATA_OR_DATA_DIR']) {
+for (const root of [
+  'DATA_DIR',
+  'AI_HOME',
+  'PROGRAM_DATA_OR_DATA_DIR',
+  'USER_INDEXED_ROOTS',
+]) {
   test(`the enumerated root ${root} is accepted`, () => {
     const result = check([readyRow({ root })]);
     assert.ok(!result.some((f) => f.includes('unknown root')), result.join(' | '));
