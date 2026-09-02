@@ -638,9 +638,22 @@ measures, the rotation-floor caveat, and the explicit statement that the metrics
   and turns a one-off analysis into a tracked series — but it is NOT in §6's scope, because the
   proximity window (14 days) and the `fix:`-title dependency are judgment calls that deserve their
   own review rather than riding along in a reader PR.
-- **Does `autoCompactWindow: 600000` fire?** Inherited open question from the
-  `agent-token-efficiency-review` tempdoc; the compaction ledger still shows 8 manual / 1 auto,
-  the auto at 1.0M.
+- **`autoCompactWindow: 600000` does NOT fire — answered, and the answer is "the ceiling you
+  think you have does not exist."** Inherited open question from the
+  `agent-token-efficiency-review` tempdoc §7. The setting IS present
+  (`~/.claude/settings.json:52`). Since it was added (2026-08-26),
+  `context-residency.mjs --since 2026-08-26` shows **2 compactions, both `manual`**, at
+  pre-compaction contexts of **947k and 959k** — sessions ran to ~950k tokens, 1.6x past the
+  600k setting, and auto-compaction never triggered; a human compacted by hand both times. Over
+  the full window it is 8 manual / 1 auto, the one auto at 1.0M.
+  This matters more than an unused setting normally would: it is the difference between "the main
+  loop has a context ceiling" and "it does not", and every context-bounding estimate in this
+  tempdoc and in the `agent-token-efficiency-review` tempdoc's §4.1 assumed the lever was at least
+  *available*. **Do not cite `autoCompactWindow` as a mitigation anywhere until someone establishes
+  what it actually does** — the observed behaviour is consistent with the setting being ignored, or
+  with auto-compaction firing only at a hard model-context limit regardless of it.
+  `context-ceiling-hint`'s 300k/500k advisories are, on this evidence, the only ceiling in the
+  main loop — and §4.6 notes they cannot reach the subagents carrying 74% of spend.
 - **Is the W34-W35 spawn-tail growth one campaign or a pattern?** The top spawns are 875-878 and
   the 882-885 decision-review lanes. If it is one campaign, the trend is a level shift, not a
   slope, and the right response is a spawn-length bound rather than a routing change.
