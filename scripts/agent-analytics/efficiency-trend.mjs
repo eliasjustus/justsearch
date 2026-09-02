@@ -685,12 +685,24 @@ function main() {
     ...(delivery.available ? delivery.rows.map((r) => r.bucket) : []),
   ]);
   const flagsByBucket = new Map();
+  for (const key of allBucketKeys) {
+    flagsByBucket.set(key, classifyBucket(bucketBounds(key, opts.by), floorMs, nowMs));
+  }
+
+  // 908 defect 4: truncatedBuckets/partialBuckets are printed "LIVE rows
+  // only" and feed excludeFromPower -- they must be derived from buckets that
+  // actually HAVE a `source: 'live'` row, not from every bucket key any
+  // section happens to mention. Deriving from `allBucketKeys` named a bucket
+  // whose ONLY row is `source: 'snapshot'` (e.g. UNKNOWN) as TRUNCATED,
+  // contradicting that row's own flag -- two different, and one false.
+  const liveBucketKeys = new Set([
+    ...leadingRows.filter((r) => r.source === 'live').map((r) => r.bucket),
+    ...spawnTailRows.filter((r) => r.source === 'live').map((r) => r.bucket),
+  ]);
   const truncatedBuckets = [];
   const partialBuckets = [];
-  for (const key of allBucketKeys) {
-    const bounds = bucketBounds(key, opts.by);
-    const flags = classifyBucket(bounds, floorMs, nowMs);
-    flagsByBucket.set(key, flags);
+  for (const key of liveBucketKeys) {
+    const flags = flagsByBucket.get(key);
     if (flags.truncated) truncatedBuckets.push(key);
     if (flags.partial) partialBuckets.push(key);
   }

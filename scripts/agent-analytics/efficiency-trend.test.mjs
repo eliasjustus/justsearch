@@ -516,6 +516,65 @@ run('CLI: a complete-at-capture snapshot row is unflagged next to a legacy recor
   });
 });
 
+// --- corpusHonesty.truncatedBuckets/partialBuckets: regression for defect 4 ---
+// (independent-verification defect 4 -- the lists were derived from EVERY
+// bucket key any section mentioned, so a bucket whose ONLY row was a
+// source:'snapshot' UNKNOWN row still got named TRUNCATED -- contradicting
+// its own row's flag, in the one section whose job is to not mislead.)
+
+run('CLI: a bucket whose only row is an UNKNOWN snapshot row must NOT appear in truncatedBuckets, even though it predates the floor', () => {
+  const records = [
+    // legacy record, no captured flags -- reads UNKNOWN, and this bucket is
+    // long before whatever floor the live scan discovers on this machine
+    { bucket: '2020-W02', harness: 'claude-code', by: 'week', generatedAtMs: 1, leading: { calls: 11, costUsd: 1, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 }, spawnTail: null },
+  ];
+  withScratchSnapshot(records, (file) => {
+    const res = spawnSync(process.execPath, [
+      SCRIPT_PATH, '--since', '2019-12-30', '--until', '2020-01-20', '--harness', 'claude-code',
+      '--no-git', '--snapshot-path', file, '--json',
+    ], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.leading[0].bucket, '2020-W02');
+    assert.equal(parsed.leading[0].unknown, true);
+    assert.deepEqual(parsed.corpusHonesty.truncatedBuckets, [], 'a bucket with no live row must never be named TRUNCATED');
+  });
+});
+
+run('CLI (consistency assertion): every bucket in truncatedBuckets has a LIVE row flagged truncated, and no UNKNOWN bucket is also in truncatedBuckets', () => {
+  // Mix: one LIVE-shaped truncated bucket (far past, no snapshot involved --
+  // this reader has no live ledger data that far back, so it is absent
+  // entirely -- proving the OTHER direction) plus the UNKNOWN snapshot bucket
+  // from the test above, in the SAME run.
+  const records = [
+    { bucket: '2020-W02', harness: 'claude-code', by: 'week', generatedAtMs: 1, leading: { calls: 11, costUsd: 1, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 }, spawnTail: null },
+    { bucket: '2020-W03', harness: 'claude-code', by: 'week', generatedAtMs: 1, truncatedAtCapture: true, partialAtCapture: false, leading: { calls: 5, costUsd: 1, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 }, spawnTail: null },
+  ];
+  withScratchSnapshot(records, (file) => {
+    const res = spawnSync(process.execPath, [
+      SCRIPT_PATH, '--since', '2019-12-30', '--until', '2020-01-27', '--harness', 'claude-code',
+      '--no-git', '--snapshot-path', file, '--json',
+    ], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    const parsed = JSON.parse(res.stdout);
+    const allLeadingRows = parsed.leading;
+    const unknownBuckets = new Set(allLeadingRows.filter((r) => r.unknown).map((r) => r.bucket));
+
+    for (const bucket of parsed.corpusHonesty.truncatedBuckets) {
+      const hasLiveTruncatedRow = allLeadingRows.some((r) => r.bucket === bucket && r.source === 'live' && r.truncated === true);
+      assert.ok(hasLiveTruncatedRow, `truncatedBuckets names ${bucket} but no LIVE row there is flagged truncated`);
+      assert.ok(!unknownBuckets.has(bucket), `${bucket} is both UNKNOWN and TRUNCATED -- contradiction`);
+    }
+    // 2020-W03 is a SNAPSHOT row (not live), so even though truncatedAtCapture
+    // is true it must not appear in truncatedBuckets (that list is LIVE-only
+    // by construction; its own per-row `truncated:true` flag is enough).
+    assert.ok(!parsed.corpusHonesty.truncatedBuckets.includes('2020-W03'));
+    const w03 = allLeadingRows.find((r) => r.bucket === '2020-W03');
+    assert.equal(w03.source, 'snapshot');
+    assert.equal(w03.truncated, true, 'the row itself still honestly reports its captured truncation');
+  });
+});
+
 // --- report ------------------------------------------------------------------
 
 if (failures.length) {
