@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  checkCorruptionPolicyVocabulary,
+  checkCountRatchet,
   checkDurableStoreRegister,
   checkParity,
   extractCatalogEntries,
@@ -554,6 +556,127 @@ test('a string literal is not a comment: `"// Files.write(x)"` still reads as pr
   assert.equal(
     isPersistenceWriteSource(JAVA_SRC, 'class X { void f() { log("// nope"); Files.write(p, b); } }'),
     true,
+  );
+});
+
+// --- tempdoc 910 item 2: closed corruptionPolicy vocabulary + count ratchet ---
+
+const POLICY_VOCAB = { FAIL_LOUD: 'Reading raises a visible error.' };
+
+test('a corruptionPolicy outside the closed vocabulary fails, naming the file to extend', () => {
+  const result = checkCorruptionPolicyVocabulary({
+    durableStores: [readyRow({ id: 'invented', corruptionPolicy: 'SILENT_EMPTY' })],
+    policies: POLICY_VOCAB,
+  });
+  assert.ok(result.some((f) => f.includes('unknown corruptionPolicy `SILENT_EMPTY`')), result.join(' | '));
+  // The message must BE the remedy: a lane coining a value has to know where to put it.
+  assert.ok(
+    result.some((f) => f.includes('governance/store-corruption-policies.v1.json')),
+    result.join(' | '),
+  );
+});
+
+test('a corruptionPolicy inside the vocabulary passes', () => {
+  assert.deepEqual(
+    checkCorruptionPolicyVocabulary({
+      durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+      policies: POLICY_VOCAB,
+    }),
+    [],
+  );
+});
+
+test('a declared policy no row uses fails, so the vocabulary cannot outlive its rows', () => {
+  const result = checkCorruptionPolicyVocabulary({
+    durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+    policies: { ...POLICY_VOCAB, RETIRED_SPELLING: 'Nothing uses this any more.' },
+  });
+  assert.ok(result.some((f) => f.includes('`RETIRED_SPELLING` is declared but no durableStores row uses it')),
+    result.join(' | '));
+});
+
+test('a vocabulary entry with no stated meaning fails', () => {
+  const result = checkCorruptionPolicyVocabulary({
+    durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+    policies: { FAIL_LOUD: '   ' },
+  });
+  assert.ok(result.some((f) => f.includes('has no meaning')), result.join(' | '));
+});
+
+const RATCHET = { durableStoreRows: 2, pendingDurableClassificationCap: 3 };
+
+test('losing a durableStores row fails against the pinned floor', () => {
+  const result = checkCountRatchet({
+    durableStores: [readyRow()],
+    pendingDurableClassification: null,
+    ratchet: RATCHET,
+  });
+  assert.ok(result.some((f) => f.includes('1 rows against a pinned floor of 2')), result.join(' | '));
+  assert.ok(result.some((f) => f.includes('SAME commit that removes the row')), result.join(' | '));
+});
+
+test('gaining a durableStores row is allowed — the pin is a floor, not an equality', () => {
+  // A lane adding rows in parallel must not red this gate; only disappearance is the event.
+  assert.deepEqual(
+    checkCountRatchet({
+      durableStores: [readyRow({ id: 'a' }), readyRow({ id: 'b' }), readyRow({ id: 'c' })],
+      pendingDurableClassification: null,
+      ratchet: RATCHET,
+    }),
+    [],
+  );
+});
+
+test('pending entries over the pinned ceiling fail', () => {
+  const entry = { path: 'X.java', state: 's', blocker: 'b' };
+  const result = checkCountRatchet({
+    durableStores: [readyRow({ id: 'a' }), readyRow({ id: 'b' })],
+    pendingDurableClassification: { cap: 3, entries: [entry, entry, entry, entry] },
+    ratchet: RATCHET,
+  });
+  assert.ok(result.some((f) => f.includes('4 entries against the pinned ceiling of 3')), result.join(' | '));
+});
+
+test('raising the register-side cap without raising the external pin fails', () => {
+  // This is the hole the external pin exists to close: before it, one commit could add a pending
+  // entry and raise the very cap that forbade it, because both lived in the same file.
+  const result = checkCountRatchet({
+    durableStores: [readyRow({ id: 'a' }), readyRow({ id: 'b' })],
+    pendingDurableClassification: { cap: 80, entries: [] },
+    ratchet: RATCHET,
+  });
+  assert.ok(result.some((f) => f.includes('cap is 80 against a pinned ceiling of 3')), result.join(' | '));
+});
+
+test('the REAL register passes both the vocabulary and the ratchet', () => {
+  const real = JSON.parse(
+    fs.readFileSync(path.resolve(REPO_ROOT, 'governance/store-recoverability.v1.json'), 'utf8'),
+  );
+  const vocab = JSON.parse(
+    fs.readFileSync(path.resolve(REPO_ROOT, 'governance/store-corruption-policies.v1.json'), 'utf8'),
+  );
+  assert.deepEqual(
+    checkCorruptionPolicyVocabulary({ durableStores: real.durableStores, policies: vocab.policies }),
+    [],
+  );
+  assert.deepEqual(
+    checkCountRatchet({
+      durableStores: real.durableStores,
+      pendingDurableClassification: real.pendingDurableClassification,
+      ratchet: vocab.ratchet,
+    }),
+    [],
+  );
+  // The pin must describe the register it pins, not a number someone typed once — but only as a
+  // floor/ceiling, never as an equality. A lane adding rows in parallel raises
+  // `real.durableStores.length` above the pin, and that is the ratchet working, not drifting.
+  assert.ok(
+    vocab.ratchet.durableStoreRows <= real.durableStores.length,
+    `pinned floor ${vocab.ratchet.durableStoreRows} exceeds the register's ${real.durableStores.length} rows`,
+  );
+  assert.ok(
+    real.pendingDurableClassification.cap <= vocab.ratchet.pendingDurableClassificationCap,
+    'register cap must not exceed the external pin',
   );
 });
 

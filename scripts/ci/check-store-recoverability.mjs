@@ -12,6 +12,12 @@ import { resolve } from 'node:path';
 import { scanPersistenceWriteSites } from '../governance/lib/persistence-write-scan.mjs';
 
 const REGISTER = 'governance/store-recoverability.v1.json';
+/**
+ * The corruptionPolicy vocabulary and the register's count ratchet, deliberately in a SEPARATE file
+ * from the register: rows change in parallel with other lanes, and a vocabulary edit colliding with
+ * a row edit is a merge conflict for no reason (tempdoc 910 item 2).
+ */
+const POLICIES = 'governance/store-corruption-policies.v1.json';
 const OWNERS = new Set(['SHELL', 'HEAD', 'WORKER', 'EXTERNAL']);
 const RECOVERABILITY = new Set(['AUTHORED', 'DERIVED', 'MIXED', 'EPHEMERAL']);
 const STATUSES = new Set(['READY', 'HARDENING_REQUIRED']);
@@ -499,9 +505,120 @@ export function checkEncryptionDisposition({ row, label, authoredCatalogDirs }) 
   return failures;
 }
 
+/**
+ * Holds every row's `corruptionPolicy` to the closed vocabulary in `store-corruption-policies.v1.json`.
+ *
+ * Kept OUT of `checkDurableStoreRegister` on purpose: that function is the row-shape checker its unit
+ * tests drive with invented rows, and folding a repo-wide vocabulary into it would make those fixtures
+ * depend on the real register's spellings.
+ *
+ * @param {{ durableStores: Array<object>, policies: Record<string, string>|undefined }} input
+ * @returns {string[]} failures
+ */
+export function checkCorruptionPolicyVocabulary({ durableStores, policies }) {
+  const failures = [];
+  if (policies === null || typeof policies !== 'object' || Array.isArray(policies)) {
+    failures.push(
+      `${POLICIES}: \`policies\` must be an object mapping each corruptionPolicy value to a one-line meaning.`,
+    );
+    return failures;
+  }
+  const known = new Set(Object.keys(policies));
+  for (const [value, meaning] of Object.entries(policies)) {
+    if (typeof meaning !== 'string' || meaning.trim() === '') {
+      failures.push(`${POLICIES}: \`${value}\` has no meaning. Every value states what happens to the bytes.`);
+    }
+  }
+  const used = new Set();
+  for (const row of durableStores ?? []) {
+    const value = row?.corruptionPolicy;
+    if (typeof value !== 'string' || value.trim() === '') continue; // shape checker owns this
+    used.add(value);
+    if (!known.has(value)) {
+      failures.push(
+        `durableStores.${row.id ?? '<missing-id>'}: unknown corruptionPolicy \`${value}\`. ` +
+          `The vocabulary is closed and lives in ${POLICIES} — add the value there with a one-line ` +
+          'meaning describing the OBSERVABLE outcome for the user\'s bytes (kept / rewritten / ' +
+          'deleted / refused), in the same commit as this row. Do not add a near-synonym of an ' +
+          'existing value to avoid editing the row; see that file\'s `extensionProcedure`.',
+      );
+    }
+  }
+  // A vocabulary that only ever grows becomes a list of spellings nobody uses, which is the same
+  // false authority a stale register is. An unused value is a failure, and deleting it is the fix.
+  for (const value of known) {
+    if (!used.has(value)) {
+      failures.push(
+        `${POLICIES}: \`${value}\` is declared but no durableStores row uses it. Delete it — a ` +
+          'vocabulary entry with no row is a spelling waiting to be picked by mistake.',
+      );
+    }
+  }
+  return failures;
+}
+
+/**
+ * The register's count ratchet. Both numbers are pinned OUTSIDE the register they describe, because
+ * `pendingDurableClassification.cap` previously called itself a ratchet while sitting in the same
+ * file as the entries it capped — one commit could add a pending entry and raise the cap forbidding
+ * it (tempdoc 910 item 2).
+ *
+ * `durableStoreRows` is a FLOOR, not an equality: adding rows is the register covering more of the
+ * tree, and a lane adding rows in parallel must not red this gate. A row DISAPPEARING is the event
+ * worth failing on.
+ *
+ * @returns {string[]} failures
+ */
+export function checkCountRatchet({ durableStores, pendingDurableClassification, ratchet }) {
+  const failures = [];
+  if (ratchet === null || typeof ratchet !== 'object') {
+    failures.push(`${POLICIES}: \`ratchet\` block is missing.`);
+    return failures;
+  }
+  const { durableStoreRows, pendingDurableClassificationCap } = ratchet;
+  const rows = Array.isArray(durableStores) ? durableStores.length : null;
+
+  if (!Number.isInteger(durableStoreRows) || durableStoreRows < 0) {
+    failures.push(`${POLICIES}: \`ratchet.durableStoreRows\` must be a non-negative integer.`);
+  } else if (rows !== null && rows < durableStoreRows) {
+    failures.push(
+      `durableStores holds ${rows} rows against a pinned floor of ${durableStoreRows}. A durable ` +
+        'authority does not stop existing quietly: if a store was genuinely retired, lower ' +
+        `\`ratchet.durableStoreRows\` in ${POLICIES} in the SAME commit that removes the row, and ` +
+        'say in the commit message where its bytes went.',
+    );
+  }
+
+  if (!Number.isInteger(pendingDurableClassificationCap) || pendingDurableClassificationCap < 0) {
+    failures.push(`${POLICIES}: \`ratchet.pendingDurableClassificationCap\` must be a non-negative integer.`);
+  } else if (pendingDurableClassification) {
+    const cap = pendingDurableClassification.cap;
+    const entries = Array.isArray(pendingDurableClassification.entries)
+      ? pendingDurableClassification.entries.length
+      : null;
+    if (Number.isInteger(cap) && cap > pendingDurableClassificationCap) {
+      failures.push(
+        `pendingDurableClassification.cap is ${cap} against a pinned ceiling of ` +
+          `${pendingDurableClassificationCap}. The cap cannot be raised in the same file as the ` +
+          `entries it caps — raise \`ratchet.pendingDurableClassificationCap\` in ${POLICIES} too, ` +
+          'and add a `bumps` entry naming which store forced it and what its blocker is.',
+      );
+    }
+    if (entries !== null && entries > pendingDurableClassificationCap) {
+      failures.push(
+        `pendingDurableClassification holds ${entries} entries against the pinned ceiling of ` +
+          `${pendingDurableClassificationCap}. Resolve one into durableStores, or raise the pin in ` +
+          `${POLICIES} deliberately and say why — this list exists to shrink.`,
+      );
+    }
+  }
+  return failures;
+}
+
 function main() {
   const root = process.cwd();
   const register = JSON.parse(readFileSync(resolve(root, REGISTER), 'utf8'));
+  const policies = JSON.parse(readFileSync(resolve(root, POLICIES), 'utf8'));
   const catalogEntries = extractCatalogEntries(
     readFileSync(resolve(root, register.catalog.file), 'utf8'),
   );
@@ -520,6 +637,15 @@ function main() {
       discoveredWriteSites: scanPersistenceWriteSites(root),
       nonDurableWriteSites: register.nonDurableWriteSites,
       pendingDurableClassification: register.pendingDurableClassification,
+    }),
+    ...checkCorruptionPolicyVocabulary({
+      durableStores: register.durableStores,
+      policies: policies.policies,
+    }),
+    ...checkCountRatchet({
+      durableStores: register.durableStores,
+      pendingDurableClassification: register.pendingDurableClassification,
+      ratchet: policies.ratchet,
     }),
   ];
 
@@ -541,7 +667,9 @@ function main() {
 
   console.log(
     `store-recoverability gate OK - ${catalogEntries.length} catalog stores and ` +
-      `${register.durableStores.length} durable state authorities are registered.`,
+      `${register.durableStores.length} durable state authorities are registered ` +
+      `(floor ${policies.ratchet.durableStoreRows}), across ` +
+      `${Object.keys(policies.policies).length} corruption policies.`,
   );
 }
 

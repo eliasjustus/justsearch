@@ -200,6 +200,44 @@
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: python -m pytest -q scripts/jseval"
+    },
+    {
+      "id": "ui-a11y-gate-settings-dialog-capture-timeout",
+      "match": [
+        "ui-a11y-gate"
+      ],
+      "claim": "`jseval ui-a11y-gate` exits 2 (CAPTURE ERROR, not a violation) on the `security` and `security-light` steps: both time out waiting for `jf-settings-window dialog[open]`. The rest of the sweep is clean — 18 ok / 2 ERROR / 0 NEW violations. Read the exit code before the diff: exit 2 here means two steps could not be captured, NOT that accessibility regressed, so do not go hunting for a violation you introduced. Reproduced identically against main's own frontend, so it is pre-existing on main and not caused by your branch. A run that reports a NEW violation, or an ERROR on a step other than security / security-light, is yours.",
+      "evidence": "tempdoc 885 UL.9/UL.10 (2026-09-02): the same sweep run against two servers minutes apart — :5174 serving worktree-resid-product and :5173 serving unmodified main — produced byte-identical outcomes (18 ok / 2 ERROR / 0 new violations, exit 2) with both ERRORs naming the `jf-settings-window dialog[open]` selector (scripts/jseval/jseval/ui_selectors.py:57-68). 885:3596-3605 records the pass and says the next kernel-facing PR should pin it; this is that pin.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbeOmitted": "No exitProbe, deliberately, and this is the honest form rather than a decoration. `ui-a11y-gate` drives a real browser against a SERVED frontend (`--ui-url`), so an unattended probe run by `expected-state-probe.mjs --slow` exits non-zero because nothing is listening — for the wrong reason. Exit 0 is what retires a pin, and this probe could never reach exit 0 whether the defect is fixed or not, which makes it an exit that cannot observe the pinned state — the defect `ui-web-envelopestream-heartbeat-flaky` records in its own exitProbeRetired, in the opposite direction. The real exit is lane R6's fix landing (worktree resid2-ui, wave-1 residue): when its PR merges, the fixing PR deletes this pin. reviewBy is the backstop if R6 does not land.",
+      "fixOwner": "wave-1 residue lane R6 (worktree resid2-ui) — the settings-dialog capture selector/wait in the ui-shot harness."
+    },
+    {
+      "id": "worker-methvin-watcher-create-event-size-race",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!worker-services))(?!.*--tests)(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*WorkerMethvinWatcher"
+      ],
+      "claim": "`WorkerMethvinWatcherTest.deliversCreateEventToJobQueue` fails under FULL-SUITE load as `The watcher must record the file's real size, not the unknown-size sentinel ==> expected: <4096> but was: <0>` and passes in isolation. Note what this is NOT: it names no timeout anywhere, so it is a different species from worker-services-30s-timeout-under-load and that pin does not cover it. The shape is a create-event race — the watcher reads the file's size after the CREATE notification but before the write has flushed, sees 0, and records JobQueue.UNKNOWN_SIZE_BYTES (modules/worker-core/.../JobQueue.java:39). Load widens the window rather than causing it, so this is a watcher defect, not a starvation artefact. A failure of any OTHER assertion in this class, or this assertion failing in an ISOLATED run, is yours.",
+      "evidence": "tempdoc 885 UL.10 third routed finding (885:3624-3641, 2026-09-02): the full `./gradlew.bat test` run for PR #603's merge produced 18 failures; 17 were covered by existing timeout-shape pins, and this was the eighteenth. Re-run isolated as `:modules:worker-services:cleanTest test --tests \"*WorkerMethvinWatcherTest*\"` — BUILD SUCCESSFUL. Assertion site: modules/worker-services/src/test/java/io/justsearch/indexerworker/services/WorkerMethvinWatcherTest.java:96. PR #603 changes no Java behaviour (one comment and one message-catalog line), so it is pre-existing either way.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbeOmitted": "No exitProbe, deliberately. Any probe narrow enough to run here would be an ISOLATED run of this test — which this pin's own claim records as PASSING. It would report exit 0, i.e. GONE, against a fully live red, and a fired exit means DELETE THE PIN. That is exactly the false-GONE defect ui-web-envelopestream-heartbeat-flaky and ui-web-pluginloader-module-mode-timeout record in their exitProbeRetired notes; a load-dependent failure exits by reviewBy plus its tracked fix, not by a probe. The real exit is lane R7's fix landing (worktree resid2-worker): when its PR merges, the fixing PR deletes this pin.",
+      "fixOwner": "wave-1 residue lane R7 (worktree resid2-worker) — a deterministic write-then-notify fixture, or the watcher re-reading size after the write settles."
+    },
+    {
+      "id": "operation-surface-indexingjobstates-unregistered",
+      "match": [
+        "governance/run\\.mjs(?!.*--gate (?!operation-surface))",
+        "--gate operation-surface"
+      ],
+      "claim": "The `operation-surface` gate fails on main with exactly ONE finding: `operation-surface/undeclared-surface` naming `modules/ui-web/src/shell-v0/state/indexingJobStates.ts` as referencing the canonical IndexingJobView lifecycle type without a row in governance/operation-surfaces.v1.json. Pre-existing, introduced with the file itself in #603; the register knows the sibling `substrates/tasks/indexingJobsBridge.ts` (operation-surfaces.v1.json:170) but not this one. A run naming a DIFFERENT file, or more than this one finding, is yours. Fix, do not remember: register the file (or fold it into the bridge's row) — this is a missing register row, not a defect in the gate.",
+      "evidence": "Reproduced 2026-09-02 on worktree-resid2-gov at base bff70561 (= origin/main): a full `node scripts/governance/run.mjs --mode gate` reported 35 gates / 3 fail, and operation-surface's only error finding is this one. `git log -1 --oneline origin/main -- modules/ui-web/src/shell-v0/state/indexingJobStates.ts` returns bff70561 (#603), and tempdoc 910's branch touches zero files under modules/ui-web or governance/operation-surfaces.v1.json (`git diff origin/main --name-only` = 6 files, none of them either), so it cannot be branch-induced. Related: tempdoc 885 UL.9's second routed finding records that the substrate failed-jobs wire has no parse-boundary contract, which is the same surface.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "node scripts/governance/run.mjs --gate operation-surface --mode gate",
+      "fixOwner": "the indexing-job lifecycle surface owner (the lane that shipped #603's jobs-drawer work) — one row in governance/operation-surfaces.v1.json."
     }
   ]
 }

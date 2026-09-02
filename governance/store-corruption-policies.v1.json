@@ -1,0 +1,42 @@
+{
+  "kind": "store-corruption-policies.v1",
+  "version": 1,
+  "tempdoc": 910,
+  "note": "The closed vocabulary for `durableStores[].corruptionPolicy` in governance/store-recoverability.v1.json, plus the count ratchet on that register. It lives in a SEPARATE file on purpose: the register's rows change often and in parallel with other lanes, and a vocabulary edit landing in the same file as a row edit is a merge conflict for no reason. Every other enumerated answer in that register (owner, recoverability, status, upgradeHandling, root, pathVerification, encryption) is already a closed Set in scripts/ci/check-store-recoverability.mjs; corruptionPolicy was the one answer still free text, so 'what happens to the user's bytes when this file is unreadable' was the only question a row could answer with a spelling nobody else uses. This file is NOT read at runtime by either register consumer (modules/shell/src-tauri/src/updater.rs, modules/ui UpgradeReconciliationProbe) - it is a build-time vocabulary only.",
+  "extensionProcedure": "A genuinely new corruption behaviour is a legitimate reason to extend this file. Add the value here WITH its one-line meaning in the same commit as the row that uses it, and make the meaning describe the OBSERVABLE outcome for the user's bytes (kept / rewritten / deleted / refused), not the implementation. Do not add a value 'in advance' of a row, and do not add a near-synonym of an existing value to avoid editing a row: 26 values for 36 rows is already close to one-per-row, so a 27th that means the same as one of these is drift, not precision. If a new value would be a synonym, reuse the existing one and say the difference in the row's corruptionNote instead.",
+  "policies": {
+    "ACTIVE_AND_FUTURE_LOGS_FAIL_LOUD": "An unreadable or future-versioned active journal is an error, not a skipped line; the process refuses rather than continuing against state it cannot read.",
+    "CLASSIFY_UNCLEAN_AND_REGENERATE": "An unreadable entry is classified as unclean and regenerated from its source; nothing user-authored is at stake.",
+    "CONSERVATIVE_REBUILD_OR_CLEAR": "A damaged marker is rebuilt if it can be, and otherwise cleared, choosing the conservative outcome over trusting partial bytes.",
+    "DELETE_AND_RECOMPUTE": "The file is deleted outright and recomputed; it is pure progress bookkeeping with no user content.",
+    "DISCARD_UNREADABLE_DERIVED_STATUS_AND_RESCAN": "Unreadable derived status is discarded and re-derived by a fresh scan rather than repaired in place.",
+    "FAIL_CLOSED": "The operation stops. Nothing is written, nothing is overwritten, and the caller is told it cannot proceed.",
+    "FAIL_CLOSED_AND_RETRY_PREPARATION": "The operation stops and the preparation step is retried from the beginning rather than resumed from unreadable state.",
+    "FAIL_CLOSED_DISABLED_WRITE_LOCKED": "The operation stops and the feature stays disabled with the store write-locked, so a corrupt file cannot be silently replaced by a default that re-enables it.",
+    "FAIL_CLOSED_REPAIR_REQUIRED": "The operation stops and stays stopped until an explicit repair; the process will not choose a recovery on the user's behalf.",
+    "FAIL_LOUD": "Reading raises a visible error instead of returning empty or default state; the bytes are left exactly as they are.",
+    "FAIL_LOUD_AND_PRESERVE": "Reading raises a visible error AND the unreadable bytes are preserved untouched, because they are user-authored and may still be recoverable by hand.",
+    "FAIL_LOUD_ON_UNREADABLE_OR_FUTURE_LINE": "A line that is unreadable OR written by a newer schema is a loud failure rather than a skipped record, so a downgrade cannot silently drop entries.",
+    "FAIL_OR_REBUILD_DERIVED_QUEUE": "A corrupt queue either fails loudly or is rebuilt from the durable source it derives from; queued work is never silently lost without one of the two happening.",
+    "NEVER_DELETE_OR_OVERWRITE_UNKNOWN_ASSET": "An asset the app does not recognise is never deleted or overwritten; it belongs to the user and is left in place regardless of what the app expected to find.",
+    "PRESERVE_AND_RECOVER_DEFAULTS": "The unparseable file is moved aside under a distinct name, defaults are loaded, and the recovery is surfaced as a condition — the user keeps the old bytes and is told.",
+    "RECOVER_PREVIOUS_OR_REBUILD": "The previous good generation is recovered if one exists; otherwise the store is rebuilt from source.",
+    "RECREATE_DERIVED_METRIC": "The metric file is recreated from scratch; it holds only derived measurements.",
+    "REFUSE_FUTURE_SCHEMA_AND_PRESERVE_OVERRIDES": "A future schema version is refused rather than downgraded, and any user overrides in the file are preserved rather than rewritten.",
+    "REGENERATE_BEFORE_CONSUMPTION": "The snapshot is regenerated before anything reads it, so a stale or damaged copy is never consumed.",
+    "REGENERATE_OR_DROP_DERIVED_HISTORY": "Derived history is regenerated where possible and otherwise dropped; losing it costs a recomputation, not user content.",
+    "ROTATE_OR_PRUNE_DIAGNOSTIC_ARTIFACT": "The damaged diagnostic artifact is rotated away or pruned; diagnostics are disposable by construction.",
+    "SKIP_DERIVED_ROW": "An unreadable row is skipped and the rest of the derived dataset is used; no single row is load-bearing.",
+    "SKIP_INVALID_PLUGIN_AND_PRESERVE_BYTES": "An invalid plugin payload is skipped rather than loaded, and its bytes are preserved rather than deleted — the payload is the user's.",
+    "SKIP_UNREADABLE_LINE_AND_WARN": "An unreadable journal line is skipped and a warning is raised; the append-only audit journal keeps going rather than losing every later entry to one bad line.",
+    "VERIFY_HASH_OR_PRESERVE_USER_ASSET": "The asset is accepted only if its hash verifies; a mismatch preserves the user's file rather than replacing it.",
+    "VERIFY_PROCESS_IDENTITY_OR_REPLACE_STALE_LOCK": "A lock is honoured only if the owning process still exists; a lock left by a dead process is replaced rather than waited on forever."
+  },
+  "ratchet": {
+    "note": "Two numbers, both pinned OUTSIDE the register they describe. Before this, `pendingDurableClassification.cap` called itself 'a ratchet' while living in the same file as the entries it capped, so one commit could add a pending entry and raise the cap that forbade it. `durableStoreRows` is a FLOOR, not an equality: rows are meant to be added (that is the register growing to cover more of the tree), and a lane adding rows in parallel must not red this gate. A row DISAPPEARING is the event worth a build failure — a durable authority does not stop existing quietly.",
+    "durableStoreRows": 36,
+    "pendingDurableClassificationCap": 8,
+    "remedy": "If a durable store is genuinely retired, lower `durableStoreRows` here in the same commit that removes its row, and say in the commit message where its bytes went. If the pending list genuinely needs more room, raise `pendingDurableClassificationCap` here AND in the register, and add a `bumps` entry saying which store forced it and what its blocker is. Never raise the cap to make a new pending entry fit without both.",
+    "bumps": []
+  }
+}
