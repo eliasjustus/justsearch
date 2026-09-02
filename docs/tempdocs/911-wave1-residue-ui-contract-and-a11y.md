@@ -65,25 +65,60 @@ by-prefix endpoint a record while leaving its twin hand-built would have created
 fork the projection-vs-fork rule exists to prevent. Both handlers now share one record
 (`FailedIndexingJobsResponse`) and one mapping helper (`IndexingController.toJobView`).
 
-### §B.b — `scanId` cannot be sourced, only declared
+### §B.b — `scanId` is out of lane scope, **not** unavailable (corrected after review S2-3)
 
-`IndexingService.FailedJobInfo` (`modules/app-api/.../IndexingService.java:298-304`) has six
-components and no `scanId`; the implementation lives in worker-services, out of lane scope. So the
-projection emits `scanId: ""`, which is what `IndexingJobView`'s own contract already spells as
-"unknown scan" (`IndexingJobView.java` compact constructor). Present-and-empty is the honest
-projection; **dropping the key was what made the payload un-typeable**, not the missing value.
+The first version of this section said `scanId` "cannot be sourced". That was wrong, and the
+correction matters: **the data exists and is simply not selected.**
 
-### §B.c — Precision opt-in
+| Layer | State | Evidence |
+|---|---|---|
+| SQLite | `scan_id` IS written on every enqueue | `SqliteJobQueue.java:392`, `:473` (INSERT column lists) |
+| The failed-jobs SELECT | does **not** select it | `SqliteJobQueue.java:1664-1669` — `SELECT path, error_message, attempts, last_updated, collection, state` |
+| proto | no field for it | `indexing.proto` `message FailedJob {…}` — 6 fields, no `scan_id` |
+| Head DTO | no component for it | `RemoteKnowledgeClient.java:1219`, `:1241` build `FailedJobInfo`; `IndexingService.java:298-304` declares 6 components |
 
-`IndexingJobView` and `FailedIndexingJobsResponse` both now implement `PreciseWire`
+All four are worker / app-services surfaces, outside lane R6. So the projection emits `""` — but
+`IndexingJobView`'s contract defines `""` as "single-file ingest, watcher, or a pre-`scan_id` row",
+a **real state**, so emitting it unqualified would make this surface assert something it never
+checked. Two things keep that honest rather than silent:
+
+- `IndexingController.SCAN_ID_NOT_PLUMBED` — the value is a named constant, not an inline `""`, so
+  the gap is greppable and cannot be misread as a checked "no scan"; the `toJobView` javadoc states
+  the four-layer cause.
+- §F.2 states the fix as the four-layer plumb, not as a vague follow-up.
+
+**Why not mark the component nullable instead** (review S2-3 preferred it if clean): it is not
+clean here. `scanId` is a component of `IndexingJobView`, which `RemoteIndexingJobsBridge.toView`
+also produces for the `core.indexing-jobs` Resource — where the value IS plumbed and is never null.
+Making it nullable would weaken a record two surfaces share, and widen the FE type to
+`string | null` for every consumer, in order to describe one projection's gap. Dropping the key is
+what made the payload un-typeable; emitting it labelled is the honest minimum in lane.
+
+### §B.c — Precision opt-in, and the generator fork it exposed (corrected after review S2-2)
+
+`IndexingJobView` and `FailedIndexingJobsResponse` both implement `PreciseWire`
 (`modules/app-agent-api/.../PreciseWire.java`), so `WireSchemaConfig` emits `required` + non-null
 instead of the permissive all-optional default. This is *true* of the record: the compact
 constructor `requireNonNull`s `pathHash`/`state`/`collection`, normalizes `errorMessage`/`scanId` to
-`""`, and the rest are primitives.
+`""`, and the rest are primitives — and of both producers (`RemoteIndexingJobsBridge.toView` reads
+proto getters, which never return null; `IndexingController.toJobView` defaults every slot).
 
-Checked before doing it: `IndexingJobViewSchemaTest` builds its **own** plain victools generator (no
-`withRequiredCheck` / `withNullableCheck`), so `indexing-job-view.v1.json` is byte-identical after
-the marker — confirmed by `git status` showing the file unmodified after a `-PupdateSchemas` run.
+**The first version treated a fork as a safety property.** It observed that
+`IndexingJobViewSchemaTest.java:40-49` built its **own** plain victools config — no
+`withRequiredCheck` / `withNullableCheck` — and concluded, approvingly, that
+`indexing-job-view.v1.json` would stay byte-identical. What that actually meant is that
+`PreciseWire` was a **no-op in that test**, leaving two generated schemas describing one record and
+disagreeing: `indexing-job-view.v1.json` said all-optional/all-nullable, while the same record
+inlined at `failed-indexing-jobs-response.v1.json` said all-required/non-null. And the permissive
+one is the one the product advertises for **this very endpoint** —
+`FailedIndexingJobsResourceCatalog.java:88-89` points `core.failed-indexing-jobs` at
+`indexing-job-view.v1.json`, `SchemaController.java:63` serves it, `ResourceView.ts:279` fetches it.
+
+Fixed: `IndexingJobViewSchemaTest` now calls `WireSchemaConfig.generator()` — the single generator
+authority — and the baseline was recaptured. The two are now identical (verified by comparing
+`indexing-job-view.v1.json` minus `$schema` against the inlined `jobs.items` node: equal). No
+consumer broke: every reference is to the file *name*, not its contents
+(`IndexingJobsResourceCatalogTest.java:44` asserts only the URL suffix).
 
 ### §B.d — Item 2: the brief's hypothesis was wrong; the cause is one layer down
 
@@ -142,10 +177,25 @@ these four surfaces with the short `Surface` constructor, and `Surface.java:99-1
 | `modules/ui-web/src/shell-v0/components/FailedJobsDrawer.ts` | `parseWireContract(failedIndexingJobsResponseSchema, …)`; `FailedRow` derived from the generated type instead of re-declared |
 | `modules/ui/build.gradle.kts` + `modules/ui/gradle.lockfile` | `libs.json.schema.validator` on the test suite |
 
-`docs/reference/api-contract-map.md` was **not** changed: it has no row for
-`/api/indexing-jobs/failed` or `.../by-prefix` (verified by grep), so no row's shape or schema
-changed. `RouteResponseSchemas` was likewise left alone — it is partial by design and states "a
-wrong mapping is worse than none".
+`docs/reference/api-contract-map.md` was **not** changed: `grep -n "indexing-jobs" ` returns no row
+for `/api/indexing-jobs/failed` or `.../by-prefix` — the doc never documented either endpoint — so
+no row's shape or schema changed and no update was due.
+
+`RouteResponseSchemas.java` **was** updated (review nit): the map's own stated criterion is "routes
+that return a documented wire record (those in `governance/contract-surfaces.v1.json`)", which both
+routes now meet. Both entries point at the one shared schema, and
+`SchemaController.SCHEMA_NAMES` gained the file so the OpenAPI `$ref` resolves —
+`RouteResponseSchemasCoverageTest` enforces that closure.
+
+### §C.a — Fixes from the independent review (S2-1 / S2-2 / S2-3)
+
+| Finding | Fix | Files |
+|---|---|---|
+| **S2-1** — the PR opened a regression: `parseWireContract` returns the RAW body in prod, and the PR removed the downstream defence, so `r.state.toUpperCase()` threw inside Lit's `performUpdate` (outside `refresh()`'s try/catch) → frozen drawer, strictly worse than pre-PR | `toRow` normalizes the three dereferenced fields at the ONE parse site (covers `retryAll` / `onRowActionSuccess` too, which key on `pathHash`), mirroring `api/domains/indexing.ts`'s defensive `(parsed.jobs ?? [])`; two prod-posture tests added | `FailedJobsDrawer.ts:56-70`, `:130`; `FailedJobsDrawer.test.ts` (new `PROD posture` describe) |
+| **S2-2** — two generated schemas disagreeing about one record (see §B.c) | `IndexingJobViewSchemaTest` → `WireSchemaConfig.generator()`; baseline recaptured | `IndexingJobViewSchemaTest.java:38-48`, `SSOT/schemas/indexing-job-view.v1.json` |
+| **S2-3** — `scanId` certified required and always empty (see §B.b) | named `SCAN_ID_NOT_PLUMBED` + four-layer cause in the javadoc; §B.b reworded from "cannot be sourced" to "out of lane scope"; §F.2 states the plumb | `IndexingController.java:916-940` |
+| **Ride-along** — the fixture-vs-schema guard for the exact defect that bit | new pytest validating every `_surface_entry` body against `SSOT/schemas/surface.v1.json` (`jsonschema`, already in jseval's `dev` extra) | `scripts/jseval/tests/test_ui_fixtures_wire_schema.py` |
+| **CI `dead-code`** — `schema-types/index.ts` 51 → 53 unused exports | `declared-growth` changeset; **not** the #611 whole-file masking trap — the barrel re-exports every target and the new module's own two exports are both consumed, so only the barrel row moves (same shape as 884's `surface.ts` changeset) | `gates/dead-code/.changesets/911-failed-jobs-wire-projection.md` |
 
 ### Item 2 (UL.10)
 
@@ -163,6 +213,8 @@ wrong mapping is worse than none".
 | `IndexingControllerFailedJobsWireContractTest.byPrefixConformsToSchema` (`modules/ui`) | reverted the by-prefix handler to the pre-911 hand-built map that dropped `scanId` | `does not conform to SSOT/schemas/failed-indexing-jobs-response.v1.json: [/jobs/0: required property 'scanId' not found, /jobs/1: …, /jobs/2: …]` — the exact stated reason; restored, green |
 | `FailedJobsDrawer.test.ts` "refuses a by-prefix body missing the required `state` field instead of rendering it" | replaced `parseWireContract(...)` with the old untyped cast | that test alone failed (1 failed / 7 passed) — no collateral, so it is the parse boundary it measures, not the render path |
 | `FailedJobsDrawer.test.ts` "a RETRY_EXHAUSTED row reads as gave up…" (fixtures upgraded to schema-shaped) | `exhausted = r.state.toUpperCase() === 'FAILED'` | that test alone failed (1 failed / 7 passed) — the assertion still distinguishes the two terminal states after the fixture change |
+| `FailedJobsDrawer.test.ts` PROD posture: "renders a state-less row instead of throwing, and records the drift" + "survives a jobs array of nulls" (review S2-1) | removed the `.map(toRow)` normalization | both failed with `TypeError: Cannot read properties of undefined (reading 'toUpperCase')` — i.e. the falsification **reproduced the exact regression the review described**, which is also the proof it was real |
+| `scripts/jseval/tests/test_ui_fixtures_wire_schema.py` (ride-along) | deleted `"altitude": "PRODUCT"` from `_surface_entry` | `surface fixture entry 'core.settings-surface' does not satisfy SSOT/schemas/surface.v1.json: $: 'altitude' is a required property` — the precise field, named |
 
 `IndexingControllerFailedJobsWireContractTest.substrateConformsToSchema` covers the sibling endpoint
 (same record, same schema) so the de-duplication in §B.a cannot silently regress on one side only.
@@ -240,10 +292,20 @@ PR body.
 
 ## §F — Open items
 
-1. **Other `ui_fixtures.py` routes are not audited against their generated schemas.** Only
-   `/api/registry/surfaces` was. Any other fixture body that a `parseWireContract` consumer reads is
-   one tightening away from the same silent failure. A cheap generic guard (validate every fixture
-   body against its registered schema at fixture-build time) would close the class; not in this
-   lane's scope.
-2. **`scanId` is structurally unavailable to the Head for failed-job rows** (§B.b). Owner: whoever
-   next touches `IndexingService.FailedJobInfo` in worker-services.
+1. **The fixture-vs-schema guard is now real but single-route.**
+   `scripts/jseval/tests/test_ui_fixtures_wire_schema.py` validates `/api/registry/surfaces` against
+   `SSOT/schemas/surface.v1.json`, which closes the exact defect this lane hit. It does **not**
+   generalize: every other fixture body a `parseWireContract` consumer reads is still one schema
+   tightening away from the same silent, fail-closed-inside-a-`catch` failure. The generic register
+   (each fixture route → its schema, asserted for all) stays routed, not done here. Its honest limit
+   is also stated in the test: JSON Schema checks required-ness and types, not unknown keys, while
+   the generated Zod is `z.strictObject` — so an extra key still passes locally and fails in the
+   browser.
+2. **`scanId` is not plumbed to failed-job rows — four layers, all outside lane R6** (§B.b). The
+   fix, in order: (a) add `scan_id` to the `listFailedJobs` SELECT
+   (`SqliteJobQueue.java:1664-1669`); (b) add `string scan_id` to `message FailedJob` in
+   `indexing.proto`; (c) pass it through `RemoteKnowledgeClient.java:1219` / `:1241`; (d) add the
+   component to `IndexingService.FailedJobInfo` (`IndexingService.java:298-304`) and read it in
+   `IndexingController.toJobView`, replacing `SCAN_ID_NOT_PLUMBED`. Until then the by-prefix and
+   substrate surfaces cannot distinguish "no scan" from "not asked". Owner: whoever next touches the
+   worker's failed-jobs read path.

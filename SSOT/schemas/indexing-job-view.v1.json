@@ -26,5 +26,6 @@
     "state" : {
       "type" : "string"
     }
-  }
+  },
+  "required" : [ "attempts", "collection", "errorMessage", "lastUpdatedMs", "pathHash", "retryAfterMs", "scanId", "state" ]
 }

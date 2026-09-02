@@ -6,7 +6,7 @@
 // though the live chip could not be reproduced. Mirrors RetrospectivePanel.test.ts (same right-drawer
 // TransientController pattern).
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './FailedJobsDrawer.js';
 import type { FailedJobsDrawer } from './FailedJobsDrawer.js';
 import {
@@ -16,6 +16,12 @@ import {
   failedJobsFolderPathHash,
   __resetFailedJobsDrawer,
 } from '../state/failedJobsDrawer.js';
+import { isDevMode } from '../../api/devMode.js';
+import { readWireDrift } from '../../api/wireDriftTelemetry.js';
+
+// The posture seam (tempdoc 683, mirrored from api/schemas.test.ts): parseWireContract THROWS in dev
+// (the vitest default) but DEGRADES in prod. The prod case has its own describe block at the bottom.
+vi.mock('../../api/devMode.js', { spy: true });
 
 afterEach(() => {
   __resetFailedJobsDrawer();
@@ -359,6 +365,99 @@ describe('FailedJobsDrawer', () => {
       // list cleared as each succeeded.
       expect(retried.length).toBe(2);
       expect(el.shadowRoot?.querySelectorAll('.row').length).toBe(0);
+      el.remove();
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});
+
+describe('FailedJobsDrawer — PROD posture (drift degrades, it does not freeze the drawer)', () => {
+  // Tempdoc 911 review S2-1. In prod `parseWireContract` logs, records the drift, and RETURNS THE
+  // RAW BODY — so the typed contract buys nothing at render time. Dereferencing `state`/`pathHash`
+  // on a drifted row would throw inside Lit's `performUpdate`, which is NOT inside `refresh()`'s
+  // try/catch: `this.error` would stay null and the user would get a frozen drawer, strictly worse
+  // than the pre-contract behaviour that rendered the rows. This pins the degrade.
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.mocked(isDevMode).mockReturnValue(false);
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+    vi.mocked(isDevMode).mockRestore();
+  });
+
+  it('renders a state-less row instead of throwing, and records the drift', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
+        const { state: _dropped, ...noState } = job({
+          pathHash: 'h-drift',
+          errorMessage: 'parse error: unexpected EOF',
+        });
+        return new Response(byPrefixBody([noState]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const el = document.createElement('jf-failed-jobs-drawer') as FailedJobsDrawer;
+      el.apiBase = 'http://x';
+      document.body.appendChild(el);
+      await settle(el);
+      openFailedJobs('folder-hash');
+      await pump(el);
+
+      // The row RENDERS (pre-PR behaviour preserved) — no TypeError escaped into performUpdate.
+      const rows = el.shadowRoot?.querySelectorAll('.row') ?? [];
+      expect(rows.length).toBe(1);
+      expect((rows[0]?.textContent ?? '')).toContain('parse error: unexpected EOF');
+      // An absent state is NOT the exhausted state: the missing discriminator must not be guessed.
+      expect(rows[0]?.querySelector('[data-testid="failed-job-exhausted"]')).toBeNull();
+      // …and the drawer is not stuck in the loading or error arm.
+      const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
+      expect(text).not.toContain("Couldn't load failed files");
+      expect(text).not.toContain('Loading');
+
+      // The degrade is SURFACED, not swallowed: the `[WireContract]` console line plus an entry in
+      // the drift ring that HealthSurface/HelpSurface render via summarizeWireDrift().
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      expect(readWireDrift().map((e) => e.context)).toContain(
+        'GET /api/indexing-jobs/failed/by-prefix',
+      );
+      el.remove();
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it('survives a jobs array of nulls (the worst degrade the raw body can carry)', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
+        return new Response(JSON.stringify({ jobs: [null], count: 1 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const el = document.createElement('jf-failed-jobs-drawer') as FailedJobsDrawer;
+      el.apiBase = 'http://x';
+      document.body.appendChild(el);
+      await settle(el);
+      openFailedJobs('folder-hash');
+      await pump(el);
+
+      expect(el.shadowRoot?.querySelectorAll('.row').length).toBe(1);
+      expect((el.shadowRoot?.textContent ?? '')).not.toContain("Couldn't load failed files");
       el.remove();
     } finally {
       globalThis.fetch = origFetch;

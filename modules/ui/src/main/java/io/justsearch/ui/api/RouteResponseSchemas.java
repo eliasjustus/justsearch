@@ -32,7 +32,15 @@ final class RouteResponseSchemas {
           Map.entry("GET /api/policy/effective", "effective-policy.v1.json"),
           Map.entry("GET /api/runtime-context", "runtime-context.v1.json"),
           Map.entry("GET /api/operation-history", "operation-history-entry.v1.json"),
-          Map.entry("GET /api/registry/resources", "resource.v1.json"));
+          Map.entry("GET /api/registry/resources", "resource.v1.json"),
+          // Tempdoc 911 (885 UL.9): the substrate failed-jobs surfaces became record-backed,
+          // so they now meet this map's stated criterion (a route returning a documented wire
+          // record in governance/contract-surfaces.v1.json). Both share one record.
+          Map.entry(
+              "GET /api/indexing-jobs/failed", "failed-indexing-jobs-response.v1.json"),
+          Map.entry(
+              "GET /api/indexing-jobs/failed/by-prefix",
+              "failed-indexing-jobs-response.v1.json"));
 
   /** The schema file name for a route, or {@code null} if none is declared. */
   static String schemaFor(String method, String path) {
