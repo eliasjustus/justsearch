@@ -22,6 +22,19 @@ public final class ExtractionSandboxFactory {
     AUTO
   }
 
+  /**
+   * How much longer than the sandbox deadline the outer {@link TimeboxedContentExtractor} waits
+   * when a child pool is in play.
+   *
+   * <p>Both layers used to enforce the same duration, and the outer one starts its clock first, so
+   * it ALWAYS won: every wedged child was reported as an interrupted wait rather than as a sandbox
+   * timeout, and the pool's own kill-at-the-deadline path — the designed mechanism — never ran.
+   * The chaos tier caught this (tempdoc 885 §SC-chaos); the unit tests could not, because they
+   * drive the pool directly with no timebox around it. The grace has to cover the kill itself:
+   * {@code destroyForcibly} + a 5 s {@code waitFor} + a 2 s stderr-drain join, plus slack.
+   */
+  static final Duration PROCESS_TIMEBOX_GRACE = Duration.ofSeconds(15);
+
   /** Pool sizing + leak-guard settings for the out-of-process families. */
   public record PoolSettings(int poolSize, int maxRequestsPerChild) {
     public static PoolSettings defaults() {
@@ -106,14 +119,17 @@ public final class ExtractionSandboxFactory {
             effectivePool.poolSize(),
             effectivePool.maxRequestsPerChild(),
             catalog);
+    // The sandbox owns the deadline; the timebox is only a backstop for a sandbox that itself
+    // wedges. See PROCESS_TIMEBOX_GRACE.
+    Duration backstop = effectiveTimeout.plus(PROCESS_TIMEBOX_GRACE);
     if (mode == Mode.PROCESS) {
-      return new TimeboxedContentExtractor(pool, effectiveTimeout, catalog);
+      return new TimeboxedContentExtractor(pool, backstop, catalog);
     }
     ContentExtractorProvider provider =
         contributionProvider(effectivePolicy, effectiveOcrConfig, ocrMetricCatalog);
     return new TimeboxedContentExtractor(
         new RoutingExtractionSandbox(new InProcessExtractionSandbox(provider), pool, provider),
-        effectiveTimeout,
+        backstop,
         catalog);
   }
 

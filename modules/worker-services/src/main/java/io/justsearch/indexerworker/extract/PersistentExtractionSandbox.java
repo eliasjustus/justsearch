@@ -64,6 +64,7 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
   static final String REASON_OOM = "oom";
   static final String REASON_REQUEST_BUDGET = "request_budget";
   static final String REASON_PROTOCOL = "protocol";
+  static final String REASON_INTERRUPTED = "interrupted";
 
   private final List<String> command;
   private final TikaExtractionPolicy policy;
@@ -205,8 +206,12 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
               + file.getFileName(),
           e);
     } catch (InterruptedException e) {
+      // NOT a crash: the child is healthy and is killed only because this thread was interrupted
+      // (loop shutdown, or an outer timebox replacing its executor). Tagging it `crash` made a
+      // deadline kill indistinguishable from a child that died on its own — the chaos tier caught
+      // exactly that (tempdoc 885 §SC-chaos).
       Thread.currentThread().interrupt();
-      discardChild(slot, child, REASON_CRASH);
+      discardChild(slot, child, REASON_INTERRUPTED);
       pending.cancel(true);
       throw new InterruptedIOException("Interrupted awaiting sandbox response");
     } catch (ExecutionException e) {

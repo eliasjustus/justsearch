@@ -45,7 +45,7 @@ public final class ExtractionSandboxChild {
   public static void main(String[] args) throws Exception {
     PrintStream protocolOut = System.out;
     System.setOut(new PrintStream(System.err, true, StandardCharsets.UTF_8));
-    startParentWatchdog(parentPid(args));
+    startParentWatchdog(args);
     serve(System.in, protocolOut);
   }
 
@@ -119,7 +119,15 @@ public final class ExtractionSandboxChild {
     return -1L;
   }
 
-  private static void startParentWatchdog(long parentPid) {
+  /**
+   * Starts the parent-liveness gate for a child launched with {@code --parent-pid=<pid>}.
+   *
+   * <p>Public because the chaos harness's stub parser is a real out-of-tree child of this pool and
+   * must run <b>this</b> orphan-prevention code, not a copy of it — a copied watchdog would make
+   * the system-level "Worker shutdown leaves no orphan" assertion prove nothing about production.
+   */
+  public static void startParentWatchdog(String[] args) {
+    long parentPid = parentPid(args);
     if (parentPid <= 0) {
       return;
     }

@@ -224,6 +224,54 @@ final class PersistentExtractionSandboxTest {
     }
   }
 
+  /**
+   * Regression for the defect the chaos tier found (tempdoc 885 §SC-chaos): the timebox and the
+   * sandbox enforced the SAME deadline, and the timebox starts its clock first, so it always won.
+   * Its {@code shutdownNow()} then interrupted the pool's wait, and every wedged child was
+   * recycled as {@code interrupted} — the pool's own kill-at-the-deadline path, which is the whole
+   * point of the design, never ran. The unit tests could not see it because they drive the pool
+   * directly, with no timebox around it; this one goes through the factory, as production does.
+   */
+  @Test
+  @Timeout(60)
+  void factoryLetsTheSandboxDeadlineFireBeforeTheTimeboxBackstop() throws Exception {
+    try (TestMetricRegistry registry = new TestMetricRegistry(ExtractionMetricCatalog.DEFINITIONS)) {
+      ExtractionMetricCatalog catalog = new ExtractionMetricCatalog(registry);
+      try (TimeboxedContentExtractor extractor =
+          ExtractionSandboxFactory.create(
+              ExtractionSandboxFactory.Mode.PROCESS,
+              TikaExtractionPolicy.defaults(),
+              OcrRoutingConfig.disabled(),
+              // Must exceed TimeboxedContentExtractor.MIN_TIMEOUT (5 s): below it the timebox is
+              // clamped up to 5 s and would beat a 2 s sandbox deadline for the wrong reason,
+              // making this test pass even with the grace removed.
+              Duration.ofSeconds(6),
+              catalog,
+              OcrMetricCatalog.noop(),
+              javaCommand(ScriptedChild.class),
+              ExtractionSandboxFactory.PoolSettings.defaults())) {
+        Path hanging = file("hang.txt");
+        assertThrows(
+            TimeboxedContentExtractor.ExtractionTimeoutException.class,
+            () -> extractor.extractArtifact(hanging));
+
+        assertEquals(
+            1L,
+            registry.counterValue(
+                ExtractionMetricCatalog.SANDBOX_RESTART_TOTAL,
+                ExtractionSandboxRestartTags.of(PersistentExtractionSandbox.REASON_TIMEOUT)),
+            "the sandbox must own the deadline and kill the child itself");
+        assertEquals(
+            0L,
+            registry.counterValue(
+                ExtractionMetricCatalog.SANDBOX_RESTART_TOTAL,
+                ExtractionSandboxRestartTags.of(
+                    PersistentExtractionSandbox.REASON_INTERRUPTED)),
+            "the timebox backstop must not pre-empt the sandbox deadline");
+      }
+    }
+  }
+
   @Test
   @Timeout(60)
   void childExitsWhenItsParentPidIsGone() throws Exception {
