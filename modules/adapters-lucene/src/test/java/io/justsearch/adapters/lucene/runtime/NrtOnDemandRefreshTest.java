@@ -105,6 +105,26 @@ final class NrtOnDemandRefreshTest {
   }
 
   @Test
+  @DisplayName("on_demand: an untouched index is already current, so the first search skips too")
+  void onDemandDoesNotReopenOnAnUntouchedIndex() throws Exception {
+    String prev = System.getProperty("justsearch.config");
+    RunningRuntime runtime = null;
+    try {
+      runtime = openWithBackgroundReopenStopped(ON_DEMAND);
+      for (int i = 0; i < 5; i++) {
+        assertEquals(0L, runtime.indexCountOps().docCount());
+      }
+      // The SearcherManager is built over a reader opened from the writer, so it covers everything
+      // written so far — which on a fresh index is nothing. Without seeding the watermark at open,
+      // the sentinel would never match the writer's sequence number and every query would refresh.
+      assertEquals(0L, runtime.runtimeGaugesSnapshot().reopenCount());
+    } finally {
+      closeQuietly(runtime);
+      restore(prev);
+    }
+  }
+
+  @Test
   @DisplayName("on_demand: an idle index does not reopen, however many searches arrive")
   void onDemandDoesNotReopenWhenNothingWasWritten() throws Exception {
     String prev = System.getProperty("justsearch.config");

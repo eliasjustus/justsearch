@@ -64,7 +64,16 @@ final class NrtReopenStats {
    */
   void install(SearcherManager mgr, AtomicLong lastRefreshNanos, IndexWriter writer) {
     if (writer != null) {
+      // The manager was just built over a reader opened from this writer, so it already covers
+      // everything written so far. Seeding both baselines here (rather than leaving the -1
+      // sentinel) also keeps a mid-session writer swap honest: the new writer's sequence numbers
+      // restart, and a max-accumulated watermark carried over from the old one would never match
+      // again — every query would refresh forever, silently cancelling the on-demand mode.
+      seqNoAtLastReopen.set(writer.getMaxCompletedSequenceNumber());
       segmentCounterAtLastReopen.set(writer.getSegmentInfosCounter());
+    } else {
+      seqNoAtLastReopen.set(-1L);
+      segmentCounterAtLastReopen.set(0L);
     }
     mgr.addListener(
         new ReferenceManager.RefreshListener() {
