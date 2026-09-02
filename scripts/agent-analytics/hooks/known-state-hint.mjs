@@ -26,7 +26,10 @@ import { readJsonStdin, hooksDisabled, isDirectRun, repoRoot } from '../lib/hook
 export const EXPECTED_STATE_FILE = 'scripts/agent-analytics/expected-state.v1.json';
 
 /** Commands that are verification-shaped at all — cheap pre-filter before regex matching. */
-const VERIFY_LEAD = /gradlew|gradle |npm |npx |vitest|pytest|jseval|scripts[\\/](ci|governance|docs)[\\/]|governance[\\/]run\.mjs|check-[a-z0-9-]+|tsc\b/i;
+// `run-all-tests.mjs` / `*.test.mjs` added 2026-09-02 (tempdoc 886 PR 5b): the agent-analytics
+// suite is a CI verification command (ci.yml runs it), but `node scripts/agent-analytics/...`
+// matched none of the leads, so no pin could ever be delivered for it.
+const VERIFY_LEAD = /gradlew|gradle |npm |npx |vitest|pytest|jseval|scripts[\\/](ci|governance|docs)[\\/]|governance[\\/]run\.mjs|check-[a-z0-9-]+|tsc\b|run-all-tests\.mjs|\.test\.mjs\b/i;
 
 /**
  * Pure matcher: returns the entries whose `match` regexes hit the command.

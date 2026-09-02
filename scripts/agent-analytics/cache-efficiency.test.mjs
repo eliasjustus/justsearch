@@ -17,6 +17,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import {
   classifyWrite,
   invalidationCause,
@@ -25,7 +27,11 @@ import {
   emptyReport,
   TTL_SEC_BY_KIND,
   INVALIDATION_READ_DROP_RATIO,
+  countSelfCheckDivergent,
+  SELF_CHECK_DIVERGENCE_THRESHOLD,
 } from './cache-efficiency.mjs';
+
+const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'cache-efficiency.mjs');
 
 let passed = 0;
 const failures = [];
@@ -214,6 +220,50 @@ run('a compaction boundary is still attributed after partial-dedup', () => {
   assert.ok(!report.invalidationCause['in-ttl-undetermined'], 'must not fall through to the residual');
   // last-wins dedup must also have kept the grown output count
   assert.equal(report.tokens.output, 250);
+});
+
+// --- SHOULD-FIX 5: --harness validation (886 independent-review fix-up) -----
+
+run('an unknown --harness exits 2 with a usage message', () => {
+  const res = spawnSync(process.execPath, [SCRIPT_PATH, '--harness', 'bogus-harness'], { encoding: 'utf8' });
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /unknown --harness "bogus-harness"/);
+  assert.match(res.stderr, /Usage: node scripts\/agent-analytics\/cache-efficiency\.mjs/);
+});
+
+// --- NIT 7: self-check divergence helper ------------------------------------
+
+run('countSelfCheckDivergent: within-threshold sessions are not counted', () => {
+  const sessions = [{ selfCheck: { deltaInputSum: 10000, maxCumulativeInput: 10050 } }]; // 0.5% off
+  assert.equal(countSelfCheckDivergent(sessions), 0);
+});
+
+run('countSelfCheckDivergent: a session over the threshold IS counted (resumed-thread shape)', () => {
+  // deliberately mirrors the corpus-observed shape (886 §11 A2): delta sum
+  // well below the cumulative counter because the thread carries prior history
+  const sessions = [{ selfCheck: { deltaInputSum: 5_000_000, maxCumulativeInput: 6_500_000 } }];
+  assert.equal(countSelfCheckDivergent(sessions), 1);
+});
+
+run('countSelfCheckDivergent: exactly at the threshold is NOT divergent (strict >, not >=)', () => {
+  const maxCumulativeInput = 100_000;
+  const deltaInputSum = maxCumulativeInput * (1 - SELF_CHECK_DIVERGENCE_THRESHOLD);
+  assert.equal(countSelfCheckDivergent([{ selfCheck: { deltaInputSum, maxCumulativeInput } }]), 0);
+});
+
+run('countSelfCheckDivergent: mixed sessions count only the divergent ones', () => {
+  const sessions = [
+    { selfCheck: { deltaInputSum: 1000, maxCumulativeInput: 1000 } }, // 0%
+    { selfCheck: { deltaInputSum: 500, maxCumulativeInput: 1000 } }, // 50%
+    { selfCheck: { deltaInputSum: 999, maxCumulativeInput: 1000 } }, // 0.1%
+  ];
+  assert.equal(countSelfCheckDivergent(sessions), 1);
+});
+
+run('--harness codex-cli prints a self-check line', () => {
+  const res = spawnSync(process.execPath, [SCRIPT_PATH, '--harness', 'codex-cli'], { encoding: 'utf8' });
+  assert.equal(res.status, 0);
+  assert.match(res.stdout, /self-check: \d+\/\d+ sessions where \|deltaInputSum - maxCumulativeInput\| > 1%/);
 });
 
 // --- report ------------------------------------------------------------------

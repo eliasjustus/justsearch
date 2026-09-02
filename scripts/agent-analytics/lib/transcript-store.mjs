@@ -36,19 +36,27 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import readline from 'node:readline';
 
 export const DEFAULT_PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
 
 /**
- * Every directory under `projectsRoot` whose slug matches /justsearch/i —
- * the main checkout, every worktree, and any jseval subdir each show up as a
- * distinct project dir under Claude Code's project-path slugging (743 Phase
- * 1 finding, reused verbatim as the matching rule here). Returns `[]` (never
- * throws) when `projectsRoot` doesn't exist — a fresh machine or a
- * contributor clone with no transcript history is a normal case, not an
- * error worth surfacing to every caller.
+ * Every directory under `projectsRoot` whose slug matches `filter` — default
+ * /justsearch/i, so every existing caller (this repo's own readers) is
+ * unaffected: the main checkout, every worktree, and any jseval subdir each
+ * show up as a distinct project dir under Claude Code's project-path
+ * slugging (743 Phase 1 finding, reused verbatim as the matching rule here).
+ * Returns `[]` (never throws) when `projectsRoot` doesn't exist — a fresh
+ * machine or a contributor clone with no transcript history is a normal
+ * case, not an error worth surfacing to every caller.
+ *
+ * `filter` was added by tempdoc 886 §12 PR 1 so `lib/ledger/claude-adapter.mjs`
+ * — which is harness-neutral by design and not scoped to this repo's own
+ * projects — can discover every project dir on the machine (`/./`-style
+ * always-match) or a caller-chosen subset, without this module hardcoding a
+ * second discovery function.
  */
-export function discoverProjectDirs(projectsRoot = DEFAULT_PROJECTS_ROOT) {
+export function discoverProjectDirs(projectsRoot = DEFAULT_PROJECTS_ROOT, filter = /justsearch/i) {
   let entries;
   try {
     entries = fs.readdirSync(projectsRoot, { withFileTypes: true });
@@ -56,7 +64,7 @@ export function discoverProjectDirs(projectsRoot = DEFAULT_PROJECTS_ROOT) {
     return [];
   }
   return entries
-    .filter((e) => e.isDirectory() && /justsearch/i.test(e.name))
+    .filter((e) => e.isDirectory() && filter.test(e.name))
     .map((e) => ({ name: e.name, path: path.join(projectsRoot, e.name) }));
 }
 
@@ -153,6 +161,63 @@ export function streamLines(file, onLine) {
     }
     onLine(parsed, i + 1, raw);
   }
+}
+
+/**
+ * Stream a transcript just far enough to find the first parseable line
+ * carrying a `timestamp` field, without slurping the whole (up to ~25MB)
+ * file. Returns a `Promise<Date|null>` — null if no timestamped line was
+ * found within `maxLines`.
+ *
+ * DELIBERATELY NOT the same signal as `listSessions`' mtime window (tempdoc
+ * 886 §12 PR 5a, moved here from baseline-economics.mjs's own copy): a
+ * resumed session's mtime moves forward every time it is touched, so mtime
+ * cannot answer "when did this session's history actually begin" — only a
+ * caller needing that DEFINITIONAL start time (baseline-economics.mjs's
+ * `discoverSessions`, costing a session against a `--since` window) pays for
+ * this per-file scan; `listSessions` above stays the cheap mtime-only list
+ * for a caller — like the signature census — for whom "was this session
+ * touched in the window" is good enough.
+ */
+export function firstTranscriptTimestamp(filePath, { maxLines = 200 } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let lineCount = 0;
+    let stream;
+    try {
+      stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    } catch {
+      resolve(null);
+      return;
+    }
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      rl.close();
+      stream.destroy();
+    };
+    rl.on('line', (line) => {
+      lineCount += 1;
+      const t = line.trim();
+      if (t) {
+        try {
+          const obj = JSON.parse(t);
+          if (obj.timestamp) {
+            const d = new Date(obj.timestamp);
+            if (!Number.isNaN(d.getTime())) {
+              finish(d);
+              return;
+            }
+          }
+        } catch { /* skip malformed line */ }
+      }
+      if (lineCount >= maxLines) finish(null);
+    });
+    rl.on('close', () => finish(null));
+    stream.on('error', () => finish(null));
+  });
 }
 
 // --- minimal turn model -----------------------------------------------

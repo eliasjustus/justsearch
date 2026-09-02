@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
- * Tempdoc 743 Phase 2 — first-cut overhead taxonomy over the baseline window
- * (sessions starting 2026-06-18..2026-07-16 by default).
+ * Tempdoc 743 Phase 2 — first-cut overhead taxonomy, default window trailing
+ * 30 days (tempdoc 886 §12 PR 2 — a bare invocation used to hardcode
+ * 2026-06-18..2026-07-16 and so returned 0 sessions on any later date;
+ * `--since`/`--until` still override explicitly, unchanged).
  *
  * RESCUED from session scratchpad into the repo (tempdoc 743 second wave,
  * Slice 3, P-L: "Also homes the rescued T1 overhead-taxonomy.mjs ... as
@@ -22,8 +24,10 @@
  * not file mtime — because that's what the ~30.5B/220-session reference
  * figure was computed against. `--since`/`--until` CLI flags were added
  * (absent from the scratchpad original, which hardcoded the window) purely
- * to make the rescue smoke-testable on a short window; they default to the
- * original hardcoded dates so a bare invocation reproduces the original run.
+ * to make the rescue smoke-testable on a short window; a bare invocation now
+ * defaults to trailing 30 days from today rather than reproducing the
+ * original 2026-06-18..2026-07-16 run — pass `--since 2026-06-18 --until
+ * 2026-07-16` explicitly to reproduce the original T1 figures byte-for-byte.
  *
  * Categories (see task spec for exact definitions):
  *   1. WAITING       — task-notification / ScheduleWakeup-tick triggered turns
@@ -41,10 +45,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import {
-  discoverProjectDirs, listSubagentPaths, DEFAULT_PROJECTS_ROOT,
+  discoverProjectDirs, listSubagentPaths, DEFAULT_PROJECTS_ROOT, firstTranscriptTimestamp,
 } from './lib/transcript-store.mjs';
 import { parseTranscriptTokens } from './lib/transcript-cost.mjs';
 import {
@@ -60,12 +63,17 @@ const OUT_JSON = path.join(repoRoot, TELEMETRY_DIR, 'overhead-taxonomy.json');
 
 // --- Config --------------------------------------------------------------
 
-const DEFAULT_SINCE = '2026-06-18';
-const DEFAULT_UNTIL = '2026-07-16'; // matches baseline-economics.mjs's own default CLI usage (UTC midnight bound) -> reproduces the ~30.5B/220-session reference figure
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TRAILING_WINDOW_DAYS = 30; // tempdoc 886 §12 PR 2 — was a hardcoded 2026-06-18..2026-07-16
 const EXCLUDED_PATH = path.join(SCRIPT_DIR, 'friction-excluded-sessions.json');
 
+/** ISO date (UTC midnight) `days` before today — same "UTC midnight bound" shape the old hardcoded defaults used. */
+function daysAgoIso(days) {
+  return new Date(Date.now() - days * DAY_MS).toISOString().slice(0, 10);
+}
+
 function parseArgs(argv) {
-  const opts = { since: DEFAULT_SINCE, until: DEFAULT_UNTIL, projectsRoot: DEFAULT_PROJECTS_ROOT };
+  const opts = { since: daysAgoIso(TRAILING_WINDOW_DAYS), until: null, projectsRoot: DEFAULT_PROJECTS_ROOT };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--since') opts.since = argv[++i];
@@ -112,54 +120,12 @@ const BUILTIN_COMMAND_EXCLUDE = new Set([
 
 // --- Discovery (ADAPTED to lib/transcript-store.mjs — see header note) ---
 
-/**
- * Stream a transcript just far enough to find the first parseable line
- * carrying a `timestamp` field, without slurping the whole (up to ~25MB)
- * file. Ported verbatim from baseline-economics.mjs — this IS the
- * definitional "session start" the original ~30.5B/220-session figure was
- * computed against, so it stays exact rather than being approximated via
- * transcript-store's cheaper mtime-based `listSessions`.
- */
-function firstTranscriptTimestamp(filePath, { maxLines = 200 } = {}) {
-  return new Promise((resolve) => {
-    let settled = false;
-    let lineCount = 0;
-    let stream;
-    try {
-      stream = fs.createReadStream(filePath, { encoding: 'utf8' });
-    } catch {
-      resolve(null);
-      return;
-    }
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-      rl.close();
-      stream.destroy();
-    };
-    rl.on('line', (line) => {
-      lineCount += 1;
-      const t = line.trim();
-      if (t) {
-        try {
-          const obj = JSON.parse(t);
-          if (obj.timestamp) {
-            const d = new Date(obj.timestamp);
-            if (!Number.isNaN(d.getTime())) {
-              finish(d);
-              return;
-            }
-          }
-        } catch { /* skip malformed line */ }
-      }
-      if (lineCount >= maxLines) finish(null);
-    });
-    rl.on('close', () => finish(null));
-    stream.on('error', () => finish(null));
-  });
-}
+// `firstTranscriptTimestamp` (the definitional "session start" the original
+// ~30.5B/220-session figure was computed against) is imported from
+// lib/transcript-store.mjs, not a private copy (tempdoc 886 §12 PR 5b —
+// this was the fourth hand-rolled copy of the same scan the PR 5a review
+// flagged; confirmed byte-identical to the private copy before deleting it,
+// so this is a pure de-duplication, not a behavior change).
 
 /**
  * Session discovery: project-dir + `.jsonl` + subagent-path enumeration
@@ -436,11 +402,11 @@ function sumTok(r) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  console.error(`overhead-taxonomy: discovering sessions ${opts.since}..${opts.until}...`);
+  console.error(`overhead-taxonomy: discovering sessions ${opts.since}..${opts.until ?? 'now'}...`);
   const exclusionKeys = loadExclusionKeys(EXCLUDED_PATH);
   const isExcluded = makeExclusionMatcher(exclusionKeys);
   const sinceMs = new Date(opts.since).getTime();
-  const untilMs = new Date(opts.until).getTime();
+  const untilMs = opts.until ? new Date(opts.until).getTime() : null;
   const { sessions, excludedCount } = await discoverSessions({
     projectsRoot: opts.projectsRoot, sinceMs, untilMs, isExcluded,
   });

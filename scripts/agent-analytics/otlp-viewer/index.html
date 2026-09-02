@@ -43,6 +43,14 @@ const fmtDur = (a,b)=> a&&b ? ((b-a)/1e6).toFixed(1)+"ms" : "";
         metrics = await ndjson("metrics.ndjson"),
         logs = await ndjson("logs.ndjson");
 
+  // Since tempdoc 886 §12 PR 3, otlp-sink.py additively appends a flat
+  // `gen_ai.usage` twin record per data point (attributes/value directly on
+  // the record, no `points` array) alongside every original per-metric
+  // batch record. Normalize every record to the batch shape here so the
+  // rest of this viewer (which assumes `m.points` unconditionally) doesn't
+  // need two code paths.
+  metrics.forEach(m => { if (!m.points) m.points = [{ attributes: m.attributes || {}, value: m.value, time_unix_nano: m.time_unix_nano }]; });
+
   // cards
   const cost = metrics.filter(m=>m.name.includes("cost")).flatMap(m=>m.points).reduce((s,p)=>s+(p.value||0),0);
   const toks = metrics.filter(m=>m.name.includes("token")).flatMap(m=>m.points).reduce((s,p)=>s+(p.value||0),0);
@@ -63,8 +71,11 @@ const fmtDur = (a,b)=> a&&b ? ((b-a)/1e6).toFixed(1)+"ms" : "";
   }); })(roots,0);
   document.getElementById("tree").innerHTML = out.join("") || "<i>no spans</i>";
 
-  // metrics table
-  const rows=[]; metrics.forEach(m=>m.points.forEach(p=>{ const a=p.attributes;
+  // metrics table — the `gen_ai.usage` normalised twins (886 §12 PR 3) are
+  // for readers (a harness-neutral join key), not eyes: showing both the
+  // original point and its twin here would double-render every token
+  // point, so the table stays original-records-only by default.
+  const rows=[]; metrics.filter(m=>!m.normalized).forEach(m=>m.points.forEach(p=>{ const a=p.attributes;
     rows.push(`<tr><td>${m.name}</td><td>${a.query_source||""}</td><td>${a["agent.name"]||""}</td><td>${a.model||""}</td><td>${a.type||""}</td><td>${p.value}</td></tr>`); }));
   document.querySelector("#metrics tbody").innerHTML = rows.join("");
 

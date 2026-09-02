@@ -24,6 +24,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Resolve claude CLI entry point. On Windows, .cmd shims can't be spawned
 // without shell:true (which corrupts args containing special chars).
@@ -47,6 +48,8 @@ import {
   JUDGE_OUTCOMES_FILE,
   repoRoot, loadEvents, groupBySession, loadNdjsonMap, loadSessionReports, round,
 } from './lib/telemetry-io.mjs';
+import { findSessionTranscript } from './baseline-economics.mjs';
+import { roleFor } from './lib/ledger/tool-roles.mjs';
 
 // --- Constants ---
 
@@ -135,45 +138,46 @@ function findTranscriptPath(sessionEvents) {
 
 /**
  * Fallback transcript discovery for sessions without events (tempdoc 276).
- * Scans Claude projects directory for a JSONL file matching the session ID.
+ * Discovers the session's main transcript across every known project dir
+ * via the ledger's transcript-store-backed lookup (tempdoc 886 §12 PR 5b —
+ * replaces this module's own hand-rolled `.claude/projects` directory walk).
  */
 function findTranscriptByDirectoryScan(sessionId) {
-  const homeDir = process.env.HOME || process.env.USERPROFILE;
-  if (!homeDir) return null;
-  const projectsDir = path.join(homeDir, '.claude', 'projects');
-  try {
-    for (const dir of fs.readdirSync(projectsDir)) {
-      const candidate = path.join(projectsDir, dir, `${sessionId}.jsonl`);
-      if (fs.existsSync(candidate)) return candidate;
-    }
-  } catch { /* directory may not exist */ }
-  return null;
+  return findSessionTranscript(sessionId)?.mainPath ?? null;
 }
 
 // --- Transcript condensation ---
 
+// Dispatches on lib/ledger/tool-roles.mjs's roleFor('claude-code', name) first (tempdoc 886
+// §12 PR 5b), refined by NAME only where a role's members disagree on shape — same convention
+// as lib/input-summarizer.mjs's PR 5a migration: 'edit' (Edit vs Write; NotebookEdit/MultiEdit
+// were never given bespoke formatting pre-migration, so they fall through to the generic
+// default unchanged), 'shell' (Bash only; PowerShell falls through), 'search' (Grep vs Glob —
+// both were pre-migration formatted, so both keep NAME-level branches), 'spawn' (Task only;
+// Agent falls through). Byte-identical output for every pre-migration branch.
 function summarizeToolUse(block) {
   const name = block.name ?? 'unknown';
   const input = block.input ?? {};
+  const role = roleFor('claude-code', name);
 
-  switch (name) {
-    case 'Read':
-      return `Read: ${input.file_path ?? '?'}`;
-    case 'Edit':
-      return `Edit: ${input.file_path ?? '?'}`;
-    case 'Write':
-      return `Write: ${input.file_path ?? '?'}`;
-    case 'Bash':
-      return `Bash: ${(input.command ?? '').substring(0, 120)}`;
-    case 'Grep':
-      return `Grep: "${input.pattern ?? '?'}" in ${input.path ?? '.'}`;
-    case 'Glob':
-      return `Glob: ${input.pattern ?? '?'}`;
-    case 'Task':
-      return `Task: ${input.description ?? input.subagent_type ?? '?'}`;
-    default:
-      return name;
+  if (role === 'read') {
+    return `${name}: ${input.file_path ?? '?'}`;
   }
+  if (role === 'edit' && (name === 'Edit' || name === 'Write')) {
+    return `${name}: ${input.file_path ?? '?'}`;
+  }
+  if (role === 'shell' && name === 'Bash') {
+    return `Bash: ${(input.command ?? '').substring(0, 120)}`;
+  }
+  if (role === 'search') {
+    if (name === 'Grep') return `Grep: "${input.pattern ?? '?'}" in ${input.path ?? '.'}`;
+    if (name === 'Glob') return `Glob: ${input.pattern ?? '?'}`;
+  }
+  if (role === 'spawn' && name === 'Task') {
+    return `Task: ${input.description ?? input.subagent_type ?? '?'}`;
+  }
+
+  return name;
 }
 
 /**
@@ -790,4 +794,6 @@ function main() {
   }
 }
 
-main();
+// Guarded entry point (886 PR 5b): this script shells out to the `claude` CLI
+// for judging; importing it for its exports must never start a run.
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main();

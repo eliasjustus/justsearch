@@ -34,6 +34,12 @@ run('fires on npm --prefix modules/ui-web run typecheck', () => {
 run('fires on node scripts/ci/check-theme-token-closure.mjs', () => {
   assert.equal(matchExpectedState('node scripts/ci/check-theme-token-closure.mjs', ENTRIES)[0].id, 'gate-pin');
 });
+run('fires on the agent-analytics suite and a single *.test.mjs (886 PR 5b: CI runs run-all-tests.mjs)', () => {
+  const suiteEntries = [{ id: 'suite-pin', match: ['run-all-tests\\.mjs', '861-w5-agent-spawn-sweep'] }];
+  assert.equal(matchExpectedState('node scripts/agent-analytics/run-all-tests.mjs', suiteEntries)[0].id, 'suite-pin');
+  assert.equal(matchExpectedState('node scripts/agent-analytics/861-w5-agent-spawn-sweep.test.mjs', suiteEntries)[0].id, 'suite-pin');
+  assert.deepEqual(matchExpectedState('node scripts/agent-analytics/cache-efficiency.mjs', suiteEntries), []);
+});
 run('fires on python -m pytest scripts/jseval', () => {
   assert.equal(matchExpectedState('python -m pytest scripts/jseval/tests', ENTRIES)[0].id, 'pytest-pin');
 });

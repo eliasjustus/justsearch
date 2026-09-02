@@ -81,7 +81,7 @@
         "861-w5-"
       ],
       "claim": "scripts/agent-analytics/run-all-tests.mjs has several wall-clock-budgeted checks with thin margins on a checkout carrying 27 registered worktrees, so ordinary parallel-agent load pushes them over while each file passes in isolation. Three different files were observed failing this way in one session: world-state.test.mjs ('CLI smoke: completes in under 10s' -- world-state.mjs measures 8.0-9.0s bare), 861-w5-remove-worktree-teardown.test.mjs and 861-w5-agent-spawn-sweep.test.mjs. A run-all-tests failure is pre-existing IF the named file passes when run alone: re-run it with 'node <file>' before believing it. It is NOT the tempdoc-scan frontmatter read added in PR #604 -- collectClaims measures 195ms of the world-state run.",
-      "evidence": "Observed 2026-09-02 on worktree-resid-kernel: world-state.test at 12354ms then 8.0s/8.1s/9.0s across three consecutive bare runs of world-state.mjs; 861-w5-remove-worktree-teardown and 861-w5-agent-spawn-sweep each failed once in run-all-tests and passed 16/16 and 16/16 when run alone in the same minute. The budgets were set in tempdoc 743 P-J when the checkout carried far fewer worktrees, and these scanners' cost scales with worktree count. Deliberately carries NO exitProbe: the condition is load-dependent and an isolated re-run passes by construction, so a probe would report GONE against a live red -- the defect this PR fixed in three other pins.",
+      "evidence": "Observed 2026-09-02 on worktree-resid-kernel: world-state.test at 12354ms then 8.0s/8.1s/9.0s across three consecutive bare runs of world-state.mjs; 861-w5-remove-worktree-teardown and 861-w5-agent-spawn-sweep each failed once in run-all-tests and passed 16/16 and 16/16 when run alone in the same minute. The budgets were set in tempdoc 743 P-J when the checkout carried far fewer worktrees, and these scanners' cost scales with worktree count. Deliberately carries NO exitProbe: the condition is load-dependent and an isolated re-run passes by construction, so a probe would report GONE against a live red -- the defect this PR fixed in three other pins. Second sighting the same day (tempdoc 886 PR 5b, worktree 886-ledger-1): 861-w5-agent-spawn-sweep.test.mjs ('CLI end-to-end: CLAUDE_CODE_SESSION_ID alone ... resolves the caller session') failed once STANDALONE and passed on the immediate retry with no code change, and an independent reviewer reproduced that standalone flake -- so for that file the condition is not only load-dependent; a second consecutive standalone failure is a real defect (owner: tempdoc 861 W5). 886 also widened known-state-hint's verification-command prefilter so `node scripts/agent-analytics/run-all-tests.mjs` / `*.test.mjs` can deliver this pin at all.",
       "added": "2026-09-02",
       "reviewBy": "2026-09-30"
     },
@@ -189,6 +189,17 @@
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "node scripts/ci/check-runtime-manifest-closure.mjs"
+    },
+    {
+      "id": "jseval-pytest-missing-optional-deps-local-env",
+      "match": [
+        "python -m pytest"
+      ],
+      "claim": "`python -m pytest -q` under scripts/jseval is RED on THIS machine only because three OPTIONAL test dependencies are not installed in the local interpreter: `inspect_ai` (the `agent` extra), `hypothesis` and `jsonschema` (the `dev` extra). Everything else passes (2661 passed / 3 collection errors observed 2026-09-02). Fix, do not remember: `python -m pip install -e \"scripts/jseval[dev,agent]\"`. `jsonschema` was missing from the `dev` extra entirely until tempdoc 885 chunk 2 added it (scripts/jseval/pyproject.toml:31), so an older install cannot have had it.",
+      "evidence": "tempdoc 885 lane C chunk 1 (2026-09-02): full `python -m pytest -q` run in scripts/jseval reported 2661 passed with the only failures being ModuleNotFoundError for inspect_ai / hypothesis / jsonschema at collection time. scripts/jseval/tests/test_corpus_inject.py:710 is the sole jsonschema importer.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: python -m pytest -q scripts/jseval"
     }
   ]
 }
