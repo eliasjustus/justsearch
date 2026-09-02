@@ -88,7 +88,11 @@ export async function runPreflight({ baselineRef, gates, repoRoot }) {
   }
   let ref = baselineRef;
   try {
-    ref = resolveBaselineRef({ strategy: 'git-base', fallback: baselineRef }, repoRoot).ref;
+    // `--preflight <ref>` names the ref deliberately, so it is `explicit`, not a
+    // fallback: the git-base ladder must not silently prefer a merge-base over
+    // what the operator asked for. `diffPaths` still uses `<ref>...HEAD`, so an
+    // explicit branch name is compared from its merge-base anyway.
+    ref = resolveBaselineRef({ strategy: 'git-base', explicit: baselineRef }, repoRoot).ref;
   } catch (err) {
     console.error(`baseline ref '${baselineRef}' unreachable: ${err.message}`);
     process.exit(2);

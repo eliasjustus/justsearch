@@ -176,6 +176,56 @@ await run('runner: required-missing -> exit 1 with kernel/input-missing', async 
   assert.ok(out.includes('scratch-req: fail'), out);
 });
 
+// `--gate` is repeatable. Before this pin it was last-wins, so a CI step naming four gates
+// evaluated ONE and reported a pass for the other three — a green that never ran what it claimed.
+// Both directions matter: several ids must all evaluate, and an unknown id must refuse rather than
+// be dropped (a dropped id is the same silent-pass in a different disguise).
+await run('runner: --gate is repeatable and evaluates every named gate', async () => {
+  const stub = (id) => ({
+    id,
+    title: `scratch ${id}`,
+    enforcer: 'scripts/governance/gates/test-efficacy/enforcer.mjs',
+    baseline: { kind: 'ratchet-file', path: 'gates/test-efficacy/strength-baseline.v1.json' },
+    config: {
+      inputs: [{ path: `tmp/${id}-absent.json`, producer: 'run-the-pit', class: 'on-demand' }],
+    },
+  });
+  const registry = writeRegistry([stub('scratch-m1'), stub('scratch-m2'), stub('scratch-m3')]);
+  const res = runGovernance([
+    '--registry', registry,
+    '--gate', 'scratch-m1',
+    '--gate', 'scratch-m3',
+    '--mode', 'gate',
+  ]);
+  assert.equal(res.status, 0, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  assert.ok(res.stdout.includes('2 gates evaluated'), res.stdout);
+  assert.ok(res.stdout.includes('scratch-m1: skipped'), res.stdout);
+  assert.ok(res.stdout.includes('scratch-m3: skipped'), res.stdout);
+  assert.ok(!res.stdout.includes('scratch-m2'), 'an unnamed gate must not run');
+});
+
+await run('runner: an unknown --gate id refuses (exit 2) instead of being dropped', async () => {
+  const registry = writeRegistry([
+    {
+      id: 'scratch-known',
+      title: 'scratch known',
+      enforcer: 'scripts/governance/gates/test-efficacy/enforcer.mjs',
+      baseline: { kind: 'ratchet-file', path: 'gates/test-efficacy/strength-baseline.v1.json' },
+      config: {
+        inputs: [{ path: 'tmp/scratch-known-absent.json', producer: 'run-the-pit', class: 'on-demand' }],
+      },
+    },
+  ]);
+  const res = runGovernance([
+    '--registry', registry,
+    '--gate', 'scratch-known',
+    '--gate', 'scratch-typo',
+    '--mode', 'gate',
+  ]);
+  assert.equal(res.status, 2, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  assert.ok((res.stdout + res.stderr).includes('scratch-typo'), res.stderr);
+});
+
 await run('runner: on-demand-missing -> exit 0 with verdict skipped', async () => {
   const registry = writeRegistry([
     {

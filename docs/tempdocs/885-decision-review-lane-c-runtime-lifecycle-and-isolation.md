@@ -3424,7 +3424,38 @@ sampling evidence are in §"Item 6 live (2026-09-02)".
 * **UI lane:** `RETRY_EXHAUSTED` needs a display treatment ("Index gave up"), and the jobs drawer
   needs the backoff/exhausted states.
 * **Owner:** `POST /api/indexing/roots` drops the collection.
-* **Kernel:** (i) `git-base` gates resolve their PR base to `HEAD~1` with no explicit fallback
+* **Kernel:** (i)-(iii) **RESOLVED in PR #604** (wave-1 residue R1); (iv) is still open and belongs
+  to whoever next touches the extraction-sandbox command line. (i) the `git-base` ladder now
+  resolves the real merge-base, so a changeset from an earlier commit on the same branch stays in
+  scope; (ii) a changeset is no longer a tempdoc-number claimant, and the trade is a new orphan
+  check on `tempdoc:` pointing at a tempdoc that does not exist; (iii) `check-store-recoverability`
+  discovery is by write call in code rather than by anchor words in prose — which is what made
+  `ExtractionSandboxCommand`'s argfile invisible while a javadoc sentence discovered
+  `ExtractionSandboxFactory`.
+
+  **`store-recoverability.v1.json` is a WIRE CONTRACT, not documentation — a row change is a wire
+  change.** PR #604 learned this by breaking two CI jobs at once, and it is the most load-bearing
+  thing this lane leaves behind. Two consumers read `durableStores` at runtime:
+  `modules/shell/src-tauri/src/updater.rs:31-32` embeds the file with `include_str!` and
+  deserialises each row into `LocalDurableStore`, whose `current_version` is a `u32` with **no serde
+  default** — so one row missing `currentVersion` makes the whole register unparseable and
+  `validate_store_compatibility` rejects **every** release descriptor; and
+  `UpgradeReconciliationProbe.loadOwnerRegister` (`modules/ui/.../UpgradeReconciliationProbe.java:196-225`)
+  builds the closed owner set for `/api/upgrade/reconcile` and returns an **empty** register with a
+  configuration error if **any** row has `status != READY`, which makes reconcile answer 409 and
+  turns in-place upgrade off. `HARDENING_REQUIRED` is therefore not a documentation tier, it is a
+  refusal signal, and `knownCompatibilityGaps` is empty because the tempdoc-617 conversion finished —
+  re-populating it disables upgrades. **Add a row only when it can be READY.**
+
+  **Register follow-up left for an owner:** the broadened scan found eight files writing durable
+  state no row owns (agent-history transcripts, install-attempt memory, the two GPL artefacts, the
+  llama-server log, and the agent's operations on the user's own documents — where the register
+  names the undo journal but not the authority that mutates the documents, and a COPY-undo deletes a
+  real user file). They are parked in `pendingDurableClassification` — capped, each naming its
+  blocker — rather than forced into `durableStores`, because every one needs a settled corruption
+  policy plus a recovery/preservation test before it can be `READY`, and a non-READY row would ship
+  an upgrade outage. Promoting them is real product work, not hygiene. Original text follows.
+  (i) `git-base` gates resolve their PR base to `HEAD~1` with no explicit fallback
   (`scripts/governance/lib/git-utils.mjs:83-92`), so a committed changeset from an earlier commit on
   the same branch is invisible and the gate reports silent-growth — verify with
   `--preflight <real base>` before believing one. (ii) `check-tempdoc-numbers` keys on the tempdoc
