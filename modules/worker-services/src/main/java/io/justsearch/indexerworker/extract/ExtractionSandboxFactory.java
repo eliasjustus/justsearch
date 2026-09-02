@@ -169,6 +169,10 @@ public final class ExtractionSandboxFactory {
       Duration timeout) {
     Path probeFile = null;
     try {
+      // Scratch, not state: a JVM temp file written and deleted inside this method, outside the
+      // data dir, holding a fixed marker string. It is classified in
+      // governance/store-recoverability.v1.json under nonDurableWriteSites for that reason - there
+      // is no recovery, upgrade or encryption policy to state, because losing it costs nothing.
       probeFile = Files.createTempFile("justsearch-extraction-probe-", ".txt");
       Files.writeString(probeFile, PROBE_MARKER, StandardCharsets.UTF_8);
       // maxRequestsPerChild = 1: this child is for the probe alone and is discarded with the pool.
