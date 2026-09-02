@@ -1,7 +1,7 @@
 ---
 title: "Retrieval adequacy as the missing verdict axis: one Worker-stamped STRONG/WEAK/NONE/UNKNOWN verdict on the canonical search trace, projected onto search results, chat evidence, agent tool results and MCP — beside (never folded into) the existing faithfulness, capability, completion and extraction-trust verdicts"
 type: tempdocs
-status: "DESIGN SETTLED (2026-09-02, fable fork) — evidence verified on main @ 4c4adbd6; the register's 'unify three vocabularies' hypothesis is corrected in §C (they are four distinct axes, correctly separate); the design adds the one axis that is missing. Owner confirmations K1-K3 before chunk I-3. Not implemented."
+status: "DESIGN SETTLED (2026-09-02, fable fork) — evidence verified on main @ 4c4adbd6; the register's 'unify three vocabularies' hypothesis is corrected in §C (they are four distinct axes, correctly separate); the design adds the one axis that is missing. Owner confirmations K1-K3 DECIDED 2026-09-02 (all as recommended; §K). Not implemented — ready for opus takeover."
 created: 2026-09-02
 updated: 2026-09-02
 lane: 887 L9 (register item 5.5)
@@ -143,12 +143,12 @@ Do not change ranking, fusion weights, or the low-signal gating behaviour (lane 
 
 Order: I-1 → I-2 → I-3 (needs K1/K3) → I-4.
 
-## §K. Owner confirmations
+## §K. Owner confirmations — DECIDED (2026-09-02, founder delegated the call to the orchestrating session)
 
-- **K1 (D6)** Abstain before generation on NONE, with an "answer anyway" affordance — or always generate and rely on the post-hoc `ungrounded` frame? Recommendation: abstain; it is honest and saves a generation.
-- **K2 (D5)** Search results: notice only (recommended), or additionally collapse WEAK rows below a fold? Collapsing touches result presentation (597 cardinality copy) and needs a measured UX audit.
-- **K3 (D8)** MCP `justsearch_answer` on NONE: return the structured no-evidence result without calling the model (recommended), or generate and mark `adequacy: NONE`?
+- **K1 (D6)** Abstain before generation on NONE, with an "answer anyway" affordance — or always generate and rely on the post-hoc `ungrounded` frame? **Decided: abstain.** Honest, saves a generation, and the affordance keeps the free-chat path one click away. Reversible per D6 if the calibration in §I-1 shows NONE fires on queries that had gold in the corpus.
+- **K2 (D5)** Search results: notice only, or additionally collapse WEAK rows below a fold? **Decided: notice only.** Collapsing is a ranking/cardinality change (lane E, 597); revisit only with a measured UX audit after the notice ships.
+- **K3 (D8)** MCP `justsearch_answer` on NONE: structured no-evidence result without a model call, or generate and mark? **Decided: no model call.** An external agent gets a typed verdict it can act on; generating anyway would spend a local generation to produce text the client should not trust.
 
 ## §Status
 
-Design settled 2026-09-02. Nothing implemented.
+Design settled 2026-09-02; K1-K3 decided the same day (all three as recommended). Nothing implemented. Chunks I-1..I-4 may start in any order that respects §I's dependencies.
