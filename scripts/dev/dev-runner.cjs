@@ -1024,7 +1024,7 @@ function fetchJsonHttp(url, timeoutMs) {
 // hook. No session-token header is attached: dev-runner-launched backends never set
 // JUSTSEARCH_PROD / -Djustsearch.prod (grepped the spawn env block — absent), so
 // ResolvedConfigBuilder's `resolveBoolean("justsearch.prod", false)` default leaves prodMode
-// false and ApiSecurityFilters.setupSessionTokenEnforcement (ApiSecurityFilters.java:200-210)
+// false and ApiSecurityFilters.setupSessionTokenEnforcement (ApiSecurityFilters.java:441-468)
 // is a no-op — the endpoint is unauthenticated for dev-runner's own backends.
 function postLifecycleShutdown(apiPort, timeoutMs) {
   return new Promise((resolve) => {

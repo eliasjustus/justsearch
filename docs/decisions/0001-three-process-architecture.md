@@ -11,6 +11,10 @@ last_reviewed: 2026-09-02
 
 # ADR-0001: Use Three Separate OS Processes
 
+> **Under re-examination (decision-review lane F, engine merge, 2026-09).** The three-process
+> split is being re-derived; this ADR is the record of the original decision and may be
+> superseded. Do not treat its Consequences as settled while lane F is open.
+
 ## Status
 
 Accepted

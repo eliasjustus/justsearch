@@ -71,7 +71,8 @@ class ProdModeSettingsPersistenceIntegrationTest extends LocalApiIntegrationTest
 
   @Override
   protected LocalApiServer.Builder configureServer(LocalApiServer.Builder builder) {
-    // Prod mode without a session token disables token enforcement; the shipped app always has one.
+    // Prod mode without a session token is REFUSED at startup (tempdoc 884 item 23), exactly as the
+    // shipped app is configured — it always mints one.
     return builder.sessionToken(SESSION_TOKEN);
   }
 

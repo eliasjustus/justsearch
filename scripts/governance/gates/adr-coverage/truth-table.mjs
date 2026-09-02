@@ -57,6 +57,120 @@ export function verdictForProbeCoverage({ adr, status, probeCount, statedReason 
 }
 
 /**
+ * Where an author is sent when a risk row's instrument stops resolving. The remedy is
+ * deliberately one-directional: build the thing, or amend the row. Deleting the reference
+ * is the move this rule exists to make impossible to do quietly.
+ */
+export const RISK_INSTRUMENT_INTENT =
+  'A row whose instrument stops resolving is a lane that closed without building what it promised.';
+
+/**
+ * One risk row's `**Instrument:**` reference either resolves against the tree or it does not.
+ * The failure quotes the reference verbatim so the message is actionable without opening the
+ * register, and names the two legitimate fixes so "delete the reference" never reads as one.
+ */
+export function verdictForRiskInstrument({ riskId, instrument, ok, detail }) {
+  if (ok) {
+    return {
+      ruleId: 'adr-coverage/risk-instrument-ok',
+      status: 'pass',
+      reason: `${riskId}: instrument '${instrument}' resolves — ${detail}`,
+    };
+  }
+  return {
+    ruleId: 'adr-coverage/risk-instrument-unresolved',
+    status: 'fail',
+    reason:
+      `${riskId}: instrument '${instrument}' does not resolve — ${detail}. `
+      + `The fix is to build the instrument or amend the risk row in `
+      + `docs/reference/architectural-risks.md; it is never to delete the reference. `
+      + RISK_INSTRUMENT_INTENT,
+  };
+}
+
+/**
+ * A row with no instrument, or a bare `none`, is the 269 shape: a note nobody reads.
+ * A stated reason does not clear the warning — it only makes the warning informative —
+ * because an unowned risk with nothing to check is exactly what should stay visible.
+ */
+export function verdictForRiskInstrumentCoverage({ riskId, instrument, statedReason }) {
+  if (instrument && statedReason) {
+    return {
+      ruleId: 'adr-coverage/risk-no-instrument',
+      status: 'info',
+      reason:
+        `${riskId}: no instrument, reason stated — ${statedReason}. `
+        + `Replace 'none - <reason>' with a gate:/check:/test:/metric:/tempdoc: reference `
+        + `as soon as one exists.`,
+    };
+  }
+  if (instrument) {
+    return {
+      ruleId: 'adr-coverage/risk-no-instrument',
+      status: 'info',
+      reason:
+        `${riskId}: a bare 'none' states nothing. Write 'none - <reason>', or name a `
+        + `gate:/check:/test:/metric:/tempdoc: reference.`,
+    };
+  }
+  return {
+    ruleId: 'adr-coverage/risk-no-instrument',
+    status: 'info',
+    reason:
+      `${riskId}: no '**Instrument:**' field. Every risk row names one machine-checkable `
+      + `reference (see docs/reference/architectural-risks.md § Instrument grammar), or `
+      + `'none - <reason>'. ${RISK_INSTRUMENT_INTENT}`,
+  };
+}
+
+/**
+ * The register's ABSENCE is the failure the register exists to prevent (884 review S3).
+ *
+ * The 2026-03 register was deleted a week after it was written and nothing noticed for six
+ * months. Treating "no file" as "nothing to check" reproduces exactly that: one `rm` would
+ * disable every instrument row at once, silently, and the gate would still be green. So a
+ * declared register that is not there is a `fail`, and the remedy is one-directional —
+ * restore the file, never drop the config key that names it.
+ */
+export function verdictForRiskRegisterPresence({ registerPath, exists }) {
+  if (exists) {
+    return {
+      ruleId: 'adr-coverage/risk-register-ok',
+      status: 'pass',
+      reason: `${registerPath} is present`,
+    };
+  }
+  return {
+    ruleId: 'adr-coverage/risk-register-missing',
+    status: 'fail',
+    reason:
+      `${registerPath} does not exist. That file IS the instrument-per-risk mechanism: every `
+      + `'## RISK-NNN:' row names exactly one machine-checkable instrument and this gate is what `
+      + `checks them, so deleting it disables every instrument at once. The fix is to restore the `
+      + `file (it is in git history) — it is never to remove the 'riskRegister' key from the `
+      + `adr-coverage gate config in governance/registry.v1.json, which would silence this rule `
+      + `instead of satisfying it. ${RISK_INSTRUMENT_INTENT}`,
+  };
+}
+
+/**
+ * A present-but-broken register is a failure, because a register that will not parse silently
+ * disables every instrument in it. (Absence is handled by `verdictForRiskRegisterPresence`.)
+ */
+export function verdictForRiskRegister({ registerPath, problem }) {
+  if (!problem) {
+    return { ruleId: 'adr-coverage/risk-register-ok', status: 'pass', reason: `${registerPath} parsed` };
+  }
+  return {
+    ruleId: 'adr-coverage/risk-register-malformed',
+    status: 'fail',
+    reason:
+      `${registerPath} is structurally broken: ${problem}. A register that does not parse `
+      + `checks nothing, which is indistinguishable from having no register at all.`,
+  };
+}
+
+/**
  * A decision nobody has re-read in six months is the 269 failure mode (one systematic
  * review, ever). Warning at the gate; the session-start hint is PR 2.
  */

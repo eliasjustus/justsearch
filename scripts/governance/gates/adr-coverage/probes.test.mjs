@@ -169,6 +169,30 @@ await run('grep: paths that match no file → fail, never vacuous pass', async (
   assert.match(r.detail, /matched no files/);
 });
 
+// A `pattern` is author-supplied text in a JSON register, so a typo is a SyntaxError from
+// `new RegExp`. It must fail THIS probe, not throw out of the enforcer and take down every other
+// gate in the same run.mjs invocation (tempdoc 884 §G — found by bite-testing the ADR-0046 probes).
+await run('grep: an invalid regex fails the probe instead of crashing the kernel run', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  for (const kind of ['grep-present', 'grep-absent']) {
+    let r;
+    assert.doesNotThrow(() => {
+      // Unterminated group — the shape a hand-edited register entry actually produces.
+      r = evaluateProbe({ kind, pattern: 'this\\.app\\.start\\(("127', paths: ['a'] }, root);
+    }, `${kind} threw instead of returning a verdict`);
+    assert.equal(r.ok, false);
+    assert.match(r.detail, /is not a valid regular expression/);
+  }
+});
+
+// A `g`-flagged RegExp carries lastIndex across calls. Reusing one compiled instance across files
+// (the fix above) must not make a later file's count depend on an earlier file's match position.
+await run('grep: a reused global regex counts every file independently', async () => {
+  const root = scaffold({ 'a/one.java': 'TOK TOK', 'a/two.java': 'TOK TOK', 'a/three.java': 'TOK TOK' });
+  const r = evaluateProbe({ kind: 'grep-present', pattern: 'TOK', paths: ['a'], expect: 6 }, root);
+  assert.equal(r.ok, true, r.detail);
+});
+
 // --------------------------------------------------------------------------- kind: json-path
 
 const DOC = JSON.stringify({ categories: [{ id: 'wire' }], bundle: { windows: { nsis: { installMode: 'currentUser' } } } });
@@ -296,7 +320,58 @@ await run('file-set: stale exception for a deleted file → fail', async () => {
   const root = scaffold({ 'src/a.ts': 'export const a = 1;', 'governance/contract-surfaces.v1.json': '{}' });
   const r = evaluateProbe(fileSetProbe({ exceptions: [{ file: 'src/gone.ts', reason: 'x' }] }), root);
   assert.equal(r.ok, false);
-  assert.match(r.detail, /no longer exist/);
+  assert.match(r.detail, /src\/gone\.ts \(the file no longer exists\)/);
+});
+
+// An exception that only goes stale on DELETION is honour-system for the case this probe is
+// actually driving toward: a file that stops being a hand-mirror (884 review S6).
+
+await run('file-set: exception whose file still carries the marker → fine', async () => {
+  const root = scaffold({
+    'src/api/types/mirror.ts': MIRROR,
+    'governance/contract-surfaces.v1.json': '{}',
+  });
+  const r = evaluateProbe(fileSetProbe({
+    exceptions: [{ file: 'src/api/types/mirror.ts', reason: 'blocked on the emitter' }],
+  }), root);
+  assert.equal(r.ok, true, r.detail);
+});
+
+await run('file-set: exception whose file exists but LOST its marker → stale, fail', async () => {
+  // The surface.ts shape: the mirror was migrated to a generated projection, so the file is
+  // still there but is no longer a mirror. The exception is now a lie about the tree.
+  const root = scaffold({
+    'src/api/types/surface.ts': 'export type { SurfaceWire } from "../generated/schema-types/surface.js";\n',
+    'governance/contract-surfaces.v1.json': '{}',
+  });
+  const r = evaluateProbe(fileSetProbe({
+    exceptions: [{ file: 'src/api/types/surface.ts', reason: 'was a hand mirror' }],
+  }), root);
+  assert.equal(r.ok, false, 'a file that stopped being a mirror must not keep its exception');
+  assert.match(r.detail, /src\/api\/types\/surface\.ts \(it still exists but no longer self-declares a mirror\)/);
+  assert.match(r.detail, /"unmarked": true/, 'the remedy for the by-design case must be named');
+});
+
+await run('file-set: exception declared UNMARKED by design → fine, never flagged as stale', async () => {
+  // api/domains/indexing.ts / api/schemas.ts are declared precisely BECAUSE they are mirrors
+  // that carry no marker; "has no marker" is their permanent, correct state.
+  const root = scaffold({
+    'src/api/domains/indexing.ts': 'export interface ApplyExcludesResponse { ok: boolean }\n',
+    'governance/contract-surfaces.v1.json': '{}',
+  });
+  const r = evaluateProbe(fileSetProbe({
+    exceptions: [{ file: 'src/api/domains/indexing.ts', unmarked: true, reason: 'unmarked mirror by design' }],
+  }), root);
+  assert.equal(r.ok, true, r.detail);
+});
+
+await run('file-set: an UNMARKED-by-design exception is still stale once its file is deleted', async () => {
+  const root = scaffold({ 'src/a.ts': 'x', 'governance/contract-surfaces.v1.json': '{}' });
+  const r = evaluateProbe(fileSetProbe({
+    exceptions: [{ file: 'src/api/domains/gone.ts', unmarked: true, reason: 'unmarked mirror by design' }],
+  }), root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /the file no longer exists/);
 });
 
 await run('file-set: generated output and tests are excluded from the scan', async () => {
@@ -313,6 +388,87 @@ await run('file-set: missing directory → fail', async () => {
   assert.equal(evaluateProbe(fileSetProbe(), root).ok, false);
 });
 
+// --------------------------------------------------------------------------- kind: any-of
+
+const PRESENT = { kind: 'grep-present', pattern: 'KEEP_ME', paths: ['a/b.java'] };
+const ABSENT = { kind: 'grep-absent', pattern: 'KEEP_ME', paths: ['a/b.java'] };
+
+await run('any-of: first alternative passes → pass, and names which one', async () => {
+  const root = scaffold({ 'a/b.java': 'KEEP_ME' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [PRESENT, ABSENT] }, root);
+  assert.equal(r.ok, true, r.detail);
+  assert.match(r.detail, /alternative 1\/2 \(grep-present\) holds/);
+});
+
+await run('any-of: only the second alternative passes → pass', async () => {
+  const root = scaffold({ 'a/b.java': 'nothing' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [PRESENT, ABSENT] }, root);
+  assert.equal(r.ok, true, r.detail);
+  assert.match(r.detail, /alternative 2\/2 \(grep-absent\) holds/);
+});
+
+await run('any-of: ALL alternatives fail → fail, and the detail names each one', async () => {
+  const root = scaffold({ 'a/b.java': 'KEEP_ME' });
+  const r = evaluateProbe({
+    kind: 'any-of',
+    alternatives: [ABSENT, { kind: 'grep-present', pattern: 'NEVER_HERE', paths: ['a/b.java'] }],
+  }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /no alternative holds/);
+  assert.match(r.detail, /alternative 1\/2 \(grep-absent\).*now appears/s);
+  assert.match(r.detail, /alternative 2\/2 \(grep-present\).*NEVER_HERE/s);
+});
+
+await run('any-of: alternatives may be any kind, including json-path', async () => {
+  const root = scaffold({ 'a/b.java': 'nothing', 'r.json': DOC });
+  const r = evaluateProbe({
+    kind: 'any-of',
+    alternatives: [
+      { kind: 'grep-present', pattern: 'KEEP_ME', paths: ['a/b.java'] },
+      { kind: 'json-path', file: 'r.json', pointer: '/categories', expect: { count: 1 } },
+    ],
+  }, root);
+  assert.equal(r.ok, true, r.detail);
+  assert.match(r.detail, /alternative 2\/2 \(json-path\) holds/);
+});
+
+await run('any-of: missing alternatives array → fail, no throw', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const r = evaluateProbe({ kind: 'any-of' }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /declares no 'alternatives' array/);
+});
+
+await run('any-of: empty alternatives array → fail (a probe with no claim is not a probe)', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [] }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /empty 'alternatives' array/);
+});
+
+await run('any-of: a nested unknown kind fails that alternative, it does not throw', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [{ kind: 'vibes' }] }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /alternative 1\/1 \(vibes\): unknown probe kind/);
+});
+
+await run('any-of: a null alternative fails legibly rather than throwing', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [null] }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /alternative 1\/1 \(no kind\)/);
+});
+
+await run('any-of: self-nesting terminates at the depth bound instead of blowing the stack', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const cyclic = { kind: 'any-of', alternatives: [] };
+  cyclic.alternatives.push(cyclic);
+  const r = evaluateProbe(cyclic, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /nesting exceeded/);
+});
+
 // --------------------------------------------------------------------------- engine plumbing
 
 await run('unknown kind → fail, never silently pass', async () => {
@@ -325,7 +481,7 @@ await run('unknown kind → fail, never silently pass', async () => {
 await run('PROBE_KINDS is the closed vocabulary the register may use', async () => {
   assert.deepEqual(
     [...PROBE_KINDS].sort(),
-    ['file-set', 'gate', 'grep-absent', 'grep-present', 'json-path', 'test'],
+    ['any-of', 'file-set', 'gate', 'grep-absent', 'grep-present', 'json-path', 'test'],
   );
 });
 
@@ -357,6 +513,24 @@ await run('every shipped probe declares a known kind and a non-empty premise', a
     assert.ok(PROBE_KINDS.has(p.kind), `${p.id}: unknown kind '${p.kind}'`);
     assert.ok(typeof p.premise === 'string' && p.premise.length > 20, `${p.id}: premise must be prose`);
     assert.match(p.adr, /^\d{4}$/, `${p.id}: adr must be a 4-digit number`);
+  }
+});
+
+await run('every shipped `unmarked: true` exception really is unmarked', async () => {
+  // The flag exempts an entry from the lost-the-marker staleness rule, so a MARKED file
+  // carrying it would be silencing the rule rather than describing the tree.
+  const reg = loadProbeRegister(process.cwd());
+  for (const probe of reg.probes.filter((p) => p.kind === 'file-set')) {
+    const marker = new RegExp(probe.mirrorMarker, 'i');
+    for (const ex of probe.exceptions ?? []) {
+      if (ex.unmarked !== true) continue;
+      const abs = path.resolve(process.cwd(), ex.file);
+      if (!fs.existsSync(abs)) continue; // the gate's own staleness rule reports this
+      assert.ok(
+        !marker.test(fs.readFileSync(abs, 'utf8')),
+        `${ex.file} carries the mirror marker, so 'unmarked: true' misdescribes it`,
+      );
+    }
   }
 });
 

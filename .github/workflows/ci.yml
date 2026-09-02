@@ -200,6 +200,13 @@ jobs:
       - name: Test squash-message preview (session-id trailer + title/body checks)
         run: node scripts/ci/test-preview-squash-message.mjs
 
+      # Tempdoc 884 PR 2. Same shape again, third time in this file: check-tempdoc-numbers is a
+      # merge gate, and its collision rule had no test at all until 884 had to loosen one branch
+      # of it. A loosened collision rule fails silently -- the regression is the case that STOPS
+      # firing -- so the pin is wired here rather than left as a script nobody runs.
+      - name: Test tempdoc/changeset number-collision scanner
+        run: node scripts/ci/test-tempdoc-scan.mjs
+
       # Tempdoc 799 Q. An adversarial review found the gate itself ran NOWHERE -- the step above
       # tests the scanner, but nothing invoked the gate on a PR. That is the same "shipped but
       # wired to nothing" shape L.1 documents for the always-loaded ratchet, reproduced in the

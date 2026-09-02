@@ -325,7 +325,8 @@
         "diffFallback": "HEAD~1"
       },
       "config": {
-        "adrDir": "docs/decisions"
+        "adrDir": "docs/decisions",
+        "riskRegister": "docs/reference/architectural-risks.md"
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/adr-coverage"
     },

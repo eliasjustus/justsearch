@@ -19,6 +19,7 @@ import { relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { CONTRACT_PROJECTION_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
+import { importSpecifiers, importsGeneratedModule, matchesGeneratedModule } from './imports.mjs';
 import {
   verdictForSchemaTypesDrift,
   verdictForDuplicateWireType,
@@ -132,7 +133,9 @@ export async function enforceContractProjection(options) {
           continue;
         }
         const text = readFileSync(consumerAbs, 'utf8');
-        if (!text.includes(`schema-types/${moduleBase}`)) {
+        // An IMPORT, not a mention: a declared consumer that only names the module in a doc
+        // comment is a false register entry, and this is what says so (884 review S5).
+        if (!importsGeneratedModule(text, moduleBase)) {
           brokenConsumers.push(`${rec.name} → ${consumer} (no import of schema-types/${moduleBase})`);
         }
       }
@@ -149,9 +152,10 @@ export async function enforceContractProjection(options) {
       if (!existsSync(rootAbs)) continue;
       for (const fileAbs of listFiles(rootAbs, excludeNames, [])) {
         const rel = norm(relative(repoRoot, fileAbs));
-        const text = readFileSync(fileAbs, 'utf8');
+        // Parse the file's import specifiers ONCE, then test each declared module against them.
+        const specs = importSpecifiers(readFileSync(fileAbs, 'utf8'));
         for (const [moduleBase, consumers] of declaredByModule) {
-          if (text.includes(`schema-types/${moduleBase}`) && !consumers.has(rel)) {
+          if (specs.some((s) => matchesGeneratedModule(s, moduleBase)) && !consumers.has(rel)) {
             undeclared.push(`${rel} (imports schema-types/${moduleBase})`);
           }
         }

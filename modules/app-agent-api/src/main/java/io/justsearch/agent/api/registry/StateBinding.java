@@ -32,7 +32,8 @@ import java.util.Objects;
  *       {@code "dateRange"}). Empty string means "the whole store value."
  * </ul>
  */
-public record StateBinding(String schemaPath, String storeId, String storeKey) {
+public record StateBinding(String schemaPath, String storeId, String storeKey)
+    implements PreciseWire {
 
   public StateBinding {
     Objects.requireNonNull(schemaPath, "schemaPath");

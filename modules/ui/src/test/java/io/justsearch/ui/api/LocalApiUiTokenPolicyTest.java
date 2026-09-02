@@ -9,6 +9,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +21,7 @@ class LocalApiUiTokenPolicyTest {
 
   private HttpClient client;
   private Javalin app;
+  private ExecutorService executor;
   private int port;
   private static final String TEST_TOKEN = "test-session-token-abc123";
 
@@ -32,6 +35,10 @@ class LocalApiUiTokenPolicyTest {
     if (app != null) {
       app.stop();
       app = null;
+    }
+    if (executor != null) {
+      executor.shutdownNow();
+      executor = null;
     }
   }
 
@@ -224,7 +231,14 @@ class LocalApiUiTokenPolicyTest {
   }
 
   /**
-   * Starts a minimal test server that mirrors LocalApiServer's token enforcement behavior.
+   * Starts a test server carrying the PRODUCTION filter chain — {@link ApiSecurityFilters#install}
+   * itself, not a re-statement of it.
+   *
+   * <p>This used to hand-copy the CORS block and the token filter, including the install guard
+   * {@code if (prodMode && sessionToken != null && !sessionToken.isBlank())}. That guard was the
+   * fail-open predicate tempdoc 884 item 23 removed: once production refuses to construct in the
+   * (prod, no-token) case, a copy that still branches on it describes behaviour that no longer
+   * exists, and would keep passing while production changed underneath it.
    */
   private void startTokenTestServer(boolean prodMode, String sessionToken) {
     app = Javalin.create(cfg -> { cfg.showJavalinBanner = false; cfg.jsonMapper(new io.justsearch.ui.json.Jackson3JsonMapper()); });
@@ -234,52 +248,8 @@ class LocalApiUiTokenPolicyTest {
       // Body and status already set by handler; do nothing.
     });
 
-    // Mirror CORS behavior
-    app.before(ctx -> {
-      String origin = ApiSecurityFilters.resolveAllowedOrigin(ctx.header("Origin"), prodMode);
-      if (origin == null) {
-        return;
-      }
-      ctx.header("Access-Control-Allow-Origin", origin);
-      ctx.header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-      ctx.res().addHeader("Vary", "Origin");
-    });
-
-    app.options("/*", ctx -> {
-      String originHeader = ctx.header("Origin");
-      String origin = ApiSecurityFilters.resolveAllowedOrigin(originHeader, prodMode);
-      if (origin == null) {
-        ctx.status(403);
-        return;
-      }
-      String requestHeaders = ctx.header("Access-Control-Request-Headers");
-      ctx.header(
-          "Access-Control-Allow-Headers",
-          requestHeaders == null || requestHeaders.isBlank() ? "Content-Type" : requestHeaders);
-      ctx.header("Access-Control-Max-Age", "3600");
-      ctx.status(200);
-    });
-
-    // Mirror token enforcement behavior. The WHICH-REQUESTS-NEED-A-TOKEN decision is NOT re-stated
-    // here — it calls the production rule. Tempdoc 834 S4 added a path-scoped requirement (the run
-    // family needs the token even for GET) and a hand-copied `if` would have stayed green while
-    // production changed underneath it, which is the whole failure mode a mirror invites.
-    if (prodMode && sessionToken != null && !sessionToken.isBlank()) {
-      app.before(ctx -> {
-        String method = ctx.method().name().toUpperCase(java.util.Locale.ROOT);
-        if (!ApiSecurityFilters.requiresSessionToken(method, ctx.path())) {
-          return;
-        }
-        String providedToken = ctx.header(LocalApiServer.SESSION_TOKEN_HEADER);
-        if (providedToken == null || !sessionToken.equals(providedToken)) {
-          ctx.status(401);
-          ctx.json(Map.of(
-              "error", "Missing or invalid session token",
-              "errorCode", "UI_TOKEN_REQUIRED"));
-          throw new io.javalin.http.HttpResponseException(401, "Unauthorized");
-        }
-      });
-    }
+    executor = Executors.newSingleThreadExecutor();
+    new ApiSecurityFilters(prodMode, sessionToken, new EventBuffer(), executor, null).install(app);
 
     // Test endpoints
     app.get("/api/status", ctx -> ctx.json(Map.of("status", "ok")));

@@ -89,6 +89,7 @@ This is the same design philosophy tempdoc 406 shipped for runtime lifecycle (se
 
 - `docs/explanation/08-observability.md` — full lifecycle, wire-format guarantees, test patterns, alternatives considered, namespace ownership table.
 - [ADR-0026](0026-manual-ci-triggering.md) — agent-discipline pattern that the catalog's ArchUnit rule depends on.
+- [ADR-0029](0029-telemetry-events-bridge-vs-direct-emit.md) — *how* an adopter reaches the catalog: pick the `TelemetryEvents` bridge or the direct-emit façade by module-dependency structure. This ADR decides the contract; 0029 decides the adoption idiom (kept separate 2026-09-02, tempdoc 884).
 - Service lifecycle pattern — tempdoc 406's lifecycle pattern, mirrored here for telemetry.
 - Implementation tempdoc: tempdoc 417 (tier4/tier5 followups from 406).
 - Tempdoc 419 C3 V1 (2026-04-26) — first non-trivial consumer extending the substrate: 2 new `StatusEndpoint` enum values (`GPU_STATUS_VIEW`, `TELEMETRY_HEALTH_VIEW`), 3 new `surfacedAt(...)` declarations across `WorkerOpsMetricCatalog` (worker side) and `HeadGpuMetricCatalog` (head side), and a parallel `HeadMetricSurfaceContractTest` in `app-services` mirroring the worker-side drift detection. See tempdoc 419 (C3 entry).

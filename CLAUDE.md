@@ -9,7 +9,7 @@ Canonical entry points: `docs/llms.txt` (docs index), `docs/tempdocs/` (active w
 ## Hard Invariants (Do Not Violate)
 
 1. **Head never touches Lucene** - Delegate all index IO to Worker via gRPC <!-- rule:head-never-touches-lucene -->
-2. **Loopback-only network** - Local API binds to 127.0.0.1 only <!-- rule:loopback-only-network -->
+2. **Local API trust boundary** - loopback bind, Host allowlist, mutation token (ADR-0046) <!-- rule:loopback-only-network -->
 3. **No legacy endpoints** - Don't resurrect removed APIs (`/api/search`, `/api/settings`) <!-- rule:no-legacy-endpoints -->
 4. **Verify, don't guess** - Use `/api/debug/state` and `/api/health` for lifecycle, `/infra/capabilities` for `host.*` sub-API contract versions; not log grepping <!-- rule:verify-dont-guess -->
 5. **Frontend is Lit, not React** - Canonical docs describe the Lit/`shell-v0` web-components stack; the React stack is retired (ADR-0032) <!-- rule:frontend-stack-is-lit -->
