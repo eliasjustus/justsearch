@@ -11,6 +11,7 @@ import logging
 import click
 
 from .._paths import DEFAULT_EVAL_RESULTS
+from ..cadence import DEFAULT_BATCH_MIN_FILES
 from ._common import _DEFAULT_BASE_URL, assert_run_capabilities
 
 log = logging.getLogger(__name__)
@@ -85,6 +86,16 @@ log = logging.getLogger(__name__)
 @click.option("--search-load", "search_load_mode", type=click.Choice(["continuous"]), default=None,
               help="Tempdoc 885: as --search-load-qpm but back-to-back with one request in "
                    "flight (the continuous MCP-style agent loop).")
+@click.option("--first-search-probe", "first_search_probe", is_flag=True, default=False,
+              help="Tempdoc 885 item 19: after every batch of --first-search-probe-files newly "
+                   "indexed documents, issue ONE search and record its latency SEPARATELY from "
+                   "--search-load* (reopen-on-demand moves the segment-open cost onto exactly "
+                   "that first post-indexing query). Reported under summary.json "
+                   "`cadence.first_search_after_indexing`. Off by default.")
+@click.option("--first-search-probe-files", "first_search_probe_files",
+              type=int, default=DEFAULT_BATCH_MIN_FILES, show_default=True,
+              help="Newly indexed documents that must accumulate before --first-search-probe "
+                   "issues its next query. Ignored unless --first-search-probe is set.")
 @click.option("--json", "json_flag", is_flag=True, hidden=True, help="Alias for top-level --json.")
 @click.option(
     "--skip-projection", "skip_projections", multiple=True,
@@ -93,14 +104,18 @@ log = logging.getLogger(__name__)
          "a single flaky projection without losing other signals.",
 )
 @click.pass_context
-def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, search_load_qpm, search_load_mode, json_flag, skip_projections):
+def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, search_load_qpm, search_load_mode, first_search_probe, first_search_probe_files, json_flag, skip_projections):
     """Execute an evaluation run."""
     if json_flag:
         ctx.obj["json"] = True
+    from .. import cadence as cadence_mod
     from .. import search_load as search_load_mod
     try:
         search_load_spec = search_load_mod.resolve_spec(
             search_load_qpm, search_load_mode == "continuous",
+        )
+        first_search_probe_spec = cadence_mod.resolve_probe_spec(
+            first_search_probe, first_search_probe_files,
         )
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
@@ -255,6 +270,7 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
             pin_index_selector_key=pin_index_selector_key,
             env_overrides=env_overrides,
             search_load_spec=search_load_spec,
+            first_search_probe_spec=first_search_probe_spec,
             json_flag=json_flag,
             is_warmup=is_warmup,
         )
@@ -336,6 +352,7 @@ def _run_iteration(
     query_syntax=None,
     env_overrides,
     search_load_spec=None,
+    first_search_probe_spec=None,
     json_flag,
     is_warmup,
 ):
@@ -419,6 +436,7 @@ def _run_iteration(
             skip_ingest, ingest_config, env_overrides,
             suppress_stdout=is_warmup, index_cache=cache_outcome,
             query_syntax=query_syntax, search_load_spec=search_load_spec,
+            first_search_probe_spec=first_search_probe_spec,
         )
         # Publish only a fresh build (outcome != adopted) done under --clean, and
         # only when the selector key is available. Capture happens while up.
@@ -506,6 +524,22 @@ def _check_build_freshness(base_url: str) -> None:
         )
 
 
+def _foreground_queries(dataset: str, option: str) -> list[str]:
+    """The dataset's own queries, used as the pool for foreground traffic during ingest."""
+    from .. import corpora
+
+    try:
+        query_records, _qrels, _meta = corpora.load(dataset)
+    except Exception as e:
+        click.echo(f"Error: {option} needs the dataset's queries: {e}", err=True)
+        sys.exit(1)
+    queries = [qr.text for qr in query_records.values() if getattr(qr, "text", "").strip()]
+    if not queries:
+        click.echo(f"Error: dataset {dataset!r} has no queries for {option}", err=True)
+        sys.exit(1)
+    return queries
+
+
 def _start_search_load(spec, base_url: str, dataset: str):
     """Start the tempdoc-885 background query loop, or return None when not requested.
 
@@ -513,21 +547,26 @@ def _start_search_load(spec, base_url: str, dataset: str):
     """
     if spec is None:
         return None
-    from .. import corpora
     from .. import search_load as search_load_mod
 
-    try:
-        query_records, _qrels, _meta = corpora.load(dataset)
-    except Exception as e:
-        click.echo(f"Error: --search-load* needs the dataset's queries: {e}", err=True)
-        sys.exit(1)
-    queries = [qr.text for qr in query_records.values() if getattr(qr, "text", "").strip()]
-    if not queries:
-        click.echo(f"Error: dataset {dataset!r} has no queries for --search-load*", err=True)
-        sys.exit(1)
-    runner = search_load_mod.SearchLoadRunner(base_url, queries, spec)
+    runner = search_load_mod.SearchLoadRunner(
+        base_url, _foreground_queries(dataset, "--search-load*"), spec,
+    )
     runner.start()
     return runner
+
+
+def _start_first_search_probe(spec, base_url: str, dataset: str):
+    """Start the tempdoc-885 item-19 post-batch probe, or None when not requested."""
+    if spec is None:
+        return None
+    from .. import cadence as cadence_mod
+
+    probe = cadence_mod.FirstSearchProbe(
+        base_url, _foreground_queries(dataset, "--first-search-probe"), spec,
+    )
+    probe.start()
+    return probe
 
 
 def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
@@ -535,7 +574,7 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
             context_coverage, thresholds, history_db, corpus_dir,
             skip_ingest, ingest_config, env_overrides=None,
             suppress_stdout=False, index_cache=None, query_syntax=None,
-            search_load_spec=None):
+            search_load_spec=None, first_search_probe_spec=None):
     """Inner run logic (extracted for backend lifecycle try/finally).
 
     When suppress_stdout is True (used by warmup iterations of --warmup N), the
@@ -557,10 +596,12 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
     # ingests -- that single pass is what warm publishes and what the floor is for.
     adopted = bool(index_cache) and index_cache.get("mode") == "adopted"
     search_load_block = None
+    first_search_block = None
     if not skip_ingest and not adopted:
         # Tempdoc 885: foreground search traffic runs for exactly the ingest + readiness/
         # pipeline wait window, which is the interval the throughput numbers cover.
         load_runner = _start_search_load(search_load_spec, base_url, dataset)
+        probe = _start_first_search_probe(first_search_probe_spec, base_url, dataset)
         try:
             ingest_summary = ingest_mod.prepare_corpus(
                 dataset_name=dataset,
@@ -570,14 +611,16 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
         finally:
             if load_runner is not None:
                 search_load_block = load_runner.stop()
+            if probe is not None:
+                first_search_block = probe.stop()
         if not ingest_summary.get("readiness_passed"):
             click.echo("Warning: readiness gate did not pass after ingestion", err=True)
             click.echo(f"  Reasons: {ingest_summary.get('failure_reasons')}", err=True)
         pipeline_summary = ingest_summary.get("pipeline_summary")
-    elif search_load_spec is not None:
+    elif search_load_spec is not None or first_search_probe_spec is not None:
         log.warning(
-            "--search-load* ignored: no ingest/readiness wait in this run "
-            "(skip_ingest=%s, adopted=%s)", skip_ingest, adopted,
+            "--search-load* / --first-search-probe ignored: no ingest/readiness wait in "
+            "this run (skip_ingest=%s, adopted=%s)", skip_ingest, adopted,
         )
     elif adopted:
         log.info(
@@ -607,6 +650,7 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
         index_cache=index_cache,
         query_syntax=query_syntax,
         search_load=search_load_block,
+        first_search_probe=first_search_block,
     )
     if suppress_stdout:
         return
