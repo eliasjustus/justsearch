@@ -1,7 +1,7 @@
 ---
 title: "Token efficiency is a trend, not a snapshot — and the data that proves it is on a 30-day delete timer"
 type: tempdocs
-status: "CHARTERED (2026-09-02) — analysis complete and reproduced (§1); one headline retracted in-document after a size control (§1.2b); rework half measured and confound-tested (§1.3b); design settled (§5); implementation delegated (§6). §4 criticisms and §5.3 are arguments, not decisions."
+status: "IMPLEMENTED 2026-09-02 on branch worktree-agent-a5cf92a1ad3d218b1 (4 commits, 66/66 suite green, acceptance gate reproduced) — NOT merged, awaiting owner go-ahead. Analysis §1 complete; one headline retracted after a size control (§1.2b); rework half measured and confound-tested (§1.3b). §4 criticisms and §5.3 are arguments, not decisions."
 created: 2026-09-02
 updated: 2026-09-02
 lane: agent-analytics / token efficiency
@@ -560,7 +560,35 @@ real budget, not a longer sentence.
 
 ### 6.0 Model routing — deliberate, and a data point
 
-Delegated to **sonnet**, not opus, despite this being substrate code. Rationale: the work is
+**OUTCOME (recorded 2026-09-02, as this section promised).** Shipped, green, acceptance gate
+reproduced exactly. **234 calls, peak context 410k, $17** (`spawn-economics.mjs --since
+2026-09-02`) against $88-$202 for the same day's 347-561-call opus workers — roughly 3-5x cheaper
+per call. Four rounds: one implementation + three fix rounds.
+
+- **What sonnet got right first time:** the whole specified surface. Round 1 reproduced §1.1/§1.2b/
+  §1.3 exactly, 66/66 suite green, and volunteered work the brief did not ask for — a per-bucket
+  `unpricedCalls` column (my own throwaway script silently absorbed those at $0), and a recursive
+  `findContentLeaks` that fails closed at write time and is tested against crafted violations
+  rather than only clean input.
+- **What independent review caught, and its own tests did not:** four defects, all real, all
+  reproduced on live data — snapshot merge ignoring `--since`/`--until` (a 10-day query returned
+  five weeks); `source` computed but never printed; snapshot rows flagged `TRUNCATED` from *today's*
+  floor, which would have permanently excluded every rescued bucket from the trend arithmetic the
+  writer exists to enable; and section (d)'s bucket lists contradicting the per-row flags in `--json`.
+- **The honest reading is not "sonnet was too weak."** All four cluster in the snapshot-merge and
+  corpus-honesty area — the part §5.2 specified in eight lines against §5.1's thirty. That is a
+  **brief-thinness signal at least as much as a model signal**, and it is the cheap lesson here:
+  the section I under-specified is exactly the section that came back wrong, four times.
+- **What was actually load-bearing was the review, not the tier.** The worker's own unit tests
+  passed through all four defects; every one surfaced only by running the tool against real data
+  and reading the output. `static-green ≠ live-working`, in miniature, on the very tempdoc that
+  argues for measurement over assertion.
+- **Cost of the review loop, stated:** round 1 was 105 calls, inside the ~120 bound §5.3 argues
+  for. The three fix rounds added 129 more, so the *total* ran to 234 — the per-round budget held,
+  the cumulative one did not. A review loop is not free; at $17 against $88-$202 it was still the
+  cheaper way to get a correct tool.
+
+Rationale for the original choice: the work is
 bounded, follows a file-level precedent (`context-residency.mjs`), and has a *self-verifying*
 acceptance criterion — it must reproduce the §1 tables, which are already computed and printed
 above. That is the profile CLAUDE.md's routing rule describes as sonnet-appropriate, and §1.3
