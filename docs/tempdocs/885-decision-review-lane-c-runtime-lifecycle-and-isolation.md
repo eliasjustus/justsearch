@@ -3451,3 +3451,47 @@ for by trimming eleven older bullets' wording — content preserved, ~330 B reco
   less.
 * **`ForegroundLoad` is a `worker-services` type**, not a gRPC concept — it survives the merge, and
   item 19's reopen seam now depends on it as a `BooleanSupplier`.
+
+### UL.9 Live pass part 1 (2026-09-02) — roots collection + the exhausted-state UI
+
+Run by the wave-1 UI residue lane (PR #603) against the orchestrator-owned stack built from
+`resid-product` @ `505d0fdd`: runId `e57fb789-2ecb-4133-8906-2ec635f1dfa2`, API
+`http://127.0.0.1:63275`, dataDir `.claude/worktrees/resid-product/modules/ui-web/.dev-data`.
+HTTP only (the lane did not hold the lease). Part 2 — the post-restart re-check — is recorded
+separately after the orchestrator restarts the stack.
+
+| # | Check | Result |
+|---|---|---|
+| 3a | `POST /api/indexing/roots` with a collection | **PASS** `{"path":"…/resid-ui/docs/explanation","collection":"residue-live"}` → `{"status":"ok"}` |
+| 3b | The listing keeps it | **PASS** `GET /api/indexing/roots` → `collection: "residue-live"` on the root (not dropped, which is the R2 defect this fixes) |
+| 3c | It survives to disk | **PASS** `watched_roots.json` contains `"collection" : "residue-live"` beside the path, `walkCompleted: true` |
+| 3d | Indexed documents carry it | **PASS** after the walk settled, all 8 hits for `architecture` under that root return `fields.collection = residue-live` via `POST /api/knowledge/search` |
+| 3e (S3) | Ad-hoc ingest INHERITS it | **PASS** a file created under the root and ingested with `POST /api/knowledge/ingest {"paths":[…]}` and **no `collection` field** came back searchable with `fields.collection = residue-live`. The probe file was deleted immediately after the reading. |
+| 6 | `RETRY_EXHAUSTED` in the drawer | **UNIT-TIER ONLY**, as briefed — a genuinely exhausted job needs a transient failure recurring across the seven-day retry window and cannot be seeded in a live session. Covered by `FailedJobsDrawer.test.ts` (a `RETRY_EXHAUSTED` row and a `FAILED` row rendering differently, plus the no-state fallback) and `indexingJobsBridge.test.ts`. |
+
+**A checklist item that is not observable where it was expected.**
+`justsearch.index.commit.timer_interval_ms` does not appear on
+`/api/debug/effective-config`: that endpoint exposes 16 curated Head-side keys and this is a
+WORKER-side key read through `session.resolvedConfig()` in `CommitOps.commitTimerIntervalMs`. Nor
+is it in the worker log — `CommitOps.startCommitTimer` logs the interval at DEBUG, below the
+running level, and the only INFO/WARN line is the invalid-value branch, which did not fire. So the
+default is consistent with what was observed (no override was set on this run, and
+`EnvRegistry.java:1306` declares the default `10000`) but it was **not observed**, and this pass
+does not claim it was. Making it observable would mean either promoting the key onto the
+effective-config surface or raising that one log line to INFO.
+
+**Routed, not investigated (this lane's own findings from the run):**
+
+* `jseval ui-a11y-gate` exits **2 (capture error)** on `security` / `security-light` — both time
+  out on `jf-settings-window dialog[open]`. Reproduced **identically against main's own frontend**
+  (`:5173`, no worktree changes): 18 ok / 2 ERROR / 0 new violations on both. Pre-existing on
+  `main`, not caused by #603; a red local gate belongs in
+  `scripts/agent-analytics/expected-state.v1.json` with a fix item rather than being rediscovered.
+* The substrate failed-jobs wire has **no parse-boundary contract**.
+  `SSOT/schemas/indexing-job-view.v1.json` exists and does describe `pathHash` / `state` /
+  `retryAfterMs`, but there is no generated TS projection for it (`schema-types/` carries only
+  `failed-jobs-response.ts`, the legacy `path`-carrying shape), and the `by-prefix` envelope is
+  hand-built as `Map<String,Object>` in `IndexingController.handleListFailedJobsByPathPrefix`
+  (which also omits `scanId`, so it is not quite an `IndexingJobView`). `FailedJobsDrawer.refresh`
+  therefore reads `state` off untyped JSON with zero contract coverage — the field UL.9 row 6 above
+  depends on.
