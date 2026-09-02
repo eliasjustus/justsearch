@@ -68,6 +68,23 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   public static final String SEGMENTS_SINCE_REOPEN = "index.runtime.segments_since_reopen";
 
   /**
+   * Commits by trigger (tempdoc 912 item 2). 885's live window could measure {@link #COMMIT_COUNT}
+   * moving only 17 % under three multiplicative cadence relaxations but could NOT say which trigger
+   * held the floor, because no per-trigger count existed. This is that count.
+   *
+   * <p>It is a counter and not a second authority for {@link #COMMIT_COUNT}: both are written at
+   * the one commit funnel ({@code CommitOps.commitAndTrack}) from the same {@code CommitReason}, and
+   * the session-side total is the SUM of its per-reason slots by construction ({@code
+   * CommitCounters}). It differs from the {@code COMMIT_COUNT} gauge only in lifetime — this
+   * accumulates across sessions, the gauge resets with the session (885: 46 vs 114).
+   *
+   * <p>Reason-tagged rather than surfaced on {@code /api/status}, for the same reason
+   * {@link #REOPEN_COUNT} is: the cadence comparison reads its trend off the metrics NDJSON, and a
+   * status-wire field would drag a proto change into a measurement knob.
+   */
+  public static final String COMMIT_TOTAL = "index.runtime.commit_total";
+
+  /**
    * Static definitions. Pass to {@code LocalTelemetry}'s constructor before constructing this
    * catalog so per-metric Views are registered before the {@code SdkMeterProvider} is built.
    */
@@ -103,6 +120,11 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
           MetricDefinition.counter(VALIDATION_FAILURE_TOTAL)
               .unit(Unit.COUNT)
               .tagKeys(IndexRuntimeTags.REASON_KEYS)
+              .build(),
+          MetricDefinition.counter(COMMIT_TOTAL)
+              .unit(Unit.COUNT)
+              .tagKeys(IndexRuntimeTags.REASON_KEYS)
+              .cardinalityLimit(32)
               .build(),
           MetricDefinition.gauge(WRITER_QUEUE_DEPTH)
               .unit(Unit.COUNT)
@@ -162,6 +184,8 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   public final HistogramMetric<SwapTags> swapDurationMs;
   public final HistogramMetric<EmptyTags> writeBarrierWaitUs;
   public final CounterMetric<ValidationTags> validationFailureTotal;
+  /** Commits by trigger — see {@link #COMMIT_TOTAL}. */
+  public final CounterMetric<CommitTags> commitTotal;
   // Phase 3b status gauges — register their async callbacks at catalog construction; the
   // suppliers route through {@code statusSupplier} (a {@code RuntimeGaugesSnapshot} provider).
   public final GaugeMetric<EmptyTags> writerQueueDepth;
@@ -206,6 +230,7 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
     this.swapDurationMs = registry.buildHistogram(SWAP_DURATION_MS);
     this.writeBarrierWaitUs = registry.buildHistogram(WRITE_BARRIER_WAIT_US);
     this.validationFailureTotal = registry.buildCounter(VALIDATION_FAILURE_TOTAL);
+    this.commitTotal = registry.buildCounter(COMMIT_TOTAL);
     this.writerQueueDepth =
         registry.buildGauge(
             WRITER_QUEUE_DEPTH,
