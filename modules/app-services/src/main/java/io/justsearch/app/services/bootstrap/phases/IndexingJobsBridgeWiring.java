@@ -92,7 +92,12 @@ public final class IndexingJobsBridgeWiring {
       return Optional.empty();
     }
     String state = row.state().toUpperCase(Locale.ROOT);
-    if (!state.equals("DONE") && !state.equals("FAILED")) {
+    // Tempdoc 885 item 21b: RETRY_EXHAUSTED is terminal too. Omitting it would have made a file
+    // that spent a week retrying and then gave up produce NO ledger outcome at all — the one case
+    // where an operator most needs a durable record.
+    if (!state.equals(IndexingJobView.STATE_DONE)
+        && !state.equals(IndexingJobView.STATE_FAILED)
+        && !state.equals(IndexingJobView.STATE_RETRY_EXHAUSTED)) {
       return Optional.empty();
     }
     return Optional.of(

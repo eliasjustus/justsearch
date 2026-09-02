@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
 import io.justsearch.indexerworker.ingest.IngestionOutcome;
+import io.justsearch.indexerworker.ingest.IngestionRetryLadder;
 import io.justsearch.indexerworker.util.PathNormalizer;
 import io.justsearch.telemetry.Telemetry;
 import org.slf4j.Logger;
@@ -42,8 +43,33 @@ import org.slf4j.LoggerFactory;
 public final class SqliteJobQueue implements SwitchBufferCapableQueue {
   private static final Logger log = LoggerFactory.getLogger(SqliteJobQueue.class);
 
-  /** Default maximum retry attempts before marking a job as FAILED. */
-  private static final int DEFAULT_MAX_ATTEMPTS = 3;
+  /**
+   * Maximum untyped-failure attempts before marking a job {@code FAILED}.
+   *
+   * <p>Tempdoc 885 item 21d: ONE home. {@code KnowledgeServer} used to pass a bare literal {@code 3}
+   * at the single construction site, so the cap existed in two places that agreed by coincidence.
+   * It is also no longer the terminal signal for a classified transient outcome — see {@link
+   * #markFailedWithOutcome}; it governs only the untyped {@link #markFailed(Path, String)} path.
+   */
+  public static final int DEFAULT_MAX_ATTEMPTS = 3;
+
+  /** Job states on the {@code jobs} table. The vocabulary the change-feed projects onto the wire. */
+  static final String STATE_PENDING = "PENDING";
+
+  static final String STATE_PROCESSING = "PROCESSING";
+
+  static final String STATE_DONE = "DONE";
+
+  static final String STATE_FAILED = "FAILED";
+
+  /**
+   * Tempdoc 885 item 21b — a transient failure run that outlived the seven-day retry window. A
+   * VISIBLE terminal state, distinct from {@code FAILED} (which means "this file cannot be
+   * parsed"): {@code RETRY_EXHAUSTED} means "we kept trying for a week and never got to read it".
+   * Reset by anything that re-enqueues the path (a rescan, a watcher event on an mtime/size
+   * change), because the enqueue statement is {@code INSERT OR REPLACE}.
+   */
+  static final String STATE_RETRY_EXHAUSTED = "RETRY_EXHAUSTED";
 
   /** SQLite busy timeout in milliseconds. */
   private static final int BUSY_TIMEOUT_MS = 5000;
@@ -93,6 +119,12 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
   private final MigrationStepHook migrationStepHook;
   private final SqliteQueueSwitchBufferOps switchBufferOps;
+
+  /** Tempdoc 885 item 21e — enqueue/dequeue rates and lock-wait, RISK-002's instrument. */
+  private final QueueThroughputMeters meters = new QueueThroughputMeters();
+
+  /** Tempdoc 885 item 21e — late-bound per-outcome counter sink; null until the catalog exists. */
+  private volatile java.util.function.Consumer<String> outcomeObserver;
 
   /**
    * Creates a SqliteJobQueue backed by the specified SQLite database file.
@@ -146,6 +178,53 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
   private Connection ensureOpenAndGetConnection() {
     ensureOpen();
     return connection;
+  }
+
+  /**
+   * Tempdoc 885 item 21e — the throughput + lock-wait instrument RISK-002 has been "monitoring"
+   * without since tempdoc 269. Owned by the queue (it is the only thing that knows when a row is
+   * admitted or claimed) and read by {@code WorkerOpsMetricCatalog}'s suppliers at flush time.
+   */
+  public QueueThroughputMeters throughputMeters() {
+    return meters;
+  }
+
+  /**
+   * Late-bound per-outcome counter sink, wired by {@code KnowledgeServer} once the telemetry
+   * registry exists. Mirrors {@code onSwitchBufferWriteFailure}: the queue is constructed long
+   * before the catalog, so the sink no-ops until it is set rather than the queue holding a
+   * half-built catalog.
+   */
+  public void setOutcomeObserver(java.util.function.Consumer<String> observer) {
+    this.outcomeObserver = observer;
+  }
+
+  private void recordOutcomeMetric(IngestionOutcome outcome) {
+    var observer = this.outcomeObserver;
+    if (observer == null) {
+      return;
+    }
+    try {
+      observer.accept(outcomeClassName(outcome));
+    } catch (RuntimeException e) {
+      log.debug("Queue outcome observer failed: {}", e.getMessage());
+    }
+  }
+
+  /**
+   * Acquires the queue's single write lock, recording how long the caller waited. Used on the two
+   * paths RISK-002 is actually about — the one dequeue caller and the many enqueue callers — so the
+   * measurement covers the contention that matters without instrumenting forty read paths whose
+   * wait is the same fact measured again.
+   */
+  private void lockTimed() {
+    if (lock.tryLock()) {
+      meters.recordLockWaitMs(0L);
+      return;
+    }
+    long start = meters.nowMs();
+    lock.lock();
+    meters.recordLockWaitMs(Math.max(0L, meters.nowMs() - start));
   }
 
   @Override
@@ -297,10 +376,15 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       return 0;
     }
 
-    lock.lock();
+    lockTimed();
     try {
       ensureOpen();
 
+      // Tempdoc 885 item 21b: the unlisted columns are the reset. INSERT OR REPLACE restores every
+      // column not named here to its default, so re-enqueueing a path clears attempts, retry_after,
+      // error_message, the last-outcome columns AND first_failed_at — which is exactly what makes a
+      // rescan (or a watcher event on an mtime/size change) revive a RETRY_EXHAUSTED row with a
+      // fresh retry window, with no separate "reset" statement to keep in sync.
       String sql = """
           INSERT OR REPLACE INTO jobs
             (path, state, attempts, last_updated, collection, size_bytes, scan_id)
@@ -336,6 +420,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
         stmt.executeBatch();
       }
 
+      meters.recordEnqueued(count);
       log.debug("Enqueued {} jobs (collection={}, scanId={})", count, col, scan);
       return count;
     } catch (SQLException e) {
@@ -348,7 +433,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
   @Override
   public List<IndexJob> pollPending(int limit) {
-    lock.lock();
+    lockTimed();
     try {
       ensureOpen();
 
@@ -429,6 +514,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
               });
 
       if (!result.isEmpty()) {
+        meters.recordDequeued(result.size());
         log.debug("Claimed {} jobs for processing", result.size());
       }
 
@@ -767,14 +853,22 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
   /**
    * Failed-state transition driven by {@code outcome.retryPolicy()}.
    *
-   * <p>{@link io.justsearch.indexerworker.ingest.IngestionRetryPolicy#NONE} forces the FAILED
-   * terminal state regardless of attempt count. {@link
-   * io.justsearch.indexerworker.ingest.IngestionRetryPolicy#RETRY_WITH_BACKOFF} follows the
-   * normal attempts-vs-maxAttempts decision and applies exponential backoff. Outcomes carrying
+   * <p>{@link io.justsearch.indexerworker.ingest.IngestionRetryPolicy#NONE} forces the {@code
+   * FAILED} terminal state on the first failure, regardless of attempt count. Outcomes carrying
    * {@link io.justsearch.indexerworker.ingest.IngestionRetryPolicy#DEFER_WITHOUT_ATTEMPT} are
    * rejected here — they belong to {@link #defer(Path, IngestionOutcome,
    * JobQueue.IngestionLedgerEntry)} and routing them through {@code markFailed} would silently
    * mark the job FAILED while incrementing the attempt counter.
+   *
+   * <p><b>Tempdoc 885 item 21a/21b.</b> {@link
+   * io.justsearch.indexerworker.ingest.IngestionRetryPolicy#RETRY_WITH_BACKOFF} no longer consults
+   * {@code maxAttempts} at all. Attempt count answers "how many times has this been tried", which
+   * is a display fact; it never answered "is this file permanently unindexable", which is what the
+   * terminal decision is about — and conflating them turned a twenty-minute network outage into a
+   * permanent {@code FAILED}. The classification already carries the answer: a transient outcome
+   * retries on {@link io.justsearch.indexerworker.ingest.IngestionRetryLadder}'s schedule until the
+   * seven-day bound, then becomes {@code RETRY_EXHAUSTED} — a visible terminal state a rescan or a
+   * file change resets. {@code attempts} is still incremented, and still shown.
    */
   private void markFailedWithOutcome(
       Path path, IngestionOutcome outcome, JobQueue.IngestionLedgerEntry entry) {
@@ -787,6 +881,10 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
     boolean terminal =
         outcome != null
             && outcome.retryPolicy() == io.justsearch.indexerworker.ingest.IngestionRetryPolicy.NONE;
+    boolean transientOutcome =
+        outcome != null
+            && outcome.retryPolicy()
+                == io.justsearch.indexerworker.ingest.IngestionRetryPolicy.RETRY_WITH_BACKOFF;
     lock.lock();
     try {
       ensureOpen();
@@ -794,21 +892,46 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       FailedTransitionResult result =
           inTransaction(
               () -> {
-                int currentAttempts = readAttempts(normalizedPath);
-                int newAttempts = currentAttempts + 1;
-                String newState = terminal || newAttempts >= maxAttempts ? "FAILED" : "PENDING";
+                FailureRunState run = readFailureRun(normalizedPath);
+                int newAttempts = run.attempts() + 1;
                 long now = System.currentTimeMillis();
+                // The run's origin: the first failure stamps it, later failures inherit it. This is
+                // the only thing the seven-day bound can be measured from once attempts stopped
+                // being the terminal signal.
+                long firstFailedAt = run.firstFailedAtMs() > 0L ? run.firstFailedAtMs() : now;
+
+                String newState;
+                if (terminal) {
+                  newState = STATE_FAILED;
+                } else if (transientOutcome) {
+                  newState =
+                      IngestionRetryLadder.exhausted(run.firstFailedAtMs(), now)
+                          ? STATE_RETRY_EXHAUSTED
+                          : STATE_PENDING;
+                } else {
+                  // outcome == null: the untyped legacy path, which keeps the attempts cap.
+                  newState = newAttempts >= maxAttempts ? STATE_FAILED : STATE_PENDING;
+                }
+
                 Long retryAfter = null;
-                if ("PENDING".equals(newState)) {
-                  long backoffMs = 1000L * (1L << Math.min(newAttempts - 1, 10));
+                if (STATE_PENDING.equals(newState)) {
+                  long backoffMs =
+                      transientOutcome
+                          ? IngestionRetryLadder.backoffMs(newAttempts)
+                          : 1000L * (1L << Math.min(newAttempts - 1, 10));
                   long jitter =
                       ThreadLocalRandom.current().nextLong(0, Math.min(1000L, backoffMs) + 1);
-                  retryAfter = now + backoffMs + jitter;
+                  retryAfter =
+                      transientOutcome
+                          ? IngestionRetryLadder.nextRetryAtMs(
+                              firstFailedAt, newAttempts, now, jitter)
+                          : now + backoffMs + jitter;
                 }
 
                 String updateSql = """
                     UPDATE jobs
                     SET state = ?, attempts = ?, last_updated = ?, error_message = ?, retry_after = ?,
+                        first_failed_at = ?,
                         last_outcome_class = ?, last_reason_code = ?, last_retry_policy = ?,
                         last_diagnostic_summary = ?, last_outcome_at = ?
                     WHERE path = ?
@@ -823,7 +946,8 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
                   } else {
                     stmt.setNull(5, java.sql.Types.INTEGER);
                   }
-                  bindOutcomeOnly(stmt, 6, outcome, normalizedPath);
+                  stmt.setLong(6, firstFailedAt);
+                  bindOutcomeOnly(stmt, 7, outcome, normalizedPath);
                   int rows = stmt.executeUpdate();
                   if (rows > 0) {
                     insertLedgerEvent(normalizedPath, outcome, entry);
@@ -832,8 +956,15 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
                 }
               });
       logIfNoRows(result.updated(), terminal ? "markFailed(terminal)" : "markFailed(retryable)", path);
+      recordOutcomeMetric(outcome);
 
-      if ("FAILED".equals(result.state())) {
+      if (STATE_RETRY_EXHAUSTED.equals(result.state())) {
+        log.warn(
+            "Job retry window exhausted after {} attempts over {} days; marked RETRY_EXHAUSTED: {}",
+            result.attempts(),
+            IngestionRetryLadder.MAX_RETRY_WINDOW_MS / 86_400_000L,
+            path);
+      } else if (STATE_FAILED.equals(result.state())) {
         log.warn("Job permanently failed after {} attempts: {}", result.attempts(), path);
       } else {
         long backoffSeconds =
@@ -864,6 +995,29 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       }
     }
   }
+
+  /**
+   * Tempdoc 885 item 21b: the two facts a failure transition needs about the current failure run —
+   * how many failures it has seen, and when it started. Read in one statement inside the same
+   * transaction as the write, so the seven-day decision can never be made against a row another
+   * thread has since reset.
+   */
+  private FailureRunState readFailureRun(String normalizedPath) throws SQLException {
+    String sql = "SELECT attempts, first_failed_at FROM jobs WHERE path = ?";
+    try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+      stmt.setString(1, normalizedPath);
+      try (ResultSet rs = stmt.executeQuery()) {
+        if (!rs.next()) {
+          return new FailureRunState(0, 0L);
+        }
+        int attempts = rs.getInt(1);
+        long firstFailedAt = rs.getLong(2);
+        return new FailureRunState(attempts, rs.wasNull() ? 0L : firstFailedAt);
+      }
+    }
+  }
+
+  private record FailureRunState(int attempts, long firstFailedAtMs) {}
 
   private record FailedTransitionResult(int updated, int attempts, String state, Long retryAfterMs) {}
 
@@ -1168,7 +1322,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
       String jobsSql = """
           DELETE FROM jobs
-          WHERE state IN ('DONE', 'FAILED') AND last_updated < ?
+          WHERE state IN ('DONE', 'FAILED', 'RETRY_EXHAUSTED') AND last_updated < ?
           """;
 
       int deleted;
@@ -1385,7 +1539,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
       // 1) Failed count
       try (Statement stmt = connection.createStatement();
-           ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM jobs WHERE state = 'FAILED'")) {
+           ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM jobs WHERE state IN ('FAILED', 'RETRY_EXHAUSTED')")) {
         if (rs.next()) {
           failedCount = rs.getLong(1);
         }
@@ -1395,7 +1549,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       String lastFailedSql = """
           SELECT path, error_message, last_updated
           FROM jobs
-          WHERE state = 'FAILED'
+          WHERE state IN ('FAILED', 'RETRY_EXHAUSTED')
           ORDER BY last_updated DESC
           LIMIT 1
           """;
@@ -1448,7 +1602,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
       String sql = """
           SELECT path, error_message, attempts, last_updated, collection
-          FROM jobs WHERE state = 'FAILED'
+          FROM jobs WHERE state IN ('FAILED', 'RETRY_EXHAUSTED')
           ORDER BY last_updated DESC
           LIMIT ?
           """;
@@ -1511,7 +1665,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
       String sql = """
           SELECT path, error_message, attempts, last_updated, collection
-          FROM jobs WHERE state = 'FAILED' AND path >= ? AND path < ?
+          FROM jobs WHERE state IN ('FAILED', 'RETRY_EXHAUSTED') AND path >= ? AND path < ?
           ORDER BY last_updated DESC
           LIMIT ?
           """;
@@ -1548,7 +1702,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
     try {
       ensureOpen();
 
-      String sql = "DELETE FROM jobs WHERE state = 'FAILED'";
+      String sql = "DELETE FROM jobs WHERE state IN ('FAILED', 'RETRY_EXHAUSTED')";
       try (Statement stmt = connection.createStatement()) {
         int deleted = stmt.executeUpdate(sql);
         if (deleted > 0) {
@@ -1679,10 +1833,13 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
             String state = rs.getString(1);
             long count = rs.getLong(2);
             switch (state == null ? "" : state) {
-              case "PENDING" -> pending = count;
-              case "PROCESSING" -> processing = count;
-              case "DONE" -> done = count;
-              case "FAILED" -> failed = count;
+              case STATE_PENDING -> pending = count;
+              case STATE_PROCESSING -> processing = count;
+              case STATE_DONE -> done = count;
+              // Tempdoc 885 item 21b: RETRY_EXHAUSTED is a terminal failure for every folder
+              // projection. Leaving it in the `default` arm would have silently dropped those rows
+              // out of the per-root totals, so a folder with exhausted files would read "100%".
+              case STATE_FAILED, STATE_RETRY_EXHAUSTED -> failed += count;
               default -> log.debug("countByPathPrefix: unknown state {} ({} rows)", state, count);
             }
           }

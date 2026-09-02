@@ -1469,10 +1469,10 @@ message SubscribeIndexingJobsRequest {
 // Raw paths NEVER appear on this wire — resolve via core.resolve-path-hash Operation.
 message IndexingJobView {
   string path_hash = 1;
-  string state = 2;            // PENDING | PROCESSING | DONE | FAILED
+  string state = 2;            // PENDING | PROCESSING | DONE | FAILED | RETRY_EXHAUSTED
   int32 attempts = 3;
   int64 last_updated_ms = 4;
-  string error_message = 5;    // empty when not FAILED
+  string error_message = 5;    // empty unless the last attempt failed
   int64 retry_after_ms = 6;    // 0 when no backoff scheduled
   string collection = 7;
   // Tempdoc 812 D2 — the scan that enqueued this job (ScanRootProgress.scan_id), or empty for
