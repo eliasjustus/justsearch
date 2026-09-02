@@ -4,6 +4,10 @@ type: decision
 status: accepted
 description: "Each MetricCatalog adoption picks between two consumption idioms — a TelemetryEvents bridge interface (decouples domain code from telemetry types; required when the domain module should not depend on the catalog package) or a direct-emit façade that wraps catalog instruments (cheaper when the domain module already depends on the catalog package). The choice is module-dep-driven, not preference-driven. Five shipped instances codify the criteria."
 date: 2026-04-27
+probes:
+  - adr-0029-bridge-idiom-present
+  - adr-0029-direct-emit-idiom-present
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0029: TelemetryEvents Bridge vs Direct-Emit Façade for MetricCatalog Adoption
@@ -185,3 +189,56 @@ Worth revisiting if catalog count exceeds ~20.
   structurally forced — `ort-common` deliberately lean)
 - Tempdoc 415 — AgentSession adoption (direct-emit instance, extends
   existing `AgentMetricCatalog` + `AgentTelemetry`)
+
+## Amendment 2026-09-02: kept as a criteria ADR, now probed
+
+Re-examined under decision-review lane B (tempdoc 884), outcome **still true, now probed**.
+
+Two questions were open: (a) fold this ADR into ADR-0027, since both are about `MetricCatalog`;
+(b) whether a criteria ADR can carry a mechanical probe at all. Both are decided here.
+
+### Kept separate from ADR-0027
+
+ADR-0027 decides the *contract*: every metric flows through a typed `MetricCatalog`. This ADR
+decides an *adoption idiom* selected by module-dependency structure. They have different subjects
+and different reasons to change — 0027 changes when the telemetry contract changes; 0029 changes
+when the module graph or the idiom population changes. Folding ~190 lines of adoption criteria
+into 0027 would inflate a differently-scoped ADR and bury the criteria a future adopter is
+looking for. Cross-referenced from 0027 instead.
+
+The tempdoc-884 finding that this ADR has **zero tempdoc citations** is an argument that it is
+*under-referenced*, not that it is wrong. The five instances it codifies are all still on `main`
+(see the probes below). The remedy for under-reference is the cross-reference added to ADR-0027,
+not deletion.
+
+### Now probed: both idioms must still exist
+
+A criteria ADR's load-bearing premise is that **there is still a choice to make**. If one idiom
+disappears from the codebase, "pick by module-dependency structure" is answering a question that
+no longer has two answers, and this ADR should be folded or retired. Two probes pin exactly that:
+
+- `adr-0029-bridge-idiom-present` — the three bridge instances named in Context still implement a
+  `*TelemetryEvents` interface:
+  `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/WorkerLuceneTelemetryAdapter.java:25`
+  (`implements LuceneRuntimeTypes.TelemetryEvents`),
+  `modules/worker-services/src/main/java/io/justsearch/indexerworker/observability/OrtSessionTelemetryAdapter.java:33`
+  (`implements OrtSessionTelemetryEvents`), and
+  `modules/worker-services/src/main/java/io/justsearch/indexerworker/embed/EmbeddingTelemetry.java:16`
+  (`implements EmbeddingTelemetryEvents`).
+- `adr-0029-direct-emit-idiom-present` — the two direct-emit instances still hold catalog
+  instruments directly and implement no events interface:
+  `modules/app-agent/src/main/java/io/justsearch/agent/AgentTelemetry.java:24`
+  (`final class AgentTelemetry {`, over `AgentMetricCatalog` + `GenAiMetricCatalog`) and
+  `modules/app-services/src/main/java/io/justsearch/app/services/worker/IpcTelemetry.java:27`
+  (`public final class IpcTelemetry {`, over `IpcMetricCatalog`).
+
+Each probe's `paths` list is exactly the named instances, so neither is a growth ratchet: a
+sixth adoption anywhere in the tree does not move either count. They fail when a *named* instance
+changes idiom — which is the only event that bears on whether the criteria still apply.
+
+### Reopening trigger
+
+**If either idiom's population goes to zero, the probe fails and ADR-0029 should be folded into
+ADR-0027 or retired.** A one-idiom codebase does not need a criteria ADR telling adopters which
+of two idioms to pick; at that point the surviving idiom is simply how `MetricCatalog` is adopted,
+and that sentence belongs in ADR-0027.

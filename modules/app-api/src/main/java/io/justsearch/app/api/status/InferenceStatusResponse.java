@@ -2,6 +2,7 @@
 package io.justsearch.app.api.status;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.justsearch.app.api.OnlineAiRuntimeIntrospection.ContextWindow;
 import io.justsearch.app.api.OnlineAiRuntimeIntrospection.ExternalServerStatus;
 import io.soabase.recordbuilder.core.RecordBuilder;
 
@@ -40,4 +41,9 @@ public record InferenceStatusResponse(
     String activeModelId,
     Long generation,
     InferenceGpuView gpu,
-    String tier) {}
+    String tier,
+    // Tempdoc 883 decision 1 — additive: the window this process launched with and why (rung,
+    // fit/override/stepped-from, free VRAM at plan time, slots, KV type). Null when the process
+    // launched no server. `llmContextTokens` above stays the OBSERVED window from /props; this is
+    // the INTENT, and the two are deliberately separate fields.
+    ContextWindow contextWindow) {}

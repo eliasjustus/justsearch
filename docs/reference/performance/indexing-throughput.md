@@ -86,8 +86,8 @@ gated on embedding completion.
 
 **Caveat:** The 201 docs/sec measurement was on SciFact (plain text `.txt`
 files) which bypass structured extraction entirely. PDF documents with layout
-detection have significantly different throughput (~4 pages/sec CPU with layout
-detector enabled via `JUSTSEARCH_LAYOUT_ENABLED=true`). PDF throughput without
+detection have significantly different throughput (~4 pages/sec CPU with
+VDU/VLM re-extraction engaged). PDF throughput without
 the layout detector (Tika SAX only) is not separately benchmarked. For
 ingestion quality measurements on PDF documents, see tempdoc 252.
 

@@ -5,6 +5,8 @@ status: superseded
 description: "Hand-written Panama FFM bindings instead of jextract codegen or JNI."
 date: 2026-02-03
 superseded_by: "GGUF→ONNX embedding migration (tempdocs 268, 286, 327)"
+probes: none - superseded by the GGUF to ONNX embedding migration (tempdocs 268, 286, 327); the hand-written FFM bindings it decided are gone, so there is no live premise to probe.
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0005: Manual FFM Bindings for llama.cpp

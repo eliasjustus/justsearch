@@ -1214,7 +1214,25 @@ public enum EnvRegistry {
      * Tempdoc 617: promoted from raw System.getProperty to satisfy the
      * checkNoDirectJustsearchSysProp build gate.
      */
-    APP_VERSION("justsearch.app.version", "JUSTSEARCH_APP_VERSION");
+    APP_VERSION("justsearch.app.version", "JUSTSEARCH_APP_VERSION"),
+
+    // ==================== Append region (tempdoc 883 lane rules) ====================
+    // Keep new entries at the END of this enum so parallel lanes merge trivially.
+
+    /**
+     * llama-server parallel slots ({@code -np}). Two by default (tempdoc 883 decision 2) so a
+     * background delegate cannot evict the foreground turn's prompt-cache prefix — a scheduling
+     * choice, not a memory one. Passing {@code -np} explicitly disables llama-server's automatic
+     * {@code kv_unified}, which is why {@code -kvu} is passed alongside it.
+     */
+    LLM_SLOTS("justsearch.llm.slots", "JUSTSEARCH_LLM_SLOTS", "2"),
+
+    /**
+     * llama-server KV cache type for both K and V ({@code -ctk} / {@code -ctv}). {@code q8_0} by
+     * default (tempdoc 883 decision 2); requires flash attention, which is why {@code -fa on} is
+     * passed explicitly rather than left to {@code auto}.
+     */
+    LLM_KV_TYPE("justsearch.llm.kv_type", "JUSTSEARCH_LLM_KV_TYPE", "q8_0");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 

@@ -196,6 +196,55 @@ public class HeadlessApp {
   }
 
   /**
+   * Tempdoc 883 decision 1: contributes the DERIVED llama-server context window at
+   * {@code ORDINAL_AUTO_DETECT} (150, source {@code auto_detected} / detail {@code hardware_probe}),
+   * so {@code /api/debug/effective-config} explains the window with the mechanism that already
+   * explains GPU detection instead of a promotion that reported a GUI value as {@code jvm_arg}.
+   *
+   * <p>Runs AFTER {@link #augmentGpuAutoDetectionAndMirror} on purpose: the top rung depends on
+   * whether layers ended up on the GPU, which that pass is what decides (Phase F) — reading
+   * {@code gpu.layers} before it would derive the CPU rung on every GPU machine.
+   *
+   * <p>Unconditional by design, including when the GPU probe returned nothing: a fresh data dir
+   * with no GPU must still get a window with a legible provenance. Every higher ordinal — YAML 200,
+   * {@code settings.json} 300, env 400, {@code -D} 500 — still wins by the ordinal chain, so the
+   * headless-eval {@code JUSTSEARCH_CONTEXT_SIZE} path is unaffected.
+   */
+  static Map<String, String> augmentDerivedContextWindow(Map<String, String> autoDetected) {
+    java.util.LinkedHashMap<String, String> augmented =
+        new java.util.LinkedHashMap<>(autoDetected == null ? Map.of() : autoDetected);
+    int gpuLayers = gpuLayersAfterAutoDetect(augmented);
+    int rung = io.justsearch.app.inference.ContextWindowPolicy.autoTopRung(gpuLayers > 0);
+    augmented.put("justsearch.context.size", String.valueOf(rung));
+    log.info(
+        "Context window derived: {} tokens (gpuLayers={}, ordinal=150 auto_detected/hardware_probe);"
+            + " the launch ladder steps down from here if the server refuses it",
+        rung,
+        gpuLayers);
+    return augmented;
+  }
+
+  /**
+   * GPU layers as they stand after auto-detection: an explicit user value (sysprop 500 / env 400,
+   * which also carries the settings mirror written above) wins, otherwise the auto-detected entry.
+   */
+  private static int gpuLayersAfterAutoDetect(Map<String, String> autoDetected) {
+    String raw = EnvRegistry.GPU_LAYERS.get().orElse(null);
+    if (raw == null || raw.isBlank()) {
+      raw = autoDetected.get("justsearch.gpu.layers");
+    }
+    if (raw == null || raw.isBlank()) {
+      return 0;
+    }
+    try {
+      return Math.max(0, Integer.parseInt(raw.trim()));
+    } catch (NumberFormatException e) {
+      log.debug("Unparseable gpu.layers '{}' while deriving the context window; treating as 0", raw);
+      return 0;
+    }
+  }
+
+  /**
    * Tempdoc 374 alpha.16 fix D (defensive backstop): if no user override is set
    * for the given per-encoder GPU enable key, mirror {@code "true"} as a sysprop
    * so the worker resolves the explicit value rather than relying on the master
@@ -414,8 +463,9 @@ public class HeadlessApp {
       System.out.flush();
       log.debug("Session token printed to stdout (length={})", sessionToken.length());
     } else {
-      log.warn(
-          "Session token is NULL - token enforcement will be disabled if prodMode={}", prodMode);
+      // Dev mode only: prod mode with no token is refused at ApiSecurityFilters construction
+      // (tempdoc 884 item 23), so the Head never reaches this line with prodMode=true.
+      log.debug("No session token (dev mode); token enforcement is not installed.");
     }
     System.out.println("JUSTSEARCH_API_PORT=" + port);
     System.out.flush();
@@ -558,16 +608,19 @@ public class HeadlessApp {
       SystemPropertyUtils.setSysPropIfBlankWithSource("justsearch.gpu.layers",
           String.valueOf(settings.getGpuLayers()), "justsearch.gpu.layers.source", "ui_settings");
     }
-    String envCtxSize = System.getenv("JUSTSEARCH_CONTEXT_SIZE");
-    if (settings.getContextLength() > 0 && (envCtxSize == null || envCtxSize.isBlank())) {
-      SystemPropertyUtils.setSysPropIfBlankWithSource("justsearch.context.size",
-          String.valueOf(settings.getContextLength()), "justsearch.context.size.source", "ui_settings");
-    }
+    // Tempdoc 883 decision 4 slice 1: there is no context-size promotion here any more. The window
+    // is derived below and contributed at ordinal 150; a user override rides settings.json at 300
+    // and an operator's -D / env var still wins at 500 / 400 — by the ordinal chain, not by a
+    // sysprop write that made a GUI value report as `jvm_arg`.
 
     ResolvedConfigBuilder rcBuilder = ResolvedConfig.builder();
     Path detectionRoot = io.justsearch.configuration.RepoRootLocator.findRepoRootOrNull();
     Map<String, String> autoDetected = io.justsearch.ort.GpuAutoDetection.probe(detectionRoot);
     autoDetected = augmentGpuAutoDetectionAndMirror(autoDetected, HeadlessApp::queryNvmlTotalVramBytes);
+    autoDetected = augmentDerivedContextWindow(autoDetected);
+    // Remembered so a later ConfigStore rebuild (settings PUT, AI install, activation) does not
+    // silently drop ordinal 150 and leave the derived window with no provenance.
+    io.justsearch.app.services.config.ConfigStoreRebuilder.rememberAutoDetected(autoDetected);
     rcBuilder.contributeAutoDetected(autoDetected);
     rcBuilder.contributeBaseSources();
     io.justsearch.app.services.config.ConfigStoreRebuilder.contributeUiSettings(rcBuilder, settings);

@@ -195,7 +195,7 @@ class RuntimeManifestSchemaCompatibilityTest {
     // Omitted fields stay null and are omitted on write (NON_NULL) — older readers unaffected.
     RuntimeManifest.AiInfo bare =
         new RuntimeManifest.AiInfo(
-            "OFFLINE", false, "Inference not configured", null, null, null, null);
+            "OFFLINE", false, "Inference not configured", null, null, null, null, null);
     String written = TOLERANT.writeValueAsString(bare);
     assertTrue(
         !written.contains("serverBuild"),
@@ -231,7 +231,7 @@ class RuntimeManifestSchemaCompatibilityTest {
     assertEquals("SUPPORTED", parsed.ai().thinkingSupport());
 
     RuntimeManifest.AiInfo unknownVerdict =
-        new RuntimeManifest.AiInfo("READY", true, null, null, null, null, null);
+        new RuntimeManifest.AiInfo("READY", true, null, null, null, null, null, null);
     String written = TOLERANT.writeValueAsString(unknownVerdict);
     assertTrue(
         !written.contains("thinkingSupport"),
@@ -239,6 +239,54 @@ class RuntimeManifestSchemaCompatibilityTest {
     assertEquals(
         null,
         TOLERANT.readValue(written, RuntimeManifest.AiInfo.class).thinkingSupport());
+  }
+
+  @Test
+  void aiContextWindowRoundTripsAndStaysOptional() throws Exception {
+    // Tempdoc 883 decision 1: contextWindow is a new OPTIONAL AiInfo sub-record carrying the
+    // window this installation's engine was launched with and why. Same additive contract as the
+    // build pin and the thinking verdict — a body carrying it round-trips, a body omitting it
+    // parses with null, and null is not written, so the schema version stays 1.
+    String withWindow =
+        "{\n"
+            + "  \"schemaVersion\": 1,\n"
+            + "  \"instanceId\": \"00000000-0000-0000-0000-000000000883\",\n"
+            + "  \"pid\": 883,\n"
+            + "  \"startedAt\": \"2026-09-02T00:00:00Z\",\n"
+            + "  \"dataDir\": \"/tmp/883\",\n"
+            + "  \"head\": {\n"
+            + "    \"apiPort\": 40883,\n"
+            + "    \"apiBaseUrl\": \"http://127.0.0.1:40883\",\n"
+            + "    \"readyAt\": \"2026-09-02T00:00:01Z\"\n"
+            + "  },\n"
+            + "  \"ai\": {\"phase\": \"READY\", \"required\": true,\n"
+            + "    \"contextWindow\": {\"rung\": 16384, \"reason\": \"stepped-from:32768\",\n"
+            + "      \"freeVramBytes\": 5368709120, \"slots\": 2, \"kvType\": \"q8_0\"}}\n"
+            + "}";
+
+    RuntimeManifest parsed = TOLERANT.readValue(withWindow, RuntimeManifest.class);
+    assertNotNull(parsed.ai());
+    assertNotNull(parsed.ai().contextWindow());
+    assertEquals(16384, parsed.ai().contextWindow().rung());
+    assertEquals(
+        "stepped-from:32768",
+        parsed.ai().contextWindow().reason(),
+        "the reason is the point of recording the window at all: a rung alone cannot tell an"
+            + " operator whether the machine fit it or fell back to it");
+    assertEquals(2, parsed.ai().contextWindow().slots());
+    assertEquals("q8_0", parsed.ai().contextWindow().kvType());
+    assertEquals(Long.valueOf(5368709120L), parsed.ai().contextWindow().freeVramBytes());
+
+    RuntimeManifest.AiInfo noWindow =
+        new RuntimeManifest.AiInfo("OFFLINE", false, null, null, null, null, null, null);
+    String written = TOLERANT.writeValueAsString(noWindow);
+    assertTrue(
+        !written.contains("contextWindow"),
+        "an absent window must be omitted (NON_NULL) — an adopted server's window is not ours to"
+            + " claim: "
+            + written);
+    assertEquals(
+        null, TOLERANT.readValue(written, RuntimeManifest.AiInfo.class).contextWindow());
   }
 
   @Test

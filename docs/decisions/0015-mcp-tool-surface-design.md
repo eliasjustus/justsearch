@@ -2,8 +2,11 @@
 title: "MCP Tool Surface Design"
 type: decision
 status: stable
-description: "Consolidate MCP tools from 7 capability-oriented to 4 task-oriented for higher agent accuracy."
+description: "Consolidate the MCP surface from 7 capability-oriented tools to a short task-oriented list for higher agent accuracy; the shipped surface is six task-oriented tools (amended 2026-09-02)."
 date: 2026-04-01
+probes:
+  - adr-0015-six-mcp-tools
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0015: MCP Tool Surface Design
@@ -64,3 +67,59 @@ Expose filter syntax, facet requests, excerpt options as optional JSON schema pa
 
 ### Use OpenAPI instead of MCP
 OpenAPI is more established but MCP is the emerging standard for AI agent tool integration, supported by Claude, Cursor, and other agent frameworks. Rejected — MCP aligns with the target ecosystem.
+
+## Amendment 2026-09-02: the surface is six tools, not four
+
+Re-examined under decision-review lane B (tempdoc 884). The Decision table above lists
+**four** task-oriented tools. Shipped code registers **six**.
+
+`modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:213` carries the
+section comment *"tools/list — 6 curated tools, position-bias ordered"*, and `listTools()`
+at `:216-257` registers, in position order:
+
+| # | Tool | Present in the 2026-04-01 Decision table? |
+|---|------|-------------------------------------------|
+| 1 | `justsearch_answer` | yes |
+| 2 | `justsearch_search` | yes |
+| 3 | `justsearch_browse` | **no — added since** |
+| 4 | `justsearch_ingest` | yes |
+| 5 | `justsearch_status` | yes |
+| 6 | `justsearch_runtime_manifest` | **no — added since** |
+
+The same six names are pinned again as the dispatch allowlist at `:434-435`.
+
+### Why the two additions are tools, not parameters
+
+The ADR's frame is accuracy-versus-list-length: each extra entry costs decision complexity,
+so an entry earns its place only if folding it into a neighbour would misdescribe it.
+
+- **`browse` is navigation, not retrieval.** `BROWSE_DESC` (`:101-105`) describes listing the
+  indexed folder structure — subfolders with file counts and sizes, files when a folder has no
+  subfolders, top-level indexed roots when called with no `parent_path`. That is traversal of the
+  corpus's *structure*; it takes no query and returns no ranked hits. Expressed as an argument of
+  `justsearch_search` it would be a mode that ignores every other argument the search schema
+  advertises — precisely the "optional schema parameters without proportional description
+  investment" degradation this ADR rejected in its Alternatives.
+- **`runtime_manifest` answers a different question than `status`.** `RUNTIME_MANIFEST_DESC`
+  (`:260-266`) returns the redacted runtime manifest: the backend's *identity* (instanceId, pid,
+  dataDir), lifecycle projection, head/worker state and AI runtime state, for identity-aware
+  caching and cross-restart detection. `STATUS_DESC` answers *how healthy is the index* (document
+  count, queue depth, readiness, enrichment coverage). An agent asking "am I still talking to the
+  same backend?" and an agent asking "is indexing done?" are not the same call.
+
+### What the headline number does and does not attest
+
+The **+20pp (72% → 92%) 50-query Haiku eval in Consequences measured the 4-tool surface.** It is
+not evidence about the 6-tool surface, and this amendment does not claim it is. The decision
+(short, task-oriented list; position-bias ordering; progressive disclosure via response hints)
+stands; its measured effect size is dated 2026-04-01 and applies to the list it was run against.
+
+Probe `adr-0015-six-mcp-tools` pins the count at 6, so a seventh tool fails the gate and forces
+this ADR to be re-read before the surface grows again.
+
+## Reassess When
+
+- **The 6-tool surface has not been measured.** Re-run tool-selection accuracy on the shipped
+  six-tool surface with the compact chat profile; if it falls below the 92% the 4-tool surface
+  measured, consolidate.
+- A seventh tool is proposed — the probe fails by construction; decide here, not in the surface.

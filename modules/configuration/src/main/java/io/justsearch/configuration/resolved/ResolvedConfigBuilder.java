@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -82,6 +83,21 @@ public final class ResolvedConfigBuilder {
    * not preference — see {@link #resolveReasoningBudget()}.
    */
   public static final int DEFAULT_REASONING_BUDGET = 512;
+
+  // ==================== llama-server slots + KV cache (tempdoc 883 decision 2) ====================
+
+  /** Default llama-server parallel slots ({@code -np}) — see {@link #resolveLlmSlots()}. */
+  public static final int DEFAULT_LLM_SLOTS = 2;
+
+  /** Upper bound on slots; every slot divides the KV cache and shrinks the per-request window. */
+  public static final int MAX_LLM_SLOTS = 8;
+
+  /** Default llama-server KV cache type ({@code -ctk} / {@code -ctv}). */
+  public static final String DEFAULT_LLM_KV_TYPE = "q8_0";
+
+  /** The cache types llama.cpp accepts for {@code --cache-type-k} / {@code --cache-type-v}. */
+  private static final Set<String> SUPPORTED_KV_TYPES =
+      Set.of("f32", "f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl");
 
   /**
    * The conversation engine's default completion ceiling ({@code
@@ -1036,7 +1052,10 @@ public final class ResolvedConfigBuilder {
         resolvePath("justsearch.llm.model_path", null),
         resolveBoolean("justsearch.ai.disabled", false),
         resolveBoolean("justsearch.llm.enabled", true),
-        resolveInt("justsearch.context.size", 8192),
+        // Tempdoc 883: 0 = auto. The window is DERIVED — contributed at ORDINAL_AUTO_DETECT by the
+        // Head's hardware probe and stepped down by the launch ladder — so there is no second
+        // shipped number here to disagree with UiSettings' default.
+        resolveInt("justsearch.context.size", 0),
         resolveString("justsearch.vlm.model", ""),
         resolveString("justsearch.mmproj.model", ""),
         resolveString("justsearch.chat.profile", "standard"),
@@ -1058,7 +1077,10 @@ public final class ResolvedConfigBuilder {
         resolveString("justsearch.sparse_model", "splade"),
         resolveBoolean("justsearch.dev.hotreload", false),
         buildBackfillPacing(),
-        resolveBoolean("justsearch.models.capability_contract_strict", false));
+        resolveBoolean("justsearch.models.capability_contract_strict", false),
+        // Tempdoc 883 decision 2 — append region; keep new resolve lines last.
+        resolveLlmSlots(),
+        resolveLlmKvType());
   }
 
   /**
@@ -1093,6 +1115,52 @@ public final class ResolvedConfigBuilder {
         ENGINE_DEFAULT_MAX_TOKENS,
         ENGINE_DEFAULT_MAX_TOKENS);
     return DEFAULT_REASONING_BUDGET;
+  }
+
+  /**
+   * llama-server parallel slots ({@code -np}), clamped to {@code [1, 8]}.
+   *
+   * <p>Tempdoc 883 decision 2. Two by default: a background delegate must not evict the foreground
+   * turn's prompt-cache prefix. Clamped rather than trusted because every slot divides the KV cache
+   * — a large value silently shrinks the per-request window (the {@code n_ctx_seq} the fold's [R1]
+   * measured), which is precisely the class of silent shrinkage this lane exists to end.
+   */
+  private int resolveLlmSlots() {
+    int resolved = resolveInt("justsearch.llm.slots", DEFAULT_LLM_SLOTS);
+    if (resolved >= 1 && resolved <= MAX_LLM_SLOTS) {
+      return resolved;
+    }
+    LOG.warn(
+        "justsearch.llm.slots={} out of range [1,{}] and overridden to {}: every slot divides the"
+            + " KV cache, so an out-of-range value shrinks the per-request window instead of"
+            + " widening throughput.",
+        resolved,
+        MAX_LLM_SLOTS,
+        DEFAULT_LLM_SLOTS);
+    return DEFAULT_LLM_SLOTS;
+  }
+
+  /**
+   * llama-server KV cache type for both {@code -ctk} and {@code -ctv}, restricted to the types
+   * llama.cpp accepts.
+   *
+   * <p>Tempdoc 883 decision 2. Refused rather than passed through, because llama-server rejects an
+   * unknown cache type by aborting at launch — which the context ladder would then read as "this
+   * rung does not fit" and step down through the whole ladder for the wrong reason.
+   */
+  private String resolveLlmKvType() {
+    String resolved = resolveString("justsearch.llm.kv_type", DEFAULT_LLM_KV_TYPE);
+    String normalized = resolved == null ? "" : resolved.trim().toLowerCase(Locale.ROOT);
+    if (SUPPORTED_KV_TYPES.contains(normalized)) {
+      return normalized;
+    }
+    LOG.warn(
+        "justsearch.llm.kv_type={} is not a llama.cpp cache type {} and was overridden to {}: an"
+            + " unknown type aborts llama-server at launch.",
+        resolved,
+        SUPPORTED_KV_TYPES,
+        DEFAULT_LLM_KV_TYPE);
+    return DEFAULT_LLM_KV_TYPE;
   }
 
   /**

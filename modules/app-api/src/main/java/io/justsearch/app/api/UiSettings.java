@@ -251,7 +251,10 @@ public final class UiSettings {
   // BYO AI: explicit llama-server executable path (optional override).
   private String serverExecutablePath = "";
   private int gpuLayers = 0;
-  private int contextLength = 4096;
+  // Tempdoc 883 decision 1: 0 = auto. The context window is derived from the backend and the
+  // launch ladder, not stored as a preference — this field is a diagnostics override only, and
+  // has never had a UI control.
+  private int contextLength = 0;
   private int maxTokens = 1024;
 
   // ONNX feature model directories — written by Install AI per package so the
@@ -297,12 +300,21 @@ public final class UiSettings {
     this.gpuLayers = Math.max(0, gpuLayers);
   }
 
+  /** The context-window override in tokens, or {@code 0} meaning "auto" (tempdoc 883). */
   public int getContextLength() {
     return contextLength;
   }
 
+  /**
+   * Sets the context-window override. {@code 0} (and any non-positive value) means <b>auto</b> and
+   * survives the round trip unchanged; a positive value is a real override and is floored at 512.
+   *
+   * <p>The old unconditional {@code Math.max(512, ...)} made "auto" unrepresentable: Jackson
+   * deserializes through this setter, so a stored {@code 0} became a real 512-token override that
+   * then outranked the derived window at ordinal 300 (tempdoc 883 fold [R5]).
+   */
   public void setContextLength(int contextLength) {
-    this.contextLength = Math.max(512, contextLength);
+    this.contextLength = contextLength <= 0 ? 0 : Math.max(512, contextLength);
   }
 
   public int getMaxTokens() {

@@ -2,8 +2,11 @@
 title: "Contract substrate — every published contract is a first-class artifact"
 type: decision
 status: accepted - format superseded by tempdoc 564
-description: "Generalizes ADR-0038: every cross-language agreement (wire, plugin SDK, catalogs, registry serialization) is a Category in one contract substrate projected per-target from a single spec."
+description: "Generalizes ADR-0038 into a contract substrate: one authority per Category, projected per-target from a single spec. Narrowed 2026-09-02 to the one Category that exists (wire); plugin-SDK, catalog and registry-serialization Categories were never registered and are not decided here."
 date: 2026-06-09
+probes:
+  - adr-0039-one-contract-category
+last_reviewed: 2026-09-02
 ---
 
 
@@ -469,3 +472,34 @@ Three substrate alternatives considered and rejected:
    evolution / distribution / governance pattern. The bug class
    re-emerges per-Category; the substrate's value is the uniform
    pattern that prevents it.
+
+## Amendment 2026-09-02: narrowed to the one Category that exists
+
+Re-examined under decision-review lane B (tempdoc 884), outcome **narrowed**.
+
+The Decision section generalizes to "every cross-language agreement the system publishes — wire
+protocol, plugin SDK, catalog set, registry primitive serialization, persistence formats". The
+substrate register tells a smaller story: `contracts/registry.v1.json` `/categories` has **exactly
+one entry**, `wire` (`specDir: contracts/wire`, `format: protobuf`, `versionFile:
+contracts/wire/VERSION`, four declared axes). There is no `plugin-sdk` Category, no `catalog`
+Category, no registry-serialization or persistence Category.
+
+**The substrate framing is retained** — one authority per contract, projection-not-fork,
+language-neutral spec, per-target emitters, mechanical governance. That framing is what
+ADR-0038 needed generalized and it is what the `wire` Category actually instantiates.
+
+**The claim is narrowed to `wire`.** As of this amendment, ADR-0039 decides the substrate shape
+for the one registered Category and nothing else. The plugin-SDK, catalog and
+registry-serialization Categories named in the Decision section were **never registered**; they
+are aspiration, not decided architecture. (ADR-0041 designed the catalog Category's *format* and
+is itself partly superseded by tempdoc 564; neither has a registry entry.) Do not cite this ADR
+as authority for how a plugin-SDK or catalog contract must be shaped — that decision has not
+been made.
+
+### Reopening trigger
+
+**A second entry appearing in `contracts/registry.v1.json` `/categories` reopens this ADR.**
+Probe `adr-0039-one-contract-category` pins the count at 1, so the addition fails the
+`adr-coverage` gate: the Category cannot be accepted until this ADR has been re-examined and
+the generalization either re-established with evidence or re-narrowed. That is the intended
+order — decide first, register second.

@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,11 +52,15 @@ final class ServerPropsOps {
   private final Supplier<InferenceConfig> config;
   private final Supplier<Boolean> isExternalServerActive;
   private final PropsObserver propsObserver;
+  /** The {@code -c} this process actually launched with, or 0 when it launched nothing. */
+  private final IntSupplier requestedContextTokens;
 
   ServerPropsOps(
       Supplier<InferenceConfig> config,
       Supplier<Boolean> isExternalServerActive,
-      PropsObserver propsObserver) {
+      PropsObserver propsObserver,
+      IntSupplier requestedContextTokens) {
+    this.requestedContextTokens = requestedContextTokens;
     this.config = config;
     this.isExternalServerActive = isExternalServerActive;
     this.propsObserver = propsObserver;
@@ -185,12 +190,23 @@ final class ServerPropsOps {
     }
   }
 
+  /**
+   * Records the window the server reports and checks it against what we launched.
+   *
+   * <p>Caveat that bounds what this method can prove (tempdoc 883 fold [R1]): {@code /props.n_ctx}
+   * reports the server's TOTAL context even when {@code kv_unified} is off, in which case each
+   * request actually gets {@code n_ctx / n_parallel}. So a matching {@code n_ctx} is NOT evidence
+   * that a request gets the full window. The guarantee for that is the argv — {@code -kvu} always
+   * accompanying an explicit {@code -np}, pinned by the ordered launch-command test — plus reading
+   * {@code n_ctx_seq} from the llama-server log in the live acceptance window. Do not add a check
+   * here that claims to verify it; the field this method reads cannot.
+   */
   private void applyContextInsightsFromProps(JsonNode root) {
     Integer actualContextSize = extractContextTokensFromProps(root);
     if (actualContextSize != null && actualContextSize > 0) {
       propsObserver.onContextTokensObserved(actualContextSize);
       LOG.info("llama-server context size: {} tokens", actualContextSize);
-      warnIfConfiguredContextExceedsActual(actualContextSize);
+      warnOnContextWindowMismatch(actualContextSize);
       warnIfSummaryBudgetExceedsActual(actualContextSize);
     } else {
       LOG.debug("llama-server /props did not include a parseable n_ctx value");
@@ -228,8 +244,25 @@ final class ServerPropsOps {
     externalServerAdoptedAtMs.compareAndSet(0, System.currentTimeMillis());
     externalServerModelMismatch.set(detectExternalModelMismatch(root));
     Integer ctx = propsObserver.observedContextTokens();
-    boolean ctxTooSmall = ctx != null && ctx < config.get().contextSize();
-    externalServerContextTooSmall.set(ctxTooSmall);
+    externalServerContextTooSmall.set(isAdoptedContextTooSmall(ctx));
+  }
+
+  /**
+   * Whether an ADOPTED external server's window is too small to work with.
+   *
+   * <p>Compared against the minimum usable window, not against our own configured one. Tempdoc 883
+   * made the configured value a DERIVED ladder rung (32768 on a GPU box), and a BYO llama-server
+   * running at a perfectly workable 8192 is not broken merely because it is smaller than the rung
+   * we would have chosen for a server we launched ourselves. Judging someone else's server by our
+   * preference would mark almost every adopted server "too small".
+   *
+   * <p>{@link ContextWindowPolicy#MIN_USABLE_ADOPTED_TOKENS} is the bottom rung of the ladder —
+   * the smallest window this app is willing to run its own engine at, and therefore the honest
+   * floor for one it adopts.
+   */
+  static boolean isAdoptedContextTooSmall(Integer observedContextTokens) {
+    return observedContextTokens != null
+        && observedContextTokens < ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS;
   }
 
   // ==================== Model/Context Extraction ====================
@@ -256,15 +289,43 @@ final class ServerPropsOps {
     }
   }
 
-  private void warnIfConfiguredContextExceedsActual(int actualContextSize) {
-    int configuredContext = config.get().contextSize();
-    if (actualContextSize < configuredContext) {
-      LOG.warn(
-          "Configured context size ({}) exceeds actual server context ({})! Requests may fail with"
-              + " 400 errors.",
-          configuredContext,
-          actualContextSize);
+  /**
+   * Tempdoc 883: {@code /props} stays the authority for what window the server actually has, so a
+   * disagreement with what THIS process asked for is a real condition — but the comparand has to be
+   * the requested rung, not {@code config.contextSize()}.
+   *
+   * <p>The configured value is stale by construction once the launch ladder steps down (config
+   * still says 32768 while the server was started at 16384), so comparing against it would fire a
+   * spurious warning on every successful step-down — a warning that is wrong every time it appears
+   * teaches operators to ignore the one time it is right.
+   *
+   * <p>No new state is published here: {@code /api/inference/status} already carries the intent
+   * ({@code contextWindow.rung}) and the observation ({@code llmContextTokens}) as separate fields
+   * from their own authorities, so the mismatch is derivable and does not need a third copy.
+   */
+  private void warnOnContextWindowMismatch(int actualContextSize) {
+    int requested = requestedContextTokens.getAsInt();
+    if (!isContextWindowMismatch(requested, actualContextSize)) {
+      return;
     }
+    LOG.warn(
+        "Context window mismatch: launched with -c {} but llama-server reports n_ctx {}. Requests"
+            + " budgeted against the larger number may fail with 400s; the /props value is the"
+            + " authority.",
+        requested,
+        actualContextSize);
+  }
+
+  /**
+   * True when the server reports a smaller window than the launch asked for.
+   *
+   * <p>Pure and package-private so the COMPARAND is testable: the defect this replaced was not the
+   * comparison but what it compared against. A {@code requestedRung} of 0 means this process
+   * launched nothing (an adopted external server), so there is no claim of ours to contradict and
+   * adoption diagnostics own the case.
+   */
+  static boolean isContextWindowMismatch(int requestedRung, int actualContextSize) {
+    return requestedRung > 0 && actualContextSize < requestedRung;
   }
 
   private void warnIfSummaryBudgetExceedsActual(int actualContextSize) {
