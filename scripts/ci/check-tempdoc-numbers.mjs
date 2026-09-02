@@ -10,25 +10,54 @@
  *
  * The scanner (collect every worktree + origin's claimed numbers) is now shared with the
  * pick-time query surface (tempdoc 743 P-J, "one scanner, two consumers") — see
- * `scripts/ci/lib/tempdoc-scan.mjs`. This file is a thin CLI over that lib and its behavior is
- * UNCHANGED: it fails if any single number maps to two or more DISTINCT basenames NOT yet on
- * origin, across two or more distinct worktrees (identical basenames across worktrees, or a
- * single worktree's own multi-file batch, are fine).
+ * `scripts/ci/lib/tempdoc-scan.mjs`. This file is a thin CLI over that lib. It enforces two rules:
  *
- * Usage: node scripts/ci/check-tempdoc-numbers.mjs   (exit 0 = no collision, 1 = collision, 2 = error)
+ *  1. **Divergent in-flight TEMPDOC numbers** — one number, two or more DISTINCT basenames not yet
+ *     on origin, across two or more distinct worktrees. Changesets are excluded: their number is
+ *     dictated by their `tempdoc:` frontmatter, several per tempdoc is the convention, and distinct
+ *     basenames merge cleanly, so "renumber one" would be advice that breaks the file.
+ *  2. **Orphan changeset declarations** — a changeset whose `tempdoc:` names a number no tempdoc
+ *     file claims. This is what rule 1's changeset exemption trades for: the number can no longer
+ *     collide, so the check that matters becomes "does the tempdoc it points at exist".
+ *
+ * Usage: node scripts/ci/check-tempdoc-numbers.mjs   (exit 0 = clean, 1 = violation, 2 = error)
  */
 
-import { collectClaims, divergentInFlightCollisions } from './lib/tempdoc-scan.mjs';
+import {
+  collectClaims,
+  divergentInFlightCollisions,
+  orphanChangesetDeclarations,
+  tempdocNumbers,
+} from './lib/tempdoc-scan.mjs';
 
-const { claims, worktreeCount, defaultBranch } = collectClaims({ cwd: process.cwd() });
+const { claims, changesets, worktreeCount, defaultBranch } = collectClaims({ cwd: process.cwd() });
 const collisions = divergentInFlightCollisions(claims);
+const orphans = orphanChangesetDeclarations(changesets, tempdocNumbers(claims));
+
+let failed = false;
 
 if (collisions.length > 0) {
-  console.error('tempdoc/changeset NUMBER COLLISION — the same number is claimed by different docs:');
+  failed = true;
+  console.error('tempdoc NUMBER COLLISION — the same number is claimed by different tempdocs:');
   console.error(collisions.map((c) => `  #${c.number}: ${c.detail}`).join('\n'));
   console.error('\nRenumber one of them (pick the next free number) before merge. Parallel worktrees');
   console.error("can't see each other's in-flight numbers; this check is the cross-worktree guard.");
-  process.exit(1);
 }
 
-console.log(`tempdoc-numbers: OK — ${claims.size} distinct numbers, no collisions across ${worktreeCount} worktree(s) + origin/${defaultBranch}.`);
+if (orphans.length > 0) {
+  failed = true;
+  if (collisions.length > 0) console.error('');
+  console.error('ORPHAN CHANGESET — `tempdoc:` names a number no tempdoc file claims:');
+  for (const o of orphans) console.error(`  ${o.path} [${o.label}] declares tempdoc: ${o.declaredTempdoc}`);
+  console.error('\nPoint it at the tempdoc that actually authorises the declaration, or write that');
+  console.error('tempdoc. A changeset is a pointer to a rationale; a dangling pointer is not one.');
+}
+
+if (failed) process.exit(1);
+
+console.log(
+  // "scanned", not "in-flight": this counts every changeset on disk across every worktree, most of
+  // which have long since merged. Calling them in-flight overstated what the number means.
+  `tempdoc-numbers: OK — ${claims.size} distinct numbers, ${changesets.length} changeset(s) scanned, ` +
+    `no collisions across ${worktreeCount} worktree(s) + origin/${defaultBranch}.`,
+);

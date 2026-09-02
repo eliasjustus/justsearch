@@ -48,7 +48,7 @@
       "evidence": "retired observations condition obs:envelopestream-test (seen 14, 2026-08-06..2026-08-25)",
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
-      "exitProbe": "slow: npm --prefix modules/ui-web run test:unit:run -- EnvelopeStream"
+      "exitProbeRetired": "2026-09-02: the exitProbe was `npm --prefix modules/ui-web run test:unit:run -- EnvelopeStream`, an ISOLATED run — which this pin's own claim says passes. It therefore reported GONE on the first --slow sweep that ran it, against a red that is fully present. An exit that cannot observe the pinned state is worse than no exit, because a fired exit means DELETE THE PIN. A load-dependent flake exits by reviewBy plus its tracked fix, which is why the sibling pin ui-web-resourceregistry-defaults-timeout — same shape, written the same day — carries no exitProbe at all."
     },
     {
       "id": "ui-web-pluginloader-module-mode-timeout",
@@ -60,7 +60,7 @@
       "evidence": "retired observations condition obs:pluginloader-test (seen 7, all 2026-08-25)",
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
-      "exitProbe": "slow: npm --prefix modules/ui-web run test:unit:run -- PluginLoader"
+      "exitProbeRetired": "2026-09-02: same defect as ui-web-envelopestream-heartbeat-flaky. The probe ran PluginLoader in isolation, where this pin's own claim records 330ms against a 5000ms budget — it could only ever pass, so it reported GONE against a live red. Exits by reviewBy plus the tracked per-test-timeout fix."
     },
     {
       "id": "ui-web-resourceregistry-defaults-timeout",
@@ -71,6 +71,18 @@
       "claim": "resourceRegistry.test.ts 'produces the four expected registrations and leaves HISTORY unsupported' times out at the 5000ms default on a full ui-web suite run (1.5s in isolation). It calls vi.resetModules() and then dynamically re-imports the registry plus its defaults module, so the whole re-transform lands inside one test's budget. A failure ONLY there is pre-existing; re-run in isolation to confirm. Same shape as ui-web-pluginloader-module-mode-timeout.",
       "evidence": "Seen 3x on full-suite runs from worktree agent-aa51999fa41f5fdf9 (tempdoc 878) on 2026-08-26, and passing in isolation each time (14/14). Not change-induced: the import graph of resourceRegistryDefaults.ts is StatusCard/Table/TimeseriesPolyline/TimeseriesSparkline/HealthLitView, none of which 878 touches.",
       "added": "2026-08-26",
+      "reviewBy": "2026-09-30"
+    },
+    {
+      "id": "agent-analytics-suite-wallclock-flaky-under-load",
+      "match": [
+        "agent-analytics/run-all-tests",
+        "world-state",
+        "861-w5-"
+      ],
+      "claim": "scripts/agent-analytics/run-all-tests.mjs has several wall-clock-budgeted checks with thin margins on a checkout carrying 27 registered worktrees, so ordinary parallel-agent load pushes them over while each file passes in isolation. Three different files were observed failing this way in one session: world-state.test.mjs ('CLI smoke: completes in under 10s' -- world-state.mjs measures 8.0-9.0s bare), 861-w5-remove-worktree-teardown.test.mjs and 861-w5-agent-spawn-sweep.test.mjs. A run-all-tests failure is pre-existing IF the named file passes when run alone: re-run it with 'node <file>' before believing it. It is NOT the tempdoc-scan frontmatter read added in PR #604 -- collectClaims measures 195ms of the world-state run.",
+      "evidence": "Observed 2026-09-02 on worktree-resid-kernel: world-state.test at 12354ms then 8.0s/8.1s/9.0s across three consecutive bare runs of world-state.mjs; 861-w5-remove-worktree-teardown and 861-w5-agent-spawn-sweep each failed once in run-all-tests and passed 16/16 and 16/16 when run alone in the same minute. The budgets were set in tempdoc 743 P-J when the checkout carried far fewer worktrees, and these scanners' cost scales with worktree count. Deliberately carries NO exitProbe: the condition is load-dependent and an isolated re-run passes by construction, so a probe would report GONE against a live red -- the defect this PR fixed in three other pins.",
+      "added": "2026-09-02",
       "reviewBy": "2026-09-30"
     },
     {
@@ -137,22 +149,35 @@
       "match": [
         "scripts/governance/run\\.mjs(?!.*--gate )(?!.*--self-test)"
       ],
-      "claim": "A bare full-kernel run reports 5 gates FAIL with kernel/input-missing (npm-audit, module-deps, dead-code, dead-code-jvm, config-surface). That is an UNBUILT REPORT, not a red: each finding names its producer command, and \"node scripts/governance/run.mjs --produce-inputs --mode gate\" builds them. Do not diagnose these as regressions from your change.",
+      "claim": "A bare LOCAL full-kernel run reports 5 gates FAIL with kernel/input-missing (npm-audit, module-deps, dead-code, dead-code-jvm, config-surface). That is an UNBUILT REPORT, not a red: each finding names its producer command, and \"node scripts/governance/run.mjs --produce-inputs --mode gate\" builds them. Do not diagnose these as regressions from your change. Do not read it as \"these gates are unenforced\" either: CI builds all five inputs and evaluates the gates (Public-claims for the four node-produced ones, the platform-contracts unit-test lane for dead-code-jvm), so a regression IS caught on the PR that causes it -- just not by a bare local run.",
       "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431) with \"node scripts/governance/run.mjs --mode warn --skip-self-test\": 7 fail, of which 5 are kernel/input-missing naming tmp/npm-audit-report.json, tmp/arch-preflight/module-deps.json, tmp/knip-report.json, tmp/dead-code-jvm-report.json and tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json.",
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: node scripts/governance/run.mjs --produce-inputs --mode gate --skip-self-test"
     },
     {
+      "id": "ts-any-gate-counts-english-prose",
+      "match": [
+        "scripts/governance/run\\.mjs.*--gate\\s+ts-any",
+        "scripts/governance/run\\.mjs(?!.*--gate )(?!.*--self-test)(?!.*--produce-inputs)"
+      ],
+      "claim": "The ts-any gate fails on main with 5 ts-any/silent-growth findings, and all five are the ENGLISH WORD \"any\" in comments, not any-casts. countAny (scripts/governance/gates/ts-any/enforcer.mjs:29-31) runs its regex over raw file text without stripping comments or strings, so \"any mid-text\", \"any documents to enrich\" and \"any named non-default\" are each scored as a cast. A ts-any failure naming only those five files is pre-existing; read the cited line before believing a new one.",
+      "evidence": "Reproduced 2026-09-02 on worktree-resid-kernel, and each hit was read rather than assumed: MarkdownBlock.ts:154, indexingProgress.ts:100 and searchResultViewModel.ts:51 carry the word in prose, plus citationResolve.test.ts and sv3-sessions.test.ts. gates/ts-any/baseline.txt last moved 2026-07-14 (bc4b26fd), so the 18 baselined rows were counted the same way and may be overstated. Diagnosed by tempdoc 884 section F row 1, which attached the analysis to the gate itself in gates/ts-any/.changesets/884-ts-any-prose-false-positives.md. TRACKED FIX: strip comments before counting (the pattern exists at scripts/ci/check-readiness-reason-codes.mjs:116-148), then rebalance the baseline. Owner: whoever next touches the ts-any gate.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node scripts/governance/run.mjs --gate ts-any --mode gate"
+    },
+    {
       "id": "wire-gate-buf-cli-missing",
       "match": [
-        "scripts/governance/run\\.mjs(?!.*--self-test)(?!.*--produce-inputs)"
+        "scripts/governance/run\\.mjs(?!.*--self-test)(?!.*--produce-inputs)(?!.*--gate\\s+(?!wire\\b))"
       ],
       "claim": "The wire gate reports contract-governance/buf-cli-missing until `npm install` has run in scripts/wire-contract/ (the buf CLI is a local devDependency, not committed). Environmental on a fresh worktree; not a contract regression. **But do not read that finding as a pass when your diff touches a .proto.** In the buf-cli-missing state the gate never inspects the protos at all, so it cannot see a breaking change — the environmental green masks the one check that matters. If the PR changes any .proto, run `npm install` in scripts/wire-contract/ FIRST and re-run the gate, and only then treat its result as evidence.",
       "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431): the finding names scripts/wire-contract/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe as absent. Claim amended 2026-09-02 during the #600 review: that PR added FailedJob.state (an additive field) to modules/ipc-common/src/main/proto/indexing.proto, and the reviewer had to install buf and re-run to get a real verdict (0 findings) — the pinned state alone would have been vacuous.",
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
-      "exitProbe": "slow: node scripts/governance/run.mjs --gate wire --mode gate"
+      "exitProbe": "slow: node scripts/governance/run.mjs --gate wire --mode gate --out tmp/wire-exit-probe.sarif && node -e \"process.exit(require('fs').readFileSync('tmp/wire-exit-probe.sarif','utf8').includes('buf-cli-missing')?1:0)\"",
+      "exitProbeNote": "2026-09-02: the previous exit was `--gate wire --mode gate`, which exits 0 EVEN IN the pinned state — the gate reports buf-cli-missing as a finding but its verdict stays pass (fail-open on absent tooling, which is the very thing this pin warns about). It therefore reported GONE on the first --slow sweep that ran it, with buf verifiably absent from scripts/wire-contract/node_modules. The exit now asserts the FINDING is gone, not the gate's verdict, because the verdict was never the pinned state."
     },
     {
       "id": "runtime-manifest-closure-sibling-file-api-port",

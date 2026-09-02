@@ -29,6 +29,17 @@ const UPGRADE_HANDLING = new Set([
  */
 const PATH_VERIFICATION = new Set(['LITERAL', 'COMPOSED']);
 /**
+ * The storage roots a row may declare. Enumerated so an invented or misspelled root is a build
+ * failure rather than a free-text string nobody reads.
+ *
+ * HONEST LIMIT, stated so this is not read as stronger than it is: this catches a root that does not
+ * EXIST, not a root that exists and is wrong. `ai-install-attempt-memory` shipped as DATA_DIR when
+ * the file is written under AI_HOME (review of PR #604, S1), and both are members of this set — so
+ * this check would NOT have caught it. Catching that needs the gate to know which root a row's
+ * writer resolves against, which is caller-side information `pathVerification` cannot see.
+ */
+const ROOTS = new Set(['DATA_DIR', 'AI_HOME', 'PROGRAM_DATA_OR_DATA_DIR']);
+/**
  * Whether a row's bytes are sealed at rest, and if not, why not. Every row answers; the absence of an
  * answer is a build failure. UNSEALED_GAP is the honest label for "no structural reason, just not done";
  * UNSEALED_DERIVED_OS_DISK_ENCRYPTION is the deliberate StoreCatalog Framing.OPAQUE position — a DERIVED,
@@ -146,6 +157,7 @@ export function checkDurableStoreRegister({
   catalogEntries,
   discoveredWriteSites,
   nonDurableWriteSites = [],
+  pendingDurableClassification = null,
   pathExists = existsSync,
   readSource = (absolutePath) => readFileSync(absolutePath, 'utf8'),
 }) {
@@ -159,7 +171,26 @@ export function checkDurableStoreRegister({
   const gaps = new Set(Array.isArray(knownCompatibilityGaps) ? knownCompatibilityGaps : []);
   const ids = new Set();
   const coveredImplementations = new Set();
-  const classifiedNonDurable = new Set((nonDurableWriteSites ?? []).map(normalize));
+  // A non-durable classification is a CLAIM ("nothing here survives, so there is no recovery,
+  // upgrade or encryption policy to state"), and every other row in this register has to justify
+  // its claims. An entry is therefore `{ path, reason }`; the reason is what a reader checks the
+  // claim against, and without it the list is a bare allowlist that grows by assertion.
+  const classifiedNonDurable = new Set();
+  for (const [index, entry] of (nonDurableWriteSites ?? []).entries()) {
+    const path = typeof entry === 'string' ? entry : entry?.path;
+    const reason = typeof entry === 'string' ? null : entry?.reason;
+    if (typeof path !== 'string' || path.trim() === '') {
+      failures.push(`nonDurableWriteSites[${index}]: path is required.`);
+      continue;
+    }
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      failures.push(
+        `nonDurableWriteSites[${index}] (${path}): reason is required — say which paths it writes ` +
+          'and why losing them costs only a recomputation.',
+      );
+    }
+    classifiedNonDurable.add(normalize(path));
+  }
   const catalogRows = new Map();
 
   for (const row of rows) {
@@ -190,6 +221,36 @@ export function checkDurableStoreRegister({
       if (typeof row[field] !== 'string' || row[field].trim() === '') {
         failures.push(`${label}: ${field} is required.`);
       }
+    }
+    // currentVersion + readableLegacyVersions are required on EVERY row, not just READY
+    // READ_IN_PLACE ones, because THIS REGISTER IS A WIRE CONTRACT — see the register's own note.
+    // Both consumers read them unconditionally: updater.rs's LocalDurableStore takes
+    // `current_version: u32` with no serde default, so one row without it makes the whole embedded
+    // register unparseable and validate_store_compatibility rejects EVERY release descriptor; and
+    // UpgradeLifecycleContractTest builds its closed owner set with
+    // `store.get("currentVersion").asInt()`, which NPEs on a row that omits it. Six rows shipped
+    // without them in PR #604 and both consumers broke — the gate was weaker than its readers.
+    for (const field of ['currentVersion', 'readableLegacyVersions']) {
+      const value = row[field];
+      const ok = field === 'currentVersion'
+        ? Number.isInteger(value) && value >= 0
+        : Array.isArray(value) && value.every((v) => Number.isInteger(v) && v >= 0);
+      if (!ok) {
+        failures.push(
+          `${label}: ${field} is required on every row (a non-negative integer` +
+            `${field === 'currentVersion' ? '' : ' array'}). updater.rs deserialises this register ` +
+            'with no default and the upgrade reconciliation reads it for the closed owner set, so a ' +
+            'row without it breaks release acceptance, not just this gate. Use 0 for bytes with no ' +
+            'version envelope, which is what the unversioned rows already do.',
+        );
+      }
+    }
+
+    if (typeof row.root === 'string' && row.root.trim() !== '' && !ROOTS.has(row.root)) {
+      failures.push(
+        `${label}: unknown root \`${row.root}\` — must be one of ${[...ROOTS].join(', ')}. ` +
+          'Add the root here if a genuinely new storage location exists; do not invent a spelling.',
+      );
     }
 
     const sources = Array.isArray(row.implementationSources) ? row.implementationSources : [];
@@ -267,9 +328,53 @@ export function checkDurableStoreRegister({
     }
   }
 
+  // The third answer, and the narrowest: a discovered site that IS durable but has no row yet.
+  // It cannot be nonDurableWriteSites (that would be the scratch escape hatch the note forbids) and
+  // it cannot be a durableStores row either, because a row is a RUNTIME commitment — updater.rs
+  // deserialises it and UpgradeReconciliationProbe refuses to attest an upgrade when any row is not
+  // READY. Every entry names its blocker, and the list is capped so it cannot become a parking lot.
+  const classifiedPending = new Set();
+  if (pendingDurableClassification !== null && pendingDurableClassification !== undefined) {
+    const entries = Array.isArray(pendingDurableClassification.entries)
+      ? pendingDurableClassification.entries
+      : null;
+    const cap = pendingDurableClassification.cap;
+    if (!entries) {
+      failures.push('pendingDurableClassification.entries must be an array.');
+    } else if (!Number.isInteger(cap) || cap < 0) {
+      failures.push('pendingDurableClassification.cap must be a non-negative integer ratchet.');
+    } else {
+      if (entries.length > cap) {
+        failures.push(
+          `pendingDurableClassification holds ${entries.length} entries against a cap of ${cap}. ` +
+            'Resolve one into durableStores, or raise the cap deliberately and say why — this list ' +
+            'exists to shrink.',
+        );
+      }
+      for (const [index, entry] of entries.entries()) {
+        const label = `pendingDurableClassification[${index}]`;
+        for (const field of ['path', 'state', 'blocker']) {
+          if (typeof entry?.[field] !== 'string' || entry[field].trim() === '') {
+            failures.push(`${label}: ${field} is required.`);
+          }
+        }
+        if (typeof entry?.path === 'string' && entry.path.trim() !== '') {
+          classifiedPending.add(normalize(entry.path));
+          if (!pathExists(resolve(root, entry.path))) {
+            failures.push(`${label}: path does not exist: ${entry.path}.`);
+          }
+        }
+      }
+    }
+  }
+
   for (const source of discoveredWriteSites ?? []) {
     const normalized = normalize(source);
-    if (!coveredImplementations.has(normalized) && !classifiedNonDurable.has(normalized)) {
+    if (
+      !coveredImplementations.has(normalized)
+      && !classifiedNonDurable.has(normalized)
+      && !classifiedPending.has(normalized)
+    ) {
       failures.push(`coverage: persistence write site is unclassified: ${source}.`);
     }
   }
@@ -414,6 +519,7 @@ function main() {
       catalogEntries,
       discoveredWriteSites: scanPersistenceWriteSites(root),
       nonDurableWriteSites: register.nonDurableWriteSites,
+      pendingDurableClassification: register.pendingDurableClassification,
     }),
   ];
 
