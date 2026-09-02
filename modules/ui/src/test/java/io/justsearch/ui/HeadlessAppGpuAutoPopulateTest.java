@@ -19,7 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Pins the four boundary cases of {@link HeadlessApp#augmentGpuAutoDetectionAndMirror} (tempdoc 374
+ * Pins the four boundary cases of {@link HeadlessApp#augmentGpuAutoDetectionAndMirrorProbeFlags} (tempdoc 374
  * alpha.13 follow-up Phases E + F).
  *
  * <p>Without this test, my prior round of "wrong-gate" mistakes — A1's {@code layers > 0} proxy
@@ -70,7 +70,7 @@ final class HeadlessAppGpuAutoPopulateTest {
     LongSupplier twelveGbVram = () -> 12L * 1024 * 1024 * 1024;
 
     Map<String, String> result =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(autoDetected, twelveGbVram);
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(autoDetected, twelveGbVram);
 
     // The augmented map carries gpu.layers=99 so contributeAutoDetected propagates
     // it at ord-150 alongside gpu.enabled.
@@ -110,7 +110,7 @@ final class HeadlessAppGpuAutoPopulateTest {
     probe.put(GPU_ENABLED_KEY, "true");
 
     Map<String, String> autoDetected =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(probe, () -> 12L * 1024 * 1024 * 1024);
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(probe, () -> 12L * 1024 * 1024 * 1024);
     assertEquals("99", autoDetected.get(GPU_LAYERS_KEY), "Phase F must have produced a value");
 
     UiSettings settings = new UiSettings();
@@ -142,7 +142,7 @@ final class HeadlessAppGpuAutoPopulateTest {
     LongSupplier twelveGbVram = () -> 12L * 1024 * 1024 * 1024;
 
     Map<String, String> result =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(autoDetected, twelveGbVram);
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(autoDetected, twelveGbVram);
 
     // User's explicit 0 stands. The augmented map does NOT contain gpu.layers.
     assertNull(result.get(GPU_LAYERS_KEY), "augmented map must not override explicit user value");
@@ -164,7 +164,7 @@ final class HeadlessAppGpuAutoPopulateTest {
     LongSupplier twelveGbVram = () -> 12L * 1024 * 1024 * 1024;
 
     Map<String, String> result =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(autoDetected, twelveGbVram);
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(autoDetected, twelveGbVram);
 
     // No gpu.layers in augmented map (Phase F skipped because shouldUseGpu=false).
     assertNull(result.get(GPU_LAYERS_KEY));
@@ -190,7 +190,7 @@ final class HeadlessAppGpuAutoPopulateTest {
     LongSupplier fourGbVram = () -> 4L * 1024 * 1024 * 1024; // < 7.5 GB threshold
 
     Map<String, String> result =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(autoDetected, fourGbVram);
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(autoDetected, fourGbVram);
 
     assertNull(result.get(GPU_LAYERS_KEY), "below-threshold VRAM must not auto-populate layers");
     assertNull(System.getProperty(GPU_LAYERS_KEY));
@@ -212,7 +212,7 @@ final class HeadlessAppGpuAutoPopulateTest {
     LongSupplier oneByteBelowThreshold = () -> HardwareProfile.MINIMUM_VRAM_FOR_GGUF - 1;
 
     Map<String, String> aboveResult =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(autoDetected, oneByteAboveThreshold);
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(autoDetected, oneByteAboveThreshold);
     assertEquals(
         "99",
         aboveResult.get(GPU_LAYERS_KEY),
@@ -224,7 +224,7 @@ final class HeadlessAppGpuAutoPopulateTest {
     System.clearProperty(GPU_ENABLED_KEY);
 
     Map<String, String> belowResult =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(autoDetected, oneByteBelowThreshold);
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(autoDetected, oneByteBelowThreshold);
     assertNotEquals("99", belowResult.get(GPU_LAYERS_KEY));
     assertFalse(belowResult.containsKey(GPU_LAYERS_KEY));
   }
@@ -236,7 +236,7 @@ final class HeadlessAppGpuAutoPopulateTest {
   @Test
   void emptyAutoDetected_doesNothing() {
     Map<String, String> result =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(
             new LinkedHashMap<>(), () -> 12L * 1024 * 1024 * 1024);
 
     assertEquals(0, result.size());
@@ -259,7 +259,7 @@ final class HeadlessAppGpuAutoPopulateTest {
         };
 
     Map<String, String> result =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(autoDetected, failingSupplier);
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(autoDetected, failingSupplier);
 
     // Phase F skipped (no VRAM info), Phase E still mirrored.
     assertNull(result.get(GPU_LAYERS_KEY));

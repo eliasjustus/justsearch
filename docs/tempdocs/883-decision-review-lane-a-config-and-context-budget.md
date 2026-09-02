@@ -1652,6 +1652,23 @@ seed was reachable, the *runner* was not.
 6. **`docs/explanation/13-ai-setup-and-verification.md:86` was read and deliberately left alone.** It
    describes `RuntimeActivationService.startActivate`, which this PR protects and which genuinely
    still persists to `UiSettings` and sets the sysprop. Editing it would have made the doc wrong.
+7. **`docs/explanation/09-testing-strategy.md` is a ride-along, and here is the justification**
+   (independent review NIT). It is a canonical doc outside the lane's stated file ownership. It named
+   `AdaptersLuceneGuardrailsTest` — a file this PR DELETES — in its ArchUnit examples list, and
+   summarised what those tests enforce as including "restricted `System.*` usage". Leaving it would
+   have left a canonical doc pointing at a path that no longer exists, which is the false-authority
+   shape `retire-with-a-sweep` exists to prevent, and the sweep is required in the same PR rather
+   than deferred. The edit is scoped to that list plus one paragraph naming the replacement; no other
+   claim in the file was touched.
+8. **The method name `augmentGpuAutoDetectionAndMirror` was corrected to
+   `augmentGpuAutoDetectionAndMirrorProbeFlags`** (independent review NIT). The nit was right that
+   the old name over-claimed, but only half: Phase E still mirrors the probe's boolean/path FLAGS to
+   sysprops (and correctly — the loop skips any key the user set). What stopped mirroring is Phase
+   F's gpu_layers NUMBER. The new name says which half, and the javadoc now states why the two
+   phases differ. Two neighbouring javadoc claims were false after the change and are fixed with it:
+   the Phase-F text still said it sets `justsearch.llm.gpu_layers` (removed in 799) as a system
+   property, and the Phase-E text listed `GPU_LAYERS` as reaching the Worker through
+   `WORKER_FORWARDED_PROPS` when it now arrives via the ordinal-450 snapshot.
 
 ### C.5c — Residue found and routed, not investigated
 
@@ -1669,6 +1686,19 @@ seed was reachable, the *runner* was not.
 3. **The dead-config scanner's bare-name collision blind spot is unchanged** (documented in
    `dead-config.mjs`). The new yaml half does not narrow it; it closes a different hole.
 4. **`AgentLoopService.java:456-460` still hand-walks the window** (carried from PR 2's §C.6b).
+5. **The runtime-config matrix generator prints an INVERTED precedence for yaml-backed rows**
+   (independent review NIT; routed, not fixed here). `scripts/docs/runtime-config-matrix-lib.mjs:113`
+   emits the per-row note `YAML > sysprop > env > default` whenever a key has a YAML contribution,
+   and `:173` repeats it as precedence note 1 in the generated document. The real chain is the
+   opposite for those three sources: `ResolvedConfigBuilder` ranks jvm_arg 500 > env_var 400 >
+   settings.json 300 > **yaml 200**, so an operator reading
+   `docs/reference/configuration/runtime-config-ownership-matrix.md` is told the packaged YAML beats
+   their own `-D` and env var, which is exactly backwards. Pre-existing (the string predates this
+   lane), and it now describes 108 rows including the `search.pipeline.profile` row this PR adds.
+   Not fixed here because the generated doc is a lane-owned surface but the precedence vocabulary is
+   the same one PR 1 had to settle across `EffectiveConfigController` and the ownership matrix
+   (§B.c of chunk 1), and getting it right means re-checking every row class, not editing two
+   strings. It belongs with whoever next touches the config-precedence documentation.
 
 ### C.6c — Still open in lane A after PR 3
 
@@ -1693,24 +1723,64 @@ named above and below —
 extended with a real YAML parse so every shipped yaml key has a reader). Scope items 8 and 9 landed
 in PRs 1 and 2. ADR-0047 records the decision the three PRs implement, with five premise probes.
 
-**Deviated.** Six deviations, each with its reason at §C.4c: ADR status vocabulary, the pre-merge
+**Deviated.** Eight deviations, each with its reason at §C.4c: ADR status vocabulary, the pre-merge
 table row that does not fit the byte budget, the allowlist's granularity/size, two beyond-brief
-additions that prevented silent breaks, the deliberately non-empty `server.exe.source` grep, and one
-doc left alone because editing it would have made it wrong.
+additions that prevented silent breaks, the deliberately non-empty `server.exe.source` grep, one doc
+left alone because editing it would have made it wrong, the `09-testing-strategy.md` ride-along, and
+the method rename the review asked for (applied to the half that actually stopped mirroring).
 
 **Skipped.** Nothing from the contract. The one thing the contract allowed to be deferred — slice 2
 proving too large — did not happen: all three promotions are retired.
 
-**Evidence.** Full suite `./gradlew.bat test -PskipWebBuild=true`: **5,123 tests / 806 classes / 21
-skipped**, one failure, `WatchedRootScanCollectionTest`, which is the pinned flaky
-`app-services-watched-root-scan-collection-flaky` and passes on isolate-rerun. `build -x test` green.
-Gates: `config-surface`, `adr-coverage`, `execution-surface`, `module-deps`, `prose-tier-register`,
-`hook-integrity` all pass; `check-always-loaded-budget`, `check-premerge-table`,
-`llmstxt-generate --check`, `skills-sync --check`, `verify-canonical-doc-links`,
-`verify-runtime-config-matrix`, `module-deps --check-canonical` all OK; `run-all-tests` 21/21;
-gate self-test fixtures pass. Three bite-tests recorded at §C.1c. `dead-code` and the knip half of it
-report `kernel/input-missing` without a `modules/ui-web` npm install — environmental, and this PR
-touches no `ui-web` file.
+**Evidence.** Full suite `./gradlew.bat test --rerun -PskipWebBuild=true`: **8,683 tests / 1,421
+classes / 26 skipped / 0 failures**, every one of the 29 module test tasks executed.
+
+*Method, because the first figure reported here was wrong* (independent review S2). The original
+"5,123 tests / 806 classes" was derived from `modules/*/build/test-results` **after** an
+isolate-rerun of the pinned flaky — and `--tests "*WatchedRootScanCollectionTest*"` REPLACES that
+module's result XML with the single filtered class, so app-services contributed 1 class instead of
+its real 2,466 tests. Re-derived from a clean run: `./gradlew.bat test --rerun` (plain `test` was
+up to date and re-ran nothing; deleting the `test-results` directories out from under Gradle did not
+help either, because task state lives in the Gradle cache), then summing the `<testsuite>` element of
+every `modules/*/build/test-results/test/TEST-*.xml`. That matches the reviewer's independent
+8,682 / 1,420 to within one class. **The lesson is the one this repo already names:** a count taken
+from an artefact directory is only as good as the run that produced it, and an isolate-rerun is a
+destructive write to that directory.
+
+The pinned flaky `app-services-watched-root-scan-collection-flaky`
+(`WatchedRootScanCollectionTest`) fired on the first full run and did NOT fire on this one — which
+is what a flaky pin describes, and why the isolate-rerun that corrupted the counts was needed at all.
+
+`build -x test` green. Gates: `config-surface` (see the note below), `adr-coverage`,
+`execution-surface`, `module-deps`, `prose-tier-register`, `hook-integrity` all pass;
+`check-always-loaded-budget`, `check-premerge-table`, `llmstxt-generate --check`,
+`skills-sync --check`, `verify-canonical-doc-links`, `verify-runtime-config-matrix`,
+`module-deps --check-canonical` all OK; `run-all-tests` 21/21; gate self-test fixtures pass. Three
+bite-tests recorded at §C.1c. `dead-code` reports `kernel/input-missing` without a
+`modules/ui-web` npm install — environmental, and this PR touches no `ui-web` file.
+
+**`config-surface` was RED when this section first claimed it passed** (independent review B1/S1),
+for two separate reasons, both now closed by one `declared-growth` changeset
+(`gates/config-surface/.changesets/883-advance-baseline-to-108-244.md`):
+
+- **`env_sysprop_pairs` 243 -> 244 was `main`'s red, inherited, not this branch's.** Lane C's three
+  `justsearch.extraction.sandbox.*` keys were declared in `885-extraction-sandbox-pool-keys.md` and
+  merged in #595 — and the changeset-loader honours only a changeset present in the CURRENT diff
+  against the baseline ref, so the moment that PR merged its declaration became invisible to every
+  later PR. This branch adds no `EnvRegistry` entry at all
+  (`git diff origin/main...HEAD -- .../EnvRegistry.java` is empty). The baseline is advanced to 244
+  and `yaml_keys` rebalanced 112 -> 108 (a tightening, which needs no licence). Exactly the
+  situation `854-w1-advance-baseline-to-112-243.md` documents; same remedy.
+- **This lane's own new ratchet was firing on this lane's own commit.** `sysaccess-allowlist-growth`
+  flagged 104 -> 105 for `ExtractionSandboxCommand#javaBinary`, inherited through the `origin/main`
+  merge. CI would NOT have caught it (the allowlist does not exist on `origin/main` yet, so
+  `readFileAtRef` returns null and the check is skipped), which is the argument for declaring it now
+  rather than leaving it to the first PR that inherits a real baseline. One changeset covers both
+  counters because the enforcer aggregates a single covering classification.
+
+The reviewer's `classification: baseline-advance` was not used: that word is not in
+`CONFIG_SURFACE_CLASSIFICATIONS` and the loader throws on it. The cited precedent
+(`854-w1-advance-baseline-to-112-243.md`) uses `declared-growth`, and so does this one.
 
 **Measurements.** The window/KV/tok-s table is in register D-010 and ADR-0047; the before/after in one
 line: window 4096 -> 32768 derived (KV 544 MiB at q8_0, 17.0 KiB/token, 6,206 of 12,281 MiB total),
@@ -1729,8 +1799,17 @@ Comment-only in all three. (d) `SelectionContextInjector`'s cut is a backend INF
 flag, so the FE cannot show it.
 
 **Residue routed.** §C.5c: the stale-config worker snapshot on the boot path, the two remaining
-`HeadlessApp` promotions, the dead-config bare-name blind spot, and `AgentLoopService`'s third window
-walk.
+`HeadlessApp` promotions, the dead-config bare-name blind spot, `AgentLoopService`'s third window
+walk, and the runtime-config matrix generator's inverted precedence note
+(`scripts/docs/runtime-config-matrix-lib.mjs:113,173` say `YAML > sysprop > env` where the real chain
+is jvm_arg 500 > env 400 > settings 300 > yaml 200).
+
+**One process finding worth carrying past this lane.** The `config-surface` red (B1) is structural,
+not a one-off: any gate whose changeset discovery is diff-scoped against the baseline ref will go red
+on every subsequent PR the moment a declaring PR merges, until someone advances the baseline. It has
+now happened twice with the same gate (854 in #517, 885 in #595), each time discovered by a later
+lane rather than by the lane that caused it. The cheap fix is a rule — a PR that declares growth also
+advances the pin in the same commit — rather than a third rediscovery.
 
 **What lanes E and F must know.**
 - **`ContextBudget` (`modules/core`, `io.justsearch.core.util`) is the ONE authority for prompt-side

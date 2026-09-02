@@ -96,31 +96,42 @@ public class HeadlessApp {
    *       (which only re-contributes sysprops via env-registry, not the
    *       transient ord-150 autoDetected map), and (b) propagate to the
    *       worker subprocess via {@code WORKER_FORWARDED_PROPS} —
-   *       {@code GPU_ENABLED}, {@code ORT_NATIVE_PATH}, {@code GPU_LAYERS}
-   *       are all in that list.
+   *       {@code GPU_ENABLED} and {@code ORT_NATIVE_PATH} are in that list.
+   *       {@code GPU_LAYERS} is in it too, but no longer arrives by this
+   *       route: since tempdoc 883 it is Phase F's map-only value, and it
+   *       reaches the Worker through the resolved worker-config snapshot at
+   *       ordinal 450 instead (pinned by {@code WorkerSnapshotAutoDetectedTest}).
    *   <li><b>Phase F — VRAM-tier auto-populate of gpu_layers.</b> If "GPU
    *       should be used" (probe said true AND user didn't explicitly say
-   *       false) AND no explicit {@code gpu.layers} / {@code llm.gpu_layers}
-   *       is set, query NVML for total VRAM. If &ge; 7.5&nbsp;GB (matches
+   *       false) AND no explicit {@code gpu.layers} is set, query NVML for
+   *       total VRAM. If &ge; 7.5&nbsp;GB (matches
    *       {@link io.justsearch.configuration.model.HardwareProfile#MINIMUM_VRAM_FOR_GGUF}),
-   *       set both {@code justsearch.gpu.layers} and
-   *       {@code justsearch.llm.gpu_layers} to {@code "99"} (full offload —
-   *       Qwen3.5-9B Q4_K_M is ~5.5&nbsp;GB, fits comfortably). Below
-   *       threshold, leave at 0; the chat model wouldn't fit anyway and
-   *       partial offload is an OOM hazard. The user can still force layers
-   *       via env var.
+   *       put {@code justsearch.gpu.layers = "99"} into the returned map
+   *       (full offload — Qwen3.5-9B Q4_K_M is ~5.5&nbsp;GB, fits
+   *       comfortably). Below threshold, leave at 0; the chat model wouldn't
+   *       fit anyway and partial offload is an OOM hazard. The user can still
+   *       force layers via env var, settings, or {@code -D}.
    * </ol>
    *
-   * <p>The augmented map is also returned so the caller can pass it to
-   * {@link ResolvedConfigBuilder#contributeAutoDetected} — keeping the
-   * ord-150 contribution and the sysprop write in lockstep.
+   * <p><b>Phase F does NOT mirror to a system property, and the name says
+   * "ProbeFlags" for that reason</b> (tempdoc 883 decision 4 slice 2). A
+   * sysprop write lands at ordinal 500, above the user's own value at 300 —
+   * which is fine for the Phase-E boolean/path FLAGS, where the loop skips any
+   * key the user set, but wrong for a NUMBER the user may have chosen a
+   * different value for. Phase F's contribution therefore lives only in the
+   * returned map, at ordinal 150, where the ordinal chain can rank it honestly.
+   *
+   * <p>The augmented map is returned so the caller can pass it to
+   * {@link ResolvedConfigBuilder#contributeAutoDetected} — for Phase E that
+   * keeps the ord-150 contribution and the sysprop write in lockstep; for
+   * Phase F the map is the only carrier.
    *
    * <p>Package-private + parameterized {@code totalVramSupplier} so tests
    * can pin behavior across the four boundary cases (autoDetected GPU + 12 GB
    * VRAM, idempotent re-run, user-disabled GPU, below-threshold VRAM)
    * without spawning NVML.
    */
-  static Map<String, String> augmentGpuAutoDetectionAndMirror(
+  static Map<String, String> augmentGpuAutoDetectionAndMirrorProbeFlags(
       Map<String, String> autoDetected, LongSupplier totalVramSupplier) {
     if (autoDetected == null || autoDetected.isEmpty()) {
       return autoDetected == null ? Map.of() : autoDetected;
@@ -207,7 +218,7 @@ public class HeadlessApp {
    * so {@code /api/debug/effective-config} explains the window with the mechanism that already
    * explains GPU detection instead of a promotion that reported a GUI value as {@code jvm_arg}.
    *
-   * <p>Runs AFTER {@link #augmentGpuAutoDetectionAndMirror} on purpose: the top rung depends on
+   * <p>Runs AFTER {@link #augmentGpuAutoDetectionAndMirrorProbeFlags} on purpose: the top rung depends on
    * whether layers ended up on the GPU, which that pass is what decides (Phase F) — reading
    * {@code gpu.layers} before it would derive the CPU rung on every GPU machine.
    *
@@ -625,7 +636,7 @@ public class HeadlessApp {
     ResolvedConfigBuilder rcBuilder = ResolvedConfig.builder();
     Path detectionRoot = io.justsearch.configuration.RepoRootLocator.findRepoRootOrNull();
     Map<String, String> autoDetected = io.justsearch.ort.GpuAutoDetection.probe(detectionRoot);
-    autoDetected = augmentGpuAutoDetectionAndMirror(autoDetected, HeadlessApp::queryNvmlTotalVramBytes);
+    autoDetected = augmentGpuAutoDetectionAndMirrorProbeFlags(autoDetected, HeadlessApp::queryNvmlTotalVramBytes);
     autoDetected = augmentDerivedContextWindow(autoDetected, settings.getGpuLayers());
     // Remembered so a later ConfigStore rebuild (settings PUT, AI install, activation) does not
     // silently drop ordinal 150 and leave the derived window with no provenance.

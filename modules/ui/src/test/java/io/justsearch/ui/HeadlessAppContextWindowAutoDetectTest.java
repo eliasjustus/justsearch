@@ -168,7 +168,7 @@ final class HeadlessAppContextWindowAutoDetectTest {
 
     Map<String, String> composed =
         HeadlessApp.augmentDerivedContextWindow(
-            HeadlessApp.augmentGpuAutoDetectionAndMirror(probe, () -> TWELVE_GB),
+            HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(probe, () -> TWELVE_GB),
             NO_SETTINGS_GPU_LAYERS);
 
     assertEquals("99", composed.get(GPU_LAYERS_KEY), "Phase F must have run first");
@@ -188,7 +188,7 @@ final class HeadlessAppContextWindowAutoDetectTest {
     Map<String, String> probe = Map.of(GPU_ENABLED_KEY, "true");
 
     Map<String, String> swapped =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(
             HeadlessApp.augmentDerivedContextWindow(probe, NO_SETTINGS_GPU_LAYERS),
             () -> TWELVE_GB);
 
