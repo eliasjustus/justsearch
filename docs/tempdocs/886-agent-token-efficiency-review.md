@@ -682,7 +682,7 @@ that generator's own contract. `node scripts/governance/run.mjs --gate hook-inte
 is green (wiring, live-wiring, cwd-invariant exec-form, `node --check` load, bite, tier-sync,
 orphan-file phases all pass).
 
-Live manual checks (read-only, real transcripts under `C:\Users\Elias\.claude\projects\`, per
+Live manual checks (read-only, real transcripts under `~/.claude/projects/`, per
 CLAUDE.md's local-API-trust-boundary carve-out for read-only checks): `context-ceiling-hint.mjs`
 against a real transcript at 886k context tokens printed `context-ceiling: 886k tokens in context
 (past 500k) — every call now re-reads this; /compact <hint> at the next task boundary, or /rewind
@@ -765,7 +765,7 @@ PR 5).** Four items implemented: `lib/input-summarizer.mjs`, `lib/transcript-cos
    and is imported back and re-exported from `baseline-economics.mjs`, alongside `DEFAULT_PROJECTS_ROOT`,
    because `record-merge.mjs` imports both names from `baseline-economics.mjs` and that import must
    keep resolving. **Parity:** `node baseline-economics.mjs --md`/`--json` run against the real
-   corpus (`C:\Users\Elias\.claude\projects`, 68 sessions, 2026-06-18..now) before and after the
+   corpus (`~/.claude/projects`, 68 sessions, 2026-06-18..now) before and after the
    migration produced an EMPTY diff except: the `generated_at` timestamp, and dollar/token figures
    for exactly 3 actively-growing sessions (this very session, `0c9df6b0`, plus two other
    concurrently-running agent sessions on this machine) — confirmed as live-corpus drift, not a

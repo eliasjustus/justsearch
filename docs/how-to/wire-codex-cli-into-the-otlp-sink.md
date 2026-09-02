@@ -85,11 +85,10 @@ additional record per mapped token-usage data point alongside the original —
 roughly **doubling** `metrics.ndjson` volume for every point that gets a
 twin. `RETENTION["metrics"]` is `None` (never pruned — metrics is the sole
 cost-baseline source, see `otlp-sink.py`'s module comment), so this is
-disk growth that accumulates indefinitely, not a self-cleaning cost; the
-main checkout's `tmp/agent-telemetry/otlp/` already carries ~146 MB of
-metrics archives as of this writing. This is a stated tradeoff, not an
-oversight — changing the retention policy is an owner decision, not made
-here.
+disk growth that accumulates indefinitely, not a self-cleaning cost — check
+the current size with `du -sh tmp/agent-telemetry/otlp/metrics.ndjson`. This
+is a stated tradeoff, not an oversight — changing the retention policy is an
+owner decision, not made here.
 
 ## One-session smoke check
 
