@@ -21,7 +21,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
 import { loadTypeScript, normalizeWholeFileCount } from './export-count.mjs';
 import { verdictForBaselineShift } from './truth-table.mjs';
 
@@ -185,17 +185,12 @@ export async function enforceDeadCode(options) {
   // live count is held to the pin, but the PIN ITSELF could be edited upward and the gate would
   // report `rebalance-available` — a pass. Mirrors todo-fixme/enforcer.mjs:129-149, the closest
   // sibling (same `<path> <count> <date>` shape, same per-file dynamic key set).
-  let priorBaseline = null;
-  if (fixtureMode && fixtureRoot) {
-    const p = resolve(fixtureRoot, '_baseline', gate.baseline.path);
-    if (existsSync(p)) priorBaseline = parseBaseline(readFileSync(p, 'utf8'));
-  } else if (baselineRef) {
-    // Returns null when the file did not exist at that ref (a new baseline), which correctly
-    // means "nothing to compare against" rather than "every row was raised from zero".
-    const content = readFileAtRef(baselineRef, gate.baseline.path, sourceRoot);
-    if (content !== null) priorBaseline = parseBaseline(content);
-  }
-  if (priorBaseline) {
+  // null means "no prior state" (a new baseline, or a ref without the file) — skip, never "all grew".
+  const priorText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  if (priorText !== null) {
+    const priorBaseline = parseBaseline(priorText);
     const covering = decls.find(d => BASELINE_SHIFT_COVERING.includes(d.classification));
     const cls = covering ? covering.classification : 'silent-growth';
     for (const [p, livePin] of baseline.entries()) {

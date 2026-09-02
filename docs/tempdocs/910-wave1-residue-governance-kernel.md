@@ -501,6 +501,51 @@ So the forward declaration cannot outlive its reason, which is the same discipli
 `gaining a durableStores row is allowed — the pin is a floor, not an equality` exists precisely to
 keep a later agent from "tightening" it into an equality (falsification F4 in §D.2).
 
+### F.9 — The three routed gate defects, fixed here; and a census
+
+Round 1 routed these instead of fixing them. That was the pile, and they are fixed in this PR.
+
+**Census — every gate declaring a `silent-baseline-shift` rule, and whether it could reach it**
+(`grep -rl silent-baseline-shift scripts/governance/gates/`, then the `readFileAtRef` call sites):
+
+| gate | rule declared | could it fire? | disposition |
+|---|---|---|---|
+| `config-surface` | yes | yes — 2 positional calls (`enforcer.mjs:233,:262`) | routed through the shared reader |
+| `npm-audit` | yes | yes — `enforcer.mjs:249` | routed through the shared reader |
+| `todo-fixme` | yes | yes — `enforcer.mjs:135` | routed through the shared reader |
+| `dead-code` | **no rule at all** (round 1) | n/a | rule added in round 1; now on the shared reader |
+| **`module-deps`** | yes (`enforcer.mjs:28`) | **NO** — `readFileAtRef` imported at `:16`, **never called** | **fixed (a)**: `verdictForBaselineShift` added to its truth-table, block added to the enforcer, 5 tests |
+| **`test-efficacy`** | yes | **NO in real runs** — `enforcer.mjs:253` passed an OPTIONS OBJECT to a POSITIONAL signature (`git-utils.mjs:236`), so `git show [object Object]:undefined` threw and the catch returned null | **fixed (b)**: positional call + 4 tests on the REAL git branch |
+
+Two adjacent findings from the same sweep: `ts-any/enforcer.mjs:15` imported `readFileAtRef` and
+never called it — removed as a ride-along (it declares no shift rule, so it was a dead import, not
+an unreachable rule). `consumer-drift`, `prose-tier-register`, `ssot-catalog-sync`,
+`register-guard-resolution` and `wire` call `readFileAtRef` correctly for non-baseline-shift
+purposes and were left alone.
+
+**(c) — I have to correct myself: `detectBaselineTamper` is NOT unused.** Round 1 routed it as "a
+helper nobody calls beside six copies". That was wrong, and I should have grepped before reporting
+it: `register-guard-resolution/enforcer.mjs:148` calls it, and `guard-resolver.mjs:80-83` documents
+building its events. So the instruction's premise — delete it or adopt it — does not apply as
+stated, and neither branch was right:
+
+- **Deleting it** would break a live consumer.
+- **Routing the six through it** is not the mechanical change it looks like. The helper expects the
+  gate to supply BOTH the covered and uncovered variants and picks between them; each of the six
+  gates instead has a `verdictForBaselineShift` in its own `truth-table.mjs` that already branches
+  on `classification` and returns one verdict. Adopting it would mean either restructuring six
+  registered truth-table artifacts, or a passthrough where both ruleIds are the one the truth-table
+  already chose — decorative centralization that makes the invariant *look* shared while the real
+  decision stays in six places. That is the failure mode this tempdoc is about.
+
+**What the duplication actually was, and what I did instead.** The copied code was the prior-baseline
+*read* — a multi-line fixtureMode/`_baseline` vs `readFileAtRef` branch with a git call inside it.
+That is the shape that rots when copied, and it is exactly where defect (b) lived. It is now
+`scripts/governance/lib/prior-baseline.mjs` (`readPriorBaselineText`), used by all six gates, with
+its own test on the real git branch. One call site of `readFileAtRef` to get wrong instead of six.
+`detectBaselineTamper` keeps its one legitimate consumer; the two helpers own different halves of
+the invariant, and the file header of each now says which.
+
 ### F.8 — Re-audit of the remaining 25 meanings, and what "audited" means here
 
 The reviewer asked for a re-audit for the same drift class, and for an honest record of which
@@ -526,21 +571,41 @@ verify the verb. Seven values whose meanings made an absolute content or disposa
 | `DISCARD_UNREADABLE_DERIVED_STATUS_AND_RESCAN` | runtime-activation-status, pack-import-status | OK — both notes say "no user content" |
 | `CONSERVATIVE_REBUILD_OR_CLEAR` | worker-protocol-markers | OK — signal files carrying one reason code, "no message text, no path" |
 
-**Tier 3 — NOT independently re-verified, and I am not claiming otherwise.** The remaining 17 values
-(the `FAIL_*` family, the preservation family, `RECOVER_PREVIOUS_OR_REBUILD`,
-`REGENERATE_BEFORE_CONSUMPTION`, `VERIFY_PROCESS_IDENTITY_OR_REPLACE_STALE_LOCK`,
-`SKIP_UNREADABLE_LINE_AND_WARN`, `NEVER_DELETE_OR_OVERWRITE_UNKNOWN_ASSET`,
-`PRESERVE_AND_RECOVER_DEFAULTS`, `VERIFY_HASH_OR_PRESERVE_USER_ASSET`,
-`SKIP_INVALID_PLUGIN_AND_PRESERVE_BYTES`, `REFUSE_FUTURE_SCHEMA_AND_PRESERVE_OVERRIDES`, …) were
-written FROM their rows' `corruptionNote` and named tests, and re-checked against those notes — not
-against a fresh read of each handling path. Their meanings are therefore exactly as good as the
-notes, which is the same standing the register already had, and no better.
+**Tier 1 (round 2) — all remaining values, verified against the handling path.** No delegation; the
+subagent attempt in round 1 never returned, so this was done inline. 18 values, not 17 — I
+miscounted in round 1.
 
-**The limit this exposes, recorded because it is the honest headline.** The gate can check that a
-value is *declared* and *used*; it cannot check that a meaning matches behaviour. Three of the eight
-claims I did check were wrong. That rate says the remaining seventeen should not be trusted as
-verified, and a per-row "the meaning matches the code" assertion — the only thing that would make
-this vocabulary self-defending — is a bigger change than this lane, listed in §E.
+| value | row(s) | verdict | evidence |
+|---|---|---|---|
+| `FAIL_LOUD` | ai-install-contract, encryption-keystore, **user-policy** | **DRIFT, fixed** | The first two throw (`InstallContractIO.java:41,:53`; `EncryptionKeystore.java:36-46`). **`user-policy` does not**: `EnterprisePolicyServiceImpl.java:287-290` catches, warns, and returns `PolicyLoad(present, invalid, message)`; `:283-285` does the same for an unsupported schemaVersion. Meaning now states the guarantee is "never silently defaulted or rewritten", not "throws". |
+| `FAIL_LOUD_ON_UNREADABLE_OR_FUTURE_LINE` | feedback-records | **DRIFT (scope), fixed** | The corruption verb is right — `NdjsonAppendStore.java:100-118` throws per line. But blank lines are skipped (`:100-102`) and a **sealed-but-locked** store returns an EMPTY list (`:95-97`), so "you always see every record" was wider than the code. Both caveats now stated. |
+| `FAIL_LOUD_AND_PRESERVE` | 8 rows (durable-grants, plugin-allowlist, installed-packs, memories, conversations, agent-runs, run-events, watched-roots) | OK | All 8 throw `CorruptDurableStoreException` (2-7 sites each) and **none delete on the corruption path**. The single `Files.deleteIfExists` in `FileConversationStore.java:731-734` is a user-initiated session-directory delete (a `Files.walk` teardown), not recovery. |
+| `ACTIVE_AND_FUTURE_LOGS_FAIL_LOUD` | file-operation-journal | OK | `FileOperationLog.java:148,:223` throw `CorruptDurableStoreException`; `:237` throws `UnsupportedStoreVersionException`; `:145-146,:189-190,:201-202,:220-221` rethrow rather than swallow. |
+| `SKIP_UNREADABLE_LINE_AND_WARN` | action-ledger-audit-journal | OK | `ActionEventJournal.java:268-271` — `catch (RuntimeException) … log.warn("Skipping unreadable action-ledger journal line")`; `:241-242` warns if the whole journal is unreadable. |
+| `PRESERVE_AND_RECOVER_DEFAULTS` | ui-settings | OK | `UiSettingsStore.java:35-37` documents it, `:109` calls `quarantineCorruptFile`, `:194` performs the move to `settings.json.corrupt-<UTC>`, and `:191-193` rethrows if the move itself fails — so it never defaults *without* preserving. |
+| `FAIL_CLOSED_DISABLED_WRITE_LOCKED` | feedback-capture-preference | OK | `FeedbackCaptureSettings.java:114-116` catches corrupt/future state, returns `false` (capture off) and sets `writeLocked`; `:59-60` makes a later write throw. Fail-closed *to disabled*, which is what the meaning says. |
+| `FAIL_CLOSED_AND_RETRY_PREPARATION` | head-shutdown-receipt | OK | `HeadShutdownCoordinator.java:88-89` — "Missing receipt is a fail-closed signal to the shell"; the receipt is nonce-bound (`:16-20`) so a stale one cannot satisfy a new preparation. |
+| `FAIL_CLOSED` | shell-release-sequence | OK | `updater.rs:435,:438` return `Err` on a descriptor/hash mismatch or a non-NSIS artifact; `:315,:449` refuse to proceed. Nothing is written. |
+| `FAIL_CLOSED_REPAIR_REQUIRED` | shell-upgrade-intent | OK | `updater.rs:242,:260,:298` set state `repair_required`; `:512,:542,:549` call `mark_repair_required` and return the error, so it stays stopped until an explicit repair. |
+| `RECOVER_PREVIOUS_OR_REBUILD` | index-generations | OK | `IndexGenerationManager.java:366` `rollbackToPreviousGeneration()`, and `:323`/`:362` state twice that it **does not delete any generations** — only `state.json` pointers move. |
+| `REFUSE_FUTURE_SCHEMA_AND_PRESERVE_OVERRIDES` | entity-clusters | OK | `EntityClusterStore.java:70-75` throws when `PRAGMA user_version` exceeds `CURRENT_SCHEMA_VERSION`; `:79-89` runs schema creation (incl. `CREATE_OVERRIDES_TABLE`) in a transaction that rolls back on failure — no destructive migration. |
+| `VERIFY_PROCESS_IDENTITY_OR_REPLACE_STALE_LOCK` | process-locks | OK | `AppInstanceLock.java:144-166` — `ProcessHandle.of(pid)`, dead-process **and** start-time-mismatch checks before `log.warn("Recovering stale app lock…")` and deleting; `:71-72` documents the retry-once. |
+| `FAIL_OR_REBUILD_DERIVED_QUEUE` | jobs-db | OK | `SqliteJobQueue.java:259` runs an integrity check on existing databases that "throws SQLException on corruption"; the queue is derived, so the rebuild path is a re-enqueue rather than a repair. |
+| `SKIP_INVALID_PLUGIN_AND_PRESERVE_BYTES` | user-plugin-payloads | OK | `lib.rs:1194-1224` — the scan skips an oversized/invalid payload with a flag and reserves `Err` for real I/O failure; nothing removes the file. |
+| `NEVER_DELETE_OR_OVERWRITE_UNKNOWN_ASSET` | byo-ai-assets | OK | The only delete on the install path is `AiInstallService.java:2655` `Files.deleteIfExists(partial)` — a partial download, never a complete or unrecognised asset. |
+| `VERIFY_HASH_OR_PRESERVE_USER_ASSET` | managed-ai-assets | OK | Same delete-site audit as above plus the `sha256` verification threaded through `AiInstallService.java:1767`. |
+| `REGENERATE_BEFORE_CONSUMPTION` | worker-config-snapshot | OK | `WorkerSpawner.java:61-66,:119` — the snapshot is written by HeadlessApp at ordinal 450 and read by the Worker afterwards; it is rewritten every boot, so a stale copy is never consumed. |
+
+**Score for the whole vocabulary: 5 of 26 meanings were wrong** — `DELETE_AND_RECOMPUTE`,
+`ROTATE_OR_PRUNE_DIAGNOSTIC_ARTIFACT`, `SKIP_DERIVED_ROW` (round 1), plus `FAIL_LOUD` and
+`FAIL_LOUD_ON_UNREADABLE_OR_FUTURE_LINE` (round 2). Every one was a claim I wrote from a
+`corruptionNote` without opening the code — which is the honest argument for §E item 3.
+
+**The pattern in the two round-2 drifts is worth naming**: both were wrong by being *too strong*.
+`FAIL_LOUD` averaged three rows that do not behave alike, and
+`FAIL_LOUD_ON_UNREADABLE_OR_FUTURE_LINE` promised a guarantee wider than the code. A one-line
+meaning invites exactly this: the shortest true sentence is often narrower than the shortest
+sentence that sounds authoritative.
 
 ## §E — Open items
 
@@ -567,31 +632,9 @@ this vocabulary self-defending — is a bigger change than this lane, listed in 
 5. **The three new pins are dated exceptions, not steady state.** They are deleted by lanes R6 and
    R7 and by the operation-surfaces register row respectively; the `reviewBy: 2026-09-30` backstop
    turns CI red for every PR if none lands.
-6. **Two SIBLING gates have the same baseline-shift defect this PR fixed for `dead-code`, and one is
-   worse than the absence it replaces.** Found while looking for a template to mirror; verified at
-   source, NOT fixed here (fixing three gates' ratchets in one PR is a different change, and neither
-   is in this lane's brief). Routed for the coordinator to assign:
-   - **`module-deps` declares a rule that can never fire.** `scripts/governance/gates/module-deps/rule-descriptions.mjs:28`
-     declares `'module-deps/silent-baseline-shift'`, and `enforcer.mjs:16` imports `readFileAtRef` —
-     but `readFileAtRef` is **never called** anywhere in the file (`grep -n readFileAtRef
-     scripts/governance/gates/module-deps/enforcer.mjs` → only the import line). A documented ruleId
-     that never fires is worse than `dead-code`'s honest absence: the rule catalog says the hole is
-     covered.
-   - **`test-efficacy`'s baseline-shift is silently broken in real mode.**
-     `scripts/governance/gates/test-efficacy/enforcer.mjs:253` calls
-     `readFileAtRef({ repoRoot, ref: baselineRef, path: baselinePath })` — an options object — but
-     the function's signature is positional: `readFileAtRef(ref, filePath, cwd)`
-     (`scripts/governance/lib/git-utils.mjs:236`). So `git show [object Object]:undefined` throws,
-     the `catch` returns `null`, and the prior baseline is **always** null outside fixture mode. The
-     gate's own fixtures pass because fixture mode takes a different branch — a green that cannot
-     see the defect.
-7. **`detectBaselineTamper` exists and nothing uses it.**
-   `scripts/governance/lib/baseline-tamper-detector.mjs` calls itself "the shared home of the 'no
-   silent downgrade' invariant", but all five gates with a baseline-shift rule (now six, including
-   this one) hand-roll the block instead. This PR mirrored `todo-fixme` rather than adopt the
-   helper, deliberately: adopting it means changing five other gates, which is a refactor, not this
-   lane. Recorded so the next agent finds the fork rather than adding a seventh copy.
-8. **CLAUDE.md's pre-merge table still names only `StoreCatalog.java` · store construction sites as
+6. **The three gate defects routed in round 1 are FIXED in this PR, not routed** — see §F.9 for the
+   census and for the correction of my own wrong claim about `detectBaselineTamper`.
+7. **CLAUDE.md's pre-merge table still names only `StoreCatalog.java` · store construction sites as
    the trigger for `check-store-recoverability`.** Editing `governance/store-corruption-policies.v1.json`
    is now a third trigger and is not listed. Left unedited deliberately: this lane's brief scoped
    CLAUDE.md out, and the file is under the always-loaded-byte ratchet, so the row belongs to
