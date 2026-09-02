@@ -59,7 +59,9 @@
  * Flags: `--by week|day` (default `week`), `--since <ISO>` (default trailing 60
  * days), `--until <ISO>`, `--harness claude-code|codex-cli|all` (default `all`),
  * `--no-git` (skip section b), `--ref <gitref>` (default `origin/main`, falls back
- * to `main` and says so), `--long-spawn-calls <n>` (default 120), `--json`.
+ * to `main` and says so), `--long-spawn-calls <n>` (default 120), `--json`,
+ * `--snapshot-path <file>` (default: `trend-snapshot.mjs`'s own default path — override
+ * mainly for tests, so a test never reads/writes the real machine snapshot store).
  */
 
 import fs from 'node:fs';
@@ -149,6 +151,24 @@ export function dayBounds(key) {
 
 export function bucketBounds(key, by) {
   return by === 'day' ? dayBounds(key) : weekBounds(key);
+}
+
+/**
+ * True when the bucket named `key` overlaps `[sinceMs, untilMs]` at all — the
+ * same coarse, bucket-level overlap test a snapshot row (which has no
+ * per-call `ts` left to filter on) needs to respect a caller's `--since/
+ * --until`. `null` on either bound means unbounded on that side, matching
+ * `lib/ledger/index.mjs`'s own `inTsWindow` convention. A bucket whose END is
+ * at-or-before `sinceMs`, or whose START is at-or-after `untilMs`, has zero
+ * overlap and is excluded — this is what stops a snapshot record from a
+ * bucket entirely outside the requested window from being admitted (908
+ * defect: the merge previously filtered only by harness/by, never by window).
+ */
+export function bucketOverlapsWindow(key, by, sinceMs, untilMs) {
+  const bounds = bucketBounds(key, by);
+  if (sinceMs != null && bounds.endMs <= sinceMs) return false;
+  if (untilMs != null && bounds.startMs >= untilMs) return false;
+  return true;
 }
 
 function tsMsOf(call) {
@@ -458,7 +478,7 @@ export function mergeLiveAndSnapshot(liveRows, snapshotRows, keyOf = (r) => r.bu
 function parseArgs(argv) {
   const opts = {
     by: 'week', since: null, until: null, harness: 'all', noGit: false,
-    ref: 'origin/main', longSpawnCalls: DEFAULT_LONG_SPAWN_CALLS, json: false,
+    ref: 'origin/main', longSpawnCalls: DEFAULT_LONG_SPAWN_CALLS, json: false, snapshotPath: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -470,6 +490,7 @@ function parseArgs(argv) {
     else if (a === '--ref') opts.ref = argv[++i];
     else if (a === '--long-spawn-calls') opts.longSpawnCalls = Number(argv[++i]);
     else if (a === '--json') opts.json = true;
+    else if (a === '--snapshot-path') opts.snapshotPath = argv[++i];
   }
   return opts;
 }
@@ -480,12 +501,13 @@ function attachFlags(rows, flagsByBucket) {
 
 function printLeading(rows) {
   console.log('\n=== (a) leading indicators (denominator-free) ===');
-  console.log('bucket        calls    cost  ctx/out  $/M-out  mainP50  subP50  subShare  flags');
+  console.log('bucket        calls    cost  ctx/out  $/M-out  mainP50  subP50  subShare  source    flags');
   for (const r of rows) {
     const flags = [r.truncated ? 'TRUNCATED' : null, r.partial ? 'PARTIAL' : null].filter(Boolean).join(',');
     console.log(`${r.bucket.padEnd(12)} ${String(r.calls).padStart(7)} ${usd(r.costUsd).padStart(7)} `
       + `${String(r.ctxOut ?? 'n/a').padStart(8)} ${usd(r.costPerMOut).padStart(8)} `
-      + `${fmtK(r.mainP50Ctx).padStart(8)} ${fmtK(r.subP50Ctx).padStart(7)} ${pctFmt(r.subCostSharePct).padStart(9)}  ${flags}`);
+      + `${fmtK(r.mainP50Ctx).padStart(8)} ${fmtK(r.subP50Ctx).padStart(7)} ${pctFmt(r.subCostSharePct).padStart(9)}  `
+      + `${(r.source ?? 'live').padEnd(8)}  ${flags}`);
     if (r.unpricedCalls) console.log(`  (${r.unpricedCalls} unpriced calls excluded from cost)`);
   }
 }
@@ -510,21 +532,30 @@ function printDelivery(delivery) {
 
 function printSpawnTail(rows, longSpawnCalls) {
   console.log(`\n=== (c) spawn tail (>= ${longSpawnCalls} calls is "long") ===`);
-  console.log('bucket        spawns  medCalls  medPeakCtx  $/spawn  long  longCostShare  flags');
+  console.log('bucket        spawns  medCalls  medPeakCtx  $/spawn  long  longCostShare  source    flags');
   for (const r of rows) {
     const flags = [r.truncated ? 'TRUNCATED' : null, r.partial ? 'PARTIAL' : null].filter(Boolean).join(',');
     console.log(`${r.bucket.padEnd(12)} ${String(r.spawns).padStart(7)} ${String(r.medCalls).padStart(9)} `
       + `${fmtK(r.medPeakCtx).padStart(11)} ${(r.costPerSpawn == null ? 'n/a' : `$${r.costPerSpawn.toFixed(1)}`).padStart(8)} ${String(r.longSpawns).padStart(5)} `
-      + `${pctFmt(r.longCostSharePct).padStart(14)}  ${flags}`);
+      + `${pctFmt(r.longCostSharePct).padStart(14)}  ${(r.source ?? 'live').padEnd(8)}  ${flags}`);
   }
 }
 
-function printCorpusHonesty(floorMs, truncatedBuckets, partialBuckets) {
+function printCorpusHonesty(floorMs, truncatedBuckets, partialBuckets, sourceCounts) {
   console.log('\n=== (d) corpus honesty ===');
   console.log(`  oldest surviving transcript mtime (rotation floor): ${floorMs == null ? 'n/a — no transcripts discovered' : new Date(floorMs).toISOString()}`);
   console.log(`  TRUNCATED buckets (start before floor+1day): ${truncatedBuckets.length ? truncatedBuckets.join(', ') : 'none'}`);
   console.log(`  PARTIAL buckets (extend past now): ${partialBuckets.length ? partialBuckets.join(', ') : 'none'}`);
+  console.log(`  row sources: leading ${sourceCounts.leading.live} live / ${sourceCounts.leading.snapshot} snapshot; `
+    + `spawn tail ${sourceCounts.spawnTail.live} live / ${sourceCounts.spawnTail.snapshot} snapshot`);
   console.log('  No trend arithmetic in this report crosses a TRUNCATED or PARTIAL bucket.');
+}
+
+export function countBySource(rows) {
+  return {
+    live: rows.filter((r) => (r.source ?? 'live') === 'live').length,
+    snapshot: rows.filter((r) => r.source === 'snapshot').length,
+  };
 }
 
 function main() {
@@ -556,12 +587,16 @@ function main() {
   // for a SINGLE requested harness (a snapshot record is per-harness; combining
   // harnesses into one row, as `--harness all` does live, has no per-harness
   // snapshot equivalent to merge against). Live data always wins on a shared
-  // bucket key (`mergeLiveAndSnapshot`); this only ever FILLS a gap.
+  // bucket key (`mergeLiveAndSnapshot`); this only ever FILLS a gap. A
+  // snapshot record must ALSO overlap the requested `--since/--until` window
+  // (`bucketOverlapsWindow`) — the snapshot file accumulates buckets across
+  // every past run, so without this a narrow window would silently admit
+  // rows from weeks the caller never asked for (908 defect 1).
   let leadingRows = liveLeadingRows;
   let spawnTailRows = liveSpawnTailRows;
   if (harnesses.length === 1) {
-    const snapshotRecords = readSnapshotFile(resolveDefaultSnapshotPath())
-      .filter((r) => r.harness === harnesses[0] && r.by === opts.by);
+    const snapshotRecords = readSnapshotFile(opts.snapshotPath ?? resolveDefaultSnapshotPath())
+      .filter((r) => r.harness === harnesses[0] && r.by === opts.by && bucketOverlapsWindow(r.bucket, opts.by, sinceMs, untilMs));
     const snapshotLeadingRows = snapshotRecords.filter((r) => r.leading).map((r) => ({ bucket: r.bucket, ...r.leading }));
     const snapshotSpawnTailRows = snapshotRecords.filter((r) => r.spawnTail).map((r) => ({ bucket: r.bucket, ...r.spawnTail }));
     leadingRows = mergeLiveAndSnapshot(liveLeadingRows, snapshotLeadingRows);
@@ -622,6 +657,7 @@ function main() {
     delivery.rows = attachFlags(delivery.rows, flagsByBucket);
     delivery.powerWarning = deliveryPowerWarning(delivery.rows, excludeFromPower);
   }
+  const sourceCounts = { leading: countBySource(leadingFlagged), spawnTail: countBySource(spawnTailFlagged) };
 
   if (opts.json) {
     console.log(JSON.stringify({
@@ -630,7 +666,10 @@ function main() {
       leading: leadingFlagged, excludedUnbucketable,
       spawnTail: spawnTailFlagged,
       delivery,
-      corpusHonesty: { rotationFloorMs: floorMs, rotationFloorIso: floorMs == null ? null : new Date(floorMs).toISOString(), truncatedBuckets, partialBuckets },
+      corpusHonesty: {
+        rotationFloorMs: floorMs, rotationFloorIso: floorMs == null ? null : new Date(floorMs).toISOString(),
+        truncatedBuckets, partialBuckets, sourceCounts,
+      },
     }, null, 2));
     return;
   }
@@ -640,7 +679,7 @@ function main() {
   printLeading(leadingFlagged);
   printDelivery(delivery);
   printSpawnTail(spawnTailFlagged, opts.longSpawnCalls);
-  printCorpusHonesty(floorMs, truncatedBuckets, partialBuckets);
+  printCorpusHonesty(floorMs, truncatedBuckets, partialBuckets, sourceCounts);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main();

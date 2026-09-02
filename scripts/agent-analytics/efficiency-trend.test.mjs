@@ -6,14 +6,20 @@
  */
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import {
   percentile, isoWeekKey, dayKey, bucketKey, weekBounds, dayBounds, bucketBounds,
-  buildLeadingIndicators, buildBucketedSpawnRows, buildSpawnTail,
+  bucketOverlapsWindow, buildLeadingIndicators, buildBucketedSpawnRows, buildSpawnTail,
   classifyPath, buildDeliveryRows, deliveryPowerWarning,
-  classifyBucket, resolveGitRef, mergeLiveAndSnapshot,
+  classifyBucket, resolveGitRef, mergeLiveAndSnapshot, countBySource,
 } from './efficiency-trend.mjs';
 import { makeCall } from './lib/ledger/record.mjs';
+
+const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'efficiency-trend.mjs');
 
 let passed = 0;
 const failures = [];
@@ -318,6 +324,112 @@ run('mergeLiveAndSnapshot: live wins on a shared bucket key; snapshot fills gaps
   assert.equal(w35.source, 'live');
   assert.equal(w30.calls, 50, 'snapshot fills a bucket with no live data');
   assert.equal(w30.source, 'snapshot');
+});
+
+// --- bucketOverlapsWindow: regression for "snapshot merge ignores --since/--until" ---
+// (independent-verification defect 1 -- the merge previously filtered a
+// snapshot record only by harness/by, never by the requested window, so a
+// 10-day query silently returned five weeks of stale snapshot data.)
+
+run('bucketOverlapsWindow: a bucket entirely BEFORE sinceMs is excluded', () => {
+  // 2026-W32 = 2026-08-03..2026-08-10; a window starting 2026-08-24 must not admit it
+  assert.equal(bucketOverlapsWindow('2026-W32', 'week', Date.parse('2026-08-24T00:00:00.000Z'), null), false);
+});
+
+run('bucketOverlapsWindow: a bucket entirely AFTER untilMs is excluded', () => {
+  assert.equal(bucketOverlapsWindow('2026-W40', 'week', null, Date.parse('2026-08-24T00:00:00.000Z')), false);
+});
+
+run('bucketOverlapsWindow: a bucket fully inside [sinceMs, untilMs] is admitted -- the other direction', () => {
+  // a fix that dropped ALL snapshot rows would pass the two exclusion tests
+  // above while destroying the feature; this is the test that catches that.
+  assert.equal(bucketOverlapsWindow(
+    '2026-W35', 'week', Date.parse('2026-08-24T00:00:00.000Z'), Date.parse('2026-09-02T00:00:00.000Z'),
+  ), true);
+});
+
+run('bucketOverlapsWindow: a bucket straddling sinceMs (partial overlap) is admitted, not excluded', () => {
+  // sinceMs lands mid-week -- the bucket still has hours of overlap with the window
+  assert.equal(bucketOverlapsWindow('2026-W32', 'week', Date.parse('2026-08-05T00:00:00.000Z'), null), true);
+});
+
+run('bucketOverlapsWindow: null sinceMs/untilMs means unbounded on that side (matches lib/ledger/index.mjs\'s inTsWindow convention)', () => {
+  assert.equal(bucketOverlapsWindow('2026-W32', 'week', null, null), true);
+});
+
+// --- countBySource -----------------------------------------------------------
+
+run('countBySource: counts live vs snapshot, defaulting an absent `source` to live', () => {
+  const rows = [{ source: 'live' }, { source: 'snapshot' }, {}, { source: 'snapshot' }];
+  assert.deepEqual(countBySource(rows), { live: 2, snapshot: 2 });
+});
+
+// --- CLI-level regression: snapshot merge respects the window AND labels source ---
+// (independent-verification defects 1+2, reproduced live against
+// tmp/agent-telemetry/efficiency-trend.ndjson before this fix landed; these
+// use a SCRATCH snapshot file via --snapshot-path, never the real store.)
+
+function withScratchSnapshot(records, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eff-trend-cli-'));
+  const file = path.join(dir, 'snap.ndjson');
+  fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  try {
+    return fn(file);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+run('CLI: a narrow --since/--until window admits an IN-window snapshot bucket and excludes an OUT-of-window one', () => {
+  const records = [
+    { bucket: '2020-W01', harness: 'claude-code', by: 'week', generatedAtMs: 1, leading: { calls: 11, costUsd: 1, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 }, spawnTail: null },
+    { bucket: '2021-W01', harness: 'claude-code', by: 'week', generatedAtMs: 1, leading: { calls: 22, costUsd: 2, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 }, spawnTail: null },
+  ];
+  withScratchSnapshot(records, (file) => {
+    const res = spawnSync(process.execPath, [
+      SCRIPT_PATH, '--since', '2020-12-28', '--until', '2021-01-11', '--harness', 'claude-code',
+      '--no-git', '--snapshot-path', file,
+    ], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /2021-W01/, 'the in-window snapshot bucket must be admitted');
+    assert.doesNotMatch(res.stdout, /2020-W01/, 'the out-of-window snapshot bucket must NOT leak in (defect 1)');
+  });
+});
+
+run('CLI: a snapshot-sourced row is visibly labelled "snapshot" in the human output (defect 2)', () => {
+  const records = [
+    { bucket: '2020-W01', harness: 'claude-code', by: 'week', generatedAtMs: 1, leading: { calls: 11, costUsd: 1, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 }, spawnTail: { spawns: 1, medCalls: 1, medPeakCtx: 1, costPerSpawn: 1, longSpawns: 0, longCostSharePct: 0, unpricedCalls: 0 } },
+  ];
+  withScratchSnapshot(records, (file) => {
+    const res = spawnSync(process.execPath, [
+      SCRIPT_PATH, '--since', '2019-12-30', '--until', '2020-01-06', '--harness', 'claude-code',
+      '--no-git', '--snapshot-path', file,
+    ], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    // the 2020-W01 row line itself must carry the "snapshot" label, not just
+    // the word appearing SOMEWHERE in the output (e.g. a header or count line)
+    const row = res.stdout.split('\n').find((l) => l.startsWith('2020-W01'));
+    assert.ok(row, 'expected a 2020-W01 row in the leading-indicators table');
+    assert.match(row, /snapshot/, 'a snapshot-sourced row must be visibly labelled, not indistinguishable from live');
+    assert.match(res.stdout, /row sources: leading 0 live \/ 1 snapshot/, 'section (d) must state the live/snapshot row counts');
+  });
+});
+
+run('CLI --json: a snapshot-sourced row carries source:"snapshot" and an in-window live-only bucket carries source:"live"', () => {
+  const records = [
+    { bucket: '2020-W01', harness: 'claude-code', by: 'week', generatedAtMs: 1, leading: { calls: 11, costUsd: 1, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 }, spawnTail: null },
+  ];
+  withScratchSnapshot(records, (file) => {
+    const res = spawnSync(process.execPath, [
+      SCRIPT_PATH, '--since', '2019-12-30', '--until', '2020-01-06', '--harness', 'claude-code',
+      '--no-git', '--snapshot-path', file, '--json',
+    ], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.leading.length, 1);
+    assert.equal(parsed.leading[0].source, 'snapshot');
+    assert.equal(parsed.corpusHonesty.sourceCounts.leading.snapshot, 1);
+  });
 });
 
 // --- report ------------------------------------------------------------------
