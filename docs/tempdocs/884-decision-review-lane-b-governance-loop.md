@@ -823,6 +823,7 @@ each names where it is acted on, not merely that it exists.
 | 5 | **`build-logic/.kotlin/` is not gitignored.** A Gradle build in a worktree leaves it untracked, one `git add -A` from being committed. | `git check-ignore -v build-logic/.kotlin/` matches nothing | Not fixed: `.gitignore` is shared-surface and lane B owns no build config. **Owner: the next build-config change.** Lane B stages explicit paths, so it cannot commit it by accident. |
 | 6 | **`setupOperationAdmission` fails open too.** `ApiSecurityFilters.java:114-115` returns silently when `operationLeases == null` — the same shape as the token defect PR 2 closed, in the same `install()` chain, one control over. Not investigated further. | `ApiSecurityFilters.java:114-115` | ADR-0046's own open question. **Owner: whoever revisits the operation-admission control**; ADR-0046 is the record it must be re-decided against. |
 | 7 | **`scripts/ci/check-installer-execution-level.mjs` is invoked by nothing** — not the pre-merge table, not any workflow (found by PR 1, §D.3; ADR-0024 stopped using it as a probe as a result). Still true. | PR 1 §D.3 | **Owner: whoever owns installer CI.** Either wire it into `.github/workflows/` or delete it; an uninvoked check is a layer that is dead regardless of its quality. |
+| 11 | **`git-base` never resolves a PR base.** `scripts/governance/lib/git-utils.mjs:36` documents the strategy as "PR base ref with `HEAD~1` fallback"; `:83-92` implements only `baseline.fallback ?? 'HEAD~1'`. Every `diffStrategy: "git-base"` gate therefore diffs a one-commit window, so a changeset committed earlier in a branch drops out of scope as soon as another commit lands — the gate flips red mid-branch with no change to its findings. | `git-utils.mjs:36` vs `:83-92`; reproduced on this branch: same 117 findings, 0 fail at the changeset commit vs 2 fail at the tip | Not fixed here: it is kernel-wide diff semantics, not lane B's subject, and the merge queue's squash makes `HEAD~1` the true base after merge so the defect is masked at the only moment it would bite CI. Fix = resolve the actual merge-base against the default branch and keep `HEAD~1` as the genuine fallback. **Owner: whoever next touches the discipline-gate kernel's baseline resolution.** |
 | 9 | **Three kernel gates run nowhere.** `dead-code`, `npm-audit` and `module-deps` need inputs no CI job builds (`ci.yml:206-207` says so), so they are registered, baselined and unable to notice anything. Producing the inputs surfaced 27 `dead-code/silent-growth` findings, 23 of them pre-existing. | `ci.yml:206-207`; `gates/dead-code/baseline.txt` last touched 2026-07-16 (#215) | Declared in `gates/dead-code/.changesets/884-surface-projection-plus-preexisting-drift.md`, which enumerates ours vs pre-existing. Fix = wire them into CI with their inputs (or state openly they are local-only), then rebalance the baseline. **Owner: the CI fact-lane owner (ADR-0044) + whoever lands the ui-web work.** |
 | 10 | **The extraction sandbox cannot start on a long path.** All 6 `ProcessExtractionSandboxTest` cases fail in a worktree with `CreateProcess error=206` — the child JVM's classpath crosses the Windows 32k command-line limit. Not load-dependent; reproduces isolated. | Full-suite run 2026-09-02; error text in `modules/worker-services/build/test-results` | Pinned as `process-extraction-sandbox-classpath-too-long` with an exit probe, and folded into **RISK-010** as a second, independent obstacle beyond the missing argv. Fix = argfile or pathing jar for the child classpath. **Owner: decision-review lane C, tempdoc 885 item 14.** |
 | 8 | **`CLAUDE.md` has 1 byte of headroom** (22321 / 22322 B) after the invariant #2 rewrite (§E.5). The next always-loaded addition of any size fails `check-always-loaded-budget`. | `node scripts/ci/check-always-loaded-budget.mjs` | **Owner: the next CLAUDE.md editor** — who must shrink before adding. The budget ratchet enforces this mechanically, so this is a warning about *when* the wall arrives, not a request to remember it. |
@@ -1267,10 +1268,27 @@ one gate, and two worktrees colliding across different gates all still fire.
 Running the whole kernel (which B1 forced, and which PR 2 had never done) produced two results, and
 the second matters more than the first.
 
-**First, the summary line.** `node scripts/governance/run.mjs --produce-inputs --mode gate` →
-**35 gates evaluated, 0 fail, 117 findings**, exit 0, all 35 self-test fixture pairs expected. A bare
-run without `--produce-inputs` reports 4-5 `kernel/input-missing` failures, which is the pinned
-`governance-kernel-inputs-unbuilt` condition, not a red.
+**First, the summary line — which depends on WHERE in the branch you stand, and that is itself a
+finding.** Run on the commit that introduced the changesets:
+**35 gates evaluated, 0 fail, 117 findings**, exit 0, all 35 self-test fixture pairs expected. Run
+again at the branch tip, several commits later: **35 gates evaluated, 2 fail, 117 findings** —
+`ts-any` and `dead-code`, the two gates this PR wrote changesets for. The findings are identical; only
+the verdict moved.
+
+The cause is not the changesets. Both gates declare `diffStrategy: "git-base"`, whose docstring
+promises "PR base ref with `HEAD~1` fallback" (`scripts/governance/lib/git-utils.mjs:36`) — but the
+implementation (`:83-92`) is `const candidate = baseline.fallback ?? 'HEAD~1'` and never resolves a
+PR base at all. The "fallback" is the only path. So changeset discovery looks at a one-commit window,
+and a changeset committed earlier in the same branch has already fallen out of it by the time later
+commits land. Recorded with both numbers rather than the flattering one: a summary line that is true
+only at one commit is exactly the kind of claim this lane exists to stop.
+
+This does not block the merge, and it is not lane B's to fix (§F row 11). Both gates are red on `main`
+independently and neither runs in `ci.yml`; the merge queue squashes, so after merge `HEAD~1` IS the
+base and the window is correct by accident.
+
+A bare run without `--produce-inputs` additionally reports 4-5 `kernel/input-missing` failures, which
+is the pinned `governance-kernel-inputs-unbuilt` condition, not a red.
 
 **Second, what producing the inputs revealed.** `dead-code` failed with **27**
 `dead-code/silent-growth` findings. Four are this branch's (the generated Surface projection, its
