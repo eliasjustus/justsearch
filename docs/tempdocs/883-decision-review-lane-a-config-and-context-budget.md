@@ -1683,6 +1683,18 @@ seed was reachable, the *runner* was not.
    `EffectiveConfigController` still reads their markers at `:329` and `:454`. Retiring them is the
    same mechanical move this PR made three times; it is a tracked item, not a silent drop, and it is
    the natural next slice for whoever picks up 883's residue.
+   **RESOLVED by the wave-1 residue PR (`worktree-resid-product`).** Both promotions are deleted;
+   both keys already reached the resolver at ordinal 300 via
+   `ConfigStoreRebuilder.contributeUiSettings`, so no reader lost its value (the Worker gets
+   `justsearch.index.base_path` from the ordinal-450 snapshot, which `ResolvedConfig.toWorkerSnapshot`
+   writes from `paths.indexBasePath()`). Both `EffectiveConfigController` rows are re-sourced from
+   resolver provenance, which removed the report's LAST two marker readers — `isUiSettingsMarker` and
+   its private `ui_settings` copy are gone with them. Two things deliberately survive: the
+   `justsearch.llm.model_path.source` marker itself, because `AiInstallService` /
+   `AiPackImportService` still write a path straight to a sysprop and `InferenceConfig` needs to tell
+   that from an operator lock; and `HeadlessApp`'s `llama.lib.path` write, which is a different shape
+   (no `EnvRegistry` entry, no resolver key — the llama.cpp JNI loader reads the raw system property,
+   so retiring it means giving it a config key first).
 3. **The dead-config scanner's bare-name collision blind spot is unchanged** (documented in
    `dead-config.mjs`). The new yaml half does not narrow it; it closes a different hole.
 4. **`AgentLoopService.java:456-460` still hand-walks the window** (carried from PR 2's §C.6b).
@@ -1705,7 +1717,8 @@ seed was reachable, the *runner* was not.
 Nothing from the lane's scope table remains: items 8, 9 and 22 are implemented. What is left is
 named above and below —
 
-- the two remaining `HeadlessApp` promotions (§C.5c (2));
+- ~~the two remaining `HeadlessApp` promotions (§C.5c (2))~~ — **done** in the wave-1 residue PR
+  (`worktree-resid-product`), together with §C.5c (1)'s snapshot-ordering residue;
 - the pre-merge-table row that does not fit the always-loaded budget (§C.4c (2));
 - the `DocAccess` / `BatchDocAccess` 200,000-char prompt injections (PR 2 §C.4b (5));
 - routing `AgentLoopService` through `ContextBudget` (PR 2 §C.6b);

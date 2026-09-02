@@ -1028,6 +1028,13 @@ under test is production `PersistentExtractionSandbox` code end to end.
   harness works around it with a JVM `@argfile` and asserts the JDK path is space-free rather than
   failing obscurely. A quoted-argv form for that key is a real (small) gap; it belongs to whoever
   next touches the key, not to this chunk.
+  **RESOLVED by the wave-1 residue PR (`worktree-resid-product`):** the key now goes through
+  `ExtractionSandboxCommand.tokenize`, which accepts shell-style `"` / `'` quoting (inside double
+  quotes only `\"` and `\\` are escapes, so a Windows path stays verbatim) and refuses an
+  unterminated quote instead of mis-splitting; the unquoted form is unchanged. The chaos harness
+  KEEPS its `@argfile` — that workaround is now justified by LENGTH alone (a fully expanded Gradle
+  test classpath clears the 32,767-character Windows limit on its own), and its two space-free
+  assertions are dropped because both paths are quoted.
 
 ### The defect the chaos tier found (and the unit tests could not)
 
@@ -2153,6 +2160,14 @@ seven-day bound and the attempts-cap behaviour are unit-tier by construction any
    handler drops the field or `GET /api/indexing/roots` projects it wrong; a two-line reproduction
    is `POST` with a `collection` then `GET …?counts=true`. Filed here as lane C residue because it
    surfaced in this lane's live window; it belongs to whichever tempdoc owns the Library surface.
+   **RESOLVED by the wave-1 residue PR (`worktree-resid-product`).** The controller was never the
+   culprit: it passes the value through (already pinned by `IndexingControllerAddRootCollectionTest`).
+   The label was lost one layer down — `RootLifecycleOps.addWatchedRoot` handed it to the two
+   write-only arms (Worker watcher registration, scan RPC) and nothing kept it, so
+   `getWatchedRoots()` hardcoded `null` for every root and the restart rewalk re-tagged a labelled
+   root's documents as the default (the deferred 821 §L.3 fix). The root→collection mapping is now
+   persisted in `watched_roots.json` (optional additive field, v1 unchanged) and read back by the
+   listing, the watcher arm and the rewalk.
 2. **The stack was serving mutating routes with an empty session token — checked, and by design.**
    `GET /api/mcp/token` returned `{"token":""}` and an unauthenticated `POST /api/indexing/roots`
    succeeded. Verified rather than assumed: `ApiSecurityFilters.setupSessionTokenEnforcement`
@@ -2384,6 +2399,11 @@ which is why this one is written down rather than remembered.
    a `PENDING`-in-backoff job before this item, and now also for `RETRY_EXHAUSTED`. Fix shape: read
    the state inside the same transaction as the re-enqueue and return it. Not bundled with B4 because
    it is a diagnostic field with no consumer that branches on it.
+   **RESOLVED by the wave-1 residue PR (`worktree-resid-product`)**, in the shape named: a
+   `JobQueue.reenqueue(EnqueueEntry)` whose SQLite implementation reads `state` and re-enqueues in
+   one transaction (a read before the call races the loop, and `INSERT OR REPLACE` destroys the
+   answer). A queue with no row-state authority reports `null`, which the RPC surfaces as `UNKNOWN`
+   rather than as a guess.
 2. **Delete the untyped `JobQueue.markFailed(Path, String)`.** No production caller remains — every
    ingestion failure now carries an `IngestionOutcome` — but it keeps a second terminal rule alive
    (the `MAX_ATTEMPTS` cap the typed transient arm no longer uses). Pinned meanwhile by
@@ -2398,6 +2418,8 @@ which is why this one is written down rather than remembered.
    filename prefix.
 4. **`POST /api/indexing/roots` drops a supplied `collection`** — see UL.6; owner
    `modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java:156-175`.
+   **RESOLVED by the wave-1 residue PR (`worktree-resid-product`)** — the loss was in
+   `RootLifecycleOps`/`WatchedRootsState`, not the controller; see UL.6 for the corrected diagnosis.
 5. **`MAX_CONTENT_CHARS` still has two further copies** outside this item's reach:
    `modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/DocAccess.java:51`
    and `BatchDocAccess.java:49`. They document the same Worker cap for the conversation SPI; folding
@@ -3148,6 +3170,16 @@ Two blockers, both structural:
 scope; only then is there a knob worth measuring. Recorded here rather than left as a deleted key
 with no explanation.
 
+**(a) is DONE — the wave-1 residue PR (`worktree-resid-product`) made the safety-net timer
+configurable.** `index.commit.timer_interval_ms` / `JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS`,
+default `10000` (the constant it replaces, so the default arm is bit-identical), resolved onto
+`ResolvedConfig.Index` and forwarded to the Worker through the ordinal-450 snapshot
+(`CommitTimerConfigForwardingTest`); `CommitOps.startCommitTimer` reads it and refuses a
+non-positive period. The A3 arm can therefore be re-measured with the timer moved instead of held
+at 10 s. **(b) is still open**: the enrichment backfill's own commit sites (61 of 114 in the
+control) remain outside every knob, so an arm that only moves the timer still cannot reach ~53% of
+the population — do not read (a) as a green light for the arm as originally designed.
+
 **Residual, recorded not fixed:** `journal.drainPending()` sits inside the idle-commit `try`
 (`IndexingLoop.java`), so a *throwing* idle commit also skips the journal drain. The measured 92%
 throughput collapse was caused by the deleted key delaying that commit, and it disappears with the
@@ -3431,7 +3463,8 @@ sampling evidence are in §"Item 6 live (2026-09-02)".
   number rather than the changeset, so one tempdoc's several changesets read as a collision (its pin
   was deleted on #600; the mis-fit was not fixed). (iii) `check-store-recoverability`'s scanner
   precision. (iv) `JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` splits on whitespace, so a path containing
-  a space cannot be expressed.
+  a space cannot be expressed — **(iv) resolved by the wave-1 residue PR**
+  (`worktree-resid-product`): the key is quote-aware now, see the §SC-argfile note above.
 
 **Residue routed.** Two platform lessons appended to `.claude/rules/agent-lessons.md` (Bash-tool
 heredocs corrupting backslashes/apostrophes; Gradle `--rerun` replaying cached test results), paid
