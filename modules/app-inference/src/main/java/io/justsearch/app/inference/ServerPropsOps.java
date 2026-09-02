@@ -190,6 +190,17 @@ final class ServerPropsOps {
     }
   }
 
+  /**
+   * Records the window the server reports and checks it against what we launched.
+   *
+   * <p>Caveat that bounds what this method can prove (tempdoc 883 fold [R1]): {@code /props.n_ctx}
+   * reports the server's TOTAL context even when {@code kv_unified} is off, in which case each
+   * request actually gets {@code n_ctx / n_parallel}. So a matching {@code n_ctx} is NOT evidence
+   * that a request gets the full window. The guarantee for that is the argv — {@code -kvu} always
+   * accompanying an explicit {@code -np}, pinned by the ordered launch-command test — plus reading
+   * {@code n_ctx_seq} from the llama-server log in the live acceptance window. Do not add a check
+   * here that claims to verify it; the field this method reads cannot.
+   */
   private void applyContextInsightsFromProps(JsonNode root) {
     Integer actualContextSize = extractContextTokensFromProps(root);
     if (actualContextSize != null && actualContextSize > 0) {
@@ -233,8 +244,25 @@ final class ServerPropsOps {
     externalServerAdoptedAtMs.compareAndSet(0, System.currentTimeMillis());
     externalServerModelMismatch.set(detectExternalModelMismatch(root));
     Integer ctx = propsObserver.observedContextTokens();
-    boolean ctxTooSmall = ctx != null && ctx < config.get().contextSize();
-    externalServerContextTooSmall.set(ctxTooSmall);
+    externalServerContextTooSmall.set(isAdoptedContextTooSmall(ctx));
+  }
+
+  /**
+   * Whether an ADOPTED external server's window is too small to work with.
+   *
+   * <p>Compared against the minimum usable window, not against our own configured one. Tempdoc 883
+   * made the configured value a DERIVED ladder rung (32768 on a GPU box), and a BYO llama-server
+   * running at a perfectly workable 8192 is not broken merely because it is smaller than the rung
+   * we would have chosen for a server we launched ourselves. Judging someone else's server by our
+   * preference would mark almost every adopted server "too small".
+   *
+   * <p>{@link ContextWindowPolicy#MIN_USABLE_ADOPTED_TOKENS} is the bottom rung of the ladder —
+   * the smallest window this app is willing to run its own engine at, and therefore the honest
+   * floor for one it adopts.
+   */
+  static boolean isAdoptedContextTooSmall(Integer observedContextTokens) {
+    return observedContextTokens != null
+        && observedContextTokens < ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS;
   }
 
   // ==================== Model/Context Extraction ====================

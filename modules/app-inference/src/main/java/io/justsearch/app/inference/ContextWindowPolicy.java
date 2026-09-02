@@ -39,6 +39,14 @@ public final class ContextWindowPolicy {
   /** Floor for an explicit operator override. */
   public static final int MIN_EXPLICIT_TOKENS = 512;
 
+  /**
+   * The smallest window this app will run its own engine at — the ladder's bottom rung.
+   *
+   * <p>Also the honest floor for judging an ADOPTED external server: a BYO llama-server is not
+   * "too small" merely because it is below the rung we would have chosen for a server we launched.
+   */
+  public static final int MIN_USABLE_ADOPTED_TOKENS = 4096;
+
   /** Recorded reason when the window came from the ladder and the first rung loaded. */
   public static final String REASON_FIT = "fit";
 
@@ -49,7 +57,8 @@ public final class ContextWindowPolicy {
   public static final String REASON_STEPPED_FROM_PREFIX = "stepped-from:";
 
   /** The full rung set, descending. A backend's ladder is the suffix at or below its top rung. */
-  private static final List<Integer> RUNGS = List.of(GPU_TOP_RUNG, 16384, CPU_TOP_RUNG, 4096);
+  private static final List<Integer> RUNGS =
+      List.of(GPU_TOP_RUNG, 16384, CPU_TOP_RUNG, MIN_USABLE_ADOPTED_TOKENS);
 
   private ContextWindowPolicy() {}
 

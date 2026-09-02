@@ -163,6 +163,40 @@ class ServerPropsOpsTest {
     assertEquals(2048, lastContextTokens.get());
   }
 
+  // ============ adopted-server context floor (tempdoc 883 review item 3) ============
+
+  @Test
+  void adoptedContextTooSmall_isFalseForAWorkableByoServer() {
+    // An adopted BYO llama-server at 8192 is perfectly workable. Before tempdoc 883 this was
+    // compared against OUR configured contextSize, which is now a derived 32768 rung on a GPU
+    // box — so every adopted server below our own preference would have been flagged too small.
+    assertFalse(ServerPropsOps.isAdoptedContextTooSmall(8192));
+    assertFalse(ServerPropsOps.isAdoptedContextTooSmall(4096));
+    assertFalse(ServerPropsOps.isAdoptedContextTooSmall(32768));
+  }
+
+  @Test
+  void adoptedContextTooSmall_isTrueBelowTheLaddersBottomRung() {
+    // Below the smallest window this app will run its OWN engine at, "too small" is honest.
+    assertTrue(ServerPropsOps.isAdoptedContextTooSmall(2048));
+    assertTrue(ServerPropsOps.isAdoptedContextTooSmall(512));
+  }
+
+  @Test
+  void adoptedContextTooSmall_isFalseWhenTheWindowIsUnknown() {
+    assertFalse(ServerPropsOps.isAdoptedContextTooSmall(null));
+  }
+
+  @Test
+  void adoptedContextFloor_isTheLaddersBottomRung() {
+    // Pins the floor to the policy rather than to a literal that can drift away from it.
+    assertEquals(4096, ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS);
+    assertFalse(
+        ServerPropsOps.isAdoptedContextTooSmall(ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS));
+    assertTrue(
+        ServerPropsOps.isAdoptedContextTooSmall(ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS - 1));
+  }
+
   // ==================== updateFromPropsBestEffort ====================
 
   @Test

@@ -242,58 +242,7 @@ final class LlamaServerOps {
     usingExternal = false;
 
     InferenceConfig cfg = config.get();
-    List<String> command = new ArrayList<>();
-    command.add(cfg.serverExecutable().toString());
-    command.add("-m");
-    command.add(cfg.modelPath().toString());
-
-    if (cfg.mmprojPath() != null) {
-      command.add("--mmproj");
-      command.add(cfg.mmprojPath().toString());
-    }
-
-    // VDU mode: no prompt cache (it corrupts silently after ~7 pages and crashes the server).
-    // The single-slot half of this rule now rides the common -np below, which VDU pins to 1 —
-    // multi-slot causes alternating HTTP 500 on vision requests.
-    if (cfg.vduMode()) {
-      command.add("--cache-ram");
-      command.add("0");
-      LOG.info("VDU mode: applying vision-safe flags (--cache-ram 0, -np 1)");
-    }
-
-    // Enable Jinja2 template processing for tool-use chat templates (required for function calling).
-    command.add("--jinja");
-
-    // When thinking mode is enabled, emit reasoning_content as a separate SSE field
-    // instead of inline <think> tags in content. Requires llama.cpp build >=b4215.
     ResolvedConfig rc = ConfigStore.global().get();
-    boolean reasoningRequested = false;
-    if (rc.ai().useThinking()) {
-      command.add("--reasoning-format");
-      command.add("deepseek");
-
-      // Control reasoning token generation. The default is a bounded budget (tempdoc 835): the
-      // budget is shared with the answer, so 0 disables reasoning entirely and an unbounded budget
-      // starves the answer — ResolvedConfigBuilder refuses the shapes that do.
-      int reasoningBudget = rc.ai().reasoningBudget();
-      command.add("--reasoning-budget");
-      command.add(String.valueOf(reasoningBudget));
-      reasoningRequested = reasoningBudget != 0;
-    }
-    this.reasoningBudgetRequested = reasoningRequested;
-    thinkingSupport.set(reasoningRequested ? ThinkingSupport.UNKNOWN : ThinkingSupport.DISABLED);
-
-    // Defense-in-depth: force loopback bind for owned llama-server (BYO binaries may differ).
-    command.add("--host");
-    command.add("127.0.0.1");
-
-    // Tempdoc 412: enable Prometheus /metrics endpoint so OnlineRuntime can scrape queue depth,
-    // active slots, kv-cache usage, tokens-predicted-total. Without this flag the endpoint 404s
-    // and the inference.queue.* / inference.generation.* status gauges stay at zero.
-    command.add("--metrics");
-
-    command.add("--port");
-    command.add(String.valueOf(cfg.serverPort()));
 
     int gpuLayers = cfg.gpuLayers();
     if (gpuLayers > 0 && !policyGpuAccelerationEnabled()) {
@@ -308,23 +257,23 @@ final class LlamaServerOps {
     GpuCapabilities gpuSnap = gpuLayers > 0 ? gpuCapabilitiesService.snapshot() : null;
     Long freeVramBytes =
         gpuSnap != null && gpuSnap.effective() != null ? gpuSnap.effective().freeVramBytes() : null;
-    ContextWindowPolicy.Plan plan = planContextWindow(rc, cfg, gpuLayers > 0, freeVramBytes);
+    ContextWindowPolicy.Plan plan = planContextWindow(rc, gpuLayers > 0, freeVramBytes);
     this.contextPlan = plan;
     this.contextRung = plan.topRung();
     this.contextRungReason = plan.reason();
+    this.contextSlots = slotsFor(cfg, rc);
+    this.contextKvType = rc.ai().llmKvType();
+    this.lastEffectiveVramFlags = memoryPlanFlags(contextSlots, contextKvType);
 
-    int slots = cfg.vduMode() ? 1 : rc.ai().llmSlots();
-    String kvType = rc.ai().llmKvType();
-    command.addAll(windowFlags(plan.topRung(), gpuLayers));
-    List<String> kvFlags = slotAndKvFlags(slots, kvType);
-    command.addAll(kvFlags);
-    this.contextSlots = slots;
-    this.contextKvType = kvType;
-    // The KV/attention flags this launch actually carries, for /api/ai/runtime/status. Formerly the
-    // subset VramFlagsUtil merged in from VramRequirements.recommendedLlamaServerFlags: a merge
-    // that is now provably inert here, because it only ever contributed -c/-ngl (always skipped),
-    // -fa and -ctk/-ctv, all of which this launch now sets itself (tempdoc 883 B.b.4).
-    this.lastEffectiveVramFlags = kvFlags;
+    List<String> command = buildLaunchCommand(cfg, rc, gpuLayers, plan);
+
+    boolean reasoningRequested = rc.ai().useThinking() && rc.ai().reasoningBudget() != 0;
+    this.reasoningBudgetRequested = reasoningRequested;
+    thinkingSupport.set(reasoningRequested ? ThinkingSupport.UNKNOWN : ThinkingSupport.DISABLED);
+
+    if (cfg.vduMode()) {
+      LOG.info("VDU mode: applying vision-safe flags (--cache-ram 0, -np 1)");
+    }
 
     // Warn if GPU layers requested but using the CPU variant (no CUDA backend).
     // The CPU variant's ggml-cuda.dll is dynamically linked and requires CUDA Toolkit.
@@ -363,11 +312,11 @@ final class LlamaServerOps {
     }
 
     LOG.info(
-        "Context window: rung={} reason={} slots={} kv={} ladder={} freeVramBytes={}",
+        "Context window: rung={} reason={} slots={} kv={} ladder={} freeVramBytes={} (-fit off)",
         plan.topRung(),
         plan.reason(),
-        slots,
-        kvType,
+        contextSlots,
+        contextKvType,
         plan.ladder(),
         freeVramBytes);
 
@@ -376,28 +325,105 @@ final class LlamaServerOps {
   }
 
   /**
-   * The window flags: {@code -c <rung> -ngl <layers>}. Package-private and pure so the exact argv
-   * is unit-testable without launching a process.
+   * The FULL llama-server argv for a launch. Package-private, static and pure so the exact
+   * argument list is unit-testable without spawning a process — the flags interact (see
+   * {@link #memoryPlanFlags}), so asserting them individually is not the same as asserting the
+   * launch line.
+   *
+   * <p>Every launch-shaping decision this class makes is visible here; the caller keeps only the
+   * side effects (recording the plan, the thinking verdict, and the VRAM diagnostics).
+   */
+  static List<String> buildLaunchCommand(
+      InferenceConfig cfg, ResolvedConfig rc, int gpuLayers, ContextWindowPolicy.Plan plan) {
+    List<String> command = new ArrayList<>();
+    command.add(cfg.serverExecutable().toString());
+    command.add("-m");
+    command.add(cfg.modelPath().toString());
+
+    if (cfg.mmprojPath() != null) {
+      command.add("--mmproj");
+      command.add(cfg.mmprojPath().toString());
+    }
+
+    // VDU mode: no prompt cache (it corrupts silently after ~7 pages and crashes the server).
+    // The single-slot half of this rule rides the common -np below, which VDU pins to 1 —
+    // multi-slot causes alternating HTTP 500 on vision requests.
+    if (cfg.vduMode()) {
+      command.add("--cache-ram");
+      command.add("0");
+    }
+
+    // Enable Jinja2 template processing for tool-use chat templates (required for function calling).
+    command.add("--jinja");
+
+    // When thinking mode is enabled, emit reasoning_content as a separate SSE field
+    // instead of inline <think> tags in content. Requires llama.cpp build >=b4215.
+    if (rc.ai().useThinking()) {
+      command.add("--reasoning-format");
+      command.add("deepseek");
+
+      // Control reasoning token generation. The default is a bounded budget (tempdoc 835): the
+      // budget is shared with the answer, so 0 disables reasoning entirely and an unbounded budget
+      // starves the answer — ResolvedConfigBuilder refuses the shapes that do.
+      command.add("--reasoning-budget");
+      command.add(String.valueOf(rc.ai().reasoningBudget()));
+    }
+
+    // Defense-in-depth: force loopback bind for owned llama-server (BYO binaries may differ).
+    command.add("--host");
+    command.add("127.0.0.1");
+
+    // Tempdoc 412: enable Prometheus /metrics endpoint so OnlineRuntime can scrape queue depth,
+    // active slots, kv-cache usage, tokens-predicted-total. Without this flag the endpoint 404s
+    // and the inference.queue.* / inference.generation.* status gauges stay at zero.
+    command.add("--metrics");
+
+    command.add("--port");
+    command.add(String.valueOf(cfg.serverPort()));
+
+    command.addAll(windowFlags(plan.topRung(), gpuLayers));
+    command.addAll(memoryPlanFlags(slotsFor(cfg, rc), rc.ai().llmKvType()));
+    return command;
+  }
+
+  /** Slots for this launch: VDU pins 1 (multi-slot breaks vision), otherwise the configured count. */
+  static int slotsFor(InferenceConfig cfg, ResolvedConfig rc) {
+    return cfg.vduMode() ? 1 : rc.ai().llmSlots();
+  }
+
+  /**
+   * The window flags: {@code -c <rung> -ngl <layers>}.
    */
   static List<String> windowFlags(int rung, int gpuLayers) {
     return List.of("-c", String.valueOf(rung), "-ngl", String.valueOf(gpuLayers));
   }
 
   /**
-   * The slot and KV-cache flags (tempdoc 883 decision 2, fold [R1][R2]).
+   * The memory-plan flags (tempdoc 883 decision 2, fold [R1][R2][R4]) — slots, KV cache type,
+   * flash attention, and memory fitting.
    *
    * <p>{@code -kvu} is not optional next to an explicit {@code -np}: llama-server enables
    * {@code kv_unified} only when the slot count is automatic, so passing {@code -np 2} without it
    * gives each slot HALF the window ({@code n_ctx_seq} 16384 at {@code -c 32768}) while
-   * {@code /props} still reports the full {@code n_ctx} - a silent halving that reads as correct
+   * {@code /props} still reports the full {@code n_ctx} — a silent halving that reads as correct
    * from every surface that asks the server what its context is.
    *
    * <p>{@code -fa on} is explicit rather than {@code auto} because a quantized V-cache aborts the
    * launch without flash attention.
+   *
+   * <p>{@code -fit off} is what makes the context ladder mean anything. b8571 defaults
+   * {@code --fit on} ("adjust UNSET arguments to fit in device memory", verified against the
+   * bundled binary's {@code --help}), and it MAXIMIZES rather than fits: with {@code -c} omitted it
+   * chose 242,944 tokens / 4 GB of KV. An explicit {@code -c} is nominally outside its remit, but
+   * the ladder's whole premise is that a rung which does not fit produces a hard, detectable abort
+   * — so leaving a memory-adjusting heuristic switched on next to it means the failure signal the
+   * step-down reads could be silently absorbed instead. Off, the rung is either honoured or the
+   * launch dies, which is the only shape the ladder can act on.
    */
-  static List<String> slotAndKvFlags(int slots, String kvType) {
+  static List<String> memoryPlanFlags(int slots, String kvType) {
     return List.of(
-        "-np", String.valueOf(slots), "-kvu", "-ctk", kvType, "-ctv", kvType, "-fa", "on");
+        "-np", String.valueOf(slots), "-kvu", "-ctk", kvType, "-ctv", kvType, "-fa", "on", "-fit",
+        "off");
   }
 
   void stopLlamaServer() {
@@ -616,11 +642,20 @@ final class LlamaServerOps {
     }
     OptionalInt lower = plan.nextRungBelow(contextRung);
     if (lower.isEmpty()) {
-      LOG.warn(
-          "llama-server exited at context rung {} and the ladder {} is exhausted; reporting the"
-              + " launch failure rather than retrying.",
-          contextRung,
-          plan.ladder());
+      if (ContextWindowPolicy.REASON_OVERRIDE.equals(plan.reason())) {
+        LOG.error(
+            "llama-server did not start at the explicitly configured context size {}"
+                + " (justsearch.context.size). This is an operator override, so it is NOT reduced"
+                + " to a smaller window: set it lower, or set it to 0 to let the window be derived"
+                + " from the backend.",
+            contextRung);
+      } else {
+        LOG.warn(
+            "llama-server exited at context rung {} and the ladder {} is exhausted; reporting the"
+                + " launch failure rather than retrying.",
+            contextRung,
+            plan.ladder());
+      }
       return false;
     }
 
@@ -674,15 +709,30 @@ final class LlamaServerOps {
    * as a one-rung ladder; otherwise the backend's derived ladder.
    */
   private static ContextWindowPolicy.Plan planContextWindow(
-      ResolvedConfig rc, InferenceConfig cfg, boolean gpuBacked, Long freeVramBytes) {
+      ResolvedConfig rc, boolean gpuBacked, Long freeVramBytes) {
+    // Provenance AND value come from the same ConfigResolution: reading the ordinal here and the
+    // number from InferenceConfig would be two reads of one fact that can disagree (the config is
+    // built once at activation; the resolution is live).
     ConfigResolution resolution = rc.resolution("justsearch.context.size");
-    boolean explicit =
-        resolution != null
-            && resolution.isResolved()
-            && resolution.sourceOrdinal() > ResolvedConfigBuilder.ORDINAL_AUTO_DETECT;
-    return explicit
-        ? ContextWindowPolicy.override(cfg.contextSize(), freeVramBytes)
-        : ContextWindowPolicy.auto(gpuBacked, freeVramBytes);
+    if (resolution == null
+        || !resolution.isResolved()
+        || resolution.sourceOrdinal() <= ResolvedConfigBuilder.ORDINAL_AUTO_DETECT) {
+      return ContextWindowPolicy.auto(gpuBacked, freeVramBytes);
+    }
+    int tokens;
+    try {
+      tokens = Integer.parseInt(resolution.value().trim());
+    } catch (NumberFormatException e) {
+      LOG.warn(
+          "justsearch.context.size={} from {} is not a number; deriving the window instead.",
+          resolution.value(),
+          resolution.sourceName());
+      return ContextWindowPolicy.auto(gpuBacked, freeVramBytes);
+    }
+    if (tokens <= 0) {
+      return ContextWindowPolicy.auto(gpuBacked, freeVramBytes);
+    }
+    return ContextWindowPolicy.override(tokens, freeVramBytes);
   }
 
   /**

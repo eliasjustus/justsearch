@@ -89,6 +89,22 @@ final class ContextWindowPolicyTest {
   }
 
   @Test
+  @DisplayName("the adopted-server floor IS the ladder's bottom rung, not a second number")
+  void adoptedFloorIsTheBottomRung() {
+    List<Integer> gpuLadder = ContextWindowPolicy.auto(true, null).ladder();
+
+    assertEquals(
+        ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS,
+        gpuLadder.get(gpuLadder.size() - 1),
+        "the smallest window we will run our own engine at is the honest floor for judging one we"
+            + " adopt; two independent numbers would drift");
+    assertEquals(
+        ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS,
+        ContextWindowPolicy.auto(false, null).ladder().get(1),
+        "both ladders bottom out at the same rung");
+  }
+
+  @Test
   @DisplayName("free VRAM rides the plan for the record and never selects a rung")
   void freeVramIsRecordedNotUsed() {
     ContextWindowPolicy.Plan starved = ContextWindowPolicy.auto(true, 1L);
