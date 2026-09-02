@@ -30,9 +30,19 @@ import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 const RESOURCE_ID = 'core.failed-indexing-jobs';
 const RETRY_OP = 'core.retry-indexing-job';
 
+/**
+ * Tempdoc 885 item 21b — the terminal state the queue landed a job in. `FAILED` says the file is
+ * unreadable (a parse failure, or the untyped attempts cap); `RETRY_EXHAUSTED` says we never
+ * managed to read it — a transient error that kept recurring for the whole seven-day retry window.
+ * The vocabulary is `IndexingJobView.STATE_*` (app-api); the by-prefix listing defaults a blank one
+ * to `FAILED`, so an older backend keeps the old rendering rather than falling off a `switch`.
+ */
+const STATE_RETRY_EXHAUSTED = 'RETRY_EXHAUSTED';
+
 interface FailedRow {
   readonly pathHash: string;
   readonly errorMessage: string;
+  readonly state: string;
 }
 
 export class FailedJobsDrawer extends JfElement {
@@ -113,6 +123,7 @@ export class FailedJobsDrawer extends JfElement {
       this.rows = items.map((j) => ({
         pathHash: String(j['pathHash'] ?? ''),
         errorMessage: String(j['errorMessage'] ?? ''),
+        state: String(j['state'] ?? ''),
       }));
       // Lazy-resolve hashes → display paths (best-effort; deleted files resolve to null → show hash).
       for (const r of this.rows) {
@@ -219,6 +230,14 @@ export class FailedJobsDrawer extends JfElement {
       color: var(--text-danger);
       overflow-wrap: anywhere;
     }
+    /* 885 item 21b — "we never managed to read it" is a WAITING outcome, not a verdict on the file,
+       so it carries the secondary tone rather than the danger tone the parse-failure line uses. */
+    .row-gaveup {
+      margin-top: 0.15rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      overflow-wrap: anywhere;
+    }
     .empty,
     .loading {
       padding: 1.5rem 0;
@@ -270,13 +289,24 @@ export class FailedJobsDrawer extends JfElement {
 
   private renderRow(r: FailedRow): TemplateResult {
     const display = this.resolved[r.pathHash] ?? `[${r.pathHash.slice(0, 12)}…]`;
+    // Tempdoc 885 item 21b — an exhausted job is NOT a bad file, and the two must not read alike.
+    // `errorMessage` on such a row is whichever transient error happened last (an I/O error, a
+    // parser timeout), which on its own reads as a verdict about the file; the header says what
+    // actually happened and what makes the queue try again, so the error stays as detail rather
+    // than as the explanation.
+    const exhausted = r.state.toUpperCase() === STATE_RETRY_EXHAUSTED;
     // Per-row retry/cancel reuse the shared <jf-row-actions> (tempdoc 599 §16.1 Move 1 + §17.2): it
     // reads the failed-jobs Resource's itemOperations and dispatches the user-invocable Operation with
     // {pathHash: rowKey} — no hand-rolled button or direct OperationClient call.
     return html`
-      <div class="row">
+      <div class="row" data-state=${r.state || 'FAILED'}>
         <div class="row-info">
           <div class="row-path" title=${display}>${display}</div>
+          ${exhausted
+            ? html`<div class="row-gaveup" data-testid="failed-job-exhausted">
+                Gave up after 7 days of retries — rescan the folder, or edit the file, to try again.
+              </div>`
+            : nothing}
           ${r.errorMessage ? html`<div class="row-error">${r.errorMessage}</div>` : nothing}
         </div>
         <jf-row-actions

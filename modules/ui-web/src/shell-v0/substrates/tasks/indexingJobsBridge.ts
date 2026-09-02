@@ -114,11 +114,16 @@ export function __resetResolvedLabelsForTest(): void {
 
 
 function labelFor(job: IndexingJobRow): string {
+  // Tempdoc 885 item 21b — a RETRY_EXHAUSTED job is terminal and the queue has STOPPED trying, so
+  // "Indexing · <file>" beside a failed pill is an active-voice claim about work that is no longer
+  // happening. `statusFor` maps it to `failed` (the rail's point of view); the verb is what says
+  // WHICH failure it is, matching the Activity ledger's own "Index gave up · …" (ActionLedgerClient).
+  const verb = job.state.toUpperCase() === 'RETRY_EXHAUSTED' ? 'Index gave up' : 'Indexing';
   const friendly = resolvedLabel.get(job.pathHash);
-  if (friendly) return `Indexing · ${friendly}`;
+  if (friendly) return `${verb} · ${friendly}`;
   // Fallback until the hash resolves (or if the worker has no path on record):
   // collection + a short hex prefix to disambiguate, never the raw path.
-  return `Indexing · ${job.collection} (${job.pathHash.slice(0, 6)})`;
+  return `${verb} · ${job.collection} (${job.pathHash.slice(0, 6)})`;
 }
 
 /**
