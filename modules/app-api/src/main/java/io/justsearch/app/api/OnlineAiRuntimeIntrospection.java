@@ -50,9 +50,35 @@ public interface OnlineAiRuntimeIntrospection {
       int consecutiveHealthFailures) {}
 
   /**
+   * The context window this process launched llama-server with, and why (tempdoc 883 decision 1).
+   *
+   * <p>The window is a DERIVED resource: a ladder rung chosen from the backend, stepped down when
+   * the server refuses it, or an operator's explicit override. This record is the intent — what was
+   * asked for. What the server reports back ({@code /props} {@code n_ctx}, and the {@code n_ctx_seq}
+   * in its log) stays the authority for what a request actually gets; never present one as the
+   * other.
+   *
+   * @param rung the {@code -c} value passed at launch
+   * @param reason {@code fit}, {@code override}, or {@code stepped-from:<planned top rung>}
+   * @param freeVramBytes NVML free VRAM at plan time — recorded for diagnosis, not an input
+   * @param slots the {@code -np} value passed at launch
+   * @param kvType the {@code -ctk}/{@code -ctv} cache type passed at launch
+   */
+  record ContextWindow(
+      int rung, String reason, Long freeVramBytes, int slots, String kvType) {}
+
+  /**
    * Returns a best-effort runtime info snapshot, or {@code null} if unavailable.
    */
   RuntimeInfo runtimeInfo();
+
+  /**
+   * Returns the launched context-window record, or {@code null} when this process launched no
+   * server (nothing started yet, or an adopted external instance whose window it did not choose).
+   */
+  default ContextWindow contextWindow() {
+    return null;
+  }
 
   /**
    * Returns safe diagnostics about external server adoption, or {@code null} if unavailable.

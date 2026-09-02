@@ -149,6 +149,16 @@ final class InferenceHandlers {
         // best-effort
       }
       try {
+        // Tempdoc 883: the window this process launched with and why. Absent (not zero) when it
+        // launched nothing — an adopted external server's window is not ours to claim.
+        var window = introspection.contextWindow();
+        if (window != null) {
+          builder.contextWindow(window);
+        }
+      } catch (Exception ignored) {
+        // best-effort
+      }
+      try {
         // Tempdoc 518 Appendix F W3.3 — generation counter (frontend detects mid-session restart).
         long gen = introspection.currentGeneration();
         if (gen >= 0) {

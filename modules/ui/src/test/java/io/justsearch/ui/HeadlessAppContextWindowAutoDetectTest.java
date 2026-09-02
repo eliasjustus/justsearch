@@ -1,0 +1,137 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.ui;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import io.justsearch.app.inference.ContextWindowPolicy;
+import java.util.HashMap;
+import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Pins {@link HeadlessApp#augmentDerivedContextWindow} (tempdoc 883 decision 1).
+ *
+ * <p>Two wrong-gate hazards live in this function and each has a test below: reading
+ * {@code gpu.layers} BEFORE the GPU auto-detect pass would derive the CPU rung on every GPU machine,
+ * and returning early on an empty probe map (as its GPU sibling does) would leave a fresh non-GPU
+ * data dir with no window provenance at all.
+ */
+@DisplayName("HeadlessApp.augmentDerivedContextWindow")
+final class HeadlessAppContextWindowAutoDetectTest {
+
+  private static final String CONTEXT_SIZE_KEY = "justsearch.context.size";
+  private static final String GPU_LAYERS_KEY = "justsearch.gpu.layers";
+
+  private String savedGpuLayers;
+
+  @BeforeEach
+  void clearSysprops() {
+    savedGpuLayers = System.getProperty(GPU_LAYERS_KEY);
+    System.clearProperty(GPU_LAYERS_KEY);
+  }
+
+  @AfterEach
+  void restoreSysprops() {
+    if (savedGpuLayers == null) {
+      System.clearProperty(GPU_LAYERS_KEY);
+    } else {
+      System.setProperty(GPU_LAYERS_KEY, savedGpuLayers);
+    }
+  }
+
+  @Test
+  @DisplayName("auto-detected GPU layers give the GPU top rung")
+  void gpuLayersFromAutoDetectGiveGpuRung() {
+    Map<String, String> autoDetected = new HashMap<>();
+    autoDetected.put("justsearch.gpu.enabled", "true");
+    autoDetected.put(GPU_LAYERS_KEY, "99");
+
+    Map<String, String> augmented = HeadlessApp.augmentDerivedContextWindow(autoDetected);
+
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.GPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
+  }
+
+  @Test
+  @DisplayName("no GPU layers give the CPU top rung")
+  void noGpuLayersGiveCpuRung() {
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(Map.of("justsearch.gpu.enabled", "false"));
+
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
+  }
+
+  @Test
+  @DisplayName("an empty probe map still gets a window: a fresh non-GPU data dir must be explained")
+  void emptyProbeMapStillContributes() {
+    Map<String, String> augmented = HeadlessApp.augmentDerivedContextWindow(Map.of());
+
+    assertTrue(
+        augmented.containsKey(CONTEXT_SIZE_KEY),
+        "returning the map unchanged (as the GPU augment pass does when empty) would leave"
+            + " effective-config with no provenance for the window at all");
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
+  }
+
+  @Test
+  @DisplayName("a null probe map is tolerated")
+  void nullProbeMapIsTolerated() {
+    Map<String, String> augmented = HeadlessApp.augmentDerivedContextWindow(null);
+
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
+  }
+
+  @Test
+  @DisplayName("an explicit gpu.layers sysprop wins over the probe map")
+  void explicitGpuLayersSyspropWins() {
+    System.setProperty(GPU_LAYERS_KEY, "35");
+
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(Map.of(GPU_LAYERS_KEY, "0"));
+
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.GPU_TOP_RUNG),
+        augmented.get(CONTEXT_SIZE_KEY),
+        "the user's layer count decides the backend, so it decides the top rung");
+  }
+
+  @Test
+  @DisplayName("an explicit gpu.layers of 0 gives the CPU rung even when the probe found a GPU")
+  void explicitZeroLayersGivesCpuRung() {
+    System.setProperty(GPU_LAYERS_KEY, "0");
+
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(Map.of(GPU_LAYERS_KEY, "99"));
+
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
+  }
+
+  @Test
+  @DisplayName("an unparseable gpu.layers degrades to the CPU rung instead of throwing at boot")
+  void unparseableGpuLayersDegrades() {
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(Map.of(GPU_LAYERS_KEY, "many"));
+
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
+  }
+
+  @Test
+  @DisplayName("the probe map's own entries are preserved")
+  void probeEntriesArePreserved() {
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(
+            Map.of("justsearch.onnxruntime.native_path", "C:/x", GPU_LAYERS_KEY, "99"));
+
+    assertEquals("C:/x", augmented.get("justsearch.onnxruntime.native_path"));
+    assertEquals("99", augmented.get(GPU_LAYERS_KEY));
+  }
+}

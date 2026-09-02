@@ -11,6 +11,26 @@
     "configuredContextTokens" : {
       "type" : "integer"
     },
+    "contextWindow" : {
+      "type" : "object",
+      "properties" : {
+        "freeVramBytes" : {
+          "type" : [ "integer", "null" ]
+        },
+        "kvType" : {
+          "type" : [ "string", "null" ]
+        },
+        "reason" : {
+          "type" : [ "string", "null" ]
+        },
+        "rung" : {
+          "type" : "integer"
+        },
+        "slots" : {
+          "type" : "integer"
+        }
+      }
+    },
     "cudaRuntimeWarning" : {
       "type" : "string"
     },

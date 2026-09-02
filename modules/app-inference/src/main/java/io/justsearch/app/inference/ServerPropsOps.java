@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,11 +52,15 @@ final class ServerPropsOps {
   private final Supplier<InferenceConfig> config;
   private final Supplier<Boolean> isExternalServerActive;
   private final PropsObserver propsObserver;
+  /** The {@code -c} this process actually launched with, or 0 when it launched nothing. */
+  private final IntSupplier requestedContextTokens;
 
   ServerPropsOps(
       Supplier<InferenceConfig> config,
       Supplier<Boolean> isExternalServerActive,
-      PropsObserver propsObserver) {
+      PropsObserver propsObserver,
+      IntSupplier requestedContextTokens) {
+    this.requestedContextTokens = requestedContextTokens;
     this.config = config;
     this.isExternalServerActive = isExternalServerActive;
     this.propsObserver = propsObserver;
@@ -190,7 +195,7 @@ final class ServerPropsOps {
     if (actualContextSize != null && actualContextSize > 0) {
       propsObserver.onContextTokensObserved(actualContextSize);
       LOG.info("llama-server context size: {} tokens", actualContextSize);
-      warnIfConfiguredContextExceedsActual(actualContextSize);
+      warnOnContextWindowMismatch(actualContextSize);
       warnIfSummaryBudgetExceedsActual(actualContextSize);
     } else {
       LOG.debug("llama-server /props did not include a parseable n_ctx value");
@@ -256,15 +261,43 @@ final class ServerPropsOps {
     }
   }
 
-  private void warnIfConfiguredContextExceedsActual(int actualContextSize) {
-    int configuredContext = config.get().contextSize();
-    if (actualContextSize < configuredContext) {
-      LOG.warn(
-          "Configured context size ({}) exceeds actual server context ({})! Requests may fail with"
-              + " 400 errors.",
-          configuredContext,
-          actualContextSize);
+  /**
+   * Tempdoc 883: {@code /props} stays the authority for what window the server actually has, so a
+   * disagreement with what THIS process asked for is a real condition — but the comparand has to be
+   * the requested rung, not {@code config.contextSize()}.
+   *
+   * <p>The configured value is stale by construction once the launch ladder steps down (config
+   * still says 32768 while the server was started at 16384), so comparing against it would fire a
+   * spurious warning on every successful step-down — a warning that is wrong every time it appears
+   * teaches operators to ignore the one time it is right.
+   *
+   * <p>No new state is published here: {@code /api/inference/status} already carries the intent
+   * ({@code contextWindow.rung}) and the observation ({@code llmContextTokens}) as separate fields
+   * from their own authorities, so the mismatch is derivable and does not need a third copy.
+   */
+  private void warnOnContextWindowMismatch(int actualContextSize) {
+    int requested = requestedContextTokens.getAsInt();
+    if (!isContextWindowMismatch(requested, actualContextSize)) {
+      return;
     }
+    LOG.warn(
+        "Context window mismatch: launched with -c {} but llama-server reports n_ctx {}. Requests"
+            + " budgeted against the larger number may fail with 400s; the /props value is the"
+            + " authority.",
+        requested,
+        actualContextSize);
+  }
+
+  /**
+   * True when the server reports a smaller window than the launch asked for.
+   *
+   * <p>Pure and package-private so the COMPARAND is testable: the defect this replaced was not the
+   * comparison but what it compared against. A {@code requestedRung} of 0 means this process
+   * launched nothing (an adopted external server), so there is no claim of ours to contradict and
+   * adoption diagnostics own the case.
+   */
+  static boolean isContextWindowMismatch(int requestedRung, int actualContextSize) {
+    return requestedRung > 0 && actualContextSize < requestedRung;
   }
 
   private void warnIfSummaryBudgetExceedsActual(int actualContextSize) {
