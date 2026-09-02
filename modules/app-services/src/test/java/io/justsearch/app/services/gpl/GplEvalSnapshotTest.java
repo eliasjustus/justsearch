@@ -64,6 +64,65 @@ class GplEvalSnapshotTest {
     assertNull(GplEvalSnapshot.load(file));
   }
 
+  /**
+   * Tempdoc 909 item 3 — the stated corruption policy, end to end: an unparseable snapshot is
+   * treated as ABSENT, and "absent" is what makes the evaluation re-run. Asserting only
+   * {@code load(...) == null} would stop one step short of the behaviour the policy promises, so
+   * this drives the real consumer ({@link GplRevalidationTrigger}) with the loaded value.
+   */
+  @Test
+  @DisplayName("a torn snapshot is treated as absent, so the evaluation re-runs")
+  void tornSnapshotMakesTheEvaluationReRun() throws Exception {
+    Path file = tempDir.resolve("gpl-eval-snapshot.json");
+    new GplEvalSnapshot(1000, Map.of("text/plain", 1000L), 500, Instant.now().toString())
+        .save(file);
+    byte[] whole = Files.readAllBytes(file);
+    Files.write(file, java.util.Arrays.copyOf(whole, whole.length / 2));
+
+    GplEvalSnapshot loaded = GplEvalSnapshot.load(file);
+    assertNull(loaded, "a torn snapshot must not load as a partially-trusted one");
+
+    var trigger = new GplRevalidationTrigger(2.0);
+    var result = trigger.evaluate(loaded, 1000, Map.of("text/plain", 1000L));
+    assertTrue(
+        result.shouldRun(),
+        "an unreadable snapshot must re-run the evaluation, never silently skip it: "
+            + result.reasons());
+  }
+
+  /**
+   * Tempdoc 909 item 3 — {@code load} is published as a per-request {@code Supplier<GplEvalData>}
+   * (HeadAssembly.headInfraRegistry), so an unbounded WARN would repeat for the life of the
+   * process. The first failure is reported; the repeats are not.
+   */
+  @Test
+  @DisplayName("an unreadable snapshot warns once per file, not once per read")
+  void unreadableSnapshotWarnsOnce() throws Exception {
+    Path file = tempDir.resolve("warn-once.json");
+    Files.writeString(file, "not valid json {{{");
+
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(GplEvalSnapshot.class);
+    ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+        new ch.qos.logback.core.read.ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      for (int i = 0; i < 5; i++) {
+        assertNull(GplEvalSnapshot.load(file));
+      }
+      long warnings =
+          appender.list.stream()
+              .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+              .count();
+      assertEquals(1, warnings, "five reads of the same unreadable snapshot must WARN once");
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
+  }
+
   @Test
   @DisplayName("save creates parent directories")
   void saveCreatesParentDirs() {
