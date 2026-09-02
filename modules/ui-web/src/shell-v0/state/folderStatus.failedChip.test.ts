@@ -17,10 +17,14 @@
  *
  * The three sampled states are pinned below, plus the two directions the rule must NOT go: it may
  * never invent a count the substrate never reported, and a settled zero must discharge the memory.
+ *
+ * Review finding S2-1 added the third describe block: the carry has to live ABOVE the branch chain,
+ * because `provisional` / `unavailable` / `walkError` all outrank the in-flight branch this file
+ * originally covered on its own.
  */
 
 import { describe, it, expect } from 'vitest';
-import { folderStatus, rememberFailedCounts, failedChipLabel } from './folderStatus';
+import { folderStatus, rememberFailedCounts, failedChipCopy } from './folderStatus';
 import type { IndexedRootView } from '../../api/generated/schema-types/indexed-root-view';
 
 const row = (over: Partial<IndexedRootView> = {}): IndexedRootView => ({
@@ -36,12 +40,13 @@ const row = (over: Partial<IndexedRootView> = {}): IndexedRootView => ({
   ...over,
 });
 
-const ctx = (lastKnownFailed?: number) => ({
+const ctx = (lastKnownFailed?: number, over: { provisional?: boolean } = {}) => ({
   relativeTime: 'just now',
   verifiedRelativeTime: '',
   provisional: false,
   enrichmentPending: false,
   enrichmentBlocked: false,
+  ...over,
   ...(lastKnownFailed === undefined ? {} : { lastKnownFailed }),
 });
 
@@ -63,9 +68,12 @@ describe('folderStatus — the failed chip survives a retry re-queue (914 D3)', 
     expect(fs.failed).toBe(2);
     expect(fs.failedIsLastKnown).toBe(true);
     // The chip says which kind of number it is rather than asserting it as this tick's count.
-    expect(failedChipLabel(fs.failed, fs.failedIsLastKnown === true)).toBe(
-      'Show 2 failed files (last known — this folder is indexing right now)',
-    );
+    // The qualifier is VISIBLE text (review S2-2), not an aria-only label.
+    const copy = failedChipCopy(fs.failed, fs.failedIsLastKnown === true);
+    expect(copy.text).toBe('2 failed · last known');
+    expect(copy.title).toContain('failed as of the last settled check');
+    // WCAG 2.5.3 "label in name" — the accessible name must CONTAIN the visible text.
+    expect(copy.label.startsWith(copy.text)).toBe(true);
   });
 
   it('sample C (1/60 in the validator run): inFlight=1 failed=1 — THIS poll wins over the memory', () => {
@@ -74,7 +82,12 @@ describe('folderStatus — the failed chip survives a retry re-queue (914 D3)', 
     // 1, not the remembered 2: a sample that reports a count is never overridden by an older one.
     expect(fs.failed).toBe(1);
     expect(fs.failedIsLastKnown).toBeFalsy();
-    expect(failedChipLabel(fs.failed, fs.failedIsLastKnown === true)).toBe('Show 1 failed file');
+    const copy = failedChipCopy(fs.failed, fs.failedIsLastKnown === true);
+    expect(copy.text).toBe('1 failed');
+    expect(copy.title).toBe('');
+    expect(copy.label.startsWith(copy.text)).toBe(true);
+    // Singular, both places.
+    expect(copy.label).toBe('1 failed — show the failed file');
   });
 
   it('never invents a chip: in-flight with no failure ever observed shows no count', () => {
@@ -84,7 +97,7 @@ describe('folderStatus — the failed chip survives a retry re-queue (914 D3)', 
     expect(fs.failedIsLastKnown).toBeFalsy();
   });
 
-  it('the memory is only read inside the in-flight branch — a drained root reports its own truth', () => {
+  it('a SETTLED branch ignores the memory — a drained root reports its own truth', () => {
     // Same memory as sample B, but the queue is settled: the substrate has answered, so the answer
     // is 0 failures and the row is ready. A sticky chip here would be the lie 813/906 forbid.
     const fs = folderStatus(row({ inFlightCount: 0, failedCount: 0 }), ctx(2));
@@ -123,5 +136,83 @@ describe('rememberFailedCounts — the bound on the memory (914 D3)', () => {
 
   it('ignores a row with no pathHash rather than keying the memory on an empty string', () => {
     expect(rememberFailedCounts({}, [row({ pathHash: '', failedCount: 3 })])).toEqual({});
+  });
+
+  it('while PROVISIONAL a transitional zero cannot discharge the memory (S2-1)', () => {
+    // During a global rebuild the seam refuses to treat any per-root number as terminal, so a
+    // drained-looking sample is not the settled answer that ends the memory.
+    expect(
+      rememberFailedCounts({ a: 2 }, [row({ pathHash: 'a', failedCount: 0, inFlightCount: 0 })], {
+        provisional: true,
+      }),
+    ).toEqual({ a: 2 });
+    // ...and the SAME sample outside a rebuild still discharges it.
+    expect(
+      rememberFailedCounts({ a: 2 }, [row({ pathHash: 'a', failedCount: 0, inFlightCount: 0 })]),
+    ).toEqual({});
+  });
+
+  it('a reported count still refreshes the memory while provisional', () => {
+    expect(
+      rememberFailedCounts({ a: 2 }, [row({ pathHash: 'a', failedCount: 5 })], { provisional: true }),
+    ).toEqual({ a: 5 });
+  });
+});
+
+/**
+ * Review finding S2-1 — the branches that OUTRANK the in-flight one.
+ *
+ * The first cut carried the count inside `inFlight > 0` only. `provisional`, `unavailable` and
+ * `walkError` all return earlier and all returned the RAW `failed`, so a retry window coinciding
+ * with any of them still dropped the chip. Measured on the served FE: the shell was provisional for
+ * 168 of 250 renders, so the majority path was the unfixed one and the fix engaged 0 times in 250.
+ *
+ * Each case below is the same wire sample — `failed=0, inFlight=2`, the retry window — differing
+ * only in which branch claims it.
+ */
+describe('folderStatus — the carry applies in every unsettled branch (914 D3 / S2-1)', () => {
+  const retryWindow = { inFlightCount: 2, failedCount: 0 };
+
+  it('PROVISIONAL: "Rebuilding…" keeps the chip, flagged last-known', () => {
+    const fs = folderStatus(row(retryWindow), ctx(2, { provisional: true }));
+    expect(fs.state).toBe('unknown');
+    expect(fs.metaText).toContain('Rebuilding…');
+    expect(fs.failed).toBe(2);
+    expect(fs.failedIsLastKnown).toBe(true);
+  });
+
+  it('UNAVAILABLE: a disconnected folder keeps the chip, flagged last-known', () => {
+    const fs = folderStatus(row({ ...retryWindow, status: 'unavailable' }), ctx(2));
+    expect(fs.state).toBe('unavailable');
+    expect(fs.failed).toBe(2);
+    expect(fs.failedIsLastKnown).toBe(true);
+  });
+
+  it('WALK ERROR: a failed walk keeps the chip, flagged last-known', () => {
+    const fs = folderStatus(row({ ...retryWindow, walkError: 'access denied' }), ctx(2));
+    expect(fs.state).toBe('failed');
+    expect(fs.metaText).toContain('access denied');
+    expect(fs.failed).toBe(2);
+    expect(fs.failedIsLastKnown).toBe(true);
+  });
+
+  it('none of the three invents a chip with nothing carried', () => {
+    expect(folderStatus(row(retryWindow), ctx(undefined, { provisional: true })).failed).toBe(0);
+    expect(folderStatus(row({ ...retryWindow, status: 'unavailable' }), ctx()).failed).toBe(0);
+    expect(folderStatus(row({ ...retryWindow, walkError: 'access denied' }), ctx()).failed).toBe(0);
+  });
+
+  it('a SETTLED branch never carries — the raw count stands where the queue has answered', () => {
+    // `ready` and `empty` are reached only with inFlight === 0 && failed === 0; a chip resurrected
+    // from memory over a drained folder would be the lie 813/906 forbid, so these stay at 0 even
+    // when a stale carry is handed in.
+    expect(folderStatus(row(), ctx(2)).state).toBe('ready');
+    expect(folderStatus(row(), ctx(2)).failed).toBe(0);
+    const empty = folderStatus(
+      row({ status: 'scanned', lastIndexedIsoTime: '', fileCount: 0 }),
+      ctx(2),
+    );
+    expect(empty.state).toBe('empty');
+    expect(empty.failed).toBe(0);
   });
 });

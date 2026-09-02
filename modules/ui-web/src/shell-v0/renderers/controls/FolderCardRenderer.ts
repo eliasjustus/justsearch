@@ -22,9 +22,9 @@ import { JsonFormsRendererBase } from '../JsonFormsRendererBase.js';
 import { registerXUiRenderer } from './xUiRendererRegistry.js';
 import { icon } from '../../components/Icon.js';
 import '../../components/Button.js';
-// Tempdoc 914 D3 — the chip's accessible name comes from the folder-status seam, so this renderer
-// and LibrarySurface's hand-authored card cannot word the last-known qualifier differently.
-import { failedChipLabel } from '../../state/folderStatus.js';
+// Tempdoc 914 D3 — the chip's copy comes from the folder-status seam, so this renderer and
+// LibrarySurface's hand-authored card cannot word the last-known qualifier differently.
+import { failedChipCopy } from '../../state/folderStatus.js';
 
 interface FolderCard {
   readonly pathHash?: string;
@@ -104,6 +104,13 @@ export class FolderCardRenderer extends JsonFormsRendererBase {
       --jf-button-color: var(--text-danger);
       color: var(--text-danger);
     }
+    /* Tempdoc 914 D3 / review S2-2 — a LAST-KNOWN count is muted + italic (StatusDeck's .val.stale
+       treatment), so the qualifier is not aria-only. */
+    .failed-chip[data-last-known='true'] {
+      --jf-button-color: var(--text-muted);
+      color: var(--text-muted);
+      font-style: italic;
+    }
     .empty {
       padding: 1rem;
       color: var(--text-secondary);
@@ -162,15 +169,7 @@ export class FolderCardRenderer extends JsonFormsRendererBase {
           ${f.metaText ?? ''}${f.walkError
             ? html` · <span class="walk-error">${f.walkError}</span>`
             : nothing}${(f.failed ?? 0) > 0
-            ? html`<jf-button
-                class="failed-chip"
-                data-last-known=${f.failedLastKnown === true ? 'true' : 'false'}
-                variant="ghost"
-                size="sm"
-                label=${failedChipLabel(f.failed ?? 0, f.failedLastKnown === true)}
-                .onActivate=${() => this.emitShowFailed(f.pathHash ?? '')}
-                >${icon({ name: 'alert-circle', size: 12 })} ${f.failed} failed</jf-button
-              >`
+            ? this.renderFailedChip(f)
             : nothing}
         </div>
       </div>
@@ -183,6 +182,26 @@ export class FolderCardRenderer extends JsonFormsRendererBase {
         ${icon({ name: 'trash-2', size: 14 })} Remove
       </jf-button>
     </div>`;
+  }
+
+  /**
+   * Tempdoc 599 §16/B1 + 914 D3 (review S2-2) — the clickable "N failed" chip. A carried count is
+   * marked VISIBLY (shared `failedChipCopy` text + the muted-italic `[data-last-known]` rule); the
+   * `label` starts with that same visible text, which is what WCAG 2.5.3 requires.
+   */
+  private renderFailedChip(f: FolderCard): TemplateResult {
+    const lastKnown = f.failedLastKnown === true;
+    const copy = failedChipCopy(f.failed ?? 0, lastKnown);
+    return html`<jf-button
+      class="failed-chip"
+      data-last-known=${lastKnown ? 'true' : 'false'}
+      variant="ghost"
+      size="sm"
+      label=${copy.label}
+      title=${copy.title || nothing}
+      .onActivate=${() => this.emitShowFailed(f.pathHash ?? '')}
+      >${icon({ name: 'alert-circle', size: 12 })} ${copy.text}</jf-button
+    >`;
   }
 
   /**

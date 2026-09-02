@@ -18,11 +18,21 @@ interface Invocation {
   readonly args: Record<string, unknown>;
 }
 
-function makeHost(recorded: Invocation[], picker?: string | null): PluginHostApi {
+/**
+ * `picks` are returned one per `pickFolder()` call (the last repeats), so a test can tell "the
+ * picker ran again" from "the click did nothing" — with a stub returning one constant path the two
+ * are indistinguishable (review nit). `undefined` ⟹ no `folder-picker` capability at all.
+ */
+function makeHost(recorded: Invocation[], picks?: readonly (string | null)[]): PluginHostApi {
+  let call = 0;
   return {
     platform: {
-      capabilities: new Set<string>(picker === undefined ? [] : ['folder-picker']),
-      pickFolder: async () => picker ?? null,
+      capabilities: new Set<string>(picks === undefined ? [] : ['folder-picker']),
+      pickFolder: async () => {
+        const value = picks?.[Math.min(call, picks.length - 1)] ?? null;
+        call += 1;
+        return value;
+      },
     },
     data: {
       // Every fetch this surface makes here (roots list, add-time preview, excludes) is advisory for
@@ -44,9 +54,12 @@ async function pump(el: Element): Promise<void> {
   }
 }
 
-async function mount(recorded: Invocation[], picker?: string | null): Promise<LibrarySurface> {
+async function mount(
+  recorded: Invocation[],
+  picks?: readonly (string | null)[],
+): Promise<LibrarySurface> {
   const el = document.createElement('jf-library-surface') as LibrarySurface;
-  el.host_ = makeHost(recorded, picker);
+  el.host_ = makeHost(recorded, picks);
   document.body.appendChild(el);
   await pump(el);
   return el;
@@ -135,7 +148,7 @@ describe('LibrarySurface — Add Folder carries the collection (914 D4)', () => 
 
   it('the native picker fills the SAME form instead of adding immediately, so the field exists there too', async () => {
     const recorded: Invocation[] = [];
-    const el = await mount(recorded, 'D:\\picked\\folder');
+    const el = await mount(recorded, ['D:\\picked\\folder']);
     try {
       await openAddForm(el);
       // The picker chose a folder — nothing was added yet; the form is open with the path filled in.
@@ -157,14 +170,18 @@ describe('LibrarySurface — Add Folder carries the collection (914 D4)', () => 
     // The wrong-gate this split fixes: with one method for "open the flow" and "submit it", a header
     // click while the form was open submitted — and in picker mode the picker became unreachable.
     const recorded: Invocation[] = [];
-    const el = await mount(recorded, 'D:\\first\\pick');
+    const el = await mount(recorded, ['D:\\first\\pick', 'D:\\second\\pick']);
     try {
       await openAddForm(el);
+      const first = el.shadowRoot?.querySelector('.add-row input') as HTMLInputElement;
+      expect(first?.value).toBe('D:\\first\\pick');
       typeInto(el, '[data-testid="library-add-collection"]', 'c1');
       await openAddForm(el); // header clicked again while the form is open
       expect(recorded.length, 'the header button must not submit').toBe(0);
       const path = el.shadowRoot?.querySelector('.add-row input') as HTMLInputElement;
-      expect(path?.value, 'it re-ran the picker').toBe('D:\\first\\pick');
+      // The stub returns a DIFFERENT path on the second call, so this distinguishes "the picker ran
+      // again" from "the click did nothing" — a same-path stub could not (review nit).
+      expect(path?.value, 'the header re-ran the picker').toBe('D:\\second\\pick');
     } finally {
       el.remove();
     }
@@ -176,9 +193,9 @@ describe('LibrarySurface — Add Folder carries the collection (914 D4)', () => 
     try {
       await openAddForm(el);
       typeInto(el, '.add-row input', 'F:\\corpus\\reports');
-      // `IngestCollectionPolicy.RESERVED`, case-insensitively — and the Operation handler this
-      // surface invokes does NOT run that policy (only the REST route does), so this guard is the
-      // one that actually holds.
+      // `IngestCollectionPolicy.RESERVED`, case-insensitively. The backend is the authority (#617
+      // routes the Operation handler through the same policy); this guard is the early, in-field
+      // half of it, so the user is told before the round trip rather than after.
       typeInto(el, '[data-testid="library-add-collection"]', 'Agent-History');
       await submit(el);
 

@@ -53,10 +53,11 @@ export interface FolderStatus {
   readonly inFlight: number;
   readonly failed: number;
   /**
-   * Tempdoc 914 D3 — `failed` is a LAST-KNOWN count carried across a retry re-queue window rather
-   * than a count this sample observed. Absent / `false` ⟹ `failed` is this sample's own number.
-   * Consumers that put the count in words must say "last known" when this is set: the chip may not
-   * assert as a present fact something the current wire row does not report.
+   * Tempdoc 914 D3 — `failed` is a LAST-KNOWN count carried across a window in which this root has
+   * no settled answer, not a count this sample observed. Absent / `false` ⟹ `failed` is this
+   * sample's own number. A consumer that renders the count MUST mark it, visibly and in the
+   * accessible name (`failedChipCopy`): the chip may not assert as a present fact something the
+   * current wire row does not report.
    */
   readonly failedIsLastKnown?: boolean;
 }
@@ -103,8 +104,10 @@ export interface FolderStatusContext {
   readonly enrichmentBlocked?: boolean;
   /**
    * Tempdoc 914 D3 — the failed count last observed for this root while its queue was SETTLED, from
-   * {@link rememberFailedCounts}. Read ONLY inside the in-flight branch, and only when this sample
-   * reports zero failures.
+   * {@link rememberFailedCounts}. Read only when THIS sample reports zero failures, and only in the
+   * branches that have no settled answer of their own: `provisional`, `unavailable`, `walkError` and
+   * `inFlight > 0` (review finding S2-1 — the first cut read it in the last of those four only,
+   * which is not the one the defect usually lands in).
    *
    * Why FE memory rather than a wire field: the retry ladder re-queues a permanently FAILED job, and
    * while that job sits PENDING the worker's per-root `GROUP BY` counts it as in-flight and not as
@@ -219,8 +222,26 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
       ? `${fileCount.toLocaleString()} ${fileCount === 1 ? 'file' : 'files'}`
       : 'count pending';
 
+  /**
+   * Tempdoc 914 D3, review finding S2-1 — the carry is computed ONCE, ABOVE the branch chain.
+   *
+   * The first cut applied it only inside the `inFlight > 0` branch, which is not the branch the
+   * defect usually lands in: `provisional`, `unavailable` and `walkError` all outrank it and all
+   * returned the RAW `failed`, so a retry window that coincided with any of them still dropped the
+   * chip. Measured: with the shell provisional for 168 of 250 renders, the first cut engaged 0
+   * times. Every branch that does NOT have a settled zero-failure answer uses `failedShown`.
+   *
+   * The settled branches below (scanning / failed / ready / enriching / keyword-only / unverified /
+   * empty) deliberately keep the raw `failed`: there the queue HAS answered, and resurrecting a
+   * chip from memory over a drained folder would be the lie 813/906 forbid.
+   */
+  const carried = count(ctx.lastKnownFailed);
+  const failedShown = failed > 0 ? failed : carried;
+  const failedIsLastKnown = failed === 0 && carried > 0;
+
   // During a global rebuild, every row is provisional: render busy + last-known, never a terminal
   // fact (595 honesty vocabulary). Highest precedence so a stale "✓ indexed" can't show mid-flux.
+  // The failed chip is last-known here for the same reason the file count is (S2-1).
   if (ctx.provisional) {
     return {
       state: 'unknown',
@@ -230,7 +251,8 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
           ? `${collection} · Rebuilding… · last known ${fileCountText}`
           : `${collection} · Rebuilding…`,
       inFlight,
-      failed,
+      failed: failedShown,
+      failedIsLastKnown,
     };
   }
 
@@ -249,12 +271,24 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
           ? `${collection} · Folder not found — reconnect the drive, or remove it · last known ${fileCountText}`
           : `${collection} · Folder not found — reconnect the drive, or remove it`,
       inFlight,
-      failed,
+      // S2-1 — a disconnected folder's job counts describe nothing; the failures it had are still
+      // the last thing known about it, and the drill-down is still how the user reads them.
+      failed: failedShown,
+      failedIsLastKnown,
     };
   }
 
   if (walkError) {
-    return { state: 'failed', glyph: 'error', metaText: `${collection} · ${walkError}`, inFlight, failed };
+    // S2-1 — same reason as the two branches above: a walk that errored did not answer the
+    // per-file question, so a last-known failure count stays reachable rather than vanishing.
+    return {
+      state: 'failed',
+      glyph: 'error',
+      metaText: `${collection} · ${walkError}`,
+      inFlight,
+      failed: failedShown,
+      failedIsLastKnown,
+    };
   }
 
   // In-flight jobs → indexing, even while the walk is still discovering more (a count-down is more
@@ -268,14 +302,13 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
     // observation carry the chip through the window (see `lastKnownFailed`). The state line stays
     // truthful ("Indexing · N remaining" — that IS what the queue is doing) and the carried count is
     // flagged as last-known so the chip can say so rather than assert it as a present fact.
-    const carriedFailed = failed > 0 ? failed : count(ctx.lastKnownFailed);
     return {
       state: 'indexing',
       glyph: 'pending',
       metaText: `${collection} · Indexing · ${inFlight.toLocaleString()} remaining`,
       inFlight,
-      failed: carriedFailed,
-      failedIsLastKnown: failed === 0 && carriedFailed > 0,
+      failed: failedShown,
+      failedIsLastKnown,
     };
   }
 
@@ -380,19 +413,45 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
 }
 
 /**
- * Tempdoc 599 §16/B1 + 914 D3 — the failed chip's ACCESSIBLE NAME, in ONE place for its two render
- * sites (the hand-authored Library card and the declared `FolderCardRenderer`), so the honesty
- * qualifier cannot land on one and not the other.
+ * Tempdoc 599 §16/B1 + 914 D3 — the failed chip's COPY, in ONE place for its two render sites (the
+ * hand-authored Library card and the declared `FolderCardRenderer`), so the honesty qualifier
+ * cannot land on one and not the other.
  *
- * When the count is carried across a retry window it is announced as LAST KNOWN together with what
- * the folder is doing instead — the chip must stay reachable (that is the whole point) without
- * claiming as a present fact a number this poll did not report.
+ * Review finding S2-2: the qualifier is VISIBLE, not aria-only. A carried count reads
+ * "2 failed - last known" on screen (in the muted/italic treatment `StatusDeck` already gives a
+ * last-known value), with the full sentence on hover and in the accessible name.
+ *
+ * WHY the chip still sets `label`, given `Button.ts`'s "no label on a button with visible slot
+ * text" rule: `jf-control.resolvedName()` reads `operationId`/`label` and its OWN `textContent`,
+ * and this chip's text is slotted through TWO shadow roots (jf-button -> jf-control -> slot), so
+ * the primitive cannot see it — dropping `label` makes it warn "no accessible name" and leans on
+ * browser slot-flattening the primitive itself declares it does not do. The rule's actual
+ * requirement (WCAG 2.5.3) is that the accessible name CONTAIN the visible text, not equal it, so
+ * `label` is built as the visible text PLUS the explanation. `labelContainsText` below is that
+ * invariant, asserted in the unit tests rather than left to callers to remember.
  */
-export function failedChipLabel(failed: number, lastKnown: boolean): string {
-  const noun = `failed file${failed === 1 ? '' : 's'}`;
-  return lastKnown
-    ? `Show ${failed} ${noun} (last known — this folder is indexing right now)`
-    : `Show ${failed} ${noun}`;
+export interface FailedChipCopy {
+  /** The chip's visible text. */
+  readonly text: string;
+  /** The accessible name. Always starts with {@link text} (WCAG 2.5.3 "label in name"). */
+  readonly label: string;
+  /** Hover detail, or '' when the count is this poll's own. */
+  readonly title: string;
+}
+
+export function failedChipCopy(failed: number, lastKnown: boolean): FailedChipCopy {
+  const noun = `file${failed === 1 ? '' : 's'}`;
+  const text = lastKnown ? `${failed} failed · last known` : `${failed} failed`;
+  const explanation = lastKnown
+    ? `${failed} ${noun} failed as of the last settled check; this folder has work in progress now`
+    : '';
+  return {
+    text,
+    label: lastKnown
+      ? `${text} — ${explanation}. Show the failed ${noun}`
+      : `${text} — show the failed ${noun}`,
+    title: explanation,
+  };
 }
 
 /**
@@ -410,12 +469,18 @@ export function failedChipLabel(failed: number, lastKnown: boolean): string {
  *       failures is the substrate answering the question directly, and it outranks any memory.
  * </ul>
  *
+ * `provisional` (review finding S2-1) suspends the third case: during a global rebuild the seam
+ * itself refuses to treat ANY per-root number as a terminal fact, so a transitional zero must not
+ * be allowed to discharge the memory the `provisional` branch is about to render as last-known.
+ * A reported failure count still refreshes it.
+ *
  * A root missing from the poll is dropped (removed / not yet listed), so the map cannot grow past
  * the current listing, and no entry can survive one settled zero-failure observation of its root.
  */
 export function rememberFailedCounts(
   previous: Readonly<Record<string, number>>,
   rows: readonly IndexedRootView[],
+  opts: { readonly provisional?: boolean } = {},
 ): Record<string, number> {
   const next: Record<string, number> = {};
   for (const row of rows) {
@@ -426,7 +491,8 @@ export function rememberFailedCounts(
       next[hash] = failed;
       continue;
     }
-    if (count(row.inFlightCount) > 0) {
+    const settled = count(row.inFlightCount) === 0 && opts.provisional !== true;
+    if (!settled) {
       const carried = count(previous[hash]);
       if (carried > 0) next[hash] = carried;
     }

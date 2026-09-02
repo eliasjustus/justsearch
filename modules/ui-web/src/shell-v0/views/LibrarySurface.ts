@@ -42,7 +42,12 @@ import {
   type IndexedRootView,
 } from '../../api/generated/schema-types/indexed-root-view.js';
 // Tempdoc 599 §9.1 — the ONE per-folder status derivation; the row glyph + meta line project from it.
-import { folderStatus, rememberFailedCounts, failedChipLabel } from '../state/folderStatus.js';
+import {
+  folderStatus,
+  rememberFailedCounts,
+  failedChipCopy,
+  type FolderStatus,
+} from '../state/folderStatus.js';
 // Tempdoc 813 §4 — the index-wide progress authority supplies enrichment-stage applicability, which
 // the per-root wire row cannot carry (counts only, no enabled flags).
 import {
@@ -341,6 +346,14 @@ export class LibrarySurface extends JfElement {
       margin-left: 0.4rem;
       --jf-button-color: var(--text-danger);
       color: var(--text-danger);
+    }
+    /* Tempdoc 914 D3 / review S2-2 — a LAST-KNOWN count is muted + italic, the same treatment
+       StatusDeck's .val.stale rule gives a last-known value. Sighted users see that the number is not
+       this tick's, which the accessible name and the hover title say in words. */
+    .failed-chip[data-last-known='true'] {
+      --jf-button-color: var(--text-muted);
+      color: var(--text-muted);
+      font-style: italic;
     }
     .status-icon {
       flex-shrink: 0;
@@ -679,7 +692,9 @@ export class LibrarySurface extends JfElement {
       // the rows render, so a poll that lands mid-retry (failures re-queued ⟹ `failedCount` 0,
       // `inFlightCount` > 0) still renders a reachable "N failed" chip. The retention rule lives in
       // the pure fold next to the seam that reads it.
-      this.lastKnownFailed = rememberFailedCounts(this.lastKnownFailed, items);
+      this.lastKnownFailed = rememberFailedCounts(this.lastKnownFailed, items, {
+        provisional: this.provisional,
+      });
       this.roots = items;
       // Lazy-resolve hashes via core.resolve-path-hash (slice 450 §1.1).
       for (const r of this.roots) {
@@ -856,9 +871,12 @@ export class LibrarySurface extends JfElement {
   /**
    * Tempdoc 914 D4 — the `core.add-watched-root` arguments.
    *
-   * `collection` is OMITTED when blank rather than sent as `""` or as a literal `"default"`: the
-   * handler's own rule is "absent or blank ⟹ default" (`AddWatchedRootHandler`), and a watched root
-   * stored with an explicit `"default"` string would be a second spelling of the untagged bucket.
+   * `collection` is OMITTED when blank rather than sent as `""` or as a literal `"default"`. Not
+   * because the stored result would differ — `AddWatchedRootHandler` and `RootLifecycleOps` both
+   * normalize absent/blank to `DEFAULT_COLLECTION`, so all three spellings converge (review nit) —
+   * but because the request should say what the USER said. Omitting keeps the backend's default the
+   * backend's to choose; hard-coding `"default"` here would pin another component's decision in the
+   * FE, and `""` is a value `IngestCollectionPolicy.normalizeRequested` explicitly rejects.
    */
   private addRootArgs(path: string): Record<string, unknown> {
     const collection = this.pendingCollection.trim();
@@ -911,9 +929,11 @@ export class LibrarySurface extends JfElement {
   private addAvailability() {
     const path = this.pendingPath.trim();
     if (!path) return unavailableBecause('Enter a folder path', true);
-    // Tempdoc 914 D4 — a supplied collection must not name an app-internal corpus. The REST route
-    // rejects that through IngestCollectionPolicy, but the Operation handler this surface invokes
-    // does not, so refusing here is what actually keeps the reserved names unassignable from the UI.
+    // Tempdoc 914 D4 — a supplied collection must not name an app-internal corpus. The AUTHORITY is
+    // `IngestCollectionPolicy`, which both the REST route and (since #617 / tempdoc 913 D6) the
+    // Operation handler this surface invokes now enforce. This check is defence in depth: it gives
+    // the reason at the keystroke, in the field, with the Add button disabled — instead of a round
+    // trip that comes back as an error banner after the user has committed to the action.
     const collection = this.pendingCollection.trim();
     if (collection && isReservedCollection(collection)) {
       return unavailableBecause(`"${collection}" is reserved for JustSearch's own documents`);
@@ -994,6 +1014,28 @@ export class LibrarySurface extends JfElement {
     >`;
   }
 
+  /**
+   * Tempdoc 599 §16/B1 — the clickable "N failed" chip. Tempdoc 914 D3 / review S2-2: when the count
+   * is being carried across a window with no settled answer, the chip says so ON SCREEN (the shared
+   * `failedChipCopy` text plus the muted-italic treatment) and not only to a screen reader. The
+   * `label` it sets always STARTS with that visible text, which is what WCAG 2.5.3 asks for (see
+   * `failedChipCopy` for why the label cannot simply be dropped here).
+   */
+  private renderFailedChip(pathHash: string, status: FolderStatus): TemplateResult {
+    const lastKnown = status.failedIsLastKnown === true;
+    const copy = failedChipCopy(status.failed, lastKnown);
+    return html`<jf-button
+      class="failed-chip"
+      data-last-known=${lastKnown ? 'true' : 'false'}
+      variant="ghost"
+      size="sm"
+      label=${copy.label}
+      title=${copy.title || nothing}
+      .onActivate=${() => openFailedJobs(pathHash)}
+      >${icon({ name: 'alert-circle', size: 12 })} ${copy.text}</jf-button
+    >`;
+  }
+
   private renderCard(root: IndexedRootView): TemplateResult {
     const pathHash = root.pathHash ?? '';
     // Tempdoc 804 §B9 (F8) — the row's NAME is its folder name (full path on hover), or an honest
@@ -1031,15 +1073,7 @@ export class LibrarySurface extends JfElement {
           </div>
           <div class="card-meta">
             ${status.metaText}${status.failed > 0
-              ? html`<jf-button
-                  class="failed-chip"
-                  data-last-known=${status.failedIsLastKnown === true ? 'true' : 'false'}
-                  variant="ghost"
-                  size="sm"
-                  label=${failedChipLabel(status.failed, status.failedIsLastKnown === true)}
-                  .onActivate=${() => openFailedJobs(pathHash)}
-                  >${icon({ name: 'alert-circle', size: 12 })} ${status.failed} failed</jf-button
-                >`
+              ? this.renderFailedChip(pathHash, status)
               : nothing}${status.state === 'unverified'
               ? html`<jf-button
                   class="reindex-chip"
