@@ -1,0 +1,135 @@
+---
+title: "Extraction isolation and indexing pacing"
+type: decision
+status: stable
+description: "Untrusted parsing runs in a persistent child process pool rather than in the Worker JVM; foreground contention is answered with a duty cycle rather than a pause; Worker health is sampled internally rather than on the request thread; ingestion failures walk a bounded retry ladder to a visible terminal state; and NRT/commit cadence is decided by measurement, which rejected the first candidate."
+date: 2026-09-02
+probes:
+  - adr-0048-extraction-child-pool-present
+  - adr-0048-no-user-active-pause
+  - adr-0048-no-eval-breath-hold-hatch
+  - adr-0048-chaos-witness
+  - adr-0048-foreground-gauge-is-worker-local
+  - adr-0048-retry-exhausted-terminal
+  - adr-0048-nrt-mode-defaults-continuous
+last_reviewed: 2026-09-02
+---
+
+# ADR-0048: Extraction isolation and indexing pacing
+
+## Status
+
+Accepted (2026-09-02).
+
+Implemented across tempdoc 885 PRs #595 (extraction pool), #598 (duty cycle), #600 (health sampler
+and retry ladder) and #602 (cadence). Written after the fact but before the lane closes, because
+the live measurements that decided several of these numbers only exist once.
+
+## Context
+
+The Worker does four things that compete: it parses untrusted files, it writes Lucene, it enriches
+in the background on the GPU, and it answers foreground search. Before this lane, those four
+interacted through mechanisms that were each locally reasonable and collectively wrong.
+
+- **Parsing ran in the Worker JVM.** A parser that looped or exhausted the heap took the Worker
+  with it. The existing `process` sandbox mode existed but required an operator to author a command
+  line, so nothing used it, and a per-file process spawn was too expensive to default to.
+- **Foreground contention was a pause.** `isUserActive()` reported "a query happened within the
+  last 2000 ms" and the indexing loop stopped while it was true. Under a continuous agent-style
+  query loop the window never expired, so indexing reached **zero** — measured, not inferred
+  (tempdoc 885's chunk-1 baseline: 699 documents indexed in 22 minutes, then nothing). The pause
+  was also unobservable: it logged at TRACE while the Worker pins that package to INFO, so no field
+  run could count one.
+- **Health was read on the request thread.** Every `/api/status` performed a Worker `IndexStatus`
+  unary, so a slow Worker became a slow Head.
+- **Ingestion failures had no terminal state.** Transient I/O failures counted against the same
+  attempt cap as permanent parse failures, and a file that exhausted its attempts simply stopped
+  being retried, invisibly.
+- **NRT and commit cadence were never measured.** The reopen thread ran on hardcoded constants at
+  index open and on configured values after the first backfill — two different cadences in one
+  process, silently.
+
+## Decision
+
+**Crash isolation is a persistent extraction child pool.** Untrusted parsing runs in child
+processes, not in the Worker JVM. The pool defaults to one child with one request in flight;
+the child command is built in-process from `java.home` + `java.class.path` so no operator
+authoring is required; requests and responses are length-prefixed frames on stdin/stdout. Routing
+is per family (`auto`): `process` for PDF, Office, archives and any OCR route, `in_process` for
+plain text, markdown, code and CSV/JSON. A timeout kills the child and marks the file
+`FAILED/TIMEOUT`; a crash reports the exit code; a child OOM is a permanent parse failure. The
+child polls the Worker PID so it cannot outlive its parent, and long classpaths are passed by
+argfile because a dist classpath is short but a test classpath is not.
+
+**Foreground contention is answered with a duty cycle, never a pause.** A Worker-local
+`ForegroundLoad` gauge counts in-flight search-family RPCs. While it is non-zero the indexing loop
+runs at a configured minimum share of wall time (`justsearch.indexing.foreground_duty_pct`,
+default 20) instead of stopping. `isUserActive`, `signalUserActivity` and the eval hatch are
+deleted, not deprecated. The gauge is a `worker-services` type rather than a gRPC concept, so it
+survives a future Head/Worker merge.
+
+**Worker health is sampled internally.** One scheduled `IndexStatus` unary on the existing health
+monitor's tick feeds the taps; the status handler reads the last snapshot and its age and never
+calls the Worker. `?fresh=true` forces a synchronous sample for debug tooling.
+
+**Ingestion failures walk a bounded ladder to a visible terminal state.** Transient outcomes stop
+counting against the attempt cap; the backoff ladder extends to a 7-day bound and then reports
+`RETRY_EXHAUSTED`, which a rescan or a file change resets; the failure reason carries the
+exception's own message rather than a literal.
+
+**NRT and commit cadence are decided by measurement, and the first candidate was rejected.**
+`index.nrt.mode` selects `continuous` (the default, today's behaviour) or `on_demand` (background
+reopens slowed, foreground reads refreshing before acquiring). It ships **opt-in and off**, because
+the measured arm rejected the implementation rather than endorsing the idea. The commit half of the
+candidate was deleted outright: a `index.commit.idle_ms` knob cannot move commit count while
+`CommitOps`' 10 s safety timer is a hardcoded constant and enrichment-backfill commits dominate the
+population.
+
+## Consequences
+
+- A parser that hangs, crashes or OOMs costs one file and one child respawn, not the Worker. The
+  isolation costs about 11 ms per file on the process families.
+- Indexing under a continuous query loop went from **0%** to a floor of 20% duty, and the pacing is
+  now countable (`worker.indexing.paced_intervals_total`, `duty_pct`) instead of invisible.
+- `/api/status` no longer depends on Worker latency, and reports the age of the sample it served.
+- A permanently failing file becomes visible instead of silently abandoned.
+- Two config keys' worth of cadence surface exists but is unused by default. It is **not** free:
+  it is carried on the explicit condition that a clean re-measure either earns it or deletes it.
+- The measurement substrate (`index.runtime.reopen_count`, `segments_since_reopen`, jseval's
+  `cadence` block and first-search probe) is retained regardless, because it is what made two
+  implementation defects visible at all.
+
+## Alternatives considered
+
+- **Per-file process spawn** for extraction. Rejected on cost; the persistent pool keeps the
+  isolation and amortises the spawn.
+- **`WindowsJobObject` for grandchild lifetime.** Rejected: it would add a dependency to
+  `worker-services` for a property the PID-gate pattern already gives.
+- **Keeping the pause and shortening its window.** Rejected: any pause length is a full stop under
+  a continuous loop, and the failure mode is starvation rather than slowness.
+- **A streaming health RPC.** Rejected as work that a Head/Worker merge would throw away; the
+  minimal sampler collapses to a direct call.
+- **Shipping reopen-on-demand on the strength of its design.** Rejected by its own measurement:
+  reopens rose 2.9x and indexing throughput fell 15%. Two implementation defects explain it, both
+  fixed, and the arm has still never run as documented.
+
+## Reassessment triggers
+
+- **Lane F merges Head and Worker into one process.** The sampler collapses to a direct call, the
+  gRPC interceptor feeding `ForegroundLoad` becomes redundant (the gauge itself survives), and the
+  deferred `FetchDocuments` proto change becomes moot. The extraction pool becomes *more* valuable,
+  not less, because a crash in one JVM is now a crash of everything.
+- **A clean re-measure of `index.nrt.mode=on_demand`**, with a search-load arm. If it does not earn
+  its keep, the three `index.nrt.*` keys are deleted.
+- **`CommitOps.COMMIT_TIMER_INTERVAL_MS` becoming configurable**, which is the precondition for any
+  commit-cadence work at all.
+- **A mixed text+binary corpus existing on disk**, which would let the in-process families' sandbox
+  round-trip be measured against the 10 ms/file bar that currently has no evidence either way.
+
+## Evidence
+
+Tempdoc 885: baseline and arm tables under "Baseline (chunk 1)" and "Consolidated live window
+(2026-09-02)"; chaos tier at §SC-chaos; per-family extraction latency at §SB.4; item 6 numbers under
+"Item 6 live"; the cadence rejection, its two defects and the commit-attribution histogram under
+"Item 19 live — resolution". Live figures were taken at the branch's pre-merge HEAD; the
+post-window merge added 166 files of this lane's own reviewed work.

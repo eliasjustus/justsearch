@@ -114,7 +114,7 @@ final class StatusReadinessStalenessTest {
     StatusLifecycleHandler handler = newHandler(indexBase, headStart, true);
     handler.setKnowledgeServer(ks, null);
 
-    StatusResponse response = handler.buildStatusMap();
+    StatusResponse response = handler.buildStatusSnapshot();
     Map<String, ReadinessComponentView> components = response.readiness().components();
 
     assertTrue(response.meta().workerRpcStale(), "the response's own contact fact");
@@ -145,7 +145,7 @@ final class StatusReadinessStalenessTest {
   void reachableWorkerLeavesEveryDimensionFresh(@TempDir Path indexBase) {
     StatusLifecycleHandler handler = reachableHandler(indexBase, Instant.now().minusSeconds(60));
 
-    StatusResponse response = handler.buildStatusMap();
+    StatusResponse response = handler.buildStatusSnapshot();
 
     assertFalse(response.meta().workerRpcStale());
     for (ReadinessDimension dim : ReadinessDimension.values()) {
@@ -171,12 +171,14 @@ final class StatusReadinessStalenessTest {
     StatusLifecycleHandler handler = newReachableHandler(indexBase, headStart, ks);
 
     long beforeSuccess = System.currentTimeMillis();
-    StatusResponse fresh = handler.buildStatusMap();
+    StatusResponse fresh = handler.buildStatusSnapshot();
     assertFalse(fresh.meta().workerRpcStale(), "first call should reach the Worker");
 
-    // Contact is lost after that successful observation.
+    // Contact is lost after that successful observation. Tempdoc 885 item 6: contact loss is
+    // discovered by the internal sampler, not by a request — a request only reports what the last
+    // sample found, so the sampler is what has to run here.
     when(ks.client()).thenThrow(new IllegalStateException("worker gone"));
-    StatusResponse stale = handler.buildStatusMap();
+    StatusResponse stale = handler.sampleAndBuildStatusSnapshot();
     long afterFailure = System.currentTimeMillis();
 
     assertTrue(stale.meta().workerRpcStale());
@@ -250,7 +252,7 @@ final class StatusReadinessStalenessTest {
   void reachableWorkerLeavesEveryCompositeFresh(@TempDir Path indexBase) {
     StatusLifecycleHandler handler = reachableHandler(indexBase, Instant.now().minusSeconds(60));
 
-    StatusResponse response = handler.buildStatusMap();
+    StatusResponse response = handler.buildStatusSnapshot();
 
     assertFalse(response.meta().workerRpcStale());
     Map<String, ReadinessCompositeView> composites = response.readiness().composites();

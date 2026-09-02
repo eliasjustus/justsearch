@@ -677,7 +677,7 @@ public class IndexingController {
                   j -> {
                     Map<String, Object> m = new java.util.LinkedHashMap<>();
                     m.put("pathHash", sha256Hex(j.path() == null ? "" : j.path()));
-                    m.put("state", "FAILED");
+                    m.put("state", j.state() == null || j.state().isBlank() ? "FAILED" : j.state());
                     m.put("attempts", j.attempts());
                     m.put("lastUpdatedMs", j.lastUpdatedMs());
                     m.put("errorMessage", j.errorMessage() == null ? "" : j.errorMessage());
@@ -761,7 +761,7 @@ public class IndexingController {
                   j -> {
                     Map<String, Object> m = new java.util.LinkedHashMap<>();
                     m.put("pathHash", sha256Hex(j.path() == null ? "" : j.path()));
-                    m.put("state", "FAILED");
+                    m.put("state", j.state() == null || j.state().isBlank() ? "FAILED" : j.state());
                     m.put("attempts", j.attempts());
                     m.put("lastUpdatedMs", j.lastUpdatedMs());
                     m.put("errorMessage", j.errorMessage() == null ? "" : j.errorMessage());

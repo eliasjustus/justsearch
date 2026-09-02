@@ -296,8 +296,16 @@ public interface JobQueue extends Closeable {
   }
 
   /**
-   * Marks a job as failed.
-   * If attempts &lt; maxAttempts, the job may be returned to PENDING for retry.
+   * Marks a job as failed. If attempts &lt; maxAttempts, the job may be returned to PENDING for
+   * retry.
+   *
+   * <p>Untyped failure. <b>No production caller remains</b> (tempdoc 885 item 21): every ingestion
+   * failure path now carries an {@link IngestionOutcome}, and this overload is reached only from
+   * tests and the 13 in-test {@code JobQueue} doubles that implement it. It keeps a second
+   * terminal rule alive — the {@code MAX_ATTEMPTS} cap, which the typed transient arm no longer
+   * uses — so it is pinned by {@code JobQueueRetryLadderTest.untypedFailurePathKeepsTheAttemptsCap}
+   * rather than left to drift. Deleting it is tracked in 885's open items; it is an interface
+   * change across those 13 doubles, not a local edit, which is why it is not bundled here.
    *
    * @param path The file path that failed
    * @param errorMessage Optional error message
@@ -422,9 +430,15 @@ public interface JobQueue extends Closeable {
    * @param attempts total attempts made
    * @param lastUpdatedMs epoch millis of last state transition
    * @param collection collection tag, or null for default
+   * @param state terminal state: {@code FAILED} or {@code RETRY_EXHAUSTED} (tempdoc 885 item 21b)
    */
   record FailedJobInfo(
-      String path, String errorMessage, int attempts, long lastUpdatedMs, String collection) {}
+      String path,
+      String errorMessage,
+      int attempts,
+      long lastUpdatedMs,
+      String collection,
+      String state) {}
 
   /**
    * Privacy-safe append-only ingestion event.

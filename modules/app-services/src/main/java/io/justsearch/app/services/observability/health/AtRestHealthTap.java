@@ -31,7 +31,8 @@ import java.util.function.Supplier;
  * <p>Deliberately verdict-independent: at-rest protection is a confidentiality concern, not a
  * retrieval-health degradation, so it is surfaced as a HealthSurface condition and never drives the
  * global "service degraded" verdict pill (629 confidence-probe P3). Snapshot-triggered from {@code
- * StatusLifecycleHandler.buildStatusMap()} alongside the other taps — no new threading.
+ * StatusLifecycleHandler.sampleAndBuildStatusSnapshot()} alongside the other taps — the internal
+ * health sampler's thread (tempdoc 885 item 6), not the request thread.
  */
 public final class AtRestHealthTap {
 
@@ -64,7 +65,7 @@ public final class AtRestHealthTap {
     this.atRestSupplier = Objects.requireNonNull(atRestSupplier, "atRestSupplier");
   }
 
-  /** Snapshot hook called from {@code StatusLifecycleHandler.buildStatusMap()}. */
+  /** Snapshot hook called from the health sampler, never from a request thread (885 item 6). */
   public void accept() {
     AtRestProtection p = atRestSupplier.get();
     reconcile(p == null ? AtRestProtection.State.UNKNOWN : p.state());

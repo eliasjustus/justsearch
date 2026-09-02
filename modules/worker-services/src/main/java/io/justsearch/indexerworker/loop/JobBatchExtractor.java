@@ -251,7 +251,7 @@ public final class JobBatchExtractor {
                       IngestionOutcomeClass.BUDGET_EXCEEDED,
                       e.reasonCode(),
                       IngestionRetryPolicy.NONE,
-                      "Extraction budget exceeded"),
+                      failureDetail(e)),
                   ledgerEntry(envelopeForLedger, collection, null)));
       journal.recordFailedMetric(filePath, null);
       batchStats.recordFailed();
@@ -269,7 +269,7 @@ public final class JobBatchExtractor {
                       IngestionOutcomeClass.PARSER_TIMEOUT,
                       IngestionReasonCodes.PARSER_TIMEOUT,
                       IngestionRetryPolicy.RETRY_WITH_BACKOFF,
-                      "Parser timed out"),
+                      failureDetail(e)),
                   ledgerEntry(envelopeForLedger, collection, null)));
       journal.recordFailedMetric(filePath, null);
       batchStats.recordFailed();
@@ -287,7 +287,7 @@ public final class JobBatchExtractor {
                       IngestionOutcomeClass.SANDBOX_FAILED,
                       IngestionReasonCodes.SANDBOX_FAILED,
                       IngestionRetryPolicy.RETRY_WITH_BACKOFF,
-                      "Sandbox failed"),
+                      failureDetail(e)),
                   ledgerEntry(envelopeForLedger, collection, null)));
       journal.recordFailedMetric(filePath, null);
       batchStats.recordFailed();
@@ -305,7 +305,7 @@ public final class JobBatchExtractor {
                       IngestionOutcomeClass.PARSER_FAILED,
                       IngestionReasonCodes.PARSER_FAILED,
                       IngestionRetryPolicy.NONE,
-                      "Parser failed"),
+                      failureDetail(e)),
                   ledgerEntry(envelopeForLedger, collection, null)));
       journal.recordFailedMetric(filePath, null);
       batchStats.recordFailed();
@@ -323,7 +323,7 @@ public final class JobBatchExtractor {
                       IngestionOutcomeClass.IO_FAILED,
                       IngestionReasonCodes.IO_ERROR,
                       IngestionRetryPolicy.RETRY_WITH_BACKOFF,
-                      "I/O failure"),
+                      failureDetail(e)),
                   ledgerEntry(envelopeForLedger, collection, null)));
       journal.recordFailedMetric(filePath, null);
       batchStats.recordFailed();
@@ -341,12 +341,35 @@ public final class JobBatchExtractor {
                       IngestionOutcomeClass.PARSER_FAILED,
                       IngestionReasonCodes.PARSER_FAILED,
                       IngestionRetryPolicy.RETRY_WITH_BACKOFF,
-                      "Unexpected processing failure"),
+                      failureDetail(e)),
                   ledgerEntry(envelopeForLedger, collection, null)));
       journal.recordFailedMetric(filePath, null);
       batchStats.recordFailed();
       return null;
     }
+  }
+
+  /**
+   * Tempdoc 885 item 21c — the durable failure reason is the exception's own text.
+   *
+   * <p>Every catch site above used to store a fixed literal ("I/O failure", "Parser failed") in
+   * {@code error_message}, so the only place the actual cause existed was a log line, which is
+   * rotated and which no UI or support flow reads. The literal was a restatement of the outcome
+   * class the same row already carries; the message is the part that says WHICH file access failed
+   * or WHAT the parser choked on. For a sandbox failure the message is also where the child's exit
+   * code lives ({@code PersistentExtractionSandbox} formats it into the exception), so 21c's "and
+   * the child exit code for SANDBOX_FAILED" needs no separate field.
+   *
+   * <p>Bounding is {@link io.justsearch.indexerworker.ingest.IngestionOutcome}'s job — its canonical
+   * constructor collapses newlines and truncates at 512 chars, so a stack-trace-sized message
+   * cannot reach the database from here.
+   */
+  private static String failureDetail(Throwable e) {
+    String message = e.getMessage();
+    if (message == null || message.isBlank()) {
+      return e.getClass().getSimpleName();
+    }
+    return e.getClass().getSimpleName() + ": " + message;
   }
 
   private JobQueue.IngestionLedgerEntry ledgerEntry(Path filePath, String collection) {

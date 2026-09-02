@@ -190,7 +190,7 @@ public final class JobBatchWriter {
                         IngestionOutcomeClass.WRITE_FAILED,
                         IngestionReasonCodes.WRITE_FAILED,
                         IngestionRetryPolicy.RETRY_WITH_BACKOFF,
-                        "Index write failed"),
+                        failureDetail(e)),
                     LedgerEntryFactory.forEnvelope(
                         ex.envelope(),
                         ex.collection(),
@@ -219,6 +219,24 @@ public final class JobBatchWriter {
             fields.get(SchemaFields.EMBEDDING_STATUS))) {
       controller.noteSuccessfulEmbeddingObserved();
     }
+  }
+
+  /**
+   * Tempdoc 885 item 21c — the write path's failure reason is the exception's own text.
+   *
+   * <p>{@code WRITE_FAILED} is {@code RETRY_WITH_BACKOFF}, so a row carrying the literal "Index
+   * write failed" would retry for seven days and then reach {@code RETRY_EXHAUSTED} with nothing
+   * recorded about WHY the write failed. The DEFER arm above keeps its literal on purpose:
+   * "Runtime draining" IS the whole fact there, and its exception is a routing sentinel rather
+   * than a diagnostic. Bounding is {@link io.justsearch.indexerworker.ingest.IngestionOutcome}'s
+   * job (512 chars, newlines collapsed).
+   */
+  private static String failureDetail(Throwable e) {
+    String message = e.getMessage();
+    if (message == null || message.isBlank()) {
+      return e.getClass().getSimpleName();
+    }
+    return e.getClass().getSimpleName() + ": " + message;
   }
 
   private static boolean isDrainingWriteRejection(RuntimeException e) {

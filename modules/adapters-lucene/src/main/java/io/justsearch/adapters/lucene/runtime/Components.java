@@ -26,4 +26,8 @@ record Components(
     Analyzer indexAnalyzer,
     ResolvedConfig resolvedConfig,
     long nrtTargetMaxStaleMs,
-    long nrtHardMaxStaleMs) {}
+    long nrtHardMaxStaleMs,
+    NrtMode nrtMode,
+    long nrtOnDemandMaxStaleMs,
+    long reopenTargetMs,
+    long reopenHardMs) {}

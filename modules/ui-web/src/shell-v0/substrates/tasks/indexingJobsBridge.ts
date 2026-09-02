@@ -283,6 +283,10 @@ function statusFor(job: IndexingJobRow): TaskStatus | null {
       // Tempdoc 575 §15: derive RUNNING from the ONE liveness authority, never inline.
       return isInFlightLive(job.lastUpdatedMs) ? 'running' : 'queued';
     case 'FAILED':
+    // Tempdoc 885 item 21b: RETRY_EXHAUSTED is a terminal failure — a transient error that kept
+    // recurring for the whole seven-day retry window. It renders as `failed` because that is what
+    // it is from the rail's point of view; the distinction from FAILED lives in the error message.
+    case 'RETRY_EXHAUSTED':
       return 'failed';
     case 'DONE':
       return null; // terminal success = history; vanish from the live rail
@@ -290,7 +294,7 @@ function statusFor(job: IndexingJobRow): TaskStatus | null {
       return 'queued';
     default:
       // Tempdoc 550 Thesis II truthfulness: an UNRECOGNIZED backend state must not be silently
-      // asserted as a known status. The worker enum is PENDING/PROCESSING/DONE/FAILED; anything
+      // asserted as a known status. The worker enum is PENDING/PROCESSING/DONE/FAILED/RETRY_EXHAUSTED;
       // else means the wire contract drifted — surface it once rather than mislabel. We render it
       // as `queued` (non-running, least-wrong) AND warn so the drift is visible, not hidden.
       warnUnknownState(job.state);

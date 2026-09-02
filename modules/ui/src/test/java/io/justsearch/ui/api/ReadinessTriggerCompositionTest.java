@@ -46,7 +46,7 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>{@code ReadinessReconciledWithoutRequestTest} (app-services) proves the trigger's own
  * mechanics over a hand-authored envelope supplier. What it cannot reach is the single line that
  * makes the trigger do anything in the running head: {@code CoreApiAssembly}'s {@code
- * readinessTrigger.attach(statusLifecycleHandler::buildStatusSnapshot)}. That method reference is
+ * readinessTrigger.attach(statusLifecycleHandler::sampleAndBuildStatusSnapshot)}. That method reference is
  * the whole wiring — if it were attached to nothing, or if the thunk threw on every call, every
  * unit test over the trigger would still be green.
  *
@@ -54,7 +54,7 @@ import org.junit.jupiter.api.io.TempDir;
  * LifecycleSnapshotTap} over a real {@link ConditionStore} (mirroring {@code CoreApiAssembly}'s tap
  * wiring), a real {@link WorkerCapability}, a real {@link ReadinessReconciliationTrigger} wired the
  * way {@code OrchestrationPhase} wires it, and the SAME {@code
- * statusLifecycleHandler::buildStatusSnapshot} thunk {@code CoreApiAssembly} attaches. There is no
+ * statusLifecycleHandler::sampleAndBuildStatusSnapshot} thunk {@code CoreApiAssembly} attaches. There is no
  * Javalin {@code Context}, no HTTP server and no {@code /api/status} call anywhere in this file:
  * the handler's only caller is the trigger's daemon thread, so a condition observed to change here
  * changed because a capability transitioned.
@@ -96,13 +96,13 @@ final class ReadinessTriggerCompositionTest {
       // OrchestrationPhase's wiring.
       trigger.wireTo(worker, inference);
       // CoreApiAssembly's wiring — the production method reference, not a test lambda.
-      trigger.attach(handler::buildStatusSnapshot);
+      trigger.attach(handler::sampleAndBuildStatusSnapshot);
 
       HealthEvent asserted =
           awaitCondition(
               conditions,
               true,
-              "the attach self-seed must run buildStatusSnapshot: a PENDING worker yields"
+              "the attach self-seed must run the sampler: a PENDING worker yields"
                   + " INDEX_SERVING NOT_READY, which the tap asserts as index.unavailable");
       assertEquals("index.unavailable", asserted.id());
       AssertedCondition condition = (AssertedCondition) asserted.body();
@@ -115,7 +115,7 @@ final class ReadinessTriggerCompositionTest {
       awaitCondition(
           conditions,
           false,
-          "the capability transition must re-run buildStatusSnapshot and clear index.unavailable"
+          "the capability transition must re-run the sampler and clear index.unavailable"
               + " — not wait for the next status request");
     }
   }

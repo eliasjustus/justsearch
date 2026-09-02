@@ -265,9 +265,13 @@ public final class CommitOps {
   }
 
   /**
-   * Resumes the background NRT refresh thread after bulk backfill completes. Creates a new
-   * CRTRT instance with the same parameters as the original — both go through
-   * {@code NrtReopenThreads.create} on the session's configured staleness bounds.
+   * Resumes the background NRT refresh thread after bulk backfill completes. Creates a new CRTRT
+   * instance with the same parameters as the original — both go through
+   * {@code NrtReopenThreads.create} on the session's MODE-RESOLVED bounds.
+   *
+   * <p>Mode-resolved, not the raw {@code index.nrt.*} pair: under {@code index.nrt.mode=on_demand}
+   * the thread runs at {@code index.nrt.background_reopen_ms} on both bounds, and reading the raw
+   * pair here reverted it to the continuous 500/50 on the first bulk backfill (885 review B1).
    */
   public void resumeNrtRefresh() {
     LifecycleSnapshot snap = session.snapshot;
@@ -278,8 +282,8 @@ public final class CommitOps {
         NrtReopenThreads.create(
             snap.writer(),
             snap.searcherManager(),
-            session.nrtTargetMaxStaleMs,
-            session.nrtHardMaxStaleMs);
+            session.nrtReopenTargetMs,
+            session.nrtReopenHardMs);
     thread.start();
     session.crtrt = thread;
     log.info("NRT refresh thread resumed after bulk backfill");

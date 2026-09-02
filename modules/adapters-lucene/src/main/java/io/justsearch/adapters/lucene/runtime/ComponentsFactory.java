@@ -72,6 +72,7 @@ final class ComponentsFactory {
       SoftDeletesMetrics softDeletesMetrics,
       IndexOpenGuard indexOpenGuard,
       AtomicLong lastRefreshNanos,
+      NrtReopenStats nrtStats,
       long nrtTargetMaxStaleMsDefault,
       long nrtHardMaxStaleMsDefault)
       throws IOException {
@@ -276,6 +277,15 @@ final class ComponentsFactory {
       long nrtTargetMs =
           cfgTarget != null && cfgTarget >= 0 ? cfgTarget : nrtTargetMaxStaleMsDefault;
       long nrtHardMs = cfgHard != null && cfgHard >= 0 ? cfgHard : nrtHardMaxStaleMsDefault;
+      // Tempdoc 885 item 19. In on_demand mode the background thread is the safety net, not the
+      // primary path: it runs at index.nrt.background_reopen_ms on BOTH Lucene bounds, and the
+      // foreground refresh in SearcherBridge is what makes a new document visible to a query.
+      NrtMode nrtMode = NrtMode.parse(idx.nrtMode());
+      long nrtBackgroundMs = Math.max(1L, idx.nrtBackgroundReopenMs());
+      long nrtOnDemandMaxStaleMs = Math.max(0L, idx.nrtOnDemandMaxStaleMs());
+      long reopenTargetMs = nrtMode == NrtMode.ON_DEMAND ? nrtBackgroundMs : nrtTargetMs;
+      long reopenHardMs = nrtMode == NrtMode.ON_DEMAND ? nrtBackgroundMs : nrtHardMs;
+      NrtReopenStats stats = nrtStats != null ? nrtStats : new NrtReopenStats();
 
       if (readOnly) {
         try {
@@ -294,7 +304,7 @@ final class ComponentsFactory {
             new SoftDeletesDirectoryReaderWrapper(
                 DirectoryReader.open(dir), softDeleteFieldResolved);
         mgr = new SearcherManager(softDeletesReader, newNoCacheSearcherFactory());
-        installRefreshListener(mgr, lastRefreshNanos);
+        stats.install(mgr, lastRefreshNanos, null);
 
         return new Components(
             idx.commitMetadataEnabled(),
@@ -311,7 +321,11 @@ final class ComponentsFactory {
             analyzer,
             rc,
             nrtTargetMs,
-            nrtHardMs);
+            nrtHardMs,
+            nrtMode,
+            nrtOnDemandMaxStaleMs,
+            reopenTargetMs,
+            reopenHardMs);
       }
 
       w = new IndexWriter(dir, cfg);
@@ -320,8 +334,8 @@ final class ComponentsFactory {
               DirectoryReader.open(w, /*applyAllDeletes=*/ true, /*writeAllDeletes=*/ true),
               softDeleteFieldResolved);
       mgr = new SearcherManager(softDeletesReader, newNoCacheSearcherFactory());
-      installRefreshListener(mgr, lastRefreshNanos);
-      thread = NrtReopenThreads.create(w, mgr, nrtTargetMs, nrtHardMs);
+      stats.install(mgr, lastRefreshNanos, w);
+      thread = NrtReopenThreads.create(w, mgr, reopenTargetMs, reopenHardMs);
 
       return new Components(
           idx.commitMetadataEnabled(),
@@ -338,7 +352,11 @@ final class ComponentsFactory {
           analyzer,
           rc,
           nrtTargetMs,
-          nrtHardMs);
+          nrtHardMs,
+          nrtMode,
+          nrtOnDemandMaxStaleMs,
+          reopenTargetMs,
+          reopenHardMs);
     } catch (Exception e) {
       // Best-effort cleanup to avoid leaking file handles (especially on Windows).
       try {
@@ -390,20 +408,6 @@ final class ComponentsFactory {
         return searcher;
       }
     };
-  }
-
-  /** Installs a RefreshListener that stamps {@code lastRefreshNanos} on each refresh. */
-  private static void installRefreshListener(SearcherManager mgr, AtomicLong lastRefreshNanos) {
-    mgr.addListener(
-        new org.apache.lucene.search.ReferenceManager.RefreshListener() {
-          @Override
-          public void beforeRefresh() {}
-
-          @Override
-          public void afterRefresh(boolean didRefresh) {
-            if (didRefresh) lastRefreshNanos.set(System.nanoTime());
-          }
-        });
   }
 
   /** Validates that the configured vector dimension matches the SSOT dimension. */

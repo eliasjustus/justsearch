@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Observes {@link WorkerOperationalView} transitions on each
- * {@code StatusLifecycleHandler.buildStatusMap()} call and emits {@link HealthEvent}
+ * {@code StatusLifecycleHandler} health-sampler pass (885 item 6) and emits {@link HealthEvent}
  * records for the 7 worker-side events that aren't surfaced through the readiness
  * envelope (which {@code LifecycleSnapshotTap} covers).
  *

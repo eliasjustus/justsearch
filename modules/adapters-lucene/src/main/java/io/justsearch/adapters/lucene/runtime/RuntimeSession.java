@@ -101,9 +101,31 @@ final class RuntimeSession implements AutoCloseable {
   volatile ValidationMode validationMode;
   volatile long maxQueueDepth;
   volatile long nrtTargetMaxStaleMs;
-  // Both CRTRT construction sites read these through NrtReopenThreads.create (tempdoc 885
-  // item 19); the 500/50 defaults below are what the initial open used to hardcode.
+  // The raw index.nrt.* pair (tempdoc 885 item 19). Neither CRTRT construction site reads it
+  // directly any more: both go through the mode-resolved nrtReopenTargetMs/nrtReopenHardMs below.
   volatile long nrtHardMaxStaleMs;
+  // Tempdoc 885 item 19 cadence candidate: CONTINUOUS is today's behaviour; ON_DEMAND moves the
+  // reopen onto the foreground acquire (SearcherBridge) and slows the background thread.
+  volatile NrtMode nrtMode;
+  volatile long nrtOnDemandMaxStaleMs;
+
+  /**
+   * The bounds the reopen thread was ACTUALLY built with, after {@link NrtMode} resolution — not
+   * the raw {@code index.nrt.*} pair. {@code CommitOps.resumeNrtRefresh} rebuilds the thread after
+   * every bulk-backfill suspend, and reading the raw pair there silently reverted on_demand's slow
+   * background cadence to the continuous 500/50 on the first backfill (885 review B1).
+   */
+  volatile long nrtReopenTargetMs;
+
+  volatile long nrtReopenHardMs;
+
+  /**
+   * Is a foreground (user-facing) RPC in flight? The reopen-on-demand seam gates on this so that
+   * enrichment-backfill reads, which reach Lucene through the same {@link SearcherBridge}, cannot
+   * trigger a refresh. Wired by the Worker from item 3's {@code ForegroundLoad}; defaults to
+   * always-true (see {@link LuceneRuntimeBuilder#withForegroundActive}).
+   */
+  volatile java.util.function.BooleanSupplier foregroundActive;
   volatile KnnVectorsFormat knnVectorsFormat;
   volatile Integer vectorEfSearchOverrideOrNull;
   volatile String softDeleteField;
@@ -115,6 +137,15 @@ final class RuntimeSession implements AutoCloseable {
   // ==========================================================================
 
   final AtomicLong lastRefreshNanos = new AtomicLong(0L);
+
+  /**
+   * Reopen counters + the on-demand freshness watermark (tempdoc 885 item 19). Final and created
+   * once per session: {@link ComponentsFactory} installs the single refresh listener that writes
+   * it, and re-opens within the session reuse the same instance so the counters are per-session,
+   * not per-reader.
+   */
+  final NrtReopenStats nrtStats = new NrtReopenStats();
+
   final AtomicLong lastCommitNanos = new AtomicLong(0L);
   final AtomicLong lastRefreshTargetMs = new AtomicLong(-1L);
   final AtomicLong pendingDocs = new AtomicLong(0L);
@@ -233,6 +264,11 @@ final class RuntimeSession implements AutoCloseable {
     this.maxQueueDepth = 10_000L;
     this.nrtTargetMaxStaleMs = 500L;
     this.nrtHardMaxStaleMs = 50L;
+    this.nrtMode = NrtMode.CONTINUOUS;
+    this.nrtOnDemandMaxStaleMs = 1000L;
+    this.nrtReopenTargetMs = 500L;
+    this.nrtReopenHardMs = 50L;
+    this.foregroundActive = () -> true;
     this.knnVectorsFormat = null;
     this.vectorEfSearchOverrideOrNull = null;
     this.softDeleteField = SchemaFields.SOFT_DELETE;
@@ -273,6 +309,7 @@ final class RuntimeSession implements AutoCloseable {
     this.indexPath = builder.indexPath();
     this.knnVectorsFormat = schema.knnVectorsFormatOverride();
     this.telemetryEvents = builder.telemetryEvents();
+    this.foregroundActive = builder.foregroundActive();
     this.softDeletesMetrics = builder.softDeletesMetrics();
     // Schema-fixed field names — same constants regardless of config.
     this.uidField = SchemaFields.DOC_UID;
@@ -288,6 +325,12 @@ final class RuntimeSession implements AutoCloseable {
     this.maxQueueDepth = 10_000L;
     this.nrtTargetMaxStaleMs = 500L;
     this.nrtHardMaxStaleMs = 50L;
+    this.nrtMode = NrtMode.CONTINUOUS;
+    this.nrtOnDemandMaxStaleMs = 1000L;
+    this.nrtReopenTargetMs = 500L;
+    this.nrtReopenHardMs = 50L;
+    // foregroundActive is NOT reset here: it is builder-supplied above, and this block runs
+    // after it. The other knobs are config-derived and are overwritten again by applyComponents.
     this.softDeleteField = SchemaFields.SOFT_DELETE;
     this.vectorEfSearchOverrideOrNull = null;
 
@@ -334,6 +377,10 @@ final class RuntimeSession implements AutoCloseable {
     this.resolvedConfig = components.resolvedConfig();
     this.nrtTargetMaxStaleMs = components.nrtTargetMaxStaleMs();
     this.nrtHardMaxStaleMs = components.nrtHardMaxStaleMs();
+    this.nrtMode = components.nrtMode() != null ? components.nrtMode() : NrtMode.CONTINUOUS;
+    this.nrtOnDemandMaxStaleMs = components.nrtOnDemandMaxStaleMs();
+    this.nrtReopenTargetMs = components.reopenTargetMs();
+    this.nrtReopenHardMs = components.reopenHardMs();
     Integer explicitEfSearch =
         resolvedConfig != null && resolvedConfig.index() != null
             ? resolvedConfig.index().vectorEfSearch()
@@ -537,6 +584,7 @@ final class RuntimeSession implements AutoCloseable {
           softDeletesMetrics,
           indexOpenGuard,
           lastRefreshNanos,
+          nrtStats,
           nrtTargetMaxStaleMs,
           nrtHardMaxStaleMs);
     } catch (IOException e) {

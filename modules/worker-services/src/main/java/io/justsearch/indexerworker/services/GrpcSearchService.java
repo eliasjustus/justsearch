@@ -75,8 +75,12 @@ import org.slf4j.LoggerFactory;
 public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImplBase {
   private static final Logger log = LoggerFactory.getLogger(GrpcSearchService.class);
 
-  /** Maximum content characters to return via gRPC to prevent memory issues. */
-  private static final int MAX_CONTENT_CHARS = 200_000;
+  /**
+   * Maximum content characters to return via gRPC to prevent memory issues. Shared with the Head's
+   * {@code BoundedDocumentFetch} pager, which sizes its byte budget by this number.
+   */
+  private static final int MAX_CONTENT_CHARS =
+      io.justsearch.ipc.grpc.GrpcMessageLimits.MAX_DOCUMENT_CONTENT_CHARS;
 
   /** Default/max slice sizes for FetchDocumentSlice. */
   private static final int DEFAULT_SLICE_CHARS = 20_000;

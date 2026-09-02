@@ -429,6 +429,7 @@ mode. The structural check is satisfied by two legs, so an omitted
 | `--history-db PATH` | Shared history database for trend tracking |
 | `--search-load-qpm N` | Drive N queries/minute (evenly spaced) against `POST /api/knowledge/search` on a background thread **during** ingest + the readiness/pipeline wait, and record a `search_load` block in `summary.json` (mode, queries issued, errors, latency p50/p95/max, start/end). Queries come from the dataset's own query file, in `hybrid` mode. Off by default; nothing changes when it is absent (885) |
 | `--search-load continuous` | As above but back-to-back with one request in flight (the continuous MCP-style agent loop). Mutually exclusive with `--search-load-qpm` |
+| `--first-search-probe` | After every batch of `--first-search-probe-files` (default 50) newly indexed documents, issue ONE search and record its latency separately from `--search-load*`. Reopen-on-demand moves the segment-open cost onto exactly that query, so averaging it into steady-state traffic hides it. Off by default (885 item 19) |
 
 That endpoint is the one that writes the Worker's MMF activity slot, so these two flags are how a
 throughput measurement is taken *with foreground search traffic present* — see tempdoc 885's
@@ -462,6 +463,20 @@ scripts/jseval/tmp/                        # DEFAULT_JSEVAL_DATA_DIR
     <mode>_run.trec         # TREC-format run file
   cohort_baselines/<hash>/  # `calibrate` envelopes + drift baselines
 ```
+
+**Additive schema key, always present (885 item 19).** Every `run` emits a `cadence` block in
+`summary.json`, whether or not `--first-search-probe` was passed — this is a disclosed schema
+addition, not a no-op: a consumer that enumerates `summary.json` keys will see it on every run.
+It carries `reopen_total`, `commit_total` and `segments_since_reopen` read from the Worker
+telemetry NDJSON (`index.runtime.*`), plus `first_search_after_indexing` (null unless the probe
+ran). Every field degrades to `null` when the Worker does not publish the metric, so the comparison
+columns exist on every row rather than appearing only on some — which is the point, an arm table
+with missing columns cannot be read.
+
+**Local prerequisite for the full pytest suite.** `python -m pytest scripts/jseval/tests` needs the
+optional extras: `pip install -e "scripts/jseval[dev,agent]"`. Without them four test modules fail
+at *collection* (`inspect_ai`, `hypothesis`), so the run reports collection errors and executes
+nothing rather than reporting a partial pass.
 
 `summary.json` fields agents typically need:
 - `per_mode.<mode>.aggregate_metrics["nDCG@10"]` — headline quality

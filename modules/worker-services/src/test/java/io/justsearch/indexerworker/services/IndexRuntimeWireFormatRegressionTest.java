@@ -157,6 +157,56 @@ final class IndexRuntimeWireFormatRegressionTest {
     assertTrue(counterLineCount >= 1, "expected at least one hard_delete_total counter line");
   }
 
+  /**
+   * Tempdoc 885 item 19: the cadence trio must reach the NDJSON, because that file is what the
+   * jseval comparison reads. Driven through a real {@code RuntimeGaugesSnapshot} rather than the
+   * zero-valued EMPTY supplier, so the assertion distinguishes "the gauge is declared" from "the
+   * gauge is wired to the snapshot field the runtime actually stamps".
+   */
+  @Test
+  void cadenceGaugesReachTheWireFormat() throws Exception {
+    String ndjson;
+    var snapshot =
+        new io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RuntimeGaugesSnapshot(
+            0L, 0L, 11L, 0L, 7L, 3L);
+    try (LocalTelemetry telemetry =
+        new LocalTelemetry(
+            tmp,
+            500,
+            "test",
+            "0",
+            "metrics-cadence.ndjson",
+            List.of(
+                io.justsearch.telemetry.catalog.MetricCatalog.of(
+                    IndexRuntimeMetricCatalog.NAMESPACE,
+                    IndexRuntimeMetricCatalog.DEFINITIONS)))) {
+      new IndexRuntimeMetricCatalog(telemetry.registry(), () -> snapshot);
+      telemetry.flush();
+      ndjson = Files.readString(tmp.resolve("telemetry").resolve("metrics-cadence.ndjson"));
+    }
+
+    assertTrue(
+        containsLine(ndjson, IndexRuntimeMetricCatalog.REOPEN_COUNT, "\"type\":\"gauge\""),
+        "reopen_count missing from the wire format; got:\n" + ndjson);
+    assertTrue(
+        containsLine(ndjson, IndexRuntimeMetricCatalog.SEGMENTS_SINCE_REOPEN, "\"type\":\"gauge\""),
+        "segments_since_reopen missing from the wire format; got:\n" + ndjson);
+    assertTrue(
+        anyLineWithName(ndjson, IndexRuntimeMetricCatalog.REOPEN_COUNT).stream()
+            .anyMatch(l -> l.contains("7")),
+        "reopen_count must carry the supplier's value, not a zero; got:\n" + ndjson);
+    assertTrue(
+        anyLineWithName(ndjson, IndexRuntimeMetricCatalog.SEGMENTS_SINCE_REOPEN).stream()
+            .anyMatch(l -> l.contains("3")),
+        "segments_since_reopen must carry the supplier's value; got:\n" + ndjson);
+    assertTrue(
+        anyLineWithName(ndjson, IndexRuntimeMetricCatalog.COMMIT_COUNT).stream()
+            .anyMatch(l -> l.contains("11")),
+        "commit_count is the third leg of the cadence trio and must still be the same instrument;"
+            + " got:\n"
+            + ndjson);
+  }
+
   // ---- helpers ----
 
   private static boolean containsLine(String ndjson, String name, String fragment) {

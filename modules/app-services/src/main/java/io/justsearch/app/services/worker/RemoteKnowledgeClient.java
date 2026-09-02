@@ -1218,7 +1218,8 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return resp.getJobsList().stream()
                 .map(j -> new IndexingService.FailedJobInfo(
                         j.getPath(), j.getErrorMessage(), j.getAttempts(),
-                        j.getLastUpdatedMs(), j.getCollection()))
+                        j.getLastUpdatedMs(), j.getCollection(),
+                        j.getState().isEmpty() ? "FAILED" : j.getState()))
                 .toList();
     }
 
@@ -1239,7 +1240,8 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return resp.getJobsList().stream()
                 .map(j -> new IndexingService.FailedJobInfo(
                         j.getPath(), j.getErrorMessage(), j.getAttempts(),
-                        j.getLastUpdatedMs(), j.getCollection()))
+                        j.getLastUpdatedMs(), j.getCollection(),
+                        j.getState().isEmpty() ? "FAILED" : j.getState()))
                 .toList();
     }
 

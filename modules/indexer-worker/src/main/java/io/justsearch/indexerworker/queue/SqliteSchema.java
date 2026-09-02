@@ -18,6 +18,7 @@ package io.justsearch.indexerworker.queue;
  *   <li>V7: Added scoped path-resolution table (ADR-0028, tempdoc 419 T5.1)</li>
  *   <li>V8: Added nullable size_bytes column to jobs (tempdoc 813 Slice B)</li>
  *   <li>V9: Added nullable scan_id column to jobs (tempdoc 812 D2)</li>
+ *   <li>V10: Added nullable first_failed_at column to jobs (tempdoc 885 item 21)</li>
  * </ul>
  */
 public final class SqliteSchema {
@@ -30,7 +31,7 @@ public final class SqliteSchema {
    * Target schema version. The migrate() method will upgrade the database
    * to this version using the migration ladder.
    */
-  public static final int TARGET_VERSION = 9;
+  public static final int TARGET_VERSION = 10;
 
   // ==================== Table: jobs ====================
 
@@ -40,11 +41,12 @@ public final class SqliteSchema {
    * <p>Columns:
    * <ul>
    *   <li>path - Primary key, normalized file path</li>
-   *   <li>state - PENDING, PROCESSING, DONE, or FAILED</li>
+   *   <li>state - PENDING, PROCESSING, DONE, FAILED, or RETRY_EXHAUSTED</li>
    *   <li>attempts - Number of failed processing attempts (incremented on failure, not claim)</li>
    *   <li>last_updated - Timestamp of last state change</li>
    *   <li>error_message - Error message from last failure</li>
    *   <li>retry_after - Timestamp after which a PENDING job can be retried (V2+)</li>
+   *   <li>first_failed_at - Timestamp of the FIRST failure in the current failure run (V10+)</li>
    * </ul>
    */
   public static final String CREATE_JOBS_TABLE = """
@@ -54,7 +56,8 @@ public final class SqliteSchema {
         attempts INTEGER NOT NULL DEFAULT 0,
         last_updated INTEGER NOT NULL,
         error_message TEXT,
-        retry_after INTEGER
+        retry_after INTEGER,
+        first_failed_at INTEGER
       )
       """;
 
@@ -263,6 +266,22 @@ public final class SqliteSchema {
    */
   public static final String MIGRATE_V8_TO_V9_ADD_SCAN_ID = """
       ALTER TABLE jobs ADD COLUMN scan_id TEXT DEFAULT NULL
+      """;
+
+  /**
+   * V9 to V10 migration (tempdoc 885 item 21): add {@code first_failed_at}, the wall clock of the
+   * FIRST failure in the current failure run.
+   *
+   * <p>The retry ladder is bounded at 7 days, and a bound needs an origin. {@code attempts} cannot
+   * serve as one once transient failures stop counting against {@code MAX_ATTEMPTS} (item 21a) —
+   * an unreachable network share would otherwise retry forever with no terminal state to show a
+   * user. NULL means "no failure run in progress". It is set on the first failure and cleared by
+   * a re-enqueue, which is {@code INSERT OR REPLACE} and therefore restores every unlisted column
+   * to its default. {@code markDone} does NOT clear it — a DONE row is not re-examined, so the
+   * stale origin is inert; the next enqueue of that path resets it before it could matter.
+   */
+  public static final String MIGRATE_V9_TO_V10_ADD_FIRST_FAILED_AT = """
+      ALTER TABLE jobs ADD COLUMN first_failed_at INTEGER DEFAULT NULL
       """;
 
   // ==================== Utility Methods ====================

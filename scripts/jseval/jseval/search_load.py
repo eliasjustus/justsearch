@@ -36,6 +36,38 @@ REQUEST_TIMEOUT_SEC = 30.0
 #: Poll granularity while waiting for the next scheduled query, so ``stop()`` stays responsive.
 _STOP_POLL_SEC = 0.1
 
+#: The one foreground-search request shape. Shared with the cadence first-search probe
+#: (:mod:`jseval.cadence`, item 19) so both populations measure the identical query.
+SEARCH_PATH = "/api/knowledge/search"
+DEFAULT_TOP_K = 10
+DEFAULT_SEARCH_MODE = "hybrid"
+
+
+def open_client(base_url: str) -> httpx.Client:
+    """The HTTP client every foreground search in this harness is issued through."""
+    return httpx.Client(base_url=base_url, timeout=REQUEST_TIMEOUT_SEC)
+
+
+def search_body(
+    query: str,
+    top_k: int = DEFAULT_TOP_K,
+    search_mode: str = DEFAULT_SEARCH_MODE,
+) -> dict:
+    """Request body for ``POST /api/knowledge/search``."""
+    return {"query": query, "limit": top_k, "mode": search_mode}
+
+
+def issue_search(client: httpx.Client, body: dict) -> float | None:
+    """Issue one search. Returns its latency in ms, or ``None`` when the request failed."""
+    t0 = time.monotonic()
+    try:
+        resp = client.post(SEARCH_PATH, json=body)
+        resp.raise_for_status()
+        return (time.monotonic() - t0) * 1000.0
+    except Exception as e:
+        log.debug("Search query failed: %s", e)
+        return None
+
 
 @dataclass(frozen=True)
 class SearchLoadSpec:
@@ -43,8 +75,8 @@ class SearchLoadSpec:
 
     mode: str
     qpm: int | None = None
-    top_k: int = 10
-    search_mode: str = "hybrid"
+    top_k: int = DEFAULT_TOP_K
+    search_mode: str = DEFAULT_SEARCH_MODE
 
 
 def resolve_spec(qpm: int | None, continuous: bool) -> SearchLoadSpec | None:
@@ -179,15 +211,17 @@ class SearchLoadRunner:
     # -- internals ---------------------------------------------------------
 
     def _run(self) -> None:
-        body_template = {"limit": self._spec.top_k, "mode": self._spec.search_mode}
         try:
-            with httpx.Client(base_url=self._base_url, timeout=REQUEST_TIMEOUT_SEC) as client:
+            with open_client(self._base_url) as client:
                 index = 0
                 while not self._stop.is_set():
                     if self._spec.qpm is not None and not self._wait_for_slot(index):
                         return
                     query = self._queries[index % len(self._queries)]
-                    self._issue(client, {**body_template, "query": query})
+                    self._issue(
+                        client,
+                        search_body(query, self._spec.top_k, self._spec.search_mode),
+                    )
                     index += 1
         except Exception:  # pragma: no cover - the loop must never kill the run
             log.exception("Search load thread aborted")
@@ -203,11 +237,8 @@ class SearchLoadRunner:
         return False
 
     def _issue(self, client: httpx.Client, body: dict) -> None:
-        t0 = time.monotonic()
-        try:
-            resp = client.post("/api/knowledge/search", json=body)
-            resp.raise_for_status()
-            self._latencies_ms.append((time.monotonic() - t0) * 1000.0)
-        except Exception as e:
+        latency_ms = issue_search(client, body)
+        if latency_ms is None:
             self._errors += 1
-            log.debug("Search-load query failed: %s", e)
+        else:
+            self._latencies_ms.append(latency_ms)

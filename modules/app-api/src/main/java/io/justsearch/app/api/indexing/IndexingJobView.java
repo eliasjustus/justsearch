@@ -13,6 +13,8 @@ import java.util.Objects;
  * a user gesture demands the path string. Pinned by ADR-0028 +
  * {@code LibraryResolveHashOnlyCallerPin}.
  *
+ * <p>{@code state} is one of the {@code STATE_*} constants below.
+ *
  * <p>Worker analogue: {@code IndexingJobChangeFeed.JobRow} (worker-core).
  * The {@code RemoteIndexingJobsBridge} translates worker proto frames →
  * this head-side record one-for-one for the V1 lean scope.
@@ -26,6 +28,31 @@ public record IndexingJobView(
     long retryAfterMs,
     String collection,
     String scanId) {
+
+  /** Awaiting processing (includes rows in retry backoff — {@code retryAfterMs} distinguishes). */
+  public static final String STATE_PENDING = "PENDING";
+
+  /** Claimed by the indexing loop. */
+  public static final String STATE_PROCESSING = "PROCESSING";
+
+  /** Indexed. */
+  public static final String STATE_DONE = "DONE";
+
+  /** Terminal: this file cannot be ingested (a parse failure, or the untyped attempts cap). */
+  public static final String STATE_FAILED = "FAILED";
+
+  /**
+   * Terminal (tempdoc 885 item 21b): a transient failure — an I/O error, a parser timeout, a
+   * sandbox crash — kept recurring for the whole seven-day retry window, so the queue stopped
+   * retrying. Distinct from {@link #STATE_FAILED}: that says the file is unreadable, this says we
+   * never managed to read it. Reset by anything that re-enqueues the path (a rescan, or a watcher
+   * event on an mtime/size change), which restarts the window.
+   *
+   * <p>The head-side vocabulary lives here, on the canonical record named by
+   * {@code governance/operation-surfaces.v1.json}, so a projection that must classify a state
+   * cannot invent its own spelling.
+   */
+  public static final String STATE_RETRY_EXHAUSTED = "RETRY_EXHAUSTED";
 
   public IndexingJobView {
     Objects.requireNonNull(pathHash, "pathHash");

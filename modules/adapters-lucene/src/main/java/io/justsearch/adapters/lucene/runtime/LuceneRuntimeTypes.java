@@ -429,13 +429,34 @@ public final class LuceneRuntimeTypes {
    * Worker's {@code IndexStatusOps}). Each field is a single volatile read taken
    * independently; consumers should treat this as a "best-effort consistent" view,
    * not a transactional snapshot.
+   *
+   * <p>Tempdoc 885 item 19 added {@code reopenCount} and {@code segmentsSinceReopen} here rather
+   * than in a new catalog, because {@code commitCount} — the other half of the cadence pair — was
+   * already this record's field, and a second commit counter would be a fork of it.
+   *
+   * @param reopenCount count of searcher reopens that swapped in a new reader, across every
+   *     reopen path (the background {@code ControlledRealTimeReopenThread}, {@code
+   *     CommitOps.maybeRefresh*}, and the reopen-on-demand seam in {@code SearcherBridge}).
+   *     <b>PER SESSION, not monotonic for the process:</b> it lives on {@code RuntimeSession} and
+   *     therefore RESETS whenever a new session is built — {@code DeferredRuntime.upgradeWriter},
+   *     a blue/green re-open, or the corruption-recovery rebuild. A run that swapped sessions
+   *     under-reports against the reason-tagged {@code index.runtime.commit_ms} histogram, which
+   *     accumulates across them (885 measured 46 here against 114 there). Prefer the histogram
+   *     where one exists; use these for within-run, within-session comparison
+   * @param segmentsSinceReopen segments the writer has created since the last reopen — the backlog
+   *     the next reopen must open, and therefore what the "first search after N new segments"
+   *     column is measuring
    */
   public record RuntimeGaugesSnapshot(
       long writerQueueDepth,
       long writerPendingDocs,
       long commitCount,
-      long refreshLagMs) {
-    public static final RuntimeGaugesSnapshot EMPTY = new RuntimeGaugesSnapshot(0L, 0L, 0L, 0L);
+      long refreshLagMs,
+      long reopenCount,
+      long segmentsSinceReopen) {
+
+    public static final RuntimeGaugesSnapshot EMPTY =
+        new RuntimeGaugesSnapshot(0L, 0L, 0L, 0L, 0L, 0L);
   }
 
   /** Optional telemetry hooks. */

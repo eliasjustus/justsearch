@@ -100,6 +100,29 @@ def _snapshot_models(base_url: str) -> dict | None:
         return None
 
 
+def _worker_data_dir() -> Path:
+    """The Worker-owned data dir (its ``telemetry/`` NDJSON lives under here).
+
+    Default to the eval-mode backend dir so a defaults-only ``run --start-backend``
+    still finds its telemetry (readers skip missing files, so a foreign/dev data dir
+    is harmless).
+    """
+    from ._paths import DEFAULT_BACKEND_DATA_DIR
+
+    override = os.environ.get("JUSTSEARCH_DATA_DIR")
+    return Path(override) if override else DEFAULT_BACKEND_DATA_DIR
+
+
+def _cadence_block(first_search: dict | None) -> dict:
+    """Tempdoc 885 item 19: end-of-run NRT/commit cadence counters + probe latencies."""
+    from . import cadence as cadence_mod
+
+    return cadence_mod.build_block(
+        cadence_mod.collect_worker_metrics(_worker_data_dir()),
+        first_search=first_search,
+    )
+
+
 def _snapshot_search_config(base_url: str) -> dict | None:
     """Fetch active search config from /api/status at run start (343 item 0.4).
 
@@ -155,6 +178,7 @@ def execute_run(
     index_cache: dict | None = None,
     query_syntax: str | None = None,
     search_load: dict | None = None,
+    first_search_probe: dict | None = None,
 ) -> dict:
     """Execute a full evaluation run.
 
@@ -204,6 +228,7 @@ def execute_run(
             summary["index_cache"] = cache_block
         if search_load:
             summary["search_load"] = search_load
+        summary["cadence"] = _cadence_block(first_search_probe)
         return summary
 
     # 1. Load dataset
@@ -351,15 +376,9 @@ def execute_run(
     # legacy roots, incl. env JUSTSEARCH_DATA_DIR, with a WARN). The worker
     # data dir stays a separate concern — it is where the Worker writes
     # telemetry/, which write_run copies into the run dir.
-    from ._paths import DEFAULT_BACKEND_DATA_DIR, DEFAULT_JSEVAL_DATA_DIR
+    from ._paths import DEFAULT_JSEVAL_DATA_DIR
     envelope_data_dir = DEFAULT_JSEVAL_DATA_DIR
-    worker_data_dir_env = os.environ.get("JUSTSEARCH_DATA_DIR")
-    # Default to the eval-mode backend dir so a defaults-only
-    # `run --start-backend` still gets its telemetry copied (write_run
-    # skips missing files, so a foreign/dev data dir is harmless).
-    worker_data_dir = (
-        Path(worker_data_dir_env) if worker_data_dir_env else DEFAULT_BACKEND_DATA_DIR
-    )
+    worker_data_dir = _worker_data_dir()
     # Phase 6 / 6.5: manifest override for LR5-d synthetic bisection.
     # When JUSTSEARCH_MANIFEST_OVERRIDE is set AND the
     # JUSTSEARCH_MANIFEST_OVERRIDE_DANGEROUS safety flag is "1", skip
@@ -407,6 +426,9 @@ def execute_run(
     # Tempdoc 885: additive block from the background search-load thread (absent by default).
     if search_load:
         summary["search_load"] = search_load
+    # Tempdoc 885 item 19: cadence counters are always emitted (null when the Worker does
+    # not publish them) so the arm-comparison table has its columns on every run.
+    summary["cadence"] = _cadence_block(first_search_probe)
 
     # 5. Write artifacts + append history
     if output_dir:

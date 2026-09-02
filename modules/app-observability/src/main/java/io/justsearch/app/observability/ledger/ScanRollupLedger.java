@@ -185,7 +185,11 @@ public final class ScanRollupLedger implements Closeable {
       if (!scan.countFirstTerminalFor(idx.pathHash())) {
         return;
       }
-      if ("FAILED".equalsIgnoreCase(idx.state())) {
+      // Tempdoc 885 item 21b: RETRY_EXHAUSTED counts as failed. Leaving it in the else arm would
+      // have made a scan whose files gave up after a week report them as successfully indexed.
+      if (io.justsearch.app.api.indexing.IndexingJobView.STATE_FAILED.equalsIgnoreCase(idx.state())
+          || io.justsearch.app.api.indexing.IndexingJobView.STATE_RETRY_EXHAUSTED.equalsIgnoreCase(
+              idx.state())) {
         scan.docsFailed++;
       } else {
         scan.docsDone++;

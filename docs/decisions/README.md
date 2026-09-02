@@ -198,6 +198,7 @@ probe fails, a lifecycle trigger fires, or `last_reviewed` goes stale.
 | [0045](0045-public-main-history-publication.md) | Public main history publication | Accepted | 2026-06-28 |
 | [0046](0046-local-api-trust-boundary.md) | Local API trust boundary | Accepted | 2026-09-02 |
 | [0047](0047-context-window-is-a-derived-resource.md) | Context window is a derived resource | Accepted | 2026-09-02 |
+| [0048](0048-extraction-isolation-and-indexing-pacing.md) | Extraction isolation and indexing pacing | Accepted | 2026-09-02 |
 
 > ADRs 0031–0041 were graduated on 2026-06-09 from the retired `421` frontend-rewrite kernel
 > draft's `50-decisions/` set (authored ~2026-05; the rewrite shipped per tempdoc 563). The

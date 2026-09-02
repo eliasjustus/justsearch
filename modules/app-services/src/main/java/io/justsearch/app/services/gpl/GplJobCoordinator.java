@@ -302,8 +302,12 @@ public final class GplJobCoordinator implements GplStatusProvider {
           break;
         }
 
-        // Fetch content for this batch
-        FetchDocumentsResponse fetchResp = knowledgeClientSupplier.get().fetchDocuments(docIds);
+        // Fetch content for this batch. Tempdoc 885 item 6 [R6b]: BATCH_SIZE doc ids x the 200k-char
+        // per-document cap can assemble a reply near the 32 MiB transport ceiling, so the batch is
+        // paged under a byte budget rather than handed over whole.
+        FetchDocumentsResponse fetchResp =
+            io.justsearch.app.services.worker.BoundedDocumentFetch.fetchAll(
+                ids -> knowledgeClientSupplier.get().fetchDocuments(ids), docIds);
 
         for (DocumentContent doc : fetchResp.getDocumentsList()) {
           if (!doc.getFound() || doc.getContent().isBlank()) {

@@ -2,6 +2,8 @@
 package io.justsearch.adapters.lucene.runtime;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
+import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.SearcherManager;
 import org.slf4j.Logger;
@@ -33,7 +35,69 @@ final class SearcherBridge {
     if (mgr == null) {
       throw new IllegalStateException("SearcherManager not available (runtime closed?)");
     }
+    refreshOnDemand(snap, mgr);
     return mgr.acquire();
+  }
+
+  /**
+   * The reopen-on-demand seam (tempdoc 885 item 19). ONE place, not one per RPC: every foreground
+   * read — Search, Rerank, RetrieveContext, FetchDocuments, Suggest, facets, folder browse, counts
+   * — reaches Lucene through {@link #acquire()} or {@link #withSearcher}, so putting the refresh
+   * here is what makes the mode a property of the index runtime rather than of whichever service
+   * happened to be updated.
+   *
+   * <p>No-op unless {@code index.nrt.mode=on_demand}, which keeps the default arm bit-identical.
+   * The write path opts out via {@link #withSearcherNoRefresh}: a read-modify-write batch is
+   * indexing work, and refreshing per batch is precisely the reopen cost the candidate removes.
+   */
+  private void refreshOnDemand(LifecycleSnapshot snap, SearcherManager mgr) {
+    if (session.nrtMode != NrtMode.ON_DEMAND) return;
+    // Background enrichment reads (CombinedEnrichmentBackfillOps / BgeM3BackfillOps fetch every
+    // document they enrich through DocumentFieldOps) come through this same bridge. Checking the
+    // foreground predicate FIRST keeps them off the refresh path without a per-consumer opt-out
+    // list that the next new read path would silently miss.
+    java.util.function.BooleanSupplier fg = session.foregroundActive;
+    boolean foregroundActive = fg == null || fg.getAsBoolean();
+    if (!foregroundActive) return;
+    IndexWriter writer = snap.writer();
+    if (writer == null) return; // read-only runtime: no writer, nothing to reopen against
+    long writerSeqNo = writer.getMaxCompletedSequenceNumber();
+    long lastRefresh = session.lastRefreshNanos.get();
+    long staleMs =
+        lastRefresh == 0L
+            ? Long.MAX_VALUE
+            : TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastRefresh);
+    NrtOnDemandPolicy.Action action =
+        NrtOnDemandPolicy.decide(
+            session.nrtMode,
+            foregroundActive,
+            writerSeqNo,
+            session.nrtStats.seqNoAtLastReopen.get(),
+            staleMs,
+            session.nrtOnDemandMaxStaleMs);
+    if (action == NrtOnDemandPolicy.Action.SKIP) return;
+    try {
+      boolean covered;
+      if (action == NrtOnDemandPolicy.Action.REFRESH_BLOCKING) {
+        mgr.maybeRefreshBlocking(); // waits for the refresh lock, so it always reruns the refresh
+        covered = true;
+      } else {
+        // Lucene returns false when another thread held the refresh lock and this call did
+        // nothing. That other refresh may have STARTED BEFORE our write, so it does not
+        // necessarily cover writerSeqNo — advancing the watermark on false would let the next
+        // query skip and leave a just-written document invisible until the background thread
+        // catches up. Leave it; the next query retries.
+        covered = mgr.maybeRefresh();
+      }
+      // Recording here, and not only in the refresh listener, is what stops an index with nothing
+      // new from re-entering this branch on every query: the listener fires only when a reader was
+      // actually swapped, and a refresh that found nothing changed still proves currency.
+      if (covered) session.nrtStats.recordCovered(writerSeqNo);
+    } catch (IOException | RuntimeException e) {
+      // Best-effort: a failed refresh must not fail the query. The watermark is deliberately NOT
+      // advanced, so the next search retries.
+      log.warn("On-demand NRT refresh failed; serving the previous searcher: {}", e.getMessage());
+    }
   }
 
   /**
@@ -62,11 +126,26 @@ final class SearcherBridge {
    * <p>Replaces the repeated anonymous {@link TextQueryOps.WithSearcher} pattern.
    */
   <T> T withSearcher(ReadPathOps.SearcherOperation<T> op) throws IOException {
+    return withSearcher(op, true);
+  }
+
+  /**
+   * Same as {@link #withSearcher}, but never triggers the on-demand NRT refresh. For write-path
+   * reads (read-modify-write, path rewrites): those run inside indexing, and the whole point of
+   * {@code index.nrt.mode=on_demand} is that indexing does not pay for reopens.
+   */
+  <T> T withSearcherNoRefresh(ReadPathOps.SearcherOperation<T> op) throws IOException {
+    return withSearcher(op, false);
+  }
+
+  private <T> T withSearcher(ReadPathOps.SearcherOperation<T> op, boolean refreshOnDemand)
+      throws IOException {
     LifecycleSnapshot snap = session.snapshot;
     SearcherManager mgr = snap != null ? snap.searcherManager() : null;
     if (mgr == null) {
       throw new IllegalStateException("SearcherManager not available (runtime closed?)");
     }
+    if (refreshOnDemand) refreshOnDemand(snap, mgr);
     IndexSearcher searcher = mgr.acquire();
     try {
       return op.execute(searcher);
