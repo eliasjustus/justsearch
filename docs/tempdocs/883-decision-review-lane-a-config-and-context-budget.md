@@ -900,3 +900,103 @@ Both are in the read-out layer; every launch decision above was correct.
    last launch's `{rung:32768, reason:"top-rung"}`. It is cleared at the start of the next
    `startLlamaServer` but not on stop, so it reads as current state for a server that is gone —
    the "intent presented as an outcome" shape register D-009 warns about.
+
+## Live verification part 3 — fix re-verification + F13 (2026-09-02, stack 91fde467 from e302a96d)
+
+API `http://127.0.0.1:59410`, same dataDir, standard profile.
+
+### Fix 1 — the context row reads the OBSERVED window
+
+Activated with `contextLength = 16384` (an override), then `GET /api/debug/effective-config`:
+
+```json
+{"key": "justsearch.context.size", "value": 16384, "source": "settings.json",
+ "details": {"sysprop": "justsearch.context.size", "envVar": "JUSTSEARCH_CONTEXT_SIZE",
+             "baseline": 16384, "sourceOrdinal": 300,
+             "sourceDetail": "justsearch.context.size", "runtime": 16384}}
+```
+
+**PASS.** `runtime: 16384` is the `/props` readback. The corroborating call on the same engine makes
+the fix unambiguous, because the OLD defect's wrong answer is still visible beside it:
+
+```
+llmContextTokens (/props) = 16384      <- what the row now reports as `runtime`
+configuredContextTokens   = 32768      <- InferenceConfig, what the row USED to report
+contextWindow             = {"rung": 16384, "reason": "override", "slots": 2, "kvType": "q8_0"}
+```
+
+Pre-fix this row said `runtime: 32768` while the server served 16384. Setting `contextLength` back
+to 0 and re-activating returned it to `auto_detected` / ordinal 150 / 32768 with
+`contextWindow.reason = "top-rung"`.
+
+### Fix 2 — the launched-window record does not outlive its server
+
+With the engine stopped (`mode=indexing`, `available=false`):
+
+- `GET /api/inference/status` → `contextWindow: null` — **ABSENT**
+- `GET /api/runtime/manifest` → `ai` keys are exactly
+  `['pendingReason', 'phase', 'readyAt', 'required', 'serverBuildActual', 'thinkingSupport']` —
+  **no `contextWindow` key at all** (omitted by `NON_NULL`, not emitted as null)
+
+**PASS on both surfaces.** Before any launch at all, the field was likewise absent — so the record
+appears exactly while a server this process launched is running, and at no other time.
+
+### F13 — the 845 RAG arms
+
+Corpus: `F:/justsearch-public/docs/explanation` added as a watched root via
+`POST /api/indexing/roots {"path":"F:/justsearch-public/docs/explanation"}` (29 markdown files).
+Enrichment reached `indexedDocuments 35`, `indexState IDLE`, `pendingJobs 0`,
+`chunkDocCount 352` with `chunkEmbeddingCompletedCount 352` (100% chunk-vector coverage) before the
+arms ran. Engine at the derived top rung: `{rung: 32768, reason: "top-rung", slots: 2, kv q8_0}`.
+
+Both arms `POST /api/chat/ask` (SSE), same question, `topK: 5`:
+
+> "What is the JustSearch hybrid inference architecture and how does the GPU mutual exclusion
+> between the Main and Worker processes work?"
+
+| Arm | Request body | HTTP | `context_truncated` | `chunks_used` / `chunks_found` | prompt + completion | window | error |
+|---|---|---|---|---|---|---|---|
+| Quick | `{"question":"...","topK":5,"maxTokens":512}` | 200 | **false** | **5** / 62 | 2597 + 512 = **3109** | 32768 | none |
+| Standard | `{"question":"...","topK":5,"maxTokens":1024}` | 200 | **false** | **5** / 62 | 2597 + 1024 = **3621** | 32768 | none |
+
+Both arms: `retrieval_mode CHUNK_HYBRID`, `retrieval_mode_reason HYBRID_AVAILABLE`,
+`chunks_considered 15`. The standard arm streamed 510 `chunk` events.
+
+**All three assertions hold in both arms:**
+
+- `context_truncated == false` — the 845 trimmer never fired.
+- `chunks_used == min(chunks_found, topK)` — 5 used of 62 found at `topK 5`, i.e. every chunk the
+  budget asked for was delivered. (`chunks_found` counts the retrieval candidate pool, not a
+  delivery shortfall.)
+- prompt + completion is far inside the window: 3109 and 3621 against 32768, ~10% utilization.
+
+For contrast, 845's original failure was "asked for **5990** input tokens out of a 4096-token
+window" (845:326). The same class of ask now costs 2597 prompt tokens against a window 8x larger.
+Note this is a *headroom* result, not a proof that the budget fractions are right — the constants
+that would fill a larger window are PR 2's `ContextBudget` work (decision 3), which is not in this
+PR. What it does show is that the derived window removes the pressure that made 845's trimmer fire.
+
+Watched root removed afterwards (`DELETE /api/indexing/roots` → `{"status":"ok","deletedJobs":30}`;
+`GET /api/indexing/roots` → `{"roots":[]}`).
+
+### C5 — the env-var arm remains NOT RUN (an honest gap, not a pass)
+
+`JUSTSEARCH_CONTEXT_SIZE` contributes at ordinal 400 (`env_var`). It is exercised at the unit level
+by `ResolvedConfigBuilderTest` (the ordinal-chain and clamping cases put values at
+`ORDINAL_ENV_VAR` explicitly and assert the resolution), and the effective-config row lists
+`env_var` among its candidates live — but with no value, because nothing set it.
+
+Running it live needs the variable present in the backend's process environment at start, which the
+orchestrator's dev-runner does not expose as a knob; changing it means an orchestrator-owned
+restart. It is therefore recorded as a **gap**, not as a pass: the env path's live behaviour on this
+build is inferred from the ordinal chain being verified at 150 / 300 / 500 (the last via the
+`-D`-sourced `jvm_arg` candidate), not observed at 400.
+
+### Live acceptance status after part 3
+
+Everything in the original acceptance list is now measured except C5 above, and the one step-down
+detail recorded in part 2: the successful rung-walk (a lower rung actually loading after a failed
+higher one) still has no live witness, because on this card the inter-rung VRAM gap (272 MiB) is
+smaller than observed free-VRAM noise (~280 MiB). Its trigger (`PROCESS_EXITED` on an unfittable
+`-c`), its guard, and its override branch are all live-verified; the relaunch line is covered by
+unit tests only.
