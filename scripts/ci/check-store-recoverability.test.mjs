@@ -604,6 +604,65 @@ test('a vocabulary entry with no stated meaning fails', () => {
   assert.ok(result.some((f) => f.includes('has no meaning')), result.join(' | '));
 });
 
+const MARKER = { reason: 'row lands in PR #613', until: '2026-09-30' };
+
+test('an awaitingRow marker with no `until` fails, so an abandoned PR cannot make it permanent', () => {
+  const result = checkCorruptionPolicyVocabulary({
+    durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+    policies: { ...POLICY_VOCAB, LANDING_IN_ANOTHER_PR: 'Regenerated or preserved.' },
+    awaitingRow: { LANDING_IN_ANOTHER_PR: { reason: 'row lands in PR #613' } },
+  });
+  assert.ok(result.some((f) => f.includes('must carry an ISO `until` date')), result.join(' | '));
+});
+
+test('an expired awaitingRow marker fails', () => {
+  // The whole point of the expiry: the row-landed branch only fires on SUCCESS, so without this a
+  // marker for an abandoned PR would sit in the vocabulary forever.
+  const result = checkCorruptionPolicyVocabulary({
+    durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+    policies: { ...POLICY_VOCAB, LANDING_IN_ANOTHER_PR: 'Regenerated or preserved.' },
+    awaitingRow: { LANDING_IN_ANOTHER_PR: { reason: 'row lands in PR #613', until: '2026-09-01' } },
+    now: new Date('2026-09-02T00:00:00Z'),
+  });
+  assert.ok(result.some((f) => f.includes('expired on 2026-09-01 (today is 2026-09-02)')), result.join(' | '));
+});
+
+test('an unexpired awaitingRow marker passes', () => {
+  assert.deepEqual(
+    checkCorruptionPolicyVocabulary({
+      durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+      policies: { ...POLICY_VOCAB, LANDING_IN_ANOTHER_PR: 'Regenerated or preserved.' },
+      awaitingRow: { LANDING_IN_ANOTHER_PR: MARKER },
+      now: new Date('2026-09-02T00:00:00Z'),
+    }),
+    [],
+  );
+});
+
+test('an awaitingRow reason naming no PR or branch fails', () => {
+  const result = checkCorruptionPolicyVocabulary({
+    durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+    policies: { ...POLICY_VOCAB, LANDING_IN_ANOTHER_PR: 'Regenerated or preserved.' },
+    awaitingRow: { LANDING_IN_ANOTHER_PR: { reason: 'landing soon', until: '2026-09-30' } },
+    now: new Date('2026-09-02T00:00:00Z'),
+  });
+  assert.ok(result.some((f) => f.includes('does not name a PR or branch')), result.join(' | '));
+});
+
+test('a branch name satisfies the reference check as well as a PR number', () => {
+  assert.deepEqual(
+    checkCorruptionPolicyVocabulary({
+      durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+      policies: { ...POLICY_VOCAB, LANDING_IN_ANOTHER_PR: 'Regenerated or preserved.' },
+      awaitingRow: {
+        LANDING_IN_ANOTHER_PR: { reason: 'row lands from worktree-resid2-stores', until: '2026-09-30' },
+      },
+      now: new Date('2026-09-02T00:00:00Z'),
+    }),
+    [],
+  );
+});
+
 test('a value declared ahead of its row passes only while awaitingRow names the PR', () => {
   // Cross-lane reality: a sibling branch coins a value, and this vocabulary must accept it BEFORE
   // that row exists or the sibling reds on merge. The marker is what keeps that from becoming a
@@ -614,7 +673,8 @@ test('a value declared ahead of its row passes only while awaitingRow names the 
     checkCorruptionPolicyVocabulary({
       durableStores,
       policies,
-      awaitingRow: { LANDING_IN_ANOTHER_PR: 'row lands in PR #613' },
+      awaitingRow: { LANDING_IN_ANOTHER_PR: MARKER },
+      now: new Date('2026-09-02T00:00:00Z'),
     }),
     [],
   );
@@ -629,7 +689,7 @@ test('an awaitingRow marker whose row has landed fails, so scaffolding cannot ou
   const result = checkCorruptionPolicyVocabulary({
     durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
     policies: POLICY_VOCAB,
-    awaitingRow: { FAIL_LOUD: 'row lands in PR #613' },
+    awaitingRow: { FAIL_LOUD: MARKER },
   });
   assert.ok(result.some((f) => f.includes('is in `awaitingRow` but a durableStores row now uses it')),
     result.join(' | '));
@@ -639,7 +699,7 @@ test('an awaitingRow value with no policy meaning fails', () => {
   const result = checkCorruptionPolicyVocabulary({
     durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
     policies: POLICY_VOCAB,
-    awaitingRow: { NEVER_DECLARED: 'row lands in PR #613' },
+    awaitingRow: { NEVER_DECLARED: MARKER },
   });
   assert.ok(result.some((f) => f.includes('has no entry in `policies`')), result.join(' | '));
 });

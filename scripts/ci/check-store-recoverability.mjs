@@ -18,6 +18,13 @@ const REGISTER = 'governance/store-recoverability.v1.json';
  * a row edit is a merge conflict for no reason (tempdoc 910 item 2).
  */
 const POLICIES = 'governance/store-corruption-policies.v1.json';
+/** `#613` or `worktree-resid2-stores` — something a reader can actually chase. */
+const AWAITING_ROW_REFERENCE = /#\d+|worktree-[A-Za-z0-9._-]+/;
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function toIsoDay(now) {
+  return (now instanceof Date ? now : new Date(now)).toISOString().slice(0, 10);
+}
 const OWNERS = new Set(['SHELL', 'HEAD', 'WORKER', 'EXTERNAL']);
 const RECOVERABILITY = new Set(['AUTHORED', 'DERIVED', 'MIXED', 'EPHEMERAL']);
 const STATUSES = new Set(['READY', 'HARDENING_REQUIRED']);
@@ -515,7 +522,7 @@ export function checkEncryptionDisposition({ row, label, authoredCatalogDirs }) 
  * @param {{ durableStores: Array<object>, policies: Record<string, string>|undefined }} input
  * @returns {string[]} failures
  */
-export function checkCorruptionPolicyVocabulary({ durableStores, policies, awaitingRow = {} }) {
+export function checkCorruptionPolicyVocabulary({ durableStores, policies, awaitingRow = {}, now = new Date() }) {
   const failures = [];
   if (policies === null || typeof policies !== 'object' || Array.isArray(policies)) {
     failures.push(
@@ -569,16 +576,42 @@ export function checkCorruptionPolicyVocabulary({ durableStores, policies, await
       );
     }
   }
-  for (const [value, reason] of Object.entries(awaiting)) {
+  const today = toIsoDay(now);
+  for (const [value, marker] of Object.entries(awaiting)) {
+    const label = `${POLICIES}: \`awaitingRow.${value}\``;
     if (!known.has(value)) {
       failures.push(
         `${POLICIES}: \`${value}\` is in \`awaitingRow\` but has no entry in \`policies\`. ` +
           'A forward declaration still needs its one-line meaning.',
       );
     }
+    const reason = marker && typeof marker === 'object' ? marker.reason : marker;
+    const until = marker && typeof marker === 'object' ? marker.until : undefined;
+
     if (typeof reason !== 'string' || reason.trim() === '') {
+      failures.push(`${label} must carry a \`reason\` naming the PR or branch whose row will use it.`);
+    } else if (!AWAITING_ROW_REFERENCE.test(reason)) {
       failures.push(
-        `${POLICIES}: \`awaitingRow.${value}\` must name the PR or branch whose row will use it.`,
+        `${label}.reason does not name a PR or branch. Cite one as \`#613\` or ` +
+          '`worktree-<name>` so the marker can be chased to something real — "landing soon" is how ' +
+          'a forward declaration becomes permanent.',
+      );
+    }
+
+    // Without an expiry the marker only retires on the SUCCESS path (a row lands and the
+    // row-landed branch above fires). If the referenced PR is abandoned, nothing ever removes it
+    // and the value sits in the vocabulary forever — exactly the outliving-its-reason this
+    // register is meant to prevent. Same shape as an expected-state pin's `reviewBy`.
+    if (typeof until !== 'string' || !ISO_DAY.test(until)) {
+      failures.push(
+        `${label} must carry an ISO \`until\` date (YYYY-MM-DD). A marker with no expiry only ` +
+          'retires if its PR lands; if that PR is abandoned it becomes permanent.',
+      );
+    } else if (until < today) {
+      failures.push(
+        `${label} expired on ${until} (today is ${today}). Either the row landed — delete the ` +
+          `marker — or it did not: delete \`${value}\` from \`policies\` too. Extending the date ` +
+          'is a third option only if the PR is genuinely still in flight, and it needs saying why.',
       );
     }
   }
@@ -732,7 +765,8 @@ function main() {
     `store-recoverability gate OK - ${catalogEntries.length} catalog stores and ` +
       `${register.durableStores.length} durable state authorities are registered ` +
       `(floor ${policies.ratchet.durableStoreRows}), across ` +
-      `${Object.keys(policies.policies).length} corruption policies.`,
+      `${Object.keys(policies.policies).length - Object.keys(policies.awaitingRow ?? {}).length} ` +
+      `corruption policies in use + ${Object.keys(policies.awaitingRow ?? {}).length} awaiting a row.`,
   );
 }
 

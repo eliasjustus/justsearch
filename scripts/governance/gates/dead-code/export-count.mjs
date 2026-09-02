@@ -39,17 +39,27 @@
  * name), while a used enum reports only its unused members — so counting name
  * AND members over-counts by one rather than risking an under-count.
  *
- * KNOWN LIMITS, stated rather than papered over. Two knip categories are NOT
- * bounded by this counter, both because they are absent from this project's
- * report today:
+ * KNOWN LIMITS, stated rather than papered over. Three ways the bound can be
+ * escaped, all absent from this project's report today:
  *
  *   - `duplicates` (the same binding exported under two names). Bounding it
  *     needs binding-level resolution rather than the syntactic walk below.
  *   - `classMembers` — see `countReportableMembers` for the measurement and
  *     the trigger to revisit.
+ *   - THE TWO BRANCHES DO NOT USE THE SAME UNIT. The per-export branch
+ *     (`enforcer.mjs:150-155`) sums EVERY array key on the row, including the
+ *     non-export categories `dependencies`, `devDependencies`, `unlisted`,
+ *     `unresolved` and `binaries`, while the whole-file branch (`:143-147`)
+ *     replaces the row with this export count and drops them — so a module
+ *     that gained >= 2 non-export findings after ceasing to be whole-file
+ *     could still exceed its pin. Measured 2026-09-02: 0 of the 23 whole-file
+ *     rows carry a non-export category, and only 3 rows repo-wide do at all
+ *     (`package.json` dependencies/devDependencies, `Shell.ts` and
+ *     `runtimeConformance.ts` one `unlisted` each), so the escape is currently
+ *     unreachable rather than merely unlikely.
  *
- * If either ever appears in a report, a module carrying it could still read as
- * growth on gaining a consumer, and this is the comment to come back to.
+ * If any of the three appears, a module carrying it could read as growth on
+ * gaining a consumer, and this is the comment to come back to.
  *
  * "Own declared" is deliberate and was measured, not assumed. Probes on
  * 2026-09-02 against knip 6.20.0:
@@ -127,11 +137,15 @@ export function resolveReportPath({ repoRoot, projectRoot, reportedPath }) {
  * repo's own config: the default report emits
  * `dependencies, devDependencies, enumMembers, exports, files, types, unlisted`
  * — `enumMembers` yes, `classMembers` no. Counting class members would pin
- * `src/shell-v0/components/SelectionActionsMenu.ts` (ONE exported Lit class,
- * 18 methods) at 19 instead of 1, and `retainedScroll.ts` / `ResolutionStats.ts`
- * at 7 instead of 1 — a large standing allowance bought for a category knip
- * does not emit here. That is the same over-permissiveness this module rejects
- * for transitive star barrels, so it is rejected here too.
+ * `src/shell-v0/components/SelectionActionsMenu.ts` at 19 instead of 1: ONE
+ * exported Lit class, whose 19 members are 9 properties + 9 methods + a
+ * constructor, and the constructor is unnamed so knip could not report it —
+ * 18 nameable members, plus the class name itself. `retainedScroll.ts` and
+ * `ResolutionStats.ts` likewise go 1 -> 7 (3 properties + 3 methods + an
+ * unnamed constructor = 6 nameable, plus the class name). Each number counts
+ * the exported NAME as well as its members. That is a large standing allowance
+ * bought for a category knip does not emit here — the same over-permissiveness
+ * this module rejects for transitive star barrels, so it is rejected here too.
  *
  * TRIGGER TO REVISIT: if `modules/ui-web/knip.config.ts` ever sets
  * `include: ['classMembers']`, this function must count them and the affected

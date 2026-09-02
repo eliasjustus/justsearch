@@ -577,17 +577,17 @@ miscounted in round 1.
 
 | value | row(s) | verdict | evidence |
 |---|---|---|---|
-| `FAIL_LOUD` | ai-install-contract, encryption-keystore, **user-policy** | **DRIFT, fixed** | The first two throw (`InstallContractIO.java:41,:53`; `EncryptionKeystore.java:36-46`). **`user-policy` does not**: `EnterprisePolicyServiceImpl.java:287-290` catches, warns, and returns `PolicyLoad(present, invalid, message)`; `:283-285` does the same for an unsupported schemaVersion. Meaning now states the guarantee is "never silently defaulted or rewritten", not "throws". |
+| `FAIL_LOUD` | ai-install-contract, encryption-keystore, **user-policy** | **DRIFT, fixed** | The first two throw (`InstallContractIO.java:41,:53`; `EncryptionKeystore.java:36-46`). **`user-policy` does not**: `EnterprisePolicyServiceImpl.java:287-290` catches, warns, and returns `PolicyLoad(present, loaded=false, message)` — the field is `loaded`, not `valid` (`:265`); `:283-285` same for an unsupported schemaVersion. Downstream splits: an unloadable **machine** policy fails CLOSED (`:73-86`), while the effective policy otherwise starts permissive (`:66-69`) and only narrows (`:100-106`). Meaning now says all of this. |
 | `FAIL_LOUD_ON_UNREADABLE_OR_FUTURE_LINE` | feedback-records | **DRIFT (scope), fixed** | The corruption verb is right — `NdjsonAppendStore.java:100-118` throws per line. But blank lines are skipped (`:100-102`) and a **sealed-but-locked** store returns an EMPTY list (`:95-97`), so "you always see every record" was wider than the code. Both caveats now stated. |
 | `FAIL_LOUD_AND_PRESERVE` | 8 rows (durable-grants, plugin-allowlist, installed-packs, memories, conversations, agent-runs, run-events, watched-roots) | OK | All 8 throw `CorruptDurableStoreException` (2-7 sites each) and **none delete on the corruption path**. The single `Files.deleteIfExists` in `FileConversationStore.java:731-734` is a user-initiated session-directory delete (a `Files.walk` teardown), not recovery. |
 | `ACTIVE_AND_FUTURE_LOGS_FAIL_LOUD` | file-operation-journal | OK | `FileOperationLog.java:148,:223` throw `CorruptDurableStoreException`; `:237` throws `UnsupportedStoreVersionException`; `:145-146,:189-190,:201-202,:220-221` rethrow rather than swallow. |
-| `SKIP_UNREADABLE_LINE_AND_WARN` | action-ledger-audit-journal | OK | `ActionEventJournal.java:268-271` — `catch (RuntimeException) … log.warn("Skipping unreadable action-ledger journal line")`; `:241-242` warns if the whole journal is unreadable. |
-| `PRESERVE_AND_RECOVER_DEFAULTS` | ui-settings | OK | `UiSettingsStore.java:35-37` documents it, `:109` calls `quarantineCorruptFile`, `:194` performs the move to `settings.json.corrupt-<UTC>`, and `:191-193` rethrows if the move itself fails — so it never defaults *without* preserving. |
+| `SKIP_UNREADABLE_LINE_AND_WARN` | action-ledger-audit-journal | **DRIFT (scope), fixed** | The parse-failure path warns (`ActionEventJournal.java:268-271`), but a line that PARSES and is structurally invalid — missing `id`/`kind`, unparseable `occurredAt` — is dropped **silently** by `ActionLedgerProjection.fromWireRow` returning `Optional.empty` (`:264-266`, `:272-274`). And the skip is per-LINE only: `Files.readAllLines` sits outside the try at `:254`, so an IO failure aborts that generation and the remaining ones. Meaning now carries both qualifications. |
+| `PRESERVE_AND_RECOVER_DEFAULTS` | ui-settings | OK | `UiSettingsStore.java:109` calls `quarantineCorruptFile` (`:194`), which moves to `settings.json.corrupt-<UTC>` at `:198` (non-atomic fallback `:200`) and rethrows the original with the IO failure suppressed into it at `:202-204` — so it never defaults *without* preserving. |
 | `FAIL_CLOSED_DISABLED_WRITE_LOCKED` | feedback-capture-preference | OK | `FeedbackCaptureSettings.java:114-116` catches corrupt/future state, returns `false` (capture off) and sets `writeLocked`; `:59-60` makes a later write throw. Fail-closed *to disabled*, which is what the meaning says. |
 | `FAIL_CLOSED_AND_RETRY_PREPARATION` | head-shutdown-receipt | OK | `HeadShutdownCoordinator.java:88-89` — "Missing receipt is a fail-closed signal to the shell"; the receipt is nonce-bound (`:16-20`) so a stale one cannot satisfy a new preparation. |
 | `FAIL_CLOSED` | shell-release-sequence | OK | `updater.rs:435,:438` return `Err` on a descriptor/hash mismatch or a non-NSIS artifact; `:315,:449` refuse to proceed. Nothing is written. |
 | `FAIL_CLOSED_REPAIR_REQUIRED` | shell-upgrade-intent | OK | `updater.rs:242,:260,:298` set state `repair_required`; `:512,:542,:549` call `mark_repair_required` and return the error, so it stays stopped until an explicit repair. |
-| `RECOVER_PREVIOUS_OR_REBUILD` | index-generations | OK | `IndexGenerationManager.java:366` `rollbackToPreviousGeneration()`, and `:323`/`:362` state twice that it **does not delete any generations** — only `state.json` pointers move. |
+| `RECOVER_PREVIOUS_OR_REBUILD` | index-generations | OK (**evidence corrected**) | The corruption path is `loadStateBestEffort():642-659`: `state.json` unreadable → fall back to `state.json.prev`, `log.warn` at `:650`, and `writeState(prev)` at `:652` overwrites the corrupt file. My round-2 citation was wrong on two counts — `rollbackToPreviousGeneration():366` is an **operator control**, not the corruption path, and the `:323`/`:362` "does not delete any generations" comments are **method-scoped**, not class-wide: the class *does* delete generation directories via `pruneMarkedForDeletionBestEffort():754` → `FileOps.deleteRecursivelyBestEffort():782` and `gcBestEffort():799,:845`, guarded by `protectedGenerationIds():876` and reachable only from the operator gRPC `IndexGc` (`MigrationControlOps.java:270-286`). The meaning never claimed "never deletes", so it stands as written. |
 | `REFUSE_FUTURE_SCHEMA_AND_PRESERVE_OVERRIDES` | entity-clusters | OK | `EntityClusterStore.java:70-75` throws when `PRAGMA user_version` exceeds `CURRENT_SCHEMA_VERSION`; `:79-89` runs schema creation (incl. `CREATE_OVERRIDES_TABLE`) in a transaction that rolls back on failure — no destructive migration. |
 | `VERIFY_PROCESS_IDENTITY_OR_REPLACE_STALE_LOCK` | process-locks | OK | `AppInstanceLock.java:144-166` — `ProcessHandle.of(pid)`, dead-process **and** start-time-mismatch checks before `log.warn("Recovering stale app lock…")` and deleting; `:71-72` documents the retry-once. |
 | `FAIL_OR_REBUILD_DERIVED_QUEUE` | jobs-db | OK | `SqliteJobQueue.java:259` runs an integrity check on existing databases that "throws SQLException on corruption"; the queue is derived, so the rebuild path is a re-enqueue rather than a repair. |
@@ -596,10 +596,13 @@ miscounted in round 1.
 | `VERIFY_HASH_OR_PRESERVE_USER_ASSET` | managed-ai-assets | OK | Same delete-site audit as above plus the `sha256` verification threaded through `AiInstallService.java:1767`. |
 | `REGENERATE_BEFORE_CONSUMPTION` | worker-config-snapshot | OK | `WorkerSpawner.java:61-66,:119` — the snapshot is written by HeadlessApp at ordinal 450 and read by the Worker afterwards; it is rewritten every boot, so a stale copy is never consumed. |
 
-**Score for the whole vocabulary: 5 of 26 meanings were wrong** — `DELETE_AND_RECOMPUTE`,
-`ROTATE_OR_PRUNE_DIAGNOSTIC_ARTIFACT`, `SKIP_DERIVED_ROW` (round 1), plus `FAIL_LOUD` and
-`FAIL_LOUD_ON_UNREADABLE_OR_FUTURE_LINE` (round 2). Every one was a claim I wrote from a
-`corruptionNote` without opening the code — which is the honest argument for §E item 3.
+**Score for the whole vocabulary: 6 of 26 meanings were wrong** — `DELETE_AND_RECOMPUTE`,
+`ROTATE_OR_PRUNE_DIAGNOSTIC_ARTIFACT`, `SKIP_DERIVED_ROW` (round 1), `FAIL_LOUD` and
+`FAIL_LOUD_ON_UNREADABLE_OR_FUTURE_LINE` (round 2), and `SKIP_UNREADABLE_LINE_AND_WARN` (round 3,
+found by the reviewer). Every one was a claim written from a `corruptionNote` without opening the
+code — which is the honest argument for §E item 3. One further round-3 correction was to my own
+EVIDENCE rather than a meaning (`RECOVER_PREVIOUS_OR_REBUILD`, above): I cited an operator control
+and two method-scoped comments as if they were the corruption path and a class-wide guarantee.
 
 **The pattern in the two round-2 drifts is worth naming**: both were wrong by being *too strong*.
 `FAIL_LOUD` averaged three rows that do not behave alike, and
@@ -645,13 +648,15 @@ about governance gates.
    touched are of that shape.
 3. **The vocabulary's meanings are prose, not enforced semantics — and §F.8 measured how much that
    costs.** The gate checks that a value is *declared* with a *non-empty* meaning; it cannot check
-   that a meaning matches what the code does. Of the eight meanings whose claims were actually
-   checked in the review round, **three were wrong** (`DELETE_AND_RECOMPUTE`,
-   `ROTATE_OR_PRUNE_DIAGNOSTIC_ARTIFACT`, `SKIP_DERIVED_ROW`); seventeen remain at the standing of
-   the `corruptionNote`s they were written from. Closing this needs a per-row assertion tying the
-   policy to the handling path (the row's named recovery test is the natural anchor) — a bigger
-   change than this lane, and the one that would make this register self-defending rather than
-   self-describing.
+   that a meaning matches what the code does. **All 26 have now been read against their handling
+   path, and 6 were wrong** (§F.8): `DELETE_AND_RECOMPUTE`, `ROTATE_OR_PRUNE_DIAGNOSTIC_ARTIFACT`,
+   `SKIP_DERIVED_ROW`, `FAIL_LOUD`, `FAIL_LOUD_ON_UNREADABLE_OR_FUTURE_LINE`,
+   `SKIP_UNREADABLE_LINE_AND_WARN` — a 23% error rate on prose that reads as authoritative, plus one
+   row where my *evidence* was wrong while the meaning happened to be right. Nothing keeps them true
+   from here: the next edit to any of those handling paths can silently re-drift the meaning.
+   Closing it needs a per-row assertion tying the policy to the handling path (the row's named
+   recovery test is the natural anchor) — a bigger change than this lane, and the one that would
+   make this register self-defending rather than self-describing.
 4. **`pendingDurableClassification` is at cap (8/8).** Any new pending entry needs a paired bump in
    two files now. That is the intent, but it means the next lane discovering a durable write site
    with no row will hit this gate before it hits anything else.

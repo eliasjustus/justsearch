@@ -86,10 +86,10 @@ export async function enforceDeadCode(options) {
     return { toolName: 'justsearch-dead-code', toolVersion: '0.1.0', findings, verdict: 'fail', ruleDescriptions: DEAD_CODE_RULE_DESCRIPTIONS };
   }
 
-  // Knip --reporter json shape varies by version. Tolerant: walk `files[]` /
-  // `issues[]` (current knip ^6, verified against node_modules/knip/dist/reporters/json.js -
-  // `{ issues: Object.values(json) }`, one row per file with per-category array fields) /
-  // legacy `issues{category:{file:[...]}}`. Default: count entries per file.
+  // One supported shape: `{ issues: [ ... ] }` (knip ^6, verified against
+  // node_modules/knip/dist/reporters/json.js - `{ issues: Object.values(json) }`, one row per file
+  // with per-category array fields). The tolerant multi-shape walk this comment used to describe
+  // was retired with the branches themselves; see the shape check below.
   const counts = new Map();
   const collect = (filePath, n) => counts.set(filePath, (counts.get(filePath) ?? 0) + n);
 
