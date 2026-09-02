@@ -96,6 +96,21 @@ run('the compact_boundary line attaches compactionBoundary to the NEXT call (msg
   assert.equal(msg3.compactionBoundary, false);
 });
 
+run('a two-line boundary (system compact_boundary + user isCompactSummary) does not clobber compactMetadata (886 §12 PR 2 fix)', () => {
+  // The fixture between the boundary and msg-2 carries the REAL corpus
+  // pattern (verified 2026-09-02, 11/11 real compaction events): a
+  // `compactMetadata`-bearing `system`/`compact_boundary` line immediately
+  // followed by a `user`/`isCompactSummary:true` line that carries NO
+  // `compactMetadata`. Before the fix, that second line unconditionally
+  // overwrote the adapter's `compactMeta` with `null`, so every boundary
+  // Call in the real corpus lost its trigger/preTokens/postTokens/durationMs
+  // silently — context-residency.mjs's compaction ledger (886 §12 PR 2)
+  // surfaced this: 0 of 11 real boundary Calls carried compactMetadata.
+  const msg2 = mainCalls.find((c) => c.callId === 'msg-2');
+  assert.ok(msg2.compactMetadata, 'compactMetadata must survive the second (metadata-less) boundary line');
+  assert.equal(msg2.compactMetadata.trigger, 'auto');
+});
+
 // --- 1h cache-write split ----------------------------------------------------
 
 run('a tiered 1h cache_creation split resolves to cacheWrite1h, not cacheWrite5m', () => {

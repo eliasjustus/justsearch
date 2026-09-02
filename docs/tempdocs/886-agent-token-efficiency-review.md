@@ -1,6 +1,6 @@
 ---
 title: "886 — Agent token efficiency review: context residency is the cost, not cache misses"
-status: "ANALYSIS 2026-09-02 — findings + ranked levers + stack-extension proposals; nothing implemented yet"
+status: "IN PROGRESS 2026-09-02 — PR 1 ledger committed; PR 2 readers in flight"
 created: 2026-09-02
 updated: 2026-09-02 (§9 scope correction, §10 theorization)
 supersedes-in-part: 841 (§7 'prefix is proportionate, not the lever' and the 'no measurable context bloat' framing — see §3)
@@ -50,9 +50,12 @@ nothing else.
 
 Main loop, per-call context: p50 **415k**, p75 627k, p90 782k, p99 942k, max 997k. 74.8% of all
 main-loop context tokens sit in calls with >400k context. First-call (cold) context is p50 66k, so
-sessions grow from 66k to 500k+ and stay there: 22 compactions in the window, **21 manual, 1 auto
-(at 1.0M)**, median pre-compaction context 889k, min 447k. Summaries are 9-29k tokens; a
-compaction takes ~150s wall clock.
+sessions grow from 66k to 500k+ and stay there: 9 compactions in the window, **8 manual, 1 auto
+(at 1.0M)**, median pre-compaction context 947k, min 447k. Summaries are 9-29k tokens; a
+compaction takes ~160s wall clock. (Corrected twice during PR 2: the throwaway reader's "22"
+counted boundary lines, of which each Claude compaction writes two, and its file-mtime window
+admitted two late-July events; `context-residency.mjs --since 2026-08-01` is the reproducible
+figure.)
 
 Subagents, per-call: p50 **177k**, p90 398k, p99 632k.
 
@@ -74,7 +77,7 @@ in practice** — check the next long session's compaction trigger before relyin
 
 - 770 of 775 `Agent` calls set an explicit model (the CLAUDE.md rule holds); the choice resolved
   to **opus 77% of the time**. Opus spawns average $14.4 vs $1.77 for Sonnet (5× rate × longer runs).
-- Spawn length is the multiplier: spawns with **>120 calls are 20% of spawns and 72% of subagent
+- Spawn length is the multiplier: spawns with **≥120 calls are 20% of spawns and 72% of subagent
   cost** ($7.6k). The top 20 spawns (all `general-purpose`/opus, "Implement <tempdoc> slice"
   workers, 361-1,365 calls, peak context 462k-920k) cost $86-355 each — i.e. the "worker-grade
   loop" the delegation rule routes out of the orchestrator is being run at orchestrator-grade
@@ -432,10 +435,77 @@ Real-corpus anchors reproduced: Codex July input 5,038.7M (target 5,044.6M), rep
 main p50 413k. Lesson worth keeping (`audit-without-test` in the other direction): fixture
 tests prove the rules, only the real corpus proves the vocabulary — every adapter PR runs both.
 
+**PR 2 outcome (2026-09-02, branch `worktree-886-ledger-1`, stacked on PR 1).** Implemented as
+specified: `context-residency.mjs` (+test, 20 cases) and `spawn-economics.mjs` (+test, 15
+cases) productionise `tmp/tokeff/{deep,deep3,deep4}.mjs`; `overhead-taxonomy.mjs`'s default
+window is now trailing 30 days (was a hardcoded 2026-06-18..07-16 that returned 0 sessions
+bare); `cost-session.mjs --reconcile` (+test, 12 cases, no real-dir reads) compares OTLP vs
+transcript pricing per session and names residue causes. Building section (c) surfaced a real
+bug in PR 1's `claude-adapter.mjs`: a genuine compaction is TWO consecutive boundary-flagged
+lines (a `compactMetadata`-bearing `system` line immediately followed by a metadata-less `user`
+`isCompactSummary` line); the adapter unconditionally overwrote its captured metadata on every
+boundary-flagged line, so the second line silently erased the first's real
+trigger/preTokens/postTokens/durationMs — 0 of 11 real compaction events in the corpus carried
+`compactMetadata` before the fix (PR 1's fixture only exercised a single-line boundary, so its
+test never caught this). Fixed in `claude-adapter.mjs`, with a regression test and a
+corpus-faithful two-line fixture addition.
+
+**Independent review, second pass — one SHOULD-FIX + three NITs, all fixed.** `listCalls`
+(`lib/ledger/index.mjs`) used `sinceMs`/`untilMs` only as a file-mtime discovery prefilter, so a
+`--since 2026-08-01` query kept every call in any file touched on-or-after that date — including
+calls from WEEKS earlier in a long-lived session (measured: 5,541 calls dated before `--since`
+leaked in, min ts 2026-07-30, before the fix). Fixed: `listCalls` now applies mtime as the cheap
+file prefilter (unchanged) THEN a per-call filter on `windowBy: 'ts'` (new default) against each
+`Call`/`ToolEvent`'s own `ts`; a null/unparsable `ts` is KEPT (cannot be judged) and counted in
+the returned `unfilterableTs`; `windowBy: 'mtime'` opts back into the old semantics; a session
+summary is kept only if ≥1 of its calls survives. 5 new tests in `index.test.mjs` (before/after
+window, null-ts kept, `windowBy:'mtime'` opt-out, no-window shape unchanged, session dropped when
+none of its calls survive). Also fixed: `context-residency.mjs`'s header line no longer conflates
+the Codex `Call.synthetic` boundary flag with a Claude turn whose `message.model` is the literal
+string `'<synthetic>'` (two unrelated things, now reported as two explicit counts);
+`spawn-economics.mjs`'s brief-length axis is renamed `firstUserMessageChars` (a skill-invoked
+subagent's opening turn is the skill body, not an Agent-tool brief — the old name implied a
+cleaner concept than the data supports); the `>120-call` prose in this tempdoc and the module
+header now says `≥120 calls`, matching the code's actual `calls >= 120` bucket boundary (the
+`.mjs` comment uses ASCII `>=120` per this repo's non-ASCII-in-code convention; the tempdoc prose
+uses `≥`).
+
+Real-corpus anchors reproduced (window since 2026-08-01, `--harness claude-code` unless noted).
+**The table below is TS-WINDOWED (post-fix)** — the first pass's numbers were mtime-windowed and
+are kept only as the "first pass" column for comparison; do not treat them as current:
+
+| Anchor (886 §2/§12) | Expected | Reproduced (ts-windowed) | First pass (mtime-windowed) | Note |
+|---|---|---|---|---|
+| Main context p50 | ≈413-415k | 405,982 (pooled) | 411,273 | ~2% |
+| Spawn context p50 | ≈177k | 179,250 (pooled) | 176,168 | ~1% |
+| Codex context p50 | ≈129k | 115,913 (pooled) | 119,103 | ~10%, different window scope (full historical Codex corpus vs since-08-01 filter) |
+| Cost above 200k, main | ≈$3.2k | $2,996 | $3,208 | within 7% |
+| Cost above 200k, spawn | ≈$2.2k | $2,274 | $2,268 | within 3% |
+| Compactions | 22 (21 manual/1 auto) | **9 (8 manual/1 auto)** | 11 (10 manual/1 auto) | matches the reviewer's independent count of 9 exactly; the "22" figure double-counts lines-per-event (fixed in the prior round), and ts-windowing further drops 2 of the 11 whose boundary-call `ts` predates 2026-08-01 even though their FILE was still being written after that date |
+| Pre-compaction context p50/min | 889k / 447k | 947,441 / 447,395 | 889,530 / 447,395 | min matches to <0.1%; p50 shifts because the fix removes 2 pre-window events |
+| Compaction duration p50 | ~150s | 160.6s | 156.4s | within 7% |
+| Residency total | ≈$13.8k | $13,999 | $13,969 | within 1% (section §d is `claude-code`-only, mtime-windowed by design — see its header — so the ts-fix does not apply here) |
+| Residency: sub prefix share | ≈23% | 23.1% | 23.1% | exact |
+| Residency: sub tool share | ≈25% | 24.8% | 24.8% | within 1% |
+| Spawns (window) | ≈1,030 | 989 | 1,054 | live-session drift + ts-fix removing pre-window spawns |
+| opus→claude-opus-5 spawns/cost | 684-696 / $9.3-10.0k | 654 / $9,214 | 697 / $9,429 | within 6% |
+| ≥120-call spawns, share of spawns | ≈20% | 20.0% | 19.2% | exact |
+| ≥120-call spawns, share of cost | ≈72% | 72.6% | 71.6% | within 1% |
+| firstUserMessageChars p50 | ≈3.9k chars | 3,916 | 3,935 | within 1% |
+
+Verified min-ts check (one-off): `listCalls({harnesses:['claude-code'], sinceMs: Date.parse('2026-08-01')})`
+returns `unfilterableTs: 0` and a minimum call `ts` of `2026-08-03T19:53:56.496Z` — no call before
+the window leaks through post-fix.
+
+Deviations: the Codex p50 gap is a window-scope difference (documented above), not measurement
+noise. `tmp/tokeff/` prototypes are retained pending an explicit go-ahead to delete them (886 §12
+says "once both readers reproduce their numbers" — done; deletion held for the merge/publish
+step, not bundled into this implementation pass).
+
 ### PR 2 — the two readers + two fixes (worktree `886-ledger-2`, after PR 1)
 
 - `context-residency.mjs` (+test): per-call context distribution by harness × model, cost above `--cap`, compaction ledger (trigger, pre/post, duration), compounded residency table (§2.4 method). Regression anchors from this tempdoc: Claude main p50 415k, Codex p50 129k, 22 Claude compactions in the window.
-- `spawn-economics.mjs` (+test): lineage ledger — requested vs actual model, calls, peak context, cost, brief length, run-length buckets, top-N. Anchor: >120-call spawns = 72% of Aug subagent cost.
+- `spawn-economics.mjs` (+test): lineage ledger — requested vs actual model, calls, peak context, cost, firstUserMessageChars, run-length buckets, top-N. Anchor: ≥120-call spawns = 72% of Aug subagent cost.
 - `overhead-taxonomy.mjs`: default window → trailing 30 days (today it returns 0 sessions bare).
 - `cost-session.mjs --reconcile`: per-session OTLP-priced vs transcript-priced diff, naming unknown-model residue (858 §9.1).
 - Delete `tmp/tokeff/` prototypes once both readers reproduce their numbers.

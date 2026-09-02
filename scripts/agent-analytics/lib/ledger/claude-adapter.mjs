@@ -110,7 +110,19 @@ function processClaudeTranscript(file, { sessionId, project, lineage }) {
   streamLines(file, (entry) => {
     if (isBoundaryEntry(entry)) {
       compactPending = true;
-      compactMeta = compactMetadataOf(entry);
+      // A real compaction is TWO consecutive boundary-flagged lines (verified
+      // corpus-wide, 886 §12 PR 2): a `system`/`subtype:'compact_boundary'`
+      // line CARRYING `compactMetadata`, immediately followed by a
+      // `user`/`isCompactSummary:true` line that carries NONE. Unconditionally
+      // overwriting `compactMeta` here clobbered the real metadata with the
+      // second line's `null` before any Call consumed it — every boundary
+      // Call in the corpus lost its trigger/preTokens/postTokens/durationMs
+      // silently (context-residency.mjs's compaction ledger is what surfaced
+      // this: 0 of 11 real events carried compactMetadata). Only overwrite
+      // when THIS line actually carries metadata, so the first line's real
+      // value survives the second line's metadata-less re-flag.
+      const meta = compactMetadataOf(entry);
+      if (meta) compactMeta = meta;
     }
 
     const content = entry.message?.content;
@@ -138,7 +150,11 @@ function processClaudeTranscript(file, { sessionId, project, lineage }) {
 
         const { w5, w1 } = splitCacheWrite(usage);
         const boundary = compactPending;
-        if (boundary) compactPending = false;
+        const boundaryMeta = compactMeta;
+        if (boundary) {
+          compactPending = false;
+          compactMeta = null; // consumed — never leak into a later metadata-less boundary
+        }
 
         const call = makeCall({
           harness: 'claude-code',
@@ -165,7 +181,7 @@ function processClaudeTranscript(file, { sessionId, project, lineage }) {
           contextTokens: (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + w5 + w1,
           compactionBoundary: boundary,
           speed: usage.speed ?? null,
-          compactMetadata: boundary && compactMeta ? compactMeta : undefined,
+          compactMetadata: boundary && boundaryMeta ? boundaryMeta : undefined,
         });
         calls.push(call);
         index += 1;
