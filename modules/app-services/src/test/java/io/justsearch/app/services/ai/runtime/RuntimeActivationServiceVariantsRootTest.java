@@ -29,10 +29,24 @@ import org.junit.jupiter.api.io.TempDir;
  * checkout's build rather than copying 10 MB of it. The resolved exe was the one fact that named
  * the right tree, and nothing looked at it.
  *
- * <p>Two tiers, because either alone passes for the wrong reason: the pure resolver tests pin the
- * ORDER, and the service-level test pins that the value is not frozen at construction — the field
- * was {@code final}, so a correct resolver behind an eager cache still answers with whatever was on
- * disk at boot.
+ * <p>Three tiers, because each alone passes for the wrong reason:
+ *
+ * <ol>
+ *   <li>the pure-resolver cases pin the ORDER, but call the static directly and so say nothing
+ *       about how the instance reaches it;
+ *   <li>{@link #statusListsTheSharedVariantWithoutJunctions} pins the READ PATH end to end — that
+ *       {@code getStatus()} reaches the config-resolved exe at all — but it stages the exe and
+ *       publishes the {@code ConfigStore} BEFORE constructing the service, so an eagerly-cached
+ *       root would be cached from an already-correct world and it would still pass;
+ *   <li>{@link #statusReDerivesOnceTheExeBecomesResolvable} is the one that pins LAZINESS: it
+ *       builds the service in an empty world and only then makes the exe resolvable. The field was
+ *       {@code final} and computed in the constructor, which is exactly the state this fails in.
+ * </ol>
+ *
+ * <p>Tier 3 was added by review of #617: the original two-tier claim was wrong. The falsification
+ * offered for it restored the eager cache while ALSO passing {@code null} for the exe, so it proved
+ * exe-blindness rather than eagerness; restoring the eager cache with the resolver intact left all
+ * of tiers 1-2 green.
  */
 class RuntimeActivationServiceVariantsRootTest {
 
@@ -194,5 +208,54 @@ class RuntimeActivationServiceVariantsRootTest {
             .anyMatch(v -> "cuda12".equals(v.variantId())),
         "installedVariants was [] on every worktree stack — the shared cuda12 build must be listed"
             + " without the two junctions the live validation needed as a workaround");
+  }
+
+  /**
+   * The tier that actually fails on an eager cache (added by #617 review, S2-1).
+   *
+   * <p>Builds the service in an empty world — no {@code ConfigStore} global, nothing under
+   * {@code justsearch.home} — so any value computed at construction is {@code []}. THEN makes the
+   * shared exe resolvable, exactly as a dev stack does when the config store is published after
+   * boot, or as a fresh profile does when Install AI finishes. A correct resolver behind a
+   * construction-time cache answers {@code []} forever here; only re-derivation recovers.
+   */
+  @Test
+  @DisplayName("getStatus() re-derives once the exe becomes resolvable, rather than freezing []")
+  void statusReDerivesOnceTheExeBecomesResolvable() throws Exception {
+    Path aiHome = tmp.resolve("worktree/modules/ui-web/.dev-data");
+    Files.createDirectories(aiHome);
+
+    prevHome = System.getProperty("justsearch.home");
+    homeCaptured = true;
+    System.setProperty("justsearch.home", aiHome.toAbsolutePath().toString());
+
+    prevStore = ConfigStore.globalOrNull();
+    storeCaptured = true;
+    // No global at all: resolvedServerExeOrNull() must degrade to null, not throw.
+    io.justsearch.configuration.resolved.TestResolvedConfigHelper.restoreGlobal(null);
+
+    RuntimeActivationService service =
+        new RuntimeActivationService(
+            OnlineAiService.unavailable(),
+            new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY),
+            null,
+            new EnterprisePolicyServiceImpl());
+
+    assertTrue(
+        service.getStatus().installedVariants().isEmpty(),
+        "nothing is installed and no exe is resolvable yet, so the status must say so");
+
+    Path sharedExe = stageVariantExe(tmp.resolve("main"), "cuda12");
+    ConfigStore.setGlobal(
+        new ConfigStore(
+            ResolvedConfig.builder()
+                .putDefault("justsearch.server.exe", sharedExe.toAbsolutePath().toString())
+                .build()));
+
+    assertTrue(
+        service.getStatus().installedVariants().stream()
+            .anyMatch(v -> "cuda12".equals(v.variantId())),
+        "an eagerly-cached variants root would still answer [] here — the memo must re-derive"
+            + " once the world it was computed in has changed");
   }
 }

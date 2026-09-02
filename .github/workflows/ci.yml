@@ -261,7 +261,13 @@ jobs:
       # implicated by D1 rather than "the rest of the kernel": ts-any is red on main behind an
       # expected-state pin, and `wire` is environment-sensitive (needs the buf CLI installed),
       # so a blanket full-kernel step would land CI red for reasons unrelated to the fix.
-      # The remaining unwired gates are tracked in tempdoc 913 open items.
+      #
+      # Census (corrected by review of #617 -- the first count missed the six kernel gates the
+      # "ui-web pre-merge gate set" step above runs via run-ui-web-gates.mjs, which expands the
+      # `ui-web-gates` recipe: ambient-purity, style-literal-ratchet, atom-fork-ratchet,
+      # modality-contract, transient-arbitration, modal-arbitration). Of 35 registered gates,
+      # 12 ran in CI before this step and 15 do with it -- so 20 remain unwired, tracked in
+      # tempdoc 913 open items with the full list.
       - name: Register-family gates (operation-surface, execution-surface, guard resolution)
         run: |
           node scripts/governance/run.mjs \

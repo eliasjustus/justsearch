@@ -362,9 +362,14 @@ function normRepoPath(p) {
  * false positive, and the caller's own dist is irrelevant in precisely that case.
  *
  * So a launch is exonerated when provenance records the resolved distFrom root and the tree the
- * dev-runner actually ran in is that root — "launched where asked", proved rather than assumed. The
- * check still bites where it was meant to: a run record whose repoRoot is neither the caller's nor
- * the root the launch requested (a stack started outside this path, a taken-over foreign run).
+ * dev-runner actually ran in is that root — "launched where asked", proved rather than assumed.
+ *
+ * What still bites, stated precisely (the first draft of this comment overclaimed, review of #617):
+ * a run whose repoRoot differs from the caller's AND carries no `distFromRoot` — i.e. a stack the
+ * MCP `start` path did not launch, such as a dev-runner invoked directly in another checkout, or a
+ * pre-913 run record written before the field existed. A run that WAS launched with `distFrom` is
+ * exonerated for every caller, including one that later takes it over; ownership is judged by the
+ * branches above, not here, and this predicate deliberately does not re-litigate it.
  *
  * @param {object|null} leaseProvenance the provenance block stamped on the lease at spawn
  * @param {string|null} callerRepoRoot the checkout this MCP server is running from

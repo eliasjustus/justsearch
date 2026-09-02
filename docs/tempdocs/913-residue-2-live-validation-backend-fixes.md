@@ -128,16 +128,24 @@ Every cited line was re-read against source before any code was written. Correct
 
 - **Why CI missed it — answered, and the answer is worse than "the wrong job ran it".**
   `operation-surface` runs **nowhere**. Not in `ci.yml`, not in any other workflow, not in
-  `build.gradle.kts`. The only `scripts/governance/run.mjs` invocations in CI are:
-  `--gate config-surface --gate dead-code --gate npm-audit --gate module-deps` (the
-  "Kernel gates with built inputs" step), `--gate adr-coverage`, and `--self-test`. The self-test
-  is the trap worth naming: it DOES exercise `operation-surface/positive` and
+  `build.gradle.kts`. The `scripts/governance/run.mjs` invocations reachable from a PR are:
+  `--gate config-surface --gate dead-code --gate npm-audit --gate module-deps` (the "Kernel gates
+  with built inputs" step), `--gate adr-coverage`, `--gate dead-code-jvm` (the unit-test lane),
+  `--self-test`, and — **corrected by review of #617** — `node scripts/ci/run-ui-web-gates.mjs`
+  (`ci.yml:158`), which expands the `ui-web-gates` recipe in
+  `governance/consult-register.v1.json` into six more kernel gates: `ambient-purity`,
+  `style-literal-ratchet`, `atom-fork-ratchet`, `modality-contract`, `transient-arbitration`,
+  `modal-arbitration`. None of them is `operation-surface`.
+  The self-test is the trap worth naming: it DOES exercise `operation-surface/positive` and
   `operation-surface/negative` — but against the gate's fixture tree, never against the repo. So
   CI proves the enforcer works and proves nothing about `main`. #614 typed `IndexingController`
   onto the canonical record, the register gained no row, PR CI and the merge group were both green,
   and `main` was red on this gate from that merge onward.
-  A repo-wide count (`tmp/gate-ci-map.mjs`, transient): **29 of 35 registered gates run in no
-  workflow.** That is a class-level defect, out of this lane's scope; see Open items.
+  **Corrected census** (the first count in this tempdoc said 29 unwired; it missed the six the
+  ui-web step runs indirectly, because the scan looked for literal `--gate <id>` strings in the
+  workflow files and that step names none): of 35 registered gates, **12 were wired before this PR
+  and 15 are after it, leaving 20 unwired.** Still a class-level defect, out of this lane's scope;
+  see Open items for the full 20.
 
 ### §B.2 — D5
 
@@ -182,7 +190,7 @@ The validator's hypothesis was correct, and the mechanism is one layer further o
   (`:130`) and `getAgentBatchDetail` (`:158`) have **zero production callers** in
   `modules/ui-web/src/` — verified by grep; only `agent.test.ts` touches them.
   `AgentSessionController.ts:2349` states outright that it "no longer reads the separate
-  `/api/chat/agent/history`", and the Undo control in `Shell.ts:1188-1204` routes through
+  `/api/chat/agent/history`", and the Undo control in `modules/ui-web/src/shell-v0/chrome/Shell.ts:1188-1204` routes through
   `OperationClient.undo → POST /api/undo/{operationId}`. So the backend fix is correct and worth
   making (the endpoint is published, schema'd, and lies), but it restores a surface no UI currently
   consumes. The FE decision — wire it or retire the three helpers and the routes per
@@ -404,22 +412,43 @@ misleading in both directions, so there are two.
   the defect case, repoRoot-still-wins-with-no-exe, exe-outside-variants, exe-under-a-nonexistent-
   variants-dir, and null-aiHome. These pin the ORDER — but every one of them would pass with the
   constructor cache left `final`, because they call the static directly.
-- `statusListsTheSharedVariantWithoutJunctions` closes that: it builds the service through the
-  4-arg public constructor with `justsearch.home` pointing at an empty worktree-shaped
+- `statusListsTheSharedVariantWithoutJunctions` adds the READ PATH: it builds the service through
+  the 4-arg public constructor with `justsearch.home` pointing at an empty worktree-shaped
   `.dev-data`, publishes the shared exe through `ConfigStore` exactly as `JUSTSEARCH_SERVER_EXE`
   reaches it, and asserts `getStatus().installedVariants()` contains `cuda12` — the exact payload
-  the live `ai_activate` failure reported as `[]`.
+  the live `ai_activate` failure reported as `[]`. It does NOT pin laziness: it arranges the world
+  before constructing the service, so an eager cache would be computed from an already-correct
+  world (see the §C correction below).
+- `statusReDerivesOnceTheExeBecomesResolvable` pins LAZINESS, and is the only one of the three that
+  fails on an eager cache with the resolver intact: service constructed in an empty world, assert
+  `[]`, then stage the exe + `setGlobal`, assert `cuda12`.
 
 *Falsification (run, observed, restored):*
 (a) neutralising the exe branch (`Path fromExe = null;`) →
 `THE DEFECT: worktree aiHome + worktree repoRoot both miss → the exe names the root FAILED` **and**
 `getStatus() lists the shared cuda12 variant on a worktree-shaped install FAILED`,
 `13 tests completed, 2 failed`.
-(b) restoring the eager-final behaviour (constructor-time
-`this.variantsRoot = resolveVariantsRoot(aiHome, repoRootOrNull(), null)` plus a memo that never
-refreshes) → only `getStatus() lists the shared cuda12 variant on a worktree-shaped install
-FAILED`, `13 tests completed, 1 failed`. That the *pure* tests stayed green under (b) is the
-evidence that the second tier was necessary.
+(b) restoring the eager cache with the resolver **fully intact** (memo never refreshes, plus
+constructor-time `this.variantsRoot = resolveVariantsRoot(aiHome, repoRootOrNull(),
+resolvedServerExeOrNull())`) → `getStatus() re-derives once the exe becomes resolvable, rather than
+freezing [] FAILED`, `14 tests completed, 1 failed`, with the message
+`an eagerly-cached variants root would still answer [] here — the memo must re-derive once the
+world it was computed in has changed`.
+
+> **§C correction — this row was wrong when first written, and review of #617 (S2-1) caught it.**
+> The original (b) passed `null` for the exe in the eager call, so it proved the resolver was
+> exe-blind, NOT that the memo was lazy. Restoring the eager cache with the resolver intact left
+> ALL of the then-existing tests green, because
+> `statusListsTheSharedVariantWithoutJunctions` stages the exe and publishes the `ConfigStore`
+> BEFORE constructing the service — an eager cache computed in an already-correct world is
+> correct. That test therefore pins the ORDER and the READ PATH, and nothing about laziness.
+> `statusReDerivesOnceTheExeBecomesResolvable` was added to pin it properly: it builds the service
+> in an empty world (no `ConfigStore` global, nothing on disk), asserts `installedVariants()` is
+> empty, and only then stages the exe and calls `setGlobal`. The falsification above is that test,
+> against the reviewer's exact shape. Generalisable lesson, and the reason this is recorded rather
+> than silently fixed: **a falsification that changes two things at once proves neither.** The
+> lazy-memo half of the H1 fix was live-correct but evidentially unsupported for the length of one
+> review cycle.
 
 **Live verification recipe (for the orchestrator).** The junctions must be removed first, or the
 green is the workaround's, not the fix's (`green-masked-destructive`):
@@ -572,15 +601,23 @@ falsification, which is correct — it guards the non-regression half.)
 
 ## Open items
 
-1. **29 of 35 registered governance gates run in no workflow.** D1 is one instance of a class.
-   Verified by mapping `governance/registry.v1.json` against `.github/workflows/*.yml`: only
-   `config-surface`, `dead-code`, `dead-code-jvm`, `npm-audit`, `module-deps` and `adr-coverage`
-   were invoked before this PR; this PR adds `operation-surface`, `execution-surface` and
-   `register-guard-resolution`. The remaining 26 include `wire`, `hook-integrity`,
-   `ssot-catalog-sync`, `surface-altitude`, `interaction-surface`, `runtime-state`,
-   `contract-projection`, `observed-happening` and `stage-completeness` — each of which can be red
-   on `main` indefinitely with nothing to notice. Wiring the rest needs a per-gate decision (some
-   are environment-sensitive, `ts-any` is pinned red), so it is a governance-lane item, not a
+1. **20 of 35 registered governance gates run in no workflow.** D1 is one instance of a class.
+   Before this PR, 12 were wired: `config-surface`, `dead-code`, `dead-code-jvm`, `npm-audit`,
+   `module-deps`, `adr-coverage` directly, plus `ambient-purity`, `style-literal-ratchet`,
+   `atom-fork-ratchet`, `modality-contract`, `transient-arbitration` and `modal-arbitration`
+   indirectly through `scripts/ci/run-ui-web-gates.mjs` (`ci.yml:158`). This PR adds
+   `operation-surface`, `execution-surface` and `register-guard-resolution` → 15 wired.
+   **Method note:** the first version of this item said 29 unwired, because the scan matched
+   literal `--gate <id>` strings in `.github/workflows/*.yml` and the ui-web step names none of
+   its six — an indirection a regex census cannot see. Corrected by review of #617; recorded
+   because the same regex would undercount again.
+   The 20 still unwired: `consumer-drift`, `consumer-presence`, `contract-projection`,
+   `contribution-surface`, `hook-integrity`, `host-owns-truth`, `interaction-surface`,
+   `observed-happening`, `prose-tier-register`, `runtime-state`, `runtime-witness`,
+   `ssot-catalog-sync`, `stage-completeness`, `surface-altitude`, `tempdoc-wiring`,
+   `test-efficacy`, `test-to-code`, `todo-fixme`, `ts-any`, `wire` — each able to sit red on
+   `main` indefinitely with nothing to notice. Wiring them needs a per-gate decision (`wire` is
+   environment-sensitive, `ts-any` is pinned red), so it is a governance-lane item, not a
    ride-along. Owner: the governance-kernel lane (910).
 2. **`scripts/dev/test-*.mjs` — 16 suites, one of which runs in CI.** Only
    `test-onramp-first-success.mjs` is invoked (`onramp-smoke.yml:86`). This PR wires the two pure
@@ -626,7 +663,13 @@ falsification, which is correct — it guards the non-regression half.)
    a real `collection=default` term. Both now validate identically — D6 is closed — but the default
    itself is a second divergence, pre-existing and untouched here because changing it alters what
    gets written to the index. Owner: whoever holds the collection-vocabulary question (811's lane).
-7. **`docs/tempdocs/374-app-packaging-and-distribution.md:233` cites stale line numbers** for
+7. **Cross-lane: `LibrarySurface.ts:914-916` goes stale when D6 merges.** The UI lane's comment
+   there says "the Operation handler this surface invokes does not validate", which was true when
+   written and is false as of this PR. The coordinator has told that lane to re-frame its
+   client-side guard as defence-in-depth rather than as the only check. Recorded here, not edited
+   here: `modules/ui-web/**` is the UI lane's, and a cross-lane edit to the same file is how merge
+   conflicts get made. No backend action.
+8. **`docs/tempdocs/374-app-packaging-and-distribution.md:233` cites stale line numbers** for
    `resolveVariantsRoot` (`:911-938`; it was `:1692-1720` before this PR and has moved again).
    Left alone deliberately: 374 is dated working history, and this PR moves the target once more,
    so a line-number edit would be stale on landing. Recorded here so the next reader of 374 knows.

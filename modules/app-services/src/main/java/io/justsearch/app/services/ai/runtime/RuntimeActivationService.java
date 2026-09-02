@@ -62,6 +62,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -161,6 +162,9 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   /** Memo for {@link #variantsRoot()}; re-derived when it stops naming a directory (913 H1). */
   private volatile Path variantsRoot;
+
+  /** Memo for {@link #repoRootOrNull()}; null = not yet resolved, empty = resolved to nothing. */
+  private volatile Optional<Path> repoRootMemo;
 
   private final Object lock = new Object();
   private final AtomicBoolean running = new AtomicBoolean(false);
@@ -1705,12 +1709,30 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     return fresh;
   }
 
-  private static Path repoRootOrNull() {
-    try {
-      return RepoRootLocator.findRepoRootOrNull();
-    } catch (Exception ignored) {
-      return null;
+  /**
+   * The repo root, resolved at most once per process.
+   *
+   * <p>Memoized because {@link #variantsRoot()} re-derives on every call while no variants
+   * directory exists yet -- a fresh profile before Install AI runs -- and {@code getStatus()} is
+   * polled about once a second by the FE during install/activation. Everything else in the
+   * re-derivation is two {@code isDirectory} checks and a field read; this was the one filesystem
+   * walk in it. Caching the ABSENCE is safe here in a way caching the variants root is not: a repo
+   * checkout cannot appear around a running process, whereas an install completing underneath one
+   * is the normal case that H1's laziness exists to serve.
+   */
+  private Path repoRootOrNull() {
+    Optional<Path> memo = repoRootMemo;
+    if (memo != null) {
+      return memo.orElse(null);
     }
+    Path resolved;
+    try {
+      resolved = RepoRootLocator.findRepoRootOrNull();
+    } catch (Exception ignored) {
+      resolved = null;
+    }
+    repoRootMemo = Optional.ofNullable(resolved);
+    return resolved;
   }
 
   /**
