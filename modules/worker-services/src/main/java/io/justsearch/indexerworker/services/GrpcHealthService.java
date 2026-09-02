@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
  * <p>Also exposes worker state for system tests:
  * <ul>
  *   <li>RUNNING - Actively indexing</li>
- *   <li>PAUSED - Breath holding (user active)</li>
+ *   <li>PAUSED - Yielding to foreground load (a duty-cycle yield, not a stop)</li>
  *   <li>IDLE - No pending work</li>
  * </ul>
  */

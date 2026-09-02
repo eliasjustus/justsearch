@@ -101,7 +101,8 @@ public final class PreviewController {
       return;
     }
 
-        // Foreground responsiveness: mark user activity so the Worker can breath-hold indexing during interactive preview.
+        // Foreground responsiveness: record interactive preview as user activity for the Head's
+        // own idle checks (VDU pacing); the Worker observes its own foreground load.
         // Best-effort only; preview must not fail if this throws.
         try {
           if (recordUserActivity != null) {
