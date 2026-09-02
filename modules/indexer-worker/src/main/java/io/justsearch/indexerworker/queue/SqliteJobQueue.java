@@ -433,6 +433,69 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
     }
   }
 
+  /**
+   * Tempdoc 885 §UD open item 1: the re-enqueue and the state read share ONE transaction, because
+   * {@code INSERT OR REPLACE} destroys the state being reported. A read before the call would race
+   * the indexing loop claiming the same row.
+   */
+  @Override
+  public JobQueue.ReenqueueResult reenqueue(JobQueue.EnqueueEntry entry) {
+    if (entry == null || entry.path() == null) {
+      return new JobQueue.ReenqueueResult(0, null);
+    }
+    if (!hasSufficientDiskSpace()) {
+      log.warn("Refusing to re-enqueue {}: insufficient free disk space", entry.path());
+      return new JobQueue.ReenqueueResult(0, null);
+    }
+    lockTimed();
+    try {
+      ensureOpen();
+      String normalizedPath =
+          PathNormalizer.normalizePath(entry.path().toAbsolutePath().toString());
+      return inTransaction(
+          () -> {
+            String previousState = null;
+            try (PreparedStatement read =
+                connection.prepareStatement("SELECT state FROM jobs WHERE path = ?")) {
+              read.setString(1, normalizedPath);
+              try (ResultSet rs = read.executeQuery()) {
+                if (rs.next()) {
+                  previousState = rs.getString(1);
+                }
+              }
+            }
+            // Same statement and same column list as enqueueEntries — the unlisted columns are the
+            // reset that revives a RETRY_EXHAUSTED row with a fresh retry window.
+            String sql =
+                """
+                INSERT OR REPLACE INTO jobs
+                  (path, state, attempts, last_updated, collection, size_bytes, scan_id)
+                VALUES (?, 'PENDING', 0, ?, NULL, ?, NULL)
+                """;
+            int accepted;
+            try (PreparedStatement write = connection.prepareStatement(sql)) {
+              write.setString(1, normalizedPath);
+              write.setLong(2, System.currentTimeMillis());
+              if (entry.sizeBytes() >= 0) {
+                write.setLong(3, entry.sizeBytes());
+              } else {
+                write.setNull(3, java.sql.Types.INTEGER);
+              }
+              accepted = write.executeUpdate() > 0 ? 1 : 0;
+            }
+            if (accepted > 0) {
+              meters.recordEnqueued(accepted);
+            }
+            return new JobQueue.ReenqueueResult(accepted, previousState);
+          });
+    } catch (SQLException e) {
+      log.error("Failed to re-enqueue {}", entry.path(), e);
+      return new JobQueue.ReenqueueResult(0, null);
+    } finally {
+      lock.unlock();
+    }
+  }
+
   @Override
   public List<IndexJob> pollPending(int limit) {
     lockTimed();

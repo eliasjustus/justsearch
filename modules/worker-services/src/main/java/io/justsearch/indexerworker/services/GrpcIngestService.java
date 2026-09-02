@@ -2112,9 +2112,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   }
 
   /**
-   * Slice 445 §A.9: retry a FAILED indexing job by path_hash. Resolves the
-   * hash, then re-enqueues. SqliteJobQueue overwrites the FAILED row with a
-   * fresh PENDING entry (path is the primary key in the jobs table).
+   * Slice 445 §A.9: retry a terminal or backing-off indexing job by path_hash. Resolves the hash,
+   * then re-enqueues. SqliteJobQueue overwrites the existing row with a fresh PENDING entry (path is
+   * the primary key in the jobs table), reporting the state it replaced — read in the same
+   * transaction, because the overwrite destroys it (tempdoc 885 §UD open item 1).
    */
   @Override
   public void retryIndexingJob(
@@ -2150,18 +2151,24 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         return;
       }
       Path path = Path.of(pathStr);
-      int enqueued = jobQueue.enqueueEntries(List.of(JobQueue.EnqueueEntry.stat(path)));
-      if (enqueued == 0) {
+      JobQueue.ReenqueueResult result = jobQueue.reenqueue(JobQueue.EnqueueEntry.stat(path));
+      if (result.accepted() == 0) {
         responseObserver.onNext(
             io.justsearch.ipc.RetryIndexingJobResponse.newBuilder()
                 .setRetried(false)
                 .setPreviousState("NOT_RETRYABLE")
                 .build());
       } else {
+        // Tempdoc 885 §UD open item 1: the state the row ACTUALLY held, read in the same
+        // transaction that overwrote it. This used to be the literal "FAILED", which was already
+        // wrong for a PENDING-in-backoff job and became wrong for RETRY_EXHAUSTED too. A queue with
+        // no row-state authority reports null, which surfaces as UNKNOWN rather than as a guess.
+        String previousState = result.previousState();
         responseObserver.onNext(
             io.justsearch.ipc.RetryIndexingJobResponse.newBuilder()
                 .setRetried(true)
-                .setPreviousState("FAILED")
+                .setPreviousState(
+                    previousState == null || previousState.isBlank() ? "UNKNOWN" : previousState)
                 .build());
       }
       responseObserver.onCompleted();
