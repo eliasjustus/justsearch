@@ -11,15 +11,19 @@
  * `npm --prefix modules/ui-web run knip:report`. A malformed report here fails
  * closed (dead-code/report-malformed).
  *
- * Whole-file findings are normalized to a per-export count before they touch
- * the ratchet (tempdoc 910 item 1) — see `export-count.mjs` for why, and for
- * the measurements behind it.
+ * Whole-file findings are normalized to the module's declared export SURFACE
+ * before they touch the ratchet (tempdoc 910 item 1) — top-level bindings plus
+ * the enum / namespace / class members knip can report separately, since this
+ * function sums every array-valued key on a row. See `export-count.mjs` for
+ * the measurements behind it and for the one category it cannot bound.
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
+import { readFileAtRef } from '../../lib/git-utils.mjs';
 import { loadTypeScript, normalizeWholeFileCount } from './export-count.mjs';
+import { verdictForBaselineShift } from './truth-table.mjs';
 
 export const DEAD_CODE_CLASSIFICATIONS = new Set([
   'declared-growth', 'merge-import', 'emergency-override', 'unused-export-shrink',
@@ -37,7 +41,19 @@ export const DEAD_CODE_RULE_DESCRIPTIONS = {
   'dead-code/rebalanced': 'Baseline auto-updated',
   'dead-code/report-malformed': 'Knip JSON report could not be parsed (fail-closed)',
   'dead-code/whole-file-uncounted': 'A whole-file finding could not be normalized to its export count (fail-closed)',
+  'dead-code/silent-baseline-shift': 'Baseline relaxed in this PR without a declared changeset',
 };
+
+/**
+ * Classifications that cover a RAISED PIN in `baseline.txt`.
+ *
+ * Deliberately a different set from the growth-covering one below. `unit-renormalization` says
+ * "the number changed because the way we count changed" — which is exactly a baseline shift and
+ * exactly NOT a licence for the live count to exceed its pin. Keeping the two sets apart is what
+ * makes that classification load-bearing instead of documentation.
+ */
+const BASELINE_SHIFT_COVERING = ['declared-growth', 'merge-import', 'emergency-override', 'unit-renormalization'];
+const GROWTH_COVERING = ['declared-growth', 'merge-import', 'emergency-override'];
 
 function parseBaseline(text) {
   const m = new Map();
@@ -100,13 +116,28 @@ export async function enforceDeadCode(options) {
     return count;
   };
 
-  if (Array.isArray(report.files)) {
-    for (const f of report.files) {
-      const p = f.file ?? f.filePath ?? f.path;
-      const issues = (f.unusedExports ?? f.unusedTypes ?? f.exports ?? []).length ?? 0;
-      if (p) collect(p, issues);
-    }
-  } else if (Array.isArray(report.issues)) {
+  // ONE supported shape, deliberately (tempdoc 910). This used to also walk a `files[]` top-level
+  // array and a legacy `issues{category:{file:[…]}}` object "tolerantly". Neither had a test, and
+  // the legacy branch was actively harmful after whole-file normalization landed: `Object.entries`
+  // over a legacy `issues.files` ARRAY yields the indices "0","1",… as paths, which the normalizer
+  // then fails closed on — a confident, wrong failure for a knip version this repo does not use.
+  // `modules/ui-web/package.json:71` pins `knip: ^6.20.0`, whose reporter emits `{issues: [...]}`.
+  // An unrecognised shape is now `report-malformed`, which is what a gate should say when it
+  // cannot read its input, instead of guessing at a count.
+  if (!Array.isArray(report.issues)) {
+    findings.push({
+      ruleId: 'dead-code/report-malformed',
+      level: 'error',
+      uri: gate.config?.reportPath,
+      message: `${reportPath}: expected a knip JSON report shaped \`{ issues: [ { file, exports, types, files, … } ] }\` `
+        + '(knip ^6). Regenerate it with `npm --prefix modules/ui-web run knip:report`. If knip\'s '
+        + 'reporter shape has genuinely changed, update this enforcer and its tests together — do '
+        + 'not add an untested tolerance branch, which is what this replaced.',
+    });
+    return { toolName: 'justsearch-dead-code', toolVersion: '0.1.0', findings, verdict: 'fail', ruleDescriptions: DEAD_CODE_RULE_DESCRIPTIONS };
+  }
+
+  {
     for (const row of report.issues) {
       const p = row.file ?? row.filePath ?? row.path;
       if (!p) continue;
@@ -124,20 +155,6 @@ export async function enforceDeadCode(options) {
       }
       if (n > 0) collect(p, n);
     }
-  } else if (report.issues && typeof report.issues === 'object') {
-    for (const [category, byFile] of Object.entries(report.issues)) {
-      if (typeof byFile !== 'object') continue;
-      for (const [p, entries] of Object.entries(byFile)) {
-        // Same unit mismatch as the current shape: the legacy `files` category
-        // is one entry per entirely-unused module, not per export.
-        if (category === 'files') {
-          const normalized = normalizeWholeFile(p);
-          if (normalized !== null) collect(p, normalized);
-          continue;
-        }
-        collect(p, Array.isArray(entries) ? entries.length : 1);
-      }
-    }
   }
 
   const decls = gate.changesetsDir ? loadChangesets({
@@ -146,7 +163,7 @@ export async function enforceDeadCode(options) {
     requireJustificationFor: new Set(['declared-growth','merge-import','emergency-override','unit-renormalization']),
     fixtureMode,
   }) : [];
-  const growthCovered = decls.some(d => ['declared-growth','merge-import','emergency-override'].includes(d.classification));
+  const growthCovered = decls.some(d => GROWTH_COVERING.includes(d.classification));
 
   const rebalanceWrites = new Map();
   for (const [p, cur] of counts) {
@@ -161,6 +178,36 @@ export async function enforceDeadCode(options) {
     } else if (cur < pinned) {
       findings.push({ ruleId: rebalance ? 'dead-code/rebalanced' : 'dead-code/rebalance-available', level: 'note', message: `${p}: ${cur} < pinned ${pinned}`, uri: p });
       if (rebalance) rebalanceWrites.set(p, cur);
+    }
+  }
+
+  // Baseline-shift detection (tempdoc 910). Without it the ratchet is only half a ratchet: the
+  // live count is held to the pin, but the PIN ITSELF could be edited upward and the gate would
+  // report `rebalance-available` — a pass. Mirrors todo-fixme/enforcer.mjs:129-149, the closest
+  // sibling (same `<path> <count> <date>` shape, same per-file dynamic key set).
+  let priorBaseline = null;
+  if (fixtureMode && fixtureRoot) {
+    const p = resolve(fixtureRoot, '_baseline', gate.baseline.path);
+    if (existsSync(p)) priorBaseline = parseBaseline(readFileSync(p, 'utf8'));
+  } else if (baselineRef) {
+    // Returns null when the file did not exist at that ref (a new baseline), which correctly
+    // means "nothing to compare against" rather than "every row was raised from zero".
+    const content = readFileAtRef(baselineRef, gate.baseline.path, sourceRoot);
+    if (content !== null) priorBaseline = parseBaseline(content);
+  }
+  if (priorBaseline) {
+    const covering = decls.find(d => BASELINE_SHIFT_COVERING.includes(d.classification));
+    const cls = covering ? covering.classification : 'silent-growth';
+    for (const [p, livePin] of baseline.entries()) {
+      const priorPin = priorBaseline.get(p);
+      if (priorPin === undefined) continue;
+      const v = verdictForBaselineShift({ path: p, priorPin, livePin, classification: cls });
+      if (v.status === 'fail') {
+        verdict = 'fail';
+        findings.push({ ruleId: v.ruleId, level: 'error', message: v.reason, uri: gate.baseline.path });
+      } else if (v.status === 'info') {
+        findings.push({ ruleId: v.ruleId, level: 'note', message: v.reason, uri: gate.baseline.path });
+      }
     }
   }
 

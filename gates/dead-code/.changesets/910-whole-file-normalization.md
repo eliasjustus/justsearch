@@ -28,11 +28,21 @@ The module declares four exports and gained a consumer. That is a strict improve
 a regression.
 
 **The fix normalizes the unit** (`scripts/governance/gates/dead-code/export-count.mjs`): a whole-file
-finding now counts the module's own declared exports, floored at 1. That number is an upper bound on
-any per-export count knip can later report for the module, so `1 -> N` becomes `N -> (<= N)` — a
-shrink — while a genuinely new dead export still pushes past the pin. After the fix the same probe
-reports `dead-code/rebalance-available | src/api/domains/browse.ts: 2 < pinned 4`, and the probe's own
-new export is caught: `dead-code/silent-growth | src/api/http.ts: 4 → 5`.
+finding now counts the module's own declared export surface, floored at 1. That number is an upper
+bound on any per-export count knip can later report for the module, so `1 -> N` becomes `N -> (<= N)`
+— a shrink — while a genuinely new dead export still pushes past the pin. After the fix the same probe
+reports `dead-code/rebalance-available | src/api/domains/browse.ts: 2 < pinned 4` and nothing else:
+the import alone produces no growth finding anywhere, which is the whole point.
+
+**That real growth is still caught was measured separately, not inferred from the same probe.**
+Appending a genuinely new dead export to a whole-file-unused module —
+`export const scratchDeadExport = 1;` in `src/api/domains/status.ts` — and re-running gives:
+
+```
+error dead-code/silent-growth | src/api/domains/status.ts: 2 → 3 unused exports without declared changeset
+```
+
+Both probe files were restored byte-for-byte afterwards.
 
 **"Own declared" is measured, not assumed.** A named import *through* a pure `export * from` barrel
 (`src/api/index.ts`) removes that barrel's row entirely — knip attributes the still-unused names to

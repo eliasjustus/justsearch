@@ -81,7 +81,7 @@ const perExportRow = (file, exports, types = []) =>
  * Scaffold a temp repo root: `{ baseline, report, files }`.
  * `files` keys are PROJECT-relative, matching how knip reports paths.
  */
-function scaffold({ baseline = '', report, files = {}, withTypeScript = true }) {
+function scaffold({ baseline = '', priorBaseline, report, files = {}, withTypeScript = true, changesets = [] }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dead-code-enforcer-'));
   tmpDirs.push(root);
   const write = (rel, content) => {
@@ -90,6 +90,12 @@ function scaffold({ baseline = '', report, files = {}, withTypeScript = true }) 
     fs.writeFileSync(abs, content, 'utf8');
   };
   write('gates/dead-code/baseline.txt', baseline);
+  // fixtureMode reads the PRIOR baseline from `_baseline/<path>` instead of git.
+  if (priorBaseline !== undefined) write(`_baseline/gates/dead-code/baseline.txt`, priorBaseline);
+  for (const cs of changesets) {
+    const fm = Object.entries(cs.frontmatter).map(([k, v]) => `${k}: ${v}`).join('\n');
+    write(`gates/dead-code/.changesets/${cs.id}.md`, `---\n${fm}\n---\n${cs.body ?? 'body'}\n`);
+  }
   write('tmp/knip-report.json', JSON.stringify(report));
   for (const [rel, content] of Object.entries(files)) write(path.join(PROJECT, rel), content);
   // The normalizer resolves `typescript` from the knip project dir first.
@@ -105,6 +111,17 @@ function scaffold({ baseline = '', report, files = {}, withTypeScript = true }) 
 
 async function enforce(root) {
   return enforceDeadCode({ repoRoot: root, gate: GATE });
+}
+
+/** Drives the baseline-shift path, which needs fixtureMode to read `_baseline/`. */
+async function enforceWithHistory(root) {
+  return enforceDeadCode({
+    repoRoot: root,
+    gate: { ...GATE, changesetsDir: 'gates/dead-code/.changesets' },
+    baselineRef: 'HEAD',
+    fixtureMode: true,
+    fixtureRoot: root,
+  });
 }
 
 async function run(label, fn) {
@@ -212,6 +229,61 @@ await run('a bare `export * from` barrel is NOT credited with its transitive sur
   assert.match(messages(r), /: 0 → 1 unused exports/, messages(r));
 });
 
+await run('an exported enum is counted with its members, so enumMembers cannot flip to growth', async () => {
+  // MEASURED counter-example (knip 6.20.0, the repo's own config, 2026-09-02 — this is in the
+  // DEFAULT report, not an opt-in): this module reports the whole-file `1` while unused; consume
+  // `ScratchEnum.A` from anywhere and knip reports `enumMembers: [B, C]` + `exports: [scratchOne,
+  // scratchTwo]` = 4. A counter that saw only the 3 top-level bindings would pin 3, and 3 -> 4 is
+  // silent-growth with no new dead code.
+  const file = 'src/scratchEnumProbe.ts';
+  const files = {
+    [file]: [
+      'export enum ScratchEnum { A, B, C }',
+      'export const scratchOne = 1;',
+      'export const scratchTwo = 2;',
+      '',
+    ].join('\n'),
+  };
+  const whole = await enforce(scaffold({ report: { issues: [wholeFileRow(file)] }, files }));
+  const m = /: 0 → (\d+) unused exports/.exec(messages(whole));
+  assert.ok(m, `expected a growth message carrying a count, got: ${messages(whole)}`);
+  const normalized = Number(m[1]);
+  assert.equal(normalized, 6, 'ScratchEnum + 3 members + scratchOne + scratchTwo');
+
+  // The bound that matters: the real post-import knip row must not exceed the pin.
+  const afterImport = await enforce(scaffold({
+    baseline: `${file} ${normalized} 2026-09-02\n`,
+    report: {
+      issues: [knipRow(file, {
+        enumMembers: [{ name: 'B' }, { name: 'C' }],
+        exports: [{ name: 'scratchOne' }, { name: 'scratchTwo' }],
+      })],
+    },
+    files,
+  }));
+  assert.equal(afterImport.verdict, 'pass', `verdict (${messages(afterImport)})`);
+  assert.ok(!ruleIds(afterImport).includes('dead-code/silent-growth'), messages(afterImport));
+});
+
+await run('namespace members count; class members deliberately do not', async () => {
+  const file = 'src/scratchMembers.ts';
+  const r = await enforce(scaffold({
+    report: { issues: [wholeFileRow(file)] },
+    files: {
+      [file]: [
+        'export namespace ScratchNs { export const inner = 1; export function alsoInner() {} }',
+        'export class ScratchClass { a() {} b() {} }',
+        '',
+      ].join('\n'),
+    },
+  }));
+  // ScratchNs + inner + alsoInner + ScratchClass = 4. The class's a()/b() are NOT counted:
+  // `classMembers` is absent from this repo's default knip report (measured 2026-09-02), and
+  // counting them would pin SelectionActionsMenu.ts — one exported Lit class with 18 methods —
+  // at 19 instead of 1, for a category knip does not emit here.
+  assert.match(messages(r), /: 0 → 4 unused exports/, messages(r));
+});
+
 await run('a whole-file finding for a file not on disk fails closed', async () => {
   const r = await enforce(scaffold({
     baseline: '',
@@ -240,6 +312,78 @@ await run('a whole-file finding with no TypeScript install fails closed rather t
   assert.ok(!ruleIds(r).includes('dead-code/within-baseline'));
 });
 
+await run('an unrecognised report shape is report-malformed, not a guessed count', async () => {
+  // The legacy `issues{category:{file:[…]}}` tolerance branch this replaced was untested AND wrong
+  // once normalization landed: Object.entries over a legacy `issues.files` ARRAY yields "0","1" as
+  // paths, which the normalizer fails closed on — a confident wrong answer for a knip version this
+  // repo does not use.
+  const r = await enforce(scaffold({ report: { issues: { files: ['src/a.ts', 'src/b.ts'] } } }));
+  assert.equal(r.verdict, 'fail', `verdict (${messages(r)})`);
+  assert.ok(ruleIds(r).includes('dead-code/report-malformed'), messages(r));
+  assert.ok(!ruleIds(r).includes('dead-code/whole-file-uncounted'),
+    'must not fail as if "0"/"1" were real paths');
+  assert.match(messages(r), /npm --prefix modules\/ui-web run knip:report/);
+});
+
+// --- The ratchet's other half: the pin itself cannot be raised silently. ---
+
+const SHIFT_FILE = 'src/api/domains/browse.ts';
+const SHIFT_FILES = { [SHIFT_FILE]: FOUR_EXPORT_MODULE };
+// The measurement matches the raised pin, so the LIVE-count check is satisfied either way — which
+// is precisely why the baseline-shift check has to be the thing that notices.
+const SHIFT_REPORT = { issues: [perExportRow(SHIFT_FILE, ['a', 'b', 'c'], ['d'])] };
+
+await run('raising a pinned number without a changeset fails', async () => {
+  const r = await enforceWithHistory(scaffold({
+    priorBaseline: `${SHIFT_FILE} 1 2026-07-16\n`,
+    baseline: `${SHIFT_FILE} 4 2026-09-02\n`,
+    report: SHIFT_REPORT,
+    files: SHIFT_FILES,
+  }));
+  assert.equal(r.verdict, 'fail', `verdict (${messages(r)})`);
+  assert.ok(ruleIds(r).includes('dead-code/silent-baseline-shift'), messages(r));
+  assert.match(messages(r), /baseline raised 1 → 4 without declared changeset/);
+});
+
+await run('a unit-renormalization changeset covers a raised pin', async () => {
+  const r = await enforceWithHistory(scaffold({
+    priorBaseline: `${SHIFT_FILE} 1 2026-07-16\n`,
+    baseline: `${SHIFT_FILE} 4 2026-09-02\n`,
+    report: SHIFT_REPORT,
+    files: SHIFT_FILES,
+    changesets: [{ id: '910-x', frontmatter: { classification: 'unit-renormalization', tempdoc: 910 } }],
+  }));
+  assert.equal(r.verdict, 'pass', `verdict (${messages(r)})`);
+  assert.ok(!ruleIds(r).includes('dead-code/silent-baseline-shift'), messages(r));
+  assert.match(messages(r), /'unit-renormalization' covers/);
+});
+
+await run('unit-renormalization covers the PIN but NOT the live count', async () => {
+  // The two covering sets are deliberately different. A counting change may move the pin; it may
+  // not licence the measurement to exceed it. If these ever collapse into one set, this fails.
+  const r = await enforceWithHistory(scaffold({
+    priorBaseline: `${SHIFT_FILE} 4 2026-07-16\n`,
+    baseline: `${SHIFT_FILE} 4 2026-09-02\n`,
+    report: { issues: [perExportRow(SHIFT_FILE, ['a', 'b', 'c', 'e'], ['d'])] },
+    files: SHIFT_FILES,
+    changesets: [{ id: '910-x', frontmatter: { classification: 'unit-renormalization', tempdoc: 910 } }],
+  }));
+  assert.equal(r.verdict, 'fail', `verdict (${messages(r)})`);
+  assert.ok(ruleIds(r).includes('dead-code/silent-growth'), messages(r));
+  assert.match(messages(r), /4 → 5 unused exports/);
+});
+
+await run('lowering a pin is always allowed', async () => {
+  const r = await enforceWithHistory(scaffold({
+    priorBaseline: `${SHIFT_FILE} 9 2026-07-16\n`,
+    baseline: `${SHIFT_FILE} 4 2026-09-02\n`,
+    report: SHIFT_REPORT,
+    files: SHIFT_FILES,
+  }));
+  assert.equal(r.verdict, 'pass', `verdict (${messages(r)})`);
+  assert.ok(!ruleIds(r).includes('dead-code/silent-baseline-shift'), messages(r));
+});
+
 // --- The counter itself. ---
 
 await run('countDeclaredExports counts each declaration form once', async () => {
@@ -256,7 +400,8 @@ await run('countDeclaredExports counts each declaration form once', async () => 
   assert.equal(countDeclaredExports(ts, write('a.ts',
     'export const a = 1, b = 2;\nexport function c() {}\nexport class D {}\n')), 4);
   assert.equal(countDeclaredExports(ts, write('b.ts',
-    'export type T = 1;\nexport interface I {}\nexport enum E { X }\n')), 3);
+    'export type T = 1;\nexport interface I {}\nexport enum E { X }\n')), 4,
+  'T + I + E + E.X — the enum member is a thing knip reports separately');
   assert.equal(countDeclaredExports(ts, write('c.ts',
     "export { a, b as c } from './x';\nexport type { T } from './y';\n")), 3);
   assert.equal(countDeclaredExports(ts, write('d.ts',

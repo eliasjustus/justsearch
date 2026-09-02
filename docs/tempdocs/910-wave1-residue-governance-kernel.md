@@ -1,7 +1,7 @@
 ---
 title: "Wave-1 residue, governance kernel: the dead-code gate's whole-file masking trap, a closed corruptionPolicy vocabulary with a count ratchet, and two pinned pre-existing reds"
 type: tempdocs
-status: "IMPLEMENTED (2026-09-02) — all three items landed, tests falsified, full kernel run recorded in §D"
+status: "IMPLEMENTED + REVIEW-ROUND-1 APPLIED (2026-09-02) — all three items landed; independent review returned NEEDS-FIXES (no S1) and every finding is answered in §F, including one measurement of mine that was false and one review claim that did not hold"
 created: 2026-09-02
 updated: 2026-09-02
 lane: wave-1 residue R5 (governance kernel)
@@ -156,8 +156,10 @@ Added to `scripts/agent-analytics/expected-state.v1.json` (now 19 pins):
 Both carry `reviewBy: 2026-09-30`, a `fixOwner`, and an `exitProbeOmitted` field saying why no
 automated probe exists — see §C.3.
 
-A **third** pin, `operation-surface-indexingjobstates-unregistered`, was added at discovery when the
-full-kernel run in §D.3 turned up a red on `main` that nothing pinned. It carries a real `exitProbe`.
+The full-kernel run also turned up a THIRD red on `main` that nothing pinned — `operation-surface`
+on `modules/ui-web/src/shell-v0/state/indexingJobStates.ts`. It was briefly pinned, and the pin was
+**withdrawn on review**: the red was one register row away, and a pin is the second-best remedy
+whenever the fix is in reach. See §F.3.
 
 ---
 
@@ -247,13 +249,16 @@ All from `.claude/worktrees/resid2-gov`.
 | Command | Result |
 |---|---|
 | `npm --prefix modules/ui-web run knip:report` | wrote `tmp/knip-report.json`, 186 issue rows, 23 whole-file |
-| `node scripts/governance/run.mjs --gate dead-code --mode gate` | **pass, 0 findings** |
-| `node scripts/governance/gates/dead-code/enforcer.test.mjs` | **all 8 checks passed** (new file) |
-| `node scripts/ci/check-store-recoverability.mjs` | **OK — 6 catalog stores and 36 durable state authorities (floor 36), across 26 corruption policies** |
-| `node scripts/ci/check-store-recoverability.test.mjs` | **OK — 60 assertions passed** (was 51) |
+| `node scripts/governance/run.mjs --gate dead-code --mode gate` | **pass** — 11 `declared-growth` notes, `'unit-renormalization' covers` |
+| `node scripts/governance/gates/dead-code/enforcer.test.mjs` | **all 15 checks passed** (new file) |
+| `node scripts/governance/run-all-tests.mjs` | **all 23 test files passed** |
+| `node scripts/governance/run.mjs --gate operation-surface --mode gate` | **pass, 0 findings** (was the third red; fixed, not pinned) |
+| `node scripts/governance/run.mjs --gate register-guard-resolution --mode gate` | **pass, 0 findings** (second reader of the register I edited) |
+| `node scripts/ci/check-store-recoverability.mjs` | **OK — 6 catalog stores and 36 durable state authorities (floor 36), across 27 corruption policies** |
+| `node scripts/ci/check-store-recoverability.test.mjs` | **OK — 64 assertions passed** (was 51) |
 | `node scripts/agent-analytics/expected-state-probe.mjs --gate` | **19 pins; 0 shape/review problems; 0 exit-probes fired** |
 | `node scripts/ci/check-tempdoc-numbers.mjs` | recorded in §D.3 |
-| `node scripts/governance/run.mjs --mode gate` (full kernel) | recorded in §D.3 |
+| `node scripts/governance/run.mjs --mode gate` (full kernel) | **35 gates, 2 fail, 94 findings** — both pinned pre-existing; see §D.3 |
 
 ### D.1 — Item 1 falsifications (each break run, then reverted)
 
@@ -263,13 +268,29 @@ All from `.claude/worktrees/resid2-gov`.
 | F2 | floor of 1 dropped | 2 FAILED — the no-export module and the star barrel both drop out of the ratchet entirely (`Input: ''`) |
 | F3 | bare `export *` followed transitively | 1 FAILED — `bare star re-exports introduce no binding knip attributes to this module: 2 !== 0` |
 | F5 | fail-closed replaced by silent fallback | 2 FAILED — both fail-closed tests, `'pass' !== 'fail'` |
+| F6 | member counting reverted (the pre-review counter) | 3 FAILED — `ScratchEnum + 3 members + scratchOne + scratchTwo: 3 !== 6`, the namespace case, and `T + I + E + E.X: 3 !== 4` |
+| F-A | baseline-shift block removed | 2 FAILED — `raising a pinned number without a changeset fails: 'pass' !== 'fail'`, and the covering case finds no message |
+| F-B | `unit-renormalization` added to `GROWTH_COVERING` (the two sets collapsed) | 1 FAILED — `unit-renormalization covers the PIN but NOT the live count: 'pass' !== 'fail'` |
+| F-C | `unit-renormalization` dropped from `BASELINE_SHIFT_COVERING` | 1 FAILED — `a unit-renormalization changeset covers a raised pin: 'fail' !== 'pass'` |
 
-Plus the end-to-end counterfactual (F4-equivalent, run against the real tree rather than fixtures):
-with one symbol of `browse.ts` imported, `origin/main`'s enforcer + baseline report
-`silent-growth | src/api/domains/browse.ts: 1 → 2`, while the fixed gate reports
-`rebalance-available | src/api/domains/browse.ts: 2 < pinned 4` — and still catches the probe's own
-new export as `silent-growth | src/api/http.ts: 4 → 5`. `modules/ui-web/src/api/http.ts` was
-restored byte-for-byte afterwards (`git status --porcelain modules/ui-web` clean).
+Plus two end-to-end probes against the real tree rather than fixtures. **They are separate probes,
+and the first version of this tempdoc wrongly reported them as one** — see §C.6.
+
+- **E1, the trap.** Append `import { fetchFolders } from './domains/browse';` to
+  `modules/ui-web/src/api/http.ts`, regenerate the report. `origin/main`'s enforcer + baseline
+  report `silent-growth | src/api/domains/browse.ts: 1 → 2`; the fixed gate reports
+  `rebalance-available | src/api/domains/browse.ts: 2 < pinned 4` **and nothing else** — the import
+  alone produces no growth finding anywhere, `http.ts` stays at 4.
+- **E2, real growth still caught.** Append `export const scratchDeadExport = 1;` to
+  `src/api/domains/status.ts` (a whole-file-unused module pinned at 2), regenerate, run the fixed
+  gate:
+
+  ```
+  error dead-code/silent-growth | src/api/domains/status.ts: 2 → 3 unused exports without declared changeset
+  ```
+
+Both probe files were restored byte-for-byte afterwards (`git status --porcelain modules/ui-web`
+clean).
 
 ### D.2 — Item 2 falsifications
 
@@ -287,34 +308,27 @@ restored byte-for-byte afterwards (`git status --porcelain modules/ui-web` clean
 (`generate-runtime-config-matrix`, `module-deps`, `report-npm-audit`, `knip:report`):
 
 ```
-governance: 35 gates evaluated, 3 fail, 84 findings
+governance: 35 gates evaluated, 2 fail, 94 findings
 ```
 
-`dead-code: pass`. The three fails are all pre-existing and all now pinned:
+`dead-code: pass`, `operation-surface: pass`. The first version of this PR reported **3 fail**; the
+third was fixed rather than pinned on review (§F.3). Both remaining fails are pre-existing and
+already pinned:
 
-| gate | finding | pin |
+| gate | finding | disposition |
 |---|---|---|
-| `ts-any` | 5 × `ts-any/silent-growth`, all the English word "any" in prose | `ts-any-gate-counts-english-prose` (existing) |
-| `dead-code-jvm` | `kernel/input-missing: tmp/dead-code-jvm-report.json` — its producer is a Gradle run, out of this lane's node-only scope | `governance-kernel-inputs-unbuilt` (existing) |
-| `operation-surface` | `operation-surface/undeclared-surface` on `modules/ui-web/src/shell-v0/state/indexingJobStates.ts` | **`operation-surface-indexingjobstates-unregistered` (new, this PR — see below)** |
+| `ts-any` | 5 × `ts-any/silent-growth`, all the English word "any" in prose | `ts-any-gate-counts-english-prose` (existing pin) |
+| `dead-code-jvm` | `kernel/input-missing: tmp/dead-code-jvm-report.json` — its producer is a Gradle run, out of this lane's node-only scope | `governance-kernel-inputs-unbuilt` (existing pin) |
+| `operation-surface` | `operation-surface/undeclared-surface` on `modules/ui-web/src/shell-v0/state/indexingJobStates.ts` | **FIXED, not pinned** — one register row (§F.3) |
 
 `wire` reports `contract-governance/buf-cli-missing` but its verdict stays pass (pinned as
 `wire-gate-buf-cli-missing`, which warns about exactly that fail-open); no `.proto` is touched here.
 
-**The unpinned one, routed at discovery rather than logged.** `operation-surface` was red on `main`
-with no pin. Per `log-pre-existing-issues` a red local verification gets a dated pin **plus** a
-named fix owner, so a third pin was added: `operation-surface-indexingjobstates-unregistered`. It is
-pre-existing, not branch-induced — `git log -1 --oneline origin/main --
-modules/ui-web/src/shell-v0/state/indexingJobStates.ts` returns `bff70561` (#603), and this branch's
-`git diff origin/main --name-only` touches zero files under `modules/ui-web` or
-`governance/operation-surfaces.v1.json`. Unlike the other two new pins this one **does** carry a real
-`exitProbe` (`node scripts/governance/run.mjs --gate operation-surface --mode gate`): it exits 1
-today and will exit 0 the moment the register row lands, which is the polarity §B.14 describes. Its
-`match` was checked in both directions — it fires on a bare `run.mjs --mode gate` and on
-`--gate operation-surface`, and does **not** fire on `--gate wire`.
-
-Post-pin: `node scripts/agent-analytics/expected-state-probe.mjs --gate` → **20 pins; 0
-shape/review problems; 2 exit-probes run, 0 fired**.
+**The unpinned one, fixed rather than pinned.** `operation-surface` was red on `main` with no pin.
+It is pre-existing, not branch-induced — `git log -1 --oneline origin/main --
+modules/ui-web/src/shell-v0/state/indexingJobStates.ts` returns `bff70561` (#603). The first version
+of this PR pinned it; review corrected that to fixing it, because the red was one register row away
+(§F.3). Final pin count: **19**.
 
 ### D.4 — Baseline row changes (before → after), all 11
 
@@ -340,6 +354,194 @@ The other 12 whole-file rows stay at 1: `scripts/capture-evidence-bundle.mjs`, `
 
 ---
 
+## §F — Independent review round (2026-09-02, PR #611 → NEEDS-FIXES, no S1)
+
+### F.1 (S2-1) — a false measurement I had recorded in three durable places
+
+**The finding.** All three write-ups claimed the browse.ts import probe "still catches the probe's
+own new export as `silent-growth | src/api/http.ts: 4 → 5`". The reviewer ran the probe as written
+and got no such finding. **They are right, and re-running it confirms it:** with only
+`import { fetchFolders } from './domains/browse';` appended, `http.ts` stays at 4 with no finding —
+only the `browse.ts: 2 < pinned 4` half reproduces.
+
+**Cause, which is the part worth recording.** My original probe appended TWO lines — the import
+*and* `export const __probeA = fetchFolders;`. The `4 → 5` finding was real, but it was caused by
+the second line, which I then omitted from every write-up. So the probe as documented could not
+produce the result as documented. This is `interrogate-results` failing in its most seductive form:
+the run produced exactly the two findings my thesis predicted, one for each half, so nothing
+prompted me to ask which line caused which.
+
+**Corrected in all three places** — `gates/dead-code/.changesets/910-whole-file-normalization.md`,
+§D.1 above, and the PR body — and split into two explicitly separate probes, E1 (the trap) and E2
+(real growth still caught), with E2 being the `status.ts` case the reviewer supplied.
+
+### F.2 (S2-2) — the upper-bound invariant was false for enum members
+
+**Measured, not conceded on argument.** A scratch module
+`export enum ScratchEnum {A,B,C}` + two consts:
+
+| state | knip | counter |
+|---|---|---|
+| whole-file unused | `files: [self]` = 1 | 3 (old) |
+| `ScratchEnum.A` consumed | `enumMembers: [B,C]` + `exports: [scratchOne, scratchTwo]` = **4** | 3 (old) → **silent-growth** |
+
+**And `enumMembers` is in the DEFAULT report** — the default array keys measured on this repo's own
+config are `dependencies, devDependencies, enumMembers, exports, files, types, unlisted`. So this
+was a live break, not a latent one. (My first probe missed it because I used the enum as a *type
+alias*, which reports it under `types` instead; it takes a *value* reference to surface
+`enumMembers`.)
+
+**Fixed** in `countReportableMembers` (`export-count.mjs`): exported enum members and exported
+namespace members now count.
+
+**Where I did NOT follow the reviewer, with the measurement for why.** They also asked for
+`classMembers`. Counting class members moved four real baseline rows —
+`SelectionActionsMenu.ts 1 → 19` (ONE exported Lit class, 18 methods), `retainedScroll.ts 1 → 7`,
+`ResolutionStats.ts 1 → 7`, `NativePopoverSpike.ts 3 → 5` — and `classMembers` is **absent from the
+default report**. That is a 19× standing allowance bought for a category knip does not emit here:
+the same over-permissiveness this very module rejects for transitive star barrels, which would have
+made the PR contradict itself. So `classMembers` is documented as an unbounded category alongside
+`duplicates`, with an explicit trigger — if `knip.config.ts` ever sets `include: ['classMembers']`,
+the counter must count them and the affected rows re-pinned in that PR.
+
+**Falsification.** Reverting to the old counter: `3 !== 6` on the enum case, plus 2 more.
+
+### F.3 (S2-3) — pin withdrawn, register row added
+
+The reviewer was right that a pin is the second-best remedy when the fix is one row away, and that
+this one is in my lane (I own `governance/`). Added
+`fe-indexing-job-state-vocabulary` to `governance/operation-surfaces.v1.json` and **deleted** the
+pin `operation-surface-indexingjobstates-unregistered`.
+
+Two things checked rather than assumed before writing the row:
+
+- **A row covers exactly one path.** `enforcer.mjs:57` builds `declared` as
+  `new Set(surfaces.map((s) => norm(s.path)))`, and `norm` is `String(p).replace(/\\/g,'/')` — an
+  array path would stringify to `"a.ts,b.ts"` and match nothing. So folding the file into the
+  sibling `indexingJobsBridge.ts` row would NOT have worked; a standalone row is the only shape
+  that does.
+- **A second gate reads this file.** `register-guard-resolution` lists it in `config.registers[]`
+  and forbids bare `self` / `none-yet` / absent guards, so the row's `guard: "gate:operation-surface"`
+  had to be a resolving form. Both gates were run: `operation-surface: pass`,
+  `register-guard-resolution: pass`.
+
+Worth recording about the detection itself: `indexingJobStates.ts` never references `IndexingJobView`
+in *code* — `scanTs` is a whole-file text regex, and the match is the phrase `IndexingJobView.STATE_*`
+in the file's header comment. The row is still correct (the file genuinely is the shell-side spelling
+of that vocabulary), but the gate found it by prose, which is worth knowing before trusting its
+population count as an import graph.
+
+### F.4 (S2-4) — one vocabulary meaning contradicted its code; the rest re-audited
+
+`DELETE_AND_RECOMPUTE`'s meaning claimed the file is "deleted outright and recomputed" with "no user
+content". Verified at source, both halves are wrong: `MigrationProgressStore.readBestEffort`
+swallows the parse failure at debug and returns `null` (`:55-58`); the write path replaces via
+`ATOMIC_MOVE` (`:91-99`); `grep -n "delete"` over the file returns **zero hits**; and `last_path` —
+one user document path in the clear — is written at `:89`.
+
+Reworded to what the code does, and the name/behaviour mismatch is left *visible* in the meaning
+rather than smoothed over, because renaming the value is a register-row edit owned by the row's
+owner, not by this vocabulary file.
+
+The re-audit of the other 25 meanings is recorded in §F.8.
+
+### F.5 (structural gap) — `dead-code` had no `silent-baseline-shift`
+
+Confirmed: `dead-code/enforcer.mjs` never read a prior baseline, so **raising a pinned number by
+hand passed as `rebalance-available`** — the ratchet held the measurement to the pin but not the pin
+to its own history. Mirrored `todo-fixme` (the closest sibling: same `<path> <count> <date>` shape,
+same per-file dynamic key set, same changeset loader), using `readFileAtRef(ref, filePath, cwd)` in
+real mode and `_baseline/` in fixture mode.
+
+**The design point the reviewer's "otherwise `unit-renormalization` is documentation-only" names.**
+The two covering sets are deliberately different:
+
+| set | covers | members |
+|---|---|---|
+| `GROWTH_COVERING` | live count exceeds its pin | `declared-growth`, `merge-import`, `emergency-override` |
+| `BASELINE_SHIFT_COVERING` | the pin itself was raised | those three **+ `unit-renormalization`** |
+
+A counting change may move the pin; it may not licence the measurement to exceed it. Collapsing
+these into one set is falsification F-B below, and it fails.
+
+On the real repo the rule now *sees* this PR's own work: 11 × `dead-code/declared-growth |
+… baseline raised 1 → N; 'unit-renormalization' covers`, gate green.
+
+### F.6 (nits)
+
+| nit | disposition |
+|---|---|
+| `expected-state.v1.json` evidence said 6 files, diff is 11 | moot — that evidence line lived in the pin deleted in §F.3 |
+| PR body cited a nonexistent `--gate` flag on `expected-state-probe` | **Checked and NOT upheld — the flag exists.** `scripts/agent-analytics/expected-state-probe.mjs:69` reads `if (args.includes('--gate') && (shape.length \|\| probes.exitFired.length)) process.exit(1);`, and the file's own usage header documents it at `:14` (`--gate  # non-zero on a stale pin`). The register's `comment` field also names `--gate` as the CI form. The PR body's citation was correct and is unchanged. Recorded rather than silently "fixed", because quietly editing a correct line to match a review note would leave the next reader with a worse command than the one that works. |
+| `enforcer.mjs` legacy-shape branch untested, would fail closed on keys `"0"`, `"1"` | **deleted**, not tested. It was speculative back-compat for a knip version this repo does not use (`package.json:71` pins `^6.20.0`), and normalization had made it actively harmful: `Object.entries` over a legacy `issues.files` ARRAY yields indices as paths. The top-level `files[]` tolerance branch went with it — same "untested guess at a shape" class. An unrecognised shape is now `dead-code/report-malformed`, with a test. |
+| vocabulary file threw a raw `JSON.parse` stack | `loadPolicies()` now fails with a remedy for both the unreadable and the malformed case, with a test that captures `console.error` and asserts the remedy text |
+
+**One consequence of the strict-shape change, found by the suite rather than by me.**
+`scripts/governance/run.input-contract.test.mjs` uses the dead-code enforcer as a vehicle for two
+producer-plumbing tests, with `{}` as a throwaway payload. Under the new contract `{}` is
+`report-malformed`, so both went red. I changed the FIXTURE, not the rule: a report with no
+`issues` array silently reading as "zero dead code" is precisely the fail-open this gate must not
+have — if a producer breaks and emits `{}`, the gate should scream, not come back green. The
+producers now emit `{"issues":[]}`, a valid empty report, so those tests assert what their names
+say and the assertion is now stronger than it was.
+
+### F.7 — Cross-lane coordination (lane R4, PR #613)
+
+R4 coined `REGENERATE_FROM_RUN_EVENTS_OR_PRESERVE`. Adding it exposed a real conflict with my own
+"a declared value no row uses is a failure" check: pre-declaring R4's value would have failed my
+gate on my own branch.
+
+Resolved with an `awaitingRow` map — value → the PR whose row will use it — that is **self-retiring**:
+a value in `awaitingRow` that a row now uses is itself a failure telling you to delete the marker.
+So the forward declaration cannot outlive its reason, which is the same discipline
+`retire-with-a-sweep` asks of everything else here.
+
+**Confirmed for R4:** `ratchet.durableStoreRows: 36` is a FLOOR — `checkCountRatchet` fails only on
+`rows < durableStoreRows`. R4's 42 rows pass unchanged, and the test
+`gaining a durableStores row is allowed — the pin is a floor, not an equality` exists precisely to
+keep a later agent from "tightening" it into an equality (falsification F4 in §D.2).
+
+### F.8 — Re-audit of the remaining 25 meanings, and what "audited" means here
+
+The reviewer asked for a re-audit for the same drift class, and for an honest record of which
+meanings I actually re-read against code. Two tiers, kept separate on purpose:
+
+**Tier 1 — verified against CODE (full read of the handling path).**
+
+| value | verdict | evidence |
+|---|---|---|
+| `DELETE_AND_RECOMPUTE` | **DRIFT, fixed** | `MigrationProgressStore.java` — `readBestEffort` swallows at debug and returns null (`:55-58`); write replaces via `ATOMIC_MOVE` (`:91-99`); `grep -n "delete"` over the file = **0 hits**; `last_path` written at `:89` |
+
+**Tier 2 — verified against the owning row's `encryptionNote`, i.e. the CONTENT claim only.** This is
+the check that caught the first defect, so it is the one worth running across the board; it does not
+verify the verb. Seven values whose meanings made an absolute content or disposability claim:
+
+| value | row | verdict |
+|---|---|---|
+| `ROTATE_OR_PRUNE_DIAGNOSTIC_ARTIFACT` | telemetry-and-crash-artifacts | **DRIFT, fixed** — my meaning said "diagnostics are disposable by construction"; the row records that spans carry `doc.path` and `http.target`, so indexed document paths and query strings land in `telemetry/*.ndjson`, and `crashes/*.json` keeps raw exception messages and stack traces |
+| `SKIP_DERIVED_ROW` | gpl-training-triples | **DRIFT (mild), fixed** — regenerable is right, but the rows are user-derived: each carries a synthetic query generated from one of the user's documents plus its id. Meaning now says so. |
+| `RECREATE_DERIVED_METRIC` | telemetry-rrd | OK — "no free text, no paths, no user content; high-cardinality streams that could carry a document path go elsewhere" |
+| `REGENERATE_OR_DROP_DERIVED_HISTORY` | inference-runtime-projections | OK — closed vocabulary of lifecycle phases/reason codes, "no prompt text, no completion text" |
+| `CLASSIFY_UNCLEAN_AND_REGENERATE` | runtime-manifest-history | OK — process bookkeeping, "no user content" |
+| `DISCARD_UNREADABLE_DERIVED_STATUS_AND_RESCAN` | runtime-activation-status, pack-import-status | OK — both notes say "no user content" |
+| `CONSERVATIVE_REBUILD_OR_CLEAR` | worker-protocol-markers | OK — signal files carrying one reason code, "no message text, no path" |
+
+**Tier 3 — NOT independently re-verified, and I am not claiming otherwise.** The remaining 17 values
+(the `FAIL_*` family, the preservation family, `RECOVER_PREVIOUS_OR_REBUILD`,
+`REGENERATE_BEFORE_CONSUMPTION`, `VERIFY_PROCESS_IDENTITY_OR_REPLACE_STALE_LOCK`,
+`SKIP_UNREADABLE_LINE_AND_WARN`, `NEVER_DELETE_OR_OVERWRITE_UNKNOWN_ASSET`,
+`PRESERVE_AND_RECOVER_DEFAULTS`, `VERIFY_HASH_OR_PRESERVE_USER_ASSET`,
+`SKIP_INVALID_PLUGIN_AND_PRESERVE_BYTES`, `REFUSE_FUTURE_SCHEMA_AND_PRESERVE_OVERRIDES`, …) were
+written FROM their rows' `corruptionNote` and named tests, and re-checked against those notes — not
+against a fresh read of each handling path. Their meanings are therefore exactly as good as the
+notes, which is the same standing the register already had, and no better.
+
+**The limit this exposes, recorded because it is the honest headline.** The gate can check that a
+value is *declared* and *used*; it cannot check that a meaning matches behaviour. Three of the eight
+claims I did check were wrong. That rate says the remaining seventeen should not be trusted as
+verified, and a per-row "the meaning matches the code" assertion — the only thing that would make
+this vocabulary self-defending — is a bigger change than this lane, listed in §E.
+
 ## §E — Open items
 
 1. **`src/api/domains/indexing.ts` is still entirely dead** (885:3609-3618). This lane fixed the
@@ -350,16 +552,46 @@ The other 12 whole-file rows stay at 1: `scripts/capture-evidence-bundle.mjs`, `
    with zero findings is never visited and its row survives forever. 884's changeset deleted 5 such
    rows by hand and named the limitation; this lane did not close it, and none of the 11 rows it
    touched are of that shape.
-3. **The vocabulary's meanings are prose, not enforced semantics.** The gate checks that a value is
-   *declared* with a *non-empty* meaning; it cannot check that a row's `corruptionPolicy` matches
-   what its code does. `corruptionNote` + the row's named tests remain the only evidence for that.
+3. **The vocabulary's meanings are prose, not enforced semantics — and §F.8 measured how much that
+   costs.** The gate checks that a value is *declared* with a *non-empty* meaning; it cannot check
+   that a meaning matches what the code does. Of the eight meanings whose claims were actually
+   checked in the review round, **three were wrong** (`DELETE_AND_RECOMPUTE`,
+   `ROTATE_OR_PRUNE_DIAGNOSTIC_ARTIFACT`, `SKIP_DERIVED_ROW`); seventeen remain at the standing of
+   the `corruptionNote`s they were written from. Closing this needs a per-row assertion tying the
+   policy to the handling path (the row's named recovery test is the natural anchor) — a bigger
+   change than this lane, and the one that would make this register self-defending rather than
+   self-describing.
 4. **`pendingDurableClassification` is at cap (8/8).** Any new pending entry needs a paired bump in
    two files now. That is the intent, but it means the next lane discovering a durable write site
    with no row will hit this gate before it hits anything else.
 5. **The three new pins are dated exceptions, not steady state.** They are deleted by lanes R6 and
    R7 and by the operation-surfaces register row respectively; the `reviewBy: 2026-09-30` backstop
    turns CI red for every PR if none lands.
-6. **CLAUDE.md's pre-merge table still names only `StoreCatalog.java` · store construction sites as
+6. **Two SIBLING gates have the same baseline-shift defect this PR fixed for `dead-code`, and one is
+   worse than the absence it replaces.** Found while looking for a template to mirror; verified at
+   source, NOT fixed here (fixing three gates' ratchets in one PR is a different change, and neither
+   is in this lane's brief). Routed for the coordinator to assign:
+   - **`module-deps` declares a rule that can never fire.** `scripts/governance/gates/module-deps/rule-descriptions.mjs:28`
+     declares `'module-deps/silent-baseline-shift'`, and `enforcer.mjs:16` imports `readFileAtRef` —
+     but `readFileAtRef` is **never called** anywhere in the file (`grep -n readFileAtRef
+     scripts/governance/gates/module-deps/enforcer.mjs` → only the import line). A documented ruleId
+     that never fires is worse than `dead-code`'s honest absence: the rule catalog says the hole is
+     covered.
+   - **`test-efficacy`'s baseline-shift is silently broken in real mode.**
+     `scripts/governance/gates/test-efficacy/enforcer.mjs:253` calls
+     `readFileAtRef({ repoRoot, ref: baselineRef, path: baselinePath })` — an options object — but
+     the function's signature is positional: `readFileAtRef(ref, filePath, cwd)`
+     (`scripts/governance/lib/git-utils.mjs:236`). So `git show [object Object]:undefined` throws,
+     the `catch` returns `null`, and the prior baseline is **always** null outside fixture mode. The
+     gate's own fixtures pass because fixture mode takes a different branch — a green that cannot
+     see the defect.
+7. **`detectBaselineTamper` exists and nothing uses it.**
+   `scripts/governance/lib/baseline-tamper-detector.mjs` calls itself "the shared home of the 'no
+   silent downgrade' invariant", but all five gates with a baseline-shift rule (now six, including
+   this one) hand-roll the block instead. This PR mirrored `todo-fixme` rather than adopt the
+   helper, deliberately: adopting it means changing five other gates, which is a refactor, not this
+   lane. Recorded so the next agent finds the fork rather than adding a seventh copy.
+8. **CLAUDE.md's pre-merge table still names only `StoreCatalog.java` · store construction sites as
    the trigger for `check-store-recoverability`.** Editing `governance/store-corruption-policies.v1.json`
    is now a third trigger and is not listed. Left unedited deliberately: this lane's brief scoped
    CLAUDE.md out, and the file is under the always-loaded-byte ratchet, so the row belongs to

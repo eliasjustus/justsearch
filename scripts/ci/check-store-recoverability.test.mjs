@@ -7,6 +7,7 @@ import {
   checkCorruptionPolicyVocabulary,
   checkCountRatchet,
   checkDurableStoreRegister,
+  loadPolicies,
   checkParity,
   extractCatalogEntries,
   findHardcodedCipherCalls,
@@ -603,6 +604,75 @@ test('a vocabulary entry with no stated meaning fails', () => {
   assert.ok(result.some((f) => f.includes('has no meaning')), result.join(' | '));
 });
 
+test('a value declared ahead of its row passes only while awaitingRow names the PR', () => {
+  // Cross-lane reality: a sibling branch coins a value, and this vocabulary must accept it BEFORE
+  // that row exists or the sibling reds on merge. The marker is what keeps that from becoming a
+  // silent hole.
+  const policies = { ...POLICY_VOCAB, LANDING_IN_ANOTHER_PR: 'Regenerated or preserved.' };
+  const durableStores = [readyRow({ corruptionPolicy: 'FAIL_LOUD' })];
+  assert.deepEqual(
+    checkCorruptionPolicyVocabulary({
+      durableStores,
+      policies,
+      awaitingRow: { LANDING_IN_ANOTHER_PR: 'row lands in PR #613' },
+    }),
+    [],
+  );
+  // Without the marker it is just an unused spelling.
+  assert.ok(
+    checkCorruptionPolicyVocabulary({ durableStores, policies })
+      .some((f) => f.includes('`LANDING_IN_ANOTHER_PR` is declared but no durableStores row uses it')),
+  );
+});
+
+test('an awaitingRow marker whose row has landed fails, so scaffolding cannot outlive its reason', () => {
+  const result = checkCorruptionPolicyVocabulary({
+    durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+    policies: POLICY_VOCAB,
+    awaitingRow: { FAIL_LOUD: 'row lands in PR #613' },
+  });
+  assert.ok(result.some((f) => f.includes('is in `awaitingRow` but a durableStores row now uses it')),
+    result.join(' | '));
+});
+
+test('an awaitingRow value with no policy meaning fails', () => {
+  const result = checkCorruptionPolicyVocabulary({
+    durableStores: [readyRow({ corruptionPolicy: 'FAIL_LOUD' })],
+    policies: POLICY_VOCAB,
+    awaitingRow: { NEVER_DECLARED: 'row lands in PR #613' },
+  });
+  assert.ok(result.some((f) => f.includes('has no entry in `policies`')), result.join(' | '));
+});
+
+test('a malformed vocabulary file fails with a remedy instead of a JSON.parse stack', () => {
+  // The gate's other failures all name what to do; the one an author is most likely to hit while
+  // EXTENDING the vocabulary should not be the one that surfaces as an unhandled exception.
+  const calls = [];
+  const originalError = console.error;
+  const originalExit = process.exit;
+  console.error = (msg) => calls.push(String(msg));
+  process.exit = (code) => { throw new Error(`exit:${code}`); };
+  try {
+    assert.throws(
+      () => loadPolicies(REPO_ROOT, () => '{ "policies": { "A": "x", } }'),
+      /exit:1/,
+    );
+    assert.ok(calls.some((m) => m.includes('is not valid JSON')), calls.join(' | '));
+    assert.ok(calls.some((m) => m.includes('trailing comma')), calls.join(' | '));
+
+    calls.length = 0;
+    assert.throws(
+      () => loadPolicies(REPO_ROOT, () => { const e = new Error('nope'); e.code = 'ENOENT'; throw e; }),
+      /exit:1/,
+    );
+    assert.ok(calls.some((m) => m.includes('could not be read')), calls.join(' | '));
+    assert.ok(calls.some((m) => m.includes('Restore the file from git')), calls.join(' | '));
+  } finally {
+    console.error = originalError;
+    process.exit = originalExit;
+  }
+});
+
 const RATCHET = { durableStoreRows: 2, pendingDurableClassificationCap: 3 };
 
 test('losing a durableStores row fails against the pinned floor', () => {
@@ -656,7 +726,11 @@ test('the REAL register passes both the vocabulary and the ratchet', () => {
     fs.readFileSync(path.resolve(REPO_ROOT, 'governance/store-corruption-policies.v1.json'), 'utf8'),
   );
   assert.deepEqual(
-    checkCorruptionPolicyVocabulary({ durableStores: real.durableStores, policies: vocab.policies }),
+    checkCorruptionPolicyVocabulary({
+      durableStores: real.durableStores,
+      policies: vocab.policies,
+      awaitingRow: vocab.awaitingRow,
+    }),
     [],
   );
   assert.deepEqual(

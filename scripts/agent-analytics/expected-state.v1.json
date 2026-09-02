@@ -225,19 +225,6 @@
       "reviewBy": "2026-09-30",
       "exitProbeOmitted": "No exitProbe, deliberately. Any probe narrow enough to run here would be an ISOLATED run of this test — which this pin's own claim records as PASSING. It would report exit 0, i.e. GONE, against a fully live red, and a fired exit means DELETE THE PIN. That is exactly the false-GONE defect ui-web-envelopestream-heartbeat-flaky and ui-web-pluginloader-module-mode-timeout record in their exitProbeRetired notes; a load-dependent failure exits by reviewBy plus its tracked fix, not by a probe. The real exit is lane R7's fix landing (worktree resid2-worker): when its PR merges, the fixing PR deletes this pin.",
       "fixOwner": "wave-1 residue lane R7 (worktree resid2-worker) — a deterministic write-then-notify fixture, or the watcher re-reading size after the write settles."
-    },
-    {
-      "id": "operation-surface-indexingjobstates-unregistered",
-      "match": [
-        "governance/run\\.mjs(?!.*--gate (?!operation-surface))",
-        "--gate operation-surface"
-      ],
-      "claim": "The `operation-surface` gate fails on main with exactly ONE finding: `operation-surface/undeclared-surface` naming `modules/ui-web/src/shell-v0/state/indexingJobStates.ts` as referencing the canonical IndexingJobView lifecycle type without a row in governance/operation-surfaces.v1.json. Pre-existing, introduced with the file itself in #603; the register knows the sibling `substrates/tasks/indexingJobsBridge.ts` (operation-surfaces.v1.json:170) but not this one. A run naming a DIFFERENT file, or more than this one finding, is yours. Fix, do not remember: register the file (or fold it into the bridge's row) — this is a missing register row, not a defect in the gate.",
-      "evidence": "Reproduced 2026-09-02 on worktree-resid2-gov at base bff70561 (= origin/main): a full `node scripts/governance/run.mjs --mode gate` reported 35 gates / 3 fail, and operation-surface's only error finding is this one. `git log -1 --oneline origin/main -- modules/ui-web/src/shell-v0/state/indexingJobStates.ts` returns bff70561 (#603), and tempdoc 910's branch touches zero files under modules/ui-web or governance/operation-surfaces.v1.json (`git diff origin/main --name-only` = 6 files, none of them either), so it cannot be branch-induced. Related: tempdoc 885 UL.9's second routed finding records that the substrate failed-jobs wire has no parse-boundary contract, which is the same surface.",
-      "added": "2026-09-02",
-      "reviewBy": "2026-09-30",
-      "exitProbe": "node scripts/governance/run.mjs --gate operation-surface --mode gate",
-      "fixOwner": "the indexing-job lifecycle surface owner (the lane that shipped #603's jobs-drawer work) — one row in governance/operation-surfaces.v1.json."
     }
   ]
 }

@@ -173,6 +173,15 @@
       "note": "The FE rail projection: maps the change-feed into the Task substrate with truthful lifecycle states (PENDING→queued, PROCESSING→running, DONE→vanish, FAILED/RETRY_EXHAUSTED→failed) — in-flight derived from the authoritative job state, never asserted by membership (Thesis II). Rendered bounded by <jf-task-list> (Thesis III.b)."
     },
     {
+      "id": "fe-indexing-job-state-vocabulary",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/state/indexingJobStates.ts",
+      "guard": "gate:operation-surface",
+      "consumesProjection": "canonical-record",
+      "note": "Tempdoc 885 item 21b, registered by 910 — the shell-side spelling of IndexingJobView.STATE_*. It is the ONE vocabulary source for the three surfaces that classify on job state (operations/ActionLedgerClient.ts, substrates/tasks/indexingJobsBridge.ts, components/FailedJobsDrawer.ts), so a state literal is typed once rather than three times independently; three literals is three chances to typo one into a silent default arm. It consumes the canonical record directly rather than another projection: it mirrors the STATE_* constants, it does not derive from the SSE feed. Import-invisible to the scanner in the usual way — it is detected by naming IndexingJobView in its own header, which is exactly the reference that makes it a surface."
+    },
+    {
       "id": "fe-activity-index-projection",
       "kind": "projection",
       "lang": "ts",

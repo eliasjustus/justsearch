@@ -16,10 +16,40 @@
  * declares 4 exports; knip reported 2 unused once one was consumed).
  *
  * Normalization: a whole-file finding counts as the module's OWN declared
- * export count, floored at 1. That number is an upper bound on any per-export
- * count knip can later report for the same module, so the 1 -> N flip becomes
- * N -> (<= N) — a shrink, never growth — while a genuinely new dead export
- * still pushes the count past the pin.
+ * export surface, floored at 1, so the 1 -> N flip becomes N -> (<= N) — a
+ * shrink, never growth — while a genuinely new dead export still pushes the
+ * count past the pin.
+ *
+ * "Export surface", not "export count", and the difference is load-bearing.
+ * The enforcer sums EVERY array-valued key on a knip row, and knip reports
+ * unused enum members under `enumMembers` and unused namespace members under
+ * `namespaceMembers` — entries a whole-file finding never shows. Counting only
+ * top-level bindings therefore under-counts and the bound breaks. Measured on
+ * 2026-09-02 against knip 6.20.0 with the repo's OWN config (this is in the
+ * DEFAULT report, not an opt-in): a module declaring
+ * `export enum ScratchEnum {A,B,C}` plus two consts reports the whole-file `1`
+ * while unused; consume `ScratchEnum.A` from anywhere and it reports
+ * `enumMembers: [B, C]` + `exports: [scratchOne, scratchTwo]` = 4. Counting
+ * top-level bindings alone gives 3, and 3 -> 4 is silent-growth with no new
+ * dead code — the very trap this module exists to remove, one level down.
+ * So members of exported enums / namespaces / classes are counted too.
+ *
+ * The bound is conservative by design where knip's positions are mutually
+ * exclusive: an entirely-unused enum is reported once under `types` (its
+ * name), while a used enum reports only its unused members — so counting name
+ * AND members over-counts by one rather than risking an under-count.
+ *
+ * KNOWN LIMITS, stated rather than papered over. Two knip categories are NOT
+ * bounded by this counter, both because they are absent from this project's
+ * report today:
+ *
+ *   - `duplicates` (the same binding exported under two names). Bounding it
+ *     needs binding-level resolution rather than the syntactic walk below.
+ *   - `classMembers` — see `countReportableMembers` for the measurement and
+ *     the trigger to revisit.
+ *
+ * If either ever appears in a report, a module carrying it could still read as
+ * growth on gaining a consumer, and this is the comment to come back to.
  *
  * "Own declared" is deliberate and was measured, not assumed. Probes on
  * 2026-09-02 against knip 6.20.0:
@@ -89,9 +119,52 @@ export function resolveReportPath({ repoRoot, projectRoot, reportedPath }) {
 }
 
 /**
- * Counts the export bindings a module declares itself. Syntactic only — no
- * program, no type checker, no module resolution — which is what makes it
- * both fast and non-transitive.
+ * Counts the members knip reports against an exported enum or namespace
+ * (`enumMembers`, `namespaceMembers`). Nested namespaces recurse.
+ *
+ * `classMembers` is DELIBERATELY not counted, and the line is empirical rather
+ * than principled — say so rather than dress it up. Measured 2026-09-02 on the
+ * repo's own config: the default report emits
+ * `dependencies, devDependencies, enumMembers, exports, files, types, unlisted`
+ * — `enumMembers` yes, `classMembers` no. Counting class members would pin
+ * `src/shell-v0/components/SelectionActionsMenu.ts` (ONE exported Lit class,
+ * 18 methods) at 19 instead of 1, and `retainedScroll.ts` / `ResolutionStats.ts`
+ * at 7 instead of 1 — a large standing allowance bought for a category knip
+ * does not emit here. That is the same over-permissiveness this module rejects
+ * for transitive star barrels, so it is rejected here too.
+ *
+ * TRIGGER TO REVISIT: if `modules/ui-web/knip.config.ts` ever sets
+ * `include: ['classMembers']`, this function must count them and the affected
+ * baseline rows must be re-pinned in the same PR — otherwise the 1 -> N trap
+ * returns for every exported class.
+ *
+ * @returns {number}
+ */
+function countReportableMembers(ts, statement, source) {
+  if (ts.isEnumDeclaration(statement)) return statement.members.length;
+
+  if (ts.isModuleDeclaration(statement) && statement.body && ts.isModuleBlock(statement.body)) {
+    let total = 0;
+    for (const inner of statement.body.statements) {
+      if ((ts.getCombinedModifierFlags(inner) & ts.ModifierFlags.Export) === 0) continue;
+      if (ts.isVariableStatement(inner)) {
+        total += inner.declarationList.declarations.length;
+        continue;
+      }
+      if (inner.name) total += 1;
+      total += countReportableMembers(ts, inner, source);
+    }
+    return total;
+  }
+
+  return 0;
+}
+
+/**
+ * Counts the export surface a module declares itself: top-level exported
+ * bindings PLUS the members knip can report against them. Syntactic only — no
+ * program, no type checker, no module resolution — which is what makes it both
+ * fast and non-transitive.
  *
  * @param {object} ts loaded TypeScript compiler
  * @param {string} absPath
@@ -106,6 +179,7 @@ export function countDeclaredExports(ts, absPath) {
   );
   const names = new Set();
   let anonymousDefaults = 0;
+  let members = 0;
 
   for (const statement of source.statements) {
     // `export default <expr>` and `export = <expr>`
@@ -143,15 +217,19 @@ export function countDeclaredExports(ts, absPath) {
 
     if (statement.name) {
       names.add(statement.name.getText(source));
+      members += countReportableMembers(ts, statement, source);
       continue;
     }
 
     // `export default class {}` / `export default function () {}` — exported,
     // named nothing.
-    if ((flags & ts.ModifierFlags.Default) !== 0) anonymousDefaults += 1;
+    if ((flags & ts.ModifierFlags.Default) !== 0) {
+      anonymousDefaults += 1;
+      members += countReportableMembers(ts, statement, source);
+    }
   }
 
-  return names.size + anonymousDefaults;
+  return names.size + anonymousDefaults + members;
 }
 
 /**

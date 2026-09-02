@@ -515,7 +515,7 @@ export function checkEncryptionDisposition({ row, label, authoredCatalogDirs }) 
  * @param {{ durableStores: Array<object>, policies: Record<string, string>|undefined }} input
  * @returns {string[]} failures
  */
-export function checkCorruptionPolicyVocabulary({ durableStores, policies }) {
+export function checkCorruptionPolicyVocabulary({ durableStores, policies, awaitingRow = {} }) {
   const failures = [];
   if (policies === null || typeof policies !== 'object' || Array.isArray(policies)) {
     failures.push(
@@ -523,6 +523,9 @@ export function checkCorruptionPolicyVocabulary({ durableStores, policies }) {
     );
     return failures;
   }
+  const awaiting = awaitingRow && typeof awaitingRow === 'object' && !Array.isArray(awaitingRow)
+    ? awaitingRow
+    : {};
   const known = new Set(Object.keys(policies));
   for (const [value, meaning] of Object.entries(policies)) {
     if (typeof meaning !== 'string' || meaning.trim() === '') {
@@ -546,11 +549,36 @@ export function checkCorruptionPolicyVocabulary({ durableStores, policies }) {
   }
   // A vocabulary that only ever grows becomes a list of spellings nobody uses, which is the same
   // false authority a stale register is. An unused value is a failure, and deleting it is the fix.
+  // The ONE exception is a value declared ahead of a row landing in another in-flight branch, which
+  // must say so in `awaitingRow` — and that marker is self-retiring: once the row lands, a stale
+  // marker is itself a failure, so the scaffolding cannot outlive its reason.
   for (const value of known) {
-    if (!used.has(value)) {
+    if (!used.has(value) && !(value in awaiting)) {
       failures.push(
         `${POLICIES}: \`${value}\` is declared but no durableStores row uses it. Delete it — a ` +
-          'vocabulary entry with no row is a spelling waiting to be picked by mistake.',
+          'vocabulary entry with no row is a spelling waiting to be picked by mistake. If the row ' +
+          'is landing in another in-flight branch, add the value to `awaitingRow` naming that PR ' +
+          'instead of leaving it unexplained.',
+      );
+    }
+    if (used.has(value) && value in awaiting) {
+      failures.push(
+        `${POLICIES}: \`${value}\` is in \`awaitingRow\` but a durableStores row now uses it. ` +
+          'Remove the awaitingRow entry (keep the policy) — it was scaffolding for a row that has ' +
+          'since landed.',
+      );
+    }
+  }
+  for (const [value, reason] of Object.entries(awaiting)) {
+    if (!known.has(value)) {
+      failures.push(
+        `${POLICIES}: \`${value}\` is in \`awaitingRow\` but has no entry in \`policies\`. ` +
+          'A forward declaration still needs its one-line meaning.',
+      );
+    }
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      failures.push(
+        `${POLICIES}: \`awaitingRow.${value}\` must name the PR or branch whose row will use it.`,
       );
     }
   }
@@ -615,10 +643,44 @@ export function checkCountRatchet({ durableStores, pendingDurableClassification,
   return failures;
 }
 
+/**
+ * Loads the vocabulary file with a remedy-bearing failure instead of a raw JSON.parse stack. Every
+ * other failure this gate emits names what to do; a missing or malformed vocabulary is the one an
+ * author is MOST likely to hit while extending it, so it is the last one that should surface as an
+ * unhandled exception.
+ *
+ * @returns {{policies: object, ratchet: object, awaitingRow: object}}
+ */
+export function loadPolicies(root, read = (p) => readFileSync(p, 'utf8')) {
+  const path = resolve(root, POLICIES);
+  let raw;
+  try {
+    raw = read(path);
+  } catch (error) {
+    console.error(
+      `store-recoverability gate FAILED:\n  - ${POLICIES} could not be read (${error.code ?? error.message}). ` +
+        'It holds the closed corruptionPolicy vocabulary and this register\'s count ratchet; the gate ' +
+        'cannot check a row against a vocabulary it cannot load, and defaulting to "anything goes" ' +
+        'would silently retire the check. Restore the file from git rather than recreating it by hand.',
+    );
+    process.exit(1);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error(
+      `store-recoverability gate FAILED:\n  - ${POLICIES} is not valid JSON (${error.message}). ` +
+        'Fix the syntax — most often a trailing comma after the last policy, or an unescaped ' +
+        'quote inside a meaning string.',
+    );
+    process.exit(1);
+  }
+}
+
 function main() {
   const root = process.cwd();
   const register = JSON.parse(readFileSync(resolve(root, REGISTER), 'utf8'));
-  const policies = JSON.parse(readFileSync(resolve(root, POLICIES), 'utf8'));
+  const policies = loadPolicies(root);
   const catalogEntries = extractCatalogEntries(
     readFileSync(resolve(root, register.catalog.file), 'utf8'),
   );
@@ -641,6 +703,7 @@ function main() {
     ...checkCorruptionPolicyVocabulary({
       durableStores: register.durableStores,
       policies: policies.policies,
+      awaitingRow: policies.awaitingRow,
     }),
     ...checkCountRatchet({
       durableStores: register.durableStores,
