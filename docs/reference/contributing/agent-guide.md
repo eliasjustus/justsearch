@@ -611,8 +611,9 @@ How:
   restates the new premise, and set `last_reviewed:` to today. Never edit a probe
   merely to make it pass.
 - **Verify** — `node scripts/governance/run.mjs --gate adr-coverage --mode gate`.
-  Review staleness also surfaces at session start via
-  `node scripts/agent-analytics/world-state.mjs` (§ ADR review), because a CI-only
+  Review staleness is also listed by the orientation command AGENTS.md points you at,
+  `node scripts/agent-analytics/world-state.mjs` (§ ADR review) — run it, nothing runs it
+  for you — because a CI-only
   warning about a decision nobody is scheduled to re-read is the pile that produced
   this rule.
 

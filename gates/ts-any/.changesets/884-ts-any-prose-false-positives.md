@@ -20,8 +20,9 @@ regex over raw file text without stripping comments or strings:
 Classified `merge-import` rather than `declared-growth` because that is the provenance-accurate
 word available in this gate's vocabulary (`scripts/governance/gates/ts-any/classifications.mjs`):
 the counts arrived through merged history — prose written by the PRs that shipped these files — not
-from the branch declaring this changeset. Tempdoc 884's lane B PR 2 changes no `.ts` file under
-`modules/ui-web/src` and cannot have introduced them. `declared-growth` would assert that type
+from the branch declaring this changeset. Tempdoc 884's lane B PR 2 changes three `.ts` files under
+`modules/ui-web/src` (the Surface projection work) but none of the six flagged sites, and cannot
+have introduced them. `declared-growth` would assert that type
 safety was knowingly traded away, which is false; leaving the gate red would leave a real signal
 buried under six false ones. The 2026-07-14 precedent is
 `gates/ts-any/.changesets/727-baseline-reconciliation-preexisting-any-casts.md`, which reconciled

@@ -164,6 +164,18 @@
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "node scripts/ci/check-runtime-manifest-closure.mjs"
+    },
+    {
+      "id": "process-extraction-sandbox-classpath-too-long",
+      "match": [
+        "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!worker-services))(?!.*--tests(?!.*ProcessExtractionSandbox))(?=.*\\btest\\b)",
+        "gradlew?(\\.bat)? .*--tests .*ProcessExtractionSandbox"
+      ],
+      "claim": "All 6 ProcessExtractionSandboxTest cases FAIL inside a deep worktree path with 'java.io.IOException: Cannot run program java.exe: CreateProcess error=206, The filename or extension is too long'. NOT load-dependent (fails isolated too) and NOT your change: the sandbox spawns a child JVM passing the whole Worker classpath on the command line, and every entry inherits the worktree prefix (.claude/worktrees/<name>/...), so the command line crosses the Windows 32k limit. The 4 assertion failures in the same class are the same cause surfacing as 'expected SandboxExtractionException but was IOException'. Expected to PASS in the main checkout F:\\JustSearch, whose path is ~25 chars shorter per entry.",
+      "evidence": "Reproduced 2026-09-02 on worktree-lane-B2: full ./gradlew.bat test -> '1080 tests completed, 6 failed'; all 6 in ProcessExtractionSandboxTest; re-run isolated with --tests still red, so this is not the worker-services-30s-timeout-under-load starvation shape. Error text quoted above from modules/worker-services/build/test-results. This is the concrete instance of RISK-010 (the extraction sandbox is unreachable) in docs/reference/architectural-risks.md; the durable fix (an argfile / pathing jar for the child classpath) is decision-review lane C, tempdoc 885 item 14.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: ./gradlew.bat :modules:worker-services:test --tests \"*ProcessExtractionSandboxTest*\""
     }
   ]
 }

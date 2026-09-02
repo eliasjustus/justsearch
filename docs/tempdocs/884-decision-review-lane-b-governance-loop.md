@@ -696,7 +696,7 @@ Reproduced on this branch with `node scripts/governance/run.mjs --mode warn --sk
 - `ts-any/silent-growth` — 5 files gained `any`-casts with no changeset
   (`chat/citationResolve.test.ts`, `chat/MarkdownBlock.ts`, `state/indexingProgress.ts`,
   `search-v3/sv3-sessions.test.ts`, `searchResultViewModel.ts`). Pre-existing on `main`;
-  this PR changes no `.ts` file. Owned by whoever lands the ui-web work, not pinnable.
+  this PR changes no FLAGGED `.ts` file. Owned by whoever lands the ui-web work, not pinnable.
 
 ## §E — PR 2 pre-implementation pass (2026-09-02, lane B worker session)
 
@@ -816,13 +816,15 @@ each names where it is acted on, not merely that it exists.
 
 | # | Finding | Evidence | Routed to |
 |---|---|---|---|
-| 1 | **`ts-any` counts English prose.** `countAny` (`scripts/governance/gates/ts-any/enforcer.mjs:29-31`) runs its regex over raw file text without stripping comments or strings, so `: any route`, `as any other number` etc. are counted as `any`-casts. All 5 current `silent-growth` findings are this (§E.6). The 18 rows in `gates/ts-any/baseline.txt` were counted the same way and may be overstated. | §E.6 table, 6 sites | Fix = strip comments before counting (the pattern exists at `scripts/ci/check-readiness-reason-codes.mjs:116-148`) then rebalance the baseline. Declared in `gates/ts-any/.changesets/884-ts-any-prose-false-positives.md`, which is attached to the gate itself so the next author of that gate reads it. **Owner: whoever next touches the ts-any gate** — not lane B, which changes no `.ts` file. |
+| 1 | **`ts-any` counts English prose.** `countAny` (`scripts/governance/gates/ts-any/enforcer.mjs:29-31`) runs its regex over raw file text without stripping comments or strings, so `: any route`, `as any other number` etc. are counted as `any`-casts. All 5 current `silent-growth` findings are this (§E.6). The 18 rows in `gates/ts-any/baseline.txt` were counted the same way and may be overstated. | §E.6 table, 6 sites | Fix = strip comments before counting (the pattern exists at `scripts/ci/check-readiness-reason-codes.mjs:116-148`) then rebalance the baseline. Declared in `gates/ts-any/.changesets/884-ts-any-prose-false-positives.md`, which is attached to the gate itself so the next author of that gate reads it. **Owner: whoever next touches the ts-any gate** — not lane B, which changes three `.ts` files but none of the six flagged sites. |
 | 2 | **`contract-projection/undeclared-consumer` is a substring test, not an import parse.** `modules/ui-web/src/shell-v0/controllers/AgentSessionController.ts` was flagged for a *doc comment* at `:217` naming `generated/schema-types/agent-sessions-response.ts`; its import block contains no such import (verified). | `governance/contract-surfaces.v1.json`, `AgentSessionsResponse.note` | Registered so the gate is green, with the overstatement recorded verbatim in the register's own `note` rather than hidden. Fix = parse imports instead of substrings. **Owner: the FE/kernel lane** — `modules/ui-web` is out of scope for lane B. |
 | 3 | **`check-runtime-manifest-closure` is red on `main`.** Two `[sibling-file]` violations, both reading `runtime/api-port.txt`: `packaging/mcpb/server/index.js:33` and `scripts/sandbox/mcp-typed-confirm.mjs:109`. Last touched by PR #468. | Reproduced 2026-09-02; `[closure-check] FAILED - 2 closure-rule violations` | Dated pin `runtime-manifest-closure-sibling-file-api-port` in `scripts/agent-analytics/expected-state.v1.json` (`reviewBy: 2026-09-30`, `exitProbe` = the check itself, so the pin deletes itself the moment the red is gone). Fix = land the API port as a `manifest.json` field, or justify the sibling in `ALLOWED_RUNTIME_ARTIFACTS` per tempdoc 501 §6. **Owner: whoever owns `packaging/mcpb`.** |
 | 4 | **13 live ADRs are invisible in `docs/llms.txt`.** `llmstxt-generate.mjs:149` includes a doc only on exact `stable`/`in-progress`/`advisory`; 13 ADRs carry `status: accepted` and 5 carry compound `accepted - …` strings, so 21 of 46 decisions are indexed. This bit PR 2 directly: ADR-0046 shipped as `status: accepted` and did not appear in the index until it was caught. | `for f in docs/decisions/0*.md` status tally: 21 `stable`, 13 `accepted`, 5 compound, 5 retired | The trap is now documented where the next ADR author looks (`docs/decisions/README.md` Conventions, with the `file:line` of the filter). The **sweep** — 13 frontmatter `accepted` → `stable` — is deliberately NOT done here: it is outside PR 2's contract and would bury a 13-file metadata diff inside a governance PR. **Owner: the next ADR-frontmatter pass**, which has a one-command check: `node scripts/docs/llmstxt-generate.mjs` should index 34 decisions, not 21. |
 | 5 | **`build-logic/.kotlin/` is not gitignored.** A Gradle build in a worktree leaves it untracked, one `git add -A` from being committed. | `git check-ignore -v build-logic/.kotlin/` matches nothing | Not fixed: `.gitignore` is shared-surface and lane B owns no build config. **Owner: the next build-config change.** Lane B stages explicit paths, so it cannot commit it by accident. |
 | 6 | **`setupOperationAdmission` fails open too.** `ApiSecurityFilters.java:114-115` returns silently when `operationLeases == null` — the same shape as the token defect PR 2 closed, in the same `install()` chain, one control over. Not investigated further. | `ApiSecurityFilters.java:114-115` | ADR-0046's own open question. **Owner: whoever revisits the operation-admission control**; ADR-0046 is the record it must be re-decided against. |
 | 7 | **`scripts/ci/check-installer-execution-level.mjs` is invoked by nothing** — not the pre-merge table, not any workflow (found by PR 1, §D.3; ADR-0024 stopped using it as a probe as a result). Still true. | PR 1 §D.3 | **Owner: whoever owns installer CI.** Either wire it into `.github/workflows/` or delete it; an uninvoked check is a layer that is dead regardless of its quality. |
+| 9 | **Three kernel gates run nowhere.** `dead-code`, `npm-audit` and `module-deps` need inputs no CI job builds (`ci.yml:206-207` says so), so they are registered, baselined and unable to notice anything. Producing the inputs surfaced 27 `dead-code/silent-growth` findings, 23 of them pre-existing. | `ci.yml:206-207`; `gates/dead-code/baseline.txt` last touched 2026-07-16 (#215) | Declared in `gates/dead-code/.changesets/884-surface-projection-plus-preexisting-drift.md`, which enumerates ours vs pre-existing. Fix = wire them into CI with their inputs (or state openly they are local-only), then rebalance the baseline. **Owner: the CI fact-lane owner (ADR-0044) + whoever lands the ui-web work.** |
+| 10 | **The extraction sandbox cannot start on a long path.** All 6 `ProcessExtractionSandboxTest` cases fail in a worktree with `CreateProcess error=206` — the child JVM's classpath crosses the Windows 32k command-line limit. Not load-dependent; reproduces isolated. | Full-suite run 2026-09-02; error text in `modules/worker-services/build/test-results` | Pinned as `process-extraction-sandbox-classpath-too-long` with an exit probe, and folded into **RISK-010** as a second, independent obstacle beyond the missing argv. Fix = argfile or pathing jar for the child classpath. **Owner: decision-review lane C, tempdoc 885 item 14.** |
 | 8 | **`CLAUDE.md` has 1 byte of headroom** (22321 / 22322 B) after the invariant #2 rewrite (§E.5). The next always-loaded addition of any size fails `check-always-loaded-budget`. | `node scripts/ci/check-always-loaded-budget.mjs` | **Owner: the next CLAUDE.md editor** — who must shrink before adding. The budget ratchet enforces this mechanically, so this is a warning about *when* the wall arrives, not a request to remember it. |
 
 ## §G — PR 2 post-implementation critical analysis (2026-09-02)
@@ -930,6 +932,8 @@ the fixing PR"). 14 pins remain; `expected-state-probe --gate` is clean.
 | 5 | `GRADLE_USER_HOME` moved from the mandated scratchpad path to `C:\Users\Elias\AppData\Local\Temp\jsgh-B` | The mandated path puts the cached `protoc-gen-grpc-java` exe at 274 chars, over Windows MAX_PATH, and `:modules:ipc-common:generateProto` then fails with an error that reads like a toolchain break. Isolation — the actual point — is preserved. |
 | 6 | PR 2's tempdoc sections are §E/§F/§G, not §B/§C | PR 1 already used §B/§C/§D. |
 | 7 | The `ui-web-typecheck-ts5101` pin was deleted, which the brief did not ask for | §G.5 — it would have masked a regression in this very PR. |
+| 8 | `modules/ui-web` was edited, which the brief put out of scope | The brief scoped out "component logic in modules/ui-web", and none of the three files touched is component logic — but the 207-line hand-authored barrel at `api/types/surface.ts` is a real crossing of that boundary and is named here rather than left implicit. The alternative was leaving the ADR-0038 item undone: retiring a mirror necessarily edits the file that *is* the mirror. `SurfaceCatalogClient.ts` (a cast replaced by a parse boundary, review S1) and the generated projection are the other two. No component, view or controller behaviour was changed. |
+| 9 | ADR-0011's `status:` line, its `## Status` body line and its top note-block were REPLACED, not appended | Append-only governs Context / Decision / Consequences, which are untouched. A retirement whose status still reads `stable` and whose banner still says "this remains the design of record" would be a decision that contradicts itself at the top of the file — the one place a reader looks first. `docs/decisions/README.md`'s own procedure names status changes and superseding notes as the edits a retirement makes. Recorded because it is the single place in this PR where existing ADR prose was rewritten rather than added to. |
 
 ## §H — PR 2 report-back (lane B, 2026-09-02)
 
@@ -1024,3 +1028,253 @@ ADRs** because their frontmatter says `accepted` rather than `stable`.
 5. **Two facts handed to this lane as settled were wrong** (§G.4), and both would have produced a
    green gate recording a falsehood. Read the code the claim depends on before acting on a summary —
    including a summary from the orchestrator.
+
+## §I — PR 2 independent-review response (2026-09-02, NEEDS-FIXES → fixed)
+
+An independent review of #597 returned NEEDS-FIXES with four blockers, eleven should-fixes and a
+set of nits. All are applied on `worktree-lane-B2`. Where the review's own claim did not survive
+verification, that is recorded here rather than silently worked around.
+
+### I.1 [B1] The full kernel was red — `contribution-surface/grandfather-drift`
+
+I had verified three gates individually and never run the whole kernel. `contribution-surfaces.v1.json`
+still listed `surface` under `grandfatheredPending`, whose entire purpose is to fail when one of
+those endpoints *silently gains a generated schema-types module* — which is exactly what this PR
+did. The register was telling the truth and I had not asked it.
+
+`surface` is promoted into `surfaces[]` (`kind: projection`, `wireType: SurfaceWire`,
+`projection: generated`, `guard: gate:contract-projection`), and
+`modules/ui-web/src/api/types/surface.ts` is added to `scan.barrel` — which subjects it to the
+barrel-purity rule, the same governance `registry.ts` and `diagnostic.ts` already carry. That
+promotion is what turned up three hand-authored declarations in the new barrel, one of which was a
+real design defect (below).
+
+**Lesson recorded as a deviation-of-process, not a footnote:** "three gates pass" is not "the
+kernel passes". The full-kernel run is now in this lane's verification list.
+
+### I.2 [B2] ADR-0046 named a route family that does not exist
+
+The ADR said the session token is required on `/api/runs/**`. The real prefix is
+`RunRoutes.PATH_PREFIX = "/api/chat/runs"` (`RunRoutes.java:29`), which
+`ApiSecurityFilters.java:426` reads directly. The ADR now names the constant rather than
+re-spelling a literal, so the doc cannot drift from the code again without the constant moving.
+`OPTIONS` is also documented as exempt (`ApiSecurityFilters.java:423-425`), which the original
+text omitted.
+
+### I.3 [B3/B4] Every ADR-0046 citation was stale, because the ADR was written before the code changed
+
+ADR-0046 was authored against `ApiSecurityFilters.java` as it stood *before* commit `4cd5d0e0`
+added the fail-closed guard — which shifted every line below it. Fourteen citations were wrong.
+All are re-verified against `HEAD` by symbol, not by offset: `install()` `:138-145`,
+`setupHostValidation` `:193-207`, `isAllowedHost` `:685`, `setupMcpOriginValidation` `:238-241`,
+`isAllowedMcpOrigin` `:295`, `setupCors` `:370-397`, `resolveAllowedOrigin` `:708`,
+`requiresSessionToken` `:422-430`, `setupSessionTokenEnforcement` `:441`, and the bind at
+`LocalApiServer.java:582`. `threat-model.md`'s `POST`/`DELETE /mcp` citation moved `:561-562` →
+`:644-645`. B4's "all five controls live in `ApiSecurityFilters`" contradicted the ADR's own
+table — control #1 is the bind in `LocalApiServer` — and is fixed.
+
+**This is a general hazard of writing an ADR in the same PR that changes the code it cites**, and
+the ordering that avoids it is: land the behavioural change, then cite. Recorded because the probe
+register cannot catch it — `file:line` prose is not a probe.
+
+### I.4 [S2 + B1] The generated schema was precise only at the top level
+
+Only `Surface` carried `PreciseWire`, so `SurfaceConsumes`, `SurfaceStateSchema` and `StateBinding`
+fell back to the all-optional/all-nullable default. That is why the first barrel had to
+hand-restate which keys are required — a hand-written union of Java field names, i.e. a small
+mirror smuggled back into the file whose mirror this PR was retiring. The `contribution-surface`
+barrel-purity rule flagged it independently, which is the gate doing exactly its job.
+
+The nested types now carry the marker where their constructors justify it, the schema is
+regenerated, and the hand-restated union is gone — `SurfaceConsumes` derives from the precise
+`SurfaceWire['consumes']`. Two declarations remain hand-authored and are allowlisted with reasons
+(`SurfaceCatalog`, the response envelope `RegistryController.handleSurfaces` composes inline via
+`writeEnvelope`'s `LinkedHashMap` — a Java `SurfaceCatalog` type does exist but it is the
+server-side `DeclarationCatalog<Surface, SurfaceRef>` lookup interface, an incidental name
+collision, not this wire shape; and `SurfaceFactory`, a client-only dispatch token that is never
+serialized in either direction).
+
+### I.5 [S1] The generated validator had no consumer
+
+`gen-wire-schema-types.mjs` emitted `surfaceWireSchema` and nothing imported it, while
+`SurfaceCatalogClient` still cast the payload — `substrate-without-consumer-flavors` in the same
+change that created the substrate. A `surfaceCatalogSchema` now sits beside the `registry.ts`
+pattern and the client parses through `parseWireContract` like `OperationCatalogClient` does.
+
+### I.6 [S3/S5/S6] Three mechanisms that could not fail
+
+- **Deleting the risk register was silent.** `docs/reference/architectural-risks.md` could be
+  `rm`-ed and `adr-coverage` still passed — the same one-command deletability that killed the 2026-03
+  register. Absence now fails.
+- **`contract-projection` counted a doc comment as a consumer.** PR 2 registered
+  `AgentSessionController.ts` as a consumer of a module it does not import, to make the gate green,
+  and recorded the overstatement in a `note`. The review is right that a documented lie is still a
+  lie: the detection is now anchored on an import statement (a comment-stripping scanner that
+  respects string/template literals, plus anchored regexes for static `from`, side-effect and
+  dynamic imports, end-anchored on the specifier so `resource` cannot launder `resource-usage`).
+  Fixing the matcher surfaced a **second** false entry nobody had seen: `SettingsV2` declared
+  `api/schemas.ts` as a consumer, whose only mention of `settings-v2` is the tempdoc-683 tombstone
+  comment at `:20-22` recording that those hand schemas were *deleted*. That one is pre-existing on
+  `main`, not from PR 2 — the old matcher could not tell a tombstone from an import. Both entries
+  are deleted. A whole-tree run (566 FE files x 26 records) found the new parser misses **zero**
+  imports the old one caught and drops exactly the two comment-only mentions.
+- **A stale probe exception was only detected on file deletion.** §G.1 called dropping
+  `surface.ts`'s exception a "mechanical handshake"; it was mechanical only for the delete case. An
+  exception whose file exists but is no longer a mirror is now stale too — which is the *success*
+  case this probe drives toward, and the one it could not see. Distinguishing that from an entry
+  declared **because** its file carries no marker (`api/domains/indexing.ts`, `api/schemas.ts`)
+  needed information the register did not carry: a prose `reason` is not machine-readable. Those two
+  now carry `"unmarked": true`, and the default is strict — an exception is expected to be marked,
+  because an exception exists to account for something the marker scan flagged.
+
+### I.7 [S11] The one review item that did not fit
+
+The review asked for the risk register to be routed in `CLAUDE.md`'s pre-merge table, shrinking a
+lane-B-authored line to pay for the bytes. It does not fit: the table row grows 17 B and the only
+other lane-B line (invariant #2) cannot shed 17 B without dropping a named control or renaming a
+registered rule slug — 7 bytes bought by a `prose-tier-register` retire+register cycle, which is
+gaming a budget rather than respecting it.
+
+Routed the better way instead, at zero always-loaded bytes: the `architecture-decisions` region in
+`governance/consult-register.v1.json` now watches `docs/reference/architectural-risks.md` as well,
+so editing a risk row pushes the same procedure at the agent editing it. That is the mechanism
+built for path-triggered routing; the pre-merge table is the always-loaded fallback for things no
+register covers.
+
+### I.8 Nits applied, and one refused
+
+Applied: the `threat-model.md` line citation; ADR-0038's `AUDIENCES` justification (it has **zero
+consumers** — the load-bearing reason is `PLACEMENTS`, which `check-a11y-closure.mjs` parses);
+ADR-0038's "`SurfaceCatalog` has no Java counterpart" made consistent with the file's own header
+(the counterpart is a hand-composed envelope built inline by `RegistryController.handleSurfaces`,
+not a record); the `OPTIONS` exemption; `Surface.java`'s stale `riskTier` comment; and the
+`world-state.mjs` claim — it is the **manual** orientation command `AGENTS.md` points at, not an
+automatic session-start hook, corrected in both `agent-guide.md` §3.8 and the consult register's
+recipe.
+
+**Refused, with evidence:** the suggested `grep-absent` probe on `0\.0\.0\.0` in
+`LocalApiServer.java` would have gone red on day one. That string occurs twice, at `:774` and
+`:811`, in javadoc that exists to warn against a wildcard bind — and `evaluateGrep` does not strip
+comments. A probe that fails on the prose written to prevent the thing it checks is worse than no
+probe. Added instead as `adr-0046-no-wildcard-bind`: `grep-absent` on `start\("0\.0\.0\.0"`, which
+pins the *call* rather than the address, currently 0 matches, bite-tested by pointing the same rule
+at the literal that is present (2 matches → fail). The register entry carries that reasoning so the
+next reader does not "simplify" the pattern back.
+
+**One correction to the review:** its nit says my report claimed `reviewStaleDays` was "dead config
+removed" and that this is wrong because the key is live. The claim was past-tense and accurate — it
+*was* inert (declared in `adr-probes.v1.json`, never read; the enforcer used a hardcoded 183 that
+happened to agree), and this PR made it live. It is live now precisely because the PR wired it.
+
+### I.9 Two consequences of the review fixes that are worth stating plainly
+
+**A behaviour change shipped with S1.** Routing `SurfaceCatalogClient` through `parseWireContract`
+is not purely additive: a malformed `/api/registry/surfaces` body used to fall through to an
+`Array.isArray(body.entries)` guard, and now hits the parse boundary — throwing in dev (caught by
+the pre-existing handler, which retains the cached catalog and engages the first-install retry) and
+failing open with a recorded drift in prod. That is exactly `OperationCatalogClient`'s behaviour, so
+the two clients now agree, but it is a change and not a refactor.
+
+**One file was edited outside the declared scope, and the reason matters.** Adding the parse
+boundary turned three `SurfaceCatalogClient.test.ts` cases red — because their *wire* mock was built
+by an FE-shaped fixture (`altitude` / `members` / `riskTier` / `stateSchema` omitted), which the
+now-precise generated schema correctly rejects. The fix followed the precedent already set at
+`OperationCatalogClient.test.ts:56-70`: keep the FE-shaped builder for the `__seedForTest` path and
+add a wire-faithful builder for the boot-fetch path. The mock got *more* faithful; the boundary was
+not weakened. Had those tests been "fixed" by loosening the schema, the whole S1 fix would have been
+theatre.
+
+**And a limit on the new exhaustiveness guard (S10).** `PLACEMENT_CLOSURE: Record<Placement, true>`
+makes a *new* Java placement a compile error — the drift direction that matters, since a zone with
+no landmark role is the accessibility hole `check-a11y-closure` exists to prevent. It cannot catch
+the reverse (deleting an entry from `PLACEMENTS` while leaving the closure key), because that gate's
+regex requires `PLACEMENTS` to stay a bare annotated literal, which erases its element literal
+types. Stated rather than left for a reader to discover.
+
+### I.10 [S8] The full suite, and the one red it surfaced
+
+`./gradlew.bat test -PskipWebBuild=true` (the acceptance criterion PR 2 had not run):
+**1080 tests completed, 6 failed, 2 skipped**. All six are `ProcessExtractionSandboxTest`, a class
+this branch does not touch (last modified by #124).
+
+Cause established rather than assumed, because the pinned worker-services shape would have made it
+easy to wave off as load: it is **not** load-dependent — it reproduces isolated with `--tests`. The
+real error is
+`java.io.IOException: Cannot run program java.exe: CreateProcess error=206, The filename or
+extension is too long`. The sandbox passes the entire Worker classpath on the child JVM's command
+line, so every entry inherits the checkout prefix; under `.claude/worktrees/lane-B/...` the command
+line crosses the Windows 32k limit. The other four failures in the class are the same `IOException`
+surfacing as "expected `SandboxExtractionException` but was `IOException`". It is expected to pass
+in the main checkout, whose path is ~25 characters shorter per classpath entry — which is why no
+one has seen it.
+
+Two consequences, both routed rather than noted:
+
+1. Pinned as `process-extraction-sandbox-classpath-too-long` (`reviewBy: 2026-09-30`, exit probe =
+   the isolated run), with the claim naming the 32k cause so the next agent does not re-derive it.
+2. **RISK-010 is strengthened, not merely cited.** The row was opened for a missing argv; this is a
+   *second, independent* obstacle — as currently invoked the sandbox cannot start at all on a long
+   path. The row now says so, and says that any fix shipping an argv must also shorten the child
+   command line (argfile or pathing jar). That is the risk register doing the job it was restored
+   for: a measurement taken for an unrelated reason landed on the row that owns it.
+
+Everything else in the suite is green, including the two new tests this PR adds
+(`ApiSecurityFiltersTest` 4/4, `LocalApiServerFailClosedTest` 2/2). None of the six pinned flaky
+shapes fired in this run.
+
+### I.11 [S7] A second fail-closed test, at the layer that could silently undo the first
+
+The review's point was precise: `ApiSecurityFilters` is constructed in `LocalApiServer`'s
+constructor, deliberately outside the bind-retry `try`. Wrapping that construction in a `catch`
+would restore fail-open with all four `ApiSecurityFiltersTest` cases still green, because none of
+them goes through the assembly path.
+
+`LocalApiServerFailClosedTest` drives the real one: a prod-mode `ConfigStore` (saved and restored
+per case — `setGlobal` is JVM-wide and `modules/ui` runs many server tests in one JVM) and
+`LocalApiServer.builder(...).build()` with no token, asserting the refusal carries the same wire
+reason code. Its second case builds the *same* assembly *with* a token and asserts it binds — without
+that, the first case would still pass if `build()` had been made to throw unconditionally in prod
+mode, which would break the shipped launch path.
+
+The `kind: test` probe pinning it is existence-only, so a third probe now pins the assertion itself:
+`adr-0046-token-refusal-asserted` (`grep-present` on `assertThrows(\s*IllegalStateException`, no
+`expect` count — the claim is "a refusal is still asserted", not a fixed number of cases). Gutting a
+test body to a no-op keeps the name and loses the assertion; that is the gap it closes.
+
+### I.12 The full-kernel run found a gate that has been inert for seven weeks
+
+Running the whole kernel (which B1 forced, and which PR 2 had never done) produced two results, and
+the second matters more than the first.
+
+**First, the summary line.** `node scripts/governance/run.mjs --produce-inputs --mode gate` →
+**35 gates evaluated, 0 fail, 117 findings**, exit 0, all 35 self-test fixture pairs expected. A bare
+run without `--produce-inputs` reports 4-5 `kernel/input-missing` failures, which is the pinned
+`governance-kernel-inputs-unbuilt` condition, not a red.
+
+**Second, what producing the inputs revealed.** `dead-code` failed with **27**
+`dead-code/silent-growth` findings. Four are this branch's (the generated Surface projection, its
+barrel re-export, and the composing `api/types/surface.ts` — a generated module exports its full
+type surface by construction, which is why the same directory's `index.ts` is already baselined at
+45 unused exports). **Twenty-three are not**, spread across `search-v3/*`, `packs.ts`,
+`TaskList.ts`, `streams.ts`, `navigationHandler.ts` and a dozen more this branch never opened.
+
+They surfaced together because the gate cannot run: it needs `tmp/knip-report.json`, and
+`.github/workflows/ci.yml:206-207` says in its own comment that this job does not build knip / npm
+audit / Gradle inputs. Locally the missing input reads as `kernel/input-missing`, which the
+expected-state pin correctly calls an unbuilt report. So `dead-code` is registered, wired, baselined
+— and has noticed nothing since `gates/dead-code/baseline.txt` was last touched on 2026-07-16 by the
+PR that "revived" it.
+
+**This is the same shape this program has now found three times**: `check-installer-execution-level.mjs`
+invoked by nothing (PR 1 §D.3), the kernel's own 18 `*.test.mjs` files running nowhere (PR 1, fixed),
+and now three kernel gates whose inputs no CI job builds. A gate that cannot fail is not a weaker
+gate; it is a *claim* of enforcement, which is worse than none because the register reads as covered.
+
+Handled honestly rather than quietly: one changeset
+(`gates/dead-code/.changesets/884-surface-projection-plus-preexisting-drift.md`) classified
+`merge-import` — because a changeset applies to the whole gate run, not per file, and
+`declared-growth` would assert that lane B knowingly traded away dead-code hygiene in 23 files it
+never opened. The changeset enumerates which four are ours and why, names all twenty-three as
+pre-existing, and routes the two real fixes: wire these gates into CI with their inputs (or state
+openly that they are local-only), then rebalance the baseline. Neither belongs in a governance-loop
+PR that already touches the sibling `adr-coverage` gate.
