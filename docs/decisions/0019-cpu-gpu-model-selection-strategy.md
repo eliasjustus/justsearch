@@ -4,6 +4,8 @@ type: decision
 status: stable
 description: "Ship separate FP32 ONNX models for CPU use; use model_manifest.json to select CPU vs GPU variants at runtime."
 date: 2026-04-06
+probes: none - the premise is runtime behaviour (manifest-driven CPU/GPU variant selection), not a static fact; a probe needs the model-manifest schema check that tempdoc 884 PR 2 scopes.
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0019: CPU vs GPU Model Selection Strategy

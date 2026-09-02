@@ -463,8 +463,9 @@ public class HeadlessApp {
       System.out.flush();
       log.debug("Session token printed to stdout (length={})", sessionToken.length());
     } else {
-      log.warn(
-          "Session token is NULL - token enforcement will be disabled if prodMode={}", prodMode);
+      // Dev mode only: prod mode with no token is refused at ApiSecurityFilters construction
+      // (tempdoc 884 item 23), so the Head never reaches this line with prodMode=true.
+      log.debug("No session token (dev mode); token enforcement is not installed.");
     }
     System.out.println("JUSTSEARCH_API_PORT=" + port);
     System.out.flush();

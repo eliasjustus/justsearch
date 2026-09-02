@@ -39,7 +39,8 @@ import java.util.Objects;
  * health-diagnostic / E2E-fixture introspection — "what state does this surface
  * expose?" gets a typed answer.
  */
-public record SurfaceStateSchema(String schema, List<StateBinding> bindings) {
+public record SurfaceStateSchema(String schema, List<StateBinding> bindings)
+    implements PreciseWire {
 
   public SurfaceStateSchema {
     Objects.requireNonNull(schema, "schema");

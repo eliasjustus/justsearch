@@ -4,6 +4,8 @@ type: decision
 status: superseded
 description: "V1 picked protobuf 3 + protovalidate as the wire-contract spec format. Superseded by tempdoc 564, which found proto3 cannot faithfully model the wire and demoted it to a derived view."
 date: 2026-06-09
+probes: none - superseded by tempdoc 564 (proto demoted to a derived view); the format it picked is no longer authoritative.
+last_reviewed: 2026-09-02
 ---
 
 

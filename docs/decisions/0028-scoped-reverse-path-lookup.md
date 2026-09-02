@@ -4,6 +4,9 @@ type: decision
 status: accepted
 description: "Refines the tempdoc-410 ingestion-ledger privacy contract. Raw paths still never appear in any operator-visible export, telemetry stream, or support-bundle generation. They may now be returned by a single dedicated Worker RPC reachable only from one HTTP endpoint, invoked in direct response to a user's 'show filename' click in the local UI. Backed by a new internal-only `path_resolution` table and an ArchUnit guard."
 date: 2026-04-26
+probes:
+  - adr-0028-one-http-resolver-caller
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0028: Scoped Reverse Path-Hash Lookup

@@ -8,6 +8,7 @@
   "scripts": {
     "doctor": "node scripts/dev/doctor.mjs",
     "test:agent-analytics": "node scripts/agent-analytics/run-all-tests.mjs",
+    "test:governance": "node scripts/governance/run-all-tests.mjs",
     "test:dev-tool-usage": "node scripts/agent-analytics/dev-tool-usage.test.mjs",
     "test:dev-runner": "node scripts/dev/test-dev-runner-runtime-resolution.mjs",
     "test:resolve-jdk": "node scripts/dev/test-resolve-jdk.mjs",

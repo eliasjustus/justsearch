@@ -166,6 +166,16 @@ const TARGETS = [
     outFile: 'settings-v2.ts',
     rootName: 'SettingsV2',
   },
+  // Tempdoc 884 (ADR-0038 amendment): the Surface Manifest wire, projected from the Surface
+  // record. Retires the hand-written mirror at api/types/surface.ts, which was a declared
+  // exception on ADR-0038's premise probe. `SurfaceWire` (not `Surface`) because the FE keeps a
+  // composed `Surface` carrying two fields the backend never sends (`factory`, `splitPairing`),
+  // and check-wire-type-single-authority forbids a hand-declared type sharing a rootName.
+  {
+    schema: 'SSOT/schemas/surface.v1.json',
+    outFile: 'surface.ts',
+    rootName: 'SurfaceWire',
+  },
 ];
 
 function parseArgs(argv) {

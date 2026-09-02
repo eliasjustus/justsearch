@@ -4,6 +4,9 @@ type: decision
 status: accepted
 description: "The public repository runs standard GitHub-hosted CI on push and pull requests, split into stable fact lanes; self-hosted and specialty workflows remain manually dispatched unless separately amended."
 date: 2026-06-27
+probes:
+  - adr-0044-fact-lane-triggers-checked
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0044: Public hosted CI fact lanes

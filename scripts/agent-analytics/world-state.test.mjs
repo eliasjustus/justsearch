@@ -14,9 +14,11 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { computeVerdict } from './world-state.mjs';
+import { computeVerdict, gatherAdrReview } from './world-state.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, 'world-state.mjs');
@@ -75,6 +77,83 @@ run('computeVerdict: everything unknown (all probes failed) -> ACTIVE (safe defa
   assert.equal(v, 'ACTIVE');
 });
 
+// --- gatherAdrReview unit tests (synthetic ADR fixture + a pinned `now`) ---
+//
+// The live repo currently has ZERO stale ADRs, so asserting only against it would be a
+// vacuously green section. These fixtures pin a synthetic old date so the arithmetic is
+// exercised in both directions.
+
+function withAdrFixture(files, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'world-state-adr-'));
+  try {
+    for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), body, 'utf8');
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const NOW = Date.parse('2026-09-02T00:00:00Z');
+const adrDoc = (lastReviewed) =>
+  `---\nstatus: accepted\nprobes: [some-probe]\nlast_reviewed: ${lastReviewed}\n---\n\n# ADR\n`;
+
+run('gatherAdrReview: reports exactly the ADR past the window, by name', () => {
+  const res = withAdrFixture(
+    {
+      // 2025-01-01 -> 609 days before NOW, well past 183.
+      '0001-old.md': adrDoc('2025-01-01'),
+      // 2026-08-01 -> 32 days before NOW, comfortably fresh.
+      '0002-fresh.md': adrDoc('2026-08-01'),
+    },
+    (dir) => gatherAdrReview({ adrDir: dir, now: NOW, thresholdDays: 183 }),
+  );
+  assert.equal(res.available, true);
+  assert.equal(res.scanned, 2);
+  assert.equal(res.staleCount, 1, 'exactly one of the two fixtures is past the window');
+  assert.deepEqual(res.rows.map((r) => r.adr), ['0001-old.md']);
+  assert.equal(res.rows[0].lastReviewed, '2025-01-01');
+  assert.equal(res.rows[0].ageDays, 609);
+});
+
+run('gatherAdrReview: the window is the threshold argument, not a hardcoded 183', () => {
+  const files = { '0001-old.md': adrDoc('2025-01-01'), '0002-fresh.md': adrDoc('2026-08-01') };
+  // A 10-day window makes BOTH stale — proves the comparison reads `thresholdDays`.
+  const tight = withAdrFixture(files, (dir) => gatherAdrReview({ adrDir: dir, now: NOW, thresholdDays: 10 }));
+  assert.equal(tight.staleCount, 2);
+  // A 1000-day window makes NEITHER stale.
+  const loose = withAdrFixture(files, (dir) => gatherAdrReview({ adrDir: dir, now: NOW, thresholdDays: 1000 }));
+  assert.equal(loose.staleCount, 0);
+});
+
+run('gatherAdrReview: missing/unparseable last_reviewed is stale, not fresh', () => {
+  const res = withAdrFixture(
+    {
+      '0001-no-date.md': '---\nstatus: accepted\n---\n\n# ADR\n',
+      '0002-no-frontmatter.md': '# ADR\n\nno frontmatter at all\n',
+      '0003-garbage-date.md': adrDoc('"not-a-date"'),
+      '0004-fresh.md': adrDoc('2026-08-01'),
+    },
+    (dir) => gatherAdrReview({ adrDir: dir, now: NOW, thresholdDays: 183 }),
+  );
+  assert.equal(res.staleCount, 3, 'an ADR declaring no usable review date must not read as reviewed');
+  assert.deepEqual(res.rows.map((r) => r.adr), ['0001-no-date.md', '0002-no-frontmatter.md', '0003-garbage-date.md']);
+});
+
+run('gatherAdrReview: README.md is the index, not a decision — never scanned', () => {
+  const res = withAdrFixture(
+    { 'README.md': '# Architecture Decision Records\n', '0001-fresh.md': adrDoc('2026-08-01') },
+    (dir) => gatherAdrReview({ adrDir: dir, now: NOW, thresholdDays: 183 }),
+  );
+  assert.equal(res.scanned, 1);
+  assert.equal(res.staleCount, 0);
+});
+
+run('gatherAdrReview: a missing ADR directory degrades to unavailable, never throws', () => {
+  const res = gatherAdrReview({ adrDir: path.join(os.tmpdir(), 'world-state-adr-does-not-exist'), now: NOW });
+  assert.equal(res.available, false);
+  assert.ok(typeof res.reason === 'string' && res.reason.length > 0);
+});
+
 // --- Smoke test: real subprocess against this actual repo checkout ---
 
 run('CLI smoke: markdown mode runs, exits 0, all five sections present, mentions this worktree', () => {
@@ -86,6 +165,10 @@ run('CLI smoke: markdown mode runs, exits 0, all five sections present, mentions
   assert.match(out, /## Stack/);
   // Tempdoc 861 §6.4 `orientation` occasion — read-only agent-spawns section.
   assert.match(out, /## Agent spawns/);
+  // Tempdoc 884 design decision 4 — the ADR review section prints even at zero. A section
+  // that vanishes when empty teaches nothing, so assert the COUNT LINE, not just the heading.
+  assert.match(out, /## ADR review/);
+  assert.match(out, /^\d+ of \d+ ADR\(s\) past the \d+-day review window$/m);
   assert.match(out, /VERDICT/);
 });
 
@@ -99,6 +182,12 @@ run('CLI smoke: --json mode runs, exits 0, output is valid JSON with the expecte
   assert.ok(typeof parsed.sessions.available === 'boolean');
   assert.ok(typeof parsed.tempdocNumbers.nextFree === 'number');
   assert.ok(typeof parsed.stack.available === 'boolean');
+  assert.ok(typeof parsed.adrReview.available === 'boolean');
+  if (parsed.adrReview.available) {
+    assert.ok(parsed.adrReview.scanned > 0, 'the real docs/decisions/ has ADRs; 0 scanned means the path is wrong');
+    assert.equal(parsed.adrReview.thresholdDays, 183, 'the window comes from governance/adr-probes.v1.json reviewStaleDays');
+    assert.equal(parsed.adrReview.rows.length, parsed.adrReview.staleCount);
+  }
   assert.ok(typeof parsed.agentSpawns.available === 'boolean');
   if (parsed.agentSpawns.available) {
     assert.ok(Array.isArray(parsed.agentSpawns.registered));
