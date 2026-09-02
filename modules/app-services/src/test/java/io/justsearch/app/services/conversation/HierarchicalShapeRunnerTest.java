@@ -64,8 +64,9 @@ final class HierarchicalShapeRunnerTest {
   @Test
   @DisplayName("Large document triggers hierarchical: split + per-section + synthesis")
   void largeDocHierarchical() {
-    // Document ≥ HIERARCHICAL_THRESHOLD_TOKENS (5000) → estimateTokens ~= chars/4 so need
-    // ≥ 20000 chars.
+    // Comfortably over the derived hierarchical threshold (tempdoc 883: the input budget, which is
+    // 2304 tokens at this stub's 4096-token window) — estimateTokens ~= chars/4, so 30k chars is
+    // ~7500 tokens and splits at any rung below 8k.
     String huge = "x".repeat(30_000);
     var ai = new StubAi(List.of("s1", "s2", "final synthesis"));
     var docs = new StubDocs(Map.of("doc", new DocumentRecord("doc", huge, Map.of())));

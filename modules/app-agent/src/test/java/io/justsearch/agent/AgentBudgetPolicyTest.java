@@ -294,9 +294,10 @@ final class AgentBudgetPolicyTest {
   @Test
   @DisplayName("878 §D.8: THOROUGH_MULTIPLIER still clears the per-run spend bound at the current iteration cap")
   void thoroughMultiplierStillClearsItsStructuralBound() {
-    // Tempdoc 883 decision 3 — resolved per call now, not a class-init constant. At the
-    // COMPACT window the derived reserve is min(1024, 4096/4) = 1024, i.e. unchanged, which
-    // is exactly why the bound below is still asserted at this window.
+    // Tempdoc 883 decision 3 — resolved per call now, not a class-init constant. With no
+    // inference handle this is the FALLBACK window (4096), where the derived reserve is
+    // min(1024, 4096/4) = 1024, i.e. unchanged — which is why the bound below is still
+    // asserted at COMPACT_N_CTX, the same number by a different route.
     int maxCompletionTokens = AgentContextBudgets.forCall(null).completionReserve();
     // spend(run) <= maxIterations * (n_ctx + maxTokens), expressed as a multiple of n_ctx. Kept as a
     // double and compared with >=, so the integer multiplier must CLEAR the exact worst case rather

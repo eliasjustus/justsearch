@@ -33,9 +33,9 @@ Primary entry point: `AgentLoopService.runAgent()` in `modules/app-agent` (the `
 | Collaborator | Owns |
 |---|---|
 | `AgentStepRunner` | one loop iteration — per-iteration tool selection, dispatch orchestration, handoff, virtual tools |
-| `AgentLlmCaller` | the LLM round-trip: `callLlmWithTools` (one entry point — sampling is always an argument, never resolved implicitly), `DEFAULT_MAX_TOKENS`, the `EMPTY_RESPONSE` retry (attempt 2 suppresses thinking), `finish_reason` capture, and leaked-tool-call recovery |
+| `AgentLlmCaller` | the LLM round-trip: `callLlmWithTools` (one entry point — sampling is always an argument, never resolved implicitly), the per-call completion cap (`AgentContextBudgets.forCall`), the `EMPTY_RESPONSE` retry (attempt 2 suppresses thinking), `finish_reason` capture, and leaked-tool-call recovery |
 | `AgentToolDispatcher` | tool execution + policy + `handleSafetyGate` approval gate (the sole direct `OperationDispatcher.dispatch` site) |
-| `AgentContextCompressor` | tool-result truncation/compression (`MAX_TOOL_RESULT_CHARS`) |
+| `AgentContextCompressor` | tool-result truncation/compression (Layer-2 cut at `toolResultCapChars()`, derived per call) |
 | `AgentEventTracing` | `TraceContext` / OTel span decoration |
 | `AgentHandoff` | multi-agent handoff tools + research-brief history pruning |
 | `AgentTurnPolicy` | PRIMARY→DECIDING state machine + force-tool-call decisions |
@@ -119,9 +119,9 @@ Current defaults are intentionally modest:
 | Constant / setting | Current behavior |
 |--------------------|------------------|
 | Conversation-shape `maxIterations` default | Omitted conversation-shape requests default to `1` in `ToolIteratingShapeRunner.parseRequest`; resume/fallback paths in `AgentLoopService` can use a larger internal limit. |
-| Completion token cap | `AgentLlmCaller.DEFAULT_MAX_TOKENS` is `1024`. |
+| Completion token cap | Derived per call by `AgentContextBudgets.forCall`: `min(cap, n_ctx / 4)`, where `cap` is `justsearch.agent.max_completion_tokens` when set and `1024` otherwise, floored at `256`. Unchanged at `n_ctx >= 4096`; smaller only at a window too small to afford `1024`. |
 | Approval timeout | `300` seconds. |
-| Tool result truncation | `MAX_TOOL_RESULT_CHARS` defaults to `4000`. |
+| Tool result truncation | Derived per call: `ContextBudget.toolResultCapChars()` = `min(inputBudget / 4, 2048)` tokens as chars (2304 chars at `n_ctx` 4096, 8192 at 32768), floored at `100`. An explicit `justsearch.agent.max_tool_result_chars` overrides it verbatim; the default is `0` = derive. |
 | Thinking control | Forced tool/commit turns use `SamplingParams.AGENT.withEnableThinking(false)` and the service strips `<think>` blocks when needed. The default prompt does not rely on a literal `/no_think` line. |
 
 ## Operation-Substrate Tool System
@@ -232,7 +232,7 @@ Important environment settings include:
 | `JUSTSEARCH_AGENT_CONTEXT_COMPRESSION_ENABLED` | Enables/disables tool-result compression. |
 | `JUSTSEARCH_AGENT_CONTEXT_COMPRESSION_MIN_CHARS` | Minimum result size before compression is attempted. |
 | `JUSTSEARCH_AGENT_CONTEXT_COMPRESSION_KEEP_LAST_RESULTS` | Number of newest tool results left uncompressed. |
-| `JUSTSEARCH_AGENT_MAX_TOOL_RESULT_CHARS` | Maximum emitted tool result size. |
+| `JUSTSEARCH_AGENT_MAX_TOOL_RESULT_CHARS` | Maximum emitted tool result size. `0` (default) derives it from the live context window. |
 
 ## Loop Detection and Errors
 

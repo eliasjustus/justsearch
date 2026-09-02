@@ -1147,7 +1147,17 @@ The acceptance greps, run as commands on the finished branch:
 | `grep -rn "MAX_CONTEXT_TOKENS = 1000\|DEFAULT_PAGE_CHARS = 3000\|SUMMARY_CONTROLLER_MAX_CONTEXT_TOKENS = 3000\|MAX_TOOL_RESULT_CHARS = 4000" modules` | **no output** |
 | `grep -rn "SECTION_TARGET_TOKENS\|1800" .../HierarchicalShapeRunner.java` | **no output** |
 | `grep -rn "layerTwoCapChars()" modules --include=*.java` | no CALL sites; the two hits are prose naming the method, both updated to `layerTwoCapChars(budget)` |
-| `grep -rn "MAX_TOOL_RESULT_CHARS\|READ_PAGE_CHARS\|DEFAULT_MAX_TOKENS\|DEFAULT_PAGE_CHARS\|SUMMARY_CONTROLLER" modules --include=*.java` | after the sweep, the only surviving hits are `ConversationEngine.DEFAULT_MAX_TOKENS` (a DIFFERENT, live symbol — the chat engine's default `max_tokens`, untouched by this PR, and its `ResolvedConfigBuilder.ENGINE_DEFAULT_MAX_TOKENS` mirror) and the `EnvRegistry` key spellings. Six stale prose references to the deleted symbols were swept in the same PR rather than left as false authority. |
+| `grep -rn "MAX_TOOL_RESULT_CHARS\|READ_PAGE_CHARS\|DEFAULT_MAX_TOKENS\|DEFAULT_PAGE_CHARS\|SUMMARY_CONTROLLER" modules --include=*.java` | after the sweep, the only surviving hits are `ConversationEngine.DEFAULT_MAX_TOKENS` (a DIFFERENT, live symbol — the chat engine's default `max_tokens`, untouched by this PR, and its `ResolvedConfigBuilder.ENGINE_DEFAULT_MAX_TOKENS` mirror) and the `EnvRegistry` key spellings. |
+
+**Correction (independent review B2).** The sweep above was run over `modules --include=*.java`
+only, so it did not see the canonical docs, the synced skills, or `modules/ui-web`. Re-run over
+`docs/ .claude/skills/ modules/ui-web/src`, it found four live-authority hits this PR had left
+stale, now fixed: `22-agent-system-architecture.md:36,38` (the collaborator table naming
+`DEFAULT_MAX_TOKENS` / `MAX_TOOL_RESULT_CHARS` as owned constants) and `:122,124` (the constants
+table stating `1024` and `4000` as the current defaults), plus `:235`. Three further hits are in
+`modules/ui-web` — another lane's files — and are ROUTED rather than edited here (see §C.6b).
+The lesson for the sweep rule: a retired symbol's fingerprints are not confined to the language it
+was written in, and `--include=*.java` is a scoping choice that has to be justified, not a default.
 
 Claims the change depends on, checked at the set-site:
 
@@ -1172,6 +1182,21 @@ The three most important, and how each FAILS on the old code:
    at 32768) fails the old code from the other side — the old literal split a document that fits
    whole. Straddling the retired constant in BOTH directions is what makes the pair discriminate a
    derived threshold from any other constant.
+
+   **Correction (independent review B1) — this claim was FALSE as first written, and the failure is
+   worth naming.** The `document(int)` helper sized its filler by the estimator's WORD arm
+   (`approxTokens / 1.3`), but `TokenEstimation.estimateTokens` returns
+   `max(wordEstimate, charEstimate)` and for `"token "` filler (6 chars, 1 word) the char arm
+   (`len/4` = 1.5/word) always dominates the word arm (1.3/word). So `document(4999)` actually
+   estimated **5768** tokens — ABOVE the retired 5000 literal — and the old code went hierarchical
+   too. The test passed on both codebases: exactly the green-for-the-wrong-reason it was written to
+   rule out, in the item claiming it could not happen. Fixed by sizing against the dominant arm
+   (`words(approxTokens * 2 / 3)`, which estimates to `approxTokens`), and then VERIFIED rather than
+   reasoned: the 5000 / 1800 literals were temporarily restored in `HierarchicalShapeRunner` and
+   all three threshold cases went red (`smallWindowForcesHierarchical`,
+   `largeWindowRaisesTheThreshold`, `sectionTargetScalesWithTheWindow`), then reverted and re-run
+   green. The general lesson: "this assertion fails on the old code" is itself a claim that needs
+   the experiment, not an argument — `audit-without-test` applied to a falsification claim.
 2. **`AgentContextBudgetsTest.toolResultCapTracksTheWindowWithinOneJvm`** — flips the window from
    4096 to 32768 inside one JVM and requires the cap to move (2304 -> 8192 chars). On the old code
    `MAX_TOOL_RESULT_CHARS` is a `static final` initialized once from config; no window value is an
@@ -1230,9 +1255,16 @@ Also checked for the "passes for a wrong reason" shape:
    when the window changes at runtime" is still satisfied and tested — the reserve moves at 2048.
 3. **`rag.max_chunks_per_article` is not used as a Head-side bound** — it is a worker-side per-parent
    diversity cap and never crosses to the Head (§B.b2 (5)). The Head-side bound is `rag.top_k`.
-4. **Both agent config defaults changed from positive to `0 = derive`** (§B.b2 (8)). An operator who
-   had set either key explicitly is unaffected; an operator relying on the shipped 4000/1024 now gets
-   a window-derived number instead, which is the point. `environment-variables.md` says so.
+4. **Both agent config defaults changed from positive to `0 = derive`** (§B.b2 (8)). An operator
+   relying on the shipped 4000/1024 now gets a window-derived number instead, which is the point.
+   The two knobs are NOT symmetric, and the first draft of this PR claimed they were:
+   `max_tool_result_chars` is honoured verbatim, but `max_completion_tokens` is a ceiling on a
+   window fraction (`min(cap, n_ctx/4)`), so a window too small to afford it reduces it — silently,
+   as first written, while the javadoc promised "never silently reduced" (independent review S1).
+   The reduction is now reported at INFO, deduplicated per `(cap, window)` pair, and covered by
+   `AgentContextBudgetsTest.operatorCapReductionIsReported` / `unreducedOperatorCapIsNotReported`.
+   `environment-variables.md` documents both keys — the `JUSTSEARCH_AGENT_MAX_COMPLETION_TOKENS` row
+   was missing entirely and has been added (review S2).
 5. **`DocAccess` / `BatchDocAccess` keep their own 200,000-char soft caps.** They are not in the
    item-9 table and they mirror the Worker's gRPC transport cap
    (`GrpcSearchService.MAX_CONTENT_CHARS = 200_000`), which is a different quantity from a prompt
@@ -1242,6 +1274,17 @@ Also checked for the "passes for a wrong reason" shape:
    belongs to whoever takes the remaining item-9 residue.
 6. **One new module edge**: `modules/app-agent` -> `modules/core` (`api`), regenerated into
    `docs/reference/architecture/module-deps.md`. `core` is a leaf, so no cycle is possible.
+7. **`readDocumentPageTokens()` never binds today** (independent review S5). `readPageChars` is
+   `min(pageChars, layerTwoCapChars - 600)`, and `min(ib/2, 4096) >= min(ib/4, 2048)` for every
+   input budget, so the Layer-2 bound resolves the page at every rung — the page fraction is a
+   ceiling that is always dominated. It is KEPT rather than deleted because it states the page's own
+   limit, so raising the tool-result ceiling later cannot silently leave pages unbounded; the
+   dominance is now stated in the doc table and PINNED by
+   `AgentContextBudgetsTest.pageFractionNeverBinds` rather than left as prose.
+8. **The "every drop is surfaced" claim was too strong** (independent review S4). Only the RAG trim
+   reaches the user (`rag.meta.context_truncated`); the history drop and the selection cut are
+   backend INFO logs with no wire flag. `05-ai-architecture.md` now says exactly that, and putting
+   those two on the wire is an open item below rather than a claim.
 
 ### C.5b — Live-window items for the orchestrator (nothing below was measured in PR 2)
 
@@ -1264,6 +1307,14 @@ Also checked for the "passes for a wrong reason" shape:
    old 4000-char cap would have cut.
 5. **The history drop, live.** A chat turn with a long `context` array should emit the new INFO line
    in the backend log with before/after token counts.
+6. **The small-rung REGRESSION, stated in advance (independent review S6).** The read page does not
+   only grow. At the 4096 fallback window it drops from the old flat 3000 chars to **1704**, and at a
+   forced 2048 window to **320** (just above the 200-char `MIN_PAGE_CHARS` refusal floor). That is
+   the derivation working — those pages never fit the Layer-2 cut at those windows, they were simply
+   clipped instead — but it is a real behaviour change on the CPU/compact path and should be watched
+   in the live pass: a delegate run at 4096 will page a document in more, smaller reads than before.
+   If that proves to cost completions, the lever is the tool-result ceiling, not the page fraction
+   (see §C.4b (7)).
 
 ### C.6b — Still open in this lane after PR 2
 
@@ -1271,3 +1322,22 @@ Decision 5 (the `getenv` funnel + the yaml-reader gate), decision 4 slice 2 (the
 `exclude_patterns` / `gpu.layers` promotions), ADR-0047 "Context window as a derived resource"
 (number still reserved, still unwritten), and the item-9 residue named in §C.4b (5) — the
 `DocAccess` / `BatchDocAccess` 200,000-char prompt injections.
+
+Added by the independent review of PR 2:
+
+- **Put the history drop and the selection cut on the wire** (§C.4b (8)). Both are INFO-only today.
+  A `context_trimmed` flag alongside `rag.meta.context_truncated` would need an FE consumer and a
+  contract surface, which is why it is not in this PR.
+- **`modules/ui-web` residue citing retired backend constants** — another lane's files, routed
+  rather than edited here: `modules/ui-web/src/shell-v0/components/chat/evidenceProjection.ts:808`
+  and `modules/ui-web/src/shell-v0/components/chat/CitationsPanel.test.ts:831` both cite
+  `READ_PAGE_CHARS = 3000` (the symbol is gone and the number is now window-derived), and
+  `modules/ui-web/src/shell-v0/views/search-v3/sv3-ask.ts:94-95` states the RAG top-K precedence as
+  "body -> configured -> `DEFAULT_TOP_K = 5`", which is now "body -> `min(configured, budget)`,
+  floor 1". Comment-only in all three cases; no behaviour depends on them.
+- **`AgentLoopService.java:456-460` hand-walks the window itself** (`llmContextTokens()` else
+  `configuredContextTokens()`) instead of going through `ContextBudget`. It is a THIRD precedence
+  spelling — it lacks the fallback rung and will NPE-unbox if both accessors return null, which
+  `ContextBudget` cannot do. Not touched in PR 2 because it feeds `AgentBudgetPolicy.initialBudget`,
+  i.e. the run's ECONOMIC budget rather than a prompt budget, and folding the two is a spend
+  decision. It should be routed through `ContextBudget.of(...).windowTokens()` in a follow-up.
