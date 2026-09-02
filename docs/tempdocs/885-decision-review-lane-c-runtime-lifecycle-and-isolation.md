@@ -3494,3 +3494,206 @@ for by trimming eleven older bullets' wording — content preserved, ~330 B reco
   less.
 * **`ForegroundLoad` is a `worker-services` type**, not a gRPC concept — it survives the merge, and
   item 19's reopen seam now depends on it as a `BooleanSupplier`.
+
+## Residue live window, part A (2026-09-02)
+
+Wave-1 residue measurement arms, run from `worktree-resid-product` @ `505d0fdd`
+(= `main` + PR #605: configurable commit timer, roots-collection persistence). This is the window
+the earlier 885 arm table was missing: the previous A2/A3 numbers were taken with the seam-polarity
+defect present (fixed on `main` by #602) and with the safety-net commit timer hardcoded, so a
+commit-cadence arm could not select the knob that is the ceiling on the other two. Both are now
+live, so the arms below are the first ones whose configs actually reached the Worker.
+
+### Method
+
+Backend: `runHeadlessEval` on port 33221 from this worktree, launched **detached** per the jseval
+skill (`Start-Process` + `.done` marker + `INSPECT_DISPLAY=none PYTHONUTF8=1`), waited on with
+condition polls. `GRADLE_USER_HOME=C:\Users\Elias\AppData\Local\Temp\jsgh-R1`;
+`PYTHONPATH=F:/justsearch-public/.claude/worktrees/resid-product/scripts/jseval`.
+`:modules:ui:installDist -PskipWebBuild=true` built green before the window so no arm paid a cold
+Gradle build.
+
+Per-arm command (identical across A1-A4; only the env differs):
+
+```
+python -m jseval run --dataset scifact --max-queries 0 --pipeline --clean --start-backend \
+  --timeline tmp/residue-live/timeline-<arm>.tsv --output-dir tmp/residue-live/<arm> --json \
+  --search-load-qpm 10 --first-search-probe
+```
+
+**Result location (885's earlier finding re-confirmed).** An ingest-only run (`--max-queries 0`)
+writes **no** `summary.json` into `--output-dir` — the directory is never created. The run's JSON
+is on **stdout** only. Captured byte-exact via `Start-Process -RedirectStandardOutput`
+(not a PowerShell `>` redirect, which would write UTF-16); artifacts are
+`tmp/residue-live/<arm>.stdout.json`.
+
+**Env spellings verified in `EnvRegistry.java` before use** — one in the brief was wrong:
+
+| Brief said | Actual (`EnvRegistry.java`) | Key |
+|---|---|---|
+| `JUSTSEARCH_MAX_DOCS_BEFORE_COMMIT` | **`JUSTSEARCH_BACKFILL_MAX_DOCS_BEFORE_COMMIT`** (:693) | `justsearch.backfill.max_docs_before_commit` |
+| `JUSTSEARCH_INDEX_NRT_MODE` | correct (:1272) | `index.nrt.mode` |
+| `JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS` | correct (:1305) | `index.commit.timer_interval_ms` |
+| `JUSTSEARCH_BACKFILL_COMMIT_INTERVAL_MS` | correct (:687) | `justsearch.backfill.commit_interval_ms` |
+| `JUSTSEARCH_CONTEXT_SIZE` | correct (:322) | `justsearch.context.size` |
+
+All five are on the `applyHeadlessEvalContract` whitelist (`modules/ui/build.gradle.kts:2020`,
+`:2046-2054`), so none was silently dropped.
+
+### Config confirmation (every arm, before trusting its numbers)
+
+`GET /api/debug/effective-config` was read on each running backend. For A2/A3/A4 the Worker's own
+`worker.log` was additionally grepped, to show the value reached the **Worker JVM** at ordinal 450
+(`worker_snapshot`) and not merely the Head — i.e. not the `[R1]` raw-sysprop defect shape.
+
+| Arm | Key | Value | Source / ordinal (Head) | Worker JVM (ordinal 450) |
+|---|---|---|---|---|
+| E | `justsearch.context.size` | **16384** | **`env_var` / 400** | n/a (Head-only key) |
+| A1 | `justsearch.context.size` | 32768 | `auto_detected` / 150 | n/a |
+| A1 | `index.nrt.mode` + commit keys | `continuous`, 10000/10000/1000 | `default` / 100 | — |
+| A2 | `index.nrt.mode` | **`on_demand`** | **`env_var` / 400** | confirmed |
+| A3 | `index.commit.timer_interval_ms` | **30000** | **`env_var` / 400** | confirmed |
+| A3 | `justsearch.backfill.commit_interval_ms` | **30000** | **`env_var` / 400** | confirmed |
+| A3 | `justsearch.backfill.max_docs_before_commit` | **5000** | **`env_var` / 400** | confirmed |
+| A4 | all four of the above | as A2 + A3 | **`env_var` / 400** | confirmed |
+
+Snapshots kept at `tmp/residue-live/<arm>-effective-config.json`.
+
+### Arm E — `JUSTSEARCH_CONTEXT_SIZE` (883 C5 gap): **CLOSED, PASS**
+
+Backend started with `JUSTSEARCH_CONTEXT_SIZE=16384` via `python -m jseval dev --clean` (AI not
+loaded — the row is read, not exercised). `/api/debug/effective-config`:
+
+```json
+{"key": "justsearch.context.size", "value": "16384", "source": "env_var", "ordinal": 400,
+ "detail": "JUSTSEARCH_CONTEXT_SIZE",
+ "candidates": [{"source": "jvm_arg", "ordinal": 500},
+                {"source": "env_var", "ordinal": 400, "value": "16384"},
+                {"source": "auto_detected", "ordinal": 150, "value": "32768"}]}
+```
+
+The **control** is the same key on arm A1 (no env var set): `value 32768, source auto_detected,
+ordinal 150`. So both halves of 883's C5 are now observed live, on the same build, in the same
+window — and the arm-E candidate list additionally shows the exact `auto_detected` value that the
+env var displaced. 883 C5 moves from **NOT RUN** to **PASS**.
+
+### Machine signature (the 885 contamination control)
+
+Recorded before **and** after every arm: `nvidia-smi --query-gpu=memory.used,utilization.gpu`,
+game-process scan (`LeagueClient|League of Legends|RiotClient|VALORANT|cs2|...`), port 33221, orphan
+`headless-eval-data` JVM.
+
+| Checkpoint (local) | GPU used | GPU util | Game | Port 33221 | Orphan eval JVM |
+|---|---|---|---|---|---|
+| pre-E 16:39 | 949 MiB | 6 % | none | free | none |
+| pre-A1 16:41 | 951 MiB | 6 % | none | free | none |
+| post-A1 / pre-A2 16:47 | 868 to 877 MiB | 8 to 10 % | none | free | none |
+| post-A2 / pre-A3 16:53 | 945 MiB | 31 % | none | free | none |
+| post-A3 / pre-A4 17:00 | 920 MiB | 27 % | none | free | none |
+| post-A4 17:06:46 | 1192 MiB | 13 % | **RiotClientServices present** | free | none |
+
+**A1-A4 are all clean.** The post-A4 signature changed, but the timestamps exonerate A4: its
+measured window closed at `15:06:32.5Z` (`search_load.ended_at`) and the earliest Riot process
+started at `15:06:34Z` — 1.5 s later. No arm's measurement overlapped a game process. GPU memory
+never exceeded 1.2 GB, far below the 4.5 GB stop threshold.
+
+**A1b (control repeat) — CONTAMINATED, NOT RUN.** A repeat of the A1 control was launched at
+17:06:48 to establish a run-to-run noise floor. The pre-arm signature caught `RiotClientServices` +
+`RiotClientCrashHandler`, so the arm was **halted within seconds** per the stop rule and its data
+discarded. A follow-up poll confirmed the box did not quiet down — 8 League processes and sustained
+33-45 % GPU utilisation — so no further arm was attempted. This is the same failure mode that
+contaminated 885's earlier window; this time the pre-arm gate caught it before it produced numbers.
+
+### Results
+
+scifact, 5184 docs, full pipeline (embedding + SPLADE + NER + chunks), 10 qpm hybrid foreground
+load throughout, first-search probe every 50 newly indexed docs. Times in seconds; latencies in ms.
+
+| Arm | Config | overall docs/s | primary docs/s | reopen | commit | fs p50 | fs p95 | load p50 | load p95 | emb 100 % | splade 100 % | chunk 100 % | ner done | total |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **A1** | defaults (control) | 15.6 | 86.3 | 223 | 53 | 221.2 | 396.5 | 218.4 | 423.6 | 290.7 | 320.7 | 249.9 | 300.7 | 322.7 |
+| **A2** | `nrt.mode=on_demand` | 15.9 | 78.3 | **185** | 54 | 263.2 | **549.6** | 270.5 | 472.2 | 283.1 | 313.4 | 243.0 | 313.4 | 315.4 |
+| **A3** | commit 30s / 30s / 5000 | 15.1 | 71.3 | 235 | **44** | 216.6 | 404.2 | 228.8 | 439.0 | 299.8 | 329.8 | 249.7 | 319.8 | 331.8 |
+| **A4** | A2 + A3 | 15.5 | 78.6 | **180** | **43** | 230.2 | **473.8** | 278.8 | **741.7** | 280.5 | 321.6 | 250.2 | 280.5 | 323.6 |
+
+Deltas vs A1:
+
+| Arm | overall | primary | reopen | commit | fs p50 | fs p95 | load p95 | total elapsed |
+|---|---|---|---|---|---|---|---|---|
+| A2 | +1.9 % | -9.3 % | **-17.0 %** | +1.9 % | +19.0 % | **+38.6 %** | +11.5 % | -2.3 % |
+| A3 | -3.2 % | -17.4 % | +5.4 % | **-17.0 %** | -2.1 % | +2.0 % | +3.6 % | +2.8 % |
+| A4 | -0.6 % | -8.9 % | **-19.3 %** | **-18.9 %** | +4.1 % | **+19.5 %** | **+75.1 %** | +0.3 % |
+
+Search-load and probe volumes (error-free on every arm): A1 56 load queries / 26 probes,
+A2 55 / 28, A3 55 / 28, A4 56 / 28. Zero errors, zero degraded responses.
+
+### Verdicts against 885's read rules
+
+> Read rule: reject if reopen count drops but first-search p95 regresses > 20 %; accept only if
+> both throughput within 10 % **and** first-search p95 not worse.
+
+**A2 (`on_demand`) — REJECT.** Reopen count drops as designed (223 to 185, -17.0 %), and first-search
+p95 regresses **+38.6 %** — comfortably past the 20 % reject threshold. This is the rule's exact
+trigger condition and it fires cleanly. The mechanism is the documented one: reopen-on-demand moves
+the segment-open cost onto the first query after new documents, which is precisely what the probe
+isolates. Note this is *not* the earlier window's result being re-confirmed — the earlier A2 ran
+with the seam-polarity defect present; this one ran with #602's fix and the config verified in the
+Worker JVM, and it still rejects. Steady-state indexing throughput is genuinely unaffected
+(overall +1.9 %, total elapsed -2.3 %): the arm buys nothing on the axis it was proposed for and
+costs on the axis the rule protects.
+
+**A3 (commit cadence) — NOT ACCEPTED (and the interesting result).** First-search p95 is flat
+(+2.0 %, inside noise) and overall throughput is within band (-3.2 %), so it does not trip the
+*reject* clause — but primary-indexing throughput is -17.4 %, outside the 10 % accept band, so it
+fails the accept clause too.
+
+The substantive finding is how *little* the commit count moved: tripling the safety-net timer
+(10s to 30s), tripling the backfill interval (10s to 30s) **and** quintupling the doc buffer
+(1000 to 5000) — all three at once, all three confirmed at ordinal 450 in the Worker — bought a
+**17 % commit reduction** (53 to 44). Three multiplicative relaxations producing a sub-linear
+single-digit-absolute change means none of these three knobs is the binding constraint on commit
+frequency. This corroborates, and sharpens, the diagnosis recorded against
+`INDEX_COMMIT_TIMER_INTERVAL_MS` in `EnvRegistry.java:1294-1304`: deferring the loop's own commits
+keeps `pendingDocs > 0` for longer and hands the remaining trigger *more* work, so relaxing the
+triggers partly cancels itself. **Making the timer configurable (#605) was necessary to measure
+this, and the measurement says the timer was not the whole answer either.** Whatever sets the floor
+on commit count is not yet identified — that is the open question this window produces.
+
+**A4 (`on_demand` + commit cadence) — REJECT, worst arm.** It stacks A2's regression rather than
+cancelling it: reopen -19.3 % and commit -18.9 % (both knobs "work"), but first-search p95 +19.5 %
+(right at the reject threshold) and **foreground load p95 +75.1 %** — by far the worst search
+latency in the window, and the only arm where the *steady-state* load p95 degrades materially, not
+just the first-search probe. Combining the two levers makes the user-visible search path worse than
+either alone while leaving throughput unchanged (overall -0.6 %, total elapsed +0.3 %).
+
+**Cross-arm coherence (the strongest evidence here).** The four arms form a clean 2x2 on the
+`on_demand` axis: both `on_demand` arms (A2, A4) show reopen down **and** first-search p95 up
+(+38.6 %, +19.5 %); both `continuous` arms (A1, A3) show first-search p95 flat (0, +2.0 %). The
+effect tracks the lever, not the run order, and the direction is the one the read rule was written
+to catch.
+
+### Honest limits of this window
+
+* **n = 1 per arm.** The planned control repeat (A1b) was aborted by game contamination, so there is
+  no measured run-to-run envelope. The `primary docs/s` column spans 71.3-86.3 across arms — a
+  +/-10 % band by itself — so **every throughput delta in the tables above is at or below the
+  plausible noise floor and should not be read as a real effect.** The latency deltas (A2 +38.6 %,
+  A4 +75.1 % load p95) are several times larger and are additionally corroborated by the 2x2
+  coherence above, which is why the verdicts rest on those and not on throughput.
+* **Commit-trigger attribution not re-measured.** 885's earlier window attributed 61/114 commits to
+  backfill. This window records only `commit_total` from the `cadence` block; the per-trigger
+  breakdown would need the Worker's commit-reason logging, and the data dir was recycled by the
+  aborted A1b before it could be extracted. The A3 finding (commit count is insensitive to all
+  three knobs) is what motivates re-running that attribution — it is the obvious next step and is
+  **not** answered here.
+* **Arm E reads a row, it does not exercise the LLM.** `justsearch.context.size` at ordinal 400 is
+  confirmed as resolved; that the loaded model then honours 16384 is out of this arm's scope (and
+  was out of 883 C5's scope too — C5 asked for the env path's live resolution).
+
+### Recommendation
+
+Do **not** ship `index.nrt.mode=on_demand` as a default on this evidence — it is a measured
+regression on the user-visible first-search path with no measured throughput gain. Keep the knob
+(it is A/B-able by construction, which is why it exists). The commit-cadence knobs are likewise not
+worth defaulting away from 10s/10s/1000; the open question is what actually floors the commit
+count, which A3 shows is none of the three levers tested.

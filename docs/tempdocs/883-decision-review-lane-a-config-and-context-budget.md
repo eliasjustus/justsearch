@@ -800,7 +800,7 @@ the shipped desired-state path — `POST /api/settings/v2 {ui:{chatEnabled:...}}
 | C2 | re-activate under the override | **PASS** `{rung:16384, reason:"override"}`, log `n_ctx_seq 16384`, KV **272.00 MiB** (exactly half of 544 — 17.0 KiB/token confirmed again), `llmContextTokens 16384` |
 | C3 | `contextLength 0` → auto | **PASS** the settings.json candidate disappears; resolver returns `auto_detected`/150/32768; re-activation gives `{rung:32768, reason:"top-rung"}`, log `n_ctx_seq 32768` |
 | C4 | `rememberAutoDetected` live | **PASS** after 5+ settings PUTs (each one a `ConfigStoreRebuilder.rebuild`), the ordinal-150 contribution is still present with its value. Without the fix in this PR it would have been dropped on the first PUT |
-| C5 | `JUSTSEARCH_CONTEXT_SIZE` env arm | **NOT RUN** — needs a restart the orchestrator owns (as briefed) |
+| C5 | `JUSTSEARCH_CONTEXT_SIZE` env arm | **PASS** (2026-09-02) — run live on a dedicated backend; `env_var` / ordinal 400 observed, with the `auto_detected` / 150 control. See §C5 below and tempdoc 885 §"Residue live window, part A" |
 | D | forced step-down on the auto path | **PARTIAL — see below** |
 | E | adopted external server | **PASS** adopted a standalone at `-c 8192` on port 8082: `usingExternalLlamaServer true`, `verified true`, `contextTokens 8192`, **`contextTooSmall false`** (the review-item-3 fix; pre-fix this compared 8192 against the derived 32768 and would have been `true`). **`contextWindow: null`** — the app does not claim a window it did not choose |
 | 11 | schema-1 upgrade path | **PASS** — see below |
@@ -979,7 +979,38 @@ PR. What it does show is that the derived window removes the pressure that made 
 Watched root removed afterwards (`DELETE /api/indexing/roots` → `{"status":"ok","deletedJobs":30}`;
 `GET /api/indexing/roots` → `{"roots":[]}`).
 
-### C5 — the env-var arm remains NOT RUN (an honest gap, not a pass)
+### C5 — CLOSED, PASS (2026-09-02); the original gap statement is kept below for history
+
+**Update 2026-09-02 (wave-1 residue live window, part A — tempdoc 885).** The gap described below
+is closed. A dedicated eval backend was started from `worktree-resid-product` @ `505d0fdd` with
+`JUSTSEARCH_CONTEXT_SIZE=16384` in its process environment (`python -m jseval dev --clean`; the
+variable is on the `applyHeadlessEvalContract` whitelist at `modules/ui/build.gradle.kts:2020`, so
+it is not filtered out in eval mode). `GET /api/debug/effective-config` returned:
+
+```json
+{"key": "justsearch.context.size", "value": "16384", "source": "env_var", "ordinal": 400,
+ "detail": "JUSTSEARCH_CONTEXT_SIZE",
+ "candidates": [{"source": "jvm_arg", "ordinal": 500},
+                {"source": "env_var", "ordinal": 400, "value": "16384"},
+                {"source": "auto_detected", "ordinal": 150, "value": "32768"}]}
+```
+
+The paired **control** — the same key on a backend started without the variable, in the same window
+on the same build — returned `value 32768, source auto_detected, ordinal 150`. So ordinal 400 is now
+**observed carrying a value and winning**, not inferred from the chain being verified at 150/300/500.
+The candidate list additionally names the exact `auto_detected` value (32768) that the env var
+displaced, which is the displacement itself rather than just the winner.
+
+Scope note, unchanged from the original framing: this closes the **config-resolution** claim. It does
+not assert that a loaded chat model honours a 16384-token window — no model was loaded (the row is
+read, not exercised), and that was never what C5 asked for.
+
+Snapshots: `tmp/residue-live/armE-effective-config.json` (env arm),
+`tmp/residue-live/A1-effective-config.json` (control).
+
+<details><summary>Original gap statement (superseded 2026-09-02)</summary>
+
+#### C5 — the env-var arm remains NOT RUN (an honest gap, not a pass)
 
 `JUSTSEARCH_CONTEXT_SIZE` contributes at ordinal 400 (`env_var`). It is exercised at the unit level
 by `ResolvedConfigBuilderTest` (the ordinal-chain and clamping cases put values at
@@ -992,7 +1023,12 @@ restart. It is therefore recorded as a **gap**, not as a pass: the env path's li
 build is inferred from the ordinal chain being verified at 150 / 300 / 500 (the last via the
 `-D`-sourced `jvm_arg` candidate), not observed at 400.
 
+</details>
+
 ### Live acceptance status after part 3
+
+**Superseded 2026-09-02:** C5 is now measured (see above), so the only remaining item is the
+step-down detail below.
 
 Everything in the original acceptance list is now measured except C5 above, and the one step-down
 detail recorded in part 2: the successful rung-walk (a lower rung actually loading after a failed
