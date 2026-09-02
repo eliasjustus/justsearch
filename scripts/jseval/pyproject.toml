@@ -28,7 +28,7 @@ scan = ["Pillow>=10.1"]
 # (claude -p solver, condition-as-task, seed-as-epoch). Opt-in so core jseval
 # stays lean — the ~80 transitive deps only land for `pip install jseval[agent]`.
 agent = ["inspect-ai>=0.3.240", "claude-agent-sdk>=0.2.111"]
-dev = ["pytest>=7.0", "pyyaml>=6.0", "hypothesis>=6.0"]
+dev = ["pytest>=7.0", "pyyaml>=6.0", "hypothesis>=6.0", "jsonschema>=4.0"]
 
 [project.scripts]
 jseval = "jseval.cli:main"
