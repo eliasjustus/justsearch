@@ -68,6 +68,8 @@ class ComponentsInjectionTest {
             500L,
             1_000L,
             NrtMode.CONTINUOUS,
+            1_000L,
+            500L,
             1_000L);
 
     // Tempdoc 406 Phase 4b: injection via builder.withPrebuiltComponentsForTests

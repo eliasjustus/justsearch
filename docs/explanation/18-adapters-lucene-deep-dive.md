@@ -99,7 +99,7 @@ visible. Both arms are shipped; `continuous` is the default.
 | Mode | Background thread cadence | Foreground search behaviour |
 | :--- | :--- | :--- |
 | `continuous` (default) | `index.nrt.target_max_stale_ms` / `index.nrt.max_stale_ms` (500 ms / 50 ms) | acquires whatever the last background reopen produced |
-| `on_demand` | `index.nrt.background_reopen_ms` (2000 ms), applied to both Lucene bounds | refreshes the `SearcherManager` itself before acquiring |
+| `on_demand` | `index.nrt.background_reopen_ms` (2000 ms), applied to both Lucene bounds and preserved across a bulk-backfill suspend/resume | refreshes the `SearcherManager` itself before acquiring |
 
 In `on_demand` mode the foreground refresh is a four-way decision (`NrtOnDemandPolicy`):
 
@@ -130,6 +130,14 @@ a `BooleanSupplier` on `RuntimeSession`, wired by the Worker from `ForegroundLoa
 search-family RPC is running. An unwired runtime defaults to "always foreground", erring toward
 freshness rather than toward serving a stale searcher; `continuous` never consults it.
 
+**Honest limit — the gauge is process-wide, not per-call provenance.** While any search-family RPC
+is in flight, a concurrent backfill fetch still takes the refresh path. The gate removes the reopen
+storm of an *unattended* backfill (the measured case: an ingest-only run), not every background
+reopen; a run that indexes and searches at the same time keeps some of it. Closing that needs the
+foreground/background distinction threaded from the RPC layer down to the read, which is a larger
+change than this seam. An ingest-only measurement cannot observe the residue, so the re-measure
+this mode is waiting on has to include a search-load arm.
+
 An idle Worker in `on_demand` mode performs no reopens at all: the background thread still wakes
 every `background_reopen_ms`, but `DirectoryReader.openIfChanged` returns null on an unchanged
 index, so no reader is swapped and `index.runtime.reopen_count` does not move.
@@ -148,6 +156,12 @@ RRD) describe the reopen/commit cadence:
 `IndexWriter` does not expose its segment count publicly (`getSegmentCount()` is
 package-private), so the segment-naming counter is the readable proxy; `DirectoryReader.leaves()`
 on an acquired searcher gives the complementary "segments currently visible" reading.
+
+**All three are per-session and reset on a session swap** — they live on `RuntimeSession`, so
+`DeferredRuntime.upgradeWriter`, a blue/green re-open and the corruption-recovery rebuild each
+start them from zero. They are not process-monotonic. Where a reason-tagged histogram exists
+(`index.runtime.commit_ms`) it accumulates across sessions and is the more complete figure; the
+gauges are for within-run, within-session comparison.
 
 ### 2.3 Read-After-Write Consistency
 

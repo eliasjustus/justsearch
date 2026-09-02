@@ -21,7 +21,12 @@ the finding is a tracked item instead. This is the changeset's original commitme
 ("the losing arm's keys are removed, not left behind") being honoured.
 
 Why the surviving three are keys rather than constants: item 19 is decided **by
-measurement**, and the reopen axis has not been cleanly measured yet. The first
+measurement**, and the reopen axis has not been cleanly measured yet — twice over. The first arm
+rejected the *implementation*, and the independent review then found that
+`CommitOps.resumeNrtRefresh` rebuilt the reopen thread from the raw `index.nrt.*` pair, so
+`index.nrt.background_reopen_ms` silently stopped applying after the first enrichment backfill.
+That arm was therefore not even running the cadence it was configured for. Both defects are fixed
+here; the knob has still never been measured behaving as documented. The first
 attempt rejected the *implementation* (the on-demand seam also fired on
 enrichment-backfill reads, tripling reopen count); that defect is fixed in this PR,
 and the arm needs a re-run on a quiet machine before the mode can be judged. Keeping

@@ -110,6 +110,16 @@ final class RuntimeSession implements AutoCloseable {
   volatile long nrtOnDemandMaxStaleMs;
 
   /**
+   * The bounds the reopen thread was ACTUALLY built with, after {@link NrtMode} resolution — not
+   * the raw {@code index.nrt.*} pair. {@code CommitOps.resumeNrtRefresh} rebuilds the thread after
+   * every bulk-backfill suspend, and reading the raw pair there silently reverted on_demand's slow
+   * background cadence to the continuous 500/50 on the first backfill (885 review B1).
+   */
+  volatile long nrtReopenTargetMs;
+
+  volatile long nrtReopenHardMs;
+
+  /**
    * Is a foreground (user-facing) RPC in flight? The reopen-on-demand seam gates on this so that
    * enrichment-backfill reads, which reach Lucene through the same {@link SearcherBridge}, cannot
    * trigger a refresh. Wired by the Worker from item 3's {@code ForegroundLoad}; defaults to
@@ -256,6 +266,8 @@ final class RuntimeSession implements AutoCloseable {
     this.nrtHardMaxStaleMs = 50L;
     this.nrtMode = NrtMode.CONTINUOUS;
     this.nrtOnDemandMaxStaleMs = 1000L;
+    this.nrtReopenTargetMs = 500L;
+    this.nrtReopenHardMs = 50L;
     this.foregroundActive = () -> true;
     this.knnVectorsFormat = null;
     this.vectorEfSearchOverrideOrNull = null;
@@ -315,6 +327,8 @@ final class RuntimeSession implements AutoCloseable {
     this.nrtHardMaxStaleMs = 50L;
     this.nrtMode = NrtMode.CONTINUOUS;
     this.nrtOnDemandMaxStaleMs = 1000L;
+    this.nrtReopenTargetMs = 500L;
+    this.nrtReopenHardMs = 50L;
     // foregroundActive is NOT reset here: it is builder-supplied above, and this block runs
     // after it. The other knobs are config-derived and are overwritten again by applyComponents.
     this.softDeleteField = SchemaFields.SOFT_DELETE;
@@ -365,6 +379,8 @@ final class RuntimeSession implements AutoCloseable {
     this.nrtHardMaxStaleMs = components.nrtHardMaxStaleMs();
     this.nrtMode = components.nrtMode() != null ? components.nrtMode() : NrtMode.CONTINUOUS;
     this.nrtOnDemandMaxStaleMs = components.nrtOnDemandMaxStaleMs();
+    this.nrtReopenTargetMs = components.reopenTargetMs();
+    this.nrtReopenHardMs = components.reopenHardMs();
     Integer explicitEfSearch =
         resolvedConfig != null && resolvedConfig.index() != null
             ? resolvedConfig.index().vectorEfSearch()

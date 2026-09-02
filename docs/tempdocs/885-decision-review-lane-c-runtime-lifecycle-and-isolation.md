@@ -58,7 +58,9 @@ construction + health sampler wiring, `modules/worker-services/.../services/Grpc
 (in-flight gauge instrumentation only), `modules/ui/.../api/StatusLifecycleHandler.java`,
 `CoreApiAssembly.java` (taps), `modules/app-services/.../worker/KnowledgeServerBootstrap.java`
 (`signalUserActivity` retirement), `modules/adapters-lucene/.../CommitOps.java`, `ComponentsFactory.java:324` +
-`RuntimeSession.java` NRT stale-time defaults (item 19 only), the affected MetricCatalogs
+`RuntimeSession.java` NRT stale-time defaults (item 19 only), `modules/ui/build.gradle.kts`
+(`HEADLESS_AI_ENV_VARS` eval whitelist — arm-selectable knobs only),
+`docs/explanation/18-adapters-lucene-deep-dive.md` (§2.2 NRT), the affected MetricCatalogs
 (`ExtractionMetricCatalog`, `WorkerOpsMetricCatalog`), `modules/app-services/.../gpl/GplJobCoordinator.java`
 and `.../worker/RemoteDocumentService.java` (the four `fetchDocuments` callers, granted for the
 byte-budget item only **[R6b]**), `modules/app-services/.../worker/KnowledgeServerHealthMonitor.java`
@@ -2580,6 +2582,19 @@ Two mechanisms, both verified rather than asserted:
 **Honest limit:** the thread still *wakes* every `background_reopen_ms`. "Idles" means "performs no
 reopen", not "does not run".
 
+**Correction (review B1): mechanism 1 was only true until the first enrichment backfill.**
+`ComponentsFactory` does pass `background_reopen_ms` on both bounds at index open, and the test
+above pins that. But `CommitOps.resumeNrtRefresh` rebuilds the thread after every bulk-backfill
+suspend (`BackfillScheduler` wraps its enrichment tight loop in `withNrtSuspended`), and it read
+the RAW `index.nrt.*` pair — so the 2 s cadence silently reverted to the continuous 500 ms on the
+first backfill and stayed there. The mode looked configured and behaved like the default. Fixed by
+carrying the mode-resolved bounds on `RuntimeSession` (`nrtReopenTargetMs` / `nrtReopenHardMs`, set
+in `applyComponents` beside `nrtMode`) and having `resumeNrtRefresh` read those;
+`NrtOnDemandRefreshTest.onDemandCadenceSurvivesSuspendResume` asserts the thread's own nanosecond
+field across a suspend/resume cycle and was falsified against the pre-fix code, with the
+`continuous` sibling green on both sides. **Every arm in the live window below ran with this defect
+present.**
+
 ### VC.3 Test precision: right reason vs wrong reason
 
 The load-bearing pair is `NrtOnDemandRefreshTest`'s first and third tests. Both suspend the CRTRT
@@ -2658,6 +2673,14 @@ every query forever.
    is, on this codebase, a *delay* on `IndexingLoop.java:634`, and 0 reproduces today exactly.
 6. **The commit-threshold arm needs no new key.** 30 000 / 5000 are set through the existing
    `justsearch.backfill.commit_interval_ms` / `max_docs_before_commit`, as the brief specified.
+7. **`on_demand` applies `background_reopen_ms` to BOTH Lucene bounds, unconditionally.** The brief
+   said "the CRTRT runs at a slow background cadence"; Lucene takes two bounds
+   (`targetMaxStaleSec` / `targetMinStaleSec`, the latter used while a caller waits on a
+   generation), and rather than keep the configured 50 ms tighter bound this passes 2 s for both.
+   Rationale: nothing in this codebase calls `waitForGeneration`, so the tighter bound has no
+   consumer, and keeping it would leave a 50 ms wake-up in a mode whose whole purpose is to stop
+   the background thread doing work. Declared here because it is a choice, not a reading of the
+   brief; `onDemandModeSlowsTheBackgroundReopenThread` asserts both fields.
 
 ### VC.6 Findings
 
@@ -2666,14 +2689,24 @@ than quietly folding them into the feature commit, because both are the same sha
 the on-demand arm silently degrades to "no better than continuous, with extra work" and nothing
 logs, tests red, or metrics move:
 
-1. **A writer swap cancelled the mode** (`NrtReopenStats.install`). The freshness watermark started
-   at a -1 sentinel and is max-accumulated (so a late writer cannot move it backwards). Both are
-   right within a session and wrong across `DeferredRuntime.upgradeWriter`, which builds a fresh
-   writer whose sequence numbers restart low: a watermark carried over from the old writer would
-   never match again, so every query would refresh forever. Fixed by seeding both baselines at
-   listener installation — the `SearcherManager` is built over a reader opened from that writer, so
-   it already covers everything written so far. `onDemandDoesNotReopenOnAnUntouchedIndex` pins the
-   visible consequence (a fresh index does not reopen on its first search).
+1. **A mid-session re-open cancelled the mode** (`NrtReopenStats.install`). The freshness
+   watermark started at a -1 sentinel and is max-accumulated (so a late writer cannot move it
+   backwards). Both are right within one writer's life and wrong across a **re-open on the same
+   session**: `RuntimeSession.openComponents` runs up to three times per session (`:471`, `:499`,
+   `:536` — the corruption-recovery and rebuild paths) against a single `final NrtReopenStats`, and
+   the second writer restarts its sequence numbers low, so the carried-over watermark would never
+   match again and every query would refresh forever. Fixed by SETTING both baselines at listener
+   installation rather than accumulating.
+
+   **Correction, and the reason this entry is rewritten (review S4).** The first version of this
+   paragraph attributed the defect to `DeferredRuntime.upgradeWriter` and cited
+   `onDemandDoesNotReopenOnAnUntouchedIndex` as its test. Both were wrong. `upgradeWriter` builds a
+   **new** `RuntimeSession`, hence a new `NrtReopenStats`, so nothing carries across it — the real
+   trigger is the within-session re-open above. And the cited test passes against the unfixed code:
+   a refresh that finds nothing changed reports `didRefresh=false` and never increments the reopen
+   counter, so the symptom is invisible to it. That was an `audit-without-test` claim.
+   `NrtReopenStatsTest.reinstallReseedsTheWatermarkFromTheNewWriter` now tests the mechanism
+   directly, and was falsified against the pre-fix seeding (red without it, green with it).
 2. **A lost refresh race advanced the watermark** (`SearcherBridge.refreshOnDemand`).
    `SearcherManager.maybeRefresh()` returns false when another thread held the refresh lock and
    this call did nothing; the seam recorded coverage regardless, reasoning that the concurrent
@@ -2829,9 +2862,24 @@ already-made decision.
 
 One window, one machine, one branch: `worktree-lane-C5` at `0a193755`, which carries **all** of
 lane C — the persistent extraction pool (item 14), the foreground duty cycle (item 3), the
-internal health sampler + retry ladder (items 6/21) and the cadence candidate (item 19). Every arm
-below therefore measures the lane as it would ship, not one item in isolation. The orchestrator
-held the shared-stack lease; no dev-runner stack and no other GPU consumer ran alongside.
+internal health sampler + retry ladder (items 6/21) and the cadence candidate (item 19). The
+orchestrator held the shared-stack lease; no dev-runner stack and no other GPU consumer ran
+alongside *at the start* (see the contamination note below).
+
+**Measurement base, stated precisely: `worktree-lane-C5` at pre-merge HEAD `0a193755`'s first
+parent, i.e. the branch BEFORE `origin/main` was merged in.** These arms therefore do **not**
+measure the lane exactly as it ships. The post-window merge brought **166 files (+7,128 lines)** of
+lane C's own reviewed work that the window never ran: #595's argfile fix and factory probe, and the
+pool/pacing review fixes from #595/#598/#600. So every number below is "lane C as implemented in
+this branch at window time", not "lane C as merged".
+
+What that does and does not undermine: the **item 19** comparison is internally valid, because all
+of its arms ran against the same base and differ only in their own config. **Item 3's** acceptance
+does not rest on these arms alone — the post-fix chaos witness (the rewritten "Time Lord" case in
+`ChaosSuiteTest`, which runs against the merged code) is the other leg, and the two agree. **Item
+14's** live evidence is the weakest against this caveat, since the argfile fix landed after it;
+what it establishes is that the child spawns and serves real files from a real dist, which the
+argfile fix only makes *more* robust.
 
 ### How each arm was run
 
@@ -2866,7 +2914,8 @@ campaign will hit them again:
    `HEADLESS_AI_ENV_VARS`, so every arm would have silently measured the default — exactly the
    failure this tempdoc's own live-window plan warned about ("an arm that silently fell back to
    `continuous` is the single most likely way this window produces a 'no difference' result for
-   the wrong reason"). The seven keys were added to the whitelist, following the precedent the
+   the wrong reason"). The six keys were added to the whitelist (a seventh, `JUSTSEARCH_INDEX_COMMIT_IDLE_MS`, was
+   added for the window and removed with its key), following the precedent the
    file already records for tempdocs 410, 771 and 789. **Proof it now works, taken before any arm
    was trusted:** arm 1(a) resolved `index.nrt.background_reopen_ms = 2000` with
    `source: env_var` while every other knob read `source: default`.
@@ -3145,11 +3194,18 @@ side needs a mixed text+binary corpus, which does not currently exist on disk.
 
 ### What still needs a re-run
 
-1. **A3b** — the commit axis re-measured after the journal-drain fix. It ran contaminated
-   (36.1 docs/s vs A3's 8.9, so the fix clearly helped, but the comparison against A1's 114.0 is
-   not clean). Re-run on a quiet machine.
+1. ~~**A3b** — the commit axis re-measured after the journal-drain fix.~~ **SUPERSEDED** by the
+   resolution below: the journal-drain change was reverted along with `index.commit.idle_ms`, and
+   item 3 of this list says a commit-cadence arm is not worth re-running at all until
+   `COMMIT_TIMER_INTERVAL_MS` is configurable. A3b measured a code shape that no longer exists.
 2. **A2 after the foreground-signal fix** — the reopen axis has not yet been measured with a
-   correct seam; the A2 number rejects *this implementation*, not the idea.
+   correct seam; the A2 number rejects *this implementation*, not the idea. **The re-run needs a
+   search-load arm** (`--search-load-qpm 10`) alongside the ingest-only one: the foreground gate is
+   a process-wide gauge, so an ingest-only arm issues almost no foreground traffic and cannot
+   observe the residual reopens a concurrent search admits (review S3). **And note A2's 2.9×
+   reopen figure was measured with the B1 suspend/resume defect present** — the background thread
+   silently reverted to the continuous 500 ms cadence after the first enrichment backfill, so that
+   arm was not running the cadence it was configured for either.
 3. **A commit-cadence arm is not worth re-running at all** until `COMMIT_TIMER_INTERVAL_MS` is
    configurable and the backfill's own commits are in scope — the attribution table above shows
    the current knobs cannot reach 72% of the commits.
@@ -3175,6 +3231,25 @@ it defaults to always-foreground (errs toward freshness, never toward a stale se
 `onDemandGateIsConsultedPerRead` flipping the predicate on one runtime); at policy level
 `backgroundReadNeverRefreshes` pairs "background" with the strongest possible refresh case.
 **Unit-proven, not field-proven** — arm A2 needs a clean re-run.
+
+**Honest limit (review S3): `foregroundActive` is a process-wide gauge, not per-call provenance.**
+While any search-family RPC is in flight, a concurrent backfill fetch still takes the refresh path.
+The gate removes the reopen storm of an *unattended* backfill — which is what the measured
+ingest-only arm suffered — but not every background reopen; a Worker that indexes and searches
+simultaneously keeps some of it. Closing that needs the foreground/background distinction threaded
+from the RPC layer down to the read. Consequence for the re-measure: **an ingest-only A2 cannot
+observe the residue**, so the re-run needs a `--search-load-qpm 10` arm beside it.
+
+**1b. The mode-resolved cadence now survives a bulk-backfill suspend/resume (review B1).**
+`CommitOps.resumeNrtRefresh` rebuilt the reopen thread from the raw `index.nrt.*` pair, so
+`on_demand`'s 2 s background cadence reverted to the continuous 500 ms after the first enrichment
+backfill and stayed there — the mode looked configured and behaved like the default. The
+mode-resolved bounds now travel on `RuntimeSession` (`nrtReopenTargetMs` / `nrtReopenHardMs`, set
+in `applyComponents` beside `nrtMode`) and `resumeNrtRefresh` reads those.
+`onDemandCadenceSurvivesSuspendResume` asserts the thread's own nanosecond fields across the cycle
+and was falsified against the pre-fix code; the `continuous` sibling is green on both sides.
+**Every arm in the live window ran with this defect present**, which is one more reason A2's 2.9×
+reopen figure cannot be read as a verdict on the mode.
 
 **2. `index.commit.idle_ms` is deleted, wiring and all.** `EnvRegistry`, `ResolvedConfig.Index`, the
 builder's YAML contribution and resolution, `IndexingLoop`'s field/accessor/gate,
@@ -3234,6 +3309,12 @@ one) — retargeted to `main` after #600 squashed. #602 closes the lane.
   the exception text; the attempts cap has one home; queue throughput/contention metrics added.
 * **Item 19 — cadence.** The coupling defect fixed in chunk 1 (both reopen-thread construction sites
   read the configured `index.nrt.*`). Then **measured, and rejected as implemented** — see below.
+* **ADR-0048 "Extraction isolation and indexing pacing"** — the record this lane reserved at the top
+  of this tempdoc, written in PR 4 with seven `governance/adr-probes.v1.json` probes (child-pool
+  presence, the two grep-absent guards for the retired pause and its eval hatch, the Time Lord chaos
+  witness, the `ForegroundLoad` gauge test, the `RETRY_EXHAUSTED` terminus, and the
+  `index.nrt.mode` default). One was bite-tested by flipping the default to `on_demand`:
+  `adr-coverage` fails, and passes again on restore.
 
 **Item 19, stated plainly.** The candidate did not ship. Both axes measured *worse* than control
 (reopen 193 → 568, throughput 114 → 97.1 docs/s on the reopen axis; throughput → 8.9 docs/s and
@@ -3269,9 +3350,12 @@ sequence number, not a doc counter or commit lag, because only it counts RAM-buf
 could never terminate; item 14 measures extraction, not enrichment). (e) Arm 1(c) was deliberately
 stopped at 20 min 51 s, the same call the chunk-1 baseline made for its own arm (c).
 
-**Skipped.** Nothing from the contract. Item 19's *shipping* decision is a rejection on measured
-evidence, not a skip — the contract asked for measurement and said "ship only what the numbers
-justify".
+**Skipped.** Nothing from the contract *now*. One thing had been silently skipped and is corrected
+in this round: **ADR-0048** was reserved at line 74 of this tempdoc and never written, while the
+first version of this section claimed "Skipped: nothing" — an unwritten reserved ADR is a skip, and
+saying otherwise made the report-back wrong about itself (review S6). It is written in this PR.
+Item 19's *shipping* decision is a rejection on measured evidence, not a skip — the contract asked
+for measurement and said "ship only what the numbers justify".
 
 **Evidence — full suite on the merged tree.** `./gradlew.bat cleanTest test -PskipWebBuild=true
 --no-build-cache`: **8,763 tests / 41 skipped / 0 failures / 0 errors** across 33 modules. Execution
@@ -3288,9 +3372,21 @@ extraction-sandbox shape is **gone**, as #595's argfile fix predicted: `worker-s
 `skills-sync --check`, `verify-canonical-doc-links` (154 files),
 `verify-runtime-config-matrix` (yaml=111, pairs=249), `module-deps --check-canonical` all OK.
 `wire` not run — no `.proto` changed; ui-web typecheck not run — no `.ts` changed. jseval:
-**2,698 passed / 3 failed**, the three being the pinned `inspect_ai` missing-optional-dep shape.
+**3,032 passed / 10 skipped / 0 failed** with the `[dev,agent]` extras installed
+(`pip install -e "scripts/jseval[dev,agent]"`). Bare pytest without them does not report a partial
+pass — four test modules fail at *collection* (`inspect_ai`, `hypothesis`) and **0 tests run**. The
+earlier "2,698 passed / 3 failed" figure in this section matched neither shape and is corrected
+(review S11). The extras are now installed on this machine, so the
+`jseval-pytest-missing-optional-deps-local-env` pin's exit probe passes; the pin is deleted in this
+PR and the prerequisite is stated in `docs/reference/jseval-pipeline-reference.md` instead, where
+it is acted on rather than remembered.
 
-**Measurements.**
+**Measurements.** All live figures below were taken on `worktree-lane-C5` at **pre-merge HEAD**,
+before `origin/main` was merged in — a delta of **166 files (+7,128 lines)** of lane C's own
+reviewed work (#595's argfile fix and factory probe, the #595/#598/#600 pool and pacing review
+fixes). They are "the lane as implemented in this branch at window time", not "as merged". Item 19's
+arms remain internally comparable (same base, differing only in their own config); item 3's
+acceptance also rests on the post-fix chaos witness, which runs against the merged code and agrees.
 
 *Item 3 — baseline vs after (scifact, primary indexing docs/s):*
 

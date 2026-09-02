@@ -424,8 +424,12 @@ class ComponentsFactoryTest {
       assertEquals(750L, c.nrtOnDemandMaxStaleMs());
       assertEquals(2_000_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMaxStaleNS"));
       assertEquals(2_000_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMinStaleNS"));
+      assertEquals(500L, c.nrtTargetMaxStaleMs(), "the raw index.nrt.* pair is carried unchanged");
       assertEquals(
-          500L, c.nrtTargetMaxStaleMs(), "the index.nrt.* pair is still carried, just unused here");
+          2000L,
+          c.reopenTargetMs(),
+          "the MODE-RESOLVED bound is what the thread was built with, and what a suspend/resume "
+              + "rebuild must reuse (see NrtOnDemandRefreshTest)");
     } finally {
       closeComponents(c);
     }

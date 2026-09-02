@@ -323,7 +323,9 @@ final class ComponentsFactory {
             nrtTargetMs,
             nrtHardMs,
             nrtMode,
-            nrtOnDemandMaxStaleMs);
+            nrtOnDemandMaxStaleMs,
+            reopenTargetMs,
+            reopenHardMs);
       }
 
       w = new IndexWriter(dir, cfg);
@@ -352,7 +354,9 @@ final class ComponentsFactory {
           nrtTargetMs,
           nrtHardMs,
           nrtMode,
-          nrtOnDemandMaxStaleMs);
+          nrtOnDemandMaxStaleMs,
+          reopenTargetMs,
+          reopenHardMs);
     } catch (Exception e) {
       // Best-effort cleanup to avoid leaking file handles (especially on Windows).
       try {

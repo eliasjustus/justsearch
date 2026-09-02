@@ -2,6 +2,7 @@
 package io.justsearch.adapters.lucene.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator;
@@ -53,6 +54,27 @@ final class NrtOnDemandRefreshTest {
   /** Opens a runtime under the given NRT config with the background reopen thread suspended. */
   private static RunningRuntime openWithBackgroundReopenStopped(String nrtBlock) throws IOException {
     return openWithBackgroundReopenStopped(nrtBlock, () -> true);
+  }
+
+  /** Opens a runtime under the given NRT config with the background reopen thread STILL RUNNING. */
+  private static RunningRuntime open(String nrtBlock) throws IOException {
+    Path dataDir = Files.createTempDirectory("justsearch-nrt-ondemand-");
+    Path cfg = Files.createTempFile("justsearch-nrt-ondemand-", ".yaml");
+    Files.writeString(cfg, config(dataDir, nrtBlock));
+    System.setProperty("justsearch.config", cfg.toString());
+    return IndexSchema.fromCatalog(
+            FieldCatalogDef.forTesting(DIM),
+            new SsotCommitMetadataSource(),
+            new JsonSchemaCommitMetadataValidator())
+        .ephemeral()
+        .open();
+  }
+
+  /** Reads a {@code ControlledRealTimeReopenThread}'s own nanosecond bound by reflection. */
+  private static long reopenThreadStaleNs(Object crtrt, String fieldName) throws Exception {
+    var f = crtrt.getClass().getDeclaredField(fieldName);
+    f.setAccessible(true);
+    return f.getLong(crtrt);
   }
 
   /** As above, with an explicit foreground predicate — the seam's gate. */
@@ -309,6 +331,61 @@ final class NrtOnDemandRefreshTest {
       assertEquals(0L, runtime.indexCountOps().docCount(), "background read: no reopen");
       foreground.set(true);
       assertEquals(2L, runtime.indexCountOps().docCount(), "foreground read: reopens and sees both");
+    } finally {
+      closeQuietly(runtime);
+      restore(prev);
+    }
+  }
+
+  /**
+   * 885 review B1. {@code CommitOps.resumeNrtRefresh} rebuilds the reopen thread after every
+   * bulk-backfill suspend ({@code BackfillScheduler} wraps its enrichment tight loop in
+   * {@code withNrtSuspended}). It used to rebuild from the RAW {@code index.nrt.*} pair, so
+   * on_demand's 2 s background cadence silently reverted to the continuous 500 ms on the first
+   * backfill — the mode looked configured and behaved like the default from then on.
+   *
+   * <p>Asserts the thread's own nanosecond field before and after a suspend/resume cycle. Against
+   * the pre-fix code the second assertion reads 500,000,000 instead of 2,000,000,000.
+   */
+  @Test
+  @DisplayName("on_demand: the background cadence survives a bulk-backfill suspend/resume")
+  void onDemandCadenceSurvivesSuspendResume() throws Exception {
+    String prev = System.getProperty("justsearch.config");
+    RunningRuntime runtime = null;
+    try {
+      runtime = open(ON_DEMAND);
+      Object before = runtime.session().crtrt;
+      assertNotNull(before, "on_demand still runs a background thread, just a slow one");
+      assertEquals(2_000_000_000L, reopenThreadStaleNs(before, "targetMaxStaleNS"));
+
+      runtime.commitOps().withNrtSuspended(() -> {});
+
+      Object after = runtime.session().crtrt;
+      assertNotNull(after, "resume must rebuild the thread");
+      assertEquals(
+          2_000_000_000L,
+          reopenThreadStaleNs(after, "targetMaxStaleNS"),
+          "the rebuilt thread must keep the MODE-RESOLVED cadence, not the raw index.nrt.* pair");
+      assertEquals(2_000_000_000L, reopenThreadStaleNs(after, "targetMinStaleNS"));
+    } finally {
+      closeQuietly(runtime);
+      restore(prev);
+    }
+  }
+
+  /** The continuous control: the same cycle must keep the 500/50 pair. */
+  @Test
+  @DisplayName("continuous: suspend/resume keeps the configured index.nrt.* bounds")
+  void continuousCadenceSurvivesSuspendResume() throws Exception {
+    String prev = System.getProperty("justsearch.config");
+    RunningRuntime runtime = null;
+    try {
+      runtime = open(CONTINUOUS);
+      runtime.commitOps().withNrtSuspended(() -> {});
+      Object after = runtime.session().crtrt;
+      assertNotNull(after);
+      assertEquals(500_000_000L, reopenThreadStaleNs(after, "targetMaxStaleNS"));
+      assertEquals(50_000_000L, reopenThreadStaleNs(after, "targetMinStaleNS"));
     } finally {
       closeQuietly(runtime);
       restore(prev);

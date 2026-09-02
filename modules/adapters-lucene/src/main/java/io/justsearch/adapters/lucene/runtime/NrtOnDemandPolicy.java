@@ -28,6 +28,11 @@ final class NrtOnDemandPolicy {
    *     reach Lucene through the same {@code SearcherBridge} as searches do, so mode alone cannot
    *     tell them apart; without this gate every backfill document fetch reopened the searcher
    *     (tempdoc 885 live window: reopen count 193 -> 568, indexing throughput -15%).
+   *     <p><b>Honest limit:</b> this is a PROCESS-WIDE gauge, not per-call provenance. While any
+   *     search-family RPC is in flight, a concurrent backfill fetch still takes the refresh path —
+   *     the gate removes the reopen storm of an unattended backfill, not every background reopen.
+   *     Closing that needs per-call provenance threaded from the RPC layer. An ingest-only arm
+   *     (885's A2) cannot observe the residue, because it issues almost no foreground traffic.
    * @param writerSeqNo {@code IndexWriter.getMaxCompletedSequenceNumber()} now
    * @param seqNoAtLastReopen the sequence number the current searcher is known to cover, or -1 if
    *     it has never been reopened

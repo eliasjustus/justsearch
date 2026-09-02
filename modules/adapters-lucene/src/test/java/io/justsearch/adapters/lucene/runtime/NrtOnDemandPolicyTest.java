@@ -47,6 +47,11 @@ final class NrtOnDemandPolicyTest {
         NrtOnDemandPolicy.decide(NrtMode.ON_DEMAND, true, 43L, 42L, MAX_STALE + 1, MAX_STALE));
   }
 
+  /**
+   * Guards the {@code -1} sentinel only. It is UNREACHABLE in production: {@code
+   * NrtReopenStats.install} seeds the watermark from the writer at open, so a read-write session
+   * never presents -1 to the policy. Kept as a total-function guard, not as a behaviour claim.
+   */
   @Test
   @DisplayName("a searcher that has never been reopened blocks, so the first query cannot miss")
   void neverReopenedBlocks() {

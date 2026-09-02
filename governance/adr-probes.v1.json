@@ -468,7 +468,9 @@
       "paths": [
         "modules"
       ],
-      "include": [".java"],
+      "include": [
+        ".java"
+      ],
       "note": "Scoped to Java sources across all modules: the symbol must not come back in the controller, in a helper, or in a test that would keep a resurrected path green. Docs and tempdocs may still NAME the retired helper (retire-with-a-sweep asks for 'delete or label'), which is why the probe does not scan docs/."
     },
     {
@@ -501,6 +503,83 @@
         "modules/app-services/src/main/java/io/justsearch/app/services/conversation/HierarchicalShapeRunner.java"
       ],
       "note": "Scoped to the one file that owned the constant. The WHY comment at its old site deliberately names the retired LITERAL (5000) and not the symbol, so the label retire-with-a-sweep asks for does not fight the probe."
+    },
+    {
+      "id": "adr-0048-extraction-child-pool-present",
+      "adr": "0048",
+      "premise": "Crash isolation IS the persistent child pool. If PersistentExtractionSandbox disappears (folded back into the Worker JVM, or replaced by a per-file spawn), ADR-0048's first decision is no longer implemented and a looping parser takes the Worker down again.",
+      "kind": "grep-present",
+      "pattern": "class PersistentExtractionSandbox",
+      "paths": [
+        "modules/worker-services/src/main/java/io/justsearch/indexerworker/extract/PersistentExtractionSandbox.java"
+      ],
+      "expect": 1,
+      "note": "expect 1 is the population: one class declaration in its own file, not a ratchet."
+    },
+    {
+      "id": "adr-0048-no-user-active-pause",
+      "adr": "0048",
+      "premise": "The duty cycle REPLACED the pause; it did not sit beside it. isUserActive/signalUserActivity returning anywhere in main source would mean the pause is back, and a pause is a full stop under a continuous query loop (measured: 0 docs/s).",
+      "kind": "grep-absent",
+      "pattern": "(boolean|void)\\s+(isUserActive|signalUserActivity)\\s*\\(",
+      "paths": [
+        "modules/worker-services/src/main/java",
+        "modules/indexer-worker/src/main/java",
+        "modules/app-services/src/main/java"
+      ],
+      "note": "Matches the DECLARATION, not the identifier: both names survive in javadoc prose that explains what the duty cycle replaced (ForegroundLoad, IndexingPacing), and deleting that prose would lose the history. The property is that no such method exists to call."
+    },
+    {
+      "id": "adr-0048-no-eval-breath-hold-hatch",
+      "adr": "0048",
+      "premise": "The eval-only escape hatch justsearch.eval.disable_breath_holding was deleted with the pause. Its return would mean measurement and production diverge again — and 885 [R1] showed the hatch could never even reach the Worker, so it measured nothing.",
+      "kind": "grep-absent",
+      "pattern": "disable_breath_holding",
+      "paths": [
+        "modules/worker-services/src/main/java",
+        "modules/indexer-worker/src/main/java",
+        "modules/ui/build.gradle.kts"
+      ]
+    },
+    {
+      "id": "adr-0048-chaos-witness",
+      "adr": "0048",
+      "premise": "The duty-cycle claim is a live property, not a unit one: indexing must be throttled rather than stopped while real foreground searches are in flight. This chaos case is the witness that runs against merged code.",
+      "kind": "test",
+      "file": "modules/system-tests/src/systemTest/java/io/justsearch/systemtests/ChaosSuiteTest.java",
+      "test": "io.justsearch.systemtests.ChaosSuiteTest$TimeLordTests#indexingRunsAtAReducedDutyUnderForegroundSearchLoad"
+    },
+    {
+      "id": "adr-0048-foreground-gauge-is-worker-local",
+      "adr": "0048",
+      "premise": "ForegroundLoad is a worker-services type so it survives a Head/Worker merge; the gRPC interceptor that feeds it is the throwaway adapter. This test pins the gauge's balance across ok/error/cancel closes, which is the property the duty cycle depends on.",
+      "kind": "test",
+      "file": "modules/indexer-worker/src/test/java/io/justsearch/indexerworker/server/ops/ForegroundLoadInterceptorTest.java",
+      "test": "io.justsearch.indexerworker.server.ops.ForegroundLoadInterceptorTest#okCloseBalancesTheGauge"
+    },
+    {
+      "id": "adr-0048-retry-exhausted-terminal",
+      "adr": "0048",
+      "premise": "A permanently failing file must reach a VISIBLE terminal state rather than silently ceasing to be retried. Losing this constant means the ladder has no terminus and the invisible-abandonment failure returns.",
+      "kind": "grep-present",
+      "pattern": "static final String STATE_RETRY_EXHAUSTED",
+      "paths": [
+        "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqliteJobQueue.java"
+      ],
+      "expect": 1,
+      "note": "The declaration site, not every mention: the constant has three readers in the same file, so a bare identifier count would be a refactor-fragile ratchet rather than a presence property."
+    },
+    {
+      "id": "adr-0048-nrt-mode-defaults-continuous",
+      "adr": "0048",
+      "premise": "on_demand was REJECTED by its own measurement and ships opt-in. If the default flips to on_demand without a clean re-measure, the ADR's cadence decision has been reversed silently.",
+      "kind": "grep-present",
+      "pattern": "INDEX_NRT_MODE\\(\"index\\.nrt\\.mode\", \"JUSTSEARCH_INDEX_NRT_MODE\", \"continuous\"\\)",
+      "paths": [
+        "modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java"
+      ],
+      "expect": 1,
+      "note": "expect 1 is the population: one enum declaration. The literal default is part of the pattern precisely so a flip fails the probe."
     }
   ]
 }

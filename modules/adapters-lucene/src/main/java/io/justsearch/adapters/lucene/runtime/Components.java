@@ -28,4 +28,6 @@ record Components(
     long nrtTargetMaxStaleMs,
     long nrtHardMaxStaleMs,
     NrtMode nrtMode,
-    long nrtOnDemandMaxStaleMs) {}
+    long nrtOnDemandMaxStaleMs,
+    long reopenTargetMs,
+    long reopenHardMs) {}
