@@ -611,3 +611,141 @@ The `RuntimeActivationService` VRAM-delta probe literal (§B.c), override = one 
 - **(sharpened) item 5**: force an unfittable top rung and record the llama-server **exit code and
   the log line**, not merely that the reason string changed — that is the measurement this PR's
   `-fit off` change exists to make meaningful.
+
+## Live verification (2026-09-02, lane A PR 1)
+
+Stack built from `2e7d6e99` (`distFrom lane-A`), runId `cb635ac5-d93c-40c5-8b46-97bed2f62afb`,
+API `http://127.0.0.1:50556`, dataDir `modules/ui-web/.dev-data`. Orchestrator holds the lease; all
+observations below are over HTTP, the bundled binary, and log files. llama-server
+`version: 8571 (e397d3885)`, RTX 4070 12281 MiB.
+
+**Status: HALTED after step A. The design premise did not survive contact.** Steps B-F were not
+run; see the decision needed at the end.
+
+### Item 11 precondition — no legacy settings file to migrate
+
+`modules/ui-web/.dev-data` contains NO `settings.json` (`find .dev-data -name "settings.json*"` →
+empty; there is no `ui/` subdirectory). The store had not saved yet, so this data dir carries no
+schema-1 file. `GET /api/settings/v2` reports `llm.contextWindow: 0` — the new auto default,
+reached as a fresh default rather than by migration. The upgrade-path arm (E) therefore needs a
+synthetic schema-1 file, which was not reached before the halt.
+
+`GET /api/runtime/manifest` at rest: `ai.phase = OFFLINE`, `thinkingSupport = UNKNOWN`, and **no**
+`ai.contextWindow` key — correct, nothing had been launched.
+
+### A.1 — `-fit off` exists and is on by default (confirmed)
+
+```
+-fit,  --fit [on|off]                   whether to adjust unset arguments to fit in device memory ('on' or
+                                        'off', default: 'on')
+                                        (env: LLAMA_ARG_FIT)
+```
+
+### A.2 — `-c 262144` at q8_0 LOADS on a 12 GB card. The ladder's top rung is wrong.
+
+```
+llama-server.exe -m Qwen_Qwen3.5-9B-Q4_K_M.gguf -c 262144 -ngl 99 -np 2 -kvu \
+  -ctk q8_0 -ctv q8_0 -fa on -fit off --port 8099
+```
+
+`EXIT=124` — i.e. `timeout 120` had to KILL it, because it was serving. Log:
+
+```
+load_tensors: offloaded 33/33 layers to GPU
+load_tensors:   CPU_Mapped model buffer size =   545.62 MiB
+load_tensors:        CUDA0 model buffer size =  5060.88 MiB
+llama_context: n_seq_max     = 2
+llama_context: n_ctx         = 262144
+llama_context: n_ctx_seq     = 262144
+llama_context: flash_attn    = enabled
+llama_context: kv_unified    = true
+llama_kv_cache:      CUDA0 KV buffer size =  4352.00 MiB
+llama_kv_cache: size = 4352.00 MiB (262144 cells,   8 layers,  2/1 seqs), K (q8_0): 2176.00 MiB, V (q8_0): 2176.00 MiB
+llama_memory_recurrent:      CUDA0 RS buffer size =   100.50 MiB
+sched_reserve:      CUDA0 compute buffer size =   808.02 MiB
+slot   load_model: id  0 | task -1 | new slot, n_ctx = 262144
+slot   load_model: id  1 | task -1 | new slot, n_ctx = 262144
+```
+
+VRAM total: 5060.88 (model) + 4352.00 (KV) + 100.50 (recurrent) + 808.02 (compute) = **10,321 MiB
+of 12,281 MiB**, with the Worker's ONNX encoders also up. The model's ENTIRE 262,144-token training
+context fits, with two slots, on the stated 12 GB dev card.
+
+This falsifies decision 1's sizing, not its mechanism. The fold's [R3] said a dense-attention
+formula would be ~4x wrong and no GGUF reader exists, so the design chose a conservative ladder
+topping out at 32k. The measurement says the conservative rung gives away **8x** the window the
+hardware supports — and llama-server says so itself at 32768:
+
+```
+llama_context: n_ctx_seq (32768) < n_ctx_train (262144) -- the full capacity of the model will not be utilized
+```
+
+### A.2b — an actually-unfittable `-c` IS a hard abort. The step-down gate is correct.
+
+```
+... -c 1000000 -ngl 99 -np 2 -kvu -ctk q8_0 -ctv q8_0 -fa on -fit off
+```
+
+`EXIT=127`, after:
+
+```
+llama_context: n_ctx_seq     = 1000192
+llama_context: n_ctx_seq (1000192) > n_ctx_train (262144) -- possible training context overflow
+llama_kv_cache:      CUDA0 KV buffer size = 16604.75 MiB
+CUDA error: out of memory
+D:\a\llama.cpp\llama.cpp\ggml\src\ggml-cuda\ggml-cuda.cu:98: CUDA error
+```
+
+A rung that does not fit produces a nonzero exit with the process dead — exactly the shape
+`awaitServerHealth` turns into `Reason.PROCESS_EXITED` and `relaunchAtLowerContextRung` acts on.
+**The step-down mechanism and its `PROCESS_EXITED` gate are verified.** `-fit off` did not mask it.
+
+### A.3 — the 32768 rung loads, and reproduces [R2]'s KV measurement exactly
+
+`EXIT=124` (killed at 100 s while serving):
+
+```
+load_tensors: offloaded 33/33 layers to GPU
+llama_context: n_ctx         = 32768
+llama_context: n_ctx_seq     = 32768
+llama_context: flash_attn    = enabled
+llama_context: kv_unified    = true
+llama_kv_cache:      CUDA0 KV buffer size =   544.00 MiB
+llama_kv_cache: size =  544.00 MiB ( 32768 cells,   8 layers,  2/1 seqs), K (q8_0):  272.00 MiB, V (q8_0):  272.00 MiB
+llama_memory_recurrent:      CUDA0 RS buffer size =   100.50 MiB
+sched_reserve:      CUDA0 compute buffer size =   501.00 MiB
+```
+
+544.00 MiB matches the review fold's [R2] figure to the MiB, and `-np 2 -kvu` gives
+`n_ctx_seq == n_ctx == 32768` with `kv_unified = true` — [R1]'s halving does not occur with the
+argv this PR ships. Total at 32k: 6,206 MiB of 12,281.
+
+KV scales linearly and exactly: 544 MiB / 32768 = 4352 MiB / 262144 = **17.0 KiB/token** at q8_0,
+confirming [R3]'s per-token figure and making the window/VRAM relationship predictable after all
+(for THIS model — 8 of 32 layers carry KV, which is why it is so cheap).
+
+### Decision needed before B-F can mean anything
+
+Everything that runs after this point (the `fit` reason, the effective-config row, the
+precedence arms, the RAG arms) reads out a 32768 that the hardware says should be much larger, and
+the forced step-down in D would be measuring a ladder whose top rung is the wrong number. Options,
+for the owner:
+
+1. **Raise the GPU top rung** (e.g. to `n_ctx_train`, or to a 131072/262144 rung) — the ladder,
+   the step-down and `-fit off` all keep working unchanged; only `GPU_TOP_RUNG` moves. The measured
+   headroom at 262144 is ~1.9 GB, which is thin once the reranker and a VDU batch are co-resident
+   (the owner's own open question in this tempdoc), so 131072 (KV ~2176 MiB, total ~8.1 GB) is the
+   conservative version of the same correction.
+2. **Keep 32768 and record why** — but the tempdoc must then say it is a co-residency budget
+   decision, not a fit decision, because "it is what fits" is now measurably false.
+
+Either way the ladder gains a rung above 32768 and the step-down is what protects smaller cards.
+This is a one-constant change plus tests, not a redesign — but it is a design change, so it stopped
+here rather than being made unilaterally.
+
+Not run, and why: B, C, D, E, F all pend this decision. The `JUSTSEARCH_CONTEXT_SIZE` env arm was
+out of scope for the window regardless (needs a restart the orchestrator owns).
+
+Cleanup: all three standalone servers were bounded by `timeout` and are gone
+(`tasklist | grep llama-server` → none; no listeners on 8098/8099). The dev stack was left running
+and untouched; the AI runtime was never activated.
