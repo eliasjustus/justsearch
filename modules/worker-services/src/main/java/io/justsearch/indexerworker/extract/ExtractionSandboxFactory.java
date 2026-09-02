@@ -138,7 +138,15 @@ public final class ExtractionSandboxFactory {
         catalog);
   }
 
-  /** Timeout for the startup probe — bounded, because a broken command must not stall Worker boot. */
+  /**
+   * Deadline for the startup probe's single extraction, because a broken command must not stall
+   * Worker boot.
+   *
+   * <p>This is NOT the whole worst case: a child that hangs is then killed, and that path waits up
+   * to 5 s on {@code Process.waitFor}. Boot therefore blocks for at most ~25 s, and only against a
+   * child that launches and then hangs; the far commoner failure — a command that cannot launch at
+   * all — is rejected by {@code ProcessBuilder.start} at once.
+   */
   public static final Duration PROBE_TIMEOUT = Duration.ofSeconds(20);
 
   private static final String PROBE_MARKER = "justsearch extraction sandbox probe";

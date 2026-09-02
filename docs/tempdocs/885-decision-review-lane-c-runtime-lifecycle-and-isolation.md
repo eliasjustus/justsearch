@@ -1318,8 +1318,10 @@ still-open list, and the dev-stack real-corpus arm is what closes it.
 Spawning is lazy, which is right for steady state, but it meant a broken command — a bad operator
 override, a missing JDK, an unreadable classpath — surfaced only as a per-file `IOException`, on
 every file, forever. `ExtractionSandboxFactory.probeChildCommand` now spawns one child at wiring
-time and runs a trivial extraction through it (bounded at `PROBE_TIMEOUT` = 20 s, so a broken
-command cannot stall Worker boot). On failure `DefaultWorkerAppServices` logs a WARN naming the
+time and runs a trivial extraction through it (`PROBE_TIMEOUT` = 20 s for the extraction, so a broken
+command cannot stall Worker boot; the honest worst case is ~25 s, since killing a child that
+*hangs* adds the 5 s `waitFor` in `discardChild` — a command that cannot launch is rejected
+immediately). On failure `DefaultWorkerAppServices` logs a WARN naming the
 reason and the command, records
 `extraction.sandbox_restart_total{reason=probe_failed}` as the lifecycle-visible signal, and falls
 back to in-process extraction **for the session** — degraded, but every document still indexes.

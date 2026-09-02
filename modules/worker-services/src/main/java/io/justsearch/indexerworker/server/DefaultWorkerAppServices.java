@@ -457,7 +457,10 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
    * unreachable, and the command is now built in-process by {@link ExtractionSandboxCommand}.
    * {@link EnvRegistry#EXTRACTION_SANDBOX_COMMAND} remains as an operator override.
    */
-  private static TimeboxedContentExtractor buildContentExtractor(
+  // Package-private for DefaultWorkerAppServicesSandboxProbeTest, like parseCsvSet above: the
+  // env-to-extractor chain has no other seam, and the probe-failure branch decides whether a
+  // session extracts at all.
+  static TimeboxedContentExtractor buildContentExtractor(
       @SuppressWarnings("unused") InfraContext ctx,
       ExtractionMetricCatalog catalog,
       OcrMetricCatalog ocrCatalog) {

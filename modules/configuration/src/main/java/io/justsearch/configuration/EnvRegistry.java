@@ -521,7 +521,6 @@ public enum EnvRegistry {
     EXTRACTION_SANDBOX_COMMAND(
         "justsearch.extraction.sandbox.command", "JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND"),
 
-
     // ==================== Ingestion Skip Policy (tempdoc 410 §13) ====================
 
     /**
