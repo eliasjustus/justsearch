@@ -227,14 +227,32 @@ public final class WorkerMethvinWatcher implements AutoCloseable {
    *
    * <p>The two encodings are NOT interchangeable, and the difference is deliberate. {@code
    * unknownSizeJobs} is a hard suppression input, not a footnote: {@code indexingProgress.ts}
-   * withdraws the byte estimate entirely when {@code unknownSizeJobs * 2 > jobsPending}, so during
-   * a large copy-in — where every CREATE lands here at 0 bytes — the UI shows "N files remaining"
-   * with no byte figure until a later MODIFY restates the size. That is the intended 813 behaviour
-   * ("an absent estimate is an absent segment"): withholding a number beats showing one that
-   * understates a mid-write backlog by gigabytes with nothing marking it incomplete. Nothing
-   * re-stats at processing time — {@code size_bytes} is written only by the enqueue path — so the
-   * healing is the next event for the path ({@code INSERT OR REPLACE} restates the row), not a
-   * later read.
+   * withdraws the byte estimate entirely when {@code unknownSizeJobs * 2 > jobsPending}. So a
+   * copy-in whose in-flight CREATEs come to outnumber half the pending backlog shows
+   * "N files remaining" with no byte figure; a sequential copy against a deep existing backlog
+   * stays under the ratio and keeps its estimate. The suppression is conditional on that ratio,
+   * not on "a copy is happening".
+   *
+   * <p>That is the intended 813 behaviour ("an absent estimate is an absent segment"): withholding
+   * a number beats showing one that understates a mid-write backlog by gigabytes with nothing
+   * marking it incomplete.
+   *
+   * <p>How long the unknown lasts, stated honestly. Nothing re-stats at processing time — {@code
+   * size_bytes} is written only by the enqueue path — so the row is healed by the next watcher
+   * event for that path ({@code INSERT OR REPLACE} restates it), not by a later read. Two cases
+   * make that window longer than "a moment":
+   * <ul>
+   *   <li>{@link FileHasher#LAST_MODIFIED_TIME} (see {@code registerRoot}) suppresses a MODIFY
+   *       whose mtime matches the recorded one, and Windows updates an open file's mtime lazily —
+   *       typically at close. For a large copy the healing MODIFY therefore tends to arrive when
+   *       the copy FINISHES, so the unknown window is roughly the file's whole copy duration, not
+   *       a few seconds.
+   *   <li>If no further event ever arrives — a file created empty and left empty, or a create and
+   *       write that land inside one mtime tick — the row keeps {@code UNKNOWN} for as long as it
+   *       stays PENDING/PROCESSING, i.e. until it is indexed and leaves the aggregate entirely.
+   * </ul>
+   * Both are accepted: an unknown that persists is still a true statement about what this
+   * producer observed, whereas the known {@code 0} it replaces was false for the entire window.
    *
    * <p>Scoped to live events on purpose: the bulk-walk producers ({@code WorkerScanOps},
    * {@code SyncDirectoryOps}) construct from {@code attrs.size()} on a settled file, where a 0 is a

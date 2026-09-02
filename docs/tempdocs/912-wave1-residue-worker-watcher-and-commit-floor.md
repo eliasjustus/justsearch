@@ -100,20 +100,39 @@ admits the weight is unvouched". **That is wrong, and the difference is the poin
   jobsPending) return null;` — the byte weight is withdrawn entirely.
 * `TaskList.ts:95` renders `null` as an absent segment: "N files remaining", no byte figure.
 
-**Consequence, accepted deliberately.** During a large copy-in every CREATE lands at 0 bytes and
-is now recorded UNKNOWN, so `unknownSizeJobs` can exceed half of `jobsPending` and the UI shows
-no byte estimate until later MODIFY events restate the sizes (`SqliteJobQueue.java:390-393`,
-`INSERT OR REPLACE`). Nothing re-stats at processing time — `size_bytes` is written **only** by
-the enqueue path (`SqliteJobQueue.java:392` and `:473`) — so healing is the next event for the
-path, not a later read.
+**Consequence, accepted deliberately — and it is conditional, not automatic.** A CREATE now
+lands as UNKNOWN, so a copy-in whose in-flight CREATEs come to outnumber half the pending backlog
+trips `unknownSizeJobs * 2 > jobsPending` and the UI drops the byte figure. A **sequential** copy
+against a deep existing backlog stays under the ratio and keeps its estimate. The trigger is the
+ratio, not "a copy is happening" — an earlier draft stated it unconditionally.
+
+**How long the unknown window lasts.** Nothing re-stats at processing time — `size_bytes` is
+written **only** by the enqueue path (`SqliteJobQueue.java:392` and `:473`) — so a row is healed
+by the next watcher event for that path (`INSERT OR REPLACE`, `SqliteJobQueue.java:390-393`), not
+by a later read. Two cases make that window longer than an earlier draft's "a few seconds":
+
+* `FileHasher.LAST_MODIFIED_TIME` (`WorkerMethvinWatcher.java:139`) suppresses a MODIFY whose
+  mtime equals the recorded one, and Windows updates an open file's mtime lazily — typically at
+  close. For a large copy the healing MODIFY therefore tends to arrive when the copy **finishes**,
+  so the unknown window is roughly the file's whole copy duration.
+* If no further event ever arrives — a file created empty and left empty, or a create+write
+  landing inside one mtime tick — the row keeps UNKNOWN for as long as it stays PENDING or
+  PROCESSING, i.e. until it is indexed and leaves the aggregate entirely. There is no later
+  correction.
+
+Both are accepted, and the reason is the same in each: an unknown that persists is still a true
+statement about what this producer observed, whereas the known `0` it replaces was false for that
+entire window.
 
 This is judged **right, and 813-consistent**, not a regression. `TaskList.ts:95`'s own contract is
 that each figure "is withdrawn ENTIRELY (no placeholder, no '0 B') whenever the projection says it
 has no honest basis for it — so an absent estimate is an absent segment." Withholding a number
 during the exact window where the number would be wrong is that rule operating as designed; the
 old behaviour showed a confident figure understating a mid-write backlog by gigabytes. The
-trade is "no estimate for a few seconds" against "a badly wrong estimate", and 813 already
-decided which of those it prefers.
+trade is "no estimate for as long as the copy runs" against "a confidently wrong estimate over
+that same window", and 813 already decided which of those it prefers. **Decision recorded
+(2026-09-02): the unknown-size encoding is KEPT** — reviewer and orchestrator concur that an
+absent segment beats a confidently wrong figure, per 813.
 
 **A second asymmetry, deliberately left in place.** The bulk-walk producers record a known `0`
 for a genuinely empty file (`WorkerScanOps.java:221`, `SyncDirectoryOps.java:317`, both from
@@ -418,24 +437,35 @@ did not touch a single one of them.** Two families, both from the census:
    earlier window attributing 61/114 commits to backfill is consistent with this being the
    largest single family.
 
-2. **`INDEXING_LOOP_IDLE` (row 10, `IndexingLoop.java:637`) sets a floor of exactly ONE commit
-   per drain-to-idle, invariant to the interval knobs.** The guard at `:634` is
-   `indexedSinceCommit > 0`, and `:640` sets `indexedSinceCommit = 0` immediately after the
-   commit — so on every subsequent idle iteration the guard is false and no further IDLE commit
-   fires. It is one commit per *drain*, not a per-iteration idle tick.
+2. **`INDEXING_LOOP_IDLE` (row 10, `IndexingLoop.java:637`) contributes AT MOST one commit per
+   drain-to-idle, and only for a drain that indexed at least one doc since the last commit.**
+   The guard at `:635` is `indexedSinceCommit > 0`, and `:640` sets `indexedSinceCommit = 0`
+   immediately after the commit — so on every subsequent idle iteration the guard is false and no
+   further IDLE commit fires. It is one commit per *drain*, not a per-iteration idle tick.
 
-   **This corrects an earlier draft of this section, which claimed IDLE "absorbs" the relaxed
-   TIME/BUFFER commits one-for-one.** It cannot: absorption would require IDLE to fire once per
-   commit the knobs suppressed, and the `:640` reset caps it at one per queue-drain regardless of
-   how much work accumulated. The mechanism is a floor, not a transfer. The
-   `EnvRegistry.java:1300-1315` absorption argument is also not applicable to A3 as run: it was
-   written for a window where the safety-net timer was hardcoded at 10 s, and A3 moved the timer
-   to 30 s, so the remaining trigger was not being handed work on the same cadence the argument
+   Crucially the TIME/BUFFER path resets the same variable at `:703`, so a drain in which
+   TIME or BUFFER already committed reaches idle with `indexedSinceCommit == 0` and yields
+   **zero** IDLE commits. The two paths share one counter.
+
+   **This corrects an earlier draft of this section twice over.** That draft claimed IDLE
+   "absorbs" the relaxed TIME/BUFFER commits one-for-one — it cannot, because the `:640` reset
+   caps IDLE at one per drain no matter how much work accumulated. The correction to that draft
+   then over-shot in the other direction, calling the floor "invariant to the interval knobs" and
+   saying a workload draining N times "commits at least N times". Both are wrong: the bound is an
+   **upper** one (at most N, not at least N), and it is **not** knob-invariant — relaxing the
+   knobs moves a given drain's IDLE contribution from 0 to 1, because suppressing that drain's
+   TIME/BUFFER commit is exactly what leaves `indexedSinceCommit > 0` at idle.
+
+   So the honest statement is a **weak, bounded** version of the relabelling idea: relaxing the
+   knobs can convert a drain's TIME/BUFFER commit into an IDLE commit, but the total IDLE
+   contribution is bounded above by the number of drains that indexed work — not by the number of
+   commits the knobs suppressed. A workload with few, long drains cannot be floored high by this
+   path; a workload with many short drains can.
+
+   The `EnvRegistry.java:1300-1315` absorption argument is separately inapplicable to A3 as run:
+   it was written for a window where the safety-net timer was hardcoded at 10 s, and A3 moved the
+   timer to 30 s, so the remaining trigger was not being handed work on the cadence the argument
    assumes.
-
-   Consequence for the run: a workload that drains to empty N times commits at least N times no
-   matter what the interval knobs say. If the corpus produces many drains, that alone can floor
-   the count near its observed value.
 
 ### What the attribution run must show — three distinct outcomes
 
@@ -448,7 +478,7 @@ CONTROL arm first: it discriminates before any comparison is needed.
 | Control: `indexing-loop/idle` share | minority | **majority** | either |
 | Control: `indexing-loop/time` + `/buffer` | non-trivial | non-trivial | **≈ 0** |
 | A3 vs control: `time` + `/buffer` | falls | falls | **already ≈ 0, cannot fall** |
-| A3 vs control: `idle` | ~flat | ~flat (bounded by drain count) | ~flat |
+| A3 vs control: `idle` | ~flat or weakly up | **up**, bounded above by the count of work-indexing drains | ~flat (nothing was suppressed to convert) |
 | A3 vs control: `backfill/*` | **unchanged** | unchanged | unchanged |
 | A3 vs control: total | small fall | small fall | **~no change attributable to the knobs** |
 
@@ -458,7 +488,10 @@ CONTROL arm first: it discriminates before any comparison is needed.
   movement 885 measured is noise or attributable to something else entirely. That is a different
   claim from "the commits moved elsewhere", and the control arm alone settles it.
 * Outcomes 1 and 2 are not exclusive: both predict a small total fall, and they are separated by
-  which family holds the majority share on the control arm.
+  which family holds the majority share on the control arm. Outcome 2 is additionally the only
+  one predicting `indexing-loop/idle` to **rise** between arms — if `idle` is flat while `time` +
+  `/buffer` fall, the suppressed commits did not reappear as IDLE and the fall should show up in
+  the total instead.
 
 Falsifiers, sharpened: if `timer` alone dominates the control arm, none of the three holds and
 the safety-net timer is the ceiling after all. If `backfill/*` *does* fall between control and
