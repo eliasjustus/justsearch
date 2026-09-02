@@ -714,6 +714,101 @@ the two new hook test files; test COUNT within those two files grew with the fol
 both hooks. Codex `hooks.json` equivalents remain optional/undocumented-here per the PR 3 how-to;
 nothing new added for Codex.
 
+**PR 5a outcome (2026-09-02, branch `worktree-886-ledger-1`, stacked on PR 1-4, "first half" of
+PR 5).** Four items implemented: `lib/input-summarizer.mjs`, `lib/transcript-cost.mjs`,
+`baseline-economics.mjs`, `context-attribution.mjs`. `analyze-session.mjs`, `evaluate-session.mjs`,
+`friction-timeline.mjs`, `mine-friction.mjs` are PR 5b (untouched here).
+
+1. **`lib/input-summarizer.mjs`.** `summarizeInput`'s hardcoded `switch (toolName)` now dispatches
+   on `lib/ledger/tool-roles.mjs`'s `roleFor('claude-code', name)` first, refined by NAME only
+   where a role's members disagree on shape (`edit`: Edit vs Write; `search`: Grep vs Glob; `web`:
+   WebSearch vs WebFetch). `read`/`shell`/`spawn` format only their one pre-migration member
+   (Read/Bash/Task) — `PowerShell`/`Agent`/`NotebookEdit`/`MultiEdit` share a role with a formatted
+   sibling but were NEVER given bespoke fields pre-migration, so they fall through to the generic
+   `{tool: name}` default unchanged. `summarizeResponse` never switched on `toolName` and is
+   untouched. **Parity:** a new `lib/input-summarizer.test.mjs` snapshots 37 cases (every pre-
+   migration switch branch, plus PowerShell/Agent/NotebookEdit/MultiEdit/TaskCreate-family/mcp__/
+   unknown-name/non-object-input edge cases) captured from the CURRENT implementation BEFORE the
+   refactor landed; all 37 still pass after — byte-identical output, proven, not asserted.
+
+2. **`lib/transcript-cost.mjs`.** Every `PRICING` row (and `FAST_PRICING`'s `OPUS_FAST`) gained
+   `provider: 'anthropic'`. New export `providerOf(model)`: same exact/longest-prefix match as
+   `findPricing`, fails closed to `null` for an unrecognized or absent model. No OpenAI/Codex row
+   was added — Codex CLI runs on a ChatGPT/Codex subscription here, not metered API tokens, so
+   pricing it would be a MODELLED number standing in for an unmeasured one (documented in a module
+   comment, not just here). New `lib/transcript-cost.test.mjs` (8 tests): every `PRICING` row
+   carries the field; `findPricing`'s existing rate fields are unchanged alongside it;
+   `providerOf` fail-closed cases; agreement with `isKnownModel`'s known/unknown boundary.
+
+3. **`baseline-economics.mjs`.** `discoverSessions`/`findSessionTranscript`'s own `.claude/projects`
+   directory walk now calls `lib/transcript-store.mjs`'s `discoverProjectDirs`/`listSubagentPaths`.
+   `firstTranscriptTimestamp` (the definitional per-file timestamp scan — deliberately NOT mtime,
+   since a resumed session's mtime moves forward on every touch) moved to `lib/transcript-store.mjs`
+   and is imported back and re-exported from `baseline-economics.mjs`, alongside `DEFAULT_PROJECTS_ROOT`,
+   because `record-merge.mjs` imports both names from `baseline-economics.mjs` and that import must
+   keep resolving. **Parity:** `node baseline-economics.mjs --md`/`--json` run against the real
+   corpus (`C:\Users\Elias\.claude\projects`, 68 sessions, 2026-06-18..now) before and after the
+   migration produced an EMPTY diff except: the `generated_at` timestamp, and dollar/token figures
+   for exactly 3 actively-growing sessions (this very session, `0c9df6b0`, plus two other
+   concurrently-running agent sessions on this machine) — confirmed as live-corpus drift, not a
+   migration artifact, by running the POST-migration script twice back-to-back (83s apart) and
+   observing the identical pattern (same 3 sessions drift by a similar magnitude, everything else
+   byte-identical). Discovery mechanics matched exactly in every run: 68 sessions in window, 474
+   raw merge rows (165 attributed + 0 excluded-by-scope + 144 unattributable + 85 duplicate + 80
+   off-main + 0 unresolvable), 309 eligible, 50 zero-merge sessions. `baseline-economics.test.mjs`
+   (64 tests, including the real-fixture-dir `discoverSessions` test) and `record-merge.test.mjs`
+   (8 tests) both green unchanged.
+
+4. **`context-attribution.mjs` — partial migration, with a measured, evidence-based deviation from
+   the literal plan.** Per-`tool_result` tool-NAME resolution now comes from
+   `lib/ledger/claude-adapter.mjs`'s `callsFromClaudeTranscript`'s `ToolEvent`s, replacing this
+   module's own private `tool_use_id -> name` join (verified: 0 file-level tool-name/count
+   mismatches across this machine's full local corpus, one file at a time, before adopting the
+   positional zip described below). CHAR COUNTS were **not** switched to `ToolEvent.outputChars`
+   as the plan's literal wording suggested — a parity run found that would be a real regression,
+   not a rounding difference. `outputChars` is built on the ledger's shared `extractToolResultText`,
+   which — correctly, for its OTHER consumers — extracts only `text`-typed content blocks and drops
+   any other block type, including an `image` block (a screenshot). Since this instrument's whole
+   purpose is "what fills agent context windows" (its own module docstring) and an image block
+   consumes real context regardless of whether its bytes are human-readable, substituting
+   `outputChars` measured a 22.5% drop in aggregate corpus chars (46,913K → 36,375K) with
+   `mcp__claude-in-chrome__computer` losing 99% (4,157K → 47K), `browser_batch` losing 99% (1,688K
+   → 9K), and `Read` losing 52% (9,570K → 4,577K, since `Read` is routinely pointed at screenshot
+   PNGs in this repo's ui-shot workflow) — confirmed by a direct per-file, per-tool diagnostic
+   against the full real corpus, which also confirmed every tool's CALL COUNT matches exactly
+   between old and new logic (0 mismatches), isolating the divergence to the char-computation
+   formula alone. Root-caused, not just observed (per CLAUDE.md's Interrogate Results / Fix Root
+   Causes rules): `Fix Root Causes, Not Symptoms` bars forcing a broken migration to make a
+   parity checkbox true. Resolution: char length is still computed locally (unchanged JSON.stringify
+   fallback for non-string `tool_result` content, image-inclusive), POSITIONALLY zipped against the
+   ledger's name-resolved `ToolEvent`s (both walk the same file's `tool_result` blocks in the same
+   document order); if a file's counts ever disagree, the zip refuses to guess — that file's
+   `tool_result`s are attributed to `'(zip-mismatch)'` with a one-line stderr warning, rather than
+   silently mis-paired by position. **Parity:** `node context-attribution.mjs --all --top 15` run
+   against the real corpus (main checkout's `tmp/agent-telemetry/events.ndjson` +
+   `events.ndjson.prev`, N=14 usable sessions) before and after the final implementation differed
+   by exactly one Bash call count (12108 vs 12107, 0% of chars) between two runs taken ~90 seconds
+   apart on a live, actively-written corpus (this very session was running Bash commands throughout)
+   — the same live-drift signature confirmed for `baseline-economics.mjs` above, not a migration
+   defect. Zero `'(zip-mismatch)'` warnings fired against the real corpus. `context-attribution.test.mjs`
+   (9 tests, exercising `aggregateResults`/`formatAggregate` on synthetic fixtures) green unchanged.
+
+Full suite: `node scripts/agent-analytics/run-all-tests.mjs` → 64/64 (62 → 64, the two new
+`lib/input-summarizer.test.mjs`/`lib/transcript-cost.test.mjs` files). `node --check` clean on all
+seven changed/new files. `git status` scoped to the five migrated `.mjs` files, two new test files,
+and this canonical-doc/tempdoc update. Non-ASCII scan of the diff's added lines found no mojibake
+(em-dash/§/other Unicode punctuation matches this codebase's existing comment style throughout,
+confirmed against the pre-existing files' own unchanged lines). `docs/explanation/21-agent-analytics-pipeline.md`
+updated (harness-neutral-ledger section + four table rows); `node scripts/docs/llmstxt-generate.mjs`
+and `node scripts/docs/skills-sync.mjs` produced no further diffs.
+
+Open item for PR 5b (out of scope here, flagged for whoever picks it up): `overhead-taxonomy.mjs`
+carries its OWN private copy of `firstTranscriptTimestamp` (module-private, not imported from
+`baseline-economics.mjs` or `lib/transcript-store.mjs`) — a fourth copy of the same scan that PR 5a
+did not touch, since PR 5a's brief scoped only the four files above. Worth folding onto
+`lib/transcript-store.mjs`'s now-exported `firstTranscriptTimestamp` when `overhead-taxonomy.mjs`
+is next touched, per this pipeline's "migrate the ONE reader you're already touching" convention.
+
 ### PR 5 — migrate the stale readers, role map, pricing provider (worktree `886-ledger-5`)
 
 - Move `baseline-economics`, `analyze-session`, `evaluate-session`, `friction-timeline`,

@@ -36,6 +36,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import readline from 'node:readline';
 
 export const DEFAULT_PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
 
@@ -160,6 +161,63 @@ export function streamLines(file, onLine) {
     }
     onLine(parsed, i + 1, raw);
   }
+}
+
+/**
+ * Stream a transcript just far enough to find the first parseable line
+ * carrying a `timestamp` field, without slurping the whole (up to ~25MB)
+ * file. Returns a `Promise<Date|null>` — null if no timestamped line was
+ * found within `maxLines`.
+ *
+ * DELIBERATELY NOT the same signal as `listSessions`' mtime window (tempdoc
+ * 886 §12 PR 5a, moved here from baseline-economics.mjs's own copy): a
+ * resumed session's mtime moves forward every time it is touched, so mtime
+ * cannot answer "when did this session's history actually begin" — only a
+ * caller needing that DEFINITIONAL start time (baseline-economics.mjs's
+ * `discoverSessions`, costing a session against a `--since` window) pays for
+ * this per-file scan; `listSessions` above stays the cheap mtime-only list
+ * for a caller — like the signature census — for whom "was this session
+ * touched in the window" is good enough.
+ */
+export function firstTranscriptTimestamp(filePath, { maxLines = 200 } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let lineCount = 0;
+    let stream;
+    try {
+      stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    } catch {
+      resolve(null);
+      return;
+    }
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      rl.close();
+      stream.destroy();
+    };
+    rl.on('line', (line) => {
+      lineCount += 1;
+      const t = line.trim();
+      if (t) {
+        try {
+          const obj = JSON.parse(t);
+          if (obj.timestamp) {
+            const d = new Date(obj.timestamp);
+            if (!Number.isNaN(d.getTime())) {
+              finish(d);
+              return;
+            }
+          }
+        } catch { /* skip malformed line */ }
+      }
+      if (lineCount >= maxLines) finish(null);
+    });
+    rl.on('close', () => finish(null));
+    stream.on('error', () => finish(null));
+  });
 }
 
 // --- minimal turn model -----------------------------------------------

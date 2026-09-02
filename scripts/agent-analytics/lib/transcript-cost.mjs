@@ -25,10 +25,18 @@ import fs from 'node:fs';
 // diffed straight against the published one.
 // Keys are matched exact-first, then by longest prefix (findPricing), so a suffixed id like
 // `claude-opus-4-8[1m]` resolves via the bare `claude-opus-4-8` entry.
-const OPUS_CURRENT = { input: 5.0, output: 25.0, cache_write_5m: 6.25, cache_write_1h: 10.0, cache_read: 0.50 };
-const OPUS_LEGACY = { input: 15.0, output: 75.0, cache_write_5m: 18.75, cache_write_1h: 30.0, cache_read: 1.50 };
-const SONNET_STANDARD = { input: 3.0, output: 15.0, cache_write_5m: 3.75, cache_write_1h: 6.0, cache_read: 0.30 };
-const HAIKU_4_5 = { input: 1.0, output: 5.0, cache_write_5m: 1.25, cache_write_1h: 2.0, cache_read: 0.10 };
+// `provider` (886 §12 PR 5a): every row below is Anthropic — this machine's
+// other harness (Codex CLI) runs on a ChatGPT/Codex subscription, not
+// API-metered tokens, so there is no real per-token rate to record for it;
+// pricing it at OpenAI's API list price would be a MODELLED number standing
+// in for an unmeasured one, not a verified fact like every other row in this
+// table. `providerOf` (below) is deliberately Anthropic-only for that reason
+// — it is not a placeholder waiting for OpenAI rows, it is the honest state
+// of what this repo can price today.
+const OPUS_CURRENT = { input: 5.0, output: 25.0, cache_write_5m: 6.25, cache_write_1h: 10.0, cache_read: 0.50, provider: 'anthropic' };
+const OPUS_LEGACY = { input: 15.0, output: 75.0, cache_write_5m: 18.75, cache_write_1h: 30.0, cache_read: 1.50, provider: 'anthropic' };
+const SONNET_STANDARD = { input: 3.0, output: 15.0, cache_write_5m: 3.75, cache_write_1h: 6.0, cache_read: 0.30, provider: 'anthropic' };
+const HAIKU_4_5 = { input: 1.0, output: 5.0, cache_write_5m: 1.25, cache_write_1h: 2.0, cache_read: 0.10, provider: 'anthropic' };
 
 /**
  * Sonnet-5 is a FLAT $2/$10 — no dated cliff (tempdoc 841, re-verified against
@@ -45,7 +53,7 @@ const HAIKU_4_5 = { input: 1.0, output: 5.0, cache_write_5m: 1.25, cache_write_1
  * would simply have been larger, and still plausible). `SONNET_5_INTRO_ENDS_MS`
  * and `SONNET_5_INTRO` are gone with it — they had no consumer outside this file.
  */
-const SONNET_5 = { input: 2.0, output: 10.0, cache_write_5m: 2.5, cache_write_1h: 4.0, cache_read: 0.20 };
+const SONNET_5 = { input: 2.0, output: 10.0, cache_write_5m: 2.5, cache_write_1h: 4.0, cache_read: 0.20, provider: 'anthropic' };
 
 /**
  * Fast mode bills Opus at a premium and is recorded per-turn as
@@ -68,7 +76,7 @@ const SONNET_5 = { input: 2.0, output: 10.0, cache_write_5m: 2.5, cache_write_1h
  * Cache multipliers stack ON TOP of fast pricing, per that page: 5m write =
  * 1.25x input, 1h write = 2.0x input, cache read = 0.1x input.
  */
-const OPUS_FAST = { input: 10.0, output: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 };
+const OPUS_FAST = { input: 10.0, output: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00, provider: 'anthropic' };
 
 export const FAST_PRICING = {
   'claude-opus-5': OPUS_FAST,
@@ -76,7 +84,7 @@ export const FAST_PRICING = {
 };
 
 export const PRICING = {
-  'claude-fable-5':             { input: 10.0, output: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
+  'claude-fable-5':             { input: 10.0, output: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00, provider: 'anthropic' },
   // Opus 5 was ABSENT until tempdoc 841. findPricing fails closed, so it did not
   // mis-price anything — it priced 36,514 turns and 7.93G cache-read tokens
   // (51.9% of all cache-read in the local corpus) at exactly $0, and every
@@ -186,6 +194,21 @@ export function isFastPricedCorrectly(model, speed) {
 export function isKnownModel(model) {
   if (!model) return true; // absent model info is a different failure mode, not an unknown-model one
   return findEntry(model) != null;
+}
+
+/**
+ * Resolve `model` to its billing provider ('anthropic' for every row in
+ * `PRICING` today — see the module-level comment above `OPUS_CURRENT`).
+ * FAILS CLOSED like `findPricing`/`isKnownModel`: an unrecognized or absent
+ * model resolves to `null`, never a guessed provider. This is deliberately
+ * NOT "does this look like an Anthropic model id" string-sniffing — it reads
+ * the same pricing-table match `findPricing` already uses (exact, else
+ * longest-prefix), so a model this module can price and a model this module
+ * can attribute to a provider are always the same set.
+ */
+export function providerOf(model) {
+  const entry = findEntry(model);
+  return entry ? entry.provider ?? null : null;
 }
 
 export function emptyModelBucket() {

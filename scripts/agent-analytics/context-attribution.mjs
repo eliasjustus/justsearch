@@ -21,6 +21,7 @@ import {
   loadEvents, groupBySession, repoRoot, round,
   TELEMETRY_DIR, SESSIONS_DIR,
 } from './lib/telemetry-io.mjs';
+import { callsFromClaudeTranscript } from './lib/ledger/claude-adapter.mjs';
 
 const DEFAULT_TOP = 10;
 
@@ -78,6 +79,90 @@ function findTranscriptPaths(sessionEvents) {
 
 // --- Transcript parser ---
 
+/**
+ * Per-tool NAME resolution (886 §12 PR 5a) is sourced from the ledger's
+ * `ToolEvent`s (`callsFromClaudeTranscript`), replacing this module's own
+ * private `tool_use_id -> name` join — the same join claude-adapter.mjs's
+ * `toolUseById` already performs. CHAR COUNTS deliberately stay a LOCAL
+ * computation (`localToolResultChars` below, unchanged since before this
+ * migration), NOT `ToolEvent.outputChars`, on measured evidence from a
+ * parity run against this repo's real corpus (886 §12 PR 5a):
+ *
+ *   outputChars is built on the ledger's shared `extractToolResultText`,
+ *   which — correctly, for its OTHER consumers — extracts only `text`-typed
+ *   content blocks and drops any other block type (an `image` block, i.e. a
+ *   screenshot). This instrument's whole purpose is "what fills agent
+ *   context windows" (module docstring) and an image block consumes real
+ *   context regardless of whether its bytes are human-readable, so a
+ *   text-only count systematically UNDERSTATES exactly the tools this repo
+ *   leans on hardest for visual verification (ui-shot / claude-in-chrome).
+ *   Substituting outputChars measured a 22.5% drop in aggregate corpus chars
+ *   (46,913K -> 36,375K) with `mcp__claude-in-chrome__computer` losing 99%
+ *   (4,157K -> 47K), `browser_batch` losing 99% (1,688K -> 9K), and `Read`
+ *   losing 52% (9,570K -> 4,577K, since Read is routinely pointed at
+ *   screenshot PNGs here) — not a rounding difference, a different metric.
+ *   See docs/tempdocs/886-agent-token-efficiency-review.md's PR 5a outcome
+ *   paragraph for the full measurement.
+ *
+ * The two joins are POSITIONALLY zippable: both walk the same file's
+ * `tool_result` blocks in the same document order (verified: 0 file-level
+ * count mismatches across this machine's full local corpus, one file at a
+ * time, 886 §12 PR 5a diagnostic). A `<task-notification>` line surfaces on
+ * the ledger as its own synthetic `ToolEvent` (role `wait`, name
+ * `task-notification`) rather than a `tool_result` and is excluded from the
+ * zip — it is not a Claude tool call; its text is still counted once, as
+ * ordinary user text, by the text/thinking/user/system walk in
+ * `analyzeTranscript`. If a file's counts ever DISAGREE (a future transcript
+ * shape neither walk was written against), the zip refuses to guess: the
+ * file's tool_results are attributed to `'(zip-mismatch)'` rather than
+ * silently mis-paired by position, and a warning is printed once per file.
+ */
+function localToolResultChars(filePath) {
+  let content;
+  try {
+    content = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return [];
+  }
+  const chars = [];
+  for (const line of content.split('\n')) {
+    if (!line.trim()) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    if (obj.type !== 'user' || !Array.isArray(obj.message?.content)) continue;
+    for (const b of obj.message.content) {
+      if (b.type !== 'tool_result') continue;
+      const c = typeof b.content === 'string' ? b.content : JSON.stringify(b.content || '');
+      chars.push(c.length);
+    }
+  }
+  return chars;
+}
+
+function attributeToolEvents(filePath) {
+  const { toolEvents } = callsFromClaudeTranscript(filePath);
+  const names = toolEvents.filter((ev) => ev.name !== 'task-notification').map((ev) => ev.name);
+  const chars = localToolResultChars(filePath);
+
+  const byTool = new Map();
+  const addTo = (name, c) => {
+    if (!byTool.has(name)) byTool.set(name, { count: 0, chars: 0 });
+    const entry = byTool.get(name);
+    entry.count += 1;
+    entry.chars += c;
+  };
+
+  if (names.length !== chars.length) {
+    console.error(`context-attribution: tool_result count mismatch in ${filePath} (ledger=${names.length}, local=${chars.length}) — attributing to '(zip-mismatch)'`);
+    const total = chars.reduce((s, c) => s + c, 0);
+    if (total > 0 || chars.length > 0) addTo('(zip-mismatch)', total);
+    return byTool;
+  }
+
+  for (let i = 0; i < names.length; i += 1) addTo(names[i], chars[i]);
+  return byTool;
+}
+
 function analyzeTranscript(filePath) {
   let content;
   try {
@@ -87,8 +172,6 @@ function analyzeTranscript(filePath) {
   }
 
   const lines = content.split('\n').filter(l => l.trim());
-  const toolMap = new Map(); // tool_use_id → tool name
-  const byTool = new Map();  // tool name → { count, chars }
   let assistantTextChars = 0;
   let thinkingChars = 0;
   let userTextChars = 0;
@@ -100,9 +183,7 @@ function analyzeTranscript(filePath) {
 
     if (obj.type === 'assistant' && Array.isArray(obj.message?.content)) {
       for (const b of obj.message.content) {
-        if (b.type === 'tool_use') {
-          toolMap.set(b.id, b.name);
-        } else if (b.type === 'text') {
+        if (b.type === 'text') {
           assistantTextChars += (b.text || '').length;
         } else if (b.type === 'thinking') {
           thinkingChars += (b.thinking || '').length;
@@ -115,16 +196,7 @@ function analyzeTranscript(filePath) {
         userTextChars += obj.message.content.length;
       } else if (Array.isArray(obj.message?.content)) {
         for (const b of obj.message.content) {
-          if (b.type === 'tool_result') {
-            const name = toolMap.get(b.tool_use_id) || 'unknown';
-            const c = typeof b.content === 'string'
-              ? b.content
-              : JSON.stringify(b.content || '');
-            if (!byTool.has(name)) byTool.set(name, { count: 0, chars: 0 });
-            const entry = byTool.get(name);
-            entry.count++;
-            entry.chars += c.length;
-          } else if (b.type === 'text') {
+          if (b.type === 'text') {
             userTextChars += (b.text || '').length;
           }
         }
@@ -138,6 +210,8 @@ function analyzeTranscript(filePath) {
       systemChars += c.length;
     }
   }
+
+  const byTool = attributeToolEvents(filePath);
 
   // Convert byTool Map to sorted array
   const toolTotal = [...byTool.values()].reduce((s, v) => s + v.chars, 0);
