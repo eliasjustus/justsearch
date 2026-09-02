@@ -218,7 +218,7 @@ public record RuntimeManifest(
    * disable a thinking control with a reason instead of promising what the build cannot do.
    *
    * <p>Tempdoc 883 decision 1 — {@code contextWindow} is the window this installation's engine was
-   * launched with and WHY ({@code rung}, {@code reason} of {@code fit} / {@code override} /
+   * launched with and WHY ({@code rung}, {@code reason} of {@code top-rung} / {@code override} /
    * {@code stepped-from:<planned top rung>}, {@code slots}, {@code kvType}, and the NVML free VRAM
    * recorded at plan time). The window is a derived resource, so "what did this machine end up
    * with" is a fact about the installation, not a setting anyone can read back out of config —

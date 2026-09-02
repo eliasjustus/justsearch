@@ -121,7 +121,7 @@ outranked every other source. Since tempdoc 883 the window is a resource the run
 * An explicit `justsearch.context.size` (env, `-D`, `settings.json`, YAML) is a **one-rung ladder**:
   honoured or the launch fails loud. `UiSettings.contextLength` `0` means auto.
 * What was launched is published on `/api/inference/status` as `contextWindow`
-  (`{rung, reason, freeVramBytes, slots, kvType}`, where reason is `fit`, `override` or
+  (`{rung, reason, freeVramBytes, slots, kvType}`, where reason is `top-rung`, `override` or
   `stepped-from:<n>`) and on the runtime manifest as `ai.contextWindow` - "what did this
   installation end up with", which is a fact about the machine rather than a setting anyone can
   read back out of config. That is the INTENT. What the server reports - `/props` `n_ctx`, and

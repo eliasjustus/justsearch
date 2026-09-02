@@ -238,7 +238,8 @@ Design choices in the current inference runtime, with rationale.
 
 - **Choice:** `-c` is no longer a user preference. `ContextWindowPolicy`
   (`modules/app-inference`) produces a **ladder** - top rung 32768 with GPU layers, 8192 at
-  `-ngl 0`, then 16384 -> 8192 -> 4096 - and the launch steps down one rung on a
+  `-ngl 0`, then 16384 -> 8192 -> 4096. The top rung is a **budget, not a fit** (measured evidence
+  below): the recorded reason for an un-stepped launch is `top-rung`, never `fit` - and the launch steps down one rung on a
   `PROCESS_EXITED` startup failure (the same seam `relaunchWithoutReasoningBudget` uses). The Head
   contributes the top rung at `ORDINAL_AUTO_DETECT` (150, `auto_detected` / `hardware_probe`)
   AFTER GPU detection, so `/api/debug/effective-config` explains the window with the mechanism that
@@ -276,12 +277,36 @@ Design choices in the current inference runtime, with rationale.
   compares an adopted BYO server's window against `ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS`
   (4096, the ladder's bottom rung), not against the derived 32k we would have chosen for a server
   we launched ourselves.
+- **Measured live 2026-09-02** (b8571 `8571 (e397d3885)`, Qwen3.5-9B-Q4_K_M, RTX 4070 12281 MiB,
+  standalone, argv as shipped):
+  - `-c 262144` **LOADS**: 33/33 layers, `n_ctx_seq 262144`, `kv_unified true`, KV 4352 MiB;
+    model 5060.88 + KV 4352.00 + recurrent 100.50 + compute 808.02 = **10,321 MiB of 12,281**. The
+    model's whole training context fits, so the 32k top rung is a deliberate budget, not a limit.
+  - `-c 32768`: KV **544.00 MiB**, `n_ctx_seq == n_ctx == 32768`, `kv_unified true`, 33/33 layers,
+    6,206 MiB total. Reproduces the review fold's [R2] figure to the MiB and confirms [R1]'s
+    halving does NOT occur with `-np 2 -kvu`.
+  - `-c 1000000`: KV 16604.75 MiB -> `CUDA error: out of memory` -> **exit 127**. An unfittable
+    rung is a hard, nonzero-exit abort - what `awaitServerHealth` turns into `PROCESS_EXITED` and
+    the step-down acts on. `-fit off` does not mask it.
+  - **KV cost at q8_0 is exactly linear: 17.0 KiB/token** (544 MiB / 32768 == 4352 MiB / 262144),
+    for this model's 8-of-32 KV-carrying layers.
+  - llama-server's `n_ctx_seq (32768) < n_ctx_train (262144) -- the full capacity of the model will
+    not be utilized` at the top rung is **expected**, not a defect to chase.
+- **Why the budget is 32k, not what fits:** (a) prefill latency per RAG ask scales with the prompt,
+  and the budget fractions fill whatever window exists, so the rung bounds worst-case latency;
+  (b) KV is reserved up front for the whole `n_ctx` whether used or not, and the same card holds
+  the embedding / SPLADE / NER encoders, the reranker and VDU batches - 544 MiB at 32k versus
+  ~2.2 GB at 128k is headroom kept on purpose; (c) the ladder exists to step DOWN on small cards,
+  not to maximize on large ones. Users who want more set `contextLength` /
+  `JUSTSEARCH_CONTEXT_SIZE`, which has no upper clamp below `n_ctx_train`.
 - **Evidence:** tempdoc 883 (contract, independent review fold R1-R4, §B pre-impl pass, §C
-  post-impl pass). Live-window acceptance (`n_ctx_seq`, `kv_unified=true`, forced step-down,
-  q8_0 vs f16 tok/s) is scheduled separately and NOT yet measured as of PR 1.
+  post-impl pass, §D review fold, §Live verification). Remaining live acceptance (in-app activation
+  arms, precedence arms, forced step-down, q8_0 vs f16 tok/s, the 845 RAG arms) is scheduled
+  separately.
 - **Revisit when:** the live window runs and reports the q8_0 tok/s cost (if it exceeds 10% on the
-  dev GPU the design says make f16 the default at 16k and below); or when lane F adds a second
-  VRAM arbiter - the window, `gpuLayers`, slots, KV type and reranker/VDU co-residency all compete
+  dev GPU the design says make f16 the default at 16k and below); when co-residency is actually
+  measured, since the top rung is a budget held FOR that co-residency and a measurement could
+  justify raising it; or when lane F adds a second VRAM arbiter - the window, `gpuLayers`, slots, KV type and reranker/VDU co-residency all compete
   for the same VRAM and should be one memory plan at activation, not several.
 
 ### D-002: BGE-M3 VRAM budget — FP16+Flash at 3072 MB arena

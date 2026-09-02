@@ -59,7 +59,8 @@ public interface OnlineAiRuntimeIntrospection {
    * other.
    *
    * @param rung the {@code -c} value passed at launch
-   * @param reason {@code fit}, {@code override}, or {@code stepped-from:<planned top rung>}
+   * @param reason {@code top-rung} (the ladder's top rung loaded), {@code override}, or
+   *     {@code stepped-from:<planned top rung>}
    * @param freeVramBytes NVML free VRAM at plan time — recorded for diagnosis, not an input
    * @param slots the {@code -np} value passed at launch
    * @param kvType the {@code -ctk}/{@code -ctv} cache type passed at launch

@@ -749,3 +749,30 @@ out of scope for the window regardless (needs a restart the orchestrator owns).
 Cleanup: all three standalone servers were bounded by `timeout` and are gone
 (`tasklist | grep llama-server` → none; no listeners on 8098/8099). The dev stack was left running
 and untouched; the AI runtime was never activated.
+
+### Owner decision on step A (2026-09-02): keep 32768, as a BUDGET rung
+
+Option 2. `GPU_TOP_RUNG` stays 32768 and the record is corrected: the top rung was never "what
+fits" — it is a budget the owner set, for three reasons:
+
+- **(a) Latency.** Prefill per RAG ask scales with the prompt, and PR 2's `ContextBudget` fractions
+  will fill whatever window exists. The rung is what bounds worst-case ask latency.
+- **(b) Co-residency.** KV is reserved up front for the whole `n_ctx` whether used or not, and the
+  same card must also hold the embedding / SPLADE / NER encoders, the reranker and VDU batches
+  (the co-residency open question at the top of this tempdoc). 544 MiB at 32k versus ~2.2 GB at
+  128k is headroom this app chooses to keep.
+- **(c) The ladder's job is stepping DOWN on smaller cards, not maximizing on big ones.**
+
+Users who want more set `contextLength` / `JUSTSEARCH_CONTEXT_SIZE`; the override has no upper
+clamp below `n_ctx_train`. llama-server's
+`n_ctx_seq (32768) < n_ctx_train (262144) -- the full capacity of the model will not be utilized`
+is therefore **expected output**, not a defect.
+
+**Consequence: the recorded reason `fit` is renamed `top-rung`.** With the rung documented as a
+budget, a wire value called `fit` would assert exactly what the measurement disproves — and would
+read as the opposite of the `-fit off` the same launch passes. `top-rung` says what actually
+happened (the ladder's first rung loaded; no step-down) and sits correctly beside `override` and
+`stepped-from:<n>`. `ContextWindowPolicy.REASON_FIT` → `REASON_TOP_RUNG`, with the tests, the
+status/manifest javadocs, `05-ai-architecture.md`, `environment-variables.md` and register D-010
+updated. The measured evidence (three probes, 17.0 KiB/token) is recorded in D-010 as the design's
+justification rather than left in this tempdoc alone.

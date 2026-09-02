@@ -27,7 +27,11 @@ final class ContextWindowPolicyTest {
 
     assertEquals(List.of(32768, 16384, 8192, 4096), plan.ladder());
     assertEquals(32768, plan.topRung());
-    assertEquals(ContextWindowPolicy.REASON_FIT, plan.reason());
+    assertEquals(ContextWindowPolicy.REASON_TOP_RUNG, plan.reason());
+    assertEquals(
+        "top-rung",
+        plan.reason(),
+        "not \"fit\": the top rung is a budget, and the card demonstrably fits far more");
   }
 
   @Test
