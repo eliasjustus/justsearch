@@ -152,7 +152,7 @@
       "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431): the finding names scripts/wire-contract/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe as absent. Claim amended 2026-09-02 during the #600 review: that PR added FailedJob.state (an additive field) to modules/ipc-common/src/main/proto/indexing.proto, and the reviewer had to install buf and re-run to get a real verdict (0 findings) — the pinned state alone would have been vacuous.",
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
-      "exitProbe": "slow: node -e \"const{execFileSync}=require('child_process');const fs=require('fs');try{execFileSync(process.execPath,['scripts/governance/run.mjs','--gate','wire','--mode','gate','--out','tmp/wire-exit-probe.sarif'],{stdio:'ignore'})}catch{}process.exit(fs.existsSync('tmp/wire-exit-probe.sarif')&&fs.readFileSync('tmp/wire-exit-probe.sarif','utf8').includes('buf-cli-missing')?1:0)\"",
+      "exitProbe": "slow: node scripts/governance/run.mjs --gate wire --mode gate --out tmp/wire-exit-probe.sarif && node -e \"process.exit(require('fs').readFileSync('tmp/wire-exit-probe.sarif','utf8').includes('buf-cli-missing')?1:0)\"",
       "exitProbeNote": "2026-09-02: the previous exit was `--gate wire --mode gate`, which exits 0 EVEN IN the pinned state — the gate reports buf-cli-missing as a finding but its verdict stays pass (fail-open on absent tooling, which is the very thing this pin warns about). It therefore reported GONE on the first --slow sweep that ran it, with buf verifiably absent from scripts/wire-contract/node_modules. The exit now asserts the FINDING is gone, not the gate's verdict, because the verdict was never the pinned state."
     },
     {
