@@ -41,9 +41,13 @@ import org.junit.jupiter.api.io.TempDir;
  * all. The scan arm now takes the label too, and the assertions below are the positive inversion:
  * both arms must receive the SAME collection for the same root.
  *
- * <p>The rule these tests pin is uniform: a root's label reaches every arm, and an unlabeled or
- * label-lost root maps to {@code IngestCollectionPolicy.DEFAULT_COLLECTION} everywhere — including
- * the restart rewalk, so one root's documents never oscillate between tagged and untagged.
+ * <p>The rule these tests pin is uniform: a root's label reaches every arm and every restart, and
+ * an unlabeled root maps to {@code IngestCollectionPolicy.DEFAULT_COLLECTION} everywhere, so one
+ * root's documents never oscillate between tagged and untagged.
+ *
+ * <p>Tempdoc 885 §UD open item 4 closes the third arm: the label is now PERSISTED with the root, so
+ * it also reaches {@code getWatchedRoots()} (which reported {@code null} → {@code "default"} on the
+ * live repro) and the restart rewalk (which re-tagged a labelled root's documents as the default).
  */
 @DisplayName("watched-root scan — collection carriage")
 final class WatchedRootScanCollectionTest {
@@ -145,11 +149,55 @@ final class WatchedRootScanCollectionTest {
   }
 
   @Test
+  @DisplayName("the label the caller supplied is readable from getWatchedRoots — the live repro")
+  void addedLabelIsReadableFromTheWatchedRootListing() throws Exception {
+    Path root = Files.createDirectories(tempDir.resolve("listed"));
+    Capture capture = new Capture("listed-roots");
+
+    capture.ops.addWatchedRoot("lane-c4-live", root);
+    capture.drain();
+
+    // 885 §UL.6: POST /api/indexing/roots with {"collection":"lane-c4-live"} returned 200 and the
+    // subsequent GET reported "default". Both write-only arms had the label; the listing did not,
+    // because nothing kept it. This is that GET, one layer down.
+    var listed = capture.ops.getWatchedRoots();
+    assertEquals(1, listed.size(), "the root was registered");
+    assertEquals(
+        "lane-c4-live",
+        listed.get(0).collection(),
+        "the listing must report the label the caller supplied, not null (rendered 'default')");
+  }
+
+  @Test
+  @DisplayName("a restart rewalk re-sends the PERSISTED label, not the default")
+  void reindexPersistedRootsReSendsTheStoredLabel() throws Exception {
+    Path root = Files.createDirectories(tempDir.resolve("relabeled"));
+
+    // Boot 1: the user adds a labelled root; the label is persisted with it.
+    Capture first = new Capture("relabeled-roots");
+    first.ops.addWatchedRoot("my-notes", root);
+    first.drain();
+
+    // Boot 2: a fresh state over the SAME store file — exactly what a restart does.
+    Capture second = new Capture("relabeled-roots");
+    second.state.loadPersistedRoots();
+    second.ops.reindexPersistedRoots();
+    Arms arms = second.drain();
+
+    assertEquals("my-notes", arms.watched(), "the watcher arm re-registers under the real label");
+    assertEquals(
+        "my-notes",
+        arms.scanned(),
+        "and the rewalk re-tags the root's documents with it — re-sending 'default' here is what"
+            + " made a labelled root's documents oscillate across restarts");
+  }
+
+  @Test
   @DisplayName("a restart rewalk hands BOTH arms the same label the add path wrote")
   void reindexPersistedRootsAgreesAcrossArmsAndWithTheAddPath() throws Exception {
     Path root = Files.createDirectories(tempDir.resolve("persisted"));
     Capture capture = new Capture("persisted-roots");
-    // Restart state: the root is known, its collection is not (821 §L.3 — not persisted).
+    // A root persisted BEFORE the collection field existed: known, with no recorded label.
     capture.state.markNeverIndexed(root.toAbsolutePath().normalize());
 
     capture.ops.reindexPersistedRoots();

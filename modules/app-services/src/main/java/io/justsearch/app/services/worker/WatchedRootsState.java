@@ -49,6 +49,14 @@ final class WatchedRootsState {
    * Transient (recomputed each reconcile), NOT persisted.
    */
   private final Map<Path, Instant> lastVerifiedAt;
+  /**
+   * The collection label each watched root was added under (tempdoc 885 §UD open item 4 / 821
+   * §L.3). Persisted: it is the only record of the label, because the two arms that consume it (the
+   * Worker-side watcher registration and the scan RPC) are write-only. Without it a labelled root
+   * reported {@code collection: "default"} on {@code GET /api/indexing/roots} and every re-walk
+   * after a restart re-tagged its documents as the default.
+   */
+  private final Map<Path, String> collections;
   private final WatchedRootsStore rootsStore;
   private final Clock clock;
 
@@ -63,6 +71,7 @@ final class WatchedRootsState {
     this.deleteDetectionUnverified = java.util.concurrent.ConcurrentHashMap.newKeySet();
     this.driftCorrected = new java.util.concurrent.ConcurrentHashMap<>();
     this.lastVerifiedAt = new java.util.concurrent.ConcurrentHashMap<>();
+    this.collections = new java.util.concurrent.ConcurrentHashMap<>();
     this.rootsStore = Objects.requireNonNull(rootsStore, "rootsStore");
     this.clock = Objects.requireNonNull(clock, "clock");
   }
@@ -74,6 +83,24 @@ final class WatchedRootsState {
     }
     walkErrors.putAll(result.walkErrors());
     walkCompleted.addAll(result.walkCompleted());
+    collections.putAll(result.collections());
+  }
+
+  /**
+   * Records the collection label a root is watched under. Blank/null clears it, so the callers'
+   * "no label" case never persists an empty string that would later read as a real label.
+   */
+  void setCollection(Path root, String collection) {
+    if (collection == null || collection.isBlank()) {
+      collections.remove(root);
+    } else {
+      collections.put(root, collection);
+    }
+  }
+
+  /** The collection label {@code root} was added under, or {@code null} if none was recorded. */
+  String getCollection(Path root) {
+    return collections.get(root);
   }
 
   void markIndexed(Path root) {
@@ -159,6 +186,8 @@ final class WatchedRootsState {
     deleteDetectionUnverified.remove(normalizedRoot);
     driftCorrected.remove(normalizedRoot);
     lastVerifiedAt.remove(normalizedRoot);
+    collections.remove(normalizedRoot);
+    collections.keySet().removeIf(p -> p.startsWith(normalizedRoot) && !p.equals(normalizedRoot));
     watchedRoots.keySet().removeIf(p -> p.startsWith(normalizedRoot) && !p.equals(normalizedRoot));
     walkCompleted.removeIf(p -> p.startsWith(normalizedRoot) && !p.equals(normalizedRoot));
     deleteDetectionUnverified.removeIf(p -> p.startsWith(normalizedRoot) && !p.equals(normalizedRoot));
@@ -167,7 +196,7 @@ final class WatchedRootsState {
   }
 
   void persist() {
-    rootsStore.persistRoots(watchedRoots, walkErrors, walkCompleted);
+    rootsStore.persistRoots(watchedRoots, walkErrors, walkCompleted, collections);
   }
 
   /** Clears all watched roots and walk errors, then persists the empty state. */
@@ -178,6 +207,7 @@ final class WatchedRootsState {
     deleteDetectionUnverified.clear();
     driftCorrected.clear();
     lastVerifiedAt.clear();
+    collections.clear();
     persist();
   }
 

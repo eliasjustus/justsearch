@@ -101,18 +101,23 @@ final class WatchedRootsStore {
    *     Fix 1) — distinguishes "walked, nothing to index" (empty) from "walk in progress / never
    *     walked" (both have no {@code lastIndexed}/{@code walkError}). Old files lack this field, so
    *     it is absent there (treated as not-completed).
+   * @param collections the collection label each root was added under. Old files lack this field,
+   *     so a pre-existing root has no entry and every arm falls back to the default label exactly
+   *     as it did before (tempdoc 885 §UD open item 4 / 821 §L.3).
    */
   record LoadResult(
       Map<Path, Instant> roots,
       Map<Path, String> walkErrors,
-      java.util.Set<Path> walkCompleted) {}
+      java.util.Set<Path> walkCompleted,
+      Map<Path, String> collections) {}
 
   LoadResult loadPersistedRootsWithErrors() {
     Map<Path, Instant> roots = new LinkedHashMap<>();
     Map<Path, String> errors = new LinkedHashMap<>();
     java.util.Set<Path> completed = new java.util.LinkedHashSet<>();
+    Map<Path, String> collections = new LinkedHashMap<>();
     if (rootsFile == null || !Files.exists(rootsFile)) {
-      return new LoadResult(Map.of(), Map.of(), java.util.Set.of());
+      return new LoadResult(Map.of(), Map.of(), java.util.Set.of(), Map.of());
     }
     try {
       String content = Files.readString(rootsFile);
@@ -130,6 +135,12 @@ final class WatchedRootsStore {
             Instant lastIndexed = (lastIndexedStr != null && !lastIndexedStr.isBlank())
                 ? Instant.parse(lastIndexedStr) : NEVER_INDEXED;
             roots.put(path, lastIndexed);
+            if (entry.has("collection")) {
+              String collection = entry.get("collection").asText(null);
+              if (collection != null && !collection.isBlank()) {
+                collections.put(path, collection);
+              }
+            }
             if (entry.has("walkError")) {
               String err = entry.get("walkError").asText(null);
               if (err != null && !err.isBlank()) {
@@ -159,7 +170,8 @@ final class WatchedRootsStore {
     return new LoadResult(
         java.util.Collections.unmodifiableMap(roots),
         java.util.Collections.unmodifiableMap(errors),
-        java.util.Collections.unmodifiableSet(completed));
+        java.util.Collections.unmodifiableSet(completed),
+        java.util.Collections.unmodifiableMap(collections));
   }
 
   /**
@@ -240,7 +252,8 @@ final class WatchedRootsStore {
   synchronized void persistRoots(
       Map<Path, Instant> watchedRoots,
       Map<Path, String> walkErrors,
-      java.util.Set<Path> walkCompleted) {
+      java.util.Set<Path> walkCompleted,
+      Map<Path, String> collections) {
     if (rootsFile == null) {
       return;
     }
@@ -254,6 +267,16 @@ final class WatchedRootsStore {
         Instant v = entry.getValue();
         if (v != null && !NEVER_INDEXED.equals(v)) {
           rootEntry.put("lastIndexed", v.toString());
+        }
+        // Tempdoc 885 §UD open item 4 / 821 §L.3 — the root's collection label. Persisted because
+        // it is the ONLY record of it: the watcher registration and the scan RPC both consume it
+        // and neither can be read back, so before this field a restart (and every GET
+        // /api/indexing/roots) reported "default" for a root the user labelled.
+        if (collections != null) {
+          String collection = collections.get(p);
+          if (collection != null && !collection.isBlank()) {
+            rootEntry.put("collection", collection);
+          }
         }
         if (walkErrors != null) {
           String err = walkErrors.get(p);
