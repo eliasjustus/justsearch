@@ -89,13 +89,42 @@ The control plane and flags (e.g., `-ngl`) exist today, but GPU acceleration onl
 *   **Crash diagnostics:** `waitForServerHealth()` parses llama-server stderr for known failure patterns (e.g., `unknown model architecture`) and surfaces user-facing error messages instead of opaque "failed to load model" errors.
 *   **Arguments:**
     *   `-m <model_path>`: Main GGUF model file.
-    *   `-c <ctx_size>`: Context window (critical for RAG).
+    *   `-c <ctx_size>`: Context window - a **derived resource**, not a preference (see the section below).
     *   `-ngl <layers>`: Number of GPU layers (offload).
+    *   `-np <slots>`: Parallel slots. `2` by default (`JUSTSEARCH_LLM_SLOTS`) so a background delegate cannot evict the foreground turn's prompt-cache prefix.
+    *   `-kvu`: Unified KV cache. Required *because* `-np` is explicit: passing `-np` at all disables llama-server's automatic `kv_unified`, and without `-kvu` two slots halve the window a request actually gets (`n_ctx_seq`) while `/props` still reports the full `n_ctx`.
+    *   `-ctk <type> -ctv <type>`: KV cache type, `q8_0` by default (`JUSTSEARCH_LLM_KV_TYPE`).
+    *   `-fa on`: Flash attention, explicitly on - a quantized V-cache aborts the launch without it, so this is never left at `auto`.
     *   `--mmproj`: Vision adapter path (for Qwen/Llava).
     *   `--port <port>`: HTTP port.
+    *   `--jinja`, `--metrics`, `--host 127.0.0.1`, and (when thinking is enabled) `--reasoning-format deepseek --reasoning-budget N`.
 *   **VDU mode flags** (applied only during VDU batch processing, not global):
-    *   `-np 1`: Single slot (multi-slot causes alternating 500s on vision)
+    *   `-np 1`: Single slot (multi-slot causes alternating 500s on vision) - pins the common `-np` above rather than adding a second one
     *   `--cache-ram 0`: Disable prompt cache (prevents silent crashes after ~7 pages)
+
+#### The context window (`-c`) is derived, not configured
+
+The packaged model trains at 262k tokens; the app used to run it at 4096 because that was the
+shipped value of a `UiSettings` field with no UI control, promoted to a system property so it
+outranked every other source. Since tempdoc 883 the window is a resource the runtime fits:
+
+* `ContextWindowPolicy` (`modules/app-inference`) produces a **ladder**: top rung 32768 with GPU
+  layers, 8192 at `-ngl 0` (CPU prefill at 32k is minutes per RAG ask), then 16384 -> 8192 -> 4096.
+* The Head contributes the top rung at ordinal 150 (`auto_detected` / `hardware_probe`) after GPU
+  detection, so `/api/debug/effective-config` explains the window with the same mechanism that
+  explains GPU detection.
+* If llama-server refuses a rung it exits immediately; `LlamaServerOps.waitForServerHealth` steps
+  down one rung and relaunches. A rung that does not fit costs context, not inference.
+* An explicit `justsearch.context.size` (env, `-D`, `settings.json`, YAML) is a **one-rung ladder**:
+  honoured or the launch fails loud. `UiSettings.contextLength` `0` means auto.
+* What was launched is published on `/api/inference/status` as `contextWindow`
+  (`{rung, reason, freeVramBytes, slots, kvType}`, where reason is `fit`, `override` or
+  `stepped-from:<n>`). That is the INTENT. What the server reports - `/props` `n_ctx`, and
+  `n_ctx_seq` in its log - stays the authority for what a request actually gets, and is published
+  separately as `llmContextTokens`.
+* No VRAM arithmetic and no GGUF reader: the packaged model is a Gated-Delta-Net hybrid whose KV
+  footprint no dense-attention formula predicts within 4x, and `/props` does not expose
+  `n_ctx_train`. Free VRAM is recorded for diagnosis, never used as an input.
     *   `chat_template_kwargs: {"enable_thinking": false}`: Ensures VLM output goes to `content` field
 
 ### 2. `InferenceLifecycleManager` (The Manager)

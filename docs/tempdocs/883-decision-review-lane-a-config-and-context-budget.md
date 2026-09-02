@@ -1,8 +1,8 @@
 ---
-status: CONTRACT — ready for takeover (not started)
+status: IN PROGRESS — chunk 1 (PR 1: precedence slice 1 + derived context window) implemented; live window pending
 created: 2026-09-01
-updated: 2026-09-01
-owner_session: unassigned (wave-1 orchestrator; branch after 882 merges)
+updated: 2026-09-02
+owner_session: lane-A worker (branch worktree-lane-A, base 6c3ba431)
 follows:
   - 882-decision-review-lane0-hygiene.md (lane 0; must be on main before this lane branches)
   - 845-rag-budget-and-prompt-scope.md (the live-window budget fix this lane generalizes)
@@ -288,3 +288,207 @@ window this session holds and supervises.
   its own tempdoc.
 - (Resolved by review) `contextLength` was never a UI control; it stays a diagnostics override in
   `UiSettings` with `0` = auto.
+
+---
+
+## §B — Pre-implementation pass (chunk 1, PR 1; base `6c3ba431`, 2026-09-02)
+
+Every `path:line` this chunk depends on, re-read on this base (lane 0 / #593 moved lines).
+Corrections are marked **[moved]**.
+
+### B.a — Item 8 / item 22 sites, verified
+
+| Fold claim | On this base | Verdict |
+|---|---|---|
+| `UiSettings.java:254` `contextLength = 4096` | `modules/app-api/.../app/api/UiSettings.java:254` `private int contextLength = 4096;` | confirmed (package is `io.justsearch.app.api`) |
+| `UiSettings.java:304-306` clamp `Math.max(512, ...)` **[R5]** | `UiSettings.java:304-306` `setContextLength` -> `this.contextLength = Math.max(512, contextLength);` | confirmed |
+| `schemaVersion` exists, no migration | `UiSettings.java:19` `private int schemaVersion = 1;`; `UiSettingsStore.java:47` `CURRENT_SCHEMA_VERSION = 1` | confirmed |
+| `ConfigStoreRebuilder.java:85-88` forwards `> 0` at ordinal 300 | `modules/app-services/.../config/ConfigStoreRebuilder.java:85-87` in `contributeUiSettings`; `putSettings` -> `ResolvedConfigBuilder.java:215-217` `put(key, ORDINAL_SETTINGS_JSON=300, "settings.json", key, value)` | confirmed |
+| `SettingsController.java:304-325` `maybeApplyContextSizeSysProp`, `<= 0` clears | `SettingsController.java:304-325`; call sites `:130` (PUT) and `:447` (reset). Marker constants `:46-47` | confirmed |
+| `SettingsController` has four promotions | `:222` serverExe, `:247` excludePatterns, `:281` gpuLayers, `:304` contextSize **[moved]** (the fold's 243/273/300/323 are the `setSysProp` lines inside each) | confirmed |
+| `HeadlessApp.java:561-566` startup promotion, guarded by `JUSTSEARCH_CONTEXT_SIZE` | `modules/ui/.../HeadlessApp.java:561-565`; `System.getenv("JUSTSEARCH_CONTEXT_SIZE")` at `:561` | confirmed |
+| `EffectiveConfigController` renders the row from the `.source` marker | `EffectiveConfigController.java:490` reads the marker, `:496-498` promotes `system_property`->`ui_settings`, `:508-512` publishes `uiOwnershipProp`, `:525` emits the row **[moved]** (fold said 503/523/538) | confirmed |
+| `LlamaServerOps` argv builder + `gpuCapabilitiesService.snapshot()` | `LlamaServerOps.java:215-337` `startLlamaServer`; `-c` at `:277-279`; `-np 1` VDU-only at `:236-242`; `snapshot()` at `:308` **[moved]** (fold said `:304`) | confirmed |
+| `ServerPropsOps` `/props` readback | `ServerPropsOps.java:188-198` `applyContextInsightsFromProps`; `warnIfConfiguredContextExceedsActual` at `:259-268` | confirmed |
+| `InferenceConfig` `ctxSize <= 0 -> 4096` + builder default | `InferenceConfig.java:133-134` and `:571` `private int contextSize = 4096;` | confirmed |
+| `ResolvedConfigBuilder.java:1048` `resolveInt("justsearch.context.size", 8192)` | `ResolvedConfigBuilder.java:1039` **[moved]** | confirmed |
+| `modules/ui/build.gradle.kts:2024` forwards `JUSTSEARCH_CONTEXT_SIZE` | `modules/ui/build.gradle.kts:2020` **[moved]**; the env path must survive | confirmed |
+| `06-configuration-ssot.md:131` documents the promotion | confirmed; `:130` also names `justsearch.context.size` in the sysprop-mirror list | confirmed |
+| `runtime-config-ownership-matrix.md:146` | the row is at `:143` **[moved]**, reading `sysprop > env > default` | confirmed |
+
+### B.b — Facts the fold did not state that change the design
+
+1. **`ConfigStoreRebuilder` reads a primitive `int`, not `Integer`.** `UiSettings.getContextLength()`
+   returns `int` (`UiSettings.java:300`); `SettingsController.java:306` boxes it into an `Integer`
+   whose null check (`:317`) can therefore never fire. Deleting `maybeApplyContextSizeSysProp`
+   removes that dead branch with it.
+2. **`StoreFormatVersions.requireReadable(storeId, observed, current, absent, readableLegacy...)`**
+   (`modules/configuration/.../persistence/StoreFormatVersions.java:15-31`) throws
+   `UnsupportedStoreVersionException` for any version that is neither `current` nor in the varargs
+   legacy list, and `UiSettingsStore.load()` (`:87-90`) catches only `CorruptDurableStoreException` --
+   so an unlisted version is **fatal, not quarantined**. Today the call is
+   `requireReadable("ui-settings", observed, 1, 0, 0)`. Bumping to 2 therefore **requires** adding
+   `1` to the readable-legacy varargs, or every existing install fails to start. The migration then
+   runs on the version `requireReadable` returns. (This answers the brief's "verify 882's quarantine
+   path treats a schemaVersion 1 file as migratable, not corrupt": it does **not** today; adding the
+   legacy-version listing is what makes it so.)
+3. **A second literal default for the quantity exists** at `RuntimeActivationService.java:1203`
+   (`startSelfTestServer`): `settings.getContextLength() > 0 ? ... : 4096`. See B.c for why it stays.
+4. **`VramFlagsUtil.mergeRecommendedFlags` skips a flag already present in the command**
+   (`VramFlagsUtil.java:57-65`) and always skips `-c`/`-ngl` (`:41-49`).
+   `VramRequirements.recommendedLlamaServerFlags` (`:88-96`) returns only `{-c, -ngl, -fa on}`
+   (+ `-ctk/-ctv q4_0` at the 8 GB tier). Once this chunk emits `-fa`, `-ctk` and `-ctv`
+   unconditionally, that merge inside `LlamaServerOps` becomes a **provably inert call** -- swept in
+   this PR (the `RuntimeActivationService` self-test caller keeps it).
+5. **A step-down / relaunch precedent already exists**: `LlamaServerOps.relaunchWithoutReasoningBudget`
+   (`:478-514`), invoked from `waitForServerHealth` (`:388-397`) on `Reason.PROCESS_EXITED`. The
+   ladder hooks the same seam instead of inventing one.
+6. **`InferenceConfig`'s compact constructor rejects `contextSize <= 0`** (`:59-61`). "Builder
+   default 0" therefore cannot mean "store 0 in the record"; it means the builder's *field* default
+   is 0 = auto and `build()` resolves it through the ladder policy. Same for `fromEnvironment`.
+7. **`InferenceStatusResponse` is a schema-generated wire record** (`WireRecordSchemaGenTest:158-161`
+   -> `SSOT/schemas/inference-status-response.v1.json` -> `scripts/codegen/gen-wire-schema-types.mjs`
+   -> `modules/ui-web/src/api/generated/schema-types/inference-status-response.ts`). Publishing the
+   context-window record there means regenerating both; `contracts/**` is protobuf only, so no
+   `--gate wire` subject is touched.
+8. **`RAGContext.java:143-148`'s javadoc** ("Matches the shipped default (`InferenceConfig` builder
+   default, `UiSettings.getContextLength()`)") stops being true the moment both become auto. The
+   constant stays (the fold is right that it is the correct last-resort fallback); the javadoc is
+   corrected in place.
+
+### B.c — Decisions taken inside this chunk
+
+- **An explicit override does not step down.** `ContextWindowPolicy.plan` returns a one-rung ladder
+  when an explicit `justsearch.context.size` is present, so an operator's value is honoured or fails
+  loud. Silently serving a smaller window than an operator asked for would be this lane's own
+  precedence lie in a new place. Recorded reason: `override`.
+- **The resolver row carries the *planned* rung; `/props` carries the *observed* one.** After a
+  step-down the ord-150 contribution is stale by construction (`ConfigStoreRebuilder.rebuild` does
+  not re-run `contributeAutoDetected` -- which is exactly what the `HeadlessApp` Phase-E sysprop
+  mirror exists to work around). `EffectiveConfigController.keyContextSize` already prefers the
+  observed runtime value and reports `source: "runtime"` with the resolver value as a `conflicts[]`
+  entry; that is the honest shape and it is kept.
+- **Source names are reported verbatim from the resolver** (`jvm_arg`, `env_var`, `settings.json`,
+  `auto_detected`, `yaml`, `default` -- `ResolvedConfigBuilder.java:202,217,241-242,285`). The
+  acceptance text spells the settings source `settings_json`; the resolver spells it `settings.json`.
+  Re-spelling it in the controller would be a second vocabulary (`catalog-verbatim`), so the
+  controller emits the resolver's own string and the ownership-matrix doc is corrected to match.
+- **`RuntimeActivationService.startSelfTestServer` keeps its `4096`.** It is a VRAM-delta *probe*
+  launch, not the runtime window, and because it already reads `settings.getContextLength() > 0`
+  first, its behaviour is *unchanged* by this PR (before: 4096 from the settings default; after:
+  4096 from its own fallback). Raising it to the ladder top rung would change what the self-test
+  measures and could fail it on small GPUs. A WHY comment now says so at the site.
+- **A deliberate user `4096` is discarded** by the schema 1 -> 2 migration. There is no way to tell
+  it from the shipped default (fold **[R5]**), `modules/ui-web` never had a control for it, and the
+  cost of keeping it is that every existing install stays pinned to the smallest rung forever.
+  Release-note line required.
+
+## §C — Post-implementation critical analysis (chunk 1, PR 1; 2026-09-02)
+
+### C.1 — Wrong-gate checks (each grepped at the set-site, not inferred)
+
+| Claim the change depends on | How it was checked | Result |
+|---|---|---|
+| The step-down fires on the failure an unfittable `-c` actually produces | `grep -rn "Reason.PROCESS_EXITED" modules --include=*.java` -> the only throw site reachable from a launch is `LlamaServerOps.awaitServerHealth:515`, in the `!process.isAlive()` branch, i.e. exactly "the process we just launched died". `TransitionRunner:641,653` are code MAPPINGS, not throws into this path. | confirmed |
+| Every path that waits for health has a plan to step down | `grep -rn "waitForServerHealth()"` -> 4 call sites in `InferenceLifecycleManager` (start, reload x2, activation) + `scheduleRecoveryTask` in `LlamaServerOps`. All are preceded by `startLlamaServer()`, which is where `contextPlan` is set. The recovery path calls `stopLlamaServer(); startLlamaServer(); waitForServerHealth()` — so a crash-recovery relaunch replans, it does not inherit a stale rung. | confirmed |
+| A health-check TIMEOUT does not step the window down | `relaunchAtLowerContextRung` gates on `PROCESS_EXITED` only. A timeout means the model is loading slowly (the 120 s default exists because a 9B cold load legitimately exceeds 30 s); shrinking the window for that would be the wrong-gate mistake in its classic form. | deliberate |
+| The two relaunch handlers cannot loop | `relaunchWithoutReasoningBudget` sets `ThinkingSupport.UNSUPPORTED` + `reasoningBudgetRequested=false`, both of which its own guard refuses on re-entry; `relaunchAtLowerContextRung` consumes a rung from a 4-element list. The `while(true)` in `waitForServerHealth` therefore terminates in at most 5 iterations. | confirmed |
+| The derived rung is computed AFTER GPU detection | `augmentDerivedContextWindow` takes the map `augmentGpuAutoDetectionAndMirror` returned (Phase F is what writes `justsearch.gpu.layers`), and reads the user's sysprop/env first. Pinned by `HeadlessAppContextWindowAutoDetectTest.gpuLayersFromAutoDetectGiveGpuRung` + `explicitZeroLayersGivesCpuRung`. | confirmed |
+| The rung the resolver reports and the rung the launch tries are the same number | `ContextWindowPolicyTest.autoTopRungByBackend` asserts `autoTopRung(b) == auto(b, null).topRung()` for both backends — the Head contributes the former, `LlamaServerOps` launches the latter. | confirmed |
+
+### C.2 — Defect found by this pass and fixed in the same PR
+
+**`ConfigStoreRebuilder.rebuild` silently drops ordinal 150.** `rebuild` re-derives the config from
+`contributeBaseSources()` + `contributeUiSettings(...)` only. Ordinal-150 values come from a probe
+that runs once, at startup, in the Head — so the first settings PUT, AI install or activation after
+boot would have erased the derived window's provenance, leaving `/api/debug/effective-config` with
+no source for `justsearch.context.size` at all.
+
+This was invisible before 883 because the only ordinal-150 values were GPU flags, and they survive a
+rebuild by *also* being written as system properties — the `HeadlessApp` "Phase E sysprop-mirror",
+whose own javadoc names `ConfigStoreRebuilder.rebuild` as the reason it exists. That mirror is the
+promotion pattern this lane deletes (it resolves at 500 and reports as `jvm_arg`), so the fix could
+not be to mirror the window too.
+
+Fix: `ConfigStoreRebuilder.rememberAutoDetected(map)`, called once by `HeadlessApp` with the same
+map it contributes, re-contributed by `rebuild` at ordinal 150. Regression tests:
+`rebuildPreservesTheDerivedWindow` and `rebuildKeepsTheOrdinalChainIntact` (the user override must
+still win at 300 after a rebuild). Static process-wide state, for the same reason
+`ConfigStore.setGlobal` is: one probe per process, and the four services that call `rebuild` have no
+path to it.
+
+### C.3 — Test precision (does each test pass for the right reason?)
+
+- `LlamaServerLaunchFlagsTest` asserts the **exact ordered list**, not `contains`. The fold's [R1]
+  failure is `-np` present and `-kvu` absent — a `contains("-np")` test passes on exactly the launch
+  line that silently halves the window, so the ordering assertion is the whole point.
+- `UiSettingsContextLengthTest.zeroRoundTrips` goes through Jackson rather than calling the setter
+  and reading the getter back. The old clamp bug was only observable across serialization, because
+  Jackson deserializes through the setter.
+- `ConfigStoreRebuilderTest.autoContextLengthContributesNothing` asserts the *ordinal and source
+  name*, not just the value. Asserting `32768` alone would also pass if `contributeUiSettings` had
+  contributed `32768` at ordinal 300 — a green for the wrong reason.
+- `EffectiveConfigContextSizeSourceTest.markerIsIgnored` sets the deleted marker sysprop and asserts
+  the row is unaffected AND that `owner` / `uiOwnershipProp` are absent — a negative test that
+  cannot pass by the marker simply not being set.
+- `ServerPropsOps` mismatch: the predicate `isContextWindowMismatch` is asserted directly (the
+  defect was the comparand, not the comparison), plus one readback test proving the launched-rung
+  supplier is what `updateFromPropsBestEffort` consults, with an `InferenceConfig` whose
+  `contextSize` deliberately disagrees.
+- `UiSettingsStoreContextLengthMigrationTest.schemaOneIsReadable` asserts `lastRecovery().isEmpty()`
+  — a migration must not be a quarantine. Without it, a bump that forgot the readable-legacy listing
+  would still "pass" a migration test that only checked the resulting value after defaults loaded.
+
+### C.4 — Known limitations and deviations, stated rather than hidden
+
+1. **The acceptance grep `grep -rn "context.size.source" modules` is not literally empty.** Two hits
+   remain by choice: the `EffectiveConfigController` javadoc that *labels* what was deleted and why
+   (retire-with-a-sweep asks for "delete or label"), and `EffectiveConfigContextSizeSourceTest`,
+   whose whole job is proving the marker is now inert. Deleting the regression test to satisfy a
+   grep would be making the check pass rather than making the property true.
+2. **`RuntimeActivationService.startSelfTestServer` still contains a literal 4096.** Reasoning and a
+   WHY comment at the site: it is a VRAM-delta probe parameter, and its behaviour is unchanged by
+   this PR. See §B.c.
+3. **`VramFlagsUtil.mergeRecommendedFlags` was removed from `LlamaServerOps` only.** The
+   `RuntimeActivationService` self-test still calls it, and `VramRequirements` still ships the
+   8 GB-tier `q4_0` recommendation. That recommendation is now unreachable on the main launch path
+   (this PR always sets `-ctk`/`-ctv`), which makes `justsearch.llm.kv_type` the single authority
+   for the runtime cache type. Whether the self-test should follow is a lane-F memory-plan question,
+   not this chunk's.
+4. **Between health-OK and the first `/props` read, `configuredContextTokens()` reports the PLANNED
+   rung, not the stepped-down one.** `/props` is read immediately after health in
+   `logServerProperties()`, so the window is sub-second, and `RAGContext` prefers the observed value
+   as soon as it exists. Recorded rather than fixed: closing it would mean the launch writing back
+   into the resolver, which is the promotion shape in a new coat.
+5. **`UiSettings.schemaVersion` (the field, `UiSettings.java:19`) is read by no Java code** — the
+   envelope's `schemaVersion` is the authority `UiSettingsStore` reads. Pre-existing dead field,
+   left alone; noted here rather than silently swept in a PR about something else.
+
+### C.5 — Live-window acceptance items still OPEN (nothing below was measured in PR 1)
+
+None of these can be checked without a running model; the orchestrator schedules the window.
+
+1. `n_ctx_seq` in the llama-server log equals the chosen rung (**not** only `/props.n_ctx` — fold
+   [R1] is precisely that these can disagree).
+2. `kv_unified = true` in the llama-server log with `-np 2` present.
+3. `-fa on` accepted and a `q8_0` K/V cache reported at load.
+4. `effective-config` shows `justsearch.context.size` sourced `auto_detected` / `hardware_probe` on
+   a **fresh data dir**, and `settings.json` when a user sets one — and never `jvm_arg`.
+5. The ladder step-down exercised once by forcing an unfittable top rung, with
+   `/api/inference/status.contextWindow.reason` observed as `stepped-from:<n>`.
+6. q8_0 vs f16 generation tok/s on the dev GPU (design says: if q8_0 costs >10%, f16 becomes the
+   default at the 16k rung and below). Register entry Q-002.
+7. The 845 RAG arms: ingest the 60-chunk corpus, ask the same question in quick (`maxTokens` 512)
+   and standard (1024) modes via `/api/chat`, assert `context_truncated = false`,
+   `chunks used = chunks found` up to `top_k`, and prompt + completion <= the window in every arm.
+   Table recorded in this tempdoc.
+8. An upgraded install (existing `settings.json` at schema 1 with `contextLength: 4096`) starts,
+   migrates to 0, and runs at the derived rung — the migration is unit-tested but the upgrade path
+   is not.
+
+### C.6 — Still open in this lane after PR 1
+
+Decision 3 (`ContextBudget` and the item-9 constants), decision 5 (the `getenv` funnel + the yaml
+reader gate), decision 4 slice 2 (the `server.exe` / `exclude_patterns` / `gpu.layers` promotions),
+and **ADR-0047 "Context window as a derived resource"** (number reserved; written in a later chunk,
+not this one).

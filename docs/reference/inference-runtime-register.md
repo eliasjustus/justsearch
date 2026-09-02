@@ -234,6 +234,46 @@ Design choices in the current inference runtime, with rationale.
 - **Verification:** `NativeSessionHandleConcurrentStressTest` for concurrency baseline (10 threads covering #3 CPU recreation + #5 lifecycle-callback + post-close acquire; invariants #1/#2/#4 require CUDA, parked as tempdoc 398; metadata-read thread retired in §14.25 FD-ProbeDeletion); `OrtSessionOptionsTest` for applier parity + causality invariants; `RuntimePolicyResolverTest` for profiling round-trip + CPU-variant zero-arena invariant (§14.28 U2); `ClosurePropertyTest` for §7.5 pure-encoder contract (denylist-by-default, §14.28 U8); `InferenceSurfaceTest` + `InferenceCompositionRootComposeTest` for compose orchestration shape (§14.28 U6/U7); `GrpcSearchServiceModelReadyLatchTest` for the query-handler gate (§14.28 U3); `SessionPoliciesControllerTest` for the gRPC-bridged diagnostic (§14.28 U4); jseval pipeline anchor (§14.7.3): 191.1 s baseline. Post-§14.28 reference run: 208 s total / 24.9 docs/sec / nDCG@10 = 0.750 on 300 scifact queries (commit `0ed0321ce`, 2026-04-21).
 - **Revisit when:** 395 A1/A4/A7 adaptive policy work starts (resolver now has a real read-path; §14.28 U2 further made the record self-describing); 394 P3 scheduler lands new `RunOptions` fields (`SessionOptionsApplier.buildGpuRunOptions` is the single setter site); tempdoc 400 observability work identifies a structural gap that motivates additional runtime assertions on the closure property.
 
+### D-010: llama-server context window is a derived resource - SHIPPED (tempdoc 883, PR 1)
+
+- **Choice:** `-c` is no longer a user preference. `ContextWindowPolicy`
+  (`modules/app-inference`) produces a **ladder** - top rung 32768 with GPU layers, 8192 at
+  `-ngl 0`, then 16384 -> 8192 -> 4096 - and the launch steps down one rung on a
+  `PROCESS_EXITED` startup failure (the same seam `relaunchWithoutReasoningBudget` uses). The Head
+  contributes the top rung at `ORDINAL_AUTO_DETECT` (150, `auto_detected` / `hardware_probe`)
+  AFTER GPU detection, so `/api/debug/effective-config` explains the window with the mechanism that
+  already explains GPU detection. `UiSettings.contextLength` `0` = auto (settings schema bumped to
+  2, migrating the old 4096 default); the settings-to-sysprop promotion and the
+  `justsearch.context.size.source` marker are deleted. An explicit
+  `justsearch.context.size` above ordinal 150 is a ONE-RUNG ladder: honoured or failed loud.
+- **Slots + KV:** `-np 2 -kvu -ctk q8_0 -ctv q8_0 -fa on`, keys `justsearch.llm.slots` (default 2,
+  clamped [1,8]) and `justsearch.llm.kv_type` (default `q8_0`, restricted to llama.cpp cache types).
+  `-kvu` is mandatory next to an explicit `-np`: llama-server enables `kv_unified` only when the
+  slot count is automatic, so `-c 32768 -np 2` alone gives `n_ctx_seq` 16384 while `/props` still
+  reports `n_ctx` 32768. Two slots is a SCHEDULING choice (a background delegate must not evict the
+  foreground prompt-cache prefix, tempdoc 841), not a memory one.
+- **Rationale:** the model trains at 262k; the app ran it at 4096 with four engine-chosen slots and
+  an f16 KV cache. Measured on the bundled b8571 (tempdoc 883 independent review): `-fa auto`
+  resolves to on for CUDA and for `-ngl 0` but is passed explicitly because a q8_0 V-cache aborts
+  the launch without it; KV at 32k q8_0 is 544 MiB on both profiles; `--fit` (default on) MAXIMIZES
+  rather than fits, choosing 242,944 tokens / 4 GB KV when `-c` is omitted, so an explicit `-c` is
+  required. No VRAM arithmetic and no GGUF reader: Qwen3.5 is a Gated-Delta-Net hybrid (8 of 32
+  layers carry KV, plus ~50 MiB/slot of recurrent state independent of n_ctx; 32 KiB/token f16,
+  17 KiB/token q8_0), so any dense-attention formula is ~4x wrong, and `/props` on b8571 does not
+  expose `n_ctx_train`. Free VRAM is recorded on the activation record, never used as an input.
+- **What is intent vs observation:** `/api/inference/status.contextWindow`
+  (`{rung, reason, freeVramBytes, slots, kvType}`) is the INTENT. `/props` `n_ctx` (published as
+  `llmContextTokens`) and `n_ctx_seq` in the llama-server log are the OBSERVATION and stay
+  authoritative. `ServerPropsOps` compares the readback against the LAUNCHED rung, not
+  `InferenceConfig.contextSize()` - the latter is stale by construction after a step-down.
+- **Evidence:** tempdoc 883 (contract, independent review fold R1-R4, §B pre-impl pass, §C
+  post-impl pass). Live-window acceptance (`n_ctx_seq`, `kv_unified=true`, forced step-down,
+  q8_0 vs f16 tok/s) is scheduled separately and NOT yet measured as of PR 1.
+- **Revisit when:** the live window runs and reports the q8_0 tok/s cost (if it exceeds 10% on the
+  dev GPU the design says make f16 the default at 16k and below); or when lane F adds a second
+  VRAM arbiter - the window, `gpuLayers`, slots, KV type and reranker/VDU co-residency all compete
+  for the same VRAM and should be one memory plan at activation, not several.
+
 ### D-002: BGE-M3 VRAM budget — FP16+Flash at 3072 MB arena
 
 - **Choice:** FP16+Flash Attention with 3072 MB arena limit (`JUSTSEARCH_BGE_M3_GPU_MEM_MB=3072`).
@@ -316,6 +356,19 @@ picking up items here over inventing new experiments.
 - **Evidence:** tempdoc 360 (warm-up implementation); tempdoc 356 (identified the fix).
 
 ---
+
+### Q-002: What does q8_0 KV cost in tok/s on the dev GPU, and does the 32k top rung hold under co-residency?
+
+- **Context:** tempdoc 883 decision 2 ships `-ctk q8_0 -ctv q8_0` by default and decision 1 ships a
+  32768 top rung, both argued from launch-time fit (KV at 32k q8_0 measured at 544 MiB) rather than
+  from throughput or from behaviour under load.
+- **What to measure:** (a) generation tok/s with `-ctk/-ctv q8_0` vs `f16` at the same rung, on the
+  dev RTX 4070 - the design says that if q8_0 costs more than 10%, `f16` becomes the default at the
+  16k rung and below; (b) whether the 32k rung still fits with the reranker and a VDU batch
+  co-resident, or whether the top rung should stay at 16k until that is measured (the owner's own
+  open question in 883).
+- **Instrument:** `jseval llm-bench` / `llm-gate` (F-012) for tok/s; the recorded
+  `contextWindow.reason` on `/api/inference/status` for step-downs.
 
 ## Future Work
 
