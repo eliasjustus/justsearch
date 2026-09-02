@@ -21,7 +21,6 @@ Precedence note:
 | index.boosts | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.collections | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.commit.debounce_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.commit.idle_ms | JUSTSEARCH_INDEX_COMMIT_IDLE_MS | index.commit.idle_ms | INDEX_COMMIT_IDLE_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.commit.meta.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.directory.type | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.hybrid.adaptive_weights_enabled | JUSTSEARCH_HYBRID_ADAPTIVE_WEIGHTS_ENABLED | index.hybrid.adaptive_weights_enabled | HYBRID_ADAPTIVE_WEIGHTS_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS - chunks 1-5 landed and the consolidated live window ran (2026-09-02). Item 3 PASSES all three acceptance criteria live (b) 143.8 vs (a) 123.8 docs/s, (c) indexes all 5184 docs at duty 20-27% where the baseline froze at 699, search p95 better than baseline. Item 14 closed for #595: the persistent sandbox child ran from a real Worker dist on 360 real files, 1 child, 0 recycles, ~11 ms/file isolation cost. Item 19 candidate REJECTED as implemented - both axes measured worse than control, from two implementation defects the window exposed (one fixed here, one recorded with a fix direction); the commit axis is additionally unreachable while CommitOps' 10 s timer is hardcoded and backfill commits dominate. Shipped defaults unchanged throughout. OPEN: re-run A2 after the foreground-signal fix, and A3b on a quiet machine
+status: IN PROGRESS - chunks 1-5 landed, the consolidated live window ran (2026-09-02) and item 19 is resolved. Item 3 PASSES all three acceptance criteria live. Item 14 closed for #595. Item 19: candidate rejected as implemented - the on-demand seam's polarity defect is FIXED (foreground predicate from ForegroundLoad) and index.nrt.mode stays opt-in pending a clean re-measure of arm A2; index.commit.idle_ms is DELETED because the commit lever cannot work while CommitOps' 10 s timer is hardcoded and backfill commits dominate (61/114) - tracked for a later lane. Defaults unchanged throughout. OPEN: re-run A2 on a quiet machine
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
@@ -2267,7 +2267,7 @@ Run-to-run spread on clean defaults arms was 114.0-123.8 docs/s (±4%), which is
 single-run comparison here must clear. (b)'s +16% clears it; it is not being read as a real speedup,
 only as "not the 61% slowdown the baseline had".
 
-### Arm 2 — item 19, the cadence matrix (A1/A2/A3 clean)
+### Item 19 live — the cadence matrix (arm 2; A1/A2/A3 clean)
 
 Every arm was confirmed via `/api/debug/effective-config` **before** its numbers were read; the
 `source` field proved `env_var` for exactly the knobs that arm set and `default` for the rest.
@@ -2354,6 +2354,86 @@ sessions. `reopen_count` and `segments_since_reopen` share the same per-session 
 comparisons above are still valid (all arms have the same session structure), but the absolute
 figures under-report, and a future reader should prefer the histogram where one exists. Recorded
 as a limitation of the instrument this chunk added.
+
+### Item 19 live — resolution (owner decision after the window)
+
+**Verdict: candidate rejected as implemented; `on_demand` stays opt-in pending a clean re-measure
+after the polarity fix; defaults unchanged.**
+
+Applying the contract's own rule — "ship only what the numbers justify" — to each half:
+
+| Piece | Decision | Why |
+|---|---|---|
+| `index.nrt.mode` (+ `background_reopen_ms`, `on_demand_max_stale_ms`) | **KEPT**, default `continuous` | The reopen axis has not been *cleanly* measured yet: A2 rejected the implementation, not the idea. The defect is fixed below; the arm needs a re-run. |
+| Reopen-on-demand seam | **FIXED** (polarity) | See below. |
+| `index.commit.idle_ms` + its wiring | **DELETED** | The lever cannot work at all — see the tracked item. |
+| `index.runtime.reopen_count` / `segments_since_reopen`, jseval `cadence` block, `--first-search-probe` | **KEPT** | This is the measurement substrate; it is what made the two defects visible, and the re-run needs it. |
+
+#### The polarity fix
+
+`NrtOnDemandPolicy.decide` now takes a `foregroundActive` flag and returns `SKIP` when it is false,
+before any staleness or sequence-number reasoning. `SearcherBridge` reads it from a
+`BooleanSupplier` on `RuntimeSession`, which the Worker wires from item 3's gauge
+(`KnowledgeServer.buildIndexRuntime` → `builder.withForegroundActive(() -> foregroundLoad.inFlight() > 0)`).
+`ForegroundLoad` is the only component that knows a search-family RPC is running, and
+`adapters-lucene` cannot depend on `worker-services`, so it crosses the boundary as a predicate.
+
+A predicate rather than a per-consumer opt-out list is deliberate: the defect was precisely that a
+*shared* seam cannot tell its callers apart, and an opt-out list is a thing the next new read path
+silently forgets to join. Unwired, the predicate defaults to always-foreground — the pre-fix
+behaviour — so it errs toward freshness rather than toward serving a stale searcher, and
+`continuous` never consults it at all.
+
+Tests are a matched pair under identical conditions (same mode, same writes, same suspended reopen
+thread, only the predicate differs), so neither can pass for the wrong reason:
+`onDemandBackgroundReadDoesNotRefresh` (predicate false → 0 reopens, the read sees the pre-write
+searcher) against `onDemandForegroundReadRefreshes` (predicate true → reopens, sees all three
+documents), plus `onDemandGateIsConsultedPerRead` flipping the predicate on one runtime. At the
+policy level, `backgroundReadNeverRefreshes` pairs "background" with the strongest possible refresh
+case — brand-new writes *and* an ancient searcher — so neither can override the gate.
+
+**Not yet re-measured.** The fix is unit-proven, not field-proven. `on_demand` remains opt-in and
+off by default until arm A2 is re-run on a quiet machine.
+
+#### Tracked item for a later lane — the commit-cadence lever is unreachable
+
+Deleting `index.commit.idle_ms` is not "the idea failed"; it is "the lever does not connect to the
+thing it was meant to move". The evidence, from the reason-tagged `index.runtime.commit_ms`
+histogram (which attributes commits rather than counting them):
+
+| reason | A1 (control) | A3 (commit cadence) |
+|---|---|---|
+| `backfill/combined-final` | **61** | **197** |
+| `indexing-loop/buffer` | 24 | **0** — the knob worked |
+| `timer` (`CommitOps.COMMIT_TIMER_INTERVAL_MS`, hardcoded 10 s) | 16 | **46** |
+| `indexing-loop/time` | 4 | 15 |
+| `indexing-loop/idle` | 4 | 0 |
+| other | 5 | 63 |
+| **total** | **114** | **321** |
+
+Two blockers, both structural:
+
+1. **Enrichment-backfill commits dominate** — 61 of 114 in the control, and
+   `justsearch.backfill.commit_interval_ms` / `max_docs_before_commit` do not govern them. Tuning
+   the indexing loop's triggers can reach at most ~28% of commits.
+2. **`CommitOps.COMMIT_TIMER_INTERVAL_MS` is a hardcoded 10 s safety net** (`CommitOps.java:34`)
+   that fires whenever `pendingDocs > 0`. Deferring the loop's commits keeps `pendingDocs` above
+   zero longer and therefore hands *more* work to that timer: 16 → 46. Any commit-cadence work is
+   self-defeating until this constant is configurable.
+
+**Do not re-run a commit-cadence arm as designed.** A future lane wanting this lever must first
+(a) make the safety-net timer configurable and (b) bring the backfill's own commit sites into
+scope; only then is there a knob worth measuring. Recorded here rather than left as a deleted key
+with no explanation.
+
+**Residual, recorded not fixed:** `journal.drainPending()` sits inside the idle-commit `try`
+(`IndexingLoop.java`), so a *throwing* idle commit also skips the journal drain. The measured 92%
+throughput collapse was caused by the deleted key delaying that commit, and it disappears with the
+key — so the drain change was reverted with it rather than kept. What remains is a narrower latent
+coupling (commit failure stalls journal progress while the queue is empty) that this window never
+observed and that no test covers; fixing it speculatively inside a "drop the key" change would be
+an unmeasured behaviour change riding along. Left for whoever takes the tracked item above, which
+touches the same block.
 
 ### Arm 3 — item 14, extraction routing on a real corpus
 
