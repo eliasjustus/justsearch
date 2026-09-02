@@ -3,6 +3,7 @@ package io.justsearch.app.api.runtime;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.soabase.recordbuilder.core.RecordBuilder;
+import io.justsearch.app.api.OnlineAiRuntimeIntrospection;
 
 /**
  * Producer-published runtime manifest (tempdoc 501).
@@ -215,6 +216,19 @@ public record RuntimeManifest(
    * (nothing launched by us, e.g. an adopted server). Nullable and additive, same as the build
    * pin: this is where "what can this installation do" is already read from, so a surface can
    * disable a thinking control with a reason instead of promising what the build cannot do.
+   *
+   * <p>Tempdoc 883 decision 1 — {@code contextWindow} is the window this installation's engine was
+   * launched with and WHY ({@code rung}, {@code reason} of {@code fit} / {@code override} /
+   * {@code stepped-from:<planned top rung>}, {@code slots}, {@code kvType}, and the NVML free VRAM
+   * recorded at plan time). The window is a derived resource, so "what did this machine end up
+   * with" is a fact about the installation, not a setting anyone can read back out of config —
+   * which is exactly what this manifest is for. Null when this process launched no server (nothing
+   * started yet, or an adopted external instance whose window it did not choose). Nullable and
+   * additive: no schema bump.
+   *
+   * <p>This is the INTENT. The window the server reports ({@code /props} {@code n_ctx}, published
+   * on {@code /api/inference/status} as {@code llmContextTokens}) is the OBSERVATION, and stays
+   * authoritative; never present one as the other.
    */
   @RecordBuilder
   @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -225,7 +239,8 @@ public record RuntimeManifest(
       String readyAt,
       String serverBuildExpected,
       String serverBuildActual,
-      String thinkingSupport) {
+      String thinkingSupport,
+      OnlineAiRuntimeIntrospection.ContextWindow contextWindow) {
 
     /**
      * Public projection (tempdoc 501 §13.4.5 audience axis). AI carries no

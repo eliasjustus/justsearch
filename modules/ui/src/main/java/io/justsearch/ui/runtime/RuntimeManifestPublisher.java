@@ -498,6 +498,9 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
    *
    * <p>Tempdoc 835 §9c.2: {@code thinkingSupport} carries the reasoning-capability verdict decided
    * by launch-argument acceptance; null when no inference manager exists.
+   *
+   * <p>Tempdoc 883 decision 1: {@code contextWindow} carries the derived window this engine was
+   * launched with and why; null when this process launched no server (including an adopted one).
    */
   public synchronized RuntimeManifest publishAi(
       String phase,
@@ -507,7 +510,8 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
       String lifecycle,
       String serverBuildExpected,
       String serverBuildActual,
-      String thinkingSupport)
+      String thinkingSupport,
+      io.justsearch.app.api.OnlineAiRuntimeIntrospection.ContextWindow contextWindow)
       throws IOException {
     RuntimeManifest previous = current.get();
     if (previous == null) {
@@ -525,7 +529,8 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
             readyAt,
             serverBuildExpected,
             serverBuildActual,
-            thinkingSupport);
+            thinkingSupport,
+            contextWindow);
     RuntimeManifest manifest =
         RuntimeManifestBuilder.builder(previous)
             .ai(aiInfo)
