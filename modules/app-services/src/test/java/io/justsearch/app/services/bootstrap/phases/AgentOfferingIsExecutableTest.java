@@ -108,6 +108,7 @@ final class AgentOfferingIsExecutableTest {
             OnlineAiService.unavailable(),
             null,
             null,
+            null,
             MemoryStore.noop(),
             null,
             null,

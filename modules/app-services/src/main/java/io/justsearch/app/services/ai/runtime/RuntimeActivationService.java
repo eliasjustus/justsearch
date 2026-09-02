@@ -158,7 +158,9 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   private final Path aiHome;
   private final Path statusPath;
-  private final Path variantsRoot;
+
+  /** Memo for {@link #variantsRoot()}; re-derived when it stops naming a directory (913 H1). */
+  private volatile Path variantsRoot;
 
   private final Object lock = new Object();
   private final AtomicBoolean running = new AtomicBoolean(false);
@@ -380,7 +382,6 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     this.runtimeReconciler = runtimeReconciler; // may be null (graceful degradation)
     this.aiHome = resolveAiHome();
     this.statusPath = aiHome.resolve("ai").resolve(STATUS_FILE);
-    this.variantsRoot = resolveVariantsRoot();
     loadStatusBestEffort();
   }
 
@@ -763,12 +764,13 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       return;
     }
 
-    Path exe = variantsRoot.resolve(variantId).resolve("llama-server.exe");
+    Path root = variantsRoot();
+    Path exe = root.resolve(variantId).resolve("llama-server.exe");
     if (!Files.isRegularFile(exe)) {
       // G17: "default" variant may be the baseline exe flat in native-bin/llama-server/
       // (not under variants/). Fall back to it so fresh installs can activate.
       if ("default".equals(variantId)) {
-        Path baseline = variantsRoot.getParent().resolve("llama-server.exe");
+        Path baseline = root.getParent().resolve("llama-server.exe");
         if (Files.isRegularFile(baseline)) {
           log.info("Using baseline exe as default variant: {}", baseline);
           exe = baseline;
@@ -1511,16 +1513,17 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
     // G17: Include the baseline exe as a synthetic "default" variant if it exists
     // flat in native-bin/llama-server/ (not under variants/).
-    Path baselineExe = variantsRoot.getParent().resolve("llama-server.exe");
-    boolean hasDefaultVariantDir = Files.isDirectory(variantsRoot.resolve("default"));
+    Path root = variantsRoot();
+    Path baselineExe = root.getParent().resolve("llama-server.exe");
+    boolean hasDefaultVariantDir = Files.isDirectory(root.resolve("default"));
     if (Files.isRegularFile(baselineExe) && !hasDefaultVariantDir) {
       out.add(
           new AiRuntimeStatusResponse.InstalledVariant(
               "default", baselineExe.toAbsolutePath().toString()));
     }
 
-    if (Files.isDirectory(variantsRoot)) {
-      try (var stream = Files.list(variantsRoot)) {
+    if (Files.isDirectory(root)) {
+      try (var stream = Files.list(root)) {
         stream
             .filter(Files::isDirectory)
             .sorted(
@@ -1683,40 +1686,132 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
   }
 
   /**
-   * Resolves the variants root directory, with fallback for dev mode.
+   * The variants root this service activates out of, re-derived whenever the memo no longer names a
+   * directory (tempdoc 913 H1).
+   *
+   * <p>It was a {@code final} field computed once in the constructor. That froze the answer before
+   * the two things that can change it have happened: on a fresh profile nothing is on disk yet and
+   * {@code AiInstallService} installs later, and a {@code ConfigStore} rebuild can re-point the
+   * resolved server exe. A memo that is only trusted while it still resolves to a real directory
+   * keeps the common path allocation-free without pinning a wrong answer for the process lifetime.
+   */
+  private Path variantsRoot() {
+    Path memo = variantsRoot;
+    if (memo != null && Files.isDirectory(memo)) {
+      return memo;
+    }
+    Path fresh = resolveVariantsRoot(aiHome, repoRootOrNull(), resolvedServerExeOrNull());
+    variantsRoot = fresh;
+    return fresh;
+  }
+
+  private static Path repoRootOrNull() {
+    try {
+      return RepoRootLocator.findRepoRootOrNull();
+    } catch (Exception ignored) {
+      return null;
+    }
+  }
+
+  /**
+   * The server exe the config layer resolved, or null before {@code ConfigStore.setGlobal} has run
+   * (unit tests, very early boot). Read through the store rather than {@code System.getenv} — a
+   * direct env read of {@code JUSTSEARCH_SERVER_EXE} is what {@code EnvRegistryDirectReadTest}
+   * forbids, and the store is also where a JVM-arg or worker-snapshot override outranks the env.
+   */
+  private static Path resolvedServerExeOrNull() {
+    try {
+      ConfigStore cs = ConfigStore.globalOrNull();
+      return cs == null ? null : cs.get().ai().serverExe();
+    } catch (Exception ignored) {
+      return null;
+    }
+  }
+
+  /**
+   * Resolves the variants root directory.
    *
    * <p>In production, variants are at {@code {aiHome}/native-bin/llama-server/variants/}. In dev
    * mode, aiHome typically points to {@code .dev-data} but variants are at
    * {@code modules/ui/native-bin/llama-server/variants/}.
+   *
+   * <p>Tempdoc 913 H1 — the resolved server exe is consulted between those two. In an agent
+   * worktree the first two both miss: {@code JUSTSEARCH_HOME} is the worktree's {@code .dev-data}
+   * (no {@code native-bin} under it) and {@code RepoRootLocator} finds the WORKTREE root, which has
+   * no {@code modules/ui/native-bin} either — worktrees share the main checkout's 10 MB cuda12
+   * build rather than copying it. So {@code listInstalledVariants()} returned {@code []} and every
+   * activation failed {@code RUNTIME_VARIANT_NOT_INSTALLED}, while the dev-runner had already
+   * resolved the shared exe and put it in {@code JUSTSEARCH_SERVER_EXE}
+   * ({@code scripts/dev/dev-runner.cjs:493-511}) — the answer was in the config the whole time.
+   * Deriving the root from that exe is what makes the worktree docs' promise ("the shared cuda12
+   * llama-server resolves from the main checkout automatically") true without junctions.
+   *
+   * <p>Order matters and aiHome stays FIRST: this class itself writes {@code justsearch.server.exe}
+   * on activate, so an exe-first order would let one activation re-root a real install at whatever
+   * it last launched. Each exe-derived candidate must still be a directory, so a BYO exe outside a
+   * {@code variants/} tree contributes nothing.
+   *
+   * @param aiHome the resolved AI home; null yields null (no root can be named)
+   * @param repoRoot the dev-mode repo root, or null when not resolvable
+   * @param resolvedServerExe the config-resolved llama-server exe, or null when unknown
    */
-  private Path resolveVariantsRoot() {
+  static Path resolveVariantsRoot(Path aiHome, Path repoRoot, Path resolvedServerExe) {
+    if (aiHome == null) {
+      return variantsRootOfExe(resolvedServerExe);
+    }
     Path standard = aiHome.resolve("native-bin").resolve("llama-server").resolve("variants");
     if (Files.isDirectory(standard)) {
       return standard;
     }
 
-    // Dev mode fallback: use RepoRootLocator for auto-discovery
-    try {
-      Path repoRoot = RepoRootLocator.findRepoRootOrNull();
-      if (repoRoot != null) {
-        Path devVariants =
-            repoRoot
-                .resolve("modules")
-                .resolve("ui")
-                .resolve("native-bin")
-                .resolve("llama-server")
-                .resolve("variants");
-        if (Files.isDirectory(devVariants)) {
-          log.debug("Using dev mode variants path: {}", devVariants);
-          return devVariants;
-        }
+    Path fromExe = variantsRootOfExe(resolvedServerExe);
+    if (fromExe != null) {
+      log.debug("Using variants path derived from the resolved server exe: {}", fromExe);
+      return fromExe;
+    }
+
+    // Dev mode fallback: the repo checkout this process resolved to.
+    if (repoRoot != null) {
+      Path devVariants =
+          repoRoot
+              .resolve("modules")
+              .resolve("ui")
+              .resolve("native-bin")
+              .resolve("llama-server")
+              .resolve("variants");
+      if (Files.isDirectory(devVariants)) {
+        log.debug("Using dev mode variants path: {}", devVariants);
+        return devVariants;
       }
-    } catch (Exception ignored) {
-      // best-effort
     }
 
     // Return standard path even if it doesn't exist (for consistent error messages)
     return standard;
+  }
+
+  /**
+   * The {@code .../variants} prefix of an exe that lives under {@code .../variants/<id>/}, or null.
+   * The segment walk mirrors {@link #resolveVariantIdFromExePath}, which answers the sibling
+   * question (the id) over the same shape — one spelling of "a variants-laid-out exe", two reads.
+   */
+  private static Path variantsRootOfExe(Path exe) {
+    if (exe == null) {
+      return null;
+    }
+    try {
+      Path p = exe.toAbsolutePath().normalize();
+      int n = p.getNameCount();
+      for (int i = n - 1; i >= 0; i--) {
+        if (!"variants".equalsIgnoreCase(p.getName(i).toString())) {
+          continue;
+        }
+        Path root = p.getRoot() == null ? p.subpath(0, i + 1) : p.getRoot().resolve(p.subpath(0, i + 1));
+        return Files.isDirectory(root) ? root : null;
+      }
+    } catch (Exception ignored) {
+      // best-effort
+    }
+    return null;
   }
 
   private static Path resolveBundledRuntimeBinDirBestEffort() {

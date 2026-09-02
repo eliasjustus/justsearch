@@ -82,6 +82,11 @@ public final class HeadAssembly implements AutoCloseable {
   private final io.justsearch.app.services.vdu.OfflineCoordinator offlineCoordinator;
   private final Telemetry telemetry;
   private final KnowledgeHttpApiAdapter agentSearchAdapter;
+  // Tempdoc 913 D5: the ONE file-operation journal for the process. Held for the same reason
+  // agentSearchAdapter is — connectKnowledgeServer hands it to AgentToolHandlers.registerLateBound
+  // so the write side (FileOperationsTool) and the read side (AgentRunQueryService.operationHistory
+  // → GET /api/chat/agent/history) are the same instance over the same directory.
+  private final FileOperationLog fileOperationLog;
   // Tempdoc 832 (lane D): published by LocalApiServer (its owner) before connectKnowledgeServer, so
   // the late-bound agent ingest adapter can be bound to the same scan-progress stream.
   private volatile io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry;
@@ -420,7 +425,7 @@ public final class HeadAssembly implements AutoCloseable {
     this.offlineCoordinator = serviceOut.offlineCoordinator();
     this.agentSearchAdapter = serviceOut.agentTools().agentSearchAdapter();
     this.excludes = serviceOut.excludes();
-    FileOperationLog fileOperationLog = serviceOut.agentTools().fileOperationLog();
+    this.fileOperationLog = serviceOut.agentTools().fileOperationLog();
 
     // Tempdoc 629 (LAYER): seal agent-run meta.json + events.ndjson with the data key (lazy reads → no
     // reload-listener needed; while locked the ledger is empty until unlock).
@@ -663,7 +668,7 @@ public final class HeadAssembly implements AutoCloseable {
     final OnlineAiService onlineAiServiceFinal = onlineAiService;
     final IndexingService indexingForOrchestration = indexingService;
     final DocumentService documentForOrchestration = documentService;
-    final FileOperationLog fileOperationLogFinal = fileOperationLog;
+    final FileOperationLog fileOperationLogFinal = this.fileOperationLog;
     final Supplier<List<String>> agentRootPathsFinal = agentRootPaths;
     var orchestrationOut =
         tracedPhase(
@@ -824,6 +829,7 @@ public final class HeadAssembly implements AutoCloseable {
                   this.services.inference().onlineAi(),
                   this.lambdaMartReranker,
                   this.agentSearchAdapter,
+                  this.fileOperationLog,
                   this.memoryStore,
                   this.scanProgressRegistry,
                   scanRollupLedgerOrNull(),
@@ -897,6 +903,7 @@ public final class HeadAssembly implements AutoCloseable {
     this.runtimeReconciler = null;
     this.offlineCoordinator = null;
     this.agentSearchAdapter = null;
+    this.fileOperationLog = null;
     this.excludes = null;
     this.serviceOut = null;
     this.gplJobCoordinator = null;

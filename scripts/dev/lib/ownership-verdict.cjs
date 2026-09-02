@@ -342,6 +342,44 @@ function recommendedTakeoverFor(decision) {
   return null; // CONTENTION / WAIT_CRITICAL_OP / REQUIRES_CONFIRMATION — not acquirable without escalation
 }
 
+/** Windows/POSIX-insensitive path compare for the provenance check. */
+function normRepoPath(p) {
+  return typeof p === 'string' ? p.replace(/\\/g, '/').replace(/\/+$/, '') : p;
+}
+
+/**
+ * Tempdoc 606 Piece 2 / 913 T1 — does the running stack run code from a checkout the caller did
+ * NOT ask for? Pure, so the false-positive case below is a unit test rather than a live repro.
+ *
+ * The check compares the running stack's provenance repoRoot against the CALLER's checkout. That
+ * proxy breaks the moment `start { distFrom }` exists (tempdoc 606 Piece 4): a worktree agent runs
+ * its own code on the one shared stack by asking the main checkout's MCP server to launch that
+ * worktree's dist. Provenance then records the worktree, `callerRepoRoot` is the main checkout, and
+ * every `quick_health` answered `rebuildFirst: true` — "it runs different code than your worktree" —
+ * about a stack that runs EXACTLY the code that was asked for. Note who can see it: `rebuildFirst`
+ * is returned only on the `callerIsOwner` branch, and the only way an owner's stack runs from
+ * another root is an explicit `distFrom`. So before this fix the check fired on nothing but its own
+ * false positive, and the caller's own dist is irrelevant in precisely that case.
+ *
+ * So a launch is exonerated when provenance records the resolved distFrom root and the tree the
+ * dev-runner actually ran in is that root — "launched where asked", proved rather than assumed. The
+ * check still bites where it was meant to: a run record whose repoRoot is neither the caller's nor
+ * the root the launch requested (a stack started outside this path, a taken-over foreign run).
+ *
+ * @param {object|null} leaseProvenance the provenance block stamped on the lease at spawn
+ * @param {string|null} callerRepoRoot the checkout this MCP server is running from
+ * @returns {boolean} true when a rebuild/relaunch warning is warranted
+ */
+function computeProvenanceMismatch(leaseProvenance, callerRepoRoot) {
+  const running = normRepoPath(leaseProvenance?.repoRoot);
+  const caller = normRepoPath(callerRepoRoot);
+  if (!running || !caller) return false;
+  if (running === caller) return false;
+  const asked = normRepoPath(leaseProvenance?.distFromRoot);
+  if (asked && asked === running) return false;
+  return true;
+}
+
 module.exports = {
   DEFAULT_THRESHOLDS,
   readSessionActivity,
@@ -349,5 +387,6 @@ module.exports = {
   classifyActivity,
   computeOwnershipVerdict,
   computeDisplacedNotice,
+  computeProvenanceMismatch,
   recommendedTakeoverFor,
 };
