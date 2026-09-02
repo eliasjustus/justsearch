@@ -141,13 +141,25 @@ function fmtK(n) {
  * Map an OTLP per-session cost aggregate (loadCostsFromOtlp) to the canonical
  * costs.ndjson record shape. `total_cost_usd` is the harness's own
  * `claude_code.cost.usage` sum — authoritative, no pricing table.
+ *
+ * Codex sessions carry token records but NO `claude_code.cost.usage` metric
+ * (Codex has no equivalent harness-computed-dollar metric at all — 886 §12
+ * PR 3), so `rec.hasCostMetric` (set by `loadCostsFromOtlp` only when it saw
+ * that metric for the session) distinguishes "genuinely $0" from "no cost
+ * metric exists for this harness" (independent review SHOULD-FIX 2). The
+ * latter reports `total_cost_usd: null` + `reason: 'no_cost_metric'` — the
+ * same null-not-zero convention `costSession()` already uses for
+ * `reason: 'no_transcript_path'` above — instead of silently pricing a
+ * Codex session at $0, which would read as "this session was free" when it
+ * was actually "we never asked what it cost".
  */
 function recordFromOtlp(rec) {
   const subCost = rec.by_source?.subagent?.cost_usd ?? 0;
+  const hasCost = rec.hasCostMetric === true;
   return {
     ts: new Date().toISOString(),
     session_id: rec.session_id,
-    total_cost_usd: round(rec.cost_usd),
+    total_cost_usd: hasCost ? round(rec.cost_usd) : null,
     tokens: {
       input: rec.input_tokens,
       output: rec.output_tokens,
@@ -155,16 +167,29 @@ function recordFromOtlp(rec) {
       cache_read: rec.cache_read_tokens,
     },
     model: rec.model,
+    harness: rec.harness ?? null,
     turns: null, // turn count not carried by the cost metric; trace/log spans hold it
     subagent_cost_usd: round(subCost),
     source: 'otlp',
-    reason: null,
+    reason: hasCost ? null : 'no_cost_metric',
   };
+}
+
+/**
+ * Pure mapping step between `loadCostsFromOtlp`'s Map (or an injected
+ * array of the same per-session shape) and the `recordFromOtlp` record
+ * list — split out so a test can feed synthetic records without touching
+ * `tmp/agent-telemetry/otlp/`, mirroring `reconcileSessions`' injected-input
+ * contract.
+ */
+export function costRecordsFromOtlp(costMapOrArray) {
+  const entries = costMapOrArray instanceof Map ? [...costMapOrArray.values()] : costMapOrArray;
+  return entries.map(recordFromOtlp);
 }
 
 function runOtlpCost(sessionId, jsonOnly) {
   const costMap = loadCostsFromOtlp();
-  const records = [...costMap.values()].map(recordFromOtlp)
+  const records = costRecordsFromOtlp(costMap)
     .filter(r => !sessionId || r.session_id === sessionId);
   if (sessionId && records.length === 0) {
     console.error(`Session not found in OTLP metrics: ${sessionId}`);
@@ -175,10 +200,20 @@ function runOtlpCost(sessionId, jsonOnly) {
   if (jsonOnly) {
     process.stdout.write(JSON.stringify(sessionId ? records[0] : records, null, 2) + '\n');
   } else {
-    const total = records.reduce((s, r) => s + (r.total_cost_usd ?? 0), 0);
-    console.log(`Costed ${records.length} session(s) from OTLP ($${total.toFixed(4)} total):\n`);
+    const priced = records.filter(r => r.total_cost_usd != null);
+    const unpriced = records.filter(r => r.total_cost_usd == null);
+    const total = priced.reduce((s, r) => s + r.total_cost_usd, 0);
+    console.log(`Costed ${records.length} session(s) from OTLP ($${total.toFixed(4)} total, `
+      + `${priced.length} priced, ${unpriced.length} no-cost-metric):\n`);
     for (const r of records) {
-      console.log(`  ${r.session_id.substring(0, 8)}  $${(r.total_cost_usd ?? 0).toFixed(4)}  (${r.model ?? 'unknown'}, subagent $${(r.subagent_cost_usd ?? 0).toFixed(4)})`);
+      const costStr = r.total_cost_usd != null
+        ? `$${r.total_cost_usd.toFixed(4)}`
+        : `n/a (no cost metric from ${r.harness ?? 'unknown harness'})`;
+      console.log(`  ${r.session_id.substring(0, 8)}  ${costStr}  (${r.model ?? 'unknown'}, subagent $${(r.subagent_cost_usd ?? 0).toFixed(4)})`);
+    }
+    if (unpriced.length) {
+      console.log(`\n${unpriced.length} session(s) had token records but no cost metric (harness reports `
+        + `no dollar value, excluded from the total above): ${unpriced.map(r => r.session_id.substring(0, 8)).join(', ')}`);
     }
     console.log(`\nCosts written to ${path.join(TELEMETRY_DIR, COSTS_FILE)}`);
   }

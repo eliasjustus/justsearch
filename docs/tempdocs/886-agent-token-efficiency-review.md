@@ -518,6 +518,117 @@ step, not bundled into this implementation pass).
 - `docs/how-to/`: Codex `[otel]` snippet targeting `http://127.0.0.1:4318` (`otlp-http`, `binary`), plus the one-session smoke check (A6). User-level config, not repo governance.
 - Routing: Sonnet-high.
 
+**PR 3 outcome (2026-09-02, branch `worktree-886-ledger-1`, stacked on PR 1 + PR 2).**
+Implemented in `otlp-sink.py`'s `decode_metrics`: a module-level `GENAI_TOKEN_MAP` (one entry
+per harness — `claude_code.token.usage{type}` and `codex.turn.token_usage{token_type}`) drives
+`_genai_normalize`, which appends one flat `{name: 'gen_ai.usage', normalized: true,
+attributes: {...original attrs, gen_ai.system, gen_ai.request.model, gen_ai.token.kind},
+value, time_unix_nano}` twin per data point into the same `metrics.ndjson` stream as the
+untouched original — additive, no separate file, same rotation/retention policy. Deviation
+from this section's original bullet (`gen_ai.usage.{input,output}_tokens` /
+`gen_ai.usage.cache_read.input_tokens` / `gen_ai.usage.cache_creation.input_tokens` as four
+separate metric names): the orchestrator's PR 3 brief specified one `gen_ai.usage` metric name
+with a `gen_ai.token.kind` attribute distinguishing input/output/cache_read/cache_creation/
+reasoning instead — functionally equivalent (same information, same filterability) and closer
+to how the OTel GenAI conventions structure a single counter with a type dimension; documented
+here so the deviation from the original plan text is visible, not silent. Codex's `total` type
+is skipped (derivable as input+output, not a new axis); Codex's raw `input` (which already
+includes cached tokens, the OpenAI convention, unlike Claude's `input` which excludes
+`cacheRead`/`cacheCreation`) gets an explicit `gen_ai.input_includes_cache_read: true` flag on
+its normalised point so the two harnesses' "input" can never be silently summed as the same
+quantity. 6 new tests in `test_otlp_sink.py` (Claude point → original + normalised; Codex
+`cached_input` → `cache_read`; Codex raw `input` → the inclusion flag; Codex `total` → no
+normalised record; unknown metric name → no normalised record; attribute passthrough +
+non-mutation of the original). Test count 16 → 22, all pass.
+
+`lib/telemetry-io.mjs`'s `loadCostsFromOtlp` now reads `gen_ai.usage` records first (preferred
+source) and remembers which origin point each one covers — keyed on session id +
+`time_unix_nano` + the origin's own raw `type`/`token_type` value, which the normalised record
+carries through verbatim — so the second pass over `claude_code.token.usage` skips any point
+already counted via its twin, closing the double-count risk the additive design creates.
+Archives written before this change carry no `gen_ai.usage` records, so that consumed-key set
+stays empty for them and the original per-point reading runs unchanged (verified by a fixture
+with `claude_code.token.usage`-only data and no twin). A `harness` field (from
+`gen_ai.system`) was added to each session's returned record. `loadCostsFromOtlp` gained an
+optional `dir` parameter (default unchanged — the live sink directory) purely so tests can
+point it at a temp directory instead of `tmp/agent-telemetry/otlp/`, mirroring the pattern
+`loadOtlpStream` already used for the same reason; no caller passes it, so this is additive.
+Deviation from this section's original bullet ("query_source/lineage mapped for both"): lineage
+mapping lives in `loadEventsFromOtlp`/`lib/ledger/{claude,codex}-adapter.mjs`, a separate code
+path from the cost/token aggregation `loadCostsFromOtlp` does; the orchestrator's PR 3 brief
+scoped this deliverable to the model-attribution/token pass specifically, so lineage mapping
+for the OTLP event stream was left untouched — `query_source` attribution was already
+harness-agnostic (`a.query_source || 'main'`) before this PR and needed no change. 3 new
+fixture-based tests added to `telemetry-io.otlp.test.mjs` (dedup against a paired
+claude_code/gen_ai twin; a gen_ai-only, e.g. Codex-shaped, session; a legacy archive with no
+`gen_ai.usage` records at all) — test count 8 → 11, all pass.
+
+`docs/how-to/wire-codex-cli-into-the-otlp-sink.md` documents the `[otel]` TOML snippet, that
+the sink must be running (`otlp-sink-ensure` for a Claude session; `python
+scripts/agent-analytics/otlp-sink.py --port 4318` run by hand for a Codex-only session), the
+`grep -c '"gen_ai.system": "codex-cli"'` smoke check, and the optional (not governed) Codex
+`hooks.json` forward pointer to PR 4's two hints. **The live Codex smoke check itself is not
+run here** — this worktree has no way to start an interactive Codex CLI session (A6 remains
+"plausible, unverified" per §11); it is a user-run step per the how-to.
+
+**A real breakage this surfaced (fixed in the same branch):** `otlp-viewer/index.html` (the
+maintainer-only static HTML viewer over `tmp/agent-telemetry/otlp/`) unconditionally does
+`metrics.forEach(m=>m.points.forEach(...))` and `metrics.flatMap(m=>m.points)`, assuming every
+decoded metric record carries a `points` array. The new flat `gen_ai.usage` twin records have
+none (by design — see the shape rationale above), so loading a real post-upgrade
+`metrics.ndjson` would throw `Cannot read properties of undefined (reading 'forEach')` and blank
+the whole viewer. Fixed by normalising every loaded metric record to the batch `{points: [...]}`
+shape immediately after `ndjson()` load, before any of the existing card/table code runs — no
+other behaviour change, and the existing cost/token card totals are unaffected (`gen_ai.usage`
+doesn't match the `name.includes("cost"/"token")` filters those cards already use, so no
+double-counting risk there either).
+
+Full suite: `node scripts/agent-analytics/run-all-tests.mjs` → 60/60 `.test.mjs` files pass
+(the file count is unchanged from before this PR — the new cases landed inside the two
+existing `test_otlp_sink.py` / `telemetry-io.otlp.test.mjs` files, not new files; `run-all-tests`
+only discovers `*.test.mjs`, so `test_otlp_sink.py` is run separately, per its own header).
+`python -m py_compile scripts/agent-analytics/otlp-sink.py` and `node --check
+scripts/agent-analytics/lib/telemetry-io.mjs` both clean. `node
+scripts/docs/llmstxt-generate.mjs --check` OK (114 docs indexed) after regenerating for the new
+how-to. No `./gradlew.bat` build was run for this PR (no Java/Gradle files touched; PR 3's
+scope is Python + `.mjs` + docs only).
+
+**Independent review — two SHOULD-FIXes + one NIT, all fixed (same branch).** (1) `GENAI_FIELD`
+in `loadCostsFromOtlp` summed a flagged Codex `input` point (raw, includes cached tokens)
+straight into `input_tokens` alongside `cache_read_tokens`, double-counting the cached portion
+in any downstream `input+output+cache_write+cache_read` summer (`baseline-economics.mjs:361`,
+`overhead-taxonomy.mjs:441`). Fixed by pairing the flagged `input` point with its `cache_read`
+sibling on `session.id`+`time_unix_nano` (buffered in either arrival order) and storing FRESH
+input (`input − cache_read`); an unpaired `input` point is kept raw and the session flagged
+`input_includes_cache_read` rather than fabricating a subtraction. 2 new tests in
+`telemetry-io.otlp.test.mjs` (13 total, was 11): `'Codex raw input paired with its cache_read
+sibling resolves to FRESH input tokens'` (input 15874, cache_read 11648 → input_tokens 4226,
+cache_read_tokens 11648) and `'Codex raw input with NO cache_read sibling is kept RAW and the
+session is flagged, not silently subtracted'` (input 15874, no pair → input_tokens 15874,
+`input_includes_cache_read: true`). (2) `cost-session.mjs`'s `recordFromOtlp` dropped the new
+`harness` field and priced a Codex session (no `claude_code.cost.usage` metric exists for
+Codex) at `total_cost_usd: 0`, which then summed into `--all` as if free. Fixed: `rec.
+hasCostMetric` (set only when `loadCostsFromOtlp` sees that metric for a session) drives
+`total_cost_usd: null` + `reason: 'no_cost_metric'` for a costless-metric session — the same
+null-not-zero convention `costSession()` already used for `no_transcript_path`; `harness`
+propagates onto the record; `runOtlpCost`'s printed total sums only priced sessions and prints
+a one-line residue count in the `--reconcile` style. `recordFromOtlp`'s mapping step was split
+into an exported, injectable `costRecordsFromOtlp` (mirroring `reconcileSessions`' contract) so
+this is testable without touching `tmp/agent-telemetry/`. 2 new tests in `cost-session.test.mjs`
+(14 total, was 12): a Claude session with a cost metric prices normally while a paired Codex
+session with none gets `null`/`'no_cost_metric'` and is excluded from the priced total; a plain
+array (not just the `loadCostsFromOtlp` Map shape) is also accepted. (3, NIT) `otlp-viewer/
+index.html`'s metrics table rendered every token point twice (origin + `gen_ai.usage` twin) —
+fixed by filtering `normalized` records out of the table (`m=>!m.normalized`) while keeping the
+`{points:[]}` shape-normalisation fix so cards/subagent counts still see every record. Also
+documented (how-to + README, NIT 4): normalisation roughly doubles `metrics.ndjson` volume and
+`RETENTION["metrics"]=None` means it is never pruned (~146 MB in the main checkout today) —
+stated as a tradeoff, retention policy unchanged (owner decision).
+
+Re-verified after fixes: `python scripts/agent-analytics/test_otlp_sink.py` → 22/22 (unaffected
+by these fixes — they touch `.mjs`/`.html` only); `node scripts/agent-analytics/run-all-tests.mjs`
+→ 60/60; `node --check` clean on `telemetry-io.mjs` and `cost-session.mjs`.
+
 ### PR 4 — control shims (worktree `886-ledger-4`, after PR 1)
 
 - `hooks/spawn-cost-hint.mjs` (PostToolUse/Agent, advisory): on return, resolve the spawn's transcript via the ledger and print one line — calls, peak context, cost, model.

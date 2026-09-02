@@ -230,3 +230,42 @@ dollars) against the transcript-priced set, per session shared by both — `otlp
 Sessions present on only one side are listed separately, not folded into a misleading delta.
 The comparison logic (`reconcileSessions`) is pure and injectable — its test never touches
 `tmp/agent-telemetry/`.
+
+## OTLP normalisation (886 PR 3)
+
+Both harnesses' native OTel exporters use their own token-usage vocabulary
+(`claude_code.token.usage{type}` vs `codex.turn.token_usage{token_type}`) and neither speaks
+the OTel GenAI semantic conventions (`gen_ai.usage.*`, `gen_ai.token.kind`). `otlp-sink.py`
+closes that gap additively: `decode_metrics` keeps writing every original record unchanged,
+and for a metric name listed in its `GENAI_TOKEN_MAP` table appends a normalised `gen_ai.usage`
+twin per data point into the same `metrics.ndjson` stream (same rotation/retention policy —
+no second file to keep in sync). `gen_ai.system` names the harness (`claude-code` /
+`codex-cli`); `gen_ai.token.kind` is the shared vocabulary (`input`/`output`/`cache_read`/
+`cache_creation`, plus Codex-only `reasoning`); Codex's `total` type is skipped (derivable, not
+a new axis). Codex's raw `input` already includes cached tokens (unlike Claude's, which
+excludes `cacheRead`/`cacheCreation`), so that point's twin carries an explicit
+`gen_ai.input_includes_cache_read: true` flag rather than leaving the two harnesses'
+"input" looking like the same quantity.
+
+`lib/telemetry-io.mjs`'s `loadCostsFromOtlp` reads the normalised records first when present
+and skips their already-covered origin point (keyed on session + `time_unix_nano` + the raw
+`type`/`token_type` value) so a session is never double-counted; archives written before this
+change have no `gen_ai.usage` records at all, so the original `claude_code.token.usage` reading
+runs unchanged for them (no behaviour change for old data). Because a flagged Codex `input`
+point's raw value already includes its cache-read portion, `loadCostsFromOtlp` pairs it with
+the `cache_read` point sharing the same session + `time_unix_nano` and resolves FRESH input
+(`input − cache_read`) — buffered across either arrival order; if no pairing `cache_read` point
+ever shows up, the raw value is kept as-is and the session is flagged
+`input_includes_cache_read` rather than a fabricated subtraction. `cost-session.mjs --source
+otlp` correspondingly reports `total_cost_usd: null` (not `$0`) with `reason: 'no_cost_metric'`
+for a session that has token records but no harness-computed dollar metric (every Codex
+session today — Codex has no `claude_code.cost.usage` equivalent), excluded from the printed
+total rather than silently priced free. See `docs/how-to/wire-codex-cli-into-the-otlp-sink.md`
+for pointing Codex CLI's own `[otel]` exporter at this sink.
+
+**Volume tradeoff:** the normalised twin roughly **doubles** `metrics.ndjson` volume for every
+mapped data point, and `RETENTION["metrics"]` is `None` (never pruned — metrics is the sole
+cost-baseline source), so this growth accumulates indefinitely rather than self-cleaning; the
+main checkout's `tmp/agent-telemetry/otlp/` already carries ~146 MB of metrics archives as of
+this writing. Stated here as a known tradeoff — changing the retention policy is an owner
+decision, not made by this PR.

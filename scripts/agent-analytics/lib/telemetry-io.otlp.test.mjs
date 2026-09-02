@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadOtlpStream } from './telemetry-io.mjs';
+import { loadOtlpStream, loadCostsFromOtlp } from './telemetry-io.mjs';
 
 let passed = 0;
 const failures = [];
@@ -110,6 +110,150 @@ try {
     const dir = fs.mkdtempSync(path.join(tmpDir, 'empty-'));
     const out = loadOtlpStream(dir, 'metrics');
     assert.deepEqual(out, []);
+  });
+
+  // --- loadCostsFromOtlp: gen_ai.usage dedup (tempdoc 886 §12 PR 3) --------
+  // otlp-sink.py's gen_ai.usage normalised records are written ADDITIVELY
+  // alongside the original claude_code.token.usage points they derive from
+  // (both land in the same metrics.ndjson stream). loadCostsFromOtlp must
+  // prefer the normalised twin and skip its already-consumed origin point,
+  // never summing both — these fixtures pair a raw claude_code point with
+  // its gen_ai twin for the SAME session and assert the total reflects one
+  // count, not two.
+
+  run('gen_ai.usage twin is not double-counted against its claude_code.token.usage origin', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'dedup-'));
+    writeNdjson(path.join(dir, 'metrics.ndjson'), [
+      {
+        signal: 'metric', name: 'claude_code.token.usage', kind: 'sum',
+        points: [{
+          attributes: { type: 'cacheRead', model: 'claude-opus-5', 'session.id': 'sess-1', query_source: 'main' },
+          value: 1000, time_unix_nano: 42,
+        }],
+        resource: {},
+      },
+      {
+        signal: 'metric', name: 'gen_ai.usage', normalized: true,
+        attributes: {
+          type: 'cacheRead', model: 'claude-opus-5', 'session.id': 'sess-1', query_source: 'main',
+          'gen_ai.system': 'claude-code', 'gen_ai.request.model': 'claude-opus-5', 'gen_ai.token.kind': 'cache_read',
+        },
+        value: 1000, time_unix_nano: 42, resource: {},
+      },
+    ]);
+    const map = loadCostsFromOtlp(dir);
+    const rec = map.get('sess-1');
+    assert.ok(rec, 'session should be present');
+    assert.equal(rec.cache_read_tokens, 1000, 'the twin must not be summed on top of its origin point');
+    assert.equal(rec.harness, 'claude-code');
+    assert.equal(rec.model, 'claude-opus-5');
+  });
+
+  run('gen_ai.usage-only session (e.g. a Codex session) accumulates tokens with no claude_code fallback', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'genai-only-'));
+    writeNdjson(path.join(dir, 'metrics.ndjson'), [
+      {
+        signal: 'metric', name: 'gen_ai.usage', normalized: true,
+        attributes: {
+          token_type: 'cached_input', model: 'gpt-5-codex', 'session.id': 'sess-codex', query_source: 'main',
+          'gen_ai.system': 'codex-cli', 'gen_ai.request.model': 'gpt-5-codex', 'gen_ai.token.kind': 'cache_read',
+        },
+        value: 250, time_unix_nano: 7, resource: {},
+      },
+      {
+        signal: 'metric', name: 'gen_ai.usage', normalized: true,
+        attributes: {
+          token_type: 'output', model: 'gpt-5-codex', 'session.id': 'sess-codex', query_source: 'main',
+          'gen_ai.system': 'codex-cli', 'gen_ai.request.model': 'gpt-5-codex', 'gen_ai.token.kind': 'output',
+        },
+        value: 80, time_unix_nano: 8, resource: {},
+      },
+    ]);
+    const map = loadCostsFromOtlp(dir);
+    const rec = map.get('sess-codex');
+    assert.ok(rec, 'session should be present');
+    assert.equal(rec.cache_read_tokens, 250);
+    assert.equal(rec.output_tokens, 80);
+    assert.equal(rec.harness, 'codex-cli');
+    assert.equal(rec.by_source.main.output_tokens, 80);
+  });
+
+  // --- Codex raw-input/cache_read pairing (independent review SHOULD-FIX 1) ---
+  // Codex's `input` gen_ai.usage point is flagged `gen_ai.input_includes_cache_read`
+  // because its raw value already includes the cached portion (the OpenAI
+  // convention). loadCostsFromOtlp must resolve FRESH input (input - cache_read)
+  // by pairing it with the `cache_read` point sharing the same session +
+  // time_unix_nano, not sum the raw value straight into input_tokens (which
+  // would double-count the cached portion in any input+output+cache_write+
+  // cache_read summer, e.g. baseline-economics.mjs:361, overhead-taxonomy.mjs:441).
+
+  run('Codex raw input paired with its cache_read sibling resolves to FRESH input tokens', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'codex-input-pair-'));
+    writeNdjson(path.join(dir, 'metrics.ndjson'), [
+      {
+        signal: 'metric', name: 'gen_ai.usage', normalized: true,
+        attributes: {
+          token_type: 'input', model: 'gpt-5-codex', 'session.id': 'sess-pair', query_source: 'main',
+          'gen_ai.system': 'codex-cli', 'gen_ai.request.model': 'gpt-5-codex', 'gen_ai.token.kind': 'input',
+          'gen_ai.input_includes_cache_read': true,
+        },
+        value: 15874, time_unix_nano: 100, resource: {},
+      },
+      {
+        signal: 'metric', name: 'gen_ai.usage', normalized: true,
+        attributes: {
+          token_type: 'cached_input', model: 'gpt-5-codex', 'session.id': 'sess-pair', query_source: 'main',
+          'gen_ai.system': 'codex-cli', 'gen_ai.request.model': 'gpt-5-codex', 'gen_ai.token.kind': 'cache_read',
+        },
+        value: 11648, time_unix_nano: 100, resource: {},
+      },
+    ]);
+    const map = loadCostsFromOtlp(dir);
+    const rec = map.get('sess-pair');
+    assert.ok(rec, 'session should be present');
+    assert.equal(rec.input_tokens, 4226, 'fresh input = raw input (15874) - cache_read (11648)');
+    assert.equal(rec.cache_read_tokens, 11648);
+    assert.equal(rec.input_includes_cache_read, false, 'the pair resolved — nothing left unresolved to flag');
+  });
+
+  run('Codex raw input with NO cache_read sibling is kept RAW and the session is flagged, not silently subtracted', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'codex-input-alone-'));
+    writeNdjson(path.join(dir, 'metrics.ndjson'), [
+      {
+        signal: 'metric', name: 'gen_ai.usage', normalized: true,
+        attributes: {
+          token_type: 'input', model: 'gpt-5-codex', 'session.id': 'sess-alone', query_source: 'main',
+          'gen_ai.system': 'codex-cli', 'gen_ai.request.model': 'gpt-5-codex', 'gen_ai.token.kind': 'input',
+          'gen_ai.input_includes_cache_read': true,
+        },
+        value: 15874, time_unix_nano: 200, resource: {},
+      },
+    ]);
+    const map = loadCostsFromOtlp(dir);
+    const rec = map.get('sess-alone');
+    assert.ok(rec, 'session should be present');
+    assert.equal(rec.input_tokens, 15874, 'no cache_read sibling arrived — kept raw, not fabricated-subtracted');
+    assert.equal(rec.cache_read_tokens, 0);
+    assert.equal(rec.input_includes_cache_read, true, 'flagged so a caller knows input_tokens is not fresh here');
+  });
+
+  run('archive with no gen_ai.usage records at all still sums claude_code.token.usage (pre-886-PR3 data)', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'legacy-archive-'));
+    writeNdjson(path.join(dir, 'metrics.ndjson'), [
+      {
+        signal: 'metric', name: 'claude_code.token.usage', kind: 'sum',
+        points: [{
+          attributes: { type: 'output', model: 'claude-sonnet-5', 'session.id': 'sess-old', query_source: 'main' },
+          value: 55, time_unix_nano: 1,
+        }],
+        resource: {},
+      },
+    ]);
+    const map = loadCostsFromOtlp(dir);
+    const rec = map.get('sess-old');
+    assert.ok(rec, 'session should be present');
+    assert.equal(rec.output_tokens, 55, 'no behaviour change for pre-upgrade archives with no gen_ai.usage twin');
+    assert.equal(rec.harness, null, 'legacy data carries no gen_ai.system attribution');
   });
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -65,6 +65,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Triage PSI Drift on Encoder Distributions (LR4-g)](how-to/triage-psi-drift.md): Investigation checklist when encoder_drift flags PSI > 0.2 on an encoder.ort_run duration distribution.
 - [Using the UI](how-to/use-ui.md): Running dev modes and accessing debug dashboards.
 - [Verify your JustSearch download](how-to/verify-your-download.md): Checking the installer's SHA-256 against SHA256SUMS, why Windows SmartScreen and Smart App Control react to an unsigned installer, and the build-from-source alternative if you'd rather not run it at all.
+- [Wire Codex CLI into the OTLP Sink](how-to/wire-codex-cli-into-the-otlp-sink.md): Point OpenAI Codex CLI's native OTel exporter at the repo's local otlp-sink.py so its token usage lands in the same gen_ai.usage-normalised metrics stream as Claude Code, for cross-harness cost/context analysis.
 - [Writing a JustSearch plugin](how-to/write-a-plugin.md): Author a V1.5 plugin that runs in a SES Compartment, contributes a Surface, and integrates with the host's trust + capability model.
 
 ### Reference (Standards)

@@ -366,22 +366,123 @@ export function loadEventsFromOtlp() {
 /**
  * Aggregate per-session cost + token usage from the decoded OTLP metric stream.
  * Returns Map<session_id, {cost_usd, input_tokens, output_tokens,
- * cache_read_tokens, cache_write_tokens, model, by_source}>. This is the
- * canonical cost authority (the harness computes `claude_code.cost.usage`
+ * cache_read_tokens, cache_write_tokens, model, harness, by_source}>. This is
+ * the canonical cost authority (the harness computes `claude_code.cost.usage`
  * directly) — it replaces transcript re-derivation (tempdoc 622 §9.3 fork).
+ *
+ * Token source preference (tempdoc 886 §12 PR 3): `otlp-sink.py` now writes a
+ * `gen_ai.usage` normalised twin ADDITIVELY alongside every
+ * `claude_code.token.usage` / `codex.turn.token_usage` point it decodes (the
+ * originals are untouched). Summing both would double-count, so this reads
+ * `gen_ai.usage` FIRST and remembers exactly which origin points it already
+ * covered (keyed on session + time_unix_nano + the origin point's own raw
+ * `type`/`token_type` attribute value, which `otlp-sink.py`'s
+ * `_genai_normalize` passes through verbatim onto the normalised twin) —
+ * the second pass over `claude_code.token.usage` skips any point whose key
+ * is already consumed. Archives written before this change carry no
+ * `gen_ai.usage` records at all, so the consumed-key set stays empty for
+ * them and the fallback runs exactly as before (no behaviour change for old
+ * data). `codex.turn.token_usage` is still not read directly here — its
+ * tokens flow ONLY through `gen_ai.usage` (Codex has no dedicated
+ * cost-authority metric to preserve field-parity with, unlike Claude's
+ * `claude_code.cost.usage`).
+ *
+ * Codex `input`-includes-`cache_read` correction (independent review
+ * SHOULD-FIX 1): a Codex `gen_ai.usage` point whose `gen_ai.token.kind` is
+ * `input` and whose `gen_ai.input_includes_cache_read` flag is set carries
+ * the RAW input count (input + cached), not a fresh one — summing it
+ * straight into `input_tokens` alongside `cache_read_tokens` would
+ * double-count the cached portion in any downstream `input + output +
+ * cache_write + cache_read` total (e.g. `baseline-economics.mjs`,
+ * `overhead-taxonomy.mjs`). This function resolves FRESH input (`input -
+ * cache_read`) by pairing the flagged `input` point with its `cache_read`
+ * sibling for the same `session.id` + `time_unix_nano` — buffered in either
+ * arrival order, since stream order between the two is not guaranteed. If
+ * the `cache_read` sibling never shows up (e.g. malformed/partial export),
+ * the raw `input` value is kept AS-IS — never silently subtracted from
+ * nothing — and `rec.input_includes_cache_read` is set so a caller can tell
+ * that session's `input_tokens` is not already fresh.
+ *
+ * `dir` defaults to the live sink's real output directory; tests pass a
+ * temp directory (same pattern `loadOtlpStream` already exposes for direct
+ * unit testing) so no test ever reads or writes `tmp/agent-telemetry/otlp/`.
  */
-export function loadCostsFromOtlp() {
-  const dir = path.join(repoRoot, TELEMETRY_DIR, OTLP_DIR);
+export function loadCostsFromOtlp(dir = path.join(repoRoot, TELEMETRY_DIR, OTLP_DIR)) {
   const metrics = loadOtlpStream(dir, 'metrics');
   const TOKEN_FIELD = { input: 'input_tokens', output: 'output_tokens',
     cacheRead: 'cache_read_tokens', cacheCreation: 'cache_write_tokens' };
+  // gen_ai.token.kind vocabulary (886 §12 PR 3) mapped onto this function's
+  // pre-existing Claude-shaped four-axis field set. 'reasoning' (Codex-only,
+  // no Claude counterpart) has no field to fold into and is intentionally
+  // left unmapped here — a reader wanting the reasoning axis reads the
+  // neutral `lib/ledger/` record instead, not this legacy cost shape.
+  const GENAI_FIELD = { input: 'input_tokens', output: 'output_tokens',
+    cache_read: 'cache_read_tokens', cache_creation: 'cache_write_tokens' };
   const map = new Map();
   const ensure = (sid) => {
     if (!map.has(sid)) map.set(sid, { session_id: sid, cost_usd: 0,
       input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0,
-      model: null, by_source: {} });
+      model: null, harness: null, hasCostMetric: false, input_includes_cache_read: false,
+      by_source: {} });
     return map.get(sid);
   };
+
+  // Pass 1: gen_ai.usage normalised records are the preferred source.
+  const consumedKeys = new Set();
+  // Buffers for the input/cache_read pairing described above, keyed on
+  // `${sid}|${time_unix_nano}` (independent of which side arrives first).
+  const pendingRawInput = new Map(); // key -> { rec, value }
+  const pendingCacheRead = new Map(); // key -> value
+  for (const m of metrics) {
+    if (m.name !== 'gen_ai.usage') continue;
+    const a = m.attributes || {};
+    const sid = a['session.id'];
+    if (!sid) continue;
+    const rec = ensure(sid);
+    if (a['gen_ai.request.model']) rec.model = a['gen_ai.request.model'];
+    if (a['gen_ai.system']) rec.harness = a['gen_ai.system'];
+    const src = a.query_source || 'main';
+    rec.by_source[src] ??= { cost_usd: 0, output_tokens: 0 };
+    const kind = a['gen_ai.token.kind'];
+    const rawType = a.type ?? a.token_type;
+    const value = m.value || 0;
+    const pairKey = `${sid}|${m.time_unix_nano}`;
+    consumedKeys.add(`${pairKey}|${rawType}`);
+
+    if (kind === 'input' && a['gen_ai.input_includes_cache_read']) {
+      const cached = pendingCacheRead.get(pairKey);
+      if (cached != null) {
+        rec.input_tokens += value - cached;
+        pendingCacheRead.delete(pairKey);
+      } else {
+        pendingRawInput.set(pairKey, { rec, value });
+      }
+      continue;
+    }
+    if (kind === 'cache_read') {
+      const pending = pendingRawInput.get(pairKey);
+      if (pending != null) {
+        pending.rec.input_tokens += pending.value - value;
+        pendingRawInput.delete(pairKey);
+      }
+      rec.cache_read_tokens += value;
+      continue;
+    }
+
+    const field = GENAI_FIELD[kind];
+    if (field) rec[field] += value;
+    if (kind === 'output') rec.by_source[src].output_tokens += value;
+  }
+  // A raw `input` point whose `cache_read` sibling never arrived: keep it
+  // RAW (do not fabricate a subtraction) and flag the session.
+  for (const { rec, value } of pendingRawInput.values()) {
+    rec.input_tokens += value;
+    rec.input_includes_cache_read = true;
+  }
+
+  // Pass 2: claude_code.cost.usage (never normalised — gen_ai.usage covers
+  // only token metrics, not cost) and claude_code.token.usage points not
+  // already consumed by a pass-1 normalised twin.
   for (const m of metrics) {
     for (const p of m.points || []) {
       const a = p.attributes || {};
@@ -394,7 +495,10 @@ export function loadCostsFromOtlp() {
       if (m.name === 'claude_code.cost.usage') {
         rec.cost_usd += p.value || 0;
         rec.by_source[src].cost_usd += p.value || 0;
+        rec.hasCostMetric = true;
       } else if (m.name === 'claude_code.token.usage') {
+        const key = `${sid}|${p.time_unix_nano}|${a.type}`;
+        if (consumedKeys.has(key)) continue;
         const field = TOKEN_FIELD[a.type];
         if (field) rec[field] += p.value || 0;
         if (a.type === 'output') rec.by_source[src].output_tokens += p.value || 0;

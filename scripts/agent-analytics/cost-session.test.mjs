@@ -11,7 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { reconcileSessions } from './cost-session.mjs';
+import { reconcileSessions, costRecordsFromOtlp } from './cost-session.mjs';
 
 let passed = 0;
 const failures = [];
@@ -130,6 +130,56 @@ run('common rows are sorted by |delta_pct| descending', () => {
   const { common } = reconcileSessions({ otlpRecords, transcriptRecords });
   assert.equal(common[0].session_id, 's2');
   assert.equal(common[1].session_id, 's1');
+});
+
+// --- costRecordsFromOtlp: harness propagation + no-cost-metric handling ------
+// (independent review SHOULD-FIX 2) — Codex sessions carry token records but
+// no `claude_code.cost.usage` metric at all, so `total_cost_usd` must be
+// `null` + `reason: 'no_cost_metric'`, never a silent `$0` that would read as
+// "this session was free" and get summed into an `--all` total as if priced.
+
+run('a Claude session with a cost metric gets a priced record; a Codex session with none gets null + reason, and only the Claude session counts toward a priced total', () => {
+  const injected = new Map([
+    ['claude-sess', {
+      session_id: 'claude-sess', cost_usd: 4.5,
+      input_tokens: 1000, output_tokens: 200, cache_read_tokens: 300, cache_write_tokens: 50,
+      model: 'claude-opus-5', harness: 'claude-code', hasCostMetric: true,
+      input_includes_cache_read: false, by_source: { main: { cost_usd: 4.5, output_tokens: 200 } },
+    }],
+    ['codex-sess', {
+      session_id: 'codex-sess', cost_usd: 0,
+      input_tokens: 5000, output_tokens: 800, cache_read_tokens: 1200, cache_write_tokens: 0,
+      model: 'gpt-5-codex', harness: 'codex-cli', hasCostMetric: false,
+      input_includes_cache_read: false, by_source: { main: { cost_usd: 0, output_tokens: 800 } },
+    }],
+  ]);
+  const records = costRecordsFromOtlp(injected);
+  const claude = records.find(r => r.session_id === 'claude-sess');
+  const codex = records.find(r => r.session_id === 'codex-sess');
+
+  assert.equal(claude.total_cost_usd, 4.5);
+  assert.equal(claude.harness, 'claude-code');
+  assert.equal(claude.reason, null);
+
+  assert.equal(codex.total_cost_usd, null, 'no claude_code.cost.usage metric exists for Codex — must not be $0');
+  assert.equal(codex.harness, 'codex-cli');
+  assert.equal(codex.reason, 'no_cost_metric');
+  // Codex still carries its token totals — only the dollar figure is unknown.
+  assert.equal(codex.tokens.input, 5000);
+
+  const priced = records.filter(r => r.total_cost_usd != null);
+  assert.deepEqual(priced.map(r => r.session_id), ['claude-sess']);
+  const total = priced.reduce((s, r) => s + r.total_cost_usd, 0);
+  assert.equal(total, 4.5, 'the unpriced Codex session must not contribute to the priced total');
+});
+
+run('costRecordsFromOtlp accepts a plain array (not just the loadCostsFromOtlp Map shape)', () => {
+  const records = costRecordsFromOtlp([
+    { session_id: 's1', cost_usd: 1, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
+      cache_write_tokens: 0, model: 'claude-sonnet-5', harness: 'claude-code', hasCostMetric: true, by_source: {} },
+  ]);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].total_cost_usd, 1);
 });
 
 // --- report ------------------------------------------------------------------
