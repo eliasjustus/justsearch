@@ -452,7 +452,8 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       ensureOpen();
       String normalizedPath =
           PathNormalizer.normalizePath(entry.path().toAbsolutePath().toString());
-      return inTransaction(
+      JobQueue.ReenqueueResult result =
+          inTransaction(
           () -> {
             String previousState = null;
             try (PreparedStatement read =
@@ -483,11 +484,16 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
               }
               accepted = write.executeUpdate() > 0 ? 1 : 0;
             }
-            if (accepted > 0) {
-              meters.recordEnqueued(accepted);
-            }
             return new JobQueue.ReenqueueResult(accepted, previousState);
           });
+      // After the commit, like enqueueEntries: a meter incremented inside the transaction would
+      // still count a row a rollback threw away.
+      if (result.accepted() > 0) {
+        meters.recordEnqueued(result.accepted());
+      }
+      log.debug(
+          "Re-enqueued {} job (previousState={})", result.accepted(), result.previousState());
+      return result;
     } catch (SQLException e) {
       log.error("Failed to re-enqueue {}", entry.path(), e);
       return new JobQueue.ReenqueueResult(0, null);

@@ -87,9 +87,17 @@ public final class ExtractionSandboxCommand {
    *   <li>{@code ""} produces an empty argument rather than disappearing.
    * </ul>
    *
-   * @throws IllegalArgumentException on an unterminated quote — a mis-split argv would spawn a
-   *     child with silently wrong arguments, and the failure would surface as "every file fails to
-   *     extract" rather than as the configuration error it is
+   * <p><b>Trailing-backslash caveat.</b> Because {@code \\} is an escape inside double quotes, a
+   * directory path written with a trailing separator before the closing quote — {@code "C:\dir\"} —
+   * escapes the quote instead of ending the argument, and the value is reported as unterminated.
+   * Write {@code "C:\dir"} or {@code "C:\dir\\"}.
+   *
+   * @throws IllegalArgumentException on an unterminated quote. This is deliberately FAIL-CLOSED:
+   *     {@code DefaultWorkerAppServices.buildContentExtractor} calls this before
+   *     {@code probeChildCommand}, so a malformed value aborts Worker startup rather than degrading
+   *     to in-process extraction the way a command that merely fails its probe does. A mis-split
+   *     argv would otherwise spawn a child with silently wrong arguments, surfacing as "every file
+   *     fails to extract" instead of as the configuration error it is.
    */
   public static List<String> tokenize(String raw) {
     List<String> argv = new ArrayList<>();

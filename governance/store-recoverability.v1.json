@@ -487,7 +487,7 @@
       "ownedPaths": ["watched_roots.json"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
-      "format": "JSON envelope v1 around legacy list or unversioned object",
+      "format": "JSON envelope v1 around legacy list or unversioned object; each root entry carries an optional `collection` label (tempdoc 885 §UD open item 4). Additive within v1 and forward-compatible in one direction only: an older build READS a newer file (it ignores the field), but persistRoots is a FULL_REWRITE, so if an older build then writes the file the labels are dropped and every root falls back to the default collection.",
       "currentVersion": 1,
       "readableLegacyVersions": [0],
       "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java",
@@ -533,7 +533,8 @@
       ],
       "tests": [
         "modules/configuration/src/test/java/io/justsearch/configuration/resolved/ResolvedConfigBuilderTest.java",
-        "modules/app-services/src/test/java/io/justsearch/app/services/worker/WorkerSpawnerConfigForwardingTest.java"
+        "modules/app-services/src/test/java/io/justsearch/app/services/worker/WorkerSpawnerConfigForwardingTest.java",
+        "modules/ui/src/test/java/io/justsearch/ui/HeadlessAppWorkerSnapshotOrderingTest.java"
       ],
       "fixtures": []
     },

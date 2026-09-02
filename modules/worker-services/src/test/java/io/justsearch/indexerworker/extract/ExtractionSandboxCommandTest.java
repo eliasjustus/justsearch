@@ -215,4 +215,19 @@ final class ExtractionSandboxCommandTest {
             () -> ExtractionSandboxCommand.tokenize("java \"C:\\Program Files\\java.exe"));
     assertTrue(e.getMessage().contains("unterminated"), e.getMessage());
   }
+
+  /**
+   * The documented trailing-backslash caveat, pinned so the doc and the parser cannot drift: a
+   * directory written with its separator before the closing quote escapes the quote.
+   */
+  @Test
+  void aTrailingSeparatorBeforeTheClosingQuoteEscapesIt() {
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> ExtractionSandboxCommand.tokenize("java -cp \"C:\\dir\\\""));
+    assertEquals(
+        List.of("java", "-cp", "C:\\dir\\"),
+        ExtractionSandboxCommand.tokenize("java -cp \"C:\\dir\\\\\""),
+        "doubling the trailing separator is the documented way to express it");
+  }
 }
