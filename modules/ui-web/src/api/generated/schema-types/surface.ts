@@ -20,11 +20,11 @@ export interface SurfaceWire {
   altitude: "PRODUCT" | "DIAGNOSTIC" | "TRUST" | "TOOL";
   audience: "USER" | "AGENT" | "OPERATOR" | "DEVELOPER";
   consumes: {
-    conversationShapes?: string[] | null;
-    diagnosticChannels?: string[] | null;
-    operations?: string[] | null;
-    prompts?: string[] | null;
-    resources?: string[] | null;
+    conversationShapes: string[];
+    diagnosticChannels: string[];
+    operations: string[];
+    prompts: string[];
+    resources: string[];
   };
   id: SurfaceRef;
   members: SurfaceRef[];
@@ -47,23 +47,23 @@ export interface SurfaceWire {
   };
   riskTier: "LOW" | "MEDIUM" | "HIGH";
   stateSchema: {
-    bindings?: ({
-      schemaPath?: string | null;
-      storeId?: string | null;
-      storeKey?: string | null;
-    })[] | null;
-    schema?: string | null;
+    bindings: ({
+      schemaPath: string;
+      storeId: string;
+      storeKey: string;
+    })[];
+    schema: string;
   } | null;
 }
 export const surfaceWireSchema = z.strictObject({
   "altitude": z.enum(["PRODUCT", "DIAGNOSTIC", "TRUST", "TOOL"]),
   "audience": z.enum(["USER", "AGENT", "OPERATOR", "DEVELOPER"]),
   "consumes": z.strictObject({
-    "conversationShapes": z.array(z.string()).nullable().optional(),
-    "diagnosticChannels": z.array(z.string()).nullable().optional(),
-    "operations": z.array(z.string()).nullable().optional(),
-    "prompts": z.array(z.string()).nullable().optional(),
-    "resources": z.array(z.string()).nullable().optional(),
+    "conversationShapes": z.array(z.string()),
+    "diagnosticChannels": z.array(z.string()),
+    "operations": z.array(z.string()),
+    "prompts": z.array(z.string()),
+    "resources": z.array(z.string()),
   }),
   "id": surfaceRefSchema,
   "members": z.array(surfaceRefSchema),
@@ -87,10 +87,10 @@ export const surfaceWireSchema = z.strictObject({
   "riskTier": z.enum(["LOW", "MEDIUM", "HIGH"]),
   "stateSchema": z.strictObject({
     "bindings": z.array(z.strictObject({
-      "schemaPath": z.string().nullable().optional(),
-      "storeId": z.string().nullable().optional(),
-      "storeKey": z.string().nullable().optional(),
-    })).nullable().optional(),
-    "schema": z.string().nullable().optional(),
+      "schemaPath": z.string(),
+      "storeId": z.string(),
+      "storeKey": z.string(),
+    })),
+    "schema": z.string(),
   }).nullable(),
 });

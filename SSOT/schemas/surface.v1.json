@@ -24,41 +24,42 @@
       "type" : "object",
       "properties" : {
         "conversationShapes" : {
-          "type" : [ "array", "null" ],
+          "type" : "array",
           "items" : {
             "type" : "string",
             "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
           }
         },
         "diagnosticChannels" : {
-          "type" : [ "array", "null" ],
+          "type" : "array",
           "items" : {
             "type" : "string",
             "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
           }
         },
         "operations" : {
-          "type" : [ "array", "null" ],
+          "type" : "array",
           "items" : {
             "type" : "string",
             "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
           }
         },
         "prompts" : {
-          "type" : [ "array", "null" ],
+          "type" : "array",
           "items" : {
             "type" : "string",
             "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
           }
         },
         "resources" : {
-          "type" : [ "array", "null" ],
+          "type" : "array",
           "items" : {
             "type" : "string",
             "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
           }
         }
-      }
+      },
+      "required" : [ "conversationShapes", "diagnosticChannels", "operations", "prompts", "resources" ]
     },
     "id" : {
       "$ref" : "#/$defs/SurfaceRef"
@@ -130,26 +131,28 @@
       "type" : [ "object", "null" ],
       "properties" : {
         "bindings" : {
-          "type" : [ "array", "null" ],
+          "type" : "array",
           "items" : {
             "type" : "object",
             "properties" : {
               "schemaPath" : {
-                "type" : [ "string", "null" ]
+                "type" : "string"
               },
               "storeId" : {
-                "type" : [ "string", "null" ]
+                "type" : "string"
               },
               "storeKey" : {
-                "type" : [ "string", "null" ]
+                "type" : "string"
               }
-            }
+            },
+            "required" : [ "schemaPath", "storeId", "storeKey" ]
           }
         },
         "schema" : {
-          "type" : [ "string", "null" ]
+          "type" : "string"
         }
-      }
+      },
+      "required" : [ "bindings", "schema" ]
     }
   },
   "required" : [ "altitude", "audience", "consumes", "id", "members", "mountTag", "placement", "presentation", "provenance", "riskTier", "stateSchema" ]

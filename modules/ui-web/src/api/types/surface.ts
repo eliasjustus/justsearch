@@ -24,10 +24,12 @@
  * `ResourceWire` / `OperationWire` barrels.
  */
 
+import { z } from 'zod';
 import type { Presentation, Provenance } from './registry.js';
 import type { Altitude } from '../generated/registry-enums.generated.js';
 import type { SurfaceWire } from '../generated/schema-types/surface.js';
-export { surfaceWireSchema } from '../generated/schema-types/surface.js';
+import { surfaceWireSchema } from '../generated/schema-types/surface.js';
+export { surfaceWireSchema };
 export type { SurfaceWire };
 
 export type { Altitude };
@@ -68,10 +70,13 @@ export type Placement = SurfaceWire['placement'];
  * This is a runtime VALUE, which is why it is hand-maintained rather than projected — and it is
  * load-bearing beyond TypeScript: `scripts/ci/check-a11y-closure.mjs` parses this declaration's
  * literal to assert every placement has a landmark role. Keep the declaration's exact shape and
- * its quoted constants; the type annotation makes a value that drifts from `Placement` a compile
- * error, so the two cannot silently diverge. (Do not restate the declaration's syntax anywhere
- * above it in this file: that check takes the FIRST match in the file, so a prose copy of it
- * shadows the real one and the gate reports zero placements.)
+ * its quoted constants. (Do not restate the declaration's syntax anywhere above it in this file:
+ * that check takes the FIRST match in the file, so a prose copy of it shadows the real one and the
+ * gate reports zero placements.)
+ *
+ * The `readonly Placement[]` annotation checks only that every entry IS a `Placement` — a subset
+ * type-checks fine, so it cannot catch a dropped or newly-added zone. `PLACEMENT_CLOSURE` below is
+ * what makes that a compile error.
  */
 export const PLACEMENTS: readonly Placement[] = [
   'COMMAND',
@@ -85,6 +90,29 @@ export const PLACEMENTS: readonly Placement[] = [
   'HEADLESS_AGENT_TOOL',
 ] as const;
 
+/**
+ * Compile-time closure over the generated `Placement` union: every member must appear as a key.
+ * Adding a zone in Java (`Placement.java`) regenerates the union, and this declaration then fails to
+ * type-check until the new zone is listed here AND in `PLACEMENTS` above — which is what forces the
+ * a11y gate to see it and demand a landmark-role mapping.
+ *
+ * Type-level only; `void`-consumed so it is not an unused binding. It is deliberately NOT exported:
+ * the registry barrel may not declare a second hand-authored wire shape (`contribution-surface`
+ * gate), and this is an assertion, not a shape.
+ */
+const PLACEMENT_CLOSURE: Record<Placement, true> = {
+  COMMAND: true,
+  RAIL: true,
+  STAGE: true,
+  HUD: true,
+  STATUS: true,
+  DRAWER: true,
+  MODAL: true,
+  DEEPLINK: true,
+  HEADLESS_AGENT_TOOL: true,
+};
+void PLACEMENT_CLOSURE;
+
 // ============================================================
 // Common value types
 // ============================================================
@@ -96,33 +124,24 @@ export const PLACEMENTS: readonly Placement[] = [
 export type SurfaceRef = SurfaceWire['id'];
 
 /**
- * Typed cross-reference graph from a Surface to the primitives it consumes.
+ * Typed cross-reference graph from a Surface to the primitives it consumes — a direct projection of
+ * the wire's `consumes` object.
  *
- * The field set is the wire's; the arrays are narrowed to non-null here because every consumer
- * reads them as lists. `SurfaceConsumes.java` defaults each `Set` to `Set.of()`, so the backend
- * never sends null — but `SurfaceConsumes` is not a `PreciseWire` type, so the generated schema
- * cannot say so and marks them nullable.
+ * `SurfaceConsumes.java` implements `PreciseWire` and its compact constructor defaults every `Set`
+ * to `Set.of()`, so the generated schema marks all five graphs `required` and non-null. Nothing is
+ * restated here: the field set, its cardinality and its nullability all come from Java
+ * mechanically, so a renamed or removed component changes this type rather than silently diverging
+ * from it.
  *
  * Slice 491 §9.D Phase E (C0): `conversationShapes` joins the graph. Surfaces hosting a chat shape
  * (e.g. `core.agent-surface` consumes `core.agent`) declare it here, and `<jf-chat-shape-mount>`
- * reads it to resolve which shape's view factory to instantiate.
+ * reads it to resolve which shape's view factory to instantiate. It is the ONE key relaxed to
+ * optional at the FE boundary — client-side Surface literals (plugin contributions, test fixtures)
+ * predate Phase E and omit it, even though the wire always carries it. Every other key comes
+ * through `Omit` untouched, so the required set is derived by exclusion rather than restated.
  */
-type ConsumesWire = NonNullable<SurfaceWire['consumes']>;
-
-/**
- * The four graphs every Surface has carried since slice 449. `conversationShapes` (491 §9.D
- * Phase E) stays optional at the FE boundary for back-compat with pre-Phase-E fixtures and plugin
- * contributions, even though the backend always sends it.
- *
- * Listing them is checked, not decorative: if a Java component is renamed or removed,
- * `ConsumesWire[K]` stops resolving and this line is a compile error rather than a silent
- * mismatch.
- */
-type RequiredConsumes = 'resources' | 'operations' | 'prompts' | 'diagnosticChannels';
-
-export type SurfaceConsumes = { [K in RequiredConsumes]-?: NonNullable<ConsumesWire[K]> } & {
-  [K in Exclude<keyof ConsumesWire, RequiredConsumes>]?: NonNullable<ConsumesWire[K]>;
-};
+export type SurfaceConsumes = Omit<SurfaceWire['consumes'], 'conversationShapes'> &
+  Partial<Pick<SurfaceWire['consumes'], 'conversationShapes'>>;
 
 // ============================================================
 // Surface manifest
@@ -246,3 +265,17 @@ export interface SurfaceCatalog {
   primitive: 'Surface';
   entries: Surface[];
 }
+
+/**
+ * Runtime validator for the Surface catalog envelope (tempdoc 884; the 560 §4c Phase B parse
+ * boundary, extended to the Surface Manifest). Each entry is validated by the GENERATED
+ * `surfaceWireSchema` — the single runtime authority for the Surface wire shape.
+ */
+export const surfaceCatalogSchema = z.object({
+  $schema: z.string().optional(),
+  schemaVersion: z.string(),
+  catalogVersion: z.number(),
+  namespace: z.string(),
+  primitive: z.literal('Surface'),
+  entries: z.array(surfaceWireSchema),
+});
