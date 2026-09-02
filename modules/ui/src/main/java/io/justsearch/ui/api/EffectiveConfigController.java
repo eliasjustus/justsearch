@@ -517,7 +517,13 @@ public final class EffectiveConfigController {
     String baselineSource =
         resolution != null && resolution.isResolved() ? resolution.sourceName() : "unknown";
 
-    Integer runtime = runtimeInfo != null ? runtimeInfo.contextSize() : null;
+    // The OBSERVED window, from the /props readback - NOT runtimeInfo.contextSize(), which is
+    // InferenceConfig's CONFIGURED value and is rebuilt on its own schedule. Measured live
+    // (tempdoc 883): with the server running at 16384 after an override, runtimeInfo still said
+    // 32768, so this row reported a "runtime" number no server ever had. After a ladder step-down
+    // it would report the PLANNED rung as the runtime value - the exact case this row exists to
+    // disambiguate.
+    Integer runtime = observedContextTokens();
     int value = runtime != null ? runtime : baseline;
 
     String source = baselineSource;
@@ -541,6 +547,18 @@ public final class EffectiveConfigController {
     }
 
     return key("justsearch.context.size", value, source, details);
+  }
+
+  /**
+   * The context window the running llama-server reports via {@code /props}, or null when none has
+   * been observed. Same authority {@code /api/inference/status.llmContextTokens} publishes.
+   */
+  private Integer observedContextTokens() {
+    try {
+      return onlineAiService == null ? null : onlineAiService.llmContextTokens();
+    } catch (Exception ignored) {
+      return null;
+    }
   }
 
   private Map<String, Object> keyGpuLayers(

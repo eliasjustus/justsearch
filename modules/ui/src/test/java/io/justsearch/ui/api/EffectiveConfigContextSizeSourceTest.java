@@ -7,8 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
 import io.javalin.http.Context;
+import io.justsearch.app.api.OnlineAiRuntimeIntrospection;
+import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.ResolvedConfigBuilder;
 import java.nio.file.Path;
@@ -104,10 +108,46 @@ final class EffectiveConfigContextSizeSourceTest {
     assertFalse(details.containsKey("owner"));
   }
 
+  @Test
+  @DisplayName("the runtime value is the OBSERVED /props window, not the configured one")
+  void runtimeValueComesFromThePropsReadback() {
+    // Tempdoc 883 live window: this row used to read runtimeInfo.contextSize(), which is
+    // InferenceConfig's CONFIGURED value and is rebuilt on its own schedule. Measured live with an
+    // override active, it reported 32768 while the server was serving 16384. The three numbers are
+    // deliberately all different here so a regression cannot pass by coincidence.
+    ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+    builder.contributeAutoDetected(Map.of(KEY, "32768"));
+    builder.putSettings(KEY, "16384");
+
+    OnlineAiService ai = mock(OnlineAiService.class, withSettings().extraInterfaces(
+        OnlineAiRuntimeIntrospection.class));
+    when(ai.llmContextTokens()).thenReturn(8192); // what /props actually reports
+    when(((OnlineAiRuntimeIntrospection) ai).runtimeInfo())
+        .thenReturn(
+            new OnlineAiRuntimeIntrospection.RuntimeInfo(
+                null, null, null, 8082, 32768, 99, false)); // the STALE configured value
+
+    Map<String, Object> row = rowFor(new ConfigStore(builder.build()), ai);
+
+    assertEquals(
+        8192,
+        row.get("value"),
+        "the observed window wins the value; reporting the configured 32768 is the live defect");
+    assertEquals("runtime", row.get("source"));
+    Map<?, ?> details = (Map<?, ?>) row.get("details");
+    assertEquals(8192, details.get("runtime"));
+    assertEquals(16384, details.get("baseline"), "the resolver baseline is unaffected");
+  }
+
   @SuppressWarnings("unchecked")
   private Map<String, Object> rowFor(ConfigStore store) {
+    return rowFor(store, null);
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> rowFor(ConfigStore store, OnlineAiService ai) {
     EffectiveConfigController controller =
-        new EffectiveConfigController(() -> 8081, null, null, null, Path.of("index"), store);
+        new EffectiveConfigController(() -> 8081, null, null, ai, Path.of("index"), store);
 
     Context ctx = mock(Context.class);
     AtomicReference<Object> captured = new AtomicReference<>();

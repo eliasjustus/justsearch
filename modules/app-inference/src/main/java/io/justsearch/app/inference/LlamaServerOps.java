@@ -229,11 +229,7 @@ final class LlamaServerOps {
 
     // Nothing is launched yet, so no window has been chosen. Cleared before the adoption check so
     // an adopted external server reports no context record rather than the previous launch's.
-    this.contextPlan = null;
-    this.contextRung = 0;
-    this.contextRungReason = null;
-    this.contextSlots = 0;
-    this.contextKvType = null;
+    clearContextWindowRecord();
 
     if (adoptExistingServerIfPresent()) {
       return;
@@ -426,8 +422,22 @@ final class LlamaServerOps {
         "off");
   }
 
+  /**
+   * Forgets the launched-window record. A window describes a server this process is running; when
+   * none is, reporting the last one is an intent presented as an outcome (register D-009).
+   */
+  private void clearContextWindowRecord() {
+    this.contextPlan = null;
+    this.contextRung = 0;
+    this.contextRungReason = null;
+    this.contextSlots = 0;
+    this.contextKvType = null;
+  }
+
   void stopLlamaServer() {
     stopPeriodicHealthCheck();
+    // No server of ours is running after this, so the launched-window record stops being true.
+    clearContextWindowRecord();
     // Cancel crash monitor before killing process to prevent spurious recovery attempts (H4).
     if (crashMonitor != null) {
       crashMonitor.cancel(true);
