@@ -164,25 +164,53 @@ def _indexed_roots_body(variant: str) -> str:
 def _surface_entry(
     surface_id: str, mount_tag: str, placement: str, members: list[str] | None = None,
 ) -> dict:
-    """One minimal Surface catalog entry (types/surface.ts `Surface`). The FE client
-    (`SurfaceCatalogClient.tryFetchAndPopulate`) does NOT Zod-validate this envelope — it only
-    checks `Array.isArray(body.entries)` and casts the rest — so this is schema-SHAPED filler, not
-    a byte-exact wire capture; only `id`/`placement`/`members`/`mountTag` are load-bearing for the
-    consumers below."""
+    """One Surface catalog entry, SCHEMA-COMPLETE against the generated wire contract.
+
+    Tempdoc 911 (885 UL.10): this used to be deliberately partial, on the (then-true) premise that
+    `SurfaceCatalogClient.tryFetchAndPopulate` only checked `Array.isArray(body.entries)` and cast
+    the rest. Tempdoc 884 replaced that cast with `parseWireContract(surfaceCatalogSchema, …)`, whose
+    generated `z.strictObject` requires EVERY field below — so the partial body started failing the
+    parse, `tryFetchAndPopulate` swallowed the throw and returned false, and `listSurfaces()` stayed
+    permanently empty of wire data. `members` lives ONLY on the wire entry (a CORE plugin
+    contribution omits it and the merge preserves the wire's), so `memberHostAliases()` produced no
+    core.security-surface -> core.settings-surface redirect and the `security` / `security-light`
+    a11y-gate steps timed out on `jf-settings-window dialog[open]`.
+
+    So: still schema-SHAPED filler (not a byte-exact capture), but it must now be schema-COMPLETE,
+    and `members` is always present (the schema has no `.optional()` on it). `altitude` / `riskTier`
+    / `stateSchema` / `provenance.identity` / `presentation.category` / `presentation.iconHint`
+    carry the values the Java `Surface` record defaults these four surfaces to (CoreSurfaceCatalog
+    passes neither altitude nor riskTier, so PRODUCT + LOW; `Presentation.of` and
+    `Provenance.core` leave the nullable slots null)."""
     entry: dict = {
         "id": surface_id,
+        "altitude": "PRODUCT",
         "presentation": {
             "labelKey": f"registry-surface.{surface_id.split('.', 1)[1]}.label",
             "descriptionKey": f"registry-surface.{surface_id.split('.', 1)[1]}.description",
+            "category": None,
+            "iconHint": None,
         },
         "audience": "USER",
         "placement": placement,
-        "consumes": {"resources": [], "operations": [], "prompts": [], "diagnosticChannels": []},
+        "consumes": {
+            "resources": [],
+            "operations": [],
+            "prompts": [],
+            "diagnosticChannels": [],
+            "conversationShapes": [],
+        },
+        "members": members or [],
         "mountTag": mount_tag,
-        "provenance": {"tier": "CORE", "contributorId": "core", "version": "1.0"},
+        "provenance": {
+            "tier": "CORE",
+            "contributorId": "core",
+            "version": "1.0",
+            "identity": None,
+        },
+        "riskTier": "LOW",
+        "stateSchema": None,
     }
-    if members:
-        entry["members"] = members
     return entry
 
 

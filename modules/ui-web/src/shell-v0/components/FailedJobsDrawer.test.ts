@@ -21,6 +21,31 @@ afterEach(() => {
   __resetFailedJobsDrawer();
 });
 
+/**
+ * Tempdoc 911 (885 UL.9) — every fixture below is SCHEMA-SHAPED: the by-prefix wire is now the
+ * generated `FailedIndexingJobsResponse` contract (`SSOT/schemas/failed-indexing-jobs-response.v1.json`,
+ * all eight IndexingJobView fields required + non-null), and the drawer parses through it. A
+ * hand-trimmed fixture would no longer be a smaller version of the wire — it would be a body the
+ * backend cannot send, so a test written on one proves nothing about the real surface.
+ */
+function job(over: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    pathHash: 'h-one',
+    state: 'FAILED',
+    attempts: 3,
+    lastUpdatedMs: 1_700_000_000_000,
+    errorMessage: '',
+    retryAfterMs: 0,
+    collection: 'default',
+    scanId: '',
+    ...over,
+  };
+}
+
+function byPrefixBody(jobs: Array<Record<string, unknown>>): string {
+  return JSON.stringify({ jobs, count: jobs.length });
+}
+
 async function settle(el: Element): Promise<void> {
   await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
 }
@@ -52,12 +77,10 @@ describe('FailedJobsDrawer', () => {
       const u = String(url);
       if (u.includes('/api/indexing-jobs/failed/by-prefix')) {
         return new Response(
-          JSON.stringify({
-            jobs: [
-              { pathHash: 'h-one', errorMessage: 'parse error: unexpected EOF' },
-              { pathHash: 'h-two', errorMessage: 'extraction timed out' },
-            ],
-          }),
+          byPrefixBody([
+            job({ pathHash: 'h-one', errorMessage: 'parse error: unexpected EOF' }),
+            job({ pathHash: 'h-two', errorMessage: 'extraction timed out' }),
+          ]),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
@@ -94,7 +117,7 @@ describe('FailedJobsDrawer', () => {
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async (url: unknown) => {
       if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
-        return new Response(JSON.stringify({ jobs: [] }), {
+        return new Response(byPrefixBody([]), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -123,12 +146,10 @@ describe('FailedJobsDrawer', () => {
     globalThis.fetch = (async (url: unknown) => {
       if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
         return new Response(
-          JSON.stringify({
-            jobs: [
-              { pathHash: 'h-one', errorMessage: 'boom' },
-              { pathHash: 'h-two', errorMessage: 'bang' },
-            ],
-          }),
+          byPrefixBody([
+            job({ pathHash: 'h-one', errorMessage: 'boom' }),
+            job({ pathHash: 'h-two', errorMessage: 'bang' }),
+          ]),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
@@ -172,12 +193,19 @@ describe('FailedJobsDrawer', () => {
     globalThis.fetch = (async (url: unknown) => {
       if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
         return new Response(
-          JSON.stringify({
-            jobs: [
-              { pathHash: 'h-bad', state: 'FAILED', errorMessage: 'parse error: unexpected EOF' },
-              { pathHash: 'h-gone', state: 'RETRY_EXHAUSTED', errorMessage: 'extraction timed out' },
-            ],
-          }),
+          byPrefixBody([
+            job({
+              pathHash: 'h-bad',
+              state: 'FAILED',
+              errorMessage: 'parse error: unexpected EOF',
+            }),
+            job({
+              pathHash: 'h-gone',
+              state: 'RETRY_EXHAUSTED',
+              errorMessage: 'extraction timed out',
+              attempts: 41,
+            }),
+          ]),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
@@ -218,13 +246,14 @@ describe('FailedJobsDrawer', () => {
     }
   });
 
-  it('a row with NO state (older backend) renders as FAILED, never as "gave up"', async () => {
-    // The by-prefix handler defaults a blank state to FAILED; the drawer must reach the same
-    // conclusion rather than treating "unknown" as the newer, softer state.
+  it('a non-exhausted state renders WITHOUT the "gave up" line (only RETRY_EXHAUSTED opts in)', async () => {
+    // The gave-up arm keys on one exact spelling. Any other state — including one this drawer has
+    // never heard of — must fall through to the plain rendering rather than be treated as the
+    // newer, softer state.
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async (url: unknown) => {
       if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
-        return new Response(JSON.stringify({ jobs: [{ pathHash: 'h-old', errorMessage: 'boom' }] }), {
+        return new Response(byPrefixBody([job({ pathHash: 'h-odd', state: 'PENDING' })]), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -240,8 +269,46 @@ describe('FailedJobsDrawer', () => {
       await pump(el);
 
       const row = el.shadowRoot?.querySelector('.row');
-      expect(row?.getAttribute('data-state')).toBe('FAILED');
+      expect(row?.getAttribute('data-state')).toBe('PENDING');
       expect(row?.querySelector('[data-testid="failed-job-exhausted"]')).toBeNull();
+      el.remove();
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it('refuses a by-prefix body missing the required `state` field instead of rendering it', async () => {
+    // Tempdoc 911 (885 UL.9) — the parse boundary. `state` is the RETRY_EXHAUSTED discriminator and
+    // the wire contract declares it required; before this, the drawer did `String(j['state'] ?? '')`
+    // and a backend that dropped or renamed the field produced a silently plausible screen (every
+    // row rendered as a plain parse failure) with nothing anywhere saying the contract had broken.
+    // Under the dev posture parseWireContract THROWS, so the drawer reports a load failure.
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
+        const { state: _dropped, ...noState } = job({ pathHash: 'h-drift' });
+        return new Response(byPrefixBody([noState]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const el = document.createElement('jf-failed-jobs-drawer') as FailedJobsDrawer;
+      el.apiBase = 'http://x';
+      document.body.appendChild(el);
+      await settle(el);
+      openFailedJobs('folder-hash');
+      await pump(el);
+
+      // No row is rendered, and the failure is surfaced — not swallowed into an empty list, which
+      // would read as "this folder has no failed files".
+      expect(el.shadowRoot?.querySelectorAll('.row').length).toBe(0);
+      const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
+      expect(text).toContain("Couldn't load failed files");
+      expect(text).toContain('WireContract');
+      expect(text).not.toContain('No failed files in this folder.');
       el.remove();
     } finally {
       globalThis.fetch = origFetch;
@@ -255,12 +322,10 @@ describe('FailedJobsDrawer', () => {
       const u = String(url);
       if (u.includes('/api/indexing-jobs/failed/by-prefix')) {
         return new Response(
-          JSON.stringify({
-            jobs: [
-              { pathHash: 'h-one', errorMessage: 'boom' },
-              { pathHash: 'h-two', errorMessage: 'bang' },
-            ],
-          }),
+          byPrefixBody([
+            job({ pathHash: 'h-one', errorMessage: 'boom' }),
+            job({ pathHash: 'h-two', errorMessage: 'bang' }),
+          ]),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }

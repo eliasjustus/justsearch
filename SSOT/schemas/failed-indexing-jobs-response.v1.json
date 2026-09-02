@@ -1,0 +1,43 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "count" : {
+      "type" : "integer"
+    },
+    "jobs" : {
+      "type" : "array",
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "attempts" : {
+            "type" : "integer"
+          },
+          "collection" : {
+            "type" : "string"
+          },
+          "errorMessage" : {
+            "type" : "string"
+          },
+          "lastUpdatedMs" : {
+            "type" : "integer"
+          },
+          "pathHash" : {
+            "type" : "string"
+          },
+          "retryAfterMs" : {
+            "type" : "integer"
+          },
+          "scanId" : {
+            "type" : "string"
+          },
+          "state" : {
+            "type" : "string"
+          }
+        },
+        "required" : [ "attempts", "collection", "errorMessage", "lastUpdatedMs", "pathHash", "retryAfterMs", "scanId", "state" ]
+      }
+    }
+  },
+  "required" : [ "count", "jobs" ]
+}

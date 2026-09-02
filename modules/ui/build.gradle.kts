@@ -102,6 +102,10 @@ testing {
         // Slice 445: integration test for the indexing-jobs SSE substrate uses
         // an in-process gRPC server (no live worker dep). Scoped to test only.
         implementation(libs.grpc.inprocess)
+        // Tempdoc 911 (885 UL.9): the failed-jobs wire-contract test validates the ACTUAL endpoint
+        // body against SSOT/schemas/failed-indexing-jobs-response.v1.json. The record→schema link is
+        // pinned in app-api; this pins the other end — that the handler emits what the schema says.
+        implementation(libs.json.schema.validator)
         runtimeOnly(libs.junit.jupiter.engine)
         runtimeOnly(libs.junit.platform.launcher)
       }

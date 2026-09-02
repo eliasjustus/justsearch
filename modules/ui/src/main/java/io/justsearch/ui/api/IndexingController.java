@@ -5,8 +5,10 @@ import io.javalin.http.Context;
 import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.ExcludesService;
 import io.justsearch.app.api.IndexingService;
+import io.justsearch.app.api.indexing.FailedIndexingJobsResponse;
 import io.justsearch.app.api.indexing.FailedJob;
 import io.justsearch.app.api.indexing.FailedJobsResponse;
+import io.justsearch.app.api.indexing.IndexingJobView;
 import io.justsearch.app.api.OpCriticality;
 import io.justsearch.app.api.OpLeaseOutcome;
 import io.justsearch.app.api.OperationLeaseHandle;
@@ -670,25 +672,9 @@ public class IndexingController {
         }
       }
       IndexingService indexing = indexingService();
-      List<IndexingService.FailedJobInfo> jobs = indexing.listFailedJobs(limit);
-      List<Map<String, Object>> payload =
-          jobs.stream()
-              .map(
-                  j -> {
-                    Map<String, Object> m = new java.util.LinkedHashMap<>();
-                    m.put("pathHash", sha256Hex(j.path() == null ? "" : j.path()));
-                    m.put("state", j.state() == null || j.state().isBlank() ? "FAILED" : j.state());
-                    m.put("attempts", j.attempts());
-                    m.put("lastUpdatedMs", j.lastUpdatedMs());
-                    m.put("errorMessage", j.errorMessage() == null ? "" : j.errorMessage());
-                    m.put("retryAfterMs", 0L);
-                    m.put(
-                        "collection",
-                        j.collection() == null ? "default" : j.collection());
-                    return m;
-                  })
-              .toList();
-      ctx.json(Map.of("jobs", payload, "count", payload.size()));
+      List<IndexingJobView> payload =
+          indexing.listFailedJobs(limit).stream().map(IndexingController::toJobView).toList();
+      ctx.json(new FailedIndexingJobsResponse(payload, payload.size()));
     } catch (Exception e) {
       log.error("Failed to list substrate-shaped failed jobs", e);
       ctx.status(500)
@@ -753,24 +739,11 @@ public class IndexingController {
                     ApiErrorHandler.routeOf(ctx)));
         return;
       }
-      List<IndexingService.FailedJobInfo> jobs =
-          indexing.listFailedJobsByPathPrefix(rawPath, limit);
-      List<Map<String, Object>> payload =
-          jobs.stream()
-              .map(
-                  j -> {
-                    Map<String, Object> m = new java.util.LinkedHashMap<>();
-                    m.put("pathHash", sha256Hex(j.path() == null ? "" : j.path()));
-                    m.put("state", j.state() == null || j.state().isBlank() ? "FAILED" : j.state());
-                    m.put("attempts", j.attempts());
-                    m.put("lastUpdatedMs", j.lastUpdatedMs());
-                    m.put("errorMessage", j.errorMessage() == null ? "" : j.errorMessage());
-                    m.put("retryAfterMs", 0L);
-                    m.put("collection", j.collection() == null ? "default" : j.collection());
-                    return m;
-                  })
+      List<IndexingJobView> payload =
+          indexing.listFailedJobsByPathPrefix(rawPath, limit).stream()
+              .map(IndexingController::toJobView)
               .toList();
-      ctx.json(Map.of("jobs", payload, "count", payload.size()));
+      ctx.json(new FailedIndexingJobsResponse(payload, payload.size()));
     } catch (Exception e) {
       log.error("Failed to list folder-scoped failed jobs", e);
       ctx.status(500)
@@ -932,6 +905,28 @@ public class IndexingController {
     } catch (java.security.NoSuchAlgorithmException e) {
       throw new IllegalStateException("SHA-256 unavailable", e);
     }
+  }
+
+  /**
+   * The ONE projection of a worker-reported failed job onto the {@link IndexingJobView} wire record,
+   * shared by {@link #handleListFailedJobsSubstrate} and {@link #handleListFailedJobsByPathPrefix}
+   * (tempdoc 911). Both endpoints emitted a byte-identical hand-built map before; two copies of one
+   * mapping is how {@code scanId} came to be dropped from both.
+   *
+   * <p>{@code retryAfterMs} is 0: these rows are terminal (no retry is scheduled), which is exactly
+   * what "no backoff deadline" means on this record. {@code scanId} is {@code ""} because {@code
+   * FailedJobInfo} does not carry it — {@link IndexingJobView} already spells "unknown scan" that way.
+   */
+  private static IndexingJobView toJobView(IndexingService.FailedJobInfo j) {
+    return new IndexingJobView(
+        sha256Hex(j.path() == null ? "" : j.path()),
+        j.state() == null || j.state().isBlank() ? IndexingJobView.STATE_FAILED : j.state(),
+        j.attempts(),
+        j.lastUpdatedMs(),
+        j.errorMessage() == null ? "" : j.errorMessage(),
+        0L,
+        j.collection() == null ? "default" : j.collection(),
+        "");
   }
 
   public void handleClearFailedJobs(Context ctx) {
