@@ -7,7 +7,7 @@ description: "Canonical YAML/env/sysprop ownership and precedence map."
 
 # Runtime Config Ownership Matrix
 
-Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-08-19.
+Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-09-02.
 
 Precedence note:
 1. `YAML > sysprop > env > default` where a YAML key and env/sysprop fallback both exist.
@@ -155,7 +155,10 @@ Precedence note:
 | - | JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED | justsearch.embed.late_chunking_enabled | EMBED_LATE_CHUNKING_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EMBED_ONNX_MODEL_PATH | justsearch.embed.onnx.model_path | EMBED_ONNX_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND | justsearch.extraction.sandbox.command | EXTRACTION_SANDBOX_COMMAND | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_EXTRACTION_SANDBOX_HEAP | justsearch.extraction.sandbox.heap | EXTRACTION_SANDBOX_HEAP | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_EXTRACTION_SANDBOX_MAX_REQUESTS | justsearch.extraction.sandbox.max_requests | EXTRACTION_SANDBOX_MAX_REQUESTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EXTRACTION_SANDBOX_MODE | justsearch.extraction.sandbox.mode | EXTRACTION_SANDBOX_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_EXTRACTION_SANDBOX_POOL | justsearch.extraction.sandbox.pool | EXTRACTION_SANDBOX_POOL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_FIELD_CATALOG | justsearch.fieldCatalog | FIELD_CATALOG | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_FILTER_NORM_ENABLED | justsearch.filter_norm.enabled | FILTER_NORM_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_GPL_REEVAL_SIZE_FACTOR | justsearch.gpl.reeval_size_factor | GPL_REEVAL_SIZE_FACTOR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

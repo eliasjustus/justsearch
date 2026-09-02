@@ -229,7 +229,19 @@ Stable migration architecture is described in `docs/explanation/11-index-schema-
 
 We use **Apache Tika** to handle diverse formats.
 *   **Supported:** PDF, DOCX, PPTX, HTML, XML, Markdown, Source Code.
-*   **Timeout protection:** `TimeboxedContentExtractor` enforces a hard extraction deadline (default 60s) and increments `extraction.timeout_total` when it triggers. The job is marked failed as `EXTRACTION_TIMEOUT` instead of blocking the indexing loop indefinitely.
+*   **Timeout protection:** `TimeboxedContentExtractor` enforces a hard extraction deadline (default 60s) and increments `extraction.timeout_total` when it triggers. The job is marked failed as `EXTRACTION_TIMEOUT` instead of blocking the indexing loop indefinitely. On a timeout the extractor also replaces its single-thread executor, because `Future.cancel(true)` only interrupts and a wedged native parser ignores the interrupt — without the replacement, one bad file held the only extraction thread and stopped **all** extraction until the Worker restarted.
+
+### Extraction sandbox pool
+
+Parser families that can wedge or exhaust a heap run **out of process**, in a pool of persistent child JVMs.
+
+*   **Routing (`justsearch.extraction.sandbox.mode`)**: `auto` (default) routes by the file kind `IndexingDocumentOps.classifyFileKind` already assigns — `pdf`, `office`, `archive`, `image` and unrecognised `binary` go out of process; `text`, `markdown` and `code` (which includes CSV/JSON) stay in the Worker JVM, where the IPC round-trip would be pure overhead. `in_process` and `process` force one side for measurement or incident response.
+*   **Persistent children, not one JVM per file**: `PersistentExtractionSandbox` spawns each child lazily and reuses it, so JVM start and Tika class-loading are paid once rather than per file. One request is in flight per child; `justsearch.extraction.sandbox.pool` (default 1) sets how many children exist.
+*   **Protocol**: length-prefixed UTF-8 JSON frames (`SandboxFrames`) over the child's stdin/stdout, carrying the existing `SandboxExtractionRequest` / `SandboxExtractionResponse` records. The child captures the real `System.out` at startup and redirects `System.out` to stderr, so parser chatter cannot corrupt a frame. The child's stderr is drained continuously into a bounded tail — draining is mandatory, not diagnostic, since a full stderr pipe would wedge the child mid-parse.
+*   **Child command**: built in-process from `java.home` + `java.class.path` (the Worker runs from a plain `-cp lib\*` classpath, not a jlink image), with `-XX:+UseSerialGC`, `--enable-native-access=ALL-UNNAMED`, and a heap of at least 4x the largest accepted input with a 512m floor (`justsearch.extraction.sandbox.heap`). The Worker's own `-XX:AOTCache` is inherited when it has one and the file exists. `JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` overrides the whole argv.
+*   **Recycling**: a child is killed and respawned on a missed deadline, on a crash, and after `justsearch.extraction.sandbox.max_requests` requests (default 500 — the leak guard). Each event increments `extraction.sandbox_restart_total{reason}`; spawns increment `extraction.sandbox_spawn_total`.
+*   **Failure classification**: a missed deadline is `PARSER_TIMEOUT` (retryable) as before; a child whose stderr carries `OutOfMemoryError` is a **permanent** `PARSER_FAILED` (`IngestionRetryPolicy.NONE`), because a file that does not fit the child heap will exhaust it again; any other non-zero exit is a retryable `SANDBOX_FAILED` carrying the exit code and a bounded stderr tail.
+*   **No orphans**: the Worker kills its children when `IndexingLoop` closes the extractor, and each child independently polls its parent PID (`--parent-pid`) and halts once the Worker is gone — so a `kill -9` of the Worker cannot leave a child behind. This is why no `WindowsJobObject` dependency is added to `worker-services`.
 *   **Garbage Detection:**
     *   Tika often returns "garbage" for scanned/image-only PDFs (random unicode characters) or empty text for images.
     *   We use `TextQualityAnalyzer` (Alphanumeric Ratio < 0.3) to detect this.
