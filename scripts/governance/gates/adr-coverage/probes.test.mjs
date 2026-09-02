@@ -320,7 +320,58 @@ await run('file-set: stale exception for a deleted file → fail', async () => {
   const root = scaffold({ 'src/a.ts': 'export const a = 1;', 'governance/contract-surfaces.v1.json': '{}' });
   const r = evaluateProbe(fileSetProbe({ exceptions: [{ file: 'src/gone.ts', reason: 'x' }] }), root);
   assert.equal(r.ok, false);
-  assert.match(r.detail, /no longer exist/);
+  assert.match(r.detail, /src\/gone\.ts \(the file no longer exists\)/);
+});
+
+// An exception that only goes stale on DELETION is honour-system for the case this probe is
+// actually driving toward: a file that stops being a hand-mirror (884 review S6).
+
+await run('file-set: exception whose file still carries the marker → fine', async () => {
+  const root = scaffold({
+    'src/api/types/mirror.ts': MIRROR,
+    'governance/contract-surfaces.v1.json': '{}',
+  });
+  const r = evaluateProbe(fileSetProbe({
+    exceptions: [{ file: 'src/api/types/mirror.ts', reason: 'blocked on the emitter' }],
+  }), root);
+  assert.equal(r.ok, true, r.detail);
+});
+
+await run('file-set: exception whose file exists but LOST its marker → stale, fail', async () => {
+  // The surface.ts shape: the mirror was migrated to a generated projection, so the file is
+  // still there but is no longer a mirror. The exception is now a lie about the tree.
+  const root = scaffold({
+    'src/api/types/surface.ts': 'export type { SurfaceWire } from "../generated/schema-types/surface.js";\n',
+    'governance/contract-surfaces.v1.json': '{}',
+  });
+  const r = evaluateProbe(fileSetProbe({
+    exceptions: [{ file: 'src/api/types/surface.ts', reason: 'was a hand mirror' }],
+  }), root);
+  assert.equal(r.ok, false, 'a file that stopped being a mirror must not keep its exception');
+  assert.match(r.detail, /src\/api\/types\/surface\.ts \(it still exists but no longer self-declares a mirror\)/);
+  assert.match(r.detail, /"unmarked": true/, 'the remedy for the by-design case must be named');
+});
+
+await run('file-set: exception declared UNMARKED by design → fine, never flagged as stale', async () => {
+  // api/domains/indexing.ts / api/schemas.ts are declared precisely BECAUSE they are mirrors
+  // that carry no marker; "has no marker" is their permanent, correct state.
+  const root = scaffold({
+    'src/api/domains/indexing.ts': 'export interface ApplyExcludesResponse { ok: boolean }\n',
+    'governance/contract-surfaces.v1.json': '{}',
+  });
+  const r = evaluateProbe(fileSetProbe({
+    exceptions: [{ file: 'src/api/domains/indexing.ts', unmarked: true, reason: 'unmarked mirror by design' }],
+  }), root);
+  assert.equal(r.ok, true, r.detail);
+});
+
+await run('file-set: an UNMARKED-by-design exception is still stale once its file is deleted', async () => {
+  const root = scaffold({ 'src/a.ts': 'x', 'governance/contract-surfaces.v1.json': '{}' });
+  const r = evaluateProbe(fileSetProbe({
+    exceptions: [{ file: 'src/api/domains/gone.ts', unmarked: true, reason: 'unmarked mirror by design' }],
+  }), root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /the file no longer exists/);
 });
 
 await run('file-set: generated output and tests are excluded from the scan', async () => {
@@ -462,6 +513,24 @@ await run('every shipped probe declares a known kind and a non-empty premise', a
     assert.ok(PROBE_KINDS.has(p.kind), `${p.id}: unknown kind '${p.kind}'`);
     assert.ok(typeof p.premise === 'string' && p.premise.length > 20, `${p.id}: premise must be prose`);
     assert.match(p.adr, /^\d{4}$/, `${p.id}: adr must be a 4-digit number`);
+  }
+});
+
+await run('every shipped `unmarked: true` exception really is unmarked', async () => {
+  // The flag exempts an entry from the lost-the-marker staleness rule, so a MARKED file
+  // carrying it would be silencing the rule rather than describing the tree.
+  const reg = loadProbeRegister(process.cwd());
+  for (const probe of reg.probes.filter((p) => p.kind === 'file-set')) {
+    const marker = new RegExp(probe.mirrorMarker, 'i');
+    for (const ex of probe.exceptions ?? []) {
+      if (ex.unmarked !== true) continue;
+      const abs = path.resolve(process.cwd(), ex.file);
+      if (!fs.existsSync(abs)) continue; // the gate's own staleness rule reports this
+      assert.ok(
+        !marker.test(fs.readFileSync(abs, 'utf8')),
+        `${ex.file} carries the mirror marker, so 'unmarked: true' misdescribes it`,
+      );
+    }
   }
 });
 

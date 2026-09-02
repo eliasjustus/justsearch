@@ -124,8 +124,38 @@ export function verdictForRiskInstrumentCoverage({ riskId, instrument, statedRea
 }
 
 /**
- * An absent register is silence (nothing was restored yet); a present-but-broken one is a
- * failure, because a register that will not parse silently disables every instrument in it.
+ * The register's ABSENCE is the failure the register exists to prevent (884 review S3).
+ *
+ * The 2026-03 register was deleted a week after it was written and nothing noticed for six
+ * months. Treating "no file" as "nothing to check" reproduces exactly that: one `rm` would
+ * disable every instrument row at once, silently, and the gate would still be green. So a
+ * declared register that is not there is a `fail`, and the remedy is one-directional —
+ * restore the file, never drop the config key that names it.
+ */
+export function verdictForRiskRegisterPresence({ registerPath, exists }) {
+  if (exists) {
+    return {
+      ruleId: 'adr-coverage/risk-register-ok',
+      status: 'pass',
+      reason: `${registerPath} is present`,
+    };
+  }
+  return {
+    ruleId: 'adr-coverage/risk-register-missing',
+    status: 'fail',
+    reason:
+      `${registerPath} does not exist. That file IS the instrument-per-risk mechanism: every `
+      + `'## RISK-NNN:' row names exactly one machine-checkable instrument and this gate is what `
+      + `checks them, so deleting it disables every instrument at once. The fix is to restore the `
+      + `file (it is in git history) — it is never to remove the 'riskRegister' key from the `
+      + `adr-coverage gate config in governance/registry.v1.json, which would silence this rule `
+      + `instead of satisfying it. ${RISK_INSTRUMENT_INTENT}`,
+  };
+}
+
+/**
+ * A present-but-broken register is a failure, because a register that will not parse silently
+ * disables every instrument in it. (Absence is handled by `verdictForRiskRegisterPresence`.)
  */
 export function verdictForRiskRegister({ registerPath, problem }) {
   if (!problem) {

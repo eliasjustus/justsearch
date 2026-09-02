@@ -325,11 +325,59 @@ const RISK_UNRESOLVED = 'adr-coverage/risk-instrument-unresolved';
 const RISK_NO_INSTRUMENT = 'adr-coverage/risk-no-instrument';
 const RISK_MALFORMED = 'adr-coverage/risk-register-malformed';
 
-await run('an absent risk register is silent — no risk findings, verdict pass', async () => {
+const RISK_MISSING = 'adr-coverage/risk-register-missing';
+
+/** Enforce with a gate whose config DECLARES the risk register (as governance/registry.v1.json does). */
+async function enforceWithDeclaredRegister(root) {
+  return enforceAdrCoverage({
+    repoRoot: root,
+    gate: { ...GATE, config: { ...GATE.config, riskRegister: RISK_PATH } },
+    baselineRef: null, mode: 'gate', fixtureMode: true, fixtureRoot: root,
+  });
+}
+
+await run('a gate config that declares no risk register is silent about one — verdict pass', async () => {
+  // The ~25 scaffolds in this file are about the ADR rules, not the register; they declare no
+  // `riskRegister`, so no register is demanded of them. This is the branch that keeps them green.
   const root = scaffold({ 'docs/decisions/0001-x.md': CLEAN_ADR });
   const r = await enforce(root);
   assert.equal(r.verdict, 'pass', ids(r).join(','));
   assert.ok(!ids(r).some((i) => i.startsWith('adr-coverage/risk-')), ids(r).join(','));
+});
+
+await run('DECLARED register present → no absence finding, verdict pass (884 review S3)', async () => {
+  const root = scaffold({
+    'docs/decisions/0001-x.md': CLEAN_ADR,
+    [RISK_PATH]: riskDoc(riskRow('RISK-001', 'none - fixture.')),
+  });
+  const r = await enforceWithDeclaredRegister(root);
+  assert.equal(r.verdict, 'pass', ids(r).join(','));
+  assert.ok(!ids(r).includes(RISK_MISSING), ids(r).join(','));
+});
+
+await run('DECLARED register DELETED → risk-register-missing, verdict fail (884 review S3)', async () => {
+  // Deleting docs/reference/architectural-risks.md used to be a silent skip: the whole
+  // instrument-per-risk mechanism was removable with one `rm` and the gate stayed green.
+  const root = scaffold({ 'docs/decisions/0001-x.md': CLEAN_ADR });
+  const r = await enforceWithDeclaredRegister(root);
+  assert.equal(r.verdict, 'fail', ids(r).join(','));
+  assert.ok(ids(r).includes(RISK_MISSING), ids(r).join(','));
+  const m = msgFor(r, RISK_MISSING);
+  assert.match(m, /docs\/reference\/architectural-risks\.md/, 'the message must name the file');
+  assert.match(m, /instrument-per-risk mechanism/, 'it must say what the file is');
+  assert.match(m, /restore the file/, 'the fix must be to restore it');
+  assert.match(m, /never to remove the 'riskRegister' key/, 'and must foreclose deleting the config key');
+});
+
+await run("the shipped adr-coverage gate config declares a risk register, and it exists", async () => {
+  // The presence rule keys on the config, so removing the config key is the one evasion left.
+  // This closes it: the real registry entry must declare the register AND the file must be there.
+  const registry = JSON.parse(fs.readFileSync(path.resolve('governance/registry.v1.json'), 'utf8'));
+  const gate = (registry.gates ?? []).find((g) => g.id === 'adr-coverage');
+  assert.ok(gate, 'adr-coverage must be a registered gate');
+  const declared = gate.config?.riskRegister;
+  assert.ok(declared, "adr-coverage's gate config must declare `config.riskRegister`");
+  assert.ok(fs.existsSync(path.resolve(declared)), `${declared} must exist`);
 });
 
 // --- gate:

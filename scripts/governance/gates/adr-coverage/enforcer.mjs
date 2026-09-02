@@ -34,6 +34,7 @@ import {
   verdictForRiskInstrument,
   verdictForRiskInstrumentCoverage,
   verdictForRiskRegister,
+  verdictForRiskRegisterPresence,
 } from './truth-table.mjs';
 
 export const ADR_COVERAGE_CLASSIFICATIONS = new Set([
@@ -66,11 +67,16 @@ export const ADR_COVERAGE_RULE_DESCRIPTIONS = {
     + 'documented in docs/reference/architectural-risks.md § Instrument grammar, or '
     + "'none - <reason>'; a risk with nothing to check is a note nobody reads.",
   'adr-coverage/risk-register-ok':
-    'The architectural risk register parsed and every row was evaluated.',
+    'The architectural risk register is present, parsed, and every row was evaluated.',
+  'adr-coverage/risk-register-missing':
+    'The risk register named by the adr-coverage gate config does not exist. It is the '
+    + 'instrument-per-risk mechanism, so deleting it disables every instrument row at once — '
+    + 'the exact 2026-03 failure (deleted, unnoticed for six months). Restore the file; do not '
+    + 'drop the config key that names it.',
   'adr-coverage/risk-register-malformed':
     'docs/reference/architectural-risks.md exists but is structurally broken (no parseable '
-    + '`## RISK-NNN:` section, or a reused id). An absent register is skipped; a broken one '
-    + 'fails, because it would silently disable every instrument check in it.',
+    + '`## RISK-NNN:` section, or a reused id). It fails, because it would silently disable '
+    + 'every instrument check in it.',
 };
 
 /** Status prefixes that make an ADR live enough to owe a probe (tempdoc 884 R1). */
@@ -504,9 +510,30 @@ export async function enforceAdrCoverage(options) {
   }
 
   // --- Architectural risk register (tempdoc 884 PART D) ---
-  const riskRegisterRel = (gate.config?.riskRegister ?? DEFAULT_RISK_REGISTER).replaceAll('\\', '/');
+  //
+  // WHY THE PRESENCE RULE IS KEYED ON THE CONFIG (884 review S3). Declaring `riskRegister` in a
+  // gate's registry config is the promise that the file exists; the promise is what this rule
+  // enforces, so `governance/registry.v1.json` (which declares it) makes deleting
+  // docs/reference/architectural-risks.md a build failure rather than a silent skip. Two
+  // consequences are deliberate:
+  //   - The rule is still exercisable in fixture mode — it keys on the gate object, not on
+  //     "is this the real repo", so enforcer.test.mjs drives BOTH branches by passing a config
+  //     with and without the register present. A rule that cannot fire in fixtures is a rule
+  //     with no test.
+  //   - The ~25 scaffolded trees in enforcer.test.mjs that declare no `riskRegister` keep
+  //     evaluating a register only if one happens to be there, so they stay green without being
+  //     given a register they are not about.
+  // The remaining hole — deleting the config key instead of the file — is closed by the
+  // "the shipped gate config declares a risk register" check in enforcer.test.mjs, and the
+  // failure message below names that evasion explicitly.
+  const declaredRiskRegister = gate.config?.riskRegister;
+  const riskRegisterRel = (declaredRiskRegister ?? DEFAULT_RISK_REGISTER).replaceAll('\\', '/');
   const riskRegisterAbs = resolve(sourceRoot, riskRegisterRel);
-  if (existsSync(riskRegisterAbs)) {
+  if (!existsSync(riskRegisterAbs)) {
+    if (declaredRiskRegister) {
+      emit(verdictForRiskRegisterPresence({ registerPath: riskRegisterRel, exists: false }), riskRegisterRel);
+    }
+  } else {
     // A throw here would take down every other gate in the same run.mjs invocation (the bug
     // PR 1 fixed for the probe register); a broken register reports a finding instead.
     try {

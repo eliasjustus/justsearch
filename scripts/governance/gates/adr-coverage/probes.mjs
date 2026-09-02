@@ -227,7 +227,8 @@ function evaluateFileSet(root, probe) {
   // that it hand-mirrors a backend type. Scanning every .ts under the tree and demanding each
   // be "registered" would need ~1000 exceptions; scanning for the marker keeps the probe honest
   // over the whole tree (tempdoc 884 review B2). Known mirrors that carry no marker are
-  // declared in `exceptions` with a reason, which is what makes them visible at all.
+  // declared in `exceptions` with a reason and `unmarked: true`, which is what makes them
+  // visible at all.
   const marker = probe.mirrorMarker ? new RegExp(probe.mirrorMarker, 'i') : null;
   const flagged = [];
   for (const rel of marker ? present : []) {
@@ -247,9 +248,40 @@ function evaluateFileSet(root, probe) {
         + `governance/adr-probes.v1.json`,
     };
   }
-  const stale = [...exceptions].filter((f) => !present.includes(f));
+  // An exception goes stale two ways, and only the first used to be noticed (884 review S6).
+  //
+  //  1. the file is gone — the entry can never be satisfied again;
+  //  2. the file is still there but no longer self-declares a mirror. That is the SUCCESS case
+  //     this probe drives toward (surface.ts, migrated in 884 PR 2), and leaving the entry
+  //     standing turns the register into a record of things that used to be true — the drift
+  //     the register exists to prevent. Detecting deletion only made the handshake mechanical
+  //     for `rm` and honour-system for everything else.
+  //
+  // `unmarked: true` opts an entry out of (2), and is REQUIRED to express the case the register
+  // already carries: `api/domains/indexing.ts` and `api/schemas.ts` are declared BECAUSE they are
+  // mirrors that carry no marker, so "has no marker" is their permanent, correct state. Nothing
+  // in `{file, reason}` distinguished that from "stopped being a mirror" — the prose reason is
+  // not machine-readable — so the flag is the smallest honest way to tell the two apart. Without
+  // the flag the default is strict: an exception is expected to be marked, because an exception
+  // exists to account for something the marker scan flags.
+  const stale = [];
+  for (const ex of probe.exceptions ?? []) {
+    if (!present.includes(ex.file)) {
+      stale.push(`${ex.file} (the file no longer exists)`);
+      continue;
+    }
+    if (marker && ex.unmarked !== true && !flagged.includes(ex.file)) {
+      stale.push(`${ex.file} (it still exists but no longer self-declares a mirror)`);
+    }
+  }
   if (stale.length > 0) {
-    return { ok: false, detail: `declared exception(s) ${stale.join(', ')} no longer exist — drop them from the register` };
+    return {
+      ok: false,
+      detail: `stale declared exception(s): ${stale.join(', ')} — drop them from the 'exceptions' `
+        + `list in governance/adr-probes.v1.json. If a listed file is a hand-written mirror that `
+        + `carries no marker by design, declare that with '"unmarked": true' on its entry rather `
+        + `than leaving it to look like a marked one.`,
+    };
   }
   return {
     ok: true,
