@@ -144,6 +144,16 @@ const TARGETS = [
     outFile: 'failed-jobs-response.ts',
     rootName: 'FailedJobsResponse',
   },
+  // Tempdoc 911 (885 UL.9): the SUBSTRATE-shaped failed-jobs surfaces — /api/indexing-jobs/failed
+  // and the folder-scoped .../by-prefix the FailedJobsDrawer reads. Both hand-built a
+  // Map<String,Object> that was almost an IndexingJobView (scanId dropped), so nothing described
+  // the wire and the drawer read `state` — the RETRY_EXHAUSTED discriminator — off untyped JSON.
+  // PreciseWire on both records, so this projection is required + non-null end to end.
+  {
+    schema: 'SSOT/schemas/failed-indexing-jobs-response.v1.json',
+    outFile: 'failed-indexing-jobs-response.ts',
+    rootName: 'FailedIndexingJobsResponse',
+  },
   // Tempdoc 560 §4c (Phase A): the registry "declaration" shape as a generated single-authority
   // projection, retiring the hand-mirrored api/types/registry.ts. The `…Wire` rootName frees the
   // FE-facing names (Resource/Presentation/Provenance) for the tightened derived aliases in the

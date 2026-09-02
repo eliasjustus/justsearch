@@ -51,7 +51,16 @@ const PATH_VERIFICATION = new Set(['LITERAL', 'COMPOSED']);
  * this check would NOT have caught it. Catching that needs the gate to know which root a row's
  * writer resolves against, which is caller-side information `pathVerification` cannot see.
  */
-const ROOTS = new Set(['DATA_DIR', 'AI_HOME', 'PROGRAM_DATA_OR_DATA_DIR']);
+const ROOTS = new Set([
+  'DATA_DIR',
+  'AI_HOME',
+  'PROGRAM_DATA_OR_DATA_DIR',
+  // Tempdoc 909 items 7/8: the user's own documents, under the indexed roots they configured. The
+  // app MUTATES them (the agent's file-operations tool moves, copies and deletes there), so there
+  // is a durable authority to declare — but the location is the user's, resolved at runtime from
+  // the live indexing service, and is under none of the app-owned roots above.
+  'USER_INDEXED_ROOTS',
+]);
 /**
  * Whether a row's bytes are sealed at rest, and if not, why not. Every row answers; the absence of an
  * answer is a build failure. UNSEALED_GAP is the honest label for "no structural reason, just not done";

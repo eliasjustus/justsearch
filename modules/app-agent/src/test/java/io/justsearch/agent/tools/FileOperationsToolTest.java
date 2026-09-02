@@ -501,6 +501,142 @@ class FileOperationsToolTest {
     assertTrue(undoResult.message().contains("skipped"), "Output should mention skipped: " + undoResult.message());
   }
 
+  // --- Tempdoc 909 items 7/8: a COPY-undo deletes only what it can prove it wrote ---
+
+  /**
+   * The defect this closes. {@code modifiedSince} compares mtime against the recorded action time,
+   * so a write that preserves the timestamp — an editor that restores it, a restore-from-backup, a
+   * sync client writing the server's mtime, a filesystem whose granularity swallowed the edit — was
+   * invisible, and the undo deleted the user's content. Content identity answers directly.
+   */
+  @Test
+  void undoRefusesToDeleteACopyWhoseContentChangedUnderAnUnchangedMtime() throws IOException {
+    Path src = root.resolve("source.txt");
+    Files.writeString(src, "copy me");
+    Path dest = root.resolve("copied.txt");
+    OperationResult copyResult = copyFileTo(src, dest);
+
+    java.nio.file.attribute.FileTime asCopied = Files.getLastModifiedTime(dest);
+    Files.writeString(dest, "the user's own edits, written with the original timestamp");
+    Files.setLastModifiedTime(dest, asCopied); // the mtime guard now sees nothing
+
+    OperationResult undoResult = tool.undo(copyResult.executionId().orElseThrow());
+
+    assertTrue(undoResult.success(), "undo still succeeds (partial): " + undoResult.message());
+    assertTrue(Files.exists(dest), "a copy whose CONTENT changed must not be deleted");
+    assertEquals(
+        "the user's own edits, written with the original timestamp",
+        Files.readString(dest),
+        "the user's bytes must survive the undo");
+    assertTrue(
+        undoResult.message().contains("no longer hold the content the agent copied"),
+        "undo must say why it refused: " + undoResult.message());
+  }
+
+  /** The same guarantee for a copied TREE, whose undo is a recursive delete. */
+  @Test
+  void undoRefusesToDeleteACopiedTreeWhoseNestedContentChanged() throws IOException {
+    Path source = root.resolve("tree");
+    Files.createDirectories(source.resolve("nested"));
+    Files.writeString(source.resolve("nested").resolve("note.txt"), "original");
+    Path dest = root.resolve("tree-copy");
+    OperationResult copyResult = copyFileTo(source, dest);
+
+    Path copiedNote = dest.resolve("nested").resolve("note.txt");
+    java.nio.file.attribute.FileTime asCopied = Files.getLastModifiedTime(copiedNote);
+    Files.writeString(copiedNote, "the user's own edit inside the copied tree");
+    Files.setLastModifiedTime(copiedNote, asCopied);
+
+    OperationResult undoResult = tool.undo(copyResult.executionId().orElseThrow());
+
+    assertTrue(Files.isDirectory(dest), "the tree must not be recursively deleted");
+    assertEquals("the user's own edit inside the copied tree", Files.readString(copiedNote));
+    assertTrue(
+        undoResult.message().contains("no longer hold the content the agent copied"),
+        "undo must say why it refused: " + undoResult.message());
+  }
+
+  /**
+   * A journal written before the digest existed cannot prove anything about the file on disk. The
+   * conservative branch is the default one: preserve, and tell the user the app could not verify it.
+   */
+  @Test
+  void undoPreservesACopyRecordedByALegacyJournalWithNoContentIdentity() throws IOException {
+    Path src = root.resolve("source.txt");
+    Files.writeString(src, "copy me");
+    Path dest = root.resolve("copied.txt");
+    OperationResult copyResult = copyFileTo(src, dest);
+    String batchId = copyResult.executionId().orElseThrow();
+    downgradeJournalToV1(batchId);
+
+    OperationResult undoResult = tool.undo(batchId);
+
+    assertTrue(undoResult.success(), "undo still succeeds (partial): " + undoResult.message());
+    assertTrue(Files.exists(dest), "an unverifiable copy must be preserved, not deleted");
+    assertEquals("copy me", Files.readString(dest));
+    assertTrue(
+        undoResult.message().contains("could not be verified against the operation log"),
+        "undo must name the unverifiable target: " + undoResult.message());
+  }
+
+  /** The guard must not over-fire: an untouched copy still reverts, and its identity was recorded. */
+  @Test
+  void undoStillDeletesACopyWhoseContentIsUnchanged() throws IOException {
+    Path src = root.resolve("source.txt");
+    Files.writeString(src, "copy me");
+    Path dest = root.resolve("copied.txt");
+    OperationResult copyResult = copyFileTo(src, dest);
+
+    var executed = executedEntries(copyResult.executionId().orElseThrow());
+    assertTrue(
+        String.valueOf(executed.get(0).get("destinationDigest")).startsWith("sha256:"),
+        "the forward COPY must record what it left at the destination: " + executed);
+
+    OperationResult undoResult = tool.undo(copyResult.executionId().orElseThrow());
+
+    assertTrue(undoResult.success(), undoResult.message());
+    assertFalse(Files.exists(dest), "an unchanged copy reverts normally");
+    assertFalse(
+        undoResult.message().contains("no longer hold the content"),
+        "no false refusal for an untouched copy: " + undoResult.message());
+  }
+
+  private OperationResult copyFileTo(Path source, Path dest) {
+    String json =
+        """
+        {"operations": [{"op": "COPY", "source": "%s", "destination": "%s"}]}
+        """
+            .formatted(
+                source.toString().replace("\\", "\\\\"), dest.toString().replace("\\", "\\\\"));
+    OperationResult copyResult = tool.execute(json);
+    assertTrue(copyResult.success(), copyResult.message());
+    assertTrue(Files.exists(dest), "precondition: the copy exists");
+    return copyResult;
+  }
+
+  @SuppressWarnings("unchecked")
+  private List<Map<String, Object>> executedEntries(String batchId) throws IOException {
+    Path file =
+        tempDir.resolve("data").resolve("file-operations").resolve(batchId + ".json");
+    var mapper = new tools.jackson.databind.ObjectMapper();
+    Map<String, Object> log = mapper.readValue(file.toFile(), Map.class);
+    return (List<Map<String, Object>>) log.get("executed");
+  }
+
+  /** Rewrite a just-written journal as the v1 shape an earlier install produced. */
+  @SuppressWarnings("unchecked")
+  private void downgradeJournalToV1(String batchId) throws IOException {
+    Path file =
+        tempDir.resolve("data").resolve("file-operations").resolve(batchId + ".json");
+    var mapper = new tools.jackson.databind.ObjectMapper();
+    Map<String, Object> log = mapper.readValue(file.toFile(), Map.class);
+    log.put("schemaVersion", 1);
+    for (Map<String, Object> entry : (List<Map<String, Object>>) log.get("executed")) {
+      entry.remove("destinationDigest");
+    }
+    Files.writeString(file, mapper.writeValueAsString(log));
+  }
+
   @Test
   void undoMissingBatchReturnsFailure() {
     OperationResult result = tool.undo("nonexistent-batch-id");
@@ -519,7 +655,7 @@ class FileOperationsToolTest {
     var log = new FileOperationLog(tempDir.resolve("data").resolve("file-operations"));
     log.startBatch("unfin-batch", "test", List.of(
         new FileOperation(FileOperation.OpType.MOVE, src, dest)));
-    log.recordSuccess("unfin-batch", 0);
+    log.recordSuccess("unfin-batch", 0, null);
     // Note: no log.finalizeBatch()
 
     OperationResult result = tool.undo("unfin-batch");

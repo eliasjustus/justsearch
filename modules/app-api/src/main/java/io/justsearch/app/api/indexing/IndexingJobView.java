@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.api.indexing;
 
+import io.justsearch.agent.api.registry.PreciseWire;
 import java.util.Objects;
 
 /**
@@ -18,6 +19,13 @@ import java.util.Objects;
  * <p>Worker analogue: {@code IndexingJobChangeFeed.JobRow} (worker-core).
  * The {@code RemoteIndexingJobsBridge} translates worker proto frames →
  * this head-side record one-for-one for the V1 lean scope.
+ *
+ * <p>{@link PreciseWire} (tempdoc 911 / 885 UL.9): every component is present and non-null on the
+ * wire — the compact constructor rejects null {@code pathHash}/{@code state}/{@code collection} and
+ * normalizes {@code errorMessage}/{@code scanId} to {@code ""}, and the rest are primitives. So the
+ * generated JSON Schema states {@code required} + non-null rather than the permissive
+ * all-optional default, and the FE's generated Zod rejects a row missing {@code state} instead of
+ * silently reading {@code undefined} (the field the RETRY_EXHAUSTED rendering depends on).
  */
 public record IndexingJobView(
     String pathHash,
@@ -27,7 +35,8 @@ public record IndexingJobView(
     String errorMessage,
     long retryAfterMs,
     String collection,
-    String scanId) {
+    String scanId)
+    implements PreciseWire {
 
   /** Awaiting processing (includes rows in retry backoff — {@code retryAfterMs} distinguishes). */
   public static final String STATE_PENDING = "PENDING";

@@ -191,6 +191,39 @@ final class InstallAttemptMemoryTest {
   }
 
   /**
+   * Tempdoc 909 item 2 — the torn-write contract. Before 909 {@code save()} was
+   * {@code Files.writeString}, which truncates the target before writing: a crash or a full disk
+   * mid-write left a PREFIX of the json on disk. This pins both halves of the recovery: a truncated
+   * file reads as "no memory" (never a crash, never a bogus terminal verdict), and the next
+   * successful write replaces it wholesale rather than appending to the wreckage.
+   */
+  @Test
+  @DisplayName("a torn (truncated) memory reads as no history and the next write replaces it")
+  void tornMemoryReadsAsNoHistoryAndIsReplacedByTheNextWrite() throws Exception {
+    InstallAttemptMemory.load(home).recordTransportFailure(TARGET, URL, 2, "Download failed", 0);
+    Path file = home.resolve(InstallAttemptMemory.FILENAME);
+    byte[] whole = Files.readAllBytes(file);
+    assertTrue(whole.length > 10, "precondition: a complete memory was written");
+    // A torn write: the first 60% of a REAL serialization, which is what a truncating write leaves.
+    Files.write(file, java.util.Arrays.copyOf(whole, (whole.length * 6) / 10));
+
+    InstallAttemptMemory torn = InstallAttemptMemory.load(home);
+    assertNull(torn.get(TARGET), "a truncated memory is no memory, not a partial one");
+    assertEquals(0, torn.startTierFor(TARGET));
+    assertFalse(torn.isTerminal(TARGET), "a torn file must never fabricate a terminal verdict");
+
+    torn.recordTransportFailure(TARGET, URL, 1, "Download failed", 0);
+    InstallAttemptMemory reloaded = InstallAttemptMemory.load(home);
+    assertNotNull(reloaded.get(TARGET), "the next write replaces the torn file with a readable one");
+    assertEquals(1, reloaded.get(TARGET).failedPasses());
+    try (var entries = Files.list(home)) {
+      assertFalse(
+          entries.anyMatch(p -> p.getFileName().toString().endsWith(".tmp")),
+          "the atomic replacement must leave no temporary residue beside the memory");
+    }
+  }
+
+  /**
    * The memory lives under {@code homeDir}, NOT in the {@code DownloadResume} sidecar, because the
    * sidecar cannot survive the event it would record: a connection-setup failure leaves no partial
    * bytes, so the next pass decides FRESH and {@code DownloadResume.clear} deletes the sidecar.

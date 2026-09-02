@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.ai.install;
 
+import io.justsearch.configuration.persistence.AtomicFileWrites;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -162,10 +163,17 @@ public final class InstallAttemptMemory {
     }
   }
 
+  /**
+   * Persists via sibling-temp + atomic rename ({@link AtomicFileWrites}), not a direct
+   * {@code writeString}. A plain write truncates the existing file first, so a crash or a full disk
+   * mid-write leaves a TRUNCATED json — which {@link #load} reads as "no history", resetting
+   * {@code failedPasses} to 0 and re-offering a Repair that has already provably failed three
+   * times (the exact non-convergence this memory exists to end). The atomic form can only leave the
+   * previous complete file or the new complete file.
+   */
   private void save() {
     try {
-      Files.createDirectories(file.getParent());
-      Files.writeString(file, JSON.writeValueAsString(new Persisted(VERSION, files)));
+      AtomicFileWrites.replaceUtf8(file, JSON.writeValueAsString(new Persisted(VERSION, files)));
     } catch (IOException | RuntimeException e) {
       log.debug("Install attempt memory not persisted ({}); escalation degrades to tier 0", e.toString());
     }

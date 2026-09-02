@@ -61,17 +61,44 @@ public final class GplEvalSnapshot implements GplEvalData {
   }
 
   /**
-   * Loads a snapshot from disk. Returns {@code null} if the file does not exist, is empty, or
-   * cannot be parsed.
+   * Paths whose unreadability has already been reported at WARN. {@link #load} is published as a
+   * {@code Supplier<GplEvalData>} (HeadAssembly.headInfraRegistry), so it is called per consumer
+   * request, not once at boot: without this the SAME corrupt file WARNs on every call. The entry is
+   * cleared on a successful load, so a file that becomes unreadable again is reported again.
+   */
+  private static final java.util.Set<String> WARNED_UNREADABLE =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+  /**
+   * Loads a snapshot from disk.
+   *
+   * <p><b>Corruption policy (tempdoc 909 item 3).</b> An absent, empty or unparseable snapshot is
+   * treated as ABSENT — {@code null} — never as a partially-trusted one. The snapshot's only job is
+   * to answer "has the corpus changed enough since the last GPL evaluation to re-run it?"
+   * ({@code GplRevalidationTrigger}), and a null last-evaluation means "re-run". So the recovery
+   * from a torn snapshot is the evaluation itself: it re-runs and {@link #save} rewrites the file.
+   * The cost is one extra evaluation; the alternative — trusting half a snapshot — would silently
+   * SKIP an evaluation the corpus actually needs. Reported at WARN once per file, not per read.
    */
   public static GplEvalSnapshot load(Path file) {
     if (!Files.isRegularFile(file)) {
       return null;
     }
+    String key = file.toAbsolutePath().normalize().toString();
     try {
-      return MAPPER.readValue(file.toFile(), GplEvalSnapshot.class);
+      GplEvalSnapshot loaded = MAPPER.readValue(file.toFile(), GplEvalSnapshot.class);
+      WARNED_UNREADABLE.remove(key);
+      return loaded;
     } catch (Exception e) {
-      log.warn("Failed to load GPL eval snapshot from {}: {}", file, e.getMessage());
+      if (WARNED_UNREADABLE.add(key)) {
+        log.warn(
+            "GPL eval snapshot at {} is unreadable ({}); treating it as absent, so the next"
+                + " evaluation re-runs and rewrites it",
+            file,
+            e.getMessage());
+      } else {
+        log.debug("GPL eval snapshot at {} is still unreadable: {}", file, e.getMessage());
+      }
       log.debug("Failed to load GPL eval snapshot (stack trace)", e);
       return null;
     }
