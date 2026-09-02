@@ -237,6 +237,11 @@ await run('runner: ./-relative producer resolves to absolute path (NoDefaultCurr
   // Windows excludes the cwd from cmd.exe's executable search when
   // NoDefaultCurrentDirectoryInExePath is set, so a bare "./tool.cmd ..."
   // producer only works if the runner resolves it absolute (run.mjs does).
+  // The trap and the .cmd producer are Windows-only; on other platforms
+  // (the hosted CI runner, tempdoc 884 B1 wired this suite there) the
+  // check has nothing to pin, so it passes vacuously rather than
+  // failing on a batch file the shell cannot run.
+  if (process.platform !== 'win32') return;
   const stamp = Date.now();
   const reportRel = `tmp/input-contract-dotslash-${stamp}.json`;
   const reportAbs = path.resolve(REPO_ROOT, reportRel);
