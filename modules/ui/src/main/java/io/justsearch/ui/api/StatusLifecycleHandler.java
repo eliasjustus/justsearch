@@ -141,11 +141,6 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     this.clockMs = clock == null ? System::currentTimeMillis : clock;
   }
 
-  /** Visible for testing: seed a sample as if it had been taken at {@code sampledAtMs}. */
-  void seedSampleForTesting(WorkerViewSample sample) {
-    this.lastWorkerSample = sample;
-  }
-
   private final Path indexBasePath;
   private final Instant startTime;
   private final Supplier<String> diskPressureSupplier;

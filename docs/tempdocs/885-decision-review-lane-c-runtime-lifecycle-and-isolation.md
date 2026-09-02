@@ -2350,6 +2350,26 @@ and truthful rather than fabricated.
   asserted-**then**-cleared transition instead of a vacuous `isEmpty()`, which an unrun tap also
   satisfies.
 
+### UD.6 `--rerun` is not what forces a suite to execute
+
+Recorded because this chunk got it wrong twice in the same PR. The first "full suite green" claim
+rested on a run that was almost entirely `UP-TO-DATE`; the fix was `--rerun`, which the reviewer
+then showed is *also* insufficient — Gradle replays those tasks from the build cache, so the counts
+come back without the tests running. What forces execution here is:
+
+```bash
+./gradlew.bat cleanTest :modules:<m>:test --no-build-cache -PskipWebBuild=true
+```
+
+`--rerun` only invalidates the task's up-to-date check; the build cache still satisfies it. The
+reviewer's own six-suite figure (5129/0) was taken that way, and it is the number to trust over this
+chunk's earlier `--rerun` counts. Practical rule for anyone verifying a test claim in this repo:
+a suite total that arrives in seconds did not run.
+
+The same trap has a documented cousin in `agent-lessons.md` (`piped-exit-masked`, where a trailing
+pipe hides a build's real exit code). Both are the same shape — a green that was never computed —
+which is why this one is written down rather than remembered.
+
 ### Open items (item 21)
 
 1. **`GrpcIngestService.retryIndexingJob` reports a fabricated previous state.**

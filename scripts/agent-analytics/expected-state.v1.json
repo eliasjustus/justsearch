@@ -148,8 +148,8 @@
       "match": [
         "scripts/governance/run\\.mjs(?!.*--self-test)(?!.*--produce-inputs)"
       ],
-      "claim": "The wire gate reports contract-governance/buf-cli-missing until \"npm install\" has run in scripts/wire-contract/ (the buf CLI is a local devDependency, not committed). Environmental on a fresh worktree; not a contract regression.",
-      "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431): the finding names scripts/wire-contract/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe as absent.",
+      "claim": "The wire gate reports contract-governance/buf-cli-missing until `npm install` has run in scripts/wire-contract/ (the buf CLI is a local devDependency, not committed). Environmental on a fresh worktree; not a contract regression. **But do not read that finding as a pass when your diff touches a .proto.** In the buf-cli-missing state the gate never inspects the protos at all, so it cannot see a breaking change — the environmental green masks the one check that matters. If the PR changes any .proto, run `npm install` in scripts/wire-contract/ FIRST and re-run the gate, and only then treat its result as evidence.",
+      "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431): the finding names scripts/wire-contract/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe as absent. Claim amended 2026-09-02 during the #600 review: that PR added FailedJob.state (an additive field) to modules/ipc-common/src/main/proto/indexing.proto, and the reviewer had to install buf and re-run to get a real verdict (0 findings) — the pinned state alone would have been vacuous.",
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: node scripts/governance/run.mjs --gate wire --mode gate"
