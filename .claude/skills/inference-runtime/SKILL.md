@@ -337,8 +337,25 @@ Design choices in the current inference runtime, with rationale.
   (b) KV is reserved up front for the whole `n_ctx` whether used or not, and the same card holds
   the embedding / SPLADE / NER encoders, the reranker and VDU batches - 544 MiB at 32k versus
   ~2.2 GB at 128k is headroom kept on purpose; (c) the ladder exists to step DOWN on small cards,
-  not to maximize on large ones. Users who want more set `contextLength` /
-  `JUSTSEARCH_CONTEXT_SIZE`, which has no upper clamp below `n_ctx_train`.
+  not to maximize on large ones. Users who want more set `contextLength` (Settings -> AI -> Agent
+  -> Context window, see the next bullet) or `JUSTSEARCH_CONTEXT_SIZE`, neither of which has an
+  upper clamp below `n_ctx_train`.
+- **Where a user sees it (2026-09-02, wave-1 UI follow-up):** Settings -> AI -> Agent -> **Context
+  window** (`SettingsSurface.renderContextWindow`, register key `context-window`) reads
+  `Auto -> 32,768 tokens (top-rung, 2 slots, q8_0)`, sourced from `/api/inference/status` through
+  the shared AI store and the ONE `core.ai.contextWindow` display fact the Brain surface already
+  renders (`shell-v0/display/facts.ts`) - so the two readouts cannot word the derivation
+  differently. The same fact now carries the derivation parenthetically beside the observed count,
+  and `AiRuntime.contextWindowDerived` (`shell-v0/state/aiStateStore.ts`) is its projection of the
+  wire block; `RuntimeManifestView.ai.contextWindow` (`api/http.ts`) mirrors the GENERATED schema
+  (`schema-types/inference-status-response.ts`, where every field is optional), so the
+  browser-side manifest view is no longer a silently-narrower copy of the AI block. It is not a
+  field-for-field mirror of the Java record: `ContextWindow.rung` and `.slots` are primitive
+  `int` there, optional here, which is the schema's nullability, not the record's.
+  The section also carries the override field: blank/0 = Auto, >=512 explicit, written as
+  `POST /api/settings/v2 {llm:{contextWindow:N}}` (the wire name `SettingsController.mergeV2Into`
+  maps onto `UiSettings.contextLength`), with help text stating the override is honoured verbatim
+  or fails loud. This closes 883 D-A.7 / §C.6b (b): `contextLength` had never had a UI control.
 - **Now an ADR.** [ADR-0047](../decisions/0047-context-window-is-a-derived-resource.md) records the
   decision, the alternatives it rejected (raise the default; compute the window from free VRAM; let
   `--fit` choose; hand-scale the downstream constants; mirror the rung into a sysprop) and its

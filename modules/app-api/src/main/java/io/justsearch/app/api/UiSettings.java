@@ -252,8 +252,10 @@ public final class UiSettings {
   private String serverExecutablePath = "";
   private int gpuLayers = 0;
   // Tempdoc 883 decision 1: 0 = auto. The context window is derived from the backend and the
-  // launch ladder, not stored as a preference — this field is a diagnostics override only, and
-  // has never had a UI control.
+  // launch ladder, not stored as a preference — this field is an override only. It is surfaced at
+  // Settings → AI → Agent → Context window (wire name `llm.contextWindow`), where the readout
+  // beside it comes from the running engine rather than from this value, because 0 is what almost
+  // every installation stores.
   private int contextLength = 0;
   private int maxTokens = 1024;
 

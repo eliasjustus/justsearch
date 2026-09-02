@@ -1877,3 +1877,99 @@ advances the pin in the same commit — rather than a third rediscovery.
 - **Anyone adding config:** a new `System.getenv`/`getProperty` outside `io.justsearch.configuration`
   now fails the build, and a new key in `config/application.yaml` with no reader now fails the build.
   Neither list can be grown quietly.
+
+## Live pass (2026-09-02) — the settings/window items, driven through the real UI
+
+Wave-1 residue PR R3 (#603). Stack owned by the orchestrator and built from ANOTHER worktree
+(`resid-product` @ `505d0fdd`), runId `e57fb789-2ecb-4133-8906-2ec635f1dfa2`, API
+`http://127.0.0.1:63275`, dataDir
+`.claude/worktrees/resid-product/modules/ui-web/.dev-data`, standard chat profile,
+RTX 4070 12,282 MiB with a game holding ~3.4 GiB. This lane drove the stack over HTTP only (no
+MCP dev tools) and served ITS OWN frontend against it —
+`node scripts/dev/serve-worktree-fe.cjs --api-port 63275` printed
+`branch: worktree-resid-ui`, `source: …/resid-ui/modules/ui-web`, `url: http://localhost:5174`,
+which is the running-vs-worktree provenance this section's UI readings depend on.
+
+There is no `ui-shot` step that reaches Settings → AI → Agent (the `settings` step lands on the
+default Appearance category), so the UI facts below were read from the live shadow DOM by an ad-hoc
+Playwright probe, per the `/ui-check` skill's standalone-script guidance — facts, not pixels.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1a | Readout with no engine running | **PASS** `Auto — derived when the assistant starts`. The absent arm, never "no window" and never a fabricated `0`. |
+| 1b | Readout at the derived window | **PASS** `Auto → 32,768 tokens (top-rung, 2 slots, q8_0)` |
+| 1c | Same string as the Brain fact | **PASS** Brain's Context row read `32,768 tokens (top-rung, 2 slots, q8_0)` — byte-identical to the settings readout minus its `Auto → ` prefix, at BOTH engine states tested. One display authority, live. |
+| 2a | Activation via the desired-state path | **PASS** `POST /api/settings/v2 {ui:{chatEnabled:true}}` → reconciler → `mode online`, `llmContextTokens 32768`, `contextWindow {rung:32768, reason:"top-rung", slots:2, kvType:"q8_0", freeVramBytes:8979828736}` |
+| 2b | Override written from the field | **PASS** captured request body `{"llm":{"contextWindow":16384}}`; `GET /api/settings/v2` → `llm.contextWindow 16384` |
+| 2c | Override honoured verbatim after a restart | **PASS** deactivate → re-activate → `contextWindow {rung:16384, reason:"override", slots:2, kvType:"q8_0"}`, `llmContextTokens 16384`. Readout then `Override 16,384 tokens → 16,384 tokens (override, 2 slots, q8_0)`. |
+| 2d | Blank = Auto is reachable | **PASS** captured body `{"llm":{"contextWindow":0}}`; field blanks; readout returns to the Auto arm |
+| 2e | Sub-512 floor | **PASS** typed `100` → body `{"llm":{"contextWindow":512}}`, field shows `512` |
+| 2f | The `live()` dirty-check fix | **PASS, and it is the discriminating arm** — see below |
+| 4 | `llm.model_path` provenance after activation | **PASS** `source: derived`. Not `jvm_arg`, across two activations. |
+
+### 2f, stated separately because it is the one arm that could only fail live
+
+Stored `512`, typed `300`: the client floor collapses back to `512`, which is what the state
+already held, so a plain `.value=` binding is dirty-checked against Lit's memo of the last
+committed value and updates nothing. The field kept the user's `300` — rendering `:invalid` under
+`min="512"` — beside a readout saying `512`. Bound through `live()` (review commit `d139b89a`) the
+live browser resynced the field to `512`. The two unit tests added for it fail without the
+directive, verified by reverting it; this run is the same property against a real browser and a
+real backend.
+
+### A live witness this lane did NOT have before
+
+`/api/debug/effective-config` `justsearch.context.size` moved from
+`source: auto_detected` / `hardware_probe` / `32768` (ordinal 150) to
+**`source: settings.json` / `16384`** (ordinal 300) as a result of a UI write, with **no
+`jvm_arg` entry appearing anywhere**. That is decision 4's deleted settings-to-sysprop promotion
+observed end to end from the surface a user actually touches: the GUI value resolves where a
+settings value belongs, and no longer impersonates an operator override.
+
+### Gaps this pass did NOT close
+
+- **The rung-walk witness is still missing.** With a game holding ~3.4 GiB the ladder still
+  launched at the top rung (`reason: top-rung`, 8,979,828,736 free VRAM recorded) rather than
+  stepping down, which is correct: the register's own arithmetic puts a 32k launch at ~6,206 MiB
+  against ~8,564 MiB free. VRAM pressure that does not cross the threshold is not a step-down
+  trigger, so this remains open exactly as §C.5c states.
+- **`JUSTSEARCH_CONTEXT_SIZE` at ordinal 400** is still unobserved — it needs a backend restarted
+  with the variable in its environment, which this lane does not own.
+- **The nav label for the new section renders the RAW KEY** `settings.section.context-window` on
+  this stack, and correctly so: the label lives in
+  `modules/app-api/src/main/resources/messages/registry-surface.en.properties`, which this PR adds
+  but the RUNNING backend was built from another worktree without it. `localizeResourceKey` falls
+  back to the raw key by design. The section content is unaffected (content dispatch is by `key`,
+  not by label), and the heading inside the section — which the FE owns — reads `Context window`.
+  It resolves when this PR's backend resource ships; there is nothing to fix, but a reviewer
+  reading a screenshot of this stack should know why.
+
+### Live pass part 2 (2026-09-02) — after a stack restart
+
+Same dataDir, stack restarted from the same `resid-product` dist (skipBuild): runId
+`f9bc186d-ee2c-456a-8541-77215e89a478`, API `http://127.0.0.1:57051`, this worktree's FE re-served
+against it (`serve-worktree-fe --api-port 57051` → `branch: worktree-resid-ui`,
+`url: http://localhost:5175`).
+
+| # | Check | Result |
+|---|---|---|
+| b | `justsearch.context.size` retracts to the derived rung | **PASS** back to `source: auto_detected`, `sourceOrdinal: 150`, `sourceDetail: hardware_probe`, value `32768` — after part 1 left it at `settings.json` / 300 / `16384` and the override was restored to `0` |
+| c | Readout after the restart | **PASS** `Auto → 32,768 tokens (top-rung, 2 slots, q8_0)`, field blank; Brain's Context row read `32,768 tokens (top-rung, 2 slots, q8_0)` — the third independent confirmation that the two surfaces project one string |
+
+**The ordinal chain was observed as a full round trip, not just in one direction.**
+`150 (auto_detected/hardware_probe, 32768)` → `300 (settings.json, 16384)` when the user typed an
+override into the new field → `150 (auto_detected/hardware_probe, 32768)` when they cleared it, with
+no `jvm_arg` entry appearing at any point. Decision 4's deleted settings-to-sysprop promotion and
+decision 1's "0 means auto" are the same fact seen from the surface a user touches, and the
+retraction direction is the half a one-shot check would have missed.
+
+Also observed, unprompted: `chatEnabled: true` persisted across the restart and the reconciler
+brought the engine back up on its own, at `{rung:32768, reason:"top-rung", freeVramBytes:
+10643128320}`. Desired state survived a process boundary without anyone commanding a transition,
+which is D-008's contract behaving as written.
+
+**Teardown:** the override was restored to `0` (Auto) before the restart, `chatEnabled` set back to
+`false` at the end (engine `Down`, `chatEnabledSpec false`), the probe's watched root removed, and
+both served-FE processes stopped. The stack itself is left running for its owner.

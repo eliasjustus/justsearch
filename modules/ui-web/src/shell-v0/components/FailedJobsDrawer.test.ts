@@ -164,6 +164,90 @@ describe('FailedJobsDrawer', () => {
     }
   });
 
+  it('a RETRY_EXHAUSTED row reads as "gave up", a FAILED row does not (885 item 21b)', async () => {
+    // The two terminal states arrive on the SAME listing and were previously indistinguishable:
+    // the drawer read only `errorMessage`, so "we retried for a week and never got to read it"
+    // rendered as whichever transient error happened last — i.e. as a verdict about the file.
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
+        return new Response(
+          JSON.stringify({
+            jobs: [
+              { pathHash: 'h-bad', state: 'FAILED', errorMessage: 'parse error: unexpected EOF' },
+              { pathHash: 'h-gone', state: 'RETRY_EXHAUSTED', errorMessage: 'extraction timed out' },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const el = document.createElement('jf-failed-jobs-drawer') as FailedJobsDrawer;
+      el.apiBase = 'http://x';
+      document.body.appendChild(el);
+      await settle(el);
+      openFailedJobs('folder-hash');
+      await pump(el);
+
+      const rows = Array.from(el.shadowRoot?.querySelectorAll('.row') ?? []);
+      expect(rows.length).toBe(2);
+      const failedRow = rows[0]!;
+      const exhaustedRow = rows[1]!;
+      // Keyed on the row that carries the state, not on document order alone.
+      expect(failedRow.getAttribute('data-state')).toBe('FAILED');
+      expect(exhaustedRow.getAttribute('data-state')).toBe('RETRY_EXHAUSTED');
+
+      const gaveUp = exhaustedRow.querySelector('[data-testid="failed-job-exhausted"]');
+      expect(gaveUp, 'an exhausted row must say what happened').toBeTruthy();
+      const gaveUpText = (gaveUp!.textContent ?? '').replace(/\s+/g, ' ').trim();
+      expect(gaveUpText).toContain('Gave up after 7 days');
+      // …and what makes the queue try again — the state is reset by anything that re-enqueues the
+      // path, so the remedy is a rescan or an edit, not just pressing Retry harder.
+      expect(gaveUpText).toContain('rescan');
+      // The underlying error stays visible as DETAIL beneath it, not as the explanation.
+      expect((exhaustedRow.textContent ?? '')).toContain('extraction timed out');
+
+      // The parse failure is untouched: no "gave up" line, because the file really is unreadable.
+      expect(failedRow.querySelector('[data-testid="failed-job-exhausted"]')).toBeNull();
+      expect((failedRow.textContent ?? '')).toContain('parse error: unexpected EOF');
+      el.remove();
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it('a row with NO state (older backend) renders as FAILED, never as "gave up"', async () => {
+    // The by-prefix handler defaults a blank state to FAILED; the drawer must reach the same
+    // conclusion rather than treating "unknown" as the newer, softer state.
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
+        return new Response(JSON.stringify({ jobs: [{ pathHash: 'h-old', errorMessage: 'boom' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const el = document.createElement('jf-failed-jobs-drawer') as FailedJobsDrawer;
+      el.apiBase = 'http://x';
+      document.body.appendChild(el);
+      await settle(el);
+      openFailedJobs('folder-hash');
+      await pump(el);
+
+      const row = el.shadowRoot?.querySelector('.row');
+      expect(row?.getAttribute('data-state')).toBe('FAILED');
+      expect(row?.querySelector('[data-testid="failed-job-exhausted"]')).toBeNull();
+      el.remove();
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
   it('"Retry all" invokes core.retry-indexing-job for every listed file and clears them', async () => {
     const retried: string[] = [];
     const origFetch = globalThis.fetch;

@@ -121,6 +121,20 @@ export interface AiRuntime {
   modelId: string | null;
   modelLabel: string | null;
   contextWindow: number | null;
+  /**
+   * Tempdoc 883 decision 1 / ADR-0047 — the DERIVED window record beside the observed
+   * `contextWindow` above: which ladder rung the engine was launched at and WHY, with the slot
+   * count and KV cache type that rung was budgeted against. Null when this process launched no
+   * server (nothing started, or an adopted external one whose window it did not choose), which is
+   * why it is a separate field rather than a widening of `contextWindow`: that one is the
+   * observation (`/props` `n_ctx`) and stays authoritative, this one is the intent.
+   */
+  contextWindowDerived: {
+    rung: number;
+    reason: string | null;
+    slots: number | null;
+    kvType: string | null;
+  } | null;
   gpu: { available: boolean; description: string } | null;
   installed: Maybe<boolean>;
   installing: Maybe<boolean>;
@@ -473,6 +487,25 @@ function computeConnection(): AiConnection {
   };
 }
 
+/**
+ * Tempdoc 883 decision 1 — project the wire's `contextWindow` record onto `AiRuntime`. A rung of
+ * zero/absent is NOT a derived window: the block only exists while a server this process launched
+ * is running, so anything without a positive rung is reported as "no derived window" rather than as
+ * a rung of 0.
+ */
+function deriveContextWindow(
+  inference: InferenceSnapshot | null,
+): AiRuntime['contextWindowDerived'] {
+  const cw = inference?.contextWindow;
+  if (!cw || typeof cw.rung !== 'number' || cw.rung <= 0) return null;
+  return {
+    rung: cw.rung,
+    reason: cw.reason ?? null,
+    slots: typeof cw.slots === 'number' && cw.slots > 0 ? cw.slots : null,
+    kvType: cw.kvType ?? null,
+  };
+}
+
 function computeRuntime(): AiRuntime {
   const inference = inferenceSig.get();
   const installState = installStateSig.get();
@@ -506,6 +539,7 @@ function computeRuntime(): AiRuntime {
     modelId: inference?.activeModelId ?? null,
     modelLabel: friendlyModel(inference?.activeModelId),
     contextWindow: inference?.llmContextTokens ?? null,
+    contextWindowDerived: deriveContextWindow(inference),
     gpu: inference?.gpu
       ? {
           available: inference.gpu.cudaAvailable ?? false,

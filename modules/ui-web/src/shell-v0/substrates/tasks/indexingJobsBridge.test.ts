@@ -85,11 +85,22 @@ describe('§32 #1 — projectJobsToTasks (stateless reconcile)', () => {
     expect(getTask('idxjob:h2')?.status).toBe('failed');
   });
 
-  it('a RETRY_EXHAUSTED job → failed Task (not the unknown-state fallback)', () => {
+  it('a RETRY_EXHAUSTED job → failed Task (not the unknown-state fallback), labelled as giving up', () => {
     // Tempdoc 885 item 21b. Without an explicit case this state falls to `default`, which returns
     // 'queued' AND warns — so an exhausted job would render as still-waiting work forever.
     projectJobsToTasks(rows({ pathHash: 'h2x', state: 'RETRY_EXHAUSTED', collection: 'docs' }));
     expect(getTask('idxjob:h2x')?.status).toBe('failed');
+    // The status alone says "failed"; the label is what distinguishes "this file is unreadable"
+    // from "we stopped trying". Same words the Activity ledger uses for the same state, so the
+    // tray and the timeline do not describe one event two ways.
+    expect(getTask('idxjob:h2x')?.label).toContain('Index gave up');
+    expect(getTask('idxjob:h2x')?.label).not.toContain('Indexing ·');
+  });
+
+  it('a plain FAILED job keeps the "Indexing ·" label — the verb only changes for the exhausted case', () => {
+    projectJobsToTasks(rows({ pathHash: 'h2y', state: 'FAILED', collection: 'docs' }));
+    expect(getTask('idxjob:h2y')?.label).toContain('Indexing ·');
+    expect(getTask('idxjob:h2y')?.label).not.toContain('gave up');
   });
 
   it('a job that leaves the live set → REMOVED (not marked succeeded)', () => {

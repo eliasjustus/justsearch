@@ -48,6 +48,8 @@ import { isInFlightLive } from './inFlightLiveness.js';
 // tempdoc 812 D4 — the row-altitude path formatter moved beside the resolver when the Activity
 // ledger became its second consumer; ONE display rule for a resolved hash.
 import { resolvePathLazy, friendlyPathName } from '../../hooks/resolvePathLazy.js';
+// Tempdoc 885 item 21b — the ONE spelling of the exhausted terminal state (see its javadoc).
+import { JOB_STATE_RETRY_EXHAUSTED } from '../../state/indexingJobStates.js';
 
 /** The Resource id whose `privacy.resolver` (core.resolve-path-hash) resolves a job pathHash. */
 const INDEXING_JOBS_RESOURCE = 'core.indexing-jobs';
@@ -114,11 +116,16 @@ export function __resetResolvedLabelsForTest(): void {
 
 
 function labelFor(job: IndexingJobRow): string {
+  // Tempdoc 885 item 21b — a RETRY_EXHAUSTED job is terminal and the queue has STOPPED trying, so
+  // "Indexing · <file>" beside a failed pill is an active-voice claim about work that is no longer
+  // happening. `statusFor` maps it to `failed` (the rail's point of view); the verb is what says
+  // WHICH failure it is, matching the Activity ledger's own "Index gave up · …" (ActionLedgerClient).
+  const verb = job.state.toUpperCase() === JOB_STATE_RETRY_EXHAUSTED ? 'Index gave up' : 'Indexing';
   const friendly = resolvedLabel.get(job.pathHash);
-  if (friendly) return `Indexing · ${friendly}`;
+  if (friendly) return `${verb} · ${friendly}`;
   // Fallback until the hash resolves (or if the worker has no path on record):
   // collection + a short hex prefix to disambiguate, never the raw path.
-  return `Indexing · ${job.collection} (${job.pathHash.slice(0, 6)})`;
+  return `${verb} · ${job.collection} (${job.pathHash.slice(0, 6)})`;
 }
 
 /**
@@ -286,7 +293,7 @@ function statusFor(job: IndexingJobRow): TaskStatus | null {
     // Tempdoc 885 item 21b: RETRY_EXHAUSTED is a terminal failure — a transient error that kept
     // recurring for the whole seven-day retry window. It renders as `failed` because that is what
     // it is from the rail's point of view; the distinction from FAILED lives in the error message.
-    case 'RETRY_EXHAUSTED':
+    case JOB_STATE_RETRY_EXHAUSTED:
       return 'failed';
     case 'DONE':
       return null; // terminal success = history; vanish from the live rail

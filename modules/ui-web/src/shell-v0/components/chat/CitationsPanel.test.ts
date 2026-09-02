@@ -828,18 +828,27 @@ describe('CitationsPanel — 870 motion and type scale', () => {
 /**
  * Tempdoc 868 §B.3 — the source card's excerpt BUDGET, once an excerpt can be a whole page.
  *
- * The read tool hands the model up to `READ_PAGE_CHARS = 3000` characters and the source carries all
- * of them, deliberately: the citation matcher verifies an opened source against its own literal text
- * (§B.1), so the wire value must stay uncapped. The card is the opposite kind of thing — a
- * fixed-size promise that lets the reader scan several sources at once — and rendering 3000 chars
- * turned one card into the whole panel (observed live on `278-decision-log.md`).
+ * The read tool hands the model a whole page and the source carries all of it, deliberately: the
+ * citation matcher verifies an opened source against its own literal text (§B.1), so the wire value
+ * must stay uncapped. The card is the opposite kind of thing — a fixed-size promise that lets the
+ * reader scan several sources at once — and rendering a full page turned one card into the whole
+ * panel (observed live on `278-decision-log.md`, when a page was the retired flat 3,000 characters).
+ *
+ * The page size is now WINDOW-DERIVED (tempdoc 883 decision 3): `ReadDocumentTool.readPageChars` is
+ * the smaller of `ContextBudget.readDocumentPageChars()` (half the input budget, capped at 4096
+ * tokens) and the Layer-2 cut minus the 600-char page headroom — the latter arm being the one that
+ * binds, which is how a page measures 7,592 chars at a 32,768-token window and 1,704 at 4,096 —
+ * and the `READ_PAGE_CHARS` literal is gone. So these tests deliberately
+ * assert against the CARD budget, which is a constant, and never against a page size, which is not.
+ * The fixtures below are sized to sit either side of that card budget for the same reason.
  *
  * So the clamp is a DISPLAY clamp, in the view-model projection, over every excerpt. These pin both
  * halves: it bites the long one, and the record behind it is untouched.
  */
 describe('CitationsPanel — excerpt display budget (868 §B.3)', () => {
-  // ~3000 chars, the shape a `core_read_document` page has: real words, so the boundary walk has
-  // somewhere to land.
+  // A page-shaped fixture: real words, so the boundary walk has somewhere to land, and comfortably
+  // over the card budget. Its length is a FIXTURE choice, not a claim about any window's page size
+  // (which varies — see the note above); the assertions below only require "well over 320".
   const OPENED_TEXT = 'opened page text '.repeat(177).trim();
   // ~300 chars — a retrieved excerpt at the top of what its producer emits (RagContextOps clamps to
   // 240; this is deliberately above that and still under the card budget).
@@ -862,7 +871,9 @@ describe('CitationsPanel — excerpt display budget (868 §B.3)', () => {
 
   it('the premise: the two fixtures sit on either side of the budget', () => {
     // Stated rather than assumed — a fixture that drifted under the ceiling would make the clamp
-    // test below pass while testing nothing.
+    // test below pass while testing nothing. The bound is a FIXTURE floor (comfortably over the
+    // 320-char card budget), not the read tool's page size: that one is window-derived and has no
+    // fixed number to pin (883 decision 3).
     expect(OPENED_TEXT.length).toBeGreaterThan(2900);
     expect(RETRIEVED_TEXT.length).toBeGreaterThan(280);
     expect(RETRIEVED_TEXT.length).toBeLessThan(320);

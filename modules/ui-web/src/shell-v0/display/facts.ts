@@ -217,6 +217,12 @@ const FACTS: Record<string, FactDef> = {
       provenance: (s) => s.runtime.modelId ?? undefined,
     },
   },
+  // Tempdoc 883 decision 1 / ADR-0047 — the window is a DERIVED resource, so the fact says which
+  // rung was chosen and why when the engine we launched published it (`runtime.contextWindowDerived`,
+  // the same record the runtime manifest carries as `ai.contextWindow`). The token count itself
+  // still comes from the OBSERVATION (`/props` `n_ctx`, `runtime.contextWindow`); the derivation is
+  // parenthetical provenance beside it, never a substitute for it. Nothing is appended when no
+  // server this process launched is running (adopted/external engine, or nothing started).
   'core.ai.contextWindow': {
     label: 'Context',
     source: {
@@ -224,7 +230,7 @@ const FACTS: Record<string, FactDef> = {
       read: (s) =>
         s.inference
           ? s.runtime.contextWindow != null
-            ? `${formatCount(s.runtime.contextWindow)} tokens`
+            ? `${formatCount(s.runtime.contextWindow)} tokens${derivedWindowSuffix(s)}`
             : null
           : undefined,
     },
@@ -237,6 +243,23 @@ const FACTS: Record<string, FactDef> = {
     },
   },
 };
+
+/**
+ * Tempdoc 883 decision 1 — the parenthetical that explains a derived window: `" (top-rung, 2 slots,
+ * q8_0)"`, or the empty string when the engine published no derivation. Reason first because it is
+ * the part that answers "why this number" (`stepped-from:32768` is the case that matters — the
+ * launch did NOT get the rung it planned); slots and KV type follow only when present, so a partial
+ * record degrades to the fields it actually has instead of rendering `null`.
+ */
+function derivedWindowSuffix(s: AiState): string {
+  const d = s.runtime.contextWindowDerived;
+  if (!d) return '';
+  const parts: string[] = [];
+  if (d.reason) parts.push(d.reason);
+  if (d.slots != null) parts.push(`${d.slots} slot${d.slots === 1 ? '' : 's'}`);
+  if (d.kvType) parts.push(d.kvType);
+  return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+}
 
 /** Map a boolean capability flag to the tri-state ObservedRead contract (name-only when present). */
 function presence(s: AiState, flag: boolean | null | undefined): string | null | undefined {

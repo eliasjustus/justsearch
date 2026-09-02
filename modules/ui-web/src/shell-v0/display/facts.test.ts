@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { projectFact, isFact } from './facts';
 import type { AiState } from '../state/aiStateStore';
 import { known } from '../state/known';
+import { formatCount } from './format';
 
 /** projectFact only reads `aiState.status`, so a partial cast is sufficient + type-honest here. */
 function withStatus(status: unknown): AiState {
@@ -129,5 +130,79 @@ describe('projectFact — status metric-facts (§17.2 migration off the bypass s
     const f = projectFact('core.files', withState({ index: { documentCount: known(1) } }));
     expect(f.confidence).toBeUndefined();
     expect(f.provenance).toBeUndefined();
+  });
+});
+
+describe('projectFact — derived context window (883 decision 1 / ADR-0047)', () => {
+  const withRuntime = (runtime: unknown): AiState =>
+    ({ inference: {}, runtime } as unknown as AiState);
+  // The token count is locale-grouped through the shared formatter, so the expectations compose it
+  // rather than hardcoding a separator — a `4,096`/`4.096` mismatch would fail on the format, not on
+  // the behaviour under test (observed: this suite runs under a non-en grouping locale).
+  const tokens = (n: number): string => `${formatCount(n)} tokens`;
+
+  it('states the observed token count AND why that rung was chosen', () => {
+    expect(
+      projectFact(
+        'core.ai.contextWindow',
+        withRuntime({
+          contextWindow: 32768,
+          contextWindowDerived: { rung: 32768, reason: 'top-rung', slots: 2, kvType: 'q8_0' },
+        }),
+      ),
+    ).toMatchObject({
+      name: 'Context',
+      value: `${tokens(32768)} (top-rung, 2 slots, q8_0)`,
+      presence: 'present',
+    });
+  });
+
+  it('a stepped-down launch says so — the case the parenthetical exists for', () => {
+    expect(
+      projectFact(
+        'core.ai.contextWindow',
+        withRuntime({
+          contextWindow: 16384,
+          contextWindowDerived: { rung: 16384, reason: 'stepped-from:32768', slots: 2, kvType: 'q8_0' },
+        }),
+      ).value,
+    ).toBe(`${tokens(16384)} (stepped-from:32768, 2 slots, q8_0)`);
+  });
+
+  it('an ADOPTED/external engine publishes no derivation — the count renders bare, not "(null)"', () => {
+    // The rung record exists only while a server THIS process launched is running (ADR-0047:
+    // intent vs observation). The observed n_ctx is still a fact, so it must still render.
+    expect(
+      projectFact(
+        'core.ai.contextWindow',
+        withRuntime({ contextWindow: 8192, contextWindowDerived: null }),
+      ).value,
+    ).toBe(tokens(8192));
+  });
+
+  it('a partial record degrades to the fields it has, and singularizes one slot', () => {
+    expect(
+      projectFact(
+        'core.ai.contextWindow',
+        withRuntime({
+          contextWindow: 4096,
+          contextWindowDerived: { rung: 4096, reason: 'override', slots: 1, kvType: null },
+        }),
+      ).value,
+    ).toBe(`${tokens(4096)} (override, 1 slot)`);
+  });
+
+  it('no observed window at all is ABSENT, even with a derivation present', () => {
+    // The count is the observation and it is what the fact reports; a rung alone would be the
+    // intent standing in for a measurement, which ADR-0047 forbids.
+    expect(
+      projectFact(
+        'core.ai.contextWindow',
+        withRuntime({
+          contextWindow: null,
+          contextWindowDerived: { rung: 32768, reason: 'top-rung', slots: 2, kvType: 'q8_0' },
+        }),
+      ).presence,
+    ).toBe('absent');
   });
 });

@@ -22,6 +22,20 @@ export interface InferenceSnapshot {
   vduQueueSize?: number;
   llmContextTokens?: number | null;
   configuredContextTokens?: number | null;
+  /**
+   * Tempdoc 883 decision 1 — the DERIVED window this installation's engine was launched with, and
+   * why (`reason`: `top-rung` | `override` | `stepped-from:<planned rung>`). Absent when this
+   * process launched no server. INTENT; `llmContextTokens` above is the OBSERVATION and stays
+   * authoritative (ADR-0047). Shape mirrors the generated
+   * `api/generated/schema-types/inference-status-response.ts` `contextWindow` block.
+   */
+  contextWindow?: {
+    rung?: number;
+    reason?: string | null;
+    slots?: number;
+    kvType?: string | null;
+    freeVramBytes?: number | null;
+  } | null;
   tier?: string | null;
   activeModelId?: string | null;
   // Tempdoc 586 §3 dedup — these are already on the /api/inference/status wire
