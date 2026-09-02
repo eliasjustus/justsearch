@@ -3495,3 +3495,35 @@ effective-config surface or raising that one log line to INFO.
   (which also omits `scanId`, so it is not quite an `IndexingJobView`). `FailedJobsDrawer.refresh`
   therefore reads `state` off untyped JSON with zero contract coverage — the field UL.9 row 6 above
   depends on.
+
+### UL.10 Live pass part 2 (2026-09-02) — the roots collection survives a restart
+
+Stack restarted from the same `resid-product` dist (skipBuild), same dataDir: runId
+`f9bc186d-ee2c-456a-8541-77215e89a478`, API `http://127.0.0.1:57051`. This is the half UL.9 could
+not cover, and the half that matters: 821 §L.3 is a PERSISTENCE defect, so a collection that is
+merely correct in memory proves nothing.
+
+| # | Check | Result |
+|---|---|---|
+| a1 | The listing survives the restart | **PASS** `GET /api/indexing/roots` → `collection: "residue-live"`, `lastIndexed` refreshed to `15:40:16` (i.e. re-walked, not just re-read) |
+| a2 | Disk survives the restart | **PASS** `watched_roots.json` still `"collection" : "residue-live"`, `walkCompleted: true` |
+| a3 | **RE-WALKED documents still carry it** | **PASS** 8/8 hits for `architecture` under that root return `fields.collection = residue-live`; the set of distinct collections across the result set is exactly `["residue-live"]` |
+| a4 | The deleted probe file left the index | **PASS** the UL.9 S3 fixture, deleted from disk between the two passes, is absent from the re-walked results — the rewalk is a real rewalk, which is what makes a3 mean something |
+
+**a3 is the live witness for 821 §L.3.** The collection is not a request-scoped label that happens
+to be echoed back: it round-tripped through `watched_roots.json`, a full backend restart, a
+directory re-walk, and re-indexing, and came back on the documents.
+
+**Teardown.** The root was removed at the end (`DELETE /api/indexing/roots` → `{"deletedJobs":30,
+"status":"ok"}`; the listing is `{"roots":[]}` and `watched_roots.json` is `"roots" : [ ]`), the AI
+runtime deactivated (engine `Down`, `chatEnabledSpec false`), both served-FE processes stopped, and
+the ad-hoc probe files deleted. The stack is left running for its owner.
+
+**On the `ui-a11y-gate` residue routed in UL.9:** it is deliberately NOT pinned in
+`scripts/agent-analytics/expected-state.v1.json` — that file is shared and was touched on `main` by
+another lane in this same wave, so a second concurrent edit buys a merge conflict for a note. It
+stays here, with the evidence that makes it actionable without re-investigation: `security` and
+`security-light` time out on `jf-settings-window dialog[open]`, and the run is **identical against
+main's own frontend** (18 ok / 2 ERROR / 0 new violations, exit 2, on both `:5174` serving this
+branch and `:5173` serving `main`). Pre-existing, not #603. The next kernel-facing PR can pin it or
+fix it from this paragraph alone.

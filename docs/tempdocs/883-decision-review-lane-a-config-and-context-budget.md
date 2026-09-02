@@ -1896,3 +1896,31 @@ settings value belongs, and no longer impersonates an operator override.
   not by label), and the heading inside the section — which the FE owns — reads `Context window`.
   It resolves when this PR's backend resource ships; there is nothing to fix, but a reviewer
   reading a screenshot of this stack should know why.
+
+### Live pass part 2 (2026-09-02) — after a stack restart
+
+Same dataDir, stack restarted from the same `resid-product` dist (skipBuild): runId
+`f9bc186d-ee2c-456a-8541-77215e89a478`, API `http://127.0.0.1:57051`, this worktree's FE re-served
+against it (`serve-worktree-fe --api-port 57051` → `branch: worktree-resid-ui`,
+`url: http://localhost:5175`).
+
+| # | Check | Result |
+|---|---|---|
+| b | `justsearch.context.size` retracts to the derived rung | **PASS** back to `source: auto_detected`, `sourceOrdinal: 150`, `sourceDetail: hardware_probe`, value `32768` — after part 1 left it at `settings.json` / 300 / `16384` and the override was restored to `0` |
+| c | Readout after the restart | **PASS** `Auto → 32,768 tokens (top-rung, 2 slots, q8_0)`, field blank; Brain's Context row read `32,768 tokens (top-rung, 2 slots, q8_0)` — the third independent confirmation that the two surfaces project one string |
+
+**The ordinal chain was observed as a full round trip, not just in one direction.**
+`150 (auto_detected/hardware_probe, 32768)` → `300 (settings.json, 16384)` when the user typed an
+override into the new field → `150 (auto_detected/hardware_probe, 32768)` when they cleared it, with
+no `jvm_arg` entry appearing at any point. Decision 4's deleted settings-to-sysprop promotion and
+decision 1's "0 means auto" are the same fact seen from the surface a user touches, and the
+retraction direction is the half a one-shot check would have missed.
+
+Also observed, unprompted: `chatEnabled: true` persisted across the restart and the reconciler
+brought the engine back up on its own, at `{rung:32768, reason:"top-rung", freeVramBytes:
+10643128320}`. Desired state survived a process boundary without anyone commanding a transition,
+which is D-008's contract behaving as written.
+
+**Teardown:** the override was restored to `0` (Auto) before the restart, `chatEnabled` set back to
+`false` at the end (engine `Down`, `chatEnabledSpec false`), the probe's watched root removed, and
+both served-FE processes stopped. The stack itself is left running for its owner.
