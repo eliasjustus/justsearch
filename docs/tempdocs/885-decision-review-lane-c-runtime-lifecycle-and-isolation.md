@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS — chunks 1, 2, 2b, 3, 4 and 5 landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green; item 3 foreground duty cycle; items 6 + 21 internal health sampler + bounded retry ladder; item 19 cadence candidate shipped behind `index.nrt.mode` / `index.commit.idle_ms` with reopen + segment-churn counters and the jseval cadence block). ALL REMAINING WORK IS LIVE: the item-19 arm matrix (A1-A4) and item 3's after-arms, both planned in §"Item 19 live window"; no default changes until those numbers exist
+status: IN PROGRESS - chunks 1-5 landed and the consolidated live window ran (2026-09-02). Item 3 PASSES all three acceptance criteria live (b) 143.8 vs (a) 123.8 docs/s, (c) indexes all 5184 docs at duty 20-27% where the baseline froze at 699, search p95 better than baseline. Item 14 closed for #595: the persistent sandbox child ran from a real Worker dist on 360 real files, 1 child, 0 recycles, ~11 ms/file isolation cost. Item 19 candidate REJECTED as implemented - both axes measured worse than control, from two implementation defects the window exposed (one fixed here, one recorded with a fix direction); the commit axis is additionally unreachable while CommitOps' 10 s timer is hardcoded and backfill commits dominate. Shipped defaults unchanged throughout. OPEN: re-run A2 after the foreground-signal fix, and A3b on a quiet machine
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
@@ -2149,3 +2149,254 @@ worse than the chunk-1 baseline.
 runs, with search load). The cadence arms are the ones whose result decides a shipped default, and
 a window that runs out of time should run out of it on the arms that only confirm an
 already-made decision.
+
+---
+
+## Consolidated live window (2026-09-02)
+
+One window, one machine, one branch: `worktree-lane-C5` at `0a193755`, which carries **all** of
+lane C — the persistent extraction pool (item 14), the foreground duty cycle (item 3), the
+internal health sampler + retry ladder (items 6/21) and the cadence candidate (item 19). Every arm
+below therefore measures the lane as it would ship, not one item in isolation. The orchestrator
+held the shared-stack lease; no dev-runner stack and no other GPU consumer ran alongside.
+
+### How each arm was run
+
+Detached `Start-Process` driver (`tmp/885-live/run-arm.ps1`) with a `.done` marker carrying the
+exit code and wall time, chained strictly one-at-a-time by `chain.ps1`. Per arm, in order:
+
+1. **Preflight, every arm, no exceptions.** Nothing may listen on 33221 and no `HeadlessApp` /
+   `IndexerWorker` JVM may survive the previous arm; the arm exits `97` rather than measuring
+   against a neighbour's process.
+2. Wipe `tmp/headless-eval-data` directly — `jseval --clean` is documented as unreliable.
+3. Apply the arm's env selection from `env-<arm>.json`.
+4. Run `python -m jseval run --dataset scifact --max-queries 0 --pipeline --start-backend --clean
+   --timeline … --json` (plus the arm's own flags), `INSPECT_DISPLAY=none`, `PYTHONUTF8=1`,
+   `PYTHONPATH=<worktree>/scripts/jseval`, `GRADLE_USER_HOME=…/jsgh-C5`.
+5. **Confirm the arm actually took** — `confirm-arm.ps1` polls `/api/debug/effective-config` as
+   soon as the backend answers and snapshots the resolved value *and source* of every cadence /
+   extraction knob into `<arm>.effcfg.json`.
+6. Snapshot `telemetry/*.ndjson`, `worker.log` and `headless-backend.log` into the live directory
+   **before** the next arm's wipe destroys them.
+
+All numbers below are read by one script per concern — `extract.py` (run summary), `pacing.py`
+(captured Worker NDJSON), `verdict.py` (the pre-written read rules) — so a column cannot quietly
+mean different things in different rows.
+
+### Three harness defects this window had to fix first
+
+Recorded because each one silently produces a *wrong* number rather than an error, and the next
+campaign will hit them again:
+
+1. **`applyHeadlessEvalContract` whitelist-filters env vars** (`modules/ui/build.gradle.kts`).
+   None of the six cadence knobs nor `JUSTSEARCH_EXTRACTION_SANDBOX_MODE` were in
+   `HEADLESS_AI_ENV_VARS`, so every arm would have silently measured the default — exactly the
+   failure this tempdoc's own live-window plan warned about ("an arm that silently fell back to
+   `continuous` is the single most likely way this window produces a 'no difference' result for
+   the wrong reason"). The seven keys were added to the whitelist, following the precedent the
+   file already records for tempdocs 410, 771 and 789. **Proof it now works, taken before any arm
+   was trusted:** arm 1(a) resolved `index.nrt.background_reopen_ms = 2000` with
+   `source: env_var` while every other knob read `source: default`.
+2. **jseval's default 120 s backend-health timeout is too short for a cold arm here.** The first
+   1(a) attempt exited 1 at 123 s; the backend became ready at ~120.5 s. The driver now exports
+   `JSEVAL_HEALTH_TIMEOUT_SEC=600`.
+3. **`Start-Process -ArgumentList` does not quote or split.** A jseval argument string containing
+   spaces was re-split into separate parameters (the driver died before writing anything), and a
+   comma-separated `[string[]]` arm list bound as a single arm named `1b,1c,A1,…`. Both now come
+   from files (`<arm>.args.txt`, `chain.arms.txt`).
+
+### Which arms are trustworthy (read this before any table below)
+
+A **League of Legends client launched at 08:36:58** and a **TFT game client at 09:16:53**, on this
+machine, mid-window. That is an uncontrolled GPU consumer, and the arms separate cleanly on their
+own GPU signature — clean arms report `gpu.avg_vram_mb` 3546-3771 with `idle_polls_pct` 14-54%;
+contaminated arms report 5477-5509 with `idle_polls_pct` **0.0**.
+
+| Arm | Wall clock | Verdict |
+|---|---|---|
+| 1a, 1b, 1c | 07:40-08:13 | **clean** |
+| A1, A2, A3 | 08:13-08:31 | **clean** (A3 ended 5.5 min before the client launched) |
+| A4 | 08:31-08:39 | last 2.7 min overlapped the client launch; union arm, no independent claim rests on it |
+| 14auto2 / 14inproc2 | 08:59-09:04 | client idle in background; both arms ran 2 min apart under identical conditions, so their A/B holds |
+| **A3b, 1a2** | 09:04-09:22 | **contaminated — not used for any conclusion** |
+
+**Every load-bearing conclusion below rests on a clean arm.** The two contaminated arms are the
+post-fix re-measure and a warm-(a) attempt; both are recorded as *needing a re-run*, not as
+results. Reporting this rather than the numbers is the point — a 2× throughput spread on
+byte-identical configuration (1a2's 60.0 vs A1's 114.0) is exactly the "uncontrolled variable"
+this tempdoc's own read rules said to look for before believing a delta.
+
+### Arm 1 — item 3, the duty cycle after the change (all arms clean)
+
+Defaults throughout (`continuous` NRT, commit 10 s / 1000, duty 20% / cooldown 500 ms), compared
+against the chunk-1 baseline taken on the same corpus before item 3 landed.
+
+| | (a) alone | (b) `--search-load-qpm 10` | (c) `--search-load continuous` |
+|---|---|---|---|
+| **baseline** `primary_indexing.docs_per_s` | 112.6 | **44.1** (39% of (a)) | **never reached** — frozen at 699 docs |
+| **after** `primary_indexing.docs_per_s` | 123.8 | **143.8** | **all 5184 docs indexed** |
+| **after** `primary_indexing.duration_s` | 41.4 | 31.6 | primary complete; enrichment stopped at 20 min |
+| **after** `search_load` p50 / p95 (ms) | — | **248.3 / 478.7** (baseline 281.8 / 543.0) | — |
+| **after** `search_load.queries` / errors | — | 46 / 0 | continuous, 1 in flight throughout |
+| `worker.indexing.duty_pct` min / max | 78 / 100 (arm A1) | — | **20 / 27** |
+| `worker.indexing.paced_intervals_total` | 325 (arm A1) | — | **16 117** |
+| `worker.job_queue.depth` max → last | 0 → 0 | — | **4304 → 0** (queue fully drained) |
+
+**Acceptance, item by item — all three pass.**
+
+* **(b) within 10% of (a): PASSES with room.** 143.8 vs 123.8 docs/s — (b) is *faster* than (a),
+  not 10% slower. The baseline had (b) at 39% of (a); the starvation is gone.
+* **(c) reaches the configured minimum duty and does not starve: PASSES.** `duty_pct` never fell
+  below **20**, its configured floor, and primary indexing **completed all 5184 documents** where
+  the baseline froze at 699 for 22 minutes. The job queue peaked at 4304 and drained to 0.
+* **Search p50/p95 not regressed by >20%: PASSES.** 248.3 / 478.7 ms vs the baseline (b)'s
+  281.8 / 543.0 — better on both, not merely within band.
+* **The pacing is finally attributable.** The baseline recorded "**0 (unobservable)**" breath-holds
+  in all three arms because the pause was TRACE-only. The duty cycle's counter reports **16 117**
+  paced intervals under continuous load against **325** unloaded, and `duty_pct` separates the two
+  regimes (20-27 vs 78-100). This closes §B.2a.
+
+**Arm (c) was deliberately stopped at 20 min 51 s** — the same call the chunk-1 baseline made for
+its own arm (c), for the same reason. What it proved is above. What it did **not** prove: full
+*enrichment* under continuous search. At the stop, embeddings were 12.8%, SPLADE 85.0%, NER 0/5184,
+GPU 56-85% busy throughout — enrichment is GPU work competing with continuous hybrid search, so
+that is a GPU-contention result, not a duty-cycle result. Extrapolation gave 2-4 more hours, which
+would have consumed the window and blocked six arms.
+
+Run-to-run spread on clean defaults arms was 114.0-123.8 docs/s (±4%), which is the noise floor a
+single-run comparison here must clear. (b)'s +16% clears it; it is not being read as a real speedup,
+only as "not the 61% slowdown the baseline had".
+
+### Arm 2 — item 19, the cadence matrix (A1/A2/A3 clean)
+
+Every arm was confirmed via `/api/debug/effective-config` **before** its numbers were read; the
+`source` field proved `env_var` for exactly the knobs that arm set and `default` for the rest.
+
+| Arm | mode / commit cadence | primary docs/s | reopen_total | reopen /100 s | commit_total | first-search p95 (ms) | pipeline s |
+|---|---|---|---|---|---|---|---|
+| **A1** control | `continuous`, 10 s/1000 | **114.0** | **193** | 76.4 | **46** | 1424.3 | 252.5 |
+| **A2** reopen-on-demand | `on_demand`, 10 s/1000 | 97.1 (0.85×) | **568** (**2.9× more**) | 218.6 | 51 | 1050.5 | 259.8 |
+| **A3** commit cadence | `continuous`, 30 s/5000 + idle 5 s | **8.9** (0.08×) | 246 | 53.1 | **58** (more) | 414.8 | 463.5 |
+| A4 both (partly contaminated) | `on_demand`, 30 s/5000 + idle 5 s | 9.7 | 645 | 138.7 | 63 | 430.2 | 465.2 |
+
+`first_search_after_indexing` fired 15/19/20/24 probes with zero errors; at those counts p95 is the
+top sample, so the column is directional only.
+
+**Verdict, from the rules written into this tempdoc before the numbers existed** (`verdict.py` is
+their mechanical form, and it takes no judgement calls):
+
+* **A2 reopen axis — NO.** The rule was "ship only if reopen count falls *substantially*". It rose
+  **2.9×** (193 → 568) and primary throughput fell 15%. Wrong direction, not a marginal miss.
+* **A3 commit axis — reject.** Commit count *rose* (46 → 58) and throughput collapsed to 8%.
+* **Neither axis ships. Per the config-surface changeset's own commitment, the keys come out**
+  unless a corrected implementation earns them.
+
+**Both results are caused by defects in the chunk-5 implementation, not by the ideas** — and the
+live window is the only tier that could have found either, because each needs a running enrichment
+backfill:
+
+1. **The on-demand seam catches background enrichment reads, not just foreground search.**
+   §VC.1 verified that every *foreground* path goes through `SearcherBridge` — but not the
+   converse. `CombinedEnrichmentBackfillOps` and `BgeM3BackfillOps` fetch every document they
+   enrich via `context.documentFieldOps()`, a bridge consumer. With indexing continuously writing,
+   the freshness gate almost always says "new writes since the last reopen", so **each backfill
+   fetch reopens**. That is the 2.9× reopen rise and the 15% throughput loss. The
+   `withSearcherNoRefresh` opt-out covered read-modify-write and stopped there; the read-side
+   backfill path was missed. **This is the `wrong-gate` shape with the polarity reversed** — I
+   checked that the gate fires everywhere it must, and not that it stays silent everywhere it
+   must not.
+   *Fix direction (not attempted mid-window):* the refresh must key on a real foreground signal,
+   and item 3 already built one — `ForegroundLoad.inFlight()`. `adapters-lucene` cannot depend on
+   `worker-services`, so the shape is a `BooleanSupplier` injected onto `RuntimeSession` at Worker
+   wiring time, with the seam skipping whenever no foreground RPC is in flight.
+2. **`index.commit.idle_ms` also delayed the journal drain.** `journal.drainPending()` sat *inside*
+   the idle-commit block (`IndexingLoop.java:661`), so gating the commit gated the drain. With a
+   5 s window the loop repeatedly found the queue empty, skipped the drain, and ingestion advanced
+   in 5 s bursts — 8.9 docs/s instead of 114. The knob was meant to trade durability latency for
+   commit count; it silently traded ingestion throughput. **Fixed in this PR**: the drain now runs
+   on the same precondition as before (uncommitted docs present) but outside the commit gate, so
+   at the default `idle_ms=0` the sequence is byte-identical to before.
+
+#### The commit axis targets the wrong commit population (the finding that outlives the defect)
+
+`index.runtime.commit_ms` carries a `reason` tag, so the commits can be attributed rather than
+guessed at. Summing bucket counts per reason:
+
+| reason | A1 (control) | A3 (commit cadence) |
+|---|---|---|
+| `backfill/combined-final` | **61** | **197** |
+| `indexing-loop/buffer` | 24 | **0** (5000 threshold never reached — the knob worked) |
+| `timer` (CommitOps' hardcoded 10 s safety net) | 16 | **46** |
+| `indexing-loop/time` | 4 | 15 |
+| `indexing-loop/idle` | 4 | 0 |
+| other (`fresh-stamp`, `backfill/*`) | 5 | 63 |
+| **total** | **114** | **321** |
+
+Two things follow, and both are more useful than the arm's headline number:
+
+* **The knobs did what they say** — the buffer trigger went 24 → 0. They just cannot move the
+  population that matters: **enrichment-backfill commits dominate** (61 of 114 in the control),
+  and `justsearch.backfill.commit_interval_ms` / `max_docs_before_commit` do not govern them at
+  all. Tuning the indexing loop's triggers can address at most ~28% of commits.
+* **Deferring the loop's commits *increases* total commits**, because `CommitOps`'
+  `COMMIT_TIMER_INTERVAL_MS` is a **hardcoded 10 s** safety net that fires whenever
+  `pendingDocs > 0`. Holding docs uncommitted for longer hands more work to that timer: 16 → 46.
+  §VB.1 verified the constant exists; the arm design failed to connect it to the outcome. **A
+  commit-cadence candidate cannot work while that timer is a constant** — that, not
+  `index.commit.idle_ms`, is the real commit floor.
+
+#### Caveat on the two cadence gauges
+
+`index.runtime.commit_count` read 46 for A1 while the reason-tagged histogram summed 114 for the
+same run. The gauge is fed from `RuntimeSession.commitCount`, which is **per session** and resets
+when `DeferredRuntime.upgradeWriter` builds a new session; the histogram accumulates across
+sessions. `reopen_count` and `segments_since_reopen` share the same per-session scope. Cross-arm
+comparisons above are still valid (all arms have the same session structure), but the absolute
+figures under-report, and a future reader should prefer the histogram where one exists. Recorded
+as a limitation of the instrument this chunk added.
+
+### Arm 3 — item 14, extraction routing on a real corpus
+
+No PDF/Office corpus is materialised anywhere under `datasets/` (27 238 `.txt`, 360 `.png`, nothing
+else), so the corpus that actually exercises the `process` route is **`golden/synth-scan-v1`** —
+360 PNGs, which `RoutingExtractionSandbox` sends to the OCR route and therefore to the child.
+`--pipeline` was dropped for these arms: all 360 images hit `extraction_dropout` (OCR yields no
+text on this synthetic corpus), so embedding coverage can never reach 99.9% and the wait would
+have run to the 7200 s timeout. Item 14 measures extraction, not enrichment, so ingest-only is the
+right shape — and the identical dropout count in both arms makes it a clean control: same work,
+same outcome, isolated vs not.
+
+| | `auto` (default routing) | `in_process` (forced) |
+|---|---|---|
+| docs indexed | 361 | 361 |
+| `ingest.elapsed_sec` | **95.55** | **91.57** |
+| sandbox children spawned | **1** | **0** |
+| sandbox children recycled | **0** | 0 |
+| `extraction_dropout` files | 360 | 363 |
+| Worker restarts | 0 | 0 |
+| mode confirmed from | `env_var` | `env_var` |
+
+**This closes #595's open item.** For the first time the persistent extraction sandbox ran from a
+**real Worker dist** on **real files**, with the command built in-process from `java.home` +
+`java.class.path` (no operator-authored command), and `auto` routing sent the image family to it:
+`Extraction sandbox child spawned (pid=11076)` in `worker.log`. **One** child served all 360 files
+— pool size 1, zero recycles, zero restarts — which is exactly Design decision 1's shape, and the
+child's survival across 360 consecutive files is the property the single-thread-executor defect
+used to break.
+
+**Isolation cost: +3.98 s over 360 files ≈ 11 ms/file.** Design decision 2 set a 10 ms/file bar for
+keeping the split; the OCR family measures just above it. Note this is the cost on the *process*
+family, which is sandboxed deliberately — the 10 ms bar was written for the *in-process* families,
+whose round-trip is not exercised here because `auto` never sends them to the child. Measuring that
+side needs a mixed text+binary corpus, which does not currently exist on disk.
+
+### What still needs a re-run
+
+1. **A3b** — the commit axis re-measured after the journal-drain fix. It ran contaminated
+   (36.1 docs/s vs A3's 8.9, so the fix clearly helped, but the comparison against A1's 114.0 is
+   not clean). Re-run on a quiet machine.
+2. **A2 after the foreground-signal fix** — the reopen axis has not yet been measured with a
+   correct seam; the A2 number rejects *this implementation*, not the idea.
+3. **A commit-cadence arm is not worth re-running at all** until `COMMIT_TIMER_INTERVAL_MS` is
+   configurable and the backfill's own commits are in scope — the attribution table above shows
+   the current knobs cannot reach 72% of the commits.
