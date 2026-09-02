@@ -1,5 +1,5 @@
 ---
-status: IMPLEMENTED pending #602 merge — lane C closed. Items 14, 3, 6 and 21 done and live-verified (PRs #595, #598, #600 merged). Item 19 measured and REJECTED as implemented: both cadence axes were worse than control, the window exposed two implementation defects (seam polarity — fixed here; index.commit.idle_ms coupling — key deleted), and index.nrt.mode ships opt-in at continuous pending a clean re-run of arm A2. Defaults unchanged throughout. Tracked follow-ups: A2 re-run; CommitOps' 10 s timer configurability before any commit-cadence work; the residual drain coupling
+status: IMPLEMENTED pending #602 merge — lane C closed. Items 14, 3, 6 and 21 done and live-verified (PRs #595, #598, #600 merged). Item 19 measured and REJECTED as implemented: both cadence axes were worse than control, the window exposed two implementation defects (seam polarity — fixed here; index.commit.idle_ms coupling — key deleted), and index.nrt.mode ships opt-in at continuous pending a clean re-run of arm A2. Defaults unchanged throughout. Tracked follow-ups: A2 re-run; CommitOps' 10 s timer configurability before any commit-cadence work; the residual drain coupling. Wave-1 residue items (UL.9/UL.10 routed findings, the Residue live window part A commit-floor open question) are settled by tempdocs 909-912 (PRs #611-#614) — see inline "Settled" notes.
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
@@ -3570,6 +3570,11 @@ effective-config surface or raising that one log line to INFO.
   therefore reads `state` off untyped JSON with zero contract coverage — the field UL.9 row 6 above
   depends on.
 
+  **Settled (2026-09-02).** Tempdoc 911 item 1 (#614): both substrate failed-jobs endpoints now emit
+  one typed `FailedIndexingJobsResponse` record with a generated schema and a generated FE
+  `parseWireContract` boundary; `scanId` is present (empty — the Head has no source for it yet, a
+  separately routed gap). See 911 §C item 1, §E.
+
 ### UL.10 Live pass part 2 (2026-09-02) — the roots collection survives a restart
 
 Stack restarted from the same `resid-product` dist (skipBuild), same dataDir: runId
@@ -3602,6 +3607,13 @@ main's own frontend** (18 ok / 2 ERROR / 0 new violations, exit 2, on both `:517
 branch and `:5173` serving `main`). Pre-existing, not #603. The next kernel-facing PR can pin it or
 fix it from this paragraph alone.
 
+**Settled (2026-09-02).** Tempdoc 911 item 2 (#614): the timeout was neither a stale gate step nor a
+product defect — `scripts/jseval/jseval/ui_fixtures.py::_surface_entry`'s fixture had not been
+updated after 884 tightened `/api/registry/surfaces` parsing to the generated strict-schema Zod, so
+the harness's own test double had been silently invalid since #597. Fixed by making the fixture
+schema-COMPLETE against `surfaceWireSchema`; `jseval ui-a11y-gate` now exits 0 (20 ok / 0 ERROR). See
+911 §C item 2, §D, §E.
+
 **A second routed finding, surfaced by the `dead-code` gate on this PR (#604's new built-inputs
 step).** `modules/ui-web/src/api/domains/indexing.ts` is an ENTIRELY unimported HTTP-client module:
 9 exported functions (`addRoot`, `removeRoot`, `reindex`, `getSuggestedRoots`, `applyExcludes`,
@@ -3620,6 +3632,12 @@ whether the baselined `1` is a whole-file finding, because then the N is pre-exi
 honest fix is either deleting the module or not reaching into it. The same trap is armed on every
 other whole-file row in that baseline (22 files report whole-file-unused in the current report,
 e.g. `src/api/domains/browse.ts 1`).
+
+**Settled (2026-09-02).** Tempdoc 910 item 1 (#611): the `dead-code` gate now normalizes a whole-file
+finding to the module's own declared export count (floored at 1) instead of counting it as `1`, so
+`1 → N` on a first import reads as `N → (≤N)` — a shrink — while a genuinely new dead export still
+pushes past the pin. 23 of 186 baseline rows were in this trap; 11 changed value. See 910 §A item 1,
+§B.4-B.6.
 
 **A third routed finding: `WorkerMethvinWatcherTest` has a size race with no pin.** The full
 `./gradlew.bat test` run for this PR's merge produced 18 failures across `ui`, `worker-core` and
@@ -3641,6 +3659,11 @@ own; it is filed here rather than in `expected-state.v1.json` for the same reaso
 `ui-a11y-gate` entry above (that file is shared and was touched on `main` in this same wave).
 Nothing in PR #603 touches Java behaviour — its only Java-side change is a comment and one
 message-catalog line — so this is pre-existing either way.
+
+**Settled (2026-09-02).** Tempdoc 912 item 1 (#612, `33ffc3bb`): fixed at the encoding, not with a
+timing budget — the watcher no longer fabricates a `0` for a mid-write create event; it now records
+the unknown-size sentinel `UNKNOWN_SIZE_BYTES` and lets the consumer re-stat. Three tests, each
+falsified; 5/5 consecutive clean runs. See 912 §A / §A2-A3, Report-back.
 
 ## Residue live window, part A (2026-09-02)
 
@@ -3844,3 +3867,12 @@ regression on the user-visible first-search path with no measured throughput gai
 (it is A/B-able by construction, which is why it exists). The commit-cadence knobs are likewise not
 worth defaulting away from 10s/10s/1000; the open question is what actually floors the commit
 count, which A3 shows is none of the three levers tested.
+
+**Settled (2026-09-02), the open question answered, the fix not yet taken.** Tempdoc 912 §E-live
+ran the per-trigger commit attribution this window could not (data dir recycled by the aborted A1b):
+the floor is `BackfillScheduler.CYCLE_BUDGET_MS` — a hardcoded 5 s pacing constant no config key
+reaches (`BackfillScheduler.java:63`) — which chops enrichment into ~5 s cycles each ending in a
+durable `backfill/combined-final` commit, measured at 48 of 69 commits (70 %) live. This is why A3
+could triple three knobs and move the count only 17 %: none of them is on this path. The fix
+(making `CYCLE_BUDGET_MS` configurable so it is A/B-able) is deliberately not attempted in 912 —
+912 open items 8/9.

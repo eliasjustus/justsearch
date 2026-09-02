@@ -685,3 +685,14 @@ about governance gates.
    is now a third trigger and is not listed. Left unedited deliberately: this lane's brief scoped
    CLAUDE.md out, and the file is under the always-loaded-byte ratchet, so the row belongs to
    whoever next opens that table (or to a `consult-register` recipe, which is the cheaper home).
+9. **PR-scoped changeset discovery lets a declared growth go red on `main` one merge later
+   (observed 2026-09-02).** `#614` declared `schema-types/index.ts 51 → 53` in a changeset but did
+   not advance the pin in the same commit. Discovery is PR-scoped
+   (`scripts/governance/lib/changeset-loader.mjs`, "PR-scope discovery"), so once #614 squash-merged
+   the changeset was no longer in any diff: the next push to `main` (#613, `b6d0861e`) and #615's
+   merge-group run both failed `dead-code/silent-growth` on a row nobody had changed. Repaired in #615
+   by advancing the pin with a covering changeset (`915-schema-types-index-repin-after-614.md`), which
+   is the remedy `discipline-gate-kernel.md` already documents ("advance the baseline in the same
+   commit as the change"). Structural fix worth its own item: make a `declared-growth` changeset
+   *require* the matching pin advance in the same diff (fail the PR that declares growth without
+   re-pinning), so the trap cannot fire after merge. Owner: next kernel-facing lane.

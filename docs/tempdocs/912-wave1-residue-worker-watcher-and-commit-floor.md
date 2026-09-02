@@ -1,7 +1,7 @@
 ---
 title: "Wave-1 residue, Worker lane: the watcher's create-event size race, and what actually floors the commit count"
 type: tempdocs
-status: "IMPLEMENTED (2026-09-02) — item 1 fixed + 5/5 stable; item 2 instrumented and unit-verified; the live attribution run is the orchestrator's, not run here"
+status: "MEASURED (2026-09-02) — items 1+2 merged in #612 (33ffc3bb); live attribution run recorded in §E-live: the commit floor is BackfillScheduler's hardcoded 5 s CYCLE_BUDGET_MS, 70 % of commits are backfill/combined-final. The fix is open item 8, not done here."
 created: 2026-09-02
 updated: 2026-09-02
 lane: R7 (wave-1 residue closure, Worker side)
@@ -522,6 +522,182 @@ Worker did not publish `index.runtime.commit_total` — that is a wiring failure
 
 ---
 
+## §E-live — Live attribution (2026-09-02)
+
+The run §E specified, executed by the orchestrator from this worktree's jseval after #612 merged
+(`33ffc3bb`). **This section answers §E's open question: the floor is the backfill scheduler's
+hardcoded 5-second cycle budget.**
+
+### Run conditions
+
+`scifact`, 5184 docs, `--clean --pipeline`, single Worker start, encoders on GPU, GPU idle before
+start, no game running, **no search load** and no first-search probe. All four enrichment stages
+completed: chunk 215 s, ner 226 s, splade 276 s. `total_elapsed` 278.7 s, 18.0 docs/s.
+Log: `scripts/jseval/tmp/912-attribution.log`.
+
+### Numbers (verbatim from the run's `cadence` block)
+
+```
+reopen_total              243
+commit_total               69
+commit_by_reason_total     69
+commit_by_reason:
+  backfill/combined-final  48
+  indexing-loop/buffer      6
+  backfill/combined         5
+  backfill/splade           4
+  timer                     3
+  indexing-loop/idle        1
+  indexing-loop/time        1
+  indexing-loop/fresh-stamp 1
+```
+
+Cross-checked independently by parsing per-reason max out of
+`tmp/headless-eval-data/telemetry/metrics-worker.ndjson`: identical, and max `commit_count` 69.
+
+**The sum invariant held live.** `commit_by_reason_total == commit_total == 69` — the structural
+property `CommitReasonAccountingTest` pins in unit tests, confirmed end-to-end on a real run.
+(§C.5 predicts `sum >= commit_total`, with equality only when no session swap occurred; equality
+here says this run used one session throughout, consistent with the single Worker start.)
+
+### Caveat on throughput — the 18.0 vs 86.3 comparison is not like-for-like
+
+885's arm table (885 line 3759) has **two** throughput columns:
+`| Arm | Config | overall docs/s | primary docs/s | ... |`, and its A1 control reads
+**overall 15.6**, **primary 86.3**. This run's 18.0 is an *overall* figure
+(5184 / 278.7 s = 18.6), so it belongs against 885's **15.6**, not against 86.3. On that
+comparison the run is ~15 % *faster* than the A1 control, and `total_elapsed` 278.7 s against
+A1's 322.7 s is ~14 % shorter — both in the same direction, and both consistent with a verified
+difference in run profile: 885's arms all ran `--search-load-qpm 10 --first-search-probe`
+(885 §Method), this run had no foreground query load at all. Same corpus and same command shape
+otherwise (885 used scifact, 5183 BEIR docs, `--dataset scifact --max-queries 0 --pipeline
+--clean --start-backend`).
+
+Not verified, so not claimed: whether the residual difference is the absent search load alone, JIT
+state, or run-to-run variance. **n = 1**, and 885's own honest-limits note records a ±10 %
+run-to-run band on the throughput columns — no throughput delta here should be read as an effect.
+
+### Scoring the three-outcome table
+
+| Prediction | Observed | Verdict |
+|---|---|---|
+| Control: `backfill/*` share | 57/69 = **83 %** (`combined-final` 48 alone = **70 %**) | **Outcome (1) HOLDS** |
+| Control: `indexing-loop/idle` share | 1/69 = 1.4 % | Outcome (2) rejected as the *dominant* family |
+| Control: `indexing-loop/time` + `/buffer` | 1 + 6 = **7**, not 0 | **Outcome (3) rejected — the knobs were NOT inert** |
+| `indexing-loop/idle` at most one per work-indexing drain | **1** | Consistent with §E item 2's corrected bound |
+
+* **Outcome (1) — backfill-dominated — holds, and more sharply than predicted.** The prediction
+  was that `backfill/*` would be the majority; it is 83 %, and a *single* reason
+  (`backfill/combined-final`) is 70 % of every commit in the run.
+* **Outcome (3) is rejected on the control arm alone**, exactly as §E said it could be:
+  `indexing-loop/time` + `/buffer` = 7 is small but not zero, so A3's knobs were relaxing triggers
+  that do fire. They are simply a 10 % minority of the total, which is why tripling them moved the
+  count so little.
+* **The idle bound is confirmed.** `indexing-loop/idle` = 1 over the whole run. §E item 2's
+  corrected claim — at most one per drain-to-idle, and only for a drain that indexed work since
+  the last commit, because `IndexingLoop.java:703` resets the shared counter when TIME/BUFFER
+  already committed — predicts a small number, and 1 sits at the bottom of that range. The
+  earlier, retracted "IDLE absorbs the relaxed commits one-for-one" claim would have predicted a
+  large IDLE count; it is decisively wrong.
+
+### What `backfill/combined-final` is, and what fragments it
+
+**Emission site.** `BackfillScheduler.java:280-281`:
+
+```java
+if (batchCommitCounter[0] > 0) {
+  commitOps.commitAndTrack(CommitReason.BACKFILL_COMBINED_FINAL);
+}
+```
+
+This sits at the end of the `commitOps.withNrtSuspended(...)` lambda opened at `:241`, so it runs
+**once per cycle**, not once per batch — one durable commit for every backfill cycle that did any
+batch work.
+
+**What a "cycle" is, and what ends one.** The enclosing method is
+`BackfillScheduler.runIdleCycle()` (`:188`), called from the indexing loop's idle branch at
+`IndexingLoop.java:651`. It arms a deadline on entry (`:191-192`):
+
+```java
+final long cycleDeadlineNanos =
+    cycleStartNanos + TimeUnit.MILLISECONDS.toNanos(CYCLE_BUDGET_MS);
+```
+
+with `CYCLE_BUDGET_MS = 5_000L` (`:63`) — **a hardcoded 5-second constant, reachable by no config
+key and therefore by none of A3's three knobs.** The tight loop at `:243` exits on any of six
+conditions: not running / interrupted (`:244`), `signalBus.shouldYieldGpuBackfill()` (`:247`,
+tempdoc 630), `signalBus.hasPendingIngest()` (`:250`, tempdoc 798), the cycle deadline (`:251`),
+the batch making no progress (`:265`, `useCombinedRef[0] = tightLoopOutcome.progressed()`), and
+`tightLoopOutcome.aborted()` (`:275`, tempdoc 809 finding 3). **Every one of those paths falls
+through to the `:280` commit.**
+
+**Is the tempdoc-809 early yield the fragmenting mechanism? Partly — but it is not the clock.**
+The 18 `worker.log` lines come from `CombinedEnrichmentBackfillOps.java:1130-1136`, emitted when
+`aborted` is true, and they map to the `:275` break. Eighteen is at most 18 of the ~48 cycle-ends,
+so the 809 yield accounts for **at most 37 %** of them and cannot by itself produce 48 commits.
+
+**The arithmetic points at the cycle budget instead.** A productive cycle costs at most the 5 s
+budget plus the inter-cycle sleep, which is `ACTIVE_IDLE_SLEEP_MS = 100 ms` while backfill is
+doing work (`LoopPacingPolicy.java:9`, selected at `IndexingLoop.java:663-666`) — so about 5.1 s
+per cycle. The enrichment window is about 276 s (splade, the last stage, completes there), giving
+a ceiling of about 54 cycles. **Observed: 48.** The commit count sits at 89 % of the ceiling the
+budget sets, and 48 x 5.1 s = 245 s covers 89 % of the enrichment window.
+
+So the mechanism that floors the commit count is: **enrichment is chopped into ~5 s cycles by
+`CYCLE_BUDGET_MS`, and every cycle that touched a document ends in a durable commit.** The 809
+early-yield and the other four break conditions determine *which* cycles end early; the budget
+determines *how many cycles there are*. That is why three multiplicative relaxations of the
+timer/interval/buffer knobs bought only 17 % in 885's A3 — none of them is on this path.
+
+Honest limit: 48 against a 54 ceiling is a strong fit, but it is one run, and the per-cycle
+overhead is inferred from the constants rather than measured per cycle. The experiment below
+discriminates directly rather than resting on the arithmetic.
+
+### Actionable hypothesis and the next experiment
+
+**Hypothesis.** The per-cycle `combined-final` commit is durability bookkeeping for a cycle
+boundary that exists for *pacing* reasons, not durability ones. A cycle that yielded early with
+work still pending has no reason to force a durable commit — the same documents are re-entered
+next cycle. Committing on **backfill-queue drain** (enrichment genuinely finished), and otherwise
+letting the safety-net `TIMER` cover the interval, would keep durability bounded while removing
+the coupling between pacing granularity and commit count.
+
+**Predicted effect if the hypothesis holds.** `backfill/combined-final` falls from 48 to the
+number of genuine drains (single digits); `timer` rises by roughly `enrichment_window /
+timer_interval` (about 276 s / 10 s = 27 at the default, fewer at 30 s). Net commit count lands
+around 30-45 rather than 69 — a larger reduction than A3's 17 %, and from the trigger that
+actually holds the floor. If instead the count barely moves, the cycle-budget mechanism is wrong,
+and the `backfill/combined` every-5-batches path
+(`CombinedEnrichmentBackfillOps.java:1087`, commit at `:1090`) or the individual stage commits are
+carrying more than this run showed.
+
+**Risk to first-search freshness (885's read rule).** Expected low, but it is the thing to
+measure rather than assume: what publishes enrichment to searchers is an NRT **reopen**, not a
+commit, and `reopen_total` (243) is an independent counter. NRT is suspended for the duration of
+the tight loop (`withNrtSuspended`, `BackfillScheduler.java:241`, tempdoc 334 Phase 8) and resumes
+when the lambda returns, so the publishing event is the reopen after resume, which this change
+does not touch. The genuine exposure is **durability**, not freshness: a crash mid-enrichment
+would lose up to one drain's worth of enrichment writes instead of one cycle's, and that work
+would be re-derived on the next backfill pass. 885's read rule still governs the arm — reject if
+reopen count drops but first-search p95 regresses > 20 %; accept only if throughput is within
+10 % **and** first-search p95 is not worse.
+
+**Exact arm to run** (the change needs a config key, which is not in scope here):
+
+```
+python -m jseval run --dataset scifact --max-queries 0 --pipeline --clean --start-backend \
+  --search-load-qpm 10 --first-search-probe --json
+```
+
+Read from the `cadence` block: `commit_by_reason` (specifically `backfill/combined-final` and
+`timer`), `commit_total`, `reopen_total`, and `first_search_after_indexing.latency_ms.p95`.
+
+**Run the control with the same flags as the arm.** This attribution run had no search load, so it
+is *not* a valid control for a first-search-p95 comparison; it is a valid control only for the
+commit attribution.
+
+---
+
 ## §D — Open items (routed, not fixed here)
 
 1. **`CommitOps.commitWithBuildState` drops attribution.** `CommitOps.java:143-147` calls the
@@ -559,7 +735,19 @@ Worker did not publish `index.runtime.commit_total` — that is a wiring failure
    **fixed in place** (`IndexRuntimeMetricCatalog.java`): the comment now names the four
    funnel-bypassing commits and states that `COMMIT_TOTAL` is a second *projection* of the one
    authority, not the second authority the original sentence rules out.
-8. **`--gate operation-surface` is RED on `origin/main`** (base `bff70561`), independently of
+8. **The commit floor itself: `BackfillScheduler`'s per-cycle `combined-final` commit.**
+   Measured in §E-live as 48 of 69 commits (70 %). `CYCLE_BUDGET_MS = 5_000L`
+   (`BackfillScheduler.java:63`) chops enrichment into ~5 s cycles and `:280-281` commits at the
+   end of every cycle that touched a document, so commit frequency is bound to *pacing*
+   granularity rather than to any durability requirement. Proposed change and its predicted
+   effect, risk and measurement arm are in §E-live; it needs a config key to be A/B-able, so it is
+   a change, not a knob, and is out of this lane's scope. **This is the actionable successor to
+   885's A3 finding** — the arm 885 wanted and could not aim.
+9. **`CYCLE_BUDGET_MS` is an inline constant with no config key** (`BackfillScheduler.java:63`),
+   like `CombinedEnrichmentBackfillOps.java:1087`'s inline `5` (open item 5). Neither can be moved
+   in a measurement arm, which is why 885's A3 could relax three knobs and still miss the binding
+   trigger. Making both configurable is the cheap enabler for open item 8's experiment.
+10. **`--gate operation-surface` is RED on `origin/main`** (base `bff70561`), independently of
    this branch: `operation-surface/undeclared-surface` —
    `modules/ui-web/src/shell-v0/state/indexingJobStates.ts` references the canonical
    `IndexingJobView` lifecycle type but is not registered in
@@ -567,6 +755,36 @@ Worker did not publish `index.runtime.commit_total` — that is a wiring failure
    itself (PR #603) and is not in this branch's diff. Not pinned in
    `expected-state.v1.json` here because lane R5 owns that file this wave; routed to the
    orchestrator to pin + assign.
+11. **`BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402`
+    (`modules/adapters-lucene/src/test/java/io/justsearch/adapters/lucene/runtime/BatchUpdateIntegrationTest.java:562`)
+    is load-flaky under a whole-repo `./gradlew test` only.** Observed 2026-09-02 on PR #613's
+    full-suite run after merging `main` at `31a26b0d`: red under the full run, green isolated
+    (12/12, `:modules:adapters-lucene:test --tests
+    "*BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402*"`) and green
+    for the whole module (622/622, `:modules:adapters-lucene:test`). Pinned as
+    `adapters-lucene-batchupdate-rmw-coordinator-load-flake` in
+    `scripts/agent-analytics/expected-state.v1.json` (`added: 2026-09-02`,
+    `reviewBy: 2026-09-30`, `exitProbeOmitted` — it passes in isolation, so a probe would report a
+    false GONE; `fixOwner: "tempdoc 912 open item (lane R7 successor)"`).
+
+    **Whether #612 altered timing on this path, checked rather than assumed.** `git log -3
+    --oneline -- <the test file>` shows its three most recent touches are `967f94bf` (798
+    ingest-livelock fix), `a8b24b2a` (742 residue sweep) and `4e9a17fa` (711 RMW field
+    preservation) — **#612 (`33ffc3bb`) never touched the test file itself**, and `git show
+    33ffc3bb --stat` confirms it also never touched `IndexingCoordinator.java`, the class under
+    test. But `33ffc3bb` did touch two files in the same `adapters.lucene.runtime` package the
+    test exercises directly: `CommitOps.java` (17 lines changed per `git show 33ffc3bb --stat`,
+    the new `CommitCounters` accounting) and `RuntimeSession.java` (7 lines changed) — and the
+    test's racing loop calls
+    `runtime.commitOps().commitAndTrack()` / `.maybeRefreshBlocking()` once per iteration
+    (`:591-592`) inside the same 50-iteration loop that races the two coordinator threads. So a
+    timing-impact hypothesis is plausible (the commit path the loop calls every iteration changed
+    shape) but not confirmed — it is equally consistent with a pre-existing starvation artefact
+    that any full-suite load surfaces, the same shape as the `WatchedRootScanCollectionTest` and
+    `InferenceLifecycleManagerExternalServer` pins already in `expected-state.v1.json`. Deciding
+    between the two needs either a targeted load-repro (run this test alongside a concurrent
+    Gradle lane, pre- and post-#612) or a next full-suite sighting to see whether the flake
+    persists past `33ffc3bb` — neither is done here.
 
 ---
 
@@ -575,10 +793,24 @@ Worker did not publish `index.runtime.commit_total` — that is a wiring failure
 * **Item 1 — done.** Watcher fixed at the encoding, not with a timing budget; three tests, each
   falsified; 5/5 consecutive clean runs. Lane R5's `expected-state.v1.json` pin can be removed
   once this merges (that file is untouched here, as briefed).
-* **Item 2 — instrumented, hypothesis stated, live run deferred.** The census is complete (23
-  reachable triggers + 2 bypasses). The enum already existed; the per-reason **count** is new and
-  rides the existing counter rather than forking it. Six tests, five falsified (one revealed a
-  real precision defect in its own fixture, now fixed).
-* **The measurement is deliberately not run here** — the dev-stack lease is the orchestrator's.
-  §E gives the invocation, the field to read, and the predictions that would confirm or refute
-  the hypothesis before the numbers are seen.
+* **Item 2 — instrumented, measured, and answered.** The census is complete (23 reachable
+  triggers + 4 bypasses, now pinned by `CommitFunnelArchTest`). The enum already existed; the
+  per-reason **count** is new and rides the existing counter rather than forking it. Eight tests,
+  six falsified (one revealed a real precision defect in its own fixture, one a vacuous
+  assertion — both fixed).
+* **The measurement ran and the floor is identified (§E-live).** Predictions were written before
+  the numbers were seen; **outcome (1), backfill-dominated, holds** — `backfill/*` is 83 % of
+  commits and `backfill/combined-final` alone is 70 %. Outcome (3) is rejected on the control arm
+  (the knobs were not inert, just a 10 % minority), and the corrected once-per-drain IDLE bound is
+  confirmed (`indexing-loop/idle` = 1).
+* **The floor is `BackfillScheduler.CYCLE_BUDGET_MS`** — a hardcoded 5 s pacing constant no config
+  key reaches, which chops enrichment into ~5 s cycles each ending in a durable commit
+  (`BackfillScheduler.java:63`, `:191-192`, `:280-281`). The tempdoc-809 early yield contributes
+  at most 18 of ~48 cycle-ends, so it is a break *reason*, not the clock. **That is why 885's A3
+  could triple three knobs and move the count only 17 %: none of them is on this path.**
+* **The `commit_by_reason_total == commit_total` invariant held live** at 69 — the structural
+  property the unit tests pin, confirmed end-to-end.
+* **The fix is deliberately not attempted here** (open items 8-9). §E-live states the change, its
+  predicted effect, the durability-vs-freshness risk under 885's read rule, and the exact arm —
+  which needs a config key first, since `CYCLE_BUDGET_MS` is currently unreachable from a
+  measurement arm.
