@@ -1,7 +1,7 @@
 ---
 title: "CI enforcement closure, tier 1: a self-hosted Windows/GPU runner on the owner's machine for the perf ratchet, mutation ratchet, soak suite, full jseval pytest, and installer-over-release qualification"
 type: tempdocs
-status: CHARTERED (2026-09-02) — decision revised same day: use the EXISTING justsearch-perf runner (docs-lint.yml:20), threat evaluated in §Decision (fork-PR RCE already gated by check-workflow-triggers, tempdoc 747 P-D); owner action shrinks to confirming the runner + picking hours (§O); item 0 amends ADR-0044 and SHA-pins Actions
+status: CHARTERED, UNBLOCKED (2026-09-02) — decision revised same day: use the EXISTING self-hosted runner (verified online: justsearch-gpu-runner, labels self-hosted/Windows/X64/gpu), threat evaluated in §Decision (fork-PR RCE already gated by check-workflow-triggers, tempdoc 747 P-D); schedule proposed in §Schedule (owner may veto); item 0 amends ADR-0044, SHA-pins Actions, scopes secrets to an Environment, fixes the docs-lint label mismatch
 created: 2026-09-02
 updated: 2026-09-02
 lane: 887 L2
@@ -30,9 +30,10 @@ must not run untrusted PR code). One PR per item.
 
 ## Decision (2026-09-02, revised the same day after the founder's challenge)
 
-**Use the self-hosted runner that already exists** — `docs-lint.yml:20` runs on
-`[self-hosted, Windows, X64, justsearch-perf]` on the owner's workstation (the machine every
-jseval/perf number in the register came from, so `MachineFingerprint` keeps runs comparable).
+**Use the self-hosted runner that already exists** — verified online 2026-09-02 as
+`justsearch-gpu-runner` (labels `self-hosted, Windows, X64, gpu`) on the owner's workstation,
+the machine every jseval/perf number in the register came from, so `MachineFingerprint` keeps
+runs comparable. `docs-lint.yml:20` already targets it, though with a stale label (see §O).
 No new runner, no cloud GPU runner. Jobs are `workflow_dispatch` plus a `schedule`, from `main`
 only. Adding `schedule` is the one step beyond ADR-0044 ("self-hosted and specialty workflows
 remain manually dispatched unless separately amended") — so item 0 below amends the ADR.
@@ -56,19 +57,25 @@ with unknown labels treated as self-hosted. The realistic residuals are:
 Net: proceed. The one vector that would make this a bad idea is the one the repo already forbids
 and gates.
 
-## §O. Owner action (five minutes)
+## §O. Owner action (none blocking)
 
-1. Confirm the `justsearch-perf` runner is online (`gh api repos/:owner/:repo/actions/runners`)
-   and note its labels; if it was decommissioned, say so and this lane pauses.
-2. Choose the nightly hour and the weekly soak day; write them into §Schedule below.
-3. Settings → Actions → General: "Require approval for all outside collaborators" (belt and
-   braces; the trigger gate is the real control).
+1. Runner confirmed online 2026-09-02 (see §Decision). Nothing to do.
+2. Schedule proposed below; veto by editing §Schedule.
+3. Optional: Settings → Actions → General: "Require approval for all outside collaborators"
+   (belt and braces; the trigger gate is the real control).
+
+**Routed defect (found while verifying):** `.github/workflows/docs-lint.yml:20` targets
+`runs-on: [self-hosted, Windows, X64, justsearch-perf]`, but the only runner carries the label
+`gpu`, not `justsearch-perf` — a dispatch of docs-lint queues forever. Fix in item 0: align the
+label (`gpu`), and make `check-workflow-triggers.mjs` or a sibling assert every self-hosted
+label set is satisfiable by a registered runner label set (read from a committed
+`governance/runners.v1.json`, since CI cannot query the API).
 
 ## Scope
 
 | # | mechanism | today | job |
 |---|---|---|---|
-| 0 | **Preconditions** | ADR-0044 says manual-only for self-hosted; Actions tag-pinned; secret scoping unverified | amend ADR-0044 with a "scheduled self-hosted lanes" section (probes via `adr-coverage`); SHA-pin every `uses:` in workflows that target the runner; confirm `check-workflow-triggers.mjs` permits `schedule` on self-hosted jobs (if its policy forbids, stay dispatch-only and record that); move signing secrets into a `release` Environment bound to `build-installer.yml` only |
+| 0 | **Preconditions** | ADR-0044 says manual-only for self-hosted; Actions tag-pinned; **no GitHub Environments exist (verified 2026-09-02), so the four repo secrets incl. the signing command and both private keys are readable by any workflow that runs on the runner**; docs-lint label mismatch | fix the docs-lint label; amend ADR-0044 with a "scheduled self-hosted lanes" section (probes via `adr-coverage`); SHA-pin every `uses:` in workflows that target the runner; confirm `check-workflow-triggers.mjs` permits `schedule` on self-hosted jobs (if its policy forbids, stay dispatch-only and record that); move signing secrets into a `release` Environment bound to `build-installer.yml` only |
 | 1 | **Perf ratchet** `jseval perf-gate` (640/647) | advisory hook nudge only; `ci.yml` never runs it | nightly: clean lifecycle run on the standard strata → `perf-gate --mode gate`; red opens a GitHub issue via the workflow (labels `perf-regression`), never auto-rebaselines |
 | 2 | **Mutation ratchet** `test-efficacy` (555) | fully built; nothing produces `pit-strength-report.v1.json` | nightly: `./gradlew.bat pitest` over the 18 seams → `report-pit-strength.mjs` → `run.mjs --gate test-efficacy --mode gate`; strength regression opens an issue |
 | 3 | **Soak suite** (`SoakSuiteTest`, 4 h) | opt-in flag, no runner | weekly: `-PincludeSoakTests=true`; extend with the two disk-growth assertions 895 measures (index generations, log bytes) once 895 reports |
@@ -93,12 +100,14 @@ and gates.
 - Dev-stack lease rules apply to the runner exactly as to an agent (`/dev-stack`).
 - Non-goals: hosted-CI changes (888), cloud runners, perf floor values (lane E / 647 recompose).
 
-## §Schedule
+## §Schedule (proposed by the orchestrating session; owner vetoes by editing)
 
-nightly: (owner fills) · weekly soak: (owner fills)
+nightly: 03:00 local (`cron: '0 1 * * *'` UTC in summer; the agent converts) · weekly soak:
+Sunday 02:00 local. Both refuse to start under a live dev-stack lease.
 
 ## §Status
 
-Chartered. First draft wrongly asked the owner to install a new runner and ignored the existing
-trigger invariant; corrected 2026-09-02 after the founder's challenge. Waiting on §O (confirm
-runner, pick hours).
+Chartered, unblocked. First draft wrongly asked the owner to install a new runner and ignored
+the existing trigger invariant; corrected 2026-09-02 after the founder's challenge; runner and
+secret facts verified read-only the same day. Item 0 first (it also closes the secret-scoping
+exposure and the docs-lint label defect).
