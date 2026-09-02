@@ -329,7 +329,8 @@ class PruneByPathPrefixTest {
       }
       commitAndRefresh();
 
-      // Abort checker that always returns true (user active)
+      // Abort checker that always returns true. The caller decides what "abort" means; it stopped
+      // meaning "a user is active" when breath-holding was replaced by the contention duty cycle.
       int pruned = runtime.pruneOps().pruneByPathPrefix(
           testFilesDir.toString(),
           () -> true,  // Always abort

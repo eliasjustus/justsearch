@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -13,25 +14,38 @@ import org.junit.jupiter.api.Test;
 /** The shipped child argv (tempdoc 885 item 14) — the piece tempdoc 410 left to the operator. */
 final class ExtractionSandboxCommandTest {
 
+  private static final String CHILD_MAIN =
+      "io.justsearch.indexerworker.extract.ExtractionSandboxChild";
+
+  /**
+   * The inline form, asked for explicitly. The public entry point picks inline vs argfile by
+   * length, and this JVM's own classpath decides which — under an isolated Gradle home it is long
+   * enough to cross the threshold, so pinning the inline shape has to name the threshold rather
+   * than inherit whatever the runner happened to hand us.
+   */
+  private static List<String> inlineCommand(String classpath) {
+    return ExtractionSandboxCommand.defaultCommand(
+        TikaExtractionPolicy.defaults(), "", Integer.MAX_VALUE, classpath);
+  }
+
   @Test
   void defaultCommandLaunchesTheChildOnThisJvmAndClasspath() {
-    List<String> argv = ExtractionSandboxCommand.defaultCommand(TikaExtractionPolicy.defaults(), "");
+    String classpath = System.getProperty("java.class.path");
+    List<String> argv = inlineCommand(classpath);
 
     assertTrue(
         argv.get(0).startsWith(System.getProperty("java.home")),
         "must reuse the running JVM, not a PATH lookup: " + argv.get(0));
-    assertEquals(
-        "io.justsearch.indexerworker.extract.ExtractionSandboxChild",
-        argv.get(argv.size() - 1));
+    assertEquals(CHILD_MAIN, argv.get(argv.size() - 1));
     assertEquals("-cp", argv.get(argv.size() - 3));
-    assertEquals(System.getProperty("java.class.path"), argv.get(argv.size() - 2));
+    assertEquals(classpath, argv.get(argv.size() - 2));
     assertTrue(argv.contains("--enable-native-access=ALL-UNNAMED"), argv.toString());
     assertTrue(argv.contains("-XX:+UseSerialGC"), argv.toString());
   }
 
   @Test
   void heapFlagIsPresentAndSizedFromThePolicysLargestAcceptedInput() {
-    List<String> argv = ExtractionSandboxCommand.defaultCommand(TikaExtractionPolicy.defaults(), "");
+    List<String> argv = inlineCommand("ignored");
 
     // Default policy accepts 100 MB inputs; 4x that is 400 MB, below the 512m floor.
     assertTrue(argv.contains("-Xmx512m"), argv.toString());
@@ -62,11 +76,94 @@ final class ExtractionSandboxCommandTest {
     if (inherited == null) {
       // The Gradle test JVM is launched without -XX:AOTCache, which is the common case.
       assertFalse(
-          ExtractionSandboxCommand.defaultCommand(TikaExtractionPolicy.defaults(), "").stream()
-              .anyMatch(a -> a.startsWith("-XX:AOTCache=")),
+          inlineCommand("ignored").stream().anyMatch(a -> a.startsWith("-XX:AOTCache=")),
           "no AOT flag may be invented when the parent JVM has none");
     } else {
       assertTrue(Files.exists(Path.of(inherited)), "an inherited AOT cache path must exist");
     }
+  }
+
+  /**
+   * Windows {@code CreateProcess} fails with {@code error=206} past 32,767 characters, and a
+   * Gradle test JVM under an isolated Gradle home hands over an expanded classpath that clears it
+   * on its own — which is how this surfaced, in three different lanes.
+   */
+  @Test
+  void switchesToAnArgfileWhenTheCommandLineWouldExceedTheWindowsLimit() throws Exception {
+    String longClasspath = ("C:\\some\\jar\\path with space\\lib.jar;").repeat(1200);
+    assertTrue(longClasspath.length() > 32_767, "the fixture must actually be over the limit");
+
+    List<String> argv =
+        ExtractionSandboxCommand.defaultCommand(
+            TikaExtractionPolicy.defaults(), "", 30_000, longClasspath);
+
+    assertEquals(3, argv.size(), "argfile form is <java> @<file> <main>; got: " + argv);
+    assertEquals(CHILD_MAIN, argv.get(2));
+    assertTrue(argv.get(1).startsWith("@"), "second argument must be an argfile: " + argv.get(1));
+
+    Path argFile = Path.of(argv.get(1).substring(1));
+    assertTrue(Files.exists(argFile), "argfile must have been written: " + argFile);
+    String content = Files.readString(argFile, StandardCharsets.UTF_8);
+    assertTrue(content.contains(ExtractionSandboxCommand.argFileToken("-cp")), content);
+    assertTrue(
+        content.contains(ExtractionSandboxCommand.argFileToken(longClasspath)),
+        "the classpath must round-trip through the argfile encoding");
+    assertTrue(content.contains(ExtractionSandboxCommand.argFileToken("-Xmx512m")), content);
+
+    assertTrue(
+        ExtractionSandboxCommand.commandLineLength(argv) < 1000,
+        "the point of the argfile is a short command line; got "
+            + ExtractionSandboxCommand.commandLineLength(argv));
+  }
+
+  /**
+   * The public entry point must pick the two forms consistently on whatever classpath this runner
+   * happens to have — which is the variable that decides it, and the reason the same suite passed
+   * under one Gradle home and died with {@code error=206} under an isolated one.
+   */
+  @Test
+  void publicEntryPointPicksTheFormThatFitsThisRunnersClasspath() {
+    List<String> actual =
+        ExtractionSandboxCommand.defaultCommand(TikaExtractionPolicy.defaults(), "");
+    List<String> inline = inlineCommand(System.getProperty("java.class.path"));
+    boolean tooLong =
+        ExtractionSandboxCommand.commandLineLength(inline)
+            > ExtractionSandboxCommand.MAX_INLINE_COMMAND_CHARS;
+
+    assertEquals(
+        tooLong,
+        actual.get(1).startsWith("@"),
+        "inline length is "
+            + ExtractionSandboxCommand.commandLineLength(inline)
+            + " against a threshold of "
+            + ExtractionSandboxCommand.MAX_INLINE_COMMAND_CHARS);
+    assertTrue(
+        ExtractionSandboxCommand.commandLineLength(actual)
+            <= ExtractionSandboxCommand.MAX_INLINE_COMMAND_CHARS,
+        "the chosen form must always fit the command-line limit");
+  }
+
+  @Test
+  void inlineFormIsKeptBelowTheThreshold() {
+    List<String> argv =
+        ExtractionSandboxCommand.defaultCommand(
+            TikaExtractionPolicy.defaults(), "", 30_000, "C:\\short\\lib.jar");
+
+    assertEquals(CHILD_MAIN, argv.get(argv.size() - 1));
+    assertEquals("C:\\short\\lib.jar", argv.get(argv.size() - 2));
+    assertFalse(argv.stream().anyMatch(a -> a.startsWith("@")), argv.toString());
+  }
+
+  /**
+   * The argfile grammar treats a backslash as an escape character inside a quoted token, so a
+   * Windows path written verbatim loses its separators. Doubling is the encoding that survives.
+   */
+  @Test
+  void argFileTokenQuotesSpacesAndEscapesBackslashes() {
+    assertEquals(
+        "\"C:\\\\Program Files\\\\jdk\\\\lib.jar\"",
+        ExtractionSandboxCommand.argFileToken("C:\\Program Files\\jdk\\lib.jar"));
+    assertEquals("\"-Xmx512m\"", ExtractionSandboxCommand.argFileToken("-Xmx512m"));
+    assertEquals("\"say \\\"hi\\\"\"", ExtractionSandboxCommand.argFileToken("say \"hi\""));
   }
 }
