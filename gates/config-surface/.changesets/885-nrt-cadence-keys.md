@@ -43,3 +43,18 @@ arm set).
 
 Post-measurement expectation is unchanged: if the corrected reopen axis does not
 earn its keep, these three come out too.
+
+## Baseline advance (same commit, tempdoc 883 rule)
+
+`gates/config-surface/baseline.txt` moves in this commit, alongside the keys it accounts for:
+
+| metric | was | now | delta |
+| :--- | ---: | ---: | :--- |
+| `env_sysprop_pairs` | 246 | **249** | +3 = exactly the three keys above |
+| `yaml_keys` | 108 | **111** | +3 = the same three (they resolve from YAML as well as env) |
+| `config_keys` | 56 | 56 | unchanged |
+
+Measured with `node scripts/docs/generate-runtime-config-matrix.mjs` on the merged tree
+(`yaml_keys=111 env_sysprop_pairs=249 config_keys=56 rows=305`). The pre-merge pin of 246/108 was
+what `main` measured after #600; this branch adds three keys and no others, so the advance is fully
+attributable and the ratchet keeps its meaning — it still only ratchets DOWN from here.
