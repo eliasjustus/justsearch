@@ -247,7 +247,7 @@ Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for `justsearc
 | - | JUSTSEARCH_RULE_TICK_MS | justsearch.rule.tick.ms | RULE_TICK_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SEARCH_ENTITY_BOOST | justsearch.search.entity_boost | SEARCH_ENTITY_BOOST | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SEARCH_PIPELINE | justsearch.search.pipeline | SEARCH_PIPELINE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SEARCH_PROFILE | justsearch.search.pipeline.profile | SEARCH_PROFILE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| justsearch.search.pipeline.profile | JUSTSEARCH_SEARCH_PROFILE | justsearch.search.pipeline.profile | SEARCH_PROFILE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_SEARCH_QUERY_CLASSIFICATION_ENABLED | justsearch.search.query_classification.enabled | SEARCH_QUERY_CLASSIFICATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SEARCH_TITLE_BOOST | justsearch.search.title_boost | SEARCH_TITLE_BOOST | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SERVER_EXE | justsearch.server.exe | SERVER_EXE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

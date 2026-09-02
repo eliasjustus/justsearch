@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS - chunk 1 (PR 1 #596) merged; chunk 2 (PR 2 #599: decision 3 ContextBudget) implemented, independent review round 1 folded, live window COMPLETE except check 8 (the agent completion-cap reduction, process-start knob only - unit-tested)
+status: IMPLEMENTED pending merge - chunk 1 (PR 1 #596) and chunk 2 (PR 2 #599) merged; chunk 3 (PR 3: decision 4 slice 2, decision 5 funnel + yaml-reader gate, ADR-0047) implemented on worktree-lane-A3, full suite green, awaiting independent review and merge. Every scope-table item (8, 9, 22) is implemented; the named residue is in §C.5c / §C.6c
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: lane-A worker (branch worktree-lane-A, base 6c3ba431)
@@ -1435,3 +1435,317 @@ AI runtime deactivated (`mode: offline` → the stack then re-entered `indexing`
 own), watched root removed (`{"deletedJobs":30,"status":"ok"}`, `GET /api/indexing/roots` →
 `{"roots":[]}`), settings restored (`chatEnabled false`, `llm.contextWindow 0`), no standalone
 processes were started, stack left running. Working tree clean.
+
+---
+
+## §B — Pre-implementation pass (chunk 3, PR 3: decision 4 slice 2, decision 5, ADR-0047)
+
+Every `path:line` this chunk depends on, re-read on the PR-2 base. Corrections marked **[moved]**;
+facts the contract did not state are in §B.b3.
+
+### B.a3 — The slice-2 sites, verified
+
+| Contract claim | On this base | Verdict |
+|---|---|---|
+| Four promotions in `SettingsController` | three remain after PR 1: `maybeApplyServerExeSysProp` `:219-242`, `maybeApplyExcludePatternsSysProp` `:244-276`, `maybeApplyGpuLayersSysProp` `:278-300` **[moved]** (§D said 243/273/300, the `setSysProp` lines inside each) | confirmed |
+| Promotion call sites | `:125-127` (settings PUT) and `:419-420` (reset — note the asymmetry: **`server.exe` is promoted from the PUT only**, not from reset) | confirmed, plus the asymmetry the contract did not state |
+| Marker constants | `:40-45`, six of them (`*_SYS_PROP` + `*_SOURCE_PROP` per key), plus `SOURCE_UI_SETTINGS = "ui_settings"` `:46` | confirmed |
+| The startup half of the same promotion | `HeadlessApp.resolveConfig` `:594-597` (server.exe), `:599-604` (exclude_patterns), `:607-610` (gpu.layers) — `SystemPropertyUtils.setSysPropIfBlankWithSource` | confirmed |
+| `ConfigStoreRebuilder` already contributes all three at ordinal 300 | `:96` server.exe, `:111-113` gpu.layers (only when `> 0`), `:118-124` exclude_patterns | confirmed — the ordinal-300 path already existed for all three |
+| The GPU auto-detect mirror | `HeadlessApp.augmentGpuAutoDetectionAndMirror` `:145-170`; `:159` puts `justsearch.gpu.layers=99` in the ord-150 map AND `:160` writes it as a **system property** | confirmed |
+| `EffectiveConfigController` renders both rows from the `.source` marker | server.exe: marker read `:403`, consumed `:410` + `:424-429`, `uiOwnershipProp` `:427`, row `:439`. gpu.layers: marker `:570`, consumed `:589` + `:603-608`, `uiOwnershipProp` `:605`, row `:621` | confirmed |
+| The migrated pattern to copy | `keyContextSize` `:503-550` — `configStore.get().resolution(key)` then `sourceName()` / `sourceOrdinal()` / `sourceDetail()`, no marker, no `owner` | confirmed |
+| Six per-module ArchUnit rules | `app-api/ArchitectureRulesTest.java:44-56`, `core/ArchUnitSanityTest.java:39-51`, `app-services/AppServicesWorkerGuardrailsTest.java:12-106` (21 named exemptions), `indexer-worker/IndexerWorkerGuardrailsTest.java:17-53` (4 exemptions), `ui/UiApiGuardrailsTest.java:14-30`, `adapters-lucene/AdaptersLuceneGuardrailsTest.java:12-26` | confirmed |
+| `WholeProgramDeadCodeTest` imports over an explicit module list | `modules/dead-code-audit/build.gradle.kts:18-49` — **29** modules **[moved]** (the contract said 30), `testImplementation` each; importer at `WholeProgramDeadCodeTest.java:102-105`, `ClassFileImporter().withImportOption(DoNotIncludeTests()).importPackages("io.justsearch")` | confirmed |
+| Dead-config gate is a regex over three Java files, never YAML | `scripts/governance/gates/config-surface/dead-config.mjs` — `DECLARATION_FILES` are `EnvRegistry.java` / `ResolvedConfigBuilder.java` / `ResolvedConfig.java`; nothing opens `config/application.yaml` | confirmed |
+| Nothing in `scripts/` parses `application.yaml` | `grep -rn "js-yaml\|yaml.load" scripts/` finds only prose; `check-workflow-triggers.mjs:5` states it uses a line scanner *instead of* a YAML parser | confirmed |
+| The keys the sysprops set | `EnvRegistry.java:291` `SERVER_EXE`, `:475` `SERVER_EXE_SOURCE`, `:325` `GPU_LAYERS`, `:1178` `UI_EXCLUDE_PATTERNS`; resolved at `ResolvedConfigBuilder.java:1050` (serverExe), `:1065` (serverExeSource), `:1051` (gpuLayers) | confirmed — and see B.b3 (1) for the one that is **not** resolved |
+
+### B.b3 — Facts the contract did not state that change the design
+
+1. **`justsearch.ui.exclude_patterns` has no `ResolvedConfig` accessor at all.** It is contributed at
+   ordinal 300 and lands in the worker snapshot, but `ResolvedConfigBuilder` never resolves it, so no
+   record component exposes it. Its three production readers therefore read the **sysprop**:
+   `ExcludesServiceImpl.java:45` and `KnowledgeSearchController.java:726` via
+   `EnvRegistry.UI_EXCLUDE_PATTERNS.get()`, and `RemoteKnowledgeClient.getExcludeMatcher` (`:979-1001`)
+   via `SystemAccess.sysProp`. Deleting this promotion without first creating the accessor silently
+   disables exclude patterns for ingest, watched-root scan and Apply-Excludes. **Order is forced:
+   accessor first, readers second, promotion last.**
+2. **`EnvRegistry.get()` reads system property, then environment variable, and nothing else**
+   (`EnvRegistry.java:1271-1281`). No `ConfigStore`, no `ResolvedConfig`, no settings.json, no YAML,
+   no default. Every "reads the sysprop directly" site is therefore a real loss of the settings
+   value, not a stylistic preference.
+3. **Deleting the settings promotion for `gpu.layers` UNMASKS a second, worse promotion.** Phase F
+   writes `justsearch.gpu.layers=99` as a system property (`HeadlessApp.java:160`) — a *derived*
+   value at ordinal **500**, above the user GUI setting at 300. Today that write is inert because the
+   settings promotion runs first (`:607-610`) and `setSysPropIfBlank` then no-ops. Delete only the
+   settings half and, on any GPU machine over the VRAM threshold, the probe 99 starts silently
+   overriding an explicit GPU-layers choice, reported as `jvm_arg`. That is the exact pathology this
+   lane exists to remove, relocated. The mirror must go too; the map entry at `:159` (ordinal 150) is
+   the honest carrier, kept alive across rebuilds by PR 1 `ConfigStoreRebuilder.rememberAutoDetected`.
+4. **`AiInstallService.applyCudaServerExe` implements its documented "respects user overrides"
+   guarantee against the promoted sysprop** (`:1930-1938`). With the promotion gone the guard sees a
+   blank value, falls through, and `:1942-1949` overwrites the sysprop **and writes the cuda12 path
+   back into `UiSettings` and saves it** — a chosen llama-server binary silently replaced and
+   persisted after "Install AI". The guard has to move to the resolved value in the same PR.
+5. **Two server.exe sysprop writers are NOT promotions and must survive.**
+   `RuntimeActivationService` (`applyServerExeSysProp` `:1105-1122`, `forceServerExeSysProp`
+   `:1124-1133`, rollback bracket `:849-850` / `:983-999`) and
+   `HeadlessApp.maybeAutoSelectCuda12Variant` (`:1148-1250`) write a path **discovered on disk** under
+   the distinct ownership token `auto_selected_cuda12`; there the `.source` sysprop is a genuine
+   ownership check, not a precedence lie. Consequence for acceptance:
+   `grep -rn "server.exe.source"` is **not** empty after this PR, by design.
+6. **The six ArchUnit rules leave nine modules uncovered.** Measured over `modules/*/src/main/java`:
+   `telemetry` (7 getenv / 8 getProperty), `app-inference` (2 / 11), `gpu-bridge` (1 / 1),
+   `ai-backend` (1 / 0), `app-launcher` (0 / 6 plus 6 setProperty), `ort-common` (0 / 4),
+   `worker-services` (7 / 5), `benchmarks` (0 / 3 plus 5), `ssot-tools` (1 / 0) — none covered by any
+   of the six. Repo totals: **getenv 45, getProperty 113, setProperty 39, clearProperty 10,
+   `Boolean.getBoolean` 8, `Integer.getInteger` 0.** The contract 46/121 counts were textual and
+   included test sources.
+7. **Coverage across the six is inconsistent**, which is what a per-module copy drifts into: only
+   `UiApiGuardrailsTest` covers `clearProperty`; none covers `Boolean.getBoolean` /
+   `Integer.getInteger` (both `System.getProperty` with a parse attached); the `app-api` copy misses
+   the no-arg `System.getenv()`. The replacement closes all three gaps rather than reproducing them.
+8. **`modules:dead-code-audit:test` DOES run in CI** — `.github/workflows/ci.yml:515`, the
+   `platform-contracts` matrix lane of the `unit-tests` job, invoked at `:544-547`. The module is in
+   `settings.gradle.kts:117` and its test task carries no `onlyIf` / `enabled = false` / tag
+   exclusion. The new rule is wired the moment it lands; no workflow change is owed.
+9. **`js-yaml@4.2.0` is already resolved at the top level of the lockfile**, as a transitive
+   devDependency (`gray-matter`, `markdownlint-cli`). Declaring it explicitly costs one line in
+   `package.json` and one in `package-lock.json` and adds **no package to the tree** —
+   `npm install --package-lock-only` reports "up to date". Root `npm ci` runs at `ci.yml:111`,
+   before the config-surface gate step at `:218`.
+10. **`putYaml*(key, root, yamlPath)` takes the YAML path as its THIRD argument**, and the existing
+    dead-config scanner reads only the FIRST. Some groups are also walked by hand
+    (`root.path("index").path("ocr").path("languages")`). A yaml-reader scan that looked only at
+    first arguments would be wrong for exactly the keys where the two spellings differ — which is
+    the class 882 found.
+11. **`CLAUDE.md` has one byte of headroom** (`check-always-loaded-budget`: 22321 / 22322 B). A
+    pre-merge-table row for the two new subjects cannot be added without displacing existing prose.
+    See §C.4c.
+
+### B.c3 — Decisions taken inside this chunk
+
+- **The auto-detect GPU-layers sysprop mirror is deleted, not merely bypassed** (B.b3 (3)). The
+  alternative considered and rejected was to keep the mirror and teach Phase F about the settings
+  value (`alreadySet ||= settingsGpuLayers > 0`): that still contributes a derived value at ordinal
+  500 whenever the user has NOT set one, so `effective-config` would keep reporting a hardware probe
+  as `jvm_arg`. Ordinal 150 is where a probe belongs, and PR 1 already built the mechanism that makes
+  150 survive a rebuild.
+- **`gpuLayersAfterAutoDetect` walks the resolver chain in miniature** — sysprop/env (500/400) then
+  settings.json (300) then the auto-detected map (150) then 0 — because once the mirror is deleted
+  the sysprop no longer stands in for the settings value. It is deliberately a *restatement* of the
+  chain rather than a call into the resolver: this runs inside `resolveConfig`, before a
+  `ResolvedConfig` exists.
+- **The funnel rule bans more than the six rules it replaces**, adding `clearProperty`,
+  `Boolean.getBoolean`, `Integer.getInteger`, `getProperties`, `setProperties` (B.b3 (7)). Widening
+  costs allowlist entries, not red builds, and a funnel with a documented hole is not a funnel.
+- **Allowlist granularity is `Class#member`, not `Class`.** Class granularity would let an
+  already-listed class grow new call sites for free. Lambda bodies are normalised
+  (`lambda$foo$3` to `foo`) because the javac index shifts on unrelated edits, and a ratchet that
+  reds on edits it does not care about gets deleted.
+- **The allowlist ratchet lives in the existing `config-surface` gate, not a new check script.** That
+  gate already has the git-base machinery (`readFileAtRef`), the changeset vocabulary and a CI step;
+  a second script would be a second thing to wire and to remember
+  (`explore-before-implementing`).
+- **The two unread YAML keys are FIXED, not baselined.** `search.pipeline.profile` has a resolver key
+  (`justsearch.search.pipeline.profile`, `ResolvedConfigBuilder.java:1403`), an `EnvRegistry`
+  constant (`:258`) and a consumer (`LauncherCommands.java:67`) — only the YAML spelling was never
+  wired, so it is wired. `index.pipeline.profile` has **no resolver key anywhere**
+  (`grep -rn "justsearch.index.pipeline" modules` finds nothing); it is a false promise in shipped
+  config and is deleted (`retire-with-a-sweep`). Baselining either would have recorded the defect
+  instead of removing it, in the same PR that builds the detector.
+- **The funnel test shares the whole-program import** (`ImportedProgram`), rather than standing up a
+  second `ClassFileImporter`. Whole-classpath scanners in this repo are the tests that go red with
+  `TimeoutException` under concurrent-agent CPU load (`agent-lessons.md`); doubling the import in a
+  task that already asks for 2g would make that worse for no benefit.
+
+## §C — Post-implementation critical analysis (chunk 3, PR 3; 2026-09-02)
+
+### C.1c — Wrong-gate checks (each grepped or run at the set-site, not inferred)
+
+| Claim the change depends on | How it was checked | Result |
+|---|---|---|
+| Deleting the settings promotion does not hand the GPU-layers decision to the hardware probe | The Phase-F sysprop mirror was deleted with it, and `HeadlessAppGpuAutoPopulateTest.probeLayersDoNotOutrankTheUsersSetting` asserts the RESOLVED value through a real `ResolvedConfigBuilder` (`contributeAutoDetected(99)` + `contributeUiSettings(gpuLayers=20)`) is **20 / `settings.json`**, not 99 / `jvm_arg`. Asserting only "no sysprop" would have passed on a version that dropped the value entirely. | confirmed |
+| The Worker still receives `gpu.layers` once the `-D` forwarding goes empty | Chain read to primary source (`ResolvedConfigBuilder.build()` resolves EVERY contributed key into `allResolutions`; `toWorkerSnapshot` writes every non-null resolution; `IndexerWorker` ingests it at ordinal 450), then PINNED: `WorkerSnapshotAutoDetectedTest.autoDetectedOnlyValueReachesTheSnapshot` + `settingsBeatAutoDetectedInTheSnapshot`. A static audit is a hypothesis (`audit-without-test`). | confirmed |
+| `AiInstallService` still respects a user-chosen server executable | The guard now reads `ConfigStore.globalOrNull().get().ai().serverExe()` / `serverExeSource()`; `AiInstallServiceCudaServerExeGuardTest.settingsSourcedExeIsRespected` puts the value at ordinal 300 with the sysprops explicitly CLEARED, which is the exact state the deletion creates. `globalOrNull` (not `global`) was chosen because two adjacent call sites in the same method already use it, i.e. this path demonstrably runs where the store may be unset. | confirmed |
+| The retired `.source` markers are inert, not merely unset | `EffectiveConfigRetiredMarkersTest` **sets** both markers and asserts the rows are unaffected AND that `owner` / `uiOwnershipProp` / `uiOwnershipValue` are ABSENT — a negative shape that cannot pass by the marker simply not being set. Same shape as PR 1's `EffectiveConfigContextSizeSourceTest.markerIsIgnored`. | confirmed |
+| The exclude-pattern readers actually resolve, rather than falling back to an empty string that happens to look like "no excludes" | `ExcludePatternsResolutionTest` asserts the sysprop is ABSENT and the patterns still arrive, for all three readers. On the pre-change code the sysprop is the only channel, so the count is 0 and every case fails. | confirmed |
+| The funnel rule fails on a NEW site | Measured before seeding: the first run reported all 104 sites as new and failed. Then, after the merge with `origin/main`, it caught lane C's `ExtractionSandboxCommand#javaBinary` — a site introduced by another lane, exactly the case the six per-module rules used to handle one module at a time. | confirmed, twice |
+| The funnel rule fails on a STALE allowlist entry | Appended `io.justsearch.ui.Bogus#neverExisted` -> red with "delete these lines"; removed -> green. | confirmed |
+| The yaml-reader gate bites | Seeded `seeded_gate_probe.unread_key: 883` in `config/application.yaml` -> `config-surface` fails with `config-surface/yaml-key-unread` naming it; seed removed -> pass. | confirmed |
+| The ADR-0047 probes bite | Deleted `-fit off` from `LlamaServerOps.memoryPlanFlags` -> `adr-coverage` fails; restored -> passes. | confirmed |
+| `modules:dead-code-audit:test` is actually invoked in CI | Read directly, not taken from the audit: `.github/workflows/ci.yml:515` lists `:modules:dead-code-audit:test` in the `platform-contracts` matrix lane, invoked by the step at `:544-547`; `settings.gradle.kts:117` includes the module; no `onlyIf` / `enabled = false` / tag exclusion applies. | confirmed |
+
+### C.2c — Defect this pass found, and fixed in the same PR
+
+**The allowlist was not a declared Gradle input, so the ratchet went stale-green.** The first
+bite-test of the stale-entry half reported `BUILD SUCCESSFUL in 750ms` with a deliberately bogus
+entry in the file — because `:modules:dead-code-audit:test` reads a path outside every source set,
+so Gradle considered the task up to date and never re-ran it. A ratchet that only runs when
+something *else* changed is a ratchet you cannot trust locally; CI would have caught a regression on
+a fresh checkout, but the local signal — the one an agent acts on — was silently wrong.
+
+Fixed by declaring the file with `inputs.file(...).withPropertyName("sysaccessAllowlist")` and
+passing the resolved absolute path as `sysaccess.allowlistPath`, which also removes the test's
+dependence on its working directory. Both halves of the bite-test were then re-run and both went
+red-then-green. Worth naming because it is the `unreachable-seed-green` shape in a new place: the
+seed was reachable, the *runner* was not.
+
+### C.3c — Test precision (does each test pass for the right reason?)
+
+- `probeLayersDoNotOutrankTheUsersSetting` asserts the resolved value AND its source name, not just
+  "no sysprop". The pre-change failure mode is 99-at-ordinal-500, which a `assertNull(sysprop)`-only
+  test would also catch — but so would deleting the probe contribution entirely, which would break
+  the context-window rung on GPU boxes. Asserting `20 / settings.json` distinguishes them.
+- `WorkerSnapshotAutoDetectedTest` is honestly labelled: it is the A6 **proof** that a value
+  contributed only at ordinal 150 reaches the snapshot, not a regression on changed code. It would
+  pass on the pre-change tree too. It exists because the claim it pins ("the `-D` forwarding going
+  empty is harmless") is exactly the kind of lifecycle claim `audit-without-test` says must be a
+  test rather than an audit conclusion.
+- Two of the new `HeadlessAppContextWindowAutoDetectTest` cases (`explicitSyspropBeatsSettings`,
+  `settingsGpuLayersZeroMeansUnset`) are **guards, not discriminators** — they pass on the old code
+  too. Recorded rather than presented as coverage: they pin the two conventions the new chain rests
+  on (an operator `-D` still wins; `0` means unset) against a future tightening.
+- `yaml-readers.test.mjs` includes `an ANCESTOR string literal does NOT count as a reader`, which
+  asserts the key is still REPORTED. That case exists because the first draft of the scanner
+  accepted ancestor literals, `"search"` occurs in Java for a hundred unrelated reasons, and the
+  gate came back green on a corpus with two known-dead keys in it. The test distinguishes "the scan
+  ran" from "the scan saw nothing".
+- The funnel test asserts `observed.size() > 50`. A green produced by an importer returning nothing
+  is not a green, and that is the one way this rule could silently stop meaning anything.
+
+### C.4c — Deviations from the brief, stated rather than hidden
+
+1. **ADR-0047 is `status: stable`, not `status: accepted`** as the brief asked. `docs/decisions/README.md`
+   records that `scripts/docs/llmstxt-generate.mjs:149` indexes a doc only when `status` is exactly
+   `stable` / `in-progress` / `advisory`, so `accepted` would have silently dropped a live decision
+   out of `docs/llms.txt` — and the `adr-coverage` gate prefix-matches both, so it would not have
+   caught it. The ADR-vocabulary word lives in the body's `## Status` section, which is how ADR-0046
+   does it. Verified after the fact: `grep -n 0047 docs/llms.txt` -> indexed.
+2. **No pre-merge-table row was added**, though two new subjects (`config/application.yaml`, a new
+   `System.getenv` site) would justify one. `check-always-loaded-budget` reports `CLAUDE.md` at
+   22321 / 22322 B — one byte of headroom — so a row cannot be added without displacing existing
+   prose, which is out of scope and merge-conflict-prone across three live lanes. Both checks run in
+   CI on every PR unconditionally (`ci.yml:218` for `config-surface`, `:515` for the funnel test), so
+   the enforcement does not depend on the row. Recorded as an open item below rather than silently
+   skipped.
+3. **The allowlist is 105 entries, not the ~167 the contract estimated.** That estimate counted
+   textual occurrences (getenv 46 + getProperty 121); this list is `Class#member`, so a method with
+   four reads is one line. The wider ban (`clearProperty`, `Boolean.getBoolean`, `Integer.getInteger`,
+   `getProperties`, `setProperties`) is included in the 105.
+4. **Two additions beyond the brief, both to avoid a silent break.** (a)
+   `ConfigStoreRebuilder.contributeUiSettings` now applies `PlatformPaths.expandUserHomePlaceholders`
+   to `server.exe`: the deleted promotion was the ONLY call site in the repo, so `${user.home}` in a
+   settings path would have stopped expanding. This also fixes a pre-existing asymmetry — the boot
+   path never expanded, only the PUT path did. The `assertNoUnexpandedPlaceholders` throw was
+   deliberately NOT carried over, because a config rebuild must not throw on a stray `${`.
+   (b) `ExcludeMatcher.fromSyspropJson` renamed `fromRawJson` — a retiree fingerprint the brief's
+   sweep list missed.
+5. **`grep -rn "server.exe.source" modules` is not empty, by design** (§B.b3 (5)):
+   `RuntimeActivationService` and `HeadlessApp.maybeAutoSelectCuda12Variant` keep the marker as their
+   genuine ownership token for runtime GPU-variant switches. `grep -rn
+   "gpu.layers.source|ui.exclude_patterns.source" modules --include=*.java` returns two hits, both
+   non-executable: the javadoc that LABELS what was retired (`retire-with-a-sweep` asks for "delete
+   or label") and the constant inside the negative-regression test whose job is proving the marker is
+   inert. There is no production read or write of either.
+6. **`docs/explanation/13-ai-setup-and-verification.md:86` was read and deliberately left alone.** It
+   describes `RuntimeActivationService.startActivate`, which this PR protects and which genuinely
+   still persists to `UiSettings` and sets the sysprop. Editing it would have made the doc wrong.
+
+### C.5c — Residue found and routed, not investigated
+
+1. **`HeadlessApp.resolveConfig` writes the worker snapshot from a stale config.** It builds
+   `resolvedConfig`, then `maybeAutoSelectCuda12Variant` writes the `server.exe` sysprop, then the
+   snapshot is written from the config built BEFORE that write — so a boot-time cuda12 auto-select
+   does not reach the Worker snapshot. Pre-existing, unchanged by this PR, found while auditing the
+   config phase. Belongs to whoever next touches the boot config phase.
+2. **Two promotions remain in `HeadlessApp.resolveConfig`**, both outside this lane's named three:
+   `justsearch.index.base_path` (with its `.source` marker) and `justsearch.llm.model_path` (same).
+   They have the identical shape and the identical defect — a GUI value reported as `jvm_arg` — and
+   `EffectiveConfigController` still reads their markers at `:329` and `:454`. Retiring them is the
+   same mechanical move this PR made three times; it is a tracked item, not a silent drop, and it is
+   the natural next slice for whoever picks up 883's residue.
+3. **The dead-config scanner's bare-name collision blind spot is unchanged** (documented in
+   `dead-config.mjs`). The new yaml half does not narrow it; it closes a different hole.
+4. **`AgentLoopService.java:456-460` still hand-walks the window** (carried from PR 2's §C.6b).
+
+### C.6c — Still open in lane A after PR 3
+
+Nothing from the lane's scope table remains: items 8, 9 and 22 are implemented. What is left is
+named above and below —
+
+- the two remaining `HeadlessApp` promotions (§C.5c (2));
+- the pre-merge-table row that does not fit the always-loaded budget (§C.4c (2));
+- the `DocAccess` / `BatchDocAccess` 200,000-char prompt injections (PR 2 §C.4b (5));
+- routing `AgentLoopService` through `ContextBudget` (PR 2 §C.6b);
+- putting the history drop and the selection cut on the wire (PR 2 §C.4b (8));
+- the two live gaps named in the register: the `JUSTSEARCH_CONTEXT_SIZE` env arm at ordinal 400, and
+  a successful rung-walk witness.
+
+## Report-back — lane A (882 cross-lane rules)
+
+**PRs.** #596 (PR 1, merged), #599 (PR 2, merged), and this one (PR 3), opened against `main` after
+`origin/main` was merged in — the base moved from `worktree-lane-A2` when #599 squashed.
+
+**Items done.** Scope item 22 in full (every settings-to-sysprop promotion retired; one repo-wide
+`System.*` funnel with a ratcheting allowlist replacing six per-module rules; the dead-config gate
+extended with a real YAML parse so every shipped yaml key has a reader). Scope items 8 and 9 landed
+in PRs 1 and 2. ADR-0047 records the decision the three PRs implement, with five premise probes.
+
+**Deviated.** Six deviations, each with its reason at §C.4c: ADR status vocabulary, the pre-merge
+table row that does not fit the byte budget, the allowlist's granularity/size, two beyond-brief
+additions that prevented silent breaks, the deliberately non-empty `server.exe.source` grep, and one
+doc left alone because editing it would have made it wrong.
+
+**Skipped.** Nothing from the contract. The one thing the contract allowed to be deferred — slice 2
+proving too large — did not happen: all three promotions are retired.
+
+**Evidence.** Full suite `./gradlew.bat test -PskipWebBuild=true`: **5,123 tests / 806 classes / 21
+skipped**, one failure, `WatchedRootScanCollectionTest`, which is the pinned flaky
+`app-services-watched-root-scan-collection-flaky` and passes on isolate-rerun. `build -x test` green.
+Gates: `config-surface`, `adr-coverage`, `execution-surface`, `module-deps`, `prose-tier-register`,
+`hook-integrity` all pass; `check-always-loaded-budget`, `check-premerge-table`,
+`llmstxt-generate --check`, `skills-sync --check`, `verify-canonical-doc-links`,
+`verify-runtime-config-matrix`, `module-deps --check-canonical` all OK; `run-all-tests` 21/21;
+gate self-test fixtures pass. Three bite-tests recorded at §C.1c. `dead-code` and the knip half of it
+report `kernel/input-missing` without a `modules/ui-web` npm install — environmental, and this PR
+touches no `ui-web` file.
+
+**Measurements.** The window/KV/tok-s table is in register D-010 and ADR-0047; the before/after in one
+line: window 4096 -> 32768 derived (KV 544 MiB at q8_0, 17.0 KiB/token, 6,206 of 12,281 MiB total),
+q8_0 vs f16 69.66 vs 69.54 tok/s (no cost), RAG ask 2,597 prompt tokens against 32,768 with
+`context_truncated false` where 845's original failure asked 5,990 into 4,096. This PR itself changes
+no runtime numbers — it changes where configuration values come from.
+
+**Cross-lane requests raised (UI lane).** None are edits this lane made. (a) `contextLength` has no
+UI control and never had one; `0` now means auto, and whether that deserves a diagnostics surface is a
+UI decision. (b) `RuntimeManifestView` does not render `ai.contextWindow`, which PR 1 added.
+(c) `modules/ui-web/src/shell-v0/components/chat/evidenceProjection.ts:808` and
+`CitationsPanel.test.ts:831` cite `READ_PAGE_CHARS = 3000`, a symbol that no longer exists and a
+number that is now window-derived; `views/search-v3/sv3-ask.ts:94-95` states the RAG top-K precedence
+as "body -> configured -> `DEFAULT_TOP_K = 5`", now "body -> `min(configured, budget)`, floor 1".
+Comment-only in all three. (d) `SelectionContextInjector`'s cut is a backend INFO log with no wire
+flag, so the FE cannot show it.
+
+**Residue routed.** §C.5c: the stale-config worker snapshot on the boot path, the two remaining
+`HeadlessApp` promotions, the dead-config bare-name blind spot, and `AgentLoopService`'s third window
+walk.
+
+**What lanes E and F must know.**
+- **`ContextBudget` (`modules/core`, `io.justsearch.core.util`) is the ONE authority for prompt-side
+  budgets.** Anything asking "how much room does this turn have" calls it. A second window walk is a
+  fork; there is exactly one survivor (`AgentLoopService:456-460`) and it is tracked.
+- **The launched window is on the runtime manifest** as `ai.contextWindow` (`{rung, reason,
+  freeVramBytes, slots, kvType}`) and on `/api/inference/status`, present only while a server this
+  process launched is running. It is INTENT; `/props` `n_ctx` (`llmContextTokens`) is the observation.
+- **Two live gaps, stated as gaps rather than passes:** the `JUSTSEARCH_CONTEXT_SIZE` env arm at
+  ordinal 400 has never been observed live (it needs an orchestrator-owned restart), and the
+  successful rung-walk has no live witness because the inter-rung VRAM gap (272 MiB) is smaller than
+  observed free-VRAM noise (~280 MiB) on the dev card.
+- **Lane F specifically:** the 32k top rung is a co-residency BUDGET, not a fit (the full 262k context
+  measurably loads). If lane F builds one memory plan at activation, that rung is the number to
+  re-derive, and ADR-0047's first reassess trigger is exactly this.
+- **Anyone adding config:** a new `System.getenv`/`getProperty` outside `io.justsearch.configuration`
+  now fails the build, and a new key in `config/application.yaml` with no reader now fails the build.
+  Neither list can be grown quietly.
