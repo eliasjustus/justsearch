@@ -15,7 +15,7 @@
  *   node scripts/governance/run.mjs --mode warn|gate \
  *        [--out tmp/governance-report.sarif] \
  *        [--registry governance/registry.v1.json] \
- *        [--gate <id>]            (run only one gate)
+ *        [--gate <id>]...         (run only the named gates; repeatable)
  *        [--self-test]            (run gate self-test fixtures + assert verdicts)
  *        [--skip-self-test]       (skip the self-test pass a full gate-mode run does first; tempdoc 742 D3)
  *        [--produce-inputs]       (run producers for absent required gate inputs first; tempdoc 742 D1)
@@ -66,7 +66,9 @@ function parseArgs(argv) {
     if (a === '--mode') args.mode = argv[++i];
     else if (a === '--out') args.out = argv[++i];
     else if (a === '--registry') args.registry = argv[++i];
-    else if (a === '--gate') args.gate = argv[++i];
+    // Repeatable. A last-wins single-value flag silently ran ONE gate when a caller passed
+    // several, which is a green that never evaluated what it claimed to.
+    else if (a === '--gate') (args.gate ??= []).push(argv[++i]);
     else if (a === '--self-test') args.selfTest = true;
     else if (a === '--skip-self-test') args.skipSelfTest = true;
     else if (a === '--produce-inputs') args.produceInputs = true;
@@ -120,7 +122,7 @@ Options:
   --out <path>           SARIF output path (default: tmp/governance-report.sarif)
   --format sarif|compact terminal output format (default: sarif)
   --registry <path>      registry path (default: governance/registry.v1.json)
-  --gate <id>            run only the named gate (default: all)
+  --gate <id>            run only the named gate (repeatable; default: all)
   -h, --help             this message
 `);
 }
@@ -271,10 +273,15 @@ async function main() {
   // requests one. (Falling back to a warning here is too lenient.)
 
   const registry = loadRegistry(args.registry);
-  const gates = args.gate ? registry.gates.filter(g => g.id === args.gate) : registry.gates;
-  if (args.gate && gates.length === 0) {
-    console.error(`gate id '${args.gate}' not found in ${args.registry}`);
-    process.exit(2);
+  const gates = args.gate ? registry.gates.filter(g => args.gate.includes(g.id)) : registry.gates;
+  if (args.gate) {
+    // Every named id must resolve. Dropping an unknown one silently would report a pass for a
+    // gate that never ran — the failure mode this flag's repeatability exists to avoid.
+    const missing = args.gate.filter(id => !registry.gates.some(g => g.id === id));
+    if (missing.length > 0) {
+      console.error(`gate id(s) not found in ${args.registry}: ${missing.join(', ')}`);
+      process.exit(2);
+    }
   }
 
   // Tempdoc 530 §3.2: --explain <ruleId> — print description + changeset template.

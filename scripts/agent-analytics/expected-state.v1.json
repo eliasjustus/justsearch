@@ -137,7 +137,7 @@
       "match": [
         "scripts/governance/run\\.mjs(?!.*--gate )(?!.*--self-test)"
       ],
-      "claim": "A bare full-kernel run reports 5 gates FAIL with kernel/input-missing (npm-audit, module-deps, dead-code, dead-code-jvm, config-surface). That is an UNBUILT REPORT, not a red: each finding names its producer command, and \"node scripts/governance/run.mjs --produce-inputs --mode gate\" builds them. Do not diagnose these as regressions from your change.",
+      "claim": "A bare LOCAL full-kernel run reports 5 gates FAIL with kernel/input-missing (npm-audit, module-deps, dead-code, dead-code-jvm, config-surface). That is an UNBUILT REPORT, not a red: each finding names its producer command, and \"node scripts/governance/run.mjs --produce-inputs --mode gate\" builds them. Do not diagnose these as regressions from your change. Do not read it as \"these gates are unenforced\" either: CI builds all five inputs and evaluates the gates (Public-claims for the four node-produced ones, the platform-contracts unit-test lane for dead-code-jvm), so a regression IS caught on the PR that causes it -- just not by a bare local run.",
       "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431) with \"node scripts/governance/run.mjs --mode warn --skip-self-test\": 7 fail, of which 5 are kernel/input-missing naming tmp/npm-audit-report.json, tmp/arch-preflight/module-deps.json, tmp/knip-report.json, tmp/dead-code-jvm-report.json and tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json.",
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
