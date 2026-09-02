@@ -167,6 +167,11 @@ Method: each claim below was read at the cited line in the worktree
   must declare compatibility for **every** row. Descriptors are *generated from this register*
   (`scripts/release/app-release-assets.mjs:77-100`) and the Rust test derives its fixture from the
   embedded register (`updater.rs:2089-2092`), so adding rows is safe on both sides.
+- **The register has a THIRD runtime consumer, which its own note did not name** (found in review):
+  `app-release-assets.mjs:78-80` throws `durable store <id> is not READY` while generating the
+  release descriptor, so a non-READY row does not merely fail a gate — it makes the release assets
+  **unbuildable**. Its test is `app-release-assets.test.mjs:120`. The register note now names it
+  alongside `updater.rs` and `UpgradeReconciliationProbe`.
 - `scripts/dev/dev-runner.cjs:299-318` — the soft-clean keep-set takes the **first path segment of
   every AUTHORED row's `ownedPaths`**, skipping segments containing `*`. The one AUTHORED row added
   here (the user's documents) declares `**`, whose first segment is a glob, so the keep-set is
@@ -224,6 +229,11 @@ have missed entirely.
 | `undoRefusesToDeleteACopyWhoseContentChangedUnderAnUnchangedMtime`, `…CopiedTree…` | disable the digest-mismatch branch | both FAILED (file deleted) |
 | `undoPreservesACopyRecordedByALegacyJournal…` | disable the missing-digest branch | FAILED (file deleted) |
 | `legacyV1JournalRemainsReadable` | `requireReadableVersion` refuses `version != CURRENT` | FAILED |
+| `rotationFailureLeavesOlderGenerationsIntact` (review S2-2) | restore the prune-then-move ordering | FAILED — `NoSuchFileException: …\logs\llama-server.log.1`, i.e. the retained set had already shrunk before the live move failed |
+| `oversizedFileIsNotDigested`, `oversizedTreeIsNotDigested` (review S2-4) | `of(Path,long)` ignores `maxBytes` | both FAILED |
+| `absentRecordNeverMatches` (review S2-4) | `matches` treats a blank record as a pass | FAILED |
+| `fileDigestTracksContentNotMtime` (review S2-4) | `of` returns a size+mtime identity instead of a content hash | FAILED |
+| `noProductionCodeReadsTheStageReports`, bind-then-read clause (review S2-6) | add `Files.readString(reportPath)` beside the coordinator's existing binding | FAILED |
 
 Two tests are deliberately NOT guard tests and would still pass with the guard removed, which is
 their point: `undoStillDeletesACopyWhoseContentIsUnchanged` (the guard must not over-fire) and the
@@ -257,8 +267,8 @@ test covers the half that IS observable: what a torn file does when read.
 | 2 | `InstallAttemptMemory` | `save()` goes through the existing `AtomicFileWrites.replaceUtf8` — no new helper. | `InstallAttemptMemory.java:166-181`; row `ai-install-attempt-memory` |
 | 3 | `GplEvalSnapshot` | Policy stated + WARN bounded to once per file (it is a per-request supplier). | `GplEvalSnapshot.java:63-105`; row `gpl-eval-snapshot` |
 | 4/5 | `GplStage3aAnalysisReport`, `GplStage3bBranchFusionReport` | The write-only claim is now a TEST that scans every production source for a reader, plus torn-file rewrite tests. One row covers both. | `GplStageReportWriteOnlyTest.java`; row `gpl-stage-analysis-reports` |
-| 6 | `LlamaServerOps` | Rotate-on-launch, 3 generations, `RETAINED_LOG_GENERATIONS` constant; encryption disposition stated as user-derived-in-the-clear rather than NOT_APPLICABLE. | `LlamaServerOps.java:943-1001`; row `llama-server-log` |
-| 7/8 | `FileOperationExecutor`, `FileOperationsTool` | COPY records a content digest (`FileContentDigest`); COPY-undo deletes only a byte-identical destination, and refuses+reports otherwise (changed, or legacy journal with no identity). Journal v1→v2, v0/v1 still readable. | `FileContentDigest.java`, `FileOperationExecutor.java:228-240`, `FileOperationsTool.java:293-325`, `FileOperationLog.java:33-40`; row `user-documents-under-agent-file-operations` + updated `file-operation-journal` |
+| 6 | `LlamaServerOps` | Rotate-on-launch, 3 generations, `RETAINED_LOG_GENERATIONS` constant; the live file is renamed aside BEFORE anything is pruned (review S2-2), so a rename blocked by an open handle leaves the retained set intact; encryption disposition stated as user-derived-in-the-clear rather than NOT_APPLICABLE. | `LlamaServerOps.java:958-1001`; row `llama-server-log` |
+| 7/8 | `FileOperationExecutor`, `FileOperationsTool` | COPY records a content digest (`FileContentDigest`, capped at 2 GiB); COPY-undo deletes only a byte-identical destination, and refuses+reports otherwise (changed, unverifiable-legacy, or over the cap). Journal v1→v2, v0/v1 still readable. | `FileContentDigest.java`, `FileOperationExecutor.java:228-240`, `FileOperationsTool.java:293-325`, `FileOperationLog.java:33-40`; row `user-documents-under-agent-file-operations` + updated `file-operation-journal` |
 
 `pendingDurableClassification.entries` is now `[]` with `cap: 8` retained.
 
@@ -290,3 +300,35 @@ could not be written down at all.
 3. **The reconciliation shares the indexer's single daemon thread**, so a large first-boot backfill
    (up to `MAX_REBUILDS_PER_PASS = 200` ingest RPCs) can delay a live transcript write behind it.
    Delayed, never lost.
+4. **A reconciliation pass costs a few filesystem operations PER PERSISTED RUN, on every boot and
+   every unlock** (review S2-3). `MAX_REBUILDS_PER_PASS` bounds the rebuilds, not the scan:
+   `AgentHistoryIndexer.java:169-171` stats every session the caller supplies, and
+   `HeadAssembly.java:648` asks `listSessions(100_000)`, which reads and sorts every run's meta
+   (`AgentRunStore.java:368-397`). Off the boot thread (verified) and small at realistic run counts,
+   but per-run rather than constant. Mitigation, not taken here because it adds durable state to a
+   lane that is closing one: either a per-pass **scan** cap (stat at most N sessions, newest first,
+   and resume next pass) or a **"last reconciled" marker** so a pass only looks at runs newer than
+   the last complete one. The constant's javadoc now states the real cost instead of implying the
+   cap covers it.
+5. **The COPY digest is a synchronous full extra read** (review S2-4), on the tool-call thread and
+   again at undo — milliseconds for documents, seconds for very large files or trees, and every file
+   of a copied directory. A 2 GiB cap (`FileContentDigest.MAX_DIGEST_BYTES`) is implemented and
+   tested: above it no digest is recorded and the undo preserves rather than deletes. What is NOT
+   done is moving the hash off the tool-call thread (it would have to complete before the journal is
+   finalized, so it is a real ordering constraint, not a scheduling one).
+6. **The verify→delete window is not atomic** (review S2-5): `FileOperationsTool.java:311` reads the
+   digest, `:319-331` deletes. A write landing in between is deleted unverified. Accepted, with the
+   reason recorded at the site and in the row: closing it needs an exclusive lock on a file the USER
+   owns held across both operations. It narrows an unbounded exposure to a microsecond one; it is
+   not a guarantee.
+
+## §F Behaviour change for existing installs
+
+**A COPY-undo against a journal written by an earlier version now PRESERVES the copy instead of
+deleting it.** A pre-v2 journal records no content identity, so the undo cannot prove the file is
+still the agent's copy, and the conservative branch is the default one. The user is told by name
+which files were left behind and why ("could not be verified against the operation log — not
+deleted"). This is a deliberate, user-visible change of an existing behaviour, not only a new
+guard: it makes an undo do LESS than it did before, on exactly the batches whose safety cannot be
+established. New copies (schema v2) undo exactly as they did, verified. Copies above
+`MAX_DIGEST_BYTES` take the same preserve branch for the same reason.

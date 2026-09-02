@@ -35,25 +35,64 @@ final class FileContentDigest {
   private static final String FILE_PREFIX = "sha256:";
   private static final String TREE_PREFIX = "tree-sha256:";
 
+  /**
+   * Above this many bytes, no digest is computed and the copy is simply not verifiable.
+   *
+   * <p>Hashing is a full extra read of what was just copied, on the tool-call thread (and again at
+   * undo). For ordinary documents that is milliseconds against a copy that already moved the same
+   * bytes twice; for a multi-gigabyte file or tree it is seconds of a user-visible operation, and
+   * for a directory it is every file in it. 2 GiB is chosen as the point where the verification
+   * stops being free relative to the copy and starts being a second visible wait.
+   *
+   * <p>The consequence is stated rather than hidden: a copy this large records NO identity, so its
+   * undo takes the same conservative branch a pre-v2 journal does — the file is preserved and the
+   * user is told the app could not verify it. Refusing to delete an unverified multi-gigabyte file
+   * is the safe direction; a cap that silently skipped verification and deleted anyway would not be.
+   */
+  static final long MAX_DIGEST_BYTES = 2L * 1024L * 1024L * 1024L;
+
   private FileContentDigest() {}
 
   /**
    * The content identity of {@code path}: a SHA-256 of the bytes for a regular file, or a SHA-256
    * over every contained file's relative path, size and content hash for a directory. Returns
-   * {@code null} when the path does not exist or cannot be read in full.
+   * {@code null} when the path does not exist, cannot be read in full, or holds more than
+   * {@link #MAX_DIGEST_BYTES}.
    */
   static String of(Path path) {
+    return of(path, MAX_DIGEST_BYTES);
+  }
+
+  /** {@link #of(Path)} with an explicit bound, so the cap's behaviour is testable without 2 GiB. */
+  static String of(Path path, long maxBytes) {
     try {
       if (Files.isDirectory(path)) {
-        return TREE_PREFIX + hex(treeDigest(path));
+        // Size the tree from metadata BEFORE hashing anything: an over-cap tree must cost a walk,
+        // not a full read of every file in it.
+        return treeSize(path) > maxBytes ? null : TREE_PREFIX + hex(treeDigest(path));
       }
       if (Files.isRegularFile(path)) {
-        return FILE_PREFIX + hex(fileDigest(path));
+        return Files.size(path) > maxBytes ? null : FILE_PREFIX + hex(fileDigest(path));
       }
       return null;
     } catch (IOException | RuntimeException e) {
       return null;
     }
+  }
+
+  /** Total bytes of every regular file beneath {@code root}, from directory metadata only. */
+  private static long treeSize(Path root) throws IOException {
+    long[] total = {0L};
+    Files.walkFileTree(
+        root,
+        new SimpleFileVisitor<>() {
+          @Override
+          public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            total[0] += attrs.size();
+            return FileVisitResult.CONTINUE;
+          }
+        });
+    return total[0];
   }
 
   /**

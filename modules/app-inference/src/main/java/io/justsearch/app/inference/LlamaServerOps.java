@@ -970,9 +970,30 @@ final class LlamaServerOps {
    * story for process logs instead of two. It also keeps the useful property for free: the previous
    * launch's output survives exactly one restart, which is what post-mortem reading needs.
    * Best-effort: a rotation that fails must never stop the server from starting.
+   *
+   * <p><b>The live file moves FIRST, and nothing is pruned until it has.</b> On Windows a rename
+   * fails while a handle is still open — a llama-server that outlived the 5s kill timeout, an
+   * orphan, or a handle the OS has not released yet — and that is exactly the crash-restart loop
+   * where retention matters most. Pruning first would then have already deleted the oldest
+   * generation and shifted the rest, leaving FEWER retained logs and a live file still growing:
+   * the failure would silently degrade the very guarantee it was meant to keep. So the live file is
+   * renamed aside to {@code .rotating} before anything is deleted; if that rename throws, every
+   * existing generation is untouched and the only cost is that this launch appends to the previous
+   * log. A {@code .rotating} left behind by a failure between the two renames is bounded — the next
+   * launch replaces it — and is covered by the row's {@code logs/llama-server.log.*} glob.
    */
   private static void rotateServerLogGenerations(Path logFile) {
     if (!Files.exists(logFile)) {
+      return;
+    }
+    Path rotating = logFile.resolveSibling(logFile.getFileName() + ".rotating");
+    try {
+      // The one operation that can fail on a live handle. Nothing is destroyed before it succeeds.
+      Files.move(logFile, rotating, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    } catch (IOException e) {
+      LOG.debug(
+          "llama-server.log could not be rotated away ({}); retained generations left intact",
+          e.getMessage());
       return;
     }
     try {
@@ -987,9 +1008,7 @@ final class LlamaServerOps {
         }
       }
       Files.move(
-          logFile,
-          logGeneration(logFile, 1),
-          java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+          rotating, logGeneration(logFile, 1), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     } catch (IOException e) {
       LOG.debug("llama-server.log rotation failed (best-effort): {}", e.getMessage());
     }

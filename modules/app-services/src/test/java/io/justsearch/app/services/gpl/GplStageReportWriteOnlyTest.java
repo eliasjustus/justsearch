@@ -28,11 +28,18 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>So this pins both halves of the claim:
  *
  * <ol>
- *   <li><b>Nothing reads it back.</b> A source scan of every production source tree: the report file
- *       names appear only in the classes that write them, and the only production reference to
- *       either class is {@code GplJobCoordinator}'s {@code write(...)} call. A future reader — a
- *       status endpoint surfacing the last sweep, say — makes the register row's recoverability
- *       claim false, and fails here rather than shipping.
+ *   <li><b>Nothing reads it back.</b> A source scan of every production source tree
+ *       ({@code modules/&#42;&#42;/src/main/java}): the report file names appear only in the classes
+ *       that write them; the only production reference to either class is
+ *       {@code GplJobCoordinator}'s {@code write(...)} call; and no production file READS a path it
+ *       bound from one of those classes. That last clause is the one that makes the check match its
+ *       claim — the coordinator does bind the returned {@code Path}, so a later
+ *       {@code Files.readString(reportPath)} added beside it would otherwise have passed a scan that
+ *       only looked at method names. A future reader — a status endpoint surfacing the last sweep,
+ *       say — makes the register row's recoverability claim false, and fails here rather than
+ *       shipping.
+ *       <p>Stated limit: the walk covers {@code modules/&#42;&#42;/src/main/java}, so a reader added
+ *       outside the Java production trees (a script, the Rust shell) is not caught here.
  *   <li><b>A torn report costs exactly a rerun.</b> Garbage at the report path is fully replaced by
  *       the next {@code write(...)}, with no merge of the old bytes and no read of them first.
  * </ol>
@@ -102,6 +109,52 @@ final class GplStageReportWriteOnlyTest {
           "GplJobCoordinator must only write the stage-3 reports, never resolve or re-analyze "
               + "them: found " + forbidden);
     }
+
+    // The method-name list above cannot see the case that actually matters: `write(...)` returns
+    // the Path and callers BIND it (`Path reportPath = ...write(...)`), so a read added beside that
+    // binding reads the report while every name above stays absent. Bind-then-read is what is
+    // forbidden, so that is what is checked.
+    for (Path source : productionJavaSources()) {
+      String text = Files.readString(source, StandardCharsets.UTF_8);
+      for (String bound : boundReportPathVariables(text)) {
+        for (String reader : READ_CALLS) {
+          assertTrue(
+              !text.contains(reader + "(" + bound),
+              source.getFileName()
+                  + " binds a stage-3 report path to `"
+                  + bound
+                  + "` and then reads it ("
+                  + reader
+                  + "). The register classifies these reports as write-only — a reader makes that "
+                  + "false, and changes the row's recoverability and atomicity with it.");
+        }
+      }
+    }
+  }
+
+  /** The read calls a consumer of a report path would plausibly use. */
+  private static final List<String> READ_CALLS =
+      List.of(
+          "Files.readString",
+          "Files.readAllBytes",
+          "Files.readAllLines",
+          "Files.newBufferedReader",
+          "Files.newInputStream",
+          "Files.lines",
+          "MAPPER.readValue",
+          "MAPPER.readTree");
+
+  /** Variable names a source binds from {@code …Report.write(...)} / {@code …reportPathFor(...)}. */
+  private static Set<String> boundReportPathVariables(String source) {
+    var names = new LinkedHashSet<String>();
+    var pattern =
+        java.util.regex.Pattern.compile(
+            "(\\w+)\\s*=\\s*GplStage3[ab]\\w*\\.(?:write|reportPathFor)\\s*\\(");
+    var matcher = pattern.matcher(source);
+    while (matcher.find()) {
+      names.add(matcher.group(1));
+    }
+    return names;
   }
 
   @Test

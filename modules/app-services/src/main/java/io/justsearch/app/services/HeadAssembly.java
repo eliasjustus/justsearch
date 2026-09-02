@@ -112,9 +112,10 @@ public final class HeadAssembly implements AutoCloseable {
   private io.justsearch.app.services.agenthistory.AgentHistoryIndexer agentHistoryIndexer;
 
   /**
-   * Tempdoc 909 item 1 — runs one agent-history reconciliation pass looks at. Matches
-   * {@code AgentRunReconciler.SCAN_LIMIT}: far above any plausible run count, and
-   * {@code listSessions} clamps below it.
+   * Tempdoc 909 item 1 — the number of persisted runs one agent-history reconciliation pass
+   * considers. Matches {@code AgentRunReconciler.SCAN_LIMIT}: far above any plausible run count,
+   * and {@code listSessions} clamps below it. Note this is a LISTING bound, not a work bound —
+   * the per-run cost of a pass is recorded on {@code AgentHistoryIndexer.MAX_REBUILDS_PER_PASS}.
    */
   private static final int AGENT_HISTORY_SCAN_LIMIT = 100_000;
   // Tempdoc 778 — the default-on local feedback-capture flag, shared by every capture site + the

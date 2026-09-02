@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.ObjectMapper;
@@ -74,6 +75,54 @@ final class LlamaServerLogRetentionTest {
     assertEquals(logFile.toFile(), pb.redirectOutput().file());
     assertEquals(logFile.toFile(), pb.redirectError().file());
     assertTrue(pb.redirectOutput().type() == ProcessBuilder.Redirect.Type.APPEND);
+  }
+
+  /**
+   * The failure branch, and the reason the live file is renamed BEFORE anything is pruned. On
+   * Windows a rename fails while a handle is still open — a llama-server that outlived the 5s kill
+   * timeout, an orphan, or a handle the OS has not released yet — which is precisely the
+   * crash-restart loop where retention matters. Prune-then-move would have already deleted the
+   * oldest generation and shifted the rest before discovering it cannot move the live file: fewer
+   * retained logs AND an unbounded live file, from a code path whose whole purpose is retention.
+   *
+   * <p>Windows-tagged because the guarantee is Windows-specific: on Linux an open descriptor does
+   * not block a rename, so the injection cannot be reproduced there (tempdoc 668 lane split). The
+   * open {@code FileOutputStream} is the real mechanism, not a mock — Java opens without
+   * FILE_SHARE_DELETE on Windows, so the rename fails exactly as it does in production.
+   */
+  @Test
+  @Tag("windows")
+  @DisplayName("a live log that cannot be renamed leaves every retained generation intact")
+  void rotationFailureLeavesOlderGenerationsIntact() throws IOException {
+    Path logFile = home.resolve("logs").resolve("llama-server.log");
+    LlamaServerOps ops = newOps();
+    launch(ops, logFile, "oldest\n");
+    launch(ops, logFile, "middle\n");
+    launch(ops, logFile, "live\n");
+    // Precondition: a full retained set, which the failing rotation must not shrink.
+    assertEquals("middle\n", Files.readString(generation(logFile, 1)));
+    assertEquals("oldest\n", Files.readString(generation(logFile, 2)));
+
+    try (var held = new java.io.FileOutputStream(logFile.toFile(), true)) {
+      held.write("still being written\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      held.flush();
+      ops.configureServerLogRedirection(new ProcessBuilder(List.of("does-not-run")), logFile);
+
+      assertEquals(
+          "middle\n",
+          Files.readString(generation(logFile, 1)),
+          "generation 1 must not have been shifted by a rotation that could not complete");
+      assertEquals(
+          "oldest\n",
+          Files.readString(generation(logFile, 2)),
+          "the oldest generation must not have been pruned before the live file moved");
+      assertTrue(
+          Files.exists(logFile),
+          "the live log is still the live log — the launch appends to it rather than losing it");
+      assertTrue(
+          Files.readString(logFile).contains("still being written"),
+          "and it still holds what the previous process wrote");
+    }
   }
 
   /** One launch: configure redirection (which rotates), then write what that launch "produced". */

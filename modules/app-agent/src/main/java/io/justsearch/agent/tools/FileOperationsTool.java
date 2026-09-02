@@ -297,16 +297,17 @@ public final class FileOperationsTool implements OperationHandler {
                 LOG.warn(
                     "Skipping COPY undo: target is outside the indexed roots: {}", action.path);
               } else if (action.recordedDigest == null) {
-                // Tempdoc 909 items 7/8 — a journal written before schema v2 recorded no content
-                // identity, so this undo cannot prove the file is still the agent's copy. Deleting
-                // on an unprovable claim is the failure mode this whole guard exists to end, so the
-                // conservative branch is the default one: preserve and say why.
+                // Tempdoc 909 items 7/8 — no content identity was recorded, so this undo cannot
+                // prove the file is still the agent's copy. Two ways to get here: a journal written
+                // before schema v2, or a copy over FileContentDigest.MAX_DIGEST_BYTES, which is not
+                // hashed. Deleting on an unprovable claim is the failure mode this whole guard
+                // exists to end, so the conservative branch is the default one: preserve, say why.
                 skippedCount++;
                 unverifiable.add(action.path);
                 LOG.warn(
-                    "Skipping COPY undo: the journal records no content identity for {} (a journal"
-                        + " written before this check existed), so the copy cannot be proven"
-                        + " unchanged",
+                    "Skipping COPY undo: the operation log records no content identity for {}"
+                        + " (either it predates this check, or the copy was above the size the app"
+                        + " verifies), so the copy cannot be proven unchanged",
                     action.path);
               } else if (!FileContentDigest.matches(action.path, action.recordedDigest)) {
                 // The bytes are not the ones the agent wrote: the user replaced, edited or restored
@@ -317,6 +318,14 @@ public final class FileOperationsTool implements OperationHandler {
                 LOG.warn(
                     "Skipping COPY undo: {} no longer holds the content the agent copied", action.path);
               } else if (Files.isDirectory(action.path)) {
+                // WHY the check-then-delete window is accepted: the digest was read a few
+                // microseconds ago and the delete is not atomic against it, so a write landing
+                // inside that window is deleted unverified. Closing it would need an exclusive
+                // lock on a file the USER owns, held across the verify and the delete — which
+                // takes the user's own document hostage to an undo and can itself fail on a file
+                // an editor has open. The window replaces an unbounded exposure (every
+                // timestamp-preserving edit, forever) with a microsecond one, on an operation the
+                // user explicitly asked for; it is a narrowing, not a guarantee.
                 executor.deleteDirectory(action.path);
                 undoneCount++;
               } else {

@@ -51,9 +51,15 @@ public final class AgentHistoryIndexer {
   static final String TRANSCRIPT_HEADER = "# Agent run";
 
   /**
-   * Transcripts one reconciliation pass will re-derive. Bounds the work a single start can do on an
-   * install whose history predates the transcript feature; the pass is idempotent, so the remainder
-   * is picked up by the next start (or the next unlock).
+   * Transcripts one reconciliation pass will RE-DERIVE. It bounds the writes, not the pass: every
+   * session the caller supplies is still stat'd by {@link #isReadableTranscript} before this cap can
+   * apply, and the caller itself pays a listing (HeadAssembly asks {@code AgentRunStore} for every
+   * session, which reads and sorts each run's meta). So one pass costs roughly a few filesystem
+   * operations per persisted run, at boot AND at each unlock, plus at most this many rebuilds. That
+   * is off the boot thread and small for realistic run counts, but it is a per-run cost, not a
+   * constant one — the honest bound and the mitigation (a scan cap or a "last reconciled" marker)
+   * are recorded in tempdoc 909 §E. The pass is idempotent, so rebuilds beyond the cap are picked up
+   * by the next start or unlock.
    */
   private static final int MAX_REBUILDS_PER_PASS = 200;
 
