@@ -85,6 +85,13 @@ describe('§32 #1 — projectJobsToTasks (stateless reconcile)', () => {
     expect(getTask('idxjob:h2')?.status).toBe('failed');
   });
 
+  it('a RETRY_EXHAUSTED job → failed Task (not the unknown-state fallback)', () => {
+    // Tempdoc 885 item 21b. Without an explicit case this state falls to `default`, which returns
+    // 'queued' AND warns — so an exhausted job would render as still-waiting work forever.
+    projectJobsToTasks(rows({ pathHash: 'h2x', state: 'RETRY_EXHAUSTED', collection: 'docs' }));
+    expect(getTask('idxjob:h2x')?.status).toBe('failed');
+  });
+
   it('a job that leaves the live set → REMOVED (not marked succeeded)', () => {
     projectJobsToTasks(rows({ pathHash: 'h3', state: 'PENDING', collection: 'docs' }));
     expect(getTask('idxjob:h3')?.status).toBe('queued');

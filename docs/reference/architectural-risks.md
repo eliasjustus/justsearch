@@ -97,7 +97,7 @@ this mechanism exists to end.
 
 **Reassess when:** Ingestion benchmarks show >2x throughput regression vs. direct queue, or users report slow bulk imports exceeding 30 minutes for typical collections.
 
-**Instrument:** `tempdoc:885#Item 21 — job queue`
+**Instrument:** `metric:worker.job_queue.dequeue_rate_per_min`
 
 **Owner tempdoc:** tempdoc 885 item 21 (decision review, lane C).
 
@@ -105,7 +105,11 @@ this mechanism exists to end.
 
 **Notes:** This row is about **write contention under load** — the runtime behaviour. The structural fact that the queue holds a single JDBC connection is [RISK-012](#risk-012-the-job-queue-runs-on-a-single-sqlite-connection); they are not duplicates, and fixing one does not fix the other.
 
-The instrument is deliberately a `tempdoc:` reference and not a `metric:` one. The 2026-03 trigger (">2x throughput regression", ">30 minutes bulk imports") has never been measurable: there is no queue-throughput metric in the tree. Lane C schedules `queue.dequeue_rate_per_min` and `queue.enqueue_rate_per_min` in `WorkerOpsMetricCatalog` and names them as this row's instrument. Verified 2026-09-02: neither identifier appears anywhere under `modules/`. When they ship, this row's instrument becomes `metric:queue.dequeue_rate_per_min`.
+The instrument shipped with tempdoc 885 item 21e. The 2026-03 trigger (">2x throughput regression", ">30 minutes bulk imports") was unmeasurable for the life of this row — the queue exposed only `worker.job_queue.depth`, and depth is a level: a queue draining at 2 docs/s and one draining at 200 read identically at the same depth. Four metrics now measure it, all in `WorkerOpsMetricCatalog`: `worker.job_queue.dequeue_rate_per_min` and `worker.job_queue.enqueue_rate_per_min` (trailing sixty one-second buckets, so two runs of different lengths stay comparable — which the trigger's ratio needs), plus `worker.job_queue.lock_wait_max_ms` and `worker.job_queue.lock_wait_avg_ms`, which say whether contention is *why* a rate is low.
+
+Names corrected 2026-09-02: an earlier revision of this row promised `queue.dequeue_rate_per_min` and `queue.enqueue_rate_per_min`, without the namespace prefix. Those identifiers were unshippable — `WorkerOpsMetricCatalog.NAMESPACE` is `worker`, and the catalog's static initializer throws on any name that does not start with `worker.`, so the row named an instrument that could never exist. The shipped names carry the prefix and join the existing `worker.job_queue.*` family.
+
+First field reading (2026-09-02, lane C live window): after a 30-file ingest, depth read `0` while both rates read `30`/min — the flush that shows why depth alone was never enough. Under an 822-file ingest: depth `313`, dequeue `560`/min. Lock wait measured `0 ms` at `1503` enqueues/min, which is the first evidence either way that the contention this row hypothesises is not present at that scale; a corpus large enough to contend is what would move this row off *Monitoring*.
 
 ## RISK-003: Manual FFM bindings require hand-maintenance on llama.cpp updates
 

@@ -238,7 +238,10 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
               .unit(Unit.MILLISECONDS)
               .archivedTo(RrdArchive.STANDARD)
               .build(),
-          MetricDefinition.gauge(JOB_QUEUE_LOCK_WAIT_AVG_MS).unit(Unit.MILLISECONDS).build(),
+          MetricDefinition.gauge(JOB_QUEUE_LOCK_WAIT_AVG_MS)
+              .unit(Unit.MILLISECONDS)
+              .archivedTo(RrdArchive.STANDARD)
+              .build(),
           MetricDefinition.counter(JOB_QUEUE_OUTCOME_TOTAL)
               .unit(Unit.COUNT)
               .tagKeys(java.util.Set.of(QueueOutcomeTags.KEY_OUTCOME_CLASS))

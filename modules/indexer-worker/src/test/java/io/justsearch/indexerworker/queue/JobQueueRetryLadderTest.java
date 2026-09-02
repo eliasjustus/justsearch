@@ -62,14 +62,15 @@ final class JobQueueRetryLadderTest {
     Files.writeString(file, "content");
     String normalized = PathNormalizer.normalizePath(file.toAbsolutePath().toString());
 
+    // Enqueued ONCE. The enqueue statement is INSERT OR REPLACE, so re-enqueueing inside the loop
+    // would reset attempts and first_failed_at on every iteration — the run would never accumulate,
+    // and the test would stay green even if the attempts cap were restored on the transient arm.
+    jobQueue.enqueue(List.of(file));
+
     // Three failures is exactly DEFAULT_MAX_ATTEMPTS — the number that used to mean "permanent".
     for (int i = 0; i < SqliteJobQueue.DEFAULT_MAX_ATTEMPTS; i++) {
-      jobQueue.enqueue(List.of(file));
-      // Re-enqueue would reset first_failed_at, so drive the failure run without it after the
-      // first: claim from PROCESSING each time, exactly as the indexing loop does.
-      if (i > 0) {
-        setStateViaJdbc(normalized, "PENDING");
-      }
+      // Return the row to PENDING the way the reaper does, without touching the failure run.
+      setStateViaJdbc(normalized, "PENDING");
       jobQueue.pollPending(1);
       jobQueue.markFailed(file, ioFailure("stat failed on attempt " + (i + 1)));
     }
@@ -81,7 +82,12 @@ final class JobQueueRetryLadderTest {
         "a transient outcome must keep retrying past the attempts cap, not become FAILED");
     assertNotNull(row.retryAfter(), "a PENDING retry must carry a scheduled time");
     assertTrue(row.retryAfter() > System.currentTimeMillis(), "the retry is in the future");
-    assertTrue(row.attempts() >= 1, "attempts is still counted, for display");
+    // The exact count is what makes this test falsifiable: three accumulated failures is the cap,
+    // so a restored cap on the transient arm turns the state assertion above red.
+    assertEquals(
+        SqliteJobQueue.DEFAULT_MAX_ATTEMPTS,
+        row.attempts(),
+        "attempts is still counted for display, and the run really did accumulate three");
     assertNotNull(row.firstFailedAt(), "the failure run must have an origin for the 7-day bound");
   }
 
@@ -177,6 +183,81 @@ final class JobQueueRetryLadderTest {
     assertNull(reset.retryAfter(), "no stale backoff survives the reset");
     assertNull(reset.firstFailedAt(), "the 7-day window restarts from the next failure");
     assertFalse(jobQueue.pollPending(10).isEmpty(), "the revived job is claimable again");
+  }
+
+  @Test
+  @DisplayName("an exhausted row counts as failed in BOTH count projections")
+  void exhaustedRowCountsAsFailedInEveryProjection() throws Exception {
+    Path file = tempDir.resolve("both-projections.txt");
+    Files.writeString(file, "content");
+    String normalized = PathNormalizer.normalizePath(file.toAbsolutePath().toString());
+
+    jobQueue.enqueue(List.of(file));
+    jobQueue.pollPending(1);
+    jobQueue.markFailed(file, ioFailure("share offline"));
+    setFirstFailedAtViaJdbc(
+        normalized,
+        System.currentTimeMillis() - IngestionRetryLadder.MAX_RETRY_WINDOW_MS - 86_400_000L);
+    setStateViaJdbc(normalized, "PENDING");
+    jobQueue.pollPending(1);
+    jobQueue.markFailed(file, ioFailure("share still offline"));
+    assertEquals("RETRY_EXHAUSTED", readRow(normalized).state());
+
+    // The two projections are computed by DIFFERENT queries in different classes
+    // (SqliteJobQueue.failureSummary vs SqliteQueueSwitchBufferOps.stateCounts). Widening one and
+    // not the other let them disagree about the same row, which is the defect this pins.
+    assertEquals(1L, jobQueue.failureSummary().failedCount(), "failureSummary counts it failed");
+    assertEquals(
+        1L,
+        jobQueue.jobStateCounts().failedCount(),
+        "jobStateCounts must agree with failureSummary about the same row");
+    assertEquals(
+        0L, jobQueue.jobStateCounts().pendingCount(), "an exhausted row is not pending");
+    assertEquals(0L, jobQueue.queueDepth(), "an exhausted row is not in the queue depth");
+  }
+
+  @Test
+  @DisplayName("listFailedJobs reports each row's real terminal state, not a blanket FAILED")
+  void failedJobListingDistinguishesTheTwoTerminalStates() throws Exception {
+    Path parsed = tempDir.resolve("unparseable.pdf");
+    Path unread = tempDir.resolve("unreadable.txt");
+    Files.writeString(parsed, "not a pdf");
+    Files.writeString(unread, "on a dead share");
+    String unreadNorm = PathNormalizer.normalizePath(unread.toAbsolutePath().toString());
+
+    // One genuinely unparseable file -> FAILED on the first attempt.
+    jobQueue.enqueue(List.of(parsed));
+    jobQueue.pollPending(1);
+    jobQueue.markFailed(
+        parsed,
+        IngestionOutcome.of(
+            IngestionOutcomeClass.PARSER_FAILED,
+            IngestionReasonCodes.PARSER_FAILED,
+            IngestionRetryPolicy.NONE,
+            "TikaException"));
+
+    // One file we never managed to read -> RETRY_EXHAUSTED after the window.
+    jobQueue.enqueue(List.of(unread));
+    jobQueue.pollPending(1);
+    jobQueue.markFailed(unread, ioFailure("share offline"));
+    setFirstFailedAtViaJdbc(
+        unreadNorm,
+        System.currentTimeMillis() - IngestionRetryLadder.MAX_RETRY_WINDOW_MS - 86_400_000L);
+    setStateViaJdbc(unreadNorm, "PENDING");
+    jobQueue.pollPending(1);
+    jobQueue.markFailed(unread, ioFailure("share still offline"));
+
+    var byState = new java.util.HashMap<String, String>();
+    for (JobQueue.FailedJobInfo j : jobQueue.listFailedJobs(10)) {
+      byState.put(j.state(), j.path());
+    }
+    assertEquals(
+        java.util.Set.of("FAILED", "RETRY_EXHAUSTED"),
+        byState.keySet(),
+        "both terminal states must be listed, and distinguishable — the failure API used to"
+            + " hardcode FAILED for every row, relabelling a week of retries as a parse failure");
+    assertTrue(byState.get("RETRY_EXHAUSTED").endsWith("unreadable.txt"));
+    assertTrue(byState.get("FAILED").endsWith("unparseable.pdf"));
   }
 
   @Test

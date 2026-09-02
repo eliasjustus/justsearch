@@ -1383,6 +1383,10 @@ message FailedJob {
   int32 attempts = 3;
   int64 last_updated_ms = 4;
   string collection = 5;
+  // Tempdoc 885 item 21b: FAILED | RETRY_EXHAUSTED. Without it the failure API had to guess, and
+  // guessed "FAILED" for every row -- relabelling a job that gave up after a week of retries as
+  // one whose content could not be parsed.
+  string state = 6;
 }
 
 message ListFailedJobsResponse {

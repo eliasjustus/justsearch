@@ -275,9 +275,10 @@ public final class SqliteSchema {
    * <p>The retry ladder is bounded at 7 days, and a bound needs an origin. {@code attempts} cannot
    * serve as one once transient failures stop counting against {@code MAX_ATTEMPTS} (item 21a) —
    * an unreachable network share would otherwise retry forever with no terminal state to show a
-   * user. NULL means "no failure run in progress"; it is set on the first failure and cleared by
-   * anything that resets the row (a completion, or a re-enqueue, which is
-   * {@code INSERT OR REPLACE} and therefore restores the column default).
+   * user. NULL means "no failure run in progress". It is set on the first failure and cleared by
+   * a re-enqueue, which is {@code INSERT OR REPLACE} and therefore restores every unlisted column
+   * to its default. {@code markDone} does NOT clear it — a DONE row is not re-examined, so the
+   * stale origin is inert; the next enqueue of that path resets it before it could matter.
    */
   public static final String MIGRATE_V9_TO_V10_ADD_FIRST_FAILED_AT = """
       ALTER TABLE jobs ADD COLUMN first_failed_at INTEGER DEFAULT NULL

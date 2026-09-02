@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS — chunks 1, 2, 2b, 2c, 2d, 3 and 4 landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green + argfile fallback + review fixes; item 3 foreground duty cycle; items 6 + 21 internal health sampler + bounded retry ladder, live arms pending); item 19-measure open
+status: IN PROGRESS — chunks 1, 2, 2b, 2c, 2d, 3 and 4 landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green + argfile fallback + review fixes; item 3 foreground duty cycle, live arms pending; items 6 + 21 internal health sampler + bounded retry ladder, live-verified + independent review applied); item 19-measure open
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
@@ -1819,9 +1819,18 @@ overshooting the bound).
   on the pre-fix code. It additionally asserts `requests.size() > 1` (50 maximal documents cannot
   legitimately ride one request) and that the flattened request ids equal the input list in order —
   so a pager that split correctly but dropped or reordered a page fails.
-* **`transientFailuresDoNotCountAgainstTheAttemptsCap`** fails exactly three times, which is
-  `DEFAULT_MAX_ATTEMPTS` — the number that *was* the terminal threshold. A test using two failures
-  would have passed before the change.
+* **`transientFailuresDoNotCountAgainstTheAttemptsCap`** — **this claim was FALSE as originally
+  written, and the independent review caught it (B1).** The test enqueued *inside* the failure loop.
+  `enqueue` is `INSERT OR REPLACE`, so every iteration reset `attempts` and `first_failed_at`: the
+  run never accumulated, the `if (i > 0)` guard was unreachable, and the final assertion was
+  `attempts() >= 1`. Restoring the attempts cap on the transient arm left it **green** — the precise
+  failure this bullet claimed it excluded. Fixed by enqueuing once above the loop, dropping the dead
+  guard, and asserting `attempts() == DEFAULT_MAX_ATTEMPTS`. Verified by scratch falsification
+  (§UD.1): with the cap restored on the transient arm, this case and
+  `transientBackoffFollowsTheLadder` both go red; reverting the scratch returns them to green.
+  Recorded rather than quietly corrected, because the lesson is the general one — a precision claim
+  in a critical-analysis pass is worth exactly as much as the falsification behind it, and this one
+  had none.
 * **`ladderOutgrowsTheOldSeventeenMinuteCap`** names the pre-change ceiling as a literal and asserts
   the third step exceeds it, so the case cannot silently pass if the ladder were reverted to
   exponential-with-cap.
@@ -2219,7 +2228,151 @@ branch's: `git diff origin/main --name-only` lists no `EnvRegistry`, no `Resolve
 schema and no `gates/config-surface/**` file, and `--preflight origin/main` reports "No gates
 affected by this diff". The baseline (`gates/config-surface/baseline.txt`, `env_sysprop_pairs 244`)
 is stale relative to what `main` already ships, while `verify-runtime-config-matrix` is content at
-246 — so the ratchet, not the surface, is what is behind. **Deliberately not advanced here:**
-editing another lane's baseline to turn a red green is the exact move that file's own header calls
-out ("appending a line is the one-line way to make the funnel test green without fixing anything").
-Routed for an `expected-state` pin plus a tracked baseline advance.
+246 — so the ratchet, not the surface, is what is behind.
+
+**Resolved (`83282b82`), and the first instinct here was wrong.** This chunk initially declined to
+advance the pin, reasoning that editing another lane's baseline to turn a red green is the move that
+file's own header calls out. That reasoning does not survive contact with tempdoc 883's rule: a PR
+that declares growth must advance the pin **in the same commit**, because the changeset loader
+honours only a changeset present in the current diff. #598 declared the two pacing keys and left the
+pin at 244, so its declaration evaporated on merge and left `main` measuring 246 against 244 — which
+reds the bare gate for every later PR, this one included, and for CI's Public-claims job. Refusing to
+advance it was not restraint; it was leaving a known-broken ratchet broken for everyone downstream.
+`gates/config-surface/.changesets/885-advance-baseline-to-246.md` advances it with the reasoning,
+naming `854-w1-advance-baseline-to-112-243.md` and `883-advance-baseline-to-108-244.md` as the two
+prior instances of the identical remedy. One line moves: measured `yaml_keys` (108) and `config_keys`
+(56) already equal their pins.
+
+## §UD — independent review of #600, applied (2026-09-02)
+
+An independent reviewer returned NEEDS-FIXES on #600 with four blockers, ten should-fixes and a set
+of nits. All are applied. The two worth reading are the ones where a *test* was the defect, because
+both are cases where this chunk's own §UC pass had asserted the opposite.
+
+### UD.1 B1 — the attempts-cap test proved nothing (and §UC.4 said it did)
+
+`JobQueueRetryLadderTest.transientFailuresDoNotCountAgainstTheAttemptsCap` called
+`jobQueue.enqueue(...)` **inside** the three-failure loop. The enqueue statement is
+`INSERT OR REPLACE`, so each iteration reset `attempts` to 0 and `first_failed_at` to NULL: the
+failure run never accumulated past one, the `if (i > 0)` re-PENDING guard was unreachable, and the
+closing assertion was `attempts() >= 1`, which a single failure satisfies. Restoring the attempts cap
+on the transient arm — the exact regression the test is named for — left it green.
+
+Fixed: enqueue once above the loop, drop the dead guard, assert
+`attempts() == DEFAULT_MAX_ATTEMPTS`.
+
+**Scratch falsification, run rather than reasoned.** Temporarily changing the transient arm to
+`newAttempts >= maxAttempts ? STATE_FAILED : …`:
+
+```text
+three IO_FAILED outcomes stay PENDING with retry_after set, past the attempts cap  FAILED
+the backoff ladder runs 1 min, 10 min, 1 h, 6 h, 24 h — not a 17-minute cap        FAILED
+14 tests completed, 2 failed
+```
+
+Scratch reverted; 14/14 green. §UC.4's bullet is rewritten in place to record that it was false.
+
+### UD.2 B2 — age-based staleness had no coverage, and the first fix still had none
+
+`SAMPLE_STALE_PERIODS` could be changed from 3 to 3_000_000 with `:modules:ui:test` staying green:
+the age arm read `System.currentTimeMillis()` inline and the sample field was private, so nothing
+could reach it. Fixed with an injectable clock (`setClockForTesting`) plus `seedSampleForTesting`,
+and two cases: a sample 1 ms inside the window reads fresh, 1 ms past it reads stale, and an aged-out
+sample recovers on the next tick — each with `verifyNoMoreInteractions` proving no re-observation
+happened at the boundary.
+
+**The first version of those tests was itself vacuous**, and only the falsification exposed it: they
+computed the window as `SAMPLE_STALE_PERIODS * SAMPLER_IDLE_PERIOD_MS`, so inflating the constant
+moved the assertion with it and the 3_000_000 scratch *still* passed. The boundary is now the literal
+`30_000L`, with both constants pinned by their own `assertEquals`. Re-run of the same scratch:
+
+```text
+a sample older than SAMPLE_STALE_PERIODS periods reads stale; one within does not  FAILED
+an aged-out sample recovers to fresh when the sampler ticks again                  FAILED
+```
+
+That is the same mistake twice in one item — a test whose expectation is derived from the value it is
+meant to constrain. It is worth naming: an assertion is only falsifiable if its expected side is
+independent of the code under test.
+
+### UD.3 B3 — one of seven queries was never widened
+
+`SqliteQueueSwitchBufferOps.stateCounts()` still counted `state = 'FAILED'` while the six queries in
+`SqliteJobQueue` had been widened to `IN ('FAILED', 'RETRY_EXHAUSTED')`. The two projections are
+computed by different classes, so `jobStateCounts().failedCount()` silently disagreed with
+`failureSummary().failedCount()` about the same row — and `03-knowledge-server.md`'s claim that
+"every projection" counts an exhausted row as failed was false. Widened, and pinned by
+`exhaustedRowCountsAsFailedInEveryProjection`, which asserts the two projections agree **and** that
+the row is absent from `pendingCount` and `queueDepth`.
+
+### UD.4 B4 — the failure API relabelled every exhausted job as FAILED
+
+`IndexingController` hardcoded `m.put("state", "FAILED")` at both emit sites because `FailedJobInfo`
+carried no state — so a job that spent seven days failing to be *read* was reported as one whose
+content could not be *parsed*. `state` is now carried end to end: `jobs.state` →
+`JobQueue.FailedJobInfo` → `FailedJob.state` (proto field 6, additive) →
+`IndexingService.FailedJobInfo` → both controller sites, with an empty-string fallback to `FAILED`
+for a pre-field Worker. `failedJobListingDistinguishesTheTwoTerminalStates` pins both states through
+the real queue. The FE's `FailedJobsDrawer` does not branch on the field today; it is now available
+and truthful rather than fabricated.
+
+### UD.5 Should-fixes and nits
+
+* **S1** — `RISK-002`'s Instrument is now `metric:worker.job_queue.dequeue_rate_per_min`. The row had
+  promised `queue.dequeue_rate_per_min` *without* the namespace, which was unshippable:
+  `WorkerOpsMetricCatalog.NAMESPACE` is `worker` and the catalog's static initializer throws on any
+  other prefix, so the row named an instrument that could never have existed. `--gate adr-coverage`
+  passes (the rule resolves `metric:` ids by scanning `modules/**/src/main`). Notes rewritten with
+  the shipped names and the first field reading.
+* **S2** — five literal `assertEquals` pin the metric names, mirroring
+  `WorkerOpsPacingWireFormatRegressionTest`.
+* **S3** — `JobBatchWriter` stored the literal `"Index write failed"` on a `RETRY_WITH_BACKOFF`
+  outcome with the exception in scope: seven days of retries, then `RETRY_EXHAUSTED`, with no
+  diagnostic anywhere but a rotated log. Now `failureDetail(e)`. The DEFER arm keeps
+  `"Runtime draining"` deliberately — that literal IS the whole fact there, and its exception is a
+  routing sentinel, not a diagnostic. A repo grep finds no other `markFailed` literal.
+* **S4 / S8** — the five queue metrics are documented in `08-observability.md`'s inventory beside the
+  pacing trio, and UL.3a's sampling-lag limitation is stated in the health-sampling section.
+* **S5** — `MAX_CONTENT_CHARS` was triplicated. Both modules already depend on `ipc-common`, so it is
+  now `GrpcMessageLimits.MAX_DOCUMENT_CONTENT_CHARS`, shared by the producer that trims to it and the
+  pager that sizes its batches by it (sharing preferred over a parity test, per the review).
+* **S7** — FE coverage for `RETRY_EXHAUSTED`: the task rail maps it to `failed` (without an explicit
+  arm it falls to `default`, which returns `queued` *and* warns, so an exhausted job would render as
+  still-waiting work forever), and the ledger labels it "Index gave up" rather than "Indexed".
+* **S10** — the `check-tempdoc-numbers` red is pinned as
+  `tempdoc-numbers-changeset-per-tempdoc-false-positive`; the fix is tracked below.
+* **Nits** — the metric tag no longer receives the literal string `"null"` (the observer passes
+  `null` and `QueueOutcomeTags.UNKNOWN` names it); a `?fresh=true` handler test covers the
+  query-param routing including the `TRUE` / `false` / absent cases; `ScanRollupLedger` uses
+  `IndexingJobView.STATE_*`; `SqliteSchema`'s "cleared by a completion" comment was false
+  (`markDone` does not touch `first_failed_at`) and now says what is true; `lock_wait_avg_ms` gained
+  `.archivedTo(STANDARD)` to match its sibling; and `WorkerStatusSamplerTest`'s tap case asserts an
+  asserted-**then**-cleared transition instead of a vacuous `isEmpty()`, which an unrun tap also
+  satisfies.
+
+### Open items (item 21)
+
+1. **`GrpcIngestService.retryIndexingJob` reports a fabricated previous state.**
+   `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/GrpcIngestService.java:2158-2161`
+   sets `setPreviousState("FAILED")` on success without ever reading the row. Already inaccurate for
+   a `PENDING`-in-backoff job before this item, and now also for `RETRY_EXHAUSTED`. Fix shape: read
+   the state inside the same transaction as the re-enqueue and return it. Not bundled with B4 because
+   it is a diagnostic field with no consumer that branches on it.
+2. **Delete the untyped `JobQueue.markFailed(Path, String)`.** No production caller remains — every
+   ingestion failure now carries an `IngestionOutcome` — but it keeps a second terminal rule alive
+   (the `MAX_ATTEMPTS` cap the typed transient arm no longer uses). Pinned meanwhile by
+   `untypedFailurePathKeepsTheAttemptsCap` and documented as unreachable at
+   `modules/worker-core/src/main/java/io/justsearch/indexerworker/queue/JobQueue.java`. Not bundled
+   here because removing it is an interface change across the 13 in-test `JobQueue` doubles plus 9
+   call sites, not a local edit.
+3. **`check-tempdoc-numbers` treats one tempdoc's several changesets as a collision.** Its unit is
+   the number, which is right for `docs/tempdocs/<n>-*.md` (one number, one doc) and wrong for
+   `gates/*/.changesets/<tempdoc>-<slug>.md`. Fix shape: scope the checker off
+   `gates/*/.changesets/**`, or key changesets by their frontmatter `tempdoc:` field rather than the
+   filename prefix.
+4. **`POST /api/indexing/roots` drops a supplied `collection`** — see UL.6; owner
+   `modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java:156-175`.
+5. **`MAX_CONTENT_CHARS` still has two further copies** outside this item's reach:
+   `modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/DocAccess.java:51`
+   and `BatchDocAccess.java:49`. They document the same Worker cap for the conversation SPI; folding
+   them onto `GrpcMessageLimits.MAX_DOCUMENT_CONTENT_CHARS` is a separate, safe follow-up.

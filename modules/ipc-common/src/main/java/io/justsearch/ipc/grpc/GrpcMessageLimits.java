@@ -16,4 +16,16 @@ public final class GrpcMessageLimits {
 
   /** Max inbound message size, in bytes, for both the Worker gRPC server and the Head client. */
   public static final int MAX_INBOUND_MESSAGE_BYTES = 32 * 1024 * 1024;
+
+  /**
+   * Max characters of document content the Worker returns per document on {@code FetchDocuments}
+   * (tempdoc 885 item 6 [R6b]).
+   *
+   * <p>Shared for the same reason as the size limit above: the producer trims to it
+   * ({@code GrpcSearchService}) and the Head's pager sizes its batches by it
+   * ({@code BoundedDocumentFetch}), so a change on one side that the other did not see would put
+   * the byte budget quietly back over the transport ceiling — the exact drift class this class was
+   * created for.
+   */
+  public static final int MAX_DOCUMENT_CONTENT_CHARS = 200_000;
 }

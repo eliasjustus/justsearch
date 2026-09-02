@@ -205,7 +205,9 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       return;
     }
     try {
-      observer.accept(outcomeClassName(outcome));
+      // NOT outcomeClassName(): that returns the literal "null" for logging, which would reach the
+      // metric as a tag VALUE "null" instead of the schema's UNKNOWN.
+      observer.accept(outcome != null ? outcome.outcomeClass().name() : null);
     } catch (RuntimeException e) {
       log.debug("Queue outcome observer failed: {}", e.getMessage());
     }
@@ -1591,7 +1593,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       int effectiveLimit = limit > 0 ? Math.min(limit, 1000) : 100;
 
       String sql = """
-          SELECT path, error_message, attempts, last_updated, collection
+          SELECT path, error_message, attempts, last_updated, collection, state
           FROM jobs WHERE state IN ('FAILED', 'RETRY_EXHAUSTED')
           ORDER BY last_updated DESC
           LIMIT ?
@@ -1607,7 +1609,8 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
                 rs.getString(2),
                 rs.getInt(3),
                 rs.getLong(4),
-                rs.getString(5)));
+                rs.getString(5),
+                rs.getString(6)));
           }
         }
       }
@@ -1654,7 +1657,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       int effectiveLimit = limit > 0 ? Math.min(limit, 1000) : 100;
 
       String sql = """
-          SELECT path, error_message, attempts, last_updated, collection
+          SELECT path, error_message, attempts, last_updated, collection, state
           FROM jobs WHERE state IN ('FAILED', 'RETRY_EXHAUSTED') AND path >= ? AND path < ?
           ORDER BY last_updated DESC
           LIMIT ?
@@ -1672,7 +1675,8 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
                 rs.getString(2),
                 rs.getInt(3),
                 rs.getLong(4),
-                rs.getString(5)));
+                rs.getString(5),
+                rs.getString(6)));
           }
         }
       }

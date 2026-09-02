@@ -31,8 +31,8 @@ import java.util.function.Function;
  */
 public final class BoundedDocumentFetch {
 
-  /** Mirrors {@code GrpcSearchService.MAX_CONTENT_CHARS} — the per-document content cap. */
-  static final int MAX_CONTENT_CHARS = 200_000;
+  /** The per-document content cap, shared with the producer that trims to it. */
+  static final int MAX_CONTENT_CHARS = GrpcMessageLimits.MAX_DOCUMENT_CONTENT_CHARS;
 
   /** UTF-8 worst case per Java char within the BMP. */
   static final int MAX_UTF8_BYTES_PER_CHAR = 3;
