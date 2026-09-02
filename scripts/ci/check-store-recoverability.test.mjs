@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   checkDurableStoreRegister,
@@ -7,6 +10,8 @@ import {
   findHardcodedCipherCalls,
 } from './check-store-recoverability.mjs';
 import { isPersistenceWriteSource } from '../governance/lib/persistence-write-scan.mjs';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 let passed = 0;
 const failures = [];
@@ -109,6 +114,7 @@ function check(rows, options = {}) {
     catalogEntries: options.catalog ?? [CATALOG[0]],
     discoveredWriteSites: options.discovered ?? ['Store.java'],
     nonDurableWriteSites: options.nonDurable ?? [],
+    pendingDurableClassification: options.pending ?? null,
     pathExists: options.pathExists ?? (() => true),
     readSource: options.readSource ?? (() => 'var p = base.resolve("conversations");'),
   });
@@ -351,7 +357,7 @@ test('an unknown storage root fails, so a root cannot be invented or misspelled'
   assert.ok(result.some((f) => f.includes('unknown root')), result.join(' | '));
 });
 
-for (const root of ['DATA_DIR', 'AI_HOME', 'PROGRAM_DATA_OR_DATA_DIR', 'USER_INDEXED_ROOTS']) {
+for (const root of ['DATA_DIR', 'AI_HOME', 'PROGRAM_DATA_OR_DATA_DIR']) {
   test(`the enumerated root ${root} is accepted`, () => {
     const result = check([readyRow({ root })]);
     assert.ok(!result.some((f) => f.includes('unknown root')), result.join(' | '));
@@ -364,6 +370,68 @@ test('the root enum does NOT catch a wrong-but-enumerated root — stated, not i
   // than it is and stops looking for the real answer.
   const result = check([readyRow({ root: 'AI_HOME' })]);
   assert.ok(!result.some((f) => f.includes('unknown root')));
+});
+
+test('a row without currentVersion fails — updater.rs cannot deserialise the register without it', () => {
+  // The regression that broke #604's CI on two jobs. Six HARDENING_REQUIRED rows omitted
+  // currentVersion; the JS gate only demanded it for READY + READ_IN_PLACE rows, but updater.rs
+  // takes `current_version: u32` with NO serde default, so one such row makes the whole embedded
+  // register unparseable and validate_store_compatibility rejects EVERY release descriptor.
+  const row = readyRow();
+  delete row.currentVersion;
+  const result = check([row]);
+  assert.ok(result.some((f) => f.includes('currentVersion is required on every row')), result.join(' | '));
+});
+
+test('a row without readableLegacyVersions fails', () => {
+  const row = readyRow();
+  delete row.readableLegacyVersions;
+  const result = check([row]);
+  assert.ok(result.some((f) => f.includes('readableLegacyVersions is required on every row')), result.join(' | '));
+});
+
+test('currentVersion 0 is valid — the convention for bytes with no version envelope', () => {
+  const result = check([readyRow({ currentVersion: 0, status: 'HARDENING_REQUIRED', upgradeHandling: 'RESET' })]);
+  assert.ok(!result.some((f) => f.includes('currentVersion')), result.join(' | '));
+});
+
+test('a non-integer currentVersion fails rather than being coerced', () => {
+  const result = check([readyRow({ currentVersion: '1' })]);
+  assert.ok(result.some((f) => f.includes('currentVersion is required on every row')), result.join(' | '));
+});
+
+test('the REAL register satisfies what updater.rs deserialises', () => {
+  // Cargo cannot build in this worktree (the Tauri build script needs staged headless resources),
+  // so the Rust contract is asserted here instead — and the field list is PARSED OUT of updater.rs
+  // rather than restated, so it cannot drift from the struct it mirrors. serde has no defaults on
+  // LocalDurableStore, so one row missing one field makes include_str! unparseable and
+  // validate_store_compatibility rejects every release descriptor.
+  const rust = fs.readFileSync(
+    path.resolve(REPO_ROOT, 'modules/shell/src-tauri/src/updater.rs'),
+    'utf8',
+  );
+  const block = /struct LocalDurableStore \{([\s\S]*?)\n\}/.exec(rust);
+  assert.ok(block, 'LocalDurableStore struct not found — updater.rs moved; re-point this test');
+  const fields = [...block[1].matchAll(/^\s*(\w+):\s*([\w<>]+),/gm)].map(([, name, type]) => ({
+    // #[serde(rename_all = "camelCase")] on the struct.
+    json: name.replace(/_([a-z])/g, (_m, c) => c.toUpperCase()),
+    numeric: /^u\d+$/.test(type),
+  }));
+  assert.ok(fields.length >= 5, `expected the struct to declare fields, parsed ${fields.length}`);
+
+  const real = JSON.parse(
+    fs.readFileSync(path.resolve(REPO_ROOT, 'governance/store-recoverability.v1.json'), 'utf8'),
+  );
+  for (const row of real.durableStores) {
+    for (const field of fields) {
+      const value = row[field.json];
+      const ok = field.numeric
+        ? Number.isInteger(value) && value >= 0
+        : typeof value === 'string' && value.length > 0;
+      assert.ok(ok, `${row.id}: ${field.json} is required by updater.rs LocalDurableStore`);
+    }
+    assert.ok(Array.isArray(row.readableLegacyVersions), `${row.id}: readableLegacyVersions`);
+  }
 });
 
 test('a non-durable classification without a reason fails', () => {
