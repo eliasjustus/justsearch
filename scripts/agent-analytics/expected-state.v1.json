@@ -154,6 +154,17 @@
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: python -m pytest -q scripts/jseval"
+    },
+    {
+      "id": "governance-git-base-fallback-head1-multicommit",
+      "match": [
+        "governance/run.mjs .*--gate (config-surface|consumer-drift|test-to-code|prose-tier-register)"
+      ],
+      "claim": "A gate whose baseline.strategy is 'git-base' resolves its PR base to HEAD~1 when no explicit fallback is configured (scripts/governance/lib/git-utils.mjs:83-92), so on a LOCAL branch with more than one commit it only sees the last commit's changesets. A committed changeset from an earlier commit on the same branch is invisible and the gate reports silent-growth. This is a local-run artifact, not a regression: CI resolves the real PR base. Verify with 'node scripts/governance/run.mjs --gate <id> --preflight <your PR base ref>' before believing a silent-growth finding on a multi-commit branch.",
+      "evidence": "tempdoc 885 chunk 5: config-surface passed with the changeset untracked (locallyAddedFiles path), then failed once committed 5 commits back; diffAddedModifiedFiles against the real base a479ce29 and against origin/main both find it, and --preflight origin/main reports the changeset as authored.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-11-30",
+      "exitProbe": "node scripts/governance/run.mjs --gate config-surface --preflight origin/main"
     }
   ]
 }
