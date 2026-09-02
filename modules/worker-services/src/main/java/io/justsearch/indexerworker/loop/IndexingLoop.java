@@ -178,6 +178,12 @@ public class IndexingLoop implements Closeable {
   private Thread loopThread;
   private long indexedSinceCommit = 0;
   private long lastCommitTime = System.currentTimeMillis();
+
+  /**
+   * When the current run of empty polls began, or 0 when the queue last had work (tempdoc 885
+   * item 19). Only read on the loop thread.
+   */
+  private long emptyPollSinceMs = 0L;
   // Tempdoc 516 Slice 4a.1: pendingMarkDone moved into IngestionOutcomeJournal, encapsulated.
   private final IngestionOutcomeJournal journal;
   // Tempdoc 516 Slice 4d (W6): SPLADE retry-backoff state + disambiguation latch moved to
@@ -449,6 +455,15 @@ public class IndexingLoop implements Closeable {
     return config != null ? config.ai().backfillPacing() : ResolvedConfig.Ai.BackfillPacing.DEFAULTS;
   }
 
+  /**
+   * Resolved {@code index.commit.idle_ms} (tempdoc 885 item 19); 0 — the historical
+   * commit-on-first-empty-poll behaviour — when no config is available.
+   */
+  private long commitIdleMs() {
+    ResolvedConfig config = resolvedConfigSupplier.get();
+    return config != null && config.index() != null ? config.index().commitIdleMs() : 0L;
+  }
+
   /** Returns a real span when tracing is enabled, or a no-op singleton when disabled. */
   private Span maybeSpan(String name) {
     if (!detailedTracing) return Span.getInvalid();
@@ -631,7 +646,12 @@ public class IndexingLoop implements Closeable {
           // The time-based commit strategy below runs only after processing jobs. If the queue becomes empty
           // and we go idle, we would otherwise never reach the commit check again, leaving the index
           // uncommitted (no segments_*), which makes the main process report indexAvailable=false.
-          if (indexedSinceCommit > 0) {
+          //
+          // Tempdoc 885 item 19: index.commit.idle_ms (default 0) can require the queue to have
+          // stayed empty for a while first, so a bulk run's momentary drains stop forcing a commit.
+          if (emptyPollSinceMs == 0L) emptyPollSinceMs = System.currentTimeMillis();
+          if (LoopPacingPolicy.isIdleCommitTriggered(
+              indexedSinceCommit, System.currentTimeMillis() - emptyPollSinceMs, commitIdleMs())) {
             try {
               commitOps.commitAndTrack(CommitReason.INDEXING_LOOP_IDLE);
               metrics.recordCommit();
@@ -665,6 +685,9 @@ public class IndexingLoop implements Closeable {
                   : LoopPacingPolicy.idleSleepMs());
           continue;
         }
+
+        // The queue is not empty, so the idle window restarts from the next empty poll.
+        emptyPollSinceMs = 0L;
 
         // Start new batch if transitioning from idle
         if (currentState != LoopState.RUNNING) {

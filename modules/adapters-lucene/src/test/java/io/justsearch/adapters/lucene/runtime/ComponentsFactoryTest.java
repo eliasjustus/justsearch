@@ -37,11 +37,13 @@ class ComponentsFactoryTest {
 
   private FieldMapper fieldMapper;
   private SsotAnalyzerRegistry analyzerRegistry;
+  private NrtReopenStats nrtStats;
 
   @BeforeEach
   void setUp() {
     fieldMapper = new FieldMapper(FieldCatalogDef.forTesting(4));
     analyzerRegistry = new SsotAnalyzerRegistry();
+    nrtStats = new NrtReopenStats();
   }
 
   private static ResolvedConfig resolveForTest(String yaml) {
@@ -60,7 +62,7 @@ class ComponentsFactoryTest {
     ResolvedConfig rc = resolveForTest(yaml);
     return ComponentsFactory.build(
         rc, null, path, readOnly, fieldMapper, analyzerRegistry,
-        knnOverride, null, null, new AtomicLong(), 500L, Long.MAX_VALUE);
+        knnOverride, null, null, new AtomicLong(), nrtStats, 500L, Long.MAX_VALUE);
   }
 
   private void closeComponents(Components c) {
@@ -97,7 +99,7 @@ class ComponentsFactoryTest {
     ResolvedConfig rc = resolveForTest(yaml);
     return ComponentsFactory.build(
         rc, null, path, readOnly, fieldMapper, analyzerRegistry,
-        knnOverride, metrics, null, new AtomicLong(), 500L, Long.MAX_VALUE);
+        knnOverride, metrics, null, new AtomicLong(), nrtStats, 500L, Long.MAX_VALUE);
   }
 
   // -- Directory type tests --
@@ -275,7 +277,7 @@ class ComponentsFactoryTest {
     Components c =
         ComponentsFactory.build(
             rc, null, idx, false, fieldMapper, analyzerRegistry,
-            null, null, null, new AtomicLong(), 750L, 15_000L);
+            null, null, null, new AtomicLong(), nrtStats, 750L, 15_000L);
     try {
       assertEquals(750L, c.nrtTargetMaxStaleMs(), "target stale should use default");
       assertEquals(15_000L, c.nrtHardMaxStaleMs(), "hard stale should use default");
@@ -304,7 +306,7 @@ class ComponentsFactoryTest {
     Components c =
         ComponentsFactory.build(
             rc, null, idx, false, fieldMapper, analyzerRegistry,
-            null, null, null, new AtomicLong(), 500L, 50L);
+            null, null, null, new AtomicLong(), nrtStats, 500L, 50L);
     try {
       assertNotNull(c.crtrt(), "read-write open must produce a reopen thread");
       assertEquals(
@@ -329,7 +331,7 @@ class ComponentsFactoryTest {
     Components c =
         ComponentsFactory.build(
             rc, null, idx, false, fieldMapper, analyzerRegistry,
-            null, null, null, new AtomicLong(), 500L, 50L);
+            null, null, null, new AtomicLong(), nrtStats, 500L, 50L);
     try {
       assertEquals(500_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMaxStaleNS"));
       assertEquals(50_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMinStaleNS"));
@@ -356,10 +358,92 @@ class ComponentsFactoryTest {
     Components c =
         ComponentsFactory.build(
             rc, null, idx, false, fieldMapper, analyzerRegistry,
-            null, null, null, new AtomicLong(), 500L, 50L);
+            null, null, null, new AtomicLong(), nrtStats, 500L, 50L);
     try {
       assertEquals(200_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMaxStaleNS"));
       assertEquals(200_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMinStaleNS"));
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  // -- Tempdoc 885 item 19: index.nrt.mode --
+
+  /**
+   * The default arm must be untouched: no {@code index.nrt.mode} configured resolves to
+   * CONTINUOUS, and the reopen thread keeps the {@code index.nrt.*} bounds — the
+   * {@code background_reopen_ms} knob must not leak into it.
+   */
+  @Test
+  void continuousModeIsTheDefaultAndIgnoresTheBackgroundReopenKnob() throws Exception {
+    String yaml =
+        """
+        index:
+          nrt:
+            background_reopen_ms: 9000
+        """;
+    Path idx = tempDir.resolve("nrt-mode-default-idx");
+    ResolvedConfig rc = resolveForTest(yaml);
+    Components c =
+        ComponentsFactory.build(
+            rc, null, idx, false, fieldMapper, analyzerRegistry,
+            null, null, null, new AtomicLong(), nrtStats, 500L, 50L);
+    try {
+      assertEquals(NrtMode.CONTINUOUS, c.nrtMode());
+      assertEquals(500_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMaxStaleNS"));
+      assertEquals(50_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMinStaleNS"));
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  /**
+   * In on_demand mode the background thread drops to {@code background_reopen_ms} on BOTH Lucene
+   * bounds — the foreground refresh in {@code SearcherBridge}, not the thread, is what makes a new
+   * document visible. Asserting on the thread's own nanosecond fields (not on the record) is what
+   * makes this discriminate: the record carried the configured 500/50 either way.
+   */
+  @Test
+  void onDemandModeSlowsTheBackgroundReopenThread() throws Exception {
+    String yaml =
+        """
+        index:
+          nrt:
+            mode: on_demand
+            background_reopen_ms: 2000
+            on_demand_max_stale_ms: 750
+        """;
+    Path idx = tempDir.resolve("nrt-mode-ondemand-idx");
+    ResolvedConfig rc = resolveForTest(yaml);
+    Components c =
+        ComponentsFactory.build(
+            rc, null, idx, false, fieldMapper, analyzerRegistry,
+            null, null, null, new AtomicLong(), nrtStats, 500L, 50L);
+    try {
+      assertEquals(NrtMode.ON_DEMAND, c.nrtMode());
+      assertEquals(750L, c.nrtOnDemandMaxStaleMs());
+      assertEquals(2_000_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMaxStaleNS"));
+      assertEquals(2_000_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMinStaleNS"));
+      assertEquals(
+          500L, c.nrtTargetMaxStaleMs(), "the index.nrt.* pair is still carried, just unused here");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  /** A typo must not silently select an arm the operator did not ask for. */
+  @Test
+  void unrecognisedNrtModeFallsBackToContinuous() throws Exception {
+    String yaml = "index:\n  nrt:\n    mode: on-demand\n";
+    Path idx = tempDir.resolve("nrt-mode-typo-idx");
+    ResolvedConfig rc = resolveForTest(yaml);
+    Components c =
+        ComponentsFactory.build(
+            rc, null, idx, false, fieldMapper, analyzerRegistry,
+            null, null, null, new AtomicLong(), nrtStats, 500L, 50L);
+    try {
+      assertEquals(NrtMode.CONTINUOUS, c.nrtMode());
+      assertEquals(500_000_000L, reopenThreadStaleNs(c.crtrt(), "targetMaxStaleNS"));
     } finally {
       closeComponents(c);
     }

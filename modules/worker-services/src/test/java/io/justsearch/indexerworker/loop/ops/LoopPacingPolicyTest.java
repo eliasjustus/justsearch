@@ -96,4 +96,25 @@ final class LoopPacingPolicyTest {
     // A smaller configured max fires earlier.
     assertTrue(LoopPacingPolicy.isBufferCommitTriggered(10, 5));
   }
+
+  @Test
+  @DisplayName(
+      "isIdleCommitTriggered: 0 keeps the historical commit-on-first-empty-poll; a positive"
+          + " index.commit.idle_ms requires the queue to have stayed empty that long (tempdoc 885"
+          + " item 19)")
+  void idleCommitHonorsTheConfiguredIdleWindow() {
+    // Default (0) is the pre-885 behaviour exactly: commit as soon as the queue is empty.
+    assertTrue(LoopPacingPolicy.isIdleCommitTriggered(1, 0L, 0L));
+    assertTrue(LoopPacingPolicy.isIdleCommitTriggered(1, 0L, -1L), "negative also reads as off");
+
+    // Nothing buffered ⇒ never commit, whatever the window says. This is the assertion that keeps
+    // a raised window from turning into an empty commit on every idle tick.
+    assertFalse(LoopPacingPolicy.isIdleCommitTriggered(0, 0L, 0L));
+    assertFalse(LoopPacingPolicy.isIdleCommitTriggered(0, 60_000L, 5_000L));
+
+    // A positive window: below it the buffered docs wait, at/above it they commit.
+    assertFalse(LoopPacingPolicy.isIdleCommitTriggered(1, 4_999L, 5_000L));
+    assertTrue(LoopPacingPolicy.isIdleCommitTriggered(1, 5_000L, 5_000L));
+    assertTrue(LoopPacingPolicy.isIdleCommitTriggered(500, 9_000L, 5_000L));
+  }
 }

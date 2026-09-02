@@ -104,6 +104,10 @@ final class RuntimeSession implements AutoCloseable {
   // Both CRTRT construction sites read these through NrtReopenThreads.create (tempdoc 885
   // item 19); the 500/50 defaults below are what the initial open used to hardcode.
   volatile long nrtHardMaxStaleMs;
+  // Tempdoc 885 item 19 cadence candidate: CONTINUOUS is today's behaviour; ON_DEMAND moves the
+  // reopen onto the foreground acquire (SearcherBridge) and slows the background thread.
+  volatile NrtMode nrtMode;
+  volatile long nrtOnDemandMaxStaleMs;
   volatile KnnVectorsFormat knnVectorsFormat;
   volatile Integer vectorEfSearchOverrideOrNull;
   volatile String softDeleteField;
@@ -115,6 +119,15 @@ final class RuntimeSession implements AutoCloseable {
   // ==========================================================================
 
   final AtomicLong lastRefreshNanos = new AtomicLong(0L);
+
+  /**
+   * Reopen counters + the on-demand freshness watermark (tempdoc 885 item 19). Final and created
+   * once per session: {@link ComponentsFactory} installs the single refresh listener that writes
+   * it, and re-opens within the session reuse the same instance so the counters are per-session,
+   * not per-reader.
+   */
+  final NrtReopenStats nrtStats = new NrtReopenStats();
+
   final AtomicLong lastCommitNanos = new AtomicLong(0L);
   final AtomicLong lastRefreshTargetMs = new AtomicLong(-1L);
   final AtomicLong pendingDocs = new AtomicLong(0L);
@@ -233,6 +246,8 @@ final class RuntimeSession implements AutoCloseable {
     this.maxQueueDepth = 10_000L;
     this.nrtTargetMaxStaleMs = 500L;
     this.nrtHardMaxStaleMs = 50L;
+    this.nrtMode = NrtMode.CONTINUOUS;
+    this.nrtOnDemandMaxStaleMs = 1000L;
     this.knnVectorsFormat = null;
     this.vectorEfSearchOverrideOrNull = null;
     this.softDeleteField = SchemaFields.SOFT_DELETE;
@@ -288,6 +303,8 @@ final class RuntimeSession implements AutoCloseable {
     this.maxQueueDepth = 10_000L;
     this.nrtTargetMaxStaleMs = 500L;
     this.nrtHardMaxStaleMs = 50L;
+    this.nrtMode = NrtMode.CONTINUOUS;
+    this.nrtOnDemandMaxStaleMs = 1000L;
     this.softDeleteField = SchemaFields.SOFT_DELETE;
     this.vectorEfSearchOverrideOrNull = null;
 
@@ -334,6 +351,8 @@ final class RuntimeSession implements AutoCloseable {
     this.resolvedConfig = components.resolvedConfig();
     this.nrtTargetMaxStaleMs = components.nrtTargetMaxStaleMs();
     this.nrtHardMaxStaleMs = components.nrtHardMaxStaleMs();
+    this.nrtMode = components.nrtMode() != null ? components.nrtMode() : NrtMode.CONTINUOUS;
+    this.nrtOnDemandMaxStaleMs = components.nrtOnDemandMaxStaleMs();
     Integer explicitEfSearch =
         resolvedConfig != null && resolvedConfig.index() != null
             ? resolvedConfig.index().vectorEfSearch()
@@ -537,6 +556,7 @@ final class RuntimeSession implements AutoCloseable {
           softDeletesMetrics,
           indexOpenGuard,
           lastRefreshNanos,
+          nrtStats,
           nrtTargetMaxStaleMs,
           nrtHardMaxStaleMs);
     } catch (IOException e) {

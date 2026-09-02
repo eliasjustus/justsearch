@@ -54,6 +54,19 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   public static final String COMMIT_COUNT = "index.runtime.commit_count";
   public static final String REFRESH_LAG_MS = "index.runtime.refresh_lag_ms";
 
+  // Tempdoc 885 item 19: the NRT/commit cadence comparison needs a reopen count and a segment-churn
+  // reading next to the commit count that already lives here. They join THIS catalog rather than
+  // WorkerOpsMetricCatalog because commit_count above is already the all-paths commit counter read
+  // off the same RuntimeGaugesSnapshot; a `worker.index.commit_total` would have been a second
+  // authority for it (note that worker.commits.total is a different quantity — it counts only the
+  // six IndexingLoop-attributed commits, not the commit timer, gRPC deletes or prune).
+
+  /** Reopens that swapped in a new reader, all paths. Pairs with {@link #COMMIT_COUNT}. */
+  public static final String REOPEN_COUNT = "index.runtime.reopen_count";
+
+  /** Segments the writer has created since the last reopen — the next reopen's backlog. */
+  public static final String SEGMENTS_SINCE_REOPEN = "index.runtime.segments_since_reopen";
+
   /**
    * Static definitions. Pass to {@code LocalTelemetry}'s constructor before constructing this
    * catalog so per-metric Views are registered before the {@code SdkMeterProvider} is built.
@@ -110,6 +123,17 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
               .unit(Unit.MILLISECONDS)
               .archivedTo(RrdArchive.STANDARD)
               .surfacedAt(StatusEndpoint.CORE_INDEX_VIEW, "refreshLagMs")
+              .build(),
+          // Archived, not surfaced on /api/status: the cadence comparison reads a trend off the
+          // metrics NDJSON, and adding status-wire fields would drag a proto change into a
+          // measurement knob.
+          MetricDefinition.gauge(REOPEN_COUNT)
+              .unit(Unit.COUNT)
+              .archivedTo(RrdArchive.STANDARD)
+              .build(),
+          MetricDefinition.gauge(SEGMENTS_SINCE_REOPEN)
+              .unit(Unit.COUNT)
+              .archivedTo(RrdArchive.STANDARD)
               .build());
 
   // Static-time validation: every declared metric name starts with the catalog's namespace.
@@ -144,6 +168,8 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   public final GaugeMetric<EmptyTags> writerPendingDocs;
   public final GaugeMetric<EmptyTags> commitCountGauge;
   public final GaugeMetric<EmptyTags> refreshLagMs;
+  public final GaugeMetric<EmptyTags> reopenCount;
+  public final GaugeMetric<EmptyTags> segmentsSinceReopen;
 
   /** Default supplier producing {@link RuntimeGaugesSnapshot#EMPTY}; used for tests / startup. */
   public static final Supplier<RuntimeGaugesSnapshot> EMPTY_STATUS =
@@ -200,6 +226,14 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
             REFRESH_LAG_MS,
             EmptyTags.INSTANCE,
             () -> (double) statusSupplier.get().refreshLagMs());
+    this.reopenCount =
+        registry.buildGauge(
+            REOPEN_COUNT, EmptyTags.INSTANCE, () -> (double) statusSupplier.get().reopenCount());
+    this.segmentsSinceReopen =
+        registry.buildGauge(
+            SEGMENTS_SINCE_REOPEN,
+            EmptyTags.INSTANCE,
+            () -> (double) statusSupplier.get().segmentsSinceReopen());
   }
 
   @Override

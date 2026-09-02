@@ -429,13 +429,28 @@ public final class LuceneRuntimeTypes {
    * Worker's {@code IndexStatusOps}). Each field is a single volatile read taken
    * independently; consumers should treat this as a "best-effort consistent" view,
    * not a transactional snapshot.
+   *
+   * <p>Tempdoc 885 item 19 added {@code reopenCount} and {@code segmentsSinceReopen} here rather
+   * than in a new catalog, because {@code commitCount} — the other half of the cadence pair — was
+   * already this record's field, and a second commit counter would be a fork of it.
+   *
+   * @param reopenCount monotonic count of searcher reopens that swapped in a new reader, across
+   *     every reopen path (the background {@code ControlledRealTimeReopenThread}, {@code
+   *     CommitOps.maybeRefresh*}, and the reopen-on-demand seam in {@code SearcherBridge})
+   * @param segmentsSinceReopen segments the writer has created since the last reopen — the backlog
+   *     the next reopen must open, and therefore what the "first search after N new segments"
+   *     column is measuring
    */
   public record RuntimeGaugesSnapshot(
       long writerQueueDepth,
       long writerPendingDocs,
       long commitCount,
-      long refreshLagMs) {
-    public static final RuntimeGaugesSnapshot EMPTY = new RuntimeGaugesSnapshot(0L, 0L, 0L, 0L);
+      long refreshLagMs,
+      long reopenCount,
+      long segmentsSinceReopen) {
+
+    public static final RuntimeGaugesSnapshot EMPTY =
+        new RuntimeGaugesSnapshot(0L, 0L, 0L, 0L, 0L, 0L);
   }
 
   /** Optional telemetry hooks. */

@@ -88,4 +88,25 @@ public final class LoopPacingPolicy {
   public static boolean isBufferCommitTriggered(long indexedSinceCommit, int maxDocsBeforeCommit) {
     return indexedSinceCommit >= maxDocsBeforeCommit;
   }
+
+  /**
+   * Whether the loop should commit the documents it has buffered now that the queue is empty
+   * (tempdoc 885 item 19).
+   *
+   * <p>Historical behaviour is {@code commitIdleMs == 0}: commit on the FIRST empty poll. That
+   * makes the {@code commit_interval_ms} / {@code max_docs_before_commit} thresholds nearly
+   * unobservable during a bulk run, because the queue drains momentarily all the time and every
+   * drain commits. A positive value requires the queue to have stayed empty that long first, which
+   * is the commit half of the cadence candidate. NRT visibility does not depend on this — a commit
+   * is durability, and reopens make documents searchable regardless.
+   *
+   * @param indexedSinceCommit documents written but not yet committed
+   * @param idleElapsedMs how long the queue has been continuously empty
+   * @param commitIdleMs configured {@code index.commit.idle_ms}; 0 or negative = commit immediately
+   */
+  public static boolean isIdleCommitTriggered(
+      long indexedSinceCommit, long idleElapsedMs, long commitIdleMs) {
+    if (indexedSinceCommit <= 0) return false;
+    return commitIdleMs <= 0 || idleElapsedMs >= commitIdleMs;
+  }
 }
