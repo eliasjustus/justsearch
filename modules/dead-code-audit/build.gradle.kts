@@ -72,10 +72,14 @@ tasks.named<Test>("test") {
   maxHeapSize = "2g"
   // The ArchUnit test writes its report to the repo-root tmp/ dir; pass the absolute path so the
   // location is independent of the test's working directory.
-  systemProperty(
-      "deadcode.reportPath",
-      rootProject.layout.projectDirectory.file("tmp/dead-code-jvm-report.json").asFile.absolutePath,
-  )
+  val deadCodeReport = rootProject.layout.projectDirectory.file("tmp/dead-code-jvm-report.json")
+  systemProperty("deadcode.reportPath", deadCodeReport.asFile.absolutePath)
+  // The report is the `dead-code-jvm` governance gate's REQUIRED input (tempdoc 884 §F row 9,
+  // wired into CI by PR #604). It lives outside the task's build dir, so until it was declared as
+  // an output a FROM-CACHE hit on this task restored nothing and the gate failed with
+  // kernel/input-missing on every PR whose audit inputs were unchanged (first seen on PR #608,
+  // 2026-09-02). Declaring it makes the build cache restore the report alongside the test results.
+  outputs.file(deadCodeReport).withPropertyName("deadCodeJvmReport")
 
   // SystemAccessFunnelTest ratchets against a checked-in file OUTSIDE any source set. Without
   // declaring it as an input, Gradle considers the task up to date after the allowlist changes and

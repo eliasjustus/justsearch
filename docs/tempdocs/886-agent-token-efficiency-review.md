@@ -217,6 +217,14 @@ Not proposed: dashboards (858 D1 retired them), a composite score (858 §4.5), e
   `agent-analytics-suite-wallclock-flaky-under-load` pin (PR #604 landed it in parallel; a second
   pin on the same command made the hint ambiguous and the merge queue rejected #608 once for it).
   The fix belongs to tempdoc 861 W5, not here.
+- Ride-along fix found while publishing (#608 CI): the `dead-code-jvm` gate's required input,
+  `tmp/dead-code-jvm-report.json`, is written by `:modules:dead-code-audit:test` outside its
+  build dir and was not a declared task output, so a FROM-CACHE hit on that task (any PR whose
+  audit inputs are unchanged) restored nothing and the gate failed with `kernel/input-missing`.
+  #604 wired the gate into CI the same day and its own merge-group run happened to execute the
+  task fresh. Fixed by declaring the report as an `outputs.file` in
+  `modules/dead-code-audit/build.gradle.kts`; verified locally by deleting the report and
+  re-running the task FROM-CACHE.
 - PR 5b review (approve, four cosmetic findings): the subagent edit check now also counts
   `MultiEdit` (disclosed in-code); the four migrated readers export nothing and have no direct
   tests, so their guards protect against a bare `import()` only; `friction-timeline`'s default
