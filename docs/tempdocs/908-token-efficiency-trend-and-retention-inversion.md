@@ -1,7 +1,7 @@
 ---
 title: "Token efficiency is a trend, not a snapshot — and the data that proves it is on a 30-day delete timer"
 type: tempdocs
-status: "CHARTERED (2026-09-02) — analysis complete and reproduced (§1); design settled (§5); implementation delegated (§6). §4 criticisms are arguments, not decisions."
+status: "CHARTERED (2026-09-02) — analysis complete and reproduced (§1); one headline retracted in-document after a size control (§1.2b); rework half measured and confound-tested (§1.3b); design settled (§5); implementation delegated (§6). §4 criticisms and §5.3 are arguments, not decisions."
 created: 2026-09-02
 updated: 2026-09-02
 lane: agent-analytics / token efficiency
@@ -29,10 +29,18 @@ related:
    `agent-token-efficiency-review` tempdoc measured 2026-08-01..09-02 as one block and reported
    the average of a moving composition as if it were a level.
 
-2. **The regression is traceable to the subagent tail, not the main loop** — and the evidence
-   for both claims is being deleted on a rolling 30-day timer while 972 MB of never-pruned OTLP
+2. **The shift is traceable to the subagent tail, not the main loop** — and the evidence for
+   every claim here is being deleted on a rolling 30-day timer while 972 MB of never-pruned OTLP
    traces that no reader consumes sits next to it. The retention policy is inverted with respect
    to analytical value.
+
+3. **Rework roughly tripled over the same period, and it is not a work-type artifact.**
+   Proximate rework (a `fix:` PR touching code another PR changed in the prior 14 days) went
+   15.4% -> 40.8% of PRs (z = 4.63). Restricted to backend-majority PRs at identical n = 114 per
+   period — where the mandated post-implementation UX audit does not apply — 15% -> 41%
+   (z = 4.42). This is the `delegate-by-default` falsifier's rework half, which `858 §8` recorded
+   as unmeasured; it is a `git log --numstat` join (§1.3b). Its remedy, however, is not the one
+   the falsifier offers (§4.4b).
 
 ---
 
@@ -134,6 +142,62 @@ workers costing $246-$355 each. That is exactly the shape CLAUDE.md's own
 `delegating-to-subagents` rule forbids ("chunk long refactors into bounded delegations"), run on
 an orchestrator-grade model at orchestrator-grade context, *inside* the one execution environment
 where the hook layer does not fire.
+
+### 1.3b The rework half — measured, and it is the half that moves
+
+`858 §8` flagged the git-churn join as the missing half of the `delegate-by-default` falsifier.
+It is a `git log --numstat` join; here it is.
+
+**Proximate rework** = a `fix:`/`revert:` PR that touches at least one code file changed by a
+*different* PR in the preceding 14 days. The proximity control matters: an unqualified `fix:`
+count also catches corrections to months-old code, which is not what the falsifier means.
+
+| Week | PRs | `fix:` share | **proximate-rework share of all PRs** |
+|---|---|---|---|
+| W29 | 66 | 14% | 18% |
+| W30 | 51 | 8% | 10% |
+| W31 | 52 | 25% | 17% |
+| W32 | 45 | 44% | **53%** |
+| W33 | 64 | 45% | **39%** |
+| W34 | 57 | 32% | **33%** |
+| W35 | 49 | 43% | **41%** |
+
+Pooled: **W29-W31 = 18/117 (15.4%)** vs **W32-W35 = 73/179 (40.8%)**, two-proportion
+**z = 4.63**. Unlike the cost measure (§1.2b), this one clears its own noise band comfortably.
+
+**Not a titling artifact:** `feat:` share held (36/49/37% → 33/28/44/45%) while `fix:` roughly
+tripled; `docs`/`chore` shrank. The mix did not swap `feat` for `fix`.
+
+The fix titles are unambiguous about what they are: `fix(871): ... (live findings)`,
+`fix(sv3): ... (live-audit findings)`, `fix(859 D live findings)`, `fix(853): audit
+remediation`, `fix(sv3): ... original defect was a hidden-tab artifact`. This is *shipped, then
+corrected* — the falsifier's sense of rework.
+
+**The obvious confound — tested, and it does not hold.** W32-W35 is heavy presentation-authority
+work (sv3, 859-871), where `slice-execution.md`'s `ux-audit-closure` rule *mandates* an
+independent live audit after implementation, so a high follow-up-fix rate could be that process
+working as designed. Splitting each PR by whether it touches more `modules/ui-web/` files than
+backend files:
+
+| Period | class | PRs | proximate rework | rate |
+|---|---|---|---|---|
+| W29-W31 | backend | **114** | 17 | **15%** |
+| W29-W31 | ui | 3 | 1 | 33% |
+| W32-W35 | backend | **114** | 47 | **41%** |
+| W32-W35 | ui | 65 | 26 | 40% |
+
+**Backend-majority PRs: identical n = 114 in both periods, rework 15% -> 41% (z = 4.42).** The UI
+work added 65 PRs at a comparable 40% rate — it increased the *volume* of rework but is not what
+moved the backend rate. The live-audit mandate does not apply to backend slices, so the rise there
+needs another explanation.
+
+**Residual confounds, not tested.** (a) Backend work in W32-W35 includes the 882-885
+decision-review lanes, which are audit-shaped by design; spot-checking the fix titles they read as
+live findings on freshly shipped features (`fix(847)`, `fix(853)`, `fix: streaming producer
+wedge`, `fix(worker): ...`) rather than a dedicated audit lane's output, but this is a read of
+titles, not a classification. (b) Difficulty is uncontrolled. So: a correlation of the right sign
+and magnitude, with the leading alternative explanation eliminated and two lesser ones open. §4.4
+draws no causal claim from it.
 
 ### 1.4 Reproduction
 
@@ -280,20 +344,37 @@ swing with no trend. Neither direction is supported.
 
 What the data *does* establish is that the falsifier's premise moved: the share of spend running
 inside subagents went 36% -> 74%, and the `>=120-call` tail — the exact shape the rule tells the
-orchestrator to chunk away — now carries ~78% of subagent cost. So the intervention the falsifier
-was written to evaluate did happen, at scale, and the evaluation is impossible because:
+orchestrator to chunk away — now carries ~78% of subagent cost. The intervention the falsifier
+was written to evaluate did happen, at scale.
 
-- the cost half has a noise band wider than any plausible effect at n≈50 PRs/week × 5 weeks;
-- the rework half was never instrumented (the git-churn join flagged in `858 §8`);
-- and the window cannot be widened backwards, because the transcripts are already deleted (§4.3).
+On its two halves: **the cost half cannot be judged** (noise band wider than any plausible effect
+at n≈50 PRs/week × 5 weeks, and the window cannot be widened backwards because the transcripts are
+already deleted — §4.3). **The rework half can, and it moved**: proximate rework 15.4% -> 40.8%,
+z = 4.63 (§1.3b), with a work-type confound stated there that this corpus cannot separate out.
 
-Renewing the paragraph by default would be the deferral move CLAUDE.md's
-`structural-defects-no-repeat` names. But so would declaring it falsified on evidence that does
-not support it. The honest options on 09-14 are: (a) extend the window forward with the snapshot
-writer (§5.2) running from now, and re-judge at ~15 weeks; or (b) decide the rule on grounds other
-than measurement and delete the falsifier rather than leaving a promise that cannot be kept. **(a)
-is only available if §5.2 ships before more weeks rotate away** — which is the whole argument for
-prioritising it over §5.1.
+### 4.4b The falsifier's remedies do not fit the failure mode
+
+This is the sharper criticism. The rule offers exactly two outcomes: *"flat -> delete this
+paragraph; rework up -> raise the floor."* Rework is up. But **"raise the floor" is not an
+available move**: the floor is already near the ceiling — 675 of 1,018 spawns requested `opus`
+outright, 95% of spawn cost is opus, and Sonnet is 303 spawns at $578 total. There is no cheaper
+tier to stop using and no more expensive tier to escalate to. The remedy presumes the failure mode
+is *model choice*, and the ledger says it is *run length*: the median spawn is flat at ~50 calls
+while `$/spawn` rose 71%, and the entire increase sits in the `>=120-call` tail (§1.3).
+
+So the falsifier as written cannot produce a correct answer regardless of what the data says. It
+needs a third outcome — **bound the spawn, not the model** — and that is the one CLAUDE.md already
+states in prose ("chunk long refactors into bounded delegations") and that the ledger shows is not
+happening: 47-62 spawns per week exceed 120 calls, every week, for five weeks. By CLAUDE.md's own
+`before-appending-to-rules` reasoning, a must-rule that prose has failed to deliver for five
+consecutive weeks belongs in a hook (~100% adherence), not in more prose (~70%). §5.3 proposes the
+cheapest version.
+
+Renewing the paragraph unchanged on 09-14 would be the deferral move
+`structural-defects-no-repeat` names; declaring it falsified on the cost half would be asserting
+more than the data carries. The honest resolution is to **rewrite the falsifier's remedy set**,
+ship §5.2 so the cost half becomes judgeable at ~15 buckets, and act now on the run-length finding
+that does not need the cost half at all.
 
 ### 4.5 The fail-closed pricing warning is being desensitised
 
@@ -374,6 +455,35 @@ the implementation brief, but it must be cheap enough to run unconditionally.
 
 ---
 
+### 5.3 The spawn call-budget self-bound (proposal — NOT in this tempdoc's implementation scope)
+
+The finding in §4.4b needs an enforcement point, and the parent has none: **parent hooks do not
+fire inside a subagent**, so the orchestrator physically cannot interrupt a spawn that is running
+long. `spawn-cost-hint` (886 PR 4) reports the cost *after* return — useful for judgment, useless
+for control, because the money is already spent.
+
+The one place the parent can still reach is **`SubagentStart`**, which
+`scripts/agent-analytics/hooks/subagent-guide.mjs` already occupies: it injects a baseline brief
+into every subagent regardless of what the orchestrator remembered to write. Adding a call-budget
+self-bound to its existing "Subagent-specific risk profile" section converts an orchestrator-side
+convention (which the ledger shows is ignored) into a subagent-side instruction delivered on every
+spawn:
+
+> If you pass ~120 tool calls, stop and report what is done and what remains rather than pushing
+> on. A spawn past that length is where this repo's cost concentrates, and a partial result the
+> orchestrator can re-chunk is worth more than a complete one that costs 5x.
+
+Why this shape rather than a hard block: a genuinely long task exists, and a guard that kills it
+would be worse than the cost. This is advisory-by-construction — the subagent decides — but it is
+*delivered* unconditionally, which prose in CLAUDE.md is not.
+
+**Deliberately out of scope for the implementation delegated in §6.** It touches the hook layer,
+which means `governance/agent-hooks.v1.json`, the tier-register, and the `hook-integrity` gate —
+a different review surface from a maintainer-only reader, and it should be judged on its own.
+Falsifier if it ships: `>=120-call` spawns should fall below ~20% of spawn cost within four
+buckets; if the tail share is unchanged, the injection is not being read and the next step is a
+real budget, not a longer sentence.
+
 ## 6. Implementation plan
 
 ### 6.0 Model routing — deliberate, and a data point
@@ -445,8 +555,17 @@ measures, the rotation-floor caveat, and the explicit statement that the metrics
   Nobody should re-run this analysis expecting a verdict until the snapshot file (§5.2) has
   accumulated ~15 buckets. The reader should say so in its own output rather than letting a
   maintainer read a 3-week slope as signal.
-- **Rework half still unmeasured** (`858 §8` git-churn join). The `delegate-by-default` criterion
-  is conjunctive and cannot be judged without it.
+- **Rework half: measured, and the leading confound is eliminated (§1.3b).** Proximate rework
+  15.4% -> 40.8% overall (z = 4.63); backend-only, at identical n = 114 per period, 15% -> 41%
+  (z = 4.42). Remaining open: difficulty is uncontrolled, and the 882-885 decision-review lanes'
+  contribution to the backend fix count is read from titles, not classified. Neither is large
+  enough to explain a 2.7x move, but both should be closed before 09-14 if the judgment is going
+  to lean on this number.
+- **The rework measure belongs in the reader, not in this tempdoc.** It is a `git log --numstat`
+  join the delivery section (§5.1b) already runs. Adding a `rework%` column there is nearly free
+  and turns a one-off analysis into a tracked series — but it is NOT in §6's scope, because the
+  proximity window (14 days) and the `fix:`-title dependency are judgment calls that deserve their
+  own review rather than riding along in a reader PR.
 - **Does `autoCompactWindow: 600000` fire?** Inherited open question from the
   `agent-token-efficiency-review` tempdoc; the compaction ledger still shows 8 manual / 1 auto,
   the auto at 1.0M.
