@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS — chunks 1, 2 and 2b landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green); items 3/6/21/19-measure open
+status: IN PROGRESS — chunks 1, 2, 2b and 3 landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green; item 3 foreground duty cycle, live arms pending); items 6/21/19-measure open
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
@@ -1136,3 +1136,270 @@ the wire-format regression test is updated · Worker shutdown leaves no orphan c
 routing split on a real mixed corpus *including* the child spawn the unit benchmark excludes, and to
 confirm no ingestion regression. Optional refinement: an OOM driven by a genuinely hostile document
 rather than a deliberate allocator.
+
+---
+
+## §TB — pre-implementation verification (chunk 3, item 3)
+
+Every `path:line` the Evidence and Design-decision sections cite for **item 3**, re-read against
+this chunk's base `768d69c7` (= `6c3ba431` + chunks 1/2/2b). Verified 2026-09-02 by the chunk-3
+implementer. Same verdict vocabulary as §B. Line numbers below are the **pre-change** ones on
+`768d69c7`; the change itself moves or deletes most of them.
+
+### TB.1 The sixteen `isUserActive` call sites
+
+All sixteen still present, and §B.2's re-verified list holds with only the drift chunks 1/2 caused:
+
+| # | Site on `768d69c7` | Verdict vs §B.2 (`6c3ba431`) |
+|---|---|---|
+| 1 | `IndexingLoop.java:604` (`if (signalBus.isUserActive())` → `transitionToPaused()` + `Thread.sleep(BREATH_HOLD_MS)`) | **OK** (`:605` in the contract is the `transitionToPaused()` line) |
+| 2-4 | `BackfillScheduler.java:239`, `:430`, `:612` | **OK** |
+| 5 | `JobBatchExtractor.java:128` | **OK** |
+| 6-7 | `SpladeBackfillOps.java:236`, `:242` (both inside `shouldInterrupt`) | **OK** |
+| 8-9 | `NerBackfillOps.java:69`, `:75` | **OK** |
+| 10 | `EmbeddingBackfillOps.java:187` | **OK** |
+| 11-12 | `DisambiguationBackfillOps.java:68`, `:74` | **OK** |
+| 13 | `CombinedEnrichmentBackfillOps.java:591` | **OK** |
+| 14-15 | `SyncDirectoryOps.java:227` (prune abort-checker), `:299` (walk abort) | **OK** |
+| 16 | `GrpcIngestService.java:1082` (prune abort-checker) and `:1142` (syncDirectory skip) | **OK** — two sites in one file, which is how the count reaches 16 |
+
+Plus one non-call reference: `IndexingLoop.java:539`, a comment naming `isUserActive()` beside
+`shouldYieldGpuBackfill()`; and `LoopPacingPolicy.shouldInterruptBackfill`'s `userActive` parameter
+(`LoopPacingPolicy.java:66-73`), a 17th *symbol* but not a bus call.
+
+**TB.1a — a fact the contract does not state, and it changes the shape of the diff.** Three of the
+five ops `BackfillContext` records carried `WorkerSignalBus` **only** to reach `isUserActive()`:
+`NerBackfillOps` (`:31`), `SpladeBackfillOps` (`:36`), `DisambiguationBackfillOps` (`:28`). Same for
+`JobBatchExtractor` (`:68`) and `SyncDirectoryOps` (`:65`). Deleting the method therefore does not
+merely replace a condition in those five — it removes their whole dependency on the signal bus, so
+the pacing policy takes over the same parameter slot instead of being an added one.
+`EmbeddingBackfillOps` and `BgeM3BackfillOps` keep the bus (GPU/energy), and
+`CombinedEnrichmentBackfillOps`'s single bus use *was* the `isUserActive()` check.
+
+### TB.2 The five Head-side `signalUserActivity` callers
+
+| Contract cite | On `768d69c7` | Verdict |
+|---|---|---|
+| `KnowledgeSearchController.java:304` (search), `:849` (suggest), `:887` (folders), `:931` (folder-files) | exact, all four | **OK** |
+| `CoreApiAssembly.java:110` (Preview, via a `Runnable` handed to `PreviewController`) | exact; `PreviewController` holds it as the `signalUserActivity` field (`:44`), invoked at `:107-108` | **OK** |
+| `KnowledgeServerBootstrap.signalUserActivity()` `:698` → `WorkerSpawner.signalUserActivity()` `:334-338` | exact | **OK** |
+| `StatusLifecycleHandler` never calls it (**[R2]**) | still 0 hits | **OK** |
+
+**TB.2a — WRONG, and it changes the deletion plan: `signalUserActivity` is not only the MMF write
+path.** `KnowledgeServerBootstrap.signalUserActivity()` (`:698-702`) does two things — it stamps the
+Head-local `lastUserActivityEpochMs` (`:83`) *and* calls the spawner. That Head-local stamp is read
+through `msSinceLastUserActivity` (`:711`) by `VduPacingPolicy` (documented at
+`VduPacingPolicy.java:16-18`), `VduOfflineTriggerSampler.java:95` and `ServicePhase.java:196`.
+Deleting the five Head callers as the chunk brief words it would silently make VDU's activity signal
+read "idle forever" — a regression in another lane's feature, caused by a rule about this one. The
+Head-side recorder is therefore **renamed** (`recordUserActivity()`), keeping all five callers, and
+only the Head→Worker half (`spawner.signalUserActivity()` → `MainSignalBus.writeActivity()`) is
+deleted. The acceptance grep is satisfied by the rename; VDU keeps its input.
+
+### TB.3 The status wire and the MMF residue
+
+| Contract cite | On `768d69c7` | Verdict |
+|---|---|---|
+| `IndexStatusOps.java:428` puts `signalBus.readActivity()` on the status wire | exact | **OK** |
+| the proto field behind it | `indexing.proto:677` — `int64 signal_bus_activity_ts = 6;` in `CoreStatus` | **OK** (deleting it is a buf break — §TC.4) |
+| `main_gpu_active` byte 24, `MmfWorkerSignalLayoutV1.java:44` | `OFFSET_MAIN_GPU_ACTIVE = 24` at `:44` | **OK** |
+| §B.4's corrected count: **six** direct `isMainGpuActive()` readers | confirmed six, unchanged by this chunk: `KnowledgeServer:1000`, `KnowledgeServer:1642` (post-change numbering; `:996`/`:1632` before), `BackfillScheduler:197`, `EmbeddingProviderLifecycle:169`, `EmbeddingBackfillOps:194`, `IndexingDocumentOps:219`. Indirect via the `WorkerSignalBus:100` `shouldYieldGpuBackfill()` default: `BgeM3BackfillOps:335`, `BackfillScheduler:246`, `:437`, `:624` | **OK** |
+| `MmfWorkerSignalBus.java:215-229` `isUserActive()`; `:219` the `Boolean.getBoolean` eval hatch | exact; `readActivity()` at `:146-149` | **OK** |
+| `modules/ui/build.gradle.kts:2178` sets `justsearch.eval.disable_breath_holding` (comment `:2176-2177`) | exact | **OK** |
+| `modules/indexer-worker/src/main/resources/logback.xml:97` pins `io.justsearch.indexerworker.loop` to INFO | exact — which is why the new pacing logger lives in `io.justsearch.indexerworker.loop.pacing` (INFO by inheritance) and logs at INFO | **OK** |
+
+**TB.3a — two sites the contract's residue list does not mention.** `MmfTestHarness`
+(`modules/system-tests/src/main/.../chaos/MmfTestHarness.java:91-122`) carries its own
+`writeActivity` / `readActivity` / `simulateRecentActivity` / `simulateStaleActivity`, and
+`ChaosSuiteTest.mmfActivityTimestamps` (`:496-517`), `MmfSignalBusCompatibilityTest` and
+`torture/ReadWhileWriteTest.java:155` exercise the activity slot. `MmfTestHarness` is
+`modules/system-tests/src/main`, so the acceptance grep sees it. They are swept here (§TC.5) rather
+than left for lane F — the alternative was to meet a "no hits" criterion by not looking.
+
+### TB.4 Which `GrpcSearchService` methods count as foreground
+
+`SearchService` declares **ten** RPCs (`modules/ipc-common/src/main/proto/indexing.proto:299-317`),
+all unary, all implemented in `GrpcSearchService`:
+
+| RPC | Impl | Foreground? |
+|---|---|---|
+| `Search` | `:414` | yes |
+| `Rerank` | `:463` | yes |
+| `Suggest` | `:527` | yes |
+| `FetchDocuments` | `:582` | yes |
+| `FetchDocumentSlice` | `:652` | yes |
+| `RetrieveContext` | `:771` | yes |
+| `MatchCitations` | `:820` | yes |
+| `ListFolders` | `:866` | yes |
+| `ListFolderFiles` | `:915` | yes |
+| `ListAllDocumentIds` | `:962` | **no** |
+
+The contract names six; the nine above are those six plus `MatchCitations` (the chat citation
+matcher), `ListFolders` and `ListFolderFiles` — and the last two are literally two of the five Head
+sites that used to signal activity (`KnowledgeSearchController:887`, `:931`), so excluding them
+would have *lost* coverage the breath-hold had. `ListAllDocumentIds` is excluded because its only
+caller is the Head's background GPL pager (`GplJobCoordinator.java:292-293`, `BATCH_SIZE = 50` over
+the whole corpus): counting it would let a background job throttle indexing, the same class of
+defect as counting a status poll. No `IngestService` or `HealthService` method counts.
+
+## §TC — post-implementation critical analysis (chunk 3, item 3)
+
+### TC.1 Wrong-gate: does the interceptor's method filter fire where it must?
+
+The filter is built from generated `MethodDescriptor`s (`ForegroundLoadInterceptor.java:38-48`), not
+from hand-written strings, so a proto rename is a compile error rather than a silently-empty filter
+(`catalog-verbatim`). The gate is asserted from both sides in `ForegroundLoadInterceptorTest`:
+
+* `indexStatusIsNotForeground` drives a real `IngestServiceGrpc.getIndexStatusMethod()` through the
+  interceptor and asserts the gauge stays 0 **and** `IndexingPacing.foregroundBusy()` is false — then
+  drives a real `Search` through the same interceptor and asserts `foregroundBusy()` flips true. That
+  is the takeover checklist's wrong-gate assertion with both halves in one test, so neither can pass
+  for the wrong reason.
+* `foregroundSetIsTheSearchServiceMinusThePager` derives the expected set from
+  `SearchServiceGrpc.getServiceDescriptor()` at runtime, so a `SearchService` RPC added later fails
+  the test until someone classifies it.
+
+The registration site was re-read rather than assumed: `KnowledgeServer.java:712-720` builds the
+interceptor list and feeds the new entry `appServices.foregroundLoad()` — the same instance
+`DefaultWorkerAppServices` hands to `IndexingPacing` (`DefaultWorkerAppServices.java:105-115`), so
+producer and consumer provably share one gauge.
+
+### TC.2 Wrong-gate: does the pacing reach every former `isUserActive` site?
+
+Checked by grep after the change, not by trusting the edit:
+
+```
+$ grep -rn "isUserActive\|signalUserActivity\|disable_breath_holding\|readActivity" modules/*/src/main
+modules/configuration/.../resolved/ResolvedConfig.java:347        (prose: names the retired gate)
+modules/worker-services/.../loop/pacing/ForegroundLoad.java:13     (prose: names the retired gate)
+modules/worker-services/.../loop/pacing/IndexingPacing.java:12     (prose: names the retired gate)
+```
+
+All three survivors are doc comments naming what was replaced (two in the replacement types, one on
+the config record whose javadoc explains what the per-document responsiveness check is now). Every executable
+site is gone and each is now a `pace()` call in the same control-flow position (loop tail, per file,
+per document, sub-batch boundary, walk throttle tick). The distribution is compile-enforced rather
+than optional: `IndexingLoop`, `BackfillScheduler` and `GrpcIngestService` take the policy as a
+`requireNonNull` constructor parameter, so a composition that forgets it fails at construction
+instead of running unthrottled.
+
+### TC.3 Test precision: right reason vs wrong reason
+
+* `IndexingPacingTest` injects both clocks and the sleep, so every assertion is on arithmetic rather
+  than on wall-clock timing: 100 ms of work under load yields exactly 400 ms at duty 20, and five
+  such intervals give `observedDutyPct() == 20`. A test that merely asserted "it slept" would pass
+  for a pause as well — item 3 is about the *ratio*, so the ratio is what is asserted.
+* `contendedIntervalStillPerformsTheConfiguredShare` is the "never fully stops" criterion, written so
+  a regression to a pause fails it: a pause yields unbounded time for zero work, driving
+  `observedDutyPct()` to 0, not 20.
+* The interceptor's three terminal paths (OK close, error close, cancel) are separate tests, and two
+  of them fire a *second* terminal event to prove the latch prevents a double decrement — the failure
+  mode that would drift the gauge negative and make it read "never busy".
+* `ForegroundPacingConfigForwardingTest` asserts the Head→snapshot→Worker round-trip, not the
+  existence of a key. "The key is declared" would have passed for `disable_breath_holding` too, which
+  is exactly the [R1] defect.
+
+### TC.4 The status wire: field kept, population stopped
+
+`signal_bus_activity_ts` (`indexing.proto:677`) is **left declared and not `reserved`**;
+`IndexStatusOps` simply stops setting it, and the removed call site is replaced by a comment naming
+why. Two reasons: removing or reserving the field is a `buf` breaking change against
+`contracts/registry.v1.json`, and lane F deletes the MMF activity byte and this field together, so
+one wire change there beats two. No `.proto` file was modified by this chunk, so the `wire` gate has
+nothing new to judge. Consumers now always read `0` — which is what the field already returned
+whenever the Head had not signalled.
+
+### TC.5 Sweep: what the retirement actually touched
+
+Beyond the 16 sites: `WorkerSignalBus.isUserActive()` + `readActivity()` (interface),
+`MmfWorkerSignalBus`'s implementations of both **and** the `Boolean.getBoolean` eval hatch,
+`MainSignalBus.writeActivity()`, `WorkerSpawner.signalUserActivity()`, the Gradle setter in
+`modules/ui/build.gradle.kts` with its comment, `LoopPacingPolicy.BREATH_HOLD_MS` + `breathHoldMs()`
++ the `userActive` parameter of `shouldInterruptBackfill`, `IndexStatusOps`'s activity population,
+`MmfTestHarness`'s four activity accessors, `ChaosSuiteTest.mmfActivityTimestamps`, and the
+`simulateRecentActivity` poke in `torture/ReadWhileWriteTest.java`. Two behaviours died with them and
+were swept rather than left inert: `syncDirectory` no longer *skips* on activity (so
+`IngestResponses.syncDirectorySkippedResponse(int,int)` and `SyncWalkPhaseResult.walkAborted` are
+gone), and the prune abort-checker became a pacing tick that never aborts — a prune that stopped
+half-way on user activity left orphans behind.
+
+Docs swept in the same change: `02-process-coordination.md` §3 (rewritten as the duty cycle, with the
+activity slot marked retired), `03-knowledge-server.md` step 1, `20-benchmarking-architecture.md`,
+`23-search-pipeline-overview.md`, `docs/reference/performance/indexing-throughput.md` (the
+`BREATH_HOLD_MS` row becomes the two config keys), ADR-0002 and ADR-0018's breath-hold mentions, and
+`modules/indexer-worker/README.md`.
+
+### TC.6 The cheaper ORT lever (design decision 3's "try first")
+
+Design decision 3 asks that lowering ORT intra-op threads under load be tried first for the
+enrichment backfills, "only if the ORT session API already exposes it". It does not, in a usable
+form: `OrtSession.SessionOptions.setIntraOpNumThreads` in `ai.onnxruntime` is a
+**session-construction** option, fixed for the session's lifetime, with no setter on a live session.
+Honouring load through it would mean tearing down and rebuilding every encoder session on each
+foreground burst — seconds of model re-init and exactly the VRAM churn the GPU arbitration slot
+exists to avoid. The duty cycle reaches the same end (give the machine back) at the cost of a
+`Thread.sleep`. Recorded as "not done, and why", not silently skipped.
+
+### TC.7 Residue lane F inherits (precise)
+
+* **MMF activity slot** — `MmfWorkerSignalLayoutV1.OFFSET_ACTIVITY_EPOCH_MS = 0`
+  (`MmfWorkerSignalLayoutV1.java:33`). No writer, no reader, no harness accessor; its only remaining
+  reference is the layout's own test (`MmfWorkerSignalLayoutV1Test.java:36-37`), which is what keeps
+  it from being dead residue while the layout still exists.
+* **Status wire** — `CoreStatus.signal_bus_activity_ts` (`indexing.proto:677`), declared but never
+  populated (§TC.4). Delete it with the layout.
+* **`main_gpu_active`** — byte 24 (`MmfWorkerSignalLayoutV1.java:44`), Head-written, with **six**
+  direct readers (`KnowledgeServer:1000`, `KnowledgeServer:1642`, `BackfillScheduler:197`,
+  `EmbeddingProviderLifecycle:169`, `EmbeddingBackfillOps:194`, `IndexingDocumentOps:219`) and four
+  indirect ones through the `WorkerSignalBus:100` `shouldYieldGpuBackfill()` default
+  (`BgeM3BackfillOps:335`, `BackfillScheduler:246`, `:437`, `:624`). Untouched here, per the contract.
+* **The gRPC interceptor** — `ForegroundLoadInterceptor` is the deliberate throwaway half: under a
+  single JVM the gauge is incremented directly at the search entry points and the interceptor goes.
+  `ForegroundLoad` and `IndexingPacing` survive as `worker-services` types.
+
+### TC.8 Routed finding: item 14's sandbox tests cannot spawn a child in this worktree
+
+`:modules:worker-services:test` is **1108 tests, 13 failed** on this branch, and all 13 are item 14's:
+`PersistentExtractionSandboxTest` (12) and `ExtractionSandboxLatencyBenchmarkTest.perFamilyLatencyTable`
+(1). Every one fails inside `ProcessBuilder.start`:
+
+```
+java.io.IOException: Cannot run program "F:\scoop\apps\temurin25-jdk\25.0.2-10.0\bin\java.exe":
+CreateProcess error=206, The filename or extension is too long
+```
+
+Not this chunk's: the whole item-3 diff touches no file under `extract/` (the single exception is
+`AdversarialCorpusIngestionTest`, which gained the new `IndexingLoop` constructor argument), and the
+throw is the Windows 32,767-character command-line limit hit *before* any child code runs.
+
+Cause, stated as a hypothesis for whoever pins it: the sandbox child argv is built from
+`java.class.path` (`ProcessExtractionSandboxTest`'s recipe, adopted by `ExtractionSandboxCommand`),
+which under a Gradle test JVM is the fully-expanded runtime classpath — hundreds of absolute jar
+paths rooted at `GRADLE_USER_HOME`. This lane runs with an isolated
+`GRADLE_USER_HOME=C:\Users\Elias\AppData\Local\Temp\jsgh-C` (39 chars) instead of the default
+`C:\Users\Elias\.gradle` (22), i.e. ~17 extra characters on every entry, inside a worktree path that
+is itself long. **Production is not exposed**: the Worker runs from `-cp lib\*`
+(`WorkerSpawner.java:584-587`), a wildcard the child inherits, so the shipped command stays short.
+The exposure is the test tier only. Two ways out for item 14's owner — run that class with the
+default Gradle home, or have the child command fall back to an `@argfile` when the assembled argv
+exceeds the OS limit (which would also harden the shipped path against a genuinely deep install).
+
+### TC.9 Live-window items still open for item 3
+
+None of these can run in a unit tier; they need the shared dev stack and are scheduled by the
+orchestrator, not by this chunk.
+
+1. **The "after" half of the baseline table** — `jseval run --pipeline` on scifact, three arms:
+   (a) alone, (b) `--search-load-qpm 10`, (c) `--search-load continuous`, with the same commands as
+   the Baseline section. Acceptance: (b) within 10% of (a); (c) reaches **at least 20% of (a)'s
+   `pipeline_timing.primary_indexing.docs_per_s`** where it previously reached 0 (frozen at 699 of
+   5184); search p95 for (b) and (c) read against **(b)'s 543 ms**, not (c)'s 276 ms, per the
+   baseline's own note.
+2. **Pacing attribution for that run** — `worker.indexing.paced_intervals_total` and
+   `worker.indexing.duty_pct` must be non-trivial in arms (b) and (c) and zero/100 in arm (a), and
+   the Worker log must carry the INFO pacing line. This is what §B.2a said the breath-hold could
+   never show; if the after-run cannot show it either, the instrument is wrong, not the result.
+3. **Chaos "Time Lord"** — `ChaosSuiteTest.indexingRunsAtAReducedDutyUnderForegroundSearchLoad`,
+   rewritten to drive the gauge with real `SearchService` traffic instead of the MMF byte. Written
+   and compiled in this chunk; **not run** — it needs the `systemTest` source set and a worker dist.
+4. **Search p95 before/after** — read from the same jseval arms' `search_load.latency_ms`.
