@@ -13,7 +13,7 @@ import { TODO_FIXME_CLASSIFICATIONS, aggregateTodoFixmeClassifications } from '.
 import { TODO_FIXME_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
 import { verdictForFile, verdictForBaselineShift } from './truth-table.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
 
 const TODO_PATTERN = /\b(TODO|FIXME|XXX)\b/g;
 
@@ -127,15 +127,11 @@ export async function enforceTodoFixme(options) {
   }
 
   // Baseline-shift detection.
-  let priorBaseline = null;
-  if (fixtureMode && fixtureRoot) {
-    const p = resolve(fixtureRoot, '_baseline', gate.baseline.path);
-    if (existsSync(p)) priorBaseline = parseBaselineContent(readFileSync(p, 'utf8'));
-  } else if (baselineRef) {
-    const content = readFileAtRef(baselineRef, gate.baseline.path, sourceRoot);
-    if (content !== null) priorBaseline = parseBaselineContent(content);
-  }
-  if (priorBaseline) {
+  const priorText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  if (priorText !== null) {
+    const priorBaseline = parseBaselineContent(priorText);
     const cls = !aggregated.growthCovered ? 'silent-growth' : (aggregated.classifications[0] ?? 'silent-growth');
     for (const [path, livePin] of baseline.entries()) {
       const priorPin = priorBaseline.get(path);

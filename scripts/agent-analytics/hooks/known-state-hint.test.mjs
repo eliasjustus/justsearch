@@ -92,6 +92,11 @@ const ALLOWED_PIN_KEYS = new Set([
   'id', 'match', 'claim', 'evidence', 'added', 'reviewBy', 'exitProbe',
   // Prose keys recording why a probe was removed or reshaped (PR #604).
   'exitProbeRetired', 'exitProbeNote',
+  // `exitProbeOmitted`: why this pin never had an exitProbe, for a red no probe can OBSERVE -- one
+  // needing a served frontend, or one that passes in isolation so a probe could only report a false
+  // GONE. `fixOwner`: the lane or owner whose fix retires the pin, so `reviewBy` is a backstop
+  // rather than the only exit. Both tempdoc 910.
+  'exitProbeOmitted', 'fixOwner',
 ]);
 run('real baseline: no entry carries an unrecognised key', () => {
   const data = JSON.parse(fs.readFileSync(path.join(repoRoot, EXPECTED_STATE_FILE), 'utf8'));

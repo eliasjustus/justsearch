@@ -153,6 +153,12 @@ RRD) describe the reopen/commit cadence:
 | `index.runtime.reopen_count` | reopens that swapped in a new reader, across every reopen path (background thread, `CommitOps.maybeRefresh*`, the on-demand seam). |
 | `index.runtime.segments_since_reopen` | `IndexWriter.getSegmentInfosCounter()` delta since the last reopen — the backlog of new segments the next reopen has to open. |
 
+Alongside them, one reason-tagged **counter** says *which trigger* fired each commit:
+
+| Metric | Meaning |
+| :--- | :--- |
+| `index.runtime.commit_total{reason}` | commits by `CommitReason` (`timer`, `indexing-loop/idle`, `backfill/ner`, …). Not a second authority for `commit_count`: both are written at the one funnel from the same reason, and `RuntimeSession.commitCount` (a `CommitCounters`) derives its total by **summing** its per-reason slots, so attribution cannot drift from the total. It differs only in lifetime — this counter accumulates across sessions, the gauge resets with the session. jseval surfaces it as `cadence.commit_by_reason`. |
+
 `IndexWriter` does not expose its segment count publicly (`getSegmentCount()` is
 package-private), so the segment-naming counter is the readable proxy; `DirectoryReader.leaves()`
 on an acquired searcher gives the complementary "segments currently visible" reading.

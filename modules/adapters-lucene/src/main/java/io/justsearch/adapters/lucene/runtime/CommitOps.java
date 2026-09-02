@@ -156,11 +156,24 @@ public final class CommitOps {
     // No separate writer null-check here — commit() performs its own atomic snapshot read
     // and throws ISE if the writer is unavailable. A separate check would be a redundant
     // volatile read that could see a different snapshot than commit() sees.
+    CommitReason effectiveReason = reason == null ? CommitReason.UNKNOWN : reason;
+    long pendingAtCommit = session.pendingDocs.get();
     long elapsedMs = commit();
     session.lastCommitNanos.set(System.nanoTime());
-    session.commitCount.incrementAndGet();
+    session.commitCount.increment(effectiveReason);
     session.pendingDocs.set(0L);
-    CommitReason effectiveReason = reason == null ? CommitReason.UNKNOWN : reason;
+    // Tempdoc 912 item 2: one line per commit naming WHICH trigger fired, so a live run can be
+    // attributed without inferring the trigger from timing. Per commit, never per document.
+    // Guarded because commitCount.get() sums all 23 reason slots on every call.
+    if (log.isDebugEnabled()) {
+      log.debug(
+          "Commit reason={} pendingDocs={} elapsedMs={} sessionCommits(reason)={} sessionCommits(total)={}",
+          effectiveReason.wireValue(),
+          pendingAtCommit,
+          elapsedMs,
+          session.commitCount.get(effectiveReason),
+          session.commitCount.get());
+    }
     LuceneRuntimeTypes.TelemetryEvents events = session.telemetryEvents;
     if (events != null) {
       events.onCommit(elapsedMs, effectiveReason);

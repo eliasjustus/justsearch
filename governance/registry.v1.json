@@ -381,6 +381,7 @@
       },
       "config": {
         "reportPath": "tmp/knip-report.json",
+        "projectRoot": "modules/ui-web",
         "inputs": [
           {
             "path": "tmp/knip-report.json",

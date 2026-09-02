@@ -21,7 +21,7 @@ import { resolve } from 'node:path';
 import { NPM_AUDIT_CLASSIFICATIONS, aggregateNpmAuditClassifications } from './classifications.mjs';
 import { NPM_AUDIT_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
 
 const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical', 'total'];
 
@@ -245,8 +245,9 @@ function readPriorBaseline({ fixtureMode, fixtureRoot, repoRoot, baselineRef, ba
       return null;
     }
   }
-  if (!baselineRef) return null;
-  const content = readFileAtRef(baselineRef, baselineFilePath, repoRoot);
+  const content = readPriorBaselineText({
+    sourceRoot: repoRoot, baselineRef, baselinePath: baselineFilePath,
+  });
   if (content === null) return null;
   try {
     return JSON.parse(content);

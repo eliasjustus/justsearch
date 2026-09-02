@@ -23,7 +23,7 @@ import {
 } from './classifications.mjs';
 import { TEST_EFFICACY_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
 
 const TOOL = { toolName: 'justsearch-test-efficacy', toolVersion: '0.1.0' };
 
@@ -242,15 +242,22 @@ function checkSchema(obj, expected, uri) {
   return null;
 }
 
-function readPriorBaseline({ fixtureMode, repoRoot, sourceRoot, baselineRef, baselinePath }) {
+export function readPriorBaseline({ fixtureMode, repoRoot, sourceRoot, baselineRef, baselinePath }) {
   if (fixtureMode) {
     // In fixture mode there is no git history; treat the live fixture baseline as the prior too.
+    // NOTE this makes prior === live, so fixture mode can never observe a shift -- which is why
+    // the real branch below needs a test of its own (tempdoc 910: it was broken for exactly as
+    // long as the fixtures were the only thing exercising this function).
     const p = resolve(sourceRoot, baselinePath);
     return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
   }
-  if (!baselineRef) return null;
   try {
-    const text = readFileAtRef({ repoRoot, ref: baselineRef, path: baselinePath });
+    // This used to call readFileAtRef with an OPTIONS OBJECT against its POSITIONAL signature, so
+    // git ran `show [object Object]:undefined`, threw, and returned null through the catch below:
+    // the prior baseline was ALWAYS null outside fixture mode and
+    // test-efficacy/silent-baseline-shift could never fire in a real run (tempdoc 910). It now goes
+    // through the shared reader, so there is one call site to get wrong instead of six.
+    const text = readPriorBaselineText({ sourceRoot: repoRoot, baselineRef, baselinePath });
     return text ? JSON.parse(text) : null;
   } catch {
     return null;

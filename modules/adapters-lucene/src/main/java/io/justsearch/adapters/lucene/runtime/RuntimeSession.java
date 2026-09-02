@@ -149,7 +149,12 @@ final class RuntimeSession implements AutoCloseable {
   final AtomicLong lastCommitNanos = new AtomicLong(0L);
   final AtomicLong lastRefreshTargetMs = new AtomicLong(-1L);
   final AtomicLong pendingDocs = new AtomicLong(0L);
-  final AtomicLong commitCount = new AtomicLong(0L);
+  /**
+   * Commits on this session, broken down by {@link CommitReason} (tempdoc 912 item 2). Not an
+   * {@code AtomicLong}: the total is the sum of the per-reason slots, so attribution cannot drift
+   * from the total. {@code commitCount.get()} still reads as the total for callers that want it.
+   */
+  final CommitCounters commitCount = new CommitCounters();
   final AtomicLong queueDepth = new AtomicLong(0L);
 
   /**

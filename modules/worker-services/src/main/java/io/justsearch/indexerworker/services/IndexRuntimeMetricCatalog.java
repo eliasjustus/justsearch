@@ -60,12 +60,35 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   // off the same RuntimeGaugesSnapshot; a `worker.index.commit_total` would have been a second
   // authority for it (note that worker.commits.total is a different quantity — it counts only the
   // six IndexingLoop-attributed commits, not the commit timer, gRPC deletes or prune).
+  // Tempdoc 912 item 2: COMMIT_TOTAL below is NOT the second authority that sentence rules out.
+  // It carries a reason DIMENSION on the same funnel write, and RuntimeSession.commitCount derives
+  // its total by summing those same per-reason slots — one authority, two projections of it.
+  // Caveat on "all-paths": four durable commits bypass the funnel entirely and are counted by
+  // neither (912 §C.4) — RuntimeSession materializeEmptyIndex + writer close, ComponentsFactory's
+  // open-failure close, and KnowledgeServerMigrationOps' low-level CommitOps.commit().
 
   /** Reopens that swapped in a new reader, all paths. Pairs with {@link #COMMIT_COUNT}. */
   public static final String REOPEN_COUNT = "index.runtime.reopen_count";
 
   /** Segments the writer has created since the last reopen — the next reopen's backlog. */
   public static final String SEGMENTS_SINCE_REOPEN = "index.runtime.segments_since_reopen";
+
+  /**
+   * Commits by trigger (tempdoc 912 item 2). 885's live window could measure {@link #COMMIT_COUNT}
+   * moving only 17 % under three multiplicative cadence relaxations but could NOT say which trigger
+   * held the floor, because no per-trigger count existed. This is that count.
+   *
+   * <p>It is a counter and not a second authority for {@link #COMMIT_COUNT}: both are written at
+   * the one commit funnel ({@code CommitOps.commitAndTrack}) from the same {@code CommitReason}, and
+   * the session-side total is the SUM of its per-reason slots by construction ({@code
+   * CommitCounters}). It differs from the {@code COMMIT_COUNT} gauge only in lifetime — this
+   * accumulates across sessions, the gauge resets with the session (885: 46 vs 114).
+   *
+   * <p>Reason-tagged rather than surfaced on {@code /api/status}, for the same reason
+   * {@link #REOPEN_COUNT} is: the cadence comparison reads its trend off the metrics NDJSON, and a
+   * status-wire field would drag a proto change into a measurement knob.
+   */
+  public static final String COMMIT_TOTAL = "index.runtime.commit_total";
 
   /**
    * Static definitions. Pass to {@code LocalTelemetry}'s constructor before constructing this
@@ -103,6 +126,11 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
           MetricDefinition.counter(VALIDATION_FAILURE_TOTAL)
               .unit(Unit.COUNT)
               .tagKeys(IndexRuntimeTags.REASON_KEYS)
+              .build(),
+          MetricDefinition.counter(COMMIT_TOTAL)
+              .unit(Unit.COUNT)
+              .tagKeys(IndexRuntimeTags.REASON_KEYS)
+              .cardinalityLimit(32)
               .build(),
           MetricDefinition.gauge(WRITER_QUEUE_DEPTH)
               .unit(Unit.COUNT)
@@ -162,6 +190,8 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   public final HistogramMetric<SwapTags> swapDurationMs;
   public final HistogramMetric<EmptyTags> writeBarrierWaitUs;
   public final CounterMetric<ValidationTags> validationFailureTotal;
+  /** Commits by trigger — see {@link #COMMIT_TOTAL}. */
+  public final CounterMetric<CommitTags> commitTotal;
   // Phase 3b status gauges — register their async callbacks at catalog construction; the
   // suppliers route through {@code statusSupplier} (a {@code RuntimeGaugesSnapshot} provider).
   public final GaugeMetric<EmptyTags> writerQueueDepth;
@@ -206,6 +236,7 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
     this.swapDurationMs = registry.buildHistogram(SWAP_DURATION_MS);
     this.writeBarrierWaitUs = registry.buildHistogram(WRITE_BARRIER_WAIT_US);
     this.validationFailureTotal = registry.buildCounter(VALIDATION_FAILURE_TOTAL);
+    this.commitTotal = registry.buildCounter(COMMIT_TOTAL);
     this.writerQueueDepth =
         registry.buildGauge(
             WRITER_QUEUE_DEPTH,

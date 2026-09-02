@@ -262,7 +262,12 @@ await run('runner: --produce-inputs runs producer then evaluates for real', asyn
         inputs: [
           {
             path: reportRel,
-            producer: `${process.execPath} -e "require('fs').writeFileSync(process.argv[1],'{}')" ${reportRel}`,
+            // A VALID (empty) knip report, not `{}`. These two producer tests use the dead-code
+            // enforcer only as a vehicle for the input-contract plumbing, so the payload just has
+            // to be something the enforcer accepts. Since tempdoc 910 the enforcer rejects a report
+            // with no `issues` array as `report-malformed` rather than reading it as "zero dead
+            // code" — a producer that silently emits `{}` must not come back green.
+            producer: `${process.execPath} -e "require('fs').writeFileSync(process.argv[1],'{\\"issues\\":[]}')" ${reportRel}`,
             class: 'required',
           },
         ],
@@ -298,7 +303,8 @@ await run('runner: ./-relative producer resolves to absolute path (NoDefaultCurr
   const producerRel = `tmp/input-contract-producer-${stamp}.cmd`;
   const producerAbs = path.resolve(REPO_ROOT, producerRel);
   tmpFiles.push(reportAbs, producerAbs);
-  fs.writeFileSync(producerAbs, `@echo off\r\necho {} > "${reportAbs}"\r\n`);
+  // Same as above: a valid empty knip report, since the enforcer no longer accepts a bare `{}`.
+  fs.writeFileSync(producerAbs, `@echo off\r\necho {"issues":[]} > "${reportAbs}"\r\n`);
 
   const registry = writeRegistry([
     {
