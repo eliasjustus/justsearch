@@ -247,7 +247,7 @@
       "expect": {
         "equals": "currentUser"
       },
-      "note": "scripts/ci/check-installer-execution-level.mjs asserts the same thing, but nothing invokes it (not in the root pre-merge table, not in any workflow), so it is not a probe. Routed as a finding rather than fixed here."
+      "note": "This probe covers the CONFIG assertion only. scripts/ci/check-installer-execution-level.mjs — uninvoked when 884 §F row 7 routed it, now wired into ci.yml (config half + its unit test) and build-installer.yml's installer_verify job (artifact half) — additionally byte-scans the BUILT installer's embedded manifest, which is the half this json-path cannot see: an installer-hooks.nsh change can leave installMode correct while the shipped setup.exe still requests elevation."
     },
     {
       "id": "adr-0026-workflow-triggers-checked",

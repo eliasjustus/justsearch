@@ -284,6 +284,16 @@ jobs:
       - name: Test the installer-branding gate
         run: node scripts/ci/check-installer-branding.test.mjs
 
+      - name: Test the installer execution-level gate
+        run: node scripts/ci/check-installer-execution-level.test.mjs
+
+      # Tempdoc 884 §F row 7: this check was invoked by nothing for months. The CONFIG half runs
+      # here on every CI run; the ARTIFACT half — the byte-scan that catches an installer-hooks.nsh
+      # change leaving tauri.conf.json correct while the BUILT installer still requests elevation —
+      # runs in build-installer.yml's installer_verify job, where a setup.exe actually exists.
+      - name: Installer does not request elevation (config half)
+        run: node scripts/ci/check-installer-execution-level.mjs
+
       # Three sandbox rounds reported an NSIS wizard naming no version anywhere. Tempdoc 806 routed
       # it through bundle.copyright -> BrandingText; round 13 found that covered only the interior
       # pages, because MUI's Welcome and Finish pages draw no strip (tempdoc 807 R13-F1). Both
