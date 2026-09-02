@@ -101,8 +101,8 @@ final class RuntimeSession implements AutoCloseable {
   volatile ValidationMode validationMode;
   volatile long maxQueueDepth;
   volatile long nrtTargetMaxStaleMs;
-  // Both CRTRT construction sites read these through NrtReopenThreads.create (tempdoc 885
-  // item 19); the 500/50 defaults below are what the initial open used to hardcode.
+  // The raw index.nrt.* pair (tempdoc 885 item 19). Neither CRTRT construction site reads it
+  // directly any more: both go through the mode-resolved nrtReopenTargetMs/nrtReopenHardMs below.
   volatile long nrtHardMaxStaleMs;
   // Tempdoc 885 item 19 cadence candidate: CONTINUOUS is today's behaviour; ON_DEMAND moves the
   // reopen onto the foreground acquire (SearcherBridge) and slows the background thread.
