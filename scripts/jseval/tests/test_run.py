@@ -976,3 +976,77 @@ def test_execute_run_omits_search_load_when_absent(
     summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
 
     assert "search_load" not in summary
+
+
+# --- tempdoc 885 item 19: cadence block wiring -------------------------------
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_always_emits_a_cadence_block(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+    tmp_path, monkeypatch,
+):
+    """Absent Worker metrics degrade to nulls — the columns exist on every run."""
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    monkeypatch.setenv("JUSTSEARCH_DATA_DIR", str(tmp_path / "no-telemetry-here"))
+
+    summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
+
+    assert summary["cadence"] == {
+        "reopen_total": None,
+        "commit_total": None,
+        "segments_since_reopen": None,
+        "first_search_after_indexing": None,
+    }
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_reads_worker_cadence_metrics_and_carries_the_probe(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+    tmp_path, monkeypatch,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir(parents=True)
+    (telemetry / "metrics-worker.ndjson").write_text(
+        "\n".join(json.dumps(r) for r in [
+            {"t": "2026-09-02T00:00:00Z", "name": "index.runtime.reopen_count",
+             "type": "counter", "value": 17},
+            {"t": "2026-09-02T00:00:01Z", "name": "index.runtime.commit_count",
+             "type": "counter", "value": 4},
+            {"t": "2026-09-02T00:00:01Z", "name": "index.runtime.segments_since_reopen",
+             "type": "gauge", "value": 2},
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JUSTSEARCH_DATA_DIR", str(tmp_path))
+    probe = {"min_new_files": 50, "batches_fired": 1, "probes_ok": 1,
+             "errors": 0, "latency_ms": {"p50": 9.0, "p95": 9.0, "max": 9.0}}
+
+    summary = execute_run(
+        "scifact", "http://localhost:8080", ["hybrid"], first_search_probe=probe,
+    )
+
+    assert summary["cadence"]["reopen_total"] == 17
+    assert summary["cadence"]["commit_total"] == 4
+    assert summary["cadence"]["segments_since_reopen"] == 2
+    assert summary["cadence"]["first_search_after_indexing"] == probe

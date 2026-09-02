@@ -1254,7 +1254,39 @@ public enum EnvRegistry {
     INDEXING_FOREGROUND_COOLDOWN_MS(
         "justsearch.indexing.foreground_cooldown_ms",
         "JUSTSEARCH_INDEXING_FOREGROUND_COOLDOWN_MS",
-        "500");
+        "500"),
+
+    // ==================== NRT reopen strategy (tempdoc 885 item 19) ====================
+
+    /**
+     * NRT reopen strategy. {@code continuous} (default) is today's behaviour: the
+     * {@code ControlledRealTimeReopenThread} reopens on the {@code index.nrt.*} staleness bounds
+     * (500 ms / 50 ms) whether or not anyone is searching. {@code on_demand} is the measurement
+     * candidate: the background thread drops to {@code index.nrt.background_reopen_ms} and each
+     * foreground search refreshes the searcher itself before acquiring it, so the segment-open cost
+     * lands on the first query after new documents instead of on every 500 ms tick.
+     *
+     * <p>An unrecognised value falls back to {@code continuous} with a WARN — this knob exists to
+     * be A/B-measured, so a typo must not silently change cadence.
+     */
+    INDEX_NRT_MODE("index.nrt.mode", "JUSTSEARCH_INDEX_NRT_MODE", "continuous"),
+
+    /**
+     * Background reopen cadence, in ms, while {@code index.nrt.mode=on_demand} (default 2000).
+     * Ignored in {@code continuous} mode. The thread still wakes on this period when nothing has
+     * been written, but Lucene's {@code openIfChanged} returns null on an unchanged index, so an
+     * idle Worker performs no reopen.
+     */
+    INDEX_NRT_BACKGROUND_REOPEN_MS(
+        "index.nrt.background_reopen_ms", "JUSTSEARCH_INDEX_NRT_BACKGROUND_REOPEN_MS", "2000"),
+
+    /**
+     * Age, in ms, past which a foreground search in {@code on_demand} mode escalates from the
+     * non-blocking {@code maybeRefresh()} to {@code maybeRefreshBlocking()} (default 1000), so a
+     * query cannot silently return a view older than this bound. Ignored in {@code continuous} mode.
+     */
+    INDEX_NRT_ON_DEMAND_MAX_STALE_MS(
+        "index.nrt.on_demand_max_stale_ms", "JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS", "1000");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 
