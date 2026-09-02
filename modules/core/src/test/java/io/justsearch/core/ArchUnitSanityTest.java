@@ -36,17 +36,7 @@ class ArchUnitSanityTest {
           .dependOnClassesThat()
           .resideInAnyPackage("org.apache.lucene..", "io.justsearch.aibackend..");
 
-  @ArchTest
-  static final ArchRule coreMustNotReadEnvOrSystemProperties =
-      noClasses()
-          .that()
-          .resideInAnyPackage("io.justsearch.core..")
-          .should()
-          .callMethod(System.class, "getenv", String.class)
-          .orShould()
-          .callMethod(System.class, "getProperty", String.class)
-          .orShould()
-          .callMethod(System.class, "getProperty", String.class, String.class)
-          .orShould()
-          .callMethod(System.class, "setProperty", String.class, String.class);
+  // `coreMustNotReadEnvOrSystemProperties` was retired in tempdoc 883 decision 5 — see the note in
+  // io.justsearch.deadcode.SystemAccessFunnelTest (modules/dead-code-audit), the single repo-wide
+  // replacement for the six per-module copies of this rule.
 }

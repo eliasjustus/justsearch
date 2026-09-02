@@ -1,0 +1,149 @@
+# System-access allowlist — tempdoc 883 decision 5. One entry per line: `<fully.qualified.Class>#<member>`.
+#
+# WHAT THIS IS. Every direct read or write of process-global state — System.getenv,
+# System.getProperty/setProperty/clearProperty/getProperties/setProperties, and their two disguises
+# Boolean.getBoolean / Integer.getInteger — that lives OUTSIDE io.justsearch.configuration, the
+# sanctioned funnel. `io.justsearch.deadcode.SystemAccessFunnelTest` (modules/dead-code-audit) fails
+# the build on a site that is not listed here, and fails on a listed site that no longer exists.
+#
+# THESE ARE RECORDED, NOT BLESSED. Every line is a consumer reaching around the resolver, so it does
+# not see settings.json, YAML, the worker snapshot, or a value that changed at runtime — it sees
+# whatever was in the environment when the JVM started. Shrinking this list is the point. The
+# `config-surface` gate additionally fails when the list GROWS without a declared changeset
+# (rule config-surface/sysaccess-allowlist-growth), because appending a line is the one-line way to
+# make the funnel test green without fixing anything.
+#
+# THE FIX for a new site is to declare the key in EnvRegistry and read it from ResolvedConfig (or
+# SystemAccess for a genuinely process-global one) — not to add a line here.
+#
+# SEEDED from the six per-module ArchUnit rules this replaces
+# (app-api/ArchitectureRulesTest, core/ArchUnitSanityTest, app-services/AppServicesWorkerGuardrailsTest,
+# indexer-worker/IndexerWorkerGuardrailsTest, ui/UiApiGuardrailsTest, adapters-lucene/AdaptersLuceneGuardrailsTest)
+# plus the nine modules their union never covered: telemetry, app-inference, gpu-bridge, ai-backend,
+# app-launcher, ort-common, worker-services, benchmarks, ssot-tools.
+#
+# Reasons carried over from the retired rules' inline exemptions:
+#   - indexerworker.server.DevReloadManager — dev-only build-stamp updater (tempdoc 371).
+#   - indexerworker.services.IndexStatusOps — reads the stamp via EnvRegistry indirection (371).
+#   - indexerworker.services.GrpcHealthService — JUSTSEARCH_WORKER_HEALTH_SYNTHETIC_DELAY_MS, a
+#     test-only synthetic-delay hook, default 0/off (374 alpha.25 R13-A).
+#   - workerservices/indexerworker extract.TikaOcrRuntime — native-resource DISCOVERY (locating the
+#     bundled/system Tesseract binary and tessdata via PATH/APPDATA/LOCALAPPDATA/TESSERACT_PATH/
+#     TESSDATA_PREFIX, and os.name for the platform binary name). This probes the WORKER HOST's
+#     filesystem, which the Head's config snapshot cannot know (tempdoc 607). Owned by lane C.
+#   - app.services.bootstrap.phases.* / HeadAssembly / BootstrapHelpers — bootstrap entrypoints that
+#     run before a ResolvedConfig exists.
+#   - app.services.bootstrap.phases.ExamplePlugin — a demo/dev enable toggle, not application config
+#     (tempdoc 560 §10.4).
+#   - app.services.lease.OperationLeaseServiceImpl — dev-runner signals.
+#
+# Note on member names: a lambda body is attributed to the method that declares it
+# (javac's `lambda$foo$3` is normalised to `foo`), because the index shifts on unrelated edits and a
+# ratchet that cries wolf gets deleted.
+#
+# ---- entries (105 as of 2026-09-02) ----
+io.justsearch.adapters.lucene.runtime.IndexMetadataParityGuard#allowMismatch
+io.justsearch.aibackend.local.DeterminismProfile#from
+io.justsearch.app.inference.BrainSupervisionPolicy#defaults
+io.justsearch.app.inference.CudaRuntimeDetection#detectCudaRuntimeWarning
+io.justsearch.app.inference.InferenceConfig#findServerExecutable
+io.justsearch.app.inference.InferenceConfig#fromEnvironment
+io.justsearch.app.inference.InferenceLifecycleManager#resolveModelStatePath
+io.justsearch.app.inference.LlamaServerOps#allowHealthOnlyExternalAdoption
+io.justsearch.app.inference.LlamaServerOps#policyDisallowExternalInferenceServers
+io.justsearch.app.inference.LlamaServerOps#policyGpuAccelerationEnabled
+io.justsearch.app.inference.LlamaServerOps#resolveBundledRuntimeBinDirBestEffort
+io.justsearch.app.inference.LlamaServerOps#resolveLlamaServerLogFile
+io.justsearch.app.inference.OnlineAiServiceImpl#resolveModelsDir
+io.justsearch.app.inference.OnlineAiServiceImpl#resolveOptionalPath
+io.justsearch.app.services.HeadAssembly#getJustSearchHome
+io.justsearch.app.services.ai.install.AiInstallService#applyCudaServerExe
+io.justsearch.app.services.ai.install.AiInstallService#resolveHomeDir
+io.justsearch.app.services.ai.install.DownloadExecutor#isWindows
+io.justsearch.app.services.ai.install.DownloadExecutor#shouldInjectTransportFault
+io.justsearch.app.services.ai.install.RuntimeRestoreUtil#resolveBundledRuntimeDir
+io.justsearch.app.services.ai.pack.AiPackImportService#resolveAiHome
+io.justsearch.app.services.ai.pack.AiPackValidator#isWindows
+io.justsearch.app.services.ai.pack.PackStagingOps#isWindows
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#<clinit>
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#applyServerExeSysProp
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#forceServerExeSysProp
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#getStatus
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#isWindows
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#resolveBundledRuntimeBinDirBestEffort
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#resolveEnvOrProp
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#resolveModelsDir
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#restoreChatProfileProp
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#rollback
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#runActivate
+io.justsearch.app.services.ai.runtime.RuntimeActivationService#runDeactivate
+io.justsearch.app.services.bootstrap.phases.BootstrapHelpers#getJustSearchHome
+io.justsearch.app.services.bootstrap.phases.BootstrapHelpers#initialRuntimeContext
+io.justsearch.app.services.bootstrap.phases.BootstrapHelpers#resolveOccurrenceBufferSize
+io.justsearch.app.services.bootstrap.phases.BootstrapHelpers#startInfraHealthGrpcServer
+io.justsearch.app.services.bootstrap.phases.ExamplePlugin#enabled
+io.justsearch.app.services.bootstrap.phases.InferenceDecision#createInferenceManager
+io.justsearch.app.services.bootstrap.phases.InferenceDecision#decideInferenceConfigured
+io.justsearch.app.services.bootstrap.phases.InferenceWiring#seedAutostartSpec
+io.justsearch.app.services.bootstrap.phases.InfraPhase#runWithOutcome
+io.justsearch.app.services.indexing.ExcludeGlobs#isWindows
+io.justsearch.app.services.lease.OperationLeaseServiceImpl#<init>
+io.justsearch.app.services.lease.OperationLeaseServiceImpl#currentHolder
+io.justsearch.app.services.policy.EnterprisePolicyServiceImpl#isWindows
+io.justsearch.app.services.policy.EnterprisePolicyServiceImpl#resolveAiHome
+io.justsearch.app.services.policy.EnterprisePolicyServiceImpl#resolveMachinePolicyPath
+io.justsearch.app.services.policy.EnterprisePolicyServiceImpl#snapshot
+io.justsearch.app.services.worker.KnowledgeServerBootstrap#tryIngestHelpFiles
+io.justsearch.app.services.worker.KnowledgeServerConfig#detectProductionMode
+io.justsearch.app.services.worker.KnowledgeServerConfig#envOrProperty
+io.justsearch.app.services.worker.KnowledgeServerConfig#resolveLibDir
+io.justsearch.app.services.worker.WorkerSpawner#buildCommand
+io.justsearch.app.services.worker.WorkerSpawner#isWindows
+io.justsearch.app.services.worker.WorkerSpawner#spawnWorker
+io.justsearch.app.services.worker.WorkerSpawner#workerJavaBinary
+io.justsearch.app.util.WindowsJobObject#isWindows
+io.justsearch.app.util.WindowsPowerStatus#isWindows
+io.justsearch.applauncher.Launcher#emitSmokeSummary
+io.justsearch.applauncher.Launcher#setIfBlank
+io.justsearch.applauncher.LauncherBootstrap#setIfBlank
+io.justsearch.applauncher.LauncherEnvironment#<init>
+io.justsearch.applauncher.LauncherEnvironment#close
+io.justsearch.applauncher.SmokeDriver#execute
+io.justsearch.benchmarks.EngineVectorIndexBench#main
+io.justsearch.benchmarks.FilteredKnnBench#main
+io.justsearch.benchmarks.util.MachineFingerprint#capture
+io.justsearch.gpu.NvmlService#isWindows
+io.justsearch.gpu.NvmlService#preferredNvmlPath
+io.justsearch.indexerworker.coordination.MmfWorkerSignalBus#isUserActive
+io.justsearch.indexerworker.extract.ExtractionSandboxCommand#javaBinary
+io.justsearch.indexerworker.extract.TikaOcrRuntime#appDataHome
+io.justsearch.indexerworker.extract.TikaOcrRuntime#appOwnedRuntimeRoots
+io.justsearch.indexerworker.extract.TikaOcrRuntime#executableNames
+io.justsearch.indexerworker.extract.TikaOcrRuntime#findExecutableOnPath
+io.justsearch.indexerworker.extract.TikaOcrRuntime#findTessdataDirectory
+io.justsearch.indexerworker.extract.TikaOcrRuntime#localAppDataHome
+io.justsearch.indexerworker.extract.TikaOcrRuntime#resolve
+io.justsearch.indexerworker.server.DevReloadManager#updateBuildStampFromReloadFile
+io.justsearch.indexerworker.services.GrpcHealthService#parseLongEnv
+io.justsearch.indexerworker.services.IndexStatusOps#buildStamp
+io.justsearch.ort.GpuAutoDetection#isWindows
+io.justsearch.ort.GpuDriverApiProbe#probe
+io.justsearch.ort.OrtCudaHelper#applyOrtNativePackProperty
+io.justsearch.ort.OrtNativeTempReaper#reapStale
+io.justsearch.ssot.tools.DocsTempdocStatusCheck#main
+io.justsearch.telemetry.CrashReporter#defaultCrashDir
+io.justsearch.telemetry.CrashReporter#writeCrashReport
+io.justsearch.telemetry.LocalTelemetry#<init>
+io.justsearch.telemetry.NdjsonMetricExporter#<init>
+io.justsearch.telemetry.NdjsonSpanExporter#<init>
+io.justsearch.telemetry.TracingBootstrap#<init>
+io.justsearch.ui.HeadlessApp#buildApi
+io.justsearch.ui.HeadlessApp#harmonizeDataDirProperties
+io.justsearch.ui.HeadlessApp#hasCudaRuntime
+io.justsearch.ui.HeadlessApp#main
+io.justsearch.ui.HeadlessApp#maybeAutoSelectCuda12Variant
+io.justsearch.ui.HeadlessApp#resolveConfig
+io.justsearch.ui.HeadlessApp#setupInfra
+io.justsearch.ui.api.DebugConditionController#handleClear
+io.justsearch.ui.api.DebugConditionController#handleTrip
+io.justsearch.ui.api.LocalApiServer#handleResetIndex

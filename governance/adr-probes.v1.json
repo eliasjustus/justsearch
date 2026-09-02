@@ -446,6 +446,61 @@
         "modules/ui/src/test/java/io/justsearch/ui/api/ApiSecurityFiltersTest.java"
       ],
       "note": "Deliberately no 'expect' count: the claim is 'at least one refusal is still asserted', not a fixed number of cases, so adding a case must not fail the gate. Pairs with the kind:test probe, which pins the method NAME; this one pins that the method still asserts something."
+    },
+    {
+      "id": "adr-0047-fit-off-explicit",
+      "adr": "0047",
+      "premise": "The context ladder steps down when a rung produces a hard, detectable launch abort. llama-server defaults '--fit on' and that pass MAXIMIZES rather than fits (measured: 242,944 tokens / 4 GB KV with -c omitted), so a memory-adjusting heuristic running beside an explicit -c could absorb the very abort the step-down reads as its signal. The launch therefore passes '-fit off' unconditionally. Drop that flag and ADR-0047's step-down premise becomes an inference again rather than a property of the launch line.",
+      "kind": "grep-present",
+      "pattern": "\"-fa\",\\s*\"on\",\\s*\"-fit\",\\s*\"off\"",
+      "paths": [
+        "modules/app-inference/src/main/java/io/justsearch/app/inference/LlamaServerOps.java"
+      ],
+      "expect": 1,
+      "note": "expect 1 is the population, not a ratchet: memoryPlanFlags is the single argv site for the memory-plan block, and LlamaServerLaunchFlagsTest asserts the FULL ordered argv rather than 'contains'. The pattern spans a line wrap in the source, which \\\\s* absorbs."
+    },
+    {
+      "id": "adr-0047-no-context-size-promotion",
+      "adr": "0047",
+      "premise": "The window is contributed at its honest ordinal, never promoted into a system property where the resolver reads it as 'jvm_arg' (500) and effective-config reports a GUI default as an operator override. The promotion helper is deleted, not merely unused; resurrecting it under any name re-opens the precedence lie this ADR exists to close.",
+      "kind": "grep-absent",
+      "pattern": "maybeApplyContextSizeSysProp",
+      "paths": [
+        "modules"
+      ],
+      "include": [".java"],
+      "note": "Scoped to Java sources across all modules: the symbol must not come back in the controller, in a helper, or in a test that would keep a resurrected path green. Docs and tempdocs may still NAME the retired helper (retire-with-a-sweep asks for 'delete or label'), which is why the probe does not scan docs/."
+    },
+    {
+      "id": "adr-0047-ladder-policy-test",
+      "adr": "0047",
+      "premise": "The rung the Head contributes at ordinal 150 and the rung LlamaServerOps actually launches are the same number, and the backend (GPU layers vs -ngl 0) is what selects the top rung. ContextWindowPolicyTest#autoTopRungByBackend pins that identity. HONEST LIMIT: kind 'test' checks only that the file still declares the member — a gutted body satisfies it; the sibling probe adr-0047-fit-off-explicit and the exact-argv assertion in LlamaServerLaunchFlagsTest are what pin behaviour.",
+      "kind": "test",
+      "file": "modules/app-inference/src/test/java/io/justsearch/app/inference/ContextWindowPolicyTest.java",
+      "test": "io.justsearch.app.inference.ContextWindowPolicyTest#autoTopRungByBackend"
+    },
+    {
+      "id": "adr-0047-budgets-are-window-fractions",
+      "adr": "0047",
+      "premise": "Every prompt-side budget is min(fraction x inputBudget, cap) computed per request from the LIVE window — not a constant, and not a static final resolved at class-init. ContextBudget is the single authority; the four capped accessors (section target, external context, read page, tool result) each derive from inputBudget.",
+      "kind": "grep-present",
+      "pattern": "capped\\(inputBudget\\s*/",
+      "paths": [
+        "modules/core/src/main/java/io/justsearch/core/util/ContextBudget.java"
+      ],
+      "expect": 4,
+      "note": "expect 4 is the population, not a growth ratchet: there are exactly four capped fractions in the design table (ADR-0047 section 6). The uncapped fifth quantity, hierarchicalThreshold(), IS the input budget and so has no 'capped(' call — adding a fifth CAPPED budget is a design change that should re-open this ADR's table, which is why the count is pinned rather than left open."
+    },
+    {
+      "id": "adr-0047-no-window-blind-threshold",
+      "adr": "0047",
+      "premise": "The hierarchical summarizer's split threshold is the live input budget, not a window-blind literal. The retired HIERARCHICAL_THRESHOLD_TOKENS = 5000 sent a 4999-token document single-pass into a 4096-token window whose honest input budget was ~2300; its return in any form would restore that.",
+      "kind": "grep-absent",
+      "pattern": "HIERARCHICAL_THRESHOLD_TOKENS",
+      "paths": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/conversation/HierarchicalShapeRunner.java"
+      ],
+      "note": "Scoped to the one file that owned the constant. The WHY comment at its old site deliberately names the retired LITERAL (5000) and not the symbol, so the label retire-with-a-sweep asks for does not fight the probe."
     }
   ]
 }

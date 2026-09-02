@@ -41,6 +41,13 @@ final class HeadlessAppContextWindowAutoDetectTest {
   /** Comfortably above HardwareProfile.MINIMUM_VRAM_FOR_GGUF, so Phase F populates layers. */
   private static final long TWELVE_GB = 12L * 1024 * 1024 * 1024;
 
+  /**
+   * What {@code UiSettings.getGpuLayers()} returns when the user has not set one. {@code 0} is
+   * "unset" in this store — {@code ConfigStoreRebuilder.contributeUiSettings} only contributes the
+   * key when {@code > 0} — so the ordinal-300 rung must be skipped for it.
+   */
+  private static final int NO_SETTINGS_GPU_LAYERS = 0;
+
   private final Map<String, String> saved = new HashMap<>();
 
   @BeforeEach
@@ -70,7 +77,8 @@ final class HeadlessAppContextWindowAutoDetectTest {
     autoDetected.put("justsearch.gpu.enabled", "true");
     autoDetected.put(GPU_LAYERS_KEY, "99");
 
-    Map<String, String> augmented = HeadlessApp.augmentDerivedContextWindow(autoDetected);
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(autoDetected, NO_SETTINGS_GPU_LAYERS);
 
     assertEquals(
         String.valueOf(ContextWindowPolicy.GPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
@@ -80,7 +88,8 @@ final class HeadlessAppContextWindowAutoDetectTest {
   @DisplayName("no GPU layers give the CPU top rung")
   void noGpuLayersGiveCpuRung() {
     Map<String, String> augmented =
-        HeadlessApp.augmentDerivedContextWindow(Map.of("justsearch.gpu.enabled", "false"));
+        HeadlessApp.augmentDerivedContextWindow(
+            Map.of("justsearch.gpu.enabled", "false"), NO_SETTINGS_GPU_LAYERS);
 
     assertEquals(
         String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
@@ -89,7 +98,8 @@ final class HeadlessAppContextWindowAutoDetectTest {
   @Test
   @DisplayName("an empty probe map still gets a window: a fresh non-GPU data dir must be explained")
   void emptyProbeMapStillContributes() {
-    Map<String, String> augmented = HeadlessApp.augmentDerivedContextWindow(Map.of());
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(Map.of(), NO_SETTINGS_GPU_LAYERS);
 
     assertTrue(
         augmented.containsKey(CONTEXT_SIZE_KEY),
@@ -102,7 +112,8 @@ final class HeadlessAppContextWindowAutoDetectTest {
   @Test
   @DisplayName("a null probe map is tolerated")
   void nullProbeMapIsTolerated() {
-    Map<String, String> augmented = HeadlessApp.augmentDerivedContextWindow(null);
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(null, NO_SETTINGS_GPU_LAYERS);
 
     assertEquals(
         String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
@@ -114,7 +125,8 @@ final class HeadlessAppContextWindowAutoDetectTest {
     System.setProperty(GPU_LAYERS_KEY, "35");
 
     Map<String, String> augmented =
-        HeadlessApp.augmentDerivedContextWindow(Map.of(GPU_LAYERS_KEY, "0"));
+        HeadlessApp.augmentDerivedContextWindow(
+            Map.of(GPU_LAYERS_KEY, "0"), NO_SETTINGS_GPU_LAYERS);
 
     assertEquals(
         String.valueOf(ContextWindowPolicy.GPU_TOP_RUNG),
@@ -128,7 +140,8 @@ final class HeadlessAppContextWindowAutoDetectTest {
     System.setProperty(GPU_LAYERS_KEY, "0");
 
     Map<String, String> augmented =
-        HeadlessApp.augmentDerivedContextWindow(Map.of(GPU_LAYERS_KEY, "99"));
+        HeadlessApp.augmentDerivedContextWindow(
+            Map.of(GPU_LAYERS_KEY, "99"), NO_SETTINGS_GPU_LAYERS);
 
     assertEquals(
         String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
@@ -138,7 +151,8 @@ final class HeadlessAppContextWindowAutoDetectTest {
   @DisplayName("an unparseable gpu.layers degrades to the CPU rung instead of throwing at boot")
   void unparseableGpuLayersDegrades() {
     Map<String, String> augmented =
-        HeadlessApp.augmentDerivedContextWindow(Map.of(GPU_LAYERS_KEY, "many"));
+        HeadlessApp.augmentDerivedContextWindow(
+            Map.of(GPU_LAYERS_KEY, "many"), NO_SETTINGS_GPU_LAYERS);
 
     assertEquals(
         String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
@@ -154,7 +168,8 @@ final class HeadlessAppContextWindowAutoDetectTest {
 
     Map<String, String> composed =
         HeadlessApp.augmentDerivedContextWindow(
-            HeadlessApp.augmentGpuAutoDetectionAndMirror(probe, () -> TWELVE_GB));
+            HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(probe, () -> TWELVE_GB),
+            NO_SETTINGS_GPU_LAYERS);
 
     assertEquals("99", composed.get(GPU_LAYERS_KEY), "Phase F must have run first");
     assertEquals(
@@ -173,8 +188,9 @@ final class HeadlessAppContextWindowAutoDetectTest {
     Map<String, String> probe = Map.of(GPU_ENABLED_KEY, "true");
 
     Map<String, String> swapped =
-        HeadlessApp.augmentGpuAutoDetectionAndMirror(
-            HeadlessApp.augmentDerivedContextWindow(probe), () -> TWELVE_GB);
+        HeadlessApp.augmentGpuAutoDetectionAndMirrorProbeFlags(
+            HeadlessApp.augmentDerivedContextWindow(probe, NO_SETTINGS_GPU_LAYERS),
+            () -> TWELVE_GB);
 
     assertEquals(
         String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG),
@@ -187,11 +203,55 @@ final class HeadlessAppContextWindowAutoDetectTest {
   }
 
   @Test
+  @DisplayName("a settings.json gpu.layers beats the auto-detected map for the rung")
+  void settingsGpuLayersBeatTheProbeMap() {
+    // Tempdoc 883 decision 4 slice 2. Before it, a user's 20 layers reached this function only
+    // because SettingsController promoted the value into the gpu.layers SYSPROP, so it arrived
+    // inside EnvRegistry.GPU_LAYERS. With the promotion deleted the settings value has to be
+    // passed in explicitly — and if it is dropped, this GPU box derives the CPU rung.
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(Map.of(GPU_LAYERS_KEY, "0"), 20);
+
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.GPU_TOP_RUNG),
+        augmented.get(CONTEXT_SIZE_KEY),
+        "the user set 20 layers at ordinal 300; the probe's 0 sits at 150 and must lose");
+  }
+
+  @Test
+  @DisplayName("a settings gpu.layers of 0 means UNSET, so the probe map still decides")
+  void settingsGpuLayersZeroMeansUnset() {
+    // ConfigStoreRebuilder.contributeUiSettings only contributes gpu.layers when > 0, so treating
+    // a settings 0 as an explicit "force CPU" here would disagree with the resolver: the resolver
+    // would see only the probe's 99 at ordinal 150 and resolve 99.
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(Map.of(GPU_LAYERS_KEY, "99"), 0);
+
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.GPU_TOP_RUNG), augmented.get(CONTEXT_SIZE_KEY));
+  }
+
+  @Test
+  @DisplayName("an explicit sysprop still beats settings.json — 500 over 300")
+  void explicitSyspropBeatsSettings() {
+    System.setProperty(GPU_LAYERS_KEY, "0");
+
+    Map<String, String> augmented =
+        HeadlessApp.augmentDerivedContextWindow(Map.of(GPU_LAYERS_KEY, "99"), 20);
+
+    assertEquals(
+        String.valueOf(ContextWindowPolicy.CPU_TOP_RUNG),
+        augmented.get(CONTEXT_SIZE_KEY),
+        "an operator's -Djustsearch.gpu.layers=0 outranks the GUI's 20, as ordinal 500 > 300");
+  }
+
+  @Test
   @DisplayName("the probe map's own entries are preserved")
   void probeEntriesArePreserved() {
     Map<String, String> augmented =
         HeadlessApp.augmentDerivedContextWindow(
-            Map.of("justsearch.onnxruntime.native_path", "C:/x", GPU_LAYERS_KEY, "99"));
+            Map.of("justsearch.onnxruntime.native_path", "C:/x", GPU_LAYERS_KEY, "99"),
+            NO_SETTINGS_GPU_LAYERS);
 
     assertEquals("C:/x", augmented.get("justsearch.onnxruntime.native_path"));
     assertEquals("99", augmented.get(GPU_LAYERS_KEY));

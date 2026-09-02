@@ -4,7 +4,7 @@ package io.justsearch.app.services.excludes;
 import io.justsearch.app.api.ExcludesService;
 import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.services.indexing.ExcludeGlobs;
-import io.justsearch.configuration.EnvRegistry;
+import io.justsearch.configuration.resolved.ConfigStore;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,8 +24,10 @@ import java.util.function.Supplier;
  * {@code dryRun=false}. Worker-delegated deletion (deleteDocsByPathPrefix / deleteDocById)
  * honors the "Head never touches Lucene" invariant.
  *
- * <p>Patterns come from {@code -Djustsearch.ui.exclude_patterns} via
- * {@link EnvRegistry#UI_EXCLUDE_PATTERNS} (mirrored from settings v2 by SettingsController).
+ * <p>Patterns come from the RESOLVED config ({@code rc.ui().excludePatterns()}), which carries the
+ * user's settings.json list at ordinal 300 and an operator's {@code -D} / env var at 500 / 400.
+ * Tempdoc 883 decision 4 slice 2: this used to read the sysprop that SettingsController promoted
+ * the settings list into, which reported a GUI value as an operator override.
  */
 public final class ExcludesServiceImpl implements ExcludesService {
 
@@ -41,8 +43,11 @@ public final class ExcludesServiceImpl implements ExcludesService {
   @Override
   public ExcludesResult applyExcludes(boolean dryRun) throws Exception {
     IndexingService indexing = indexingServiceSupplier.get();
+    // globalOrNull, not global(): this is an HTTP handler so the store is set in production, but
+    // failing the request with IllegalStateException would be a worse answer than "no excludes".
+    ConfigStore store = ConfigStore.globalOrNull();
     ExcludeGlobs excludes =
-        ExcludeGlobs.fromRawJsonArray(EnvRegistry.UI_EXCLUDE_PATTERNS.get().orElse(""));
+        ExcludeGlobs.fromRawJsonArray(store == null ? "" : store.get().ui().excludePatterns());
     List<String> expandedPatterns = excludes.patterns();
 
     if (excludes.isEmpty()) {
