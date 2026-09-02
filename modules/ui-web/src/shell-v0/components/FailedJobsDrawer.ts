@@ -28,7 +28,7 @@ import { getOperationClient } from '../operations/OperationClient.js';
 // Tempdoc 885 item 21b — the ONE spelling of the exhausted terminal state (see its javadoc). The
 // by-prefix listing defaults a blank state to `FAILED`, so an older backend keeps the old
 // rendering rather than falling into the exhausted arm.
-import { JOB_STATE_RETRY_EXHAUSTED } from '../../api/domains/indexing.js';
+import { JOB_STATE_RETRY_EXHAUSTED } from '../state/indexingJobStates.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 
 const RESOURCE_ID = 'core.failed-indexing-jobs';

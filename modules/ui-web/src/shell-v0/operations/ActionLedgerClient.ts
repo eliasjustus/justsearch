@@ -32,7 +32,7 @@ import { present } from '../display/present.js';
 // navigation, and the operation-significance grade over the declared OperationCatalog facets.
 import { isRoutineActivity, isRoutineOperation } from '../state/messageRouting.js';
 // Tempdoc 885 item 21b — the ONE spelling of the exhausted terminal state (see its javadoc).
-import { JOB_STATE_RETRY_EXHAUSTED } from '../../api/domains/indexing.js';
+import { JOB_STATE_RETRY_EXHAUSTED } from '../state/indexingJobStates.js';
 // 612 §3 — resolve an operation row's declared significance facets (sync singleton; the same registry
 // `present()` already joins for labels in this module).
 import { getOperation } from '../../api/registry/OperationCatalogClient.js';

@@ -3602,6 +3602,25 @@ main's own frontend** (18 ok / 2 ERROR / 0 new violations, exit 2, on both `:517
 branch and `:5173` serving `main`). Pre-existing, not #603. The next kernel-facing PR can pin it or
 fix it from this paragraph alone.
 
+**A second routed finding, surfaced by the `dead-code` gate on this PR (#604's new built-inputs
+step).** `modules/ui-web/src/api/domains/indexing.ts` is an ENTIRELY unimported HTTP-client module:
+9 exported functions (`addRoot`, `removeRoot`, `reindex`, `getSuggestedRoots`, `applyExcludes`,
+`previewExcludes`, `startMigration`, `listFailedJobs`, `clearFailedJobs`) and 4 exported types, with
+zero importers anywhere in `src/`. knip reports it as a single whole-file finding, which is why the
+`gates/dead-code/baseline.txt` row reads `src/api/domains/indexing.ts 1` rather than `13` — the
+count is "one dead file", not "one dead export".
+
+That masking is the part worth recording, because it has a sharp edge: importing ONE symbol from
+such a file flips knip out of whole-file mode into per-export mode, and the row jumps `1 → 13` with
+no new dead code anywhere. This PR hit exactly that when it first placed a shared state constant
+there; the fix was to put the constant beside its three consumers
+(`shell-v0/state/indexingJobStates.ts`) rather than to declare growth for 12 exports that were
+already dead. **Do not declare a `1 → N` jump on one of these rows as growth** — check first
+whether the baselined `1` is a whole-file finding, because then the N is pre-existing and the
+honest fix is either deleting the module or not reaching into it. The same trap is armed on every
+other whole-file row in that baseline (22 files report whole-file-unused in the current report,
+e.g. `src/api/domains/browse.ts 1`).
+
 ## Residue live window, part A (2026-09-02)
 
 Wave-1 residue measurement arms, run from `worktree-resid-product` @ `505d0fdd`

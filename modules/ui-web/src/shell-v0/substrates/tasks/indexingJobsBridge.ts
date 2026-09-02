@@ -49,7 +49,7 @@ import { isInFlightLive } from './inFlightLiveness.js';
 // ledger became its second consumer; ONE display rule for a resolved hash.
 import { resolvePathLazy, friendlyPathName } from '../../hooks/resolvePathLazy.js';
 // Tempdoc 885 item 21b — the ONE spelling of the exhausted terminal state (see its javadoc).
-import { JOB_STATE_RETRY_EXHAUSTED } from '../../../api/domains/indexing.js';
+import { JOB_STATE_RETRY_EXHAUSTED } from '../../state/indexingJobStates.js';
 
 /** The Resource id whose `privacy.resolver` (core.resolve-path-hash) resolves a job pathHash. */
 const INDEXING_JOBS_RESOURCE = 'core.indexing-jobs';
