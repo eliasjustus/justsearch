@@ -31,7 +31,12 @@ import org.slf4j.LoggerFactory;
 public final class CommitOps {
 
   private static final Logger log = LoggerFactory.getLogger(CommitOps.class);
-  private static final long COMMIT_TIMER_INTERVAL_MS = 10_000L;
+
+  /**
+   * Fallback period of the safety-net commit timer, used when the resolver has nothing to say.
+   * Same 10 s the hardcoded constant used, so an unconfigured runtime is bit-identical.
+   */
+  static final long DEFAULT_COMMIT_TIMER_INTERVAL_MS = 10_000L;
 
   private final RuntimeSession session;
   private volatile ScheduledExecutorService commitTimer;
@@ -303,6 +308,7 @@ public final class CommitOps {
    */
   public void startCommitTimer() {
     if (commitTimer != null) return;
+    long intervalMs = commitTimerIntervalMs();
     ScheduledExecutorService executor =
         Executors.newSingleThreadScheduledExecutor(
             r -> {
@@ -313,8 +319,36 @@ public final class CommitOps {
     this.commitTimer = executor;
     this.commitTimerFuture =
         executor.scheduleAtFixedRate(
-            this::timerTick, COMMIT_TIMER_INTERVAL_MS, COMMIT_TIMER_INTERVAL_MS, TimeUnit.MILLISECONDS);
-    log.debug("Commit timer started (interval={}ms)", COMMIT_TIMER_INTERVAL_MS);
+            this::timerTick, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
+    log.debug("Commit timer started (interval={}ms)", intervalMs);
+  }
+
+  /**
+   * The timer period from {@code index.commit.timer_interval_ms} (tempdoc 885's tracked commit-
+   * cadence item), falling back to {@link #DEFAULT_COMMIT_TIMER_INTERVAL_MS}.
+   *
+   * <p>Read from the resolved config rather than a raw sysprop: this class runs in the WORKER, so a
+   * sysprop read here would only ever see the Worker JVM's own launch arguments — the [R1] defect
+   * shape. Non-positive values fall back rather than throw: a zero-period fixed-rate schedule would
+   * spin the commit thread, and a boot-time knob must not be able to do that.
+   */
+  private long commitTimerIntervalMs() {
+    try {
+      var resolved = session.resolvedConfig();
+      if (resolved != null && resolved.index() != null) {
+        int configured = resolved.index().commitTimerIntervalMs();
+        if (configured > 0) {
+          return configured;
+        }
+        log.warn(
+            "Ignoring index.commit.timer_interval_ms={} (must be > 0); using {}ms",
+            configured,
+            DEFAULT_COMMIT_TIMER_INTERVAL_MS);
+      }
+    } catch (RuntimeException e) {
+      log.debug("Commit timer interval unresolved; using the default", e);
+    }
+    return DEFAULT_COMMIT_TIMER_INTERVAL_MS;
   }
 
   /**
