@@ -3621,6 +3621,27 @@ honest fix is either deleting the module or not reaching into it. The same trap 
 other whole-file row in that baseline (22 files report whole-file-unused in the current report,
 e.g. `src/api/domains/browse.ts 1`).
 
+**A third routed finding: `WorkerMethvinWatcherTest` has a size race with no pin.** The full
+`./gradlew.bat test` run for this PR's merge produced 18 failures across `ui`, `worker-core` and
+`worker-services`. Sixteen are `java.util.concurrent.TimeoutException: … timed out after 30/40
+seconds`, i.e. the shape `worker-services-30s-timeout-under-load` and
+`worker-core-onnx-longdoc-forensic-timeout` already pin; one is
+`ReadinessTriggerCompositionTest` failing with the pinned message verbatim
+(`index.unavailable was still asserted after 5000ms`). All were re-run isolated and pass.
+
+The eighteenth is not covered by any pin and does not name a timeout anywhere:
+`WorkerMethvinWatcherTest.deliversCreateEventToJobQueue` fails as
+`The watcher must record the file's real size, not the unknown-size sentinel ==> expected: <4096>
+but was: <0>`. It passes in isolation (`:modules:worker-services:cleanTest test --tests …`,
+BUILD SUCCESSFUL). The shape is a create-event race — the watcher reads the file's size after a
+CREATE notification but before the write has flushed, so it sees `0` and records the sentinel —
+which widens under load rather than being caused by it. It is a **watcher** defect, not a
+starvation artefact, so it wants either a deterministic write-then-notify fixture or a pin of its
+own; it is filed here rather than in `expected-state.v1.json` for the same reason as the
+`ui-a11y-gate` entry above (that file is shared and was touched on `main` in this same wave).
+Nothing in PR #603 touches Java behaviour — its only Java-side change is a comment and one
+message-catalog line — so this is pre-existing either way.
+
 ## Residue live window, part A (2026-09-02)
 
 Wave-1 residue measurement arms, run from `worktree-resid-product` @ `505d0fdd`
