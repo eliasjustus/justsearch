@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS — chunk 1 (PR 1 #596) merged, live window COMPLETE except two recorded gaps (C5, the JUSTSEARCH_CONTEXT_SIZE env arm at ordinal 400, and a live witness for the successful rung-walk); chunk 2 (PR 2: decision 3 `ContextBudget`) implemented with §B/§C, live items in §C.5b pending
+status: IN PROGRESS - chunk 1 (PR 1 #596) merged; chunk 2 (PR 2 #599: decision 3 ContextBudget) implemented, independent review round 1 folded, live window COMPLETE except check 8 (the agent completion-cap reduction, process-start knob only - unit-tested)
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: lane-A worker (branch worktree-lane-A, base 6c3ba431)
@@ -1316,6 +1316,14 @@ Also checked for the "passes for a wrong reason" shape:
    If that proves to cost completions, the lever is the tool-result ceiling, not the page fraction
    (see §C.4b (7)).
 
+**All six items above were run on 2026-09-02; see "Live verification (2026-09-02, lane A PR 2)" at
+the end of this tempdoc.** Five passed as predicted. Two predictions were WRONG and are corrected
+there rather than here: item 1's expectation that a no-topK ask would be indistinguishable was right
+about the count (5) but the wire evidence turned out to be directly readable in the worker log
+(`~2365/28108 tokens, 5 sections`), and the small-window arm returned `context_truncated: true`, not
+the predicted `false` — because a 460-token budget cannot hold a 500-token chunk, which is the honest
+limit of a 2048-token window and not something this PR could change.
+
 ### C.6b — Still open in this lane after PR 2
 
 Decision 5 (the `getenv` funnel + the yaml-reader gate), decision 4 slice 2 (the `server.exe` /
@@ -1341,3 +1349,89 @@ Added by the independent review of PR 2:
   `ContextBudget` cannot do. Not touched in PR 2 because it feeds `AgentBudgetPolicy.initialBudget`,
   i.e. the run's ECONOMIC budget rather than a prompt budget, and folding the two is a spend
   decision. It should be routed through `ContextBudget.of(...).windowTokens()` in a follow-up.
+
+## Live verification (2026-09-02, lane A PR 2)
+
+Stack built from `9a82d1cf` (`distFrom lane-A2`), runId `b69cf562-aa63-4420-abaa-fba039d8b774`,
+API `http://127.0.0.1:55369`, dataDir
+`.claude/worktrees/lane-A2/modules/ui-web/.dev-data` (fresh: no `settings.json`, `llm.contextWindow`
+0 at start). Orchestrator holds the lease; all observations are over HTTP and log files. Chat profile
+`standard` (`Qwen_Qwen3.5-9B-Q4_K_M.gguf`, `mmprojActive`), RTX 4070 12 GB.
+
+**Activation route.** Unchanged from PR 1: `POST /api/ai/runtime/activate {variantId:"cuda12"}` is
+unusable on this data dir (`installedVariants: []` — the worktree has no
+`modules/ui/native-bin/llama-server/variants`, so `resolveVariantsRoot` finds nothing; the dev stack
+wires the shared binary through `justsearch.server.exe` at ordinal 450 instead). Every arm below
+drives the engine through the shipped desired-state path,
+`POST /api/settings/v2 {ui:{chatEnabled:…}}` → `RuntimeReconciler`, exactly as PR 1's window did.
+A window change is applied by `{llm:{contextWindow:N}}` + deactivate + a `chatEnabled` false/true
+toggle.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1 | window at the GPU rung | **PASS** `llmContextTokens 32768`, `configuredContextTokens 32768`, `contextWindow {rung:32768, reason:"top-rung", slots:2, kvType:"q8_0", freeVramBytes:9573388288}` |
+| 2 | RAG with **no** `topK` | **PASS** worker log `RAG context assembly (token-aware): ~2365/28108 tokens, 5 sections` — wire `maxContextTokens` **28108** (= `(32768-1024-512)*0.9`, the predicted value) and **5** sections = the derived `topK` `min(28108/500, 5)`. `rag.meta`: `chunks_used 5`, `chunks_found 63`, `context_truncated false` |
+| 3 | forced 2048 window | **PASS on both load-bearing numbers, one prediction corrected.** `{rung:2048, reason:"override"}`, `llmContextTokens 2048`. Worker log `~460/460 tokens, 1 sections` — wire `maxContextTokens` **460** and `topK` **1**, both exactly as predicted. `context_truncated` came back **true**, not the predicted false — see below |
+| 4a | 5000-token doc @ 32768 | **PASS** phases `loading → standard`; single-pass. The retired 5000 literal would have split it (`5000 < 5000` is false) |
+| 4b | same doc @ 4096 | **PASS** phases `loading → splitting → sections → summarizing ×5 → synthesis`, `{"totalStages":5,"totalTokens":4999}`. 5 = `ceil(5000/1152)`, i.e. `sectionTarget()` at this window; the old 1800 target gives `ceil(5000/1800)` = **3** |
+| 5a | agent read page @ 32768 | **PASS** header `[read] …05-ai-architecture.md — chars 0–7592 of 48874`, exactly the predicted 7592. `outputCharsToModel 7758` < the 8192 cap; **zero** `[... truncated,` markers on any tool result in the run |
+| 5b | agent read page @ 4096 | **PASS (accepted regression)** `chars 0–1704 of 48874` — the predicted small-rung value, down from the old flat 3000 |
+| 6 | external-context drop | **PASS** Head log: `ExternalContextInjector: dropped 8 of 12 prior messages to fit the context budget (6014 -> 2006 tokens, cap 2048)`. Cap 2048 = the ceiling, i.e. `min(28108/4, 2048)` at its cap |
+| 7 | selection cut | **PASS** Head log: `SelectionContextInjector: result-set document for …05-ai-architecture.md cut to fit the context budget (48874 -> 23040 chars, ~12219 -> ~5760 tokens)` |
+| 8 | `max_completion_tokens` reduction | **GAP, not a pass** — see below |
+
+Document fixtures for 4a/4b were sized against the REAL estimator, not word count: `"token "` filler
+at `t * 2 / 3` words, verified to return `estimateTokens == 5000` before use, and the runner's own
+`totalTokens: 4999` confirms it in flight.
+
+### Check 3: why `context_truncated` is `true`, and why that is correct
+
+The prediction (mine, in §C.5b) said `false`. It was wrong, and the arithmetic says so plainly: at a
+2048-token window with the request's real 1024-token completion reserve the input budget is **460
+tokens**, while the corpus chunk size is **500** (`ChunkSplitter.DEFAULT_CHUNK_TOKENS`). One chunk
+does not fit. The worker filled the budget exactly (`~460/460 tokens, 1 sections`) and set its own
+`contextTruncated`, which is the honest report that even a single passage had to be cut.
+
+So the derivation did exactly what it is supposed to — ask for one passage instead of five — and the
+flag is doing exactly what tempdoc 845 built it for. What was wrong was the prediction, which
+assumed a passage would fit a budget smaller than one passage. Recorded rather than quietly
+re-scoped: a 2048-token window cannot serve a RAG ask without truncation, whatever the shape asks
+for, and no change in this PR could make it.
+
+Note the reserve is NOT clamped on this path: the chat engine sends the `maxTokens` the request
+asked for (1024), and `ContextBudget.of` takes it verbatim (§B.b2 (7)) precisely so the budget cannot
+promise input room the real completion will eat. The `min(cap, window/4)` clamp is the AGENT loop's,
+which chooses its own reserve.
+
+### Check 8: the knob is process-start only (an honest gap, like PR 1's C5)
+
+`GET /api/debug/effective-config` reports both agent knobs as
+`{"key":"justsearch.agent.max_completion_tokens","source":"none","ordinal":0,"candidates":[{"source":"jvm_arg","ordinal":500},{"source":"env_var","ordinal":400}]}`
+(and the same for `max_tool_result_chars`). There is no `settings.json` or yaml contributor, so the
+value cannot be set on a running backend, and setting it means an orchestrator-owned restart with the
+env var present. The INFO reduction line is therefore **unit-tested only**
+(`AgentContextBudgetsTest.operatorCapReductionIsReported` / `unreducedOperatorCapIsNotReported`),
+not live-witnessed.
+
+Two things this DOES witness live, incidentally: `source: "none"` on both keys confirms the config
+default flip to `0 = derive` landed (a positive default would have shown a `default`-sourced value),
+and the derived caps observed in checks 5a/5b (7592 / 1704 chars) are only reachable through the
+derive branch.
+
+### What this window did not cover
+
+- The `contextLength` migration path and the ladder step-down were PR 1's arms and were not re-run.
+- No arm exercised an operator-set `max_tool_result_chars` (same process-start limitation as check 8).
+- The selection cut was exercised through the `result-set` arm (per-doc budget = `inputBudgetChars/5`,
+  23040 chars at this request's 256-token reserve). The whole-selection arms (`text-range`, `item`,
+  `citation`) use the same `truncateToBudget` helper and the same INFO line, but were not separately
+  driven.
+
+### Cleanup performed
+
+AI runtime deactivated (`mode: offline` → the stack then re-entered `indexing` GPU ownership on its
+own), watched root removed (`{"deletedJobs":30,"status":"ok"}`, `GET /api/indexing/roots` →
+`{"roots":[]}`), settings restored (`chatEnabled false`, `llm.contextWindow 0`), no standalone
+processes were started, stack left running. Working tree clean.
