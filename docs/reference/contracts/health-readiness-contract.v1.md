@@ -125,9 +125,18 @@ Head-local dimensions read head-side supervisor, capability, or monitor state th
 response-build time. They always report `stale=false`, `stalenessMs=0`, and the response-build
 `observedAt` — a Worker outage does not make them stale.
 
-Worker-observed dimensions are those whose verdict reads the Worker's gRPC status view. When that
-call fails or the worker capability is unavailable, the Head substitutes a fallback view, so those
-arms answer from placeholder data. Then:
+Worker-observed dimensions are those whose verdict reads the Worker's gRPC status view. That view
+is **not** fetched on the request thread: an internal sampler on the Head's health-monitor schedule
+performs the `IndexStatus` unary (10 s while idle, 2 s while indexing/backfill/AI activation is in
+flight, plus one sample on every capability transition), and a request reports what the last sample
+found. Consequently `meta.workerRpcAtMs` is the **sample's** observation time, not a per-request
+timestamp, and successive responses within one sampling period carry the same value by design.
+`GET /api/status?fresh=true` forces one synchronous sample.
+
+When the sample failed — the call threw, or the worker capability was unavailable — the Head
+substitutes a fallback view, so those arms answer from placeholder data. A sample older than three
+sampling periods is treated the same way, so a stalled sampler surfaces as loss of contact rather
+than as a frozen snapshot presented as fresh. Then:
 
 4. `stale` is `true`, and `observedAt` carries the epoch of the newest *successful* Worker
    observation in this Head process — not the response-build time, which would be a false freshness

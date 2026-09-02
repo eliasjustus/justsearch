@@ -56,9 +56,24 @@ Only unambiguously tool-generated patterns are hardcoded. Context-dependent dire
 
 We use **SQLite** as a persistent Job Queue (`jobs.db`, stored under the Worker `dataDir`).
 *   **Why SQLite?** It survives crashes. An in-memory queue would lose thousands of pending files if the worker was killed by the "Suicide Pact."
-*   **Schema (conceptual):** jobs are durable rows with a `state` machine (`PENDING`/`PROCESSING`/`DONE`/`FAILED`) and retry/backoff metadata.
-*   **States:** `PENDING`, `PROCESSING`, `DONE`, `FAILED`.
-*   **Retry Logic:** Exponential backoff ($1s \times 2^{n-1}$, formula-capped at ~17 min) with capped additive jitter (`[0, min(1s, backoff)]`) to prevent synchronized retry bursts. At the production `maxAttempts=3`, only two backoffs actually occur (~1s, ~2s) before a job reaches terminal `FAILED`; the ~17 min ceiling is reachable only if `maxAttempts` is raised well beyond the shipped value.
+*   **Schema (conceptual):** jobs are durable rows with a `state` machine and retry/backoff metadata.
+*   **States:** `PENDING`, `PROCESSING`, `DONE`, `FAILED`, `RETRY_EXHAUSTED`. The head-side vocabulary is the `IndexingJobView.STATE_*` constants; `FAILED` and `RETRY_EXHAUSTED` are both terminal and both counted as failures by every projection (failure summary, per-folder counts, scan rollup, the FE task rail).
+
+### The failure ladder
+
+Which terminal state a job reaches is decided by its **failure class**, not by its attempt count. Every failure carries a typed `IngestionOutcome` whose `IngestionRetryPolicy` is one of `NONE`, `RETRY_WITH_BACKOFF` or `DEFER_WITHOUT_ATTEMPT`, and `SqliteJobQueue.markFailed` branches on it:
+
+| Retry policy | Example outcome | Behaviour |
+|---|---|---|
+| `NONE` | `PARSER_FAILED`, `BUDGET_EXCEEDED` | Terminal `FAILED` on the **first** failure. The file cannot be parsed; retrying it changes nothing. |
+| `RETRY_WITH_BACKOFF` | `IO_FAILED`, `PARSER_TIMEOUT`, `SANDBOX_FAILED` | Returns to `PENDING` with `retry_after` set, on the ladder below, **without** the attempts cap applying. After 7 days of continuous failure the job becomes terminal `RETRY_EXHAUSTED`. |
+| `DEFER_WITHOUT_ATTEMPT` | cloud placeholder, `WRITE_UNAVAILABLE_DRAINING` | Routed through `defer(...)`, not `markFailed(...)`; no attempt is consumed. |
+
+*   **Backoff ladder** (`IngestionRetryLadder`): 1 min → 10 min → 1 h → 6 h → 24 h, with the 24 h step repeating, plus capped additive jitter (`[0, min(1s, backoff)]`) to prevent synchronized retry bursts.
+*   **The bound:** the ladder is bounded at **7 days from the first failure of the current failure run**, recorded in the `first_failed_at` column (schema V10). No retry is ever scheduled past that boundary — the ladder's next-retry time is clamped to it. The failure that occurs at or after the boundary transitions the job to `RETRY_EXHAUSTED`.
+*   **Resetting an exhausted job:** anything that re-enqueues the path clears the row. The enqueue statement is `INSERT OR REPLACE`, so a rescan of the containing root, or a watcher event on an mtime/size change, restores `state=PENDING`, `attempts=0`, `retry_after=NULL` and `first_failed_at=NULL`, and the retry window starts again from the next failure. `RetryIndexingJob` re-enqueues by the same path.
+*   **Attempts cap:** `maxAttempts` (one home: `SqliteJobQueue.DEFAULT_MAX_ATTEMPTS = 3`) still governs the **untyped** `markFailed(path, message)` path, which has no outcome class to classify on. It does not apply to a classified transient failure — a network share unreachable for twenty minutes must not become permanently `FAILED`.
+*   **`error_message`** holds the exception's own text (class name plus message, collapsed to one line and truncated at 512 chars by `IngestionOutcome`), not a fixed literal. For a sandbox failure that text carries the child process's exit code.
 
 ### Concurrency & configuration
 
@@ -124,6 +139,8 @@ RETURNING path;
 *   `recoverStuckJobs()` (crash recovery) resets `PROCESSING` → `PENDING` without mutating `attempts`.
 
 This ensures transient crashes don't burn retry budget.
+
+`attempts` is a **display** fact — how many times this file has been tried. It is not the terminal signal for a classified transient failure (see the failure ladder above); the seven-day window measured from `first_failed_at` is.
 
 ### Retention & bloat
 

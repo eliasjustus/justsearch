@@ -969,6 +969,18 @@ We maintain a circular buffer of the last 50 significant events in memory.
 
 The frontend (and dev tooling) treats `/api/status` as the canonical “what’s running?” signal. It is explicitly designed to avoid Head-side filesystem probing (no direct Lucene access in the Head).
 
+#### Health sampling is internal, not request-driven
+
+`/api/status` is a **read of a sample**, not an observation. The Worker's `IndexStatus` unary is performed by an internal sampler on the Head, and the request thread never calls the Worker.
+
+*   **Where the sampler runs.** `KnowledgeServerHealthMonitor`'s existing schedule (a single daemon thread; no executor was added for this). Its per-tick callback drives `ReadinessReconciliationTrigger`, whose thunk is `StatusLifecycleHandler.sampleAndBuildStatusSnapshot` — the one method that performs the Worker RPC and reconciles every health tap (`LifecycleSnapshotTap`, `WorkerSnapshotTap`, `IndexDriftHealthTap`, `AtRestHealthTap`, the conversation-protection tap and the worker-metrics publisher). The trigger also fires on every worker/inference capability transition, and self-seeds one sample when the composition root attaches it.
+*   **Sampling period.** 10 s while idle, 2 s while the Worker has index work in flight or the inference runtime is activating (`StatusLifecycleHandler.samplingPeriodMs()`, derived from the **last** sample so the decision costs no RPC). The monitor re-arms itself with that value, clamped to `[1 s, pollIntervalMs]` — the health poll's own configured interval is the ceiling. Resume detection still measures its inter-tick gap against the configured interval, not the actual delay, so a faster tick can only make it more conservative.
+*   **What a request does.** `GET /api/status` builds the response from the cached sample and runs **no** taps. The one exception is the boot window: if no sample has ever been taken, the first request takes one synchronously. That can happen at most once per process.
+*   **Freshness semantics.** `meta.workerRpcAtMs` is the sample's observation time (stamped immediately before the call), so a consumer's age is `now - workerRpcAtMs`. `meta.workerRpcStale` is `true` when the last sample failed **or** when it is older than three sampling periods — a wedged sampler surfaces as "contact lost" rather than as a frozen snapshot served as fresh. Per-dimension `stale`/`stalenessMs` derive from the same fact (see the health/readiness contract).
+*   **Forcing a sample.** `GET /api/status?fresh=true` performs exactly one synchronous sample (RPC + tap reconciliation) for debug tooling.
+
+Consequence: the browser's ~10 s poll is no longer the reason the condition store looks correct, and the health SSE stream advances with no client polling at all.
+
 **Proto structure (tempdoc 341):** `StatusResponse` uses 10 nested sub-messages instead of flat fields. Each sub-message owns its own field number space. The Java view (`WorkerOperationalView`) mirrors this with 11 sub-records. JSON output currently emits both grouped sub-objects and flat `@JsonUnwrapped` fields for backward compatibility.
 
 Key sub-messages and their fields (current):

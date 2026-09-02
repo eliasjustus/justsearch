@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS — chunks 1, 2, 2b and 3 landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green; item 3 foreground duty cycle, live arms pending); items 6/21/19-measure open
+status: IN PROGRESS — chunks 1, 2, 2b, 3 and 4 landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green; item 3 foreground duty cycle; items 6 + 21 internal health sampler + bounded retry ladder, live arms pending); item 19-measure open
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
@@ -1403,3 +1403,327 @@ orchestrator, not by this chunk.
    rewritten to drive the gauge with real `SearchService` traffic instead of the MMF byte. Written
    and compiled in this chunk; **not run** — it needs the `systemTest` source set and a worker dist.
 4. **Search p95 before/after** — read from the same jseval arms' `search_load.latency_ms`.
+
+## §UB — pre-implementation verification (chunk 4, items 6 and 21)
+
+Every `path:line` the Evidence and Design-decision sections cite for **items 6 and 21**, re-read
+against this chunk's base `e1eccb17` (= `6c3ba431` + chunks 1/2/2b/3). Verified 2026-09-02 by the
+chunk-4 implementer. Verdicts: **OK** (exact), **DRIFT** (right thing, moved), **WRONG** (the claim
+does not hold).
+
+### UB.1 Item 6 — status and health
+
+| Contract cite | On `e1eccb17` | Verdict |
+|---|---|---|
+| `StatusLifecycleHandler.java:406-431` — every `/api/status` hit calls `client().getWorkerOperationalView()` on the request thread | exact: the `if (workerCapability.available())` block at `:412-431`, RPC at `:414` | **OK** |
+| `RemoteKnowledgeClient.java:767-768` — that call is one blocking `IngestService.IndexStatus` unary | `:769` `getWorkerOperationalView()` | **DRIFT** (1 line) |
+| `CoreApiAssembly.java:238-250` — the taps that feed `ConditionStore` + `HealthEventChangeRegistry` hang off that handler | `:239-250` `setLifecycleSnapshotTap` / `setWorkerSnapshotTap`; the tap block runs to `:308` (`setIndexDriftTap` `:249`, `setAtRestTap` `:265`, `setConversationProtectionTap` `:289`, `setWorkerMetricsPublisher` `:308`) | **OK**, but the range under-counts: there are **six** tap-shaped consumers, not two |
+| `StatusLifecycleHandler.java:388-393` also reads Head heap per hit; keep, it is cheap | `:389-393` | **OK** |
+| **[R8]** `KnowledgeServerHealthMonitor` `scheduleWithFixedDelay` at `:145`, 10 s default (`DEFAULT_POLL_INTERVAL_MS` `:54`), started at `HeadlessApp.java:509` | `scheduleWithFixedDelay` at `:143-145`; `DEFAULT_POLL_INTERVAL_MS = 10_000` at `:54`; `startHealthMonitor` at `HeadlessApp.java:506-524`, `monitor.start()` at `:522` | **OK** |
+| `ResumeDetector` handles OS-resume gaps | `KnowledgeServerHealthMonitor.java:150-154` + `RESUME_TOLERANCE_FACTOR = 3` at `:60` | **OK** |
+| Ten mock sites stub `getWorkerOperationalView()` | exactly ten: `LifecycleContractTest` `:185,237,279,336,388,436,486` (7), `StatusReadinessStalenessTest` `:168,269` (2), `ReadinessTriggerCompositionTest` `:87` (1) | **OK** |
+| **[R6b]** per-document content capped at 200k chars (`GrpcSearchService.java:77,603`); `GplJobCoordinator.BATCH_SIZE = 50` (`:58`); four callers in app-services (`GplJobCoordinator.java:306,670`, `RemoteDocumentService.java:96,476`) | `MAX_CONTENT_CHARS = 200_000` at `GrpcSearchService.java:77`, applied at `:600`; `BATCH_SIZE = 50` at `GplJobCoordinator.java:58`; callers at `GplJobCoordinator.java:306,670` and `RemoteDocumentService.java:96,476` | **OK** (one 3-line drift on the trim site) |
+
+**UB.1a — the sampler the contract asks for already half-exists, and the contract does not say so.**
+This is the single biggest correction in this chunk. Tempdoc 876 §C.8 added
+`KnowledgeServerHealthMonitor.onTick` (`:200-212`), wired in `HeadlessApp.java:520` to
+`ReadinessReconciliationTrigger::request`, whose thunk is attached in `CoreApiAssembly.java:453` as
+`statusLifecycleHandler::buildStatusSnapshot` — i.e. `buildStatusMap()`, i.e. **the Worker RPC plus
+every tap, already running on the monitor's tick, on a dedicated daemon thread**
+(`ReadinessReconciliationTrigger.java:52-58`; its own javadoc says "it performs a Worker gRPC call").
+Design decision 4 reads as though the sampler must be built; what actually had to be built is the
+*other* half — the cache that lets a request read what the tick left behind. Framing item 6 as "add
+a sampler" would have produced a second observation path beside this one, which is the fork this
+repo's registers exist to prevent. The implementation therefore adds no scheduler and no new
+thread: it splits `buildStatusMap` into a sampling path and a read path, and re-points the existing
+thunk at the sampling one.
+
+**UB.1b — R8's "ten mock sites need updating" is nearly right, for a different reason than stated.**
+Only **two** of the ten needed a change, and neither because of the stubbing: `StatusReadinessStalenessTest`
+`:180` needed its *second* call to be a sample (contact loss is now discovered by the sampler, not
+by a request), and `ReadinessTriggerCompositionTest` `:99` binds the production method reference by
+name and therefore had to follow the rename. The other eight make a single status call per test,
+which the boot-window fallback (UB.1c) serves with the same one RPC they already stubbed.
+
+**UB.1c — a fact that changes the design: `attach()` self-seeds.**
+`ReadinessReconciliationTrigger.attach` (`:75-78`) calls `request()` immediately, so the first sample
+is taken at composition time, not at the first monitor tick 10 s later. That removes the reason to
+give the read path a max-age re-sample (which would have put a Worker RPC back on the request thread
+in exactly the degraded case the item is about). The read path therefore samples synchronously in
+one case only — no sample has ever been taken — which can happen at most once per process, and a
+stalled sampler surfaces as `workerRpcStale=true` rather than as a request-thread RPC.
+
+**UB.1d — `?fresh=true` had no prior art on this handler.** `handleStatus` (`:372-374` pre-change)
+read no query parameters at all. The parameter is new surface, not a restored one.
+
+### UB.2 Item 21 — job queue
+
+| Contract cite | On `e1eccb17` | Verdict |
+|---|---|---|
+| `SqliteJobQueue.java:46` `DEFAULT_MAX_ATTEMPTS = 3` (private) | `:46`, `private static final` | **OK** |
+| `SqliteJobQueue.java:49,60,62` one connection, one `ReentrantLock`, `busy_timeout=5 s` | `BUSY_TIMEOUT_MS` `:49`, `lock` `:60`, `maxAttempts` `:61`, `connection` `:62` | **OK** |
+| `KnowledgeServer.java:394-401` passes a bare `3` (the only construction site) | the literal is at `:414` (`new SqliteJobQueue(dbPath, 3, onSwitchBufferWriteFailure)`); still the only construction site in `src/main` | **DRIFT** (~13 lines; chunk 3 moved it) |
+| `markFailed` backoff `:642-647`, cap ~17 min | `:640-647` (`1000L * (1L << Math.min(newAttempts - 1, 10))`) | **OK** |
+| `markFailedWithOutcome` `:779-855` branches on `outcome.retryPolicy()` | `:779-855` exactly | **OK** |
+| `retry_after` column (`:378,640-652`) | selected in `pollPending` at `:378`, written at `:640-652` and `:788-800` | **OK** |
+| `IngestionRetryPolicy {NONE, RETRY_WITH_BACKOFF, DEFER_WITHOUT_ATTEMPT}` in worker-core | `modules/worker-core/.../ingest/IngestionRetryPolicy.java:6-10` | **OK** |
+| 14 `IngestionOutcomeClass` values | exactly 14 (`SUCCESS_FULL` … `SANDBOX_FAILED`) | **OK** |
+| catch-site wiring `JobBatchExtractor.java:250-340` (`IOException`→`IO_FAILED`→RETRY, parser failure→NONE) | six catch sites at `:241-345`: `BudgetExceededException`→NONE, `ExtractionTimeoutException`→RETRY, `SandboxExtractionException`→RETRY, `ContentExtractor.ExtractionException`→NONE, `IOException`→RETRY, `RuntimeException`→`PARSER_FAILED`+**RETRY** | **OK**, with one nuance the contract flattens: a bare `RuntimeException` is `PARSER_FAILED` but *retryable*, so "parser failure → NONE" is true only of the declared `ExtractionException` |
+| cloud placeholders → DEFER (`CloudPlaceholderRecorder.java:61`) | `:61` | **OK** |
+| `IndexingJobView` carries `attempts` + `retryAfterMs` | `modules/app-api/.../indexing/IndexingJobView.java:22,26` | **OK** |
+| schema `TARGET_VERSION 9` + `SqliteQueueMigrationOps` ladder | `SqliteSchema.java:33`; ladder `SqliteQueueMigrationOps.applyMigration` cases 1..9, backup at `:123`, txn `:131-150`, `setSchemaVersion` **after** commit at `:147` | **OK** |
+| `governance/operation-surfaces.v1.json` registers `IndexingJobLifecycle` | `canonicalRecord.name = "IndexingJobLifecycle"`, `sourceOfTruth = IndexingJobsChangeStream.java`, `appApiType = IndexingJobView.java` | **OK** |
+| **Genuine gaps:** transients count against `MAX_ATTEMPTS`; ladder caps at ~17 min; `error_message` stores fixed literals | all three confirmed: `:799` `terminal \|\| newAttempts >= maxAttempts`; `:806`; the six literals `"Extraction budget exceeded"`, `"Parser timed out"`, `"Sandbox failed"`, `"Parser failed"`, `"I/O failure"`, `"Unexpected processing failure"` | **OK** |
+
+**UB.2a — WRONG, and it changes what item 21e must be named.** The contract says the risk register
+"names `queue.dequeue_rate_per_min` under 885 item 21". It does not. `RISK-002` on `origin/main`
+(`docs/reference/architectural-risks.md:100`) reads `**Instrument:** tempdoc:885#Item 21 — job queue`
+— a pointer to this tempdoc, not a metric name. There is therefore no register name to honour and no
+cross-lane rename to request. The metrics are named for the family that already exists in
+`WorkerOpsMetricCatalog` (`worker.job_queue.depth`, `worker.job_queue.pending_jobs`, …), so they read
+as `worker.job_queue.enqueue_rate_per_min` / `worker.job_queue.dequeue_rate_per_min` rather than
+opening a second `worker.queue.*` prefix for the same subject. Lane B's file is untouched.
+
+**UB.2b — the rescan reset needs no new code, and the reason is worth stating.** `enqueueEntries`
+(`:288-345`) is `INSERT OR REPLACE` over a 7-column list; every column NOT in that list reverts to
+its default. So a re-enqueue already clears `attempts`, `retry_after`, `error_message`, the five
+`last_outcome_*` columns — and now `first_failed_at`. `WorkerScanOps.flushBatch` (`:263-278`) enqueues
+every admitted file with no state filter, so a rescan of the containing root is the reset, and so is
+a watcher event (`WorkerMethvinWatcher.java:192`) and `RetryIndexingJob`
+(`GrpcIngestService.java:2149`). The freshness "UNCHANGED" skip happens later, at the extractor, not
+at enqueue — so an unchanged file is still re-admitted and still leaves `RETRY_EXHAUSTED`.
+
+**UB.2c — `RETRY_EXHAUSTED` is a string on the wire, not a proto enum.** `IndexingJobView.state`
+is `string` (`indexing.proto:1472`), so adding a state is not a `buf` breaking change and the `wire`
+gate has nothing to judge. What it *is* is a new value in a vocabulary five consumers switch on:
+`SqliteJobQueue.countByPathPrefix` (`:1685`), `IndexingJobsBridgeWiring.terminalIndexEvent` (`:95`),
+`ScanRollupLedger.recordIndexOutcome` (`:188`), `indexingJobsBridge.statusFor` (`:285`) and
+`ActionLedgerClient.projectBackend` (`:260`). Four of the five had a `default`/`else` arm that would
+have silently mis-classified an exhausted job as *not failed* — the folder projection would read
+100%, the scan rollup would count it as done, and the ledger would emit nothing at all. All five are
+swept in this chunk; the register's three prose notes naming the terminal set are updated with them.
+
+**UB.2d — the exit code needs no new field.** 21c asks for "the child exit code for
+`SANDBOX_FAILED`". `PersistentExtractionSandbox` already formats it into the exception message
+(`:282,285`: `"Sandbox child exited with code " + exitCode + ": " + tail`), so storing the
+exception's message satisfies both halves of 21c with one change.
+
+### UB.3 Claims that no longer hold (chunk 4 summary)
+
+1. The health sampler's **schedule and tap-feeding already existed** (876 §C.8 + the trigger); only
+   the cache was missing (UB.1a).
+2. **Eight of R8's ten mock sites did not need updating**, and the two that did needed it for
+   reasons R8 does not give (UB.1b).
+3. **RISK-002 names no metric** — the "use exactly the names the register expects" instruction has
+   no register entry behind it (UB.2a).
+4. `RuntimeException` at the extraction boundary is `PARSER_FAILED` **retryable**, so "parser
+   failure → NONE" holds only for the declared `ExtractionException` (UB.2).
+5. Line drift from `6c3ba431` to `e1eccb17` is small except `KnowledgeServer.java`, which chunk 3
+   moved by ~13 lines around the queue construction site.
+
+## §UC — post-implementation critical analysis (chunk 4, items 6 and 21)
+
+### UC.1 Wrong-gate: does the sampler's tick feed the SAME taps the handler used?
+
+The failure mode this asks about is a sampler that refreshes a cache while the taps keep reconciling
+somewhere else (or stop reconciling at all). Checked structurally rather than by reading:
+
+* There is exactly **one** method that feeds taps — `StatusLifecycleHandler.feedHealthTaps` — and
+  exactly **one** call site for it, inside `buildStatusMap(boolean)` under `if (sampleWorker)`. All
+  six tap consumers moved into it verbatim (`lifecycleSnapshotTap`, `workerSnapshotTap`,
+  `indexDriftTap`, `atRestTap`, `conversationProtectionTap`, `workerMetricsPublisher`); the diff for
+  that block is a pure move, so a tap cannot have been dropped in the split.
+* `sampleWorker=true` has exactly two callers: `sampleAndBuildStatusSnapshot()` (the trigger's
+  thunk) and `handleStatus` under `?fresh=true`. Grepped the set-site rather than trusting the
+  symbol: `CoreApiAssembly.java` now reads
+  `readinessTrigger.attach(statusLifecycleHandler::sampleAndBuildStatusSnapshot)`, and
+  `HeadlessApp.java` still wires `monitor.onTick(readinessTrigger::request)`.
+* `ReadinessTriggerCompositionTest` is the test that binds that production method reference by name
+  over a real `ConditionStore` and a real `WorkerCapability`, with no HTTP anywhere. It was updated
+  to the new name and is green — so "the tick reconciles the condition store" is asserted end-to-end
+  through the production wiring, not through a test lambda.
+* `WorkerStatusSamplerTest.readPathDoesNotFeedTaps` asserts the *negative* half with a counting
+  `IndexDriftHealthTap`: 0 invocations from `buildStatusMap()`, 1 from
+  `sampleAndBuildStatusSnapshot()`. Without that case the split would pass every other test while
+  silently leaving the drift tap's `getWatchedRoots()` RPC on the request thread.
+
+**One behaviour genuinely changed and is deliberate:** `GET /api/status` no longer reconciles the
+health taps. That is 876's own thesis applied ("request-driven reconciliation is a cache, not a
+state"), and the trigger fires on every monitor tick plus every capability transition, so the
+substrate advances at least as often as it did under the browser poll. Recorded here rather than
+left implicit.
+
+### UC.2 Wrong-gate: does the adaptive period actually fire, and can it hurt anything?
+
+* The monitor no longer uses `scheduleWithFixedDelay`; it re-arms with
+  `executor.schedule(this::tickAndReschedule, nextTickDelayMs(), …)` in a `finally`, so a throwing
+  tick still re-arms. `scheduleNextTick` returns early when `closed`, and swallows
+  `RejectedExecutionException`, so `close()` during an in-flight tick cannot resurrect the schedule.
+* `nextTickDelayMs()` clamps to `[MIN_TICK_INTERVAL_MS = 1 s, pollIntervalMs]` and falls back to
+  `pollIntervalMs` when the supplier is null or throws. Unset supplier ⇒ byte-identical cadence to
+  before, so every existing construction site (tests, standalone launchers) is unaffected.
+* **The resume-detection trap, and why it is not one.** `ResumeDetector` compares the inter-tick gap
+  against `pollIntervalMs * RESUME_TOLERANCE_FACTOR`. Had the reference shrunk with the actual delay,
+  a 2 s cadence would treat any 6 s stall — a long GC, a starved CPU under parallel agent builds — as
+  an OS resume and fire an eager channel reconnect + reconcile. The reference stays pinned to the
+  **configured** interval, so a faster tick can only make resume detection more conservative, never
+  more trigger-happy. `KnowledgeServerHealthMonitorTest.tickIntervalSupplierIsClampedToTheConfiguredInterval`
+  pins the clamp, the zero case and the throwing case.
+* **Cost of the fast arm:** at 2 s the monitor also runs `bootstrap.checkHealth()` five times more
+  often. That is accepted and bounded: it only happens while the Worker is already doing index work,
+  and the ceiling is the configured poll interval.
+
+### UC.3 Wrong-gate: does `RETRY_EXHAUSTED` actually reset on a rescan?
+
+Asserted, not reasoned: `JobQueueRetryLadderTest.sevenDayBoundExhaustsAndRescanResets` drives the
+real `markFailed` path to `RETRY_EXHAUSTED`, then calls `jobQueue.enqueue(...)` — the exact statement
+`WorkerScanOps.flushBatch` calls — and asserts `state=PENDING`, `attempts=0`, `retry_after=NULL`,
+`first_failed_at=NULL` **and** that the row is claimable again by `pollPending`. The last assertion
+is the one that distinguishes "the columns were reset" from "the job actually rejoined the queue".
+The same test asserts the negative before the reset (`pollPending` returns empty while exhausted), so
+an exhausted job silently rejoining the queue would fail it.
+
+The seven-day boundary is reached by rewriting `first_failed_at` through JDBC. That is the only way
+to reach it in a unit test; everything downstream of the column — the ladder call, the state
+decision, the write — is the production path. `IngestionRetryLadderTest` pins the boundary
+arithmetic itself (6 d not exhausted, exactly 7 d exhausted, the clamp that stops a 24 h step
+overshooting the bound).
+
+### UC.4 Test precision: right reason vs wrong reason
+
+* **`statusReadPerformsNoWorkerRpc`** asserts `verifyNoMoreInteractions(client)` *and* that
+  `meta.workerRpcAtMs` is byte-identical across three reads. Interaction counting alone could pass on
+  a mock that was never reached for an unrelated reason; the timestamp identity is positive evidence
+  that the three responses came from one observation, since the pre-change code stamped
+  `System.currentTimeMillis()` per request.
+* **`GplFetchDocumentsByteBudgetTest`** asserts on the *captured request sizes*, not on "the run
+  completed". A mocked client never enforces the 32 MiB ceiling, so a completion assertion would pass
+  on the pre-fix code. It additionally asserts `requests.size() > 1` (50 maximal documents cannot
+  legitimately ride one request) and that the flattened request ids equal the input list in order —
+  so a pager that split correctly but dropped or reordered a page fails.
+* **`transientFailuresDoNotCountAgainstTheAttemptsCap`** fails exactly three times, which is
+  `DEFAULT_MAX_ATTEMPTS` — the number that *was* the terminal threshold. A test using two failures
+  would have passed before the change.
+* **`ladderOutgrowsTheOldSeventeenMinuteCap`** names the pre-change ceiling as a literal and asserts
+  the third step exceeds it, so the case cannot silently pass if the ladder were reverted to
+  exponential-with-cap.
+* **`WorkerOpsQueueMetricWireFormatTest`** asserts the supplier *values* (`4242`, `1717`) reach the
+  NDJSON, not just the names. A gauge wired to the wrong supplier would still print its own name —
+  which is precisely how RISK-002 could have acquired a metric that measures nothing.
+* **`untypedFailurePathKeepsTheAttemptsCap`** is the adverse-precondition case for 21a: the cap is
+  removed for classified transients and kept for the untyped path, so a change that removed it
+  everywhere fails here.
+
+### UC.5 Tri-state / stale-flag / asymmetric-lifecycle checks
+
+* **Unknown ≠ healthy (sampler).** A failed sample is stored *as a sample* with `failed=true`, and
+  `workerRpcStale` is derived from it; the previous behaviour (fallback view + stale) is preserved
+  bit-for-bit. `WorkerSnapshotTap`'s existing stale-short-circuit is untouched, so a fallback view
+  still cannot clear a real `queue-db.unhealthy` condition.
+* **Unknown ≠ healthy (period).** `samplingPeriodMs()` returns the **idle** period when the last
+  sample failed. Returning the busy period would pin the monitor at 2 s for the whole duration of a
+  Worker outage — a stale-flag short-circuit inverted into a cost.
+* **Unknown ≠ zero (schema).** `first_failed_at` is `NULL` for every pre-V10 row, and
+  `IngestionRetryLadder.exhausted` treats `<= 0` as "no run in progress, never exhausted". Had the
+  migration backfilled `0`, every migrated row would have read as "first failed in 1970" and gone
+  terminal on its next transient failure. The migration test asserts the NULL explicitly and says
+  why.
+* **Asymmetric lifecycle.** The monitor's re-arm is the only new lifecycle; `close()` sets `closed`
+  before `shutdownNow()`, and `scheduleNextTick` checks `closed` first, so there is no start-without-
+  stop. No new executor, thread or file handle is created by either item.
+* **Counter drift.** `QueueThroughputMeters` buckets are stamped with their epoch-second and
+  re-zeroed on reuse, so a slot from an earlier revolution of the ring cannot be summed into the
+  trailing window. Reads take no queue lock, so the OTel flush thread never contends with the lock it
+  is measuring.
+
+### UC.6 Deliberate deviations from the chunk brief
+
+1. **No `StatusMeta` field for the sample age.** The brief asks `/api/status` to report the sample's
+   age. `meta.workerRpcAtMs` *is* the sample time under the new semantics, so the age is
+   `now - workerRpcAtMs` with no wire change. Adding a field would have meant editing
+   `contracts/wire/status.proto`, regenerating the FE schema types and running the `wire` gate — for
+   a value the consumer can already compute, on a surface design decision 4 explicitly says to keep
+   minimal because lane F collapses it.
+2. **Metric names are `worker.job_queue.*`, not `worker.queue.*`.** See UB.2a: the register names no
+   metric, and `worker.job_queue.*` is the prefix the five existing queue gauges already use.
+   Opening a second prefix for the same subject would be the fork the namespace guard exists to
+   catch.
+3. **Per-outcome counters are ONE tagged counter, not fourteen names.** `worker.job_queue.outcome.total`
+   with a single `outcome_class` tag and `cardinalityLimit(32)`. The 14 outcome classes are one
+   closed vocabulary always read together; fourteen names would be fourteen things to keep in sync.
+4. **Lock-wait is two gauges, not a histogram.** `lock_wait_max_ms` + `lock_wait_avg_ms` over the
+   same trailing minute as the rates. A histogram would need bucket boundaries chosen before anyone
+   has ever measured this lock; the max is the number RISK-002's trigger reads, and the pair can be
+   promoted once there is a distribution to bucket.
+5. **Lock-wait is measured on two paths, not forty.** `enqueueEntries` and `pollPending` — the
+   enqueue side (≥6 caller threads) and the dequeue side (1 caller). RISK-002 is about contention
+   between those two; instrumenting the ~40 read paths would measure the same lock again at the cost
+   of touching every method in the class.
+6. **`GplJobCoordinator.fetchSingleDocContent` (`:670`) is left calling `fetchDocuments` directly.**
+   It fetches exactly one id, so its worst case is one 200k-char document (~600 KB) — already two
+   orders of magnitude under the ceiling. Routing it through the pager would add a loop that can
+   only ever run once. Stated rather than silently skipped.
+7. **No proto change**, per design decision 4: `RETRY_EXHAUSTED` rides the existing `string state`
+   field (UB.2c) and the `FetchDocuments` budget is a caller-side pager. Two comment-only edits to
+   `modules/ipc-common/src/main/proto/indexing.proto` (the state list, and `error_message`'s "empty
+   when not FAILED" which was already inaccurate) are the whole `.proto` diff; `contracts/**` is
+   untouched, so the `wire` gate has nothing new to judge.
+
+### UC.7 Sweep: what the two items actually touched
+
+Item 6: `StatusLifecycleHandler` (sample record + cache + `buildStatusMap(boolean)` +
+`feedHealthTaps` + `samplingPeriodMs` + `?fresh=true`), `CoreApiAssembly` (the attached thunk),
+`LocalApiServer` (`statusSamplingPeriodMs()` accessor), `HeadlessApp` (the interval supplier),
+`KnowledgeServerHealthMonitor` (re-arming schedule + `tickIntervalSupplier` + clamp).
+`FetchDocuments`: new `BoundedDocumentFetch` + three of the four callers.
+Item 21: `IngestionRetryLadder` (new), `SqliteSchema` V10, `SqliteQueueMigrationOps` case 10,
+`SqliteJobQueue` (state constants, `readFailureRun`, the ladder branch, `first_failed_at`, five
+`state = 'FAILED'` queries widened, `countByPathPrefix` switch, meters, outcome observer, public
+`DEFAULT_MAX_ATTEMPTS`, `lockTimed`), `QueueThroughputMeters` (new), `JobBatchExtractor` (six
+literals → `failureDetail(e)`), `WorkerOpsMetricCatalog` + `QueueOutcomeTags` (new),
+`KnowledgeServer` (cap + observer + four suppliers), `IndexingJobView` (`STATE_*`),
+`IndexingJobsBridgeWiring`, `ScanRollupLedger`, `indexingJobsBridge.ts`, `ActionLedgerClient.ts`,
+`governance/operation-surfaces.v1.json` (three notes naming the terminal set).
+Docs: `03-knowledge-server.md` §job queue (the ladder table + the exhausted state + the attempt
+semantics note), `08-observability.md` §health sampling, `health-readiness-contract.v1.md`
+(freshness semantics). No new configuration key was introduced — the sampler's two periods are
+constants, per the brief's "prefer none".
+
+### UC.8 Findings
+
+Zero actionable findings from the passes above; the two behaviour changes worth naming (taps no
+longer reconcile on the request path, `checkHealth` runs at 2 s while indexing) are recorded in
+UC.1 and UC.2 as deliberate rather than left implicit.
+
+One **routed** finding, outside this chunk's scope: `GrpcIngestService.retryIndexingJob`
+(`:2158-2161`) hard-codes `setPreviousState("FAILED")` on success without ever reading the row's
+state. That was already inaccurate for a `PENDING`-in-backoff job and is now also inaccurate for a
+`RETRY_EXHAUSTED` one. It is a diagnostic field on the retry response with no consumer that branches
+on it; fixing it needs a state read inside the same transaction as the enqueue, which is more than a
+comment. Routed to item 21's open items rather than fixed here.
+
+### UC.9 Live items still open (items 6 and 21)
+
+Neither can run in a unit tier; both need the shared dev stack and are scheduled by the
+orchestrator, not by this chunk.
+
+1. **Health SSE advances with no client polling** — subscribe to `/api/health/events/stream`, issue
+   **zero** `/api/status` calls, stop the Worker, and assert the transition arrives within one
+   monitor period. The unit tier proves the sampler feeds the taps
+   (`WorkerStatusSamplerTest`, `ReadinessTriggerCompositionTest`); only the live stack proves the
+   SSE fan-out carries it to a subscriber.
+2. **`/api/status` p50 < 5 ms** — the acceptance number for "no RPC on the request thread". Measure
+   with the stack warm, after at least one sample has been taken (the first request of a process is
+   allowed to be slow by design, UB.1c).
+3. **The fast sampling arm under real indexing** — confirm the monitor actually ticks at ~2 s while
+   a scan is in flight and returns to ~10 s when it drains. The idle/busy decision is unit-tested
+   against a synthetic view; only a live run proves the Worker's `processingJobsCount` is non-zero
+   for long enough to drive it.
+4. **The queue metrics under a bulk import** — `worker.job_queue.enqueue_rate_per_min`,
+   `dequeue_rate_per_min`, `lock_wait_max_ms`, `lock_wait_avg_ms` non-trivial during a jseval
+   pipeline run, and the per-outcome counter carrying at least one class. This is RISK-002's
+   instrument; a field run that cannot show a rate means the instrument is wrong, not the result.
+5. **A live `RETRY_EXHAUSTED`** cannot be produced in seven days of wall clock, and is not worth a
+   clock-injection seam in the queue for one live assertion. The unit tier owns the boundary; the
+   live tier can only confirm that an exhausted row, if one is planted by JDBC, renders as a failed
+   task on the rail and as "Index gave up" in the ledger.
