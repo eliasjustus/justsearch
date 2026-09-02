@@ -808,9 +808,60 @@ Chunk-level hybrid (`CHUNK_HYBRID`) uses the `chunk_vector` field and is coverag
 Optional quality boost (disabled by default): a cross-encoder chunk reranker can rerank BM25 chunk hits under a tight time budget. GPU acceleration requires an ONNX Runtime CUDA-capable native runtime (see `docs/explanation/16-gpu-booster-pack.md`).
 
 ### Token budgets (current)
-`SummaryController` uses the configured `maxTokens` (persisted via `/api/settings/v2`) as the **output** budget for summarize/Q&A/chat. It also computes a safe **input** budget from the effective context window (`n_ctx`) to avoid llama-server 400s when input + output would exceed the server limit.
 
-The Head passes this input token budget to the Worker (`RetrieveContextRequest.max_context_tokens`) so the Worker can budget context during retrieval (avoids "Worker fetches 200K chars, Head truncates to 3K tokens" waste). The Head still keeps a safety-net truncation step and filters citations based on the returned `sections[]` to avoid "citations for dropped chunks" after truncation.
+Every window-sized quantity in the Head is derived from **one** request-scoped record,
+`ContextBudget` (`modules/core/src/main/java/io/justsearch/core/util/ContextBudget.java`). It is
+built once per request from the live context window and the completion this turn reserves, and every
+consumer reads its derived accessors instead of carrying a literal of its own.
+
+**Window precedence.** Observed llama-server `/props` `n_ctx` -> the configured launch window ->
+`ContextBudget.FALLBACK_WINDOW_TOKENS` (4096, the smallest rung of the launch ladder). "Unknown" is
+never treated as generous: it falls through to the next most authoritative value, and the last of
+them is the smallest window any server this app starts can end up with. The launch ladder itself is
+described in `docs/reference/configuration/runtime-config-ownership-matrix.md`
+(`justsearch.context.size`).
+
+**Input budget.** `inputBudget = TokenEstimation.computeSafeInputBudgetTokens(window, reserve)` —
+`(window - reserve - 256 - 512) * 0.9`, and `0` when the reservation leaves no room at all. The
+completion reserve is the turn's real `max_tokens` (the chat engine publishes it onto the request;
+reasoning tokens are spent *inside* it, never alongside it), so the budget cannot drift from what
+the server will actually enforce.
+
+**Derived quantities.** Each is `min(fraction x inputBudget, ceiling)`. The fraction makes the value
+scale with the window; the ceiling states the reason it should stop scaling.
+
+| Accessor | Derivation | Consumer | Why the ceiling |
+|---|---|---|---|
+| `hierarchicalThreshold()` | `inputBudget` (no ceiling) | `HierarchicalShapeRunner` — single-pass vs map-reduce | None: it *is* the budget. A document that does not fit the prompt cannot be summarized in one call. |
+| `sectionTarget()` | `inputBudget / 2`, max 4096 | `HierarchicalShapeRunner` — map-step size | A section is one blocking LLM call; past a few thousand tokens per-section latency, not the window, is what the user waits on. |
+| `externalContextCap()` | `inputBudget / 4`, max 2048 | `ExternalContextInjector` — prior conversation turns | History is low value per token next to the material this turn retrieved. |
+| `readDocumentPageTokens()` / `readDocumentPageChars()` | `inputBudget / 2`, max 4096 tokens | `ReadDocumentTool` — one page of a document | Agent-context hygiene: a 12k-token page at a 32k window fills the prompt with one document and defeats the compressor. |
+| `toolResultCap()` / `toolResultCapChars()` | `inputBudget / 4`, max 2048 tokens | `AgentContextCompressor` Layer-2 cut, `SearchTool` result set | One tool result must not own the prompt; the agent loop's value is holding several at once. |
+
+The read page is additionally bounded by the Layer-2 cut minus a header allowance, because a page
+that arrives clipped is the excerpt-shaped result the read tool exists to replace.
+
+**Character budgets.** Consumers that cut in characters (the Layer-2 tool-result cut, the read page,
+the selection injector) convert through `TokenEstimation.charsForTokens` — the documented inverse of
+the estimator's default heuristic (4 chars per token), and the only conversion any of them use.
+
+**Every drop is surfaced.** A trimmed RAG context sets `rag.meta.context_truncated`; a dropped prior
+turn and a cut selection are reported at INFO with before/after token counts. A prompt that quietly
+lost the turn the user was referring to is the failure these reports exist to make visible.
+
+**Agent knobs.** `justsearch.agent.max_completion_tokens` and
+`justsearch.agent.max_tool_result_chars` both default to `0 = derive from the window`; a positive
+value is an explicit operator ceiling and is honoured verbatim. The agent's completion reserve is
+`min(1024, window / 4)` — an answer does not get longer because the window did, but at a window too
+small to afford 1024 a flat reserve starves the input instead.
+
+**Retrieval shape.** The Head passes `inputBudget` to the Worker
+(`RetrieveContextRequest.max_context_tokens`) so the Worker can budget context during retrieval
+(avoids "Worker fetches 200K chars, Head truncates to 3K tokens" waste), and derives how many
+passages to ask for from it: `inputBudget / chunk size`, bounded above by `justsearch.rag.top_k`. An
+explicit per-request `topK` still wins verbatim. The Head keeps a safety-net truncation step and
+resolves each citation to what that cut did with its passage, so a citation never claims a passage
+the prompt does not contain.
 
 ## Q&A (multi-file “Ask”)
 

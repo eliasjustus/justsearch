@@ -1000,3 +1000,274 @@ higher one) still has no live witness, because on this card the inter-rung VRAM 
 smaller than observed free-VRAM noise (~280 MiB). Its trigger (`PROCESS_EXITED` on an unfittable
 `-c`), its guard, and its override branch are all live-verified; the relaunch line is covered by
 unit tests only.
+
+---
+
+## §B — Pre-implementation pass (chunk 2, PR 2: decision 3 `ContextBudget`; base `5547f564` = PR 1)
+
+Every `path:line` in the item-9 constants table, re-read on THIS base (PR 1 moved several).
+Corrections are marked **[moved]**; facts the item-9 table did not state are in §B.b2.
+
+### B.a2 — The item-9 constant sites, verified
+
+| Item-9 row | On this base | Verdict |
+|---|---|---|
+| `HIERARCHICAL_THRESHOLD_TOKENS` 5000 at `:59`, branch `:133` | `HierarchicalShapeRunner.java:59` `private static final int HIERARCHICAL_THRESHOLD_TOKENS = 5000;`, branch at `:133` `if (totalTokens < HIERARCHICAL_THRESHOLD_TOKENS)` | confirmed |
+| `SECTION_TARGET/SECTION_MAX/SYNTHESIS_MAX` 1800/512/1024 at `:63,67,68` | same lines; `SECTION_TARGET_TOKENS` used at `:140`, `SECTION_MAX_TOKENS` at `:169`, `SYNTHESIS_MAX_TOKENS` at `:245` | confirmed |
+| RAG default shape `5 x 2 x 500` | `RAGContext.java:81` `DEFAULT_TOP_K = 5`; `ResolvedConfigBuilder.java:1643` `resolveInt("justsearch.rag.top_k", 5)` and `:1645` `rag.max_chunks_per_article` **[moved]** (fold said 1592-1594); `ChunkSplitter.java:92` `DEFAULT_CHUNK_TOKENS = 500` | confirmed |
+| 845 trimmer + budget | `RAGContext.inputBudgetTokens :244`, `contextWindowTokens :254`, `completionReserveTokens :274`, cut at `:412-414`, `cutContext :514`, `SectionCut :482` **[moved]** (fold said 406-421,511-531) | confirmed |
+| `DEFAULT_CONTEXT_WINDOW_TOKENS = 4096` | `RAGContext.java:151` **[moved]** (fold said `:148`; PR 1 rewrote its javadoc) | confirmed, and kept |
+| `TokenEstimation` reserves 256/256/512/256 | `TokenEstimation.java:16-21` (`FIRST_PORTION 2000`, `LAST_PORTION 800`, `OVERHEAD 256`, `SAFETY 256`, `MIN_CONTEXT 512`, `MIN_BUDGET 256`); `computeSafeInputBudgetTokens :115-124` **[moved]** (fold said 114-123) | confirmed |
+| `ExternalContextInjector.MAX_CONTEXT_TOKENS = 1000` | `:30`, javadoc claim "~25% of a conservative 8K context window" at `:22`, applied at `:71` | confirmed |
+| `ReadDocumentTool.DEFAULT_PAGE_CHARS = 3000` | `:40` **[moved]** (fold said `:24,39`); `READ_PAGE_CHARS` at `:68-73`, a `static final` composed at class-init from `ToolResultCarrier.layerTwoCapChars()` | confirmed |
+| `ServerPropsOps.SUMMARY_CONTROLLER_MAX_CONTEXT_TOKENS = 3000` | `:27` **[moved]** (fold said `:26`); sole reader `warnIfSummaryBudgetExceedsActual :331-340`, called from `:210` | confirmed - and see B.b2 (4) |
+| `AgentLlmCaller.DEFAULT_MAX_TOKENS`, `AgentContextCompressor.MAX_TOOL_RESULT_CHARS` | `AgentLlmCaller.java:48-49` `Math.max(256, resolveInt(rc -> rc.agent().maxCompletionTokens(), 1024))`, used at `:317`; `AgentContextCompressor.java:74-75` `Math.max(100, resolveInt(rc -> rc.agent().maxToolResultChars(), 4000))`, used at `:95-99` | confirmed, both class-init `static final` |
+| `AgentBudgetPolicy` "12.5x @ n_ctx 4096" | `:28` inside the bound derivation, restated at `:46` | confirmed |
+| `ConversationEngine.parseMaxTokens` + reserve publication | `parseMaxTokens :1142-1149` **[moved]**; reserve published at `:447-455` | confirmed, unchanged by this PR |
+| `RetrieveContextParams.maxContextTokens` on the wire | `RetrieveContextParams.java:21` component; `RAGContext.tryOpenRetrieval :724-727` sends `max(1, inputBudgetTokens(ctx))`; `tryRetrieveContext :698-699` sends `0` (scoped path, char-budget behaviour) | confirmed - **no proto change needed**, the field already exists and already carries the budget |
+
+### B.b2 - Facts the contract did not state that change the design
+
+1. **`modules/app-agent` has no `modules:core` edge.** Its deps are `app-agent-api`, `app-api`,
+   `configuration`, `telemetry` (`modules/app-agent/build.gradle.kts:8-12`); `app-api` pulls
+   `app-agent-api` + `configuration` + `api-contract-projection-java`, and `configuration` pulls only
+   `core-contracts`. So `TokenEstimation` (`modules/core`) is NOT reachable from `app-agent` today.
+   `modules/core` is a leaf (no project deps), so the edge cannot cycle. Adding
+   `api(project(":modules:core"))` to `app-agent` is this PR's one new module edge; the canonical
+   `docs/reference/architecture/module-deps.md` is regenerated with it.
+2. **The tools cannot see the session.** `SearchTool`/`ReadDocumentTool` are `OperationHandler`s
+   dispatched by id (`execute(String argumentsJson)`); nothing hands them an `AgentSession`. So a
+   per-call budget reaches them as a `Supplier<ContextBudget>` injected at construction, in
+   `AgentToolFactory.assemble` (`modules/app-services/.../bootstrap/phases/AgentToolFactory.java:97-107`),
+   which already holds the `OnlineAiService`. This is the only seam that does not require changing
+   the `OperationHandler` contract.
+3. **`READ_PAGE_CHARS` must stay under the Layer-2 cap, and the decision-3 fractions invert that.**
+   Decision 3 sizes the read page at `inputBudget/2` (cap 4k tokens) and the tool-result cap at
+   `inputBudget/4` (cap 2k tokens) - the page is twice the cap that clips it, so a full page would
+   arrive Layer-2-truncated, which is the exact failure `READ_PAGE_CHARS` exists to prevent
+   (868 A.5). The existing `min(pageSize, layerTwoCap - PAGE_HEADROOM_CHARS)` shape is therefore
+   KEPT, with the budget's page figure replacing the `3000` literal inside it. Both operands now
+   scale with the window, so the page grows with the window and never exceeds the cut.
+4. **`ServerPropsOps.SUMMARY_CONTROLLER_MAX_CONTEXT_TOKENS` names a class that does not exist.**
+   `grep -rn "SummaryController" modules --include=*.java` -> the only hits are this constant's own
+   name and its WARN string. The warning ("SummaryController MAX_CONTEXT_TOKENS may be too large for
+   server context") is residue of a deleted controller, and with decision 3 the situation it warns
+   about is unrepresentable: every consumer's budget is derived FROM the observed window, so no
+   consumer constant can exceed it. Constant + `warnIfSummaryBudgetExceedsActual` + its call site are
+   DELETED (`retire-with-a-sweep`), not re-derived. This is the PR's only `app-inference` change.
+5. **`rag.max_chunks_per_article` is a worker-side per-parent diversity cap**, applied in
+   `RagContextOps.java:632,643,672,1767-1781`; it never crosses to the Head and is not a bound on how
+   many passages the Head asks for. The Head-side upper bound is `justsearch.rag.top_k` alone. Stated
+   because the contract names both.
+6. **An explicit body `topK` must keep winning.** `RAGContext.extractTopK :821-828` documents
+   body -> configured -> `DEFAULT_TOP_K`, and its javadoc (`:171-178`) states that config must not
+   override a caller that asked for a value. The budget-derived shape therefore replaces the
+   DEFAULT (the configured/`DEFAULT_TOP_K` arm) only. Consequence for the live item: the 845 arms
+   send `topK: 5` explicitly, so they are unaffected - see C.6b.
+7. **The completion reserve must not be clamped where the caller already fixed it.** `RAGContext`
+   budgets against the reserve `ConversationEngine` will actually send (`ATTR_COMPLETION_RESERVE_TOKENS`,
+   `ConversationEngine.java:447-455`). Clamping that number inside `ContextBudget` would promise input
+   room the real completion can still eat. So `ContextBudget` has TWO factories: one that takes the
+   caller's fixed reserve verbatim, one (`withDerivedReserve`) for callers that let the budget CHOOSE
+   the reserve - today only the agent loop, whose cap is a config knob, not a request field.
+8. **`justsearch.agent.max_tool_result_chars` / `max_completion_tokens` defaults (4000 / 1024) block
+   the derivation.** `ResolvedConfigBuilder.java:1384-1385`. If they stay positive defaults they
+   always win the `min(...)` against a 32k-derived value and the window scaling is invisible. Both
+   defaults become `0 = derive from the window`, with a positive value an explicit operator ceiling
+   honoured verbatim - the same "0 means auto, an override is honoured or fails loud" shape PR 1 gave
+   `contextLength` (B.c). `docs/reference/configuration/environment-variables.md:91` currently
+   documents the tool-result default as `900`, which was already wrong on `main`; corrected here.
+9. **`ExternalContextInjector` is a stateless `INSTANCE` singleton** (`:28`), wired at
+   `modules/ui/.../ConversationApiAssembly.java:238` where `onlineAiSupplier` (`:131-136`) is already
+   in scope - the same supplier `RAGContext` gets at `:234`. It becomes a constructed injector.
+   `SelectionContextInjector` (`:239-243` wiring) takes the same supplier.
+
+### B.c2 - Decisions taken inside this chunk
+
+- **`ContextBudget` lives in `modules/core` (`io.justsearch.core.util`), next to `TokenEstimation`,
+  whose `computeSafeInputBudgetTokens` is the derivation it wraps.** It is built from PLAIN INTS
+  (`Integer observedWindow, Integer configuredWindow, int reserve`) so `core` stays a leaf and every
+  caller - Head conversation SPI, agent loop, agent tools - resolves the same precedence in one
+  place without `core` learning about `OnlineAiService`. The alternative (put it in `app-api`) would
+  have forced either a `core` edge on `app-api` anyway or a second copy of the budget formula.
+- **`RAGContext` delegates, it does not fork.** `contextWindowTokens()` / `inputBudgetTokens()` become
+  `RAGContext.budgetFor(...)`, a pair of public statics that read the live `OnlineAiService` and the
+  turn's reserve attribute and hand both to `ContextBudget`. `RAGContext` already owned both the
+  window walk and `ATTR_COMPLETION_RESERVE_TOKENS`, so this is generalizing in place; the injectors
+  in the same package call the same static rather than re-reading the window.
+- **`SECTION_MAX_TOKENS` and `SYNTHESIS_MAX_TOKENS` are per-call OUTPUT limits, not window
+  fractions**, and stay constants. They are the `max_tokens` handed to `streamChat`
+  (`HierarchicalShapeRunner:169,245`) - a completion reservation, the same category as
+  `ConversationEngine.DEFAULT_MAX_TOKENS`. What changes is that `SYNTHESIS_MAX_TOKENS` is now the
+  reserve the runner's `ContextBudget` is BUILT from, so the threshold it derives accounts for the
+  room the answer will take. `SECTION_TARGET_TOKENS` IS window-derived and becomes `sectionTarget()`.
+- **The agent's completion reserve is `min(configured cap, window/4)`.** A reserve is not linear in
+  the window (an answer does not get longer because the window did), but at a small window a flat
+  1024 crowds out the input. `window/4` changes nothing at 4096 and above (min picks the 1024 cap)
+  and shrinks the reserve below it, which is where the starvation is real. It also keeps
+  `AgentBudgetPolicy`'s structural bound `spend <= maxIterations * (n_ctx + maxTokens)` valid, since
+  `maxTokens` can now only go DOWN.
+- **Tokens->chars conversion is the documented inverse of `TokenEstimation`'s default heuristic**
+  (`charEstimate = ceil(len / 4)`), added as `TokenEstimation.charsForTokens`. It is an estimate, and
+  is only used where the consumer's own budget is a CHAR budget (`READ_PAGE_CHARS`, the Layer-2 cut,
+  the selection injector). Dense/CJK text estimates higher per char, so a char budget converted this
+  way can be re-estimated above its token figure - which is why the read page keeps its second,
+  char-vs-char bound against the Layer-2 cap (B.b2 (3)) instead of trusting the conversion alone.
+- **The selection injector's caps are the full input budget, not a fraction.** A user's selection is
+  the turn's PRIMARY material (the same role the RAG context plays), so it is budgeted at
+  `inputBudget` converted to chars, and the result-set arm splits that budget across the docs it
+  takes (`inputBudget / MAX_RESULT_SET_DOCS`). No new fraction is invented; the existing
+  `MAX_RESULT_SET_DOCS` stays a doc COUNT, which is not a window quantity.
+- **`execution-surface` is not implicated.** The register gates new production files that reference
+  `SearchTrace` / `ContextCitation` / `EvidenceSpan` (`governance/execution-surfaces.v1.json`
+  `scan.javaImportPatterns`). `ContextBudget` is a request-scoped budget record that references none
+  of them, and this PR adds no new file that does. Gate re-run under C.
+
+### B.d2 - The fraction/cap table as it will be implemented
+
+| Accessor | Derivation | Cap reason (stated in javadoc at the site) |
+|---|---|---|
+| `inputBudget()` | `computeSafeInputBudgetTokens(window, reserve)` | unchanged (845) |
+| `hierarchicalThreshold()` | `inputBudget` | no cap - it IS the budget |
+| `sectionTarget()` | `min(inputBudget / 2, 4096)` | map-step latency: a section is one blocking LLM call |
+| `externalContextCap()` | `min(inputBudget / 4, 2048)` | prior turns are low value per token next to this turn's material |
+| `readDocumentPageTokens()` | `min(inputBudget / 2, 4096)` | agent-context hygiene: a 12k page at 32k defeats the compressor |
+| `toolResultCap()` | `min(inputBudget / 4, 2048)` | one tool result must not own the prompt |
+| agent completion reserve | `min(configured cap, window / 4)` | see B.c2 |
+
+## §C — Post-implementation critical analysis (chunk 2, PR 2; 2026-09-02)
+
+### C.1b — Wrong-gate checks (each grepped at the set-site, not inferred)
+
+The acceptance greps, run as commands on the finished branch:
+
+| Command | Result |
+|---|---|
+| `grep -rn "5000\|HIERARCHICAL_THRESHOLD_TOKENS" modules/app-services/.../HierarchicalShapeRunner.java` | one hit, in the WHY comment that names the retired literal (`:137`). The constant and its branch are gone. |
+| `grep -rn "MAX_CONTEXT_TOKENS = 1000\|DEFAULT_PAGE_CHARS = 3000\|SUMMARY_CONTROLLER_MAX_CONTEXT_TOKENS = 3000\|MAX_TOOL_RESULT_CHARS = 4000" modules` | **no output** |
+| `grep -rn "SECTION_TARGET_TOKENS\|1800" .../HierarchicalShapeRunner.java` | **no output** |
+| `grep -rn "layerTwoCapChars()" modules --include=*.java` | no CALL sites; the two hits are prose naming the method, both updated to `layerTwoCapChars(budget)` |
+| `grep -rn "MAX_TOOL_RESULT_CHARS\|READ_PAGE_CHARS\|DEFAULT_MAX_TOKENS\|DEFAULT_PAGE_CHARS\|SUMMARY_CONTROLLER" modules --include=*.java` | after the sweep, the only surviving hits are `ConversationEngine.DEFAULT_MAX_TOKENS` (a DIFFERENT, live symbol — the chat engine's default `max_tokens`, untouched by this PR, and its `ResolvedConfigBuilder.ENGINE_DEFAULT_MAX_TOKENS` mirror) and the `EnvRegistry` key spellings. Six stale prose references to the deleted symbols were swept in the same PR rather than left as false authority. |
+
+Claims the change depends on, checked at the set-site:
+
+| Claim | How it was checked | Result |
+|---|---|---|
+| The tools actually RECEIVE a live budget in production, not the null-fallback | `AgentToolFactory.assemble` builds `() -> AgentContextBudgets.forCall(onlineAiService)` once and passes it to BOTH `SearchTool` and `ReadDocumentTool`; `AgentToolFactory.build` and `AgentToolHandlers.registerLateBound` both route through `assemble` (tempdoc 832's single construction authority), so the eager and late-bound paths cannot diverge. | confirmed |
+| The compressor's cap is not frozen | `AgentLoopService` passes a SUPPLIER, not a value (`AgentLoopService.java:336-338`); `AgentContextCompressorTest`-equivalent coverage is `AgentContextBudgetsTest.toolResultCapTracksTheWindowWithinOneJvm`, which flips the window inside one JVM and requires the number to move. A value-typed wiring would have compiled and passed every other test. | confirmed |
+| The read page cannot be Layer-2 clipped at any rung | `AgentContextBudgetsTest.readPageGrowsWithTheWindowAndStaysUnderTheCut` asserts `page + PAGE_HEADROOM_CHARS <= layerTwoCap` at 2048/4096/8192/16384/32768. It binds with EQUALITY at every rung, which is the sign the second bound (not the page fraction) is what governs — exactly as §B.b2 (3) predicted. | confirmed |
+| A history drop is reported on the path that actually drops | the INFO log is inside `ExternalContextInjector.inject`, after the keep-loop, gated on `kept.size() < parsed.size()` — the same list the loop built. `noDropNoLog` asserts the quiet path stays quiet, so the assertion is not satisfied by an unconditional log. | confirmed |
+| The `execution-surface` register is not implicated | `node scripts/governance/run.mjs --gate execution-surface --mode gate` -> `1 gate evaluated, 0 fail, 0 findings`. No new file references `SearchTrace` / `ContextCitation` / `EvidenceSpan`. | pass |
+| No contract changed | `RetrieveContextParams.maxContextTokens` already existed and already carried the budget; `contracts/**` is untouched, so `--gate wire` has no subject. `UnifiedChatView.ts` / `CoreConversationShapeCatalog.java` are untouched, so `check-intent-tier-coverage` has no subject. | confirmed |
+
+### C.2b — Test precision: does each test pass for the RIGHT reason?
+
+The three most important, and how each FAILS on the old code:
+
+1. **`ContextBudgetConsumerTest.smallWindowForcesHierarchical`** — a 4999-token document at a
+   4096-token window. On the old code `4999 < HIERARCHICAL_THRESHOLD_TOKENS (5000)` is true, so the
+   runner emits `progress phase:"standard"` and single-passes 4999 tokens into a window whose honest
+   input budget is 2304. The test asserts `"standard"` is NOT among the emitted phases, so the old
+   code fails it on the first assertion. Its companion (`largeWindowRaisesTheThreshold`, 6000 tokens
+   at 32768) fails the old code from the other side — the old literal split a document that fits
+   whole. Straddling the retired constant in BOTH directions is what makes the pair discriminate a
+   derived threshold from any other constant.
+2. **`AgentContextBudgetsTest.toolResultCapTracksTheWindowWithinOneJvm`** — flips the window from
+   4096 to 32768 inside one JVM and requires the cap to move (2304 -> 8192 chars). On the old code
+   `MAX_TOOL_RESULT_CHARS` is a `static final` initialized once from config; no window value is an
+   input to it at all, so the two reads are identical by construction and the `assertTrue(large >
+   small)` fails. This is the shape the acceptance asked for precisely because a
+   single-value assertion cannot tell "resolved correctly" from "frozen at whatever the first caller
+   saw".
+3. **`ContextBudgetConsumerTest.historyDropIsLogged`** — asserts an INFO record naming the dropped
+   count, the before/after token totals and the cap. On the old code the keep-loop `break`s with no
+   log statement anywhere in the class (the class had no `Logger` field), so the appender list is
+   empty and the `orElseThrow` fires. The assertion also pins `cap 576`, i.e. the DERIVED cap, so a
+   version that logged but kept the flat 1000 would fail too.
+
+Also checked for the "passes for a wrong reason" shape:
+
+- `ContextBudgetTest.windowPrecedence` asserts `assertNotEquals(8192, ...)` explicitly, because the
+  845 defect was a hardcoded 8192 and a test that only asserted 4096 would pass on a fallback that
+  happened to be right for a different reason.
+- `sectionTargetScalesWithTheWindow` counts sections from the runner's OWN `sections` progress event
+  (`totalStages`), not from a count of stubbed LLM calls. The first draft counted calls and read 0
+  at both windows, because `blockingStreamChat` uses a 7-argument `streamChat` overload the stub did
+  not implement — a green-for-the-wrong-reason that the explicit `throw new AssertionError("no
+  sections event")` in the helper now makes impossible.
+- `defaultTopKIsDerivedFromTheBudget` asserts BOTH ends (5 at 32768, 1 at 2048). Asserting only the
+  narrow end would also pass on a version that always returned `min(top_k, 1)`.
+
+### C.3b — Defects this pass found, and fixed in the same PR
+
+1. **The history keep-loop was rewritten from `break` to `continue` in the first draft**, which would
+   have let an older, SMALLER turn ride along after a larger one was skipped — a history with a hole
+   in it, which reads as a different conversation than the one the user had. Reverted to `break`
+   with the reason stated at the site, and the drop counted separately.
+2. **The decision-3 fractions invert the read-page invariant.** The page fraction
+   (`inputBudget/2`) is twice the tool-result fraction (`inputBudget/4`), so a full page would be
+   Layer-2 clipped at every rung — the exact failure `READ_PAGE_CHARS` was introduced to prevent
+   (868 §A.5). Caught in the §B pre-implementation pass, not by a test; the existing
+   `min(page, layerTwoCap - headroom)` shape is kept and both operands now scale.
+3. **Four pre-existing `RAGContextTest` top-K tests went red** on the derived default (they asserted
+   the configured 17 / 5 reached retrieval at a 4096-token window, where the budget affords 4). The
+   tests are RIGHT about their intent — config precedence, not budget arithmetic — so each was given
+   a window wide enough to afford its number, with a comment saying why, and the budget bound itself
+   is covered by the new `defaultTopKIsDerivedFromTheBudget`. No assertion was weakened.
+4. **`ServerPropsOps.SUMMARY_CONTROLLER_MAX_CONTEXT_TOKENS` names a class that does not exist**
+   (§B.b2 (4)). Deleted with its warning and its call site rather than re-derived.
+
+### C.4b — Deviations from the contract, stated rather than hidden
+
+1. **`SECTION_MAX_TOKENS` / `SYNTHESIS_MAX_TOKENS` are NOT window-derived.** The contract asked to
+   add them "if they are window-derived, state if they are per-call output limits instead". They are
+   per-call OUTPUT limits — the `max_tokens` handed to `streamChat` — so they stay constants, and
+   `SYNTHESIS_MAX_TOKENS` is now the reserve the runner's budget is built FROM. Stated in §B.c2.
+2. **The agent's completion cap is not a pure window fraction.** `min(configured cap, window/4)`,
+   which changes nothing at 4096 and above. Raising a completion cap with the window would change
+   agent run economics and invalidate `AgentBudgetPolicy`'s structural spend bound; that is a spend
+   decision, not a budget-plumbing one. The acceptance's "the two former class-init constants change
+   when the window changes at runtime" is still satisfied and tested — the reserve moves at 2048.
+3. **`rag.max_chunks_per_article` is not used as a Head-side bound** — it is a worker-side per-parent
+   diversity cap and never crosses to the Head (§B.b2 (5)). The Head-side bound is `rag.top_k`.
+4. **Both agent config defaults changed from positive to `0 = derive`** (§B.b2 (8)). An operator who
+   had set either key explicitly is unaffected; an operator relying on the shipped 4000/1024 now gets
+   a window-derived number instead, which is the point. `environment-variables.md` says so.
+5. **`DocAccess` / `BatchDocAccess` keep their own 200,000-char soft caps.** They are not in the
+   item-9 table and they mirror the Worker's gRPC transport cap
+   (`GrpcSearchService.MAX_CONTENT_CHARS = 200_000`), which is a different quantity from a prompt
+   budget. Routed here rather than swept: `DocAccess.java:50-51,98-99` and
+   `BatchDocAccess.java:48-49,100-101` inject document text into a prompt with no window-derived
+   bound, so the same class of over-commit is still reachable through the doc-access injectors. It
+   belongs to whoever takes the remaining item-9 residue.
+6. **One new module edge**: `modules/app-agent` -> `modules/core` (`api`), regenerated into
+   `docs/reference/architecture/module-deps.md`. `core` is a leaf, so no cycle is possible.
+
+### C.5b — Live-window items for the orchestrator (nothing below was measured in PR 2)
+
+1. **Re-run the 845 RAG arms at 32768 with the new shape.** Expected, and stated in advance so the
+   result can falsify it: **the arms are UNCHANGED at `chunks_used 5 / chunks_found 62`**, because
+   both arms send `topK: 5` explicitly (883 F13's request bodies) and an explicit `topK` still wins
+   verbatim (§B.b2 (6)). The derived default would ask for `min(28108/500, 5) = 5` anyway at this
+   window, so the shape is the same number by two routes. `context_truncated` must still be `false`
+   and prompt + completion must still sit far inside 32768. **The arm that would actually show the
+   change is a request with NO `topK`**: run one, and record what the wire `topK` was.
+2. **A small-window arm.** The derived shape only bites below ~4096: at the CPU rung (8192, reserve
+   1024) the input budget is 5860 and `min(5860/500, 5) = 5`, i.e. still unchanged. To witness the
+   derivation live, force a small window (`-Djustsearch.context.size=2048`) and assert the wire
+   `topK` is 1 and `context_truncated` stays `false` — the case 845's trimmer used to absorb.
+3. **The hierarchical runner at a live window.** Summarize a ~5000-token document with a 32768-token
+   server and confirm it goes SINGLE-PASS (`progress phase:"standard"`), then at a forced 4096 window
+   confirm it splits. Unit-covered; not yet witnessed against a real model.
+4. **An agent run at 32768.** Confirm a `core_read_document` page is materially larger than 3000
+   chars (expected 7592) and that no tool result carries the `[... truncated,` marker at a size the
+   old 4000-char cap would have cut.
+5. **The history drop, live.** A chat turn with a long `context` array should emit the new INFO line
+   in the backend log with before/after token counts.
+
+### C.6b — Still open in this lane after PR 2
+
+Decision 5 (the `getenv` funnel + the yaml-reader gate), decision 4 slice 2 (the `server.exe` /
+`exclude_patterns` / `gpu.layers` promotions), ADR-0047 "Context window as a derived resource"
+(number still reserved, still unwritten), and the item-9 residue named in §C.4b (5) — the
+`DocAccess` / `BatchDocAccess` 200,000-char prompt injections.
