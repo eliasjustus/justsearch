@@ -132,8 +132,10 @@ re-discovering that Codex hooks exist.
 - `scripts/agent-analytics/lib/telemetry-io.mjs` — `loadCostsFromOtlp`
   prefers `gen_ai.usage` records when present, with a fallback for
   archives written before this change.
-- `docs/tempdocs/886-agent-token-efficiency-review.md` §10.3 (option
-  B), §11 row A6, §12 PR 3.
+- The design rationale (OTLP as the live layer next to the transcript
+  adapters, and the one-session smoke check) is dated working history in
+  the 886 tempdoc; the durable description lives in the explanation doc
+  below.
 - `docs/explanation/21-agent-analytics-pipeline.md` — sink hook
   wiring, rotation/retention policy, the harness-neutral session
   ledger.
