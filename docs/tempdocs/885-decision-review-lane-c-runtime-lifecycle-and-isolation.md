@@ -1602,7 +1602,22 @@ orchestrator, not by this chunk.
    `worker.indexing.duty_pct` must be non-trivial in arms (b) and (c) and zero/100 in arm (a), and
    the Worker log must carry the INFO pacing line. This is what §B.2a said the breath-hold could
    never show; if the after-run cannot show it either, the instrument is wrong, not the result.
-3. **Chaos "Time Lord"** — `ChaosSuiteTest.indexingRunsAtAReducedDutyUnderForegroundSearchLoad`,
-   rewritten to drive the gauge with real `SearchService` traffic instead of the MMF byte. Written
-   and compiled in this chunk; **not run** — it needs the `systemTest` source set and a worker dist.
+3. **Chaos "Time Lord"** — ~~not run~~ **RUN AND GREEN** (2026-09-02, review window):
+   `ChaosSuiteTest.indexingRunsAtAReducedDutyUnderForegroundSearchLoad`, rewritten to drive the
+   gauge with real `SearchService` traffic instead of the MMF byte, passes in 38.1 s as part of a
+   **13/13** chaos suite. Three defects were found and fixed getting there, all in the test, none
+   in the product: (a) `spawnWorkerAndAwaitPort` stops its heartbeat keeper as soon as the port
+   appears, so any body outliving `STARTUP_GRACE_MS + HEARTBEAT_STALE_MS` watches the Worker honour
+   the suicide pact — the test now runs its own keeper for the whole body; (b) a single corpus was
+   fully drained by the poll-only phase, so "no progress under load" meant "no work queued" — the
+   test now submits a second batch at the load phase and asserts `queueDepth > 0` before measuring;
+   (c) a 1200-path `submitBatch` exceeds the client default 10 s deadline while the loop is
+   indexing. The Worker log carries the shipped-level evidence:
+   `Indexing pacing: foreground duty 20%, cooldown 500 ms` at startup (the config crossed the
+   process boundary live) and `Indexing paced by foreground load: … foreground inFlight=2
+   cooldownMs=500` at INFO from `i.j.indexerworker.loop.pacing.IndexingPacing` — the observable
+   §B.2a said the breath-hold could never produce. Note when reading it: the line is rate-limited
+   to one per 30 s and fires on the first yield, so the first line always reports `1 yields` and a
+   window duty dominated by the preceding uncontended phase; magnitude comes from the second line
+   onward and from the jseval arms, not from the first.
 4. **Search p95 before/after** — read from the same jseval arms' `search_load.latency_ms`.

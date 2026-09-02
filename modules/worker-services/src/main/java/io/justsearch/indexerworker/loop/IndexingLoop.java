@@ -34,6 +34,7 @@ import io.justsearch.indexerworker.loop.ops.CombinedEnrichmentBackfillOps;
 import io.justsearch.indexerworker.loop.ops.EmbeddingBackfillOps;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
 import io.justsearch.indexerworker.loop.ops.LoopPacingPolicy;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.loop.ops.DisambiguationBackfillOps;
 import io.justsearch.indexerworker.loop.ops.NerBackfillOps;
 import io.justsearch.indexerworker.loop.ops.BgeM3BackfillOps;
@@ -64,7 +65,7 @@ import org.slf4j.LoggerFactory;
  * Background indexing loop that processes jobs from the queue.
  *
  * <p>The loop runs a <b>duty cycle</b> against {@link
- * io.justsearch.indexerworker.loop.pacing.IndexingPacing} (tempdoc 885 item 3): while foreground
+ * IndexingPacing} (tempdoc 885 item 3): while foreground
  * search-family RPCs are in flight it yields most of each interval to keep the machine responsive,
  * but it never stops. The predecessor was "breath holding" — a full pause on a Head-written
  * wall-clock activity byte — which indexed 699 of 5184 documents in 22 minutes under a continuous
@@ -111,7 +112,7 @@ public class IndexingLoop implements Closeable {
   private final Supplier<ResolvedConfig> resolvedConfigSupplier;
   private final WorkerSignalBus signalBus;
   /** Tempdoc 885 item 3: the duty-cycle policy that replaced the breath-hold pause. */
-  private final io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing;
+  private final IndexingPacing indexingPacing;
   private final TimeboxedContentExtractor contentExtractor;
   // Tempdoc 516 Slice 4c: embeddingProvider / embeddingServiceForLifecycle / embeddingEvents
   // / embeddingCompatController are now owned by EmbeddingProviderLifecycle. The lifecycle's
@@ -233,7 +234,7 @@ public class IndexingLoop implements Closeable {
       WorkerSignalBus signalBus) {
     this(jobQueue, indexingCoordinator, commitOps, documentFieldOps, indexCountOps,
         resolvedConfigSupplier, signalBus,
-        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
+        IndexingPacing.unthrottled(),
         null, null, null, null, null,
         new io.justsearch.indexerworker.server.EncoderBindings(), null);
   }
@@ -261,7 +262,7 @@ public class IndexingLoop implements Closeable {
       EmbeddingService embeddingService) {
     this(jobQueue, indexingCoordinator, commitOps, documentFieldOps, indexCountOps,
         resolvedConfigSupplier, signalBus,
-        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
+        IndexingPacing.unthrottled(),
         embeddingService, null, null, null, null,
         new io.justsearch.indexerworker.server.EncoderBindings(), null);
   }
@@ -285,7 +286,7 @@ public class IndexingLoop implements Closeable {
       ExtractionMetricCatalog extractionCatalog) {
     this(jobQueue, indexingCoordinator, commitOps, documentFieldOps, indexCountOps,
         resolvedConfigSupplier, signalBus,
-        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
+        IndexingPacing.unthrottled(),
         embeddingService, pipelineCatalog, extractionCatalog,
         null, null, new io.justsearch.indexerworker.server.EncoderBindings(), null);
   }
@@ -318,7 +319,7 @@ public class IndexingLoop implements Closeable {
       IndexCountOps indexCountOps,
       Supplier<ResolvedConfig> resolvedConfigSupplier,
       WorkerSignalBus signalBus,
-      io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing,
+      IndexingPacing indexingPacing,
       EmbeddingService embeddingService,
       IndexingPipelineMetricCatalog pipelineCatalog,
       ExtractionMetricCatalog extractionCatalog,

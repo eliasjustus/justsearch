@@ -21,5 +21,6 @@ Worker JVM. That is deliberate: 885 [R1] found the previous Worker-side knob
 (`justsearch.eval.disable_breath_holding`) could never reach the Worker at all
 because it was only ever set as a Head system property, and
 `ForegroundPacingConfigForwardingTest` now pins the snapshot round-trip. That dead
-key is deleted in the same change, so the true delta against the pre-885 surface is
-+1.
+key is deleted in the same change, but it was a bare `Boolean.getBoolean` read and
+never an `EnvRegistry` entry, so it was never counted by this metric: the net growth
+is the full +2.
