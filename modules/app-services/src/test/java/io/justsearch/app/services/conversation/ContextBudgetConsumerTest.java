@@ -204,9 +204,22 @@ class ContextBudgetConsumerTest {
     throw new AssertionError("no sections event; phases were " + phases(events));
   }
 
-  /** ~1 token per word by the estimator's word heuristic, so the size is predictable. */
+  /**
+   * A document of approximately {@code approxTokens} estimated tokens.
+   *
+   * <p>Sized against the CHAR arm of {@link io.justsearch.core.util.TokenEstimation#estimateTokens},
+   * not the word arm. The estimator returns {@code max(wordEstimate, charEstimate)} and each
+   * {@code "token "} is 6 chars / 1 word, so the char arm ({@code len/4} = 1.5 per word) always
+   * dominates the word arm (1.3 per word) for this filler: {@code words(t * 2 / 3)} estimates to
+   * {@code t}, and the earlier {@code words(t / 1.3)} estimated to {@code 1.15 * t}.
+   *
+   * <p>That 15% mattered: it put {@code document(4999)} at 5768 estimated tokens, ABOVE the retired
+   * 5000-token literal, so {@link #smallWindowForcesHierarchical} passed on the old code as well as
+   * the new one — the exact green-for-the-wrong-reason this test exists to rule out. Verified by
+   * restoring the literal and watching both threshold cases go red.
+   */
   private static String document(int approxTokens) {
-    return words((int) (approxTokens / 1.3));
+    return words(approxTokens * 2 / 3);
   }
 
   private static String words(int count) {
