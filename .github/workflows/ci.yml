@@ -45,7 +45,10 @@ jobs:
   public-claims:
     name: Public claims
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 10 -> 15: this job now installs modules/ui-web and builds the kernel gate inputs (knip,
+    # npm audit, module-deps). The producers themselves measure ~8s combined; the install is the
+    # cost, and a job that times out is a red for every PR rather than a signal about one.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
