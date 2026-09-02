@@ -15,7 +15,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,6 +35,16 @@ import org.slf4j.LoggerFactory;
  * <p>Thread safety: This class is thread-safe. The underlying executor is a single-thread
  * executor to ensure isolation between extraction tasks.
  *
+ * <p><b>Tempdoc 885 item 14 — a timed-out extraction no longer poisons the executor.</b> A wedged
+ * native parser ignores {@code cancel(true)}, so the single worker thread used to stay occupied
+ * forever and every subsequent file queued behind it: one bad file stopped <em>all</em> extraction
+ * until the Worker restarted. On a timeout the executor is now replaced, so the next file gets a
+ * fresh thread. <b>Honest residual for the in-process families:</b> the wedged thread itself is not
+ * killable from the JVM — it is a daemon thread that leaks (holding its parser's memory) until the
+ * process exits. Only the {@link PersistentExtractionSandbox} path genuinely reclaims the work, by
+ * killing the child. That is the reason the wedge-prone families default to {@code process}
+ * routing ({@link RoutingExtractionSandbox}).
+ *
  * @see ContentExtractor
  */
 public final class TimeboxedContentExtractor implements AutoCloseable {
@@ -47,7 +59,8 @@ public final class TimeboxedContentExtractor implements AutoCloseable {
   private final ContentExtractorProvider delegate;
   private final ExtractionSandbox sandbox;
   private final Duration timeout;
-  private final ExecutorService executor;
+  private final AtomicReference<ExecutorService> executor = new AtomicReference<>();
+  private final AtomicLong executorGeneration = new AtomicLong();
 
   // Observability counters
   private final AtomicLong timeoutCount = new AtomicLong(0);
@@ -119,12 +132,17 @@ public final class TimeboxedContentExtractor implements AutoCloseable {
       this.timeout = timeout == null ? DEFAULT_TIMEOUT : timeout;
     }
     // Use a single-thread executor to isolate extraction work
-    this.executor = Executors.newSingleThreadExecutor(r -> {
-      Thread t = new Thread(r, "ContentExtractor-Timebox");
-      t.setDaemon(true);
-      return t;
-    });
+    this.executor.set(newExtractionExecutor(executorGeneration.get()));
     this.catalog = catalog;
+  }
+
+  private static ExecutorService newExtractionExecutor(long generation) {
+    return Executors.newSingleThreadExecutor(
+        r -> {
+          Thread t = new Thread(r, "ContentExtractor-Timebox-" + generation);
+          t.setDaemon(true);
+          return t;
+        });
   }
 
   /**
@@ -144,14 +162,26 @@ public final class TimeboxedContentExtractor implements AutoCloseable {
   public ExtractionArtifact extractArtifact(Path file) throws IOException, ExtractionException {
     Objects.requireNonNull(file, "file");
 
-    Callable<ExtractionArtifact> task = () -> sandbox.extract(file);
-    Future<ExtractionArtifact> future = executor.submit(task);
+    // The task reports its own completion: Future.isDone() is TRUE the moment cancel() succeeds,
+    // even while the task thread runs on, so it cannot answer "did the thread come back?".
+    AtomicBoolean taskReturned = new AtomicBoolean();
+    Callable<ExtractionArtifact> task =
+        () -> {
+          try {
+            return sandbox.extract(file);
+          } finally {
+            taskReturned.set(true);
+          }
+        };
+    ExecutorService current = executor.get();
+    Future<ExtractionArtifact> future = current.submit(task);
 
     try {
       return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
     } catch (TimeoutException e) {
       // Best-effort cancellation
       future.cancel(true);
+      replaceIfWedged(current, taskReturned);
       recordTimeout(file);
       throw new ExtractionTimeoutException(
           "Extraction timed out after " + timeout.toSeconds() + "s for: " + file.getFileName(), e);
@@ -199,13 +229,7 @@ public final class TimeboxedContentExtractor implements AutoCloseable {
   }
 
   public TikaExtractionPolicy extractionPolicy() {
-    if (sandbox instanceof InProcessExtractionSandbox inProcess) {
-      return inProcess.policy();
-    }
-    if (sandbox instanceof ProcessExtractionSandbox process) {
-      return process.policy();
-    }
-    return TikaExtractionPolicy.defaults();
+    return sandbox.policy();
   }
 
   /**
@@ -213,6 +237,31 @@ public final class TimeboxedContentExtractor implements AutoCloseable {
    */
   public long getTimeoutCount() {
     return timeoutCount.get();
+  }
+
+  /**
+   * Replaces the executor when a timed-out task did not actually stop.
+   *
+   * <p>{@code cancel(true)} interrupts, and a native parser mid-{@code read} ignores it. Without
+   * this, the single worker thread stays occupied by the wedged task and every later file blocks
+   * on {@code submit} forever — the "one bad file stops all extraction" defect. Called only on the
+   * timeout path, so a healthy run keeps exactly one executor for the extractor's whole life.
+   */
+  private void replaceIfWedged(ExecutorService current, AtomicBoolean taskReturned) {
+    if (taskReturned.get()) {
+      return;
+    }
+    ExecutorService replacement = newExtractionExecutor(executorGeneration.incrementAndGet());
+    if (executor.compareAndSet(current, replacement)) {
+      // shutdownNow() re-interrupts and prevents new work reaching the wedged thread; it does NOT
+      // stop the running task (nothing can), so the thread leaks by design until the JVM exits.
+      current.shutdownNow();
+      log.warn(
+          "Extraction executor thread wedged past the timeout; replaced with generation {}",
+          executorGeneration.get());
+    } else {
+      replacement.shutdownNow();
+    }
   }
 
   private void recordTimeout(Path file) {
@@ -233,15 +282,18 @@ public final class TimeboxedContentExtractor implements AutoCloseable {
 
   @Override
   public void close() {
-    executor.shutdownNow();
+    ExecutorService current = executor.get();
+    current.shutdownNow();
     try {
-      if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+      if (!current.awaitTermination(5, TimeUnit.SECONDS)) {
         log.warn("Extraction executor did not terminate cleanly");
       }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       log.warn("Interrupted while shutting down extraction executor");
     }
+    // Kills any sandbox child processes; an in-process sandbox has nothing to release.
+    sandbox.close();
   }
 
   /**

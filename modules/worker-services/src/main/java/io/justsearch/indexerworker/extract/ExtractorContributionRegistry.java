@@ -28,7 +28,7 @@ import java.util.function.Predicate;
  *   <li><b>Trust</b> — host owns the reserved {@code core.*} id namespace; a non-CORE extractor may
  *       not claim a {@code core.*} id.
  *   <li><b>Boundary</b> — the {@link ExtractorTrust} of a contribution selects its isolation: an
- *       UNTRUSTED extractor is only admissible behind the {@link ProcessExtractionSandbox} (P2), the
+ *       UNTRUSTED extractor is only admissible behind the {@link PersistentExtractionSandbox} (P2), the
  *       same posture the Head's composer takes — refused, never silently downgraded.
  *   <li><b>Dispatch</b> — {@link #select} routes a file to the first installed contribution (install
  *       order) whose predicate matches; the catch-all is last-resort.

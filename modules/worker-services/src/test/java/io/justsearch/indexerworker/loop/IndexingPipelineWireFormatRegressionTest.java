@@ -3,8 +3,10 @@ package io.justsearch.indexerworker.loop;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.indexerworker.extract.ExtractionMetricCatalog;
+import io.justsearch.indexerworker.extract.ExtractionSandboxRestartTags;
 import io.justsearch.indexerworker.extract.ExtractionTimeoutTags;
 import io.justsearch.telemetry.LocalTelemetry;
+import io.justsearch.telemetry.catalog.EmptyTags;
 import io.justsearch.telemetry.catalog.MetricCatalog;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,6 +46,8 @@ final class IndexingPipelineWireFormatRegressionTest {
       pipelineCatalog.stageMs.record(150L, PipelineStageTags.of("extract", null));
       pipelineCatalog.stageMs.record(80L, PipelineStageTags.of("post_commit", "buffer_full"));
       extractionCatalog.timeoutTotal.increment(ExtractionTimeoutTags.of());
+      extractionCatalog.sandboxRestartTotal.increment(ExtractionSandboxRestartTags.of("timeout"));
+      extractionCatalog.sandboxSpawnTotal.increment(EmptyTags.INSTANCE);
 
       telemetry.flush();
       ndjson = Files.readString(tmp.resolve("telemetry").resolve("metrics-worker.ndjson"));
@@ -82,6 +86,18 @@ final class IndexingPipelineWireFormatRegressionTest {
         anyLineWithName(ndjson, "extraction.timeout_total").stream()
             .anyMatch(l -> l.contains("\"component\":\"content_extractor\"")),
         "extraction.timeout_total missing component=content_extractor (F2); got: " + ndjson);
+
+    // Tempdoc 885 item 14: the sandbox pool's observables.
+    assertTrue(
+        containsLine(ndjson, "extraction.sandbox_restart_total", "\"type\":\"counter\""),
+        "extraction.sandbox_restart_total missing; got: " + ndjson);
+    assertTrue(
+        anyLineWithName(ndjson, "extraction.sandbox_restart_total").stream()
+            .anyMatch(l -> l.contains("\"reason\":\"timeout\"")),
+        "extraction.sandbox_restart_total missing reason=timeout; got: " + ndjson);
+    assertTrue(
+        containsLine(ndjson, "extraction.sandbox_spawn_total", "\"type\":\"counter\""),
+        "extraction.sandbox_spawn_total missing; got: " + ndjson);
   }
 
   private static boolean containsLine(String ndjson, String name, String fragment) {

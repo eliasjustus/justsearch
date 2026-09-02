@@ -7,7 +7,7 @@ import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.extract.ContentExtractor;
 import io.justsearch.indexerworker.extract.ContentExtractor.BudgetExceededException;
 import io.justsearch.indexerworker.extract.ExtractionArtifact;
-import io.justsearch.indexerworker.extract.ProcessExtractionSandbox;
+import io.justsearch.indexerworker.extract.SandboxExtractionException;
 import io.justsearch.indexerworker.extract.TimeboxedContentExtractor;
 import io.justsearch.indexerworker.extract.TimeboxedContentExtractor.ExtractionTimeoutException;
 import io.justsearch.indexerworker.extract.ValidatedExtractionArtifact;
@@ -271,7 +271,7 @@ public final class JobBatchExtractor {
       journal.recordFailedMetric(filePath, null);
       batchStats.recordFailed();
       return null;
-    } catch (ProcessExtractionSandbox.SandboxExtractionException e) {
+    } catch (SandboxExtractionException e) {
       log.warn("Extraction sandbox failed for: {} - {}", filePath, e.getMessage());
       FileEnvelope envelopeForLedger = envelope;
       journal.recordOutcomeSafely(

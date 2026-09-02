@@ -8,13 +8,33 @@ import java.util.List;
  * Builds selectable extraction sandboxes without coupling callers to sandbox implementation
  * classes. Tempdoc 417 post-merge: takes an {@link ExtractionMetricCatalog} (catalog-substrate)
  * instead of the legacy {@code Telemetry} handle.
+ *
+ * <p>Tempdoc 885 item 14 added {@link Mode#AUTO} — per-family routing between the two — and made
+ * it the shipped default. {@link Mode#PROCESS} now means the {@link PersistentExtractionSandbox}
+ * pool, not a child JVM per file.
  */
 public final class ExtractionSandboxFactory {
   private ExtractionSandboxFactory() {}
 
   public enum Mode {
     IN_PROCESS,
-    PROCESS
+    PROCESS,
+    AUTO
+  }
+
+  /** Pool sizing + leak-guard settings for the out-of-process families. */
+  public record PoolSettings(int poolSize, int maxRequestsPerChild) {
+    public static PoolSettings defaults() {
+      return new PoolSettings(1, PersistentExtractionSandbox.DEFAULT_MAX_REQUESTS_PER_CHILD);
+    }
+
+    public PoolSettings {
+      poolSize = poolSize > 0 ? poolSize : 1;
+      maxRequestsPerChild =
+          maxRequestsPerChild > 0
+              ? maxRequestsPerChild
+              : PersistentExtractionSandbox.DEFAULT_MAX_REQUESTS_PER_CHILD;
+    }
   }
 
   public static TimeboxedContentExtractor create(
@@ -44,27 +64,72 @@ public final class ExtractionSandboxFactory {
       ExtractionMetricCatalog catalog,
       OcrMetricCatalog ocrMetricCatalog,
       List<String> processCommand) {
+    return create(
+        mode,
+        policy,
+        ocrConfig,
+        timeout,
+        catalog,
+        ocrMetricCatalog,
+        processCommand,
+        PoolSettings.defaults());
+  }
+
+  public static TimeboxedContentExtractor create(
+      Mode mode,
+      TikaExtractionPolicy policy,
+      OcrRoutingConfig ocrConfig,
+      Duration timeout,
+      ExtractionMetricCatalog catalog,
+      OcrMetricCatalog ocrMetricCatalog,
+      List<String> processCommand,
+      PoolSettings poolSettings) {
     TikaExtractionPolicy effectivePolicy = policy == null ? TikaExtractionPolicy.defaults() : policy;
     OcrRoutingConfig effectiveOcrConfig =
         ocrConfig == null ? OcrRoutingConfig.disabled() : ocrConfig;
     Duration effectiveTimeout =
         timeout == null ? TimeboxedContentExtractor.DEFAULT_TIMEOUT : timeout;
-    if (mode == Mode.PROCESS) {
+    PoolSettings effectivePool = poolSettings == null ? PoolSettings.defaults() : poolSettings;
+
+    if (mode == Mode.IN_PROCESS) {
       return new TimeboxedContentExtractor(
-          new ProcessExtractionSandbox(
-              processCommand, effectivePolicy, effectiveOcrConfig, effectiveTimeout),
+          inProcessSandbox(effectivePolicy, effectiveOcrConfig, ocrMetricCatalog),
           effectiveTimeout,
           catalog);
     }
-    // Tempdoc 560 §4.4/§6: the in-process extractor is pulled through the Worker's contribution
-    // composer (the content extractor as a real first consumer of the substrate). The default
-    // composition is a single CORE Tika catch-all, so this is behaviorally identical to the direct
-    // delegate — but the extractor now IS a declared, composable contribution.
+    ExtractionSandbox pool =
+        new PersistentExtractionSandbox(
+            processCommand,
+            effectivePolicy,
+            effectiveOcrConfig,
+            effectiveTimeout,
+            effectivePool.poolSize(),
+            effectivePool.maxRequestsPerChild(),
+            catalog);
+    if (mode == Mode.PROCESS) {
+      return new TimeboxedContentExtractor(pool, effectiveTimeout, catalog);
+    }
+    ContentExtractorProvider provider =
+        contributionProvider(effectivePolicy, effectiveOcrConfig, ocrMetricCatalog);
     return new TimeboxedContentExtractor(
-        ExtractorContributionRegistry.withCoreTika(
-            new PolicyDrivenTikaExtractor(effectivePolicy, effectiveOcrConfig, ocrMetricCatalog)),
+        new RoutingExtractionSandbox(new InProcessExtractionSandbox(provider), pool, provider),
         effectiveTimeout,
         catalog);
+  }
+
+  private static ExtractionSandbox inProcessSandbox(
+      TikaExtractionPolicy policy, OcrRoutingConfig ocrConfig, OcrMetricCatalog ocrMetricCatalog) {
+    return new InProcessExtractionSandbox(contributionProvider(policy, ocrConfig, ocrMetricCatalog));
+  }
+
+  // Tempdoc 560 §4.4/§6: the in-process extractor is pulled through the Worker's contribution
+  // composer (the content extractor as a real first consumer of the substrate). The default
+  // composition is a single CORE Tika catch-all, so this is behaviorally identical to the direct
+  // delegate — but the extractor now IS a declared, composable contribution.
+  private static ContentExtractorProvider contributionProvider(
+      TikaExtractionPolicy policy, OcrRoutingConfig ocrConfig, OcrMetricCatalog ocrMetricCatalog) {
+    return ExtractorContributionRegistry.withCoreTika(
+        new PolicyDrivenTikaExtractor(policy, ocrConfig, ocrMetricCatalog));
   }
 
   public static TimeboxedContentExtractor inProcessStructured(ExtractionMetricCatalog catalog) {

@@ -24,6 +24,13 @@ class IndexerWorkerGuardrailsTest {
   // environment probing of the worker's own filesystem, not user configuration — the same class of
   // bootstrapping/infra discovery as the three exemptions above, and it cannot be meaningfully
   // routed through the head's config snapshot (the head does not know the worker host's FS layout).
+  // Tempdoc 885 item 14: ExtractionSandboxCommand exempt — same class as TikaOcrRuntime. It builds
+  // the extraction child's argv, and its single remaining System read is a `java.home` FALLBACK for
+  // the JVM's own launcher path when ProcessHandle.Info#command() is unavailable. That is JVM
+  // self-introspection ("which java am I running, on what classpath"), not user configuration; the
+  // operator-facing knobs it consumes (heap, pool, request budget, argv override) all go through
+  // EnvRegistry in DefaultWorkerAppServices. The classpath is read via ManagementFactory rather
+  // than System.getProperty precisely to keep this exemption down to the one fallback.
   @ArchTest
   static final ArchRule indexerWorkerMustNotReadEnvOrSystemProperties =
       noClasses()
@@ -41,6 +48,9 @@ class IndexerWorkerGuardrailsTest {
           .and()
           .doNotHaveFullyQualifiedName(
               "io.justsearch.indexerworker.extract.TikaOcrRuntime")
+          .and()
+          .doNotHaveFullyQualifiedName(
+              "io.justsearch.indexerworker.extract.ExtractionSandboxCommand")
           .should()
           .callMethod(System.class, "getenv")
           .orShould()

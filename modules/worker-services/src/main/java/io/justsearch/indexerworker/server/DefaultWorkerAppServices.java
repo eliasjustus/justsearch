@@ -7,6 +7,7 @@ import io.justsearch.indexerworker.disambiguation.DisambiguationService;
 import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.extract.ExtractionMetricCatalog;
+import io.justsearch.indexerworker.extract.ExtractionSandboxCommand;
 import io.justsearch.indexerworker.extract.ExtractionSandboxFactory;
 import io.justsearch.indexerworker.extract.OcrMetricCatalog;
 import io.justsearch.indexerworker.extract.OcrRoutingConfig;
@@ -444,47 +445,70 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
   // ==================== Sandbox seam (tempdoc 410) ====================
 
   /**
-   * Selects an extraction sandbox based on {@link EnvRegistry#EXTRACTION_SANDBOX_MODE}. Defaults
-   * to in-process. {@code process} mode requires a non-blank
-   * {@link EnvRegistry#EXTRACTION_SANDBOX_COMMAND} (whitespace-split argv); selecting it without
-   * a command fails fast.
+   * Selects an extraction sandbox based on {@link EnvRegistry#EXTRACTION_SANDBOX_MODE}.
+   *
+   * <p>Tempdoc 885 item 14: the default is {@code auto} — PDF/Office/archive/image files are
+   * parsed in a persistent child process, everything else in the Worker JVM. {@code in_process}
+   * and {@code process} force one side. There is no longer a "process mode requires an operator
+   * command" precondition: that precondition is exactly why the sandbox tempdoc 410 shipped was
+   * unreachable, and the command is now built in-process by {@link ExtractionSandboxCommand}.
+   * {@link EnvRegistry#EXTRACTION_SANDBOX_COMMAND} remains as an operator override.
    */
   private static TimeboxedContentExtractor buildContentExtractor(
       @SuppressWarnings("unused") InfraContext ctx,
       ExtractionMetricCatalog catalog,
       OcrMetricCatalog ocrCatalog) {
-    String mode = EnvRegistry.EXTRACTION_SANDBOX_MODE.getString("in_process").trim();
+    String mode = EnvRegistry.EXTRACTION_SANDBOX_MODE.getString("auto").trim();
     OcrRoutingConfig ocrConfig = resolvedOcrConfig();
     logEffectiveOcrConfig(ocrConfig);
     TikaExtractionPolicy extractionPolicy = resolvedExtractionPolicy();
-    if (mode.isEmpty() || "in_process".equalsIgnoreCase(mode)) {
+    ExtractionSandboxFactory.Mode sandboxMode = parseSandboxMode(mode);
+    if (sandboxMode == ExtractionSandboxFactory.Mode.IN_PROCESS) {
       return ExtractionSandboxFactory.inProcessStructured(
           catalog, ocrConfig, ocrCatalog, extractionPolicy);
-    }
-    if (!"process".equalsIgnoreCase(mode)) {
-      throw new IllegalStateException(
-          "Unknown JUSTSEARCH_EXTRACTION_SANDBOX_MODE='"
-              + mode
-              + "': expected 'in_process' or 'process'");
     }
     String rawCommand = EnvRegistry.EXTRACTION_SANDBOX_COMMAND.getString("");
     List<String> command =
         rawCommand == null || rawCommand.isBlank()
-            ? List.of()
+            ? ExtractionSandboxCommand.defaultCommand(
+                extractionPolicy, EnvRegistry.EXTRACTION_SANDBOX_HEAP.getString(""))
             : List.of(rawCommand.trim().split("\\s+"));
-    if (command.isEmpty()) {
-      throw new IllegalStateException(
-          "JUSTSEARCH_EXTRACTION_SANDBOX_MODE=process requires non-blank "
-              + "JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND (whitespace-split argv)");
-    }
+    ExtractionSandboxFactory.PoolSettings poolSettings =
+        new ExtractionSandboxFactory.PoolSettings(
+            EnvRegistry.EXTRACTION_SANDBOX_POOL.getInt(1),
+            EnvRegistry.EXTRACTION_SANDBOX_MAX_REQUESTS.getInt(
+                ExtractionSandboxFactory.PoolSettings.defaults().maxRequestsPerChild()));
+    log.info(
+        "Extraction sandbox mode={} pool={} maxRequestsPerChild={} command={}",
+        sandboxMode,
+        poolSettings.poolSize(),
+        poolSettings.maxRequestsPerChild(),
+        command);
     return ExtractionSandboxFactory.create(
-        ExtractionSandboxFactory.Mode.PROCESS,
+        sandboxMode,
         extractionPolicy,
         ocrConfig,
         TimeboxedContentExtractor.DEFAULT_TIMEOUT,
         catalog,
         ocrCatalog,
-        command);
+        command,
+        poolSettings);
+  }
+
+  private static ExtractionSandboxFactory.Mode parseSandboxMode(String mode) {
+    if (mode.isEmpty() || "auto".equalsIgnoreCase(mode)) {
+      return ExtractionSandboxFactory.Mode.AUTO;
+    }
+    if ("in_process".equalsIgnoreCase(mode)) {
+      return ExtractionSandboxFactory.Mode.IN_PROCESS;
+    }
+    if ("process".equalsIgnoreCase(mode)) {
+      return ExtractionSandboxFactory.Mode.PROCESS;
+    }
+    throw new IllegalStateException(
+        "Unknown JUSTSEARCH_EXTRACTION_SANDBOX_MODE='"
+            + mode
+            + "': expected 'auto', 'in_process' or 'process'");
   }
 
   /**

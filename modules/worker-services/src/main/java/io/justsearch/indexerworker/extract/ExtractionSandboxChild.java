@@ -1,45 +1,146 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.indexerworker.extract;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.io.PrintStream;
+import java.util.Objects;
+import java.util.Optional;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
-/** Minimal child-process entry point for out-of-process extraction. */
+/**
+ * Child-process entry point for out-of-process extraction (tempdoc 885 item 14).
+ *
+ * <p>Serves a length-prefixed request/response loop on stdin/stdout ({@link SandboxFrames}) until
+ * the parent closes the pipe. The one-shot "read stdin to EOF, answer once, exit" mode was retired
+ * with {@code ProcessExtractionSandbox}: a JVM start plus Tika class-loading per file is why that
+ * mode was never shipped, and a persistent child amortises both across every file it handles.
+ * There is therefore no mode flag — serving is the only mode.
+ *
+ * <p>Two invariants this class owns:
+ *
+ * <ul>
+ *   <li><b>Protocol channel isolation.</b> The real {@code System.out} is captured before any
+ *       parser runs and {@code System.out} is redirected to stderr, so a parser that prints cannot
+ *       corrupt a frame. (Shipped before this tempdoc; the serve loop preserves it.)
+ *   <li><b>No orphan.</b> With {@code --parent-pid=<pid>} a daemon thread polls the parent handle
+ *       and halts the JVM once it is gone — the PID-gate pattern from tempdoc 630. This is the
+ *       reason no {@code WindowsJobObject} dependency has to be added to {@code worker-services}.
+ * </ul>
+ */
 public final class ExtractionSandboxChild {
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
+
+  static final String PARENT_PID_FLAG = "--parent-pid=";
+
+  /** Parent-liveness poll interval. Short enough that an orphan dies well inside a test. */
+  private static final long PARENT_POLL_MS = 500L;
 
   private ExtractionSandboxChild() {}
 
   public static void main(String[] args) throws Exception {
     PrintStream protocolOut = System.out;
     System.setOut(new PrintStream(System.err, true, StandardCharsets.UTF_8));
-    String requestJson = new String(System.in.readAllBytes(), StandardCharsets.UTF_8);
-    SandboxExtractionRequest request =
-        MAPPER.readValue(requestJson, SandboxExtractionRequest.class);
+    startParentWatchdog(parentPid(args));
+    serve(System.in, protocolOut);
+  }
+
+  private static void serve(InputStream in, OutputStream protocolOut) throws IOException {
+    ExtractorCache cache = new ExtractorCache();
+    byte[] frame;
+    while ((frame = SandboxFrames.read(in, SandboxFrames.MAX_FRAME_BYTES)) != null) {
+      SandboxExtractionRequest request =
+          MAPPER.readValue(new String(frame, StandardCharsets.UTF_8), SandboxExtractionRequest.class);
+      SandboxFrames.write(protocolOut, MAPPER.writeValueAsBytes(handle(request, cache)));
+    }
+  }
+
+  private static SandboxExtractionResponse handle(
+      SandboxExtractionRequest request, ExtractorCache cache) {
     TikaExtractionPolicy policy =
         request.policy() == null ? TikaExtractionPolicy.defaults() : request.policy();
     OcrRoutingConfig ocrConfig =
         request.ocrConfig() == null ? OcrRoutingConfig.disabled() : request.ocrConfig();
-    SandboxExtractionResponse response;
     try {
       ExtractionArtifact artifact =
-          new PolicyDrivenTikaExtractor(policy, ocrConfig)
+          cache
+              .extractor(policy, ocrConfig)
               .extractArtifact(Path.of(request.path()))
               .validateContentBoundsOnly(policy.maxExtractedChars());
-      response = SandboxExtractionResponse.fromArtifact(artifact);
+      return SandboxExtractionResponse.fromArtifact(artifact);
     } catch (ContentExtractor.BudgetExceededException e) {
-      response =
-          SandboxExtractionResponse.failed(
-              ExtractionStatus.BUDGET_EXCEEDED, policy, "sandbox-child", "Budget exceeded", e.reasonCode());
+      return SandboxExtractionResponse.failed(
+          ExtractionStatus.BUDGET_EXCEEDED, policy, "sandbox-child", "Budget exceeded", e.reasonCode());
     } catch (Exception e) {
-      response =
-          SandboxExtractionResponse.failed(
-              ExtractionStatus.FAILED, policy, "sandbox-child", "Sandbox parser failed", "PARSER_FAILED");
+      return SandboxExtractionResponse.failed(
+          ExtractionStatus.FAILED, policy, "sandbox-child", "Sandbox parser failed", "PARSER_FAILED");
     }
-    protocolOut.write(MAPPER.writeValueAsBytes(response));
-    protocolOut.flush();
+  }
+
+  /**
+   * Reuses one {@link PolicyDrivenTikaExtractor} across requests. The parent sends the same policy
+   * on every frame, so this constructs exactly one extractor per child in practice — which is the
+   * whole point of a persistent child. An {@link OutOfMemoryError} is deliberately NOT caught: the
+   * parent classifies a heap-exhausted child as a permanent parse failure from the exit code plus
+   * the JVM's own stderr signature, and answering from a poisoned heap is not reliable.
+   */
+  private static final class ExtractorCache {
+    private TikaExtractionPolicy policy;
+    private OcrRoutingConfig ocrConfig;
+    private PolicyDrivenTikaExtractor extractor;
+
+    PolicyDrivenTikaExtractor extractor(TikaExtractionPolicy p, OcrRoutingConfig o) {
+      if (extractor == null || !Objects.equals(policy, p) || !Objects.equals(ocrConfig, o)) {
+        extractor = new PolicyDrivenTikaExtractor(p, o);
+        policy = p;
+        ocrConfig = o;
+      }
+      return extractor;
+    }
+  }
+
+  static long parentPid(String[] args) {
+    if (args == null) {
+      return -1L;
+    }
+    for (String arg : args) {
+      if (arg != null && arg.startsWith(PARENT_PID_FLAG)) {
+        try {
+          return Long.parseLong(arg.substring(PARENT_PID_FLAG.length()).trim());
+        } catch (NumberFormatException e) {
+          return -1L;
+        }
+      }
+    }
+    return -1L;
+  }
+
+  private static void startParentWatchdog(long parentPid) {
+    if (parentPid <= 0) {
+      return;
+    }
+    Thread watchdog =
+        new Thread(
+            () -> {
+              while (true) {
+                Optional<ProcessHandle> parent = ProcessHandle.of(parentPid);
+                if (parent.isEmpty() || !parent.get().isAlive()) {
+                  Runtime.getRuntime().halt(0);
+                }
+                try {
+                  Thread.sleep(PARENT_POLL_MS);
+                } catch (InterruptedException e) {
+                  Thread.currentThread().interrupt();
+                  return;
+                }
+              }
+            },
+            "extraction-sandbox-parent-watchdog");
+    watchdog.setDaemon(true);
+    watchdog.start();
   }
 }
