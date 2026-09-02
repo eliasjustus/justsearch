@@ -143,12 +143,6 @@ public final class MmfWorkerSignalBus implements WorkerSignalBus {
   }
 
   @Override
-  public long readActivity() {
-    ensureOpen();
-    return segment.get(LE_LONG, MmfWorkerSignalLayoutV1.OFFSET_ACTIVITY_EPOCH_MS);
-  }
-
-  @Override
   public long readHeartbeat() {
     ensureOpen();
     return segment.get(LE_LONG, MmfWorkerSignalLayoutV1.OFFSET_HEARTBEAT_EPOCH_MS);
@@ -209,23 +203,6 @@ public final class MmfWorkerSignalBus implements WorkerSignalBus {
     return alive
         ? WorkerLivenessDecision.HeadLiveness.ALIVE
         : WorkerLivenessDecision.HeadLiveness.DEAD;
-  }
-
-  @Override
-  public boolean isUserActive() {
-    // 326: Disable breath-holding for eval runs. jseval status polling triggers
-    // isUserActive, causing indexing to pause repeatedly and reducing throughput
-    // from ~5 docs/sec to ~1 doc/sec. Controlled via env var so production is unaffected.
-    if (Boolean.getBoolean("justsearch.eval.disable_breath_holding")) {
-      return false;
-    }
-    ensureOpen();
-    long activity = readActivity();
-    if (activity == 0) {
-      return false;
-    }
-    long staleness = System.currentTimeMillis() - activity;
-    return staleness < 2000L;
   }
 
   @Override

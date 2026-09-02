@@ -4,7 +4,7 @@ package io.justsearch.indexerworker.loop.ops;
 import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.ner.NerResult;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexing.SchemaFields;
@@ -29,7 +29,7 @@ public final class NerBackfillOps {
       DocumentFieldOps documentFieldOps,
       IndexingCoordinator indexingCoordinator,
       CommitOps commitOps,
-      WorkerSignalBus signalBus,
+      IndexingPacing pacing,
       Supplier<NerService> nerServiceSupplier,
       BooleanSupplier runningSupplier,
       int batchSize,
@@ -64,16 +64,11 @@ public final class NerBackfillOps {
       List<Map.Entry<String, Map<String, Object>>> batchUpdates = new ArrayList<>();
 
       for (String docId : pendingIds) {
-        // NER is CPU-only: interrupt on shutdown or user activity, but no GPU check
-        boolean shouldInterrupt =
-            !context.runningSupplier().getAsBoolean() || context.signalBus().isUserActive();
-        if (shouldInterrupt) {
-          context
-              .log()
-              .debug(
-                  "NER backfill interrupted: user active={}, stopping={}",
-                  context.signalBus().isUserActive(),
-                  !context.runningSupplier().getAsBoolean());
+        // NER is CPU-only: interrupt on shutdown, no GPU check. Tempdoc 885 item 3: foreground
+        // load paces the per-document loop instead of breaking out of it.
+        context.pacing().pace();
+        if (!context.runningSupplier().getAsBoolean()) {
+          context.log().debug("NER backfill interrupted: loop stopping");
           break;
         }
 

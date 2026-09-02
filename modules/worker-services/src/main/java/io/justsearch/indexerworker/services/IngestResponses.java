@@ -195,14 +195,6 @@ final class IngestResponses {
     return SyncDirectoryResponse.newBuilder().setSkipped(true).build();
   }
 
-  static SyncDirectoryResponse syncDirectorySkippedResponse(int filesDeleted, int filesAdded) {
-    return SyncDirectoryResponse.newBuilder()
-        .setFilesDeleted(filesDeleted)
-        .setFilesAdded(filesAdded)
-        .setSkipped(true)
-        .build();
-  }
-
   /**
    * Tempdoc 626 §Axis-B/C — the reconcile pruned the orphans it could see but could NOT run
    * missing-file (delete) detection for this root (indexed-path set exceeded the scan cap), so the

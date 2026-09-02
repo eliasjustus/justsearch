@@ -101,6 +101,8 @@ public final class BackfillScheduler {
   private final IndexCountOps indexCountOps;
   private final CommitOps commitOps;
   private final WorkerSignalBus signalBus;
+  /** Tempdoc 885 item 3: the duty cycle backfill yields against instead of stopping. */
+  private final io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing;
   private final EmbeddingProviderLifecycle embeddingLifecycle;
   private final AtomicBoolean running;
   private final Supplier<ResolvedConfig> resolvedConfigSupplier;
@@ -135,6 +137,7 @@ public final class BackfillScheduler {
       IndexCountOps indexCountOps,
       CommitOps commitOps,
       WorkerSignalBus signalBus,
+      io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing,
       EmbeddingProviderLifecycle embeddingLifecycle,
       AtomicBoolean running,
       Supplier<ResolvedConfig> resolvedConfigSupplier,
@@ -147,6 +150,8 @@ public final class BackfillScheduler {
     this.indexCountOps = indexCountOps;
     this.commitOps = commitOps;
     this.signalBus = signalBus;
+    this.indexingPacing =
+        java.util.Objects.requireNonNull(indexingPacing, "indexingPacing");
     this.embeddingLifecycle = embeddingLifecycle;
     this.running = running;
     this.resolvedConfigSupplier = resolvedConfigSupplier;
@@ -236,7 +241,8 @@ public final class BackfillScheduler {
             () -> {
               while (useCombinedRef[0]) {
                 if (!running.get() || Thread.currentThread().isInterrupted()) break;
-                if (signalBus.isUserActive()) break;
+                // Tempdoc 885 item 3: yield to foreground load, do not abandon the cycle for it.
+                indexingPacing.pace();
                 if (signalBus.shouldYieldGpuBackfill()) break; // tempdoc 630: GPU-claimed OR energy-reduced
                 // Tempdoc 798: primary indexing outranks background enrichment. Backfill resumes
                 // next idle cycle; a queued ingest job the user is waiting on cannot.
@@ -427,7 +433,7 @@ public final class BackfillScheduler {
         while (chunkDidWork) {
           backfillDidWork = true;
           if (!running.get() || Thread.currentThread().isInterrupted()) break;
-          if (signalBus.isUserActive()) break;
+          indexingPacing.pace(); // tempdoc 885 item 3: duty cycle, not a stop
           if (signalBus.shouldYieldGpuBackfill()) break; // tempdoc 630: GPU-claimed OR energy-reduced
           if (signalBus.hasPendingIngest()) break; // tempdoc 798: primary indexing outranks backfill
           if (System.nanoTime() >= cycleDeadlineNanos) {
@@ -605,11 +611,16 @@ public final class BackfillScheduler {
    * 809 finding 3). Exactly the conditions the tight loop below breaks on, evaluated at the batch's
    * internal sub-batch boundaries instead of only between batches — a batch is ~150 documents and
    * was measured at ~63 s, so between-batches was a 12x overshoot of the very budget it enforced.
+   *
+   * <p>Tempdoc 885 item 3: this is also the batch's pacing tick, so the call is deliberately not
+   * side-effect-free — it may yield before answering. Foreground load left the stop set: under a
+   * duty cycle a contended batch runs slower, it does not stop. The remaining reasons are all
+   * genuine stops. Callers invoke it exactly once per sub-batch boundary.
    */
-  private boolean shouldStopBackfillWork(long cycleDeadlineNanos) {
+  private boolean paceAndCheckStopBackfillWork(long cycleDeadlineNanos) {
+    indexingPacing.pace();
     return !running.get()
         || Thread.currentThread().isInterrupted()
-        || signalBus.isUserActive()
         || signalBus.shouldYieldGpuBackfill()
         || signalBus.hasPendingIngest()
         || System.nanoTime() >= cycleDeadlineNanos;
@@ -640,7 +651,7 @@ public final class BackfillScheduler {
             documentFieldOps,
             indexingCoordinator,
             commitOps,
-            signalBus,
+            indexingPacing,
             embeddingLifecycle::embeddingProvider,
             spladeEncoderSupplier,
             nerServiceSupplier,
@@ -655,7 +666,7 @@ public final class BackfillScheduler {
             parentIdCache != null ? parentIdCache : new ArrayDeque<>(),
             chunkIdCache != null ? chunkIdCache : new ArrayDeque<>(),
             batchesSinceCommit != null ? batchesSinceCommit : new int[] {0},
-            () -> shouldStopBackfillWork(cycleDeadlineNanos),
+            () -> paceAndCheckStopBackfillWork(cycleDeadlineNanos),
             () -> System.nanoTime() >= embedShareDeadlineNanos,
             windowedEmbedProgress));
   }
@@ -672,6 +683,7 @@ public final class BackfillScheduler {
             indexingCoordinator,
             commitOps,
             signalBus,
+            indexingPacing,
             embeddingLifecycle::embeddingProvider,
             running::get,
             embeddingLifecycle::allowEmbeddingWrites,
@@ -686,6 +698,7 @@ public final class BackfillScheduler {
             indexingCoordinator,
             commitOps,
             signalBus,
+            indexingPacing,
             embeddingLifecycle::embeddingProvider,
             running::get,
             embeddingLifecycle::allowEmbeddingWrites,
@@ -699,7 +712,7 @@ public final class BackfillScheduler {
             documentFieldOps,
             indexingCoordinator,
             commitOps,
-            signalBus,
+            indexingPacing,
             nerServiceSupplier,
             running::get,
             pacing().nerBackfillBatchSize(),
@@ -726,7 +739,7 @@ public final class BackfillScheduler {
             documentFieldOps,
             indexingCoordinator,
             commitOps,
-            signalBus,
+            indexingPacing,
             spladeEncoderSupplier,
             running::get,
             pacing().spladeBackfillBatchSize(),
@@ -754,7 +767,7 @@ public final class BackfillScheduler {
             documentFieldOps,
             indexingCoordinator,
             commitOps,
-            signalBus,
+            indexingPacing,
             spladeEncoderSupplier,
             running::get,
             pacing().spladeInterleaveBatchSize(),
@@ -766,7 +779,7 @@ public final class BackfillScheduler {
     DisambiguationBackfillOps.processDisambiguationBackfill(
         new DisambiguationBackfillOps.BackfillContext(
             documentFieldOps,
-            signalBus,
+            indexingPacing,
             disambiguationServiceSupplier,
             running::get,
             pacing().disambiguationBackfillBatchSize(),

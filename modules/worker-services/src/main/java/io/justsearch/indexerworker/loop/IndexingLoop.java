@@ -63,12 +63,15 @@ import org.slf4j.LoggerFactory;
 /**
  * Background indexing loop that processes jobs from the queue.
  *
- * <p>The loop implements "breath holding" - it pauses when the user is active
- * to prioritize interactive responsiveness over background indexing.
+ * <p>The loop runs a <b>duty cycle</b> against {@link
+ * io.justsearch.indexerworker.loop.pacing.IndexingPacing} (tempdoc 885 item 3): while foreground
+ * search-family RPCs are in flight it yields most of each interval to keep the machine responsive,
+ * but it never stops. The predecessor was "breath holding" — a full pause on a Head-written
+ * wall-clock activity byte — which indexed 699 of 5184 documents in 22 minutes under a continuous
+ * search loop.
  *
  * <p>Processing flow for each job:
  * <ol>
- *   <li>Check user activity (breath holding)</li>
  *   <li>Poll pending job from queue</li>
  *   <li>Read file content</li>
  *   <li>Extract text (future: Tika integration)</li>
@@ -79,9 +82,6 @@ import org.slf4j.LoggerFactory;
  */
 public class IndexingLoop implements Closeable {
   private static final Logger log = LoggerFactory.getLogger(IndexingLoop.class);
-
-  /** Pause duration when user is active (breath holding). */
-  private static final long BREATH_HOLD_MS = LoopPacingPolicy.breathHoldMs();
 
   private static final long ERROR_BACKOFF_MS = 1000; // back-off after a recovered error (tempdoc 588)
 
@@ -110,6 +110,8 @@ public class IndexingLoop implements Closeable {
   // lateChunkingEnabled from its copy.
   private final Supplier<ResolvedConfig> resolvedConfigSupplier;
   private final WorkerSignalBus signalBus;
+  /** Tempdoc 885 item 3: the duty-cycle policy that replaced the breath-hold pause. */
+  private final io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing;
   private final TimeboxedContentExtractor contentExtractor;
   // Tempdoc 516 Slice 4c: embeddingProvider / embeddingServiceForLifecycle / embeddingEvents
   // / embeddingCompatController are now owned by EmbeddingProviderLifecycle. The lifecycle's
@@ -230,7 +232,9 @@ public class IndexingLoop implements Closeable {
       Supplier<ResolvedConfig> resolvedConfigSupplier,
       WorkerSignalBus signalBus) {
     this(jobQueue, indexingCoordinator, commitOps, documentFieldOps, indexCountOps,
-        resolvedConfigSupplier, signalBus, null, null, null, null, null,
+        resolvedConfigSupplier, signalBus,
+        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
+        null, null, null, null, null,
         new io.justsearch.indexerworker.server.EncoderBindings(), null);
   }
 
@@ -256,7 +260,9 @@ public class IndexingLoop implements Closeable {
       WorkerSignalBus signalBus,
       EmbeddingService embeddingService) {
     this(jobQueue, indexingCoordinator, commitOps, documentFieldOps, indexCountOps,
-        resolvedConfigSupplier, signalBus, embeddingService, null, null, null, null,
+        resolvedConfigSupplier, signalBus,
+        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
+        embeddingService, null, null, null, null,
         new io.justsearch.indexerworker.server.EncoderBindings(), null);
   }
 
@@ -278,7 +284,9 @@ public class IndexingLoop implements Closeable {
       IndexingPipelineMetricCatalog pipelineCatalog,
       ExtractionMetricCatalog extractionCatalog) {
     this(jobQueue, indexingCoordinator, commitOps, documentFieldOps, indexCountOps,
-        resolvedConfigSupplier, signalBus, embeddingService, pipelineCatalog, extractionCatalog,
+        resolvedConfigSupplier, signalBus,
+        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
+        embeddingService, pipelineCatalog, extractionCatalog,
         null, null, new io.justsearch.indexerworker.server.EncoderBindings(), null);
   }
 
@@ -292,6 +300,9 @@ public class IndexingLoop implements Closeable {
    * @param indexCountOps The index count operations
    * @param resolvedConfigSupplier Supplier for the resolved configuration
    * @param signalBus The signal bus for coordination
+   * @param indexingPacing The foreground-contention duty cycle (tempdoc 885 item 3); required —
+   *     {@code IndexingPacing.unthrottled()} is the explicit "no throttling" value, so a missing
+   *     policy is a construction error rather than a silently un-paced loop
    * @param embeddingService The embedding service for vector generation (may be null)
    * @param pipelineCatalog Catalog for {@code pipeline.*} metrics (may be null)
    * @param extractionCatalog Catalog passed to a default {@link TimeboxedContentExtractor}
@@ -307,6 +318,7 @@ public class IndexingLoop implements Closeable {
       IndexCountOps indexCountOps,
       Supplier<ResolvedConfig> resolvedConfigSupplier,
       WorkerSignalBus signalBus,
+      io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing,
       EmbeddingService embeddingService,
       IndexingPipelineMetricCatalog pipelineCatalog,
       ExtractionMetricCatalog extractionCatalog,
@@ -318,6 +330,7 @@ public class IndexingLoop implements Closeable {
     this.commitOps = commitOps;
     this.resolvedConfigSupplier = resolvedConfigSupplier;
     this.signalBus = signalBus;
+    this.indexingPacing = java.util.Objects.requireNonNull(indexingPacing, "indexingPacing");
     this.encoderBindings =
         encoderBindings != null
             ? encoderBindings
@@ -399,7 +412,7 @@ public class IndexingLoop implements Closeable {
             batchStats,
             staleResolver,
             staleSourceHandler,
-            signalBus,
+            this.indexingPacing,
             running,
             forcedPaths,
             () -> pathResolutionStore,
@@ -415,6 +428,7 @@ public class IndexingLoop implements Closeable {
             indexCountOps,
             commitOps,
             signalBus,
+            this.indexingPacing,
             embeddingLifecycle,
             running,
             resolvedConfigSupplier,
@@ -536,7 +550,7 @@ public class IndexingLoop implements Closeable {
     if (running.compareAndSet(false, true)) {
       // Tempdoc 798: publish the third backfill-yield signal. This loop owns the job queue, so it
       // is the only component that can answer "is primary indexing work waiting"; BackfillScheduler
-      // reads it through the signal bus alongside isUserActive() / shouldYieldGpuBackfill().
+      // reads it through the signal bus alongside shouldYieldGpuBackfill().
       signalBus.setPendingIngestProbe(this::hasPendingIngestWork);
       loopThread = new Thread(this::runLoop, "indexing-loop");
       loopThread.setDaemon(true);
@@ -599,14 +613,6 @@ public class IndexingLoop implements Closeable {
         // CRITICAL: Handle GPU state transitions for Hybrid Inference
         // Must unload embedding model when Main claims GPU, reload when released
         embeddingLifecycle.handleGpuStateTransition();
-
-        // Check breath holding - pause if user is active
-        if (signalBus.isUserActive()) {
-          transitionToPaused();
-          log.trace("User active, pausing indexing (breath holding)");
-          Thread.sleep(BREATH_HOLD_MS);
-          continue;
-        }
 
         // Poll for pending jobs
         List<JobQueue.IndexJob> jobs = jobQueue.pollPending(pacing().pollBatchSize());
@@ -710,6 +716,15 @@ public class IndexingLoop implements Closeable {
         // Tempdoc 730 A3: fresh-index -> COMPATIBLE path has no REBUILDING to complete; check
         // whether it still needs its stamp-persisting commit.
         tryFinalizeFreshCompatibleEmbeddingStamp();
+
+        // Tempdoc 885 item 3: the duty cycle. While foreground search-family RPCs are in flight,
+        // yield most of the interval that follows this batch — but never all of it. PAUSED is
+        // reported only for the duration of the yield, so `worker.indexing.paused` and the health
+        // RPC's worker_state stay honest about a loop that is throttled, not stopped.
+        if (indexingPacing.foregroundBusy()) {
+          transitionToPaused();
+        }
+        indexingPacing.pace();
 
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();

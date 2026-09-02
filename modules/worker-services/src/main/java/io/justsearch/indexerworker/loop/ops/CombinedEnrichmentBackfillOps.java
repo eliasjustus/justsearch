@@ -5,7 +5,7 @@ import ai.onnxruntime.OrtException;
 import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexerworker.metrics.EncoderOrtRunSpans;
@@ -152,7 +152,7 @@ public final class CombinedEnrichmentBackfillOps {
       DocumentFieldOps documentFieldOps,
       IndexingCoordinator indexingCoordinator,
       CommitOps commitOps,
-      WorkerSignalBus signalBus,
+      IndexingPacing pacing,
       Supplier<EmbeddingProvider> embeddingProviderSupplier,
       Supplier<SpladeEncoder> spladeEncoderSupplier,
       Supplier<NerService> nerServiceSupplier,
@@ -587,8 +587,10 @@ public final class CombinedEnrichmentBackfillOps {
 
       fetchMs = (System.nanoTime() - t0) / 1_000_000;
 
-      // Check for interruption
-      if (!context.runningSupplier().getAsBoolean() || context.signalBus().isUserActive()) {
+      // Check for interruption. Tempdoc 885 item 3: foreground load paces here, it does not
+      // cancel the batch.
+      context.pacing().pace();
+      if (!context.runningSupplier().getAsBoolean()) {
         return CombinedOutcome.none();
       }
 

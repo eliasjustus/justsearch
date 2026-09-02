@@ -107,7 +107,7 @@ final class CoreApiAssembly {
                 java.time.Duration.ofSeconds(5),
                 () -> {
                   try {
-                    b.knowledgeServer.signalUserActivity();
+                    b.knowledgeServer.recordUserActivity();
                   } catch (Exception ignored) {
                     // best-effort
                   }

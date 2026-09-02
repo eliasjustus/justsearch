@@ -329,15 +329,6 @@ public final class WorkerSpawner implements Closeable {
     }
 
     /**
-     * Writes user activity to the signal bus (for breath holding).
-     */
-    public void signalUserActivity() {
-        if (running.get()) {
-            signalBus.writeActivity();
-        }
-    }
-
-    /**
      * Installs the supervision lifecycle callback (tempdoc 627). The bootstrap bridges these events to
      * {@code WorkerCapability} transitions so a recovery/give-up is legible on {@code /api/health}.
      * Mirrors the Brain's {@code goOfflineFromMaxCrashes} callback installation.

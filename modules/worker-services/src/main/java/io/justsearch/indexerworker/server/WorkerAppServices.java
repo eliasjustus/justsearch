@@ -42,6 +42,15 @@ public interface WorkerAppServices extends Closeable {
 
   String indexingLoopState();
 
+  // --- Foreground-contention pacing (tempdoc 885 item 3) ---
+
+  /**
+   * The single pacing policy the indexing loop and every backfill site throttle against. Supplied
+   * by {@code KnowledgeServer} (which owns it across app-service reconstructions), not created
+   * here.
+   */
+  io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing();
+
   // --- Deferred model wiring (distributes to internal services) ---
 
   // 516 P3 FINAL CUT: wireEmbeddingTelemetryEvents removed from the interface — the

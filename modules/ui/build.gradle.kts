@@ -2173,9 +2173,6 @@ fun JavaExec.applyHeadlessEvalContract() {
   systemProperty("justsearch.ssot.path", ssotPath)
   systemProperty("justsearch.plugins.manifest", pluginsManifest)
   systemProperty("justsearch.models.dir", modelsDir)
-  // 326: Disable breath-holding in eval — jseval polling triggers isUserActive,
-  // throttling indexing from ~5 docs/sec to ~1 doc/sec.
-  systemProperty("justsearch.eval.disable_breath_holding", "true")
   // 355: Enable eval-only endpoints (e.g. POST /api/debug/reset-index)
   systemProperty("justsearch.eval.mode", "true")
   if (!serverExe.isNullOrBlank()) {
