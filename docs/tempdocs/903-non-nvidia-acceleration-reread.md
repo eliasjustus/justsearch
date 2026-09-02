@@ -228,8 +228,8 @@ below in full.
 | | **Vulkan** | **4264 ± 149** | **98.0 ± 1.3** |
 | | CPU (12 threads) | 80.0 ± 3.1 | 9.22 ± 0.39 |
 
-Reading: Vulkan is 0.93-0.96× CUDA on prefill and 1.13-1.14× on generation for both models on
-this card. The CPU tier is 58-65× slower on prefill and 9-14× slower on generation. At the CPU
+Reading: Vulkan is 0.92-0.96× CUDA on prefill and 1.13-1.14× on generation for both models on
+this card. The CPU tier is 53-64× slower on prefill and 9-14× slower on generation. At the CPU
 rung (8192) a full RAG prefill is 179 s on CPU; at the GPU rung (32768) it is 11-12 s on either
 GPU backend. The tg advantage of Vulkan over CUDA is repeatable here (three reps each, two CUDA
 runs) but is a property of this driver/build pair, not a general claim.
@@ -393,9 +393,11 @@ the *right* place but is also where the closure property lives.
   device memory (discrete RDNA2+, Radeon 780M/890M/8060S with VGM, Arc A/B, Xe on Alder Lake+
   with caveats). Today these users get **no chat**. With (b) they get chat, RAG, summarization,
   agent and VDU at GPU speed on the same model files, with the same ladder and lease.
-- **Benefit, measured:** on the one card available, Vulkan ≈ CUDA (§2.1). External data puts
-  RDNA3 discrete at ~70 % of a 4070 on prefill and Arc A770 at ~10 %; even the A770 is 7× the
-  CPU tier on prefill and 10× on generation (§1.2 scoreboard vs §2.1 CPU rows).
+- **Benefit, measured:** on the one card available, Vulkan ≈ CUDA (§2.1). External data
+  (different model — Llama-2 7B Q4_0, 2025-01 — so order-of-magnitude only) puts an RX 7900 XTX
+  at roughly 0.7× this box's 4070 prefill and an Arc A770 at roughly 0.1×; even the A770's
+  314 / 45 tok/s is ~7× the CPU tier on prefill and ~10× on generation (§1.2 scoreboard vs
+  §2.1 CPU rows). The first real same-box number is §2.3's job.
 - **Cost:** one pinned 35-56 MB asset; a Vulkan device probe; one download profile; variant
   preference order; label plumbing; docs + ADR; live verification on NVIDIA (forcing the Vulkan
   variant) plus the §2.3 plan on the first AMD/Intel box. Estimate M (one opus lane, §6).

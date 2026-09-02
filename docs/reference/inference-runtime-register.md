@@ -176,8 +176,8 @@ Settled empirical facts. Each was an open question that got answered.
   Qwen3.5-9B-Q4_K_M — CUDA pp512 2935-3007 / tg128 55.1-55.3 tok/s (two runs); **Vulkan pp512
   2808 / tg128 63.0** (NV_coopmat2); CPU (i7-12700K, 12 threads) 45.8 / 4.52.
   Qwen3.5-4B-Q4_K_M — CUDA 4616 / 86.9; Vulkan 4264 / 98.0; CPU 80.0 / 9.22. Vulkan is
-  0.93-0.96x CUDA on prefill and 1.13-1.14x on generation here; the CPU tier is 58-65x slower on
-  prefill (an 8k RAG prefill is ~3 min on CPU). The raw `docs/ops/Vulkan.csv` confirms
+  0.92-0.96x CUDA on prefill and 1.13-1.14x on generation here; the CPU tier is 53-64x slower on
+  prefill (an 8k RAG prefill is ~3 min on CPU) and 9-14x slower on generation. The raw `docs/ops/Vulkan.csv` confirms
   `GATED_DELTA_NET`, `SSM_CONV`, `SOLVE_TRI` and q8_0-KV `FLASH_ATTN_EXT` are supported, so the
   packaged hybrid runs fully offloaded with the D-010 launch line.
 - **Encoders (ORT WebGPU plugin EP, `onnxruntime-ep-webgpu` 0.3.0, from Java via
@@ -187,8 +187,8 @@ Settled empirical facts. Each was an open question that got answered.
   CPU `onnxruntime` jar registers the DLL, enumerates the GPU via DXGI, and runs (batch 1, mean of
   50): gte-multilingual-base fp16 on WebGPU **14.8 ms** vs shipped FP32 CPU 113 ms at seq 256
   (7.7x); reranker fp16 14.8 ms vs shipped CPU variant 57.0 ms (3.9x); NER fp16 6.2 ms vs INT8
-  CPU 7.0 ms at seq 64. Loading the INT8 CPU model on WebGPU is 4-5x SLOWER than CPU (QOperator
-  fallback — the F-013 shape); a GPU EP must always get the fp16 variant.
+  CPU 7.0 ms at seq 64. Loading the INT8/CPU-variant model on WebGPU is 2-5x SLOWER than running
+  it on CPU (QOperator fallback — the F-013 shape); a GPU EP must always get the fp16 variant.
 - **What is NOT settled:** AMD/Intel numbers (Q-003), the Dawn D3D12-vs-Vulkan backend choice,
   multi-session behaviour under the Worker's GPU lease (WebGPU has no BFC arena, so
   `arenaCapBytes > 0 <=> GPU` in `ModelSessionPolicyResolver` needs a second signal),
