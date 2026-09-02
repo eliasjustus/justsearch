@@ -31,11 +31,14 @@ import {
 } from './classifications.mjs';
 import { CONFIG_SURFACE_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
 import { scanDeadConfig } from './dead-config.mjs';
+import { scanYamlReaders } from './yaml-readers.mjs';
 import {
   verdictForMetric,
   verdictForBaselineShift,
   verdictForDeadKey,
   verdictForUnreadComponent,
+  verdictForUnreadYamlKey,
+  verdictForSysaccessGrowth,
 } from './truth-table.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
 import { readFileAtRef } from '../../lib/git-utils.mjs';
@@ -181,6 +184,71 @@ export async function enforceConfigSurface(options) {
         } else {
           findings.push({ ruleId: v.ruleId, level: 'note', message: v.reason, uri: deadBaselineUri(gate) });
         }
+      }
+    }
+
+    // --- YAML-reader presence (tempdoc 883 decision 5). The scan above starts from what the
+    // resolver DECLARES; this one starts from what the shipped YAML OFFERS. A key that exists only
+    // in application.yaml is invisible to the other half by construction — the two keys tempdoc 882
+    // found by hand (search.pipeline.profile / index.pipeline.profile) were green on every check in
+    // the repo, because nothing in scripts/ parsed application.yaml at all.
+    const yamlScan = scanYamlReaders(
+      sourceRoot,
+      gate.config?.applicationYaml ?? 'config/application.yaml',
+    );
+    if (yamlScan.parseError) {
+      verdict = 'fail';
+      findings.push({
+        ruleId: 'config-surface/yaml-parse-failed',
+        level: 'error',
+        message: `config/application.yaml did not parse: ${yamlScan.parseError}`,
+        uri: gate.config?.applicationYaml ?? 'config/application.yaml',
+      });
+    } else if (!yamlScan.skipped) {
+      for (const key of yamlScan.unreadYamlKeys) {
+        const v = verdictForUnreadYamlKey({ key, baselined: pinned.has('yaml:' + key) });
+        if (v.status === 'fail') {
+          verdict = 'fail';
+          findings.push({ ruleId: v.ruleId, level: 'error', message: v.reason, uri: deadBaselineUri(gate) });
+        } else {
+          findings.push({ ruleId: v.ruleId, level: 'note', message: v.reason, uri: deadBaselineUri(gate) });
+        }
+      }
+    }
+  }
+
+  // --- System-access allowlist ratchet (tempdoc 883 decision 5). SystemAccessFunnelTest fails on a
+  // call site missing from the list; this fails on the list GROWING, which is the one-line way to
+  // make that test green without routing the value through the resolver. Same shape as the metric
+  // ratchet above: it only shrinks, and growth needs a declared changeset.
+  const sysaccessRel = gate.config?.sysaccessAllowlist ?? 'gates/config-surface/sysaccess-allowlist.txt';
+  const sysaccessPath = resolve(sourceRoot, sysaccessRel);
+  if (existsSync(sysaccessPath)) {
+    const priorRaw =
+      fixtureMode && fixtureRoot
+        ? (existsSync(resolve(fixtureRoot, '_baseline', sysaccessRel))
+            ? readFileSync(resolve(fixtureRoot, '_baseline', sysaccessRel), 'utf8')
+            : null)
+        : baselineRef
+          ? readFileAtRef(baselineRef, sysaccessRel, sourceRoot)
+          : null;
+    if (priorRaw !== null && priorRaw !== undefined) {
+      const parseEntries = (content) =>
+        new Set(
+          (content ?? '')
+            .split(SPLIT_LINES)
+            .map((l) => l.trim())
+            .filter((l) => l && !l.startsWith('#')),
+        );
+      const live = parseEntries(readFileSync(sysaccessPath, 'utf8'));
+      const prior = parseEntries(priorRaw);
+      const added = [...live].filter((e) => !prior.has(e)).sort();
+      const v = verdictForSysaccessGrowth({ added, classification: coveringClassification });
+      if (v.status === 'fail') {
+        verdict = 'fail';
+        findings.push({ ruleId: v.ruleId, level: 'error', message: v.reason, uri: sysaccessRel });
+      } else if (v.status === 'info') {
+        findings.push({ ruleId: v.ruleId, level: 'note', message: v.reason, uri: sysaccessRel });
       }
     }
   }

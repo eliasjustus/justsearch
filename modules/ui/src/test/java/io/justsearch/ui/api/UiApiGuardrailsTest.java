@@ -11,23 +11,11 @@ import com.tngtech.archunit.lang.ArchRule;
 
 @AnalyzeClasses(packages = "io.justsearch.ui.api", importOptions = ImportOption.DoNotIncludeTests.class)
 class UiApiGuardrailsTest {
-  @ArchTest
-  static final ArchRule uiApiMustNotReadEnvOrSystemProperties =
-      noClasses()
-          .that()
-          .resideInAnyPackage("io.justsearch.ui.api..")
-          .should()
-          .callMethod(System.class, "getenv")
-          .orShould()
-          .callMethod(System.class, "getenv", String.class)
-          .orShould()
-          .callMethod(System.class, "getProperty", String.class)
-          .orShould()
-          .callMethod(System.class, "getProperty", String.class, String.class)
-          .orShould()
-          .callMethod(System.class, "setProperty", String.class, String.class)
-          .orShould()
-          .callMethod(System.class, "clearProperty", String.class);
+  // `uiApiMustNotReadEnvOrSystemProperties` was retired in tempdoc 883 decision 5. It was the only
+  // one of the six per-module copies that also covered clearProperty; the single repo-wide
+  // replacement, io.justsearch.deadcode.SystemAccessFunnelTest (modules/dead-code-audit), covers
+  // clearProperty everywhere, plus Boolean.getBoolean / Integer.getInteger, which none of the six
+  // covered anywhere.
 
   // Exception classes in ipc.* (e.g. CircuitBreakerOpenException) are legitimate to catch in
   // error handlers. Tempdoc 400 §22 Issue A (LR6-a refactor) moved the

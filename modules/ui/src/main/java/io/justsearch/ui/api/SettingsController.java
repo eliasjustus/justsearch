@@ -7,11 +7,9 @@ import tools.jackson.databind.json.JsonMapper;
 import io.javalin.http.Context;
 import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.SettingsService;
-import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.app.services.config.ConfigStoreRebuilder;
 import io.justsearch.telemetry.Telemetry;
-import io.justsearch.configuration.SystemAccess;
 import io.justsearch.app.api.settings.LlmSettingsV2;
 import io.justsearch.app.api.settings.SettingsV2;
 import io.justsearch.app.api.settings.UiSettingsV2;
@@ -37,13 +35,6 @@ public class SettingsController {
   private static final Logger log = LoggerFactory.getLogger(SettingsController.class);
   private static final ObjectMapper MAPPER =
       JsonMapper.builder().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
-  private static final String SERVER_EXE_SYS_PROP = "justsearch.server.exe";
-  private static final String SERVER_EXE_SOURCE_PROP = "justsearch.server.exe.source";
-  private static final String EXCLUDE_PATTERNS_SYS_PROP = "justsearch.ui.exclude_patterns";
-  private static final String EXCLUDE_PATTERNS_SOURCE_PROP = "justsearch.ui.exclude_patterns.source";
-  private static final String GPU_LAYERS_SYS_PROP = "justsearch.gpu.layers";
-  private static final String GPU_LAYERS_SOURCE_PROP = "justsearch.gpu.layers.source";
-  private static final String SOURCE_UI_SETTINGS = "ui_settings";
   private final UiSettingsStore settingsStore;
   private final Path defaultIndexBasePath;
   private final Telemetry telemetry;
@@ -122,9 +113,6 @@ public class SettingsController {
       }
 
       settingsStore.save(merged);
-      maybeApplyServerExeSysProp(merged);
-      maybeApplyExcludePatternsSysProp(merged);
-      maybeApplyGpuLayersSysProp(merged);
       rebuildConfigStore(merged);
       if (chatEnabledChanged != null
           && !java.util.Objects.equals(chatEnabledBefore, merged.getChatEnabled())) {
@@ -216,93 +204,16 @@ public class SettingsController {
     return (s == null || s.isBlank()) ? null : s;
   }
 
-  private static void maybeApplyServerExeSysProp(UiSettings settings) {
-    if (settings == null) return;
-    String exePath = settings.getServerExecutablePath();
-    String source = SystemAccess.sysProp(SERVER_EXE_SOURCE_PROP, "");
-    String existing = SystemAccess.sysProp(SERVER_EXE_SYS_PROP, "");
-
-    boolean owned = SOURCE_UI_SETTINGS.equalsIgnoreCase(source);
-    boolean unset = existing == null || existing.isBlank();
-    if (!owned && !unset) {
-      // Respect explicit operator overrides (sysprop set outside UI settings).
-      return;
-    }
-
-    if (exePath == null || exePath.isBlank()) {
-      SystemAccess.clearSysProp(SERVER_EXE_SYS_PROP);
-      SystemAccess.clearSysProp(SERVER_EXE_SOURCE_PROP);
-      return;
-    }
-
-    String normalized = PlatformPaths.expandUserHomePlaceholders(exePath.trim());
-    normalized = PlatformPaths.assertNoUnexpandedPlaceholders(normalized, "ui.settings.serverExecutablePath");
-    SystemAccess.setSysProp(SERVER_EXE_SYS_PROP, normalized);
-    SystemAccess.setSysProp(SERVER_EXE_SOURCE_PROP, SOURCE_UI_SETTINGS);
-  }
-
-  private static void maybeApplyExcludePatternsSysProp(UiSettings settings) {
-    if (settings == null) return;
-    String source = SystemAccess.sysProp(EXCLUDE_PATTERNS_SOURCE_PROP, "");
-    String existing = SystemAccess.sysProp(EXCLUDE_PATTERNS_SYS_PROP, "");
-
-    boolean owned = SOURCE_UI_SETTINGS.equalsIgnoreCase(source);
-    boolean unset = existing == null || existing.isBlank();
-    if (!owned && !unset) {
-      // Respect explicit operator overrides (sysprop set outside UI settings).
-      return;
-    }
-
-    List<String> patterns = settings.getExcludePatterns();
-    if (patterns == null || patterns.isEmpty()) {
-      SystemAccess.clearSysProp(EXCLUDE_PATTERNS_SYS_PROP);
-      SystemAccess.clearSysProp(EXCLUDE_PATTERNS_SOURCE_PROP);
-      return;
-    }
-
-    try {
-      String json = MAPPER.writeValueAsString(patterns);
-      if (json == null || json.isBlank()) {
-        SystemAccess.clearSysProp(EXCLUDE_PATTERNS_SYS_PROP);
-        SystemAccess.clearSysProp(EXCLUDE_PATTERNS_SOURCE_PROP);
-        return;
-      }
-      SystemAccess.setSysProp(EXCLUDE_PATTERNS_SYS_PROP, json);
-      SystemAccess.setSysProp(EXCLUDE_PATTERNS_SOURCE_PROP, SOURCE_UI_SETTINGS);
-    } catch (Exception e) {
-      // Best-effort only; exclude patterns are still persisted even if sysprop mirroring fails.
-      log.warn("Failed to mirror exclude patterns to sysprops", e);
-    }
-  }
-
-  private static void maybeApplyGpuLayersSysProp(UiSettings settings) {
-    if (settings == null) return;
-    Integer gpuLayers = settings.getGpuLayers();
-    String source = SystemAccess.sysProp(GPU_LAYERS_SOURCE_PROP, "");
-    String existing = SystemAccess.sysProp(GPU_LAYERS_SYS_PROP, "");
-
-    boolean owned = SOURCE_UI_SETTINGS.equalsIgnoreCase(source);
-    boolean unset = existing == null || existing.isBlank();
-    if (!owned && !unset) {
-      // Respect explicit operator overrides (sysprop set outside UI settings).
-      return;
-    }
-
-    if (gpuLayers == null || gpuLayers <= 0) {
-      SystemAccess.clearSysProp(GPU_LAYERS_SYS_PROP);
-      SystemAccess.clearSysProp(GPU_LAYERS_SOURCE_PROP);
-      return;
-    }
-
-    SystemAccess.setSysProp(GPU_LAYERS_SYS_PROP, String.valueOf(gpuLayers));
-    SystemAccess.setSysProp(GPU_LAYERS_SOURCE_PROP, SOURCE_UI_SETTINGS);
-  }
-
   /**
    * Rebuilds the ResolvedConfig with updated settings and swaps it into the ConfigStore.
    *
-   * <p>This ensures ConfigStore listeners are notified of settings changes. The rebuild re-reads
-   * env vars and system properties (which may have been updated by the maybeApply* methods above).
+   * <p>This is the ONLY way a settings write reaches configuration. Tempdoc 883 decision 4 deleted
+   * the {@code maybeApply*SysProp} promotions that used to run first: writing a GUI value into a
+   * system property resolved it at ordinal 500 ({@code jvm_arg}), so
+   * {@code /api/debug/effective-config} reported the user's own setting as an operator override.
+   * {@code ConfigStoreRebuilder.contributeUiSettings} contributes the same keys at ordinal 300
+   * ({@code settings.json}), where env vars (400) and a real {@code -D} (500) still win — by the
+   * ordinal chain rather than by a sysprop write and a {@code .source} marker to un-tell it.
    */
   private void rebuildConfigStore(UiSettings settings) {
     ConfigStoreRebuilder.rebuild(configStore, settings);
@@ -416,8 +327,6 @@ public class SettingsController {
     // - inspectorWidth (UX state, persistent across reload)
     // - vimMode (user binding preference; not in the FE's prior reset map)
     settingsStore.save(current);
-    maybeApplyExcludePatternsSysProp(current);
-    maybeApplyGpuLayersSysProp(current);
     rebuildConfigStore(current);
 
     SettingsV2 v2 = toSettingsV2(current);

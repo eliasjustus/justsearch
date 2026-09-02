@@ -2,6 +2,7 @@
 package io.justsearch.app.services.config;
 
 import io.justsearch.app.api.UiSettings;
+import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.configuration.resolved.ResolvedConfigBuilder;
@@ -93,7 +94,13 @@ public final class ConfigStoreRebuilder {
   public static void contributeUiSettings(ResolvedConfigBuilder builder, UiSettings settings) {
     builder.putSettings("justsearch.index.base_path", settings.getIndexBasePath());
     builder.putSettings("justsearch.llm.model_path", settings.getLlmModelPath());
-    builder.putSettings("justsearch.server.exe", settings.getServerExecutablePath());
+    // ${user.home} expansion used to happen only in SettingsController's server.exe promotion, so a
+    // placeholder resolved differently before and after a settings PUT. Tempdoc 883 decision 4
+    // slice 2 deleted that promotion; the expansion moves here, where the value actually enters the
+    // resolver, and now applies on every path (boot and PUT alike).
+    builder.putSettings(
+        "justsearch.server.exe",
+        PlatformPaths.expandUserHomePlaceholders(settings.getServerExecutablePath()));
     // Tempdoc 374 sandbox round 4 finding D/E: forward the per-encoder model
     // paths that AiInstallService.applyOnnxSettings persists, so the worker's
     // resolved-config snapshot gets justsearch.<feature>.model_path keys and

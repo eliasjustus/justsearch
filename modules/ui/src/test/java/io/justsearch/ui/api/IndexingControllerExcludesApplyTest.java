@@ -9,6 +9,12 @@ import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.SearchRequest;
 import io.justsearch.app.api.SearchResponse;
+import io.justsearch.app.api.UiSettings;
+import io.justsearch.app.services.config.ConfigStoreRebuilder;
+import io.justsearch.configuration.resolved.ConfigStore;
+import io.justsearch.configuration.resolved.ResolvedConfig;
+import io.justsearch.configuration.resolved.ResolvedConfigBuilder;
+import io.justsearch.configuration.resolved.TestResolvedConfigHelper;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -29,10 +35,12 @@ class IndexingControllerExcludesApplyTest {
 
   private Javalin app;
   private HttpClient client;
+  private ConfigStore previousGlobal;
 
   @BeforeEach
   void setup() {
     client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+    previousGlobal = ConfigStore.globalOrNull();
   }
 
   @AfterEach
@@ -41,7 +49,23 @@ class IndexingControllerExcludesApplyTest {
       app.stop();
       app = null;
     }
-    System.clearProperty("justsearch.ui.exclude_patterns");
+    TestResolvedConfigHelper.restoreGlobal(previousGlobal);
+  }
+
+  /**
+   * Seeds the patterns the way production does: {@code UiSettings} → ordinal 300 → ConfigStore.
+   *
+   * <p>These cases used to set {@code -Djustsearch.ui.exclude_patterns} directly, which stopped
+   * exercising the real path when tempdoc 883 decision 4 slice 2 repointed
+   * {@code ExcludesServiceImpl} at {@code ResolvedConfig.Ui#excludePatterns}. Only the seeding
+   * changed here — every assertion below is the one it always made.
+   */
+  private static void seedExcludePatterns(List<String> patterns) {
+    UiSettings settings = new UiSettings();
+    settings.setExcludePatterns(new ArrayList<>(patterns));
+    ResolvedConfigBuilder builder = ResolvedConfig.builder();
+    ConfigStoreRebuilder.contributeUiSettings(builder, settings);
+    ConfigStore.setGlobal(new ConfigStore(builder.build()));
   }
 
   @Test
@@ -58,9 +82,7 @@ class IndexingControllerExcludesApplyTest {
     Path excludedLog = logs.resolve("x.log");
     Files.writeString(excludedLog, "x");
 
-    System.setProperty(
-        "justsearch.ui.exclude_patterns",
-        JSON.writeValueAsString(List.of("**/node_modules/**", "**/*.log")));
+    seedExcludePatterns(List.of("**/node_modules/**", "**/*.log"));
 
     RecordingIndexingService indexing =
         new RecordingIndexingService(List.of(new IndexingService.WatchedRoot("default", root)));
@@ -124,9 +146,7 @@ class IndexingControllerExcludesApplyTest {
     Path logs = Files.createDirectories(root.resolve("logs"));
     Files.writeString(logs.resolve("x.log"), "x");
 
-    System.setProperty(
-        "justsearch.ui.exclude_patterns",
-        JSON.writeValueAsString(List.of("**/node_modules/**", "**/*.log")));
+    seedExcludePatterns(List.of("**/node_modules/**", "**/*.log"));
 
     RecordingIndexingService indexing =
         new RecordingIndexingService(List.of(new IndexingService.WatchedRoot("default", root)));
@@ -183,9 +203,7 @@ class IndexingControllerExcludesApplyTest {
     // Pattern 1 fixture: 1 *.tmp file - separates count cleanly from pattern 0.
     Files.writeString(root.resolve("scratch.tmp"), "x");
 
-    System.setProperty(
-        "justsearch.ui.exclude_patterns",
-        JSON.writeValueAsString(List.of("**/*.log", "**/*.tmp")));
+    seedExcludePatterns(List.of("**/*.log", "**/*.tmp"));
 
     RecordingIndexingService indexing =
         new RecordingIndexingService(List.of(new IndexingService.WatchedRoot("default", root)));

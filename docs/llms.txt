@@ -146,6 +146,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [MetricCatalog as the Telemetry Contract](decisions/0027-metric-catalog-as-telemetry-contract.md): Every metric the JustSearch processes emit flows through a typed `MetricCatalog`. Callsites build `MetricDefinition`s at module load, register them with `LocalTelemetry` at boot, and emit through compile-checked `Counter/Histogram/Gauge/ObservableCounter` instruments. The legacy `Telemetry.counter/timer/histogram/gauge/meter` surface is retired.
 - [Public main history publication](decisions/0045-public-main-history-publication.md): Public main receives curated squash commits from pull requests while branch commits remain workspace history.
 - [Local API trust boundary](decisions/0046-local-api-trust-boundary.md): The local HTTP API's trust boundary is the same-user native process: loopback bind, Host allowlist, MCP Origin validation, CORS pinned to the shell origin, and a per-boot session token on mutating routes. Same-user native processes are inside the boundary by construction.
+- [Context window is a derived resource](decisions/0047-context-window-is-a-derived-resource.md): The LLM context window is derived at activation from a ladder of explicit rungs (32k on GPU, 8k on CPU, stepped down on a launch abort) rather than configured as a user preference, and every prompt-side budget is a fraction of the live window rather than a constant.
 
 <!-- generated:end -->
 

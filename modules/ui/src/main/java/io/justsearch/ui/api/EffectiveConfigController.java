@@ -37,9 +37,10 @@ public final class EffectiveConfigController {
    * <p>Deliberately still a single-marker equality test in {@link #isUiSettingsMarker}, NOT
    * {@link ModelPathSource#isSystemOwned}: that predicate also admits {@code auto_selected_cuda12}
    * and {@code profile_resolved}, which would reclassify markers this report currently calls
-   * {@code owner: "unknown"} across five keys (index.base_path, server.exe, llm.model_path,
-   * gpu.layers, context.size). Widening the report is a behavior change with its own evidence
-   * bar — this migration is the constant only.
+   * {@code owner: "unknown"}. Tempdoc 883 decision 4 narrowed that from five keys to two
+   * (index.base_path, llm.model_path) — server.exe, gpu.layers and context.size are sourced from
+   * resolver provenance now and read no marker at all. Widening the report is a behavior change
+   * with its own evidence bar — this migration is the constant only.
    */
   private static final String UI_SETTINGS = ModelPathSource.UI_SETTINGS;
 
@@ -395,23 +396,38 @@ public final class EffectiveConfigController {
     return key("justsearch.models.dir", resolved == null ? null : resolved.toString(), source, details);
   }
 
+  /**
+   * The {@code justsearch.server.exe} row, sourced from the RESOLVER's provenance (tempdoc 883
+   * decision 4 slice 2) exactly as {@link #keyContextSize} is.
+   *
+   * <p>The {@code justsearch.server.exe.source} marker is NOT read here any more. The marker still
+   * exists — {@code RuntimeActivationService} and {@code HeadlessApp.maybeAutoSelectCuda12Variant}
+   * write it as a genuine ownership token for a runtime GPU-variant switch — but the settings
+   * promotion it used to disambiguate is deleted, so a GUI-chosen exe now resolves as
+   * {@code settings.json} at ordinal 300 without needing a marker to say so.
+   *
+   * <p>The observed runtime value still wins {@code value} when a server is actually running: after
+   * a variant switch the resolver holds the CONFIGURED exe and only the live runtime knows which
+   * binary is serving.
+   */
   private Map<String, Object> keyServerExe(
       OnlineAiRuntimeIntrospection.RuntimeInfo runtimeInfo,
       InferenceConfig envInference) {
+    ConfigResolution resolution =
+        configStore != null ? configStore.get().resolution("justsearch.server.exe") : null;
     String sys = sysProp(EnvRegistry.SERVER_EXE.sysProp());
     String env = envVar(EnvRegistry.SERVER_EXE.envVar());
-    String marker = sysProp("justsearch.server.exe.source");
 
     String effective = runtimeInfo != null ? runtimeInfo.serverExecutable()
         : (envInference != null && envInference.serverExecutable() != null ? envInference.serverExecutable().toString() : null);
 
     String source;
-    if (sys != null && valuesMatchPath(sys, effective)) {
-      source = isUiSettingsMarker(marker) ? "ui_settings" : "system_property";
-    } else if (env != null && valuesMatchPath(env, effective)) {
-      source = "environment_variable";
+    if (resolution != null && resolution.isResolved() && valuesMatchPath(resolution.value(), effective)) {
+      source = resolution.sourceName();
     } else if (effective != null && !effective.isBlank()) {
       source = "derived";
+    } else if (resolution != null && resolution.isResolved()) {
+      source = resolution.sourceName();
     } else {
       source = "default";
     }
@@ -419,15 +435,14 @@ public final class EffectiveConfigController {
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("sysprop", EnvRegistry.SERVER_EXE.sysProp());
     details.put("envVar", EnvRegistry.SERVER_EXE.envVar());
-    if (sys != null) {
-      details.put("syspropValue", sys);
-      if (!isUiSettingsMarker(marker)) details.put("owner", "unknown");
-      else {
-        details.put("owner", "ui_settings");
-        details.put("uiOwnershipProp", "justsearch.server.exe.source");
-        details.put("uiOwnershipValue", marker);
+    if (resolution != null && resolution.isResolved()) {
+      details.put("resolvedValue", resolution.value());
+      details.put("sourceOrdinal", resolution.sourceOrdinal());
+      if (resolution.sourceDetail() != null) {
+        details.put("sourceDetail", resolution.sourceDetail());
       }
     }
+    if (sys != null) details.put("syspropValue", sys);
     if (env != null) details.put("envValue", env);
     if (runtimeInfo != null) details.put("usingExternalLlamaServer", runtimeInfo.usingExternalLlamaServer());
 
@@ -561,13 +576,29 @@ public final class EffectiveConfigController {
     }
   }
 
+  /**
+   * The {@code justsearch.gpu.layers} row, sourced from the RESOLVER's provenance (tempdoc 883
+   * decision 4 slice 2) exactly as {@link #keyContextSize} is.
+   *
+   * <p>It used to report a {@code justsearch.gpu.layers.source} marker sysprop, which existed only
+   * to un-tell the lie told by promoting {@code settings.json} into a system property: a GUI value
+   * resolved at ordinal 500 and the row said {@code system_property}. Promotion and marker are both
+   * deleted, so the row says {@code settings.json} for a GUI value, {@code auto_detected} for the
+   * VRAM-tier probe, and {@code jvm_arg} only for a real {@code -D}. Source names are the resolver's
+   * own strings — re-spelling them here would be a second vocabulary that drifts.
+   *
+   * <p>The policy veto below is a separate axis and is unchanged: {@code requested} is what the
+   * chain resolved, {@code applied} is what {@code InferenceLifecycleManager} will actually spawn
+   * with once {@code policy.gpu_acceleration_enabled=false} forces {@code -ngl 0}.
+   */
   private Map<String, Object> keyGpuLayers(
       OnlineAiRuntimeIntrospection.RuntimeInfo runtimeInfo,
       InferenceConfig envInference,
       EffectivePolicy policy) {
+    ConfigResolution resolution =
+        configStore != null ? configStore.get().resolution("justsearch.gpu.layers") : null;
     String sys = sysProp(EnvRegistry.GPU_LAYERS.sysProp());
     String env = envVar(EnvRegistry.GPU_LAYERS.envVar());
-    String marker = sysProp("justsearch.gpu.layers.source");
 
     int baseline = envInference != null ? envInference.gpuLayers() : 0;
     Integer requested = runtimeInfo != null ? runtimeInfo.gpuLayers() : null;
@@ -585,10 +616,8 @@ public final class EffectiveConfigController {
       applied = (requested > 0 && !policyGpuEnabled) ? 0 : requested;
     }
 
-    String baselineSource = sourceForBaseline(sys, env);
-    if ("system_property".equals(baselineSource) && isUiSettingsMarker(marker)) {
-      baselineSource = "ui_settings";
-    }
+    String baselineSource =
+        resolution != null && resolution.isResolved() ? resolution.sourceName() : "unknown";
     String source = baselineSource;
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("sysprop", EnvRegistry.GPU_LAYERS.sysProp());
@@ -598,16 +627,13 @@ public final class EffectiveConfigController {
     details.put("appliedValueKnown", appliedKnown);
     details.put("policyGpuAccelerationEnabled", policyGpuEnabled);
     if (runtimeInfo != null) details.put("usingExternalLlamaServer", usingExternal);
-    if (sys != null) {
-      details.put("syspropValue", sys);
-      if (isUiSettingsMarker(marker)) {
-        details.put("owner", "ui_settings");
-        details.put("uiOwnershipProp", "justsearch.gpu.layers.source");
-        details.put("uiOwnershipValue", marker);
-      } else {
-        details.put("owner", "unknown");
+    if (resolution != null && resolution.isResolved()) {
+      details.put("sourceOrdinal", resolution.sourceOrdinal());
+      if (resolution.sourceDetail() != null) {
+        details.put("sourceDetail", resolution.sourceDetail());
       }
     }
+    if (sys != null) details.put("syspropValue", sys);
     if (env != null) details.put("envValue", env);
 
     if (runtimeInfo != null && requested != baseline) {
