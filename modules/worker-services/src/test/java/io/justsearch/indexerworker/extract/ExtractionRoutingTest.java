@@ -1,0 +1,178 @@
+package io.justsearch.indexerworker.extract;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * Default routing (tempdoc 885 item 14, design decision 2): PDF / Office / archives / images out
+ * of process, plain text / markdown / code / CSV / JSON in process, and one mode switch that
+ * forces either side.
+ *
+ * <p>The routing is asserted against <b>real files</b> through the real MIME detector, not against
+ * the extension strings, because the classification the router consumes
+ * ({@code IndexingDocumentOps.classifyFileKind}) keys on the detected MIME first.
+ */
+final class ExtractionRoutingTest {
+
+  @TempDir Path tempDir;
+
+  @Test
+  void pdfAndOfficeAndArchivesGoOutOfProcessAndTextStaysInProcess() throws Exception {
+    RecordingSandbox inProcess = new RecordingSandbox("in");
+    RecordingSandbox outOfProcess = new RecordingSandbox("out");
+    RoutingExtractionSandbox router =
+        new RoutingExtractionSandbox(inProcess, outOfProcess, new ContentExtractor());
+
+    router.extract(copyFixture("/fixtures/pdf/pdf-text-layer.pdf", "doc.pdf"));
+    router.extract(copyFixture("/fixtures/office/office-marker.docx", "doc.docx"));
+    router.extract(copyFixture("/fixtures/office/office-marker.xlsx", "sheet.xlsx"));
+    router.extract(copyFixture("/fixtures/office/office-marker.pptx", "deck.pptx"));
+    router.extract(zip("bundle.zip"));
+
+    assertEquals(
+        List.of("doc.pdf", "doc.docx", "sheet.xlsx", "deck.pptx", "bundle.zip"),
+        outOfProcess.seen,
+        "wedge-prone families must be parsed out of process");
+
+    router.extract(write("notes.txt", "plain text"));
+    router.extract(write("readme.md", "# heading"));
+    router.extract(write("App.java", "class App {}"));
+    router.extract(write("rows.csv", "a,b\n1,2\n"));
+    router.extract(write("data.json", "{\"a\":1}"));
+
+    assertEquals(
+        List.of("notes.txt", "readme.md", "App.java", "rows.csv", "data.json"),
+        inProcess.seen,
+        "decoder-only families must stay in process");
+    assertEquals(5, outOfProcess.seen.size(), "no text file may have crossed the process boundary");
+  }
+
+  @Test
+  void routingTableIsExplicitAboutEveryClassifiedKind() {
+    for (String kind : List.of("pdf", "office", "archive", "image", "binary")) {
+      assertTrue(RoutingExtractionSandbox.requiresProcessIsolation(kind), kind);
+    }
+    for (String kind : List.of("text", "markdown", "code", "unknown")) {
+      assertFalse(RoutingExtractionSandbox.requiresProcessIsolation(kind), kind);
+    }
+    assertFalse(RoutingExtractionSandbox.requiresProcessIsolation(null));
+  }
+
+  /**
+   * The mode switch, asserted on an observable difference rather than on a getter: only the
+   * in-process mode tolerates an empty child command, because the other two build a child pool.
+   */
+  @Test
+  void modeSwitchSelectsTheSandbox() {
+    try (TimeboxedContentExtractor inProcess =
+        ExtractionSandboxFactory.create(
+            ExtractionSandboxFactory.Mode.IN_PROCESS,
+            TikaExtractionPolicy.defaults(),
+            Duration.ofSeconds(5),
+            null,
+            List.of())) {
+      assertEquals("tika-default-v1", inProcess.extractionPolicy().policyId());
+    }
+
+    for (ExtractionSandboxFactory.Mode mode :
+        List.of(ExtractionSandboxFactory.Mode.PROCESS, ExtractionSandboxFactory.Mode.AUTO)) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              ExtractionSandboxFactory.create(
+                  mode,
+                  TikaExtractionPolicy.defaults(),
+                  Duration.ofSeconds(5),
+                  null,
+                  List.of()),
+          mode + " must build a child pool and therefore require a command");
+    }
+  }
+
+  /**
+   * The startup probe, both ways. Spawning is lazy, so without it a broken child command is
+   * invisible until the first file and then fails every file; the Worker uses this verdict to fall
+   * back to in-process extraction for the session instead.
+   */
+  @Test
+  void startupProbeAnswersForAWorkingChildAndNamesTheFailureForABrokenOne() {
+    assertEquals(
+        java.util.Optional.empty(),
+        ExtractionSandboxFactory.probeChildCommand(
+            PersistentExtractionSandboxTest.javaCommand(ExtractionSandboxChild.class),
+            TikaExtractionPolicy.defaults(),
+            OcrRoutingConfig.disabled(),
+            Duration.ofSeconds(30)),
+        "the shipped child command must pass its own probe");
+
+    java.util.Optional<String> broken =
+        ExtractionSandboxFactory.probeChildCommand(
+            List.of("this-binary-does-not-exist", "--serve"),
+            TikaExtractionPolicy.defaults(),
+            OcrRoutingConfig.disabled(),
+            Duration.ofSeconds(10));
+    assertTrue(broken.isPresent(), "a command that cannot launch must fail the probe");
+    assertFalse(broken.get().isBlank(), "the probe must name why it failed");
+  }
+
+  private Path copyFixture(String resource, String name) throws IOException {
+    Path target = tempDir.resolve(name);
+    try (InputStream in = ExtractionRoutingTest.class.getResourceAsStream(resource)) {
+      if (in == null) {
+        throw new IOException("Missing test fixture: " + resource);
+      }
+      Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+    }
+    return target;
+  }
+
+  private Path write(String name, String content) throws IOException {
+    Path target = tempDir.resolve(name);
+    Files.writeString(target, content, StandardCharsets.UTF_8);
+    return target;
+  }
+
+  private Path zip(String name) throws IOException {
+    Path target = tempDir.resolve(name);
+    try (java.util.zip.ZipOutputStream out =
+        new java.util.zip.ZipOutputStream(Files.newOutputStream(target))) {
+      out.putNextEntry(new java.util.zip.ZipEntry("inner.txt"));
+      out.write("inner".getBytes(StandardCharsets.UTF_8));
+      out.closeEntry();
+    }
+    return target;
+  }
+
+  private static final class RecordingSandbox implements ExtractionSandbox {
+    private final String id;
+    private final List<String> seen = new ArrayList<>();
+
+    RecordingSandbox(String id) {
+      this.id = id;
+    }
+
+    @Override
+    public ExtractionArtifact extract(Path file) {
+      seen.add(file.getFileName().toString());
+      return ExtractionArtifact.full(
+          new ContentExtractor.ExtractionResult(id, null, "text/plain"),
+          TikaExtractionPolicy.defaults(),
+          id,
+          false);
+    }
+  }
+}

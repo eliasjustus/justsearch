@@ -101,7 +101,8 @@ final class RuntimeSession implements AutoCloseable {
   volatile ValidationMode validationMode;
   volatile long maxQueueDepth;
   volatile long nrtTargetMaxStaleMs;
-  // Default 50L must match the hardcoded 0.05s in ComponentsFactory initial CRTRT creation.
+  // Both CRTRT construction sites read these through NrtReopenThreads.create (tempdoc 885
+  // item 19); the 500/50 defaults below are what the initial open used to hardcode.
   volatile long nrtHardMaxStaleMs;
   volatile KnnVectorsFormat knnVectorsFormat;
   volatile Integer vectorEfSearchOverrideOrNull;

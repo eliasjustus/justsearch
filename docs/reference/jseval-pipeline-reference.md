@@ -393,6 +393,13 @@ mode. The structural check is satisfied by two legs, so an omitted
 | `--json` | NDJSON progress to stderr, JSON result to stdout |
 | `-v` / `--verbose` | DEBUG logging (httpcore/httpx suppressed) |
 | `--history-db PATH` | Shared history database for trend tracking |
+| `--search-load-qpm N` | Drive N queries/minute (evenly spaced) against `POST /api/knowledge/search` on a background thread **during** ingest + the readiness/pipeline wait, and record a `search_load` block in `summary.json` (mode, queries issued, errors, latency p50/p95/max, start/end). Queries come from the dataset's own query file, in `hybrid` mode. Off by default; nothing changes when it is absent (885) |
+| `--search-load continuous` | As above but back-to-back with one request in flight (the continuous MCP-style agent loop). Mutually exclusive with `--search-load-qpm` |
+
+That endpoint is the one that writes the Worker's MMF activity slot, so these two flags are how a
+throughput measurement is taken *with foreground search traffic present* — see tempdoc 885's
+chunk-1 baseline for the measured effect. Both are ignored (with a WARN) on a run that does no
+ingest, i.e. `--skip-ingest` or an adopted index-cache entry.
 
 **Trap — `datasets/` resolves differently per command.** `jseval run`
 resolves `datasets/` from the **repo root** and ignores the current

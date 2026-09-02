@@ -154,6 +154,7 @@ def execute_run(
     env_overrides: dict[str, str] | None = None,
     index_cache: dict | None = None,
     query_syntax: str | None = None,
+    search_load: dict | None = None,
 ) -> dict:
     """Execute a full evaluation run.
 
@@ -201,6 +202,8 @@ def execute_run(
         cache_block = _index_cache_block(index_cache)
         if cache_block:
             summary["index_cache"] = cache_block
+        if search_load:
+            summary["search_load"] = search_load
         return summary
 
     # 1. Load dataset
@@ -401,6 +404,9 @@ def execute_run(
                              run_manifest=run_manifest, base_dir=base_dir,
                              status_snapshot=state_snapshots.get("/api/status"),
                              index_cache=index_cache, query_syntax=query_syntax)
+    # Tempdoc 885: additive block from the background search-load thread (absent by default).
+    if search_load:
+        summary["search_load"] = search_load
 
     # 5. Write artifacts + append history
     if output_dir:

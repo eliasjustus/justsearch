@@ -504,18 +504,19 @@ public enum EnvRegistry {
     // ==================== Extraction Sandbox Configuration ====================
 
     /**
-     * Worker extraction sandbox mode. Values: {@code in_process} (default) or {@code process}.
-     * In {@code process} mode the Worker requires a non-blank {@link
-     * #EXTRACTION_SANDBOX_COMMAND} listing the child JVM command to spawn (whitespace-split
-     * argv). See tempdoc 410 for the failure-domain design.
+     * Worker extraction sandbox mode. Values: {@code auto} (default — per-family routing:
+     * PDF/Office/archives/images out of process, text/markdown/code/CSV/JSON in process),
+     * {@code in_process} (everything in the Worker JVM) or {@code process} (everything in the
+     * child pool). See tempdoc 410 for the failure-domain design and tempdoc 885 item 14 for the
+     * persistent pool that made it shippable.
      */
     EXTRACTION_SANDBOX_MODE(
         "justsearch.extraction.sandbox.mode", "JUSTSEARCH_EXTRACTION_SANDBOX_MODE"),
 
     /**
-     * Whitespace-separated command used by the {@code process} sandbox mode to spawn the
-     * extraction child JVM. Required when {@link #EXTRACTION_SANDBOX_MODE} is {@code process};
-     * ignored otherwise.
+     * Whitespace-separated command used to spawn the extraction child JVM. Optional operator
+     * override; when unset the Worker builds the command in-process from {@code java.home} +
+     * {@code java.class.path}. The child's parent-PID argument is appended by the pool.
      */
     EXTRACTION_SANDBOX_COMMAND(
         "justsearch.extraction.sandbox.command", "JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND"),
@@ -1215,7 +1216,23 @@ public enum EnvRegistry {
      * default (tempdoc 883 decision 2); requires flash attention, which is why {@code -fa on} is
      * passed explicitly rather than left to {@code auto}.
      */
-    LLM_KV_TYPE("justsearch.llm.kv_type", "JUSTSEARCH_LLM_KV_TYPE", "q8_0");
+    LLM_KV_TYPE("justsearch.llm.kv_type", "JUSTSEARCH_LLM_KV_TYPE", "q8_0"),
+
+    /** Number of persistent extraction child processes (default 1, one request in flight each). */
+    EXTRACTION_SANDBOX_POOL(
+        "justsearch.extraction.sandbox.pool", "JUSTSEARCH_EXTRACTION_SANDBOX_POOL"),
+
+    /**
+     * Max heap for an extraction child (e.g. {@code 768m}). Default: at least 4x the largest
+     * accepted input, floor 512m.
+     */
+    EXTRACTION_SANDBOX_HEAP(
+        "justsearch.extraction.sandbox.heap", "JUSTSEARCH_EXTRACTION_SANDBOX_HEAP"),
+
+    /** Requests one extraction child handles before it is recycled (leak guard; default 500). */
+    EXTRACTION_SANDBOX_MAX_REQUESTS(
+        "justsearch.extraction.sandbox.max_requests",
+        "JUSTSEARCH_EXTRACTION_SANDBOX_MAX_REQUESTS");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 

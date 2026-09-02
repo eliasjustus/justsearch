@@ -107,7 +107,7 @@ public record ExtractionArtifact(
 
   /**
    * Sandbox-internal bounds check — used inside the extraction child JVM and by
-   * {@code ProcessExtractionSandbox} immediately after deserializing a sandbox response. Enforces
+   * {@code PersistentExtractionSandbox} immediately after deserializing a sandbox response. Enforces
    * content length, scalar metadata caps, warning caps, but NOT policy-id matching or
    * embedded-resource caps (those are caller-side, post-sandbox).
    *

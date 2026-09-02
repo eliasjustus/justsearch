@@ -929,3 +929,50 @@ class TestBuildSummaryEmbedsCeCoverage:
         assert summary["per_mode"]["hybrid"]["comparability_reasons"] == []
         assert summary["per_mode"]["hybrid"]["ann_proof_status"] == "PASS"
         assert summary["per_mode"]["hybrid"]["error_count"] == 0
+
+
+# --- tempdoc 885: search_load block wiring ----------------------------------
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_records_search_load_block(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    block = {"mode": "qpm", "qpm": 10, "queries_issued": 4, "errors": 0}
+
+    summary = execute_run(
+        "scifact", "http://localhost:8080", ["hybrid"], search_load=block,
+    )
+
+    assert summary["search_load"] == block
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_omits_search_load_when_absent(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+
+    summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
+
+    assert "search_load" not in summary
