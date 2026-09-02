@@ -44,6 +44,8 @@ import {
   resolveForeignRegisterDir,
   truncationNotice,
 } from './justsearch-dev-mcp/server.mjs';
+import { buildDevRunnerArgsStart } from './justsearch-dev-mcp/cli.mjs';
+import { createRequire } from 'node:module';
 
 // server.mjs installs process-level uncaughtException/unhandledRejection handlers that LOG rather
 // than exit, so a top-level abort in this file would otherwise leave exit code 0 — a green that
@@ -51,6 +53,9 @@ import {
 process.exitCode = 1;
 
 const HERE = import.meta.dirname;
+// dev-runner.cjs exports its __test seam only when it is not the entry module, so requiring it
+// here runs no supervisor (same access path as test-dev-runner-lease-duration.mjs).
+const devRunnerModule = createRequire(import.meta.url)(path.join(HERE, 'dev-runner.cjs'));
 
 /* ── B1: the tree preflight checks is the tree start launches from ─────────────────────────── */
 
@@ -656,7 +661,63 @@ function admitApiCallPath(rawPath, base = 'http://127.0.0.1:33301') {
   return { admitted: true, sent };
 }
 
+/* ── 913 T1: the distFrom→provenance wiring the mismatch verdict reads ─────────────────────── */
+//
+// computeProvenanceMismatch is unit-tested in test-ownership-verdict.mjs. These pin the WIRING
+// that puts `distFromRoot` in front of it: without the forward, that function is correct and the
+// verdict is still wrong, which is the shape `audit-without-test` names.
+
+const provenanceWiringTests = [
+  ['start forwards the resolved distFrom root to the dev-runner', () => {
+    const args = buildDevRunnerArgsStart({
+      apiPort: 0, uiPort: 5173, clean: 'soft', distFromRoot: '/tmp/main/.claude/worktrees/lane-x',
+    });
+    assert.ok(args.includes('--dist-from=/tmp/main/.claude/worktrees/lane-x'),
+      `--dist-from missing from ${JSON.stringify(args)}`);
+  }],
+  ['…and omits the flag entirely when no distFrom was asked for', () => {
+    const args = buildDevRunnerArgsStart({ apiPort: 0, uiPort: 5173, clean: 'soft', distFromRoot: null });
+    assert.ok(!args.some((a) => a.startsWith('--dist-from')),
+      'a caller-checkout launch must not claim a requested root it never requested');
+  }],
+  ['the start handler only forwards it when distFrom was actually supplied', async () => {
+    const src = await fsp.readFile(path.join(HERE, 'justsearch-dev-mcp', 'server.mjs'), 'utf8');
+    assert.match(src, /distFromRoot:\s*distRoot\.distFrom\s*\?\s*effRepoRoot\s*:\s*null/);
+  }],
+  ['dev-runner parses --dist-from into the option the provenance block reads', () => {
+    const out = devRunnerModule.__test.parseArgs(
+      ['start', '--api-port=0', '--dist-from=/tmp/main/.claude/worktrees/lane-x']);
+    assert.equal(out.distFromRoot, '/tmp/main/.claude/worktrees/lane-x');
+    assert.equal(devRunnerModule.__test.parseArgs(['start', '--api-port=0']).distFromRoot, null,
+      'absent flag must stay null, not become the empty string');
+  }],
+  ['…and the provenance block stamped on the lease carries it', () => {
+    assert.match(devRunnerSrc, /function resolveProvenance\(distFromRoot = null\)/);
+    assert.match(devRunnerSrc, /distFromRoot:\s*distFromRoot\s*\?\s*toPosix\(path\.resolve\(distFromRoot\)\)\s*:\s*null/);
+    assert.match(devRunnerSrc, /resolveProvenance\(opts\.distFromRoot\)/,
+      'the spawn-time call must pass the parsed option — an unparameterised call would stamp null forever');
+  }],
+];
+
 const allowlistTests = [
+  // 913 T2: the two endpoints the allowlist was missing. GET-only, and the schemas route matches
+  // by pattern because the schema name is a path segment.
+  ['913 T2: the index-wide failed-jobs route is reachable, like its by-prefix sibling', () => {
+    assert.equal(admitApiCallPath('/api/indexing-jobs/failed').admitted, true);
+    assert.equal(admitApiCallPath('/api/indexing-jobs/failed/by-prefix').admitted, true);
+  }],
+  ['913 T2: /api/schemas/<name> is admitted, and is GET-only', () => {
+    const r = admitApiCallPath('/api/schemas/failed-indexing-jobs-response.v1.json');
+    assert.equal(r.admitted, true, r.why);
+    assert.equal(r.sent, '/api/schemas/failed-indexing-jobs-response.v1.json');
+    const entry = API_CALL_ALLOWLIST.find((e) => e.path === '/api/schemas/{name}');
+    assert.deepEqual(entry.methods, ['GET'], 'a schema read must not be a mutation surface');
+  }],
+  ['913 T2: the schemas pattern does not admit a deeper path than the route serves', () => {
+    // LocalApiServer serves /api/schemas/{name} — one segment. A two-segment path is not that
+    // route, and admitting it would make the allowlist describe a surface that does not exist.
+    assert.equal(admitApiCallPath('/api/schemas/nested/thing.json').admitted, false);
+  }],
   ['a legitimate package id is still admitted, and sent verbatim', () => {
     const r = admitApiCallPath('/api/ai/install/packages/chat-compact_v1.2/decline');
     assert.equal(r.admitted, true, r.why);
@@ -724,7 +785,7 @@ const allowlistTests = [
 
 let pass = 0;
 let fail = 0;
-for (const [name, fn] of [...distTests, ...distCodeTests, ...foreignTests, ...registerTests, ...allowlistTests, ...jsonPathTests, ...truncationTests]) {
+for (const [name, fn] of [...distTests, ...distCodeTests, ...provenanceWiringTests, ...foreignTests, ...registerTests, ...allowlistTests, ...jsonPathTests, ...truncationTests]) {
   try {
     await fn();
     console.log(`  PASS  ${name}`);
