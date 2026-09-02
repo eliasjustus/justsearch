@@ -660,6 +660,15 @@ public record ResolvedConfig(
    *     BACKUP_ONLY recovers to empty without an auto-rebuild; FAIL_CLOSED never auto-recovers
    *     (tempdoc 628 Stage B/G2)
    * @param migrationCutoverMaxFailedJobs max failed jobs before migration cutover is blocked
+   * @param nrtMode NRT reopen strategy — {@code continuous} (default) or {@code on_demand}
+   *     (tempdoc 885 item 19). Unrecognised values fall back to {@code continuous}.
+   * @param nrtBackgroundReopenMs background reopen cadence in {@code on_demand} mode; ignored in
+   *     {@code continuous} mode
+   * @param nrtOnDemandMaxStaleMs age past which a foreground search in {@code on_demand} mode
+   *     escalates to a blocking refresh; ignored in {@code continuous} mode
+   * @param commitIdleMs ms the indexing loop must have found the queue empty before it commits
+   *     buffered documents; 0 (default) commits on the first empty poll, which is the historical
+   *     behaviour
    */
   public record Index(
       Integer writerRamBufferMb,
@@ -690,7 +699,17 @@ public record ResolvedConfig(
       Double similarityTextB,
       String validationMode,
       List<IndexSortItem> sort,
-      Map<String, Double> boosts) {
+      Map<String, Double> boosts,
+      String nrtMode,
+      int nrtBackgroundReopenMs,
+      int nrtOnDemandMaxStaleMs,
+      int commitIdleMs) {
+
+    /** Wire value of the default NRT reopen strategy (today's behaviour). */
+    public static final String NRT_MODE_CONTINUOUS = "continuous";
+
+    /** Wire value of the reopen-on-demand candidate (tempdoc 885 item 19). */
+    public static final String NRT_MODE_ON_DEMAND = "on_demand";
 
     public Index {
       sort = sort != null ? List.copyOf(sort) : List.of();

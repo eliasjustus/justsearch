@@ -366,6 +366,11 @@ public final class ResolvedConfigBuilder {
     putYamlBoolean("index.commit.meta.enabled", root, "index.commit.meta.enabled");
     putYamlInt("index.nrt.target_max_stale_ms", root, "index.nrt.target_max_stale_ms");
     putYamlInt("index.nrt.max_stale_ms", root, "index.nrt.max_stale_ms");
+    // Tempdoc 885 item 19 cadence candidate.
+    putYaml("index.nrt.mode", root, "index.nrt.mode");
+    putYamlInt("index.nrt.background_reopen_ms", root, "index.nrt.background_reopen_ms");
+    putYamlInt("index.nrt.on_demand_max_stale_ms", root, "index.nrt.on_demand_max_stale_ms");
+    putYamlInt("index.commit.idle_ms", root, "index.commit.idle_ms");
     putYaml("index.soft_deletes.field", root, "index.soft_deletes.field");
     putYamlBoolean("index.soft_deletes.retention.enabled", root,
         "index.soft_deletes.retention.enabled");
@@ -1462,7 +1467,15 @@ public final class ResolvedConfigBuilder {
         resolveNullableDouble("index.similarity.text.b"),
         resolveString("index.validation.mode", null),
         parseIndexSort(resolveString("index.sort", null)),
-        parseBoosts(resolveString("index.boosts", null)));
+        parseBoosts(resolveString("index.boosts", null)),
+        // Tempdoc 885 item 19: NRT/commit cadence candidate. Resolved here (not read as a raw
+        // sysprop in the Worker) so the values reach the Worker through the ordinal-450 config
+        // snapshot, the channel the item-3 forwarding defect [R1] proved is the only one that
+        // crosses the process boundary.
+        resolveString("index.nrt.mode", ResolvedConfig.Index.NRT_MODE_CONTINUOUS),
+        resolveInt("index.nrt.background_reopen_ms", 2000),
+        resolveInt("index.nrt.on_demand_max_stale_ms", 1000),
+        resolveInt("index.commit.idle_ms", 0));
   }
 
   private ResolvedConfig.Collections buildCollections() {
