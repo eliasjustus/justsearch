@@ -106,7 +106,7 @@ final class AgentGroundingInclusionTest {
     var message = new LinkedHashMap<String, Object>();
     message.put("role", "tool");
     message.put("tool_call_id", callId);
-    message.put("content", AgentContextCompressor.truncate(result.message()));
+    message.put("content", compressor.truncate(result.message()));
     session.appendMessage(message);
     session.recordCompression(compressor.compressToolMessages(session.messages()));
     return delta;

@@ -99,24 +99,24 @@ final class ReadDocumentToolTest {
     String longPath = longWindowsPath();
     assertEquals(400, longPath.length(), "the fixture must exercise the headroom budget");
     var fetch =
-        new FakeFetch(slice(longPath, page(ReadDocumentTool.READ_PAGE_CHARS), true, 3000));
+        new FakeFetch(slice(longPath, page(ReadDocumentTool.readPageChars(AgentContextBudgets.forCall(null))), true, 3000));
     OperationResult result =
         new ReadDocumentTool(fetch)
             .execute("{\"path\":\"" + longPath.replace("\\", "\\\\") + "\"}");
 
     assertTrue(result.success(), result.message());
-    // THE point of READ_PAGE_CHARS: header + carrier framing + a maximal page must still fit under
-    // MAX_TOOL_RESULT_CHARS. Run through the real truncate, so a future change to either constant
+    // THE point of readPageChars: header + carrier framing + a maximal page must still fit under
+    // the Layer-2 cap. Run through the real truncate, so a future change to either derivation
     // (or to the header text) fails here instead of silently shipping clipped pages.
     String message = result.message();
     assertSame(
         message,
-        AgentContextCompressor.truncate(message),
+        new AgentContextCompressor(false, 200, 1).truncate(message),
         "a maximal read page under a maximal path must reach the model whole; truncate returns the"
             + " same instance when it has nothing to cut. message length="
             + message.length()
             + " cap="
-            + AgentContextCompressor.MAX_TOOL_RESULT_CHARS);
+            + new AgentContextCompressor(false, 200, 1).toolResultCapChars());
     assertFalse(message.contains("truncated,"), "no Layer-2 truncation marker");
   }
 
@@ -186,7 +186,7 @@ final class ReadDocumentToolTest {
     String longPath = longWindowsPath();
     var fetch =
         new FakeFetch(
-            slice(longPath, page(ReadDocumentTool.READ_PAGE_CHARS), true, 3000, 987_654_321));
+            slice(longPath, page(ReadDocumentTool.readPageChars(AgentContextBudgets.forCall(null))), true, 3000, 987_654_321));
     OperationResult result =
         new ReadDocumentTool(fetch)
             .execute("{\"path\":\"" + longPath.replace("\\", "\\\\") + "\"}");
@@ -196,11 +196,11 @@ final class ReadDocumentToolTest {
     assertTrue(message.contains(" of 987654321"), "the total is in the header: " + message);
     assertSame(
         message,
-        AgentContextCompressor.truncate(message),
+        new AgentContextCompressor(false, 200, 1).truncate(message),
         "the denominator must fit inside PAGE_HEADROOM_CHARS. message length="
             + message.length()
             + " cap="
-            + AgentContextCompressor.MAX_TOOL_RESULT_CHARS);
+            + new AgentContextCompressor(false, 200, 1).toolResultCapChars());
   }
 
   @Test
@@ -218,12 +218,12 @@ final class ReadDocumentToolTest {
   }
 
   @Test
-  @DisplayName("878: a stringified max_chars is coerced and still capped at READ_PAGE_CHARS")
+  @DisplayName("878: a stringified max_chars is coerced and still capped at the page size")
   void stringifiedMaxCharsIsCoercedAndCapped() {
     var fetch = new FakeFetch(slice(page(10), false, 10));
     new ReadDocumentTool(fetch)
         .execute("{\"path\":\"" + PATH + "\",\"max_chars\":\"100000\",\"offset_chars\":\"7\"}");
-    assertEquals(ReadDocumentTool.READ_PAGE_CHARS, fetch.lastMaxChars);
+    assertEquals(ReadDocumentTool.readPageChars(AgentContextBudgets.forCall(null)), fetch.lastMaxChars);
     assertEquals(7, fetch.lastOffset);
   }
 
@@ -267,13 +267,13 @@ final class ReadDocumentToolTest {
   }
 
   @Test
-  @DisplayName("max_chars is capped at READ_PAGE_CHARS at the fetch boundary, not merely documented")
+  @DisplayName("max_chars is capped at the page size at the fetch boundary, not merely documented")
   void oversizedMaxCharsIsCappedBeforeTheFetch() {
     var fetch = new FakeFetch(slice(page(10), false, 10));
     new ReadDocumentTool(fetch)
         .execute("{\"path\":\"" + PATH + "\",\"max_chars\":100000,\"offset_chars\":42}");
     assertEquals(
-        ReadDocumentTool.READ_PAGE_CHARS,
+        ReadDocumentTool.readPageChars(AgentContextBudgets.forCall(null)),
         fetch.lastMaxChars,
         "an LLM-chosen max_chars must not be able to blow past the context cap");
     assertEquals(42, fetch.lastOffset);

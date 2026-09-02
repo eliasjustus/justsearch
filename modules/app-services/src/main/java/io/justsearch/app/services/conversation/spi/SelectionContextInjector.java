@@ -8,9 +8,11 @@ import io.justsearch.agent.api.conversation.SseEvent;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.DocumentService.ContextCitation;
 import io.justsearch.app.api.DocumentService.DocumentRecord;
+import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.selection.DocumentAddress;
 import io.justsearch.app.api.selection.SelectionPayload;
 import io.justsearch.app.api.selection.SourceCitation;
+import io.justsearch.core.util.ContextBudget;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -18,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.ObjectMapper;
@@ -53,14 +56,8 @@ public final class SelectionContextInjector implements ContextInjector {
   /** Default fetch timeout (mirrors {@link DocAccess#DEFAULT_FETCH_TIMEOUT}). */
   static final Duration DEFAULT_FETCH_TIMEOUT = Duration.ofSeconds(10);
 
-  /** Soft cap on injected content. */
-  static final int MAX_CONTENT_CHARS = 200_000;
-
   /** Maximum docs fetched for a {@link SelectionPayload.ResultSet} injection. */
   static final int MAX_RESULT_SET_DOCS = 5;
-
-  /** Per-doc char cap for {@link SelectionPayload.ResultSet} injection. */
-  static final int RESULT_SET_PER_DOC_CHARS = 10_000;
 
   /**
    * Id of the summarize shape, as a literal so this SPI does not depend on the {@code shapes}
@@ -74,13 +71,50 @@ public final class SelectionContextInjector implements ContextInjector {
   private final DocumentService documents;
   private final Duration fetchTimeout;
 
+  /**
+   * The live context window, read per request (tempdoc 883 decision 3). Null (a caller that wired
+   * no inference handle) budgets against {@link ContextBudget#FALLBACK_WINDOW_TOKENS}.
+   */
+  private final Supplier<OnlineAiService> onlineAi;
+
   public SelectionContextInjector(DocumentService documents) {
-    this(documents, DEFAULT_FETCH_TIMEOUT);
+    this(documents, DEFAULT_FETCH_TIMEOUT, null);
   }
 
   public SelectionContextInjector(DocumentService documents, Duration fetchTimeout) {
+    this(documents, fetchTimeout, null);
+  }
+
+  /** Composition-root constructor: the default fetch timeout plus the live window. */
+  public SelectionContextInjector(
+      DocumentService documents, Supplier<OnlineAiService> onlineAi) {
+    this(documents, DEFAULT_FETCH_TIMEOUT, onlineAi);
+  }
+
+  /**
+   * Composition-root constructor (tempdoc 883 decision 3) — takes the same
+   * {@code Supplier<OnlineAiService>} {@link RAGContext} gets, so a selected passage is cut against
+   * the window the running server actually has instead of a flat 200,000-character soft cap that
+   * exceeded every real window by an order of magnitude.
+   */
+  public SelectionContextInjector(
+      DocumentService documents, Duration fetchTimeout, Supplier<OnlineAiService> onlineAi) {
     this.documents = Objects.requireNonNull(documents, "documents");
     this.fetchTimeout = Objects.requireNonNull(fetchTimeout, "fetchTimeout");
+    this.onlineAi = onlineAi;
+  }
+
+  /**
+   * The characters this turn's PRIMARY material may occupy.
+   *
+   * <p>A selection is not a fraction of the budget: it is what the user asked about, the same role
+   * the retrieved context plays in a RAG ask. So it gets the whole input budget, converted to
+   * characters. The old {@code MAX_CONTENT_CHARS} was 200,000 — roughly 50,000 tokens, i.e. more
+   * than any window this app launches, so the "soft cap" never once bounded a prompt and the real
+   * cut happened at the server with a 400.
+   */
+  private int selectionCapChars(ConversationContext ctx) {
+    return RAGContext.budgetFor(onlineAi, ctx).inputBudgetChars();
   }
 
   @Override
@@ -181,7 +215,7 @@ public final class SelectionContextInjector implements ContextInjector {
     }
 
     String slice = fullContent.substring(startChar, endChar);
-    String truncated = truncate(slice, MAX_CONTENT_CHARS);
+    String truncated = truncateToBudget(ctx, slice, "selected text range", resolved.docId());
     Map<String, Object> message = userMessage(textRangePrefix(ctx.shapeId()), truncated);
 
     ContextCitation citation =
@@ -220,7 +254,7 @@ public final class SelectionContextInjector implements ContextInjector {
               "Item has no fetchable content: " + item.itemKind() + "/" + docId,
               "ITEM_UNAVAILABLE"));
     }
-    String truncated = truncate(fullContent, MAX_CONTENT_CHARS);
+    String truncated = truncateToBudget(ctx, fullContent, "selected item", docId);
     Map<String, Object> message =
         userMessage("Use the following document for context:\n\n", truncated);
     ContextCitation citation =
@@ -248,7 +282,7 @@ public final class SelectionContextInjector implements ContextInjector {
       return injectInlineExcerpt(ctx, sc.parentDocId(), sc.excerpt());
     }
     String slice = fullContent.substring(startChar, endChar);
-    String truncated = truncate(slice, MAX_CONTENT_CHARS);
+    String truncated = truncateToBudget(ctx, slice, "cited passage", sc.parentDocId());
     Map<String, Object> message =
         userMessage("Use the following cited passage as context:\n\n", truncated);
     ContextCitation citation =
@@ -296,12 +330,16 @@ public final class SelectionContextInjector implements ContextInjector {
     StringBuilder concat = new StringBuilder();
     List<Map<String, Object>> citations = new ArrayList<>();
     List<DocumentService.VerificationSource> sources = new ArrayList<>();
+    // Tempdoc 883 decision 3 — the turn's budget SPLIT across the documents it may take, rather
+    // than a flat 10,000 chars each (50,000 for a full set, which no window this app launches can
+    // hold). MAX_RESULT_SET_DOCS stays a document COUNT: it is not a window quantity.
+    int perDocChars = Math.max(1, selectionCapChars(ctx) / MAX_RESULT_SET_DOCS);
     int taken = 0;
     for (SelectionPayload.ResultRef ref : refs) {
       if (taken >= MAX_RESULT_SET_DOCS) break;
       String content = fetchDocContent(ref.id());
       if (content == null || content.isBlank()) continue;
-      String truncated = truncate(content, RESULT_SET_PER_DOC_CHARS);
+      String truncated = truncateToBudget(ctx, content, "result-set document", ref.id(), perDocChars);
       if (concat.length() > 0) concat.append(DocumentService.SECTION_SEPARATOR);
       concat.append("Document: ").append(ref.id()).append("\n\n").append(truncated);
       Map<String, Object> citation = new LinkedHashMap<>();
@@ -413,6 +451,35 @@ public final class SelectionContextInjector implements ContextInjector {
 
   private static String truncate(String s, int max) {
     return s == null ? "" : (s.length() > max ? s.substring(0, max) : s);
+  }
+
+  /** Cuts to the turn's whole input budget, saying so when the cut actually removed something. */
+  private String truncateToBudget(ConversationContext ctx, String s, String what, String docId) {
+    return truncateToBudget(ctx, s, what, docId, selectionCapChars(ctx));
+  }
+
+  /**
+   * Cuts to a character budget and reports a real drop at INFO (tempdoc 883 decision 3).
+   *
+   * <p>The old cut was silent, and its cap was so far above any real window that the prompt was
+   * cut at the SERVER instead — as a 400, with nothing in our logs saying which selection was too
+   * big. A drop that changes what the model was shown is a fact about the answer, so it is stated.
+   */
+  private String truncateToBudget(
+      ConversationContext ctx, String s, String what, String docId, int capChars) {
+    String cut = truncate(s, capChars);
+    if (s != null && cut.length() < s.length()) {
+      LOG.info(
+          "SelectionContextInjector: {} for {} cut to fit the context budget ({} -> {} chars,"
+              + " ~{} -> ~{} tokens)",
+          what,
+          docId,
+          s.length(),
+          cut.length(),
+          io.justsearch.core.util.TokenEstimation.estimateTokens(s),
+          io.justsearch.core.util.TokenEstimation.estimateTokens(cut));
+    }
+    return cut;
   }
 
   private static int clamp(int v, int lo, int hi) {

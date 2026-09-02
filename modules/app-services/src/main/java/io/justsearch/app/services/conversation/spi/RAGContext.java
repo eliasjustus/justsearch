@@ -13,10 +13,12 @@ import io.justsearch.app.api.DocumentService.ContextSection;
 import io.justsearch.app.api.DocumentService.DocumentRecord;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.RetrieveContextParams;
+import io.justsearch.core.util.ContextBudget;
 import io.justsearch.core.util.DocumentTypeDetector;
 import io.justsearch.core.util.Strings;
 import io.justsearch.core.util.TokenEstimation;
 import io.justsearch.core.util.TokenEstimation.TruncationResult;
+import io.justsearch.indexing.chunking.ChunkSplitter;
 import io.justsearch.indexing.rag.ContextBudgeter;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -147,8 +149,12 @@ public final class RAGContext implements ContextInjector {
    * backend: this constant is the last resort for callers with no observed and no configured
    * window, and over-committing a budget against a window that may not exist is the failure it
    * exists to prevent. The composition root supplies the live observed window instead.
+   *
+   * <p>Tempdoc 883 PR 2: the value now LIVES on {@link ContextBudget}, which is where the whole
+   * precedence walk lives. This alias is kept because this class's tests and javadoc name it, and
+   * because a second literal here would be exactly the fork {@link ContextBudget} exists to end.
    */
-  static final int DEFAULT_CONTEXT_WINDOW_TOKENS = 4096;
+  static final int DEFAULT_CONTEXT_WINDOW_TOKENS = ContextBudget.FALLBACK_WINDOW_TOKENS;
 
   private final DocumentService documents;
   private final Duration timeout;
@@ -231,40 +237,41 @@ public final class RAGContext implements ContextInjector {
   }
 
   /**
-   * Tempdoc 845 — the ONE place this injector decides how many input tokens it may spend.
+   * Tempdoc 845 / 883 decision 3 — the ONE place a conversation request decides how many input
+   * tokens it may spend, and the ONE place the live context window is read.
    *
-   * <p>Both budget consumers (the post-retrieval truncation safety net and the open-retrieval wire
-   * parameter) call this, so they cannot disagree about how much room the prompt has. Both used to
-   * hardcode {@code computeSafeInputBudgetTokens(8192, 1024)} independently — a window that does
+   * <p>Every budget consumer in this turn (the shape of the retrieval ask, the wire
+   * {@code maxContextTokens}, the post-retrieval cut) reads the single {@link ContextBudget} built
+   * from this, so they cannot disagree about how much room the prompt has. Before 845 two of them
+   * hardcoded {@code computeSafeInputBudgetTokens(8192, 1024)} independently — a window that does
    * not exist paired with a reserve that ignored the request, yielding ~5990 tokens of promised
    * input against a real 4096-token window.
    *
-   * @return the input-token budget; 0 when the completion reservation leaves no room at all
+   * <p>Every context injector in this package budgets through here rather than re-reading
+   * {@link OnlineAiService}, so the window walk (observed {@code /props} n_ctx → configured launch
+   * window → {@link ContextBudget#FALLBACK_WINDOW_TOKENS}) exists once. Unknown is never treated as
+   * generous: it falls through to the next most authoritative value.
+   *
+   * @param onlineAi supplier of the online-AI handle; null or an unavailable handle budgets against
+   *     the fallback window
+   * @param ctx the turn, read for the completion reserve the engine published onto it
    */
-  private int inputBudgetTokens(ConversationContext ctx) {
-    return TokenEstimation.computeSafeInputBudgetTokens(
-        contextWindowTokens(), completionReserveTokens(ctx));
+  public static ContextBudget budgetFor(
+      Supplier<OnlineAiService> onlineAi, ConversationContext ctx) {
+    return budgetFor(onlineAi, completionReserveTokens(ctx));
   }
 
   /**
-   * The live context window: observed {@code /props} n_ctx, else the configured launch window, else
-   * the shipped default. Unknown is never treated as generous — it falls through to the next most
-   * authoritative value, and the last of them is the real shipped default, not an invented one.
+   * The same budget for a caller that knows its own completion reserve — a shape runner whose
+   * {@code max_tokens} is its own constant rather than the request's.
    */
-  private int contextWindowTokens() {
+  public static ContextBudget budgetFor(
+      Supplier<OnlineAiService> onlineAi, int completionReserveTokens) {
     OnlineAiService ai = onlineAi == null ? null : onlineAi.get();
-    if (ai != null) {
-      Integer observed = ai.llmContextTokens();
-      if (observed != null && observed > 0) {
-        return observed;
-      }
-      // Both accessors are nullable; configured is only a fallback when nothing was observed.
-      Integer configured = ai.configuredContextTokens();
-      if (configured != null && configured > 0) {
-        return configured;
-      }
-    }
-    return DEFAULT_CONTEXT_WINDOW_TOKENS;
+    return ContextBudget.of(
+        ai == null ? null : ai.llmContextTokens(),
+        ai == null ? null : ai.configuredContextTokens(),
+        completionReserveTokens);
   }
 
   /**
@@ -295,7 +302,10 @@ public final class RAGContext implements ContextInjector {
       question = s;
     }
     List<String> docIds = extractDocIds(body);
-    int topK = extractTopK(body);
+    // Tempdoc 883 decision 3 — ONE budget per request, built before anything is asked for, so the
+    // shape of the ask and the cut that follows it cannot disagree about how much room there is.
+    ContextBudget budget = budgetFor(onlineAi, ctx);
+    int topK = extractTopK(body, budget);
 
     if (question == null || question.isBlank()) {
       return InjectorResult.terminalError(errorEvent("No question provided", "NO_QUESTION"));
@@ -319,7 +329,7 @@ public final class RAGContext implements ContextInjector {
     // (BM25 pre-search discovers relevant documents from the full index).
     RetrievalAttempt attempt;
     if (docIds.isEmpty()) {
-      attempt = tryOpenRetrieval(ctx, question, topK, excludedSourceIds, collection);
+      attempt = tryOpenRetrieval(budget, question, topK, excludedSourceIds, collection);
     } else {
       attempt = tryRetrieveContext(question, docIdSet, topK, excludedSourceIds, collection);
     }
@@ -409,7 +419,7 @@ public final class RAGContext implements ContextInjector {
     // Token-budget truncation safety net. Tempdoc 845 — budgeted against the LIVE window and this
     // request's real completion reserve, so it now actually fires when a turn would overflow
     // instead of waving through ~5990 tokens aimed at a 4096-token window.
-    int budgetTokens = inputBudgetTokens(ctx);
+    int budgetTokens = budget.inputBudget();
     List<ContextSection> sections = retrieval == null ? List.of() : retrieval.sections();
     SectionCut cut = cutContext(context, sections, budgetTokens, wholeDocumentFallback);
 
@@ -709,7 +719,7 @@ public final class RAGContext implements ContextInjector {
   }
 
   private RetrievalAttempt tryOpenRetrieval(
-      ConversationContext ctx,
+      ContextBudget budget,
       String question,
       int topK,
       List<String> excludedSourceIds,
@@ -721,7 +731,7 @@ public final class RAGContext implements ContextInjector {
       // window cannot hold. Floored at 1 because 0 would flip the Worker out of token-aware mode
       // into its 200K-character fallback (RagContextOps: `if (maxContextTokens > 0)`), which is the
       // opposite of what a zero budget means.
-      int budgetTokens = Math.max(1, inputBudgetTokens(ctx));
+      int budgetTokens = Math.max(1, budget.inputBudget());
       RetrieveContextParams params =
           RetrieveContextParams.of(
               question, topK, budgetTokens, Set.of(), excludedSourceIds, collection);
@@ -818,13 +828,28 @@ public final class RAGContext implements ContextInjector {
         .collect(Collectors.toUnmodifiableList());
   }
 
-  private int extractTopK(Map<String, Object> body) {
+  /**
+   * How many passages to ask for.
+   *
+   * <p>An explicit body {@code topK} wins verbatim (the caller asked for a number; config and this
+   * budget must not silently override it — see the {@link #defaultTopK} javadoc).
+   *
+   * <p>Tempdoc 883 decision 3 — the DEFAULT is now derived: how many passages of the corpus's own
+   * chunk size the turn's input budget can actually hold, bounded above by the configured
+   * {@code justsearch.rag.top_k}. That bound is what keeps a large window from asking for 50
+   * passages nobody wants; the derivation is what stops a SMALL window asking for five it cannot
+   * hold, which is the shape tempdoc 845's trimmer existed to clean up after.
+   */
+  private int extractTopK(Map<String, Object> body, ContextBudget budget) {
     Object raw = body == null ? null : body.get("topK");
     if (raw instanceof Number n) {
       int v = n.intValue();
-      return v > 0 ? v : defaultTopK;
+      if (v > 0) {
+        return v;
+      }
     }
-    return defaultTopK;
+    int affordable = budget.inputBudget() / ChunkSplitter.DEFAULT_CHUNK_TOKENS;
+    return Math.max(1, Math.min(defaultTopK, affordable));
   }
 
   private static String asString(Object o) {

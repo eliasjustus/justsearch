@@ -9,6 +9,8 @@ import io.justsearch.app.api.DocumentService.DocumentRecord;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.SamplingParams;
 import io.justsearch.app.services.conversation.shapes.HierarchicalSummarizeShape;
+import io.justsearch.app.services.conversation.spi.RAGContext;
+import io.justsearch.core.util.ContextBudget;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -55,16 +57,20 @@ public final class HierarchicalShapeRunner implements ShapeRunner {
 
   private static final Logger LOG = LoggerFactory.getLogger(HierarchicalShapeRunner.class);
 
-  /** Threshold for using hierarchical vs single-pass summarization. */
-  private static final int HIERARCHICAL_THRESHOLD_TOKENS = 5000;
-
-  /** Target tokens per section when splitting (matches legacy
-   * {@code TokenEstimationUtils.SECTION_TARGET_TOKENS}). */
-  private static final int SECTION_TARGET_TOKENS = 1800;
-
   private static final int SECTION_TIMEOUT_SECONDS = 45;
   private static final int SYNTHESIS_TIMEOUT_SECONDS = 180;
+
+  /**
+   * The completion reserved for one section summary, and for the final synthesis.
+   *
+   * <p>Tempdoc 883 decision 3 — these two are OUTPUT limits, not window fractions: they are the
+   * {@code max_tokens} handed to {@code streamChat}, the same category as
+   * {@code ConversationEngine.DEFAULT_MAX_TOKENS}. They stay constants. What changed is that
+   * {@link #SYNTHESIS_MAX_TOKENS} is now the reserve this runner's {@link ContextBudget} is BUILT
+   * from, so the threshold it derives already accounts for the room the answer will take.
+   */
   private static final int SECTION_MAX_TOKENS = 512;
+
   private static final int SYNTHESIS_MAX_TOKENS = 1024;
 
   private static final String SECTION_SUMMARY_SYSTEM_PROMPT =
@@ -127,17 +133,28 @@ public final class HierarchicalShapeRunner implements ShapeRunner {
       return;
     }
 
-    int totalTokens = estimateTokens(content);
-    LOG.info("Hierarchical summary: docId={} tokens={}", docId, totalTokens);
+    // Tempdoc 883 decision 3 — the shape of this run is derived from the window the server
+    // actually has, not from a 5000-token literal that predates the launch ladder. The reserve is
+    // the synthesis call's own max_tokens, because that is the call the single-pass branch makes.
+    ContextBudget budget = RAGContext.budgetFor(onlineAiSupplier, SYNTHESIS_MAX_TOKENS);
 
-    if (totalTokens < HIERARCHICAL_THRESHOLD_TOKENS) {
+    int totalTokens = estimateTokens(content);
+    LOG.info(
+        "Hierarchical summary: docId={} tokens={} threshold={} window={} ({})",
+        docId,
+        totalTokens,
+        budget.hierarchicalThreshold(),
+        budget.windowTokens(),
+        budget.source());
+
+    if (totalTokens < budget.hierarchicalThreshold()) {
       emitProgress(sink, "standard", "Document is small, using single-pass summarization");
       streamSingleSynthesis(onlineAi, content, docId, false, 0, sink);
       return;
     }
 
     emitProgress(sink, "splitting", "Splitting into sections...");
-    List<String> sections = splitIntoSections(content, SECTION_TARGET_TOKENS);
+    List<String> sections = splitIntoSections(content, budget.sectionTarget());
     int sectionCount = sections.size();
 
     Map<String, Object> sectionsPayload = new LinkedHashMap<>();

@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.agent;
 
-import io.justsearch.configuration.resolved.ConfigStore;
-import io.justsearch.configuration.resolved.ResolvedConfig;
+import io.justsearch.core.util.ContextBudget;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -11,7 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.ToIntFunction;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -20,7 +19,7 @@ import java.util.regex.Pattern;
  * budget by compressing older tool results:
  *
  * <ul>
- *   <li>{@link #truncate(String)} — Layer-2 hard cut at {@code MAX_TOOL_RESULT_CHARS};
+ *   <li>{@link #truncate(String)} — Layer-2 hard cut at {@link #toolResultCapChars()};
  *   <li>{@link #stripSearchExcerpts(String)} — drops the longest per-result field;
  *   <li>{@link #compressToolMessages(List)} — Layer-3: compresses all but the last
  *       {@code keepLastResults} tool messages each iteration.
@@ -70,10 +69,6 @@ final class AgentContextCompressor {
     }
   }
 
-  /** Per-tool-result hard cap. See AgentLoopService's three-layer truncation note. */
-  static final int MAX_TOOL_RESULT_CHARS =
-      Math.max(100, resolveInt(rc -> rc.agent().maxToolResultChars(), 4000));
-
   /** The marker {@link #compressToolOutput} stamps on every output it actually rewrote. */
   static final String COMPRESSED_MARKER = "[compressed-tool-output";
 
@@ -84,19 +79,38 @@ final class AgentContextCompressor {
   private final int minChars;
   private final int keepLastResults;
 
+  /**
+   * The live per-call budget (tempdoc 883 decision 3). The Layer-2 cap used to be a
+   * {@code static final} resolved at class-init, so neither a window change nor a config change
+   * after the first tool call ever reached it; it is now read per truncation.
+   */
+  private final Supplier<ContextBudget> budget;
+
   AgentContextCompressor(boolean enabled, int minChars, int keepLastResults) {
+    this(enabled, minChars, keepLastResults, () -> AgentContextBudgets.forCall(null));
+  }
+
+  AgentContextCompressor(
+      boolean enabled, int minChars, int keepLastResults, Supplier<ContextBudget> budget) {
     this.enabled = enabled;
     this.minChars = minChars;
     this.keepLastResults = keepLastResults;
+    this.budget = budget;
+  }
+
+  /** The Layer-2 per-tool-result cap for the CURRENT window and config. */
+  int toolResultCapChars() {
+    return AgentContextBudgets.toolResultCapChars(budget.get());
   }
 
   /** Layer-2: hard-truncate a single tool result that exceeds the per-result cap. */
-  static String truncate(String output) {
-    if (output == null || output.length() <= MAX_TOOL_RESULT_CHARS) {
+  String truncate(String output) {
+    int cap = toolResultCapChars();
+    if (output == null || output.length() <= cap) {
       return output;
     }
-    return output.substring(0, MAX_TOOL_RESULT_CHARS)
-        + "\n[... truncated, " + (output.length() - MAX_TOOL_RESULT_CHARS) + " chars omitted]";
+    return output.substring(0, cap)
+        + "\n[... truncated, " + (output.length() - cap) + " chars omitted]";
   }
 
   /**
@@ -325,10 +339,5 @@ final class AgentContextCompressor {
     }
     out.add(trimmed);
     return true;
-  }
-
-  private static int resolveInt(ToIntFunction<ResolvedConfig> extractor, int fallback) {
-    ConfigStore cs = ConfigStore.globalOrNull();
-    return cs != null ? extractor.applyAsInt(cs.get()) : fallback;
   }
 }
