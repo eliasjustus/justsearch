@@ -67,18 +67,26 @@ final class WorkerMethvinWatcherTest {
    * remaining-work byte weight is only as good as what each producer records. A watcher enqueue
    * that fell back to the unsized path would be invisible in the aggregate — the sum would simply
    * understate the backlog — so the size is asserted at the call site, not just in the queue.
+   *
+   * <p>Tempdoc 912 item 1: the file is written OUTSIDE the watched root and moved in, so it is
+   * complete at the instant it becomes visible to the watcher. The previous fixture wrote it in
+   * place, which let the event-thread stat race the writer and observe 0 bytes under load (the
+   * flake this fixture removes); the racing case is now pinned deterministically by {@link
+   * #liveEventOnAStillEmptyFileRecordsUnknownSizeNotAKnownZero()}.
    */
   @Test
   @Timeout(15)
   void createEventCarriesTheFilesRealSizeToTheQueue() throws Exception {
     Path root = Files.createDirectory(tempDir.resolve("sized"));
+    Path staging = Files.createDirectory(tempDir.resolve("sized-staging"));
     RecordingQueue queue = new RecordingQueue();
     RecordingDeleteSink sink = new RecordingDeleteSink();
     try (WorkerMethvinWatcher watcher = new WorkerMethvinWatcher(queue, null, sink)) {
       assertTrue(watcher.registerRoot(root, "docs"), "registerRoot must report success");
+
       Thread.sleep(500);
-      String body = "x".repeat(4_096);
-      Path created = Files.writeString(root.resolve("sized.txt"), body);
+      Path staged = Files.writeString(staging.resolve("sized.txt"), "x".repeat(4_096));
+      Path created = Files.move(staged, root.resolve("sized.txt"));
 
       pollForEnqueued(queue, created, 10_000);
       JobQueue.EnqueueEntry entry =
@@ -94,6 +102,65 @@ final class WorkerMethvinWatcherTest {
           Files.size(created),
           entry.sizeBytes(),
           "The watcher must record the file's real size, not the unknown-size sentinel");
+      assertTrue(
+          queue.enqueuedEntries.stream()
+              .filter(e -> e.path().equals(created))
+              .noneMatch(e -> e.sizeBytes() == 0L),
+          "No event for the path may record a KNOWN size of zero; entries: "
+              + new ArrayList<>(queue.enqueuedEntries));
+    }
+  }
+
+  /**
+   * Tempdoc 912 item 1 — the race the old code recorded as fact. A live CREATE notification can
+   * reach the event thread before the writer has flushed a byte, so the stat returns 0 for a file
+   * that is about to be large. Recording that as a KNOWN zero sums it into {@code
+   * PendingBytes.knownBytes} as "0 bytes of work" instead of counting it in {@code
+   * unknownSizeJobs}, silently understating the backlog with nothing marking the estimate
+   * incomplete — the exact tri-state 813 Slice B built the two fields to preserve.
+   *
+   * <p>Fed as a synthetic event so the assertion does not depend on OS scheduling: the file exists
+   * and is empty at event time, which is precisely the state the racing watcher observes. On the
+   * pre-fix code path ({@code EnqueueEntry.stat} straight through) this records {@code 0}.
+   */
+  @Test
+  void liveEventOnAStillEmptyFileRecordsUnknownSizeNotAKnownZero() throws Exception {
+    Path root = Files.createDirectory(tempDir.resolve("racing"));
+    Path stillEmpty = Files.createFile(root.resolve("growing.bin"));
+    RecordingQueue queue = new RecordingQueue();
+    RecordingDeleteSink sink = new RecordingDeleteSink();
+    try (WorkerMethvinWatcher watcher = new WorkerMethvinWatcher(queue, null, sink)) {
+      watcher.handleUpsert(root, "docs", stillEmpty);
+
+      assertEquals(1, queue.enqueuedEntries.size(), "The event must produce exactly one entry");
+      JobQueue.EnqueueEntry entry = queue.enqueuedEntries.get(0);
+      assertEquals(stillEmpty, entry.path(), "The entry must carry the event's path");
+      assertEquals(
+          JobQueue.UNKNOWN_SIZE_BYTES,
+          entry.sizeBytes(),
+          "A zero-byte stat on a live event is 'looked too early', not a known size of zero");
+      assertEquals("docs", queue.lastCollection, "Collection tag must still propagate");
+    }
+  }
+
+  /**
+   * Tempdoc 912 item 1 — the fix must not over-reach: a file that already has content at event
+   * time still records its real size, so the unknown-size mapping is confined to the zero case.
+   */
+  @Test
+  void liveEventOnAWrittenFileRecordsItsRealSize() throws Exception {
+    Path root = Files.createDirectory(tempDir.resolve("settled"));
+    Path written = Files.writeString(root.resolve("settled.txt"), "y".repeat(2_048));
+    RecordingQueue queue = new RecordingQueue();
+    RecordingDeleteSink sink = new RecordingDeleteSink();
+    try (WorkerMethvinWatcher watcher = new WorkerMethvinWatcher(queue, null, sink)) {
+      watcher.handleUpsert(root, "docs", written);
+
+      assertEquals(1, queue.enqueuedEntries.size(), "The event must produce exactly one entry");
+      assertEquals(
+          2_048L,
+          queue.enqueuedEntries.get(0).sizeBytes(),
+          "A settled file's real size must survive the zero-is-unknown mapping");
     }
   }
 

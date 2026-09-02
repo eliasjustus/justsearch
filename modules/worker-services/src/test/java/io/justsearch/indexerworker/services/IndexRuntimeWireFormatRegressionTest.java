@@ -87,6 +87,7 @@ final class IndexRuntimeWireFormatRegressionTest {
     expectedTypes.put("index.runtime.swap_duration_ms", "histogram");
     expectedTypes.put("index.runtime.write_barrier_wait_us", "histogram");
     expectedTypes.put("index.runtime.validation_failure_total", "counter");
+    expectedTypes.put("index.runtime.commit_total", "counter");
 
     for (Map.Entry<String, String> e : expectedTypes.entrySet()) {
       assertTrue(
@@ -208,6 +209,51 @@ final class IndexRuntimeWireFormatRegressionTest {
   }
 
   // ---- helpers ----
+
+  /**
+   * Tempdoc 912 item 2 — {@code index.runtime.commit_total} reaches the NDJSON as ONE cumulative
+   * series per reason, which is the shape jseval's cadence block reads to attribute a run's
+   * commits to their triggers. Asserted with an asymmetric distribution (3 timer / 1 drain) so a
+   * counter that recorded one increment per reason regardless of how many commits fired — or that
+   * pooled every reason into one series — fails instead of passing on symmetry.
+   */
+  @Test
+  void commitTotalCarriesOneCumulativeSeriesPerReason() throws Exception {
+    String ndjson;
+    try (LocalTelemetry telemetry =
+        new LocalTelemetry(
+            tmp,
+            500,
+            "test",
+            "0",
+            "metrics-commit-total.ndjson",
+            List.of(
+                io.justsearch.telemetry.catalog.MetricCatalog.of(
+                    IndexRuntimeMetricCatalog.NAMESPACE,
+                    IndexRuntimeMetricCatalog.DEFINITIONS)))) {
+      WorkerLuceneTelemetryAdapter adapter =
+          new WorkerLuceneTelemetryAdapter(new IndexRuntimeMetricCatalog(telemetry.registry()));
+
+      adapter.onCommit(10L, CommitReason.TIMER);
+      adapter.onCommit(11L, CommitReason.TIMER);
+      adapter.onCommit(12L, CommitReason.TIMER);
+      adapter.onCommit(13L, CommitReason.DRAIN);
+
+      telemetry.flush();
+      ndjson = Files.readString(tmp.resolve("telemetry").resolve("metrics-commit-total.ndjson"));
+    }
+
+    List<String> lines = anyLineWithName(ndjson, "index.runtime.commit_total");
+    assertTrue(
+        lines.stream().anyMatch(l -> l.contains("\"reason\":\"timer\"") && l.contains("\"value\":3")),
+        "commit_total must report 3 for reason=timer; got:\n" + ndjson);
+    assertTrue(
+        lines.stream().anyMatch(l -> l.contains("\"reason\":\"drain\"") && l.contains("\"value\":1")),
+        "commit_total must report 1 for reason=drain; got:\n" + ndjson);
+    assertFalse(
+        lines.stream().anyMatch(l -> l.contains("\"reason\":\"prune\"")),
+        "A reason that never committed must not appear as a series; got:\n" + ndjson);
+  }
 
   private static boolean containsLine(String ndjson, String name, String fragment) {
     for (String line : ndjson.split("\n")) {
