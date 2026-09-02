@@ -5,6 +5,8 @@ status: stable
 description: "Selective adoption of NER entity extraction for Lucene keyword facets with SQLite sidecar disambiguation, deferring full knowledge graph."
 date: 2026-01-22
 updated: 2026-02-11
+probes: none - the premise is a scope judgement (facets now, knowledge graph later), not a code fact; the trigger for revisiting it is a product decision, not a drift a grep can see.
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0007: Entity Faceting Over Full Knowledge Graph

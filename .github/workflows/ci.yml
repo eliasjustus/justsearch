@@ -210,6 +210,21 @@ jobs:
           node scripts/docs/generate-runtime-config-matrix.mjs
           node scripts/governance/run.mjs --gate config-surface --mode gate
 
+      # Tempdoc 884 review B1, same shape as the note above: the kernel's own gate tests
+      # (18 *.test.mjs files) ran NOWHERE -- standalone `node <file>` scripts nobody
+      # invoked. The runner auto-discovers them so a new one is covered the moment it lands.
+      - name: Governance kernel tests (node)
+        run: node scripts/governance/run-all-tests.mjs
+
+      # The fixture self-test asserts each gate's positive/negative fixture still produces
+      # the verdict it claims. --mode gate is load-bearing: in the default warn mode a
+      # mismatch prints and exits 0 (run.mjs:312).
+      - name: Governance gate self-test fixtures
+        run: node scripts/governance/run.mjs --self-test --mode gate
+
+      - name: ADR premise probes (adr-coverage gate)
+        run: node scripts/governance/run.mjs --gate adr-coverage --mode gate
+
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
 

@@ -4,6 +4,10 @@ type: decision
 status: stable
 description: "Use soft boosts (SHOULD clauses) for QU-extracted signals, not hard filters."
 date: 2026-03-28
+probes:
+  - adr-0016-soft-boost-not-filter
+  - adr-0016-no-hard-filter-boost
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0016: Query Understanding Soft-Boost

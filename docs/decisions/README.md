@@ -16,6 +16,48 @@ ADRs complement the explanation docs — they capture *why not* and *what else w
 - **Numbering:** `NNNN-short-title.md` (zero-padded, sequential)
 - **Append-only:** Don't modify Context, Decision, or Consequences after acceptance. Superseded decisions get a status change and a link to the replacement ADR; the original reasoning stays intact.
 - **Cross-references:** ADRs link to the explanation doc that covers the topic in depth.
+- **`probes:`** — every ADR names the mechanical probes that fail when its load-bearing premise drifts (see below).
+- **`last_reviewed:`** — the date the decision was last re-read against the code, `YYYY-MM-DD`.
+
+### Frontmatter: `probes:` and `last_reviewed:`
+
+A decision nobody re-reads becomes prose that outlives its reason. Two frontmatter keys,
+checked by the `adr-coverage` kernel gate, make that mechanical instead of remembered:
+
+```yaml
+probes:
+  - adr-0015-six-mcp-tools
+last_reviewed: 2026-09-02
+```
+
+- **`probes:`** is a YAML list of ids in [`governance/adr-probes.v1.json`](../../governance/adr-probes.v1.json).
+  Each register entry carries the ADR's `premise` in prose plus one mechanical restatement
+  of it. Kinds, in preference order: `test` / `gate` → `grep-absent` / `grep-present`
+  (a symbol, flag or file must / must not exist) → `json-path` (a value in a register is the
+  premise) → `file-set` (every self-declared hand-written mirror under a tree is generated,
+  registered, or a reasoned exception). A **count** (`expect: N`) is legitimate only where
+  the premise *is* the count — ADR-0015's six MCP tools is the instance — never as a general
+  growth ratchet.
+- **What a `test` / `gate` probe actually checks is existence, not correctness.** It asserts
+  that the named test file still declares the pinned member, that the kernel gate id is still
+  registered, or that the `scripts/ci` check still exists *and is still named* by the
+  pre-merge table or a `.github/workflows/` file (a textual reference — the probe reads those
+  files, it does not trace execution). It does **not** run the test or the check — a disabled
+  or gutted test satisfies it. Its job is to notice that an ADR's enforcement was deleted or
+  renamed out from under it; running the enforcement is the enforcement's own job.
+- When a premise has no cheap mechanical form, say so instead of leaving the key off:
+  `probes: none - <reason>`. A live (`accepted…` / `stable…`) ADR with neither — and a bare
+  `probes: none` with no reason counts as neither — raises `adr-coverage/no-probe` (warning).
+- **`last_reviewed:`** older than 183 days raises `adr-coverage/review-stale` (warning), and
+  so does a *missing* `last_reviewed`. Update it when you re-read the decision, not when you
+  edit the file.
+
+**When a probe fails**, the code has drifted away from the decision. The fix is to
+re-examine and amend the ADR (below) — never to edit the probe until it goes green. That
+inversion is the whole point of the register: `adr-coverage/probe-failed` is a prompt to
+re-decide, not a lint to satisfy.
+
+Run it with `node scripts/governance/run.mjs --gate adr-coverage --mode gate`.
 
 ## Template
 
@@ -26,6 +68,9 @@ type: decision
 status: stable
 description: "One-line summary."
 date: YYYY-MM-DD
+probes:
+  - adr-NNNN-<premise-slug>
+last_reviewed: YYYY-MM-DD
 ---
 
 # ADR-NNNN: Decision Title
@@ -56,6 +101,43 @@ ADRs should be reviewed when any of these triggers occur:
 - A follow-up ADR contradicts or narrows a prior decision
 
 Superseded ADRs are retained for historical context but must include a note directing readers to the current approach.
+
+The triggers above are events you have to notice. The two frontmatter keys are the part
+that does not depend on noticing: a failing probe or a stale `last_reviewed` says the
+decision is due for the procedure below. There is no `/adr-review` skill and no cron — the
+gate plus the review window *are* the schedule.
+
+## How to re-examine an ADR
+
+The procedure below is tempdoc 269's, compressed. It is what "re-examine" means when a
+probe fails, a lifecycle trigger fires, or `last_reviewed` goes stale.
+
+1. **Read the ADR as written**, not as remembered. Name its load-bearing premise in one
+   sentence — the claim about the world that, if false, makes the decision wrong. Most
+   drift is a premise that quietly stopped being true, not a decision that was wrong.
+2. **Verify the premise against `main`**, primary source only (`file:line`), never a
+   tempdoc's summary and never the ADR's own prose. If a probe exists, its failure detail
+   already names the drift; confirm it by reading the code it points at.
+3. **Classify the outcome** — exactly one of:
+   - *still true* — update `last_reviewed`, and add a probe if the check you just ran by
+     hand can be written down;
+   - *narrowed* — the decision holds for less than it claims. Amend the description and
+     body to what is actually true, keep the original reasoning intact (append-only), and
+     tighten the probe to the narrower claim;
+   - *superseded* — a later decision replaced it. Set `status`, name the successor, and
+     retire the probe;
+   - *never built* — the decision was accepted and nothing shipped. Retire it rather than
+     leaving an aspiration with a green status; an absence probe (`grep-absent`) keeps it
+     honest if someone starts building it later.
+4. **Amend, don't rewrite.** Context / Decision / Consequences are append-only after
+   acceptance. Corrections go in a dated amendment section at the end of the ADR, with the
+   evidence that forced them.
+5. **Update the register in the same change**: the ADR's `probes:` list, the premise text in
+   `governance/adr-probes.v1.json`, `last_reviewed`, and this file's Decision Log row.
+6. **Route what you found and will not fix here.** A defect the re-examination surfaced goes
+   to the owning tempdoc or its domain register at discovery — see the
+   `log-pre-existing-issues` rule in `CLAUDE.md`. A note nobody is scheduled to read is the
+   failure this mechanism exists to end.
 
 ## Decision Log
 

@@ -4,6 +4,8 @@ type: decision
 status: stable
 description: "Use SHA-256 content hash of the Worker distribution to detect stale JVM processes during development."
 date: 2026-04-06
+probes: none - the build-stamp hash is verified by its own runtime staleness check, which fails at boot rather than at gate time.
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0021: Build-Stamp Content-Hash Design

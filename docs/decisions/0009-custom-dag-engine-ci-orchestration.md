@@ -4,6 +4,8 @@ type: decision
 status: superseded
 description: "Build a custom TypeScript DAG engine for CI script orchestration instead of adopting an off-the-shelf tool. SUPERSEDED 2026-03-16 by commit a9c484f59; retirement completed 2026-05-12 per slice 3a-1-8f §B.14."
 date: 2026-02-23
+probes: none - superseded 2026-03-16; the custom DAG engine was retired (slice 3a-1-8f §B.14) and nothing it decided survives in code.
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0009: Custom DAG Engine for CI Orchestration

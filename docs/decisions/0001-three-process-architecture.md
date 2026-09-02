@@ -4,6 +4,9 @@ type: decision
 status: stable
 description: "Split into Head (UI), Body (indexing), and Brain (inference) processes."
 date: 2026-02-03
+probes:
+  - adr-0001-lucene-owners-pinned
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0001: Use Three Separate OS Processes

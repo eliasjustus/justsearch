@@ -4,6 +4,8 @@ type: decision
 status: stable
 description: "Every metric the JustSearch processes emit flows through a typed `MetricCatalog`. Callsites build `MetricDefinition`s at module load, register them with `LocalTelemetry` at boot, and emit through compile-checked `Counter/Histogram/Gauge/ObservableCounter` instruments. The legacy `Telemetry.counter/timer/histogram/gauge/meter` surface is retired."
 date: 2026-04-25
+probes: none - the retired Telemetry.counter/timer/gauge surface survives only in javadoc that documents its retirement, so a grep-absent probe false-fails on three comment sites (tempdoc 884 §B.3).
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0027: MetricCatalog as the Telemetry Contract

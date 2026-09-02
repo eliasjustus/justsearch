@@ -4,6 +4,9 @@ type: decision
 status: accepted
 description: "JustSearch's Operation registry primitive carries policy fields (risk, confirm, audit, retry, rate-limit, capabilities) on the entry, while MCP keeps equivalent metadata as untrusted hints clients should not trust. The divergence is justified by JustSearch's single-trust-domain threat model and is composed with MCP discipline at the plugin-tier boundary via a trust-tier-aware executor."
 date: 2026-04-30
+probes:
+  - adr-0030-consult-region-present
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0030: Policy on Operations vs MCP-style hints — JustSearch's deliberate divergence

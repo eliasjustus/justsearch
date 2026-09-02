@@ -1,0 +1,360 @@
+{
+  "version": 1,
+  "kind": "adr-premise-probe-register.v1",
+  "tempdoc": 884,
+  "note": "ADR premise probes. An ADR's load-bearing premise is a claim about the code; a probe is the cheapest mechanical restatement of that claim, and it fails when the code drifts away from the decision. Enforced by the adr-coverage kernel gate (rule adr-coverage/probe-failed). Referenced from each ADR's frontmatter as 'probes: [<id>]'. When a probe fails, the fix is to re-examine and amend the ADR per docs/decisions/README.md - never to edit the probe until it passes. Kinds in preference order (tempdoc 884 design decision 2): test/gate first (a named test or an existing enforcement already IS the probe), then absence probes, then counts - and counts only where the premise IS the count (ADR-0015 is the one).",
+  "amendmentProcedure": "docs/decisions/README.md § How to re-examine an ADR",
+  "reviewStaleDays": 183,
+  "probes": [
+    {
+      "id": "adr-0001-lucene-owners-pinned",
+      "adr": "0001",
+      "premise": "The Head process never touches Lucene: only adapters-lucene and the Worker (indexerworker) may depend on Lucene classes.",
+      "kind": "test",
+      "file": "modules/app-launcher/src/test/java/io/justsearch/app/launcher/IndexWriterOwnershipTest.java",
+      "test": "io.justsearch.app.launcher.IndexWriterOwnershipTest#onlyLuceneOwnersMayDependOnLuceneClasses"
+    },
+    {
+      "id": "adr-0002-mmf-layout-pinned",
+      "adr": "0002",
+      "premise": "The MMF signal region is a fixed 64-byte layout whose reserved tail runs exactly to the end of the region — the property that makes a new signal an explicit layout change rather than a silent overwrite.",
+      "kind": "test",
+      "file": "modules/ipc-common/src/test/java/io/justsearch/ipc/mmf/MmfWorkerSignalLayoutV1Test.java",
+      "test": "io.justsearch.ipc.mmf.MmfWorkerSignalLayoutV1Test#reserved1EndsAtMmfSize"
+    },
+    {
+      "id": "adr-0002-mmf-constants-pinned",
+      "adr": "0002",
+      "premise": "The V1 layout's size and its published field offsets are frozen: 64 bytes total, worker gRPC port at offset 20. Moving either is a wire-compatibility break between Head and Worker, not an edit.",
+      "kind": "grep-present",
+      "pattern": "(MMF_SIZE_BYTES = 64|OFFSET_WORKER_GRPC_PORT = 20)",
+      "paths": [
+        "modules/ipc-common/src/main/java/io/justsearch/ipc/mmf/MmfWorkerSignalLayoutV1.java"
+      ],
+      "expect": 2
+    },
+    {
+      "id": "adr-0002-grpc-present",
+      "adr": "0002",
+      "premise": "gRPC carries the structured-data half of the hybrid IPC — the modules on both ends of the boundary actually depend on it, not merely the version catalog.",
+      "kind": "grep-present",
+      "pattern": "libs\\.grpc|io\\.grpc",
+      "paths": [
+        "modules"
+      ],
+      "include": [
+        ".kts"
+      ]
+    },
+    {
+      "id": "adr-0003-lucene-direct",
+      "adr": "0003",
+      "premise": "Lucene is consumed as a library directly.",
+      "kind": "grep-present",
+      "pattern": "org\\.apache\\.lucene:lucene-core",
+      "paths": [
+        "gradle/libs.versions.toml"
+      ]
+    },
+    {
+      "id": "adr-0003-no-search-platform",
+      "adr": "0003",
+      "premise": "No search platform (Elasticsearch / OpenSearch / Solr) is a dependency.",
+      "kind": "grep-absent",
+      "pattern": "elasticsearch|opensearch|solr",
+      "paths": [
+        "gradle/libs.versions.toml",
+        "build.gradle.kts",
+        "settings.gradle.kts"
+      ]
+    },
+    {
+      "id": "adr-0004-gpu-mutual-exclusion",
+      "adr": "0004",
+      "premise": "Backfill yields the GPU when Main has claimed it, and the energy reason stays distinct from the VRAM-conflict reason.",
+      "kind": "test",
+      "file": "modules/worker-services/src/test/java/io/justsearch/indexerworker/loop/ops/LoopPacingPolicyTest.java",
+      "test": "io.justsearch.indexerworker.loop.ops.LoopPacingPolicyTest#gpuYieldIsConflictOnly"
+    },
+    {
+      "id": "adr-0006-citation-scorer-wired",
+      "adr": "0006",
+      "premise": "The CPU cross-encoder prong is wired: the search service owns a CitationScorer and exposes post-hoc citation matching.",
+      "kind": "grep-present",
+      "pattern": "setCitationScorer|isCitationScorerActive|matchCitations",
+      "paths": [
+        "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/GrpcSearchService.java"
+      ]
+    },
+    {
+      "id": "adr-0006-citation-match-ops-wired",
+      "adr": "0006",
+      "premise": "The post-hoc prong is reached from the search path: matchCitations delegates to CitationMatchOps, which owns the CitationScorer. A CitationScorer class that nothing calls would satisfy the ADR's letter and not its decision.",
+      "kind": "grep-present",
+      "pattern": "(citationMatchOps\\.execute\\(|citationMatchOps\\.setCitationScorer\\()",
+      "paths": [
+        "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/GrpcSearchService.java"
+      ],
+      "expect": 2
+    },
+    {
+      "id": "adr-0008-settings-reset-surfaced",
+      "adr": "0008",
+      "premise": "An incompatible settings file is replaced with defaults and the reset is surfaced as a lifecycle condition, not swallowed.",
+      "kind": "test",
+      "file": "modules/app-services/src/test/java/io/justsearch/app/services/settings/SettingsRecoveryNoticeTest.java",
+      "test": "io.justsearch.app.services.settings.SettingsRecoveryNoticeTest#publishAssertsCondition"
+    },
+    {
+      "id": "adr-0008-reset-reason-code",
+      "adr": "0008",
+      "premise": "The reset carries a named lifecycle reason code (SETTINGS_RESET_FROM_CORRUPT).",
+      "kind": "grep-present",
+      "pattern": "SETTINGS_RESET_FROM_CORRUPT",
+      "paths": [
+        "modules/app-api/src/main/java/io/justsearch/app/api/lifecycle/LifecycleReasonCode.java"
+      ]
+    },
+    {
+      "id": "adr-0011-no-remote-shard",
+      "adr": "0011",
+      "premise": "The Remote Shard SPI was never built: no RemoteShard symbol exists in shipped code.",
+      "kind": "grep-absent",
+      "pattern": "RemoteShard",
+      "paths": [
+        "modules",
+        "contracts"
+      ],
+      "include": [
+        ".java",
+        ".kts",
+        ".ts",
+        ".proto"
+      ]
+    },
+    {
+      "id": "adr-0015-six-mcp-tools",
+      "adr": "0015",
+      "premise": "The MCP surface is a small curated tool list, because small models pick badly from long lists. The count IS the decision: 6 tools (answer, search, browse, ingest, status, runtime_manifest).",
+      "kind": "grep-present",
+      "pattern": "tool\\(\\s*\"justsearch_[a-z_]+\"",
+      "paths": [
+        "modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java"
+      ],
+      "expect": 6
+    },
+    {
+      "id": "adr-0016-soft-boost-not-filter",
+      "adr": "0016",
+      "premise": "Query-understanding signals enter the query as soft boosts: both boost sites wrap the clause in BoostQuery(ConstantScoreQuery(...)) so the boost cannot vary with IDF.",
+      "kind": "grep-present",
+      "pattern": "new BoostQuery\\(new ConstantScoreQuery\\(",
+      "paths": [
+        "modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/QueryFilterBuilder.java"
+      ],
+      "expect": 2,
+      "note": "The count is the whole boost population (term boost + range boost), not a growth ratchet: a third boost site is a deliberate ADR-0016 decision about what may be soft-boosted, so it should land with an ADR read."
+    },
+    {
+      "id": "adr-0016-no-hard-filter-boost",
+      "adr": "0016",
+      "premise": "Never apply QU output as a hard filter: a BoostQuery must never be added on a FILTER or MUST clause, which would exclude non-matching documents instead of ranking them lower.",
+      "kind": "grep-absent",
+      "pattern": "new BoostQuery\\(.*Occur\\.(FILTER|MUST)\\b",
+      "paths": [
+        "modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/QueryFilterBuilder.java"
+      ]
+    },
+    {
+      "id": "adr-0017-decomposed-modules-present",
+      "adr": "0017",
+      "premise": "The ai-bridge monolith was split into ai-backend, gpu-bridge and prompt-support.",
+      "kind": "grep-present",
+      "pattern": ":modules:(ai-backend|gpu-bridge|prompt-support)",
+      "paths": [
+        "settings.gradle.kts"
+      ],
+      "expect": 3
+    },
+    {
+      "id": "adr-0017-retired-modules-absent",
+      "adr": "0017",
+      "premise": "ai-bridge, app-ai and ai-worker were deleted, not left behind.",
+      "kind": "grep-absent",
+      "pattern": ":modules:(ai-bridge|app-ai|ai-worker)",
+      "paths": [
+        "settings.gradle.kts"
+      ]
+    },
+    {
+      "id": "adr-0018-layout-flag-absent",
+      "adr": "0018",
+      "premise": "The ADR gates VLM extraction behind JUSTSEARCH_LAYOUT_ENABLED. That flag does not exist in shipped code; routing is per-extension inside a tiered fallback budget.",
+      "kind": "grep-absent",
+      "pattern": "JUSTSEARCH_LAYOUT_ENABLED",
+      "paths": [
+        "modules"
+      ],
+      "include": [
+        ".java",
+        ".kts",
+        ".ts",
+        ".rs",
+        ".json"
+      ]
+    },
+    {
+      "id": "adr-0022-record-builder-present",
+      "adr": "0022",
+      "premise": "API records get their fluent builders from the io.soabase record-builder annotation processor, so fields can evolve additively.",
+      "kind": "grep-present",
+      "pattern": "io\\.soabase\\.record-builder:record-builder-processor",
+      "paths": [
+        "gradle/libs.versions.toml"
+      ]
+    },
+    {
+      "id": "adr-0024-per-user-install",
+      "adr": "0024",
+      "premise": "The NSIS bundle installs per-user (currentUser), non-elevated — the decision that makes post-install model download into LocalAppData work without UAC.",
+      "kind": "json-path",
+      "file": "modules/shell/src-tauri/tauri.conf.json",
+      "pointer": "/bundle/windows/nsis/installMode",
+      "expect": {
+        "equals": "currentUser"
+      },
+      "note": "scripts/ci/check-installer-execution-level.mjs asserts the same thing, but nothing invokes it (not in the root pre-merge table, not in any workflow), so it is not a probe. Routed as a finding rather than fixed here."
+    },
+    {
+      "id": "adr-0026-workflow-triggers-checked",
+      "adr": "0026",
+      "premise": "Self-hosted and specialty workflows stay manually dispatched; the trigger policy is machine-checked, not remembered.",
+      "kind": "gate",
+      "script": "scripts/ci/check-workflow-triggers.mjs"
+    },
+    {
+      "id": "adr-0028-one-http-resolver-caller",
+      "adr": "0028",
+      "premise": "Exactly ONE HTTP entry point may resolve a path hash. The approved-caller allowlist contains exactly one io.justsearch.ui.api Controller (IndexingController, which owns POST /api/library/resolve-hash); a second one is the privacy-contract change the ADR exists to make deliberate.",
+      "kind": "grep-present",
+      "pattern": "\"io\\.justsearch\\.ui\\.api\\.\\w*Controller\"",
+      "paths": [
+        "modules/app-launcher/src/test/java/io/justsearch/app/launcher/LibraryResolveHashOnlyCallerPin.java"
+      ],
+      "expect": 1
+    },
+    {
+      "id": "adr-0030-consult-region-present",
+      "adr": "0030",
+      "premise": "The Operation-policy divergence is delivered where the code is edited: a consult-register region points the agent at this ADR.",
+      "kind": "json-path",
+      "file": "governance/consult-register.v1.json",
+      "pointer": "",
+      "expect": {
+        "contains": "docs/decisions/0030-policy-on-operations-vs-mcp-hints.md"
+      }
+    },
+    {
+      "id": "adr-0032-no-react",
+      "adr": "0032",
+      "premise": "The frontend is Lit web components; the React stack is retired, not dormant.",
+      "kind": "grep-absent",
+      "pattern": "react",
+      "paths": [
+        "modules/ui-web/package.json"
+      ]
+    },
+    {
+      "id": "adr-0036-observed-happening-gate",
+      "adr": "0036",
+      "premise": "Resource carries a typed Category axis, and operator-trace data is not Resource truth — the boundary is gate-enforced.",
+      "kind": "gate",
+      "gate": "observed-happening"
+    },
+    {
+      "id": "adr-0038-no-unregistered-fe-mirror",
+      "adr": "0038",
+      "premise": "Hand-written mirrors of the wire contract are forbidden: every consumer-side type under modules/ui-web/src is either mechanically generated (registered in governance/contract-surfaces.v1.json) or a declared, reasoned exception. The ADR's own Rationale names three drift sites -- api/domains/*, shell-v0/handshake/capabilities-types.ts and api/schemas.ts -- so the scan is the whole source tree, not one directory.",
+      "kind": "file-set",
+      "dir": "modules/ui-web/src",
+      "extension": ".ts",
+      "excludePathContains": [
+        "/generated/",
+        ".test.ts",
+        "__fixtures__"
+      ],
+      "mirrorMarker": "hand-written (typescript |ts )?(mirror|view|types|interfaces)|hand-mirror|hand mirror|FE mirror types|hand-authored mirror",
+      "registeredIn": "governance/contract-surfaces.v1.json",
+      "exceptions": [
+        {
+          "file": "modules/ui-web/src/api/types/surface.ts",
+          "reason": "Hand-written mirror of Surface/SurfaceRef/Audience/Placement/SurfaceConsumes (slice 449 phase 5). Tempdoc 884 design decision 6 schedules generating it via scripts/codegen/gen-wire-schema-types.mjs -- PR 2 / 0038 amendment decides."
+        },
+        {
+          "file": "modules/ui-web/src/api/types/conversation-shape.ts",
+          "reason": "Hand-written mirror of ConversationShape/ConversationShapeRef (slice 491 section 9.D). Same class as surface.ts -- PR 2 / 0038 amendment decides."
+        },
+        {
+          "file": "modules/ui-web/src/api/types/selection.ts",
+          "reason": "Hand-written mirror of the Java sealed sums under app-api/selection (tempdoc 526); sealed-sum discriminated unions are not expressible by the current record-to-JSON-Schema-to-TS emitter -- PR 2 / 0038 amendment decides."
+        },
+        {
+          "file": "modules/ui-web/src/shell-v0/handshake/capabilities-types.ts",
+          "reason": "Hand-written TS view of the /infra/capabilities payload, self-declared at :3-10 as mirroring CapabilitiesService.CapabilitiesView in modules/app-observability, and absent from contract-surfaces.v1.json -- PR 2 / 0038 amendment decides."
+        },
+        {
+          "file": "modules/ui-web/src/api/domains/indexing.ts",
+          "reason": "Carries no mirror marker but is one: ApplyExcludesResponse/PatternMatch (:95,:100) are mirrored FROM the FE by ExcludesService.ExcludesResult (modules/.../ExcludesService.java:35-38 says so in its javadoc) -- PR 2 / 0038 amendment decides."
+        },
+        {
+          "file": "modules/ui-web/src/api/schemas.ts",
+          "reason": "Named by ADR-0038's Rationale as the hand-written Zod half of the drift; tempdoc 683 reduced it to one deliberately permissive .loose() agent-session schema, and the rest now validate against generated projections -- PR 2 / 0038 amendment decides whether the remainder is admissible."
+        },
+        {
+          "file": "modules/ui-web/src/shell-v0/utils/aiInstallPoll.ts",
+          "reason": "Marker false positive: :27 says this USED to be a hand-written mirror, retired by tempdoc 840 Phase 4. Listed so the marker scan stays green without weakening the regex."
+        }
+      ],
+      "note": "registry.ts and diagnostic.ts need no exception -- both appear in governance/contract-surfaces.v1.json (:145,151,157,163,169) as declared consumers of generated projections. The probe scans every .ts under modules/ui-web/src (excluding generated/, tests and fixtures) for a self-declared mirror marker; a marked file must be registered or excepted. Unmarked mirrors are invisible to the scan by construction, which is why the two known ones (indexing.ts, schemas.ts) are declared here explicitly. When PR 2 generates surface.ts and registers it, drop its exception -- the probe fails on a stale exception, so the handshake is mechanical."
+    },
+    {
+      "id": "adr-0039-one-contract-category",
+      "adr": "0039",
+      "premise": "The ADR generalizes 0038 to every cross-language agreement as a Category. Exactly one Category (wire) is registered today; the others are unbuilt.",
+      "kind": "json-path",
+      "file": "contracts/registry.v1.json",
+      "pointer": "/categories",
+      "expect": {
+        "count": 1
+      }
+    },
+    {
+      "id": "adr-0042-live-witness-checked",
+      "adr": "0042",
+      "premise": "Consumer presence is checked over the LIVE ContributionRegistry, not only the static snapshot.",
+      "kind": "gate",
+      "script": "scripts/ci/check-live-witness.mjs"
+    },
+    {
+      "id": "adr-0043-no-per-language-levers",
+      "adr": "0043",
+      "premise": "No per-language analysis artifact (analyzer field, stopwords, spelling dictionary, curated synonyms) may be authored; analysis is locale-invariant.",
+      "kind": "gate",
+      "script": "scripts/ci/check-language-agnostic-analysis.mjs"
+    },
+    {
+      "id": "adr-0044-fact-lane-triggers-checked",
+      "adr": "0044",
+      "premise": "Public hosted CI runs on push and pull request in stable fact lanes; every workflow's trigger set is policy-checked.",
+      "kind": "gate",
+      "script": "scripts/ci/check-workflow-triggers.mjs"
+    },
+    {
+      "id": "adr-0045-history-policy-checked",
+      "adr": "0045",
+      "premise": "Public main receives curated squash commits only; the repository's history-publication settings are machine-checked.",
+      "kind": "gate",
+      "script": "scripts/ci/check-repo-history-policy.mjs"
+    }
+  ]
+}

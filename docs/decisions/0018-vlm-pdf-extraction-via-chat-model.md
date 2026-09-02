@@ -4,6 +4,9 @@ type: decision
 status: stable
 description: "Use existing chat model's vision capability (Qwen 3.5 VLM) for PDF layout extraction instead of adding Docling as a Python sidecar."
 date: 2026-03-23
+probes:
+  - adr-0018-layout-flag-absent
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0018: VLM PDF Extraction via Chat Model
