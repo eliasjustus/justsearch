@@ -307,13 +307,17 @@ public record InferenceConfig(
    * Classifies the stored model path by <em>who wrote it</em>, using the resolution trace the
    * config chain already records plus the {@code .source} marker sysprop.
    *
-   * <p>The trace is the honest seam. A settings.json value now arrives as {@code settings.json} at
-   * ordinal 300 — the boot-time promotion that made it look like {@code jvm_arg} was retired
-   * (tempdoc 883 §C.5c) — so that case classifies itself. The marker still matters for the writers
-   * that push a path straight into a system property ({@code AiInstallService},
-   * {@code AiPackImportService}, the CUDA auto-select): those DO arrive as {@code jvm_arg},
-   * indistinguishable from an operator {@code -D} by value alone, which is why
-   * {@link ModelPathSource#isSystemOwned(String)} is shared rather than re-derived per call site.
+   * <p>The trace is the honest seam, and since tempdoc 883 §C.5c (#605) it is the WHOLE seam for
+   * this key. Every settings-borne chat-model path — the boot one, the installer's, the pack
+   * import's — now arrives as {@code settings.json} at ordinal 300, because none of them is copied
+   * into a system property any more. So a {@code jvm_arg} here really is an operator {@code -D},
+   * and the marker branch below is inert: it is retained, not relied on, for tempdoc 842's
+   * profile-persistence writer, which would be the first system writer to need labelling again.
+   *
+   * <p>That structural change is what closes 842's landmine at the root. The rule used to need a
+   * marker because every installed data dir carried a promoted 9B path that read exactly like an
+   * operator lock; with no promotion left, "an explicit profile supersedes a stored settings path"
+   * follows from the ordinal chain alone.
    *
    * <p>Unknown/absent provenance is treated as an operator flag unless the marker says otherwise:
    * when in doubt, an explicit path stays sacred.

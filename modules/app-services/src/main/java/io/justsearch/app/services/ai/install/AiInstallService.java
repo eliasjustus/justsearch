@@ -14,7 +14,6 @@ import io.justsearch.app.api.OperationLeaseService;
 import io.justsearch.app.services.runtimestate.RuntimeReconciler;
 import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.configuration.PlatformPaths;
-import io.justsearch.configuration.ModelPathSource;
 import io.justsearch.configuration.SystemPropertyUtils;
 import io.justsearch.configuration.model.CapabilityTier;
 import io.justsearch.configuration.model.DownloadProfile;
@@ -1807,18 +1806,16 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     s.setLlmModelPath(chatModelPath.toAbsolutePath().toString());
     settingsStore.save(s);
 
-    // Tempdoc 842 (S2): the marker MUST be written next to the value. The bare
-    // setSysPropIfBlank left justsearch.llm.model_path unlabelled, so for the rest of a
-    // just-installed JVM every reader classified the installer's own path as operator-owned —
-    // EffectiveConfigController reported owner "unknown", and the §2.3 precedence rule would have
-    // treated a re-derivable installer path as a sacred operator lock. The value written here is a
-    // copy of the settings row saved two lines up, which is exactly what UI_SETTINGS means.
-    SystemPropertyUtils.setSysPropIfBlankWithSource(
-        "justsearch.llm.model_path",
-        chatModelPath.toAbsolutePath().toString(),
-        ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH,
-        ModelPathSource.UI_SETTINGS);
-
+    // No sysprop write here (883 §C.5c residue, #605 review S1). The save above plus the rebuild
+    // below already deliver this path at ordinal 300 (settings.json) through
+    // ConfigStoreRebuilder.contributeUiSettings, and every reader takes it from ResolvedConfig —
+    // InferenceConfig reads rc.ai().llmModelPath(), and LLM_MODEL_PATH is not in
+    // WorkerSpawner.WORKER_FORWARDED_PROPS, so no process boundary depends on the sysprop.
+    // Writing it as well put a GUI/installer value at ordinal 500, which is the precedence lie
+    // tempdoc 842 (S2) then needed a companion `.source` marker to un-tell: with the write gone the
+    // marker has nothing to correct, and the installer's path classifies as STORED_SETTINGS —
+    // re-derivable, supersedable by an explicit chat profile — from the ordinal chain alone. That
+    // is 842 §2.3's rule reached structurally instead of by annotation.
     ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), s);
 
     OnlineAiService onlineAi = this.onlineAi;
@@ -1879,6 +1876,17 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
       String absolute = modelDir.toAbsolutePath().toString();
       feature.setter().accept(absolute);
+      // This sysprop write SURVIVES the 883 promotion retirement, and not by oversight (#605
+      // review S1). Unlike the chat model path it is load-bearing across a process boundary: the
+      // Worker is respawned immediately after this step (ConfigurationStage's restart gate), and
+      // WorkerSpawner forwards these five keys as `-D` args read via EnvRegistry.get(), i.e. from
+      // the HEAD'S SYSPROPS. The ordinal-450 worker snapshot cannot carry them instead, because
+      // ResolvedConfig.toWorkerSnapshot is called exactly once, at boot (HeadlessApp.resolveConfig),
+      // so the file on disk predates this install and knows nothing about the models it just
+      // landed. Deleting this line would re-open tempdoc 374 alpha.19 Bug J-1: SPLADE/NER/reranker
+      // silently disabled after Install AI because the Worker saw modelPath=null. The real fix is
+      // to make the snapshot re-writable at runtime, which is a separate change; until then this is
+      // a knowingly-kept ordinal-500 write, not a forgotten one.
       SystemPropertyUtils.setSysPropIfBlank(feature.sysProp(), absolute);
       dirty = true;
     }

@@ -19,8 +19,6 @@ import io.justsearch.app.api.OperationLeaseService;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.PlatformPaths;
-import io.justsearch.configuration.ModelPathSource;
-import io.justsearch.configuration.SystemPropertyUtils;
 import io.justsearch.app.services.config.ConfigStoreRebuilder;
 import io.justsearch.app.api.InstalledPacksRecord;
 import io.justsearch.app.api.EnterprisePolicyService;
@@ -609,14 +607,9 @@ public final class AiPackImportService implements io.justsearch.app.api.AiPackIm
     s.setLlmModelPath(chatModel.toAbsolutePath().toString());
     settingsStore.save(s);
 
-    // Tempdoc 842 (S2): same unmarked-write hole as AiInstallService.applySettings — the pack
-    // import writes the settings row and then the sysprop, so the sysprop is a copy of settings and
-    // must say so. Unlabelled, it read as an operator lock for the rest of the JVM's life.
-    SystemPropertyUtils.setSysPropIfBlankWithSource(
-        "justsearch.llm.model_path",
-        chatModel.toAbsolutePath().toString(),
-        ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH,
-        ModelPathSource.UI_SETTINGS);
+    // No sysprop write here — same reasoning as AiInstallService.applySettings (883 §C.5c residue,
+    // #605 review S1). The save above and the rebuild below deliver this path at ordinal 300, and
+    // the sysprop copy only added an ordinal-500 claim that a `.source` marker then had to correct.
 
     // Rebuild ConfigStore so readers see updated model paths.
     ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), s);
