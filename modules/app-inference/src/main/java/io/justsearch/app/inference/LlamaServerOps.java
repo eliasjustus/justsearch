@@ -981,6 +981,13 @@ final class LlamaServerOps {
    * existing generation is untouched and the only cost is that this launch appends to the previous
    * log. A {@code .rotating} left behind by a failure between the two renames is bounded — the next
    * launch replaces it — and is covered by the row's {@code logs/llama-server.log.*} glob.
+   *
+   * <p>The partial case, traced rather than assumed: if the {@code .1 → .2} shift fails AFTER
+   * {@code .2} was pruned, the just-rotated log is stranded in {@code .rotating} and the next launch
+   * replaces it, so that one generation is lost — while {@code .1} still holds the older log and the
+   * live file is fresh. Bounded and best-effort by design: this is a diagnostic artifact whose row
+   * declares {@code ROTATE_OR_PRUNE_DIAGNOSTIC_ARTIFACT}, so losing a generation to a filesystem
+   * error costs post-mortem depth, never user state — and never the server's start.
    */
   private static void rotateServerLogGenerations(Path logFile) {
     if (!Files.exists(logFile)) {

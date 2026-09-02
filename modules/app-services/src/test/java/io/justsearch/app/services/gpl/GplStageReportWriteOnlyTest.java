@@ -38,8 +38,15 @@ import tools.jackson.databind.json.JsonMapper;
  *       only looked at method names. A future reader — a status endpoint surfacing the last sweep,
  *       say — makes the register row's recoverability claim false, and fails here rather than
  *       shipping.
- *       <p>Stated limit: the walk covers {@code modules/&#42;&#42;/src/main/java}, so a reader added
- *       outside the Java production trees (a script, the Rust shell) is not caught here.
+ *       <p>Stated limits, so this is not read as stronger than it is. The walk covers
+ *       {@code modules/&#42;&#42;/src/main/java}, so a reader added outside the Java production
+ *       trees (a script, the Rust shell) is not caught. The bind-then-read check is
+ *       single-file and single-statement: it misses a bound {@code Path} PASSED to another class
+ *       (the read then lives in a file that never names a report type) and a field binding
+ *       ({@code this.reportPath = …write(…)}), because the read site spells it {@code this.} while
+ *       the captured name does not. Both would need call-graph analysis rather than a text scan;
+ *       what this catches is the shape an incremental edit actually takes — a read added beside
+ *       the existing binding.
  *   <li><b>A torn report costs exactly a rerun.</b> Garbage at the report path is fully replaced by
  *       the next {@code write(...)}, with no merge of the old bytes and no read of them first.
  * </ol>
@@ -132,7 +139,12 @@ final class GplStageReportWriteOnlyTest {
     }
   }
 
-  /** The read calls a consumer of a report path would plausibly use. */
+  /**
+   * The read calls a consumer of a report path would plausibly use. Both the static-constant
+   * ({@code MAPPER}) and instance-field ({@code mapper} / {@code objectMapper}) spellings are
+   * listed because this repo uses all of them in production today — a check that knew only the
+   * SHOUTING one would miss a reader written in the more common style.
+   */
   private static final List<String> READ_CALLS =
       List.of(
           "Files.readString",
@@ -142,7 +154,11 @@ final class GplStageReportWriteOnlyTest {
           "Files.newInputStream",
           "Files.lines",
           "MAPPER.readValue",
-          "MAPPER.readTree");
+          "MAPPER.readTree",
+          "mapper.readValue",
+          "mapper.readTree",
+          "objectMapper.readValue",
+          "objectMapper.readTree");
 
   /** Variable names a source binds from {@code …Report.write(...)} / {@code …reportPathFor(...)}. */
   private static Set<String> boundReportPathVariables(String source) {

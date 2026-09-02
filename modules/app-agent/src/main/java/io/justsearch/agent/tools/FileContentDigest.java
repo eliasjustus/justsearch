@@ -80,7 +80,17 @@ final class FileContentDigest {
     }
   }
 
-  /** Total bytes of every regular file beneath {@code root}, from directory metadata only. */
+  /**
+   * Total bytes of every regular file beneath {@code root}, from directory metadata only.
+   *
+   * <p>The cap this feeds cannot bound the WALK itself: a directory junction that points at an
+   * ancestor (Windows reparse points are not symlinks, so they are not skipped the way
+   * {@code walkFileTree} skips a symlink by default) makes the traversal revisit the same subtree
+   * until it exceeds the path limit and throws. That throw is the safe end of the story —
+   * {@link #of(Path, long)} catches {@code IOException}, yields no digest, and the undo therefore
+   * PRESERVES rather than deletes. Fail-safe, not fail-open, which is why it is documented rather
+   * than special-cased.
+   */
   private static long treeSize(Path root) throws IOException {
     long[] total = {0L};
     Files.walkFileTree(

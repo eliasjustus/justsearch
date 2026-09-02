@@ -288,7 +288,8 @@ could not be written down at all.
 ## §E Open items
 
 1. **A transcript written while the Worker is down is never indexed.** `writeAndIndex` skips
-   `submitBatch` when the knowledge client is null (`AgentHistoryIndexer.java:190`), on the LIVE path
+   `submitBatch` when the knowledge client is null (`AgentHistoryIndexer.java:265-272`, the guard at
+   `:271`), on the LIVE path
    as well as the reconciliation path, and the next reconciliation sees a healthy file and skips it.
    This is pre-existing and wider than item 1 (any run finishing while the Worker is down produces an
    un-indexed transcript, permanently); item 1 recovers the transcript FILE, which is the durable
@@ -302,8 +303,8 @@ could not be written down at all.
    Delayed, never lost.
 4. **A reconciliation pass costs a few filesystem operations PER PERSISTED RUN, on every boot and
    every unlock** (review S2-3). `MAX_REBUILDS_PER_PASS` bounds the rebuilds, not the scan:
-   `AgentHistoryIndexer.java:169-171` stats every session the caller supplies, and
-   `HeadAssembly.java:648` asks `listSessions(100_000)`, which reads and sorts every run's meta
+   `AgentHistoryIndexer.java:175` stats every session the caller supplies, and
+   `HeadAssembly.java:649` asks `listSessions(100_000)`, which reads and sorts every run's meta
    (`AgentRunStore.java:368-397`). Off the boot thread (verified) and small at realistic run counts,
    but per-run rather than constant. Mitigation, not taken here because it adds durable state to a
    lane that is closing one: either a per-pass **scan** cap (stat at most N sessions, newest first,
@@ -316,8 +317,8 @@ could not be written down at all.
    tested: above it no digest is recorded and the undo preserves rather than deletes. What is NOT
    done is moving the hash off the tool-call thread (it would have to complete before the journal is
    finalized, so it is a real ordering constraint, not a scheduling one).
-6. **The verify→delete window is not atomic** (review S2-5): `FileOperationsTool.java:311` reads the
-   digest, `:319-331` deletes. A write landing in between is deleted unverified. Accepted, with the
+6. **The verify→delete window is not atomic** (review S2-5): `FileOperationsTool.java:312` reads the
+   digest, `:329` (tree) and `:333` (file) delete. A write landing in between is deleted unverified. Accepted, with the
    reason recorded at the site and in the row: closing it needs an exclusive lock on a file the USER
    owns held across both operations. It narrows an unbounded exposure to a microsecond one; it is
    not a guarantee.
