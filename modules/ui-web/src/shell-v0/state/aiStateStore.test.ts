@@ -696,3 +696,37 @@ describe('computeRealized — tempdoc 644 realized engine projection', () => {
     expect(r.embed.loaded).toBe(true);
   });
 });
+
+describe('aiStateStore — derived context window (tempdoc 883 decision 1 / ADR-0047)', () => {
+  beforeEach(() => __resetAiStateForTest());
+  afterEach(() => __resetAiStateForTest());
+
+  const feedInference = (inf: Record<string, unknown>) =>
+    __feedForTest({ inference: inf as unknown as InferenceSnapshot });
+
+  it('projects the wire rung/reason/slots/kvType beside the OBSERVED llmContextTokens', () => {
+    feedInference({
+      mode: 'online',
+      available: true,
+      llmContextTokens: 32768,
+      contextWindow: { rung: 32768, reason: 'top-rung', slots: 2, kvType: 'q8_0', freeVramBytes: 9573388288 },
+    });
+    const r = getAiState().runtime;
+    // Two distinct facts, kept distinct: observation first, intent alongside it.
+    expect(r.contextWindow).toBe(32768);
+    expect(r.contextWindowDerived).toEqual({ rung: 32768, reason: 'top-rung', slots: 2, kvType: 'q8_0' });
+  });
+
+  it('no contextWindow block (adopted/external engine) → null, with the observation untouched', () => {
+    feedInference({ mode: 'online', available: true, llmContextTokens: 8192 });
+    expect(getAiState().runtime.contextWindow).toBe(8192);
+    expect(getAiState().runtime.contextWindowDerived).toBeNull();
+  });
+
+  it('a rung of 0 is NOT a derived window — it is the absent block, and must not render as "0"', () => {
+    // A `contextWindow: {}` (or an explicit 0) reaches the FE as `rung: undefined | 0`. Passing it
+    // through would put a rung of zero on the Brain/Settings readout as if it were a real launch.
+    feedInference({ mode: 'online', available: true, llmContextTokens: 8192, contextWindow: { rung: 0 } });
+    expect(getAiState().runtime.contextWindowDerived).toBeNull();
+  });
+});

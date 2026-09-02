@@ -86,12 +86,32 @@ export interface RuntimeManifestView {
    * `READY` | `DEGRADED` | `OFFLINE` | `RECOVERING`). `required` reports
    * whether inference is configured at all — `required=false` with
    * `phase=OFFLINE` is the expected state, not a failure.
+   *
+   * Tempdoc 883 decision 1 (backend `RuntimeManifest.AiInfo`) — `contextWindow` is the window the
+   * engine this process launched was actually started with, and why: `rung` in tokens, `reason` one
+   * of `top-rung` / `override` / `stepped-from:<planned rung>`, plus the slot count, KV cache type
+   * and the NVML free VRAM recorded at plan time. Null when this process launched no server
+   * (nothing started yet, or an adopted external instance whose window it did not choose).
+   *
+   * This is INTENT, not observation: the window the running server reports (`/props` `n_ctx`,
+   * published as `llmContextTokens`) stays authoritative — never present one as the other
+   * (ADR-0047). The SAME record is published on `/api/inference/status.contextWindow`, which is
+   * the transport the shell actually renders it from (`state/aiStateStore.ts` → the
+   * `core.ai.contextWindow` fact → Brain / Settings); it is typed here so a consumer reading the
+   * manifest sees the full AI block rather than a silently-narrower copy of it.
    */
   ai?: {
     phase: string;
     required: boolean;
     pendingReason?: string | null;
     readyAt?: string | null;
+    contextWindow?: {
+      rung?: number;
+      reason?: string | null;
+      slots?: number;
+      kvType?: string | null;
+      freeVramBytes?: number | null;
+    } | null;
   } | null;
   /**
    * Tempdoc 501 Phase 30 (§13.4.2): typed reachability axis. Each

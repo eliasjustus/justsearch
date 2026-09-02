@@ -273,6 +273,7 @@ describe('BrainSurface — the status card sentence (807 Part A)', () => {
     modelId: 'qwen3-4b',
     modelLabel: 'Qwen3 4B',
     contextWindow: 8192,
+    contextWindowDerived: null,
     gpu: null,
     installed: UNKNOWN as Maybe<boolean>,
     installing: UNKNOWN as Maybe<boolean>,
