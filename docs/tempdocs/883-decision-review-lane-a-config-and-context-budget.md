@@ -1683,7 +1683,7 @@ seed was reachable, the *runner* was not.
    `EffectiveConfigController` still reads their markers at `:329` and `:454`. Retiring them is the
    same mechanical move this PR made three times; it is a tracked item, not a silent drop, and it is
    the natural next slice for whoever picks up 883's residue.
-   **RESOLVED by the wave-1 residue PR (`worktree-resid-product`).** Both promotions are deleted;
+   **RESOLVED by the wave-1 residue PR #605.** Both promotions are deleted;
    both keys already reached the resolver at ordinal 300 via
    `ConfigStoreRebuilder.contributeUiSettings`, so no reader lost its value (the Worker gets
    `justsearch.index.base_path` from the ordinal-450 snapshot, which `ResolvedConfig.toWorkerSnapshot`
@@ -1718,7 +1718,7 @@ Nothing from the lane's scope table remains: items 8, 9 and 22 are implemented. 
 named above and below —
 
 - ~~the two remaining `HeadlessApp` promotions (§C.5c (2))~~ — **done** in the wave-1 residue PR
-  (`worktree-resid-product`), together with §C.5c (1)'s snapshot-ordering residue;
+  #605, together with §C.5c (1)'s snapshot-ordering residue;
 - the pre-merge-table row that does not fit the always-loaded budget (§C.4c (2));
 - the `DocAccess` / `BatchDocAccess` 200,000-char prompt injections (PR 2 §C.4b (5));
 - routing `AgentLoopService` through `ContextBudget` (PR 2 §C.6b);
