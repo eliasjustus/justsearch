@@ -31,6 +31,7 @@ import io.justsearch.configuration.model.ModelRegistryLoader;
 import io.justsearch.configuration.model.ModelVariant;
 import io.justsearch.configuration.model.SkipCause;
 import io.justsearch.configuration.resolved.ConfigStore;
+import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.app.services.config.ConfigStoreRebuilder;
 import io.justsearch.app.api.EffectivePolicy;
 import io.justsearch.app.api.EnterprisePolicyService;
@@ -1904,9 +1905,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * auto-select sees the populated dir). This method closes the gap inside a
    * single Install-AI-then-apply cycle.
    *
-   * <p>Respects user overrides: if the server.exe sysprop is already set with
-   * a non-{@code auto_selected_cuda12} source (env var, settings.json,
-   * operator config), the explicit choice wins.
+   * <p>Respects user overrides: if a server.exe is already RESOLVED with a
+   * non-{@code auto_selected_cuda12} source (env var, settings.json, operator
+   * config), the explicit choice wins — see {@link #serverExeIsUserOwned}.
    *
    * @return true when the cuda12 server.exe was selected; false when the binary is absent or a user
    *     override was respected
@@ -1923,19 +1924,14 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           cuda12Exe);
       return false;
     }
-    // observations.md fix: migrated from raw sysprop reads to typed
-    // EnvRegistry.SERVER_EXE / SERVER_EXE_SOURCE. Closes the alpha.17
-    // build-fix exemption marker.
-    String existingExe =
-        System.getProperty(io.justsearch.configuration.EnvRegistry.SERVER_EXE.sysProp(), "");
-    String existingSrc =
-        System.getProperty(
-            io.justsearch.configuration.EnvRegistry.SERVER_EXE_SOURCE.sysProp(), "");
-    if (!existingExe.isBlank() && !"auto_selected_cuda12".equals(existingSrc)) {
+    ConfigStore store = ConfigStore.globalOrNull();
+    ResolvedConfig resolved = store == null ? null : store.get();
+    if (serverExeIsUserOwned(resolved)) {
       log.info(
-          "alpha.15: {} already set (source={}); respecting user override",
-          io.justsearch.configuration.EnvRegistry.SERVER_EXE.sysProp(),
-          existingSrc);
+          "alpha.15: justsearch.server.exe already resolved to {} (source={}); respecting user"
+              + " override",
+          resolved.ai().serverExe(),
+          resolved.ai().serverExeSource());
       return false;
     }
     String absPath = cuda12Exe.toAbsolutePath().toString();
@@ -1949,6 +1945,30 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), s);
     log.info("alpha.15: server.exe set to cuda12 variant: {}", absPath);
     return true;
+  }
+
+  /**
+   * True when a server executable is already resolved and was NOT chosen by a previous cuda12
+   * auto-selection — i.e. someone (env var, settings.json, operator {@code -D}) made an explicit
+   * choice that {@link #applyCudaServerExe} must not overwrite.
+   *
+   * <p>Reads the RESOLVED config rather than the {@code justsearch.server.exe} system property.
+   * Tempdoc 883 decision 4 slice 2 deleted the settings-to-sysprop promotion, so a GUI-chosen
+   * executable no longer appears in that property at all; keeping the old sysprop read would have
+   * made this guard fall through and silently replace the user's choice — including writing the
+   * cuda12 path back into their persisted {@code UiSettings}. The resolved value carries the whole
+   * ordinal chain (settings.json 300, env 400, {@code -D} 500), which is strictly more than the
+   * system property ever did.
+   *
+   * <p>Package-private and static so the guarantee is testable without an installer.
+   *
+   * @param resolved the current resolved config, or {@code null} when no store is published yet
+   */
+  static boolean serverExeIsUserOwned(ResolvedConfig resolved) {
+    if (resolved == null) return false;
+    Path exe = resolved.ai().serverExe();
+    if (exe == null || exe.toString().isBlank()) return false;
+    return !"auto_selected_cuda12".equals(resolved.ai().serverExeSource());
   }
 
   /**

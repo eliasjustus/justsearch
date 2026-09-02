@@ -41,8 +41,6 @@ import org.slf4j.bridge.SLF4JBridgeHandler;
  */
 public class HeadlessApp {
   private static final Logger log = LoggerFactory.getLogger(HeadlessApp.class);
-  private static final tools.jackson.databind.ObjectMapper JSON =
-      new tools.jackson.databind.ObjectMapper();
 
   // Tempdoc 502 §3.3: Typed phase outputs. Each record captures the outputs of one boot phase,
   // enabling independent testing of each phase.
@@ -145,6 +143,8 @@ public class HeadlessApp {
     if (shouldUseGpu(augmented)) {
       // LLM_GPU_LAYERS was a dead duplicate of GPU_LAYERS (resolved, documented, read by
       // nothing) — removed in tempdoc 799 §N.2, so only the live key is consulted here.
+      // Deliberately NOT also checking settings.json: contributing an auto-detected 99 at ordinal
+      // 150 is harmless when the user set a value at 300, because 300 wins.
       boolean alreadySet = EnvRegistry.GPU_LAYERS.get().isPresent();
       if (!alreadySet) {
         long vramBytes = -1;
@@ -156,8 +156,14 @@ public class HeadlessApp {
         if (vramBytes
             >= io.justsearch.configuration.model.HardwareProfile.MINIMUM_VRAM_FOR_GGUF) {
           String layers = "99";
+          // Tempdoc 883 decision 4 slice 2: the map ONLY — no sysprop mirror. A sysprop write puts
+          // this DERIVED hardware-probe number at ordinal 500, where it outranks the user's own GPU
+          // setting at 300. It was masked only because the settings→sysprop promotion ran first and
+          // setSysPropIfBlank then no-opped; with that promotion deleted, mirroring here would let
+          // an auto-detected 99 silently override the user's choice on exactly the hardware where
+          // the choice matters. The map is contributed at ordinal 150 and kept across rebuilds by
+          // ConfigStoreRebuilder.rememberAutoDetected — a probe value reported as a probe value.
           augmented.put("justsearch.gpu.layers", layers);
-          SystemPropertyUtils.setSysPropIfBlank("justsearch.gpu.layers", layers);
           // justsearch.llm.gpu_layers was a dead duplicate of the key above — resolved,
           // documented, and read by nothing. Removed in tempdoc 799 §N.2.
           log.info(
@@ -209,11 +215,15 @@ public class HeadlessApp {
    * with no GPU must still get a window with a legible provenance. Every higher ordinal — YAML 200,
    * {@code settings.json} 300, env 400, {@code -D} 500 — still wins by the ordinal chain, so the
    * headless-eval {@code JUSTSEARCH_CONTEXT_SIZE} path is unaffected.
+   *
+   * @param settingsGpuLayers the user's {@code UiSettings.gpuLayers} (ordinal 300), {@code 0} when
+   *     unset — see {@link #gpuLayersAfterAutoDetect} for why it has to be passed in
    */
-  static Map<String, String> augmentDerivedContextWindow(Map<String, String> autoDetected) {
+  static Map<String, String> augmentDerivedContextWindow(
+      Map<String, String> autoDetected, int settingsGpuLayers) {
     java.util.LinkedHashMap<String, String> augmented =
         new java.util.LinkedHashMap<>(autoDetected == null ? Map.of() : autoDetected);
-    int gpuLayers = gpuLayersAfterAutoDetect(augmented);
+    int gpuLayers = gpuLayersAfterAutoDetect(augmented, settingsGpuLayers);
     int rung = io.justsearch.app.inference.ContextWindowPolicy.autoTopRung(gpuLayers > 0);
     augmented.put("justsearch.context.size", String.valueOf(rung));
     log.info(
@@ -225,11 +235,26 @@ public class HeadlessApp {
   }
 
   /**
-   * GPU layers as they stand after auto-detection: an explicit user value (sysprop 500 / env 400,
-   * which also carries the settings mirror written above) wins, otherwise the auto-detected entry.
+   * GPU layers as they stand after auto-detection — the resolver's ordinal chain in miniature.
+   *
+   * <p>Walks {@code -D} / env (500 / 400) → {@code settings.json} (300) → the auto-detected probe
+   * map (150) → 0, which is the order {@link ResolvedConfigBuilder} will apply to the same key a few
+   * lines later in {@code resolveConfig}. Tempdoc 883 decision 4 slice 2 is what makes the middle
+   * rung explicit: the settings value used to arrive here inside {@code EnvRegistry.GPU_LAYERS}
+   * because a promotion mirrored it into the sysprop, so this method could not tell a GUI setting
+   * from an operator's {@code -D}. With that promotion deleted the settings value has to be passed
+   * in, or a user who set 20 layers would get the CPU rung derived on a GPU box.
+   *
+   * @param settingsGpuLayers the user's {@code UiSettings.gpuLayers}; consulted only when
+   *     {@code > 0}, matching {@code ConfigStoreRebuilder.contributeUiSettings} where {@code 0}
+   *     means "unset" and is not contributed at all
    */
-  private static int gpuLayersAfterAutoDetect(Map<String, String> autoDetected) {
+  private static int gpuLayersAfterAutoDetect(
+      Map<String, String> autoDetected, int settingsGpuLayers) {
     String raw = EnvRegistry.GPU_LAYERS.get().orElse(null);
+    if ((raw == null || raw.isBlank()) && settingsGpuLayers > 0) {
+      raw = String.valueOf(settingsGpuLayers);
+    }
     if (raw == null || raw.isBlank()) {
       raw = autoDetected.get("justsearch.gpu.layers");
     }
@@ -591,33 +616,17 @@ public class HeadlessApp {
       SystemPropertyUtils.setSysPropIfBlankWithSource("justsearch.llm.model_path",
           settings.getLlmModelPath(), "justsearch.llm.model_path.source", "ui_settings");
     }
-    if (settings.getServerExecutablePath() != null && !settings.getServerExecutablePath().isBlank()) {
-      SystemPropertyUtils.setSysPropIfBlankWithSource("justsearch.server.exe",
-          settings.getServerExecutablePath(), "justsearch.server.exe.source", "ui_settings");
-    }
-    try {
-      List<String> patterns = settings.getExcludePatterns();
-      if (patterns != null && !patterns.isEmpty()) {
-        SystemPropertyUtils.setSysPropIfBlankWithSource("justsearch.ui.exclude_patterns",
-            JSON.writeValueAsString(patterns), "justsearch.ui.exclude_patterns.source", "ui_settings");
-      }
-    } catch (Exception e) {
-      log.warn("Failed to serialize exclude patterns: {}", e.getMessage());
-    }
-    if (settings.getGpuLayers() > 0) {
-      SystemPropertyUtils.setSysPropIfBlankWithSource("justsearch.gpu.layers",
-          String.valueOf(settings.getGpuLayers()), "justsearch.gpu.layers.source", "ui_settings");
-    }
-    // Tempdoc 883 decision 4 slice 1: there is no context-size promotion here any more. The window
-    // is derived below and contributed at ordinal 150; a user override rides settings.json at 300
-    // and an operator's -D / env var still wins at 500 / 400 — by the ordinal chain, not by a
-    // sysprop write that made a GUI value report as `jvm_arg`.
+    // Tempdoc 883 decision 4: there is no context-size (slice 1) nor server.exe / exclude-patterns /
+    // gpu.layers (slice 2) promotion here any more. Those keys ride settings.json at ordinal 300 via
+    // ConfigStoreRebuilder.contributeUiSettings; the derived window rides auto_detected at 150. An
+    // operator's -D / env var still wins at 500 / 400 — by the ordinal chain, not by a sysprop write
+    // that made a GUI value report as `jvm_arg` and then needed a `.source` marker to un-tell it.
 
     ResolvedConfigBuilder rcBuilder = ResolvedConfig.builder();
     Path detectionRoot = io.justsearch.configuration.RepoRootLocator.findRepoRootOrNull();
     Map<String, String> autoDetected = io.justsearch.ort.GpuAutoDetection.probe(detectionRoot);
     autoDetected = augmentGpuAutoDetectionAndMirror(autoDetected, HeadlessApp::queryNvmlTotalVramBytes);
-    autoDetected = augmentDerivedContextWindow(autoDetected);
+    autoDetected = augmentDerivedContextWindow(autoDetected, settings.getGpuLayers());
     // Remembered so a later ConfigStore rebuild (settings PUT, AI install, activation) does not
     // silently drop ordinal 150 and leave the derived window with no provenance.
     io.justsearch.app.services.config.ConfigStoreRebuilder.rememberAutoDetected(autoDetected);

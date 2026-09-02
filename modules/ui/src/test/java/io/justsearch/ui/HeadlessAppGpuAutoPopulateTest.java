@@ -5,7 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.justsearch.app.api.UiSettings;
+import io.justsearch.app.services.config.ConfigStoreRebuilder;
 import io.justsearch.configuration.model.HardwareProfile;
+import io.justsearch.configuration.resolved.ResolvedConfig;
+import io.justsearch.configuration.resolved.ResolvedConfigBuilder;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -56,7 +60,7 @@ final class HeadlessAppGpuAutoPopulateTest {
 
   /**
    * Phase F happy path: probe says CUDA available, NVML reports 12 GB VRAM (above the 7.5 GB
-   * threshold), no user override → gpu.layers="99" is set in both the augmented map AND the sysprops.
+   * threshold), no user override → gpu.layers="99" lands in the augmented MAP and in no sysprop.
    * Phase E side effect: gpu.enabled is sysprop-mirrored.
    */
   @Test
@@ -74,13 +78,55 @@ final class HeadlessAppGpuAutoPopulateTest {
     // Phase E: gpu.enabled mirrored to sysprop (so it survives ConfigStoreRebuilder
     // + propagates to worker via WORKER_FORWARDED_PROPS).
     assertEquals("true", System.getProperty(GPU_ENABLED_KEY));
-    // Phase F: gpu.layers is mirrored to a sysprop so it survives ConfigStoreRebuilder.
-    assertEquals("99", System.getProperty(GPU_LAYERS_KEY));
+    // Tempdoc 883 decision 4 slice 2: this used to assert "99" here too. The mirror is DELETED.
+    // A sysprop puts this derived probe number at ordinal 500, above the user's own setting at
+    // 300 — masked only while the settings→sysprop promotion ran first and setSysPropIfBlank
+    // no-opped. With that promotion gone, mirroring would silently override the user's choice.
+    // Ordinal 150 via the map (kept across rebuilds by rememberAutoDetected) is the honest slot.
+    assertNull(
+        System.getProperty(GPU_LAYERS_KEY),
+        "the probe's layer count must not be written as a system property");
     // Regression guard (tempdoc 799 §N.2): justsearch.llm.gpu_layers was a DEAD DUPLICATE —
     // resolved and documented, but read by nothing once rc.llm().llmGpuLayers was removed.
     // This previously asserted "99" because both keys were mirrored. Asserting null now keeps
     // the duplicate from being re-introduced; justsearch.gpu.layers is the one live key.
     assertNull(System.getProperty(LLM_GPU_LAYERS_KEY));
+  }
+
+  /**
+   * The precedence the deleted mirror would have inverted, asserted on the RESOLVED value rather
+   * than on the absence of a sysprop.
+   *
+   * <p>"No sysprop" alone would also pass on a version that dropped the auto-detected value
+   * entirely, so this runs the real Phase F, feeds its map to a real {@link ResolvedConfigBuilder}
+   * at ordinal 150 alongside the user's {@code UiSettings} at 300, and demands the USER's number
+   * with the USER's source. Re-add {@code setSysPropIfBlank("justsearch.gpu.layers", …)} to Phase F
+   * and {@code contributeEnvRegistry} picks it up at ordinal 500: value becomes 99, source
+   * {@code jvm_arg}, and this fails on both.
+   */
+  @Test
+  void probeLayersDoNotOutrankTheUsersSetting() {
+    Map<String, String> probe = new LinkedHashMap<>();
+    probe.put(GPU_ENABLED_KEY, "true");
+
+    Map<String, String> autoDetected =
+        HeadlessApp.augmentGpuAutoDetectionAndMirror(probe, () -> 12L * 1024 * 1024 * 1024);
+    assertEquals("99", autoDetected.get(GPU_LAYERS_KEY), "Phase F must have produced a value");
+
+    UiSettings settings = new UiSettings();
+    settings.setGpuLayers(20);
+
+    ResolvedConfigBuilder builder = ResolvedConfig.builder();
+    builder.contributeAutoDetected(autoDetected);
+    builder.contributeEnvRegistry(); // ordinal 500/400 — would see a mirrored sysprop if one existed
+    ConfigStoreRebuilder.contributeUiSettings(builder, settings);
+    ResolvedConfig resolved = builder.build();
+
+    assertEquals(20, resolved.ai().gpuLayers(), "the user's 20 must win over the probe's 99");
+    assertEquals(
+        "settings.json",
+        resolved.resolution("justsearch.gpu.layers").sourceName(),
+        "and it must be REPORTED as the GUI setting it is, never as jvm_arg");
   }
 
   /**
