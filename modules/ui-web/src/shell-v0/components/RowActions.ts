@@ -100,8 +100,15 @@ export class RowActions extends JfElement {
   }
 
   static styles = css`
+    /**
+     * Tempdoc 914 D2 — the button strip WRAPS. Each jf-action-button renders its operation's
+     * full label ("Retry indexing job"), which does not shrink, so in a narrow host (the 26rem
+     * failed-files drawer, a narrow table cell) a non-wrapping strip either overflows or starves
+     * the neighbouring content column of its width.
+     */
     :host {
       display: inline-flex;
+      flex-wrap: wrap;
       gap: 0.25rem;
       align-items: center;
     }
