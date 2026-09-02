@@ -41,7 +41,7 @@ import {
   verdictForSysaccessGrowth,
 } from './truth-table.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
 
 const TOOL = { toolName: 'justsearch-config-surface', toolVersion: '0.2.0' };
 
@@ -224,14 +224,9 @@ export async function enforceConfigSurface(options) {
   const sysaccessRel = gate.config?.sysaccessAllowlist ?? 'gates/config-surface/sysaccess-allowlist.txt';
   const sysaccessPath = resolve(sourceRoot, sysaccessRel);
   if (existsSync(sysaccessPath)) {
-    const priorRaw =
-      fixtureMode && fixtureRoot
-        ? (existsSync(resolve(fixtureRoot, '_baseline', sysaccessRel))
-            ? readFileSync(resolve(fixtureRoot, '_baseline', sysaccessRel), 'utf8')
-            : null)
-        : baselineRef
-          ? readFileAtRef(baselineRef, sysaccessRel, sourceRoot)
-          : null;
+    const priorRaw = readPriorBaselineText({
+      fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: sysaccessRel,
+    });
     if (priorRaw !== null && priorRaw !== undefined) {
       const parseEntries = (content) =>
         new Set(
@@ -254,15 +249,11 @@ export async function enforceConfigSurface(options) {
   }
 
   // Baseline-shift detection — catches relaxing the pin instead of the surface.
-  let priorBaseline = null;
-  if (fixtureMode && fixtureRoot) {
-    const p = resolve(fixtureRoot, '_baseline', gate.baseline.path);
-    if (existsSync(p)) priorBaseline = parseBaseline(readFileSync(p, 'utf8'));
-  } else if (baselineRef) {
-    const content = readFileAtRef(baselineRef, gate.baseline.path, sourceRoot);
-    if (content !== null) priorBaseline = parseBaseline(content);
-  }
-  if (priorBaseline) {
+  const priorBaselineText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  if (priorBaselineText !== null) {
+    const priorBaseline = parseBaseline(priorBaselineText);
     for (const [metric, livePin] of baseline.entries()) {
       const priorPin = priorBaseline.get(metric);
       if (priorPin === undefined) continue;

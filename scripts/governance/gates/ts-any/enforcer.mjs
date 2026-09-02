@@ -12,7 +12,6 @@ import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { resolve, relative, join } from 'node:path';
 
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
 
 export const TS_ANY_CLASSIFICATIONS = new Set(['declared-growth', 'merge-import', 'emergency-override', 'monotonic-shrink']);
 export const TS_ANY_RULE_DESCRIPTIONS = {
