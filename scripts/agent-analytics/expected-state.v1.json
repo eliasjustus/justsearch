@@ -48,7 +48,7 @@
       "evidence": "retired observations condition obs:envelopestream-test (seen 14, 2026-08-06..2026-08-25)",
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
-      "exitProbe": "slow: npm --prefix modules/ui-web run test:unit:run -- EnvelopeStream"
+      "exitProbeRetired": "2026-09-02: the exitProbe was `npm --prefix modules/ui-web run test:unit:run -- EnvelopeStream`, an ISOLATED run — which this pin's own claim says passes. It therefore reported GONE on the first --slow sweep that ran it, against a red that is fully present. An exit that cannot observe the pinned state is worse than no exit, because a fired exit means DELETE THE PIN. A load-dependent flake exits by reviewBy plus its tracked fix, which is why the sibling pin ui-web-resourceregistry-defaults-timeout — same shape, written the same day — carries no exitProbe at all."
     },
     {
       "id": "ui-web-pluginloader-module-mode-timeout",
@@ -60,7 +60,7 @@
       "evidence": "retired observations condition obs:pluginloader-test (seen 7, all 2026-08-25)",
       "added": "2026-08-26",
       "reviewBy": "2026-09-30",
-      "exitProbe": "slow: npm --prefix modules/ui-web run test:unit:run -- PluginLoader"
+      "exitProbeRetired": "2026-09-02: same defect as ui-web-envelopestream-heartbeat-flaky. The probe ran PluginLoader in isolation, where this pin's own claim records 330ms against a 5000ms budget — it could only ever pass, so it reported GONE against a live red. Exits by reviewBy plus the tracked per-test-timeout fix."
     },
     {
       "id": "ui-web-resourceregistry-defaults-timeout",
@@ -152,7 +152,8 @@
       "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431): the finding names scripts/wire-contract/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe as absent. Claim amended 2026-09-02 during the #600 review: that PR added FailedJob.state (an additive field) to modules/ipc-common/src/main/proto/indexing.proto, and the reviewer had to install buf and re-run to get a real verdict (0 findings) — the pinned state alone would have been vacuous.",
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
-      "exitProbe": "slow: node scripts/governance/run.mjs --gate wire --mode gate"
+      "exitProbe": "slow: node -e \"const{execFileSync}=require('child_process');const fs=require('fs');try{execFileSync(process.execPath,['scripts/governance/run.mjs','--gate','wire','--mode','gate','--out','tmp/wire-exit-probe.sarif'],{stdio:'ignore'})}catch{}process.exit(fs.existsSync('tmp/wire-exit-probe.sarif')&&fs.readFileSync('tmp/wire-exit-probe.sarif','utf8').includes('buf-cli-missing')?1:0)\"",
+      "exitProbeNote": "2026-09-02: the previous exit was `--gate wire --mode gate`, which exits 0 EVEN IN the pinned state — the gate reports buf-cli-missing as a finding but its verdict stays pass (fail-open on absent tooling, which is the very thing this pin warns about). It therefore reported GONE on the first --slow sweep that ran it, with buf verifiably absent from scripts/wire-contract/node_modules. The exit now asserts the FINDING is gone, not the gate's verdict, because the verdict was never the pinned state."
     },
     {
       "id": "runtime-manifest-closure-sibling-file-api-port",
