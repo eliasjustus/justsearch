@@ -14,53 +14,15 @@ import io.justsearch.indexerworker.services.GrpcIngestService;
 
 @AnalyzeClasses(packages = "io.justsearch.indexerworker", importOptions = ImportOption.DoNotIncludeTests.class)
 class IndexerWorkerGuardrailsTest {
-  // 371: DevReloadManager and IndexStatusOps are exempt — DevReloadManager is dev-only code
-  // that updates the build stamp; IndexStatusOps reads it via EnvRegistry indirection.
-  // 374 alpha.25 R13-A: GrpcHealthService exempt — `JUSTSEARCH_WORKER_HEALTH_SYNTHETIC_DELAY_MS`
-  // is a deliberate test-only synthetic-delay hook for retry-loop verification (default 0/off).
-  // Tempdoc 607 OCR: TikaOcrRuntime exempt — its env/sysprop reads are native-resource DISCOVERY
-  // (locating the bundled/system Tesseract executable + tessdata via PATH/APPDATA/LOCALAPPDATA/
-  // TESSERACT_PATH/TESSDATA_PREFIX, and os.name for the platform binary name). This is runtime
-  // environment probing of the worker's own filesystem, not user configuration — the same class of
-  // bootstrapping/infra discovery as the three exemptions above, and it cannot be meaningfully
-  // routed through the head's config snapshot (the head does not know the worker host's FS layout).
-  // Tempdoc 885 item 14: ExtractionSandboxCommand exempt — same class as TikaOcrRuntime. It builds
-  // the extraction child's argv, and its single remaining System read is a `java.home` FALLBACK for
-  // the JVM's own launcher path when ProcessHandle.Info#command() is unavailable. That is JVM
-  // self-introspection ("which java am I running, on what classpath"), not user configuration; the
-  // operator-facing knobs it consumes (heap, pool, request budget, argv override) all go through
-  // EnvRegistry in DefaultWorkerAppServices. The classpath is read via ManagementFactory rather
-  // than System.getProperty precisely to keep this exemption down to the one fallback.
-  @ArchTest
-  static final ArchRule indexerWorkerMustNotReadEnvOrSystemProperties =
-      noClasses()
-          .that()
-          .resideInAnyPackage("io.justsearch.indexerworker..")
-          .and()
-          .doNotHaveFullyQualifiedName(
-              "io.justsearch.indexerworker.server.DevReloadManager")
-          .and()
-          .doNotHaveFullyQualifiedName(
-              "io.justsearch.indexerworker.services.IndexStatusOps")
-          .and()
-          .doNotHaveFullyQualifiedName(
-              "io.justsearch.indexerworker.services.GrpcHealthService")
-          .and()
-          .doNotHaveFullyQualifiedName(
-              "io.justsearch.indexerworker.extract.TikaOcrRuntime")
-          .and()
-          .doNotHaveFullyQualifiedName(
-              "io.justsearch.indexerworker.extract.ExtractionSandboxCommand")
-          .should()
-          .callMethod(System.class, "getenv")
-          .orShould()
-          .callMethod(System.class, "getenv", String.class)
-          .orShould()
-          .callMethod(System.class, "getProperty", String.class)
-          .orShould()
-          .callMethod(System.class, "getProperty", String.class, String.class)
-          .orShould()
-          .callMethod(System.class, "setProperty", String.class, String.class);
+  // `indexerWorkerMustNotReadEnvOrSystemProperties` and its five exemptions (DevReloadManager,
+  // IndexStatusOps, GrpcHealthService, TikaOcrRuntime, ExtractionSandboxCommand) were retired in
+  // tempdoc 883 decision 5. The single repo-wide replacement is
+  // io.justsearch.deadcode.SystemAccessFunnelTest (modules/dead-code-audit); each exemption is now
+  // a line in gates/config-surface/sysaccess-allowlist.txt, a ratchet that only shrinks. The
+  // reasons they were exempt (a dev-only build stamp, a test-only synthetic-delay hook,
+  // TikaOcrRuntime's native-resource DISCOVERY of Tesseract/tessdata on the worker host, and
+  // ExtractionSandboxCommand's `java.home` fallback for the JVM's own launcher path) are recorded
+  // in that file rather than here, so one list carries both the entries and their justifications.
 
   @ArchTest
   static final ArchRule indexerWorkerMustNotDependOnTestSupport =

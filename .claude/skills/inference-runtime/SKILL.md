@@ -308,15 +308,44 @@ Design choices in the current inference runtime, with rationale.
   ~2.2 GB at 128k is headroom kept on purpose; (c) the ladder exists to step DOWN on small cards,
   not to maximize on large ones. Users who want more set `contextLength` /
   `JUSTSEARCH_CONTEXT_SIZE`, which has no upper clamp below `n_ctx_train`.
+- **Now an ADR.** [ADR-0047](../decisions/0047-context-window-is-a-derived-resource.md) records the
+  decision, the alternatives it rejected (raise the default; compute the window from free VRAM; let
+  `--fit` choose; hand-scale the downstream constants; mirror the rung into a sysprop) and its
+  reassess triggers, with premise probes in `governance/adr-probes.v1.json`
+  (`adr-0047-fit-off-explicit`, `adr-0047-no-context-size-promotion`, `adr-0047-ladder-policy-test`,
+  `adr-0047-budgets-are-window-fractions`, `adr-0047-no-window-blind-threshold`). This entry stays
+  the measurement record; the ADR is the decision record.
+- **Prompt-side budgets are downstream of this entry, and have ONE authority** (tempdoc 883 PR 2):
+  `ContextBudget` (`modules/core`, `io.justsearch.core.util`), built per request from the observed
+  window plus that request completion reserve. Every derived quantity is
+  `min(fraction x inputBudget, cap)`: hierarchical threshold = `inputBudget` (no cap), section
+  target = `min(ib/2, 4096)`, external-context = `min(ib/4, 2048)`, agent read page =
+  `min(ib/2, 4096)`, tool-result cap = `min(ib/4, 2048)`, agent completion reserve =
+  `min(configured cap, window/4)`. Anything that needs "how much room does this turn have" asks
+  `ContextBudget`; a second window walk is a fork. One known survivor:
+  `AgentLoopService.java:456-460` still hand-walks `llmContextTokens()` else
+  `configuredContextTokens()` for the run ECONOMIC budget — it lacks the fallback rung and can
+  NPE-unbox where `ContextBudget` cannot, and routing it through
+  `ContextBudget.of(...).windowTokens()` is open work (883 §C.6b).
+- **Measured 2026-09-02, q8_0 vs f16 at the 32768 rung** (standalone, 3 x 200 generated tokens,
+  `cache_prompt:false`): q8_0 median **69.66 tok/s** at KV 544.00 MiB; f16 median **69.54 tok/s** at
+  KV 1024.00 MiB. q8_0 is 0.2% FASTER, inside run-to-run noise, while halving the cache — design
+  decision 2 revisit trigger ("if q8_0 exceeds 10%, make f16 the default at 16k and below") does NOT
+  fire. See Q-002, whose tok/s half is answered.
 - **Evidence:** tempdoc 883 (contract, independent review fold R1-R4, §B pre-impl pass, §C
-  post-impl pass, §D review fold, §Live verification). Remaining live acceptance (in-app activation
-  arms, precedence arms, forced step-down, q8_0 vs f16 tok/s, the 845 RAG arms) is scheduled
-  separately.
-- **Revisit when:** the live window runs and reports the q8_0 tok/s cost (if it exceeds 10% on the
-  dev GPU the design says make f16 the default at 16k and below); when co-residency is actually
-  measured, since the top rung is a budget held FOR that co-residency and a measurement could
-  justify raising it; or when lane F adds a second VRAM arbiter - the window, `gpuLayers`, slots, KV type and reranker/VDU co-residency all compete
-  for the same VRAM and should be one memory plan at activation, not several.
+  post-impl pass, §D review fold, three §Live verification windows). Live acceptance is complete
+  except two named gaps: the `JUSTSEARCH_CONTEXT_SIZE` env arm at ordinal 400 (needs an
+  orchestrator-owned restart with the variable in the backend process environment — the ordinal
+  chain is verified at 150 / 300 / 500, not observed at 400), and a successful rung-walk witness (a
+  lower rung actually loading after a higher one aborted; the inter-rung VRAM gap of 272 MiB is
+  smaller than the ~280 MiB free-VRAM noise on the dev card, so it needs a different card or a test
+  seam). The step-down trigger, its `PROCESS_EXITED` gate and its override branch ARE live-verified.
+- **Revisit when:** co-residency is actually measured, since the top rung is a budget held FOR that
+  co-residency and a measurement could justify raising it; when lane F adds a second VRAM arbiter -
+  the window, `gpuLayers`, slots, KV type and reranker/VDU co-residency all compete for the same
+  VRAM and should be one memory plan at activation, not several; or when a packaged model arrives
+  whose `n_ctx_train` is below 32768, which the ladder has no source for today. (The q8_0 tok/s
+  trigger is retired: measured above, it does not fire.)
 
 ### D-002: BGE-M3 VRAM budget — FP16+Flash at 3072 MB arena
 
@@ -401,7 +430,20 @@ picking up items here over inventing new experiments.
 
 ---
 
-### Q-002: What does q8_0 KV cost in tok/s on the dev GPU, and does the 32k top rung hold under co-residency?
+### Q-002: ~~What does q8_0 KV cost in tok/s on the dev GPU?~~ ANSWERED — does the 32k top rung hold under co-residency? STILL OPEN
+
+- **Half answered (2026-09-02, tempdoc 883 live window 2, F12).** q8_0 costs **nothing**: median
+  69.66 tok/s vs f16 69.54 at the same 32768 rung (3 x 200 generated tokens each,
+  `cache_prompt:false`, RTX 4070), i.e. 0.2% FASTER and inside run-to-run noise, while halving the
+  KV cache (544.00 vs 1024.00 MiB). The design revisit trigger ("if q8_0 exceeds 10%, make f16 the
+  default at the 16k rung and below") does not fire; **q8_0 stays the default at every rung.**
+  Recorded in D-010.
+- **Still open: (b), the co-residency half.** Nothing has yet measured whether 32768 holds with the
+  reranker and a VDU batch co-resident, which is the reason the rung is 32768 rather than 131072
+  ([ADR-0047](../decisions/0047-context-window-is-a-derived-resource.md) Decision 2(b), and its
+  first reassess trigger). The full 262,144-token context measurably FITS on the dev card in
+  isolation (10,321 of 12,281 MiB), so this is a budget question, not a capacity one.
+- **Original framing below.**
 
 - **Context:** tempdoc 883 decision 2 ships `-ctk q8_0 -ctv q8_0` by default and decision 1 ships a
   32768 top rung, both argued from launch-time fit (KV at 32k q8_0 measured at 544 MiB) rather than

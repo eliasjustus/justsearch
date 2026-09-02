@@ -540,6 +540,13 @@ public final class ResolvedConfigBuilder {
   private void contributeYamlSearch(JsonNode root) {
     JsonNode searchRoot = root.path("search");
     if (searchRoot.isMissingNode()) return;
+    // Tempdoc 883 decision 5: `search.pipeline.profile` shipped in config/application.yaml with a
+    // value (`desktop-default`) that reached nothing — the resolver only ever resolved the
+    // env/sysprop spelling `justsearch.search.pipeline.profile`, so editing the YAML did nothing,
+    // silently. Note the key here carries the `justsearch.` prefix while the yamlPath does not;
+    // that mismatch is exactly why it was missed, and why the new yaml-reader gate resolves the
+    // relative path against `searchRoot` instead of trusting the two spellings to match.
+    putYamlFromNode("justsearch.search.pipeline.profile", searchRoot, "pipeline.profile");
     putYamlIntFromNode("search.hybrid.bm25_k", searchRoot, "hybrid.bm25_k");
     putYamlIntFromNode("search.hybrid.ann_k", searchRoot, "hybrid.ann_k");
     putYamlFromNode("search.hybrid.auto_embed", searchRoot, "hybrid.auto_embed");
@@ -1479,7 +1486,8 @@ public final class ResolvedConfigBuilder {
   private ResolvedConfig.Ui buildUi() {
     return new ResolvedConfig.Ui(
         resolveBoolean("justsearch.ui.automation.enabled", false),
-        resolveBoolean("justsearch.ui.automation.forceDiagnostics", true));
+        resolveBoolean("justsearch.ui.automation.forceDiagnostics", true),
+        resolveString("justsearch.ui.exclude_patterns", ""));
   }
 
   private ResolvedConfig.Watcher buildWatcher() {

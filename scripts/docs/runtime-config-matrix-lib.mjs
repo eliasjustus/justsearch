@@ -184,14 +184,24 @@ export function renderMatrixMarkdown(model) {
   lines.push("");
   lines.push(
     "- **`settings.json` (300)** — `ConfigStoreRebuilder.contributeUiSettings` forwards a handful" +
-      " of `UiSettings` fields, including `justsearch.gpu.layers` and `justsearch.context.size`.",
+      " of `UiSettings` fields, including `justsearch.gpu.layers`, `justsearch.context.size`," +
+      " `justsearch.server.exe` and `justsearch.ui.exclude_patterns`.",
   );
   lines.push(
     "- **`auto_detected` (150, detail `hardware_probe`)** — the Head's startup probe contributes" +
-      " GPU detection results and, since tempdoc 883, the DERIVED `justsearch.context.size`" +
-      " window rung. So `justsearch.context.size` resolves `settings.json` when the user set one" +
-      " and `auto_detected` otherwise — never `jvm_arg` merely because it came from the GUI, which" +
-      " is what the deleted settings-to-sysprop promotion used to make it report.",
+      " GPU detection results (including the VRAM-tier `justsearch.gpu.layers`) and, since" +
+      " tempdoc 883, the DERIVED `justsearch.context.size` window rung.",
+  );
+  lines.push("");
+  lines.push(
+    "Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for" +
+      " `justsearch.context.size` (slice 1) and `justsearch.gpu.layers`," +
+      " `justsearch.server.exe`, `justsearch.ui.exclude_patterns` (slice 2), along with their" +
+      " `*.source=ui_settings` marker properties. Each of those keys now resolves `settings.json`" +
+      " when the user set one and `auto_detected` / `default` otherwise — never `jvm_arg` merely" +
+      " because the value came from the GUI, which is what the promotions used to make them" +
+      " report. `justsearch.server.exe.source` survives as the ownership token of the runtime" +
+      " GPU-variant switch (`RuntimeActivationService`), which is a different mechanism.",
   );
   lines.push("");
   lines.push("| YAML key | Env var | System property | EnvRegistry constant | Owner module | Precedence notes |");
