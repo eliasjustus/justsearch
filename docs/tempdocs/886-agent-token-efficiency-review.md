@@ -213,9 +213,10 @@ Not proposed: dashboards (858 D1 retired them), a composite score (858 §4.5), e
   usage only.
 - 268 in-TTL undetermined invalidations (841 §4) remain unexplained; not the lever, still open.
 - `861-w5-agent-spawn-sweep.test.mjs` is flaky standalone (failed once, passed on retry with no
-  code change, 2026-09-02; reproduced by the independent reviewer). Pinned in
-  `expected-state.v1.json` (`agent-analytics-spawn-sweep-test-flaky-under-load`, review by
-  2026-09-30) with an exit probe; the fix belongs to tempdoc 861 W5, not here.
+  code change, 2026-09-02; reproduced by the independent reviewer). Folded into main's
+  `agent-analytics-suite-wallclock-flaky-under-load` pin (PR #604 landed it in parallel; a second
+  pin on the same command made the hint ambiguous and the merge queue rejected #608 once for it).
+  The fix belongs to tempdoc 861 W5, not here.
 - PR 5b review (approve, four cosmetic findings): the subagent edit check now also counts
   `MultiEdit` (disclosed in-code); the four migrated readers export nothing and have no direct
   tests, so their guards protect against a bare `import()` only; `friction-timeline`'s default
