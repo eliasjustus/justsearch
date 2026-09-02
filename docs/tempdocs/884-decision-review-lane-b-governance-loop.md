@@ -1241,6 +1241,27 @@ The `kind: test` probe pinning it is existence-only, so a third probe now pins t
 `expect` count — the claim is "a refusal is still asserted", not a fixed number of cases). Gutting a
 test body to a no-op keeps the name and loses the assertion; that is the gap it closes.
 
+### I.13 Why the tempdoc-number collision was fixed at the scanner, not by renaming
+
+`check-tempdoc-numbers` went red on this PR's two changesets (`gates/ts-any/.changesets/884-*` and
+`gates/dead-code/.changesets/884-*`). The obvious remedy is to renumber one of them. It is the wrong
+one, and the repo's own contents say so.
+
+The changeset convention is `<tempdoc-number>-<slug>.md`, and **one tempdoc authoring several
+changesets is already normal**: `563-*` x3 (`prose-tier-register`), plus `727-*`, `742-*`, `861-*`,
+`581-*` and `854-*` pairs. Every one of those is within a SINGLE gate, so their labels
+(`worktree:X:gates/<gate>`) matched and the rule never fired. This PR is the first in-flight case
+spanning TWO gates. Renaming would also contradict the file's own frontmatter: the changeset loader
+requires `tempdoc: 884` on both, so a filename claiming another number would make the name lie about
+the body.
+
+`divergentInFlightCollisions`' own comment already said what it meant — *"all from one worktree -> an
+intentional single-author batch"*. Only the label granularity disagreed, because a changeset's label
+carries its gate. The fix strips that suffix when counting distinct worktrees. Six checks in
+`scripts/ci/test-tempdoc-scan.mjs` pin both directions, weighted toward the direction that matters
+when loosening a collision rule: the genuine 553 cross-worktree case, two worktrees colliding inside
+one gate, and two worktrees colliding across different gates all still fire.
+
 ### I.12 The full-kernel run found a gate that has been inert for seven weeks
 
 Running the whole kernel (which B1 forced, and which PR 2 had never done) produced two results, and
