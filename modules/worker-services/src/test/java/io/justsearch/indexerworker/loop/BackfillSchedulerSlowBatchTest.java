@@ -151,7 +151,6 @@ class BackfillSchedulerSlowBatchTest {
       docIds.add(String.format("doc-%02d", i));
     }
 
-    lenient().when(signalBus.isUserActive()).thenReturn(false);
     lenient().when(signalBus.isMainGpuActive()).thenReturn(false);
     lenient().when(signalBus.isEnergyReduced()).thenReturn(false);
     lenient().when(signalBus.shouldYieldGpuBackfill()).thenReturn(false);
@@ -278,6 +277,7 @@ class BackfillSchedulerSlowBatchTest {
         indexCountOps,
         commitOps,
         signalBus,
+        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
         embeddingLifecycle,
         new AtomicBoolean(true),
         this::resolvedConfig,
@@ -313,7 +313,9 @@ class BackfillSchedulerSlowBatchTest {
                 defaults.maxDocsBeforeCommit(),
                 0,
                 defaults.bgeM3BackfillBatchSize(),
-                defaults.bgeM3InterleaveBatchSize()));
+                defaults.bgeM3InterleaveBatchSize(),
+                defaults.foregroundDutyPct(),
+                defaults.foregroundCooldownMs()));
     lenient().when(config.ai()).thenReturn(ai);
     return config;
   }

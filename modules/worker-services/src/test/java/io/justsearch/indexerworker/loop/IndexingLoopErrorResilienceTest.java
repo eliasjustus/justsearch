@@ -8,6 +8,7 @@ import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
 import java.lang.reflect.Field;
 import java.util.List;
@@ -113,6 +114,7 @@ final class IndexingLoopErrorResilienceTest {
         indexCountOps,
         () -> null,
         signalBus,
+        IndexingPacing.unthrottled(),
         null,
         null,
         null,

@@ -19,6 +19,7 @@ import io.justsearch.ipc.SyncDirectoryRequest;
 import io.justsearch.ipc.SyncDirectoryResponse;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.loop.IndexingLoop;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexerworker.queue.SqliteJobQueue;
 import java.io.IOException;
@@ -59,7 +60,9 @@ final class GrpcIngestServiceTest {
     Path stubIndexBasePath = tempDir.resolve("indexBase");
     Path stubIndexPath = stubIndexBasePath.resolve("indices").resolve("g-test");
     Files.createDirectories(stubIndexPath);
-    service = new GrpcIngestService(jobQueue, stubLoop, stubBus, stubIndexBasePath, stubIndexPath, null, null, null, 0L, null);
+    service = new GrpcIngestService(
+        jobQueue, stubLoop, stubBus, IndexingPacing.unthrottled(), stubIndexBasePath, stubIndexPath,
+        null, null, null, 0L, null);
   }
 
   @AfterEach
@@ -285,58 +288,35 @@ final class GrpcIngestServiceTest {
   }
 
   @Test
-  void syncDirectorySkipsWhenUserActiveAndForceIsFalse() throws Exception {
-    // Create a service with user marked as active
-    ConfigurableStubWorkerSignalBus activeBus = new ConfigurableStubWorkerSignalBus();
-    activeBus.setUserActive(true);
-
+  void syncDirectoryNoLongerSkipsOnForegroundActivity() throws Exception {
+    // Tempdoc 885 item 3: WorkerSignalBus.isUserActive() — and the syncDirectory skip that used
+    // to fire when the user was active and force was false — were retired along with the
+    // breath-hold pause; indexing pacing is now a duty cycle the caller cannot observe as a
+    // skip. There is no longer a WorkerSignalBus signal to construct an "active" stub from, so
+    // this pins the surviving invariant directly: syncDirectory's outcome is the same regardless
+    // of `force` when the index runtime is unavailable — no activity-based skip remains for
+    // either value.
     Path stubIndexBasePath = tempDir.resolve("indexBase");
     Path stubIndexPath = stubIndexBasePath.resolve("indices").resolve("g-test");
     Files.createDirectories(stubIndexPath);
-    GrpcIngestService activeService = new GrpcIngestService(
-        jobQueue, new StubIndexingLoop(), activeBus, stubIndexBasePath, stubIndexPath, null, null, null, 0L, null);
+    GrpcIngestService svc = new GrpcIngestService(
+        jobQueue, new StubIndexingLoop(), new StubWorkerSignalBus(), IndexingPacing.unthrottled(),
+        stubIndexBasePath, stubIndexPath, null, null, null, 0L, null);
 
-    SyncDirectoryRequest request = SyncDirectoryRequest.newBuilder()
-        .setRootPath(tempDir.toAbsolutePath().toString())
-        .setForce(false)
-        .build();
-    CapturingObserver<SyncDirectoryResponse> observer = new CapturingObserver<>();
+    for (boolean force : new boolean[] {false, true}) {
+      SyncDirectoryRequest request = SyncDirectoryRequest.newBuilder()
+          .setRootPath(tempDir.toAbsolutePath().toString())
+          .setForce(force)
+          .build();
+      CapturingObserver<SyncDirectoryResponse> observer = new CapturingObserver<>();
 
-    activeService.syncDirectory(request, observer);
+      svc.syncDirectory(request, observer);
 
-    SyncDirectoryResponse response = observer.single();
-    assertTrue(response.getSkipped(), "Expected skipped=true when user is active");
-    assertTrue(response.getError().isEmpty(), "Expected no error");
-    assertTrue(observer.completed);
-  }
-
-  @Test
-  void syncDirectoryDoesNotSkipWhenUserActiveAndForceIsTrue() throws Exception {
-    // Create a service with user marked as active but force=true
-    ConfigurableStubWorkerSignalBus activeBus = new ConfigurableStubWorkerSignalBus();
-    activeBus.setUserActive(true);
-
-    // With indexRuntime=null, it will fail after the user activity check
-    // This proves force=true bypasses the user activity check
-    Path stubIndexBasePath = tempDir.resolve("indexBase");
-    Path stubIndexPath = stubIndexBasePath.resolve("indices").resolve("g-test");
-    Files.createDirectories(stubIndexPath);
-    GrpcIngestService activeService = new GrpcIngestService(
-        jobQueue, new StubIndexingLoop(), activeBus, stubIndexBasePath, stubIndexPath, null, null, null, 0L, null);
-
-    SyncDirectoryRequest request = SyncDirectoryRequest.newBuilder()
-        .setRootPath(tempDir.toAbsolutePath().toString())
-        .setForce(true)
-        .build();
-    CapturingObserver<SyncDirectoryResponse> observer = new CapturingObserver<>();
-
-    activeService.syncDirectory(request, observer);
-
-    SyncDirectoryResponse response = observer.single();
-    // Should NOT be skipped - should proceed to the indexRuntime check and fail there
-    assertFalse(response.getSkipped(), "Expected skipped=false when force=true");
-    assertEquals("Index runtime not available", response.getError());
-    assertTrue(observer.completed);
+      SyncDirectoryResponse response = observer.single();
+      assertFalse(response.getSkipped(), "force=" + force + ": no activity-based skip remains");
+      assertEquals("Index runtime not available", response.getError());
+      assertTrue(observer.completed);
+    }
   }
 
   /**
@@ -391,7 +371,8 @@ final class GrpcIngestServiceTest {
     IndexingLoop stubLoop = new StubIndexingLoop();
     WorkerSignalBus stubBus = new StubWorkerSignalBus();
     GrpcIngestService switchingService = new GrpcIngestService(
-        jobQueue, stubLoop, stubBus, indexBasePath, genDir, null, null, null, 0L, null);
+        jobQueue, stubLoop, stubBus, IndexingPacing.unthrottled(), indexBasePath, genDir,
+        null, null, null, 0L, null);
 
     // Create a real file for the request
     Path file = tempDir.resolve("testfile.txt");
@@ -446,7 +427,8 @@ final class GrpcIngestServiceTest {
     JobQueue nonSqliteQueue = new NoopJobQueue();
     GrpcIngestService switchingService =
         new GrpcIngestService(
-            nonSqliteQueue, new StubIndexingLoop(), new StubWorkerSignalBus(), indexBasePath, genDir, null, null, null, 0L, null);
+            nonSqliteQueue, new StubIndexingLoop(), new StubWorkerSignalBus(), IndexingPacing.unthrottled(),
+            indexBasePath, genDir, null, null, null, 0L, null);
 
     ErrorCapturingObserver<BatchResponse> observer = new ErrorCapturingObserver<>();
     switchingService.submitBatch(
@@ -487,7 +469,8 @@ final class GrpcIngestServiceTest {
     JobQueue nonSqliteQueue = new NoopJobQueue();
     GrpcIngestService switchingService =
         new GrpcIngestService(
-            nonSqliteQueue, new StubIndexingLoop(), new StubWorkerSignalBus(), indexBasePath, genDir, null, null, null, 0L, null);
+            nonSqliteQueue, new StubIndexingLoop(), new StubWorkerSignalBus(), IndexingPacing.unthrottled(),
+            indexBasePath, genDir, null, null, null, 0L, null);
 
     ErrorCapturingObserver<SyncDirectoryResponse> observer = new ErrorCapturingObserver<>();
     switchingService.syncDirectory(
@@ -537,7 +520,8 @@ final class GrpcIngestServiceTest {
 
     GrpcIngestService switchingService =
         new GrpcIngestService(
-            sqliteQueue, new StubIndexingLoop(), new StubWorkerSignalBus(), indexBasePath, genDir, null, null, null, 0L, null);
+            sqliteQueue, new StubIndexingLoop(), new StubWorkerSignalBus(), IndexingPacing.unthrottled(),
+            indexBasePath, genDir, null, null, null, 0L, null);
 
     String rootPath = tempDir.toAbsolutePath().toString();
     CapturingObserver<SyncDirectoryResponse> observer = new CapturingObserver<>();
@@ -946,11 +930,6 @@ final class GrpcIngestServiceTest {
     public void writePort(int port) {}
 
     @Override
-    public long readActivity() {
-      return 0;
-    }
-
-    @Override
     public long readHeartbeat() {
       return System.currentTimeMillis();
     }
@@ -962,11 +941,6 @@ final class GrpcIngestServiceTest {
 
     @Override
     public boolean shouldDie() {
-      return false;
-    }
-
-    @Override
-    public boolean isUserActive() {
       return false;
     }
 
@@ -984,57 +958,4 @@ final class GrpcIngestServiceTest {
     public void close() {}
   }
 
-  /** Configurable stub for testing user activity behavior. */
-  private static final class ConfigurableStubWorkerSignalBus implements WorkerSignalBus {
-    private final long startupTime = System.currentTimeMillis();
-    private volatile boolean userActive = false;
-
-    void setUserActive(boolean active) {
-      this.userActive = active;
-    }
-
-    @Override
-    public void open() {}
-
-    @Override
-    public void writePort(int port) {}
-
-    @Override
-    public long readActivity() {
-      return 0;
-    }
-
-    @Override
-    public long readHeartbeat() {
-      return System.currentTimeMillis();
-    }
-
-    @Override
-    public boolean isShutdownRequested() {
-      return false;
-    }
-
-    @Override
-    public boolean shouldDie() {
-      return false;
-    }
-
-    @Override
-    public boolean isUserActive() {
-      return userActive;
-    }
-
-    @Override
-    public boolean isMainGpuActive() {
-      return false;
-    }
-
-    @Override
-    public long startupTime() {
-      return startupTime;
-    }
-
-    @Override
-    public void close() {}
-  }
 }

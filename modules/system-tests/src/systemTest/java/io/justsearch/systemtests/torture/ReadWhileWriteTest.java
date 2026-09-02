@@ -147,12 +147,13 @@ class ReadWhileWriteTest {
                 });
             }
 
-            // Perform "heavy" indexing (simulated via rapid health checks/activity)
-            // In a real test, we would send index requests
+            // Simulated background pressure. Tempdoc 885 item 3 retired the MMF activity slot this
+            // loop used to poke (`mmfHarness.simulateRecentActivity`) — it signalled nothing to the
+            // Worker any more. The loop keeps its original role: hold the test open for the
+            // configured duration while the concurrent searches run.
             long startIndexing = System.currentTimeMillis();
             for (int i = 0; i < indexingOps; i++) {
                 if (searchError.get() != null) break;
-                mmfHarness.simulateRecentActivity(0); // Trigger "activity"
                 Thread.sleep(50);
             }
             long indexingDuration = System.currentTimeMillis() - startIndexing;

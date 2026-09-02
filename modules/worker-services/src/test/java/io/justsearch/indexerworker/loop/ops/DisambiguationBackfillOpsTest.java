@@ -10,8 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.disambiguation.DisambiguationService;
+import io.justsearch.indexerworker.loop.pacing.ForegroundLoad;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexing.SchemaFields;
 import java.util.List;
 import java.util.Map;
@@ -29,13 +30,16 @@ import org.slf4j.LoggerFactory;
 class DisambiguationBackfillOpsTest {
 
   @Mock DocumentFieldOps documentFieldOps;
-  @Mock WorkerSignalBus signalBus;
   @Mock DisambiguationService disambiguationService;
 
   private DisambiguationBackfillOps.BackfillContext context() {
+    return context(IndexingPacing.unthrottled());
+  }
+
+  private DisambiguationBackfillOps.BackfillContext context(IndexingPacing pacing) {
     return new DisambiguationBackfillOps.BackfillContext(
         documentFieldOps,
-        signalBus,
+        pacing,
         () -> disambiguationService,
         () -> true,
         100,
@@ -52,7 +56,7 @@ class DisambiguationBackfillOpsTest {
       DisambiguationBackfillOps.BackfillContext ctx =
           new DisambiguationBackfillOps.BackfillContext(
               documentFieldOps,
-              signalBus,
+              IndexingPacing.unthrottled(),
               () -> null,
               () -> true,
               100,
@@ -97,7 +101,6 @@ class DisambiguationBackfillOpsTest {
       when(documentFieldOps.queryDocIdsByField(
               eq(SchemaFields.NER_STATUS), eq(SchemaFields.NER_STATUS_COMPLETED), anyInt()))
           .thenReturn(List.of("doc1", "doc2"));
-      when(signalBus.isUserActive()).thenReturn(false);
 
       // doc1 has persons and orgs
       when(documentFieldOps.getDocumentFieldValues("doc1", SchemaFields.ENTITY_PERSONS_RAW))
@@ -135,18 +138,27 @@ class DisambiguationBackfillOpsTest {
     }
 
     @Test
-    @DisplayName("interrupted when user is active")
-    void interruptedWhenUserActive() {
+    @DisplayName(
+        "processes every completed doc despite foreground load (tempdoc 885 item 3: a duty"
+            + " cycle paces the scan, it no longer aborts it)")
+    void processesAllDocsUnderForegroundLoad() {
       when(disambiguationService.isAvailable()).thenReturn(true);
       when(documentFieldOps.queryDocIdsByField(
               eq(SchemaFields.NER_STATUS), eq(SchemaFields.NER_STATUS_COMPLETED), anyInt()))
           .thenReturn(List.of("doc1", "doc2"));
-      when(signalBus.isUserActive()).thenReturn(true);
 
-      DisambiguationBackfillOps.processDisambiguationBackfill(context());
+      // Foreground load stays in-flight for the whole scan (never drains) — the old
+      // isUserActive()==true case that used to abort the loop outright.
+      ForegroundLoad load = new ForegroundLoad();
+      load.started();
+      IndexingPacing busyPacing = new IndexingPacing(load, 20, 500L, () -> 0L, () -> 0L, ms -> {});
 
-      // Should not read any document fields because user is active
-      verify(documentFieldOps, never()).getDocumentFieldValues(anyString(), anyString());
+      DisambiguationBackfillOps.processDisambiguationBackfill(context(busyPacing));
+
+      // Both completed docs are still scanned for entity mentions — the scan is paced, not
+      // interrupted, under sustained foreground contention.
+      verify(documentFieldOps).getDocumentFieldValues("doc1", SchemaFields.ENTITY_PERSONS_RAW);
+      verify(documentFieldOps).getDocumentFieldValues("doc2", SchemaFields.ENTITY_PERSONS_RAW);
     }
   }
 }

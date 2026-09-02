@@ -25,6 +25,7 @@ import io.justsearch.indexerworker.embed.EmbeddingTelemetryEvents;
 import io.justsearch.indexerworker.embed.EmbeddingTelemetryEvents.InvokeFailureReason;
 import io.justsearch.indexerworker.embed.EmbeddingTelemetryEvents.Operation;
 import io.justsearch.indexerworker.embed.EmbeddingTelemetryEvents.UnloadReason;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
@@ -303,6 +304,7 @@ final class IndexingLoopUnloadTelemetryEmitTest {
         indexCountOps,
         () -> null,
         signalBus,
+        IndexingPacing.unthrottled(),
         null, // embeddingService — wired via setEmbeddingProvider in the test
         null, // pipelineCatalog
         null, // extractionCatalog

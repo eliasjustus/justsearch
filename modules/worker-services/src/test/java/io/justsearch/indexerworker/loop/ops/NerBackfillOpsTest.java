@@ -8,7 +8,7 @@ import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.ner.NerResult;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexing.SchemaFields;
@@ -30,7 +30,6 @@ class NerBackfillOpsTest {
   @Mock DocumentFieldOps documentFieldOps;
   @Mock IndexingCoordinator indexingCoordinator;
   @Mock CommitOps commitOps;
-  @Mock WorkerSignalBus signalBus;
   @Mock NerService nerService;
 
   @Nested
@@ -46,7 +45,7 @@ class NerBackfillOpsTest {
 
       NerBackfillOps.BackfillContext context =
           new NerBackfillOps.BackfillContext(
-              documentFieldOps, indexingCoordinator, commitOps, signalBus, () -> nerService, () -> true, 100,
+              documentFieldOps, indexingCoordinator, commitOps, IndexingPacing.unthrottled(), () -> nerService, () -> true, 100,
               LoggerFactory.getLogger(NerBackfillOpsTest.class));
 
       NerBackfillOps.processNerBackfill(context);
@@ -61,12 +60,11 @@ class NerBackfillOpsTest {
       when(documentFieldOps.queryDocIdsByField(
               eq(SchemaFields.NER_STATUS), eq(SchemaFields.NER_STATUS_PENDING), anyInt()))
           .thenReturn(List.of("doc1"));
-      when(signalBus.isUserActive()).thenReturn(false);
       when(documentFieldOps.getDocumentContent("doc1")).thenReturn("");
 
       NerBackfillOps.BackfillContext context =
           new NerBackfillOps.BackfillContext(
-              documentFieldOps, indexingCoordinator, commitOps, signalBus, () -> nerService, () -> true, 100,
+              documentFieldOps, indexingCoordinator, commitOps, IndexingPacing.unthrottled(), () -> nerService, () -> true, 100,
               LoggerFactory.getLogger(NerBackfillOpsTest.class));
 
       NerBackfillOps.processNerBackfill(context);
@@ -89,7 +87,6 @@ class NerBackfillOpsTest {
       when(documentFieldOps.queryDocIdsByField(
               eq(SchemaFields.NER_STATUS), eq(SchemaFields.NER_STATUS_PENDING), anyInt()))
           .thenReturn(List.of("doc1"));
-      when(signalBus.isUserActive()).thenReturn(false);
       when(documentFieldOps.getDocumentContent("doc1")).thenReturn("content with no entities");
       when(nerService.extractEntitiesBatch(anyList())).thenReturn(List.of(NerResult.EMPTY));
       when(indexingCoordinator.updateDocumentsBatch(anyList()))
@@ -97,7 +94,7 @@ class NerBackfillOpsTest {
 
       NerBackfillOps.BackfillContext context =
           new NerBackfillOps.BackfillContext(
-              documentFieldOps, indexingCoordinator, commitOps, signalBus, () -> nerService, () -> true, 100,
+              documentFieldOps, indexingCoordinator, commitOps, IndexingPacing.unthrottled(), () -> nerService, () -> true, 100,
               LoggerFactory.getLogger(NerBackfillOpsTest.class));
 
       NerBackfillOps.processNerBackfill(context);
@@ -118,7 +115,6 @@ class NerBackfillOpsTest {
       when(documentFieldOps.queryDocIdsByField(
               eq(SchemaFields.NER_STATUS), eq(SchemaFields.NER_STATUS_PENDING), anyInt()))
           .thenReturn(List.of("doc1"));
-      when(signalBus.isUserActive()).thenReturn(false);
       when(documentFieldOps.getDocumentContent("doc1")).thenReturn("Ada Lovelace wrote this");
       when(nerService.extractEntitiesBatch(anyList()))
           .thenReturn(List.of(new NerResult(List.of("Ada Lovelace"), List.of(), List.of())));
@@ -127,7 +123,7 @@ class NerBackfillOpsTest {
 
       NerBackfillOps.BackfillContext context =
           new NerBackfillOps.BackfillContext(
-              documentFieldOps, indexingCoordinator, commitOps, signalBus, () -> nerService, () -> true, 100,
+              documentFieldOps, indexingCoordinator, commitOps, IndexingPacing.unthrottled(), () -> nerService, () -> true, 100,
               LoggerFactory.getLogger(NerBackfillOpsTest.class));
 
       NerBackfillOps.processNerBackfill(context);
@@ -147,12 +143,11 @@ class NerBackfillOpsTest {
       when(documentFieldOps.queryDocIdsByField(
               eq(SchemaFields.NER_STATUS), eq(SchemaFields.NER_STATUS_PENDING), anyInt()))
           .thenReturn(List.of("doc1"));
-      when(signalBus.isUserActive()).thenReturn(false);
       when(documentFieldOps.getDocumentContent("doc1")).thenReturn("Some content about Paris");
 
       NerBackfillOps.BackfillContext context =
           new NerBackfillOps.BackfillContext(
-              documentFieldOps, indexingCoordinator, commitOps, signalBus, () -> null, () -> true, 100,
+              documentFieldOps, indexingCoordinator, commitOps, IndexingPacing.unthrottled(), () -> null, () -> true, 100,
               LoggerFactory.getLogger(NerBackfillOpsTest.class));
 
       // Should not throw NPE
@@ -171,7 +166,7 @@ class NerBackfillOpsTest {
       // runningSupplier returns false immediately — should break before processing any docs
       NerBackfillOps.BackfillContext context =
           new NerBackfillOps.BackfillContext(
-              documentFieldOps, indexingCoordinator, commitOps, signalBus, () -> nerService, () -> false, 100,
+              documentFieldOps, indexingCoordinator, commitOps, IndexingPacing.unthrottled(), () -> nerService, () -> false, 100,
               LoggerFactory.getLogger(NerBackfillOpsTest.class));
 
       NerBackfillOps.processNerBackfill(context);

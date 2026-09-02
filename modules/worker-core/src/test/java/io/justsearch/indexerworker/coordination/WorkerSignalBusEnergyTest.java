@@ -19,11 +19,9 @@ final class WorkerSignalBusEnergyTest {
     return new WorkerSignalBus() {
       @Override public void open() {}
       @Override public void writePort(int port) {}
-      @Override public long readActivity() { return 0; }
       @Override public long readHeartbeat() { return 0; }
       @Override public boolean isShutdownRequested() { return false; }
       @Override public boolean shouldDie() { return false; }
-      @Override public boolean isUserActive() { return false; }
       @Override public boolean isMainGpuActive() { return gpuActive; }
       @Override public boolean isEnergyReduced() {
         return energyReduced != null ? energyReduced : WorkerSignalBus.super.isEnergyReduced();

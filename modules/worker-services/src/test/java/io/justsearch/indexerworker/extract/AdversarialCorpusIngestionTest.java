@@ -14,6 +14,7 @@ import io.justsearch.indexerworker.ingest.IngestionOutcome;
 import io.justsearch.indexerworker.ingest.IngestionOutcomeClass;
 import io.justsearch.indexerworker.ingest.IngestionReasonCodes;
 import io.justsearch.indexerworker.loop.IndexingLoop;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
 import java.io.IOException;
 import java.lang.reflect.Method;
@@ -60,6 +61,7 @@ final class AdversarialCorpusIngestionTest {
             mock(IndexCountOps.class),
             () -> null,
             mock(WorkerSignalBus.class),
+            IndexingPacing.unthrottled(),
             null,
             null,
             null,
@@ -232,6 +234,7 @@ final class AdversarialCorpusIngestionTest {
             mock(IndexCountOps.class),
             () -> null,
             mock(WorkerSignalBus.class),
+            IndexingPacing.unthrottled(),
             null,
             null,
             null,
@@ -298,6 +301,7 @@ final class AdversarialCorpusIngestionTest {
             mock(IndexCountOps.class),
             () -> null,
             mock(WorkerSignalBus.class),
+            IndexingPacing.unthrottled(),
             null,
             null,
             null,

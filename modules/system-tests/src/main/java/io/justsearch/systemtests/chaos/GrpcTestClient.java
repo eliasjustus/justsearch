@@ -157,7 +157,7 @@ public final class GrpcTestClient implements Closeable {
    *   <li>is_healthy - Whether the worker is healthy</li>
    *   <li>state - Worker state (IDLE, INDEXING, ERROR)</li>
    *   <li>last_commit_timestamp - Last Lucene commit time</li>
-   *   <li>signal_bus_activity_ts - Last user activity timestamp</li>
+   *   <li>signal_bus_activity_ts - retired (tempdoc 885 item 3); always 0</li>
    *   <li>signal_bus_heartbeat_ts - Last main process heartbeat</li>
    *   <li>uptime_ms - Worker uptime in milliseconds</li>
    * </ul>

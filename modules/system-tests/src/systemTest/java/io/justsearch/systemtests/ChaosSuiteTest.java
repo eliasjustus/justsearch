@@ -43,7 +43,7 @@ import org.slf4j.LoggerFactory;
  * <p>These tests verify system recovery and resilience:
  * <ul>
  *   <li><b>Watchdog Test</b>: Worker dies when Main dies (zombie prevention)</li>
- *   <li><b>Time Lord Test</b>: Throttling via MMF timestamp manipulation</li>
+ *   <li><b>Time Lord Test</b>: indexing duty cycle under real foreground search load</li>
  *   <li><b>Disconnector Test</b>: Recovery from worker crash during operation</li>
  *   <li><b>Signal Noise</b>: IPC robustness under MMF fuzzing</li>
  *   <li><b>Stale Port</b>: Ignore stale port values in MMF</li>
@@ -279,13 +279,13 @@ class ChaosSuiteTest {
   // =========================================================================
 
   @Nested
-  @DisplayName("Time Lord Test (Throttling Validation)")
+  @DisplayName("Time Lord Test (Duty-cycle validation under foreground load)")
   class TimeLordTests {
 
     @Test
-    @DisplayName("Worker pauses when user activity is recent")
+    @DisplayName("Indexing is throttled — not stopped — while foreground searches are in flight")
     @Timeout(value = 180, unit = TimeUnit.SECONDS)
-    void workerPausesOnRecentActivity() throws Exception {
+    void indexingRunsAtAReducedDutyUnderForegroundSearchLoad() throws Exception {
       org.junit.jupiter.api.Assertions.assertTrue(workerDistExists && processManager != null,
           "❌ Worker distribution or shared config not available");
 
@@ -296,35 +296,88 @@ class ChaosSuiteTest {
       int port = spawnWorkerAndAwaitPort(120_000);
       grpcClient = new GrpcTestClient(port);
 
-      // 1. Initial state: no activity → RUNNING or IDLE
-      String initialState = grpcClient.getWorkerState();
-      log.info("Initial worker state: {}", initialState);
+      // Tempdoc 885 item 3. The predecessor of this test wrote a wall-clock byte into the MMF
+      // (mmfHarness.simulateRecentActivity) and asserted the loop went PAUSED and stayed there.
+      // That signal no longer exists: the Worker observes its own in-flight foreground RPCs and
+      // runs a duty cycle. So the property under test changed with it — from "a Head-written
+      // timestamp stops indexing" to "real foreground load slows indexing without starving it",
+      // which is exactly what the 885 baseline arm (c) showed the pause could not do (699 of
+      // 5184 documents in 22 minutes).
+      List<String> corpus = writeThrottlingCorpus(400);
+      int submitted = grpcClient.submitBatch(corpus);
+      assertTrue(submitted > 0, "corpus should have been accepted for indexing");
 
-      // 2. Simulate recent user activity (100ms ago)
-      mmfHarness.simulateRecentActivity(100);
+      long docsBeforeLoad = grpcClient.getDetailedStatus().getCore().getDocCount();
 
-      // 3. Worker should transition to PAUSED
-      String pausedState = awaitWorkerState("PAUSED", STATE_CHANGE_TIMEOUT);
-      assertEquals("PAUSED", pausedState, "Worker should pause on recent activity");
+      // Drive continuous foreground search load: every call increments the Worker's foreground
+      // gauge for its duration, which is what the duty cycle reads.
+      AtomicBoolean loadRunning = new AtomicBoolean(true);
+      AtomicInteger queriesIssued = new AtomicInteger();
+      AtomicBoolean observedPaced = new AtomicBoolean(false);
+      ExecutorService loadPool = Executors.newFixedThreadPool(2);
+      for (int i = 0; i < 2; i++) {
+        loadPool.submit(
+            () -> {
+              while (loadRunning.get()) {
+                try {
+                  grpcClient.searchText("chaos throttling probe", 5);
+                  queriesIssued.incrementAndGet();
+                } catch (RuntimeException e) {
+                  // A search failing under load is not what this test measures.
+                }
+              }
+            });
+      }
 
-      // 4. Simulate stale activity (1000ms ago) → should resume
-      mmfHarness.simulateStaleActivity(1000);
+      try {
+        long deadline = System.currentTimeMillis() + 20_000;
+        while (System.currentTimeMillis() < deadline) {
+          if ("PAUSED".equals(grpcClient.getWorkerState())) {
+            observedPaced.set(true); // sampled inside a duty-cycle yield window
+          }
+          Thread.sleep(100);
+        }
+      } finally {
+        loadRunning.set(false);
+        loadPool.shutdownNow();
+        loadPool.awaitTermination(10, TimeUnit.SECONDS);
+      }
 
-      // 5. Worker should transition back to RUNNING or IDLE
-      String resumedState = awaitWorkerState(state -> !"PAUSED".equals(state), STATE_CHANGE_TIMEOUT);
-      assertNotEquals("PAUSED", resumedState, "Worker should resume when activity is stale");
+      long docsUnderLoad = grpcClient.getDetailedStatus().getCore().getDocCount();
+      log.info(
+          "Under load: {} queries issued, docCount {} -> {}, paced sample seen={}",
+          queriesIssued.get(), docsBeforeLoad, docsUnderLoad, observedPaced.get());
+
+      assertTrue(queriesIssued.get() > 0, "the foreground load must actually have run");
+      assertTrue(
+          docsUnderLoad > docsBeforeLoad,
+          "indexing must keep making progress under continuous foreground load — a full stop is"
+              + " the pre-885 breath-hold behaviour this item removed");
+      assertTrue(
+          observedPaced.get(),
+          "the loop must be observed yielding (PAUSED) at least once under load — otherwise the"
+              + " duty cycle never engaged and this test proves nothing about throttling");
+
+      // With the load gone, the loop must leave the yield state and finish the corpus.
+      String resumedState =
+          awaitWorkerState(state -> !"PAUSED".equals(state), STATE_CHANGE_TIMEOUT);
+      assertNotEquals("PAUSED", resumedState, "Worker should resume once foreground load drains");
     }
 
-    private String awaitWorkerState(String expected, Duration timeout) throws InterruptedException {
-      long deadline = System.currentTimeMillis() + timeout.toMillis();
-      while (System.currentTimeMillis() < deadline) {
-        String state = grpcClient.getWorkerState();
-        if (expected.equals(state)) {
-          return state;
-        }
-        Thread.sleep(100);
+    /** Writes a small synthetic corpus for the throttling probe. */
+    private List<String> writeThrottlingCorpus(int fileCount) throws IOException {
+      Path corpusDir = testDataDir.resolve("throttle-corpus");
+      Files.createDirectories(corpusDir);
+      List<String> paths = new ArrayList<>(fileCount);
+      for (int i = 0; i < fileCount; i++) {
+        Path file = corpusDir.resolve("doc-" + i + ".txt");
+        Files.writeString(
+            file,
+            "chaos throttling probe document " + i + "\n"
+                + "the duty cycle must keep indexing this corpus while searches run\n");
+        paths.add(file.toAbsolutePath().toString());
       }
-      return grpcClient.getWorkerState();
+      return paths;
     }
 
     private String awaitWorkerState(java.util.function.Predicate<String> condition, Duration timeout)
@@ -433,29 +486,6 @@ class ChaosSuiteTest {
         // Write another port
         harness.writePort(12345);
         assertEquals(12345, harness.readPort());
-      } finally {
-        harness.close();
-      }
-    }
-
-    @Test
-    @DisplayName("MMF activity timestamps work correctly")
-    void mmfActivityTimestamps() throws IOException {
-      Path signalFile = getSignalFile("activity");
-      MmfTestHarness harness = new MmfTestHarness(signalFile);
-      try {
-        harness.open();
-        harness.resetAll();
-
-        long now = System.currentTimeMillis();
-        harness.writeActivity(now);
-        assertEquals(now, harness.readActivity());
-
-        // Simulate recent activity
-        harness.simulateRecentActivity(100);
-        long activity = harness.readActivity();
-        assertTrue(activity >= now - 200 && activity <= now,
-            "Activity should be within expected range");
       } finally {
         harness.close();
       }
