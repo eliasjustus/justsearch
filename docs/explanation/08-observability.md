@@ -369,6 +369,7 @@ Not an exhaustive list, but the metrics below are intentionally low-cardinality 
   - `worker.switch_buffer.depth` (durable cutover buffer depth during `SWITCHING`)
   - `worker.switch_buffer.write_failures` (counter; incremented on `putSwitchBuffer` SQL errors)
   - `worker.index.pending_embeddings`, `worker.index.pending_vdu` (backlog gauges)
+  - `worker.indexing.paced_intervals_total` (counter; indexing/backfill intervals that actually yielded to foreground load), `worker.indexing.duty_pct` (gauge, 0-100; observed share of paced wall time spent working, 100 when nothing is throttled) and `worker.indexing.foreground_in_flight` (gauge; in-flight search-family RPCs). The attribution trio for the indexing duty cycle (tempdoc 885 item 3) — the breath-hold pause they replaced was TRACE/DEBUG-only under a package the Worker pins to INFO, so no field run could count one. `worker.indexing.paused` reads 1 only for the duration of a yield.
   - `extraction.timeout_total` (counter; content extraction timeouts)
   - `extraction.sandbox_restart_total` (counter, tag `reason` ∈ `timeout` | `crash` | `oom` | `request_budget` | `protocol` | `interrupted` | `probe_failed`; extraction child JVM recycled, or the startup probe rejected the child command)
   - `extraction.sandbox_spawn_total` (counter; extraction child JVMs started)

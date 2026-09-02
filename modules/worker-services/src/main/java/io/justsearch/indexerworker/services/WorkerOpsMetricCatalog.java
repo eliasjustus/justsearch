@@ -201,7 +201,7 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
               .archivedTo(RrdArchive.STANDARD)
               .build(),
           MetricDefinition.gauge(INDEXING_DUTY_PCT)
-              .unit(Unit.COUNT)
+              .unit(Unit.RATIO)
               .archivedTo(RrdArchive.STANDARD)
               .build(),
           MetricDefinition.gauge(INDEXING_FOREGROUND_IN_FLIGHT).unit(Unit.COUNT).build(),
