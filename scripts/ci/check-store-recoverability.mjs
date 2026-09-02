@@ -159,7 +159,26 @@ export function checkDurableStoreRegister({
   const gaps = new Set(Array.isArray(knownCompatibilityGaps) ? knownCompatibilityGaps : []);
   const ids = new Set();
   const coveredImplementations = new Set();
-  const classifiedNonDurable = new Set((nonDurableWriteSites ?? []).map(normalize));
+  // A non-durable classification is a CLAIM ("nothing here survives, so there is no recovery,
+  // upgrade or encryption policy to state"), and every other row in this register has to justify
+  // its claims. An entry is therefore `{ path, reason }`; the reason is what a reader checks the
+  // claim against, and without it the list is a bare allowlist that grows by assertion.
+  const classifiedNonDurable = new Set();
+  for (const [index, entry] of (nonDurableWriteSites ?? []).entries()) {
+    const path = typeof entry === 'string' ? entry : entry?.path;
+    const reason = typeof entry === 'string' ? null : entry?.reason;
+    if (typeof path !== 'string' || path.trim() === '') {
+      failures.push(`nonDurableWriteSites[${index}]: path is required.`);
+      continue;
+    }
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      failures.push(
+        `nonDurableWriteSites[${index}] (${path}): reason is required — say which paths it writes ` +
+          'and why losing them costs only a recomputation.',
+      );
+    }
+    classifiedNonDurable.add(normalize(path));
+  }
   const catalogRows = new Map();
 
   for (const row of rows) {

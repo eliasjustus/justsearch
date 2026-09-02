@@ -1,7 +1,7 @@
 {
   "version": 2,
   "tempdoc": 617,
-  "note": "The StoreCatalog mirror remains the cipher-selection authority for its six stores. durableStores is the broader in-place-upgrade compatibility register: every process-owned durable authority names its owner, recovery class, format, write behavior, reconciliation, implementation, and evidence. HARDENING_REQUIRED rows are an explicit tempdoc-617 ratchet; the gate forbids adding an unnamed gap. Tempdoc 879 added two required per-row answers. pathVerification: LITERAL means ONE implementationSources file contains the string literal of every segment of the declared path - a union across several files does not count, because that made LITERAL satisfiable by adding an unrelated file that merely mentions the missing word; COMPOSED means the path is assembled at runtime, and pathVerificationNote must say by what. encryption: SEALED_BY_STORE_CIPHER = the StoreCatalog cipher seals it; UNSEALED_KEY_ROOT = it IS the key root and cannot be sealed by the key it holds; UNSEALED_EXTERNAL_AUTHORITY = the bytes belong to the user or an operator, not the app; UNSEALED_NO_JVM_CIPHER = Shell-owned, written by Rust with no reach to the JVM StoreCipher; UNSEALED_DERIVED_OS_DISK_ENCRYPTION = StoreCatalog's Framing.OPAQUE position, a derived/rebuildable store that does hold user-derived content in the clear and is covered by OS disk encryption only; UNSEALED_GAP = no structural reason, simply not sealed yet; NOT_APPLICABLE = there is nothing here worth sealing. UNSEALED_GAP, UNSEALED_DERIVED_OS_DISK_ENCRYPTION and NOT_APPLICABLE are all claims about what the bytes hold, so the gate requires an encryptionNote on each saying what the file actually contains - before 879 NOT_APPLICABLE was the one value nobody had to justify, and it was standing in for both 'nothing sensitive' and 'the user's own document text'. Known limit of the LITERAL check: it matches string literals, so it cannot tell a path constant from a same-named error-message label - a few rows (agent-runs, memories, conversations) are LITERAL-green via a CorruptDurableStoreException store label rather than a path constant, which means a rename of those directories could pass. Closing that needs the gate to recognise resolve(...)-shaped occurrences specifically; tracked in tempdoc 879. nonDurableWriteSites is the OTHER answer the coverage check accepts: a production source the write-site scanner flags that holds no durable state at all, so there is no recovery, upgrade or encryption policy to state for it. The bar is that every path it writes is scratch - process-scoped, regenerated on demand, and outside the data dir - so losing or deleting the file costs a recomputation and nothing else. It is not an escape hatch for a durable store whose row is inconvenient to write: if deleting the file would lose user-visible state, it belongs in durableStores. TempFileManager and WorkerProcessManager are JVM/OS temp scratch; ExtractionSandboxFactory writes one JVM temp file for the extraction child's startup probe and deletes it in the same method (tempdoc 885 item 14).",
+  "note": "The StoreCatalog mirror remains the cipher-selection authority for its six stores. durableStores is the broader in-place-upgrade compatibility register: every process-owned durable authority names its owner, recovery class, format, write behavior, reconciliation, implementation, and evidence. HARDENING_REQUIRED rows are an explicit tempdoc-617 ratchet; the gate forbids adding an unnamed gap. Tempdoc 879 added two required per-row answers. pathVerification: LITERAL means ONE implementationSources file contains the string literal of every segment of the declared path - a union across several files does not count, because that made LITERAL satisfiable by adding an unrelated file that merely mentions the missing word; COMPOSED means the path is assembled at runtime, and pathVerificationNote must say by what. encryption: SEALED_BY_STORE_CIPHER = the StoreCatalog cipher seals it; UNSEALED_KEY_ROOT = it IS the key root and cannot be sealed by the key it holds; UNSEALED_EXTERNAL_AUTHORITY = the bytes belong to the user or an operator, not the app; UNSEALED_NO_JVM_CIPHER = Shell-owned, written by Rust with no reach to the JVM StoreCipher; UNSEALED_DERIVED_OS_DISK_ENCRYPTION = StoreCatalog's Framing.OPAQUE position, a derived/rebuildable store that does hold user-derived content in the clear and is covered by OS disk encryption only; UNSEALED_GAP = no structural reason, simply not sealed yet; NOT_APPLICABLE = there is nothing here worth sealing. UNSEALED_GAP, UNSEALED_DERIVED_OS_DISK_ENCRYPTION and NOT_APPLICABLE are all claims about what the bytes hold, so the gate requires an encryptionNote on each saying what the file actually contains - before 879 NOT_APPLICABLE was the one value nobody had to justify, and it was standing in for both 'nothing sensitive' and 'the user's own document text'. Known limit of the LITERAL check: it matches string literals, so it cannot tell a path constant from a same-named error-message label - a few rows (agent-runs, memories, conversations) are LITERAL-green via a CorruptDurableStoreException store label rather than a path constant, which means a rename of those directories could pass. Closing that needs the gate to recognise resolve(...)-shaped occurrences specifically; tracked in tempdoc 879. nonDurableWriteSites is the OTHER answer the coverage check accepts: a production source the write-site scanner flags that holds no durable state at all, so there is no recovery, upgrade or encryption policy to state for it. The bar is that every path it writes is scratch - process-scoped, regenerated on demand, and outside the data dir - so losing or deleting the file costs a recomputation and nothing else. It is not an escape hatch for a durable store whose row is inconvenient to write: if deleting the file would lose user-visible state, it belongs in durableStores. TempFileManager and WorkerProcessManager are JVM/OS temp scratch; ExtractionSandboxFactory writes one JVM temp file for the extraction child's startup probe and deletes it in the same method (tempdoc 885 item 14). DISCOVERY (wave-1 residue R1): the write-site scanner keys on write CALLS in code (scripts/governance/lib/persistence-write-scan.mjs strips comments, keeps literals), not on a \"durable anchor\" word appearing anywhere in the file text. The retired rule decided by reading English prose, which discovered ExtractionSandboxFactory via a javadoc sentence and missed ExtractionSandboxCommand's real argfile write. It over-discovers by design -- benchmarks, SSOT generators and the agent file tools all write to disk -- and each costs one honest nonDurableWriteSites line. nonDurableWriteSites entries are now { path, reason }: the classification is a claim, and every other row here justifies its claims. Six rows were added HARDENING_REQUIRED because the broadened scan found durable state no row owned: agent-history-markdown, ai-install-attempt-memory, gpl-eval-snapshot, gpl-stage-reports, llama-server-log and agent-user-document-operations. They are HARDENING_REQUIRED and not READY on purpose -- each names what IS established (owner, path, format, write mode) and marks its corruption policy NOT_YET_STATED rather than inventing one, because a READY row asserting an unverified recovery story is the false authority this register exists to prevent.",
   "catalog": {
     "file": "modules/app-agent-api/src/main/java/io/justsearch/agent/api/encryption/StoreCatalog.java"
   },
@@ -13,7 +13,14 @@
     { "dirName": "index", "recoverability": "DERIVED" },
     { "dirName": "jobs.db", "recoverability": "DERIVED" }
   ],
-  "knownCompatibilityGaps": [],
+  "knownCompatibilityGaps": [
+    "agent-history-markdown",
+    "ai-install-attempt-memory",
+    "gpl-eval-snapshot",
+    "gpl-stage-reports",
+    "llama-server-log",
+    "agent-user-document-operations"
+  ],
   "durableStores": [
     {
       "id": "ui-settings",
@@ -38,7 +45,8 @@
       "status": "READY",
       "implementationSources": [
         "modules/app-services/src/main/java/io/justsearch/app/services/settings/UiSettingsStore.java",
-        "modules/app-services/src/main/java/io/justsearch/app/services/settings/SettingsRecoveryNotice.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/settings/SettingsRecoveryNotice.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/settings/UiSettingsStorePersistenceModeTest.java"
@@ -97,7 +105,8 @@
       "reconciliation": "READ_V0_OR_V1_AND_WRITE_V1",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/intent/DurableGrantStore.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/intent/DurableGrantStore.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/intent/DurableGrantStoreTest.java"
@@ -128,7 +137,8 @@
       "implementationSources": [
         "modules/app-services/src/main/java/io/justsearch/app/services/settings/PluginAllowlistStore.java",
         "modules/app-services/src/main/java/io/justsearch/app/services/settings/UiSettingsStore.java",
-        "modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java"
+        "modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/settings/PluginAllowlistStoreTest.java"
@@ -156,7 +166,8 @@
       "reconciliation": "READ_V0_OR_V1_AND_REQUIRE_EXPLICIT_REPAIR_ON_ERROR",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/feedback/FeedbackCaptureSettings.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/feedback/FeedbackCaptureSettings.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/feedback/FeedbackCaptureSettingsTest.java"
@@ -184,7 +195,8 @@
       "reconciliation": "RETAIN_INCOMPATIBLE_PROJECTION_DISABLE_AND_REIMPORT_PACKS",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/InstalledPacksStore.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/InstalledPacksStore.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/ai/pack/AiPackImportServiceTest.java"
@@ -213,7 +225,8 @@
       "status": "READY",
       "implementationSources": [
         "modules/configuration/src/main/java/io/justsearch/configuration/model/InstallContractIO.java",
-        "modules/configuration/src/main/java/io/justsearch/configuration/model/InstallContract.java"
+        "modules/configuration/src/main/java/io/justsearch/configuration/model/InstallContract.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/configuration/src/test/java/io/justsearch/configuration/model/InstallContractIOTest.java"
@@ -240,7 +253,8 @@
       "reconciliation": "REQUIRE_USER_UNLOCK_OR_RECOVERY_KEY",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/encryption/EncryptionKeystore.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/encryption/EncryptionKeystore.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/encryption/DataKeyManagerTest.java",
@@ -297,7 +311,8 @@
       "reconciliation": "READ_V0_ARRAY_OR_V1_ENVELOPE_AND_WRITE_V1",
       "status": "READY",
       "implementationSources": [
-        "modules/app-agent/src/main/java/io/justsearch/agent/FileMemoryStore.java"
+        "modules/app-agent/src/main/java/io/justsearch/agent/FileMemoryStore.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-agent/src/test/java/io/justsearch/agent/FileMemoryStoreTest.java"
@@ -311,7 +326,10 @@
       "catalogDirName": "conversations",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["conversations/*/meta.json", "conversations/*/messages.jsonl"],
+      "ownedPaths": [
+        "conversations/*/meta.json",
+        "conversations/*/messages.jsonl"
+      ],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "schema-v1 encrypted meta.json plus legacy-compatible append-only messages.jsonl",
@@ -325,7 +343,8 @@
       "reconciliation": "READ_V0_META_OR_V1_META_AND_PRESERVE_MESSAGE_LINES",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/conversation/FileConversationStore.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/conversation/FileConversationStore.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/conversation/FileConversationStoreTest.java"
@@ -339,12 +358,20 @@
       "catalogDirName": "agent-runs",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["agent-runs/*/meta.json", "agent-runs/last-session.txt"],
+      "ownedPaths": [
+        "agent-runs/*/meta.json",
+        "agent-runs/last-session.txt"
+      ],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "meta/checkpoint JSON v4 plus append-only events",
       "currentVersion": 4,
-      "readableLegacyVersions": [0, 1, 2, 3],
+      "readableLegacyVersions": [
+        0,
+        1,
+        2,
+        3
+      ],
       "versionAuthority": "modules/app-agent/src/main/java/io/justsearch/agent/AgentRunStore.java",
       "futureVersionRefusalTest": "modules/app-agent/src/test/java/io/justsearch/agent/AgentRunStoreSchemaUpcasterTest.java",
       "writeMode": "MIXED_APPEND_AND_FULL_REWRITE",
@@ -353,7 +380,8 @@
       "reconciliation": "EXISTING_V0_TO_V4_UPCAST_THEN_ATOMIC_CHECKPOINT",
       "status": "READY",
       "implementationSources": [
-        "modules/app-agent/src/main/java/io/justsearch/agent/AgentRunStore.java"
+        "modules/app-agent/src/main/java/io/justsearch/agent/AgentRunStore.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-agent/src/test/java/io/justsearch/agent/AgentRunStoreTest.java",
@@ -385,7 +413,8 @@
       "reconciliation": "PRESERVE_APPEND_LOG_AND_UPCAST_METADATA",
       "status": "READY",
       "implementationSources": [
-        "modules/app-agent/src/main/java/io/justsearch/agent/RunEventStore.java"
+        "modules/app-agent/src/main/java/io/justsearch/agent/RunEventStore.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-agent/src/test/java/io/justsearch/agent/RunEventStoreTest.java"
@@ -414,7 +443,8 @@
       "status": "READY",
       "implementationSources": [
         "modules/app-agent/src/main/java/io/justsearch/agent/tools/FileOperationLog.java",
-        "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/AgentToolFactory.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/AgentToolFactory.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-agent/src/test/java/io/justsearch/agent/tools/FileOperationLogTest.java"
@@ -499,7 +529,8 @@
       "status": "READY",
       "implementationSources": [
         "modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java",
-        "modules/app-services/src/main/java/io/justsearch/app/services/worker/RemoteKnowledgeClient.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/worker/RemoteKnowledgeClient.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/worker/WatchedRootsStoreTest.java"
@@ -529,7 +560,8 @@
         "modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfig.java",
         "modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java",
         "modules/app-services/src/main/java/io/justsearch/app/services/worker/KnowledgeServerBootstrap.java",
-        "modules/app-services/src/main/java/io/justsearch/app/services/worker/WorkerSpawner.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/worker/WorkerSpawner.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/configuration/src/test/java/io/justsearch/configuration/resolved/ResolvedConfigBuilderTest.java",
@@ -546,12 +578,25 @@
       "catalogDirName": "jobs.db",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": ["jobs.db", "jobs.db-wal", "jobs.db-shm", "jobs.db.bak"],
+      "ownedPaths": [
+        "jobs.db",
+        "jobs.db-wal",
+        "jobs.db-shm",
+        "jobs.db.bak"
+      ],
       "recoverability": "DERIVED",
       "upgradeHandling": "REBUILD",
       "format": "SQLite WAL schema v7",
       "currentVersion": 7,
-      "readableLegacyVersions": [0, 1, 2, 3, 4, 5, 6],
+      "readableLegacyVersions": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
       "versionAuthority": "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqliteSchema.java",
       "futureVersionRefusalTest": "modules/indexer-worker/src/test/java/io/justsearch/indexerworker/queue/JobQueueMigrationTest.java",
       "writeMode": "TRANSACTIONAL",
@@ -579,7 +624,13 @@
       "catalogDirName": "index",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": ["index/*/indices/**", "index/*/state.json", "index/*/state.json.prev", "index/*/indices/*.rebuild-pending", "index/*/indices/*.clean-shutdown"],
+      "ownedPaths": [
+        "index/*/indices/**",
+        "index/*/state.json",
+        "index/*/state.json.prev",
+        "index/*/indices/*.rebuild-pending",
+        "index/*/indices/*.clean-shutdown"
+      ],
       "recoverability": "DERIVED",
       "upgradeHandling": "REBUILD",
       "format": "Lucene generations plus state v2 and generation manifest v1",
@@ -597,7 +648,10 @@
         "modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/RuntimeSession.java",
         "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/server/KnowledgeServer.java",
         "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/server/ops/KnowledgeServerMigrationOps.java",
-        "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/util/IndexRootLock.java"
+        "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/util/IndexRootLock.java",
+        "modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/ComponentsFactory.java",
+        "modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/SafeIndexPathOps.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/FileOps.java"
       ],
       "tests": [
         "modules/worker-core/src/test/java/io/justsearch/indexerworker/index/IndexGenerationManagerRestartTest.java"
@@ -641,7 +695,11 @@
       "encryptionNote": "Plaintext SQLite. entity_overrides records the user's own merge/split decisions and entity_clusters holds entity surface forms mined from the user's documents (EntityClusterSchema.java:8,15,41). Worker-owned, but the Worker is a JVM - unlike the Rust shell rows there is no reachability bar, only that nothing seals it today.",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": ["entity-clusters.db", "entity-clusters.db-wal", "entity-clusters.db-shm"],
+      "ownedPaths": [
+        "entity-clusters.db",
+        "entity-clusters.db-wal",
+        "entity-clusters.db-shm"
+      ],
       "recoverability": "MIXED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "SQLite WAL schema v1",
@@ -683,7 +741,8 @@
       "reconciliation": "RESCAN_INSTALLED_RUNTIME_VARIANTS",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/ai/runtime/RuntimeActivationService.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/runtime/RuntimeActivationService.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/ai/runtime/RuntimeActivationServiceTest.java"
@@ -709,7 +768,8 @@
       "reconciliation": "RESCAN_STAGING_AND_INSTALLED_PACKS",
       "status": "READY",
       "implementationSources": [
-        "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/AiPackImportService.java"
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/AiPackImportService.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/ai/pack/AiPackImportServiceTest.java"
@@ -723,7 +783,10 @@
       "encryptionNote": "Who is running right now and where: instance id, process ids, loopback ports, the app's own data directory, and reachability/shutdown classification per instance (RuntimeManifestPublisher.java:40). Process bookkeeping only; no user content.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["runtime/manifest.json", "runtime/instances/**"],
+      "ownedPaths": [
+        "runtime/manifest.json",
+        "runtime/instances/**"
+      ],
       "recoverability": "EPHEMERAL",
       "upgradeHandling": "RESET",
       "format": "atomic current manifest plus append-only instance history",
@@ -779,7 +842,10 @@
       "encryptionNote": "Model weights and runtime binaries the app downloaded or bundled - and only those, since the ownership rule limits this row to files a verified managed manifest names. Publicly distributed artifacts identical on every install; nothing user-derived to protect (files NOT claimed by a manifest are the byo-ai-assets row).",
       "owner": "HEAD",
       "root": "AI_HOME",
-      "ownedPaths": ["models/**", "native-bin/**"],
+      "ownedPaths": [
+        "models/**",
+        "native-bin/**"
+      ],
       "ownershipRule": "Only files named by a verified managed manifest are app-owned.",
       "recoverability": "DERIVED",
       "upgradeHandling": "REBUILD",
@@ -796,12 +862,18 @@
         "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/PackInstallOps.java",
         "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/PackStagingOps.java",
         "modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AcquisitionStage.java",
-        "modules/shell/src-tauri/src/lib.rs"
+        "modules/shell/src-tauri/src/lib.rs",
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/install/DownloadExecutor.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/install/DownloadResume.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/install/RuntimeRestoreUtil.java",
+        "modules/ort-common/src/main/java/io/justsearch/ort/OnnxSessionCache.java",
+        "modules/worker-core/src/main/java/io/justsearch/indexerworker/util/Sha256SidecarCache.java"
       ],
       "tests": [
         "modules/app-services/src/test/java/io/justsearch/app/services/ai/pack/AiPackImportServiceTest.java"
       ],
-      "fixtures": []
+      "fixtures": [],
+      "derivedCacheNote": "Beyond the manifest-named assets, three APP-GENERATED caches live under models/** beside the file they derive from: <model>.optimized / .opt-meta / .cuda.* (OnnxSessionCache.java:29-32) and <model>.sha256 (Sha256SidecarCache.java:31,48). They are not manifest-named and are not user-supplied, so neither this row's ownershipRule nor byo-ai-assets described them. They are rebuildable at a cost (a 30s+ re-optimization, a 100-400ms rehash), never user data. Recorded here rather than split into a row of their own; splitting is the open option."
     },
     {
       "id": "byo-ai-assets",
@@ -809,7 +881,10 @@
       "encryption": "UNSEALED_EXTERNAL_AUTHORITY",
       "owner": "EXTERNAL",
       "root": "AI_HOME",
-      "ownedPaths": ["models/**", "native-bin/**"],
+      "ownedPaths": [
+        "models/**",
+        "native-bin/**"
+      ],
       "ownershipRule": "Files not named by a verified managed manifest remain user-owned.",
       "recoverability": "AUTHORED",
       "upgradeHandling": "PRESERVE_EXTERNAL",
@@ -837,7 +912,10 @@
       "encryption": "UNSEALED_EXTERNAL_AUTHORITY",
       "owner": "EXTERNAL",
       "root": "DATA_DIR",
-      "ownedPaths": ["plugins/*/manifest.json", "plugins/*/plugin.js"],
+      "ownedPaths": [
+        "plugins/*/manifest.json",
+        "plugins/*/plugin.js"
+      ],
       "recoverability": "AUTHORED",
       "upgradeHandling": "PRESERVE_EXTERNAL",
       "format": "user-managed plugin manifest and JavaScript source",
@@ -917,7 +995,8 @@
       "reconciliation": "SHELL_ACCEPTS_ONLY_CURRENT_PREPARATION_ID_AND_RECEIPT_NONCE",
       "status": "READY",
       "implementationSources": [
-        "modules/ui/src/main/java/io/justsearch/ui/HeadShutdownCoordinator.java"
+        "modules/ui/src/main/java/io/justsearch/ui/HeadShutdownCoordinator.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/persistence/AtomicFileWrites.java"
       ],
       "tests": [
         "modules/ui/src/test/java/io/justsearch/ui/HeadShutdownCoordinatorTest.java"
@@ -931,7 +1010,10 @@
       "encryptionNote": "The id of the loaded model, plus a transition log of fromMode/toMode/reason/success/durationMs/generation (NdjsonInferenceTransitionLog.java:161-172). A closed vocabulary of lifecycle phases and reason codes - no prompt text, no completion text, no user content.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["inference-model-id.txt", "telemetry/inference-transitions.ndjson"],
+      "ownedPaths": [
+        "inference-model-id.txt",
+        "telemetry/inference-transitions.ndjson"
+      ],
       "recoverability": "DERIVED",
       "upgradeHandling": "RESET",
       "format": "runtime identity cache plus bounded transition telemetry",
@@ -959,7 +1041,11 @@
       "encryptionNote": "Plaintext diagnostics that do carry user-derived content: the exported span attributes include doc.path and http.target (NdjsonSpanExporter.java:45,59), so indexed document paths and request query strings land in telemetry/*.ndjson, and crashes/*.json records the raw exception message plus stack trace (CrashReporter.java:101-102), which for an indexing failure names the file being read. Derived, bounded, and pruned rather than recovered, so it is deliberately unsealed and covered by OS disk encryption only.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": ["telemetry/*.ndjson", "crashes/*.json", "diagnostics/slow-*.json"],
+      "ownedPaths": [
+        "telemetry/*.ndjson",
+        "crashes/*.json",
+        "diagnostics/slow-*.json"
+      ],
       "recoverability": "DERIVED",
       "upgradeHandling": "RESET",
       "format": "bounded diagnostic NDJSON and JSON artifacts",
@@ -993,7 +1079,11 @@
       "encryptionNote": "Signal files, not data files: the two index markers carry meaning by existing, and worker-fatal-reason holds one reason code - its only production writer passes the INDEX_CORRUPT constant (KnowledgeServer.java:758-759; WorkerFatalReasonMarker.java:27). No message text, no path, no user content.",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": ["worker-fatal-reason", "index/*/indices/*.rebuild-pending", "index/*/indices/*.clean-shutdown"],
+      "ownedPaths": [
+        "worker-fatal-reason",
+        "index/*/indices/*.rebuild-pending",
+        "index/*/indices/*.clean-shutdown"
+      ],
       "recoverability": "DERIVED",
       "upgradeHandling": "RESET",
       "format": "single-use worker recovery and clean-shutdown marker files",
@@ -1035,16 +1125,273 @@
       "reconciliation": "REACQUIRE_FOR_CURRENT_PROCESS",
       "status": "READY",
       "implementationSources": [
-        "modules/app-util/src/main/java/io/justsearch/app/util/AppInstanceLock.java"
+        "modules/app-util/src/main/java/io/justsearch/app/util/AppInstanceLock.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/worker/MainSignalBus.java",
+        "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/coordination/MmfWorkerSignalBus.java"
       ],
       "tests": ["modules/app-util/src/test/java/io/justsearch/app/util/AppInstanceLockTest.java"],
+      "fixtures": [],
+      "mmapNote": "worker_signal.lock matches this row's *.lock glob exactly, but it is not a PID marker: it is a memory-mapped Head<->Worker IPC region (MainSignalBus.java:63-73, MmfWorkerSignalBus.java:98-103) holding port, heartbeat and PID bytes, recreated each launch. Same lifecycle, different thing; named here so the row's format line is not read as covering more than it says."
+    },
+    {
+      "id": "agent-history-markdown",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "historyDir is dataDir.resolve(\"agent-history\") assembled in HeadAssembly.java:626 and passed in; the filename is sessionId + \".md\" at AgentHistoryIndexer.java:120. No single source carries both segments.",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext Markdown transcripts of agent sessions, one document per session -- user prompts and model output in the clear. Nothing structural prevents sealing it; nothing seals it today.",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "ownedPaths": ["agent-history/*.md"],
+      "recoverability": "DERIVED",
+      "upgradeHandling": "REBUILD",
+      "format": "One Markdown document per agent session, named <sessionId>.md.",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "NOT_YET_STATED",
+      "corruptionNote": "Not yet established. The writer is temp + ATOMIC_MOVE (AgentHistoryIndexer.java:184-188) with a REPLACE_EXISTING fallback, so a torn write is unlikely, but no read path states what happens to an unparseable document. This is why the row is HARDENING_REQUIRED rather than READY.",
+      "reconciliation": "Re-derivable from the agent-runs / run-events stores, but only on the backup-import path (reindexRestoredRun, AgentHistoryIndexer.java:104-115) -- not automatically at boot.",
+      "status": "HARDENING_REQUIRED",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/agenthistory/AgentHistoryIndexer.java"
+      ],
+      "tests": [],
+      "fixtures": []
+    },
+    {
+      "id": "ai-install-attempt-memory",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext JSON recording which AI-asset download attempts failed and at which transport tier, keyed by asset file name. No user content; asset names only.",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "ownedPaths": ["install-attempts.json"],
+      "recoverability": "AUTHORED",
+      "upgradeHandling": "RESET",
+      "format": "JSON { version, files } written whole (InstallAttemptMemory.java:43,167-168).",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "NON_ATOMIC",
+      "corruptionPolicy": "NOT_YET_STATED",
+      "corruptionNote": "Not yet established. The write is createDirectories + writeString with no temp-and-rename (InstallAttemptMemory.java:167-168), so a torn write IS reachable, and no read path states the recovery. Losing or corrupting it is not silent: it resets transport escalation to tier 0 and re-offers a Repair that will not converge, which is user-visible behaviour.",
+      "reconciliation": "None. The file IS the memory; there is no other record of prior attempts.",
+      "status": "HARDENING_REQUIRED",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/install/InstallAttemptMemory.java"
+      ],
+      "tests": [],
+      "fixtures": []
+    },
+    {
+      "id": "gpl-eval-snapshot",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "The path is dataDir.resolve(\"gpl-eval-snapshot.json\") at GplOrchestration.java:172 and passed into GplEvalSnapshot.save(Path); the writer itself names no literal.",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext JSON holding GPL evaluation metrics computed over the user's own indexed corpus -- aggregate scores, not document text. Nothing structural prevents sealing it.",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "ownedPaths": ["gpl-eval-snapshot.json"],
+      "recoverability": "DERIVED",
+      "upgradeHandling": "REBUILD",
+      "format": "JSON snapshot of the last GPL evaluation run.",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "NOT_YET_STATED",
+      "corruptionNote": "Not yet established. Written temp + ATOMIC_MOVE (GplEvalSnapshot.java:81-90); read back at boot by GplOrchestration.java:88 to decide whether to re-run evaluation, and surfaced on /api/debug/state (DebugStateController.java:61). No read path states what an unparseable snapshot does.",
+      "reconciliation": "Rebuilt by re-running GPL evaluation; a missing snapshot means the run happens again.",
+      "status": "HARDENING_REQUIRED",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/gpl/GplEvalSnapshot.java"
+      ],
+      "tests": [],
+      "fixtures": []
+    },
+    {
+      "id": "gpl-stage-reports",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext JSON analysis reports derived from the GPL training triples, which are themselves derived from the user's corpus. Aggregate statistics, not document text.",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "ownedPaths": [
+        "gpl-stage3a-analysis.json",
+        "gpl-stage3b-branch-fusion.json"
+      ],
+      "recoverability": "DERIVED",
+      "upgradeHandling": "REBUILD",
+      "format": "Two JSON reports written as siblings of gpl-training-triples.ndjson.",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "NON_ATOMIC",
+      "corruptionPolicy": "NOT_YET_STATED",
+      "corruptionNote": "Not yet established. Both are createDirectories + MAPPER.writeValue with no temp-and-rename (GplStage3aAnalysisReport.java:157-159, GplStage3bBranchFusionReport.java:211-213). They are pure reports -- nothing reads them back -- so a torn write costs a rerun, but that is stated here rather than assumed.",
+      "reconciliation": "Regenerated by re-running the GPL stage-3 jobs (GplJobCoordinator.java:738,747).",
+      "status": "HARDENING_REQUIRED",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/gpl/GplStage3aAnalysisReport.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/gpl/GplStage3bBranchFusionReport.java"
+      ],
+      "tests": [],
+      "fixtures": []
+    },
+    {
+      "id": "llama-server-log",
+      "pathVerification": "LITERAL",
+      "encryption": "UNSEALED_GAP",
+      "encryptionNote": "Plaintext append-only capture of llama-server stdout/stderr. Its contents depend on the server's verbosity and can include prompt-shaped diagnostics, so this is not an empty claim: it is a user-content-adjacent file that nothing seals.",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "ownedPaths": ["logs/llama-server.log"],
+      "recoverability": "EPHEMERAL",
+      "upgradeHandling": "RESET",
+      "format": "Plain text, appended to by ProcessBuilder.Redirect.appendTo across restarts.",
+      "writeMode": "APPEND",
+      "atomicity": "NON_ATOMIC",
+      "corruptionPolicy": "NOT_YET_STATED",
+      "corruptionNote": "Not yet established, and no rotation or retention policy is stated either -- the code says outright that the log is append-only across restarts (LlamaServerOps.java:939-940). Deleting it loses past inference diagnostics and nothing functional.",
+      "reconciliation": "None. A deleted log is simply gone; the next server launch starts a new one.",
+      "status": "HARDENING_REQUIRED",
+      "implementationSources": [
+        "modules/app-inference/src/main/java/io/justsearch/app/inference/LlamaServerOps.java"
+      ],
+      "tests": [],
+      "fixtures": []
+    },
+    {
+      "id": "agent-user-document-operations",
+      "pathVerification": "COMPOSED",
+      "pathVerificationNote": "There is no fixed path. Destinations are agent-supplied and resolved against the user's configured indexed roots (FileOperationExecutor.java:22-23,49-50; FileOperationsTool.java:447), so the owned path is a policy boundary, not a literal.",
+      "encryption": "UNSEALED_EXTERNAL_AUTHORITY",
+      "owner": "HEAD",
+      "root": "USER_INDEXED_ROOTS",
+      "ownedPaths": ["(any path under a user-configured indexed root)"],
+      "recoverability": "AUTHORED",
+      "upgradeHandling": "PRESERVE_EXTERNAL",
+      "format": "The user's own files and directories -- moved, copied, created and deleted in place.",
+      "writeMode": "IN_PLACE_MUTATION",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "JOURNAL_AND_UNDO",
+      "corruptionNote": "The undo journal (file-operation-journal, file-operations/*.json) is the recovery mechanism, and a COPY-undo DELETES a real user file (FileOperationsTool.java:277-289). That is the sharpest reason this row exists: the register previously named the journal but not the authority that mutates the user's documents, so the destructive half was unregistered.",
+      "reconciliation": "None from inside the app beyond the undo journal; the user's own backups are the outer authority.",
+      "status": "HARDENING_REQUIRED",
+      "implementationSources": [
+        "modules/app-agent/src/main/java/io/justsearch/agent/tools/FileOperationExecutor.java",
+        "modules/app-agent/src/main/java/io/justsearch/agent/tools/FileOperationsTool.java"
+      ],
+      "tests": [],
       "fixtures": []
     }
   ],
   "nonDurableWriteSites": [
-    "modules/app-util/src/main/java/io/justsearch/app/util/TempFileManager.java",
-    "modules/system-tests/src/main/java/io/justsearch/systemtests/chaos/WorkerProcessManager.java",
-    "modules/worker-services/src/main/java/io/justsearch/indexerworker/extract/ExtractionSandboxFactory.java"
+    {
+      "path": "modules/app-util/src/main/java/io/justsearch/app/util/TempFileManager.java",
+      "reason": "JVM/OS temp scratch: allocates and reaps files under java.io.tmpdir for in-flight work."
+    },
+    {
+      "path": "modules/system-tests/src/main/java/io/justsearch/systemtests/chaos/WorkerProcessManager.java",
+      "reason": "JVM/OS temp scratch: per-test data dirs the chaos harness creates and discards."
+    },
+    {
+      "path": "modules/worker-services/src/main/java/io/justsearch/indexerworker/extract/ExtractionSandboxFactory.java",
+      "reason": "Writes one JVM temp file for the extraction child's startup probe and deletes it in the same method (tempdoc 885 item 14)."
+    },
+    {
+      "path": "modules/app-launcher/src/main/java/io/justsearch/applauncher/Launcher.java",
+      "reason": "Files.createDirectories(dataDir) only (:316) -- a directory node with no content, created before logback init and recreated on every launch."
+    },
+    {
+      "path": "modules/app-launcher/src/main/java/io/justsearch/applauncher/LauncherBootstrap.java",
+      "reason": "Files.createDirectories(p) only (:37) -- the same mkdir-only bootstrap, run before SLF4J init. Writes no bytes."
+    },
+    {
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/lease/OperationLeaseServiceImpl.java",
+      "reason": "Dev-runner-only projection of the in-memory operation-lease map to tmp/dev-runner/op-leases.json; JUSTSEARCH_DEV_RUNNER_STATE_ROOT is unset in production (:67-73), so no file is written at all and the live map is the authority."
+    },
+    {
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/registry/snapshot/RegistrySnapshotExporter.java",
+      "reason": "Gradle JavaExec gate tool (modules/app-services/build.gradle.kts:209) exporting the operation/consumer registry to repo tmp/consumer-presence/registry-snapshot.json; regenerated by rerunning the exporter."
+    },
+    {
+      "path": "modules/benchmarks/src/main/java/io/justsearch/benchmarks/EncoderBatchSweepBench.java",
+      "reason": "Benchmark output under repo tmp/bench/encoder-batch-sweep/; regenerated by rerunning the bench."
+    },
+    {
+      "path": "modules/benchmarks/src/main/java/io/justsearch/benchmarks/EngineIndexBench.java",
+      "reason": "Benchmark output under repo tmp/bench/claim-a/ plus a JVM temp index it deletes at :384."
+    },
+    {
+      "path": "modules/benchmarks/src/main/java/io/justsearch/benchmarks/EngineVectorIndexBench.java",
+      "reason": "Benchmark output under repo tmp/bench/vector/ plus a JVM temp index it deletes at :740."
+    },
+    {
+      "path": "modules/benchmarks/src/main/java/io/justsearch/benchmarks/FilteredKnnBench.java",
+      "reason": "Benchmark output under repo tmp/bench/filtered-knn/ plus a JVM temp index it deletes at :401."
+    },
+    {
+      "path": "modules/benchmarks/src/main/java/io/justsearch/benchmarks/IndexingOverheadProfiler.java",
+      "reason": "Profiler output under repo tmp/bench/overhead-profile/ plus two JVM temp dirs best-effort deleted at :212."
+    },
+    {
+      "path": "modules/benchmarks/src/main/java/io/justsearch/benchmarks/RawLuceneIndexBench.java",
+      "reason": "Benchmark output under repo tmp/bench/raw-lucene/ plus a JVM temp index it deletes at :222."
+    },
+    {
+      "path": "modules/benchmarks/src/main/java/io/justsearch/benchmarks/RerankerDeadlineBench.java",
+      "reason": "Benchmark output under repo tmp/bench/reranker/; its model paths are read-only."
+    },
+    {
+      "path": "modules/benchmarks/src/main/java/io/justsearch/benchmarks/VectorQuantizationGate.java",
+      "reason": "Benchmark output under repo tmp/bench/quantization-gate/ plus per-mode JVM temp indices deleted at :226."
+    },
+    {
+      "path": "modules/benchmarks/src/main/java/io/justsearch/benchmarks/util/BenchmarkUtils.java",
+      "reason": "Its only write idiom is deleteRecursively(Path) (:188-202); all four production callers pass a Files.createTempDirectory bench index."
+    },
+    {
+      "path": "modules/ort-common/src/main/java/io/justsearch/ort/OrtCudaHelper.java",
+      "reason": "Copies CUDA dependency DLLs into ORT's %TEMP%/onnxruntime-java* extraction dir (:507) so LoadLibrary resolves them; that dir is re-extracted per JVM run."
+    },
+    {
+      "path": "modules/ort-common/src/main/java/io/justsearch/ort/OrtNativeTempReaper.java",
+      "reason": "Housekeeping sweep of stale %TEMP%/onnxruntime-java* dirs (:155); each is re-extracted on next load. Its FileChannel.open(lib, WRITE) at :119 is a liveness probe that modifies nothing."
+    },
+    {
+      "path": "modules/ssot-tools/src/main/java/io/justsearch/ssot/tools/GbnfGenerator.java",
+      "reason": "Repo build artifact: SSOT/artifacts/grammars/intent_v1.gbnf and its manifest.json (:63-71), git-tracked and regenerated by rerunning the generator."
+    },
+    {
+      "path": "modules/ssot-tools/src/main/java/io/justsearch/ssot/tools/SsotValidator.java",
+      "reason": "Repo build artifact: SSOT/manifests/repro/repro.v1.json (:202-204), regenerated by rerunning validation. Every other path it touches is a read."
+    },
+    {
+      "path": "modules/system-tests/src/main/java/io/justsearch/systemtests/chaos/MmfTestHarness.java",
+      "reason": "Test-harness peer of the worker signal MMF, opened against a per-test temp data dir that WorkerProcessManager (already classified here) owns and discards."
+    },
+    {
+      "path": "modules/system-tests/src/main/java/io/justsearch/systemtests/corpus/CorpusVectorGenerator.java",
+      "reason": "Writes build/rag-eval-vectors.json for its single caller (RagEvalVectorGeneratorTest:105); the vectors are seeded and deterministic, so rerunning regenerates them byte for byte."
+    },
+    {
+      "path": "modules/test-support/src/main/java/io/justsearch/testsupport/cli/GoldenSmokeRunner.java",
+      "reason": "Writes the three CLI-argument report paths the Gradle goldenSmoke task points at reports/phase10/goldens; regenerated by rerunning the task."
+    },
+    {
+      "path": "modules/test-support/src/main/java/io/justsearch/testsupport/fixtures/MiniIndexFixture.java",
+      "reason": "Writes build/test-support/mini-index/<set>/<hash>/ and appends reports/phase10/fixtures/mini-index-fixture.log; both are build/report paths keyed by a content hash, regenerated on the next fixture build."
+    },
+    {
+      "path": "modules/test-support/src/main/java/io/justsearch/testsupport/paging/PagingDeterminismHarness.java",
+      "reason": "Writes a JSON trace to a caller-supplied report path; its only caller is GoldenSmokeRunner with the goldens report path."
+    },
+    {
+      "path": "modules/worker-core/src/main/java/io/justsearch/indexerworker/splade/SpladeTruncationEvidence.java",
+      "reason": "Opt-in SPLADE truncation-statistics dump to an operator-named path (justsearch.splade.evidence_path); the config default is null (ResolvedConfigBuilder:1322) so nothing is written unless an operator asks, and it is recomputed by re-running encoding."
+    },
+    {
+      "path": "modules/worker-services/src/main/java/io/justsearch/indexerworker/extract/ExtractionSandboxCommand.java",
+      "reason": "Writes one %TEMP%/justsearch-extraction-sandbox-*.args JDK argfile per extraction-child spawn (:138-144), marked deleteOnExit; it exists only to carry that launch's arguments. This is the write the anchor-word scanner could not see."
+    },
+    {
+      "path": "modules/worker-services/src/main/java/io/justsearch/indexerworker/extract/PdfOcrEngine.java",
+      "reason": "Per-document JVM temp dirs (justsearch-ocr-*) holding rendered page PNGs and tesseract output, swept by deleteRecursively in the same call's finally (:201, :326, :353)."
+    }
   ],
   "constructionSites": [
     "modules/app-services/src/main/java/io/justsearch/app/services/HeadAssembly.java",

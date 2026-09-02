@@ -340,10 +340,29 @@ test('classified non-durable write sites satisfy coverage explicitly', () => {
   assert.deepEqual(
     check([readyRow()], {
       discovered: ['Store.java', 'Diagnostics.java'],
-      nonDurable: ['Diagnostics.java'],
+      nonDurable: [{ path: 'Diagnostics.java', reason: 'writes one JVM temp probe file it deletes.' }],
     }),
     [],
   );
+});
+
+test('a non-durable classification without a reason fails', () => {
+  // The entry is a CLAIM that nothing here survives. Every other row in this register justifies its
+  // claims; a bare path grows the allowlist by assertion, which is how the register acquires
+  // entries nobody can re-check.
+  const result = check([readyRow()], {
+    discovered: ['Store.java', 'Diagnostics.java'],
+    nonDurable: [{ path: 'Diagnostics.java' }],
+  });
+  assert.ok(result.some((f) => f.includes('reason is required')), result.join(' | '));
+});
+
+test('a non-durable entry with a blank reason fails the same way', () => {
+  const result = check([readyRow()], {
+    discovered: ['Store.java', 'Diagnostics.java'],
+    nonDurable: [{ path: 'Diagnostics.java', reason: '   ' }],
+  });
+  assert.ok(result.some((f) => f.includes('reason is required')), result.join(' | '));
 });
 
 // The gate only inspects sites the scanner discovers (check-store-recoverability.mjs:194), so an
@@ -364,7 +383,7 @@ for (const idiom of [
 }
 
 test('read-only mode-dependent APIs are not write sites', () => {
-  // Both appear in production against durable anchors and are strictly reads; flagging them would
+  // Both appear in production against durable paths and are strictly reads; flagging them would
   // force read-only files into nonDurableWriteSites, which registers false authority.
   assert.equal(
     isPersistenceWriteSource(JAVA_SRC, 'FileChannel.open(dbPath, StandardOpenOption.READ);'),
@@ -376,8 +395,78 @@ test('read-only mode-dependent APIs are not write sites', () => {
   );
 });
 
-test('a durable write idiom without a durable anchor stays out of the gate', () => {
-  assert.equal(isPersistenceWriteSource(JAVA_SRC, 'new FileWriter(userChosenExportTarget);'), false);
+// -------------------- discovery is by CALL, not by vocabulary --------------------
+//
+// The retired rule ANDed the mutation idiom with a "durable anchor" word (`dataDir`, `telemetry`,
+// `StoreCatalog`, …) matched against the raw file TEXT — comments included. That produced both
+// error directions at once: `ExtractionSandboxFactory` was discovered because a javadoc sentence
+// happened to contain an anchor word, while `ExtractionSandboxCommand`, which writes a real
+// argfile, was invisible because its prose did not. Discovery decided by reading English.
+//
+// The two checks below are the exact shapes of that defect, in both directions.
+
+test('DISCOVERED BY CALL: a write with no anchor vocabulary anywhere is a write site', () => {
+  // The ExtractionSandboxCommand shape: a real argfile write, and not one anchor word in the file.
+  assert.equal(
+    isPersistenceWriteSource(
+      'modules/worker-services/src/main/java/io/justsearch/x/SandboxCommand.java',
+      'class SandboxCommand { void argfile(Path file, StringBuilder body) {\n' +
+        '  Files.writeString(file, body.toString(), StandardCharsets.UTF_8);\n} }',
+    ),
+    true,
+  );
+});
+
+test('NOT DISCOVERED BY PROSE: a javadoc naming a write and an anchor is not a write site', () => {
+  // The ExtractionSandboxFactory shape, inverted: everything the old rule keyed on is present, and
+  // all of it is prose. A file that only TALKS about writing must not be classified as writing.
+  assert.equal(
+    isPersistenceWriteSource(
+      JAVA_SRC,
+      '/**\n' +
+        ' * Reads the snapshot. The writer uses Files.writeString under dataDir; see StoreCatalog\n' +
+        ' * and the telemetry runtimeDir notes. This class never writes.\n' +
+        ' */\n' +
+        'class Reader { String read(Path p) throws IOException { return Files.readString(p); } }',
+    ),
+    false,
+  );
+});
+
+test('NOT DISCOVERED BY PROSE: a commented-out write does not count', () => {
+  assert.equal(
+    isPersistenceWriteSource(JAVA_SRC, 'class X { void f() { // Files.write(dataDir, b);\n } }'),
+    false,
+  );
+});
+
+test('a write to a caller-supplied destination is STILL a write site (fail-closed)', () => {
+  // The retired anchor let this through on the theory that user-chosen export targets are governed
+  // elsewhere. Deciding that by vocabulary made the exemption invisible; it is now one explicit
+  // nonDurableWriteSites line with a reason, which a reader can disagree with.
+  assert.equal(isPersistenceWriteSource(JAVA_SRC, 'new FileWriter(userChosenExportTarget);'), true);
+});
+
+test('mode-bearing write forms ARE discovered when the mode says write', () => {
+  // These were dropped entirely because matching them by name flagged their read-only twins. The
+  // mode literal distinguishes them, so the argfile/marker writes that used them stop being a gap.
+  assert.equal(
+    isPersistenceWriteSource(JAVA_SRC, 'var raf = new RandomAccessFile(signalPath.toFile(), "rw");'),
+    true,
+  );
+  assert.equal(
+    isPersistenceWriteSource(JAVA_SRC, 'FileChannel.open(lib, StandardOpenOption.WRITE);'),
+    true,
+  );
+});
+
+test('a string literal is not a comment: `"// Files.write(x)"` still reads as prose-free code', () => {
+  // The comment stripper must not mistake `//` inside a literal for a comment start, or it would
+  // swallow the rest of a line that may contain the real call.
+  assert.equal(
+    isPersistenceWriteSource(JAVA_SRC, 'class X { void f() { log("// nope"); Files.write(p, b); } }'),
+    true,
+  );
 });
 
 if (failures.length > 0) {
