@@ -562,11 +562,40 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
             pass
 
     async def setup_skeleton(page):
-        await page.goto(_demo_url(ui_url, e2e_view_delay_ms="4000"), wait_until="domcontentloaded", timeout=timeout_ms)
+        # This step was unpassable on any code from the initial public release (29579e51) until
+        # 2026-09-03: it waited on a `skeleton-library` test id that no element in
+        # `modules/ui-web/src` has ever carried, and drove it with an `e2e_view_delay_ms` query
+        # param nothing in the FE reads. Both were hooks for a delay mechanism that does not
+        # exist, so the step failed in EVERY harness mode (tempdoc 721 `unanchored-drift-20`).
+        #
+        # The Library surface DOES have an observable loading state, so no test id is added to
+        # production to satisfy the harness: `this.loading` renders one `<div class="empty">
+        # Loading…</div>` while the `/api/indexing-roots/substrate` fetch is in flight. What was
+        # actually missing is a way to HOLD that state open — a fixture (or live) response lands in
+        # milliseconds. So the step stubs the route itself and answers late. A PAGE route outranks
+        # `install_fixtures`' CONTEXT route, which is what lets this step pass with `--fixtures`,
+        # against a live stack, and with no backend at all: `loading` is set before the fetch and
+        # cleared only in its `finally`, so holding the response holds the state in all three.
+        async def _hold_substrate(route):
+            await asyncio.sleep(10)
+            try:
+                await route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=ui_fixtures.fixture_body(route.request.url),
+                )
+            except Exception:
+                # The capture finished and the page is gone — the hold already did its job.
+                pass
+
+        await page.route("**/api/indexing-roots/substrate*", _hold_substrate)
+        await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
         if cooldown_ms > 0:
             await asyncio.sleep(cooldown_ms / 1000)
         await page.locator(S.rail_css(S.RAIL_SURFACE_LIBRARY)).click(timeout=5_000)
-        await page.get_by_test_id(S.TID_SKELETON_LIBRARY).wait_for(state="visible", timeout=5_000)
+        await page.locator(S.CSS_LIBRARY_SURFACE_HOST).get_by_text(
+            S.TEXT_LIBRARY_LOADING, exact=False
+        ).first.wait_for(state="visible", timeout=10_000)
 
     async def setup_snippets(page):
         await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
