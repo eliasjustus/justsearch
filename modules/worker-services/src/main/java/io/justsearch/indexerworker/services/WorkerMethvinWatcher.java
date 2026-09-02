@@ -186,21 +186,87 @@ public final class WorkerMethvinWatcher implements AutoCloseable {
     Path path = event.path();
     log.trace("Worker watcher event: {} {}", kind, path);
     switch (kind) {
-      case CREATE, MODIFY -> {
-        try {
-          // 813 Slice B: single-file event — stat for the size, unknown if the stat fails.
-          jobQueue.enqueueEntries(List.of(JobQueue.EnqueueEntry.stat(path)), collection);
-        } catch (RuntimeException e) {
-          log.warn("Worker watcher enqueue failed for {}: {}", path, e.getMessage());
-        }
-        maybeScheduleBurstReconcile(root);
-      }
+      case CREATE, MODIFY -> handleUpsert(root, collection, path);
       case DELETE -> {
         handleDelete(root, path);
         maybeScheduleBurstReconcile(root);
       }
       case OVERFLOW -> handleOverflow(root, path);
     }
+  }
+
+  /**
+   * CREATE/MODIFY: enqueue the path with the byte size observed at event time (813 Slice B).
+   *
+   * <p>Package-private so the size-at-event-time behaviour is deterministically unit-testable
+   * without racing a live {@code DirectoryWatcher} (same reason as {@link #handleDelete} and
+   * {@link #handleOverflow}).
+   */
+  void handleUpsert(Path root, String collection, Path path) {
+    try {
+      jobQueue.enqueueEntries(List.of(entryForLiveEvent(path)), collection);
+    } catch (RuntimeException e) {
+      log.warn("Worker watcher enqueue failed for {}: {}", path, e.getMessage());
+    }
+    maybeScheduleBurstReconcile(root);
+  }
+
+  /**
+   * Builds the sized queue entry for a single-file watcher event, recording a size of 0 as
+   * <em>unknown</em> rather than as a known zero.
+   *
+   * <p>A live CREATE/MODIFY notification races the writer: the OS reports the entry the moment it
+   * appears, which can be before the first byte is flushed, so {@code Files.size} legitimately
+   * returns 0 for a file that is about to be large. Recording that 0 as a KNOWN size is the defect
+   * — {@code JobQueue.pendingBytes()} then sums it into {@code knownBytes} as "0 bytes of work"
+   * instead of counting it in {@code unknownSizeJobs}, which is the tri-state 813 Slice B built so a
+   * consumer can tell "no work left" from "work left whose weight is unknown". A mid-write 4 GB file
+   * understates the backlog by 4 GB with nothing marking the estimate as incomplete.
+   *
+   * <p>A 0 observed on a live event is therefore not knowledge, it is "looked too early".
+   *
+   * <p>The two encodings are NOT interchangeable, and the difference is deliberate. {@code
+   * unknownSizeJobs} is a hard suppression input, not a footnote: {@code indexingProgress.ts}
+   * withdraws the byte estimate entirely when {@code unknownSizeJobs * 2 > jobsPending}. So a
+   * copy-in whose in-flight CREATEs come to outnumber half the pending backlog shows
+   * "N files remaining" with no byte figure; a sequential copy against a deep existing backlog
+   * stays under the ratio and keeps its estimate. The suppression is conditional on that ratio,
+   * not on "a copy is happening".
+   *
+   * <p>That is the intended 813 behaviour ("an absent estimate is an absent segment"): withholding
+   * a number beats showing one that understates a mid-write backlog by gigabytes with nothing
+   * marking it incomplete.
+   *
+   * <p>How long the unknown lasts, stated honestly. Nothing re-stats at processing time — {@code
+   * size_bytes} is written only by the enqueue path — so the row is healed by the next watcher
+   * event for that path ({@code INSERT OR REPLACE} restates it), not by a later read. Two cases
+   * make that window longer than "a moment":
+   * <ul>
+   *   <li>{@link FileHasher#LAST_MODIFIED_TIME} (see {@code registerRoot}) suppresses a MODIFY
+   *       whose mtime matches the recorded one, and Windows updates an open file's mtime lazily —
+   *       typically at close. For a large copy the healing MODIFY therefore tends to arrive when
+   *       the copy FINISHES, so the unknown window is roughly the file's whole copy duration, not
+   *       a few seconds.
+   *   <li>If no further event ever arrives — a file created empty and left empty, or a create and
+   *       write that land inside one mtime tick — the row keeps {@code UNKNOWN} for as long as it
+   *       stays PENDING/PROCESSING, i.e. until it is indexed and leaves the aggregate entirely.
+   * </ul>
+   * Both are accepted: an unknown that persists is still a true statement about what this
+   * producer observed, whereas the known {@code 0} it replaces was false for the entire window.
+   *
+   * <p>Scoped to live events on purpose: the bulk-walk producers ({@code WorkerScanOps},
+   * {@code SyncDirectoryOps}) construct from {@code attrs.size()} on a settled file, where a 0 is a
+   * true fact and stays a known 0. One empty file can therefore be encoded two ways depending on
+   * which producer found it — that asymmetry tracks how trustworthy the observation was, which is
+   * the distinction worth keeping.
+   *
+   * <p>Deliberately not a re-stat/settle loop: that would block the watcher's event-delivery thread
+   * on wall-clock time (the reason reconciles are already dispatched off-thread here) and would
+   * still be timing-dependent, trading a wrong value for a flaky one.
+   */
+  static JobQueue.EnqueueEntry entryForLiveEvent(Path path) {
+    JobQueue.EnqueueEntry stated = JobQueue.EnqueueEntry.stat(path);
+    return stated.sizeBytes() == 0L ? JobQueue.EnqueueEntry.ofUnknownSize(path) : stated;
   }
 
   /**
