@@ -51,8 +51,9 @@ These tests exist to prevent architectural drift and contract breakage in a mult
     - `modules/app-launcher/src/test/java/io/justsearch/app/launcher/LayeringEnforcementTest.java`
     - `modules/app-services/src/test/java/io/justsearch/app/services/worker/AppServicesWorkerGuardrailsTest.java`
     - `modules/indexer-worker/src/test/java/io/justsearch/indexerworker/IndexerWorkerGuardrailsTest.java`
-    - `modules/adapters-lucene/src/test/java/io/justsearch/adapters/lucene/runtime/AdaptersLuceneGuardrailsTest.java`
-  - What they enforce (examples): no runtime `test-support` dependencies, restricted `System.*` usage, and DTO-direction rules (UI REST controllers should not import proto DTOs by default).
+    - `modules/dead-code-audit/src/test/java/io/justsearch/deadcode/SystemAccessFunnelTest.java`
+  - What they enforce (examples): no runtime `test-support` dependencies, DTO-direction rules (UI REST controllers should not import proto DTOs by default), and the repo-wide system-access funnel.
+  - **`System.*` access is one rule, not one per module.** Six per-module copies of "no `System.getenv`/`getProperty`" were retired in tempdoc 883; their union still left nine modules uncovered, because a per-module rule has to be remembered when a module is added. `SystemAccessFunnelTest` lives in `modules/dead-code-audit`, whose classpath is already the union of every production module, and ratchets the surviving call sites through `gates/config-surface/sysaccess-allowlist.txt` — a list that only shrinks, enforced from the other side by the `config-surface` kernel gate.
 
 * **Lifecycle contract tests**:
   - `modules/ui/src/test/java/io/justsearch/ui/api/LifecycleContractTest.java` asserts the stable `/api/health` + `/api/status` lifecycle subset (schema v1) and the reason-code allowlist.

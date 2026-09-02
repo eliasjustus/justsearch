@@ -637,6 +637,8 @@
       },
       "config": {
         "reportPath": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
+        "applicationYaml": "config/application.yaml",
+        "sysaccessAllowlist": "gates/config-surface/sysaccess-allowlist.txt",
         "inputs": [
           {
             "path": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
