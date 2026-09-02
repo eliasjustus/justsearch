@@ -1945,3 +1945,211 @@ orchestrator, not by this chunk.
    clock-injection seam in the queue for one live assertion. The unit tier owns the boundary; the
    live tier can only confirm that an exhausted row, if one is planted by JDBC, renders as a failed
    task on the rail and as "Index gave up" in the ledger.
+
+## Item 6 live (2026-09-02)
+
+Run on the lane-C5 stack (runId `cf50b876-18d6-422d-b3b9-97aee016ede5`, API `127.0.0.1:56253`,
+dataDir `…/lane-C5/modules/ui-web/.dev-data`, compact profile, AI offline, Worker READY), which
+carries #600's sampler + ladder on top of the pacing/pool/cadence work. HTTP + logs only; no Gradle
+and no MCP dev tools (a lane-C5 measurement window was live). Head PID 32516, Worker PID 34104,
+extraction sandbox child PID 10288 — the last one is item 14's persistent child, observed alive and
+serving, which is incidental live evidence for that item.
+
+### Results
+
+| # | Acceptance item | Result | Evidence |
+|---|---|---|---|
+| 1 | Health SSE advances with **no** `/api/status` call | **PASS** | See UL.1 |
+| 1 | Worker-lost transition within one sampler period | **PASS — 786 ms** | See UL.1 |
+| 2 | `/api/status` p50 < 5 ms | **PASS — p50 1.27 ms** | See UL.2 |
+| 2 | No Worker RPC on the request thread | **PASS — 260 requests, 4 samples** | See UL.2 |
+| 2 | `?fresh=true` forces exactly one synchronous sample | **PASS** | See UL.2 |
+| 3 | 2 s sampling arm while indexing | **PASS — 17 consecutive ~2013 ms intervals** | See UL.3 |
+| 3 | 10 s sampling arm while idle | **PASS — 10002/10004/10004/10003 ms** | See UL.3 |
+| 4 | Queue throughput metrics non-trivial under load | **PASS** | See UL.4 |
+| 4 | Per-outcome counter | **NOT EXERCISED** — no failure occurred | See UL.4 |
+| 5 | Retry ladder live (locked file → `IO_FAILED`) | **INCONCLUSIVE** — fault injection did not reproduce the catch site | See UL.5 |
+
+### UL.1 The stream advances without anyone polling
+
+`curl -N` on `/api/health/events/stream` for the whole window; **zero `/api/status` calls** were
+issued between subscribing and the kill. Adding the 30-file root at 07:33:51.9 produced no condition
+delta, which is correct — a healthy scan crosses no condition threshold — only the 15 s heartbeats
+(seq 20/22/23/24), so the stream was demonstrably live throughout.
+
+Worker killed at **07:34:59.163** (`Stop-Process -Id 34104 -Force`, the Worker only; the Head was
+left alone):
+
+| SSE seq | Frame `ts` | Δ from kill | Event |
+|---|---|---|---|
+| 25 | 07:34:59.949 | **+786 ms** | `condition-added worker.capability` — `Recovering`, "worker process died; restarting" |
+| 26 | 07:34:59.952 | +789 ms | `occurrence-appended worker.restart-attempted` (attempt 1, backoffMs 1000, faultKind `death`) |
+| 27 | 07:34:59.955 | +791 ms | `condition-added index.unavailable` (ERROR, recovery `core.rebuild-index`) |
+| 28 | 07:34:59.955 | +791 ms | `condition-added embedding.readiness-unknown` |
+| 31 | 07:35:08.744 | +9.58 s | `condition-removed worker.capability` |
+| 32 | 07:35:08.746 | +9.58 s | `occurrence-appended worker.recovered` (recoveredAfterAttempts 1) |
+| 33 | 07:35:09.325 | +10.2 s | `condition-removed index.unavailable` |
+
+786 ms is well inside one sampler period, and it is *faster* than a period on purpose: the
+capability transition arm (`ReadinessReconciliationTrigger.wireTo(worker, inference)`) requests a
+reconcile the moment the supervisor flips `WorkerCapability`, so the periodic tick is the floor for
+a change nobody announces, not the latency for one that is announced. The Head's own supervision
+restarted the Worker and the conditions cleared without intervention.
+
+Note `embedding.readiness-unknown` rather than a cleared/healthy assertion while the Worker was
+down — the tri-state discipline (`unknown ≠ healthy`) holding on a live outage.
+
+### UL.2 `/api/status` latency and the absent RPC
+
+200 sequential calls over one keep-alive connection:
+
+```
+n=200  min=0.60  p50=1.27  p90=2.06  p95=2.67  p99=4.38  max=6.73   (ms)
+```
+
+**p50 = 1.27 ms** against the < 5 ms criterion; even p99 is under it.
+
+The stronger evidence is the interaction count, since a fast response could in principle still have
+made a call. 260 requests over a 33.2 s idle window returned **4 distinct `workerRpcAtMs` values**,
+i.e. one observation per ~10 s regardless of request rate, with the reported age sawtoothing 0 →
+9948 ms and `workerRpcStale` false throughout. A per-request RPC would have produced 260 distinct
+values.
+
+`?fresh=true`, sampled around one call:
+
+```
+cached  age= 7848ms sample=1788334609057
+FRESH   age=  -59ms sample=1788334617074   <== NEW SAMPLE
+cached  age=   99ms sample=1788334617074
+cached  age=  208ms sample=1788334617074
+```
+
+Exactly one new sample, and the following cached reads inherit it. The cost difference is itself the
+measurement of what left the request thread: **`?fresh=true` 49.8 ms vs cached 1.85 ms** — a 27x
+gap, which is the blocking `IndexStatus` unary plus tap reconciliation that every `/api/status` hit
+used to pay. (The −59 ms age is clock granularity between the measuring shell and the Head's
+`System.currentTimeMillis`.)
+
+### UL.3 The two sampling arms
+
+**Idle** (no watched roots, 260 requests / 33.2 s): inter-sample deltas **10014, 10014, 10003 ms**.
+
+**Busy** — an 822-file root (`lane-C5/docs`) added at 07:39:12.9, in-flight queue depth peaking at
+**680**:
+
+```
+deltas (ms): 10002, 10004, 2013, 2013, 2011, 2012, 2010, 2019, 2017,
+             2007, 2005, 2018, 2012, 2005, 2016, 2019, 2016, 2012, 2013
+```
+
+The arm engages and holds ~2013 ms for 17 consecutive intervals, then the run ends. Both arms behave
+as specified.
+
+**UL.3a — a real limitation the live run exposed, which the unit tier could not.** The first attempt
+at this used the 30-file root and produced **zero** 2 s intervals: 420 requests over ~60 s, 7
+samples, all 10 s apart, with `pendingJobsCount + processingJobsCount` reading 0 at every sample.
+The scan had drained inside a single idle gap. This is inherent to the design, not a bug in it —
+`samplingPeriodMs()` derives "busy" from the **last sample**, so the fast arm can only engage one
+period after work becomes observable, and an ingest shorter than the idle period is never seen at
+all. The two visible 10 s deltas at the head of the busy sequence above are that same one-period
+lag. Stated plainly: **the fast arm is reachable only for ingests longer than ~10 s.** That is
+arguably the right trade (a three-second ingest does not need 2 s health sampling, and the
+alternative — sampling faster to discover whether to sample faster — is circular), but it was an
+assumption before this run and is a measured fact after it.
+
+### UL.4 Queue metrics — RISK-002's instrument, in the field
+
+Read from the Worker's `telemetry/metrics-worker.ndjson`.
+
+First (30-file) ingest, read after the queue had drained:
+
+| Metric | Value |
+|---|---|
+| `worker.job_queue.enqueue_rate_per_min` | **30.0** |
+| `worker.job_queue.dequeue_rate_per_min` | **30.0** |
+| `worker.job_queue.depth` | 0.0 |
+
+This one flush is the whole argument for the item. **Depth reads 0 while the rates read 30/min** —
+the level says "nothing here", the rate says "thirty files just went through". Depth alone, which is
+all RISK-002 had for the years it sat at status *Monitoring*, cannot tell a drained queue from an
+idle one.
+
+Under the 822-file load:
+
+| Metric | Value |
+|---|---|
+| `worker.job_queue.enqueue_rate_per_min` | **1503.0** |
+| `worker.job_queue.dequeue_rate_per_min` | **560.0** |
+| `worker.job_queue.depth` | **313.0** |
+| `worker.job_queue.lock_wait_max_ms` | 0.0 |
+| `worker.job_queue.lock_wait_avg_ms` | 0.0 |
+
+Depth 313 **and** drain 560/min together state what neither states alone: the queue is 313 deep and
+emptying at 9.3 docs/s, so it clears in ~34 s. That is the shape RISK-002's ">2x throughput
+regression" trigger needs on both sides of a comparison.
+
+**The zero lock-wait is a result, not a gap.** At 1503 enqueues/min against one dequeue caller, the
+single `ReentrantLock` never made anyone wait a measurable millisecond. RISK-002 hypothesises write
+contention; at this scale the instrument says there is none, which is the first evidence either way
+the risk has ever had. A corpus large enough to contend is what would move it.
+
+`worker.job_queue.outcome.total` is **absent from the wire**, correctly: no job failed during the
+window, so the counter never incremented and no series exists. It stays unexercised live; the unit
+tier covers it (`WorkerOpsQueueMetricWireFormatTest` asserts all three tag values reach the NDJSON,
+including the `UNKNOWN` fallback).
+
+Rescan behaviour was as expected throughout: removing and re-adding a root reported
+`deletedJobs: 31` / `822` and re-enqueued cleanly, with no stale rows and no unexpected resets.
+
+### UL.5 Retry ladder — inconclusive, and why
+
+Two attempts, both using a Windows exclusive handle
+(`[System.IO.File]::Open(…, FileShare::None)`) to make a file unreadable, both failing to reach the
+`IOException` catch site in `JobBatchExtractor`:
+
+1. **`zz-locked-probe.md` inside the 30-file root**, locked across a full rescan
+   (07:37:23 → 07:38:38, rescan at 07:37:32). `failedJobs` stayed 0 and no backoff appeared. Note
+   that `failedJobs` reading 0 is *by itself* consistent with item 21a working — a transient failure
+   is no longer `FAILED` — so this attempt could not distinguish "the ladder held it PENDING" from
+   "no failure happened".
+2. **A dedicated two-file root** (`lane-C5/ladder-probe`, one locked + one readable) added at
+   07:41:38 to remove that ambiguity. The Worker logged `Indexing batch complete: 1 indexed, 0
+   skipped, 0 failed` — the readable file — and the locked file sat at `pendingJobsCount = 1` with
+   `pendingBackoffJobsCount = 0`, `failedJobs = 0`, `nextRetryAtMs = 0` for 96 consecutive samples.
+   The job existed and was never failed, but it was also never put in backoff, so this does **not**
+   demonstrate the ladder; it shows the file never reached the extractor's failure path at all.
+
+An earlier third attempt placed the probe under `lane-C5/tmp/`, which the scan excludes — no job was
+created at all (120 samples, all zero). Recorded so the next attempt does not repeat it.
+
+**Not reported as a pass, and not reported as a defect.** Nothing here contradicts the ladder; the
+fault injection simply did not produce the fault. A faithful live reproduction needs a fault that
+lands *inside* extraction rather than at open time — a file deleted between scan and extract, an ACL
+change that makes the read fail mid-stream, or a directory made unreadable — and is a follow-up. The
+seven-day bound and the attempts-cap behaviour are unit-tier by construction anyway
+(`JobQueueRetryLadderTest`, 8 tests, including the three-`IO_FAILED`-stays-PENDING case and the
+`RETRY_EXHAUSTED` → rescan reset). `RETRY_EXHAUSTED` itself remains unit-tier by design.
+
+### UL.6 Two out-of-scope observations, routed not investigated
+
+1. **`POST /api/indexing/roots` appears to drop a supplied `collection`.** Posting
+   `{"path": "…/docs/explanation", "collection": "lane-c4-live"}` returned `{"status":"ok"}`, and
+   `GET /api/indexing/roots?counts=true` then reported that root with `"collection":"default"`. The
+   contract (`docs/reference/api-contract-map.md`, Watched Roots API) says `collection` is optional
+   and defaults to `"default"` **when omitted** — it was not omitted. Not this lane's surface
+   (`IndexingController.handleAddRoot`, `IndexingController.java:156-175`); routed, not chased.
+2. **The stack was serving mutating routes with an empty session token.** `GET /api/mcp/token`
+   returned `{"token":""}` and an unauthenticated `POST /api/indexing/roots` succeeded. This is
+   presumably the dev-mode path of ADR-0046 control 5 rather than a hole in it, but it is worth a
+   deliberate confirmation by the ADR's owner (lane A) that dev mode is meant to mint no token
+   rather than mint one nobody delivered.
+
+### UL.7 What is now closed on §UC.9, and what is not
+
+Closed by this run: item 1 (health SSE with no polling), item 2 (`/api/status` p50), item 3 (the
+fast sampling arm — with UL.3a's limitation attached), and item 4's throughput half.
+
+Still open: item 4's per-outcome counter (needs a live failure), and item 5, which this run
+downgraded from "not worth doing live" to "attempted, fault injection insufficient" — the note in
+§UC.9 that a live `RETRY_EXHAUSTED` is not reachable in wall clock still holds, but a live
+*`IO_FAILED` → PENDING with backoff* is reachable and has not yet been shown.
