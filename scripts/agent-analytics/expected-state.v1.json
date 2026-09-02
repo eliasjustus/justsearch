@@ -200,6 +200,18 @@
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: python -m pytest -q scripts/jseval"
+    },
+    {
+      "id": "ui-a11y-gate-settings-dialog-capture-timeout",
+      "match": [
+        "ui-a11y-gate"
+      ],
+      "claim": "`jseval ui-a11y-gate` exits 2 (CAPTURE ERROR, not a violation) on the `security` and `security-light` steps: both time out waiting for `jf-settings-window dialog[open]`. The rest of the sweep is clean — 18 ok / 2 ERROR / 0 NEW violations. Read the exit code before the diff: exit 2 here means two steps could not be captured, NOT that accessibility regressed, so do not go hunting for a violation you introduced. Reproduced identically against main's own frontend, so it is pre-existing on main and not caused by your branch. A run that reports a NEW violation, or an ERROR on a step other than security / security-light, is yours.",
+      "evidence": "tempdoc 885 UL.9/UL.10 (2026-09-02): the same sweep run against two servers minutes apart — :5174 serving worktree-resid-product and :5173 serving unmodified main — produced byte-identical outcomes (18 ok / 2 ERROR / 0 new violations, exit 2) with both ERRORs naming the `jf-settings-window dialog[open]` selector (scripts/jseval/jseval/ui_selectors.py:57-68). 885:3596-3605 records the pass and says the next kernel-facing PR should pin it; this is that pin.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbeOmitted": "No exitProbe, deliberately, and this is the honest form rather than a decoration. `ui-a11y-gate` drives a real browser against a SERVED frontend (`--ui-url`), so an unattended probe run by `expected-state-probe.mjs --slow` exits non-zero because nothing is listening — for the wrong reason. Exit 0 is what retires a pin, and this probe could never reach exit 0 whether the defect is fixed or not, which makes it an exit that cannot observe the pinned state — the defect `ui-web-envelopestream-heartbeat-flaky` records in its own exitProbeRetired, in the opposite direction. The real exit is lane R6's fix landing (worktree resid2-ui, wave-1 residue): when its PR merges, the fixing PR deletes this pin. reviewBy is the backstop if R6 does not land.",
+      "fixOwner": "wave-1 residue lane R6 (worktree resid2-ui) — the settings-dialog capture selector/wait in the ui-shot harness."
     }
   ]
 }

@@ -77,13 +77,15 @@ def test_summarize_first_search_no_successful_probe_has_no_latency_stats():
 def test_build_block_with_present_metrics():
     block = cadence.build_block({
         cadence.REOPEN_TOTAL: 128.0,
-        cadence.COMMIT_TOTAL: 42.0,
+        cadence.COMMIT_COUNT: 42.0,
         cadence.SEGMENTS_SINCE_REOPEN: 3.0,
     })
     assert block == {
         "reopen_total": 128,
         "commit_total": 42,
         "segments_since_reopen": 3,
+        "commit_by_reason": None,
+        "commit_by_reason_total": None,
         "first_search_after_indexing": None,
     }
 
@@ -97,7 +99,7 @@ def test_build_block_absent_metrics_are_null_not_a_crash():
 
 
 def test_build_block_partial_metrics():
-    block = cadence.build_block({cadence.COMMIT_TOTAL: 7})
+    block = cadence.build_block({cadence.COMMIT_COUNT: 7})
     assert block["commit_total"] == 7
     assert block["reopen_total"] is None
 
@@ -143,11 +145,11 @@ def test_collect_worker_metrics_counters_take_the_end_of_run_total(tmp_path):
     _write_worker_metrics(tmp_path, [
         {"t": "2026-09-02T00:00:00Z", "name": cadence.REOPEN_TOTAL, "type": "counter", "value": 5},
         {"t": "2026-09-02T00:00:10Z", "name": cadence.REOPEN_TOTAL, "type": "counter", "value": 11},
-        {"t": "2026-09-02T00:00:10Z", "name": cadence.COMMIT_TOTAL, "type": "counter", "value": 2},
+        {"t": "2026-09-02T00:00:10Z", "name": cadence.COMMIT_COUNT, "type": "counter", "value": 2},
     ])
     values = cadence.collect_worker_metrics(tmp_path)
     assert values[cadence.REOPEN_TOTAL] == 11
-    assert values[cadence.COMMIT_TOTAL] == 2
+    assert values[cadence.COMMIT_COUNT] == 2
     assert values[cadence.SEGMENTS_SINCE_REOPEN] is None
 
 
@@ -165,19 +167,20 @@ def test_collect_worker_metrics_gauge_takes_the_last_observation(tmp_path):
 def test_collect_worker_metrics_missing_telemetry_is_all_null(tmp_path):
     values = cadence.collect_worker_metrics(tmp_path / "does-not-exist")
     assert set(values) == {
-        cadence.REOPEN_TOTAL, cadence.COMMIT_TOTAL, cadence.SEGMENTS_SINCE_REOPEN,
+        cadence.REOPEN_TOTAL, cadence.COMMIT_COUNT, cadence.SEGMENTS_SINCE_REOPEN,
+        cadence.BY_REASON_KEY,
     }
     assert all(v is None for v in values.values())
 
 
 def test_collect_worker_metrics_skips_malformed_and_foreign_records(tmp_path):
     _write_worker_metrics(tmp_path, [
-        {"t": "2026-09-02T00:00:00Z", "name": cadence.COMMIT_TOTAL, "value": "not-a-number"},
+        {"t": "2026-09-02T00:00:00Z", "name": cadence.COMMIT_COUNT, "value": "not-a-number"},
         {"t": "2026-09-02T00:00:01Z", "name": "worker.index.something_else", "value": 999},
-        {"t": "2026-09-02T00:00:02Z", "name": cadence.COMMIT_TOTAL, "value": 6},
+        {"t": "2026-09-02T00:00:02Z", "name": cadence.COMMIT_COUNT, "value": 6},
     ])
     values = cadence.collect_worker_metrics(tmp_path)
-    assert values[cadence.COMMIT_TOTAL] == 6
+    assert values[cadence.COMMIT_COUNT] == 6
 
 
 # -- (c) batch-trigger predicate --------------------------------------------
@@ -302,3 +305,52 @@ def test_probe_never_started_reports_an_empty_block():
         "errors": 0,
         "latency_ms": None,
     }
+
+
+def test_commit_by_reason_maxes_per_reason_not_across_reasons(tmp_path):
+    """Tempdoc 912 item 2: the tagged commit counter is one cumulative series PER reason.
+
+    The name-keyed max used for untagged counters would report the largest single reason as
+    the total, which is the failure this breakdown exists to avoid.
+    """
+    _write_worker_metrics(tmp_path, [
+        {"t": "2026-09-02T00:00:00Z", "name": cadence.COMMIT_TOTAL, "type": "counter",
+         "value": 4, "tags": {"reason": "timer"}},
+        {"t": "2026-09-02T00:00:10Z", "name": cadence.COMMIT_TOTAL, "type": "counter",
+         "value": 9, "tags": {"reason": "timer"}},
+        # A Worker restart resets the cumulative counter, so the LAST sample is not the run
+        # total. Keeping the max per reason is what the untagged counters already do; a
+        # last-wins read would report 2 here.
+        {"t": "2026-09-02T00:00:20Z", "name": cadence.COMMIT_TOTAL, "type": "counter",
+         "value": 2, "tags": {"reason": "timer"}},
+        {"t": "2026-09-02T00:00:10Z", "name": cadence.COMMIT_TOTAL, "type": "counter",
+         "value": 3, "tags": {"reason": "indexing-loop/idle"}},
+        {"t": "2026-09-02T00:00:10Z", "name": cadence.COMMIT_TOTAL, "type": "counter",
+         "value": 2},
+    ])
+    values = cadence.collect_worker_metrics(tmp_path)
+    assert values[cadence.BY_REASON_KEY] == {
+        "indexing-loop/idle": 3,
+        "timer": 9,
+        "unknown": 2,
+    }
+
+    block = cadence.build_block(values)
+    assert block["commit_by_reason"] == {
+        "indexing-loop/idle": 3,
+        "timer": 9,
+        "unknown": 2,
+    }
+    assert block["commit_by_reason_total"] == 14
+
+
+def test_commit_by_reason_is_null_when_the_worker_publishes_none(tmp_path):
+    _write_worker_metrics(tmp_path, [
+        {"t": "2026-09-02T00:00:00Z", "name": cadence.COMMIT_COUNT, "type": "counter", "value": 6},
+    ])
+    values = cadence.collect_worker_metrics(tmp_path)
+    assert values[cadence.BY_REASON_KEY] is None
+    block = cadence.build_block(values)
+    assert block["commit_by_reason"] is None
+    assert block["commit_by_reason_total"] is None
+    assert block["commit_total"] == 6

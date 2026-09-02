@@ -57,7 +57,11 @@ public final class WorkerLuceneTelemetryAdapter implements LuceneRuntimeTypes.Te
 
   @Override
   public void onCommit(long latencyMs, CommitReason reason) {
-    catalog.commitMs.record(latencyMs, CommitTags.of(reason == null ? CommitReason.UNKNOWN : reason));
+    CommitTags tags = CommitTags.of(reason == null ? CommitReason.UNKNOWN : reason);
+    catalog.commitMs.record(latencyMs, tags);
+    // Tempdoc 912 item 2: the histogram carries the reason but a histogram's per-tag count is not
+    // what the cadence block reads; the commit COUNT per trigger is the attribution surface.
+    catalog.commitTotal.increment(tags);
   }
 
   @Override

@@ -13,7 +13,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
+import { verdictForBaselineShift } from './truth-table.mjs';
 
 export const MODULE_DEPS_CLASSIFICATIONS = new Set([
   'declared-growth', 'merge-import', 'emergency-override', 'dep-shrink',
@@ -93,6 +94,30 @@ export async function enforceModuleDeps(options) {
     } else if (cur < pinned) {
       findings.push({ ruleId: rebalance ? 'module-deps/rebalanced' : 'module-deps/rebalance-available', level: 'note', message: `${name}: ${cur} < pinned ${pinned}`, uri: name });
       if (rebalance) rebalanceWrites.set(name, cur);
+    }
+  }
+
+  // Baseline-shift detection (tempdoc 910). `module-deps/silent-baseline-shift` was DECLARED in the
+  // rule descriptions above but nothing ever emitted it: `readFileAtRef` was imported and never
+  // called, so raising a pinned number by hand passed as `rebalance-available`. A documented ruleId
+  // that cannot fire is worse than an absent one — the catalog claims the hole is covered.
+  const priorText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  if (priorText !== null) {
+    const priorBaseline = parseBaseline(priorText);
+    for (const [name, livePin] of baseline.entries()) {
+      const priorPin = priorBaseline.get(name);
+      if (priorPin === undefined) continue;
+      const v = verdictForBaselineShift({
+        module: name, priorPin, livePin, classification: growthCovered ? covering : 'silent-growth',
+      });
+      if (v.status === 'fail') {
+        verdict = 'fail';
+        findings.push({ ruleId: v.ruleId, level: 'error', message: v.reason, uri: gate.baseline.path });
+      } else if (v.status === 'info') {
+        findings.push({ ruleId: v.ruleId, level: 'note', message: v.reason, uri: gate.baseline.path });
+      }
     }
   }
 
