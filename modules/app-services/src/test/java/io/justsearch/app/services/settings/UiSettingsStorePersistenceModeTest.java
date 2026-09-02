@@ -313,7 +313,7 @@ class UiSettingsStorePersistenceModeTest {
     }
 
     @Test
-    @DisplayName("READ_WRITE save emits the v1 envelope and reloads it")
+    @DisplayName("READ_WRITE save emits the current-version envelope and reloads it")
     void readWrite_saveWritesVersionedEnvelope() throws Exception {
       Path settingsFile = tempDir.resolve("settings.json");
       UiSettings settings = new UiSettings();
@@ -322,7 +322,8 @@ class UiSettingsStorePersistenceModeTest {
       new UiSettingsStore(READ_WRITE, settingsFile).save(settings);
 
       String persisted = Files.readString(settingsFile);
-      assertTrue(persisted.contains("\"schemaVersion\" : 1"));
+      // Bumped to 2 by tempdoc 883 (contextLength 4096 -> 0 = auto migration).
+      assertTrue(persisted.contains("\"schemaVersion\" : 2"));
       assertTrue(persisted.contains("\"settings\""));
       assertEquals(777, new UiSettingsStore(READ_WRITE, settingsFile).load().getMaxTokens());
     }

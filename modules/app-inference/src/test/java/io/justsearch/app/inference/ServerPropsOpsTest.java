@@ -16,6 +16,8 @@ class ServerPropsOpsTest {
   private AtomicReference<String> lastModelId;
   private AtomicReference<Integer> lastContextTokens;
   private AtomicReference<Boolean> externalActive;
+  /** The {@code -c} the ops under test should believe was launched (tempdoc 883). */
+  private AtomicReference<Integer> requestedContextTokens;
   private ServerPropsOps ops;
 
   @BeforeEach
@@ -23,6 +25,7 @@ class ServerPropsOpsTest {
     lastModelId = new AtomicReference<>(null);
     lastContextTokens = new AtomicReference<>(null);
     externalActive = new AtomicReference<>(false);
+    requestedContextTokens = new AtomicReference<>(4096);
     InferenceConfig config =
         new InferenceConfig(
             Path.of("bin", "llama-server.exe"),
@@ -34,29 +37,43 @@ class ServerPropsOpsTest {
             false);
     ops =
         new ServerPropsOps(
-            () -> config,
-            externalActive::get,
-            new PropsObserver() {
-              @Override
-              public void onModelIdObserved(String modelId) {
-                lastModelId.set(modelId);
-              }
+            () -> config, externalActive::get, observer(), () -> requestedContextTokens.get());
+  }
 
-              @Override
-              public void onContextTokensObserved(int contextTokens) {
-                lastContextTokens.set(contextTokens);
-              }
+  /** A config whose contextSize (4096) deliberately DISAGREES with the launched rung under test. */
+  private static InferenceConfig configuredAt4096() {
+    return new InferenceConfig(
+        Path.of("bin", "llama-server.exe"),
+        Path.of("models", "configured.gguf"),
+        null,
+        8080,
+        4096,
+        0,
+        false);
+  }
 
-              @Override
-              public String observedModelId() {
-                return lastModelId.get();
-              }
+  private PropsObserver observer() {
+    return new PropsObserver() {
+      @Override
+      public void onModelIdObserved(String modelId) {
+        lastModelId.set(modelId);
+      }
 
-              @Override
-              public Integer observedContextTokens() {
-                return lastContextTokens.get();
-              }
-            });
+      @Override
+      public void onContextTokensObserved(int contextTokens) {
+        lastContextTokens.set(contextTokens);
+      }
+
+      @Override
+      public String observedModelId() {
+        return lastModelId.get();
+      }
+
+      @Override
+      public Integer observedContextTokens() {
+        return lastContextTokens.get();
+      }
+    };
   }
 
   // ==================== resetExternalAdoptionState ====================
@@ -98,6 +115,86 @@ class ServerPropsOpsTest {
     assertEquals(12345L, diag.lastHealthOkAtMs());
     assertEquals("timeout", diag.lastHealthError());
     assertEquals(3, diag.consecutiveHealthFailures());
+  }
+
+  // ==================== context window mismatch (tempdoc 883) ====================
+
+  @Test
+  void contextMismatch_isFalseWhenTheServerHonouredTheLaunchedRung() {
+    assertFalse(ServerPropsOps.isContextWindowMismatch(16384, 16384));
+    assertFalse(
+        ServerPropsOps.isContextWindowMismatch(16384, 32768),
+        "a server with MORE context than we asked for is not a mismatch");
+  }
+
+  @Test
+  void contextMismatch_isTrueWhenTheServerGaveLessThanWasLaunched() {
+    assertTrue(ServerPropsOps.isContextWindowMismatch(32768, 8192));
+  }
+
+  @Test
+  void contextMismatch_isFalseWhenThisProcessLaunchedNothing() {
+    // Adopted external server: we chose no window, so we have no claim to contradict.
+    assertFalse(ServerPropsOps.isContextWindowMismatch(0, 512));
+  }
+
+  @Test
+  void contextMismatch_readbackConsultsTheLaunchedRungNotTheConfiguredValue() throws Exception {
+    // The comparand is the point, not the comparison. This setUp's InferenceConfig says 4096; a
+    // launch that stepped down to 2048 and a server reporting 2048 agree with each other, and the
+    // readback must ask the launch - not the (now stale) config - to know that. A warning that is
+    // wrong on every successful step-down teaches operators to ignore the one time it is right.
+    requestedContextTokens.set(2048);
+    java.util.concurrent.atomic.AtomicInteger consulted =
+        new java.util.concurrent.atomic.AtomicInteger();
+    ServerPropsOps stepped =
+        new ServerPropsOps(
+            () -> configuredAt4096(),
+            externalActive::get,
+            observer(),
+            () -> {
+              consulted.incrementAndGet();
+              return requestedContextTokens.get();
+            });
+
+    stepped.updateFromPropsBestEffort(MAPPER.readTree("{\"n_ctx\":2048}"));
+
+    assertTrue(consulted.get() > 0, "the launched rung is the comparand");
+    assertEquals(2048, lastContextTokens.get());
+  }
+
+  // ============ adopted-server context floor (tempdoc 883 review item 3) ============
+
+  @Test
+  void adoptedContextTooSmall_isFalseForAWorkableByoServer() {
+    // An adopted BYO llama-server at 8192 is perfectly workable. Before tempdoc 883 this was
+    // compared against OUR configured contextSize, which is now a derived 32768 rung on a GPU
+    // box — so every adopted server below our own preference would have been flagged too small.
+    assertFalse(ServerPropsOps.isAdoptedContextTooSmall(8192));
+    assertFalse(ServerPropsOps.isAdoptedContextTooSmall(4096));
+    assertFalse(ServerPropsOps.isAdoptedContextTooSmall(32768));
+  }
+
+  @Test
+  void adoptedContextTooSmall_isTrueBelowTheLaddersBottomRung() {
+    // Below the smallest window this app will run its OWN engine at, "too small" is honest.
+    assertTrue(ServerPropsOps.isAdoptedContextTooSmall(2048));
+    assertTrue(ServerPropsOps.isAdoptedContextTooSmall(512));
+  }
+
+  @Test
+  void adoptedContextTooSmall_isFalseWhenTheWindowIsUnknown() {
+    assertFalse(ServerPropsOps.isAdoptedContextTooSmall(null));
+  }
+
+  @Test
+  void adoptedContextFloor_isTheLaddersBottomRung() {
+    // Pins the floor to the policy rather than to a literal that can drift away from it.
+    assertEquals(4096, ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS);
+    assertFalse(
+        ServerPropsOps.isAdoptedContextTooSmall(ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS));
+    assertTrue(
+        ServerPropsOps.isAdoptedContextTooSmall(ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS - 1));
   }
 
   // ==================== updateFromPropsBestEffort ====================

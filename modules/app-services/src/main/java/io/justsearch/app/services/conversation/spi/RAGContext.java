@@ -141,9 +141,12 @@ public final class RAGContext implements ContextInjector {
   static final int DEFAULT_COMPLETION_RESERVE_TOKENS = 1024;
 
   /**
-   * Fallback context window when no live value is available. Matches the shipped default
-   * ({@code InferenceConfig} builder default, {@code UiSettings.getContextLength()}); the
-   * composition root supplies the live observed window instead.
+   * Fallback context window when no live value is available - the smallest rung of the launch
+   * ladder ({@code ContextWindowPolicy}), i.e. the smallest window any server this app starts can
+   * end up with. Deliberately NOT the derived default, which tempdoc 883 made 32768 / 8192 by
+   * backend: this constant is the last resort for callers with no observed and no configured
+   * window, and over-committing a budget against a window that may not exist is the failure it
+   * exists to prevent. The composition root supplies the live observed window instead.
    */
   static final int DEFAULT_CONTEXT_WINDOW_TOKENS = 4096;
 

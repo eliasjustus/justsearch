@@ -269,6 +269,14 @@ public class InferenceLifecycleManager
     return serverOps.thinkingSupport();
   }
 
+  /**
+   * Tempdoc 883 decision 1: the context window this process launched llama-server with, and why —
+   * null when it launched none. Published on {@code /api/inference/status}.
+   */
+  public io.justsearch.app.api.OnlineAiRuntimeIntrospection.ContextWindow launchedContextWindow() {
+    return serverOps.contextWindow();
+  }
+
   public long getLastStartupDurationMs() {
     return runner.view().lastStartupDurationMs();
   }
