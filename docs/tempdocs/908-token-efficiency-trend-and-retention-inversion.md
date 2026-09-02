@@ -376,6 +376,36 @@ more than the data carries. The honest resolution is to **rewrite the falsifier'
 ship §5.2 so the cost half becomes judgeable at ~15 buckets, and act now on the run-length finding
 that does not need the cost half at all.
 
+### 4.5b The largest single lever is the orchestrator's own model, and nobody has named it
+
+The `agent-token-efficiency-review` tempdoc's §4.2 lever is "model routing for implementation
+**workers**" — opus vs sonnet inside spawns. It never asks what the **main loop** runs on. The
+main loop carries the largest resident context in the system (p50 331-500k, re-presented on every
+one of ~14k calls), and 84% of those calls run on `claude-fable-5`, whose cache-read rate is
+**$1.00/M — exactly 2x Opus 5's $0.50/M and 5x Sonnet 5's $0.20/M** (`lib/transcript-cost.mjs`;
+Fable-5's rates are identical to `OPUS_FAST`).
+
+Counterfactual re-pricing of the same token counts, same window (2026-08-03..now):
+
+| main-loop model | calls | cache-read | actual | if Opus 5 | if Sonnet 5 |
+|---|---|---|---|---|---|
+| `claude-fable-5` | 9,038 | 4,104M | **$6,112** | $3,056 | $1,222 |
+| `claude-opus-5` | 3,924 | 1,527M | $1,168 | $1,168 | $467 |
+| `claude-fable-5-1` | 1,529 | 516M | $869 | $434 | $174 |
+| **total main** | | | **$8,148** | **$4,660** | — |
+
+**Delta: $3,489 per 5-week window**, on identical work — larger than that tempdoc's top-ranked
+lever ($2.5-3.5k realistic for bounding context per call), and it requires no behaviour change at
+all, only a model choice.
+
+**This is a tradeoff, not a free win, and the tempdoc should not pretend otherwise.** Fable is
+presumably run for orchestration quality; CLAUDE.md's own routing rule says judge the output, not
+the price tag, and a worse orchestrator that re-does work costs more than $3.5k. The criticism is
+not "switch models" — it is that a 2x multiplier on the single largest resident context in the
+system was never *measured or named*, in a tempdoc whose whole subject was model-routing
+economics. It cannot be traded off if nobody puts a number on it. §5.1's reader prints per-model
+rows for exactly this reason.
+
 ### 4.5 The fail-closed pricing warning is being desensitised
 
 `cache-efficiency.mjs` ends every run with a loud `!!` for `<synthetic>` — 69 turns, 0.0M tokens,
@@ -387,6 +417,48 @@ the `!!` reserved for models that are actually unknown. This is small and it is 
 degradation of a load-bearing guard.
 
 ---
+
+### 4.6 The two control shims are aimed at the half of the system that is improving
+
+`context-ceiling-hint` (886 PR 4) is a `PostToolUse` hook that fires at 300k/500k main-loop
+context. Main-loop p50 is 331-502k and **falling** (502k -> 331k). Meanwhile 74% of spend is inside
+subagents, whose p50 rose 158k -> 201k — and **parent hooks do not fire inside a subagent**, so the
+shim structurally cannot reach them. `spawn-cost-hint` does reach the spawn, but only on return,
+after the spend. So both shims from the token-efficiency review land on the improving half, and
+neither can act on the degrading one. Not a defect in either hook — a consequence of where the
+harness lets a hook run — but it means "886 shipped control shims" should not be read as "the
+subagent tail is now instrumented for control." §5.3 names the one reachable point.
+
+### 4.7 External practice, and the two places it contradicts this repo
+
+Research pass 2026-09-02 (complementing the `agent-token-efficiency-review` tempdoc's §5, which
+covered harness settings and effect sizes but not orchestration economics):
+
+- **Explicit per-agent iteration budgets are standard practice**, not a novel idea — published
+  scaffolds cap the parent (~90 iterations) and give each subagent an independent, smaller budget
+  (~50). This repo has **no budget at either level**, and its `>=120-call` spawns — 47-62 per week
+  — would be 2.4x over a typical subagent cap. §5.3's ~120 self-bound is *generous* against this
+  precedent, which is an argument for shipping it rather than debating the number.
+- **Subagents as "context firewalls" with capped return payloads** (e.g. 8 KB summaries), and
+  hierarchical delegation (leads spawning specialists) to keep the orchestrator's own context flat.
+  Lower value here: main tool results are only ~9% of re-presentation cost (§1 / 886 §2.4). Noted,
+  not proposed.
+- **Reference orchestrator/worker token split ~9.8% / 70.6%.** This repo runs **26.6% / 73.4%**
+  (`baseline-economics.mjs`). Worker share is at the norm; orchestrator share is ~2.7x it, and the
+  guidance attached to that reference is that a coordinator over-consuming is accumulating context
+  it should have delegated. Treat as orientation, not a target — it is one paper's measurement on
+  different work, and §4.5b shows the orchestrator's *cost* share (44%) diverges from its token
+  share anyway because of the model it runs on.
+- **"Cost per outcome, not cost per token" is the settled framing** — which §3.1 already adopts,
+  and §1.2b is the cautionary case for doing it with only one denominator.
+
+Sources: [Augment Code](https://www.augmentcode.com/guides/ai-agent-loop-token-cost-context-constraints),
+[The Harness Effect (arXiv 2607.06906)](https://arxiv.org/pdf/2607.06906),
+[The Orchestrator's Tax](https://martinfowler.com/articles/orchestrator-tax.html),
+[Code Agent Orchestra](https://addyosmani.com/blog/code-agent-orchestra/),
+[Future AGI](https://futureagi.substack.com/p/agent-cost-optimization-is-an-observability),
+[MintMCP](https://www.mintmcp.com/blog/ai-agent-monitoring),
+[nerdheadz](https://www.nerdheadz.com/blog/token-efficiency-ai-coding-agents-guide).
 
 ## 5. Design
 
