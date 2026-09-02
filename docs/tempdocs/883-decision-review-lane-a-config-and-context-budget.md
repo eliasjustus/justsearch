@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS — chunk 1 (PR 1 #596: precedence slice 1 + derived context window) implemented, independent review folded (§D); live window pending
+status: IN PROGRESS — chunk 1 (PR 1 #596: precedence slice 1 + derived context window) implemented, independent review folded (§D); live window COMPLETE except two recorded gaps — C5 (the JUSTSEARCH_CONTEXT_SIZE env arm, ordinal 400) and a live witness for the successful rung-walk
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: lane-A worker (branch worktree-lane-A, base 6c3ba431)
