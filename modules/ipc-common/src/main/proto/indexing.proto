@@ -1383,6 +1383,10 @@ message FailedJob {
   int32 attempts = 3;
   int64 last_updated_ms = 4;
   string collection = 5;
+  // Tempdoc 885 item 21b: FAILED | RETRY_EXHAUSTED. Without it the failure API had to guess, and
+  // guessed "FAILED" for every row -- relabelling a job that gave up after a week of retries as
+  // one whose content could not be parsed.
+  string state = 6;
 }
 
 message ListFailedJobsResponse {
@@ -1469,10 +1473,10 @@ message SubscribeIndexingJobsRequest {
 // Raw paths NEVER appear on this wire — resolve via core.resolve-path-hash Operation.
 message IndexingJobView {
   string path_hash = 1;
-  string state = 2;            // PENDING | PROCESSING | DONE | FAILED
+  string state = 2;            // PENDING | PROCESSING | DONE | FAILED | RETRY_EXHAUSTED
   int32 attempts = 3;
   int64 last_updated_ms = 4;
-  string error_message = 5;    // empty when not FAILED
+  string error_message = 5;    // empty unless the last attempt failed
   int64 retry_after_ms = 6;    // 0 when no backoff scheduled
   string collection = 7;
   // Tempdoc 812 D2 — the scan that enqueued this job (ScanRootProgress.scan_id), or empty for

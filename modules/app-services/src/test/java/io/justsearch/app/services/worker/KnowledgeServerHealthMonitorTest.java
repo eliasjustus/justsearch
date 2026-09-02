@@ -1,6 +1,7 @@
 package io.justsearch.app.services.worker;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -210,5 +211,42 @@ final class KnowledgeServerHealthMonitorTest {
     KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
     assertDoesNotThrow(() -> new KnowledgeServerHealthMonitor(bootstrap, 0L).close());
     assertDoesNotThrow(() -> new KnowledgeServerHealthMonitor(bootstrap, -1L).close());
+  }
+
+  /**
+   * Tempdoc 885 item 6: the monitor hosts the Worker-status sampler, so its inter-tick delay became
+   * variable. The clamp is the part worth a test — an unclamped supplier could return 0 and spin the
+   * single monitor thread, or a value larger than the configured interval and silently slow the
+   * health poll the monitor exists for.
+   */
+  @Test
+  void tickIntervalSupplierIsClampedToTheConfiguredInterval() {
+    KnowledgeServerBootstrap bootstrap = mock(KnowledgeServerBootstrap.class);
+    try (KnowledgeServerHealthMonitor monitor =
+        new KnowledgeServerHealthMonitor(bootstrap, 10_000L)) {
+      assertEquals(
+          10_000L, monitor.nextTickDelayMs(), "no supplier keeps the configured fixed cadence");
+
+      monitor.tickIntervalSupplier(() -> 2_000L);
+      assertEquals(2_000L, monitor.nextTickDelayMs());
+
+      monitor.tickIntervalSupplier(() -> 0L);
+      assertEquals(
+          KnowledgeServerHealthMonitor.MIN_TICK_INTERVAL_MS,
+          monitor.nextTickDelayMs(),
+          "a zero request must be floored, never spun");
+
+      monitor.tickIntervalSupplier(() -> 600_000L);
+      assertEquals(
+          10_000L, monitor.nextTickDelayMs(), "a supplier cannot slow the health poll past its own"
+              + " configured interval");
+
+      monitor.tickIntervalSupplier(
+          () -> {
+            throw new IllegalStateException("supplier blew up");
+          });
+      assertEquals(
+          10_000L, monitor.nextTickDelayMs(), "a throwing supplier falls back, never wedges");
+    }
   }
 }

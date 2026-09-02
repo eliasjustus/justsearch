@@ -604,6 +604,11 @@ public class HeadlessApp {
       var readinessTrigger = bootstrap.substrate().health().readinessReconciliationTrigger();
       if (readinessTrigger != null) {
         monitor.onTick(readinessTrigger::request);
+        // Tempdoc 885 item 6: the trigger's thunk is now the Worker-status sampler, so the
+        // monitor's tick IS the sampling schedule. Let the sampler choose the next interval
+        // (2 s while indexing/backfill/AI activation is in flight, 10 s idle) rather than adding
+        // a second executor for it.
+        monitor.tickIntervalSupplier(apiServer::statusSamplingPeriodMs);
       }
     }
     apiServer.bindWorkerRecovery(monitor);

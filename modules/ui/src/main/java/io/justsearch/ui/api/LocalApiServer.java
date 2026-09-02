@@ -845,6 +845,16 @@ public class LocalApiServer {
     core.inferenceHandlers().setWorkerRecovery(workerRecovery);
   }
 
+  /**
+   * Tempdoc 885 item 6: the delay the Worker-status sampler wants before its next observation —
+   * 2 s while indexing/backfill/AI activation is in flight, 10 s otherwise. Read by
+   * {@code KnowledgeServerHealthMonitor} to set its next tick, so the sampler rides the monitor's
+   * schedule instead of adding an executor.
+   */
+  public long statusSamplingPeriodMs() {
+    return core.statusLifecycleHandler().samplingPeriodMs();
+  }
+
   public void lateBindKnowledgeServer(KnowledgeServerBootstrap ks, String startError) {
     // The upgrade routes deliberately do NOT cache `ks` here: HeadAssembly.currentKnowledgeServer()
     // is the single owner of that reference (HeadlessApp calls connectKnowledgeServer immediately

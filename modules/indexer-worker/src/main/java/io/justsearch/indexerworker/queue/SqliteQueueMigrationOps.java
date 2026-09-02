@@ -250,6 +250,11 @@ final class SqliteQueueMigrationOps {
         addColumnIfMissing(conn, "scan_id", SqliteSchema.MIGRATE_V8_TO_V9_ADD_SCAN_ID);
         log.info("V8 to V9: Ensured scan_id column on jobs table (tempdoc 812 D2)");
       }
+      case 10 -> {
+        addColumnIfMissing(
+            conn, "first_failed_at", SqliteSchema.MIGRATE_V9_TO_V10_ADD_FIRST_FAILED_AT);
+        log.info("V9 to V10: Ensured first_failed_at column on jobs table (tempdoc 885 item 21)");
+      }
       default -> throw new SQLException("Unknown migration version: " + version);
     }
   }

@@ -63,6 +63,15 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
   /** How long {@link #close()} waits for an in-flight boot-recovery attempt to unwind (review F4). */
   static final long CLOSE_AWAIT_MS = 5_000;
 
+  /** Floor for the variable tick interval (tempdoc 885 item 6) — a supplier cannot make it spin. */
+  static final long MIN_TICK_INTERVAL_MS = 1_000;
+
+  /**
+   * Tempdoc 885 item 6: variable inter-tick delay, installed by the composition root. Null (the
+   * default) keeps the fixed {@link #pollIntervalMs} cadence every existing construction site had.
+   */
+  private volatile LongSupplier tickIntervalSupplier;
+
   private final KnowledgeServerBootstrap bootstrap;
   private final long pollIntervalMs;
   private final ScheduledExecutorService executor;
@@ -140,10 +149,58 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
 
   public void start() {
     log.info("Knowledge Server health monitor started (poll interval: {}ms)", pollIntervalMs);
-    @SuppressWarnings("unused")
-    var ignored =
-        executor.scheduleWithFixedDelay(
-            this::tick, pollIntervalMs, pollIntervalMs, TimeUnit.MILLISECONDS);
+    scheduleNextTick(pollIntervalMs);
+  }
+
+  /**
+   * Tempdoc 885 item 6: install a variable inter-tick delay. The monitor re-arms itself after every
+   * tick with {@code supplier.getAsLong()} clamped to {@code [MIN_TICK_INTERVAL_MS, pollIntervalMs]}
+   * — so the health sampler it now hosts can observe at 2 s while indexing is in flight and fall
+   * back to the configured 10 s when idle, without a second executor.
+   *
+   * <p>Resume detection deliberately keeps using the CONFIGURED {@code pollIntervalMs} as its
+   * reference (not the actual delay): shrinking the reference alongside the delay would shrink the
+   * gap threshold to 6 s and turn a long GC pause into a false "the machine resumed" reconnect.
+   * With the reference pinned, a faster tick can only make resume detection more conservative.
+   */
+  public void tickIntervalSupplier(LongSupplier supplier) {
+    this.tickIntervalSupplier = supplier;
+  }
+
+  private void scheduleNextTick(long delayMs) {
+    if (closed) {
+      return;
+    }
+    try {
+      @SuppressWarnings("unused")
+      var ignored = executor.schedule(this::tickAndReschedule, delayMs, TimeUnit.MILLISECONDS);
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      log.debug("Health monitor tick not rescheduled (monitor closing): {}", e.getMessage());
+    }
+  }
+
+  private void tickAndReschedule() {
+    try {
+      tick();
+    } finally {
+      scheduleNextTick(nextTickDelayMs());
+    }
+  }
+
+  /** The next inter-tick delay, clamped so a bad supplier can neither spin nor stall the monitor. */
+  long nextTickDelayMs() {
+    LongSupplier supplier = this.tickIntervalSupplier;
+    if (supplier == null) {
+      return pollIntervalMs;
+    }
+    long requested;
+    try {
+      requested = supplier.getAsLong();
+    } catch (RuntimeException e) {
+      log.debug("Tick-interval supplier failed; falling back to the configured interval", e);
+      return pollIntervalMs;
+    }
+    return Math.max(MIN_TICK_INTERVAL_MS, Math.min(pollIntervalMs, requested));
   }
 
   void tick() {

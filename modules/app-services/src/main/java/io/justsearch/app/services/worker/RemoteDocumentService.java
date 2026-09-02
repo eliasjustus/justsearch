@@ -93,7 +93,11 @@ public final class RemoteDocumentService implements DocumentService {
     return CompletableFuture.supplyAsync(() -> {
       try {
         log.debug("Fetching {} documents via gRPC", docIds.size());
-        FetchDocumentsResponse response = clientSupplier.get().fetchDocuments(docIds);
+        // Tempdoc 885 item 6 [R6b]: this list is caller-supplied (a search result set, a citation
+        // set), so nothing here bounds it. Paged under the byte budget so the reply can never reach
+        // the transport ceiling regardless of how many ids arrive.
+        FetchDocumentsResponse response =
+            BoundedDocumentFetch.fetchAll(ids -> clientSupplier.get().fetchDocuments(ids), docIds);
 
         Map<String, DocumentRecord> results = new LinkedHashMap<>();
         for (DocumentContent doc : response.getDocumentsList()) {
@@ -473,7 +477,9 @@ public final class RemoteDocumentService implements DocumentService {
    */
   private ContextResult retrieveContextFallback(Set<String> docIds) {
     try {
-      Map<String, DocumentRecord> docs = clientSupplier.get().fetchDocuments(List.copyOf(docIds))
+      Map<String, DocumentRecord> docs =
+          BoundedDocumentFetch.fetchAll(
+                  ids -> clientSupplier.get().fetchDocuments(ids), List.copyOf(docIds))
           .getDocumentsList().stream()
           .collect(java.util.stream.Collectors.toMap(
               DocumentContent::getDocId,

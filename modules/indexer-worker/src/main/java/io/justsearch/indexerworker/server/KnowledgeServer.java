@@ -413,7 +413,21 @@ public final class KnowledgeServer implements Closeable {
           c.switchBufferWriteFailures.increment(io.justsearch.telemetry.catalog.EmptyTags.INSTANCE);
         }
       };
-      jobQueue = new SqliteJobQueue(dbPath, 3, onSwitchBufferWriteFailure);
+      // Tempdoc 885 item 21d: the cap lives in ONE place. This was a bare literal `3` that agreed
+      // with SqliteJobQueue.DEFAULT_MAX_ATTEMPTS only by coincidence.
+      SqliteJobQueue sqliteQueue =
+          new SqliteJobQueue(dbPath, SqliteJobQueue.DEFAULT_MAX_ATTEMPTS, onSwitchBufferWriteFailure);
+      // Tempdoc 885 item 21e: per-outcome counters. Late-bound like the write-failure callback
+      // above — the catalog does not exist until registerTelemetryGauges runs.
+      sqliteQueue.setOutcomeObserver(
+          outcomeClass -> {
+            var c = this.workerOpsCatalog;
+            if (c != null) {
+              c.jobQueueOutcomeTotal.increment(
+                  new io.justsearch.indexerworker.services.QueueOutcomeTags(outcomeClass));
+            }
+          });
+      jobQueue = sqliteQueue;
       try {
         jobQueue.open();
       } catch (SQLException e) {
@@ -1318,6 +1332,14 @@ public final class KnowledgeServer implements Closeable {
    * {@code registerOtelObservableCallbacks} (which used the now-retired
    * {@code Telemetry.meter(scope)}) and the per-gauge {@code Telemetry.gauge(...)} calls.
    */
+  /** Tempdoc 885 item 21e — reads one queue meter, or 0 when the queue is not the SQLite one. */
+  private long queueMeter(
+      java.util.function.ToLongFunction<
+              io.justsearch.indexerworker.queue.QueueThroughputMeters>
+          reader) {
+    return jobQueue instanceof SqliteJobQueue q ? reader.applyAsLong(q.throughputMeters()) : 0L;
+  }
+
   private void registerTelemetryGauges() {
     if (telemetry == null) return;
     if (!(telemetry instanceof LocalTelemetry lt)) return;
@@ -1340,7 +1362,17 @@ public final class KnowledgeServer implements Closeable {
             // to count a single breath-hold (§B.2a).
             () -> indexingPacing.pacedIntervalsTotal(),
             () -> indexingPacing.observedDutyPct(),
-            () -> (long) foregroundLoad.inFlight());
+            () -> (long) foregroundLoad.inFlight(),
+            // Tempdoc 885 item 21e: RISK-002's instrument. Read straight off the queue's own
+            // meters, which are the only thing that sees a row admitted or claimed. The pattern
+            // match rather than a JobQueue interface method is deliberate: the meters type lives
+            // beside the SQLite implementation, and RISK-002 is specifically about THAT
+            // implementation's single connection + single lock. A non-SQLite queue reports zero
+            // because the risk this measures would not be its risk.
+            () -> queueMeter(m -> m.enqueueRatePerMinute()),
+            () -> queueMeter(m -> m.dequeueRatePerMinute()),
+            () -> queueMeter(m -> m.lockWaitMaxMs()),
+            () -> queueMeter(m -> m.lockWaitAvgMs()));
     this.workerOpsCatalog =
         new io.justsearch.indexerworker.services.WorkerOpsMetricCatalog(
             lt.registry(), OperationalMetrics.getInstance(),
