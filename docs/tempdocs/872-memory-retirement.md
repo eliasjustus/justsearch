@@ -221,6 +221,21 @@ Proceeding was authorised as "do that and proceed autonomously" on the assessmen
   assertion failures — the one-Gradle-at-a-time convention in `branch-safety.md`, not a defect).
   New **unowned**: the Settings "Solid surfaces" toggle in `renderAppearance()` is unreachable;
   the recipe's `--gate a,b,c` wording (fixed in place in `consult-register.v1.json`).
+- **The "concurrent-agent load times out random worker tests" pin candidate bit again, and one
+  instance was a real test defect (#605, 2026-09-02).** The full suite reddened twice on that
+  branch; every failure was a timeout and every one passed re-run in isolation, so the shape held.
+  But one of them,
+  `PersistentExtractionSandboxTest.hangingChildIsKilledAtTheDeadlineAndTheNextRequestSucceeds`, was
+  not merely starved: it configured a **2-second** sandbox deadline and then asserted that the
+  request AFTER the deliberate timeout succeeds. That second request has to spawn a cold JVM, which
+  on Windows under load exceeds 2 s on its own, so the test failed with the very
+  `ExtractionTimeoutException` it had just asserted — a self-inflicted flake wearing the
+  starvation shape. Fixed in #605 by raising the deadline to 10 s: the property under test is
+  kill-at-deadline-plus-replacement, not the deadline's value, and the hang fixture still trips it
+  long before 10 s. **Lesson for the pin candidate:** "every failure is a timeout" is evidence for
+  starvation but not proof — a wall-clock budget sized for an idle machine looks identical. Check
+  whether the failing assertion depends on a duration the test itself chose before filing it as
+  load.
 - **Owner call, still open**: an external defect tracker. Not needed for 872 to hold.
 
 ## §7 What this does NOT claim

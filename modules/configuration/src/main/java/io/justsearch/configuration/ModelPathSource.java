@@ -7,9 +7,8 @@ import java.util.Set;
 /**
  * Ownership markers for the stored LLM model path (tempdoc 842 §2.3 precedence rule).
  *
- * <p>The runtime stores a resolved chat-model path in {@code justsearch.llm.model_path} and, next
- * to it, a marker in {@link #SOURCE_PROP_LLM_MODEL_PATH} naming <em>who wrote it</em>. That marker
- * is the only thing separating two values that look identical on the wire:
+ * <p>A marker system property records <em>who wrote</em> the system property beside it, separating
+ * two values that look identical on the wire:
  *
  * <ul>
  *   <li><b>System-owned</b> — written by the system itself (settings promotion at boot, CUDA
@@ -22,26 +21,48 @@ import java.util.Set;
  *       may quietly point the engine somewhere else.
  * </ul>
  *
- * <p>Without this distinction the compact profile would be silently inert on every installed and
- * dev data dir — each one already stores a 9B model path written by the boot-time settings
- * promotion, which as a bare "override is set" test reads exactly like an operator lock.
+ * <p><b>What still writes a marker, as of tempdoc 883 §C.5c (#605).</b> Only
+ * {@code justsearch.server.exe.source}, and only for the runtime GPU-variant switch
+ * ({@code RuntimeActivationService}, {@code AiInstallService.applyCudaServerExe},
+ * {@code HeadlessApp.maybeAutoSelectCuda12Variant}). There it is genuinely load-bearing: it is the
+ * token {@code applyServerExeSysProp} reads to decide whether an existing exe override is the
+ * system's own (overwritable) or an operator lock (refuse), and it is captured and restored by the
+ * activation rollback bracket.
  *
- * <p>The marker vocabulary is shared, not private, precisely because several surfaces must agree on
- * it: {@code InferenceConfig} (bootstrap resolution), {@code RuntimeActivationService} (activation
- * writes), and {@code EffectiveConfigController} (ownership reporting). Divergent private copies of
- * this list are how "system-owned" and "operator lock" drift apart.
+ * <p><b>Nothing writes {@link #SOURCE_PROP_LLM_MODEL_PATH} any more.</b> Its writers existed only to
+ * label a settings-borne value that had been promoted to a system property — the boot promotion
+ * (retired by 883 §C.5c) and the installer/pack-import promotions (retired with it, #605 review S1).
+ * A chat-model path now reaches the resolver once, at ordinal 300, so the ordinal chain classifies
+ * it without help: {@code settings.json} is re-derivable and supersedable by an explicit profile,
+ * and an unmarked {@code jvm_arg} really is an operator lock. The constant and
+ * {@link #isSystemOwned} survive because tempdoc 842 forward-declared {@link #PROFILE_RESOLVED} for
+ * the profile-persistence writer that has not shipped yet; if that slice is abandoned, this pair
+ * goes with it.
+ *
+ * <p>The vocabulary is shared, not private, precisely because several surfaces must agree on it:
+ * {@code InferenceConfig} (bootstrap resolution) and {@code RuntimeActivationService} (activation
+ * writes). Divergent private copies are how "system-owned" and "operator lock" drift apart.
  */
 public final class ModelPathSource {
 
   private ModelPathSource() {}
 
-  /** Companion system property that records who wrote {@code justsearch.llm.model_path}. */
+  /**
+   * Companion system property that records who wrote {@code justsearch.llm.model_path}.
+   *
+   * <p>No writer ships today — see the class javadoc. It is read by
+   * {@code InferenceConfig.classifyModelPathOwner}, where an absent marker correctly means
+   * "operator", and is kept for tempdoc 842's pending profile-persistence writer.
+   */
   public static final String SOURCE_PROP_LLM_MODEL_PATH = "justsearch.llm.model_path.source";
 
   /**
-   * Written by {@code HeadlessApp.resolveConfig} (boot-time settings promotion) and
-   * {@code SettingsController} when a settings-borne value is pushed into a system property. The
-   * value is a copy of {@code settings.json}, re-derivable at every boot.
+   * A value copied from {@code settings.json} into a system property — re-derivable at every boot.
+   *
+   * <p>Now written only for {@code justsearch.server.exe.source}, by
+   * {@code RuntimeActivationService}, which needs the exe override at ordinal 500 to beat the
+   * settings row it just saved. No settings→sysprop promotion writes it any more: the boot pair went
+   * with tempdoc 883 §C.5c, and the installer/pack-import pair with #605 review S1.
    */
   public static final String UI_SETTINGS = "ui_settings";
 

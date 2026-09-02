@@ -69,7 +69,64 @@ class HeadlessEvalEnvAllowlistTest {
               + " nothing. Missing keys:"
               + missing
               + "\n\nFix: add each missing key to the HEADLESS_AI_ENV_VARS list in"
-              + " modules/ui/build.gradle.kts (~line 1620).");
+              + " modules/ui/build.gradle.kts.");
+    }
+  }
+
+  /**
+   * The indexing-cadence knobs an eval arm selects per run (tempdoc 885 item 19 and its tracked
+   * commit-timer follow-up, made configurable in #605).
+   *
+   * <p>Listed explicitly rather than self-discovered by prefix: most of {@code EnvRegistry} has no
+   * business on the eval allowlist, so a prefix rule here would either over-forward or drift into
+   * meaninglessness. These are the keys an arm sets to differ from control, which is exactly the
+   * set whose silent absence produces a WRONG measurement rather than a failure — the arm runs the
+   * default and the comparison table reads "no difference". 885's own window lost an arm to that
+   * shape twice.
+   */
+  private static final Set<String> CADENCE_ARM_ENV_KEYS =
+      Set.of(
+          "JUSTSEARCH_INDEX_NRT_MODE",
+          "JUSTSEARCH_INDEX_NRT_BACKGROUND_REOPEN_MS",
+          "JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS",
+          "JUSTSEARCH_BACKFILL_COMMIT_INTERVAL_MS",
+          "JUSTSEARCH_BACKFILL_MAX_DOCS_BEFORE_COMMIT",
+          "JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS",
+          "JUSTSEARCH_EXTRACTION_SANDBOX_MODE");
+
+  @Test
+  @DisplayName("Every indexing-cadence arm knob is forwarded by the eval-mode allowlist")
+  void everyCadenceArmEnvKeyReachesEvalLaunch() throws IOException {
+    String script = stripKotlinComments(Files.readString(resolveBuildScript()));
+
+    StringBuilder missing = new StringBuilder();
+    for (String key : CADENCE_ARM_ENV_KEYS) {
+      // Each key must ALSO still be declared in EnvRegistry — a key forwarded by the build script
+      // but deleted from the registry is a dead entry, and one declared but unforwarded is the
+      // silent-drop this pins. Both directions are checked so the pair cannot drift apart.
+      boolean declared = false;
+      for (EnvRegistry candidate : EnvRegistry.values()) {
+        if (candidate.envVar().equals(key)) {
+          declared = true;
+          break;
+        }
+      }
+      if (!declared) {
+        missing.append("\n  - ").append(key).append(" (no longer declared in EnvRegistry)");
+      } else if (!script.contains("\"" + key + "\"")) {
+        missing.append("\n  - ").append(key).append(" (declared, but not on the allowlist)");
+      }
+    }
+    if (missing.length() > 0) {
+      fail(
+          "modules/ui/build.gradle.kts must forward every indexing-cadence knob via"
+              + " HEADLESS_AI_ENV_VARS. Eval mode (runHeadlessEval, and therefore jseval"
+              + " --start-backend) silently filters anything not on that list, so the arm launches"
+              + " with the DEFAULT value and its comparison against control reads 'no difference'"
+              + " for the wrong reason — a wrong measurement, not a visible failure. Problems:"
+              + missing
+              + "\n\nFix: add each missing key to HEADLESS_AI_ENV_VARS in"
+              + " modules/ui/build.gradle.kts, in the tempdoc 885 cadence block.");
     }
   }
 

@@ -159,20 +159,16 @@ class ExtractionSandboxChaosTest {
   }
 
   /**
-   * The operator-override argv for the chaos child. The classpath goes into a JVM
-   * {@code @argfile} because the Worker whitespace-splits
-   * {@code JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND}, so it cannot carry a long (or spaced) value
-   * inline.
+   * The operator-override argv for the chaos child. The classpath goes into a JVM {@code @argfile}
+   * because a fully expanded Gradle test classpath clears the Windows 32,767-character command-line
+   * limit on its own — the same reason {@code ExtractionSandboxCommand} has an argfile fallback.
+   * That is a LENGTH constraint, not a quoting one: since tempdoc 885's residue fix the override is
+   * quote-aware, so the two paths below are quoted and may contain spaces.
    */
   private String chaosChildCommand() throws IOException {
     String javaExe = Path.of(System.getProperty("java.home"), "bin",
         isWindows() ? "java.exe" : "java").toString();
-    assertFalse(javaExe.contains(" "),
-        "JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND is whitespace-split, so this harness needs a "
-            + "space-free JDK path; got: " + javaExe);
     Path argFile = testDataDir.resolve("chaos-sandbox-child-args.txt");
-    assertFalse(argFile.toAbsolutePath().toString().contains(" "),
-        "argfile path must be space-free: " + argFile);
     // 128m: large enough for Tika on the small text fixtures, small enough that the chaos-oom
     // file exhausts the child heap in seconds.
     String args = "-Xmx128m\n"
@@ -181,7 +177,7 @@ class ExtractionSandboxChaosTest {
         + "\"" + System.getProperty("java.class.path").replace("\\", "\\\\") + "\"\n"
         + ChaosExtractionSandboxChild.class.getName() + "\n";
     Files.writeString(argFile, args, StandardCharsets.UTF_8);
-    return javaExe + " @" + argFile.toAbsolutePath();
+    return "\"" + javaExe + "\" \"@" + argFile.toAbsolutePath() + "\"";
   }
 
   private int spawnWorkerAndAwaitPort(long timeoutMs) throws Exception {

@@ -186,6 +186,77 @@ final class JobQueueRetryLadderTest {
   }
 
   @Test
+  @DisplayName("a retry reports the state it actually replaced, not a hardcoded FAILED")
+  void reenqueueReportsTheStateItReplaced() throws Exception {
+    // 885 §UD open item 1: GrpcIngestService.retryIndexingJob stated setPreviousState("FAILED")
+    // without ever reading the row — wrong for a PENDING-in-backoff job before this item, and wrong
+    // for RETRY_EXHAUSTED after it. Every case below is a state that literal misreported.
+
+    // (1) RETRY_EXHAUSTED — the state item 21b introduced, and the reason this is worth fixing.
+    Path exhausted = tempDir.resolve("exhausted.txt");
+    Files.writeString(exhausted, "on a network share");
+    String exhaustedNorm = PathNormalizer.normalizePath(exhausted.toAbsolutePath().toString());
+    jobQueue.enqueue(List.of(exhausted));
+    jobQueue.pollPending(1);
+    jobQueue.markFailed(exhausted, ioFailure("share offline"));
+    setFirstFailedAtViaJdbc(
+        exhaustedNorm,
+        System.currentTimeMillis() - IngestionRetryLadder.MAX_RETRY_WINDOW_MS - 86_400_000L);
+    setStateViaJdbc(exhaustedNorm, "PENDING");
+    jobQueue.pollPending(1);
+    jobQueue.markFailed(exhausted, ioFailure("share still offline"));
+    assertEquals("RETRY_EXHAUSTED", readRow(exhaustedNorm).state(), "precondition");
+
+    JobQueue.ReenqueueResult exhaustedResult =
+        jobQueue.reenqueue(JobQueue.EnqueueEntry.stat(exhausted));
+    assertEquals(1, exhaustedResult.accepted());
+    assertEquals("RETRY_EXHAUSTED", exhaustedResult.previousState());
+    JobRow revived = readRow(exhaustedNorm);
+    assertEquals("PENDING", revived.state(), "the retry still revives the row");
+    assertEquals(0, revived.attempts(), "and still resets the failure run");
+    assertNull(revived.firstFailedAt());
+
+    // (2) FAILED — the one case the old literal happened to get right.
+    Path failed = tempDir.resolve("failed.txt");
+    Files.writeString(failed, "content");
+    String failedNorm = PathNormalizer.normalizePath(failed.toAbsolutePath().toString());
+    jobQueue.enqueue(List.of(failed));
+    jobQueue.pollPending(1);
+    jobQueue.markFailed(
+        failed,
+        IngestionOutcome.of(
+            IngestionOutcomeClass.PARSER_FAILED,
+            IngestionReasonCodes.PARSER_FAILED,
+            IngestionRetryPolicy.NONE,
+            "unparseable"));
+    assertEquals("FAILED", readRow(failedNorm).state(), "precondition");
+    assertEquals("FAILED", jobQueue.reenqueue(JobQueue.EnqueueEntry.stat(failed)).previousState());
+
+    // (3) PENDING in backoff — a job the user retries early because it is waiting, not broken.
+    Path backoff = tempDir.resolve("backoff.txt");
+    Files.writeString(backoff, "content");
+    String backoffNorm = PathNormalizer.normalizePath(backoff.toAbsolutePath().toString());
+    jobQueue.enqueue(List.of(backoff));
+    jobQueue.pollPending(1);
+    jobQueue.markFailed(backoff, ioFailure("transient"));
+    JobRow waiting = readRow(backoffNorm);
+    assertEquals("PENDING", waiting.state(), "precondition");
+    assertNotNull(waiting.retryAfter(), "precondition: it is waiting on a backoff");
+    JobQueue.ReenqueueResult backoffResult =
+        jobQueue.reenqueue(JobQueue.EnqueueEntry.stat(backoff));
+    assertEquals("PENDING", backoffResult.previousState());
+    assertNull(readRow(backoffNorm).retryAfter(), "the retry clears the backoff");
+
+    // (4) No row at all — "cannot say", not a guessed state name.
+    Path unknown = tempDir.resolve("never-queued.txt");
+    Files.writeString(unknown, "content");
+    JobQueue.ReenqueueResult unknownResult =
+        jobQueue.reenqueue(JobQueue.EnqueueEntry.stat(unknown));
+    assertEquals(1, unknownResult.accepted(), "a path with no row is still enqueued");
+    assertNull(unknownResult.previousState(), "there was no previous state to report");
+  }
+
+  @Test
   @DisplayName("an exhausted row counts as failed in BOTH count projections")
   void exhaustedRowCountsAsFailedInEveryProjection() throws Exception {
     Path file = tempDir.resolve("both-projections.txt");

@@ -497,7 +497,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
         rawCommand == null || rawCommand.isBlank()
             ? ExtractionSandboxCommand.defaultCommand(
                 extractionPolicy, EnvRegistry.EXTRACTION_SANDBOX_HEAP.getString(""))
-            : List.of(rawCommand.trim().split("\\s+"));
+            : ExtractionSandboxCommand.tokenize(rawCommand);
     ExtractionSandboxFactory.PoolSettings poolSettings =
         new ExtractionSandboxFactory.PoolSettings(
             EnvRegistry.EXTRACTION_SANDBOX_POOL.getInt(1),

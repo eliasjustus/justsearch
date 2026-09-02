@@ -69,6 +69,93 @@ public final class ExtractionSandboxCommand {
         ManagementFactory.getRuntimeMXBean().getClassPath());
   }
 
+  /**
+   * Splits an operator-supplied {@code JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND} into an argv.
+   *
+   * <p>Whitespace separates arguments, as it always did. What is new (tempdoc 885 §UD residue) is
+   * that an argument may be QUOTED, so a path containing a space can be used inline instead of
+   * being smuggled through a JVM {@code @argfile}:
+   *
+   * <ul>
+   *   <li>{@code "…"} and {@code '…'} both group; the quotes themselves are removed.
+   *   <li>Inside double quotes, {@code \"} and {@code \\} are escapes. <b>Every other backslash is
+   *       literal</b> — {@code "C:\Program Files\jdk\bin\java.exe"} must survive verbatim, and a
+   *       shell-strict reading would eat {@code \P}, {@code \j} and {@code \b}.
+   *   <li>Inside single quotes nothing is an escape, exactly as in POSIX shells.
+   *   <li>Outside quotes a backslash is literal too, so an unquoted Windows path is unchanged. The
+   *       way to include a space is therefore to quote the argument, not to escape the space.
+   *   <li>{@code ""} produces an empty argument rather than disappearing.
+   * </ul>
+   *
+   * <p><b>Trailing-backslash caveat.</b> Because {@code \\} is an escape inside double quotes, a
+   * directory path written with a trailing separator before the closing quote — {@code "C:\dir\"} —
+   * escapes the quote instead of ending the argument, and the value is reported as unterminated.
+   * Write {@code "C:\dir"} or {@code "C:\dir\\"}.
+   *
+   * @throws IllegalArgumentException on an unterminated quote. This is deliberately FAIL-CLOSED:
+   *     {@code DefaultWorkerAppServices.buildContentExtractor} calls this before
+   *     {@code probeChildCommand}, so a malformed value aborts Worker startup rather than degrading
+   *     to in-process extraction the way a command that merely fails its probe does. A mis-split
+   *     argv would otherwise spawn a child with silently wrong arguments, surfacing as "every file
+   *     fails to extract" instead of as the configuration error it is.
+   */
+  public static List<String> tokenize(String raw) {
+    List<String> argv = new ArrayList<>();
+    if (raw == null) {
+      return argv;
+    }
+    StringBuilder current = new StringBuilder();
+    boolean inArgument = false;
+    char quote = 0;
+    for (int i = 0; i < raw.length(); i++) {
+      char c = raw.charAt(i);
+      if (quote == '\'') {
+        if (c == '\'') {
+          quote = 0;
+        } else {
+          current.append(c);
+        }
+      } else if (quote == '"') {
+        if (c == '\\' && i + 1 < raw.length()) {
+          char next = raw.charAt(i + 1);
+          if (next == '"' || next == '\\') {
+            current.append(next);
+            i++;
+            continue;
+          }
+          current.append(c);
+        } else if (c == '"') {
+          quote = 0;
+        } else {
+          current.append(c);
+        }
+      } else if (c == '"' || c == '\'') {
+        quote = c;
+        inArgument = true;
+      } else if (Character.isWhitespace(c)) {
+        if (inArgument) {
+          argv.add(current.toString());
+          current.setLength(0);
+          inArgument = false;
+        }
+      } else {
+        current.append(c);
+        inArgument = true;
+      }
+    }
+    if (quote != 0) {
+      throw new IllegalArgumentException(
+          "JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND has an unterminated "
+              + (quote == '"' ? "double" : "single")
+              + " quote: "
+              + raw);
+    }
+    if (inArgument) {
+      argv.add(current.toString());
+    }
+    return argv;
+  }
+
   /** As above, with the threshold and classpath supplied — both are inputs, not policy. */
   static List<String> defaultCommand(
       TikaExtractionPolicy policy, String heapOverride, int maxInlineChars, String classpath) {
