@@ -85,6 +85,71 @@ Lucene rejects `targetMaxStaleSec < targetMinStaleSec`, so a configured `index.n
 larger than `index.nrt.target_max_stale_ms` is clamped to the target (with a WARN) rather than
 failing the open.
 
+**Knob-naming caveat.** `index.nrt.max_stale_ms` reads as the *larger* bound but is passed as
+Lucene's `targetMinStaleSec` — the *tighter* reopen target used while a caller is waiting on a
+generation. The field behind it is `nrtHardMaxStaleMs`. The names are backwards relative to
+Lucene's; renaming the key would change the resolved-config surface, so the ordering is enforced
+(the clamp above) while the naming is documented here rather than corrected.
+
+### 2.2.1 Reopen strategy: `index.nrt.mode`
+
+`index.nrt.mode` selects which component is responsible for making a newly written document
+visible. Both arms are shipped; `continuous` is the default.
+
+| Mode | Background thread cadence | Foreground search behaviour |
+| :--- | :--- | :--- |
+| `continuous` (default) | `index.nrt.target_max_stale_ms` / `index.nrt.max_stale_ms` (500 ms / 50 ms) | acquires whatever the last background reopen produced |
+| `on_demand` | `index.nrt.background_reopen_ms` (2000 ms), applied to both Lucene bounds | refreshes the `SearcherManager` itself before acquiring |
+
+In `on_demand` mode the foreground refresh is a three-way decision (`NrtOnDemandPolicy`):
+
+1. **Skip** when the writer's `getMaxCompletedSequenceNumber()` has not moved since the last
+   reopen. Nothing has been added, updated or deleted, so there is nothing to see; age alone is
+   never a reason to reopen.
+2. **`maybeRefresh()`** (non-blocking) when there are new writes and the last reopen is within
+   `index.nrt.on_demand_max_stale_ms` (1000 ms).
+3. **`maybeRefreshBlocking()`** when there are new writes and the last reopen is older than that
+   bound, so a query cannot silently return a view older than the configured limit.
+
+The refresh lives in **one** seam — `SearcherBridge`, which every foreground read path (text
+query, chunk search, suggest, facets, folder browse, document fetch, counts) already goes through
+— rather than per RPC, so the mode is a property of the index runtime and not of whichever
+service was updated last. The write path's read-modify-write reads opt out via
+`withSearcherNoRefresh`: those run inside indexing, and not paying for reopens during indexing is
+the point of the mode.
+
+An idle Worker in `on_demand` mode performs no reopens at all: the background thread still wakes
+every `background_reopen_ms`, but `DirectoryReader.openIfChanged` returns null on an unchanged
+index, so no reader is swapped and `index.runtime.reopen_count` does not move.
+
+### 2.2.2 Cadence instrumentation
+
+Three gauges on `RuntimeGaugesSnapshot` (exported by `IndexRuntimeMetricCatalog` and archived to
+RRD) describe the reopen/commit cadence:
+
+| Metric | Meaning |
+| :--- | :--- |
+| `index.runtime.commit_count` | every `CommitOps.commitAndTrack` — the commit timer, gRPC deletes, prune and backfill included. Distinct from `worker.commits.total`, which counts only the `IndexingLoop`-attributed commits. |
+| `index.runtime.reopen_count` | reopens that swapped in a new reader, across every reopen path (background thread, `CommitOps.maybeRefresh*`, the on-demand seam). |
+| `index.runtime.segments_since_reopen` | `IndexWriter.getSegmentInfosCounter()` delta since the last reopen — the backlog of new segments the next reopen has to open. |
+
+`IndexWriter` does not expose its segment count publicly (`getSegmentCount()` is
+package-private), so the segment-naming counter is the readable proxy; `DirectoryReader.leaves()`
+on an acquired searcher gives the complementary "segments currently visible" reading.
+
+### 2.2.3 Commit cadence: `index.commit.idle_ms`
+
+`IndexingLoop` commits on three triggers: time
+(`justsearch.backfill.commit_interval_ms`), buffer (`justsearch.backfill.max_docs_before_commit`),
+and idle (the job queue came up empty with documents buffered). The idle trigger historically
+fired on the *first* empty poll, which during a bulk run means every momentary queue drain
+commits — so the time and buffer thresholds are nearly unobservable. `index.commit.idle_ms`
+(default `0` = the historical behaviour) requires the queue to have stayed empty that long first.
+
+Commit is durability, not visibility: NRT reopens make documents searchable whether or not a
+commit has happened, so raising this knob trades durability latency for commit count and does not
+affect what a search can see.
+
 ### 2.3 Read-After-Write Consistency
 
 For APIs that need immediate visibility after commit:

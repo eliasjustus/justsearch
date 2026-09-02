@@ -21,6 +21,7 @@ Precedence note:
 | index.boosts | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.collections | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.commit.debounce_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| index.commit.idle_ms | JUSTSEARCH_INDEX_COMMIT_IDLE_MS | index.commit.idle_ms | INDEX_COMMIT_IDLE_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.commit.meta.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.directory.type | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.hybrid.adaptive_weights_enabled | JUSTSEARCH_HYBRID_ADAPTIVE_WEIGHTS_ENABLED | index.hybrid.adaptive_weights_enabled | HYBRID_ADAPTIVE_WEIGHTS_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
@@ -66,7 +67,10 @@ Precedence note:
 | index.merge.tiered.max_merged_segment_mb | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.merge.tiered.segs_per_tier | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | - | JUSTSEARCH_INDEX_MIGRATION_CUTOVER_MAX_FAILED_JOBS | index.migration.cutover.max_failed_jobs | INDEX_MIGRATION_CUTOVER_MAX_FAILED_JOBS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| index.nrt.background_reopen_ms | JUSTSEARCH_INDEX_NRT_BACKGROUND_REOPEN_MS | index.nrt.background_reopen_ms | INDEX_NRT_BACKGROUND_REOPEN_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.nrt.max_stale_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| index.nrt.mode | JUSTSEARCH_INDEX_NRT_MODE | index.nrt.mode | INDEX_NRT_MODE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.nrt.on_demand_max_stale_ms | JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS | index.nrt.on_demand_max_stale_ms | INDEX_NRT_ON_DEMAND_MAX_STALE_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.nrt.target_max_stale_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.languages | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
