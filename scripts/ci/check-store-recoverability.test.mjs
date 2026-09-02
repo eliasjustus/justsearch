@@ -346,6 +346,26 @@ test('classified non-durable write sites satisfy coverage explicitly', () => {
   );
 });
 
+test('an unknown storage root fails, so a root cannot be invented or misspelled', () => {
+  const result = check([readyRow({ root: 'APP_DATA' })]);
+  assert.ok(result.some((f) => f.includes('unknown root')), result.join(' | '));
+});
+
+for (const root of ['DATA_DIR', 'AI_HOME', 'PROGRAM_DATA_OR_DATA_DIR', 'USER_INDEXED_ROOTS']) {
+  test(`the enumerated root ${root} is accepted`, () => {
+    const result = check([readyRow({ root })]);
+    assert.ok(!result.some((f) => f.includes('unknown root')), result.join(' | '));
+  });
+}
+
+test('the root enum does NOT catch a wrong-but-enumerated root — stated, not implied', () => {
+  // ai-install-attempt-memory shipped as DATA_DIR while writing under AI_HOME (review of PR #604).
+  // Both are members, so this check is silent on it. Pinned so nobody reads the enum as stronger
+  // than it is and stops looking for the real answer.
+  const result = check([readyRow({ root: 'AI_HOME' })]);
+  assert.ok(!result.some((f) => f.includes('unknown root')));
+});
+
 test('a non-durable classification without a reason fails', () => {
   // The entry is a CLAIM that nothing here survives. Every other row in this register justifies its
   // claims; a bare path grows the allowlist by assertion, which is how the register acquires

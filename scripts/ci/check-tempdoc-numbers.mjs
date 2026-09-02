@@ -56,6 +56,8 @@ if (orphans.length > 0) {
 if (failed) process.exit(1);
 
 console.log(
-  `tempdoc-numbers: OK — ${claims.size} distinct numbers, ${changesets.length} in-flight changeset(s), ` +
+  // "scanned", not "in-flight": this counts every changeset on disk across every worktree, most of
+  // which have long since merged. Calling them in-flight overstated what the number means.
+  `tempdoc-numbers: OK — ${claims.size} distinct numbers, ${changesets.length} changeset(s) scanned, ` +
     `no collisions across ${worktreeCount} worktree(s) + origin/${defaultBranch}.`,
 );

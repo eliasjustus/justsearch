@@ -3431,7 +3431,15 @@ sampling evidence are in §"Item 6 live (2026-09-02)".
   check on `tempdoc:` pointing at a tempdoc that does not exist; (iii) `check-store-recoverability`
   discovery is by write call in code rather than by anchor words in prose — which is what made
   `ExtractionSandboxCommand`'s argfile invisible while a javadoc sentence discovered
-  `ExtractionSandboxFactory`. Original text follows.
+  `ExtractionSandboxFactory`. **Register follow-up (iii) leaves behind, for an owner:** the six new
+  `HARDENING_REQUIRED` rows the broadened scan forced (agent-history transcripts, install-attempt
+  memory, the two GPL artefacts, the llama-server log, the agent's operations on the user's own
+  documents) want an owner review of their recovery and encryption dispositions, and the register
+  needs two mechanisms before `corruptionPolicy: NOT_YET_STATED` can be driven to zero — a count
+  ratchet on those rows (`knownCompatibilityGaps` only requires that a HARDENING_REQUIRED row be
+  named, so the list can grow freely) and an enumerated `corruptionPolicy` vocabulary (it is
+  free-form today, so `NOT_YET_STATED` is a convention, not a value the gate knows). Original text
+  follows.
   (i) `git-base` gates resolve their PR base to `HEAD~1` with no explicit fallback
   (`scripts/governance/lib/git-utils.mjs:83-92`), so a committed changeset from an earlier commit on
   the same branch is invisible and the gate reports silent-growth — verify with

@@ -156,9 +156,21 @@
       "exitProbe": "slow: node scripts/governance/run.mjs --produce-inputs --mode gate --skip-self-test"
     },
     {
+      "id": "ts-any-gate-counts-english-prose",
+      "match": [
+        "scripts/governance/run\\.mjs.*--gate\\s+ts-any",
+        "scripts/governance/run\\.mjs(?!.*--gate )(?!.*--self-test)(?!.*--produce-inputs)"
+      ],
+      "claim": "The ts-any gate fails on main with 5 ts-any/silent-growth findings, and all five are the ENGLISH WORD \"any\" in comments, not any-casts. countAny (scripts/governance/gates/ts-any/enforcer.mjs:29-31) runs its regex over raw file text without stripping comments or strings, so \"any mid-text\", \"any documents to enrich\" and \"any named non-default\" are each scored as a cast. A ts-any failure naming only those five files is pre-existing; read the cited line before believing a new one.",
+      "evidence": "Reproduced 2026-09-02 on worktree-resid-kernel, and each hit was read rather than assumed: MarkdownBlock.ts:154, indexingProgress.ts:100 and searchResultViewModel.ts:51 carry the word in prose, plus citationResolve.test.ts and sv3-sessions.test.ts. gates/ts-any/baseline.txt last moved 2026-07-14 (bc4b26fd), so the 18 baselined rows were counted the same way and may be overstated. Diagnosed by tempdoc 884 section F row 1, which attached the analysis to the gate itself in gates/ts-any/.changesets/884-ts-any-prose-false-positives.md. TRACKED FIX: strip comments before counting (the pattern exists at scripts/ci/check-readiness-reason-codes.mjs:116-148), then rebalance the baseline. Owner: whoever next touches the ts-any gate.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node scripts/governance/run.mjs --gate ts-any --mode gate"
+    },
+    {
       "id": "wire-gate-buf-cli-missing",
       "match": [
-        "scripts/governance/run\\.mjs(?!.*--self-test)(?!.*--produce-inputs)"
+        "scripts/governance/run\\.mjs(?!.*--self-test)(?!.*--produce-inputs)(?!.*--gate\\s+(?!wire\\b))"
       ],
       "claim": "The wire gate reports contract-governance/buf-cli-missing until `npm install` has run in scripts/wire-contract/ (the buf CLI is a local devDependency, not committed). Environmental on a fresh worktree; not a contract regression. **But do not read that finding as a pass when your diff touches a .proto.** In the buf-cli-missing state the gate never inspects the protos at all, so it cannot see a breaking change — the environmental green masks the one check that matters. If the PR changes any .proto, run `npm install` in scripts/wire-contract/ FIRST and re-run the gate, and only then treat its result as evidence.",
       "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431): the finding names scripts/wire-contract/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe as absent. Claim amended 2026-09-02 during the #600 review: that PR added FailedJob.state (an additive field) to modules/ipc-common/src/main/proto/indexing.proto, and the reviewer had to install buf and re-run to get a real verdict (0 findings) — the pinned state alone would have been vacuous.",

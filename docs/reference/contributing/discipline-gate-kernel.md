@@ -162,9 +162,10 @@ evaluates the gate for real. A producer exiting non-zero is a runner error
 first runs the `--self-test` fixture pass (so fixture rot is caught where it
 bites) and aborts with exit 1 before evaluation if any fixture mismatches. Pass
 `--skip-self-test` to bypass it; a gate-scoped run (any `--gate <id>`) never
-triggers it. `--gate` is repeatable — `--gate a --gate b` evaluates both, and an
-id that resolves to no registered gate aborts with exit 2 rather than being
-dropped (a dropped id would report a pass for a gate that never ran).
+triggers it. `--gate` is repeatable — `--gate a --gate b` evaluates both, in
+**registry order** rather than the order the flags were given, and an id that
+resolves to no registered gate aborts with exit 2 rather than being dropped (a
+dropped id would report a pass for a gate that never ran).
 
 ## Gates currently registered
 

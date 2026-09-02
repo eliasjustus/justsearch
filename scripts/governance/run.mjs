@@ -15,7 +15,8 @@
  *   node scripts/governance/run.mjs --mode warn|gate \
  *        [--out tmp/governance-report.sarif] \
  *        [--registry governance/registry.v1.json] \
- *        [--gate <id>]...         (run only the named gates; repeatable)
+ *        [--gate <id>]...         (run only the named gates; repeatable, evaluated in REGISTRY
+ *                                  order regardless of the order the flags are given)
  *        [--self-test]            (run gate self-test fixtures + assert verdicts)
  *        [--skip-self-test]       (skip the self-test pass a full gate-mode run does first; tempdoc 742 D3)
  *        [--produce-inputs]       (run producers for absent required gate inputs first; tempdoc 742 D1)
@@ -122,7 +123,7 @@ Options:
   --out <path>           SARIF output path (default: tmp/governance-report.sarif)
   --format sarif|compact terminal output format (default: sarif)
   --registry <path>      registry path (default: governance/registry.v1.json)
-  --gate <id>            run only the named gate (repeatable; default: all)
+  --gate <id>            run only the named gate (repeatable, evaluated in registry order; default: all)
   -h, --help             this message
 `);
 }

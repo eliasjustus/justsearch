@@ -29,6 +29,17 @@ const UPGRADE_HANDLING = new Set([
  */
 const PATH_VERIFICATION = new Set(['LITERAL', 'COMPOSED']);
 /**
+ * The storage roots a row may declare. Enumerated so an invented or misspelled root is a build
+ * failure rather than a free-text string nobody reads.
+ *
+ * HONEST LIMIT, stated so this is not read as stronger than it is: this catches a root that does not
+ * EXIST, not a root that exists and is wrong. `ai-install-attempt-memory` shipped as DATA_DIR when
+ * the file is written under AI_HOME (review of PR #604, S1), and both are members of this set — so
+ * this check would NOT have caught it. Catching that needs the gate to know which root a row's
+ * writer resolves against, which is caller-side information `pathVerification` cannot see.
+ */
+const ROOTS = new Set(['DATA_DIR', 'AI_HOME', 'PROGRAM_DATA_OR_DATA_DIR', 'USER_INDEXED_ROOTS']);
+/**
  * Whether a row's bytes are sealed at rest, and if not, why not. Every row answers; the absence of an
  * answer is a build failure. UNSEALED_GAP is the honest label for "no structural reason, just not done";
  * UNSEALED_DERIVED_OS_DISK_ENCRYPTION is the deliberate StoreCatalog Framing.OPAQUE position — a DERIVED,
@@ -209,6 +220,12 @@ export function checkDurableStoreRegister({
       if (typeof row[field] !== 'string' || row[field].trim() === '') {
         failures.push(`${label}: ${field} is required.`);
       }
+    }
+    if (typeof row.root === 'string' && row.root.trim() !== '' && !ROOTS.has(row.root)) {
+      failures.push(
+        `${label}: unknown root \`${row.root}\` — must be one of ${[...ROOTS].join(', ')}. ` +
+          'Add the root here if a genuinely new storage location exists; do not invent a spelling.',
+      );
     }
 
     const sources = Array.isArray(row.implementationSources) ? row.implementationSources : [];

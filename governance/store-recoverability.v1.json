@@ -326,10 +326,7 @@
       "catalogDirName": "conversations",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "conversations/*/meta.json",
-        "conversations/*/messages.jsonl"
-      ],
+      "ownedPaths": ["conversations/*/meta.json", "conversations/*/messages.jsonl"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "schema-v1 encrypted meta.json plus legacy-compatible append-only messages.jsonl",
@@ -358,20 +355,12 @@
       "catalogDirName": "agent-runs",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "agent-runs/*/meta.json",
-        "agent-runs/last-session.txt"
-      ],
+      "ownedPaths": ["agent-runs/*/meta.json", "agent-runs/last-session.txt"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "meta/checkpoint JSON v4 plus append-only events",
       "currentVersion": 4,
-      "readableLegacyVersions": [
-        0,
-        1,
-        2,
-        3
-      ],
+      "readableLegacyVersions": [0, 1, 2, 3],
       "versionAuthority": "modules/app-agent/src/main/java/io/justsearch/agent/AgentRunStore.java",
       "futureVersionRefusalTest": "modules/app-agent/src/test/java/io/justsearch/agent/AgentRunStoreSchemaUpcasterTest.java",
       "writeMode": "MIXED_APPEND_AND_FULL_REWRITE",
@@ -578,25 +567,12 @@
       "catalogDirName": "jobs.db",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "jobs.db",
-        "jobs.db-wal",
-        "jobs.db-shm",
-        "jobs.db.bak"
-      ],
+      "ownedPaths": ["jobs.db", "jobs.db-wal", "jobs.db-shm", "jobs.db.bak"],
       "recoverability": "DERIVED",
       "upgradeHandling": "REBUILD",
       "format": "SQLite WAL schema v7",
       "currentVersion": 7,
-      "readableLegacyVersions": [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6
-      ],
+      "readableLegacyVersions": [0, 1, 2, 3, 4, 5, 6],
       "versionAuthority": "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqliteSchema.java",
       "futureVersionRefusalTest": "modules/indexer-worker/src/test/java/io/justsearch/indexerworker/queue/JobQueueMigrationTest.java",
       "writeMode": "TRANSACTIONAL",
@@ -624,13 +600,7 @@
       "catalogDirName": "index",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "index/*/indices/**",
-        "index/*/state.json",
-        "index/*/state.json.prev",
-        "index/*/indices/*.rebuild-pending",
-        "index/*/indices/*.clean-shutdown"
-      ],
+      "ownedPaths": ["index/*/indices/**", "index/*/state.json", "index/*/state.json.prev", "index/*/indices/*.rebuild-pending", "index/*/indices/*.clean-shutdown"],
       "recoverability": "DERIVED",
       "upgradeHandling": "REBUILD",
       "format": "Lucene generations plus state v2 and generation manifest v1",
@@ -695,11 +665,7 @@
       "encryptionNote": "Plaintext SQLite. entity_overrides records the user's own merge/split decisions and entity_clusters holds entity surface forms mined from the user's documents (EntityClusterSchema.java:8,15,41). Worker-owned, but the Worker is a JVM - unlike the Rust shell rows there is no reachability bar, only that nothing seals it today.",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "entity-clusters.db",
-        "entity-clusters.db-wal",
-        "entity-clusters.db-shm"
-      ],
+      "ownedPaths": ["entity-clusters.db", "entity-clusters.db-wal", "entity-clusters.db-shm"],
       "recoverability": "MIXED",
       "upgradeHandling": "READ_IN_PLACE",
       "format": "SQLite WAL schema v1",
@@ -783,10 +749,7 @@
       "encryptionNote": "Who is running right now and where: instance id, process ids, loopback ports, the app's own data directory, and reachability/shutdown classification per instance (RuntimeManifestPublisher.java:40). Process bookkeeping only; no user content.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "runtime/manifest.json",
-        "runtime/instances/**"
-      ],
+      "ownedPaths": ["runtime/manifest.json", "runtime/instances/**"],
       "recoverability": "EPHEMERAL",
       "upgradeHandling": "RESET",
       "format": "atomic current manifest plus append-only instance history",
@@ -842,10 +805,7 @@
       "encryptionNote": "Model weights and runtime binaries the app downloaded or bundled - and only those, since the ownership rule limits this row to files a verified managed manifest names. Publicly distributed artifacts identical on every install; nothing user-derived to protect (files NOT claimed by a manifest are the byo-ai-assets row).",
       "owner": "HEAD",
       "root": "AI_HOME",
-      "ownedPaths": [
-        "models/**",
-        "native-bin/**"
-      ],
+      "ownedPaths": ["models/**", "native-bin/**"],
       "ownershipRule": "Only files named by a verified managed manifest are app-owned.",
       "recoverability": "DERIVED",
       "upgradeHandling": "REBUILD",
@@ -881,10 +841,7 @@
       "encryption": "UNSEALED_EXTERNAL_AUTHORITY",
       "owner": "EXTERNAL",
       "root": "AI_HOME",
-      "ownedPaths": [
-        "models/**",
-        "native-bin/**"
-      ],
+      "ownedPaths": ["models/**", "native-bin/**"],
       "ownershipRule": "Files not named by a verified managed manifest remain user-owned.",
       "recoverability": "AUTHORED",
       "upgradeHandling": "PRESERVE_EXTERNAL",
@@ -912,10 +869,7 @@
       "encryption": "UNSEALED_EXTERNAL_AUTHORITY",
       "owner": "EXTERNAL",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "plugins/*/manifest.json",
-        "plugins/*/plugin.js"
-      ],
+      "ownedPaths": ["plugins/*/manifest.json", "plugins/*/plugin.js"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "PRESERVE_EXTERNAL",
       "format": "user-managed plugin manifest and JavaScript source",
@@ -1010,10 +964,7 @@
       "encryptionNote": "The id of the loaded model, plus a transition log of fromMode/toMode/reason/success/durationMs/generation (NdjsonInferenceTransitionLog.java:161-172). A closed vocabulary of lifecycle phases and reason codes - no prompt text, no completion text, no user content.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "inference-model-id.txt",
-        "telemetry/inference-transitions.ndjson"
-      ],
+      "ownedPaths": ["inference-model-id.txt", "telemetry/inference-transitions.ndjson"],
       "recoverability": "DERIVED",
       "upgradeHandling": "RESET",
       "format": "runtime identity cache plus bounded transition telemetry",
@@ -1041,11 +992,7 @@
       "encryptionNote": "Plaintext diagnostics that do carry user-derived content: the exported span attributes include doc.path and http.target (NdjsonSpanExporter.java:45,59), so indexed document paths and request query strings land in telemetry/*.ndjson, and crashes/*.json records the raw exception message plus stack trace (CrashReporter.java:101-102), which for an indexing failure names the file being read. Derived, bounded, and pruned rather than recovered, so it is deliberately unsealed and covered by OS disk encryption only.",
       "owner": "HEAD",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "telemetry/*.ndjson",
-        "crashes/*.json",
-        "diagnostics/slow-*.json"
-      ],
+      "ownedPaths": ["telemetry/*.ndjson", "crashes/*.json", "diagnostics/slow-*.json"],
       "recoverability": "DERIVED",
       "upgradeHandling": "RESET",
       "format": "bounded diagnostic NDJSON and JSON artifacts",
@@ -1079,11 +1026,7 @@
       "encryptionNote": "Signal files, not data files: the two index markers carry meaning by existing, and worker-fatal-reason holds one reason code - its only production writer passes the INDEX_CORRUPT constant (KnowledgeServer.java:758-759; WorkerFatalReasonMarker.java:27). No message text, no path, no user content.",
       "owner": "WORKER",
       "root": "DATA_DIR",
-      "ownedPaths": [
-        "worker-fatal-reason",
-        "index/*/indices/*.rebuild-pending",
-        "index/*/indices/*.clean-shutdown"
-      ],
+      "ownedPaths": ["worker-fatal-reason", "index/*/indices/*.rebuild-pending", "index/*/indices/*.clean-shutdown"],
       "recoverability": "DERIVED",
       "upgradeHandling": "RESET",
       "format": "single-use worker recovery and clean-shutdown marker files",
@@ -1163,7 +1106,8 @@
       "encryption": "UNSEALED_GAP",
       "encryptionNote": "Plaintext JSON recording which AI-asset download attempts failed and at which transport tier, keyed by asset file name. No user content; asset names only.",
       "owner": "HEAD",
-      "root": "DATA_DIR",
+      "root": "AI_HOME",
+      "rootNote": "AI_HOME, not DATA_DIR: AiInstallService.java:268 sets homeDir = aiHomeDir and :994 calls InstallAttemptMemory.load(homeDir), which resolves the filename against it (InstallAttemptMemory.java:76). Its siblings installed-packs, ai-install-contract and managed-ai-assets say AI_HOME for the same reason.",
       "ownedPaths": ["install-attempts.json"],
       "recoverability": "AUTHORED",
       "upgradeHandling": "RESET",

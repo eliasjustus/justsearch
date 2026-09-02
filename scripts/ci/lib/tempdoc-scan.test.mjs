@@ -24,6 +24,8 @@ import {
   divergentInFlightCollisions,
   isNumberFree,
   nextFreeNumber,
+  orphanChangesetDeclarations,
+  tempdocNumbers,
 } from './tempdoc-scan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -152,6 +154,65 @@ try {
     assert.ok(claims.has('900'), 'the fixture doc\'s number must be recorded');
     const byName = claims.get('900');
     assert.ok(byName.has('900-fixture-doc.md'));
+  });
+
+  // --- declaredTempdocOf, exercised through collectClaims: the frontmatter value must be read the
+  // way the changeset LOADER reads it. It used to be a second hand-rolled regex over the first 2000
+  // characters, and every shape it could not read failed OPEN — orphanChangesetDeclarations skips a
+  // changeset whose tempdoc it cannot resolve, so an unreadable value was a silent exemption. ---
+  run('changeset frontmatter: bare, quoted, BOM-prefixed and long-block values all resolve', () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(tmp, 'fm-'));
+    const csDir = path.join(fixtureRoot, 'gates', 'ts-any', '.changesets');
+    fs.mkdirSync(csDir, { recursive: true });
+    const write = (name, body) => fs.writeFileSync(path.join(csDir, name), body, 'utf8');
+    // A char code, not a literal: a raw BOM in this source could be stripped by an editor or an
+    // encoding round-trip, and the test would then pass for the wrong reason (no BOM at all).
+    const BOM = String.fromCharCode(0xfeff);
+    const doc = (value) => ['---', 'classification: declared-growth', `tempdoc: ${value}`, '---', '', 'Body.', ''].join('\n');
+    write('901-bare.md', doc('901'));
+    write('902-double-quoted.md', doc('"902"'));
+    write('903-single-quoted.md', doc("'903'"));
+    write('904-bom.md', BOM + doc('904'));
+    // A long frontmatter block: the retired regex only ever looked at the first 2000 characters.
+    const filler = Array.from({ length: 60 }, (_, i) => `note${i}: ${'x'.repeat(60)}`);
+    write(
+      '905-long-frontmatter.md',
+      ['---', 'classification: declared-growth', ...filler, 'tempdoc: 905', '---', '', 'Body.', ''].join('\n'),
+    );
+    write('906-adr-only.md', ['---', 'classification: declared-growth', 'adr: 0026', '---', '', 'Body.', ''].join('\n'));
+
+    // The BOM case is only meaningful if the fixture really carries one — assert the bytes, so a
+    // broken fixture fails loudly instead of quietly degrading into a second bare-value case.
+    assert.equal(
+      fs.readFileSync(path.join(csDir, '904-bom.md'), 'utf8').charCodeAt(0),
+      0xfeff,
+      'the BOM fixture must actually start with a BOM',
+    );
+
+    const { changesets } = collectClaims({ cwd: fixtureRoot });
+    const declared = Object.fromEntries(changesets.map((c) => [c.basename, c.declaredTempdoc]));
+    assert.equal(declared['901-bare.md'], '901');
+    assert.equal(declared['902-double-quoted.md'], '902', 'a double-quoted scalar names the same tempdoc');
+    assert.equal(declared['903-single-quoted.md'], '903', 'a single-quoted scalar names the same tempdoc');
+    assert.equal(declared['904-bom.md'], '904', 'a UTF-8 BOM must not hide the frontmatter');
+    assert.equal(declared['905-long-frontmatter.md'], '905', 'frontmatter is not truncated at a byte cut');
+    assert.equal(declared['906-adr-only.md'], null, 'an adr-only changeset declares no tempdoc');
+  });
+
+  run('a quoted tempdoc value is still checked for orphanhood, not silently exempted', () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(tmp, 'orphan-'));
+    const csDir = path.join(fixtureRoot, 'gates', 'ts-any', '.changesets');
+    fs.mkdirSync(csDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(csDir, '907-quoted-orphan.md'),
+      ['---', 'classification: declared-growth', 'tempdoc: "907"', '---', '', 'Body.', ''].join('\n'),
+      'utf8',
+    );
+    // No docs/tempdocs in this fixture, so 907 is claimed by no tempdoc at all.
+    const { claims, changesets } = collectClaims({ cwd: fixtureRoot });
+    const orphans = orphanChangesetDeclarations(changesets, tempdocNumbers(claims));
+    assert.equal(orphans.length, 1, 'the retired reader returned null here, which skipped the check');
+    assert.equal(orphans[0].declaredTempdoc, '907');
   });
 
   // --- collectClaims: end-to-end against the real repo checkout (sanity, not golden-parity —

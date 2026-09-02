@@ -34,6 +34,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { parseFrontmatter } from '../../governance/lib/frontmatter.mjs';
+
 // A top-level tempdoc is `docs/tempdocs/<N>-<name>.md` OR a `docs/tempdocs/<N>-<name>/` directory
 // (a nested-numbered draft folder). Its nested files have their own local numbering and
 // are NOT tempdoc numbers — only the top-level segment counts.
@@ -63,20 +65,30 @@ function record(claims, number, basename, origin) {
  * the collision rule distinguish "this changeset belongs to a tempdoc that exists" from
  * "this number was invented".
  *
+ * Uses the SAME parser the changeset loader uses (`scripts/governance/lib/frontmatter.mjs`, via
+ * `changeset-loader.mjs`) rather than a second regex over the head of the file. A hand-rolled
+ * matcher disagreeing with the loader fails OPEN here — `orphanChangesetDeclarations` skips a
+ * changeset whose value it could not read — so `tempdoc: "884"`, a BOM, or frontmatter past an
+ * arbitrary byte cut would each have silently exempted the file from the check.
+ *
  * @param {string} file
  * @returns {string|null}
  */
+/** A UTF-8 BOM ahead of the opening `---` makes parseFrontmatter see no frontmatter at all. */
+const stripBom = (text) => (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+
 function declaredTempdocOf(file) {
-  let head;
+  let content;
   try {
-    head = readFileSync(file, 'utf8').slice(0, 2000);
+    content = readFileSync(file, 'utf8');
   } catch {
     return null;
   }
-  if (!head.startsWith('---')) return null;
-  const end = head.indexOf('\n---', 3);
-  const front = end === -1 ? head : head.slice(0, end);
-  const m = /^tempdoc:\s*(\d+)/m.exec(front);
+  const parsed = parseFrontmatter(stripBom(content));
+  const raw = parsed?.frontmatter?.tempdoc;
+  if (typeof raw !== 'string') return null;
+  // The loader accepts a quoted scalar; `tempdoc: "884"` and `tempdoc: 884` name the same tempdoc.
+  const m = /^["']?(\d+)["']?$/.exec(raw.trim());
   return m ? m[1] : null;
 }
 
