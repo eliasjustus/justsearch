@@ -15,7 +15,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadExclusionKeys, makeExclusionMatcher, fmtScopeExclusion } from './lib/telemetry-io.mjs';
+import { discoverProjectDirs, DEFAULT_PROJECTS_ROOT, firstTranscriptTimestamp } from './lib/transcript-store.mjs';
 
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const repoRoot = path.resolve(SCRIPT_DIR, '..', '..');
@@ -29,31 +31,35 @@ function parseArgs() {
     return i !== -1 && args[i + 1] ? args[i + 1] : def;
   };
   return {
-    projectDir: get('--project-dir', defaultProjectDir()),
+    // No default anymore (tempdoc 886 §12 PR 5b) — omitting --project-dir now
+    // resolves each session's transcript by discovering it across EVERY
+    // /justsearch/i-matching project dir (main checkout + every worktree) via
+    // lib/transcript-store.mjs, matching mine-friction.mjs's own PR 5b
+    // migration; an explicit --project-dir still narrows to exactly one dir.
+    projectDir: get('--project-dir', null),
     bucket: get('--bucket', 'day'),
   };
 }
 
-function defaultProjectDir() {
-  const home = process.env.HOME || process.env.USERPROFILE;
-  const slug = repoRoot.replace(/[:\\/]/g, '-');
-  return path.join(home, '.claude', 'projects', slug);
-}
-
-function sessionStartDate(transcriptPath) {
-  let content;
-  try {
-    content = fs.readFileSync(transcriptPath, 'utf8');
-  } catch {
-    return null;
+/**
+ * Locate `<sessionId>.jsonl` across every discovered project dir, or under
+ * an explicit `projectDir` override. Returns null if not found anywhere.
+ */
+function findTranscriptPath(sessionId, projectDir) {
+  if (projectDir) {
+    const candidate = path.join(projectDir, `${sessionId}.jsonl`);
+    return fs.existsSync(candidate) ? candidate : null;
   }
-  for (const line of content.split('\n')) {
-    if (!line.trim()) continue;
-    let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
-    if (entry.timestamp) return entry.timestamp; // first timestamped line = session start
+  for (const dir of discoverProjectDirs(DEFAULT_PROJECTS_ROOT)) {
+    const candidate = path.join(dir.path, `${sessionId}.jsonl`);
+    if (fs.existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+async function sessionStartDate(transcriptPath) {
+  const d = await firstTranscriptTimestamp(transcriptPath);
+  return d ? d.toISOString() : null;
 }
 
 function bucketKey(isoDate, bucket) {
@@ -77,7 +83,7 @@ function bucketKey(isoDate, bucket) {
 const costWeight = { low: 1, medium: 2, high: 3 };
 const EXCLUSIONS_FILE = path.join(SCRIPT_DIR, 'friction-excluded-sessions.json');
 
-function main() {
+async function main() {
   const opts = parseArgs();
   const includeExcluded = process.argv.includes('--include-excluded');
   // Keys are loaded even when the filter is off, so the report can state the
@@ -94,8 +100,9 @@ function main() {
     if (isExcluded(j.sessionId)) { excluded++; continue; }
     if (j.tooSmall || j.error || !j.evaluation) continue;
 
-    const transcriptPath = path.join(opts.projectDir, `${j.sessionId}.jsonl`);
-    const startIso = sessionStartDate(transcriptPath);
+    const transcriptPath = findTranscriptPath(j.sessionId, opts.projectDir);
+    // eslint-disable-next-line no-await-in-loop -- streaming scan must stay sequential per file
+    const startIso = transcriptPath ? await sessionStartDate(transcriptPath) : null;
     if (!startIso) { missingTimestamp++; continue; }
     const key = bucketKey(startIso, opts.bucket);
 
@@ -152,4 +159,10 @@ function main() {
   console.log(`\nWrote ${OUT_FILE}`);
 }
 
-main();
+// Guarded entry point (886 PR 5b): importing for exports must not run a report.
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

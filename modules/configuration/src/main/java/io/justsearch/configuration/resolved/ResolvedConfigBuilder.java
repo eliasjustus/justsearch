@@ -1557,7 +1557,11 @@ public final class ResolvedConfigBuilder {
         // crosses the process boundary.
         resolveString("index.nrt.mode", ResolvedConfig.Index.NRT_MODE_CONTINUOUS),
         resolveInt("index.nrt.background_reopen_ms", 2000),
-        resolveInt("index.nrt.on_demand_max_stale_ms", 1000));
+        resolveInt("index.nrt.on_demand_max_stale_ms", 1000),
+        // The safety-net commit timer's period. Same channel and same reason as the three above:
+        // CommitOps runs in the Worker, so a raw sysprop read there would never see a Head-side
+        // value. The default reproduces the constant it replaces exactly.
+        resolveInt("index.commit.timer_interval_ms", 10_000));
   }
 
   private ResolvedConfig.Collections buildCollections() {

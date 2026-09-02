@@ -43,6 +43,7 @@ otlp_sink = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(otlp_sink)  # type: ignore[union-attr]
 
 from opentelemetry.proto.collector.logs.v1 import logs_service_pb2  # noqa: E402
+from opentelemetry.proto.collector.metrics.v1 import metrics_service_pb2  # noqa: E402
 
 
 def _headers(pairs: dict) -> email.message.Message:
@@ -116,6 +117,126 @@ def _log_export_request(text: str) -> bytes:
     lr.body.string_value = text
     lr.time_unix_nano = 1
     return req.SerializeToString()
+
+
+def _set_kv_attrs(container, attrs: dict) -> None:
+    for k, v in attrs.items():
+        kv = container.add()
+        kv.key = k
+        if isinstance(v, bool):
+            kv.value.bool_value = v
+        elif isinstance(v, int):
+            kv.value.int_value = v
+        else:
+            kv.value.string_value = str(v)
+
+
+def _metric_export_request(metric_name: str, point_attrs: dict, value: int) -> metrics_service_pb2.ExportMetricsServiceRequest:
+    """One resource_metrics -> one scope_metrics -> one Metric (Sum) carrying
+    a single NumberDataPoint, mirroring the shape both harnesses' native OTel
+    exporters send for a token-usage counter."""
+    req = metrics_service_pb2.ExportMetricsServiceRequest()
+    rm = req.resource_metrics.add()
+    sm = rm.scope_metrics.add()
+    m = sm.metrics.add()
+    m.name = metric_name
+    dp = m.sum.data_points.add()
+    dp.as_int = value
+    dp.time_unix_nano = 1
+    _set_kv_attrs(dp.attributes, point_attrs)
+    return req
+
+
+class GenAiNormalizationTests(unittest.TestCase):
+    """otlp-sink.py's additive gen_ai.usage normalisation (tempdoc 886 section 12
+    PR 3 -- see the section 10.3 note in decode_metrics' module comment):
+    decode_metrics must keep emitting the original per-harness record
+    unchanged AND append a normalised gen_ai.usage twin for every data point
+    whose raw token-kind attribute is in GENAI_TOKEN_MAP -- never mutating
+    or replacing the original."""
+
+    def test_claude_metric_point_yields_original_plus_normalised(self):
+        req = _metric_export_request(
+            "claude_code.token.usage",
+            {"type": "cacheRead", "model": "claude-opus-5", "session.id": "s1"},
+            12345,
+        )
+        records = otlp_sink.decode_metrics(req)
+        originals = [r for r in records if r["name"] == "claude_code.token.usage"]
+        normalised = [r for r in records if r["name"] == "gen_ai.usage"]
+        self.assertEqual(len(originals), 1)
+        self.assertEqual(originals[0]["points"][0]["attributes"]["type"], "cacheRead")
+        self.assertEqual(len(normalised), 1)
+        rec = normalised[0]
+        self.assertTrue(rec["normalized"])
+        self.assertEqual(rec["value"], 12345)
+        self.assertEqual(rec["attributes"]["gen_ai.system"], "claude-code")
+        self.assertEqual(rec["attributes"]["gen_ai.request.model"], "claude-opus-5")
+        self.assertEqual(rec["attributes"]["gen_ai.token.kind"], "cache_read")
+        # passthrough: the original attributes (type, model, session.id) all
+        # survive onto the normalised record, not just the gen_ai.* additions.
+        self.assertEqual(rec["attributes"]["type"], "cacheRead")
+        self.assertEqual(rec["attributes"]["session.id"], "s1")
+
+    def test_codex_cached_input_maps_to_cache_read(self):
+        req = _metric_export_request(
+            "codex.turn.token_usage",
+            {"token_type": "cached_input", "model": "gpt-5-codex"},
+            500,
+        )
+        records = otlp_sink.decode_metrics(req)
+        normalised = [r for r in records if r["name"] == "gen_ai.usage"]
+        self.assertEqual(len(normalised), 1)
+        rec = normalised[0]
+        self.assertEqual(rec["attributes"]["gen_ai.system"], "codex-cli")
+        self.assertEqual(rec["attributes"]["gen_ai.token.kind"], "cache_read")
+        self.assertNotIn("gen_ai.input_includes_cache_read", rec["attributes"])
+
+    def test_codex_raw_input_flags_cache_inclusion(self):
+        req = _metric_export_request(
+            "codex.turn.token_usage",
+            {"token_type": "input", "model": "gpt-5-codex"},
+            1000,
+        )
+        records = otlp_sink.decode_metrics(req)
+        normalised = [r for r in records if r["name"] == "gen_ai.usage"]
+        self.assertEqual(len(normalised), 1)
+        self.assertIs(normalised[0]["attributes"]["gen_ai.input_includes_cache_read"], True)
+
+    def test_codex_total_yields_no_normalised_record(self):
+        req = _metric_export_request(
+            "codex.turn.token_usage",
+            {"token_type": "total", "model": "gpt-5-codex"},
+            1500,
+        )
+        records = otlp_sink.decode_metrics(req)
+        originals = [r for r in records if r["name"] == "codex.turn.token_usage"]
+        normalised = [r for r in records if r["name"] == "gen_ai.usage"]
+        self.assertEqual(len(originals), 1, "the original record must still be written")
+        self.assertEqual(normalised, [], "'total' is derivable, not a new axis -- must not be normalised")
+
+    def test_unknown_metric_name_yields_no_normalised_record(self):
+        req = _metric_export_request(
+            "some.other.metric",
+            {"type": "input"},
+            1,
+        )
+        records = otlp_sink.decode_metrics(req)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["name"], "some.other.metric")
+
+    def test_decode_metrics_is_additive_not_mutating(self):
+        # The original record's `points` list must be the exact same objects
+        # passed to _genai_normalize, not a copy that could silently diverge --
+        # and normalisation must not mutate them in place.
+        req = _metric_export_request(
+            "claude_code.token.usage",
+            {"type": "output", "model": "claude-sonnet-5"},
+            42,
+        )
+        records = otlp_sink.decode_metrics(req)
+        original = next(r for r in records if r["name"] == "claude_code.token.usage")
+        self.assertEqual(original["points"][0]["attributes"], {"type": "output", "model": "claude-sonnet-5"})
 
 
 class LiveServerTests(unittest.TestCase):

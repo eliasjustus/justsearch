@@ -149,8 +149,8 @@ final class RootLifecycleOps {
             Instant lastVerifiedAt = watchedRootsState.getLastVerifiedAt(root);
             result.add(
                 new IndexingService.WatchedRoot(
-                    null, root, exposed, walkError, walkCompleted, deleteDetectionUnverified,
-                    driftOrphanCount, driftOrphanAtMs, lastVerifiedAt));
+                    watchedRootsState.getCollection(root), root, exposed, walkError, walkCompleted,
+                    deleteDetectionUnverified, driftOrphanCount, driftOrphanAtMs, lastVerifiedAt));
         }
         return result;
     }
@@ -198,9 +198,9 @@ final class RootLifecycleOps {
         watchedRootsState.markNeverIndexed(normalized);
         // No label reaches this entry point — the contract calls it "primary collection"
         // (IndexingService#addWatchedPath), which is DEFAULT_COLLECTION. One root must carry ONE
-        // label across every arm and every restart, so this uses the same literal the add path
-        // normalizes to and the reindex paths re-send (tempdoc 821 §L.3 — real labels are still
-        // lost on restart because root→collection is not persisted; that is the deferred fix).
+        // label across every arm and every restart, so this records the same literal the add path
+        // normalizes to and the reindex paths now read back.
+        recordCollection(normalized, IngestCollectionPolicy.DEFAULT_COLLECTION);
         walkExecutor.execute(
                 () -> walkAndSubmit(
                         normalized,
@@ -306,8 +306,13 @@ final class RootLifecycleOps {
         }
 
         // 1. Register root immediately so getWatchedRoots() returns it and
-        //    walkAndSubmit()'s cancellation check sees it in the map.
+        //    walkAndSubmit()'s cancellation check sees it in the map. The label is recorded with
+        //    it: both consumers below (watcher registration, scan RPC) are write-only, so without
+        //    this the caller's collection was unreadable the moment this method returned —
+        //    GET /api/indexing/roots reported "default" for a labelled root (885 §UL.6) and every
+        //    re-walk after a restart re-tagged its documents as the default (821 §L.3).
         watchedRootsState.markNeverIndexed(normalized);
+        recordCollection(normalized, collectionName);
         watchedRootsState.persist();
 
         // 2. Start file watcher (does not depend on walk completion)
@@ -463,15 +468,14 @@ final class RootLifecycleOps {
             // backpressure. walkAndSubmit() handles batching, state marking, and persistence.
             walkExecutor.execute(() -> {
                 syncOps.pruneMissing(root.toString());
-                // No per-root label survives here (tempdoc 821 §L.3 — root→collection is not
-                // persisted; recovering the real label is the deferred fix). Re-send the same
-                // default the root was admitted under rather than leaving the field unset: a
-                // rewalk that writes nothing where the add path wrote "default" would make one
-                // root's documents oscillate between tagged and untagged over time.
+                // The root's own persisted label (885 §UD open item 4), falling back to the
+                // default for a root persisted before the label was recorded. Re-sending the label
+                // the add path wrote is what stops one root's documents oscillating between
+                // tagged and untagged across re-walks.
                 // Tempdoc 821 §3-C3 — THIS is what makes the user's force-reindex real. The
                 // scan used to go out as SCAN_MODE_INITIAL regardless, so the Worker admitted the
                 // same paths and the batch extractor skipped every one of them as UNCHANGED.
-                walkAndSubmit(root, IngestCollectionPolicy.DEFAULT_COLLECTION, scanMode);
+                walkAndSubmit(root, collectionOf(root), scanMode);
             });
         }
         watchedRootsState.persist();
@@ -494,14 +498,16 @@ final class RootLifecycleOps {
         List<Path> rootsToReindex = List.copyOf(watchedRoots.keySet());
         for (Path root : rootsToReindex) {
             Path normalized = root.toAbsolutePath().normalize();
-            // Tempdoc 821 §L.3 — the root→collection mapping is not persisted, so no label survives
-            // a restart; recovering it is the deferred fix. Both arms must at least agree with each
-            // other and with what the add path wrote, so the scan re-sends the watcher's default.
-            startWatcherIfAvailable(IngestCollectionPolicy.DEFAULT_COLLECTION, normalized);
+            // Tempdoc 885 §UD open item 4 — the root→collection mapping IS persisted now, so the
+            // label the user chose survives the restart. Both arms read the same one; a root
+            // persisted before the field existed has none and falls back to the default, which is
+            // what every arm sent before.
+            String collection = collectionOf(normalized);
+            startWatcherIfAvailable(collection, normalized);
             walkExecutor.execute(
                 () -> walkAndSubmit(
                     normalized,
-                    IngestCollectionPolicy.DEFAULT_COLLECTION,
+                    collection,
                     io.justsearch.ipc.ScanMode.SCAN_MODE_INITIAL));
         }
         // Runs after all walks complete (single-thread executor serializes tasks).
@@ -510,6 +516,35 @@ final class RootLifecycleOps {
     }
 
     // ========== Helpers ==========
+
+    /**
+     * Records the label a root is watched under, storing NOTHING for the default bucket.
+     *
+     * <p>{@code "default"} is what an unlabeled root already normalizes to on both write arms, so a
+     * root that carries it is indistinguishable from one that carries no label — and NOT storing it
+     * keeps two pre-existing behaviours exactly as they were: {@code getWatchedRoots()} reports
+     * {@code null} for an unlabeled root (which every consumer already reads as "the index
+     * default", including {@code IngestCollectionPolicy.RootBinding}), and a root persisted before
+     * this field existed is treated identically to one added after it. Only a REAL label — the
+     * thing 885 §UL.6 saw dropped — is written down.
+     */
+    private void recordCollection(Path root, String collection) {
+        watchedRootsState.setCollection(
+                root,
+                IngestCollectionPolicy.DEFAULT_COLLECTION.equals(collection) ? null : collection);
+    }
+
+    /**
+     * The persisted collection label for {@code root}, or {@link IngestCollectionPolicy#DEFAULT_COLLECTION}
+     * when none was recorded (an unlabeled root, or one persisted before tempdoc 885 §UD open item 4
+     * added the field). One root carries ONE label across the watcher arm, the scan arm and every restart.
+     */
+    private String collectionOf(Path root) {
+        String collection = watchedRootsState.getCollection(root);
+        return (collection == null || collection.isBlank())
+                ? IngestCollectionPolicy.DEFAULT_COLLECTION
+                : collection;
+    }
 
     private void startWatcherIfAvailable(String collection, Path normalized) {
         // Tempdoc 626 §Axis-A (the 418 Phase-C cutover) — the Worker-side watcher is now the SOLE

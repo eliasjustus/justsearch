@@ -677,6 +677,9 @@ public record ResolvedConfig(
    *     {@code continuous} mode
    * @param nrtOnDemandMaxStaleMs age past which a foreground search in {@code on_demand} mode
    *     escalates to a blocking refresh; ignored in {@code continuous} mode
+   * @param commitTimerIntervalMs period of the safety-net commit timer that fires whenever
+   *     {@code pendingDocs > 0} (default 10000 — unchanged behaviour). The ceiling on every other
+   *     commit-cadence lever, which is why it is configurable at all (885's tracked item).
    */
   public record Index(
       Integer writerRamBufferMb,
@@ -710,7 +713,8 @@ public record ResolvedConfig(
       Map<String, Double> boosts,
       String nrtMode,
       int nrtBackgroundReopenMs,
-      int nrtOnDemandMaxStaleMs) {
+      int nrtOnDemandMaxStaleMs,
+      int commitTimerIntervalMs) {
 
     /** Wire value of the default NRT reopen strategy (today's behaviour). */
     public static final String NRT_MODE_CONTINUOUS = "continuous";

@@ -1,0 +1,7 @@
+{
+  "agentType": "fork",
+  "description": "fixture fork for claude-adapter tests",
+  "model": "claude-opus-5",
+  "toolUseId": "tu-fork-1",
+  "spawnDepth": 1
+}

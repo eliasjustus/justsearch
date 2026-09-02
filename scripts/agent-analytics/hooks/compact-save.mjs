@@ -22,11 +22,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { atomicWriteFileSync, readStdin, runHook, repoRoot, telemetryDir as TELEMETRY_DIR } from '../lib/hook-base.mjs';
+import { DEFAULT_PROJECTS_ROOT } from '../lib/transcript-store.mjs';
 
-// Auto-memory path — derived from repo path
+// Auto-memory path — derived from repo path. The projects root comes from
+// lib/transcript-store.mjs's DEFAULT_PROJECTS_ROOT (886 §12 PR 5b — this was
+// the last hand-rolled `'.claude', 'projects'` join outside that module); the
+// per-repo slug computation below is NOT a transcript-store concern (it
+// locates a `memory/MEMORY.md` artifact, not a session transcript), so it
+// stays local rather than pretending discoverProjectDirs' fuzzy multi-dir
+// scan is the same operation as "the one dir for THIS repoRoot".
 const MEMORY_DIR = path.join(
-  process.env.HOME || process.env.USERPROFILE || '',
-  '.claude', 'projects',
+  DEFAULT_PROJECTS_ROOT,
   repoRoot.replace(/[:/\\]/g, '-').replace(/^-+/, ''),
   'memory'
 );

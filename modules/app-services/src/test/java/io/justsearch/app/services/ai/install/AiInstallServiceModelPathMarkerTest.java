@@ -2,8 +2,10 @@
 package io.justsearch.app.services.ai.install;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.justsearch.app.services.config.ConfigStoreRebuilder;
 import io.justsearch.app.services.settings.UiSettingsStore;
 import io.justsearch.configuration.ModelPathSource;
 import io.justsearch.configuration.model.DownloadProfile;
@@ -13,6 +15,9 @@ import io.justsearch.configuration.model.ModelPackage;
 import io.justsearch.configuration.model.ModelPrecision;
 import io.justsearch.configuration.model.ModelRegistry;
 import io.justsearch.configuration.model.ModelVariant;
+import io.justsearch.configuration.resolved.ConfigResolution;
+import io.justsearch.configuration.resolved.ResolvedConfig;
+import io.justsearch.configuration.resolved.ResolvedConfigBuilder;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -26,25 +31,23 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Tempdoc 842 (S2) — the installer must LABEL the model path it writes into the system property.
+ * Tempdoc 842 (S2) reached structurally — tempdoc 883 §C.5c residue, #605 review S1.
  *
- * <p>{@code applySettings} wrote {@code justsearch.llm.model_path} through the bare
- * {@code setSysPropIfBlank}, with no companion {@code .source} marker. For the rest of a
- * just-installed JVM every reader of that marker then classified the installer's own path as
- * operator-owned:
+ * <p>842's problem was real: {@code applySettings} copied the installed chat-model path into
+ * {@code justsearch.llm.model_path}, where it resolved at ordinal 500 and became
+ * indistinguishable from an operator {@code -D}. Every reader then classified the product's own
+ * path as operator-owned, and 842 §2.3's rule ("system-owned paths are re-derivable and may be
+ * superseded by a profile; an operator path is sacred") would have made a compact-profile switch
+ * silently inert on exactly the machines that had just run Install AI. 842 fixed it by writing a
+ * {@code .source} marker beside the value.
  *
- * <ul>
- *   <li>{@code EffectiveConfigController} reported {@code owner: "unknown"} for a value the
- *       product itself had just written;
- *   <li>the tempdoc 842 section 2.3 precedence rule ("system-owned paths are re-derivable and may
- *       be superseded by a profile; an operator path is sacred") would have read an unmarked
- *       installer path as a sacred operator lock — making a compact-profile switch silently inert
- *       on precisely the machines that had just run Install AI.
- * </ul>
+ * <p>883 removes the cause instead of labelling it. The installer saves {@code settings.json} and
+ * rebuilds the {@code ConfigStore}; that alone delivers the path at ordinal 300, where it is
+ * already, by the ordinal chain, a re-derivable settings value. The sysprop copy — and therefore
+ * the marker that existed to correct it — is gone.
  *
- * <p>The value written is a copy of the {@code settings.json} row saved two lines earlier, which is
- * exactly what {@link ModelPathSource#UI_SETTINGS} means; the marker is not a new claim, it is the
- * missing label on an existing one.
+ * <p>These tests assert the new mechanism and the OLD intent: the installer's path must never
+ * report as {@code jvm_arg}, and an operator's own {@code -D} must survive an install untouched.
  */
 final class AiInstallServiceModelPathMarkerTest {
 
@@ -67,8 +70,8 @@ final class AiInstallServiceModelPathMarkerTest {
   }
 
   @Test
-  @DisplayName("applySettings stamps the ui_settings source marker beside the model path it writes")
-  void applySettingsStampsSourceMarker() throws Exception {
+  @DisplayName("applySettings persists the installed path and writes NO system property for it")
+  void applySettingsPersistsWithoutPromotingToASysprop() throws Exception {
     clearProp(MODEL_PATH_PROP);
     clearProp(ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH);
     clearProp("justsearch.models.dir");
@@ -84,22 +87,57 @@ final class AiInstallServiceModelPathMarkerTest {
 
     invokeApplySettings(svc, registryWithChatModel("model.gguf"), planFor(DownloadProfile.GPU_FULL));
 
+    String installed = chatModel.toAbsolutePath().toString();
     assertEquals(
-        chatModel.toAbsolutePath().toString(),
+        installed,
+        store.load().getLlmModelPath(),
+        "precondition: the installer still persists the path it just installed");
+    assertNull(
         System.getProperty(MODEL_PATH_PROP),
-        "precondition: the installer wrote the path it just installed");
-    assertEquals(
-        ModelPathSource.UI_SETTINGS,
+        "the settings row is the whole delivery — a sysprop copy would resolve at ordinal 500 and"
+            + " report a product-written value as jvm_arg");
+    assertNull(
         System.getProperty(ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH),
-        "the marker must be written with the value, not left for a later writer to guess");
-    assertTrue(
-        ModelPathSource.isSystemOwned(
-            System.getProperty(ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH)),
-        "a just-installed path is re-derivable, so it must classify as system-owned");
+        "and with no promotion there is nothing for a .source marker to correct");
   }
 
   @Test
-  @DisplayName("an operator-set model path is still not overwritten, and keeps its unmarked status")
+  @DisplayName("the installed path resolves as settings.json at ordinal 300, never jvm_arg")
+  void installedPathResolvesAsSettingsJson() throws Exception {
+    clearProp(MODEL_PATH_PROP);
+    clearProp(ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH);
+    clearProp("justsearch.models.dir");
+
+    Path chatModel = tmp.resolve("models").resolve("chat").resolve("model.gguf");
+    Files.createDirectories(chatModel.getParent());
+    Files.writeString(chatModel, "gguf-bytes", StandardCharsets.UTF_8);
+
+    UiSettingsStore store =
+        new UiSettingsStore(
+            UiSettingsStore.PersistenceMode.READ_WRITE, tmp.resolve("settings.json"));
+    AiInstallService svc = new AiInstallService(null, store, null, null, tmp);
+    invokeApplySettings(svc, registryWithChatModel("model.gguf"), planFor(DownloadProfile.GPU_FULL));
+
+    // What ConfigStoreRebuilder.rebuild does with the row applySettings just saved.
+    ResolvedConfigBuilder builder = ResolvedConfig.builder();
+    ConfigStoreRebuilder.contributeUiSettings(builder, store.load());
+    builder.contributeEnvRegistry();
+    ConfigResolution resolution = builder.build().resolution(MODEL_PATH_PROP);
+
+    assertEquals(chatModel.toAbsolutePath().toString(), resolution.value());
+    assertEquals(
+        "settings.json",
+        resolution.sourceName(),
+        "an installer-written path is a settings value and must say so");
+    assertEquals(ResolvedConfigBuilder.ORDINAL_SETTINGS_JSON, resolution.sourceOrdinal());
+    assertNotEquals(
+        "jvm_arg",
+        resolution.sourceName(),
+        "reporting jvm_arg is the precedence lie 842 needed a marker to un-tell");
+  }
+
+  @Test
+  @DisplayName("an operator-set model path survives an install untouched, and still wins")
   void operatorPathIsStillRespected() throws Exception {
     clearProp(ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH);
     clearProp("justsearch.models.dir");
@@ -120,12 +158,18 @@ final class AiInstallServiceModelPathMarkerTest {
     assertEquals(
         operatorValue,
         System.getProperty(MODEL_PATH_PROP),
-        "setSysPropIfBlankWithSource keeps the first-writer-wins guard the bare form had");
-    assertEquals(
-        null,
+        "the installer writes no sysprop at all, so it cannot clobber an operator's -D");
+    assertNull(
         System.getProperty(ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH),
-        "a value this writer did NOT write must not be labelled as if it had; an unmarked value is"
-            + " an operator value and must stay one");
+        "an unmarked value is an operator value and must stay one");
+
+    // And the chain — not a first-writer-wins guard — is what keeps the operator on top.
+    ResolvedConfigBuilder builder = ResolvedConfig.builder();
+    ConfigStoreRebuilder.contributeUiSettings(builder, store.load());
+    builder.contributeEnvRegistry();
+    ConfigResolution resolution = builder.build().resolution(MODEL_PATH_PROP);
+    assertEquals(operatorValue, resolution.value());
+    assertEquals("jvm_arg", resolution.sourceName(), "here jvm_arg is the truth: a human set it");
   }
 
   // ---------------------------------------------------------------- fixtures

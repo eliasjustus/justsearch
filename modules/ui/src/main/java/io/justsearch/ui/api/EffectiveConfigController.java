@@ -7,7 +7,6 @@ import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.status.EffectiveConfigEntry;
 import io.justsearch.app.inference.InferenceConfig;
 import io.justsearch.configuration.EnvRegistry;
-import io.justsearch.configuration.ModelPathSource;
 import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.SystemAccess;
 import io.justsearch.configuration.resolved.ConfigResolution;
@@ -28,21 +27,12 @@ import java.util.function.Supplier;
 /** Implements GET /api/debug/effective-config (runtime grounding snapshot). */
 public final class EffectiveConfigController {
   private static final int SCHEMA_VERSION = 1;
-  /**
-   * Tempdoc 842: the ownership marker vocabulary is shared, not privately re-spelled here. This was
-   * a fourth private copy of the same literal ({@code RuntimeActivationService} held two, the
-   * writers hold their own) — and tempdoc 374 alpha.16 already had to re-learn what happens when
-   * one copy drifts from another.
-   *
-   * <p>Deliberately still a single-marker equality test in {@link #isUiSettingsMarker}, NOT
-   * {@link ModelPathSource#isSystemOwned}: that predicate also admits {@code auto_selected_cuda12}
-   * and {@code profile_resolved}, which would reclassify markers this report currently calls
-   * {@code owner: "unknown"}. Tempdoc 883 decision 4 narrowed that from five keys to two
-   * (index.base_path, llm.model_path) — server.exe, gpu.layers and context.size are sourced from
-   * resolver provenance now and read no marker at all. Widening the report is a behavior change
-   * with its own evidence bar — this migration is the constant only.
-   */
-  private static final String UI_SETTINGS = ModelPathSource.UI_SETTINGS;
+  // Tempdoc 883 decision 4 + its §C.5c residue: this report reads NO `*.source` marker sysprop any
+  // more. It used to hold a private copy of the `ui_settings` marker literal (tempdoc 842's fourth
+  // copy) to un-tell the precedence lie the boot-time settings promotions created; with the last
+  // two promotions (index.base_path, llm.model_path) retired, every row is sourced from the
+  // resolver's own ordinal chain and the copy is gone with the reason for it. The marker itself
+  // still exists for `llm.model_path` — `ModelPathSource` and `InferenceConfig` own that vocabulary.
 
   private final Supplier<Integer> apiPortSupplier;
   @SuppressWarnings("unused")
@@ -319,25 +309,31 @@ public final class EffectiveConfigController {
     return key("justsearch.data.dir", chosenRaw, chosenSource, details);
   }
 
+  /**
+   * Tempdoc 883 §C.5c residue — sourced from the RESOLVER's own provenance, not from a
+   * {@code justsearch.index.base_path.source} marker sysprop.
+   *
+   * <p>The marker existed only because {@code settings.json} was promoted to a system property at
+   * boot, which made a GUI-chosen index root report as {@code jvm_arg}; the row then read a second
+   * sysprop to un-tell that. Both are gone: the value rides settings.json at ordinal 300 through
+   * {@code ConfigStoreRebuilder.contributeUiSettings}, so the ordinal chain already knows who won.
+   * Source names are the resolver's own strings, for the same reason the context-size row uses
+   * them — a second vocabulary here would drift from the {@code resolvedConfig} block's.
+   */
   private Map<String, Object> keyIndexBasePath() {
-    final String sysprop = "justsearch.index.base_path";
-    final String envVar = "JUSTSEARCH_INDEX_BASE_PATH";
+    final String sysprop = EnvRegistry.INDEX_BASE_PATH.sysProp();
+    final String envVar = EnvRegistry.INDEX_BASE_PATH.envVar();
+    ConfigResolution resolution =
+        configStore != null ? configStore.get().resolution(sysprop) : null;
+    boolean resolved = resolution != null && resolution.isResolved();
     String sys = sysProp(sysprop);
     String env = envVar(envVar);
-    String marker = sysProp("justsearch.index.base_path.source");
-
-    String source;
-    if (sys != null) source = isUiSettingsMarker(marker) ? "ui_settings" : "system_property";
-    else if (env != null) source = "environment_variable";
-    else source = "derived";
 
     String value;
     if (indexBasePath != null) {
       value = indexBasePath.toString();
-    } else if (sys != null) {
-      value = sys;
-    } else if (env != null) {
-      value = env;
+    } else if (resolved) {
+      value = resolution.value();
     } else {
       // Best-effort default: <dataDir>/index/default
       try {
@@ -347,20 +343,21 @@ public final class EffectiveConfigController {
       }
     }
 
+    // Nothing configured at any ordinal means the effective root was DERIVED from the data dir.
+    String source = resolved ? resolution.sourceName() : "derived";
+
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("sysprop", sysprop);
     details.put("envVar", envVar);
     if (indexBasePath != null) details.put("resolved", indexBasePath.toString());
-    if (sys != null) {
-      details.put("syspropValue", sys);
-      if (isUiSettingsMarker(marker)) {
-        details.put("owner", "ui_settings");
-        details.put("uiOwnershipProp", "justsearch.index.base_path.source");
-        details.put("uiOwnershipValue", marker);
-      } else {
-        details.put("owner", "unknown");
+    if (resolved) {
+      details.put("resolvedValue", resolution.value());
+      details.put("sourceOrdinal", resolution.sourceOrdinal());
+      if (resolution.sourceDetail() != null) {
+        details.put("sourceDetail", resolution.sourceDetail());
       }
     }
+    if (sys != null) details.put("syspropValue", sys);
     if (env != null) details.put("envValue", env);
 
     List<Map<String, Object>> conflicts = new ArrayList<>();
@@ -368,7 +365,7 @@ public final class EffectiveConfigController {
     addConflictIfDifferent(conflicts, "environment_variable", env, value);
     if (!conflicts.isEmpty()) details.put("conflicts", conflicts);
 
-    return key("justsearch.index.base_path", value, source, details);
+    return key(sysprop, value, source, details);
   }
 
   private Map<String, Object> keyModelsDir(Path baseDir) {
@@ -454,38 +451,58 @@ public final class EffectiveConfigController {
     return key("justsearch.server.exe", effective, source, details);
   }
 
+  /**
+   * Tempdoc 883 §C.5c residue — the same migration the {@code server.exe} row already made.
+   *
+   * <p>The {@code justsearch.llm.model_path.source} marker is NOT deleted: {@code AiInstallService}
+   * and {@code AiPackImportService} still write it as a genuine ownership token, and
+   * {@code InferenceConfig.classifyModelPathOwner} reads it to tell an installer-written path from
+   * an operator lock. What is deleted is this row RE-TELLING it — the marker only had to
+   * disambiguate because the boot-time settings promotion made a GUI value report as
+   * {@code jvm_arg}, and that promotion is gone. A GUI-chosen model now resolves as
+   * {@code settings.json} at ordinal 300 without a marker to say so.
+   */
   private Map<String, Object> keyLlmModelPath(
       Path baseDir,
       OnlineAiRuntimeIntrospection.RuntimeInfo runtimeInfo,
       InferenceConfig envInference) {
+    ConfigResolution resolution =
+        configStore != null
+            ? configStore.get().resolution(EnvRegistry.LLM_MODEL_PATH.configKey())
+            : null;
+    boolean resolved = resolution != null && resolution.isResolved();
     String sys = sysProp(EnvRegistry.LLM_MODEL_PATH.sysProp());
     String env = envVar(EnvRegistry.LLM_MODEL_PATH.envVar());
-    String marker = sysProp("justsearch.llm.model_path.source");
 
     String effective = runtimeInfo != null ? runtimeInfo.modelPath()
         : (envInference != null && envInference.modelPath() != null ? envInference.modelPath().toString() : null);
 
     String source;
-    if (sys != null) source = isUiSettingsMarker(marker) ? "ui_settings" : "system_property";
-    else if (env != null) source = "environment_variable";
-    else if (effective != null && !effective.isBlank()) source = "derived";
-    else source = "default";
+    if (resolved && valuesMatchPath(resolution.value(), effective)) {
+      source = resolution.sourceName();
+    } else if (effective != null && !effective.isBlank()) {
+      // The live runtime is serving a model the resolver does not name (a profile-resolved pair, an
+      // externally adopted server): the value is observed, not configured.
+      source = "derived";
+    } else if (resolved) {
+      source = resolution.sourceName();
+    } else {
+      source = "default";
+    }
 
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("sysprop", EnvRegistry.LLM_MODEL_PATH.sysProp());
     details.put("envVar", EnvRegistry.LLM_MODEL_PATH.envVar());
     if (baseDir != null) details.put("baseDir", baseDir.toString());
     if (runtimeInfo != null) details.put("usingExternalLlamaServer", runtimeInfo.usingExternalLlamaServer());
-    if (sys != null) {
-      details.put("syspropValue", sys);
-      if (isUiSettingsMarker(marker)) {
-        details.put("owner", "ui_settings");
-        details.put("uiOwnershipProp", "justsearch.llm.model_path.source");
-        details.put("uiOwnershipValue", marker);
-      } else {
-        details.put("owner", "unknown");
+    if (resolved) {
+      details.put("resolvedValue", resolution.value());
+      details.put("sourceOrdinal", resolution.sourceOrdinal());
+      if (resolution.sourceDetail() != null) {
+        details.put("sourceDetail", resolution.sourceDetail());
       }
     }
+    if (sys != null) details.put("syspropValue", sys);
     if (env != null) details.put("envValue", env);
 
     // If the runtime effective model path differs from the configured override, surface conflicts.
@@ -494,7 +511,9 @@ public final class EffectiveConfigController {
     addConflictIfDifferent(conflicts, "environment_variable", env, effective);
     if (!conflicts.isEmpty()) details.put("conflicts", conflicts);
 
-    return key("justsearch.llm.model_path", effective != null ? effective : (sys != null ? sys : env), source, details);
+    String value =
+        effective != null ? effective : (resolved ? resolution.value() : (sys != null ? sys : env));
+    return key("justsearch.llm.model_path", value, source, details);
   }
 
   /**
@@ -744,11 +763,6 @@ public final class EffectiveConfigController {
     if (sysVal != null) return "system_property";
     if (envVal != null) return "environment_variable";
     return "default";
-  }
-
-  private static boolean isUiSettingsMarker(String raw) {
-    if (raw == null) return false;
-    return UI_SETTINGS.equalsIgnoreCase(raw.trim());
   }
 
   private static void addConflictIfDifferent(List<Map<String, Object>> conflicts, String source, String candidate, String winner) {

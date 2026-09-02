@@ -31,8 +31,10 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { parseFrontmatter } from '../../governance/lib/frontmatter.mjs';
 
 // A top-level tempdoc is `docs/tempdocs/<N>-<name>.md` OR a `docs/tempdocs/<N>-<name>/` directory
 // (a nested-numbered draft folder). Its nested files have their own local numbering and
@@ -55,8 +57,43 @@ function record(claims, number, basename, origin) {
   byName.get(basename).add(origin);
 }
 
+/**
+ * The `tempdoc:` number a changeset's frontmatter declares, or null.
+ *
+ * A changeset's number is NOT a free choice — the changeset loader throws without a `tempdoc:`
+ * or `adr:` field, and the filename convention is `<N>-<slug>.md`. Reading it here is what lets
+ * the collision rule distinguish "this changeset belongs to a tempdoc that exists" from
+ * "this number was invented".
+ *
+ * Uses the SAME parser the changeset loader uses (`scripts/governance/lib/frontmatter.mjs`, via
+ * `changeset-loader.mjs`) rather than a second regex over the head of the file. A hand-rolled
+ * matcher disagreeing with the loader fails OPEN here — `orphanChangesetDeclarations` skips a
+ * changeset whose value it could not read — so `tempdoc: "884"`, a BOM, or frontmatter past an
+ * arbitrary byte cut would each have silently exempted the file from the check.
+ *
+ * @param {string} file
+ * @returns {string|null}
+ */
+/** A UTF-8 BOM ahead of the opening `---` makes parseFrontmatter see no frontmatter at all. */
+const stripBom = (text) => (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+
+function declaredTempdocOf(file) {
+  let content;
+  try {
+    content = readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+  const parsed = parseFrontmatter(stripBom(content));
+  const raw = parsed?.frontmatter?.tempdoc;
+  if (typeof raw !== 'string') return null;
+  // The loader accepts a quoted scalar; `tempdoc: "884"` and `tempdoc: 884` name the same tempdoc.
+  const m = /^["']?(\d+)["']?$/.exec(raw.trim());
+  return m ? m[1] : null;
+}
+
 /** Scan a worktree dir's tempdocs (top-level file/dir) + changesets on disk. */
-function scanDir(claims, rootDir, label) {
+function scanDir(claims, changesets, rootDir, label) {
   const tempdocs = join(rootDir, 'docs', 'tempdocs');
   if (existsSync(tempdocs)) {
     for (const e of readdirSync(tempdocs, { withFileTypes: true })) {
@@ -72,7 +109,16 @@ function scanDir(claims, rootDir, label) {
       if (!existsSync(cs)) continue;
       for (const e of readdirSync(cs, { withFileTypes: true })) {
         const m = e.isFile() ? CHANGESET_RE.exec(e.name) : null;
-        if (m) record(claims, m[1], e.name, `${label}:gates/${g.name}`);
+        if (!m) continue;
+        const csLabel = `${label}:gates/${g.name}`;
+        record(claims, m[1], e.name, csLabel);
+        changesets.push({
+          number: m[1],
+          basename: e.name,
+          label: csLabel,
+          path: `gates/${g.name}/.changesets/${e.name}`,
+          declaredTempdoc: declaredTempdocOf(join(cs, e.name)),
+        });
       }
     }
   }
@@ -91,6 +137,8 @@ function scanDir(claims, rootDir, label) {
  */
 export function collectClaims({ cwd = process.cwd() } = {}) {
   const claims = new Map();
+  /** @type {Array<{number: string, basename: string, label: string, path: string, declaredTempdoc: string|null}>} */
+  const changesets = [];
 
   // 1. All registered worktrees (incl. the current one + the main checkout).
   const wtPaths = git(['worktree', 'list', '--porcelain'], { cwd })
@@ -102,7 +150,7 @@ export function collectClaims({ cwd = process.cwd() } = {}) {
   for (const p of wtPaths.length ? wtPaths : [cwd]) {
     if (seen.has(p)) continue;
     seen.add(p);
-    scanDir(claims, p, `worktree:${p.replace(/\\/g, '/').split('/').pop()}`);
+    scanDir(claims, changesets, p, `worktree:${p.replace(/\\/g, '/').split('/').pop()}`);
   }
 
   // 2. origin/<default-branch> (best-effort).
@@ -123,16 +171,63 @@ export function collectClaims({ cwd = process.cwd() } = {}) {
     } else if (/^gates\/[^/]+\/\.changesets\/[^/]+$/.test(p)) {
       const name = p.split('/').pop();
       const m = CHANGESET_RE.exec(name);
-      if (m) record(claims, m[1], name, `origin:${p.split('/')[1]}`);
+      if (m) record(claims, m[1], name, `origin:gates/${p.split('/')[1]}`);
     }
   }
 
-  return { claims, worktreeCount: seen.size, defaultBranch };
+  return { claims, changesets, worktreeCount: seen.size, defaultBranch };
 }
 
 const isOrigin = (label) => label === 'origin' || label.startsWith('origin:');
 /** The worktree a claim came from, dropping the `:gates/<id>` suffix a changeset label carries. */
 const worktreeOf = (label) => label.replace(/:gates\/[^:]+$/, '');
+/** A changeset's label always carries the gate it lives under; a tempdoc's never does. */
+const isChangesetLabel = (label) => /(?:^|:)gates\//.test(label);
+
+/**
+ * The set of numbers claimed by an actual `docs/tempdocs/<N>-*` entry, anywhere (worktree or
+ * origin). A changeset's `tempdoc:` must name one of these.
+ *
+ * @param {Map<string, Map<string, Set<string>>>} claims
+ * @returns {Set<string>}
+ */
+export function tempdocNumbers(claims) {
+  const out = new Set();
+  for (const [n, byName] of claims) {
+    for (const [, labels] of byName) {
+      if ([...labels].some((l) => !isChangesetLabel(l))) {
+        out.add(n);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Changesets whose `tempdoc:` frontmatter names a number no tempdoc file claims.
+ *
+ * This is the check that pays for exempting changesets from the divergence rule below. Once a
+ * changeset can no longer collide by number, the remaining risk is a changeset pointing at a
+ * tempdoc that does not exist — an invented number, or a typo that quietly detaches the
+ * declaration from its rationale. That is what this catches.
+ *
+ * A changeset carrying `adr:` instead of `tempdoc:` is legitimate (the changeset loader accepts
+ * either), so a missing `tempdoc:` is not reported here.
+ *
+ * @param {Array<{number: string, basename: string, label: string, path: string, declaredTempdoc: string|null}>} changesets
+ * @param {Set<string>} numbers - from `tempdocNumbers`
+ * @returns {Array<{path: string, label: string, declaredTempdoc: string}>}
+ */
+export function orphanChangesetDeclarations(changesets, numbers) {
+  const out = [];
+  for (const cs of changesets) {
+    if (!cs.declaredTempdoc) continue;
+    if (numbers.has(cs.declaredTempdoc)) continue;
+    out.push({ path: cs.path, label: cs.label, declaredTempdoc: cs.declaredTempdoc });
+  }
+  return out;
+}
 
 /**
  * The merge-gate collision rule, UNCHANGED from pre-743 `check-tempdoc-numbers.mjs`: this repo's
@@ -144,20 +239,30 @@ const worktreeOf = (label) => label.replace(/:gates\/[^:]+$/, '');
  * 553-code-duplication-audit case). On-origin reuse and a single worktree's own multi-file batch
  * are both fine.
  *
+ * **Changesets are not claimants** (residue R1 of the 883/884/885 wave). A changeset number is not
+ * a free choice the way a tempdoc number is: the frontmatter REQUIRES `tempdoc: N` and the filename
+ * convention is `<N>-<slug>.md`, so every changeset for tempdoc N is *obliged* to be named `N-*`.
+ * Several changesets per tempdoc is the standing convention — `main` alone carries four `885-*` and
+ * three `563-*` — and there is nothing to renumber when two worktrees each write one, because the
+ * basenames differ and the files co-exist on merge. Telling an agent to "renumber one of them"
+ * would make the filename contradict its own frontmatter. The risk that exemption creates —
+ * a changeset naming a tempdoc that does not exist — is caught by `orphanChangesetDeclarations`,
+ * not by pretending it is a number collision.
+ *
  * @param {Map<string, Map<string, Set<string>>>} claims
  * @returns {Array<{number: string, detail: string}>} sorted ascending by number
  */
 export function divergentInFlightCollisions(claims) {
   const collisions = [];
   for (const [n, byName] of [...claims.entries()].sort((a, b) => Number(a[0]) - Number(b[0]))) {
-    // basenames for N that are NOT present on origin (in-flight additions only).
-    const newBasenames = [...byName.entries()].filter(([, labels]) => ![...labels].some(isOrigin));
+    // basenames for N that are NOT present on origin (in-flight additions only), and that are
+    // TEMPDOCS — a basename claimed only by `:gates/<id>` labels is a changeset (see above).
+    const newBasenames = [...byName.entries()].filter(
+      ([, labels]) => ![...labels].some(isOrigin) && [...labels].some((l) => !isChangesetLabel(l)),
+    );
     if (newBasenames.length < 2) continue; // 0/1 distinct in-flight basename -> no divergent claim.
-    // Compare by WORKTREE, not by label: a changeset's label carries its gate
-    // (`worktree:lane-B:gates/ts-any`), so one agent authoring changesets for two different gates
-    // under one tempdoc number — which the frontmatter's `tempdoc: N` REQUIRES them to share —
-    // read as two claimants and tripped this rule. That is the single-author batch the next line
-    // has always meant to allow; only the label granularity disagreed.
+    // Compare by WORKTREE, not by label: the same tempdoc checked out in several worktrees is one
+    // claim, and a single agent's own multi-file batch is intentional.
     const worktrees = new Set();
     for (const [, labels] of newBasenames) for (const l of labels) worktrees.add(worktreeOf(l));
     if (worktrees.size < 2) continue; // all from one worktree -> an intentional single-author batch.

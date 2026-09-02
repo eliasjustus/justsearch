@@ -154,7 +154,7 @@ final class WatchedRootsStateTest {
 
     Path rootsFile = tempDir.resolve("watched_roots.json");
     WatchedRootsStore store = new WatchedRootsStore(rootsFile, null);
-    store.persistRoots(Map.of(normalized, ts), Map.of(), java.util.Set.of());
+    store.persistRoots(Map.of(normalized, ts), Map.of(), java.util.Set.of(), Map.of());
 
     Map<Path, Instant> watchedRoots = new ConcurrentHashMap<>();
     WatchedRootsState state = new WatchedRootsState(watchedRoots, store);

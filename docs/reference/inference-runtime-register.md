@@ -166,6 +166,37 @@ Settled empirical facts. Each was an open question that got answered.
   (`--no-deps`; triton warnings non-fatal).
 - **Evidence:** tempdoc 708 §Execution log (final table + run JSON pointers).
 
+### F-015: Non-NVIDIA backends measured on the dev box — llama.cpp Vulkan at CUDA parity for the packaged model; ORT WebGPU plugin EP loads from the stock Java jar at ORT >= 1.24.4 (tempdoc 903, 2026-09-02)
+
+- **Context:** 887 §S row 1.1 re-opened the 311 DirectML rejection (which compared against CUDA,
+  not the CPU tier). No AMD/Intel GPU was available, so both measurements are on the RTX 4070 and
+  bound BACKEND overhead (portable vs vendor backend on the same silicon), not vendor performance.
+  A game client and browsers held ~2.8 GB / 22-40 % GPU throughout (same load for every row).
+- **Chat (llama-bench, pinned b8571, `-p 512 -n 128 -r 3 -fa 1`, `-ngl 99` on GPU):**
+  Qwen3.5-9B-Q4_K_M — CUDA pp512 2935-3007 / tg128 55.1-55.3 tok/s (two runs); **Vulkan pp512
+  2808 / tg128 63.0** (NV_coopmat2); CPU (i7-12700K, 12 threads) 45.8 / 4.52.
+  Qwen3.5-4B-Q4_K_M — CUDA 4616 / 86.9; Vulkan 4264 / 98.0; CPU 80.0 / 9.22. Vulkan is
+  0.92-0.96x CUDA on prefill and 1.13-1.14x on generation here; the CPU tier is 53-64x slower on
+  prefill (an 8k RAG prefill is ~3 min on CPU) and 9-14x slower on generation. llama.cpp's upstream op-support table (`docs/ops/Vulkan.csv` in the ggml-org repo) confirms
+  `GATED_DELTA_NET`, `SSM_CONV`, `SOLVE_TRI` and q8_0-KV `FLASH_ATTN_EXT` are supported, so the
+  packaged hybrid runs fully offloaded with the D-010 launch line.
+- **Encoders (ORT WebGPU plugin EP, `onnxruntime-ep-webgpu` 0.3.0, from Java via
+  `OrtEnvironment.registerExecutionProviderLibrary` + `SessionOptions.addExecutionProvider`):**
+  the pinned **1.24.3 refuses** (`ORT runtime version "1.24.3" is below the minimum required
+  version "1.24.4"`; Maven has no 1.24.4 — next is 1.25.0, current 1.29.0). With 1.29.0 the stock
+  CPU `onnxruntime` jar registers the DLL, enumerates the GPU via DXGI, and runs (batch 1, mean of
+  50): gte-multilingual-base fp16 on WebGPU **14.8 ms** vs shipped FP32 CPU 113 ms at seq 256
+  (7.7x); reranker fp16 14.8 ms vs shipped CPU variant 57.0 ms (3.9x); NER fp16 6.2 ms vs INT8
+  CPU 7.0 ms at seq 64. Loading the INT8/CPU-variant model on WebGPU is 2-5x SLOWER than running
+  it on CPU (QOperator fallback — the F-013 shape); a GPU EP must always get the fp16 variant.
+- **What is NOT settled:** AMD/Intel numbers (Q-003), the Dawn D3D12-vs-Vulkan backend choice,
+  multi-session behaviour under the Worker's GPU lease (WebGPU has no BFC arena, so
+  `arenaCapBytes > 0 <=> GPU` in `ModelSessionPolicyResolver` needs a second signal),
+  production batch sizes. DirectML is in maintenance mode with no Java binding and is not a
+  candidate; ORT has no Vulkan EP (WebGPU is the successor).
+- **Evidence:** tempdoc 903 §2 (tables), Appendix A (probe source), Appendix B (raw rows);
+  artifacts under the gitignored `tmp/903-bench/`.
+
 ## Decisions
 
 Design choices in the current inference runtime, with rationale.
@@ -463,6 +494,26 @@ picking up items here over inventing new experiments.
   open question in 883).
 - **Instrument:** `jseval llm-bench` / `llm-gate` (F-012) for tok/s; the recorded
   `contextWindow.reason` on `/api/inference/status` for step-downs.
+
+### Q-003: How much does a non-NVIDIA GPU beat the CPU tier on an actual AMD / Intel machine? OPEN (tempdoc 903)
+
+- **Context:** F-015 measured Vulkan (chat) and the WebGPU plugin EP (encoders) only on the
+  NVIDIA dev card, which bounds backend overhead but says nothing about AMD RDNA / Intel Arc-Xe
+  performance, driver behaviour (Intel coopmat TDR, llama.cpp #20554; Q8 slowdown, #24002), or
+  iGPU memory reporting (#16832). Tempdoc 903 ranks "Vulkan for chat" first on the strength of
+  the "chat vs no chat" cliff (`InstallPlanner.java:207-231` skips every GGUF unless the profile
+  is `GPU_FULL`), not on vendor numbers.
+- **What to measure (exact commands in 903 §2.3):** on the first AMD or Intel box, llama-bench
+  Vulkan vs CPU for the 9B and 4B packaged models (Intel: also with `GGML_VK_DISABLE_COOPMAT=1`
+  and a Q6_K quant); `jseval llm-bench` end to end with the Vulkan variant forced via
+  `-Djustsearch.server.exe`; the WebGPU probe (903 Appendix A) on the fp16 embedder / reranker /
+  NER; `llama-server --list-devices` total/free versus OS-reported memory (sizes the detection
+  problem on UMA parts). Record the hardware inventory as the row key.
+- **Also open here:** whether `GPU_TOP_RUNG` (32768) needs a UMA/iGPU rung (prefill on an
+  8060S-class iGPU is ~5-10x slower than a 4070); WebGPU session lifecycle under the
+  `main_gpu_active` lease and co-residency with llama-server (F-010 budgets are CUDA-arena
+  numbers). Owner: 903 §6's opus chunk records what it could and could not measure; the vendor
+  rows stay open until hardware exists.
 
 ## Future Work
 

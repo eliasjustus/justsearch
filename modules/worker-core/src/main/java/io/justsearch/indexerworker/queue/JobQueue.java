@@ -222,6 +222,36 @@ public interface JobQueue extends Closeable {
   }
 
   /**
+   * Outcome of {@link #reenqueue(EnqueueEntry)} (tempdoc 885 §UD open item 1).
+   *
+   * @param accepted number of rows the re-enqueue accepted (0 or 1)
+   * @param previousState the state the row held immediately before the re-enqueue overwrote it, or
+   *     {@code null} when the queue has no row-state authority to report one (there was no row, or
+   *     the implementation does not track states). {@code null} means "cannot say" — it is NOT a
+   *     state name, so a caller must not print it as one.
+   */
+  record ReenqueueResult(int accepted, String previousState) {}
+
+  /**
+   * Re-enqueues ONE path and reports the state it was in immediately before.
+   *
+   * <p>Exists because the retry RPC used to state the previous state as a literal {@code "FAILED"}
+   * without ever reading the row — already wrong for a {@code PENDING}-in-backoff job and wrong
+   * again for {@code RETRY_EXHAUSTED} (tempdoc 885 §UD open item 1). The read has to happen where
+   * the write happens: {@code INSERT OR REPLACE} destroys the old state, so a separate read before
+   * the call is a race, not an answer.
+   *
+   * <p>Default implementation performs the re-enqueue and reports {@code null} — a queue that does
+   * not expose row states must say "cannot say" rather than guess.
+   */
+  default ReenqueueResult reenqueue(EnqueueEntry entry) {
+    if (entry == null || entry.path() == null) {
+      return new ReenqueueResult(0, null);
+    }
+    return new ReenqueueResult(enqueueEntries(List.of(entry)), null);
+  }
+
+  /**
    * Returns the aggregate byte weight of remaining (PENDING + PROCESSING) work.
    *
    * <p>Default is {@link PendingBytes#EMPTY} for implementations that do not record sizes.

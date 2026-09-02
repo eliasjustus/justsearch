@@ -34,6 +34,12 @@ run('fires on npm --prefix modules/ui-web run typecheck', () => {
 run('fires on node scripts/ci/check-theme-token-closure.mjs', () => {
   assert.equal(matchExpectedState('node scripts/ci/check-theme-token-closure.mjs', ENTRIES)[0].id, 'gate-pin');
 });
+run('fires on the agent-analytics suite and a single *.test.mjs (886 PR 5b: CI runs run-all-tests.mjs)', () => {
+  const suiteEntries = [{ id: 'suite-pin', match: ['run-all-tests\\.mjs', '861-w5-agent-spawn-sweep'] }];
+  assert.equal(matchExpectedState('node scripts/agent-analytics/run-all-tests.mjs', suiteEntries)[0].id, 'suite-pin');
+  assert.equal(matchExpectedState('node scripts/agent-analytics/861-w5-agent-spawn-sweep.test.mjs', suiteEntries)[0].id, 'suite-pin');
+  assert.deepEqual(matchExpectedState('node scripts/agent-analytics/cache-efficiency.mjs', suiteEntries), []);
+});
 run('fires on python -m pytest scripts/jseval', () => {
   assert.equal(matchExpectedState('python -m pytest scripts/jseval/tests', ENTRIES)[0].id, 'pytest-pin');
 });
@@ -77,6 +83,34 @@ run('real expected-state.v1.json parses and all match regexes compile', () => {
     assert.ok(e.exitProbe || e.reviewBy, `entry ${e.id} carries an exit discipline (exitProbe or reviewBy)`);
     for (const p of e.match) new RegExp(p, 'i');
   }
+});
+
+// Nothing reads an unrecognised key, so a typo in one is invisible: `exitProbeRetired` misspelled
+// reads as a pin that simply has no note, and — worse — `exitProbe` misspelled reads as a pin with
+// no probe, which silently downgrades its exit discipline to reviewBy alone.
+const ALLOWED_PIN_KEYS = new Set([
+  'id', 'match', 'claim', 'evidence', 'added', 'reviewBy', 'exitProbe',
+  // Prose keys recording why a probe was removed or reshaped (PR #604).
+  'exitProbeRetired', 'exitProbeNote',
+]);
+run('real baseline: no entry carries an unrecognised key', () => {
+  const data = JSON.parse(fs.readFileSync(path.join(repoRoot, EXPECTED_STATE_FILE), 'utf8'));
+  for (const e of data.entries) {
+    for (const key of Object.keys(e)) {
+      assert.ok(
+        ALLOWED_PIN_KEYS.has(key),
+        `entry ${e.id} has unrecognised key \`${key}\` — add it to ALLOWED_PIN_KEYS if intended, `
+          + 'or fix the typo; an unread key is a silently ignored one',
+      );
+    }
+  }
+});
+
+run('the unrecognised-key check actually fires', () => {
+  // Pinning the pin: a schema check that cannot fail is the shape this whole PR is about.
+  const typo = { id: 'x', match: ['y'], claim: 'z', exitProbeRetried: 'typo' };
+  const bad = Object.keys(typo).filter((k) => !ALLOWED_PIN_KEYS.has(k));
+  assert.deepEqual(bad, ['exitProbeRetried']);
 });
 run('real baseline: every entry is reachable by its own exitProbe, and unambiguously so', () => {
   // Derived from the live entries rather than naming specific pins. Naming them made this test

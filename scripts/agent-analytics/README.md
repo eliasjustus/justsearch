@@ -88,3 +88,227 @@ cancelled Sonnet-5 price cliff sat in the table two weeks from silently overpric
 Sonnet-5 turn by 50%. The rates in `lib/transcript-cost.mjs` carry the date they were last
 verified against `platform.claude.com/docs/en/about-claude/pricing`; re-check them when a
 model ships or a promotional rate is announced, because nothing here will tell you.
+
+## Session ledger (886)
+
+Every reader above speaks Claude Code's own transcript shape. Tempdoc 886 found that the
+thing that actually sets the bill — context tokens re-presented per API call — is the same
+idea whether the harness is Claude Code or OpenAI Codex CLI; only the field names differ.
+`lib/ledger/` is the harness-neutral projection of that idea:
+
+```
+import { listCalls } from './lib/ledger/index.mjs';
+const { calls, toolEvents, sessions } = listCalls({ harnesses: ['claude-code', 'codex-cli'], sinceMs: Date.parse('2026-08-01') });
+```
+
+**Window semantics, `sinceMs`/`untilMs` (886 §12 PR 2 fix, independent review):** these bound
+TWO different things. Each adapter uses them as a cheap file-mtime prefilter before parsing
+(unchanged). `listCalls` then ALSO applies them as a per-CALL filter on `windowBy: 'ts'` (the
+default) — a `Call`/`ToolEvent` survives only if its OWN `ts` falls inside the window. This
+matters because a file's mtime is its LAST write: a `--since 2026-08-01` request previously kept
+every call in any file touched on-or-after that date, including calls from weeks earlier in a
+long-lived session (measured: 5,541 calls dated before `--since` leaked into a 2026-08-01 query
+before this fix). A call with a null/unparsable `ts` cannot be judged, so it is KEPT — never
+silently dropped — and counted in the result's `unfilterableTs`. Pass `windowBy: 'mtime'` to opt
+back into the old file-level-only semantics. When neither `sinceMs` nor `untilMs` is given, no
+per-call filtering runs and the result shape is unchanged (no `unfilterableTs` key).
+
+A `Call` carries `{harness, provider, project, sessionId, callId, lineage, ts, model, tokens,
+contextTokens, compactionBoundary}`; a `ToolEvent` carries `{harness, sessionId, callRef, role,
+name, inputChars, outputChars, isError, ts}`. **Absent token axes are `null`, never `0`** —
+Codex has no billable cache write, Claude has no reasoning-token axis, and a reader summing a
+`null` as zero spend would be quietly wrong in the direction that hides cost, not inflates it.
+
+Per-harness adapters:
+
+- `lib/ledger/claude-adapter.mjs` wraps `lib/transcript-store.mjs` discovery. Dedups by
+  `message.id` (Claude writes one JSONL line per content block, all sharing one id, with
+  identical `usage` repeated on each) while still registering every line's `tool_use` blocks —
+  a block can land on a line AFTER the one that carried the usage snapshot, so registering
+  before the dedup skip is what keeps the tool_result→tool-name join intact. Subagent lineage
+  (`spawn` vs `fork`) comes from the sibling `subagents/*.meta.json`.
+- `lib/ledger/codex-adapter.mjs` reads `~/.codex/sessions/**/rollout-*.jsonl` directly (no
+  shared discovery module exists for Codex yet). Every parsing rule is corpus-verified (886
+  §11's derisk pass, 51,740 `token_count` events / 289 sessions): `input_tokens` already
+  *includes* `cached_input_tokens` (the OpenAI convention); `last_token_usage` is a per-call
+  delta, and a `token_count` event whose cumulative total exactly repeats the previous one is
+  dropped as a duplicate, not counted as a new call (1,482 such repeats in that corpus); tool
+  outputs are capped at 64k chars with a `truncated` flag (some run past 750k uncapped). Every
+  Codex `Call` has `lineage.kind = 'main'` — `inter_agent_communication_metadata` is a real
+  signal, but on real payloads (`{trigger_turn: false}`) it names no PARENT, so no per-call
+  lineage edge is derivable from it; that fact surfaces instead as the session-level
+  `session.multiAgent` boolean. A `compacted` line with no following `token_count` event still
+  gets a synthetic zero-token boundary `Call` (`Call.synthetic = true` — every other `Call` is
+  `synthetic: false`). A file with no usable `sessionId` (missing/empty `session_meta.payload.id`)
+  is the ONE documented skip condition — collected into the returned `skipped: [{file, reason}]`
+  array, not silently dropped; any OTHER parsing exception propagates rather than being caught.
+  `session.selfCheck` reports `{deltaInputSum, maxCumulativeInput, resets, repeatsDropped}` —
+  `maxCumulativeInput` (renamed from an earlier `finalCumulativeInput`) is the largest cumulative
+  input-token counter observed, not merely the last one, and `resets` counts how many times that
+  cumulative counter DECREASED (a resumed thread restarting its counter).
+
+**`resume` and `thread` are RESERVED lineage vocabulary — no adapter in this PR produces
+either.** `record.mjs`'s `VALID_LINEAGE_KINDS` documents the evidence each would need: `thread`
+needs a real PARENT id in the payload (not just a boolean flag asserting multi-agent
+communication happened); `resume` needs an explicit resumed-FROM linkage (a Codex rollout
+naming the prior rollout it continues, or a Claude Code transcript carrying `--resume`'s source
+sessionId). Neither harness's log carries that evidence today.
+
+`lib/ledger/tool-roles.mjs` maps each harness's own tool names onto one shared role vocabulary
+(`read`/`edit`/`shell`/`search`/`spawn`/`wait`/`web`/`other`) so a cross-harness reader never
+needs a tool-name switch statement per harness. The Codex table is a corpus vocabulary snapshot
+(2026-09-02, 50,259 real calls/tool events) — `agent_message` maps to `spawn` for table
+completeness even though the adapter no longer emits a `ToolEvent` for it (its payloads are
+plain assistant reply text, not tool activity).
+
+**Boundary rule, enforced not just documented (886 §10.4):** this library is machine-level —
+every project on the machine could use it — while the hooks/gates elsewhere in this directory
+are this repo's own policy. Nothing under `lib/ledger/` may read `governance/`, `CLAUDE.md`, or
+`tmp/agent-telemetry` paths, or resolve a repo root via a relative `'..','..','..'` climb.
+`lib/ledger/boundary-check.mjs` exports the pure checker (`findBoundaryViolations`);
+`lib/ledger/boundary.test.mjs` runs it over every real file in the directory AND over crafted
+violation shapes (a side-effect import, a multi-line `import {...} from`) to prove the checker
+itself catches them, not just that today's files happen to pass.
+
+`cache-efficiency.mjs` is the first migrated consumer — its `--harness` flag (default
+`claude-code`) selects the provider, and file discovery now comes from the ledger's
+`listClaudeTranscriptFiles` instead of a second hand-rolled directory walk. Fixtures for both
+adapters live under `fixtures/claude/` and `fixtures/codex/` — synthetic content only, no real
+prompts or paths.
+
+## Context residency and spawn economics (886)
+
+`context-residency.mjs` and `spawn-economics.mjs` are the second wave of ledger consumers
+(tempdoc 886 §12 PR 2) — they productionise three throwaway scripts (`tmp/tokeff/{deep,deep3,
+deep4}.mjs`) that first measured the variable §2 of that tempdoc found no existing reader
+tracked: context tokens re-presented **per API call**, not cache-hit rate.
+
+```
+node scripts/agent-analytics/context-residency.mjs --since 2026-08-01 --harness claude-code
+node scripts/agent-analytics/spawn-economics.mjs --since 2026-08-01 --top 20
+node scripts/agent-analytics/cost-session.mjs --reconcile
+```
+
+`context-residency.mjs` reads the neutral ledger for three harness-neutral sections: per-call
+context distribution by harness × lineage-kind (main vs spawn/fork) × model (p50/p75/p90/p99/
+max, ctx/out ratio); share of context tokens and cache-read-priced cost above `--cap` (default
+200000 — fails closed on an unpriced model, never a silent `$0`); the compaction ledger
+(trigger, pre/post tokens, durationMs). A fourth section — compounded residency, where every
+context piece (prefix, a tool result, a tool_use input, user/assistant text, thinking) is
+charged again on EVERY call it stays resident for, reset at a compaction boundary — is
+`claude-code`-only: it reads raw transcripts directly, the same precedent `cache-efficiency.mjs`
+set for content the neutral `Call`/`ToolEvent` record has no axis for (a plain text block's
+size). Every section excludes `synthetic` calls.
+
+**A real bug this surfaced (fixed in `lib/ledger/claude-adapter.mjs`):** a genuine Claude Code
+compaction is TWO consecutive boundary-flagged lines — a `system`/`compact_boundary` line
+carrying `compactMetadata`, immediately followed by a `user`/`isCompactSummary:true` line that
+carries none. The adapter unconditionally overwrote its captured metadata on every
+boundary-flagged line, so the SECOND (metadata-less) line silently erased the first's real
+trigger/preTokens/postTokens/durationMs before any `Call` ever saw them — 0 of 11 real
+compaction events in the local corpus carried `compactMetadata` before the fix. The original
+PR 1 fixture only exercised a single-line boundary, so its test never caught this.
+
+`spawn-economics.mjs` joins the lineage every Claude `spawn`/`fork` Call already carries
+(`agentType`, requested vs actual model, parent session — sourced from `subagents/*.meta.json`
+by the claude-adapter) to per-call COST (priced per token axis, not from `contextTokens` alone)
+and `firstUserMessageChars` (the opening turn's character count, read off the raw spawn
+transcript — same no-neutral-axis rationale as `context-residency.mjs`'s compounded-residency
+section). **Not a clean "brief length"** (independent review, 886 §12 PR 2): a skill-invoked
+subagent's opening turn is the skill body ("Base directory for this skill: …"), not an
+Agent-tool brief, so this axis is a mixed proxy across both call shapes, named accordingly.
+Tables: requested→actual model, by `agentType`, run-length buckets (`[0-10,10-30,30-60,60-120,
+120-250,250-500,500+]`, so the `120-250` bucket is `calls >= 120`) with cost share, top-N by
+cost. Codex has no per-spawn lineage yet (every Call is `lineage.kind:'main'`), so a Codex
+session with `session.multiAgent` is reported as one row in a separate "multi-agent sessions"
+table rather than a fabricated per-spawn split.
+
+`cost-session.mjs --reconcile` compares the OTLP-costed set (`--source otlp`'s harness-computed
+dollars) against the transcript-priced set, per session shared by both — `otlp$`,
+`transcript$`, `delta%`, and named residue causes (`otlp:unknown-model` /
+`transcript:unknown-model` — including Claude's own literal `<synthetic>` model-name turns).
+Sessions present on only one side are listed separately, not folded into a misleading delta.
+The comparison logic (`reconcileSessions`) is pure and injectable — its test never touches
+`tmp/agent-telemetry/`.
+
+## OTLP normalisation (886 PR 3)
+
+Both harnesses' native OTel exporters use their own token-usage vocabulary
+(`claude_code.token.usage{type}` vs `codex.turn.token_usage{token_type}`) and neither speaks
+the OTel GenAI semantic conventions (`gen_ai.usage.*`, `gen_ai.token.kind`). `otlp-sink.py`
+closes that gap additively: `decode_metrics` keeps writing every original record unchanged,
+and for a metric name listed in its `GENAI_TOKEN_MAP` table appends a normalised `gen_ai.usage`
+twin per data point into the same `metrics.ndjson` stream (same rotation/retention policy —
+no second file to keep in sync). `gen_ai.system` names the harness (`claude-code` /
+`codex-cli`); `gen_ai.token.kind` is the shared vocabulary (`input`/`output`/`cache_read`/
+`cache_creation`, plus Codex-only `reasoning`); Codex's `total` type is skipped (derivable, not
+a new axis). Codex's raw `input` already includes cached tokens (unlike Claude's, which
+excludes `cacheRead`/`cacheCreation`), so that point's twin carries an explicit
+`gen_ai.input_includes_cache_read: true` flag rather than leaving the two harnesses'
+"input" looking like the same quantity.
+
+`lib/telemetry-io.mjs`'s `loadCostsFromOtlp` reads the normalised records first when present
+and skips their already-covered origin point (keyed on session + `time_unix_nano` + the raw
+`type`/`token_type` value) so a session is never double-counted; archives written before this
+change have no `gen_ai.usage` records at all, so the original `claude_code.token.usage` reading
+runs unchanged for them (no behaviour change for old data). Because a flagged Codex `input`
+point's raw value already includes its cache-read portion, `loadCostsFromOtlp` pairs it with
+the `cache_read` point sharing the same session + `time_unix_nano` and resolves FRESH input
+(`input − cache_read`) — buffered across either arrival order; if no pairing `cache_read` point
+ever shows up, the raw value is kept as-is and the session is flagged
+`input_includes_cache_read` rather than a fabricated subtraction. `cost-session.mjs --source
+otlp` correspondingly reports `total_cost_usd: null` (not `$0`) with `reason: 'no_cost_metric'`
+for a session that has token records but no harness-computed dollar metric (every Codex
+session today — Codex has no `claude_code.cost.usage` equivalent), excluded from the printed
+total rather than silently priced free. See `docs/how-to/wire-codex-cli-into-the-otlp-sink.md`
+for pointing Codex CLI's own `[otel]` exporter at this sink.
+
+**Volume tradeoff:** the normalised twin roughly **doubles** `metrics.ndjson` volume for every
+mapped data point, and `RETENTION["metrics"]` is `None` (never pruned — metrics is the sole
+cost-baseline source), so this growth accumulates indefinitely rather than self-cleaning; the
+main checkout's `tmp/agent-telemetry/otlp/` already carries ~146 MB of metrics archives as of
+this writing. Stated here as a known tradeoff — changing the retention policy is an owner
+decision, not made by this PR.
+
+## Control shims (886 PR 4)
+
+`hooks/spawn-cost-hint.mjs` and `hooks/context-ceiling-hint.mjs` are non-blocking PostToolUse
+advisories that surface tempdoc 886 §2.2/§2.3's two findings at the moment they matter, instead
+of only in a post-hoc report:
+
+- **`spawn-cost-hint.mjs`** (matcher `Agent`) fires when a subagent call returns. It resolves
+  the spawn's OWN `subagents/agent-*.jsonl` transcript — joining on `tool_use_id` against every
+  sibling `*.meta.json`'s `toolUseId` (the synchronous-spawn case), or on an `agentId:` line the
+  `tool_response` text carries for an async/background spawn with no `toolUseId` recorded — reads
+  it through `lib/ledger/claude-adapter.mjs`'s new `callsFromClaudeTranscript` (a single-file
+  parse, not a second implementation), and prints `spawn-cost: <calls> calls, peak ctx <N>k, out
+  <M>k, model <actual> (requested <meta.model>), ~$<cost> — <description>`. Cost is priced per
+  call via `lib/transcript-cost.mjs`'s `findPricing`; an unpriced call (unknown model, e.g.
+  Claude's own literal `<synthetic>` model-name turns) is counted, not treated as voiding the
+  whole line — the sum covers the PRICED calls and appends `(+N unpriced)` when `N > 0`, and
+  `n/a` is reserved for the case where ZERO calls are priceable (independent-review fix: one bad
+  axis previously collapsed an otherwise-known cost to `n/a`). Silent (no output) when the spawn
+  can't be resolved — this is an advisory delivering data that isn't always available, not a guard.
+- **`context-ceiling-hint.mjs`** (matcher: every tool) fires on every `PostToolUse` and reads only
+  the last ~256KB of `transcript_path` (never the whole file — transcripts reach hundreds of MB),
+  retrying once at ~2MB if no assistant usage line turns up (a single trailing tool_result can
+  exceed 256KB and push the last assistant line out of the first tail read), to find the LAST
+  assistant `usage` snapshot, computing `contextTokens = input + cache_read + cache_creation`.
+  Once per threshold per session (state under
+  `tmp/agent-telemetry/context-ceiling-state/<session_id>.json`), it prints a reminder at 300k and
+  500k tokens naming the two remedies 886 §2.2 identifies: `/compact <hint>` at the next task
+  boundary, or `/rewind` if abandoning the current path. **Re-arms**: any call whose context drops
+  back below 300k (e.g. after a `/compact`) clears both threshold flags for that session, so a
+  later climb back past 300k/500k fires again rather than staying silent forever (independent-review
+  fix — the pre-fix version fired once per session for life). Like `build-counter.mjs`'s per-session
+  state, `context-ceiling-state/<session_id>.json` is **not swept on SessionEnd**
+  (`dispatch.mjs`'s cleanup list covers `turn-count`/`repeat-buffer`/`build-fails` only) — a known,
+  small (one file per session, a few hundred bytes each), harmless pile, not yet addressed.
+
+Both are registered in `governance/agent-hooks.v1.json` (`role: "advisory"`) with a unit-test
+`bite` entry, wired into `.claude/settings.local.json[.example]` (regenerated via
+`node scripts/codegen/gen-agent-hooks-wiring.mjs` / `--emit-local-example` — never hand-edited),
+and listed in `.claude/rules/hooks-reference.md`'s Hint hooks section. `node scripts/governance/run.mjs
+--gate hook-integrity --mode gate` verifies wiring/load/bite; Codex's `hooks.json` equivalents are
+documented as optional in `docs/how-to/wire-codex-cli-into-the-otlp-sink.md` (886 PR 3) and are not
+governed by this manifest.

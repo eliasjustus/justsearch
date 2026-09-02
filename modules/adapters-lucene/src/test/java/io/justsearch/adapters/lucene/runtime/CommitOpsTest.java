@@ -247,6 +247,66 @@ class CommitOpsTest {
     r.close();
   }
 
+  // -- Tempdoc 885 tracked item: the safety-net commit timer's period is configurable ------------
+  // It was a hardcoded 10 s that fires whenever pendingDocs > 0, which is why the live window's
+  // commit-cadence arm could not work: deferring the indexing loop's own commits just handed this
+  // timer more work (16 -> 46). Asserting on the SCHEDULED delay, not on the resolver, is what
+  // makes these discriminate — the value has to reach scheduleAtFixedRate.
+
+  private static long scheduledInitialDelayMs(CommitOps ops) throws Exception {
+    var field = CommitOps.class.getDeclaredField("commitTimerFuture");
+    field.setAccessible(true);
+    var future = (java.util.concurrent.ScheduledFuture<?>) field.get(ops);
+    assertNotNull(future, "the timer must actually have been scheduled");
+    return future.getDelay(java.util.concurrent.TimeUnit.MILLISECONDS);
+  }
+
+  private static CommitOps opsWithIndexConfig(String key, String value) {
+    RuntimeSession session =
+        new RuntimeSession(schemaWith(() -> () -> new HashMap<>(Map.of("k", "v")), m -> {}));
+    var builder = io.justsearch.configuration.resolved.ResolvedConfig.builder();
+    if (key != null) {
+      builder.put(key, 500, "jvm_arg", key, value);
+    }
+    session.resolvedConfig = builder.build();
+    return new CommitOps(session, LuceneRuntimeTypes.BuildState.COMPLETE);
+  }
+
+  @Test
+  void commitTimerUsesTheConfiguredInterval() throws Exception {
+    CommitOps ops = opsWithIndexConfig("index.commit.timer_interval_ms", "45000");
+    ops.startCommitTimer();
+    try {
+      assertTrue(
+          scheduledInitialDelayMs(ops) > 20_000L,
+          "the configured 45 s must reach the scheduler; the hardcoded 10 s would land near 10000");
+    } finally {
+      ops.stopCommitTimer();
+    }
+  }
+
+  @Test
+  void commitTimerDefaultsToTenSecondsAndRefusesANonPositiveInterval() throws Exception {
+    CommitOps unset = opsWithIndexConfig(null, null);
+    unset.startCommitTimer();
+    try {
+      long delay = scheduledInitialDelayMs(unset);
+      assertTrue(delay > 5_000L && delay <= 10_000L, "unchanged default behaviour, got " + delay);
+    } finally {
+      unset.stopCommitTimer();
+    }
+
+    // A zero period would spin the commit thread at a fixed rate; the knob must not be able to.
+    CommitOps zero = opsWithIndexConfig("index.commit.timer_interval_ms", "0");
+    zero.startCommitTimer();
+    try {
+      long delay = scheduledInitialDelayMs(zero);
+      assertTrue(delay > 5_000L && delay <= 10_000L, "must fall back, got " + delay);
+    } finally {
+      zero.stopCommitTimer();
+    }
+  }
+
   @Test
   void refreshLagZeroBeforeAnyCommit() throws Exception {
     var meta = new SsotCommitMetadataSource();
