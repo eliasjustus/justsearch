@@ -23,12 +23,13 @@ import java.util.function.LongSupplier;
  * {@link io.justsearch.telemetry.Telemetry#meter(String)} — now retired) and
  * {@code KnowledgeServer.registerTelemetryGauges} (legacy {@code Telemetry.gauge(...)}).
  *
- * <p>Covers 34 metrics:
+ * <p>Covers 37 metrics:
  * <ul>
  *   <li>16 observable counters from {@link OperationalMetrics} (LongAdder.sum()).
  *   <li>5 long-valued saturation gauges (last latencies, content-length count/min/max).
  *   <li>3 double-valued averages (avg latencies, avg content-length).
  *   <li>9 queue/buffer/state gauges read from a caller-supplied {@link Sources}.
+ *   <li>3 foreground-pacing instruments (tempdoc 885 item 3), also {@link Sources}-driven.
  *   <li>1 counter for switch-buffer write failures.
  * </ul>
  *
@@ -78,6 +79,23 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
   public static final String INDEX_PENDING_EMBEDDINGS = "worker.index.pending_embeddings";
   public static final String INDEX_PENDING_VDU = "worker.index.pending_vdu";
 
+  // Foreground-contention pacing (tempdoc 885 item 3)
+
+  /**
+   * Count of pacing intervals in which the indexing/backfill work actually yielded to foreground
+   * load. This is the attribution instrument the breath-hold never had: its pause was TRACE/DEBUG
+   * only, and the Worker pins {@code io.justsearch.indexerworker.loop} to INFO, so no field run
+   * could count one (tempdoc 885 §B.2a).
+   */
+  public static final String INDEXING_PACED_INTERVALS_TOTAL =
+      "worker.indexing.paced_intervals_total";
+
+  /** Observed duty over the pacing window: share of paced wall time spent working, 0..100. */
+  public static final String INDEXING_DUTY_PCT = "worker.indexing.duty_pct";
+
+  /** In-flight foreground (search-family) RPCs — the quantity the duty cycle reacts to. */
+  public static final String INDEXING_FOREGROUND_IN_FLIGHT = "worker.indexing.foreground_in_flight";
+
   /**
    * Tempdoc 419 C3 V2 P2: instantaneous indexing rate (docs/sec) computed by
    * {@link io.justsearch.indexerworker.metrics.OperationalMetrics.ThroughputMonitor}'s 180s
@@ -101,13 +119,20 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
       LongSupplier switchBufferDepth,
       LongSupplier indexingPaused, // 1 if paused, 0 otherwise
       LongSupplier pendingEmbeddings,
-      LongSupplier pendingVdu) {
+      LongSupplier pendingVdu,
+      // Tempdoc 885 item 3
+      LongSupplier pacedIntervals,
+      LongSupplier dutyPct,
+      LongSupplier foregroundInFlight) {
 
-    /** Default suppliers all returning 0 — used by tests / startup. */
+    /**
+     * Default suppliers — used by tests / startup. {@code dutyPct} defaults to 100 (nothing
+     * throttled), not 0, so an unwired catalog does not read as "indexing fully stopped".
+     */
     public static final Sources EMPTY =
         new Sources(
             () -> 0L, () -> 0L, () -> 0L, () -> 0L, () -> 0L, () -> 0L, () -> 0L, () -> 0L,
-            () -> 0L);
+            () -> 0L, () -> 0L, () -> 100L, () -> 0L);
   }
 
   public static final List<MetricDefinition> DEFINITIONS =
@@ -167,6 +192,19 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
               .archivedTo(RrdArchive.STANDARD)
               .build(),
           MetricDefinition.gauge(INDEX_PENDING_VDU).unit(Unit.COUNT).build(),
+          // Tempdoc 885 item 3: pacing attribution. paced_intervals_total is an observable
+          // counter (read from IndexingPacing's own monotonic total, like the OperationalMetrics
+          // counters above) rather than a mutable CounterMetric, because the policy that owns the
+          // count is constructed before the telemetry registry exists.
+          MetricDefinition.observableCounter(INDEXING_PACED_INTERVALS_TOTAL)
+              .unit(Unit.COUNT)
+              .archivedTo(RrdArchive.STANDARD)
+              .build(),
+          MetricDefinition.gauge(INDEXING_DUTY_PCT)
+              .unit(Unit.COUNT)
+              .archivedTo(RrdArchive.STANDARD)
+              .build(),
+          MetricDefinition.gauge(INDEXING_FOREGROUND_IN_FLIGHT).unit(Unit.COUNT).build(),
           // 419 C3 V2 P2: instantaneous indexing rate (docs/sec). Curated for RRD trend that
           // backs worker.core.recentDocsPerSec on /api/status.
           MetricDefinition.gauge(INDEX_DOCS_PER_SEC)
@@ -237,6 +275,12 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
   public final GaugeMetric<EmptyTags> indexingPaused;
   public final GaugeMetric<EmptyTags> indexPendingEmbeddings;
   public final GaugeMetric<EmptyTags> indexPendingVdu;
+  /** Tempdoc 885 item 3. */
+  public final ObservableCounterMetric<EmptyTags> indexingPacedIntervalsTotal;
+  /** Tempdoc 885 item 3. */
+  public final GaugeMetric<EmptyTags> indexingDutyPct;
+  /** Tempdoc 885 item 3. */
+  public final GaugeMetric<EmptyTags> indexingForegroundInFlight;
   /** Tempdoc 419 C3 V2 P2: instantaneous indexing rate (docs/sec) curated for RRD trend. */
   public final GaugeMetric<EmptyTags> indexDocsPerSec;
 
@@ -364,6 +408,17 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
             INDEX_PENDING_VDU,
             EmptyTags.INSTANCE,
             () -> (double) sources.pendingVdu().getAsLong());
+    this.indexingPacedIntervalsTotal =
+        registry.buildObservableCounter(
+            INDEXING_PACED_INTERVALS_TOTAL, EmptyTags.INSTANCE, sources.pacedIntervals());
+    this.indexingDutyPct =
+        registry.buildGauge(
+            INDEXING_DUTY_PCT, EmptyTags.INSTANCE, () -> (double) sources.dutyPct().getAsLong());
+    this.indexingForegroundInFlight =
+        registry.buildGauge(
+            INDEXING_FOREGROUND_IN_FLIGHT,
+            EmptyTags.INSTANCE,
+            () -> (double) sources.foregroundInFlight().getAsLong());
     // 419 C3 V2 P2: docs/sec from ThroughputMonitor's 180s rolling window. The supplier
     // also calls recordSample() so the monitor accumulates samples on flush cadence even
     // when no /api/status RPC is hitting the worker — keeps the trend self-sufficient.
