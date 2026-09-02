@@ -164,13 +164,16 @@ public final class CommitOps {
     session.pendingDocs.set(0L);
     // Tempdoc 912 item 2: one line per commit naming WHICH trigger fired, so a live run can be
     // attributed without inferring the trigger from timing. Per commit, never per document.
-    log.debug(
-        "Commit reason={} pendingDocs={} elapsedMs={} sessionCommits(reason)={} sessionCommits(total)={}",
-        effectiveReason.wireValue(),
-        pendingAtCommit,
-        elapsedMs,
-        session.commitCount.get(effectiveReason),
-        session.commitCount.get());
+    // Guarded because commitCount.get() sums all 23 reason slots on every call.
+    if (log.isDebugEnabled()) {
+      log.debug(
+          "Commit reason={} pendingDocs={} elapsedMs={} sessionCommits(reason)={} sessionCommits(total)={}",
+          effectiveReason.wireValue(),
+          pendingAtCommit,
+          elapsedMs,
+          session.commitCount.get(effectiveReason),
+          session.commitCount.get());
+    }
     LuceneRuntimeTypes.TelemetryEvents events = session.telemetryEvents;
     if (events != null) {
       events.onCommit(elapsedMs, effectiveReason);

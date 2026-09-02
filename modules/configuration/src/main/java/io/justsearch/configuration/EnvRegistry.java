@@ -683,13 +683,22 @@ public enum EnvRegistry {
         "JUSTSEARCH_BACKFILL_SPLADE_INTERLEAVE_INTERVAL_MS",
         "5000"),
 
-    /** Time-based commit trigger interval in ms (default 10000). */
+    /**
+     * Time-based commit trigger interval in ms (default 10000). Despite the {@code backfill.} key,
+     * this is read by {@code LoopPacingPolicy.isTimeCommitTriggered} for the PRIMARY indexing loop;
+     * no backfill op reads it (tempdoc 912 §E — the mislabelling is what led 885's A3 arm to
+     * believe it had relaxed backfill commits when it had relaxed none).
+     */
     BACKFILL_COMMIT_INTERVAL_MS(
         "justsearch.backfill.commit_interval_ms",
         "JUSTSEARCH_BACKFILL_COMMIT_INTERVAL_MS",
         "10000"),
 
-    /** Buffer-based commit trigger: doc count since last commit (default 1000). */
+    /**
+     * Buffer-based commit trigger: doc count since last commit (default 1000). Despite the
+     * {@code backfill.} key, this is read by {@code LoopPacingPolicy.isBufferCommitTriggered} for
+     * the PRIMARY indexing loop; no backfill op reads it (tempdoc 912 §E).
+     */
     BACKFILL_MAX_DOCS_BEFORE_COMMIT(
         "justsearch.backfill.max_docs_before_commit",
         "JUSTSEARCH_BACKFILL_MAX_DOCS_BEFORE_COMMIT",

@@ -1,7 +1,6 @@
 package io.justsearch.adapters.lucene.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator;
@@ -57,7 +56,7 @@ class CommitReasonAccountingTest {
    * on symmetry.
    */
   @Test
-  void eachReasonAccruesToItsOwnSlotAndTheTotalIsTheirSum() throws Exception {
+  void aMixedCommitSequenceLandsInPerReasonSlotsAndNowhereElse() throws Exception {
     try (RunningRuntime runtime = openWithPendingDoc("mixed", 6)) {
       CommitOps ops = runtime.commitOps();
       CommitCounters counters = runtime.session().commitCount;
@@ -83,14 +82,16 @@ class CommitReasonAccountingTest {
           "A reason that never fired must stay at zero, not absorb another reason's commits");
       assertEquals(before + 6L, counters.get(), "The total must be the sum of the per-reason slots");
 
-      Map<CommitReason, Long> snapshot = counters.snapshot();
+      // The snapshot is the shape a reader attributes from, so it must expose exactly the three
+      // reasons that fired with exactly their counts. Asserting the whole map (not its sum, which
+      // merely restates CommitCounters.get()'s own definition) is what makes this non-vacuous.
       assertEquals(
-          counters.get(),
-          snapshot.values().stream().mapToLong(Long::longValue).sum(),
-          "The snapshot must account for every commit the total claims");
-      assertFalse(
-          snapshot.containsKey(CommitReason.DRAIN),
-          "A reason that never fired must be absent, not reported as zero; snapshot: " + snapshot);
+          Map.of(
+              CommitReason.TIMER, 3L,
+              CommitReason.INDEXING_LOOP_IDLE, 2L,
+              CommitReason.BACKFILL_NER, 1L),
+          counters.snapshot(),
+          "The snapshot must expose the reasons that fired, with their counts, and nothing else");
     }
   }
 

@@ -38,8 +38,17 @@ once in the repo, at
 `modules/worker-services/src/test/java/io/justsearch/indexerworker/services/WorkerMethvinWatcherTest.java:96`,
 inside **`createEventCarriesTheFilesRealSizeToTheQueue`**. `deliversCreateEventToJobQueue`
 (same file, :43-62) asserts only the path and the collection tag and cannot produce that
-message. The failing test is `createEventCarriesTheFilesRealSizeToTheQueue`. Corrected here;
-885's text is dated history and is not edited.
+message. The test that produced 885's quoted failure is
+`createEventCarriesTheFilesRealSizeToTheQueue`. Corrected here; 885's text is dated history and is
+not edited.
+
+**A second-order correction, measured on review.** "`createEventCarriesTheFilesRealSizeToTheQueue`
+is the failing test" describes the *pre-fix* code only. Under the fix reverted
+(`entryForLiveEvent` → `return stated;`), the only test that fails is the NEW
+`liveEventOnAStillEmptyFileRecordsUnknownSizeNotAKnownZero` — because the rewritten move-in
+fixture makes the 813 pin deterministic, so it no longer observes the race at all. The race is
+now pinned by the synthetic-event test and by nothing else, which is the intended split: one test
+owns the race, one owns the call-site size contract.
 
 ### B.2 What is read, when, and what the sentinel is
 
@@ -80,6 +89,38 @@ Two consequences:
    `unknownSizeJobs` stays put and `pendingBytes` renders "0 bytes remaining" mid-backlog. A
    mid-write 4 GB file understates the backlog by 4 GB with **nothing** marking the estimate as
    incomplete. This is the `tri-state lookup` failure mode named in `slice-execution.md`.
+
+### B.3a The consumer asymmetry — corrected on review, and its UX consequence
+
+An earlier draft of the fix's javadoc said the two encodings "differ only in that unknown also
+admits the weight is unvouched". **That is wrong, and the difference is the point.**
+`unknownSizeJobs` is a hard **suppression input**, not a footnote:
+
+* `modules/ui-web/src/shell-v0/state/indexingProgress.ts:523` — `if (unknownSizeJobs * 2 >
+  jobsPending) return null;` — the byte weight is withdrawn entirely.
+* `TaskList.ts:95` renders `null` as an absent segment: "N files remaining", no byte figure.
+
+**Consequence, accepted deliberately.** During a large copy-in every CREATE lands at 0 bytes and
+is now recorded UNKNOWN, so `unknownSizeJobs` can exceed half of `jobsPending` and the UI shows
+no byte estimate until later MODIFY events restate the sizes (`SqliteJobQueue.java:390-393`,
+`INSERT OR REPLACE`). Nothing re-stats at processing time — `size_bytes` is written **only** by
+the enqueue path (`SqliteJobQueue.java:392` and `:473`) — so healing is the next event for the
+path, not a later read.
+
+This is judged **right, and 813-consistent**, not a regression. `TaskList.ts:95`'s own contract is
+that each figure "is withdrawn ENTIRELY (no placeholder, no '0 B') whenever the projection says it
+has no honest basis for it — so an absent estimate is an absent segment." Withholding a number
+during the exact window where the number would be wrong is that rule operating as designed; the
+old behaviour showed a confident figure understating a mid-write backlog by gigabytes. The
+trade is "no estimate for a few seconds" against "a badly wrong estimate", and 813 already
+decided which of those it prefers.
+
+**A second asymmetry, deliberately left in place.** The bulk-walk producers record a known `0`
+for a genuinely empty file (`WorkerScanOps.java:221`, `SyncDirectoryOps.java:317`, both from
+`attrs.size()` on a settled file), so one empty file is encoded two ways depending on which
+producer found it. That tracks how trustworthy the observation was — a walk's `attrs` are not
+racing a writer, a live CREATE is — which is the distinction worth keeping. Unifying them would
+mean either trusting the racy read or distrusting the settled one.
 
 ### B.4 The brief's option (b) — bounded re-stat — evaluated and rejected
 
@@ -155,11 +196,11 @@ complete at the instant it becomes visible and the event thread cannot observe a
 ## §A2 — Item 2a: the commit-trigger census
 
 Every path that reaches the commit funnel `CommitOps.commitAndTrack(CommitReason)`
-(`modules/adapters-lucene/.../CommitOps.java:155`, counter at `:161`). Guards quoted verbatim.
+(`modules/adapters-lucene/.../CommitOps.java:155`, counter at `:163`). Guards quoted verbatim.
 
 | # | Reason | Call site | Guard | Interval / threshold |
 |---|---|---|---|---|
-| 1 | `TIMER` | `adapters-lucene/.../CommitOps.java:375` | `pendingDocs.get() > 0 && timerSnap != null && timerSnap.writer() != null` | `INDEX_COMMIT_TIMER_INTERVAL_MS` (`EnvRegistry.java:1305`) **10000 ms** |
+| 1 | `TIMER` | `adapters-lucene/.../CommitOps.java:388` | `pendingDocs.get() > 0 && timerSnap != null && timerSnap.writer() != null` | `INDEX_COMMIT_TIMER_INTERVAL_MS` (`EnvRegistry.java:1314`) **10000 ms** |
 | 2 | `DRAIN` | `adapters-lucene/.../RunningRuntime.java:207` | `pendingDocs.get() > 0 && commitOps != null` | none (event) |
 | 3 | `PRUNE` | `adapters-lucene/.../PruneOps.java:139` | `pruned > 0` | none |
 | 4 | `SYNC_PRUNE` | `worker-services/.../SyncDirectoryOps.java:127` | `filesDeleted > 0 && commitOps != null` | none |
@@ -169,11 +210,11 @@ Every path that reaches the commit funnel `CommitOps.commitAndTrack(CommitReason
 | 8 | `GRPC_UPDATE_PATHS` | `GrpcIngestService.java:1487` | unconditional — commits even if every mapping failed | none |
 | 9 | `RESET` | `GrpcIngestService.java:1926` | unconditional inside `resetForProfiling` | none |
 | 10 | `INDEXING_LOOP_IDLE` | `worker-services/.../loop/IndexingLoop.java:637` | `indexedSinceCommit > 0`, reached only when `jobs.isEmpty()` (`:621`) | **none — fires on every drain-to-idle** |
-| 11 | `INDEXING_LOOP_TIME` | `IndexingLoop.java:695` | `timeSinceCommitMs >= commitIntervalMs && indexedSinceCommit > 0` (`LoopPacingPolicy.java:79-82`) | `BACKFILL_COMMIT_INTERVAL_MS` (`EnvRegistry.java:687`) **10000 ms** |
-| 12 | `INDEXING_LOOP_BUFFER` | `IndexingLoop.java:695` | `indexedSinceCommit >= maxDocsBeforeCommit` (`LoopPacingPolicy.java:88-90`) | `BACKFILL_MAX_DOCS_BEFORE_COMMIT` (`EnvRegistry.java:693`) **1000 docs** |
+| 11 | `INDEXING_LOOP_TIME` | `IndexingLoop.java:695` (ONE site; ternary at `:693` picks the reason) | `timeSinceCommitMs >= commitIntervalMs && indexedSinceCommit > 0` (`loop/ops/LoopPacingPolicy.java:79`) | `BACKFILL_COMMIT_INTERVAL_MS` (`EnvRegistry.java:692`) **10000 ms** |
+| 12 | `INDEXING_LOOP_BUFFER` | `IndexingLoop.java:695` (same site as row 11) | `indexedSinceCommit >= maxDocsBeforeCommit` (`loop/ops/LoopPacingPolicy.java:88`) | `BACKFILL_MAX_DOCS_BEFORE_COMMIT` (`EnvRegistry.java:702`) **1000 docs** |
 | 13 | `INDEXING_LOOP_SHUTDOWN` | `IndexingLoop.java:793` | `indexedSinceCommit > 0` | none |
-| 14 | `INDEXING_LOOP_REBUILD_STAMP` | `worker-services/.../EmbeddingProviderLifecycle.java:360` | debounced on 2 consecutive `pending == 0` reads (`:349`) | none |
-| 15 | `INDEXING_LOOP_FRESH_STAMP` | `EmbeddingProviderLifecycle.java:466` | `reconcileStampEvidence()` + backoff window (`:457-461`) | `FRESH_STAMP_RETRY_BACKOFF_MS` (same file) |
+| 14 | `INDEXING_LOOP_REBUILD_STAMP` | `worker-services/.../loop/EmbeddingProviderLifecycle.java:360` | TWO gates: `:349` `if (!oneShot && ++pendingZeroStreak < 2)` — the 2-read debounce is **skipped entirely when `oneShot`** — then `:354` `if (!controller.checkRebuildCompletion(queueDepth, pendingEmbeddings))` | none |
+| 15 | `INDEXING_LOOP_FRESH_STAMP` | `loop/EmbeddingProviderLifecycle.java:466` | `:457` `reconcileStampEvidence()` + `:461` backoff window | `FRESH_STAMP_RETRY_BACKOFF_MS` (same file) |
 | 16 | `BACKFILL_COMBINED` | `worker-services/.../loop/ops/CombinedEnrichmentBackfillOps.java:1090` | `written > 0 && batchesSinceCommit[0] >= 5` | **inline literal `5`, no constant, not configurable** |
 | 17 | `BACKFILL_COMBINED_FINAL` | `worker-services/.../loop/BackfillScheduler.java:281` | `batchCommitCounter[0] > 0` | none |
 | 18 | `BACKFILL_SPLADE` | `worker-services/.../loop/ops/SpladeBackfillOps.java:254` | `(processed > 0 \|\| failed > 0) && context.commitAfterBatch()` | batch size only |
@@ -189,18 +230,46 @@ scan-completion or per-root commit, no schema/config-change commit, no `forceMer
 `prepareCommit`, or explicit index `flush()` anywhere in `adapters-lucene`, `worker-services`,
 `worker-core` or `indexer-worker` main source.
 
-### Two durable commits the counter does not see
+### Four durable commits the counter does not see
+
+An earlier draft of this section said "two". That was 2-of-4 — corrected on review, and the
+count now has a gate behind it (`CommitFunnelArchTest`, below) so it cannot silently become
+five.
 
 * `KnowledgeServerMigrationOps.java:771` calls the **low-level** `CommitOps.commit()` (guard
   `mutatedLucene && context.ingestLifecycle() != null`, `:769`), bypassing `commitCount`,
   `pendingDocs.set(0)`, `TelemetryEvents.onCommit` and the `CommitCompletedListener`.
-* `RuntimeSession.java:635` `snap.writer().close()` — Lucene's `commitOnClose` defaults to true
+* `RuntimeSession.java:640` `snap.writer().close()` — Lucene's `commitOnClose` defaults to true
   and there is no production `setCommitOnClose` call anywhere, so session teardown commits
-  uncounted whenever `pendingDocs == 0` skipped the `DRAIN` pre-commit (`RunningRuntime.java:205`).
+  uncounted whenever `pendingDocs == 0` skipped the `DRAIN` pre-commit (`RunningRuntime.java:204`).
+* `RuntimeSession.java:806` `w.commit()` inside `materializeEmptyIndex` (`:799`) — a scratch
+  `IndexWriter` in a try-with-resources, so it commits twice over (explicitly, then again on the
+  generated `close()` at `:801-807`). It creates the empty index that lets the Head report
+  `indexAvailable`, and no session exists yet to count it against.
+* `ComponentsFactory.java:378` `if (w != null) w.close()` on the open-failure cleanup branch —
+  same implicit commit-on-close, on a path where the session being built never materialised.
 
-Both are in `modules/indexer-worker` / session teardown and are routed as open items (§D)
-rather than fixed here — they are outside this lane's ownership and neither is a plausible
-contributor to a per-minute commit *rate*.
+All four are lifecycle one-shots, not rate contributors, so the attribution in §E is unaffected.
+Two are in this lane's modules but are structural (they want a `CommitReason` on a lifecycle
+path); two are in `modules/indexer-worker` / factory teardown, outside this lane's ownership.
+All are routed as open items (§D) rather than fixed here.
+
+### The census is now an invariant, not a dated audit
+
+`CommitFunnelArchTest` (`modules/adapters-lucene/src/test/.../CommitFunnelArchTest.java`) is
+two ArchUnit rules over this module's bytecode:
+
+1. No class outside `CommitOps` / `RuntimeSession` / `ComponentsFactory` may call
+   `IndexWriter.commit()` or `IndexWriter.close()`. The allowlist is by class, with the reason
+   each is on it written next to the constant — adding a name is a deliberate statement that the
+   commit is invisible to the attribution and that this is acceptable there.
+2. No class outside `CommitOps` may call the low-level `CommitOps.commit()`, so the funnel stays
+   the only in-module route to a counted commit.
+
+A static census is a hypothesis about a moment (`audit-without-test`); this is what keeps it
+true. Scope limit, stated rather than implied: the importer sees only this module, so the
+`KnowledgeServerMigrationOps` bypass in `modules/indexer-worker` is out of its reach and remains
+a routed open item (§D.2) rather than a covered case.
 
 ---
 
@@ -219,7 +288,9 @@ adding a sibling, which is what 885 §3387 asked for.
   emits **one DEBUG line per commit** (not per doc) naming the reason, the pending-doc count at
   commit, elapsed ms, and both the per-reason and total session counts.
 * **`index.runtime.commit_total`** — a reason-tagged counter in `IndexRuntimeMetricCatalog`
-  (template: the existing `VALIDATION_FAILURE_TOTAL`; `cardinalityLimit(32)` covers 23 reasons),
+  (tagged-counter shape copied from the existing `VALIDATION_FAILURE_TOTAL`, which does
+  **not** set a cardinality limit; the `cardinalityLimit(32)` follows `AgentMetricCatalog.java:116`,
+  and 32 covers the 23 reasons),
   incremented in `WorkerLuceneTelemetryAdapter.onCommit` from the same `CommitTags` the
   `commit_ms` histogram already uses. This is the surface the live run reads.
 * **`scripts/jseval/jseval/cadence.py`** gains `commit_by_reason` + `commit_by_reason_total` in
@@ -249,18 +320,27 @@ overrule if the status wire is wanted anyway; it is a proto field + two mapper l
 
 | Test | Property | Falsified by | Observed failure |
 |---|---|---|---|
-| `CommitReasonAccountingTest.eachReasonAccruesToItsOwnSlotAndTheTotalIsTheirSum` | 3 TIMER / 2 IDLE / 1 NER land in their own slots; total == sum; never-fired reasons absent from `snapshot()` | `CommitCounters.increment` → always `UNKNOWN.ordinal()` | `TIMER must count its own three commits ==> expected: <3> but was: <0>` |
+| `CommitReasonAccountingTest.aMixedCommitSequenceLandsInPerReasonSlotsAndNowhereElse` | 3 TIMER / 2 IDLE / 1 NER land in their own slots; `snapshot()` equals exactly that map | `CommitCounters.increment` → always `UNKNOWN.ordinal()` | `TIMER must count its own three commits ==> expected: <3> but was: <0>` |
 | `CommitReasonAccountingTest.theCounterAndTheTelemetryEventSeeTheSameReason` | the counter and `TelemetryEvents.onCommit` see one reason | same mutation | `The counter must see the SAME reason telemetry saw ==> expected: <1> but was: <0>` |
 | `CommitReasonAccountingTest.aNullReasonIsCountedAsUnknownRatherThanDropped` | null → UNKNOWN, still summed | (correctly survives the above mutation) | — |
 | `IndexRuntimeWireFormatRegressionTest.commitTotalCarriesOneCumulativeSeriesPerReason` | one cumulative NDJSON series per reason, 3 timer / 1 drain | `commitTotal.increment` gated to DRAIN only | `commit_total must report 3 for reason=timer` |
 | `test_commit_by_reason_maxes_per_reason_not_across_reasons` (pytest) | per-reason max survives a counter reset; sum is the total | `by_reason[reason] = parsed` (last-wins) | `AssertionError` at the breakdown |
 | `test_commit_by_reason_is_null_when_the_worker_publishes_none` | degrades to null, never crashes | — | — |
+| `CommitFunnelArchTest.onlyTheFunnelAndTheNamedLifecycleSitesTouchIndexWriterCommitOrClose` | the 4-site bypass census is an invariant | a scratch `w.commit()` added to `PruneOps` | `Architecture Violation … was violated (1 times): Method <io.justsearch.adapters.lucene.runtime.PruneOps.scratchBypassForFalsification(org.apache.lucene.index.IndexWriter)>` |
+| `CommitFunnelArchTest.theLowLevelCommitIsReachedOnlyFromTheFunnel` | `CommitOps.commit()` has one in-module caller | (same scratch mutation) | — |
 
 The asymmetric distributions (3/2/1, 3-vs-1) are deliberate: a counter that incremented once per
 reason regardless of how many commits fired, or pooled every reason into one series, passes a
 symmetric fixture.
 
-**One test-precision defect was caught by falsification and fixed.** The first version of
+**Two test-precision defects were caught and fixed.** The first was found on review: the
+per-reason test's `snapshot()` assertion summed the map and compared it to `counters.get()`,
+which merely restates `CommitCounters.get()`'s own definition — vacuous. It now asserts the whole
+map (`{TIMER:3, INDEXING_LOOP_IDLE:2, BACKFILL_NER:1}`), so a snapshot that dropped or invented a
+reason fails. The test was also renamed to `aMixedCommitSequenceLandsInPerReasonSlotsAndNowhereElse`,
+since total-equals-sum is structural in `CommitCounters` and not what the test can pin.
+
+**The second was caught by falsification.** The first version of
 `test_commit_by_reason_maxes_per_reason_not_across_reasons` did **not** fail under the
 last-wins mutation, because `read_merged` returns records in timestamp order and the fixture's
 last sample was also its largest — it passed for the wrong reason. The fixture now includes a
@@ -291,9 +371,11 @@ race test. No single mutation passes all three.
 
 **C.4 "All-paths counter" is not literally true.** The brief and
 `IndexRuntimeMetricCatalog.java` both describe `commitCount` as the all-paths commit counter. The
-census found two durable commits it does not see (§A2). This does **not** invalidate the
-attribution — both are one-shot lifecycle events, not rate contributors — but the claim is
-overstated in the code comment and is routed as an open item rather than silently relied on.
+census found **four** durable commits it does not see (§A2) — an earlier draft of this section
+said two, which was 2-of-4. This does **not** invalidate the attribution: all four are one-shot
+lifecycle events, not rate contributors. The overstated comment is now corrected in place
+(`IndexRuntimeMetricCatalog.java`) and the four sites are pinned by `CommitFunnelArchTest`, so a
+fifth fails the build rather than quietly widening the gap.
 
 **C.5 Per-session vs cross-session, restated.** `CommitCounters` inherits `commitCount`'s
 lifetime: it lives on `RuntimeSession` and resets on `DeferredRuntime.upgradeWriter`, a
@@ -326,39 +408,62 @@ did not touch a single one of them.** Two families, both from the census:
 1. **The enrichment/backfill per-batch commits (rows 20, 21, 22, and 17).**
    `NerBackfillOps.java:133`, `EmbeddingBackfillOps.java:221` and `:471`, and
    `BackfillScheduler.java:281` commit on `processed > 0 || failed > 0` with **no interval and no
-   `commitAfterBatch` gate** — one commit per batch, unconditionally. Row 16
-   (`CombinedEnrichmentBackfillOps.java:1087`) is throttled only by an **inline literal `5`**,
-   which no config key reaches.
+   `commitAfterBatch` gate** — one commit per batch, unconditionally. Row 16 (call at
+   `CombinedEnrichmentBackfillOps.java:1090`, guard at `:1087`) is throttled only by an **inline
+   literal `5`**, which no config key reaches.
    *The decisive detail:* the A3 arm's "tripled the backfill interval" changed
-   `justsearch.backfill.commit_interval_ms`, which `LoopPacingPolicy.java:79-82` reads for the
+   `justsearch.backfill.commit_interval_ms`, which `loop/ops/LoopPacingPolicy.java:79` reads for the
    **primary indexing loop** (rows 11/12) — despite the `backfill` prefix. **No backfill op reads
    it.** So the arm believed it had relaxed backfill commits and had not relaxed any. 885's
    earlier window attributing 61/114 commits to backfill is consistent with this being the
    largest single family.
 
-2. **`INDEXING_LOOP_IDLE` (row 10, `IndexingLoop.java:637`).** Fires on every transition to an
-   empty queue with `indexedSinceCommit > 0`, with **no interval whatsoever**. This is also the
-   mechanism that makes the timer/buffer relaxation *self-cancelling*, sharpening the diagnosis
-   already recorded at `EnvRegistry.java:1291-1306`: deferring the loop's own commits leaves
-   `indexedSinceCommit > 0` for longer, so the next drain-to-idle commits anyway. The relaxed
-   knobs do not remove commits, they **relabel** them — `INDEXING_LOOP_TIME`/`BUFFER` become
-   `INDEXING_LOOP_IDLE` and `TIMER`.
+2. **`INDEXING_LOOP_IDLE` (row 10, `IndexingLoop.java:637`) sets a floor of exactly ONE commit
+   per drain-to-idle, invariant to the interval knobs.** The guard at `:634` is
+   `indexedSinceCommit > 0`, and `:640` sets `indexedSinceCommit = 0` immediately after the
+   commit — so on every subsequent idle iteration the guard is false and no further IDLE commit
+   fires. It is one commit per *drain*, not a per-iteration idle tick.
 
-### What the attribution run must show if this is right
+   **This corrects an earlier draft of this section, which claimed IDLE "absorbs" the relaxed
+   TIME/BUFFER commits one-for-one.** It cannot: absorption would require IDLE to fire once per
+   commit the knobs suppressed, and the `:640` reset caps it at one per queue-drain regardless of
+   how much work accumulated. The mechanism is a floor, not a transfer. The
+   `EnvRegistry.java:1300-1315` absorption argument is also not applicable to A3 as run: it was
+   written for a window where the safety-net timer was hardcoded at 10 s, and A3 moved the timer
+   to 30 s, so the remaining trigger was not being handed work on the same cadence the argument
+   assumes.
 
-* `backfill/*` reasons plus `indexing-loop/idle` together account for the **majority** of
-  `commit_by_reason` on the control arm.
-* Re-running the A3 arm, the *sum* barely moves while the **mix** shifts: `indexing-loop/time`
-  and `indexing-loop/buffer` fall sharply (they are the knobs that were relaxed), and
-  `indexing-loop/idle` and/or `timer` rise to absorb them. A large fall in the two relaxed
-  reasons with a small fall in the total **is** the self-cancelling mechanism, observed directly
-  rather than inferred.
-* `backfill/*` counts are **unchanged** between control and A3 — the prediction that most
-  distinguishes this hypothesis from "the timer is the ceiling".
+   Consequence for the run: a workload that drains to empty N times commits at least N times no
+   matter what the interval knobs say. If the corpus produces many drains, that alone can floor
+   the count near its observed value.
 
-Falsifiers: if `timer` alone dominates the control arm, hypothesis (2) is wrong and the timer is
-the ceiling after all. If `backfill/*` *does* fall in the A3 arm, then something does read
-`commit_interval_ms` that this census missed, and the census is wrong.
+### What the attribution run must show — three distinct outcomes
+
+The predictions are written so the three candidate explanations score differently. Read the
+CONTROL arm first: it discriminates before any comparison is needed.
+
+| Observation | (1) Backfill-dominated | (2) Idle floor | (3) Knobs were INERT |
+|---|---|---|---|
+| Control: `backfill/*` share | **majority** | minority | minority |
+| Control: `indexing-loop/idle` share | minority | **majority** | either |
+| Control: `indexing-loop/time` + `/buffer` | non-trivial | non-trivial | **≈ 0** |
+| A3 vs control: `time` + `/buffer` | falls | falls | **already ≈ 0, cannot fall** |
+| A3 vs control: `idle` | ~flat | ~flat (bounded by drain count) | ~flat |
+| A3 vs control: `backfill/*` | **unchanged** | unchanged | unchanged |
+| A3 vs control: total | small fall | small fall | **~no change attributable to the knobs** |
+
+* **Outcome 3 is the one the earlier draft could not express.** If `indexing-loop/time` and
+  `indexing-loop/buffer` are already near zero on the *control* arm, then the A3 arm relaxed
+  triggers that were barely firing — the knobs were **inert**, not absorbed — and the 17 %
+  movement 885 measured is noise or attributable to something else entirely. That is a different
+  claim from "the commits moved elsewhere", and the control arm alone settles it.
+* Outcomes 1 and 2 are not exclusive: both predict a small total fall, and they are separated by
+  which family holds the majority share on the control arm.
+
+Falsifiers, sharpened: if `timer` alone dominates the control arm, none of the three holds and
+the safety-net timer is the ceiling after all. If `backfill/*` *does* fall between control and
+A3, then something reads `commit_interval_ms` that this census missed — the census is wrong and
+`CommitFunnelArchTest`'s allowlist should be re-derived.
 
 ### Exact live invocation (orchestrator's to run — NOT run here)
 
@@ -395,23 +500,32 @@ Worker did not publish `index.runtime.commit_total` — that is a wiring failure
    `CommitOps.commit()`, so the switch-buffer DELETE replay skips `commitCount`,
    `pendingDocs.set(0)`, telemetry, and the `CommitCompletedListener` that keeps
    `EmbeddingCompatibilityController`'s fingerprint in sync. Same ownership reason.
-3. **`RuntimeSession.java:635` `writer().close()` is an uncounted durable commit**
+3. **`RuntimeSession.java:640` `writer().close()` is an uncounted durable commit**
    (`commitOnClose` defaults true; no production `setCommitOnClose` exists). Owning tempdoc: 885
    item 19 / commit cadence.
+3b. **`RuntimeSession.java:806` `materializeEmptyIndex` commits twice uncounted** — explicit
+   `w.commit()` plus the try-with-resources `close()` at `:801-807`. Both are allowlisted in
+   `CommitFunnelArchTest`; wants a lifecycle `CommitReason` rather than an allowlist entry.
+3c. **`ComponentsFactory.java:378` open-failure `w.close()`** — implicit commit-on-close on a
+   path where no session exists to count against. Same disposition as 3b.
 4. **`GrpcIngestService.java:1042` and `:1487` commit unconditionally** even when the delete or
    update matched zero documents — spurious `segments_N` writes and `commitCount` increments on
    no-op RPCs. In this lane's module but out of this task's scope; it is a behavioural change to
    two RPCs, not instrumentation.
-5. **`CombinedEnrichmentBackfillOps.java:1087`'s batch threshold is an inline `5`** with no
+5. **`CombinedEnrichmentBackfillOps.java:1087`'s batch threshold is an inline `5`** (commit at `:1090`) with no
    constant and no config key, so it cannot be included in a cadence arm. If §E's hypothesis
    holds, this becomes a knob worth having.
 6. **`justsearch.backfill.commit_interval_ms` / `max_docs_before_commit` are misnamed** — both
-   are read by `LoopPacingPolicy` for the primary indexing loop, not by any backfill op
-   (`EnvRegistry.java:687-696`). This mislabelling is what made the A3 arm believe it had
-   relaxed backfill commits. Renaming is a config-surface change with a deprecation path;
-   routed rather than done inside a measurement lane.
-7. **`IndexRuntimeMetricCatalog`'s "all-paths commit counter" comment is overstated** given
-   items 2 and 3. Left as-is pending those fixes rather than weakened.
+   are read by `loop/ops/LoopPacingPolicy` for the primary indexing loop, not by any backfill op.
+   This mislabelling is what made the A3 arm believe it had relaxed backfill commits.
+   **Ride-along fix applied:** the javadocs at `EnvRegistry.java:692` and `:702` and the two rows
+   at `docs/reference/configuration/environment-variables.md:169-170` now say so explicitly (the
+   page is hand-maintained — no generator — so the source and the page were both edited). The
+   **rename** stays the open item: it is a config-surface change needing a deprecation path.
+7. ~~**`IndexRuntimeMetricCatalog`'s "all-paths commit counter" comment is overstated**~~ —
+   **fixed in place** (`IndexRuntimeMetricCatalog.java`): the comment now names the four
+   funnel-bypassing commits and states that `COMMIT_TOTAL` is a second *projection* of the one
+   authority, not the second authority the original sentence rules out.
 8. **`--gate operation-surface` is RED on `origin/main`** (base `bff70561`), independently of
    this branch: `operation-surface/undeclared-surface` —
    `modules/ui-web/src/shell-v0/state/indexingJobStates.ts` references the canonical

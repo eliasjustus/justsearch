@@ -223,11 +223,24 @@ public final class WorkerMethvinWatcher implements AutoCloseable {
    * consumer can tell "no work left" from "work left whose weight is unknown". A mid-write 4 GB file
    * understates the backlog by 4 GB with nothing marking the estimate as incomplete.
    *
-   * <p>A 0 observed on a live event is therefore not knowledge, it is "looked too early". For a
-   * genuinely empty file both encodings contribute the same 0 to {@code knownBytes} and differ only
-   * in that unknown also admits the weight is unvouched — which for a still-pending job is the
-   * honest answer either way. The jobs insert is {@code INSERT OR REPLACE}, so any later event for
-   * the path restates the size and heals the row.
+   * <p>A 0 observed on a live event is therefore not knowledge, it is "looked too early".
+   *
+   * <p>The two encodings are NOT interchangeable, and the difference is deliberate. {@code
+   * unknownSizeJobs} is a hard suppression input, not a footnote: {@code indexingProgress.ts}
+   * withdraws the byte estimate entirely when {@code unknownSizeJobs * 2 > jobsPending}, so during
+   * a large copy-in — where every CREATE lands here at 0 bytes — the UI shows "N files remaining"
+   * with no byte figure until a later MODIFY restates the size. That is the intended 813 behaviour
+   * ("an absent estimate is an absent segment"): withholding a number beats showing one that
+   * understates a mid-write backlog by gigabytes with nothing marking it incomplete. Nothing
+   * re-stats at processing time — {@code size_bytes} is written only by the enqueue path — so the
+   * healing is the next event for the path ({@code INSERT OR REPLACE} restates the row), not a
+   * later read.
+   *
+   * <p>Scoped to live events on purpose: the bulk-walk producers ({@code WorkerScanOps},
+   * {@code SyncDirectoryOps}) construct from {@code attrs.size()} on a settled file, where a 0 is a
+   * true fact and stays a known 0. One empty file can therefore be encoded two ways depending on
+   * which producer found it — that asymmetry tracks how trustworthy the observation was, which is
+   * the distinction worth keeping.
    *
    * <p>Deliberately not a re-stat/settle loop: that would block the watcher's event-delivery thread
    * on wall-clock time (the reason reconciles are already dispatched off-thread here) and would

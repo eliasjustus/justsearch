@@ -60,6 +60,12 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   // off the same RuntimeGaugesSnapshot; a `worker.index.commit_total` would have been a second
   // authority for it (note that worker.commits.total is a different quantity — it counts only the
   // six IndexingLoop-attributed commits, not the commit timer, gRPC deletes or prune).
+  // Tempdoc 912 item 2: COMMIT_TOTAL below is NOT the second authority that sentence rules out.
+  // It carries a reason DIMENSION on the same funnel write, and RuntimeSession.commitCount derives
+  // its total by summing those same per-reason slots — one authority, two projections of it.
+  // Caveat on "all-paths": four durable commits bypass the funnel entirely and are counted by
+  // neither (912 §C.4) — RuntimeSession materializeEmptyIndex + writer close, ComponentsFactory's
+  // open-failure close, and KnowledgeServerMigrationOps' low-level CommitOps.commit().
 
   /** Reopens that swapped in a new reader, all paths. Pairs with {@link #COMMIT_COUNT}. */
   public static final String REOPEN_COUNT = "index.runtime.reopen_count";
