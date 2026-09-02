@@ -75,6 +75,16 @@ log = logging.getLogger(__name__)
                   "validated CV improvement. Keep default=0 unless the 4.4%-to-1.5% claim "
                   "is validated with N=5+ matched pairs (currently deferred)."
               ))
+@click.option("--search-load-qpm", "search_load_qpm", type=int, default=None,
+              help="Tempdoc 885: drive N queries/minute (evenly spaced) against "
+                   "POST /api/knowledge/search on a background thread DURING ingest + the "
+                   "enrichment wait, then record a `search_load` block in summary.json. That "
+                   "endpoint writes the Worker's MMF activity slot, so this is what makes the "
+                   "indexing loop breath-hold. Off by default; mutually exclusive with "
+                   "--search-load.")
+@click.option("--search-load", "search_load_mode", type=click.Choice(["continuous"]), default=None,
+              help="Tempdoc 885: as --search-load-qpm but back-to-back with one request in "
+                   "flight (the continuous MCP-style agent loop).")
 @click.option("--json", "json_flag", is_flag=True, hidden=True, help="Alias for top-level --json.")
 @click.option(
     "--skip-projection", "skip_projections", multiple=True,
@@ -83,10 +93,18 @@ log = logging.getLogger(__name__)
          "a single flaky projection without losing other signals.",
 )
 @click.pass_context
-def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, json_flag, skip_projections):
+def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, search_load_qpm, search_load_mode, json_flag, skip_projections):
     """Execute an evaluation run."""
     if json_flag:
         ctx.obj["json"] = True
+    from .. import search_load as search_load_mod
+    try:
+        search_load_spec = search_load_mod.resolve_spec(
+            search_load_qpm, search_load_mode == "continuous",
+        )
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     from .. import ingest as ingest_mod
     from .. import run as run_module
 
@@ -236,6 +254,7 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
             index_cache_enabled=index_cache_enabled,
             pin_index_selector_key=pin_index_selector_key,
             env_overrides=env_overrides,
+            search_load_spec=search_load_spec,
             json_flag=json_flag,
             is_warmup=is_warmup,
         )
@@ -316,6 +335,7 @@ def _run_iteration(
     pin_index_selector_key=None,
     query_syntax=None,
     env_overrides,
+    search_load_spec=None,
     json_flag,
     is_warmup,
 ):
@@ -398,7 +418,7 @@ def _run_iteration(
             context_coverage, thresholds, history_db, corpus_dir,
             skip_ingest, ingest_config, env_overrides,
             suppress_stdout=is_warmup, index_cache=cache_outcome,
-            query_syntax=query_syntax,
+            query_syntax=query_syntax, search_load_spec=search_load_spec,
         )
         # Publish only a fresh build (outcome != adopted) done under --clean, and
         # only when the selector key is available. Capture happens while up.
@@ -486,11 +506,36 @@ def _check_build_freshness(base_url: str) -> None:
         )
 
 
+def _start_search_load(spec, base_url: str, dataset: str):
+    """Start the tempdoc-885 background query loop, or return None when not requested.
+
+    Queries come from the dataset's own query file, in hybrid (server-resolved) mode.
+    """
+    if spec is None:
+        return None
+    from .. import corpora
+    from .. import search_load as search_load_mod
+
+    try:
+        query_records, _qrels, _meta = corpora.load(dataset)
+    except Exception as e:
+        click.echo(f"Error: --search-load* needs the dataset's queries: {e}", err=True)
+        sys.exit(1)
+    queries = [qr.text for qr in query_records.values() if getattr(qr, "text", "").strip()]
+    if not queries:
+        click.echo(f"Error: dataset {dataset!r} has no queries for --search-load*", err=True)
+        sys.exit(1)
+    runner = search_load_mod.SearchLoadRunner(base_url, queries, spec)
+    runner.start()
+    return runner
+
+
 def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
             splade, lambdamart, cross_encoder, allow_errors, max_queries,
             context_coverage, thresholds, history_db, corpus_dir,
             skip_ingest, ingest_config, env_overrides=None,
-            suppress_stdout=False, index_cache=None, query_syntax=None):
+            suppress_stdout=False, index_cache=None, query_syntax=None,
+            search_load_spec=None):
     """Inner run logic (extracted for backend lifecycle try/finally).
 
     When suppress_stdout is True (used by warmup iterations of --warmup N), the
@@ -511,16 +556,29 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
     # still runs against the adopted index. Only a fresh build (miss / disabled)
     # ingests -- that single pass is what warm publishes and what the floor is for.
     adopted = bool(index_cache) and index_cache.get("mode") == "adopted"
+    search_load_block = None
     if not skip_ingest and not adopted:
-        ingest_summary = ingest_mod.prepare_corpus(
-            dataset_name=dataset,
-            config=ingest_config,
-            corpus_dir=Path(corpus_dir) if corpus_dir else None,
-        )
+        # Tempdoc 885: foreground search traffic runs for exactly the ingest + readiness/
+        # pipeline wait window, which is the interval the throughput numbers cover.
+        load_runner = _start_search_load(search_load_spec, base_url, dataset)
+        try:
+            ingest_summary = ingest_mod.prepare_corpus(
+                dataset_name=dataset,
+                config=ingest_config,
+                corpus_dir=Path(corpus_dir) if corpus_dir else None,
+            )
+        finally:
+            if load_runner is not None:
+                search_load_block = load_runner.stop()
         if not ingest_summary.get("readiness_passed"):
             click.echo("Warning: readiness gate did not pass after ingestion", err=True)
             click.echo(f"  Reasons: {ingest_summary.get('failure_reasons')}", err=True)
         pipeline_summary = ingest_summary.get("pipeline_summary")
+    elif search_load_spec is not None:
+        log.warning(
+            "--search-load* ignored: no ingest/readiness wait in this run "
+            "(skip_ingest=%s, adopted=%s)", skip_ingest, adopted,
+        )
     elif adopted:
         log.info(
             "Index cache adopted (%s) -- corpus already indexed; skipping ingest "
@@ -548,6 +606,7 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
         env_overrides=env_overrides,
         index_cache=index_cache,
         query_syntax=query_syntax,
+        search_load=search_load_block,
     )
     if suppress_stdout:
         return

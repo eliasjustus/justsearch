@@ -20,7 +20,6 @@ import io.justsearch.indexerworker.extract.ContentExtractorProvider;
 import io.justsearch.indexerworker.extract.ExtractionArtifact;
 import io.justsearch.indexerworker.extract.ExtractionMetricCatalog;
 import io.justsearch.indexerworker.extract.ExtractionSandboxFactory;
-import io.justsearch.indexerworker.extract.ProcessExtractionSandbox;
 import io.justsearch.indexerworker.extract.TimeboxedContentExtractor;
 import io.justsearch.indexerworker.extract.TimeboxedContentExtractor.ExtractionTimeoutException;
 import io.justsearch.indexerworker.extract.ValidatedExtractionArtifact;

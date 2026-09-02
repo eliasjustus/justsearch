@@ -41,6 +41,7 @@ public final class WorkerProcessManager extends ManagedProcess {
   private final Path externalTestConfigDir;
 
   private String extraJvmArgs = "";
+  private final java.util.Map<String, String> extraEnv = new java.util.LinkedHashMap<>();
 
   /**
    * Creates a new WorkerProcessManager using a JAR file.
@@ -158,6 +159,22 @@ public final class WorkerProcessManager extends ManagedProcess {
    * @param args Additional JVM arguments (space-separated)
    * @return this manager for chaining
    */
+  /**
+   * Adds an environment variable to the spawned worker.
+   *
+   * <p>Needed for any value that contains whitespace: {@link #withJvmArgs} splits on whitespace to
+   * build the JVM argument list, so a key like {@code JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND}
+   * (a whitespace-separated argv) cannot be passed as a {@code -D} property.
+   *
+   * @param name environment variable name
+   * @param value environment variable value
+   * @return this, for chaining
+   */
+  public WorkerProcessManager withEnv(String name, String value) {
+    extraEnv.put(name, value);
+    return this;
+  }
+
   public WorkerProcessManager withJvmArgs(String args) {
     this.extraJvmArgs = args;
     return this;
@@ -221,6 +238,7 @@ public final class WorkerProcessManager extends ManagedProcess {
     // Set environment variables to ensure worker uses correct paths
     pb.environment().put("JUSTSEARCH_DATA_DIR", dataDir.toAbsolutePath().toString());
     pb.environment().put("JUSTSEARCH_WORKER_SIGNAL_PATH", signalFilePath.toAbsolutePath().toString());
+    pb.environment().putAll(extraEnv);
 
     // Set repo root for SSOT resolution (if not already set via JVM args)
     Path projectRoot = findProjectRoot(workerPath);
@@ -359,6 +377,7 @@ public final class WorkerProcessManager extends ManagedProcess {
 
     pb.environment().put("JUSTSEARCH_DATA_DIR", dataDir.toAbsolutePath().toString());
     pb.environment().put("JUSTSEARCH_WORKER_SIGNAL_PATH", signalFilePath.toAbsolutePath().toString());
+    pb.environment().putAll(extraEnv);
 
     // Also set env vars for repo root (backup to system properties in argfile)
     if (repoRootForWorker != null) {

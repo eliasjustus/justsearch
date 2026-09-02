@@ -10,6 +10,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -325,5 +328,46 @@ class TimeboxedContentExtractorTest {
 
     assertThrows(ExtractionTimeoutException.class, () -> extractor.extract(file));
     assertEquals(1, extractor.getTimeoutCount());
+  }
+
+  @Test
+  @DisplayName("after a wedged extraction times out, the next file extracts normally")
+  @Timeout(30)
+  void wedgedExtractionDoesNotPoisonTheExecutor() throws Exception {
+    // Tempdoc 885 item 14 [R7]: the executor was a single-thread executor and cancel(true) only
+    // interrupts. A parser that ignores the interrupt held that one thread forever, so the NEXT
+    // file — and every file after it — timed out too: one bad file stopped ALL extraction until
+    // the Worker restarted. This sandbox reproduces exactly that: it ignores interruption.
+    Path file = tempDir.resolve("wedge.bin");
+    Files.writeString(file, "x");
+
+    AtomicBoolean release = new AtomicBoolean(false);
+    AtomicInteger calls = new AtomicInteger();
+    ExtractionSandbox wedgingSandbox =
+        path -> {
+          if (calls.incrementAndGet() == 1) {
+            while (!release.get()) {
+              // parkNanos returns on interrupt WITHOUT throwing, so this loop survives cancel().
+              LockSupport.parkNanos(1_000_000L);
+            }
+            return ExtractionArtifact.full(
+                new ExtractionResult("late", null, "text/plain"), "wedged");
+          }
+          return ExtractionArtifact.full(
+              new ExtractionResult("second file", null, "text/plain"), "recovered");
+        };
+
+    extractor =
+        new TimeboxedContentExtractor(null, wedgingSandbox, Duration.ofMillis(200), null, false);
+    try {
+      assertThrows(ExtractionTimeoutException.class, () -> extractor.extractArtifact(file));
+      assertEquals(1, extractor.getTimeoutCount());
+
+      ExtractionArtifact next = extractor.extractArtifact(file);
+      assertEquals("second file", next.result().content());
+      assertEquals(1, extractor.getTimeoutCount(), "the second extraction must not have timed out");
+    } finally {
+      release.set(true);
+    }
   }
 }

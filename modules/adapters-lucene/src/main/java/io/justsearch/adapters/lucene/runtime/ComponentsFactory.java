@@ -321,9 +321,7 @@ final class ComponentsFactory {
               softDeleteFieldResolved);
       mgr = new SearcherManager(softDeletesReader, newNoCacheSearcherFactory());
       installRefreshListener(mgr, lastRefreshNanos);
-      thread = new ControlledRealTimeReopenThread<>(w, mgr, 0.5, 0.05);
-      thread.setName("crtrt");
-      thread.setDaemon(true);
+      thread = NrtReopenThreads.create(w, mgr, nrtTargetMs, nrtHardMs);
 
       return new Components(
           idx.commitMetadataEnabled(),

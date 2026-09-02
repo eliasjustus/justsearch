@@ -29,11 +29,11 @@ import tools.jackson.databind.node.ObjectNode;
  *
  * <p>The process is long-lived (one {@code initialize} handshake, then many {@code tools/call}s),
  * so this is a persistent session, not the one-shot request/response of {@code
- * ProcessExtractionSandbox}. A daemon reader thread parses one JSON message per line and completes
+ * PersistentExtractionSandbox}. A daemon reader thread parses one JSON message per line and completes
  * the pending {@link CompletableFuture} matched by JSON-RPC {@code id}; server→client requests and
  * notifications (no/echoed {@code id} we did not issue) are ignored — sufficient for the EXECUTABLE
  * first consumer (tempdoc 560 §4.4). The subprocess + lifecycle pattern mirrors {@code
- * ProcessExtractionSandbox} / {@code LlamaServerOps}; isolation is the process boundary (P2).
+ * PersistentExtractionSandbox} / {@code LlamaServerOps}; isolation is the process boundary (P2).
  */
 public final class StdioMcpTransport implements McpTransport {
   private static final Logger log = LoggerFactory.getLogger(StdioMcpTransport.class);
