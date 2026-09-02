@@ -48,6 +48,7 @@ import { atomicWriteFileSync, mainRepoRoot } from './lib/hook-base.mjs';
 import {
   DAY_MS, VALID_HARNESS_ARGS, VALID_BY, DEFAULT_LONG_SPAWN_CALLS,
   buildLeadingIndicators, buildBucketedSpawnRows, buildSpawnTail,
+  bucketBounds, classifyBucket, findOldestTranscriptMtimeMs,
 } from './efficiency-trend.mjs';
 
 const SNAPSHOT_RELATIVE = path.join('tmp', 'agent-telemetry', 'efficiency-trend.ndjson');
@@ -81,15 +82,30 @@ export function recordKey(record) {
  * `spawnTailRow` may be `undefined` (a bucket with, say, leading-indicator data
  * but zero spawns that week) — the corresponding sub-object is `null`, never a
  * fabricated zero-row.
+ *
+ * `truncatedAtCapture`/`partialAtCapture` (908 defect 3): completeness is a
+ * property of the data AT CAPTURE TIME, not something the reader can safely
+ * re-derive later against TODAY's rotation floor -- by the time a reader sees
+ * this record, the bucket the writer captured while complete may now sit
+ * before the (moved-forward) floor, and re-deriving would flag it TRUNCATED
+ * forever even though it was captured whole. Computed here with the SAME
+ * `classifyBucket` predicate the reader uses, just evaluated against the
+ * floor/clock AT WRITE TIME -- one predicate, two evaluation times, never a
+ * second implementation. A caller that omits either flag (a legacy record
+ * written before this field existed) leaves the record without them; a
+ * reader must treat that as UNKNOWN, never guess `false`.
  */
 export function buildSnapshotRecord({
   bucket, harness, by, generatedAtMs, leadingRow, spawnTailRow, runLengthHistogram,
+  truncatedAtCapture, partialAtCapture,
 }) {
   return {
     bucket,
     harness,
     by,
     generatedAtMs,
+    truncatedAtCapture,
+    partialAtCapture,
     leading: leadingRow ? {
       calls: leadingRow.calls,
       costUsd: leadingRow.costUsd,
@@ -170,9 +186,22 @@ export function writeSnapshotFile(filePath, records) {
 
 // --- compute (ledger I/O) ---------------------------------------------------------
 
-/** One record per `(bucket, harness)` for every harness in `harnesses`, over the window. */
+/**
+ * One record per `(bucket, harness)` for every harness in `harnesses`, over
+ * the window. `truncatedAtCapture`/`partialAtCapture` are computed HERE,
+ * against the rotation floor and clock AT THIS CALL -- the same
+ * `classifyBucket` predicate `efficiency-trend.mjs` uses to flag a LIVE row,
+ * evaluated now rather than deferred to whenever this record is later read
+ * (908 defect 3: re-deriving at read time against a LATER floor would flag
+ * every rescued bucket TRUNCATED forever, defeating the writer's purpose).
+ * Only meaningful for `claude-code` (the rotation floor is a Claude Code
+ * transcript-store fact) -- a `codex-cli` record's flags are always `false`,
+ * mirroring the reader's own `harnesses.includes('claude-code') ? ... : null`
+ * gate.
+ */
 export function computeSnapshotRecords({ harnesses, sinceMs, untilMs, by, longSpawnCalls, generatedAtMs = Date.now() }) {
   const records = [];
+  const floorMsAtCapture = harnesses.includes('claude-code') ? findOldestTranscriptMtimeMs() : null;
   for (const harness of harnesses) {
     const { calls } = listCalls({ harnesses: [harness], sinceMs, untilMs });
     const nonSynthetic = calls.filter((c) => !c.synthetic);
@@ -193,11 +222,16 @@ export function computeSnapshotRecords({ harnesses, sinceMs, untilMs, by, longSp
     const buckets = new Set([...leadingByBucket.keys(), ...spawnTailByBucket.keys()]);
     for (const bucket of buckets) {
       const spawnTailRow = spawnTailByBucket.get(bucket);
+      const { truncated, partial } = classifyBucket(
+        bucketBounds(bucket, by), harness === 'claude-code' ? floorMsAtCapture : null, generatedAtMs,
+      );
       records.push(buildSnapshotRecord({
         bucket, harness, by, generatedAtMs,
         leadingRow: leadingByBucket.get(bucket),
         spawnTailRow,
         runLengthHistogram: spawnTailRow ? buildRunLengthHistogram(spawnsByBucket.get(bucket) ?? []) : null,
+        truncatedAtCapture: truncated,
+        partialAtCapture: partial,
       }));
     }
   }

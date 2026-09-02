@@ -499,11 +499,46 @@ function attachFlags(rows, flagsByBucket) {
   return rows.map((r) => ({ ...r, ...(flagsByBucket.get(r.bucket) ?? { truncated: false, partial: false }) }));
 }
 
+/**
+ * Three-state completeness for a leading/spawn-tail row (908 defect 3). A
+ * `source: 'live'` row is always judged against TODAY's floor/clock — the
+ * live scan genuinely cannot see past it, so `classifyBucket` is correct
+ * as-is. A `source: 'snapshot'` row must NOT be re-judged against today's
+ * floor: it carries its OWN `truncatedAtCapture`/`partialAtCapture`,
+ * recorded by `trend-snapshot.mjs` at write time against the floor/clock
+ * THEN, precisely so a bucket rescued while complete does not become
+ * permanently TRUNCATED once the floor moves past it. A snapshot row
+ * missing either field (a legacy record written before this field existed)
+ * is a named residual, `unknown: true` — never guessed `false`, the same
+ * "we don't know" precedent as the ledger's `in-ttl-undetermined` /
+ * `unfilterableTs`.
+ */
+export function resolveRowFlags(row, floorMs, nowMs, by) {
+  if (row.source === 'snapshot') {
+    if (typeof row.truncatedAtCapture === 'boolean' && typeof row.partialAtCapture === 'boolean') {
+      return { truncated: row.truncatedAtCapture, partial: row.partialAtCapture, unknown: false };
+    }
+    return { truncated: false, partial: false, unknown: true };
+  }
+  const { truncated, partial } = classifyBucket(bucketBounds(row.bucket, by), floorMs, nowMs);
+  return { truncated, partial, unknown: false };
+}
+
+function attachRowFlags(rows, floorMs, nowMs, by) {
+  return rows.map((r) => ({ ...r, ...resolveRowFlags(r, floorMs, nowMs, by) }));
+}
+
+/** UNKNOWN takes precedence in the printed label -- a legacy record is not "complete", it is unjudged. */
+function flagLabels(r) {
+  if (r.unknown) return 'UNKNOWN';
+  return [r.truncated ? 'TRUNCATED' : null, r.partial ? 'PARTIAL' : null].filter(Boolean).join(',');
+}
+
 function printLeading(rows) {
   console.log('\n=== (a) leading indicators (denominator-free) ===');
   console.log('bucket        calls    cost  ctx/out  $/M-out  mainP50  subP50  subShare  source    flags');
   for (const r of rows) {
-    const flags = [r.truncated ? 'TRUNCATED' : null, r.partial ? 'PARTIAL' : null].filter(Boolean).join(',');
+    const flags = flagLabels(r);
     console.log(`${r.bucket.padEnd(12)} ${String(r.calls).padStart(7)} ${usd(r.costUsd).padStart(7)} `
       + `${String(r.ctxOut ?? 'n/a').padStart(8)} ${usd(r.costPerMOut).padStart(8)} `
       + `${fmtK(r.mainP50Ctx).padStart(8)} ${fmtK(r.subP50Ctx).padStart(7)} ${pctFmt(r.subCostSharePct).padStart(9)}  `
@@ -534,21 +569,23 @@ function printSpawnTail(rows, longSpawnCalls) {
   console.log(`\n=== (c) spawn tail (>= ${longSpawnCalls} calls is "long") ===`);
   console.log('bucket        spawns  medCalls  medPeakCtx  $/spawn  long  longCostShare  source    flags');
   for (const r of rows) {
-    const flags = [r.truncated ? 'TRUNCATED' : null, r.partial ? 'PARTIAL' : null].filter(Boolean).join(',');
+    const flags = flagLabels(r);
     console.log(`${r.bucket.padEnd(12)} ${String(r.spawns).padStart(7)} ${String(r.medCalls).padStart(9)} `
       + `${fmtK(r.medPeakCtx).padStart(11)} ${(r.costPerSpawn == null ? 'n/a' : `$${r.costPerSpawn.toFixed(1)}`).padStart(8)} ${String(r.longSpawns).padStart(5)} `
       + `${pctFmt(r.longCostSharePct).padStart(14)}  ${(r.source ?? 'live').padEnd(8)}  ${flags}`);
   }
 }
 
-function printCorpusHonesty(floorMs, truncatedBuckets, partialBuckets, sourceCounts) {
+function printCorpusHonesty(floorMs, truncatedBuckets, partialBuckets, sourceCounts, unknownCounts) {
   console.log('\n=== (d) corpus honesty ===');
   console.log(`  oldest surviving transcript mtime (rotation floor): ${floorMs == null ? 'n/a — no transcripts discovered' : new Date(floorMs).toISOString()}`);
-  console.log(`  TRUNCATED buckets (start before floor+1day): ${truncatedBuckets.length ? truncatedBuckets.join(', ') : 'none'}`);
-  console.log(`  PARTIAL buckets (extend past now): ${partialBuckets.length ? partialBuckets.join(', ') : 'none'}`);
+  console.log(`  TRUNCATED buckets (start before floor+1day, LIVE rows only): ${truncatedBuckets.length ? truncatedBuckets.join(', ') : 'none'}`);
+  console.log(`  PARTIAL buckets (extend past now, LIVE rows only): ${partialBuckets.length ? partialBuckets.join(', ') : 'none'}`);
   console.log(`  row sources: leading ${sourceCounts.leading.live} live / ${sourceCounts.leading.snapshot} snapshot; `
     + `spawn tail ${sourceCounts.spawnTail.live} live / ${sourceCounts.spawnTail.snapshot} snapshot`);
-  console.log('  No trend arithmetic in this report crosses a TRUNCATED or PARTIAL bucket.');
+  console.log(`  UNKNOWN completeness (legacy snapshot record, captured before truncatedAtCapture/partialAtCapture existed): `
+    + `leading ${unknownCounts.leading}, spawn tail ${unknownCounts.spawnTail}`);
+  console.log('  No trend arithmetic in this report crosses a TRUNCATED, PARTIAL, or UNKNOWN row.');
 }
 
 export function countBySource(rows) {
@@ -556,6 +593,10 @@ export function countBySource(rows) {
     live: rows.filter((r) => (r.source ?? 'live') === 'live').length,
     snapshot: rows.filter((r) => r.source === 'snapshot').length,
   };
+}
+
+export function countUnknown(rows) {
+  return rows.filter((r) => r.unknown === true).length;
 }
 
 function main() {
@@ -597,8 +638,14 @@ function main() {
   if (harnesses.length === 1) {
     const snapshotRecords = readSnapshotFile(opts.snapshotPath ?? resolveDefaultSnapshotPath())
       .filter((r) => r.harness === harnesses[0] && r.by === opts.by && bucketOverlapsWindow(r.bucket, opts.by, sinceMs, untilMs));
-    const snapshotLeadingRows = snapshotRecords.filter((r) => r.leading).map((r) => ({ bucket: r.bucket, ...r.leading }));
-    const snapshotSpawnTailRows = snapshotRecords.filter((r) => r.spawnTail).map((r) => ({ bucket: r.bucket, ...r.spawnTail }));
+    // Carry the CAPTURE-TIME completeness flags along with the aggregate
+    // fields (908 defect 3) — they live at the top level of the snapshot
+    // record, not inside `.leading`/`.spawnTail`, so they must be spread in
+    // explicitly or a merged row silently loses them.
+    const snapshotLeadingRows = snapshotRecords.filter((r) => r.leading)
+      .map((r) => ({ bucket: r.bucket, truncatedAtCapture: r.truncatedAtCapture, partialAtCapture: r.partialAtCapture, ...r.leading }));
+    const snapshotSpawnTailRows = snapshotRecords.filter((r) => r.spawnTail)
+      .map((r) => ({ bucket: r.bucket, truncatedAtCapture: r.truncatedAtCapture, partialAtCapture: r.partialAtCapture, ...r.spawnTail }));
     leadingRows = mergeLiveAndSnapshot(liveLeadingRows, snapshotLeadingRows);
     spawnTailRows = mergeLiveAndSnapshot(liveSpawnTailRows, snapshotSpawnTailRows);
   } else {
@@ -651,13 +698,18 @@ function main() {
   partialBuckets.sort();
   const excludeFromPower = new Set([...truncatedBuckets, ...partialBuckets]);
 
-  const leadingFlagged = attachFlags(leadingRows, flagsByBucket);
-  const spawnTailFlagged = attachFlags(spawnTailRows, flagsByBucket);
+  // Leading/spawn-tail rows resolve flags PER ROW (908 defect 3) — a
+  // snapshot-sourced row uses its own captured completeness, never today's
+  // floor. Delivery has no snapshot equivalent (git history never rotates),
+  // so it stays on the uniform bucket-floor `flagsByBucket` derivation.
+  const leadingFlagged = attachRowFlags(leadingRows, floorMs, nowMs, opts.by);
+  const spawnTailFlagged = attachRowFlags(spawnTailRows, floorMs, nowMs, opts.by);
   if (delivery.available) {
     delivery.rows = attachFlags(delivery.rows, flagsByBucket);
     delivery.powerWarning = deliveryPowerWarning(delivery.rows, excludeFromPower);
   }
   const sourceCounts = { leading: countBySource(leadingFlagged), spawnTail: countBySource(spawnTailFlagged) };
+  const unknownCounts = { leading: countUnknown(leadingFlagged), spawnTail: countUnknown(spawnTailFlagged) };
 
   if (opts.json) {
     console.log(JSON.stringify({
@@ -668,7 +720,7 @@ function main() {
       delivery,
       corpusHonesty: {
         rotationFloorMs: floorMs, rotationFloorIso: floorMs == null ? null : new Date(floorMs).toISOString(),
-        truncatedBuckets, partialBuckets, sourceCounts,
+        truncatedBuckets, partialBuckets, sourceCounts, unknownCounts,
       },
     }, null, 2));
     return;
@@ -679,7 +731,7 @@ function main() {
   printLeading(leadingFlagged);
   printDelivery(delivery);
   printSpawnTail(spawnTailFlagged, opts.longSpawnCalls);
-  printCorpusHonesty(floorMs, truncatedBuckets, partialBuckets, sourceCounts);
+  printCorpusHonesty(floorMs, truncatedBuckets, partialBuckets, sourceCounts, unknownCounts);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main();

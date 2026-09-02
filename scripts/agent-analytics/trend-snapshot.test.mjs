@@ -58,6 +58,29 @@ run('buildSnapshotRecord: carries only aggregate fields off a leadingRow/spawnTa
   assert.deepEqual(r.spawnTail.runLengthHistogram, { '0-10': 2 });
 });
 
+// --- truncatedAtCapture/partialAtCapture: regression for defect 3 ------------
+// (independent-verification defect 3 -- completeness must be recorded AT
+// CAPTURE TIME, not re-derived later against a floor that has since moved.)
+
+run('buildSnapshotRecord: carries truncatedAtCapture/partialAtCapture at the TOP LEVEL, sibling to leading/spawnTail', () => {
+  const r = buildSnapshotRecord({
+    bucket: '2026-W33', harness: 'claude-code', by: 'week', generatedAtMs: 1,
+    leadingRow: { calls: 1, costUsd: 1, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 },
+    truncatedAtCapture: false, partialAtCapture: true,
+  });
+  assert.equal(r.truncatedAtCapture, false);
+  assert.equal(r.partialAtCapture, true);
+});
+
+run('findContentLeaks: booleans truncatedAtCapture/partialAtCapture never trip the string-shape checker', () => {
+  const r = buildSnapshotRecord({
+    bucket: '2026-W33', harness: 'claude-code', by: 'week', generatedAtMs: 1,
+    leadingRow: { calls: 1, costUsd: 1, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 },
+    truncatedAtCapture: true, partialAtCapture: false,
+  });
+  assert.deepEqual(findContentLeaks(r), []);
+});
+
 // --- findContentLeaks: the aggregates-only rule enforced by test -------------
 
 run('findContentLeaks: a real snapshot record produces zero leaks', () => {

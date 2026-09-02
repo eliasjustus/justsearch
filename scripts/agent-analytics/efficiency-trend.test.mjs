@@ -16,6 +16,7 @@ import {
   bucketOverlapsWindow, buildLeadingIndicators, buildBucketedSpawnRows, buildSpawnTail,
   classifyPath, buildDeliveryRows, deliveryPowerWarning,
   classifyBucket, resolveGitRef, mergeLiveAndSnapshot, countBySource,
+  resolveRowFlags, countUnknown,
 } from './efficiency-trend.mjs';
 import { makeCall } from './lib/ledger/record.mjs';
 
@@ -429,6 +430,89 @@ run('CLI --json: a snapshot-sourced row carries source:"snapshot" and an in-wind
     assert.equal(parsed.leading.length, 1);
     assert.equal(parsed.leading[0].source, 'snapshot');
     assert.equal(parsed.corpusHonesty.sourceCounts.leading.snapshot, 1);
+  });
+});
+
+// --- resolveRowFlags / countUnknown: regression for defect 3 -----------------
+// (independent-verification defect 3 -- a snapshot row was re-judged against
+// TODAY's rotation floor, so every bucket the snapshot rescues was flagged
+// TRUNCATED forever, defeating trend-snapshot.mjs's whole purpose.)
+
+const FAR_PAST_BOUNDS = { startMs: Date.parse('2020-01-06T00:00:00.000Z'), endMs: Date.parse('2020-01-13T00:00:00.000Z') };
+const TODAY_FLOOR_MS = Date.parse('2026-08-04T00:00:00.000Z'); // long after FAR_PAST_BOUNDS
+const NOW_MS = Date.parse('2026-09-02T00:00:00.000Z');
+
+run('resolveRowFlags: a snapshot row captured COMPLETE is not flagged, even though it is before TODAY\'s floor', () => {
+  const row = { bucket: '2020-W02', source: 'snapshot', truncatedAtCapture: false, partialAtCapture: false };
+  const flags = resolveRowFlags(row, TODAY_FLOOR_MS, NOW_MS, 'week');
+  assert.deepEqual(flags, { truncated: false, partial: false, unknown: false });
+});
+
+run('resolveRowFlags: a snapshot row captured TRUNCATED stays flagged (the writer\'s own honest capture-time state)', () => {
+  const row = { bucket: '2020-W02', source: 'snapshot', truncatedAtCapture: true, partialAtCapture: false };
+  const flags = resolveRowFlags(row, TODAY_FLOOR_MS, NOW_MS, 'week');
+  assert.deepEqual(flags, { truncated: true, partial: false, unknown: false });
+});
+
+run('resolveRowFlags: a legacy snapshot record (neither field present) reads UNKNOWN, never a guessed false', () => {
+  const row = { bucket: '2020-W02', source: 'snapshot' }; // no truncatedAtCapture/partialAtCapture at all
+  const flags = resolveRowFlags(row, TODAY_FLOOR_MS, NOW_MS, 'week');
+  assert.deepEqual(flags, { truncated: false, partial: false, unknown: true });
+});
+
+run('resolveRowFlags: a legacy record with only ONE of the two fields present is STILL unknown (both-or-unknown, no partial credit)', () => {
+  const row = { bucket: '2020-W02', source: 'snapshot', truncatedAtCapture: false };
+  assert.equal(resolveRowFlags(row, TODAY_FLOOR_MS, NOW_MS, 'week').unknown, true);
+});
+
+run('resolveRowFlags: a LIVE pre-floor row is STILL judged against today\'s floor (no regression on existing behaviour)', () => {
+  const row = { bucket: '2020-W02', source: 'live' };
+  const bounds = bucketBounds(row.bucket, 'week');
+  assert.deepEqual(bounds, FAR_PAST_BOUNDS);
+  const flags = resolveRowFlags(row, TODAY_FLOOR_MS, NOW_MS, 'week');
+  assert.equal(flags.truncated, true, 'a live row this far before the floor must still read TRUNCATED');
+  assert.equal(flags.unknown, false);
+});
+
+run('countUnknown: counts only rows with unknown:true', () => {
+  const rows = [{ unknown: true }, { unknown: false }, {}, { unknown: true }];
+  assert.equal(countUnknown(rows), 2, 'the bare {} row is not unknown:true and must not be counted');
+});
+
+run('CLI: a complete-at-capture snapshot row is unflagged next to a legacy record reading UNKNOWN', () => {
+  const records = [
+    // legacy shape -- no truncatedAtCapture/partialAtCapture at all
+    { bucket: '2020-W01', harness: 'claude-code', by: 'week', generatedAtMs: 1, leading: { calls: 11, costUsd: 1, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 }, spawnTail: null },
+    // new shape -- captured complete, even though it is long before today's rotation floor
+    { bucket: '2020-W02', harness: 'claude-code', by: 'week', generatedAtMs: 1, truncatedAtCapture: false, partialAtCapture: false, leading: { calls: 22, costUsd: 2, unpricedCalls: 0, ctxOut: 1, costPerMOut: 1, mainP50Ctx: 1, subP50Ctx: 1, subCostSharePct: 0 }, spawnTail: null },
+  ];
+  withScratchSnapshot(records, (file) => {
+    const res = spawnSync(process.execPath, [
+      SCRIPT_PATH, '--since', '2019-12-30', '--until', '2020-01-20', '--harness', 'claude-code',
+      '--no-git', '--snapshot-path', file, '--json',
+    ], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    const parsed = JSON.parse(res.stdout);
+    const w01 = parsed.leading.find((r) => r.bucket === '2020-W01');
+    const w02 = parsed.leading.find((r) => r.bucket === '2020-W02');
+    assert.equal(w01.unknown, true, 'the legacy record must read UNKNOWN, not a guessed complete/truncated');
+    assert.equal(w01.truncated, false, 'UNKNOWN must not also masquerade as TRUNCATED');
+    assert.equal(w02.unknown, false);
+    assert.equal(w02.truncated, false, 'a row captured complete must NOT be re-flagged TRUNCATED against a later floor -- the defect this fixes');
+    assert.equal(parsed.corpusHonesty.unknownCounts.leading, 1);
+  });
+
+  // human-readable path: same fixture, assert the printed table itself
+  withScratchSnapshot(records, (file) => {
+    const res = spawnSync(process.execPath, [
+      SCRIPT_PATH, '--since', '2019-12-30', '--until', '2020-01-20', '--harness', 'claude-code', '--no-git', '--snapshot-path', file,
+    ], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    const w01Line = res.stdout.split('\n').find((l) => l.startsWith('2020-W01'));
+    const w02Line = res.stdout.split('\n').find((l) => l.startsWith('2020-W02'));
+    assert.match(w01Line, /UNKNOWN/, 'the legacy row must print UNKNOWN in the flags column');
+    assert.doesNotMatch(w02Line, /TRUNCATED|UNKNOWN/, 'the complete-at-capture row must print with NO flag at all');
+    assert.match(res.stdout, /UNKNOWN completeness .*leading 1, spawn tail 0/, 'section (d) must tally UNKNOWN rows separately from TRUNCATED/PARTIAL');
   });
 });
 
