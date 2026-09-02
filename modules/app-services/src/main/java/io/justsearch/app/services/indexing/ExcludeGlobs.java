@@ -21,10 +21,12 @@ import java.util.regex.Pattern;
  * - Users can use {@code ** /} (double-star + slash) to match at any depth (gitignore-like).
  * - Matching is case-insensitive on Windows.
  *
- * <p>Source of truth: {@code -Djustsearch.ui.exclude_patterns=[...]} (JSON string array).
+ * <p>Source of truth: the resolved {@code justsearch.ui.exclude_patterns} (JSON string array),
+ * reached via {@code ResolvedConfig.Ui#excludePatterns} — the user's settings.json contributes it
+ * at ordinal 300, an operator's env var / {@code -D} at 400 / 500. This class stays a pure parser:
+ * callers read the resolved value and pass the raw JSON here.
  */
 public final class ExcludeGlobs {
-  public static final String SYS_PROP_EXCLUDE_PATTERNS = "justsearch.ui.exclude_patterns";
 
   private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -51,12 +53,10 @@ public final class ExcludeGlobs {
    * Parse a JSON-encoded pattern list (string form of a JSON array) into an ExcludeGlobs.
    *
    * <p>Tempdoc 519 §9 Block B3.0.b: moved from {@code io.justsearch.ui.indexing} to
-   * {@code app-services}. The previous {@code fromSystemProperties()} factory read
-   * {@code -Djustsearch.ui.exclude_patterns=[…]} directly. After the move, the
-   * {@code AppServicesWorkerGuardrailsTest} ArchUnit rule bars ad-hoc
-   * {@code System.getProperty} in app-services; callers (currently
-   * {@code IndexingController.applyExcludes}) now read the sysprop themselves (ui is
-   * not subject to the guardrail) and pass the raw JSON string here.
+   * {@code app-services}, dropping a {@code fromSystemProperties()} factory that read the sysprop
+   * directly. Tempdoc 883 decision 4 slice 2 finished the job: callers now read
+   * {@code ConfigStore.globalOrNull().get().ui().excludePatterns()} and pass the raw JSON here, so
+   * a GUI-set list resolves as {@code settings.json} instead of as an operator {@code jvm_arg}.
    */
   public static ExcludeGlobs fromRawJsonArray(String raw) {
     if (raw == null || raw.isBlank()) {

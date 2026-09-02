@@ -4,8 +4,6 @@ package io.justsearch.deadcode;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaModifier;
-import com.tngtech.archunit.core.importer.ClassFileImporter;
-import com.tngtech.archunit.core.importer.ImportOption;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -99,10 +97,9 @@ class WholeProgramDeadCodeTest {
 
   @Test
   void emit_whole_program_dead_code_report() {
-    JavaClasses classes =
-        new ClassFileImporter()
-            .withImportOption(new ImportOption.DoNotIncludeTests())
-            .importPackages("io.justsearch");
+    // Shared with SystemAccessFunnelTest so the whole-program import happens once per JVM
+    // rather than once per analysis (tempdoc 883: this module gained a second whole-program rule).
+    JavaClasses classes = ImportedProgram.classes();
 
     assertWholeProgramCoverage(classes);
 

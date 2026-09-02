@@ -4,6 +4,8 @@ type: decision
 status: accepted
 description: "Operations, Resources, and Prompts (the truth) are singular and backend-owned; the frontend is a renderer/composition layer over them."
 date: 2026-06-09
+probes: none - backend-owned truth is enforced by the host-owns-truth kernel gate, which is its own authority; a probe here would be a second one.
+last_reviewed: 2026-09-02
 ---
 
 

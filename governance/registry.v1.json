@@ -325,7 +325,8 @@
         "diffFallback": "HEAD~1"
       },
       "config": {
-        "adrDir": "docs/decisions"
+        "adrDir": "docs/decisions",
+        "riskRegister": "docs/reference/architectural-risks.md"
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/adr-coverage"
     },
@@ -636,6 +637,8 @@
       },
       "config": {
         "reportPath": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
+        "applicationYaml": "config/application.yaml",
+        "sysaccessAllowlist": "gates/config-surface/sysaccess-allowlist.txt",
         "inputs": [
           {
             "path": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",

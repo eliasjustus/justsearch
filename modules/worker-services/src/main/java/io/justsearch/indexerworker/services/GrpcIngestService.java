@@ -65,6 +65,7 @@ import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.queue.IndexingJobChangeFeed;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexerworker.queue.SwitchBufferCapableQueue;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.loop.IndexingLoop;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.index.IndexGenerationManager;
@@ -121,7 +122,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private final IndexingLoop indexingLoop;
   private final WorkerSignalBus signalBus;
   /** Tempdoc 885 item 3: foreground-contention duty cycle for the prune / sync walks. */
-  private final io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing;
+  private final IndexingPacing indexingPacing;
   private final io.justsearch.adapters.lucene.runtime.RunningRuntime ingestLifecycle;
   private final IndexGenerationManager indexGenerationManager;
   private final OperationalMetrics metrics = OperationalMetrics.getInstance();
@@ -158,7 +159,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       JobQueue jobQueue,
       IndexingLoop indexingLoop,
       WorkerSignalBus signalBus,
-      io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing,
+      IndexingPacing indexingPacing,
       Path indexBasePath,
       Path indexPath,
       io.justsearch.adapters.lucene.runtime.RunningRuntime ingestLifecycle,
@@ -1526,6 +1527,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
                 .setAttempts(job.attempts())
                 .setLastUpdatedMs(job.lastUpdatedMs())
                 .setCollection(job.collection() != null ? job.collection() : "")
+                .setState(job.state() != null ? job.state() : "")
                 .build());
       }
       responseObserver.onNext(resp.build());
@@ -1602,6 +1604,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
                 .setAttempts(job.attempts())
                 .setLastUpdatedMs(job.lastUpdatedMs())
                 .setCollection(job.collection() != null ? job.collection() : "")
+                .setState(job.state() != null ? job.state() : "")
                 .build());
       }
       responseObserver.onNext(resp.build());

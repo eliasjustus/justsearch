@@ -128,6 +128,19 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   /** The sampler's last observation; {@code null} until the first one. */
   private volatile WorkerViewSample lastWorkerSample;
 
+  /**
+   * Wall clock for sample stamping and age. Injectable so the age-based staleness rule is testable:
+   * without a seam, proving "a sample older than {@link #SAMPLE_STALE_PERIODS} periods reads stale"
+   * would mean sleeping 30 s, so in practice it would not be proven at all — and a rule with no test
+   * is a rule that can be changed to any value and stay green.
+   */
+  private volatile java.util.function.LongSupplier clockMs = System::currentTimeMillis;
+
+  /** Visible for testing: drive the sampler's clock. */
+  void setClockForTesting(java.util.function.LongSupplier clock) {
+    this.clockMs = clock == null ? System::currentTimeMillis : clock;
+  }
+
   private final Path indexBasePath;
   private final Instant startTime;
   private final Supplier<String> diskPressureSupplier;
@@ -454,11 +467,6 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     return SAMPLER_IDLE_PERIOD_MS;
   }
 
-  /** Visible for testing: the sampler's last observation, or {@code null} before the first one. */
-  WorkerViewSample lastWorkerSample() {
-    return lastWorkerSample;
-  }
-
   /**
    * Performs one Worker observation and caches it. Never throws — a failed observation is itself a
    * recorded sample, which is what keeps {@code workerRpcStale} honest when the Worker is gone.
@@ -466,7 +474,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   private WorkerViewSample observeWorker() {
     // Stamped BEFORE the call, not after it, so the age reported to consumers is never younger
     // than the observation actually is (the 821 §3-C1 convention, preserved).
-    long sampledAtMs = System.currentTimeMillis();
+    long sampledAtMs = clockMs.getAsLong();
     if (!workerCapability.available()) {
       return new WorkerViewSample(
           WorkerOperationalView.fallback(workerCapability.health().name()), true, null, sampledAtMs);
@@ -487,11 +495,6 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
           e.getClass().getSimpleName() + ": " + e.getMessage(),
           sampledAtMs);
     }
-  }
-
-  /** Builds the status response (reusable outside HTTP context). */
-  StatusResponse buildStatusMap() {
-    return buildStatusMap(false);
   }
 
   /**
@@ -539,8 +542,8 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     long workerRpcAtMs = sample.sampledAtMs();
     boolean workerRpcStale =
         sample.failed()
-            || (System.currentTimeMillis() - workerRpcAtMs)
-                > SAMPLE_STALE_PERIODS * samplingPeriodMs();
+            || (clockMs.getAsLong() - workerRpcAtMs)
+                > (long) SAMPLE_STALE_PERIODS * samplingPeriodMs();
     WorkerOperationalView workerView = overlayVduCapability(sample.view());
 
     // Tempdoc 412 Phase 3: single inference status surface (replaces LlmStatusView + OnlineAiView).

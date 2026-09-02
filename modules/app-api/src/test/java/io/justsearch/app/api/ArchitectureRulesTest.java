@@ -41,19 +41,13 @@ class ArchitectureRulesTest {
                   + " io.justsearch.contract.wire.LifecycleState (548 §4.1); app-api must not"
                   + " re-introduce a hand-written LifecycleState");
 
-  @ArchTest
-  static final ArchRule appApiMustNotReadEnvOrSystemProperties =
-      noClasses()
-          .that()
-          .resideInAnyPackage("io.justsearch.app.api..")
-          .should()
-          .callMethod(System.class, "getenv", String.class)
-          .orShould()
-          .callMethod(System.class, "getProperty", String.class)
-          .orShould()
-          .callMethod(System.class, "getProperty", String.class, String.class)
-          .orShould()
-          .callMethod(System.class, "setProperty", String.class, String.class);
+  // The former `appApiMustNotReadEnvOrSystemProperties` rule was retired in tempdoc 883
+  // decision 5: it was one of six per-module copies whose union still left telemetry,
+  // app-inference, gpu-bridge, ai-backend, app-launcher, ort-common, worker-services, benchmarks
+  // and ssot-tools uncovered. The single repo-wide replacement is
+  // `io.justsearch.deadcode.SystemAccessFunnelTest` (modules/dead-code-audit), which sees every
+  // production module by classpath rather than by a list someone has to remember to extend, and
+  // additionally covers clearProperty / Boolean.getBoolean / Integer.getInteger.
 
   /**
    * Records annotated with {@code @RecordBuilder} must be constructed via their generated builder,

@@ -253,6 +253,11 @@ public final class OnlineAiServiceImpl
   }
 
   @Override
+  public ContextWindow contextWindow() {
+    return manager.launchedContextWindow();
+  }
+
+  @Override
   public String cudaRuntimeWarning() {
     return manager.getCudaRuntimeWarning();
   }

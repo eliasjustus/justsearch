@@ -62,6 +62,42 @@ function catalogOf(...entries: Surface[]): SurfaceCatalog {
   };
 }
 
+// The RAW WIRE shape served by `RegistryController.handleSurfaces` — what the boot-fetch path parses
+// through the generated `surfaceWireSchema` (strict, and precise all the way down since tempdoc 884:
+// Surface / SurfaceConsumes / SurfaceStateSchema / StateBinding are `PreciseWire`). The FE `Surface`
+// type relaxes `altitude` / `members` / `riskTier` / `stateSchema` / `consumes.conversationShapes` to
+// optional for client-constructed literals (plugin contributions, these fixtures); the wire always
+// carries them, so a drifting mock now throws at the boundary. Mirrors the wire-faithful builder in
+// OperationCatalogClient.test.ts.
+function surfaceWireEntry(fe: Surface): unknown {
+  return {
+    ...fe,
+    altitude: fe.altitude ?? 'PRODUCT',
+    members: fe.members ?? [],
+    riskTier: fe.riskTier ?? 'LOW',
+    stateSchema: fe.stateSchema ?? null,
+    consumes: {
+      ...fe.consumes,
+      conversationShapes: fe.consumes.conversationShapes ?? [],
+    },
+    provenance: {
+      tier: fe.provenance.tier,
+      contributorId: fe.provenance.contributorId,
+      version: fe.provenance.version,
+      identity: fe.provenance.identity
+        ? {
+            verified: fe.provenance.identity.verified,
+            signature: fe.provenance.identity.signature ?? null,
+          }
+        : null,
+    },
+  };
+}
+
+function wireCatalogOf(...entries: Surface[]): unknown {
+  return { ...catalogOf(...entries), entries: entries.map(surfaceWireEntry) };
+}
+
 describe('mergePluginSurfaceContributions — TRUST + DIAGNOSTIC altitude clamp (tempdoc 571 §4d)', () => {
   beforeEach(() => __resetForTest());
   afterEach(() => __resetForTest());
@@ -280,7 +316,7 @@ describe('SurfaceCatalogClient', () => {
 
   describe('boot fetch', () => {
     it('populates the catalog on 200', async () => {
-      const catalog = catalogOf(librarySurface());
+      const catalog = wireCatalogOf(librarySurface());
       const fetchImpl = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
@@ -320,7 +356,7 @@ describe('SurfaceCatalogClient', () => {
           ok: true,
           status: 200,
           headers: { get: () => '"etag-1"' },
-          json: () => Promise.resolve(catalogOf(librarySurface())),
+          json: () => Promise.resolve(wireCatalogOf(librarySurface())),
         } as unknown as Response);
       });
       // Speed up the test: stub setTimeout to fire immediately.
@@ -409,7 +445,7 @@ describe('SurfaceCatalogClient', () => {
         ok: true,
         status: 200,
         headers: { get: () => null },
-        json: () => Promise.resolve(catalogOf(librarySurface())),
+        json: () => Promise.resolve(wireCatalogOf(librarySurface())),
       } as unknown as Response);
       await bootSurfaceRegistry('http://127.0.0.1:33221', fetchImpl);
       expect(listener).toHaveBeenCalledOnce();

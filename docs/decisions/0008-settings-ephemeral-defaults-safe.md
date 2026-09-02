@@ -4,6 +4,10 @@ type: decision
 status: stable
 description: "User settings (settings.json) are not migration-protected. An incompatible settings file is preserved as a timestamped .corrupt- sibling, replaced with defaults, and the reset is surfaced as a lifecycle condition."
 date: 2026-02-10
+probes:
+  - adr-0008-settings-reset-surfaced
+  - adr-0008-reset-reason-code
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0008: Settings Are Ephemeral, Defaults Are Safe

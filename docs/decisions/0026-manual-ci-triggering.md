@@ -4,6 +4,9 @@ type: decision
 status: accepted - narrowed by ADR-0044
 description: "Manual-only workflow policy for the former self-hosted/local-runner model; ADR-0044 now narrows this for the public hosted CI lane."
 date: 2026-04-22
+probes:
+  - adr-0026-workflow-triggers-checked
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0026: Manual-Only CI Triggering

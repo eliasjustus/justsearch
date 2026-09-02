@@ -11,8 +11,9 @@ import java.util.regex.Pattern;
 /**
  * Path exclusion matcher used to filter watched-root sync batches on the Head.
  *
- * <p>Patterns are provided as a JSON string array via sysprop (UI settings mirror):
- * {@code justsearch.ui.exclude_patterns}.
+ * <p>Patterns arrive as a JSON string array — the resolved value of
+ * {@code justsearch.ui.exclude_patterns} ({@code ResolvedConfig.Ui#excludePatterns}), which the
+ * user's settings.json contributes at ordinal 300.
  *
  * <p>This is intentionally lightweight and defensive: invalid JSON or invalid patterns result in an
  * empty matcher (no excludes), rather than failing indexing.
@@ -44,7 +45,7 @@ final class ExcludeMatcher {
     return rawGlobs;
   }
 
-  static ExcludeMatcher fromSyspropJson(String rawJson, boolean windows) {
+  static ExcludeMatcher fromRawJson(String rawJson, boolean windows) {
     if (rawJson == null || rawJson.isBlank()) {
       return empty(windows);
     }

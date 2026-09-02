@@ -14,6 +14,7 @@ import io.justsearch.indexerworker.loop.ops.BgeM3BackfillOps;
 import io.justsearch.indexerworker.loop.ops.CombinedEnrichmentBackfillOps;
 import io.justsearch.indexerworker.loop.ops.DisambiguationBackfillOps;
 import io.justsearch.indexerworker.loop.ops.EmbeddingBackfillOps;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.loop.ops.LoopPacingPolicy;
 import io.justsearch.indexerworker.loop.ops.NerBackfillOps;
 import io.justsearch.indexerworker.loop.ops.SpladeBackfillOps;
@@ -102,7 +103,7 @@ public final class BackfillScheduler {
   private final CommitOps commitOps;
   private final WorkerSignalBus signalBus;
   /** Tempdoc 885 item 3: the duty cycle backfill yields against instead of stopping. */
-  private final io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing;
+  private final IndexingPacing indexingPacing;
   private final EmbeddingProviderLifecycle embeddingLifecycle;
   private final AtomicBoolean running;
   private final Supplier<ResolvedConfig> resolvedConfigSupplier;
@@ -137,7 +138,7 @@ public final class BackfillScheduler {
       IndexCountOps indexCountOps,
       CommitOps commitOps,
       WorkerSignalBus signalBus,
-      io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing,
+      IndexingPacing indexingPacing,
       EmbeddingProviderLifecycle embeddingLifecycle,
       AtomicBoolean running,
       Supplier<ResolvedConfig> resolvedConfigSupplier,

@@ -1,8 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.indexerworker.extract;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Builds selectable extraction sandboxes without coupling callers to sandbox implementation
@@ -131,6 +136,65 @@ public final class ExtractionSandboxFactory {
         new RoutingExtractionSandbox(new InProcessExtractionSandbox(provider), pool, provider),
         backstop,
         catalog);
+  }
+
+  /**
+   * Deadline for the startup probe's single extraction, because a broken command must not stall
+   * Worker boot.
+   *
+   * <p>This is NOT the whole worst case: a child that hangs is then killed, and that path waits up
+   * to 5 s on {@code Process.waitFor}. Boot therefore blocks for at most ~25 s, and only against a
+   * child that launches and then hangs; the far commoner failure — a command that cannot launch at
+   * all — is rejected by {@code ProcessBuilder.start} at once.
+   */
+  public static final Duration PROBE_TIMEOUT = Duration.ofSeconds(20);
+
+  private static final String PROBE_MARKER = "justsearch extraction sandbox probe";
+
+  /**
+   * Spawns one child on {@code command} and runs a trivial extraction through it.
+   *
+   * <p>The pool spawns lazily, which is right for steady state but means a broken child command —
+   * a bad operator override, a missing JDK, an unreadable classpath — is invisible until the first
+   * real file, and then surfaces as a per-file failure on every file forever. This turns that into
+   * one bounded check at wiring time, so the Worker can fall back to in-process extraction for the
+   * session instead of failing every document.
+   *
+   * @return empty when the child launched and answered correctly, else the reason it did not
+   */
+  public static Optional<String> probeChildCommand(
+      List<String> command,
+      TikaExtractionPolicy policy,
+      OcrRoutingConfig ocrConfig,
+      Duration timeout) {
+    Path probeFile = null;
+    try {
+      // Scratch, not state: a JVM temp file written and deleted inside this method, outside the
+      // data dir, holding a fixed marker string. It is classified in
+      // governance/store-recoverability.v1.json under nonDurableWriteSites for that reason - there
+      // is no recovery, upgrade or encryption policy to state, because losing it costs nothing.
+      probeFile = Files.createTempFile("justsearch-extraction-probe-", ".txt");
+      Files.writeString(probeFile, PROBE_MARKER, StandardCharsets.UTF_8);
+      // maxRequestsPerChild = 1: this child is for the probe alone and is discarded with the pool.
+      try (PersistentExtractionSandbox sandbox =
+          new PersistentExtractionSandbox(command, policy, ocrConfig, timeout, 1, 1, null)) {
+        String content = sandbox.extract(probeFile).result().content();
+        if (content == null || !content.contains(PROBE_MARKER)) {
+          return Optional.of("child answered without the probe content");
+        }
+        return Optional.empty();
+      }
+    } catch (IOException | ContentExtractor.ExtractionException | RuntimeException e) {
+      return Optional.of(e.getClass().getSimpleName() + ": " + e.getMessage());
+    } finally {
+      if (probeFile != null) {
+        try {
+          Files.deleteIfExists(probeFile);
+        } catch (IOException e) {
+          // Temp file; the OS reclaims it.
+        }
+      }
+    }
   }
 
   private static ExtractionSandbox inProcessSandbox(

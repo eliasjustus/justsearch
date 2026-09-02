@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "kind": "adr-premise-probe-register.v1",
+  "note": "Fixture register for the adr-coverage positive self-test. Both probes hold, and both are claimed by 0001-sample.md's LIST-valued `probes:` key — so if frontmatter parsing regresses to the per-line parser (tempdoc 884 R3), the list parses empty, the probes become unclaimed orphans, and this fixture flips to `fail`.",
+  "probes": [
+    {
+      "id": "fixture-foo-present",
+      "adr": "0001",
+      "premise": "The sample file still says hello.",
+      "kind": "grep-present",
+      "pattern": "hello",
+      "paths": ["sample/foo.txt"]
+    },
+    {
+      "id": "fixture-bar-absent",
+      "adr": "0001",
+      "premise": "The forbidden symbol was never reintroduced.",
+      "kind": "grep-absent",
+      "pattern": "forbidden-symbol",
+      "paths": ["sample"]
+    }
+  ]
+}

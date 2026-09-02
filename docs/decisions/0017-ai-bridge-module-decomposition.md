@@ -4,6 +4,10 @@ type: decision
 status: stable
 description: "Split ai-bridge monolith into ai-backend, gpu-bridge, and prompt-support; delete hollow app-ai and unused ai-worker."
 date: 2026-04-06
+probes:
+  - adr-0017-decomposed-modules-present
+  - adr-0017-retired-modules-absent
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0017: ai-bridge Module Decomposition

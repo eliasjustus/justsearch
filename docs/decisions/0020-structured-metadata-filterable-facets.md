@@ -4,6 +4,8 @@ type: decision
 status: stable
 description: "Extend entity faceting to structured metadata with meta_ prefix, typed proto fields, and two-stage chunk retrieval."
 date: 2026-03-27
+probes: none - the meta_ field convention is already owned by the SSOT catalog sync gate; a second probe over the same catalogs would be a duplicate authority.
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0020: Structured Metadata Fields as Filterable Facets

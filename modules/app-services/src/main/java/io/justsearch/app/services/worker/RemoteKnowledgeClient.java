@@ -45,7 +45,6 @@ import io.justsearch.ipc.RerankResponse;
 import io.justsearch.ipc.PathMapping;
 import io.justsearch.ipc.UpdatePathsRequest;
 import io.justsearch.ipc.UpdatePathsResponse;
-import io.justsearch.configuration.SystemAccess;
 import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.core.search.SearchPort;
 import io.justsearch.core.dto.Query;
@@ -194,9 +193,9 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     private final AtomicReference<io.justsearch.app.api.status.WorkerOperationalView>
         cachedOperationalView = new AtomicReference<>(null);
 
-    // Exclude patterns (UI settings; mirrored into a sysprop as JSON string array).
+    // Exclude patterns as a raw JSON string array, read from the RESOLVED config (tempdoc 883
+    // decision 4 slice 2 — previously the sysprop the settings promotion mirrored them into).
     // Shared via this::getExcludeMatcher supplier with RootLifecycleOps.
-    private static final String EXCLUDE_SYS_PROP = "justsearch.ui.exclude_patterns";
     private final Object excludeLock = new Object();
     private volatile String excludeRawCache = null;
     private volatile ExcludeMatcher excludeCache = ExcludeMatcher.empty(PlatformPaths.isWindows());
@@ -976,10 +975,26 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
 
     // ========== Exclude Matcher Cache ==========
 
+    /**
+     * The resolved exclude-patterns JSON, or {@code ""}. {@code globalOrNull} because sync batches
+     * can be driven before the store is published; no excludes is the safe answer there.
+     *
+     * <p>Package-private so the tempdoc 883 slice-2 rewiring (settings.json at ordinal 300 instead
+     * of the promoted sysprop) has a direct test; {@code getExcludeMatcher} is unreachable without
+     * a live gRPC client.
+     */
+    static String resolvedExcludePatterns() {
+        var store = io.justsearch.configuration.resolved.ConfigStore.globalOrNull();
+        if (store == null) return "";
+        String raw = store.get().ui().excludePatterns();
+        return raw == null ? "" : raw;
+    }
+
     private ExcludeMatcher getExcludeMatcher() {
         boolean windows = PlatformPaths.isWindows();
-        String raw = SystemAccess.sysProp(EXCLUDE_SYS_PROP, "");
-        raw = raw == null ? "" : raw;
+        // String-equality cache on the raw JSON, unchanged: a resolved value is the same kind of
+        // immutable string the sysprop was, and ConfigStoreRebuilder swaps it wholesale.
+        String raw = resolvedExcludePatterns();
         if (raw.isBlank()) {
             excludeRawCache = "";
             excludeCache = ExcludeMatcher.empty(windows);
@@ -989,12 +1004,11 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
             return excludeCache;
         }
         synchronized (excludeLock) {
-            String raw2 = SystemAccess.sysProp(EXCLUDE_SYS_PROP, "");
-            raw2 = raw2 == null ? "" : raw2;
+            String raw2 = resolvedExcludePatterns();
             if (raw2.equals(excludeRawCache)) {
                 return excludeCache;
             }
-            ExcludeMatcher next = ExcludeMatcher.fromSyspropJson(raw2, windows);
+            ExcludeMatcher next = ExcludeMatcher.fromRawJson(raw2, windows);
             excludeRawCache = raw2;
             excludeCache = next;
             return next;
@@ -1204,7 +1218,8 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return resp.getJobsList().stream()
                 .map(j -> new IndexingService.FailedJobInfo(
                         j.getPath(), j.getErrorMessage(), j.getAttempts(),
-                        j.getLastUpdatedMs(), j.getCollection()))
+                        j.getLastUpdatedMs(), j.getCollection(),
+                        j.getState().isEmpty() ? "FAILED" : j.getState()))
                 .toList();
     }
 
@@ -1225,7 +1240,8 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return resp.getJobsList().stream()
                 .map(j -> new IndexingService.FailedJobInfo(
                         j.getPath(), j.getErrorMessage(), j.getAttempts(),
-                        j.getLastUpdatedMs(), j.getCollection()))
+                        j.getLastUpdatedMs(), j.getCollection(),
+                        j.getState().isEmpty() ? "FAILED" : j.getState()))
                 .toList();
     }
 

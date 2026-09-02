@@ -4,6 +4,8 @@ type: decision
 status: accepted - format superseded in part by tempdoc 564
 description: "The catalog Category of the contract substrate used protobuf enums + a companion metadata message. Superseded in part by tempdoc 564 (proto demoted to a derived view)."
 date: 2026-06-09
+probes: none - format superseded in part by tempdoc 564; the surviving half is owned by ADR-0039 probes.
+last_reviewed: 2026-09-02
 ---
 
 
@@ -19,6 +21,8 @@ date: 2026-06-09
 ## Status
 
 Accepted **in principle** (catalogs are a first-class contract Category; no parallel hand-authored enums) — but the **proto-as-source realization is superseded in part by tempdoc 564** (record-as-IDL; proto demoted). The Category framing stands; its V1 format follows ADR-0040 into supersession.
+
+**Where the surviving mechanism lives (added 2026-09-02):** the record-as-IDL projection register [`governance/contract-surfaces.v1.json`](../../governance/contract-surfaces.v1.json) and its emitter [`scripts/codegen/gen-wire-schema-types.mjs`](../../scripts/codegen/gen-wire-schema-types.mjs) are what actually projects contract types today; the decisions that still hold are [ADR-0038](0038-wire-contract-source-of-truth.md) (wire contract as a first-class artifact) and [ADR-0039](0039-contract-substrate.md) (the substrate, narrowed 2026-09-02 to the one registered `wire` Category — no catalog Category is registered).
 
 ## Decision
 

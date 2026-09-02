@@ -1,5 +1,5 @@
 # config-surface ratchet — tempdoc 799 K.4. <metric> <count> <date>
 # Produced from scripts/docs/generate-runtime-config-matrix.mjs. Only ratchets DOWN.
-yaml_keys 112 2026-08-19
-env_sysprop_pairs 243 2026-08-19
+yaml_keys 108 2026-09-02
+env_sysprop_pairs 246 2026-09-02
 config_keys 56 2026-07-30

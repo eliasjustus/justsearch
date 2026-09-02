@@ -358,7 +358,8 @@ public class IndexingController {
    * <p>POST /api/indexing/excludes/apply
    *
    * <p>Notes:
-   * - Patterns come from {@code -Djustsearch.ui.exclude_patterns} (mirrored from settings v2).
+   * - Patterns come from the resolved {@code justsearch.ui.exclude_patterns} (settings.json at
+   *   ordinal 300; env var / {@code -D} still win at 400 / 500).
    * - Deletion is delegated to the Worker via gRPC (no Lucene/queue DB IO in Head).
    * - This is explicit, user-triggered cleanup; it does not run automatically in the background.
    */
@@ -676,7 +677,7 @@ public class IndexingController {
                   j -> {
                     Map<String, Object> m = new java.util.LinkedHashMap<>();
                     m.put("pathHash", sha256Hex(j.path() == null ? "" : j.path()));
-                    m.put("state", "FAILED");
+                    m.put("state", j.state() == null || j.state().isBlank() ? "FAILED" : j.state());
                     m.put("attempts", j.attempts());
                     m.put("lastUpdatedMs", j.lastUpdatedMs());
                     m.put("errorMessage", j.errorMessage() == null ? "" : j.errorMessage());
@@ -760,7 +761,7 @@ public class IndexingController {
                   j -> {
                     Map<String, Object> m = new java.util.LinkedHashMap<>();
                     m.put("pathHash", sha256Hex(j.path() == null ? "" : j.path()));
-                    m.put("state", "FAILED");
+                    m.put("state", j.state() == null || j.state().isBlank() ? "FAILED" : j.state());
                     m.put("attempts", j.attempts());
                     m.put("lastUpdatedMs", j.lastUpdatedMs());
                     m.put("errorMessage", j.errorMessage() == null ? "" : j.errorMessage());

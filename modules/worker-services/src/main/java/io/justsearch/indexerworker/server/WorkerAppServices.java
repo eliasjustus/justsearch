@@ -5,6 +5,7 @@ import io.justsearch.indexerworker.bgem3.BgeM3Encoder;
 import io.justsearch.indexerworker.disambiguation.DisambiguationService;
 import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexerworker.services.GrpcHealthService;
 import io.justsearch.indexerworker.services.GrpcIngestService;
@@ -49,7 +50,7 @@ public interface WorkerAppServices extends Closeable {
    * by {@code KnowledgeServer} (which owns it across app-service reconstructions), not created
    * here.
    */
-  io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing();
+  IndexingPacing indexingPacing();
 
   // --- Deferred model wiring (distributes to internal services) ---
 

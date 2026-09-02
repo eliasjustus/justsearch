@@ -79,7 +79,7 @@ public record Surface(
     Optional<SurfaceStateSchema> stateSchema,
     RiskTier riskTier,
     Altitude altitude,
-    List<SurfaceRef> members) implements Provenanced {
+    List<SurfaceRef> members) implements Provenanced, PreciseWire {
 
   public Surface {
     Objects.requireNonNull(id, "id");
@@ -92,8 +92,10 @@ public record Surface(
     // Tempdoc 550 WA-4: navigating TO a surface traverses the same (SourceTier × RiskTier)
     // lattice as an Operation invocation, so "all actions traverse the spine" (538) holds
     // for Navigation too. Default LOW → Navigation × any tier = AUTO (no behavior change);
-    // only a surface that exposes destructive state declares higher. Backend-only (read by
-    // BackendIntentRouter.forwardNavigation); not part of the FE surface wire payload.
+    // only a surface that exposes destructive state declares higher. Read by
+    // BackendIntentRouter.forwardNavigation. It DOES ride the surfaces wire (`riskTier` is a
+    // required property of surface.v1.json, this record being PreciseWire); the FE simply does
+    // not read it.
     riskTier = riskTier == null ? RiskTier.LOW : riskTier;
     // Tempdoc 571: altitude is the governing axis (home + core-vs-plugin eligibility). PRODUCT is the
     // benign default; DIAGNOSTIC / TRUST are declared explicitly and witnessed by the surface-altitude

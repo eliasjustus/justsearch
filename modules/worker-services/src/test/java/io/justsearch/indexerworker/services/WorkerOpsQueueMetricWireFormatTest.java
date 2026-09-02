@@ -61,6 +61,27 @@ final class WorkerOpsQueueMetricWireFormatTest {
   }
 
   @Test
+  @DisplayName("the metric names are pinned literally")
+  void metricNamesArePinned() {
+    // The names ARE the contract — RISK-002's row and any dashboard refer to them as strings. A
+    // test that only compares constants to themselves stays green through a rename that silently
+    // breaks every external reference.
+    assertEquals(
+        "worker.job_queue.enqueue_rate_per_min",
+        WorkerOpsMetricCatalog.JOB_QUEUE_ENQUEUE_RATE_PER_MIN);
+    assertEquals(
+        "worker.job_queue.dequeue_rate_per_min",
+        WorkerOpsMetricCatalog.JOB_QUEUE_DEQUEUE_RATE_PER_MIN);
+    assertEquals(
+        "worker.job_queue.lock_wait_max_ms", WorkerOpsMetricCatalog.JOB_QUEUE_LOCK_WAIT_MAX_MS);
+    assertEquals(
+        "worker.job_queue.lock_wait_avg_ms", WorkerOpsMetricCatalog.JOB_QUEUE_LOCK_WAIT_AVG_MS);
+    assertEquals(
+        "worker.job_queue.outcome.total", WorkerOpsMetricCatalog.JOB_QUEUE_OUTCOME_TOTAL);
+    assertEquals("outcome_class", QueueOutcomeTags.KEY_OUTCOME_CLASS);
+  }
+
+  @Test
   @DisplayName("emitted queue metrics reach the NDJSON with their tag values intact")
   void queueMetricsReachTheWire() throws Exception {
     String ndjson;

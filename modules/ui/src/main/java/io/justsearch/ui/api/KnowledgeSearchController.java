@@ -723,7 +723,15 @@ public class KnowledgeSearchController {
       //  - regular file: keep the legacy submitBatch single-file path (no walk needed).
       // ExcludeGlobs is no longer applied Head-side; the equivalent is handled by
       // WorkerIngestionAuthority.shouldSkip plus the per-request exclude_globs supplied here.
-      List<String> excludeGlobs = ExcludeGlobs.fromRawJsonArray(io.justsearch.configuration.EnvRegistry.UI_EXCLUDE_PATTERNS.get().orElse("")).patterns();
+      // Tempdoc 883 decision 4 slice 2: the RESOLVED list (settings.json 300, env 400, -D 500), not
+      // the sysprop the settings promotion used to mirror it into. globalOrNull because an ingest
+      // request must not 500 on a store that is not up yet; no excludes is the safe answer.
+      io.justsearch.configuration.resolved.ConfigStore excludeStore =
+          io.justsearch.configuration.resolved.ConfigStore.globalOrNull();
+      List<String> excludeGlobs =
+          ExcludeGlobs.fromRawJsonArray(
+                  excludeStore == null ? "" : excludeStore.get().ui().excludePatterns())
+              .patterns();
       // Tempdoc 811 (C-2a): single files are grouped by resolved collection so one request can mix
       // in-root (inherited tag) and out-of-root (mcp-ingest) paths without forcing one label on all.
       Map<String, List<Path>> singleFilesByCollection = new java.util.LinkedHashMap<>();

@@ -76,4 +76,18 @@ tasks.named<Test>("test") {
       "deadcode.reportPath",
       rootProject.layout.projectDirectory.file("tmp/dead-code-jvm-report.json").asFile.absolutePath,
   )
+
+  // SystemAccessFunnelTest ratchets against a checked-in file OUTSIDE any source set. Without
+  // declaring it as an input, Gradle considers the task up to date after the allowlist changes and
+  // the ratchet silently stops running locally — measured while building it (a deliberately bogus
+  // entry produced BUILD SUCCESSFUL in 750ms because nothing re-ran). Passing the resolved path as
+  // a property additionally frees the test from having to guess the repo root from its working
+  // directory.
+  val sysaccessAllowlist =
+      rootProject.layout.projectDirectory.file("gates/config-surface/sysaccess-allowlist.txt")
+  inputs
+      .file(sysaccessAllowlist)
+      .withPropertyName("sysaccessAllowlist")
+      .withPathSensitivity(PathSensitivity.RELATIVE)
+  systemProperty("sysaccess.allowlistPath", sysaccessAllowlist.asFile.absolutePath)
 }

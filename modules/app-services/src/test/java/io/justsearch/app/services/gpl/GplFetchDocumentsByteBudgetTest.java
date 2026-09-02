@@ -54,7 +54,8 @@ import org.mockito.quality.Strictness;
 final class GplFetchDocumentsByteBudgetTest {
 
   private static final int GPL_BATCH_SIZE = 50;
-  private static final int WORKER_CONTENT_CAP_CHARS = 200_000;
+  private static final int WORKER_CONTENT_CAP_CHARS =
+      GrpcMessageLimits.MAX_DOCUMENT_CONTENT_CHARS;
 
   @TempDir Path tempDir;
 

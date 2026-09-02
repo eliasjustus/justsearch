@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "kind": "adr-premise-probe-register.v1",
+  "note": "Fixture register for the adr-coverage negative self-test. `fixture-count-drifted` is the count-probe shape (ADR-0015's): the register declares 3, the tree has 1, so the ADR's premise no longer holds and the gate must fail with adr-coverage/probe-failed.",
+  "probes": [
+    {
+      "id": "fixture-count-drifted",
+      "adr": "0002",
+      "premise": "There are exactly three widgets, and the count IS the decision.",
+      "kind": "grep-present",
+      "pattern": "widget",
+      "paths": ["sample/foo.txt"],
+      "expect": 3
+    }
+  ]
+}

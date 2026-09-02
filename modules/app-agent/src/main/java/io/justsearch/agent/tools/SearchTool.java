@@ -4,6 +4,7 @@ package io.justsearch.agent.tools;
 import tools.jackson.databind.JsonNode;
 import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.core.util.ContextBudget;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequest;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequestFiltersBuilder;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
@@ -29,11 +30,11 @@ import java.util.function.Supplier;
  */
 public final class SearchTool implements OperationHandler {
   // Three-layer truncation for search results delivered to the LLM (see tempdocs 208, 213):
-  // Layer 1 (formatResults): sizes the WHOLE emitted string under MAX_TOOL_RESULT_CHARS by
+  // Layer 1 (formatResults): sizes the WHOLE emitted string under the Layer-2 cap by
   //   construction — summary reserved first, then every hit's identity block, then excerpts with
   //   whatever is left, spread top-down so a dropped hit is always a tail hit and is announced.
   //   — 800-char per-region cap preserved as safety net for very long individual regions.
-  // Layer 2 (AgentLoopService.truncateForContext): hard cut at MAX_TOOL_RESULT_CHARS.
+  // Layer 2 (AgentContextCompressor.truncate): hard cut at ToolResultCarrier.layerTwoCapChars.
   // Layer 3 (AgentLoopService.compressToolMessagesForContext): strips Excerpt: lines from
   //   older tool messages to free context for subsequent iterations.
   // The k=3 default was set by tempdoc 213, superseding limit-5 from tempdoc 208 compression work.
@@ -142,6 +143,13 @@ public final class SearchTool implements OperationHandler {
   private final SearchCallback searchCallback;
   private final AgentToolPaths.RootsView rootsView;
 
+  /**
+   * The live per-call budget (tempdoc 883 decision 3). The result-set cap used to come from a
+   * {@code static final} frozen at class-init; it is now a fraction of the window the running
+   * server actually has, read per call.
+   */
+  private final Supplier<ContextBudget> budget;
+
   public SearchTool(SearchCallback searchCallback) {
     this(searchCallback, (Supplier<List<BrowseTool.RootInfo>>) null);
   }
@@ -153,8 +161,22 @@ public final class SearchTool implements OperationHandler {
 
   /** Tempdoc 877 §2.4 — the shared roots view {@code AgentToolFactory.assemble} builds once. */
   public SearchTool(SearchCallback searchCallback, AgentToolPaths.RootsView rootsView) {
+    this(searchCallback, rootsView, null);
+  }
+
+  /**
+   * Tempdoc 883 decision 3 — the composition-root constructor: roots view plus the live context
+   * budget. A null budget supplier falls back to the no-server budget, which is what an
+   * inference-less caller (a test, a boot before activation) actually has.
+   */
+  public SearchTool(
+      SearchCallback searchCallback,
+      AgentToolPaths.RootsView rootsView,
+      Supplier<ContextBudget> budget) {
     this.searchCallback = searchCallback;
     this.rootsView = rootsView == null ? AgentToolPaths.RootsView.of(null) : rootsView;
+    this.budget =
+        budget == null ? () -> io.justsearch.agent.AgentContextBudgets.forCall(null) : budget;
   }
 
   @Override
@@ -393,7 +415,7 @@ public final class SearchTool implements OperationHandler {
    * overshot {@code AgentContextCompressor}'s hard cut, and the tail of the list — the later,
    * lower-ranked hits and the "Found N results" summary itself — died inside Layer 2 without a
    * trace. Here the summary is reserved first, and every hit is charged the FULL length of every
-   * line it writes, so the returned string is {@code <= layerTwoCapChars()} rather than
+   * line it writes, so the returned string is {@code <= layerTwoCapChars(budget)} rather than
    * approximately so.
    *
    * <p><b>Identity is never the part that gets cut.</b> A first version of this budget let a hit
@@ -405,16 +427,14 @@ public final class SearchTool implements OperationHandler {
    * each guaranteed its header and path with the excerpt budget free to fall to zero, and whatever
    * did not fit is STATED by {@link #omittedNotice} rather than silently missing.
    */
-  private static String formatResults(KnowledgeSearchResponse response) {
-    return formatResults(response, io.justsearch.agent.ToolResultCarrier.layerTwoCapChars());
+  private String formatResults(KnowledgeSearchResponse response) {
+    return formatResults(
+        response, io.justsearch.agent.ToolResultCarrier.layerTwoCapChars(budget.get()));
   }
 
   /**
-   * {@link #formatResults(KnowledgeSearchResponse)} with the cap as a parameter. The cap it is
-   * called with in production ({@code ToolResultCarrier.layerTwoCapChars()}) is a {@code static
-   * final} frozen at class-init, so a constrained-budget test cannot set it at runtime without
-   * becoming order-dependent on whichever test first touched {@code AgentContextCompressor}. Passing
-   * it makes the constrained path directly testable.
+   * {@link #formatResults(KnowledgeSearchResponse)} with the cap as a parameter, so the
+   * constrained-budget path is directly testable without standing up a window.
    */
   static String formatResults(KnowledgeSearchResponse response, int capChars) {
     List<KnowledgeSearchResponse.Hit> hits = response.results();

@@ -2,10 +2,12 @@
 package io.justsearch.app.services.config;
 
 import io.justsearch.app.api.UiSettings;
+import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.configuration.resolved.ResolvedConfigBuilder;
 import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.ObjectMapper;
@@ -29,13 +31,40 @@ public final class ConfigStoreRebuilder {
   private static final Logger log = LoggerFactory.getLogger(ConfigStoreRebuilder.class);
   private static final ObjectMapper JSON = JsonMapper.builder().build();
 
+  /**
+   * The boot-time hardware probe, so a rebuild does not silently drop ordinal 150.
+   *
+   * <p>{@link #rebuild} re-derives the config from scratch, but ordinal-150 values do not come from
+   * any source it can re-read: the probe runs once, at startup, in the Head. Before tempdoc 883 the
+   * only ordinal-150 values were GPU flags, and they survived a rebuild by ALSO being written as
+   * system properties — which is the promotion pattern 883 deletes, and which resolves at ordinal
+   * 500 and so reports as {@code jvm_arg}. The derived context window must not acquire the same
+   * lie, so the probe result is remembered here and re-contributed at its own ordinal instead.
+   *
+   * <p>Process-wide static for the same reason {@code ConfigStore.setGlobal} is: there is one
+   * hardware probe per process, and the four services that call {@link #rebuild} have no path to it.
+   */
+  private static volatile Map<String, String> autoDetected = Map.of();
+
   private ConfigStoreRebuilder() {}
+
+  /**
+   * Records the startup hardware probe (ordinal 150) so later rebuilds keep it.
+   *
+   * <p>Called once by {@code HeadlessApp} with the same map it passes to
+   * {@link ResolvedConfigBuilder#contributeAutoDetected} — keeping the initial build and every
+   * rebuild on one set of values by construction.
+   */
+  public static void rememberAutoDetected(Map<String, String> detected) {
+    autoDetected = detected == null ? Map.of() : Map.copyOf(detected);
+  }
 
   /**
    * Rebuilds the ResolvedConfig from all sources and swaps it into the given ConfigStore.
    *
-   * <p>Re-reads env vars, system properties, YAML, and UI settings. Notifies ConfigStore listeners
-   * of any changes.
+   * <p>Re-reads env vars, system properties, YAML, and UI settings, and re-contributes the
+   * remembered startup hardware probe at ordinal 150 (see {@link #rememberAutoDetected}). Notifies
+   * ConfigStore listeners of any changes.
    *
    * @param store the ConfigStore to update (if null, this is a no-op)
    * @param settings current UI settings (if null, UI settings contribution is skipped)
@@ -44,6 +73,7 @@ public final class ConfigStoreRebuilder {
     if (store == null) return;
     try {
       ResolvedConfigBuilder builder = ResolvedConfig.builder();
+      builder.contributeAutoDetected(autoDetected);
       builder.contributeBaseSources();
       if (settings != null) {
         contributeUiSettings(builder, settings);
@@ -64,7 +94,13 @@ public final class ConfigStoreRebuilder {
   public static void contributeUiSettings(ResolvedConfigBuilder builder, UiSettings settings) {
     builder.putSettings("justsearch.index.base_path", settings.getIndexBasePath());
     builder.putSettings("justsearch.llm.model_path", settings.getLlmModelPath());
-    builder.putSettings("justsearch.server.exe", settings.getServerExecutablePath());
+    // ${user.home} expansion used to happen only in SettingsController's server.exe promotion, so a
+    // placeholder resolved differently before and after a settings PUT. Tempdoc 883 decision 4
+    // slice 2 deleted that promotion; the expansion moves here, where the value actually enters the
+    // resolver, and now applies on every path (boot and PUT alike).
+    builder.putSettings(
+        "justsearch.server.exe",
+        PlatformPaths.expandUserHomePlaceholders(settings.getServerExecutablePath()));
     // Tempdoc 374 sandbox round 4 finding D/E: forward the per-encoder model
     // paths that AiInstallService.applyOnnxSettings persists, so the worker's
     // resolved-config snapshot gets justsearch.<feature>.model_path keys and

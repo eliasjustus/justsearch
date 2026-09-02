@@ -59,9 +59,11 @@ import org.slf4j.LoggerFactory;
 /**
  * gRPC Search service implementation supporting text, vector, and hybrid search.
  *
- * <p>Executes search queries against the Lucene index and returns results.
- * This service does NOT respect the "breath holding" logic - user queries
- * take priority over background CPU savings.
+ * <p>Executes search queries against the Lucene index and returns results. Every method here is
+ * <b>foreground</b>: a {@code ServerInterceptor} counts each call in the Worker's foreground-load
+ * gauge for its duration, and the indexing loop throttles itself to a minimum duty while any is in
+ * flight (tempdoc 885 item 3). Search itself is never throttled — it is what indexing yields to.
+ * The one exception is {@code ListAllDocumentIds}, whose caller is a background pager, not a user.
  *
  * <p>Content returned via gRPC is trimmed to {@link #MAX_CONTENT_CHARS} to prevent
  * memory issues with very large documents.
@@ -73,8 +75,12 @@ import org.slf4j.LoggerFactory;
 public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImplBase {
   private static final Logger log = LoggerFactory.getLogger(GrpcSearchService.class);
 
-  /** Maximum content characters to return via gRPC to prevent memory issues. */
-  private static final int MAX_CONTENT_CHARS = 200_000;
+  /**
+   * Maximum content characters to return via gRPC to prevent memory issues. Shared with the Head's
+   * {@code BoundedDocumentFetch} pager, which sizes its byte budget by this number.
+   */
+  private static final int MAX_CONTENT_CHARS =
+      io.justsearch.ipc.grpc.GrpcMessageLimits.MAX_DOCUMENT_CONTENT_CHARS;
 
   /** Default/max slice sizes for FetchDocumentSlice. */
   private static final int DEFAULT_SLICE_CHARS = 20_000;

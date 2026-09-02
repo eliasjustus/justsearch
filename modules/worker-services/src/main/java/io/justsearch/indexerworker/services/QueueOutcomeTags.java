@@ -17,11 +17,14 @@ import java.util.Set;
 public record QueueOutcomeTags(String outcomeClass) implements TagSchema {
 
   static final String KEY_OUTCOME_CLASS = "outcome_class";
+
+  /** Tag value for an untyped failure — the legacy {@code markFailed(Path, String)} path. */
+  public static final String UNKNOWN = "UNKNOWN";
   private static final Set<String> KEYS = Set.of(KEY_OUTCOME_CLASS);
   private static final AttributeKey<String> ATTR = AttributeKey.stringKey(KEY_OUTCOME_CLASS);
 
   public QueueOutcomeTags {
-    outcomeClass = outcomeClass == null || outcomeClass.isBlank() ? "UNKNOWN" : outcomeClass;
+    outcomeClass = outcomeClass == null || outcomeClass.isBlank() ? UNKNOWN : outcomeClass;
   }
 
   @Override

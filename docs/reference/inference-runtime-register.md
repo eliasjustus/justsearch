@@ -234,6 +234,110 @@ Design choices in the current inference runtime, with rationale.
 - **Verification:** `NativeSessionHandleConcurrentStressTest` for concurrency baseline (10 threads covering #3 CPU recreation + #5 lifecycle-callback + post-close acquire; invariants #1/#2/#4 require CUDA, parked as tempdoc 398; metadata-read thread retired in §14.25 FD-ProbeDeletion); `OrtSessionOptionsTest` for applier parity + causality invariants; `RuntimePolicyResolverTest` for profiling round-trip + CPU-variant zero-arena invariant (§14.28 U2); `ClosurePropertyTest` for §7.5 pure-encoder contract (denylist-by-default, §14.28 U8); `InferenceSurfaceTest` + `InferenceCompositionRootComposeTest` for compose orchestration shape (§14.28 U6/U7); `GrpcSearchServiceModelReadyLatchTest` for the query-handler gate (§14.28 U3); `SessionPoliciesControllerTest` for the gRPC-bridged diagnostic (§14.28 U4); jseval pipeline anchor (§14.7.3): 191.1 s baseline. Post-§14.28 reference run: 208 s total / 24.9 docs/sec / nDCG@10 = 0.750 on 300 scifact queries (commit `0ed0321ce`, 2026-04-21).
 - **Revisit when:** 395 A1/A4/A7 adaptive policy work starts (resolver now has a real read-path; §14.28 U2 further made the record self-describing); 394 P3 scheduler lands new `RunOptions` fields (`SessionOptionsApplier.buildGpuRunOptions` is the single setter site); tempdoc 400 observability work identifies a structural gap that motivates additional runtime assertions on the closure property.
 
+### D-010: llama-server context window is a derived resource - SHIPPED (tempdoc 883, PR 1)
+
+- **Choice:** `-c` is no longer a user preference. `ContextWindowPolicy`
+  (`modules/app-inference`) produces a **ladder** - top rung 32768 with GPU layers, 8192 at
+  `-ngl 0`, then 16384 -> 8192 -> 4096. The top rung is a **budget, not a fit** (measured evidence
+  below): the recorded reason for an un-stepped launch is `top-rung`, never `fit` - and the launch steps down one rung on a
+  `PROCESS_EXITED` startup failure (the same seam `relaunchWithoutReasoningBudget` uses). The Head
+  contributes the top rung at `ORDINAL_AUTO_DETECT` (150, `auto_detected` / `hardware_probe`)
+  AFTER GPU detection, so `/api/debug/effective-config` explains the window with the mechanism that
+  already explains GPU detection. `UiSettings.contextLength` `0` = auto (settings schema bumped to
+  2, migrating the old 4096 default); the settings-to-sysprop promotion and the
+  `justsearch.context.size.source` marker are deleted. An explicit
+  `justsearch.context.size` above ordinal 150 is a ONE-RUNG ladder: honoured or failed loud.
+- **Slots + KV + fit:** `-np 2 -kvu -ctk q8_0 -ctv q8_0 -fa on -fit off`, keys `justsearch.llm.slots` (default 2,
+  clamped [1,8]) and `justsearch.llm.kv_type` (default `q8_0`, restricted to llama.cpp cache types).
+  `-kvu` is mandatory next to an explicit `-np`: llama-server enables `kv_unified` only when the
+  slot count is automatic, so `-c 32768 -np 2` alone gives `n_ctx_seq` 16384 while `/props` still
+  reports `n_ctx` 32768. Two slots is a SCHEDULING choice (a background delegate must not evict the
+  foreground prompt-cache prefix, tempdoc 841), not a memory one. `-fit off` is what makes the
+  ladder mean anything: b8571 defaults `--fit on` (verified against the bundled binary's `--help`:
+  `-fit, --fit [on|off] ... default: on`) and it MAXIMIZES rather than fits, so leaving a
+  memory-adjusting pass running next to an explicit `-c` risks absorbing the hard abort the
+  step-down reads as its signal.
+- **Rationale:** the model trains at 262k; the app ran it at 4096 with four engine-chosen slots and
+  an f16 KV cache. Measured on the bundled b8571 (tempdoc 883 independent review): `-fa auto`
+  resolves to on for CUDA and for `-ngl 0` but is passed explicitly because a q8_0 V-cache aborts
+  the launch without it; KV at 32k q8_0 is 544 MiB on both profiles; `--fit` (default on) MAXIMIZES
+  rather than fits, choosing 242,944 tokens / 4 GB KV when `-c` is omitted, so an explicit `-c` is
+  required. No VRAM arithmetic and no GGUF reader: Qwen3.5 is a Gated-Delta-Net hybrid (8 of 32
+  layers carry KV, plus ~50 MiB/slot of recurrent state independent of n_ctx; 32 KiB/token f16,
+  17 KiB/token q8_0), so any dense-attention formula is ~4x wrong, and `/props` on b8571 does not
+  expose `n_ctx_train`. Free VRAM is recorded on the activation record, never used as an input.
+- **What is intent vs observation:** `/api/inference/status.contextWindow` and the runtime
+  manifest's `ai.contextWindow` (`{rung, reason, freeVramBytes, slots, kvType}`) are the INTENT.
+  `/props` `n_ctx` (published as `llmContextTokens`) and `n_ctx_seq` in the llama-server log are the
+  OBSERVATION and stay authoritative. `ServerPropsOps` compares the readback against the LAUNCHED
+  rung, not `InferenceConfig.contextSize()` - the latter is stale by construction after a step-down.
+  Note `/props.n_ctx` reports the TOTAL context even when `kv_unified` is off (each request then
+  gets `n_ctx / n_parallel`), so it cannot by itself prove a request gets the full window.
+- **Adopted servers are judged by the floor, not by our rung:** `externalServer.contextTooSmall`
+  compares an adopted BYO server's window against `ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS`
+  (4096, the ladder's bottom rung), not against the derived 32k we would have chosen for a server
+  we launched ourselves.
+- **Measured live 2026-09-02** (b8571 `8571 (e397d3885)`, Qwen3.5-9B-Q4_K_M, RTX 4070 12281 MiB,
+  standalone, argv as shipped):
+  - `-c 262144` **LOADS**: 33/33 layers, `n_ctx_seq 262144`, `kv_unified true`, KV 4352 MiB;
+    model 5060.88 + KV 4352.00 + recurrent 100.50 + compute 808.02 = **10,321 MiB of 12,281**. The
+    model's whole training context fits, so the 32k top rung is a deliberate budget, not a limit.
+  - `-c 32768`: KV **544.00 MiB**, `n_ctx_seq == n_ctx == 32768`, `kv_unified true`, 33/33 layers,
+    6,206 MiB total. Reproduces the review fold's [R2] figure to the MiB and confirms [R1]'s
+    halving does NOT occur with `-np 2 -kvu`.
+  - `-c 1000000`: KV 16604.75 MiB -> `CUDA error: out of memory` -> **exit 127**. An unfittable
+    rung is a hard, nonzero-exit abort - what `awaitServerHealth` turns into `PROCESS_EXITED` and
+    the step-down acts on. `-fit off` does not mask it.
+  - **KV cost at q8_0 is exactly linear: 17.0 KiB/token** (544 MiB / 32768 == 4352 MiB / 262144),
+    for this model's 8-of-32 KV-carrying layers.
+  - llama-server's `n_ctx_seq (32768) < n_ctx_train (262144) -- the full capacity of the model will
+    not be utilized` at the top rung is **expected**, not a defect to chase.
+- **Why the budget is 32k, not what fits:** (a) prefill latency per RAG ask scales with the prompt,
+  and the budget fractions fill whatever window exists, so the rung bounds worst-case latency;
+  (b) KV is reserved up front for the whole `n_ctx` whether used or not, and the same card holds
+  the embedding / SPLADE / NER encoders, the reranker and VDU batches - 544 MiB at 32k versus
+  ~2.2 GB at 128k is headroom kept on purpose; (c) the ladder exists to step DOWN on small cards,
+  not to maximize on large ones. Users who want more set `contextLength` /
+  `JUSTSEARCH_CONTEXT_SIZE`, which has no upper clamp below `n_ctx_train`.
+- **Now an ADR.** [ADR-0047](../decisions/0047-context-window-is-a-derived-resource.md) records the
+  decision, the alternatives it rejected (raise the default; compute the window from free VRAM; let
+  `--fit` choose; hand-scale the downstream constants; mirror the rung into a sysprop) and its
+  reassess triggers, with premise probes in `governance/adr-probes.v1.json`
+  (`adr-0047-fit-off-explicit`, `adr-0047-no-context-size-promotion`, `adr-0047-ladder-policy-test`,
+  `adr-0047-budgets-are-window-fractions`, `adr-0047-no-window-blind-threshold`). This entry stays
+  the measurement record; the ADR is the decision record.
+- **Prompt-side budgets are downstream of this entry, and have ONE authority** (tempdoc 883 PR 2):
+  `ContextBudget` (`modules/core`, `io.justsearch.core.util`), built per request from the observed
+  window plus that request completion reserve. Every derived quantity is
+  `min(fraction x inputBudget, cap)`: hierarchical threshold = `inputBudget` (no cap), section
+  target = `min(ib/2, 4096)`, external-context = `min(ib/4, 2048)`, agent read page =
+  `min(ib/2, 4096)`, tool-result cap = `min(ib/4, 2048)`, agent completion reserve =
+  `min(configured cap, window/4)`. Anything that needs "how much room does this turn have" asks
+  `ContextBudget`; a second window walk is a fork. One known survivor:
+  `AgentLoopService.java:456-460` still hand-walks `llmContextTokens()` else
+  `configuredContextTokens()` for the run ECONOMIC budget — it lacks the fallback rung and can
+  NPE-unbox where `ContextBudget` cannot, and routing it through
+  `ContextBudget.of(...).windowTokens()` is open work (883 §C.6b).
+- **Measured 2026-09-02, q8_0 vs f16 at the 32768 rung** (standalone, 3 x 200 generated tokens,
+  `cache_prompt:false`): q8_0 median **69.66 tok/s** at KV 544.00 MiB; f16 median **69.54 tok/s** at
+  KV 1024.00 MiB. q8_0 is 0.2% FASTER, inside run-to-run noise, while halving the cache — design
+  decision 2 revisit trigger ("if q8_0 exceeds 10%, make f16 the default at 16k and below") does NOT
+  fire. See Q-002, whose tok/s half is answered.
+- **Evidence:** tempdoc 883 (contract, independent review fold R1-R4, §B pre-impl pass, §C
+  post-impl pass, §D review fold, three §Live verification windows). Live acceptance is complete
+  except two named gaps: the `JUSTSEARCH_CONTEXT_SIZE` env arm at ordinal 400 (needs an
+  orchestrator-owned restart with the variable in the backend process environment — the ordinal
+  chain is verified at 150 / 300 / 500, not observed at 400), and a successful rung-walk witness (a
+  lower rung actually loading after a higher one aborted; the inter-rung VRAM gap of 272 MiB is
+  smaller than the ~280 MiB free-VRAM noise on the dev card, so it needs a different card or a test
+  seam). The step-down trigger, its `PROCESS_EXITED` gate and its override branch ARE live-verified.
+- **Revisit when:** co-residency is actually measured, since the top rung is a budget held FOR that
+  co-residency and a measurement could justify raising it; when lane F adds a second VRAM arbiter -
+  the window, `gpuLayers`, slots, KV type and reranker/VDU co-residency all compete for the same
+  VRAM and should be one memory plan at activation, not several; or when a packaged model arrives
+  whose `n_ctx_train` is below 32768, which the ladder has no source for today. (The q8_0 tok/s
+  trigger is retired: measured above, it does not fire.)
+
 ### D-002: BGE-M3 VRAM budget — FP16+Flash at 3072 MB arena
 
 - **Choice:** FP16+Flash Attention with 3072 MB arena limit (`JUSTSEARCH_BGE_M3_GPU_MEM_MB=3072`).
@@ -316,6 +420,32 @@ picking up items here over inventing new experiments.
 - **Evidence:** tempdoc 360 (warm-up implementation); tempdoc 356 (identified the fix).
 
 ---
+
+### Q-002: ~~What does q8_0 KV cost in tok/s on the dev GPU?~~ ANSWERED — does the 32k top rung hold under co-residency? STILL OPEN
+
+- **Half answered (2026-09-02, tempdoc 883 live window 2, F12).** q8_0 costs **nothing**: median
+  69.66 tok/s vs f16 69.54 at the same 32768 rung (3 x 200 generated tokens each,
+  `cache_prompt:false`, RTX 4070), i.e. 0.2% FASTER and inside run-to-run noise, while halving the
+  KV cache (544.00 vs 1024.00 MiB). The design revisit trigger ("if q8_0 exceeds 10%, make f16 the
+  default at the 16k rung and below") does not fire; **q8_0 stays the default at every rung.**
+  Recorded in D-010.
+- **Still open: (b), the co-residency half.** Nothing has yet measured whether 32768 holds with the
+  reranker and a VDU batch co-resident, which is the reason the rung is 32768 rather than 131072
+  ([ADR-0047](../decisions/0047-context-window-is-a-derived-resource.md) Decision 2(b), and its
+  first reassess trigger). The full 262,144-token context measurably FITS on the dev card in
+  isolation (10,321 of 12,281 MiB), so this is a budget question, not a capacity one.
+- **Original framing below.**
+
+- **Context:** tempdoc 883 decision 2 ships `-ctk q8_0 -ctv q8_0` by default and decision 1 ships a
+  32768 top rung, both argued from launch-time fit (KV at 32k q8_0 measured at 544 MiB) rather than
+  from throughput or from behaviour under load.
+- **What to measure:** (a) generation tok/s with `-ctk/-ctv q8_0` vs `f16` at the same rung, on the
+  dev RTX 4070 - the design says that if q8_0 costs more than 10%, `f16` becomes the default at the
+  16k rung and below; (b) whether the 32k rung still fits with the reranker and a VDU batch
+  co-resident, or whether the top rung should stay at 16k until that is measured (the owner's own
+  open question in 883).
+- **Instrument:** `jseval llm-bench` / `llm-gate` (F-012) for tok/s; the recorded
+  `contextWindow.reason` on `/api/inference/status` for step-downs.
 
 ## Future Work
 

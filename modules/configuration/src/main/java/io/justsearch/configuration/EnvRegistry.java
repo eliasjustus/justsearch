@@ -521,22 +521,6 @@ public enum EnvRegistry {
     EXTRACTION_SANDBOX_COMMAND(
         "justsearch.extraction.sandbox.command", "JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND"),
 
-    /** Number of persistent extraction child processes (default 1, one request in flight each). */
-    EXTRACTION_SANDBOX_POOL(
-        "justsearch.extraction.sandbox.pool", "JUSTSEARCH_EXTRACTION_SANDBOX_POOL"),
-
-    /**
-     * Max heap for an extraction child (e.g. {@code 768m}). Default: at least 4x the largest
-     * accepted input, floor 512m.
-     */
-    EXTRACTION_SANDBOX_HEAP(
-        "justsearch.extraction.sandbox.heap", "JUSTSEARCH_EXTRACTION_SANDBOX_HEAP"),
-
-    /** Requests one extraction child handles before it is recycled (leak guard; default 500). */
-    EXTRACTION_SANDBOX_MAX_REQUESTS(
-        "justsearch.extraction.sandbox.max_requests",
-        "JUSTSEARCH_EXTRACTION_SANDBOX_MAX_REQUESTS"),
-
     // ==================== Ingestion Skip Policy (tempdoc 410 §13) ====================
 
     /**
@@ -1216,6 +1200,40 @@ public enum EnvRegistry {
      */
     APP_VERSION("justsearch.app.version", "JUSTSEARCH_APP_VERSION"),
 
+    // ==================== Append region (tempdoc 883 lane rules) ====================
+    // Keep new entries at the END of this enum so parallel lanes merge trivially.
+
+    /**
+     * llama-server parallel slots ({@code -np}). Two by default (tempdoc 883 decision 2) so a
+     * background delegate cannot evict the foreground turn's prompt-cache prefix — a scheduling
+     * choice, not a memory one. Passing {@code -np} explicitly disables llama-server's automatic
+     * {@code kv_unified}, which is why {@code -kvu} is passed alongside it.
+     */
+    LLM_SLOTS("justsearch.llm.slots", "JUSTSEARCH_LLM_SLOTS", "2"),
+
+    /**
+     * llama-server KV cache type for both K and V ({@code -ctk} / {@code -ctv}). {@code q8_0} by
+     * default (tempdoc 883 decision 2); requires flash attention, which is why {@code -fa on} is
+     * passed explicitly rather than left to {@code auto}.
+     */
+    LLM_KV_TYPE("justsearch.llm.kv_type", "JUSTSEARCH_LLM_KV_TYPE", "q8_0"),
+
+    /** Number of persistent extraction child processes (default 1, one request in flight each). */
+    EXTRACTION_SANDBOX_POOL(
+        "justsearch.extraction.sandbox.pool", "JUSTSEARCH_EXTRACTION_SANDBOX_POOL"),
+
+    /**
+     * Max heap for an extraction child (e.g. {@code 768m}). Default: at least 4x the largest
+     * accepted input, floor 512m.
+     */
+    EXTRACTION_SANDBOX_HEAP(
+        "justsearch.extraction.sandbox.heap", "JUSTSEARCH_EXTRACTION_SANDBOX_HEAP"),
+
+    /** Requests one extraction child handles before it is recycled (leak guard; default 500). */
+    EXTRACTION_SANDBOX_MAX_REQUESTS(
+        "justsearch.extraction.sandbox.max_requests",
+        "JUSTSEARCH_EXTRACTION_SANDBOX_MAX_REQUESTS"),
+
     // ==================== Foreground-contention pacing (tempdoc 885 item 3) ====================
 
     /**
@@ -1238,7 +1256,7 @@ public enum EnvRegistry {
         "JUSTSEARCH_INDEXING_FOREGROUND_COOLDOWN_MS",
         "500"),
 
-    // ==================== NRT / commit cadence (tempdoc 885 item 19) ====================
+    // ==================== NRT reopen strategy (tempdoc 885 item 19) ====================
 
     /**
      * NRT reopen strategy. {@code continuous} (default) is today's behaviour: the

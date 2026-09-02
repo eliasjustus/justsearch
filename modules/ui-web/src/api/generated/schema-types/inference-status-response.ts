@@ -14,6 +14,13 @@ export interface InferenceStatusResponse {
   activeModelId?: string;
   available?: boolean;
   configuredContextTokens?: number;
+  contextWindow?: {
+    freeVramBytes?: number | null;
+    kvType?: string | null;
+    reason?: string | null;
+    rung?: number;
+    slots?: number;
+  };
   cudaRuntimeWarning?: string;
   embeddingQueueSize?: number;
   externalServer?: {
@@ -53,6 +60,13 @@ export const inferenceStatusResponseSchema = z.strictObject({
   "activeModelId": z.string().optional(),
   "available": z.boolean().optional(),
   "configuredContextTokens": z.number().int().optional(),
+  "contextWindow": z.strictObject({
+    "freeVramBytes": z.number().int().nullable().optional(),
+    "kvType": z.string().nullable().optional(),
+    "reason": z.string().nullable().optional(),
+    "rung": z.number().int().optional(),
+    "slots": z.number().int().optional(),
+  }).optional(),
   "cudaRuntimeWarning": z.string().optional(),
   "embeddingQueueSize": z.number().int().optional(),
   "externalServer": z.strictObject({

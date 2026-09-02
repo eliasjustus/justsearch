@@ -298,9 +298,9 @@ class HttpIndexingE2ETest {
         while (System.currentTimeMillis() < deadline) {
             try {
                 attempts++;
-                // IMPORTANT: /api/knowledge/search signals user activity, which can pause indexing
-                // (foreground responsiveness / breath-holding). If we hammer search while there
-                // are jobs pending or processing, we can deadlock the test.
+                // IMPORTANT: /api/knowledge/search is foreground load, which throttles indexing to
+                // its minimum duty (tempdoc 885 item 3 — it no longer stops it outright). Hammering
+                // search while jobs are pending or processing still slows the test to a crawl.
                 JsonNode status = getKnowledgeStatus();
                 long queueDepth = status.path("queueDepth").asLong(0);
                 long processingJobs = status.path("processingJobsCount").asLong(0);
