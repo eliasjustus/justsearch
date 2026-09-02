@@ -169,6 +169,30 @@ await run('grep: paths that match no file → fail, never vacuous pass', async (
   assert.match(r.detail, /matched no files/);
 });
 
+// A `pattern` is author-supplied text in a JSON register, so a typo is a SyntaxError from
+// `new RegExp`. It must fail THIS probe, not throw out of the enforcer and take down every other
+// gate in the same run.mjs invocation (tempdoc 884 §G — found by bite-testing the ADR-0046 probes).
+await run('grep: an invalid regex fails the probe instead of crashing the kernel run', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  for (const kind of ['grep-present', 'grep-absent']) {
+    let r;
+    assert.doesNotThrow(() => {
+      // Unterminated group — the shape a hand-edited register entry actually produces.
+      r = evaluateProbe({ kind, pattern: 'this\\.app\\.start\\(("127', paths: ['a'] }, root);
+    }, `${kind} threw instead of returning a verdict`);
+    assert.equal(r.ok, false);
+    assert.match(r.detail, /is not a valid regular expression/);
+  }
+});
+
+// A `g`-flagged RegExp carries lastIndex across calls. Reusing one compiled instance across files
+// (the fix above) must not make a later file's count depend on an earlier file's match position.
+await run('grep: a reused global regex counts every file independently', async () => {
+  const root = scaffold({ 'a/one.java': 'TOK TOK', 'a/two.java': 'TOK TOK', 'a/three.java': 'TOK TOK' });
+  const r = evaluateProbe({ kind: 'grep-present', pattern: 'TOK', paths: ['a'], expect: 6 }, root);
+  assert.equal(r.ok, true, r.detail);
+});
+
 // --------------------------------------------------------------------------- kind: json-path
 
 const DOC = JSON.stringify({ categories: [{ id: 'wire' }], bundle: { windows: { nsis: { installMode: 'currentUser' } } } });
@@ -313,6 +337,87 @@ await run('file-set: missing directory → fail', async () => {
   assert.equal(evaluateProbe(fileSetProbe(), root).ok, false);
 });
 
+// --------------------------------------------------------------------------- kind: any-of
+
+const PRESENT = { kind: 'grep-present', pattern: 'KEEP_ME', paths: ['a/b.java'] };
+const ABSENT = { kind: 'grep-absent', pattern: 'KEEP_ME', paths: ['a/b.java'] };
+
+await run('any-of: first alternative passes → pass, and names which one', async () => {
+  const root = scaffold({ 'a/b.java': 'KEEP_ME' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [PRESENT, ABSENT] }, root);
+  assert.equal(r.ok, true, r.detail);
+  assert.match(r.detail, /alternative 1\/2 \(grep-present\) holds/);
+});
+
+await run('any-of: only the second alternative passes → pass', async () => {
+  const root = scaffold({ 'a/b.java': 'nothing' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [PRESENT, ABSENT] }, root);
+  assert.equal(r.ok, true, r.detail);
+  assert.match(r.detail, /alternative 2\/2 \(grep-absent\) holds/);
+});
+
+await run('any-of: ALL alternatives fail → fail, and the detail names each one', async () => {
+  const root = scaffold({ 'a/b.java': 'KEEP_ME' });
+  const r = evaluateProbe({
+    kind: 'any-of',
+    alternatives: [ABSENT, { kind: 'grep-present', pattern: 'NEVER_HERE', paths: ['a/b.java'] }],
+  }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /no alternative holds/);
+  assert.match(r.detail, /alternative 1\/2 \(grep-absent\).*now appears/s);
+  assert.match(r.detail, /alternative 2\/2 \(grep-present\).*NEVER_HERE/s);
+});
+
+await run('any-of: alternatives may be any kind, including json-path', async () => {
+  const root = scaffold({ 'a/b.java': 'nothing', 'r.json': DOC });
+  const r = evaluateProbe({
+    kind: 'any-of',
+    alternatives: [
+      { kind: 'grep-present', pattern: 'KEEP_ME', paths: ['a/b.java'] },
+      { kind: 'json-path', file: 'r.json', pointer: '/categories', expect: { count: 1 } },
+    ],
+  }, root);
+  assert.equal(r.ok, true, r.detail);
+  assert.match(r.detail, /alternative 2\/2 \(json-path\) holds/);
+});
+
+await run('any-of: missing alternatives array → fail, no throw', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const r = evaluateProbe({ kind: 'any-of' }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /declares no 'alternatives' array/);
+});
+
+await run('any-of: empty alternatives array → fail (a probe with no claim is not a probe)', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [] }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /empty 'alternatives' array/);
+});
+
+await run('any-of: a nested unknown kind fails that alternative, it does not throw', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [{ kind: 'vibes' }] }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /alternative 1\/1 \(vibes\): unknown probe kind/);
+});
+
+await run('any-of: a null alternative fails legibly rather than throwing', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const r = evaluateProbe({ kind: 'any-of', alternatives: [null] }, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /alternative 1\/1 \(no kind\)/);
+});
+
+await run('any-of: self-nesting terminates at the depth bound instead of blowing the stack', async () => {
+  const root = scaffold({ 'a/b.java': 'x' });
+  const cyclic = { kind: 'any-of', alternatives: [] };
+  cyclic.alternatives.push(cyclic);
+  const r = evaluateProbe(cyclic, root);
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /nesting exceeded/);
+});
+
 // --------------------------------------------------------------------------- engine plumbing
 
 await run('unknown kind → fail, never silently pass', async () => {
@@ -325,7 +430,7 @@ await run('unknown kind → fail, never silently pass', async () => {
 await run('PROBE_KINDS is the closed vocabulary the register may use', async () => {
   assert.deepEqual(
     [...PROBE_KINDS].sort(),
-    ['file-set', 'gate', 'grep-absent', 'grep-present', 'json-path', 'test'],
+    ['any-of', 'file-set', 'gate', 'grep-absent', 'grep-present', 'json-path', 'test'],
   );
 });
 

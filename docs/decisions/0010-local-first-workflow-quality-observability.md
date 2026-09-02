@@ -12,6 +12,8 @@ last_reviewed: 2026-09-02
 
 **Status: Superseded (tempdoc 638)** — the workflow-telemetry implementation described here was removed.
 
+**Where to read instead:** there is **no canonical successor decision** — the implementation was removed, not replaced. Current observability truth lives in [Observability & Telemetry](../explanation/08-observability.md), whose §"Workflow-Run Telemetry" records the removal (`scripts/lib/workflow-telemetry.mjs`, the bench workflow scripts, and the `tmp/workflow-telemetry/runs/` evidence store are all gone). Runtime metrics, traces and agent telemetry are unaffected and are owned by that doc.
+
 ## Status
 
 Superseded (tempdoc 638); frontmatter aligned 2026-09-01 (tempdoc 882 item 25).

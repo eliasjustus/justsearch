@@ -14,6 +14,9 @@
  *   2. `grep-absent`  / `grep-present` — the symbol/flag/file must (not) exist.
  *   3. `json-path`  — a value in a JSON register is the premise.
  *      `file-set`   — every file in a directory is registered or a reasoned exception.
+ *   4. `any-of`     — the premise holds for any of several reasons (`alternatives`, each an
+ *                     entry of any kind above). For a premise that survives a planned
+ *                     migration; never as a way to give a failing probe a second chance.
  *
  * Counts (`expect`) are permitted only where the premise IS the count (ADR-0015); they
  * are never a general growth ratchet.
@@ -23,8 +26,15 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, extname } from 'node:path';
 
 export const PROBE_KINDS = new Set([
-  'test', 'gate', 'grep-absent', 'grep-present', 'json-path', 'file-set',
+  'test', 'gate', 'grep-absent', 'grep-present', 'json-path', 'file-set', 'any-of',
 ]);
+
+/**
+ * How deep `any-of` alternatives may nest before the engine refuses. A premise that needs
+ * five levels of disjunction is not a premise; the bound also makes a self-referential
+ * register entry terminate with a legible failure instead of blowing the stack.
+ */
+const MAX_ANY_OF_DEPTH = 4;
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'build', 'tmp', '.gradle', 'dist']);
 
@@ -46,6 +56,17 @@ function collectFiles(root, rel, include, out) {
 }
 
 function countMatches(root, probe) {
+  // A `pattern` is author-supplied text in a JSON register, so a typo is a SyntaxError from
+  // `new RegExp`. Compiling it once up front and reporting it as a probe failure keeps that typo
+  // from throwing out of the enforcer and taking down every other gate in the same run.mjs
+  // invocation — the same fail-loudly-here rather than crash-everything treatment already given
+  // to unparseable ADR frontmatter and an unparseable register (tempdoc 884 §C.2/§D.7).
+  let re;
+  try {
+    re = new RegExp(probe.pattern, 'g');
+  } catch (e) {
+    return { patternError: e.message, total: 0, hits: [], scanned: 0 };
+  }
   const files = [];
   for (const p of probe.paths ?? []) collectFiles(root, p, probe.include ?? null, files);
   let total = 0;
@@ -53,7 +74,7 @@ function countMatches(root, probe) {
   for (const f of files) {
     let content;
     try { content = readFileSync(f, 'utf8'); } catch { continue; }
-    const re = new RegExp(probe.pattern, 'g');
+    re.lastIndex = 0;
     const m = content.match(re);
     if (m && m.length > 0) {
       total += m.length;
@@ -135,7 +156,10 @@ function evaluateGate(root, probe) {
 }
 
 function evaluateGrep(root, probe, mustBePresent) {
-  const { total, hits, scanned } = countMatches(root, probe);
+  const { total, hits, scanned, patternError } = countMatches(root, probe);
+  if (patternError) {
+    return { ok: false, detail: `probe pattern /${probe.pattern}/ is not a valid regular expression: ${patternError}` };
+  }
   if (scanned === 0) {
     return { ok: false, detail: `probe paths matched no files: ${(probe.paths ?? []).join(', ')}` };
   }
@@ -235,13 +259,52 @@ function evaluateFileSet(root, probe) {
 }
 
 /**
+ * A premise that holds if ANY of several mechanical restatements holds.
+ *
+ * The motivating case is a premise that is true for two different reasons across a planned
+ * migration: ADR-0007's entity boost is "retired or off", true today because the boost default
+ * is 0.0 and true after the fields are deleted. Expressing that as one probe would either go
+ * red the day the migration lands or be loosened to something that cannot fail.
+ *
+ * A failure names every alternative and why each failed — a disjunction that only said "no
+ * alternative holds" would tell the reader nothing about which half of the premise broke.
+ */
+function evaluateAnyOf(root, probe, depth) {
+  const alternatives = probe.alternatives;
+  if (!Array.isArray(alternatives)) {
+    return { ok: false, detail: `any-of probe declares no 'alternatives' array` };
+  }
+  if (alternatives.length === 0) {
+    return {
+      ok: false,
+      detail: `any-of probe declares an empty 'alternatives' array — a probe with no claim is not a probe`,
+    };
+  }
+  if (depth > MAX_ANY_OF_DEPTH) {
+    return {
+      ok: false,
+      detail: `any-of nesting exceeded ${MAX_ANY_OF_DEPTH} levels — the register entry is cyclic or over-nested`,
+    };
+  }
+  const why = [];
+  for (const [i, alt] of alternatives.entries()) {
+    const label = `alternative ${i + 1}/${alternatives.length} (${alt?.kind ?? 'no kind'})`;
+    const r = evaluateProbe(alt ?? {}, root, depth + 1);
+    if (r.ok) return { ok: true, detail: `${label} holds: ${r.detail}` };
+    why.push(`${label}: ${r.detail}`);
+  }
+  return { ok: false, detail: `no alternative holds — ${why.join('; ')}` };
+}
+
+/**
  * Evaluate one probe against a source tree.
  *
  * @param {object} probe   a `governance/adr-probes.v1.json` entry
  * @param {string} root    the tree to evaluate against (repo root, or a fixture root)
+ * @param {number} depth   `any-of` recursion depth; callers leave this at 0
  * @returns {{ok: boolean, detail: string}}
  */
-export function evaluateProbe(probe, root) {
+export function evaluateProbe(probe, root, depth = 0) {
   if (!PROBE_KINDS.has(probe.kind)) {
     return { ok: false, detail: `unknown probe kind '${probe.kind}'` };
   }
@@ -252,6 +315,7 @@ export function evaluateProbe(probe, root) {
     case 'grep-absent': return evaluateGrep(root, probe, false);
     case 'json-path': return evaluateJsonPath(root, probe);
     case 'file-set': return evaluateFileSet(root, probe);
+    case 'any-of': return evaluateAnyOf(root, probe, depth);
     default: return { ok: false, detail: `unhandled probe kind '${probe.kind}'` };
   }
 }

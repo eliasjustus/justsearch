@@ -98,6 +98,30 @@
       "expect": 2
     },
     {
+      "id": "adr-0007-entity-boost-retired-or-off",
+      "adr": "0007",
+      "premise": "ADR-0007 chose entity FACETS over a knowledge graph. Faceting shipped and is live; the separate entity_*_text BOOST fields are being retired by decision-review lane D, and the search-side boost is already off by default. The premise this probe pins is 'the entity boost is retired or off' - it must hold both before and after lane D lands.",
+      "kind": "any-of",
+      "alternatives": [
+        {
+          "kind": "grep-present",
+          "pattern": "resolveDouble\\(\"justsearch\\.search\\.entity_boost\", 0\\.0\\)",
+          "paths": [
+            "modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java"
+          ],
+          "expect": 1
+        },
+        {
+          "kind": "grep-absent",
+          "pattern": "entity_persons_text|entity_organizations_text|entity_locations_text",
+          "paths": [
+            "SSOT/catalogs/fields.v1.json"
+          ]
+        }
+      ],
+      "note": "Two alternatives, one premise across a planned migration. TODAY alternative 1 holds: justsearch.search.entity_boost defaults to 0.0 (ResolvedConfigBuilder.java:1336) and TextQueryOps only applies the boost when entityBoost > 0.0f, so the boost fields are declared but inert. AFTER lane D retires the entity_*_text fields, alternative 2 also holds and alternative 1 may disappear with the config key. This is NOT a probe that gives a failure a second chance: BOTH failing means the boost is on AND the fields still exist - i.e. the boost was re-enabled without an ADR read, which is exactly the drift to catch. Honest limit: the default is a config value, not a build constant, so an operator can still set justsearch.search.entity_boost > 0 at runtime; the probe pins the shipped default, which is what the ADR decides."
+    },
+    {
       "id": "adr-0008-settings-reset-surfaced",
       "adr": "0008",
       "premise": "An incompatible settings file is replaced with defaults and the reset is surfaced as a lifecycle condition, not swallowed.",
@@ -118,7 +142,7 @@
     {
       "id": "adr-0011-no-remote-shard",
       "adr": "0011",
-      "premise": "The Remote Shard SPI was never built: no RemoteShard symbol exists in shipped code.",
+      "premise": "The Remote Shard SPI was never built and the ADR was retired on 2026-09-02 (status 'rejected - never built'). The absence is now the decision: a single-user desktop product has no shard need, so no RemoteShard symbol may exist in shipped code. Building one fails this probe and forces a deliberate ADR change first.",
       "kind": "grep-absent",
       "pattern": "RemoteShard",
       "paths": [
@@ -189,7 +213,7 @@
     {
       "id": "adr-0018-layout-flag-absent",
       "adr": "0018",
-      "premise": "The ADR gates VLM extraction behind JUSTSEARCH_LAYOUT_ENABLED. That flag does not exist in shipped code; routing is per-extension inside a tiered fallback budget.",
+      "premise": "The ADR's 2026-09-02 amendment records that JUSTSEARCH_LAYOUT_ENABLED does not exist: the enable flag named in the original Decision section never shipped (or was removed), and VDU/VLM routing is default-on, per-extension, inside a tiered extraction-fallback budget. Re-introducing the flag name means the routing decision changed and this ADR must be re-decided, not re-gated.",
       "kind": "grep-absent",
       "pattern": "JUSTSEARCH_LAYOUT_ENABLED",
       "paths": [
@@ -244,6 +268,33 @@
       "expect": 1
     },
     {
+      "id": "adr-0029-bridge-idiom-present",
+      "adr": "0029",
+      "premise": "ADR-0029 is a criteria ADR: it tells the next MetricCatalog adopter which of TWO shipped idioms to pick. The bridge idiom must still exist for that choice to be real — a domain-owned *TelemetryEvents interface implemented by an adapter in a module that may depend on the catalog package. The three shipped bridge instances are WorkerLuceneTelemetryAdapter, OrtSessionTelemetryAdapter and EmbeddingTelemetry.",
+      "kind": "grep-present",
+      "pattern": "class \\w+ implements [\\w.]*TelemetryEvents\\b",
+      "paths": [
+        "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/WorkerLuceneTelemetryAdapter.java",
+        "modules/worker-services/src/main/java/io/justsearch/indexerworker/observability/OrtSessionTelemetryAdapter.java",
+        "modules/worker-services/src/main/java/io/justsearch/indexerworker/embed/EmbeddingTelemetry.java"
+      ],
+      "expect": 3,
+      "note": "The count is the named bridge population, not a growth ratchet: `paths` lists exactly the three files ADR-0029 cites as its bridge instances, so a FOURTH bridge elsewhere in the tree does not move this number. It fails when one of the three stops implementing a *TelemetryEvents interface — i.e. when the bridge idiom is being converted away, which is the drift that makes a two-idiom criteria ADR moot."
+    },
+    {
+      "id": "adr-0029-direct-emit-idiom-present",
+      "adr": "0029",
+      "premise": "The other half of ADR-0029's choice: the direct-emit facade idiom — a thin Telemetry class holding catalog instruments directly, implementing NO events interface. The two shipped instances are AgentTelemetry (over AgentMetricCatalog + GenAiMetricCatalog) and IpcTelemetry (over IpcMetricCatalog).",
+      "kind": "grep-present",
+      "pattern": "final class (AgentTelemetry|IpcTelemetry) \\{",
+      "paths": [
+        "modules/app-agent/src/main/java/io/justsearch/agent/AgentTelemetry.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/worker/IpcTelemetry.java"
+      ],
+      "expect": 2,
+      "note": "The count is the named direct-emit population, not a growth ratchet: `paths` lists exactly the two files ADR-0029 cites, so a third direct-emit facade elsewhere does not move it. The literal `{` after the class name is the discriminator — converting either class to the bridge idiom (`... implements XxxTelemetryEvents {`) drops the count and fails the probe, which is exactly when a two-idiom criteria ADR should be re-read."
+    },
+    {
       "id": "adr-0030-consult-region-present",
       "adr": "0030",
       "premise": "The Operation-policy divergence is delivered where the code is edited: a consult-register region points the agent at this ADR.",
@@ -287,40 +338,36 @@
       "registeredIn": "governance/contract-surfaces.v1.json",
       "exceptions": [
         {
-          "file": "modules/ui-web/src/api/types/surface.ts",
-          "reason": "Hand-written mirror of Surface/SurfaceRef/Audience/Placement/SurfaceConsumes (slice 449 phase 5). Tempdoc 884 design decision 6 schedules generating it via scripts/codegen/gen-wire-schema-types.mjs -- PR 2 / 0038 amendment decides."
-        },
-        {
           "file": "modules/ui-web/src/api/types/conversation-shape.ts",
-          "reason": "Hand-written mirror of ConversationShape/ConversationShapeRef (slice 491 section 9.D). Same class as surface.ts -- PR 2 / 0038 amendment decides."
+          "reason": "DECLARED EXCEPTION, owner: the UI lane. Hand-written mirror of ConversationShape/ConversationShapeRef (slice 491 section 9.D) -- structurally the same case surface.ts just resolved (a plain record projection the existing emitter can express), so the fix is the surface.ts recipe applied again: add a captureOrVerify case to SubstrateSchemaGenTest, a TARGETS entry, a contract-surfaces record, and reduce this file to a composing barrel. Not done in tempdoc 884 PR 2 because ConversationShape's FE consumers carry client-side state the wire does not, and re-shaping them is modules/ui-web component work, which lane B does not own. Recorded per the ADR-0038 amendment 2026-09-02."
         },
         {
           "file": "modules/ui-web/src/api/types/selection.ts",
-          "reason": "Hand-written mirror of the Java sealed sums under app-api/selection (tempdoc 526); sealed-sum discriminated unions are not expressible by the current record-to-JSON-Schema-to-TS emitter -- PR 2 / 0038 amendment decides."
+          "reason": "DECLARED EXCEPTION, owner: the UI lane. Hand-written mirror of the Java sealed sums under app-api/selection (tempdoc 526). Unlike surface.ts this one is BLOCKED, not merely unscheduled: sealed-sum discriminated unions are not expressible by the record-to-JSON-Schema-to-TS emitter (gen-wire-schema-types.mjs supports type/properties/required/items/enum/const/anyOf and $ref into #/$defs; it has no discriminator concept). Generating it requires extending the emitter first. Recorded per the ADR-0038 amendment 2026-09-02."
         },
         {
           "file": "modules/ui-web/src/shell-v0/handshake/capabilities-types.ts",
-          "reason": "Hand-written TS view of the /infra/capabilities payload, self-declared at :3-10 as mirroring CapabilitiesService.CapabilitiesView in modules/app-observability, and absent from contract-surfaces.v1.json -- PR 2 / 0038 amendment decides."
+          "reason": "DECLARED EXCEPTION, owner: the UI lane. Hand-written TS view of the /infra/capabilities payload, self-declared at :3-10 as mirroring CapabilitiesService.CapabilitiesView in modules/app-observability, and absent from contract-surfaces.v1.json. Same recipe as surface.ts (CapabilitiesView is a plain record), but the handshake payload is consumed during boot before the generated-module graph is loaded, so the migration has an ordering question lane B did not investigate. Recorded per the ADR-0038 amendment 2026-09-02."
         },
         {
           "file": "modules/ui-web/src/api/domains/indexing.ts",
-          "reason": "Carries no mirror marker but is one: ApplyExcludesResponse/PatternMatch (:95,:100) are mirrored FROM the FE by ExcludesService.ExcludesResult (modules/.../ExcludesService.java:35-38 says so in its javadoc) -- PR 2 / 0038 amendment decides."
+          "reason": "DECLARED EXCEPTION, owner: the UI lane. Carries no mirror marker but is one, and the drift runs BACKWARDS: ApplyExcludesResponse/PatternMatch (:95,:100) are mirrored FROM the FE by ExcludesService.ExcludesResult (modules/.../ExcludesService.java:35-38 says so in its javadoc). Generating it would invert the authority, which is a product decision about who owns the excludes contract, not a codegen chore. Recorded per the ADR-0038 amendment 2026-09-02."
         },
         {
           "file": "modules/ui-web/src/api/schemas.ts",
-          "reason": "Named by ADR-0038's Rationale as the hand-written Zod half of the drift; tempdoc 683 reduced it to one deliberately permissive .loose() agent-session schema, and the rest now validate against generated projections -- PR 2 / 0038 amendment decides whether the remainder is admissible."
+          "reason": "DECLARED EXCEPTION, owner: the UI lane. Named by ADR-0038's Rationale as the hand-written Zod half of the drift; tempdoc 683 already reduced it to ONE deliberately permissive .loose() agent-session schema, and the rest now validate against generated projections. The residue is a deliberate fail-open parse boundary, so retiring it is a decision about that boundary rather than a mirror to generate. Recorded per the ADR-0038 amendment 2026-09-02."
         },
         {
           "file": "modules/ui-web/src/shell-v0/utils/aiInstallPoll.ts",
-          "reason": "Marker false positive: :27 says this USED to be a hand-written mirror, retired by tempdoc 840 Phase 4. Listed so the marker scan stays green without weakening the regex."
+          "reason": "Marker false positive, not a mirror: :27 says this USED to be a hand-written mirror, retired by tempdoc 840 Phase 4. Listed so the marker scan stays green without weakening the regex."
         }
       ],
-      "note": "registry.ts and diagnostic.ts need no exception -- both appear in governance/contract-surfaces.v1.json (:145,151,157,163,169) as declared consumers of generated projections. The probe scans every .ts under modules/ui-web/src (excluding generated/, tests and fixtures) for a self-declared mirror marker; a marked file must be registered or excepted. Unmarked mirrors are invisible to the scan by construction, which is why the two known ones (indexing.ts, schemas.ts) are declared here explicitly. When PR 2 generates surface.ts and registers it, drop its exception -- the probe fails on a stale exception, so the handshake is mechanical."
+      "note": "registry.ts and diagnostic.ts need no exception -- both appear in governance/contract-surfaces.v1.json as declared consumers of generated projections, and as of tempdoc 884 PR 2 so does api/types/surface.ts, which is now a composing barrel over the generated SurfaceWire rather than a mirror (its exception was dropped in the same change -- the probe fails on a stale exception, so that handshake was mechanical). The probe scans every .ts under modules/ui-web/src (excluding generated/, tests and fixtures) for a self-declared mirror marker; a marked file must be registered or excepted. Unmarked mirrors are invisible to the scan by construction, which is why the two known ones (indexing.ts, schemas.ts) are declared here explicitly. Every remaining exception names its blocker and its owner: the ADR-0038 amendment of 2026-09-02 is the record, not this list."
     },
     {
       "id": "adr-0039-one-contract-category",
       "adr": "0039",
-      "premise": "The ADR generalizes 0038 to every cross-language agreement as a Category. Exactly one Category (wire) is registered today; the others are unbuilt.",
+      "premise": "Narrowed by the ADR's 2026-09-02 amendment: ADR-0039 decides the contract substrate for exactly the one Category that exists, wire. The plugin-SDK, catalog and registry-serialization Categories its Decision section names were never registered and are not decided by the ADR. A second entry in /categories reopens it — the Category must be decided here before it is registered.",
       "kind": "json-path",
       "file": "contracts/registry.v1.json",
       "pointer": "/categories",
@@ -355,6 +402,26 @@
       "premise": "Public main receives curated squash commits only; the repository's history-publication settings are machine-checked.",
       "kind": "gate",
       "script": "scripts/ci/check-repo-history-policy.mjs"
+    },
+    {
+      "id": "adr-0046-loopback-bind-literal",
+      "adr": "0046",
+      "premise": "The whole trust boundary rests on the network being unable to reach the port: the local API's bind address is the literal 127.0.0.1, not a setting. There is no configuration path to 0.0.0.0. Binding anything else voids ADR-0046 until it is re-derived.",
+      "kind": "grep-present",
+      "pattern": "this\\.app\\.start\\(\"127\\.0\\.0\\.1\"",
+      "paths": [
+        "modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java"
+      ],
+      "expect": 1,
+      "note": "expect 1 is the population, not a ratchet: there is exactly one bind call site. The pattern requires the 'this.app.' receiver so it pins the real call and not the javadoc at the same file's :773, which quotes 'app.start(\"127.0.0.1\", bindPort)' as prose."
+    },
+    {
+      "id": "adr-0046-token-fails-closed",
+      "adr": "0046",
+      "premise": "Session-token enforcement fails CLOSED: prod mode with a null or blank token refuses to construct the API and raises LOCAL_API_SESSION_TOKEN_MISSING, rather than logging that enforcement is disabled and serving mutations unguarded. The named test drives the real ApiSecurityFilters constructor, not a double.",
+      "kind": "test",
+      "file": "modules/ui/src/test/java/io/justsearch/ui/api/ApiSecurityFiltersTest.java",
+      "test": "io.justsearch.ui.api.ApiSecurityFiltersTest#prodModeWithoutSessionTokenRefusesToConstruct"
     }
   ]
 }
