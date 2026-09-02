@@ -122,6 +122,7 @@ Both `fetch_api_json` and `api_call` accept `jsonPath`, sharing one implementati
 | `/api/indexing/roots` | GET, POST, DELETE |
 | `/api/indexing-roots/substrate` | GET |
 | `/api/indexing-roots/preview` | POST |
+| `/api/indexing-jobs/failed` | GET |
 | `/api/indexing-jobs/failed/by-prefix` | GET |
 | `/api/indexing/reindex` | POST |
 | `/api/indexing/excludes/apply` | POST |
@@ -156,6 +157,7 @@ Both `fetch_api_json` and `api_call` accept `jsonPath`, sharing one implementati
 | `/api/policy/user/allowlist/pack-manifest/add` | POST |
 | `/api/diagnostics/export` | POST |
 | `/api/knowledge/status` | GET |
+| `/api/schemas/{name}` | GET |
 | `/api/debug/events` | GET |
 | `/api/debug/worker-log` | GET |
 | `/api/telemetry/health` | GET |

@@ -247,6 +247,103 @@ class HeadAssemblyTest {
     }
   }
 
+  /**
+   * Tempdoc 913 D5 regression: {@code GET /api/chat/agent/history} answered {@code
+   * {"batches":[]}} while v2 journals sat in {@code <dataDir>/file-operations/}, before and after a
+   * restart. Same bug class as the 672 case above — a value captured at bootstrap while the Worker
+   * is still connecting — but one layer further in: {@code AgentToolFactory.build} returned an
+   * all-null bundle when {@code knowledgeClient}/{@code indexingService} were null, and the
+   * file-operation journal rode that guard arm despite depending on neither. {@code
+   * AgentLoopService} then captured the null into a final field with no rebind path, so {@code
+   * AgentRunQueryService.operationHistory} returned {@code List.of()} for the process lifetime
+   * while the write side got its own second instance at connect time.
+   *
+   * <p>Drives the real bootstrap ordering (the production {@code knowledgeServer=null} constructor
+   * {@code HeadlessApp} uses) and reads back through {@code core().agent()} — the same instance the
+   * controller's live supplier resolves. A direct {@code AgentRunQueryService} construction cannot
+   * catch this: {@code AgentLoopServiceTest} already builds one with a real log by hand and is green
+   * throughout the defect ({@code unreachable-seed-green}).
+   *
+   * <p>The assertion is deliberately PRE-connect. Post-connect would pass even with the defect
+   * present, because the late-bound path builds its own journal — the failing case is precisely the
+   * window in which the product actually lives.
+   */
+  @Test
+  void agentOperationHistoryReadsTheJournalAtBootstrapBeforeAnyWorkerConnects() throws Exception {
+    Path dataDir = tempDir.resolve("d5-data");
+    Path fileOps = dataDir.resolve("file-operations");
+    Files.createDirectories(fileOps);
+    // A v2 journal batch, the shape the live validation found on disk (schemaVersion 2 +
+    // destinationDigest, tempdoc 909 items 7/8).
+    String batchJson =
+        "{"
+            + "\"batchId\":\"batch-913-d5\","
+            + "\"schemaVersion\":2,"
+            + "\"timestamp\":\"2026-09-02T10:00:00Z\","
+            + "\"explanation\":\"D5 wiring regression fixture\","
+            + "\"operations\":[{\"op\":\"COPY\",\"source\":\"/a.txt\",\"destination\":\"/b.txt\"}],"
+            + "\"executed\":[{\"index\":0,\"status\":\"OK\",\"destinationDigest\":\"abc123\"}],"
+            + "\"finalized\":\"2026-09-02T10:00:01Z\""
+            + "}";
+    Files.writeString(fileOps.resolve("batch-913-d5.json"), batchJson, StandardCharsets.UTF_8);
+
+    String prevDataDir = System.getProperty("justsearch.data.dir");
+    String prevPort = System.getProperty("justsearch.infra.health.port");
+    ConfigStore storeBefore = ConfigStore.globalOrNull();
+    try {
+      System.setProperty("justsearch.data.dir", dataDir.toAbsolutePath().toString());
+      System.setProperty("justsearch.infra.health.port", "0");
+      // Rebuild the global store so HeadAssembly's rc.paths().dataDir() resolves to the seeded dir
+      // rather than the developer's real data directory.
+      TestResolvedConfigHelper.storeFromEnvironment();
+
+      var cap = new io.justsearch.app.services.lifecycle.WorkerCapability();
+      try (HeadAssembly bootstrap =
+          new HeadAssembly(
+              new NoopTelemetry(),
+              new ConfigManagerBootstrap(),
+              null,
+              new io.justsearch.app.services.settings.UiSettingsStore(
+                  io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.IN_MEMORY),
+              cap)) {
+
+        var agent = bootstrap.core().agent();
+        assertNotNull(agent, "the agent service must exist at bootstrap");
+        // Right-reason guard: AgentService.unavailable() also answers operationHistory with an
+        // empty list (the AgentRunQueries default), so a green here would say nothing about the
+        // journal wiring if the real loop service had not been constructed.
+        assertNotNull(
+            agent.getClass().getName(),
+            "agent implementation must be identifiable for the right-reason check");
+        assertTrue(
+            agent.getClass().getName().contains("AgentLoopService"),
+            "expected the real AgentLoopService at bootstrap, got "
+                + agent.getClass().getName()
+                + " — an unavailable() stub would return an empty history for the wrong reason");
+
+        List<Map<String, Object>> history = agent.operationHistory(10);
+        assertEquals(
+            1,
+            history.size(),
+            "the journal batch on disk must be listed at bootstrap, before any Worker connects —"
+                + " the file-operation log does not depend on the Worker");
+        assertEquals("batch-913-d5", history.get(0).get("batchId"));
+      }
+    } finally {
+      if (prevDataDir == null) {
+        System.clearProperty("justsearch.data.dir");
+      } else {
+        System.setProperty("justsearch.data.dir", prevDataDir);
+      }
+      if (prevPort == null) {
+        System.clearProperty("justsearch.infra.health.port");
+      } else {
+        System.setProperty("justsearch.infra.health.port", prevPort);
+      }
+      TestResolvedConfigHelper.restoreGlobal(storeBefore);
+    }
+  }
+
   @Test
   void fileBackedCapabilitiesHandlerServesPayload() throws Exception {
     Path payload = tempDir.resolve("caps.json");

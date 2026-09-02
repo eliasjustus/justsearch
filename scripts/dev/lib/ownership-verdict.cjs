@@ -342,6 +342,49 @@ function recommendedTakeoverFor(decision) {
   return null; // CONTENTION / WAIT_CRITICAL_OP / REQUIRES_CONFIRMATION — not acquirable without escalation
 }
 
+/** Windows/POSIX-insensitive path compare for the provenance check. */
+function normRepoPath(p) {
+  return typeof p === 'string' ? p.replace(/\\/g, '/').replace(/\/+$/, '') : p;
+}
+
+/**
+ * Tempdoc 606 Piece 2 / 913 T1 — does the running stack run code from a checkout the caller did
+ * NOT ask for? Pure, so the false-positive case below is a unit test rather than a live repro.
+ *
+ * The check compares the running stack's provenance repoRoot against the CALLER's checkout. That
+ * proxy breaks the moment `start { distFrom }` exists (tempdoc 606 Piece 4): a worktree agent runs
+ * its own code on the one shared stack by asking the main checkout's MCP server to launch that
+ * worktree's dist. Provenance then records the worktree, `callerRepoRoot` is the main checkout, and
+ * every `quick_health` answered `rebuildFirst: true` — "it runs different code than your worktree" —
+ * about a stack that runs EXACTLY the code that was asked for. Note who can see it: `rebuildFirst`
+ * is returned only on the `callerIsOwner` branch, and the only way an owner's stack runs from
+ * another root is an explicit `distFrom`. So before this fix the check fired on nothing but its own
+ * false positive, and the caller's own dist is irrelevant in precisely that case.
+ *
+ * So a launch is exonerated when provenance records the resolved distFrom root and the tree the
+ * dev-runner actually ran in is that root — "launched where asked", proved rather than assumed.
+ *
+ * What still bites, stated precisely (the first draft of this comment overclaimed, review of #617):
+ * a run whose repoRoot differs from the caller's AND carries no `distFromRoot` — i.e. a stack the
+ * MCP `start` path did not launch, such as a dev-runner invoked directly in another checkout, or a
+ * pre-913 run record written before the field existed. A run that WAS launched with `distFrom` is
+ * exonerated for every caller, including one that later takes it over; ownership is judged by the
+ * branches above, not here, and this predicate deliberately does not re-litigate it.
+ *
+ * @param {object|null} leaseProvenance the provenance block stamped on the lease at spawn
+ * @param {string|null} callerRepoRoot the checkout this MCP server is running from
+ * @returns {boolean} true when a rebuild/relaunch warning is warranted
+ */
+function computeProvenanceMismatch(leaseProvenance, callerRepoRoot) {
+  const running = normRepoPath(leaseProvenance?.repoRoot);
+  const caller = normRepoPath(callerRepoRoot);
+  if (!running || !caller) return false;
+  if (running === caller) return false;
+  const asked = normRepoPath(leaseProvenance?.distFromRoot);
+  if (asked && asked === running) return false;
+  return true;
+}
+
 module.exports = {
   DEFAULT_THRESHOLDS,
   readSessionActivity,
@@ -349,5 +392,6 @@ module.exports = {
   classifyActivity,
   computeOwnershipVerdict,
   computeDisplacedNotice,
+  computeProvenanceMismatch,
   recommendedTakeoverFor,
 };
