@@ -234,16 +234,34 @@ export class FailedJobsDrawer extends JfElement {
       overflow-y: auto;
       padding: 0.5rem 1rem;
     }
+    /**
+     * Tempdoc 914 D2 — the row STACKS; it is not a two-column flex row.
+     *
+     * The panel is 26rem wide and jf-row-actions renders one full-label button per declared
+     * item-operation ("Retry indexing job", "Cancel indexing job"). Those buttons do not shrink, so
+     * side-by-side they took 339px of the 373px row and squeezed .row-info to 22px — one
+     * character per line, an 822px-tall row for a single path. The path IS the row's identity, so
+     * it takes the full width and the actions sit under it; the same shape AdvisoryInboxDrawer
+     * uses for its per-item action inside the same 26rem right-drawer slot.
+     */
     .row {
       display: flex;
+      flex-direction: column;
       align-items: flex-start;
-      gap: 0.75rem;
+      gap: 0.4rem;
       padding: 0.6rem 0;
       border-bottom: 1px solid var(--border-subtle);
     }
     .row-info {
-      flex: 1;
+      inline-size: 100%;
       min-inline-size: 0;
+    }
+    /* ActionButton's :host carries a form-control bottom margin sized for stacked form fields; in a
+       list row that is dead space under the buttons. Withdrawn through its own token, not by
+       overriding the component's rule. */
+    .row jf-row-actions {
+      --justsearch-shell-form-control-spacing: 0;
+      max-inline-size: 100%;
     }
     .row-path {
       font-size: var(--font-size-sm);

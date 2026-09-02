@@ -22,6 +22,9 @@ import { JsonFormsRendererBase } from '../JsonFormsRendererBase.js';
 import { registerXUiRenderer } from './xUiRendererRegistry.js';
 import { icon } from '../../components/Icon.js';
 import '../../components/Button.js';
+// Tempdoc 914 D3 — the chip's accessible name comes from the folder-status seam, so this renderer
+// and LibrarySurface's hand-authored card cannot word the last-known qualifier differently.
+import { failedChipLabel } from '../../state/folderStatus.js';
 
 interface FolderCard {
   readonly pathHash?: string;
@@ -31,6 +34,9 @@ interface FolderCard {
   readonly walkError?: string;
   /** Tempdoc 599 §16/B1 — failed-job count; >0 renders a clickable chip that opens the drill-down. */
   readonly failed?: number;
+  /** Tempdoc 914 D3 — `failed` is a count carried across a retry re-queue window, not this poll's
+   *  own number; the chip's accessible name says so (`failedChipLabel`). */
+  readonly failedLastKnown?: boolean;
 }
 
 export class FolderCardRenderer extends JsonFormsRendererBase {
@@ -158,9 +164,10 @@ export class FolderCardRenderer extends JsonFormsRendererBase {
             : nothing}${(f.failed ?? 0) > 0
             ? html`<jf-button
                 class="failed-chip"
+                data-last-known=${f.failedLastKnown === true ? 'true' : 'false'}
                 variant="ghost"
                 size="sm"
-                label=${`Show ${f.failed} failed file${f.failed === 1 ? '' : 's'}`}
+                label=${failedChipLabel(f.failed ?? 0, f.failedLastKnown === true)}
                 .onActivate=${() => this.emitShowFailed(f.pathHash ?? '')}
                 >${icon({ name: 'alert-circle', size: 12 })} ${f.failed} failed</jf-button
               >`

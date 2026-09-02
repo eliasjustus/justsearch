@@ -52,6 +52,13 @@ export interface FolderStatus {
   readonly metaText: string;
   readonly inFlight: number;
   readonly failed: number;
+  /**
+   * Tempdoc 914 D3 — `failed` is a LAST-KNOWN count carried across a retry re-queue window rather
+   * than a count this sample observed. Absent / `false` ⟹ `failed` is this sample's own number.
+   * Consumers that put the count in words must say "last known" when this is set: the chip may not
+   * assert as a present fact something the current wire row does not report.
+   */
+  readonly failedIsLastKnown?: boolean;
 }
 
 export interface FolderStatusContext {
@@ -94,6 +101,20 @@ export interface FolderStatusContext {
    * rendered an unqualified green "✓ … Verified just now" at 0% coverage (F1b).
    */
   readonly enrichmentBlocked?: boolean;
+  /**
+   * Tempdoc 914 D3 — the failed count last observed for this root while its queue was SETTLED, from
+   * {@link rememberFailedCounts}. Read ONLY inside the in-flight branch, and only when this sample
+   * reports zero failures.
+   *
+   * Why FE memory rather than a wire field: the retry ladder re-queues a permanently FAILED job, and
+   * while that job sits PENDING the worker's per-root `GROUP BY` counts it as in-flight and not as
+   * failed. `IndexedRootView` carries no field that distinguishes a retry from a first attempt
+   * (`inFlightCount`/`failedCount` are the only job columns), and the failed-jobs drill-down lists
+   * FAILED rows only — so during that window the substrate genuinely cannot say "this folder has
+   * failures". Measured on a 2-permanently-failing-file root: 4 of 60 samples at 300ms reported
+   * `inFlight=2 failed=0`, which dropped the "N failed" chip and made the drill-down unreachable.
+   */
+  readonly lastKnownFailed?: number;
 }
 
 /** A non-negative finite count from an optional wire number (absent / negative ⟹ 0). */
@@ -241,12 +262,20 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
   if (inFlight > 0) {
     // The `failed` count rides the structured field (rendered as a clickable chip by the row,
     // tempdoc 599 §16/B1) — not baked into the prose meta — so it can open the drill-down.
+    //
+    // Tempdoc 914 D3 — a retry re-queue must not make the drill-down unreachable. This sample's own
+    // count always wins when it has one; only when it reports ZERO failures does the last settled
+    // observation carry the chip through the window (see `lastKnownFailed`). The state line stays
+    // truthful ("Indexing · N remaining" — that IS what the queue is doing) and the carried count is
+    // flagged as last-known so the chip can say so rather than assert it as a present fact.
+    const carriedFailed = failed > 0 ? failed : count(ctx.lastKnownFailed);
     return {
       state: 'indexing',
       glyph: 'pending',
       metaText: `${collection} · Indexing · ${inFlight.toLocaleString()} remaining`,
       inFlight,
-      failed,
+      failed: carriedFailed,
+      failedIsLastKnown: failed === 0 && carriedFailed > 0,
     };
   }
 
@@ -348,4 +377,59 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
 
   // Walk completed, no files admitted, no failures → empty / nothing indexable (tempdoc 599 Fix 1).
   return { state: 'empty', glyph: 'pending', metaText: `${collection} · No indexable files`, inFlight, failed };
+}
+
+/**
+ * Tempdoc 599 §16/B1 + 914 D3 — the failed chip's ACCESSIBLE NAME, in ONE place for its two render
+ * sites (the hand-authored Library card and the declared `FolderCardRenderer`), so the honesty
+ * qualifier cannot land on one and not the other.
+ *
+ * When the count is carried across a retry window it is announced as LAST KNOWN together with what
+ * the folder is doing instead — the chip must stay reachable (that is the whole point) without
+ * claiming as a present fact a number this poll did not report.
+ */
+export function failedChipLabel(failed: number, lastKnown: boolean): string {
+  const noun = `failed file${failed === 1 ? '' : 's'}`;
+  return lastKnown
+    ? `Show ${failed} ${noun} (last known — this folder is indexing right now)`
+    : `Show ${failed} ${noun}`;
+}
+
+/**
+ * Tempdoc 914 D3 — the BOUND on the last-known failed count `folderStatus` reads.
+ *
+ * Pure fold of the previous memory over the newest poll, so the retention rule is one testable
+ * function rather than surface state nobody can inspect. Per root, exactly three cases:
+ *
+ * <ul>
+ *   <li>this sample reports failures ⟹ REMEMBER that number (the memory is refreshed, never aged);
+ *   <li>this sample reports none but the queue is UNSETTLED (`inFlightCount > 0`) ⟹ carry the
+ *       previous number, because "0 failed" is not yet an answer — a re-queued FAILED job counts as
+ *       in-flight while it waits;
+ *   <li>this sample reports none with a SETTLED queue ⟹ DISCHARGE it. A drained root with no
+ *       failures is the substrate answering the question directly, and it outranks any memory.
+ * </ul>
+ *
+ * A root missing from the poll is dropped (removed / not yet listed), so the map cannot grow past
+ * the current listing, and no entry can survive one settled zero-failure observation of its root.
+ */
+export function rememberFailedCounts(
+  previous: Readonly<Record<string, number>>,
+  rows: readonly IndexedRootView[],
+): Record<string, number> {
+  const next: Record<string, number> = {};
+  for (const row of rows) {
+    const hash = row.pathHash ?? '';
+    if (!hash) continue;
+    const failed = count(row.failedCount);
+    if (failed > 0) {
+      next[hash] = failed;
+      continue;
+    }
+    if (count(row.inFlightCount) > 0) {
+      const carried = count(previous[hash]);
+      if (carried > 0) next[hash] = carried;
+    }
+  }
+  return next;
 }
