@@ -425,8 +425,10 @@ describe('FailedJobsDrawer — PROD posture (drift degrades, it does not freeze 
       expect(text).not.toContain("Couldn't load failed files");
       expect(text).not.toContain('Loading');
 
-      // The degrade is SURFACED, not swallowed: the `[WireContract]` console line plus an entry in
-      // the drift ring that HealthSurface/HelpSurface render via summarizeWireDrift().
+      // The degrade leaves a TRACE rather than being swallowed: the `[WireContract]` console line
+      // plus an entry in the drift ring. Nothing displays that ring — HealthSurface.ts:1459 and
+      // HelpSurface.ts:422 pass `summarizeWireDrift()` as `.args` to `core.export-diagnostics`, so
+      // it reaches a human only through a diagnostics export.
       expect(consoleErrorSpy).toHaveBeenCalled();
       expect(readWireDrift().map((e) => e.context)).toContain(
         'GET /api/indexing-jobs/failed/by-prefix',

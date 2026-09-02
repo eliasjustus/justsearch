@@ -73,7 +73,7 @@ correction matters: **the data exists and is simply not selected.**
 | Layer | State | Evidence |
 |---|---|---|
 | SQLite | `scan_id` IS written on every enqueue | `SqliteJobQueue.java:392`, `:473` (INSERT column lists) |
-| The failed-jobs SELECT | does **not** select it | `SqliteJobQueue.java:1664-1669` — `SELECT path, error_message, attempts, last_updated, collection, state` |
+| The failed-jobs SELECTs | neither selects it | `SqliteJobQueue.java:1664-1669` (`listFailedJobs`) and `:1728-1733` (`listFailedJobsByPathPrefix` — the one the drawer actually reads); both are `SELECT path, error_message, attempts, last_updated, collection, state` |
 | proto | no field for it | `indexing.proto` `message FailedJob {…}` — 6 fields, no `scan_id` |
 | Head DTO | no component for it | `RemoteKnowledgeClient.java:1219`, `:1241` build `FailedJobInfo`; `IndexingService.java:298-304` declares 6 components |
 
@@ -302,8 +302,10 @@ PR body.
    the generated Zod is `z.strictObject` — so an extra key still passes locally and fails in the
    browser.
 2. **`scanId` is not plumbed to failed-job rows — four layers, all outside lane R6** (§B.b). The
-   fix, in order: (a) add `scan_id` to the `listFailedJobs` SELECT
-   (`SqliteJobQueue.java:1664-1669`); (b) add `string scan_id` to `message FailedJob` in
+   fix, in order: (a) add `scan_id` to **both** failed-jobs SELECTs — `listFailedJobs`
+   (`SqliteJobQueue.java:1664-1669`) and `listFailedJobsByPathPrefix` (`:1728-1733`), the latter
+   being the one the drawer reads, so fixing only the former would leave the surface that motivated
+   this item unchanged; (b) add `string scan_id` to `message FailedJob` in
    `indexing.proto`; (c) pass it through `RemoteKnowledgeClient.java:1219` / `:1241`; (d) add the
    component to `IndexingService.FailedJobInfo` (`IndexingService.java:298-304`) and read it in
    `IndexingController.toJobView`, replacing `SCAN_ID_NOT_PLUMBED`. Until then the by-prefix and
