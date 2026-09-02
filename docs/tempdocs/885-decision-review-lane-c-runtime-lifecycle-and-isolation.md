@@ -1,7 +1,7 @@
 ---
-status: CONTRACT — ready for takeover (not started)
+status: IN PROGRESS — chunk 1 (item 19 NRT fix + baseline) and chunk 2 (item 14 extraction pool) landed; items 3/6/21/19-measure open
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
 follows:
   - 882-decision-review-lane0-hygiene.md (lane 0; moved MMF RESERVED1 start, raised the RPC deadline, left the breath-hold and per-RPC deadlines to C/F)
@@ -662,3 +662,304 @@ lane C's later cadence item — recorded in B.4 (5) rather than done here.
 
 None actionable. One follow-up recorded for a later chunk (C.4's naming limit, already listed as
 B.4 (5)).
+
+---
+
+## §SB — pre-implementation verification (chunk 2, item 14)
+
+Every `path:line` the Evidence and Design-decision sections cite for **item 14**, re-read against
+this branch's HEAD `fcf7c6e7` (= base `6c3ba431` + chunk 1). Verified 2026-09-02 by the chunk-2
+implementer. Same verdict vocabulary as §B.
+
+| Contract cite | On `fcf7c6e7` | Verdict |
+|---|---|---|
+| `TimeboxedContentExtractor.java:122` `newSingleThreadExecutor` **[R7]** | exact (`this.executor = Executors.newSingleThreadExecutor(r -> {`) | **OK** |
+| `TimeboxedContentExtractor.java:144-162` cancel path | `extractArtifact` opens `:144`; `future.get` `:151`, `future.cancel(true)` `:154`, `recordTimeout` `:155`, `throw` `:156-157`; the `InterruptedException` branch `:158-161` | **OK** |
+| `DefaultWorkerAppServices.java:453-479` sandbox wiring | method signature `:452-455`, mode read `:456`, command read `:470`, the fail-fast throw `:476-478` | **OK** |
+| `ProcessExtractionSandbox.java:76-104` one process per file | `new ProcessBuilder(command).start()` `:76`, stdin write `:90`, `waitFor(timeout)` `:104` | **OK** |
+| `ExtractionSandboxChild.main` one-shot `:16-40` | `main` `:16`, `System.out` capture `:17-18`, `readAllBytes` `:19`, response write `:42-43`, method ends `:44` | **MOVED** (the write is `:42-43`, outside the cited range) |
+| `ProcessExtractionSandboxTest` child-command recipe `:119-122` | the `javaCommand` helper is `:104-108` (`java.home` `:106`, `java.class.path` `:107`); `:114-122` are the `MalformedChild` / `OversizedChild` stubs. §B.3 already corrected this to `:105-107`; the exact declaration-to-brace span is `:104-108` | **MOVED** (-15) |
+| "...and its **seven** stub children" | there are **five**: `MalformedChild`, `OversizedChild`, `PollutedChild`, `SleepingChild`, `EchoOcrConfigChild` (`grep -c "public static final class"` = 5). Six children total if the real `ExtractionSandboxChild` is counted | **WRONG** (count) |
+| `ExtractionMetricCatalog.java:22-45` namespace guard | `NAMESPACE` `:22`, `TIMEOUT_TOTAL` `:24`, static initializer `:33-45`; it throws `ExceptionInInitializerError` on a foreign prefix | **OK** |
+| `IndexingPipelineWireFormatRegressionTest.java:57,80-84` | `extraction.timeout_total` type assertion `:56-58`; the `component=content_extractor` assertion `:80-84` | **OK** |
+| `EnvRegistry.java:512-520` sandbox keys | `EXTRACTION_SANDBOX_MODE` `:512-513`, `EXTRACTION_SANDBOX_COMMAND` `:520-521` | **OK** |
+| `WorkerSpawner.java:200,435-437` Job Object | `WindowsJobObject.createOrNull()` `:200`; `jobObject.assign(process.pid())` `:436` (inside the `if (jobObject != null)` at `:435-437`) | **OK** |
+| §B.4 (3): `ExtractionSandboxChild:17-18` already captures `System.out` | confirmed verbatim; the serve loop **preserves** it rather than adding it | **OK** (§B.4's correction stands) |
+
+### SB.1 — new facts the contract does not state
+
+1. **`MAX_FILE_SIZE` is not the number the heap default should key on.**
+   `ContentExtractor.MAX_FILE_SIZE` is `private static final` (`ContentExtractor.java:38`,
+   `100 * 1024 * 1024`) and is not reachable from the sandbox. The *configurable* equivalent is
+   `TikaExtractionPolicy.maxInputBytes` (`DEFAULT_MAX_INPUT_BYTES = 100L * 1024 * 1024`,
+   `TikaExtractionPolicy.java:35`), which the operator moves via `worker.limits.max_file_size`.
+   The heap default is therefore keyed on the *policy*, so raising the accepted file size raises
+   the child heap with it: `max(512 MiB, 4 x policy.maxInputBytes())` gives `512m` at defaults
+   (4 x 100 MB = 400 MB, below the floor). Design decision 1's "verify MAX_FILE_SIZE" resolves to:
+   the two constants agree today, and the policy field is the one to read.
+2. **The file-kind classification design decision 2 needs already exists and is public**:
+   `IndexingDocumentOps.classifyFileKind(Path, String mimeBase)`
+   (`modules/worker-services/.../loop/ops/IndexingDocumentOps.java:505`), returning
+   `pdf | image | markdown | office | code | text | archive | binary | unknown`. It is already the
+   tag source for `OperationalMetrics.recordDocumentFailed` (`IngestionOutcomeJournal.java:246`),
+   so routing on it is a projection of the existing taxonomy, not a second one. **It needs a
+   detected MIME**: with `mimeBase == null` it can only return `markdown | code | unknown` — a
+   `.pdf` classifies as `unknown`. The router therefore calls
+   `ContentExtractorProvider.detectMimeType` first, which is why `RoutingExtractionSandbox` takes a
+   provider.
+3. **No ArchUnit rule forbids `extract` depending on `loop.ops`.** `BoundaryRulesTest` and
+   `LayeringEnforcementTest` treat `io.justsearch.indexerworker..` as one unit, and the repo has no
+   package-cycle rule, so the router may call `IndexingDocumentOps` directly.
+4. **`IndexerWorkerGuardrailsTest.indexerWorkerMustNotReadEnvOrSystemProperties` blocks
+   `System.getProperty` anywhere under `io.justsearch.indexerworker..`** with a four-class allowlist
+   — so the shipped child command cannot be built the way the *test* built it
+   (`System.getProperty("java.home")` / `("java.class.path")`). This is the one guardrail the
+   contract's "the shipped-command recipe already exists in tests" claim does not survive contact
+   with; see §SC.5 (3) for how it is resolved.
+5. **The config-surface ratchet has headroom.** `env_sysprop_pairs` was 239 before this chunk
+   against a pinned 243 (`gates/config-surface/baseline.txt`), so three new keys land at 242 —
+   under the pin, `config-surface: pass`, no changeset needed.
+
+## §SC — post-implementation critical analysis (chunk 2, item 14)
+
+Diff under review: `ExtractionSandboxChild` (serve loop + PID gate), `SandboxFrames` (new),
+`PersistentExtractionSandbox` (new), `RoutingExtractionSandbox` (new), `ExtractionSandboxCommand`
+(new), `SandboxExtractionException` (promoted to top level), `ExtractionSandboxRestartTags` (new),
+`ExtractionSandbox` (+`policy()`, +`close()`), `ExtractionMetricCatalog` (+2 counters),
+`ExtractionSandboxFactory` (+`AUTO`, +`PoolSettings`), `TimeboxedContentExtractor` (executor
+replacement + sandbox close), `DefaultWorkerAppServices` (mode/pool/heap wiring),
+`EnvRegistry` (+3 keys), `JobBatchExtractor` + `IndexingLoop` (sweep), plus the deletion of
+`ProcessExtractionSandbox` and its test.
+
+### SC.1 Wrong-gate: does the timeout path actually kill the child and release the thread?
+
+Two independent gates had to fire, and each was checked at its set-site rather than assumed.
+
+**(a) The pool's deadline kills the child.** `PersistentExtractionSandbox.extractOnSlot` reads the
+response frame on a `readers` pool task and waits with `pending.get(timeout, MILLISECONDS)`. On
+`TimeoutException` it calls `discardChild(...)` — which calls `destroyForcibly()` — **before**
+`pending.cancel(true)`. The order is load-bearing: `cancel(true)` only interrupts, and a blocking
+pipe read on Windows is not interruptible; it is the kill closing the child's stdout that gives the
+reader task EOF and un-leaks it. Asserted end-to-end by
+`PersistentExtractionSandboxTest.hangingChildIsKilledAtTheDeadlineAndTheNextRequestSucceeds`: the
+stub sleeps 600 s, the call returns at the 2 s deadline, `restartCount()` is 1,
+`extraction.sandbox_restart_total{reason=timeout}` is 1 on a real `TestMetricRegistry`, the next
+request succeeds, and `spawnCount()` is 2 — so the child was genuinely replaced, not reused.
+
+**(b) The in-process executor is replaced — and the first implementation of this gate was wrong.**
+The initial version asked `future.isDone()`. That is **true the instant `cancel()` succeeds**, even
+while the task thread runs on, so the replacement never fired. The test caught it
+(`TimeboxedContentExtractorTest.wedgedExtractionDoesNotPoisonTheExecutor` failed on the *second*
+extraction). The gate now reads a flag the task itself sets in a `finally` block, which is the only
+signal that answers "did the thread come back?".
+
+**Falsification run** (the `audit-without-test` discipline). `replaceIfWedged`'s guard was
+temporarily changed to `if (true) { return; }` — the fix disabled, everything else identical:
+
+```text
+TimeboxedContentExtractor > after a wedged extraction times out, the next file extracts normally FAILED
+19 tests completed, 1 failed
+```
+
+Exactly one failure, and the pre-existing `extractTimesOutDeterministically` stayed green — so the
+new assertion discriminates on the executor-replacement behaviour, not on the timeout mechanism.
+Guard restored; suite green.
+
+**Residual, stated rather than papered over.** The wedged thread is not killable from the JVM.
+`shutdownNow()` re-interrupts and stops new work reaching it, but a native parser ignoring the
+interrupt keeps that daemon thread (and its parser's memory) until the process exits. Only the
+child-process path reclaims the work. This is exactly why item 14's answer is *routing*, not "fix
+the executor" — recorded in `TimeboxedContentExtractor`'s class javadoc so the next reader does not
+mistake the executor fix for a full solution.
+
+### SC.2 Wrong-gate: does the routing switch fire for the extensions claimed?
+
+Checked against **real files through the real MIME detector**, not against extension strings,
+because `classifyFileKind` keys on the detected MIME first (SB.1 (2)) — asserting on extensions
+would have been the classic "passes for the wrong reason".
+`ExtractionRoutingTest.pdfAndOfficeAndArchivesGoOutOfProcessAndTextStaysInProcess` drives a real
+`.pdf`, real `.docx`/`.xlsx`/`.pptx` fixtures, a real ZIP built in the test, and five text-family
+files, and asserts the exact ordered list each side saw plus "no text file crossed the process
+boundary". The `.json` case is worth naming: it classifies as `code` (not `text`), because
+`isCodeExtension` lists `.json`. It still routes in-process, which is what design decision 2 asks
+for — but for a different reason than the label suggests.
+
+**What the gates do NOT do was checked too.** `auto` is now the *default*
+(`DefaultWorkerAppServices.buildContentExtractor`, `EXTRACTION_SANDBOX_MODE.getString("auto")`), so
+an unconfigured install changes behaviour — that is the intent of item 14 ("make it the default for
+the parser families that can wedge"), and it is stated in `environment-variables.md` and
+`03-knowledge-server.md`. `parseSandboxMode` still throws on an unknown value rather than silently
+falling back, so a typo is loud.
+
+**Mode-switch test precision.** The mode assertion deliberately does not use a getter for "which
+sandbox did the factory build" — a getter would let the test pass while the wiring was wrong. It
+asserts an observable consequence instead: `IN_PROCESS` tolerates an empty child command, while
+`PROCESS` and `AUTO` both throw `IllegalArgumentException` because they construct a child pool.
+
+### SC.3 Test precision — right reason vs wrong reason
+
+* **The stub-name collision the first run exposed.** The follow-up files were originally named
+  `after-hang.txt` / `after-crash.txt`, and `ScriptedChild` branches on `name.contains("hang")` /
+  `contains("crash")` — so the "next request succeeds" cases were re-triggering the *failure*. Both
+  tests failed, correctly. Renamed to `next-after-timeout.txt` / `next-after-exit.txt`. Worth
+  recording: the tests failed for a real reason, and the reason was in the test, not the code.
+* **OOM is a real OOM, not a simulated stderr string.** `childHeapExhaustionIsAPermanentParseFailure`
+  launches the stub with `-Xmx64m` and has it retain 8 MB blocks until the JVM dies, so the
+  `OutOfMemoryError` signature the parent classifies on is the JVM's own. The assertion is on the
+  exact class (`assertEquals(ContentExtractor.ExtractionException.class, failure.getClass())`), not
+  `instanceof` — `SandboxExtractionException` *extends* `ContentExtractor.ExtractionException`, so
+  an `instanceof` assertion would have passed on the retryable path too and proven nothing about
+  permanence.
+* **"One child serves three requests" asserts the PID**, not just three successes — three successes
+  are also consistent with three spawns, which is the behaviour this chunk replaces.
+* **The request-budget test asserts the PID *changed*** after the budget and that `spawnCount()`
+  went to 2 — the leak guard firing, not merely not-crashing.
+* **The benchmark asserts almost nothing, on purpose.** It first asserted `overhead >= 0`, which
+  failed in the full suite the moment the process path came out *faster* than in-process under load.
+  That was a wrong assertion, not a flaky machine: it encoded "was measured" as "is non-negative".
+  It now asserts only that both paths were measured and prints the overhead; the 10 ms criterion is
+  judged from the recorded table (SB.4 below).
+
+### SC.4 Tri-state / stale-flag / asymmetric-lifecycle checks
+
+* **Asymmetric lifecycle — the one this chunk could have got wrong.** `ExtractionSandbox` gained a
+  `close()`, and the pool spawns processes, so "who kills the children" is a real question with
+  three answers, all wired: (i) `IndexingLoop.close()` already closed the `TimeboxedContentExtractor`
+  (`IndexingLoop.java:1083-1085`), which now closes the sandbox; (ii) the pool registers a JVM
+  shutdown hook, removed in `close()` so a per-test sandbox does not accumulate hooks; (iii) the
+  child polls its parent PID and halts, which is the only one that survives a `kill -9` of the
+  Worker. Asserted by `childExitsWhenItsParentPidIsGone`, which holds the dead process's handle for
+  the test's lifetime so Windows cannot recycle the PID underneath the assertion.
+* **stderr draining is a liveness requirement, not diagnostics.** An undrained stderr pipe fills its
+  OS buffer and wedges the child mid-parse — which would look exactly like the hang the sandbox
+  exists to prevent. `StderrTail` drains continuously on a daemon thread into a bounded buffer.
+* **The OOM classification races the drain thread.** `destroyForcibly()` + `waitFor` returns before
+  the drain thread has necessarily seen EOF, so reading the tail immediately would classify a heap
+  exhaustion as an ordinary crash. `discardAndClassify` joins the drain thread (bounded, 2 s) before
+  reading. Found by inspection, then confirmed by the OOM test passing.
+* **No tri-state added.** `slot.child` is `Child | null`, where null means "spawn lazily"; there is
+  no third "unknown" state to conflate with healthy.
+* **WARN dedup.** The recycle WARN fires once per discarded child, bounded by the request budget
+  (default 500 requests per line) — not per file.
+
+### SC.5 Deliberate deviations from the chunk brief
+
+1. **No `--serve` flag.** The brief asks for `ExtractionSandboxChild --serve`. Because the one-shot
+   mode is retired (below), a mode flag with exactly one mode is residue, so the child always
+   serves. The parent still appends `--parent-pid=<pid>`.
+2. **One-shot mode deleted, and `ProcessExtractionSandbox` with it.** The brief allowed "keep the
+   one-shot mode working for the existing tests, **or migrate them deliberately**". Migrated: the
+   pool is the only construction site for a child, so a one-child-per-file sandbox plus a one-shot
+   child mode would be exactly the residue `retire-with-a-sweep` prohibits. The sweep:
+   `ProcessExtractionSandbox.java` and `ProcessExtractionSandboxTest.java` deleted;
+   `SandboxExtractionException` promoted to a top-level type (it is the boundary contract
+   `JobBatchExtractor` classifies on, so it must not be nested inside whichever implementation
+   throws it); `JobBatchExtractor.java` import + catch updated; a dead import removed from
+   `IndexingLoop.java:23`; javadoc references relabelled in `ExtractionArtifact`,
+   `ExtractorContributionRegistry` and `StdioMcpTransport`; the historical CI-incident comment in
+   `JvmBaseConventionsPlugin.kt` labelled with the test's new name rather than rewritten, since it
+   records a dated event. `grep -rn ProcessExtractionSandbox` outside `docs/tempdocs/` now returns
+   only that labelled history comment.
+3. **`ExtractionSandboxCommand` added to the `IndexerWorkerGuardrailsTest` allowlist** (SB.1 (4)).
+   Before allowlisting, the surface was minimised so the exemption covers as little as possible: the
+   classpath comes from `ManagementFactory.getRuntimeMXBean().getClassPath()` and the launcher from
+   `ProcessHandle.current().info().command()` — the latter is strictly better than reconstructing
+   `java.home` + `os.name`, since it is the *actual* running binary (the trap tempdoc 696 fixed for
+   `WorkerSpawner`). One `System.getProperty("java.home")` remains, in the fallback for a platform
+   where `ProcessHandle.Info#command()` is empty, and even that picks `java` vs `java.exe` by file
+   existence rather than by parsing `os.name`. The exemption is the same class as the existing
+   `TikaOcrRuntime` one — JVM/environment self-discovery, not user configuration — and is justified
+   inline in the test.
+4. **Leak guard is a request budget, not an RSS probe.** The brief offered either; a request count
+   needs no platform-specific memory API and is deterministically testable. Key
+   `justsearch.extraction.sandbox.max_requests`, default 500.
+5. **No `-XX:+ExitOnOutOfMemoryError` on the child**, although it would give a deterministic exit
+   code. The JVM writes that flag's "Terminating due to java.lang.OutOfMemoryError" message to the
+   process's **real stdout**, which is the protocol channel — it would corrupt a frame.
+   Classification is taken from the stderr tail instead, where the default uncaught-exception
+   handler writes.
+
+### SC.6 Findings
+
+None actionable beyond what is recorded above — SC.1 (b) and SC.3's stub-name collision were both
+found and fixed inside this chunk. Two follow-ups belong to later chunks and are listed in the
+live-window section.
+
+## SB.4 — per-family extraction latency (unit-level, chunk 2)
+
+`ExtractionSandboxLatencyBenchmarkTest`: 3 warmup + 15 samples per family per path, one persistent
+child, repo fixtures plus two rows from the tempdoc-410 adversarial corpus. **Both runs were taken
+with another agent worktree building concurrently**, so absolute values are noisy and only the
+in-process vs process *delta* on the same row is meaningful.
+
+Run 1 (2026-09-02, single-test run):
+
+| family | in_process p50 | in_process p95 | process p50 | process p95 |
+|---|---|---|---|---|
+| text | 7.07 ms | 13.47 ms | 7.29 ms | 11.93 ms |
+| markdown | 3.15 ms | 4.61 ms | 4.34 ms | 5.24 ms |
+| code | 14.00 ms | 23.04 ms | 9.72 ms | 18.32 ms |
+| json | 4.70 ms | 5.81 ms | 4.45 ms | 7.51 ms |
+| nasty_long_line | 6.95 ms | 8.55 ms | 8.14 ms | 9.91 ms |
+| nasty_empty | 0.31 ms | 0.34 ms | 2.23 ms | 2.67 ms |
+| pdf | 7.62 ms | 11.99 ms | 7.16 ms | 10.02 ms |
+| office_docx | 12.14 ms | 16.22 ms | 14.18 ms | 16.35 ms |
+| office_xlsx | 6.90 ms | 12.42 ms | 7.71 ms | 16.10 ms |
+| office_pptx | 10.11 ms | 15.31 ms | 9.27 ms | 12.01 ms |
+
+Run 2 (2026-09-02, full `:modules:worker-services:test` run, heavier load):
+
+| family | in_process p50 | in_process p95 | process p50 | process p95 |
+|---|---|---|---|---|
+| text | 11.58 ms | 18.16 ms | 10.82 ms | 13.71 ms |
+| markdown | 6.91 ms | 9.52 ms | 5.96 ms | 8.96 ms |
+| code | 13.61 ms | 21.51 ms | 10.80 ms | 20.68 ms |
+| json | 5.01 ms | 17.21 ms | 7.26 ms | 15.22 ms |
+| nasty_long_line | 8.99 ms | 12.17 ms | 9.17 ms | 13.02 ms |
+| nasty_empty | 0.33 ms | 0.43 ms | 2.25 ms | 2.83 ms |
+| pdf | 9.74 ms | 13.19 ms | 8.41 ms | 10.98 ms |
+| office_docx | 22.18 ms | 31.39 ms | 15.68 ms | 22.23 ms |
+| office_xlsx | 11.07 ms | 19.48 ms | 15.89 ms | 32.59 ms |
+| office_pptx | 13.91 ms | 26.64 ms | 12.75 ms | 15.55 ms |
+
+**Reading the numbers (per `interrogate-results`).**
+
+* **Design decision 2's criterion is met with room to spare.** The round-trip cost is the
+  `nasty_empty` row — the only row where the parser does essentially no work, so the measurement is
+  almost pure IPC: **+1.92 ms in run 1 and +1.92 ms in run 2**, against a 10 ms budget, and
+  identical across two different machine loads, which is what a fixed per-call cost should look
+  like. The text row's delta (+0.22 ms run 1, **-0.76 ms** run 2) sits inside the noise of the parse
+  itself and must not be read as "IPC is free"; that is why `nasty_empty` is the row that answers
+  the question.
+* **The negative deltas are noise, not a speedup.** A child JVM cannot parse faster than the same
+  Tika in the same process. Rows like `code` (14.00 to 9.72) and `office_docx` (22.18 to 15.68) are
+  the *in-process* number being inflated by the test JVM's own GC and by the concurrent build; the
+  child has a dedicated 512 MB serial-GC heap and its own core. That is a real but incidental effect
+  of the measurement setup, not a property to claim.
+* **What this does NOT measure.** Child spawn cost is excluded (3 warmup requests amortise it, and
+  the pool spawns once per 500 files by design), and so is Tika class-loading in the child. Spawn
+  cost is a live-window number, not a unit-test one.
+* **The split is justified on cost, and would have been justified anyway on correctness.** ~2 ms per
+  file across a text-heavy corpus is real (5 000 text files is about 10 s), and the text families
+  have no wedge or OOM exposure to buy with it.
+
+## Live/chaos-window acceptance items still open (item 14)
+
+Nothing below can be checked without the shared dev stack or the `:modules:system-tests` chaos
+source set, which this chunk was scoped out of. Listed so the orchestrator can schedule one window.
+
+1. **Synthetic hanging child under the chaos harness** — the `ChaosSuiteTest` case the acceptance
+   criteria ask for: a real wedged parser (no existing fixture wedges one; the nasty corpus fails
+   fast), file marked `FAILED/TIMEOUT` with the reason, **the next file extracts normally**, and
+   **the Worker never restarts**. The unit-level halves are green
+   (`hangingChildIsKilledAtTheDeadlineAndTheNextRequestSucceeds`,
+   `wedgedExtractionDoesNotPoisonTheExecutor`); the Worker-never-restarts half is live-only.
+2. **Orphan check on Worker shutdown** — kill the Worker (graceful and `kill -9`) with a child
+   mid-parse and assert no `ExtractionSandboxChild` process survives. The PID gate is unit-tested
+   against a dead PID; the Worker-shutdown wiring end of it is not.
+3. **Real-corpus routing + throughput** — `jseval run --pipeline` on the standard corpus with
+   `mode=auto` vs `mode=in_process`, to price the split on a real mixed corpus (including the child
+   spawn the unit benchmark excludes) and confirm no ingestion regression.
+4. **Child OOM against a real hostile document**, rather than the unit test's deliberate allocator.
+5. **`extraction.sandbox_restart_total` observed on the live metrics stream** — the wire format is
+   pinned by `IndexingPipelineWireFormatRegressionTest`, but no live run has emitted it yet.
