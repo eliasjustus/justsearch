@@ -507,6 +507,7 @@ jobs:
             os: ubuntu-latest
             artifact: unit-test-attribution-app-ui
             runner_label: ubuntu-latest/app-ui
+            fetch_depth: 1
             gradle_tasks: >-
               :modules:app-agent:test
               :modules:app-agent-api:test
@@ -522,6 +523,7 @@ jobs:
             os: ubuntu-latest
             artifact: unit-test-attribution-search-worker
             runner_label: ubuntu-latest/search-worker
+            fetch_depth: 1
             gradle_tasks: >-
               :modules:adapters-lucene:test
               :modules:configuration:test
@@ -564,7 +566,11 @@ jobs:
           # platform-contracts alone needs real history: it runs the dead-code-jvm kernel gate
           # below, whose baseline strategy is git-base, and the kernel fails CLOSED on a shallow
           # clone rather than reporting a false green. The other two lanes stay on depth 1.
-          fetch-depth: ${{ matrix.fetch_depth || 1 }}
+          #
+          # Every lane declares this explicitly. `matrix.fetch_depth || 1` would have been wrong:
+          # GitHub expressions treat 0 as FALSY, so the one lane that needs full history would have
+          # silently got depth 1 and the gate would have exited 2 on every run.
+          fetch-depth: ${{ matrix.fetch_depth }}
 
       - name: Setup Java
         uses: actions/setup-java@v5
