@@ -7,7 +7,9 @@ import tools.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -39,7 +41,8 @@ class FileOperationLogTest {
     assertTrue(Files.exists(logFile), "Log file should be created");
 
     JsonNode json = MAPPER.readTree(logFile.toFile());
-    assertEquals(1, json.get("schemaVersion").asInt());
+    // v2 since tempdoc 909 items 7/8 (executed[].destinationDigest); v1 stays readable below.
+    assertEquals(2, json.get("schemaVersion").asInt());
     assertEquals("batch-1", json.get("batchId").asText());
     assertEquals("Move files", json.get("explanation").asText());
     assertNotNull(json.get("timestamp"));
@@ -58,7 +61,7 @@ class FileOperationLogTest {
         List.of(
             new FileOperation(
                 FileOperation.OpType.COPY, Path.of("/src/a.txt"), Path.of("/dst/a.txt"))));
-    log.recordSuccess("batch-2", 0);
+    log.recordSuccess("batch-2", 0, null);
 
     JsonNode json = MAPPER.readTree(logDir.resolve("batch-2.json").toFile());
     assertEquals(1, json.get("executed").size());
@@ -113,8 +116,8 @@ class FileOperationLogTest {
                 FileOperation.OpType.MKDIR, null, Path.of("/dst/dir")),
             new FileOperation(
                 FileOperation.OpType.MOVE, Path.of("/src/a.txt"), Path.of("/dst/dir/a.txt"))));
-    log.recordSuccess("batch-5", 0);
-    log.recordSuccess("batch-5", 1);
+    log.recordSuccess("batch-5", 0, null);
+    log.recordSuccess("batch-5", 1, null);
     log.finalizeBatch("batch-5");
 
     JsonNode json = MAPPER.readTree(logDir.resolve("batch-5.json").toFile());
@@ -132,7 +135,7 @@ class FileOperationLogTest {
   @Test
   void recordOnMissingBatchIsNoOp() {
     // Should not throw — just logs a warning
-    assertDoesNotThrow(() -> log.recordSuccess("nonexistent-batch", 0));
+    assertDoesNotThrow(() -> log.recordSuccess("nonexistent-batch", 0, null));
     assertDoesNotThrow(() -> log.recordFailure("nonexistent-batch", 0, "error"));
     assertDoesNotThrow(() -> log.finalizeBatch("nonexistent-batch"));
   }
@@ -152,7 +155,7 @@ class FileOperationLogTest {
         List.of(
             new FileOperation(
                 FileOperation.OpType.MOVE, Path.of("/src/a.txt"), Path.of("/dst/a.txt"))));
-    log.recordSuccess("read-batch-1", 0);
+    log.recordSuccess("read-batch-1", 0, null);
     log.finalizeBatch("read-batch-1");
 
     var batch = log.readBatch("read-batch-1");
@@ -244,12 +247,39 @@ class FileOperationLogTest {
   @Test
   void futureSchemaVersionIsRefusedWithoutOverwrite() throws Exception {
     Path path = logDir.resolve("future.json");
-    Files.writeString(path, "{\"schemaVersion\":2,\"batchId\":\"future\"}");
+    Files.writeString(path, "{\"schemaVersion\":3,\"batchId\":\"future\"}");
 
     assertThrows(
         io.justsearch.configuration.persistence.UnsupportedStoreVersionException.class,
         () -> log.readBatch("future"));
-    assertEquals(2, MAPPER.readTree(path.toFile()).get("schemaVersion").asInt());
+    assertEquals(3, MAPPER.readTree(path.toFile()).get("schemaVersion").asInt());
+  }
+
+  /**
+   * Tempdoc 909 items 7/8 — the v1→v2 bump added a field; it removed nothing and re-shaped nothing,
+   * so every journal an earlier install wrote must still read. The register row declares
+   * {@code readableLegacyVersions: [0, 1]} and this is what holds it to that.
+   */
+  @Test
+  @DisplayName("a v1 journal (no destinationDigest) is still readable after the v2 bump")
+  void legacyV1JournalRemainsReadable() throws Exception {
+    Path path = logDir.resolve("legacy.json");
+    Files.writeString(
+        path,
+        "{\"schemaVersion\":1,\"batchId\":\"legacy\",\"finalized\":\"2026-01-01T00:00:00Z\","
+            + "\"operations\":[{\"op\":\"COPY\",\"source\":\"/a\",\"destination\":\"/b\"}],"
+            + "\"executed\":[{\"index\":0,\"status\":\"OK\",\"timestamp\":\"2026-01-01T00:00:00Z\"}]}");
+
+    Map<String, Object> batch = log.readBatch("legacy");
+
+    assertNotNull(batch);
+    assertEquals(1, ((Number) batch.get("schemaVersion")).intValue());
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> executed = (List<Map<String, Object>>) batch.get("executed");
+    assertEquals(1, executed.size());
+    assertNull(
+        executed.get(0).get("destinationDigest"),
+        "a v1 entry has no content identity — that absence is what makes the undo preserve");
   }
 
   // ===== recordSkip tests =====
@@ -278,7 +308,8 @@ class FileOperationLogTest {
     log.startBatch("rename-batch", "Rename test", List.of(
         new FileOperation(
             FileOperation.OpType.MOVE, Path.of("/src/a.txt"), Path.of("/dst/a.txt"))));
-    log.recordRename("rename-batch", 0, Path.of("/dst/a.txt"), Path.of("/dst/a (1).txt"));
+    log.recordRename(
+        "rename-batch", 0, Path.of("/dst/a.txt"), Path.of("/dst/a (1).txt"), null);
 
     JsonNode json = MAPPER.readTree(logDir.resolve("rename-batch.json").toFile());
     assertEquals(1, json.get("executed").size());
