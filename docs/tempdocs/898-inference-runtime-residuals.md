@@ -7,7 +7,7 @@ updated: 2026-09-02
 lane: 887 L19
 model: opus (takeover)
 parent: 887-improvement-landscape-register
-coordination: "⇢ founder lane C (885) owns pacing; ⇢ lane A (883, ADR-0047) owns the context-window ladder — extend, do not re-derive. Battery-aware indexing pacing is deferred until 885 lands (only the VDU consumer exists today)."
+coordination: "⇢ founder lane C (885) owns pacing; ⇢ lane A (883, ADR-0047) owns the context-window ladder — extend, do not re-derive. Battery-aware indexing pacing is deferred until 885 lands (an energy-reduced input already defers backfill via `LoopPacingPolicy.shouldRunBackfill`; the user-facing pause-on-battery lever is `user-indexing-policy` (907), corrected 2026-09-02)."
 related:
   - 883-decision-review-lane-a-config-and-context-budget   # ADR-0047 ladder; memory-plan flags -np/-kvu/-fa/-fit
   - 737-ai-runtime-lifecycle-model     # spec/status reconcile; where activation happens
