@@ -4,6 +4,8 @@ type: decision
 status: Superseded
 description: "JavaFX theming via design tokens, TestFX + Monocle for testing, Vale/markdownlint/Lychee for docs CI."
 date: 2026-03-16
+probes: none - superseded; the JavaFX/TestFX stack it decided was replaced wholesale by ADR-0032.
+last_reviewed: 2026-09-02
 ---
 
 > **Note:** This ADR is superseded. The JavaFX UI layer it describes was replaced by React/Vite/TypeScript (`modules/ui-web`). It is retained for historical context only.

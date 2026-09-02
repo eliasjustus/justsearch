@@ -157,6 +157,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | repo history publication settings (ADR-0045) | `check-repo-history-policy` |
 | PR title/body as public squash message | `preview-squash-message` |
 | `contracts/**` | `--gate wire` |
+| `docs/decisions/**` | `--gate adr-coverage` |
 | new `<dataDir>/runtime/` file | `check-runtime-manifest-closure` |
 | NSIS hooks · tauri bundle resources · sidecar staging | `check-update-preserves-models` |
 | `SSOT/catalogs/**` · analyzers schema · `adapters-lucene/**` | `check-language-agnostic-analysis` |

@@ -4,6 +4,9 @@ type: decision
 status: stable
 description: "Define a Remote Shard SPI for future multi-host search without breaking local-first architecture."
 date: 2026-03-16
+probes:
+  - adr-0011-no-remote-shard
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0011: Distributed Readiness — Remote Shard SPI

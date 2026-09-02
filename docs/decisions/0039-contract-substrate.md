@@ -4,6 +4,9 @@ type: decision
 status: accepted - format superseded by tempdoc 564
 description: "Generalizes ADR-0038: every cross-language agreement (wire, plugin SDK, catalogs, registry serialization) is a Category in one contract substrate projected per-target from a single spec."
 date: 2026-06-09
+probes:
+  - adr-0039-one-contract-category
+last_reviewed: 2026-09-02
 ---
 
 

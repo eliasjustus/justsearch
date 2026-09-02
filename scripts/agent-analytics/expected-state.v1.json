@@ -143,6 +143,28 @@
       "added": "2026-09-01",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: ./gradlew.bat :modules:ui:test --tests \"*ReadinessTriggerCompositionTest*\""
+    },
+    {
+      "id": "governance-kernel-inputs-unbuilt",
+      "match": [
+        "scripts/governance/run\\.mjs(?!.*--gate )(?!.*--self-test)"
+      ],
+      "claim": "A bare full-kernel run reports 5 gates FAIL with kernel/input-missing (npm-audit, module-deps, dead-code, dead-code-jvm, config-surface). That is an UNBUILT REPORT, not a red: each finding names its producer command, and \"node scripts/governance/run.mjs --produce-inputs --mode gate\" builds them. Do not diagnose these as regressions from your change.",
+      "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431) with \"node scripts/governance/run.mjs --mode warn --skip-self-test\": 7 fail, of which 5 are kernel/input-missing naming tmp/npm-audit-report.json, tmp/arch-preflight/module-deps.json, tmp/knip-report.json, tmp/dead-code-jvm-report.json and tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node scripts/governance/run.mjs --produce-inputs --mode gate --skip-self-test"
+    },
+    {
+      "id": "wire-gate-buf-cli-missing",
+      "match": [
+        "scripts/governance/run\\.mjs(?!.*--self-test)(?!.*--produce-inputs)"
+      ],
+      "claim": "The wire gate reports contract-governance/buf-cli-missing until \"npm install\" has run in scripts/wire-contract/ (the buf CLI is a local devDependency, not committed). Environmental on a fresh worktree; not a contract regression.",
+      "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431): the finding names scripts/wire-contract/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe as absent.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node scripts/governance/run.mjs --gate wire --mode gate"
     }
   ]
 }

@@ -4,6 +4,8 @@ type: decision
 status: stable
 description: "Maintain separate core DTOs (gRPC-aligned) and app-api records (REST-aligned) as intentional layering, not duplication."
 date: 2026-04-06
+probes: none - the dual-type layering is a design intent about which types live where; the module-deps gate already fails a boundary violation, and a probe would restate it.
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0025: Core DTO Dual-Type Layering (gRPC vs REST)
