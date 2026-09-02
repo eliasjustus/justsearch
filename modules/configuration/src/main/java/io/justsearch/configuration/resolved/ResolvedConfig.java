@@ -343,7 +343,8 @@ public record ResolvedConfig(
      *
      * @param pollBatchSize primary-indexing job-queue poll batch size. Raised from 1 to 16 in
      *     tempdoc 278 Phase 1 item 1b to amortize per-batch queue overhead (paired with item 1a's
-     *     per-document {@code isUserActive()} check, which keeps larger batches responsive).
+     *     per-document responsiveness check — since tempdoc 885 item 3 that is the per-file
+     *     {@code IndexingPacing.pace()} tick, not the retired {@code isUserActive()} gate).
      * @param embeddingBackfillBatchSize doc-count per embedding backfill batch (parent docs and,
      *     when {@code chunkVectorsEnabled}, the chunk cache populated by the same batch size).
      * @param nerBackfillBatchSize doc-count per NER backfill batch.
@@ -370,6 +371,14 @@ public record ResolvedConfig(
      *     literal in {@code BackfillScheduler}; unified onto this record).
      * @param bgeM3InterleaveBatchSize doc-count per BGE-M3 batch interleaved into the primary
      *     indexing branch (BGE-M3's counterpart to {@code spladeInterleaveBatchSize}).
+     * @param foregroundDutyPct minimum share of wall time (1..100) that indexing and backfill keep
+     *     while foreground search-family RPCs are in flight (tempdoc 885 item 3,
+     *     {@code justsearch.indexing.foreground_duty_pct}, default 20). This is a duty cycle, not a
+     *     pause: the pre-885 behaviour was a full stop, which starved indexing to zero under a
+     *     continuous search loop. 100 disables throttling.
+     * @param foregroundCooldownMs how long after the last foreground completion the Worker still
+     *     counts as contended ({@code justsearch.indexing.foreground_cooldown_ms}, default 500), so
+     *     a burst of short queries does not read as idle in the gaps between them.
      */
     public record BackfillPacing(
         int pollBatchSize,
@@ -383,17 +392,19 @@ public record ResolvedConfig(
         int maxDocsBeforeCommit,
         int chunkSlotsPerBatch,
         int bgeM3BackfillBatchSize,
-        int bgeM3InterleaveBatchSize) {
+        int bgeM3InterleaveBatchSize,
+        int foregroundDutyPct,
+        long foregroundCooldownMs) {
 
       /**
        * The historical hardcoded values, used as a defensive fallback when no {@link
        * ResolvedConfig} is available (e.g. a test double supplying a null config supplier).
-       * Identical to every field's {@code justsearch.backfill.*} default in {@link
-       * ResolvedConfigBuilder} — kept in sync by construction since both originate from the same
-       * pre-Move-4 literals.
+       * Identical to every field's {@code justsearch.backfill.*} / {@code justsearch.indexing.*}
+       * default in {@link ResolvedConfigBuilder} — kept in sync by construction since both
+       * originate from the same pre-Move-4 literals.
        */
       public static final BackfillPacing DEFAULTS =
-          new BackfillPacing(16, 100, 100, 500, 200, 10, 5_000L, 10_000L, 1000, 50, 50, 10);
+          new BackfillPacing(16, 100, 100, 500, 200, 10, 5_000L, 10_000L, 1000, 50, 50, 10, 20, 500L);
     }
   }
 

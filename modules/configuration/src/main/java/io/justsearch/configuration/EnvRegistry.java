@@ -1214,7 +1214,29 @@ public enum EnvRegistry {
      * Tempdoc 617: promoted from raw System.getProperty to satisfy the
      * checkNoDirectJustsearchSysProp build gate.
      */
-    APP_VERSION("justsearch.app.version", "JUSTSEARCH_APP_VERSION");
+    APP_VERSION("justsearch.app.version", "JUSTSEARCH_APP_VERSION"),
+
+    // ==================== Foreground-contention pacing (tempdoc 885 item 3) ====================
+
+    /**
+     * Minimum share of wall time (1..100, default 20) that indexing and enrichment backfill keep
+     * while foreground search-family RPCs are in flight. Replaces the breath-hold pause, which was
+     * a full stop and starved indexing to zero under a continuous search loop (885 baseline arm
+     * (c)). 100 disables throttling. Resolved onto {@code ResolvedConfig.Ai.BackfillPacing}, so the
+     * Worker reads it from the ordinal-450 config snapshot rather than from its own sysprops.
+     */
+    INDEXING_FOREGROUND_DUTY_PCT(
+        "justsearch.indexing.foreground_duty_pct", "JUSTSEARCH_INDEXING_FOREGROUND_DUTY_PCT", "20"),
+
+    /**
+     * Milliseconds after the last foreground RPC completes during which the Worker still counts as
+     * contended (default 500), so a burst of short queries does not read as idle in the gaps
+     * between them.
+     */
+    INDEXING_FOREGROUND_COOLDOWN_MS(
+        "justsearch.indexing.foreground_cooldown_ms",
+        "JUSTSEARCH_INDEXING_FOREGROUND_COOLDOWN_MS",
+        "500");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 
