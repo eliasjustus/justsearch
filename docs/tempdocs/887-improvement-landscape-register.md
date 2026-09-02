@@ -1,7 +1,7 @@
 ---
 title: "Improvement landscape register: breadth-first survey of un-chartered improvement areas, existence-checked per item, bucketed for owner / opus takeover / fable theorization"
 type: tempdocs
-status: "REGISTER COMPLETE (2026-09-02) — 75 items existence-checked by 10 pinned opus workers, 5 load-bearing claims spot-checked by the orchestrator; decision-age audit (§S) applied to every superseded/rejected/deferred item — 1.1 non-NVIDIA re-opened (stale 2026-03 premise), 191's 2026-02 deferrals flagged; 19 candidate lanes proposed; NO lane chartered yet — awaiting owner selection (§L)"
+status: "REGISTER COMPLETE + 13 LANES CHARTERED (2026-09-02) — 75 items existence-checked by 10 pinned opus workers; decision-age audit (§S) applied; handoff tempdocs 888-900 written for the opus lanes (L1,L3,L5,L6,L7,L8,L11,L12,L13,L14,L15,L17,L19); fable lanes L4/L9/1.1-re-read pending; owner lanes L2/L10/L16/L18 awaiting decision"
 created: 2026-09-02
 updated: 2026-09-02
 author: agent (Fable orchestration), founder-directed 2026-09-02 ("determine what the remaining areas of work are, to improving the repo/project in general from any aspects … breadth first … theorize all angles with potential of providing meaningful general improvements")
@@ -266,29 +266,29 @@ Columns: id · item · verdict · bucket · lane (§L) · one-line gap. Evidence
 
 ## §L. Proposed lanes (for founder selection)
 
-Each lane becomes a tempdoc only when picked. Bucket = who acts first.
+Each lane becomes a tempdoc only when picked. Bucket = who acts first. **Chartered 2026-09-02:** the 13 OPUS lanes have handoff tempdocs 888-900 (number after the arrow); L4, L9 and the 1.1 re-read are fable work in the orchestrating session; L2, L10, L16, L18 wait on the founder.
 
 | lane | name | items | bucket | notes |
 |---|---|---|---|---|
-| **L1** | CI enforcement closure, tier 0 (no new infra) | 7.5, 7.3 (PMD/SpotBugs via `check`), 7.7 (ruff/mypy/clippy/eslint), 8.8, 7.6 (hook bites), 6.5 (axe gate), 8.5 one-liners | OPUS | highest value-per-effort in the register; one PR per sub-item; SpotBugs needs a baseline triage first |
+| **L1** → **888** | CI enforcement closure, tier 0 (no new infra) | 7.5, 7.3 (PMD/SpotBugs via `check`), 7.7 (ruff/mypy/clippy/eslint), 8.8, 7.6 (hook bites), 6.5 (axe gate), 8.5 one-liners | OPUS | highest value-per-effort in the register; one PR per sub-item; SpotBugs needs a baseline triage first |
 | **L2** | CI enforcement closure, tier 1 (self-hosted / GPU) | 4.6, 7.4, 4.4, 7.7 pytest, 7.8 | OWNER → OPUS | needs a runner decision (cost) before any agent work |
-| **L3** | Filesystem reality | 2.1, 2.2, 2.4, 2.7 | OPUS | junction/symlink/long-path classification, access-denied ledger row, AV guidance, scale + Unicode matrix; 410's open rows are the spec |
+| **L3** → **889** | Filesystem reality | 2.1, 2.2, 2.4, 2.7 | OPUS | junction/symlink/long-path classification, access-denied ledger row, AV guidance, scale + Unicode matrix; 410's open rows are the spec |
 | **L4** | Sensitive content + injection adversary | 3.1, 3.4 | FABLE | product-shape: default exclusions, `.env` reversal, MCP serving policy, prompt-injection control; touches threat model (canonical) |
-| **L5** | File lifecycle and data portability | 3.2, 3.3 | OPUS (+1 FABLE sub-item) | per-file forget, citation invalidation, out-of-root prune, uninstall prompt, plaintext export; relocation/portable mode theorized separately |
-| **L6** | Index maintenance and footprint | 4.1, 4.2, 4.3, 4.7 | OPUS ⇢882-D | generation GC policy, WAL bounds, bytes/doc + cold-open + idle measurements; int8 default is an owner call after measurement |
-| **L7** | Background citizenship | 2.5, 2.8, 2.3 | OPUS ⇢882-C | OS priority classes, job-object limits, one low-disk policy; must coordinate with 885 items 3/19 |
-| **L8** | Launcher and search primitives | 6.1, 6.3, 5.1 (FE date filter), 5.8 (query history) | OPUS | 191 §A is the launcher design; fixes the help-vs-composer syntax defect (§Z-7) |
+| **L5** → **891** | File lifecycle and data portability | 3.2, 3.3 | OPUS (+1 FABLE sub-item) | per-file forget, citation invalidation, out-of-root prune, uninstall prompt, plaintext export; relocation/portable mode theorized separately |
+| **L6** → **895** | Index maintenance and footprint | 4.1, 4.2, 4.3, 4.7 | OPUS ⇢882-D | generation GC policy, WAL bounds, bytes/doc + cold-open + idle measurements; int8 default is an owner call after measurement |
+| **L7** → **896** | Background citizenship | 2.5, 2.8, 2.3 | OPUS ⇢882-C | OS priority classes, job-object limits, one low-disk policy; must coordinate with 885 items 3/19 |
+| **L8** → **890** | Launcher and search primitives | 6.1, 6.3, 5.1 (FE date filter), 5.8 (query history) | OPUS | 191 §A is the launcher design; fixes the help-vs-composer syntax defect (§Z-7) |
 | **L9** | Unified abstention authority | 5.5 | FABLE | cross-surface; results need a relevance floor; relates to 603/677/779/797 |
 | **L10** | User indexing policy | 6.4 | FABLE ⇢882-C | interacts with 885 duty cycle and 813 cancel honesty |
-| **L11** | Static-analysis and concurrency conventions | 7.2, 7.3 (NullAway pilot), 8.1 | FABLE(short) → OPUS | decide `@GuardedBy` convention, api/internal packages, JSpecify adoption; then ArchUnit + one-module NullAway pilot |
-| **L12** | Continuous fuzzing | 7.1 | OPUS | Jazzer targets: Tika (sandbox child), MCP JSON-RPC, HTTP; scheduled job |
-| **L13** | Format breadth corpus + duplicate measurement | 5.6, 5.3, 5.2 (later) | OPUS | depends on 686's real binary corpus; assert extraction, not just no-crash; measure duplicate rate before 639 design |
-| **L14** | Hygiene registers | 8.6, 8.7 (spec snapshot), 8.2, 8.3, 6.8, 8.4 (policy draft) | OPUS | EOL register + check, committed OpenAPI snapshot + CI diff, ratchet globs, health NDJSON, glossary, flag policy draft for owner |
-| **L15** | Open-items collector + ADR follow-up | 10.7, 10.8 | OPUS ⇢882-B | collector script over tempdoc open-items sections; extend `adr-coverage` to `## Follow-up`; one-time harvest feeds this register |
+| **L11** → **900** | Static-analysis and concurrency conventions | 7.2, 7.3 (NullAway pilot), 8.1 | FABLE(short) → OPUS | decide `@GuardedBy` convention, api/internal packages, JSpecify adoption; then ArchUnit + one-module NullAway pilot |
+| **L12** → **894** | Continuous fuzzing | 7.1 | OPUS | Jazzer targets: Tika (sandbox child), MCP JSON-RPC, HTTP; scheduled job |
+| **L13** → **897** | Format breadth corpus + duplicate measurement | 5.6, 5.3, 5.2 (later) | OPUS | depends on 686's real binary corpus; assert extraction, not just no-crash; measure duplicate rate before 639 design |
+| **L14** → **893** | Hygiene registers | 8.6, 8.7 (spec snapshot), 8.2, 8.3, 6.8, 8.4 (policy draft) | OPUS | EOL register + check, committed OpenAPI snapshot + CI diff, ratchet globs, health NDJSON, glossary, flag policy draft for owner |
+| **L15** → **892** | Open-items collector + ADR follow-up | 10.7, 10.8 | OPUS ⇢882-B | collector script over tempdoc open-items sections; extend `adr-coverage` to `## Follow-up`; one-time harvest feeds this register |
 | **L16** | Release unblock | 9.1, 9.2, 9.4, 9.6 | OWNER → OPUS | cert purchase + GA tag, then winget automation, CHANGELOG gate, model-swap runbook |
-| **L17** | Project operations | 10.1, 10.2, 10.5, 10.6, 3.6 | OPUS + OWNER | devcontainer, labels, succession doc (owner inputs), on-wire deprecation, SDK language decision, crash-report stance |
+| **L17** → **899** | Project operations | 10.1, 10.2, 10.5, 10.6, 3.6 | OPUS + OWNER | devcontainer, labels, succession doc (owner inputs), on-wire deprecation, SDK language decision, crash-report stance |
 | **L18** | Product bets (theorization menu) | **1.1 (non-NVIDIA re-read)**, 1.4, 2.9, 5.4, 5.7, 5.8 (enable), 6.2, 6.6, 9.3, 10.3 | OWNER/FABLE | each is a direction decision; none should be chartered without the founder picking it; 1.1, 6.2, 9.3 carry stale early-era rejections/deferrals (§S) — the re-read is the deliverable, not a presumption either way |
-| **L19** | Inference runtime residuals | 1.3, 1.5, 1.7, 1.8 | OPUS (+1 research) | RAM-derived heap, battery-aware pacing beyond VDU, device-lost classification, slot pinning; speculative decoding is a model-pack research item |
+| **L19** → **898** | Inference runtime residuals | 1.3, 1.5, 1.7, 1.8 | OPUS (+1 research) | RAM-derived heap, battery-aware pacing beyond VDU, device-lost classification, slot pinning; speculative decoding is a model-pack research item |
 
 Suggested first picks if the founder wants a default: **L1** (inert enforcement, zero infra),
 **L4** (the `.env` finding is a live privacy defect), **L3** (silent-invisible files), **L8**
