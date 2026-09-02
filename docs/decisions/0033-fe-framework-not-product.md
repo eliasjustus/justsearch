@@ -4,6 +4,8 @@ type: decision
 status: accepted
 description: "The frontend is a framework whose surfaces are projected from declarations, so users/plugins can author presentation without forking the shell."
 date: 2026-06-09
+probes: none - "framework, not product" is an architectural stance; its violations look like new hard-coded surfaces, which the surface-altitude gate judges case by case.
+last_reviewed: 2026-09-02
 ---
 
 

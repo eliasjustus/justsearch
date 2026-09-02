@@ -4,6 +4,10 @@ type: decision
 status: stable
 description: "LLM-generated citations backed by RAG metadata, supplemented by CPU cross-encoder post-hoc matching."
 date: 2026-02-07
+probes:
+  - adr-0006-citation-scorer-wired
+  - adr-0006-citation-match-ops-wired
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0006: Two-Pronged Citation Strategy
@@ -70,3 +74,26 @@ Use llama.cpp GBNF grammars to force citation syntax in the output. **Deferred**
 - Cross-encoder latency becomes a UX bottleneck (e.g., answer streams complete faster than cross-encoder scoring), degrading the perceived responsiveness.
 
 *Added by tempdoc 269 trigger audit (2026-03).*
+
+**Trigger check 2026-09-02** (decision-review lane B, tempdoc 884). **Neither trigger has
+fired; the decision is unchanged.** Both prongs are still wired — probes
+`adr-0006-citation-scorer-wired` and `adr-0006-citation-match-ops-wired` hold against
+`GrpcSearchService`, which owns the `CitationScorer` and reaches it through `CitationMatchOps`
+on the search path.
+
+Two things the check surfaced:
+
+- **The last systematic trigger check was tempdoc 720 (2026-07-12)**, which trigger-checked this
+  ADR's parked alternatives (Alt B entailment scorer, Alt C/D abstain rail) and recorded that
+  none fired. Nothing since has measured LLM citation accuracy against the 95% threshold, so
+  trigger #1 is *unmeasured*, not *unmet* — worth stating plainly rather than reading a green
+  probe as an answer to a question nobody asked.
+- **Citation marks were substantially rebuilt in 2026-08 without this ADR being cited.**
+  Tempdoc 847 (end-to-end citation correctness: the mark must land, survive reload, and never
+  outrun its evidence), tempdoc 867 (citation mark species: model-authored refs vs verified
+  marks) and tempdoc 869 (the four mechanical mark defects) all reworked the citation surface;
+  none references ADR-0006. That is exactly the drift the premise-probe register exists to
+  catch: the work stayed *consistent* with the two-pronged decision — marks follow the
+  cross-encoder verifier, not the model — but it re-derived that policy instead of reading it
+  here. The probes now make the ADR's wiring mechanically visible; the cross-reference gap is
+  recorded rather than retro-fixed.

@@ -62,6 +62,8 @@ class ExtractionSandboxChaosTest {
   private WorkerProcessManager processManager;
   private MmfTestHarness mmfHarness;
   private GrpcTestClient grpcClient;
+  /** Set as the LAST statement of a passing test, so a thrown assertion leaves it false. */
+  private boolean passed;
 
   @BeforeAll
   static void locateDistribution() {
@@ -107,6 +109,7 @@ class ExtractionSandboxChaosTest {
     corpusDir = testDataDir.resolveSibling("corpus");
     Files.createDirectories(corpusDir);
 
+    passed = false;
     processManager = WorkerProcessManager.fromDistributionNoConfig(
         workerDistPath, testDataDir, projectRoot);
     processManager
@@ -132,6 +135,26 @@ class ExtractionSandboxChaosTest {
     if (processManager != null) {
       processManager.close();
       processManager = null;
+    }
+    // A Worker data dir is ~10 MB and every run makes a new one. Kept on failure — the worker log
+    // and the metrics NDJSON are the evidence for anything that went wrong.
+    if (passed && testDataDir != null) {
+      deleteRecursively(testDataDir.getParent());
+    }
+  }
+
+  private static void deleteRecursively(Path root) throws IOException {
+    if (root == null || !Files.exists(root)) {
+      return;
+    }
+    try (java.util.stream.Stream<Path> walk = Files.walk(root)) {
+      for (Path path : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+        try {
+          Files.deleteIfExists(path);
+        } catch (IOException e) {
+          // A file the Worker still holds open; the OS temp sweep reclaims it.
+        }
+      }
     }
   }
 
@@ -373,6 +396,7 @@ class ExtractionSandboxChaosTest {
           "the Worker PID must be unchanged across the whole sequence");
       log.info("Sandbox chaos sequence complete on worker PID {} (restart reasons: {})",
           workerPid, restartReasons());
+      passed = true;
     } finally {
       heartbeat.interrupt();
     }
@@ -421,6 +445,7 @@ class ExtractionSandboxChaosTest {
     }
     assertTrue(gone, "extraction child " + childPid
         + " must halt itself once the Worker is gone (parent-PID gate)");
+    passed = true;
   }
 
   /** Waits until the Worker has spawned its extraction child, and returns that child's PID. */

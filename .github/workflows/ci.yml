@@ -200,6 +200,13 @@ jobs:
       - name: Test squash-message preview (session-id trailer + title/body checks)
         run: node scripts/ci/test-preview-squash-message.mjs
 
+      # Tempdoc 884 PR 2. Same shape again, third time in this file: check-tempdoc-numbers is a
+      # merge gate, and its collision rule had no test at all until 884 had to loosen one branch
+      # of it. A loosened collision rule fails silently -- the regression is the case that STOPS
+      # firing -- so the pin is wired here rather than left as a script nobody runs.
+      - name: Test tempdoc/changeset number-collision scanner
+        run: node scripts/ci/test-tempdoc-scan.mjs
+
       # Tempdoc 799 Q. An adversarial review found the gate itself ran NOWHERE -- the step above
       # tests the scanner, but nothing invoked the gate on a PR. That is the same "shipped but
       # wired to nothing" shape L.1 documents for the always-loaded ratchet, reproduced in the
@@ -209,6 +216,21 @@ jobs:
         run: |
           node scripts/docs/generate-runtime-config-matrix.mjs
           node scripts/governance/run.mjs --gate config-surface --mode gate
+
+      # Tempdoc 884 review B1, same shape as the note above: the kernel's own gate tests
+      # (18 *.test.mjs files) ran NOWHERE -- standalone `node <file>` scripts nobody
+      # invoked. The runner auto-discovers them so a new one is covered the moment it lands.
+      - name: Governance kernel tests (node)
+        run: node scripts/governance/run-all-tests.mjs
+
+      # The fixture self-test asserts each gate's positive/negative fixture still produces
+      # the verdict it claims. --mode gate is load-bearing: in the default warn mode a
+      # mismatch prints and exits 0 (run.mjs:312).
+      - name: Governance gate self-test fixtures
+        run: node scripts/governance/run.mjs --self-test --mode gate
+
+      - name: ADR premise probes (adr-coverage gate)
+        run: node scripts/governance/run.mjs --gate adr-coverage --mode gate
 
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs

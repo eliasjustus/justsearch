@@ -4,6 +4,8 @@ type: decision
 status: accepted
 description: "Plugins author presentation (renderers, surfaces, layout, theme) but never own backend truth (Operations/Resources/Prompts). The boundary is a type, not a convention."
 date: 2026-06-09
+probes: none - the plugin boundary is a type, so its enforcement is the compiler plus the contribution-surface gate.
+last_reviewed: 2026-09-02
 ---
 
 

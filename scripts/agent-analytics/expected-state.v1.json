@@ -4,18 +4,6 @@
   "comment": "Known expected state of verification commands (tempdoc 680 environment lane; contract tightened by tempdoc 872). Consumed by the known-state-hint hook (PreToolUse Bash): when a command matches an entry's `match` regexes, the claim is surfaced BEFORE the command runs so a session recognises a pre-existing red instead of re-deriving it via stash-and-verify. A PIN IS A DATED EXCEPTION, NOT A STEADY STATE: main being red is a defect, and the pin exists only so the defect is not rediscovered while it is being fixed. DISCIPLINE: every pin carries an exit — an `exitProbe` (a command; exit 0 means the pinned red is GONE; `slow:` prefix = only run with --slow) and/or a `reviewBy` date after which the pin must be re-affirmed with evidence or deleted. `node scripts/agent-analytics/expected-state-probe.mjs --gate` fails on a pin with no exit, past reviewBy, or whose exitProbe fired. A pin whose red is gone is a lie; delete it in the fixing PR. CI runs the --gate form WITHOUT --slow, so exitProbes run only locally; the CI check is shape + reviewBy, and a pin past its reviewBy turns CI red for every PR by design.",
   "entries": [
     {
-      "id": "ui-web-typecheck-ts5101",
-      "match": [
-        "npm .*typecheck",
-        "tsc\\b.*-p\\b|tsc\\b.*--noEmit"
-      ],
-      "claim": "ui-web `npm run typecheck` is RED repo-wide (TS5101: tsconfig.json baseUrl deprecation vs pinned typescript 6.x) — pre-existing on main since ~2026-07-01; a typecheck failure that is ONLY TS5101 is not caused by your change.",
-      "evidence": "observations condition obs:ui-web-typecheck-ts5101 (seen 5); probe re-confirmed 2026-07-05",
-      "added": "2026-07-06",
-      "reviewBy": "2026-09-30",
-      "exitProbe": "slow: npm --prefix modules/ui-web run typecheck"
-    },
-    {
       "id": "vdu-pdf-fixtures-local-env",
       "match": [
         "gradlew?(\\.bat)? (?!.*-x test)(?!.*:modules:(?!worker-services))(?!.*--tests(?!.*VduEligibility))(?=.*\\btest\\b)"
@@ -143,6 +131,39 @@
       "added": "2026-09-01",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: ./gradlew.bat :modules:ui:test --tests \"*ReadinessTriggerCompositionTest*\""
+    },
+    {
+      "id": "governance-kernel-inputs-unbuilt",
+      "match": [
+        "scripts/governance/run\\.mjs(?!.*--gate )(?!.*--self-test)"
+      ],
+      "claim": "A bare full-kernel run reports 5 gates FAIL with kernel/input-missing (npm-audit, module-deps, dead-code, dead-code-jvm, config-surface). That is an UNBUILT REPORT, not a red: each finding names its producer command, and \"node scripts/governance/run.mjs --produce-inputs --mode gate\" builds them. Do not diagnose these as regressions from your change.",
+      "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431) with \"node scripts/governance/run.mjs --mode warn --skip-self-test\": 7 fail, of which 5 are kernel/input-missing naming tmp/npm-audit-report.json, tmp/arch-preflight/module-deps.json, tmp/knip-report.json, tmp/dead-code-jvm-report.json and tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node scripts/governance/run.mjs --produce-inputs --mode gate --skip-self-test"
+    },
+    {
+      "id": "wire-gate-buf-cli-missing",
+      "match": [
+        "scripts/governance/run\\.mjs(?!.*--self-test)(?!.*--produce-inputs)"
+      ],
+      "claim": "The wire gate reports contract-governance/buf-cli-missing until \"npm install\" has run in scripts/wire-contract/ (the buf CLI is a local devDependency, not committed). Environmental on a fresh worktree; not a contract regression.",
+      "evidence": "Reproduced 2026-09-02 on worktree-lane-B (base 6c3ba431): the finding names scripts/wire-contract/node_modules/@bufbuild/buf-win32-x64/bin/buf.exe as absent.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "slow: node scripts/governance/run.mjs --gate wire --mode gate"
+    },
+    {
+      "id": "runtime-manifest-closure-sibling-file-api-port",
+      "match": [
+        "check-runtime-manifest-closure\\.mjs"
+      ],
+      "claim": "check-runtime-manifest-closure exits 1 on main with exactly 2 [sibling-file] violations, both reading runtime/api-port.txt: packaging/mcpb/server/index.js:33 and scripts/sandbox/mcp-typed-confirm.mjs:109. Pre-existing (last touched by PR #468), not caused by your change. A run reporting a DIFFERENT file, a different rule (stdout-emit / unauthorized-write), or more than these 2 violations is yours.",
+      "evidence": "Reproduced 2026-09-02 on worktree-lane-B2 (base 9e43df5f): \"[closure-check] FAILED - 2 closure-rule violations\" naming exactly those two file:line sites. The fix (land the API port as a manifest.json field, or justify the sibling in ALLOWED_RUNTIME_ARTIFACTS per tempdoc 501 section 6) is owned by whoever owns packaging/mcpb, NOT by decision-review lane B; tracked in tempdoc 884's residue list.",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30",
+      "exitProbe": "node scripts/ci/check-runtime-manifest-closure.mjs"
     },
     {
       "id": "jseval-pytest-missing-optional-deps-local-env",

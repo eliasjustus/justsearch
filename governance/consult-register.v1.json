@@ -210,6 +210,26 @@
       ]
     },
     {
+      "id": "architecture-decisions",
+      "pathIncludes": ["docs/decisions/", "docs/reference/architectural-risks.md"],
+      "region": "an architecture decision record (ADR) or the architectural risk register",
+      "maintain": true,
+      "docs": [
+        {
+          "path": "docs/decisions/README.md",
+          "why": "the ADR conventions and the § How to re-examine an ADR procedure — an ADR is amended append-only, and every edit owes a refreshed `last_reviewed:` plus a `probes:` entry that still restates the decision's premise. Editing an ADR's prose without those is the drift the probe register exists to catch."
+        }
+      ],
+      "recipe": [
+        "Changing a decision (not a typo): follow docs/decisions/README.md § How to re-examine an ADR. Amendments are APPEND-ONLY — add a dated amendment section, do not rewrite the original Decision/Context in place; the superseded reasoning is the record.",
+        "Set `last_reviewed: YYYY-MM-DD` to today in the frontmatter. That date is the cadence: the adr-coverage gate warns past the window declared as `reviewStaleDays` in governance/adr-probes.v1.json (183 days), and node scripts/agent-analytics/world-state.mjs lists the same ADRs in its ADR review section (the manual orientation command AGENTS.md points you at, not an automatic session-start hook).",
+        "Check the ADR's `probes:` still restates the NEW premise. A probe that passes against the old decision is worse than no probe — it reports green about a claim the ADR no longer makes. Update or replace the entry in governance/adr-probes.v1.json; never edit a probe merely to make it pass.",
+        "A live (accepted*/stable*) ADR must name a probe or state a reason: `probes: none - <reason>`. A bare `probes: none` states nothing and still fails.",
+        "Verify: node scripts/governance/run.mjs --gate adr-coverage --mode gate.",
+        "If the decision changed inside a tempdoc, the ADR update rides in the SAME PR — see docs/reference/contributing/agent-guide.md §3.8."
+      ]
+    },
+    {
       "id": "dev-stack-stale-jar",
       "pathIncludes": ["modules/app-services/", "modules/app-agent-api/"],
       "region": "Java on the head-process classpath (dev-stack freshness)",

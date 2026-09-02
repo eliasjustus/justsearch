@@ -96,7 +96,8 @@ public final class RuntimeManifestListenerWiring {
                 ls.name(),
                 bootstrap.expectedLlamaServerBuild(),
                 bootstrap.actualLlamaServerBuild(),
-                bootstrap.llamaServerThinkingSupport());
+                bootstrap.llamaServerThinkingSupport(),
+                bootstrap.launchedContextWindow());
             publisher.publishMode(modeIntent, realizedMode(workCap, infCap));
             // Tempdoc 842 §2.5: the realized chat identity rides the SAME listener that keeps
             // `mode` fresh. Every engine start, stop and profile switch is an inference transition,
@@ -170,7 +171,8 @@ public final class RuntimeManifestListenerWiring {
           ls.name(),
           bootstrap.expectedLlamaServerBuild(),
           bootstrap.actualLlamaServerBuild(),
-          bootstrap.llamaServerThinkingSupport());
+          bootstrap.llamaServerThinkingSupport(),
+          bootstrap.launchedContextWindow());
     } catch (Exception e) {
       log.warn("Runtime manifest initial-AI publish failed (non-fatal)", e);
     }

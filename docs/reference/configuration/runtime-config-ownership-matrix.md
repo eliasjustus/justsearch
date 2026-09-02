@@ -14,6 +14,11 @@ Precedence note:
 2. `YAML > default` for YAML-only keys (ConfigKey entries, no env var override).
 3. `sysprop > env > default` for env/sysprop-only runtime knobs.
 
+The per-row notes above cover only the sources this table can derive from `EnvRegistry` / `ConfigKey`. The full ordinal chain in `ResolvedConfigBuilder` has more: `jvm_arg` 500 > `worker_snapshot` 450 > `env_var` 400 > `ci_profile` 350 > `settings.json` 300 > `yaml` 200 > `auto_detected` 150 > `default` 100. Two of those contributors are invisible here because they are written by callers rather than declared as keys:
+
+- **`settings.json` (300)** — `ConfigStoreRebuilder.contributeUiSettings` forwards a handful of `UiSettings` fields, including `justsearch.gpu.layers` and `justsearch.context.size`.
+- **`auto_detected` (150, detail `hardware_probe`)** — the Head's startup probe contributes GPU detection results and, since tempdoc 883, the DERIVED `justsearch.context.size` window rung. So `justsearch.context.size` resolves `settings.json` when the user set one and `auto_detected` otherwise — never `jvm_arg` merely because it came from the GUI, which is what the deleted settings-to-sysprop promotion used to make it report.
+
 | YAML key | Env var | System property | EnvRegistry constant | Owner module | Precedence notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | egress.block_all | JUSTSEARCH_EGRESS_BLOCK_ALL | egress.block_all | EGRESS_BLOCK_ALL | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
@@ -156,8 +161,11 @@ Precedence note:
 | - | JUSTSEARCH_EMBED_ONNX_MODEL_PATH | justsearch.embed.onnx.model_path | EMBED_ONNX_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND | justsearch.extraction.sandbox.command | EXTRACTION_SANDBOX_COMMAND | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EXTRACTION_SANDBOX_HEAP | justsearch.extraction.sandbox.heap | EXTRACTION_SANDBOX_HEAP | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_EXTRACTION_SANDBOX_HEAP | justsearch.extraction.sandbox.heap | EXTRACTION_SANDBOX_HEAP | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_EXTRACTION_SANDBOX_MAX_REQUESTS | justsearch.extraction.sandbox.max_requests | EXTRACTION_SANDBOX_MAX_REQUESTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EXTRACTION_SANDBOX_MAX_REQUESTS | justsearch.extraction.sandbox.max_requests | EXTRACTION_SANDBOX_MAX_REQUESTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EXTRACTION_SANDBOX_MODE | justsearch.extraction.sandbox.mode | EXTRACTION_SANDBOX_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_EXTRACTION_SANDBOX_POOL | justsearch.extraction.sandbox.pool | EXTRACTION_SANDBOX_POOL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EXTRACTION_SANDBOX_POOL | justsearch.extraction.sandbox.pool | EXTRACTION_SANDBOX_POOL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_FIELD_CATALOG | justsearch.fieldCatalog | FIELD_CATALOG | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_FILTER_NORM_ENABLED | justsearch.filter_norm.enabled | FILTER_NORM_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -187,8 +195,10 @@ Precedence note:
 | - | JUSTSEARCH_LAMBDAMART_ENABLED | justsearch.lambdamart.enabled | LAMBDAMART_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LITE_MODE | justsearch.lite.mode | LITE_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | justsearch.llm.enabled | JUSTSEARCH_LLM_ENABLED | justsearch.llm.enabled | LLM_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| - | JUSTSEARCH_LLM_KV_TYPE | justsearch.llm.kv_type | LLM_KV_TYPE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | justsearch.llm.model_path | JUSTSEARCH_LLM_MODEL_PATH | justsearch.llm.model_path | LLM_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_REASONING_BUDGET | justsearch.llm.reasoning_budget | REASONING_BUDGET | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_LLM_SLOTS | justsearch.llm.slots | LLM_SLOTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_USE_THINKING | justsearch.llm.use_thinking | USE_THINKING | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_MCP_HOST_CONFIG | justsearch.mcp.host.config | MCP_HOST_CONFIG | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_MMPROJ_MODEL | justsearch.mmproj.model | MMPROJ_MODEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

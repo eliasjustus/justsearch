@@ -39,12 +39,33 @@ import org.slf4j.LoggerFactory;
  * {@code schemaVersion} is a different question and stays fail-loud: {@link
  * StoreFormatVersions#requireReadable} still throws, because refusing to touch state a newer build
  * wrote is the safe answer, while defaulting over it would silently downgrade it on the next save.
+ *
+ * <p>A PAST {@code schemaVersion} is neither: it is listed in {@link #READABLE_LEGACY_VERSIONS} and
+ * forward-migrated by {@link #migrate} on load (tempdoc 883). Migration runs on every load until the
+ * next save rewrites the file at the current version, so each step must be idempotent.
  */
 public final class UiSettingsStore {
 
   private static final Logger log = LoggerFactory.getLogger(UiSettingsStore.class);
 
-  static final int CURRENT_SCHEMA_VERSION = 1;
+  static final int CURRENT_SCHEMA_VERSION = 2;
+
+  /**
+   * Versions this build can still read and migrate forward. {@code 0} is the unversioned legacy
+   * file (no envelope); {@code 1} is the pre-tempdoc-883 envelope. A version NOT listed here is
+   * fatal by {@link StoreFormatVersions#requireReadable}, so every schema bump must extend this
+   * list or every existing install fails to start.
+   */
+  private static final int[] READABLE_LEGACY_VERSIONS = {0, 1};
+
+  /**
+   * The pre-883 shipped default for {@code contextLength}. Tempdoc 883 made the context window a
+   * derived resource with {@code 0} = auto, so a stored 4096 — which every install has on disk,
+   * because settings are serialized whole on every save — has to become auto or the derived ladder
+   * is unreachable forever. A deliberate user 4096 is indistinguishable from the default (there was
+   * never a UI control for it) and is discarded; see tempdoc 883 §B.c.
+   */
+  private static final int LEGACY_DEFAULT_CONTEXT_LENGTH = 4096;
 
   private static final DateTimeFormatter BACKUP_STAMP =
       DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT).withZone(ZoneOffset.UTC);
@@ -119,8 +140,13 @@ public final class UiSettingsStore {
       }
       Integer observedVersion =
           versionNode == null || versionNode.isNull() ? null : versionNode.asInt();
-      StoreFormatVersions.requireReadable(
-          "ui-settings", observedVersion, CURRENT_SCHEMA_VERSION, 0, 0);
+      int resolvedVersion =
+          StoreFormatVersions.requireReadable(
+              "ui-settings",
+              observedVersion,
+              CURRENT_SCHEMA_VERSION,
+              0,
+              READABLE_LEGACY_VERSIONS);
       UiSettings settings =
           !envelope
               ? MAPPER.treeToValue(root, UiSettings.class)
@@ -128,7 +154,7 @@ public final class UiSettingsStore {
       if (settings == null) {
         throw new CorruptDurableStoreException("ui-settings", "settings payload is missing");
       }
-      return settings;
+      return migrate(settings, resolvedVersion);
     } catch (CorruptDurableStoreException
         | io.justsearch.configuration.persistence.UnsupportedStoreVersionException e) {
       throw e;
@@ -136,6 +162,27 @@ public final class UiSettingsStore {
       throw new CorruptDurableStoreException(
           "ui-settings", "cannot parse " + settingsFile, e);
     }
+  }
+
+  /**
+   * Forward-migrates a settings payload read at {@code storedVersion} to
+   * {@link #CURRENT_SCHEMA_VERSION}. The next successful {@link #save} rewrites the file at the
+   * current version; until then the migration is applied on every load, so it must be idempotent.
+   *
+   * <p>1 → 2 (tempdoc 883): {@code contextLength} 4096 means "the pre-883 default", which is now
+   * spelled 0 = auto. Any other positive value is a deliberate operator override and is preserved.
+   */
+  private static UiSettings migrate(UiSettings settings, int storedVersion) {
+    if (storedVersion < 2 && settings.getContextLength() == LEGACY_DEFAULT_CONTEXT_LENGTH) {
+      log.info(
+          "ui-settings schema {} → {}: contextLength {} (the pre-883 shipped default) migrated to 0"
+              + " = auto; the context window is now derived at activation.",
+          storedVersion,
+          CURRENT_SCHEMA_VERSION,
+          LEGACY_DEFAULT_CONTEXT_LENGTH);
+      settings.setContextLength(0);
+    }
+    return settings;
   }
 
   /**

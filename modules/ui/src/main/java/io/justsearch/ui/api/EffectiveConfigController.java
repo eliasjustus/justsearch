@@ -482,38 +482,62 @@ public final class EffectiveConfigController {
     return key("justsearch.llm.model_path", effective != null ? effective : (sys != null ? sys : env), source, details);
   }
 
+  /**
+   * Tempdoc 883 decision 4: the context-size row is sourced from the RESOLVER's own provenance, not
+   * from a {@code justsearch.context.size.source} marker sysprop.
+   *
+   * <p>That marker existed because {@code settings.json} used to be promoted to a system property,
+   * which made a GUI value report as {@code jvm_arg} — a precedence lie the row then had to un-tell
+   * by reading a second sysprop. Both are deleted: {@code settings.json} contributes at ordinal 300
+   * and the derived window at 150, so the ordinal chain already knows who won, with what value,
+   * from which detail.
+   *
+   * <p>Source names are the resolver's own strings ({@code auto_detected}, {@code settings.json},
+   * {@code env_var}, {@code jvm_arg}, {@code yaml}, {@code default}) — re-spelling them here would
+   * be a second vocabulary that drifts from the one the {@code resolvedConfig} block reports.
+   *
+   * <p>The observed runtime window still wins the {@code value} when it differs, reported as
+   * {@code source: "runtime"} with the resolved value as a conflict: after a ladder step-down the
+   * resolver holds the PLANNED rung and only {@code /props} knows the real one.
+   */
   private Map<String, Object> keyContextSize(
       OnlineAiRuntimeIntrospection.RuntimeInfo runtimeInfo,
       InferenceConfig envInference) {
-    String sys = sysProp(EnvRegistry.CONTEXT_SIZE.sysProp());
-    String env = envVar(EnvRegistry.CONTEXT_SIZE.envVar());
-    String marker = sysProp("justsearch.context.size.source");
-    int baseline = envInference != null ? envInference.contextSize() : 4096;
-    Integer runtime = runtimeInfo != null ? runtimeInfo.contextSize() : null;
+    ConfigResolution resolution =
+        configStore != null ? configStore.get().resolution("justsearch.context.size") : null;
+    Integer resolved =
+        resolution != null && resolution.isResolved() ? parseInt(resolution.value()) : null;
 
+    // Fallback for callers built without a ConfigStore (the legacy constructor): the inference
+    // layer's own resolution of the same key.
+    int baseline =
+        resolved != null
+            ? resolved
+            : (envInference != null ? envInference.contextSize() : 0);
+    String baselineSource =
+        resolution != null && resolution.isResolved() ? resolution.sourceName() : "unknown";
+
+    // The OBSERVED window, from the /props readback - NOT runtimeInfo.contextSize(), which is
+    // InferenceConfig's CONFIGURED value and is rebuilt on its own schedule. Measured live
+    // (tempdoc 883): with the server running at 16384 after an override, runtimeInfo still said
+    // 32768, so this row reported a "runtime" number no server ever had. After a ladder step-down
+    // it would report the PLANNED rung as the runtime value - the exact case this row exists to
+    // disambiguate.
+    Integer runtime = observedContextTokens();
     int value = runtime != null ? runtime : baseline;
 
-    String baselineSource = sourceForBaseline(sys, env);
-    if ("system_property".equals(baselineSource) && isUiSettingsMarker(marker)) {
-      baselineSource = "ui_settings";
-    }
     String source = baselineSource;
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("sysprop", EnvRegistry.CONTEXT_SIZE.sysProp());
     details.put("envVar", EnvRegistry.CONTEXT_SIZE.envVar());
     details.put("baseline", baseline);
-    if (runtime != null) details.put("runtime", runtime);
-    if (sys != null) {
-      details.put("syspropValue", sys);
-      if (isUiSettingsMarker(marker)) {
-        details.put("owner", "ui_settings");
-        details.put("uiOwnershipProp", "justsearch.context.size.source");
-        details.put("uiOwnershipValue", marker);
-      } else {
-        details.put("owner", "unknown");
+    if (resolution != null && resolution.isResolved()) {
+      details.put("sourceOrdinal", resolution.sourceOrdinal());
+      if (resolution.sourceDetail() != null) {
+        details.put("sourceDetail", resolution.sourceDetail());
       }
     }
-    if (env != null) details.put("envValue", env);
+    if (runtime != null) details.put("runtime", runtime);
 
     if (runtime != null && runtime != baseline) {
       source = "runtime";
@@ -523,6 +547,18 @@ public final class EffectiveConfigController {
     }
 
     return key("justsearch.context.size", value, source, details);
+  }
+
+  /**
+   * The context window the running llama-server reports via {@code /props}, or null when none has
+   * been observed. Same authority {@code /api/inference/status.llmContextTokens} publishes.
+   */
+  private Integer observedContextTokens() {
+    try {
+      return onlineAiService == null ? null : onlineAiService.llmContextTokens();
+    } catch (Exception ignored) {
+      return null;
+    }
   }
 
   private Map<String, Object> keyGpuLayers(

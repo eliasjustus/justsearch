@@ -6,13 +6,14 @@
     "name": "RegistryWire",
     "barrel": "modules/ui-web/src/api/types/registry.ts",
     "generatedDir": "modules/ui-web/src/api/generated/schema-types",
-    "note": "The registry FE type barrel is a re-export/derivation surface over the generated wire types (ResourceWire/OperationWire/PresentationWire/ProvenanceWire from generated/schema-types/*). It is NOT itself a shape authority: every wire-shaped type in it must derive from a generated source. The only permitted hand-authored objects are the `registryAllowlist` below (catalog envelopes + the OperationInvocation helper)."
+    "note": "The registry FE type barrel is a re-export/derivation surface over the generated wire types (ResourceWire/OperationWire/PresentationWire/ProvenanceWire from generated/schema-types/*). It is NOT itself a shape authority: every wire-shaped type in it must derive from a generated source. The only permitted hand-authored objects are the `registryAllowlist` below (catalog envelopes, the OperationInvocation helper, the deferred SSE surfaces, and the client-only SurfaceFactory dispatch token)."
   },
   "scan": {
     "comment": "The gate is barrel-centric (it scans the registry FE type barrels for shape/import purity + RegistryController for grandfather coverage), not an import-graph fan-out like operation-surface.",
     "barrel": [
       "modules/ui-web/src/api/types/registry.ts",
-      "modules/ui-web/src/api/types/diagnostic.ts"
+      "modules/ui-web/src/api/types/diagnostic.ts",
+      "modules/ui-web/src/api/types/surface.ts"
     ],
     "generatedDir": "modules/ui-web/src/api/generated/schema-types",
     "registryController": "modules/ui/src/main/java/io/justsearch/ui/api/RegistryController.java",
@@ -85,6 +86,18 @@
       "guard": "gate:contract-projection",
       "consumesProjection": "canonical-record",
       "note": "The DiagnosticChannel wire — the Logs surface registry primitive (tempdoc 560 §4c extension). UIDiagnosticChannelView → diagnostic-channel.v1.json → diagnostic-channel.ts, consumed by the diagnostic.ts barrel (which derives DiagnosticChannel/SubCategory/DataClass/… from DiagnosticChannelWire). Promoted from grandfatheredPending the instant the generated module landed: consumers flattened to ConsumerView (last kind-ful wire retired), parse boundary added at DiagnosticChannelCatalogClient."
+    },
+    {
+      "id": "surface",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/api/generated/schema-types/surface.ts",
+      "wireType": "SurfaceWire",
+      "projection": "generated",
+      "endpoint": "/api/registry/surfaces",
+      "guard": "gate:contract-projection",
+      "consumesProjection": "canonical-record",
+      "note": "The Surface Manifest wire (tempdoc 884, ADR-0038 amendment). Surface.java (implements PreciseWire) -> surface.v1.json -> surface.ts, consumed by the api/types/surface.ts barrel, which derives Audience/Placement/SurfaceRef/SurfaceConsumes/Surface from SurfaceWire and adds only the client-side additions the backend never sends (factory, splitPairing) plus two runtime consts. Promoted from grandfatheredPending in the same change that landed the generated module."
     }
   ],
   "grandfatheredPending": [
@@ -94,13 +107,6 @@
       "servedRaw": "handlePrompts",
       "potentialModule": "prompt",
       "note": "V1-stub (empty catalog), schema-only (prompt.v1.json from Prompt.class); no UIPromptView, no FE projection target. Known-pending — NOT demanded-projected. Projecting it is deferred 4c-extension work (YAGNI until prompts have a real catalog + FE consumer)."
-    },
-    {
-      "id": "surface",
-      "endpoint": "/api/registry/surfaces",
-      "servedRaw": "handleSurfaces",
-      "potentialModule": "surface",
-      "note": "Surface Manifest (not a primitive); served raw / defensively projected in the controller. Known-pending."
     },
     {
       "id": "conversation-shape",
@@ -131,6 +137,16 @@
       "name": "DiagnosticChannelCatalog",
       "kind": "catalog-envelope",
       "reason": "The thin envelope of GET /api/registry/diagnostic-channels (entries validated by the generated diagnosticChannelWireSchema). Same rationale as ResourceCatalog — the envelope is hand-composed; each entry derives from DiagnosticChannelWire."
+    },
+    {
+      "name": "SurfaceCatalog",
+      "kind": "catalog-envelope",
+      "reason": "The thin {$schema, schemaVersion, catalogVersion, namespace, primitive, entries} envelope of GET /api/registry/surfaces. Hand-composed: RegistryController.handleSurfaces builds it via writeEnvelope's LinkedHashMap, so no Java record projects it. A Java `SurfaceCatalog` DOES exist (app-agent-api/.../registry/SurfaceCatalog.java) but it is the server-side DeclarationCatalog<Surface, SurfaceRef> lookup interface, not this wire envelope — the name collision is incidental. Each entry is validated by the generated surfaceWireSchema via surfaceCatalogSchema."
+    },
+    {
+      "name": "SurfaceFactory",
+      "kind": "client-only-token",
+      "reason": "The branded dispatch token of 478 §4.A — minted client-side by SurfaceCatalogClient.stampFactory at catalog boot/merge time and carrying a module-private Symbol brand plus a mount() closure. It has NO Java counterpart and is never serialized in either direction (Surface.java has no such component; the wire arrives with factory absent), so it cannot be a second authority for a wire shape. Not `helper-object`: its point is that it is unrepresentable on the wire, not that it is a local value-object."
     },
     {
       "name": "DiagnosticEvent",

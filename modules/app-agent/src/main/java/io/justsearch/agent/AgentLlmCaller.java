@@ -6,8 +6,6 @@ import io.justsearch.agent.api.AgentEvent;
 import io.justsearch.agent.api.ToolCallRequest;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.SamplingParams;
-import io.justsearch.configuration.resolved.ConfigStore;
-import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
@@ -22,7 +20,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import java.util.function.ToIntFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
@@ -44,9 +41,18 @@ final class AgentLlmCaller {
   private static final Logger LOG = LoggerFactory.getLogger(AgentLlmCaller.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
-  /** Per-call completion-token cap. */
-  static final int DEFAULT_MAX_TOKENS =
-      Math.max(256, resolveInt(rc -> rc.agent().maxCompletionTokens(), 1024));
+  /**
+   * The per-call completion-token cap, resolved PER CALL from the live context window and config
+   * (tempdoc 883 decision 3).
+   *
+   * <p>It used to be a {@code static final} resolved at class-init, so a window change at runtime —
+   * routine now that the launch ladder derives the window per activation — never reached it. See
+   * {@link AgentContextBudgets} for what the number is and why it is not simply a fraction of the
+   * window.
+   */
+  private int completionTokens() {
+    return AgentContextBudgets.forCall(onlineAiService).completionReserve();
+  }
 
   private final OnlineAiService onlineAiService;
   private final AgentTelemetry agentTelemetry;
@@ -314,7 +320,7 @@ final class AgentLlmCaller {
     onlineAiService.streamChatWithTools(
         session.messages(),
         tools,
-        DEFAULT_MAX_TOKENS,
+        completionTokens(),
         new OnlineAiService.StreamCallbacks(
             chunk -> {
               textBuilder.append(chunk);
@@ -906,10 +912,5 @@ final class AgentLlmCaller {
     }
     msg.put("tool_calls", toolCallMaps);
     return msg;
-  }
-
-  private static int resolveInt(ToIntFunction<ResolvedConfig> extractor, int fallback) {
-    ConfigStore cs = ConfigStore.globalOrNull();
-    return cs != null ? extractor.applyAsInt(cs.get()) : fallback;
   }
 }

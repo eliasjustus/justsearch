@@ -1,5 +1,5 @@
 ---
-status: IN PROGRESS — chunks 1, 2, 2b and 3 landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green; item 3 foreground duty cycle, live arms pending); items 6/21/19-measure open
+status: IN PROGRESS — chunks 1, 2, 2b, 2c, 2d and 3 landed (item 19 NRT fix + baseline; item 14 extraction pool + chaos tier green + argfile fallback + review fixes; item 3 foreground duty cycle, live arms pending); items 6/21/19-measure open
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
@@ -858,8 +858,11 @@ asserts an observable consequence instead: `IN_PROCESS` tolerates an empty child
    `IndexingLoop.java:23`; javadoc references relabelled in `ExtractionArtifact`,
    `ExtractorContributionRegistry` and `StdioMcpTransport`; the historical CI-incident comment in
    `JvmBaseConventionsPlugin.kt` labelled with the test's new name rather than rewritten, since it
-   records a dated event. `grep -rn ProcessExtractionSandbox` outside `docs/tempdocs/` now returns
-   only that labelled history comment.
+   records a dated event. Stated accurately: `grep -rn ProcessExtractionSandbox` outside
+   `docs/tempdocs/` still returns **four** hits, all deliberate history in prose —
+   `ExtractionSandboxChild:20`, `ExtractionSandboxCommand:19`, `SandboxExtractionException:9` and
+   the `JvmBaseConventionsPlugin.kt` incident comment. No code references the retired type; the
+   claim is "no live referencer", not "no occurrences".
 3. **`ExtractionSandboxCommand` added to the `IndexerWorkerGuardrailsTest` allowlist** (SB.1 (4)).
    Before allowlisting, the surface was minimised so the exemption covers as little as possible: the
    classpath comes from `ManagementFactory.getRuntimeMXBean().getClassPath()` and the launcher from
@@ -944,6 +947,11 @@ Run 2 (2026-09-02, full `:modules:worker-services:test` run, heavier load):
   have no wedge or OOM exposure to buy with it.
 
 ## Live/chaos-window acceptance items still open (item 14)
+
+> **SUPERSEDED by §SC-chaos (chunk 2b, 2026-09-02).** Items 1, 2, 4 and 5 below are closed —
+> the chaos tier ran green (14/14) and its evidence is recorded there. Only the real-corpus
+> throughput arm (item 3) is still open, plus the gap §SC-chaos records under "what the chaos
+> tier did NOT cover". This section is kept as the dated list the chunk was planned against.
 
 Nothing below can be checked without the shared dev stack or the `:modules:system-tests` chaos
 source set, which this chunk was scoped out of. Listed so the orchestrator can schedule one window.
@@ -1131,11 +1139,215 @@ with the reason, next file extracts normally, Worker never restarts · child cra
 exit code · child OOM → permanent parse failure · `extraction.sandbox_restart_total` increments and
 the wire-format regression test is updated · Worker shutdown leaves no orphan child.
 
-**Still open (needs the dev-stack window, not the chaos tier):** the real-corpus comparison —
+**Still open (needs the dev-stack window, not the chaos tier):** (a) **the shipped default child
+command and `auto` routing have never been launched from a real Worker dist** — the chaos harness
+overrides `JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` and forces `mode=process`, so
+`ExtractionSandboxCommand.defaultCommand` and the per-family router are covered by unit tests and
+by nothing live; the real-corpus arm closes both. (b) the real-corpus comparison —
 `jseval run --pipeline` on the standard corpus with `mode=auto` vs `mode=in_process`, to price the
 routing split on a real mixed corpus *including* the child spawn the unit benchmark excludes, and to
 confirm no ingestion regression. Optional refinement: an OOM driven by a genuinely hostile document
 rather than a deliberate allocator.
+
+## §SC-argfile — chunk 2c: the child command must not assume a short classpath (2026-09-02)
+
+### The report
+
+Lane C3's worker and lane B's full-suite run both hit
+`java.io.IOException: Cannot run program java.exe: CreateProcess error=206, The filename or
+extension is too long` in `PersistentExtractionSandboxTest` and
+`ExtractionSandboxLatencyBenchmarkTest` (and, on `main`, in the retired
+`ProcessExtractionSandboxTest`) when Gradle ran under an isolated
+`GRADLE_USER_HOME=C:\Users\Elias\AppData\Local\Temp\jsgh-C`.
+
+**Production was never at risk and still is not**: `WorkerSpawner.buildCommand` launches the Worker
+with `-cp lib\*` (`WorkerSpawner.java:584-587`), a wildcard the launcher expands itself, so the
+Worker's own `java.class.path` is a handful of characters. **But `ExtractionSandboxCommand` must not
+depend on that.** It copies whatever classpath the running JVM reports onto a child command line, so
+any embedder with an expanded classpath — a Gradle test JVM, and an isolated Gradle home in
+particular, where every cache entry carries a ~24-character-longer prefix — pushes it past Windows'
+32,767-character `CreateProcess` limit. The dependency was invisible because the one environment
+that mattered happened to be short.
+
+### The fix
+
+`ExtractionSandboxCommand` now chooses between two forms by length
+(`MAX_INLINE_COMMAND_CHARS = 30_000`, leaving margin for the launcher path, the main class, the
+`--parent-pid` the pool appends, and per-argument quoting):
+
+* **inline**, unchanged, when the assembled command line fits;
+* **argfile** otherwise — the JVM options (including `-cp <classpath>`) are written to a JDK
+  `@argfile` and the command becomes `java @<file> <main>`, which is a few hundred characters
+  regardless of classpath size.
+
+One argfile is written per built command and reused by every child the pool spawns from it. It
+cannot be deleted on child exit — the pool respawns children throughout the Worker's life and they
+all read the same file — so it is a temp file registered for deletion at Worker exit. In practice
+`DefaultWorkerAppServices` builds the command once, so that is one file per Worker.
+
+`PersistentExtractionSandboxTest.javaCommand` was making the *same* mistake for its stub children,
+so it routes through the same two production primitives (`commandLineLength` / `writeArgFile`)
+rather than growing a parallel copy.
+
+### Argfile encoding: what is actually true, measured rather than assumed
+
+The first version of this work asserted in a comment that "the backslash is an escape character
+inside a quoted token, so an unescaped `C:\dir` loses its separators". **The falsification run
+refuted that as written**: with the escaping removed entirely, the real-child test — which launches
+the production child from an argfile whose classpath begins with a directory containing a space —
+still passed.
+
+Probing further with a token designed to contain the sequences that differ produced the ground
+truth. Feeding `C:\tab\back\form\already\\doubled\dir with spaces\a"quoted".jar` through the JDK 25
+launcher unescaped and reading it back out of a child returned:
+
+```
+C:<TAB>ab<BS>ack<FF>orm...already\\doubled...dir with spaces...aquoted.jar
+```
+
+So: the backslash **is** an escape character inside a quoted token, but an **unrecognised** escape
+is passed through unchanged. That is why an ordinary Windows path survives unescaped, and why this
+would have been a latent, path-dependent corruption rather than an obvious break — the worst kind.
+Quoting every token and doubling every backslash is therefore not defensive; it is the only
+encoding that survives an arbitrary path. The javadoc on `argFileToken` now says this, with the
+measurement, instead of the claim that was wrong.
+
+### Tests
+
+| Test | Pins |
+|---|---|
+| `ExtractionSandboxCommandTest.switchesToAnArgfileWhenTheCommandLineWouldExceedTheWindowsLimit` | above the threshold the form is `java @file main`, the file exists, and the classpath round-trips into it |
+| `…inlineFormIsKeptBelowTheThreshold` | below it, nothing changes |
+| `…publicEntryPointPicksTheFormThatFitsThisRunnersClasspath` | the public entry point picks the form that fits **this** runner's classpath, and the chosen form always fits the limit — the branch that made the same suite pass under one Gradle home and die under another |
+| `…argFileTokenQuotesSpacesAndEscapesBackslashes` | the encoding, as a pure function |
+| `PersistentExtractionSandboxTest.argfileCommandLaunchesTheRealChildWithASpacedClasspathEntry` | the argfile form launches the **production** child, with a spaced classpath entry |
+| `PersistentExtractionSandboxTest.argFileEncodingRoundTripsThroughTheJdkParser` | a hostile token survives the JDK's **own** parser, out through a child JVM and back |
+
+The last two are deliberately different in kind: the launch test proves the 206 fix, and (as the
+falsification showed) it cannot discriminate on escaping; the probe is what does.
+
+**Falsification.** Replacing `argFileToken` with bare quoting reds exactly the two encoding tests
+(`argFileTokenQuotesSpacesAndEscapesBackslashes`, `argFileEncodingRoundTripsThroughTheJdkParser`)
+and leaves the other 18 green.
+
+### Verification, under both Gradle homes
+
+| | default `GRADLE_USER_HOME` | `GRADLE_USER_HOME=…\Temp\jsgh-C` |
+|---|---|---|
+| `:modules:worker-services:test` | **1100 tests, 0 failures** | **1100 tests, 0 failures** |
+| `:modules:indexer-worker:test` | 305 / 0 | — |
+| `:modules:adapters-lucene:test` | 592 / 0 | — |
+| `PersistentExtractionSandboxTest` | 14 / 0 | 14 / 0 |
+| `ExtractionSandboxCommandTest` | 7 / 0 | 7 / 0 |
+| `ExtractionSandboxLatencyBenchmarkTest` | 1 / 0 | 1 / 0 |
+| `ExtractionRoutingTest` | 3 / 0 | 3 / 0 |
+
+`error=206` appears nowhere in either run. The default-home figures are from a `--rerun-tasks`
+pass, because the two homes share the build directory and an up-to-date task would otherwise have
+reported the other home's results.
+
+### Ride-along
+
+`PruneByPathPrefixTest.java:332`'s comment described the abort checker as "user active", which
+stopped being what it means when breath-holding was replaced by the contention duty cycle (#598).
+PR #598 does not touch that file (checked against its file list), so the comment is corrected here.
+The method name `abortsOnUserActivity` carries the same staleness but is left to #598's own sweep
+rather than renamed across branches.
+
+## §SC-review — independent review of #595, applied (chunk 2d, 2026-09-02)
+
+An independent reviewer reproduced the chaos tier (14/14, with the 60.0 s sandbox deadline firing
+before the 75 s backstop) and all three falsifications, then raised seven should-fixes. What each
+one changed, and what it changed my mind about.
+
+### 1. The stderr capture kept the HEAD, so a chatty parser could demote an OOM
+
+The real defect of the set. `StderrTail.append` stopped accepting once full, so the **newest** bytes
+were dropped — and the newest bytes are the ones that say how the child died. A parser that logged
+more than 64 KB before dying pushed its own `OutOfMemoryError` trace out of the capture, the
+substring test in `discardAndClassify` went false, and a permanent parse failure was reported as a
+**retryable** crash: the file would then be retried forever against a heap it cannot fit in. The
+OOM classification chunk 2 added was therefore only correct for quiet parsers.
+
+Fixed as a real ring (keep the last `maxBytes`), plus a `reset()` before each request so the
+reported tail belongs to the file that actually failed rather than to whatever the child logged
+handling earlier ones. Note which half is load-bearing: with a head buffer, resetting per request
+would **not** have helped, because the noise and the OOM are in the same request.
+
+Regression test `chattyParserCannotDemoteAnOomToRetryable` — the stub writes ~212 KB of chatter and
+then genuinely exhausts a 64 MB heap. **Falsified:** restoring the "stop when full" behaviour reds
+exactly that test (`15 tests completed, 1 failed`) and leaves the quiet-OOM test green, so the two
+discriminate on the ring and not on the OOM plumbing.
+
+### 2. Merge `origin/main`, and retire the stale pin
+
+Merged `origin/main` (#594, #596, #597). Three conflicts, resolved deliberately:
+
+* `docs/explanation/23-search-pipeline-overview.md` — both sides rewrote the same stage-2 row.
+  Kept main's VDU sentence (it removed the retired enable flag and renamed the threshold) and this
+  branch's sandbox sentence; neither side's fact was dropped.
+* `.claude/skills/search-quality/SKILL.md` — generated; regenerated from the resolved canonical doc
+  with `skills-sync` rather than hand-merged.
+* `scripts/agent-analytics/expected-state.v1.json` — both sides appended pins. Took main's set plus
+  this branch's one addition. **Caught while resolving:** a naive union would have resurrected
+  `ui-web-typecheck-ts5101`, which main deliberately retired — a merge that silently restores a pin
+  someone else just removed is exactly the residue the register exists to prevent.
+
+`process-extraction-sandbox-classpath-too-long` deleted in the same commit. That pin was written
+against the defect chunk 2c fixed at the root, and it names `ProcessExtractionSandboxTest`, which
+chunk 2 deleted — its own exit condition says "when the file is absent, delete this entry".
+`run-all-tests.mjs` 50/50; `expected-state-probe --gate` reports 15 pins, 0 shape/review problems.
+
+### 3. The Prune comment asserted a change that lands in a different PR
+
+Reworded to point at the tempdoc item rather than to state the duty-cycle outcome as already true.
+The reviewer is right that #598, not #595, is where that becomes a fact; a comment on this branch
+claiming it would be wrong for however long #598 takes to land.
+
+### 4. The shipped default command and `auto` routing have never run from a real Worker dist
+
+Accepted and recorded rather than papered over. The chaos harness sets
+`JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` (to substitute the parser) and
+`JUSTSEARCH_EXTRACTION_SANDBOX_MODE=process` (so a `.txt` reaches the pool at all) — so the two
+things a default install actually uses, `ExtractionSandboxCommand.defaultCommand` and `auto`
+routing, are covered by unit tests and by nothing live. This is now the second entry on the
+still-open list, and the dev-stack real-corpus arm is what closes it.
+
+### 5. A bad child command was invisible until the first file
+
+Spawning is lazy, which is right for steady state, but it meant a broken command — a bad operator
+override, a missing JDK, an unreadable classpath — surfaced only as a per-file `IOException`, on
+every file, forever. `ExtractionSandboxFactory.probeChildCommand` now spawns one child at wiring
+time and runs a trivial extraction through it (`PROBE_TIMEOUT` = 20 s for the extraction, so a broken
+command cannot stall Worker boot; the honest worst case is ~25 s, since killing a child that
+*hangs* adds the 5 s `waitFor` in `discardChild` — a command that cannot launch is rejected
+immediately). On failure `DefaultWorkerAppServices` logs a WARN naming the
+reason and the command, records
+`extraction.sandbox_restart_total{reason=probe_failed}` as the lifecycle-visible signal, and falls
+back to in-process extraction **for the session** — degraded, but every document still indexes.
+Both branches are tested in `ExtractionRoutingTest` (the shipped command passes its own probe; a
+command that cannot launch returns a named failure).
+
+Honest limit: the fallback is per-session and silent to the UI. A user-visible condition would need
+the worker-condition path, which is item 6's territory, not this chunk's.
+
+### 6-7. Superseded pointer; EnvRegistry append region
+
+The old "Live/chaos-window acceptance items still open" list now carries a SUPERSEDED banner
+pointing at §SC-chaos. The three new `EXTRACTION_SANDBOX_*` constants moved from mid-enum to the
+end of `EnvRegistry`, where the cross-lane append rule puts them — they were added before that
+region existed on this base, and leaving them mid-enum is a merge conflict waiting for lane A.
+
+### Nits
+
+`SandboxFrames` javadoc corrected (the length is a **signed** 31-bit int — Java has no unsigned
+int, and the reader rejects a negative one); `TimeboxedContentExtractor.extractSafe` now routes
+through its own `detectMimeType`, which already null-guards the delegate, instead of dereferencing
+it (an extractor built on a bare sandbox has no delegate); §SC.5's sweep claim restated accurately
+(four prose mentions of the retired type remain, all deliberate history — the claim is "no live
+referencer", not "no occurrences"); the chaos test deletes its `%TEMP%\justsearch-sandbox-chaos`
+run directory on success and keeps it on failure, where the worker log and metrics NDJSON are the
+evidence; the argfile probe child uses `redirectErrorStream` so the two-pipe read cannot deadlock.
 
 ---
 
@@ -1357,32 +1569,23 @@ exists to avoid. The duty cycle reaches the same end (give the machine back) at 
   single JVM the gauge is incremented directly at the search entry points and the interceptor goes.
   `ForegroundLoad` and `IndexingPacing` survive as `worker-services` types.
 
-### TC.8 Routed finding: item 14's sandbox tests cannot spawn a child in this worktree
+### TC.8 The routed finding this chunk raised, and where it landed
 
-`:modules:worker-services:test` is **1108 tests, 13 failed** on this branch, and all 13 are item 14's:
-`PersistentExtractionSandboxTest` (12) and `ExtractionSandboxLatencyBenchmarkTest.perFamilyLatencyTable`
-(1). Every one fails inside `ProcessBuilder.start`:
+Before the merge with `main`, `:modules:worker-services:test` was **1108 tests, 13 failed** on this
+branch — all 13 item 14's (`PersistentExtractionSandboxTest` ×12,
+`ExtractionSandboxLatencyBenchmarkTest.perFamilyLatencyTable` ×1), every one failing inside
+`ProcessBuilder.start` with `CreateProcess error=206, The filename or extension is too long`, the
+Windows command-line limit hit before any child code ran. It was not this chunk's: the item-3 diff
+touches no file under `extract/` beyond one constructor argument in
+`AdversarialCorpusIngestionTest`.
 
-```
-java.io.IOException: Cannot run program "F:\scoop\apps\temurin25-jdk\25.0.2-10.0\bin\java.exe":
-CreateProcess error=206, The filename or extension is too long
-```
-
-Not this chunk's: the whole item-3 diff touches no file under `extract/` (the single exception is
-`AdversarialCorpusIngestionTest`, which gained the new `IndexingLoop` constructor argument), and the
-throw is the Windows 32,767-character command-line limit hit *before* any child code runs.
-
-Cause, stated as a hypothesis for whoever pins it: the sandbox child argv is built from
-`java.class.path` (`ProcessExtractionSandboxTest`'s recipe, adopted by `ExtractionSandboxCommand`),
-which under a Gradle test JVM is the fully-expanded runtime classpath — hundreds of absolute jar
-paths rooted at `GRADLE_USER_HOME`. This lane runs with an isolated
-`GRADLE_USER_HOME=C:\Users\Elias\AppData\Local\Temp\jsgh-C` (39 chars) instead of the default
-`C:\Users\Elias\.gradle` (22), i.e. ~17 extra characters on every entry, inside a worktree path that
-is itself long. **Production is not exposed**: the Worker runs from `-cp lib\*`
-(`WorkerSpawner.java:584-587`), a wildcard the child inherits, so the shipped command stays short.
-The exposure is the test tier only. Two ways out for item 14's owner — run that class with the
-default Gradle home, or have the child command fall back to an `@argfile` when the assembled argv
-exceeds the OS limit (which would also harden the shipped path against a genuinely deep install).
+Routed to the orchestrator with the diagnosis (the child argv copies the running JVM's fully
+expanded `java.class.path`, which the lane's isolated `GRADLE_USER_HOME` lengthens past the limit;
+production was never exposed because the Worker runs from `-cp lib\*`). **Chunk 2c fixed it at the
+root rather than pinning it** — see §SC-argfile: `ExtractionSandboxCommand` now falls back to an
+`@argfile` when the assembled command would exceed the OS limit, which also hardens the shipped
+path against a genuinely deep install. After merging `origin/main` (#595, which carries 2c), those
+13 failures are gone; the post-merge counts are in the PR body.
 
 ### TC.9 Live-window items still open for item 3
 

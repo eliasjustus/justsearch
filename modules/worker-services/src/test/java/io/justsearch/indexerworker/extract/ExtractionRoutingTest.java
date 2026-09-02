@@ -103,6 +103,32 @@ final class ExtractionRoutingTest {
     }
   }
 
+  /**
+   * The startup probe, both ways. Spawning is lazy, so without it a broken child command is
+   * invisible until the first file and then fails every file; the Worker uses this verdict to fall
+   * back to in-process extraction for the session instead.
+   */
+  @Test
+  void startupProbeAnswersForAWorkingChildAndNamesTheFailureForABrokenOne() {
+    assertEquals(
+        java.util.Optional.empty(),
+        ExtractionSandboxFactory.probeChildCommand(
+            PersistentExtractionSandboxTest.javaCommand(ExtractionSandboxChild.class),
+            TikaExtractionPolicy.defaults(),
+            OcrRoutingConfig.disabled(),
+            Duration.ofSeconds(30)),
+        "the shipped child command must pass its own probe");
+
+    java.util.Optional<String> broken =
+        ExtractionSandboxFactory.probeChildCommand(
+            List.of("this-binary-does-not-exist", "--serve"),
+            TikaExtractionPolicy.defaults(),
+            OcrRoutingConfig.disabled(),
+            Duration.ofSeconds(10));
+    assertTrue(broken.isPresent(), "a command that cannot launch must fail the probe");
+    assertFalse(broken.get().isBlank(), "the probe must name why it failed");
+  }
+
   private Path copyFixture(String resource, String name) throws IOException {
     Path target = tempDir.resolve(name);
     try (InputStream in = ExtractionRoutingTest.class.getResourceAsStream(resource)) {

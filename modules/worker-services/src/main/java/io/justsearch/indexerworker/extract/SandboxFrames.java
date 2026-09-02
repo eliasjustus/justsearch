@@ -9,7 +9,8 @@ import java.io.OutputStream;
 /**
  * Length-prefixed frame codec for the persistent extraction sandbox protocol (tempdoc 885 item 14).
  *
- * <p>A frame is a 4-byte big-endian unsigned length followed by that many bytes of UTF-8 JSON. The
+ * <p>A frame is a 4-byte big-endian SIGNED length (Java has no unsigned int, and the reader
+ * rejects a negative one) followed by that many bytes of UTF-8 JSON. The
  * one-process-per-file predecessor could use "read stdin to EOF" as its framing because the child
  * exited after one response; a persistent child multiplexes many request/response pairs over one
  * pipe, so the length prefix is what makes "where does this message end" answerable without

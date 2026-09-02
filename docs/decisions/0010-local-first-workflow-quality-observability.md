@@ -4,11 +4,15 @@ type: decision
 status: superseded
 description: "Keep repo-owned NDJSON workflow evidence canonical and treat Opik/Inspect as optional overlays."
 date: 2026-03-07
+probes: none - superseded; the Opik/Inspect overlay decision has no surviving code premise.
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0010: Local-First Workflow Quality Observability
 
 **Status: Superseded (tempdoc 638)** — the workflow-telemetry implementation described here was removed.
+
+**Where to read instead:** there is **no canonical successor decision** — the implementation was removed, not replaced. Current observability truth lives in [Observability & Telemetry](../explanation/08-observability.md), whose §"Workflow-Run Telemetry" records the removal (`scripts/lib/workflow-telemetry.mjs`, the bench workflow scripts, and the `tmp/workflow-telemetry/runs/` evidence store are all gone). Runtime metrics, traces and agent telemetry are unaffected and are owned by that doc.
 
 ## Status
 

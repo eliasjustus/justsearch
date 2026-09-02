@@ -397,6 +397,120 @@ final class ResolvedConfigBuilderTest {
           "the clamp's fallback must satisfy the invariant the clamp enforces");
     }
 
+    // ==================== context window / slots / KV (tempdoc 883) ====================
+
+    @Test
+    @DisplayName("context size defaults to 0 = auto — there is no second shipped number")
+    void contextSizeDefaultsToAuto() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+
+      assertEquals(
+          0,
+          builder.build().ai().contextSize(),
+          "the old 8192 here disagreed with UiSettings' 4096 for six months and neither ever"
+              + " reached llama-server; the window is derived now");
+    }
+
+    @Test
+    @DisplayName("an auto-detected rung wins over nothing and loses to settings_json")
+    void contextSizeOrdinalChain() {
+      ResolvedConfigBuilder derived = new ResolvedConfigBuilder();
+      derived.contributeAutoDetected(java.util.Map.of("justsearch.context.size", "32768"));
+      assertEquals(32768, derived.build().ai().contextSize());
+
+      ResolvedConfigBuilder overridden = new ResolvedConfigBuilder();
+      overridden.contributeAutoDetected(java.util.Map.of("justsearch.context.size", "32768"));
+      overridden.putSettings("justsearch.context.size", "8192");
+      assertEquals(8192, overridden.build().ai().contextSize());
+    }
+
+    @Test
+    @DisplayName("llm slots default to 2 — a background delegate must not evict the foreground")
+    void llmSlotsDefaultToTwo() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+
+      assertEquals(ResolvedConfigBuilder.DEFAULT_LLM_SLOTS, builder.build().ai().llmSlots());
+      assertEquals(2, builder.build().ai().llmSlots());
+    }
+
+    @Test
+    @DisplayName("an out-of-range slot count is refused: every slot divides the KV cache")
+    void outOfRangeSlotsAreRefused() {
+      for (String raw : new String[] {"0", "-1", "99"}) {
+        ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+        builder.put(
+            "justsearch.llm.slots",
+            ResolvedConfigBuilder.ORDINAL_ENV_VAR,
+            "env_var",
+            "JUSTSEARCH_LLM_SLOTS",
+            raw);
+        assertEquals(
+            ResolvedConfigBuilder.DEFAULT_LLM_SLOTS,
+            builder.build().ai().llmSlots(),
+            "slots=" + raw + " must be refused, not passed to -np");
+      }
+    }
+
+    @Test
+    @DisplayName("an in-range slot override is honored")
+    void inRangeSlotsAreHonored() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.put(
+          "justsearch.llm.slots",
+          ResolvedConfigBuilder.ORDINAL_ENV_VAR,
+          "env_var",
+          "JUSTSEARCH_LLM_SLOTS",
+          "4");
+
+      assertEquals(4, builder.build().ai().llmSlots());
+    }
+
+    @Test
+    @DisplayName("KV cache type defaults to q8_0")
+    void kvTypeDefaultsToQ8() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+
+      assertEquals(ResolvedConfigBuilder.DEFAULT_LLM_KV_TYPE, builder.build().ai().llmKvType());
+      assertEquals("q8_0", builder.build().ai().llmKvType());
+    }
+
+    @Test
+    @DisplayName("an unknown KV cache type is refused — it would abort llama-server at launch")
+    void unknownKvTypeIsRefused() {
+      for (String raw : new String[] {"q8", "int8", "", "nonsense"}) {
+        ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+        builder.put(
+            "justsearch.llm.kv_type",
+            ResolvedConfigBuilder.ORDINAL_ENV_VAR,
+            "env_var",
+            "JUSTSEARCH_LLM_KV_TYPE",
+            raw);
+        assertEquals(
+            ResolvedConfigBuilder.DEFAULT_LLM_KV_TYPE,
+            builder.build().ai().llmKvType(),
+            "kv_type='" + raw + "' must be refused: llama-server aborts on it, and the context"
+                + " ladder would read that abort as 'this rung does not fit' and walk the whole"
+                + " ladder down for the wrong reason");
+      }
+    }
+
+    @Test
+    @DisplayName("a known KV cache type is honored and normalized")
+    void knownKvTypeIsHonored() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.put(
+          "justsearch.llm.kv_type",
+          ResolvedConfigBuilder.ORDINAL_ENV_VAR,
+          "env_var",
+          "JUSTSEARCH_LLM_KV_TYPE",
+          "  F16 ");
+
+      assertEquals("f16", builder.build().ai().llmKvType());
+    }
+
     @Test
     @DisplayName("embedGpuMemMb honors explicit override")
     void embedGpuMemMbExplicitOverride() {

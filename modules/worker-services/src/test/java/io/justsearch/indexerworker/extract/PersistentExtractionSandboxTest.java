@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.telemetry.catalog.TestMetricRegistry;
+import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
@@ -61,6 +62,70 @@ final class PersistentExtractionSandboxTest {
       assertEquals("tika-default-v1", artifact.policyId());
       assertTrue(artifact.result().content().contains("sandbox child content"));
     }
+  }
+
+  /**
+   * Round-trips the argfile form through the JDK's own parser: a real production child is launched
+   * from an argfile whose classpath begins with a directory whose name contains a space. If the
+   * quoting or backslash escaping were wrong the launcher would split the classpath and never find
+   * the child's main class, so this discriminates on the encoding rather than on the file content.
+   *
+   * <p>This is the shape that fails as {@code CreateProcess error=206} without the argfile: a
+   * Gradle test JVM under an isolated Gradle home has an expanded classpath past Windows'
+   * 32,767-character command-line limit.
+   */
+  @Test
+  @Timeout(60)
+  void argfileCommandLaunchesTheRealChildWithASpacedClasspathEntry() throws Exception {
+    Path spaced = Files.createDirectories(tempDir.resolve("class path with spaces"));
+    String classpath = spaced.toAbsolutePath() + File.pathSeparator
+        + System.getProperty("java.class.path");
+
+    // Threshold 0 forces the argfile branch regardless of how long this runner's classpath is.
+    List<String> command =
+        ExtractionSandboxCommand.defaultCommand(TikaExtractionPolicy.defaults(), "", 0, classpath);
+    assertTrue(command.get(1).startsWith("@"), "expected the argfile form; got: " + command);
+
+    try (PersistentExtractionSandbox sandbox = sandbox(command, Duration.ofSeconds(30))) {
+      ExtractionArtifact artifact = sandbox.extract(file("argfile.txt"));
+      assertTrue(artifact.result().content().contains("sandbox child content"));
+      assertEquals(1L, sandbox.spawnCount());
+    }
+  }
+
+  /**
+   * Round-trips a hostile token through the JDK's OWN argfile parser and back out of a child JVM.
+   *
+   * <p>The real-child test above proves the argfile form launches, but it cannot discriminate on
+   * escaping: an ordinary Windows path survives either encoding, because the parser leaves an
+   * unrecognised escape alone (verified by falsification). The sequences that actually differ are
+   * backslash-t, backslash-b, backslash-f, a doubled backslash and an embedded quote — so the
+   * probe puts all of those in a system property and asserts the child reads back exactly what
+   * was written.
+   */
+  @Test
+  @Timeout(60)
+  void argFileEncodingRoundTripsThroughTheJdkParser() throws Exception {
+    String hostile =
+        "C:\\tab\\back\\form\\already\\\\doubled\\dir with spaces\\a\"quoted\".jar";
+
+    Path argFile =
+        ExtractionSandboxCommand.writeArgFile(
+            List.of("-cp", System.getProperty("java.class.path"), "-Dsandbox.probe=" + hostile));
+
+    // redirectErrorStream: reading two pipes in sequence deadlocks if the child fills the one not
+    // being read. One merged stream removes the shape rather than relying on the output being small.
+    Process probe =
+        new ProcessBuilder(
+                ExtractionSandboxCommand.javaBinary(),
+                "@" + argFile,
+                ArgFileProbeChild.class.getName())
+            .redirectErrorStream(true)
+            .start();
+    String output = new String(probe.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    assertTrue(probe.waitFor(45, TimeUnit.SECONDS), "probe child must exit");
+    assertEquals(0, probe.exitValue(), "probe child failed: " + output);
+    assertEquals(hostile, output.trim(), "argfile encoding must round-trip");
   }
 
   @Test
@@ -141,6 +206,34 @@ final class PersistentExtractionSandboxTest {
       assertTrue(
           failure.getMessage().contains("exhausted its heap"),
           "got: " + failure.getMessage());
+    }
+  }
+
+  /**
+   * A chatty parser must not be able to demote an OOM to a retryable failure.
+   *
+   * <p>The stderr capture is bounded at 64 KB. When it kept the HEAD, a parser that logged more
+   * than that before dying pushed its own {@code OutOfMemoryError} trace out of the buffer, the
+   * substring test in {@code discardAndClassify} went false, and a permanent parse failure was
+   * reported as a retryable crash — so the file would be retried forever against a heap it cannot
+   * fit in. The capture keeps the tail for exactly this case.
+   */
+  @Test
+  @Timeout(90)
+  void chattyParserCannotDemoteAnOomToRetryable() throws Exception {
+    try (PersistentExtractionSandbox sandbox =
+        sandbox(javaCommand(ScriptedChild.class, "-Xmx64m"), Duration.ofSeconds(60))) {
+      Path noisyOom = file("noisy-oom.txt");
+      ContentExtractor.ExtractionException failure =
+          assertThrows(ContentExtractor.ExtractionException.class, () -> sandbox.extract(noisyOom));
+
+      assertEquals(
+          ContentExtractor.ExtractionException.class,
+          failure.getClass(),
+          "64 KB of parser chatter must not push the OOM trace out of the capture: "
+              + failure.getMessage());
+      assertTrue(
+          failure.getMessage().contains("exhausted its heap"), "got: " + failure.getMessage());
     }
   }
 
@@ -295,20 +388,40 @@ final class PersistentExtractionSandboxTest {
     }
   }
 
+  /**
+   * Launches a stub child on this JVM and classpath, through the same inline-or-argfile choice the
+   * production builder makes. Not cosmetic reuse: this helper spells the classpath out, and under
+   * an isolated {@code GRADLE_USER_HOME} the expanded test classpath crosses Windows'
+   * 32,767-character limit, so every test in this class died with {@code CreateProcess error=206}.
+   */
   static List<String> javaCommand(Class<?> mainClass, String... jvmArgs) {
     String executable =
         Path.of(System.getProperty("java.home"), "bin", windows() ? "java.exe" : "java").toString();
-    List<String> command = new ArrayList<>();
-    command.add(executable);
-    command.addAll(List.of(jvmArgs));
-    command.add("-cp");
-    command.add(System.getProperty("java.class.path"));
-    command.add(mainClass.getName());
-    return List.copyOf(command);
+    List<String> options = new ArrayList<>(List.of(jvmArgs));
+    options.add("-cp");
+    options.add(System.getProperty("java.class.path"));
+
+    List<String> direct = new ArrayList<>();
+    direct.add(executable);
+    direct.addAll(options);
+    direct.add(mainClass.getName());
+    if (ExtractionSandboxCommand.commandLineLength(direct)
+        <= ExtractionSandboxCommand.MAX_INLINE_COMMAND_CHARS) {
+      return List.copyOf(direct);
+    }
+    return List.of(
+        executable, "@" + ExtractionSandboxCommand.writeArgFile(options), mainClass.getName());
   }
 
   private static boolean windows() {
     return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+  }
+
+  /** Echoes back the system property the argfile carried, for the encoding round-trip. */
+  public static final class ArgFileProbeChild {
+    public static void main(String[] args) {
+      System.out.print(System.getProperty("sandbox.probe", "<absent>"));
+    }
   }
 
   /** Trivial helper whose only job is to produce a PID that is definitely dead. */
@@ -344,6 +457,14 @@ final class PersistentExtractionSandboxTest {
           System.exit(3);
         }
         if (name.contains("oom")) {
+          if (name.contains("noisy")) {
+            // Overflow the parent's 64 KB stderr capture BEFORE dying, so the OutOfMemoryError
+            // trace is only visible to a capture that keeps the tail rather than the head.
+            for (int i = 0; i < 400; i++) {
+              System.err.println("chatty parser noise line " + i + " " + "x".repeat(512));
+            }
+            System.err.flush();
+          }
           while (true) {
             retained.add(new byte[8 * 1024 * 1024]);
           }

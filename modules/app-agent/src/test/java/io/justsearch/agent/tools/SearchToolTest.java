@@ -650,10 +650,10 @@ class SearchToolTest {
 
   @Test
   void executeEnforcesPerResultCharBudget() {
-    // Tempdoc 877 §2.2 — the budget is taken from ToolResultCarrier.layerTwoCapChars(), the ONE
-    // reader of agent.maxToolResultChars, frozen at class-init alongside the Layer-2 cut it must
-    // stay under. This test used to set justsearch.agent.max_tool_result_chars at runtime and rely
-    // on SearchTool's own per-call re-read of the config — the second reader §2.2 deletes. The
+    // Tempdoc 877 §2.2 — the budget is taken from ToolResultCarrier.layerTwoCapChars(budget), the ONE
+    // reader of agent.maxToolResultChars, which since tempdoc 883 is a fraction of the LIVE window
+    // resolved per call. This test used to set justsearch.agent.max_tool_result_chars at runtime and
+    // rely on SearchTool's own per-call re-read of the config — the second reader §2.2 deletes. The
     // excerpt is sized past the 800-char per-region guard so truncation is certain at any cap.
     {
       String longText = "A".repeat(1200);
@@ -692,11 +692,13 @@ class SearchToolTest {
       // is the half the old per-result-only budget never checked: headers, Path: lines, carrier
       // framing and the trailing summary were all uncounted, so the tail died inside Layer 2.
       assertTrue(
-          output.length() <= io.justsearch.agent.ToolResultCarrier.layerTwoCapChars(),
+          output.length() <= io.justsearch.agent.ToolResultCarrier.layerTwoCapChars(
+              io.justsearch.agent.AgentContextBudgets.forCall(null)),
           "emitted "
               + output.length()
               + " chars, over the Layer-2 cap of "
-              + io.justsearch.agent.ToolResultCarrier.layerTwoCapChars());
+              + io.justsearch.agent.ToolResultCarrier.layerTwoCapChars(
+              io.justsearch.agent.AgentContextBudgets.forCall(null)));
       assertTrue(output.contains("Found 3 results"), "the summary must survive: " + output);
     }
   }
@@ -704,12 +706,9 @@ class SearchToolTest {
   @Test
   void formatResultsUnderASmallCapKeepsEveryHitsIdentity() {
     // Recovers the small-cap coverage origin/main had as `executeEnforcesPerResultCharBudget` with
-    // `justsearch.agent.max_tool_result_chars=600`. That property can no longer be set at test time:
-    // §2.2 moved the cap to ToolResultCarrier.layerTwoCapChars() -> AgentContextCompressor's
-    // `static final MAX_TOOL_RESULT_CHARS`, frozen at class-init, so a runtime System.setProperty
-    // would only take effect if this test happened to run before anything else touched that class —
-    // an order-dependent green, which is worse than no test. The cap is a PARAMETER of the renderer
-    // instead, so the constrained path is exercised directly.
+    // `justsearch.agent.max_tool_result_chars=600`. Setting that property at test time would make
+    // the assertion depend on process-global config rather than on the renderer, so the cap is a
+    // PARAMETER of the renderer instead and the constrained path is exercised directly.
     KnowledgeSearchResponse response = threeHitsWithLongExcerpts();
 
     String output = SearchTool.formatResults(response, 600);

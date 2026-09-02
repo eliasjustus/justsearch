@@ -2,7 +2,6 @@
 package io.justsearch.indexerworker.extract;
 
 import io.justsearch.telemetry.catalog.EmptyTags;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
@@ -65,6 +64,8 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
   static final String REASON_REQUEST_BUDGET = "request_budget";
   static final String REASON_PROTOCOL = "protocol";
   static final String REASON_INTERRUPTED = "interrupted";
+  /** Recorded by the wiring, not the pool: the child failed its startup probe. */
+  public static final String REASON_PROBE_FAILED = "probe_failed";
 
   private final List<String> command;
   private final TikaExtractionPolicy policy;
@@ -176,6 +177,8 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
       throws IOException, ContentExtractor.ExtractionException {
     Child child = acquireChild(slot);
     child.requests++;
+    // The tail is reported per FILE, so it must not carry the previous request's chatter.
+    child.stderr.reset();
 
     byte[] request =
         MAPPER.writeValueAsBytes(
@@ -413,17 +416,26 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
   }
 
   /**
-   * Drains the child's stderr on a daemon thread into a bounded buffer. Draining is mandatory, not
-   * diagnostic: an undrained stderr pipe fills its OS buffer and wedges the child mid-parse, which
-   * would look exactly like the hang this sandbox exists to prevent.
+   * Drains the child's stderr on a daemon thread, keeping the LAST {@code maxBytes}.
+   *
+   * <p>Draining is mandatory, not diagnostic: an undrained stderr pipe fills its OS buffer and
+   * wedges the child mid-parse, which would look exactly like the hang this sandbox exists to
+   * prevent.
+   *
+   * <p><b>It must keep the tail, not the head.</b> A bounded buffer that stops accepting once full
+   * discards the newest bytes — and the newest bytes are the ones that say how the child died. A
+   * parser chatty enough to fill 64 KB would push its own {@code OutOfMemoryError} trace out of the
+   * capture, {@code tail().contains("OutOfMemoryError")} would be false, and the OOM would be
+   * reported as a retryable crash instead of a permanent parse failure. Hence a ring.
    */
   private static final class StderrTail {
-    private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-    private final int maxBytes;
+    private final byte[] ring;
     private final Thread thread;
+    private int size;
+    private int end;
 
     StderrTail(InputStream stream, int maxBytes) {
-      this.maxBytes = maxBytes;
+      this.ring = new byte[Math.max(1, maxBytes)];
       this.thread =
           new Thread(
               () -> {
@@ -443,17 +455,32 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
     }
 
     private synchronized void append(byte[] chunk, int n) {
-      int room = maxBytes - buffer.size();
-      if (room > 0) {
-        buffer.write(chunk, 0, Math.min(room, n));
+      for (int i = n > ring.length ? n - ring.length : 0; i < n; i++) {
+        ring[end] = chunk[i];
+        end = (end + 1) % ring.length;
+        if (size < ring.length) {
+          size++;
+        }
       }
     }
 
+    /**
+     * Forgets everything captured so far. Called before each request so the reported tail belongs
+     * to the file that actually failed, not to whatever the child logged handling earlier ones.
+     */
+    synchronized void reset() {
+      size = 0;
+      end = 0;
+    }
+
     synchronized String tail() {
+      byte[] out = new byte[size];
+      int begin = (end - size + ring.length) % ring.length;
+      for (int i = 0; i < size; i++) {
+        out[i] = ring[(begin + i) % ring.length];
+      }
       String value =
-          new String(buffer.toByteArray(), StandardCharsets.UTF_8)
-              .replaceAll("[\\r\\n\\t]+", " ")
-              .trim();
+          new String(out, StandardCharsets.UTF_8).replaceAll("[\\r\\n\\t]+", " ").trim();
       return value.length() <= 512 ? value : value.substring(value.length() - 512);
     }
 

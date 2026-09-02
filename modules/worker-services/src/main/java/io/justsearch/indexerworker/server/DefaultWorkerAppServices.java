@@ -9,6 +9,8 @@ import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.extract.ExtractionMetricCatalog;
 import io.justsearch.indexerworker.extract.ExtractionSandboxCommand;
 import io.justsearch.indexerworker.extract.ExtractionSandboxFactory;
+import io.justsearch.indexerworker.extract.ExtractionSandboxRestartTags;
+import io.justsearch.indexerworker.extract.PersistentExtractionSandbox;
 import io.justsearch.indexerworker.extract.OcrMetricCatalog;
 import io.justsearch.indexerworker.extract.OcrRoutingConfig;
 import io.justsearch.indexerworker.extract.StructuredContentExtractor;
@@ -32,6 +34,7 @@ import io.justsearch.reranker.WorkerModelDiscovery;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -473,7 +476,10 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
    * unreachable, and the command is now built in-process by {@link ExtractionSandboxCommand}.
    * {@link EnvRegistry#EXTRACTION_SANDBOX_COMMAND} remains as an operator override.
    */
-  private static TimeboxedContentExtractor buildContentExtractor(
+  // Package-private for DefaultWorkerAppServicesSandboxProbeTest, like parseCsvSet above: the
+  // env-to-extractor chain has no other seam, and the probe-failure branch decides whether a
+  // session extracts at all.
+  static TimeboxedContentExtractor buildContentExtractor(
       @SuppressWarnings("unused") InfraContext ctx,
       ExtractionMetricCatalog catalog,
       OcrMetricCatalog ocrCatalog) {
@@ -503,6 +509,26 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
         poolSettings.poolSize(),
         poolSettings.maxRequestsPerChild(),
         command);
+
+    // Spawning is lazy, so without this a broken child command would be invisible until the first
+    // file and would then fail EVERY file. One bounded check here converts that into a degraded
+    // but working session.
+    Optional<String> probeFailure =
+        ExtractionSandboxFactory.probeChildCommand(
+            command, extractionPolicy, ocrConfig, ExtractionSandboxFactory.PROBE_TIMEOUT);
+    if (probeFailure.isPresent()) {
+      log.warn(
+          "Extraction sandbox child failed its startup probe ({}); falling back to in_process "
+              + "extraction for this session. Command: {}",
+          probeFailure.get(),
+          command);
+      if (catalog != null) {
+        catalog.sandboxRestartTotal.increment(
+            ExtractionSandboxRestartTags.of(PersistentExtractionSandbox.REASON_PROBE_FAILED));
+      }
+      return ExtractionSandboxFactory.inProcessStructured(
+          catalog, ocrConfig, ocrCatalog, extractionPolicy);
+    }
     return ExtractionSandboxFactory.create(
         sandboxMode,
         extractionPolicy,

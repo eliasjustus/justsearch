@@ -11,6 +11,7 @@
     "table": "CAUSE_ROWS"
   },
   "noWordingExempt": [
+    { "code": "local_api.session_token_missing", "why": "Fail-closed boot refusal (tempdoc 884 item 23): the Head throws at LocalApiServer construction before the loopback bind, so no readiness envelope, ConditionStore or SSE stream exists to carry it. The operator sees it in the fatal log line and the process exit; there is no UI to word it in." },
     { "code": "settings.reset_from_corrupt", "why": "Head-owned ConditionStore condition (SettingsRecoveryNotice, tempdoc 882 item 24); never on the readiness envelope, so never reaches wordCauses. The user sees it on the Health surface, which renders conditions with the Java-side message." },
     { "code": "worker.not_configured", "why": "NOT_CONFIGURED state on INDEX_SERVING -> verdict 'checking', never rendered by wordCauses (PART X)" },
     { "code": "worker.not_started", "why": "NOT_CONFIGURED state on INDEX_SERVING -> verdict 'checking'" },

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.bootstrap.phases;
 
+import io.justsearch.agent.AgentContextBudgets;
 import io.justsearch.agent.tools.AgentToolPaths;
 import io.justsearch.agent.tools.BrowseTool;
 import io.justsearch.agent.tools.FileOperationLog;
@@ -16,6 +17,7 @@ import io.justsearch.app.services.gpl.LambdaMartReranker;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
+import io.justsearch.core.util.ContextBudget;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Supplier;
@@ -133,7 +135,12 @@ public final class AgentToolFactory {
             knowledgeClient::updateDocumentPaths,
             fileOperationLog,
             rootsView);
-    SearchTool searchTool = new SearchTool(agentSearchAdapter::search, rootsView);
+    // Tempdoc 883 decision 3: ONE live context budget for the whole bundle, read per tool call.
+    // The tools cannot see the AgentSession (they are OperationHandlers dispatched by id), so the
+    // window reaches them as a supplier bound here, where the OnlineAiService already is.
+    Supplier<ContextBudget> contextBudget = () -> AgentContextBudgets.forCall(onlineAiService);
+    SearchTool searchTool =
+        new SearchTool(agentSearchAdapter::search, rootsView, contextBudget);
     BrowseTool browseTool =
         new BrowseTool(
             agentSearchAdapter::listFolders, agentSearchAdapter::listFolderFiles, rootsView);
@@ -149,7 +156,7 @@ public final class AgentToolFactory {
     ReadDocumentTool readDocumentTool =
         documentService == null
             ? null
-            : new ReadDocumentTool(documentService::fetchSlice, rootsView);
+            : new ReadDocumentTool(documentService::fetchSlice, rootsView, contextBudget);
     return new Output(
         agentSearchAdapter,
         fileOperationLog,

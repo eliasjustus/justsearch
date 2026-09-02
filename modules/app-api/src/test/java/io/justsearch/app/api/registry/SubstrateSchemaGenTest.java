@@ -107,6 +107,12 @@ final class SubstrateSchemaGenTest {
         io.justsearch.agent.api.registry.UIDiagnosticChannelView.class, "diagnostic-channel.v1.json");
   }
 
+  @Test
+  @DisplayName("Surface manifest schema generates (tempdoc 884 — retires the hand-mirrored api/types/surface.ts)")
+  void surfaceSchema() throws Exception {
+    captureOrVerify(io.justsearch.agent.api.registry.Surface.class, "surface.v1.json");
+  }
+
   private static void captureOrVerify(Class<?> type, String fileName) throws IOException {
     JsonNode current = schemaGenerator.generateSchema(type);
     // tempdoc 696: force LF so Windows System.lineSeparator() doesn't churn committed files

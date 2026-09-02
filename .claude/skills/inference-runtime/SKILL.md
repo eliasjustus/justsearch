@@ -243,6 +243,81 @@ Design choices in the current inference runtime, with rationale.
 - **Verification:** `NativeSessionHandleConcurrentStressTest` for concurrency baseline (10 threads covering #3 CPU recreation + #5 lifecycle-callback + post-close acquire; invariants #1/#2/#4 require CUDA, parked as tempdoc 398; metadata-read thread retired in §14.25 FD-ProbeDeletion); `OrtSessionOptionsTest` for applier parity + causality invariants; `RuntimePolicyResolverTest` for profiling round-trip + CPU-variant zero-arena invariant (§14.28 U2); `ClosurePropertyTest` for §7.5 pure-encoder contract (denylist-by-default, §14.28 U8); `InferenceSurfaceTest` + `InferenceCompositionRootComposeTest` for compose orchestration shape (§14.28 U6/U7); `GrpcSearchServiceModelReadyLatchTest` for the query-handler gate (§14.28 U3); `SessionPoliciesControllerTest` for the gRPC-bridged diagnostic (§14.28 U4); jseval pipeline anchor (§14.7.3): 191.1 s baseline. Post-§14.28 reference run: 208 s total / 24.9 docs/sec / nDCG@10 = 0.750 on 300 scifact queries (commit `0ed0321ce`, 2026-04-21).
 - **Revisit when:** 395 A1/A4/A7 adaptive policy work starts (resolver now has a real read-path; §14.28 U2 further made the record self-describing); 394 P3 scheduler lands new `RunOptions` fields (`SessionOptionsApplier.buildGpuRunOptions` is the single setter site); tempdoc 400 observability work identifies a structural gap that motivates additional runtime assertions on the closure property.
 
+### D-010: llama-server context window is a derived resource - SHIPPED (tempdoc 883, PR 1)
+
+- **Choice:** `-c` is no longer a user preference. `ContextWindowPolicy`
+  (`modules/app-inference`) produces a **ladder** - top rung 32768 with GPU layers, 8192 at
+  `-ngl 0`, then 16384 -> 8192 -> 4096. The top rung is a **budget, not a fit** (measured evidence
+  below): the recorded reason for an un-stepped launch is `top-rung`, never `fit` - and the launch steps down one rung on a
+  `PROCESS_EXITED` startup failure (the same seam `relaunchWithoutReasoningBudget` uses). The Head
+  contributes the top rung at `ORDINAL_AUTO_DETECT` (150, `auto_detected` / `hardware_probe`)
+  AFTER GPU detection, so `/api/debug/effective-config` explains the window with the mechanism that
+  already explains GPU detection. `UiSettings.contextLength` `0` = auto (settings schema bumped to
+  2, migrating the old 4096 default); the settings-to-sysprop promotion and the
+  `justsearch.context.size.source` marker are deleted. An explicit
+  `justsearch.context.size` above ordinal 150 is a ONE-RUNG ladder: honoured or failed loud.
+- **Slots + KV + fit:** `-np 2 -kvu -ctk q8_0 -ctv q8_0 -fa on -fit off`, keys `justsearch.llm.slots` (default 2,
+  clamped [1,8]) and `justsearch.llm.kv_type` (default `q8_0`, restricted to llama.cpp cache types).
+  `-kvu` is mandatory next to an explicit `-np`: llama-server enables `kv_unified` only when the
+  slot count is automatic, so `-c 32768 -np 2` alone gives `n_ctx_seq` 16384 while `/props` still
+  reports `n_ctx` 32768. Two slots is a SCHEDULING choice (a background delegate must not evict the
+  foreground prompt-cache prefix, tempdoc 841), not a memory one. `-fit off` is what makes the
+  ladder mean anything: b8571 defaults `--fit on` (verified against the bundled binary's `--help`:
+  `-fit, --fit [on|off] ... default: on`) and it MAXIMIZES rather than fits, so leaving a
+  memory-adjusting pass running next to an explicit `-c` risks absorbing the hard abort the
+  step-down reads as its signal.
+- **Rationale:** the model trains at 262k; the app ran it at 4096 with four engine-chosen slots and
+  an f16 KV cache. Measured on the bundled b8571 (tempdoc 883 independent review): `-fa auto`
+  resolves to on for CUDA and for `-ngl 0` but is passed explicitly because a q8_0 V-cache aborts
+  the launch without it; KV at 32k q8_0 is 544 MiB on both profiles; `--fit` (default on) MAXIMIZES
+  rather than fits, choosing 242,944 tokens / 4 GB KV when `-c` is omitted, so an explicit `-c` is
+  required. No VRAM arithmetic and no GGUF reader: Qwen3.5 is a Gated-Delta-Net hybrid (8 of 32
+  layers carry KV, plus ~50 MiB/slot of recurrent state independent of n_ctx; 32 KiB/token f16,
+  17 KiB/token q8_0), so any dense-attention formula is ~4x wrong, and `/props` on b8571 does not
+  expose `n_ctx_train`. Free VRAM is recorded on the activation record, never used as an input.
+- **What is intent vs observation:** `/api/inference/status.contextWindow` and the runtime
+  manifest's `ai.contextWindow` (`{rung, reason, freeVramBytes, slots, kvType}`) are the INTENT.
+  `/props` `n_ctx` (published as `llmContextTokens`) and `n_ctx_seq` in the llama-server log are the
+  OBSERVATION and stay authoritative. `ServerPropsOps` compares the readback against the LAUNCHED
+  rung, not `InferenceConfig.contextSize()` - the latter is stale by construction after a step-down.
+  Note `/props.n_ctx` reports the TOTAL context even when `kv_unified` is off (each request then
+  gets `n_ctx / n_parallel`), so it cannot by itself prove a request gets the full window.
+- **Adopted servers are judged by the floor, not by our rung:** `externalServer.contextTooSmall`
+  compares an adopted BYO server's window against `ContextWindowPolicy.MIN_USABLE_ADOPTED_TOKENS`
+  (4096, the ladder's bottom rung), not against the derived 32k we would have chosen for a server
+  we launched ourselves.
+- **Measured live 2026-09-02** (b8571 `8571 (e397d3885)`, Qwen3.5-9B-Q4_K_M, RTX 4070 12281 MiB,
+  standalone, argv as shipped):
+  - `-c 262144` **LOADS**: 33/33 layers, `n_ctx_seq 262144`, `kv_unified true`, KV 4352 MiB;
+    model 5060.88 + KV 4352.00 + recurrent 100.50 + compute 808.02 = **10,321 MiB of 12,281**. The
+    model's whole training context fits, so the 32k top rung is a deliberate budget, not a limit.
+  - `-c 32768`: KV **544.00 MiB**, `n_ctx_seq == n_ctx == 32768`, `kv_unified true`, 33/33 layers,
+    6,206 MiB total. Reproduces the review fold's [R2] figure to the MiB and confirms [R1]'s
+    halving does NOT occur with `-np 2 -kvu`.
+  - `-c 1000000`: KV 16604.75 MiB -> `CUDA error: out of memory` -> **exit 127**. An unfittable
+    rung is a hard, nonzero-exit abort - what `awaitServerHealth` turns into `PROCESS_EXITED` and
+    the step-down acts on. `-fit off` does not mask it.
+  - **KV cost at q8_0 is exactly linear: 17.0 KiB/token** (544 MiB / 32768 == 4352 MiB / 262144),
+    for this model's 8-of-32 KV-carrying layers.
+  - llama-server's `n_ctx_seq (32768) < n_ctx_train (262144) -- the full capacity of the model will
+    not be utilized` at the top rung is **expected**, not a defect to chase.
+- **Why the budget is 32k, not what fits:** (a) prefill latency per RAG ask scales with the prompt,
+  and the budget fractions fill whatever window exists, so the rung bounds worst-case latency;
+  (b) KV is reserved up front for the whole `n_ctx` whether used or not, and the same card holds
+  the embedding / SPLADE / NER encoders, the reranker and VDU batches - 544 MiB at 32k versus
+  ~2.2 GB at 128k is headroom kept on purpose; (c) the ladder exists to step DOWN on small cards,
+  not to maximize on large ones. Users who want more set `contextLength` /
+  `JUSTSEARCH_CONTEXT_SIZE`, which has no upper clamp below `n_ctx_train`.
+- **Evidence:** tempdoc 883 (contract, independent review fold R1-R4, §B pre-impl pass, §C
+  post-impl pass, §D review fold, §Live verification). Remaining live acceptance (in-app activation
+  arms, precedence arms, forced step-down, q8_0 vs f16 tok/s, the 845 RAG arms) is scheduled
+  separately.
+- **Revisit when:** the live window runs and reports the q8_0 tok/s cost (if it exceeds 10% on the
+  dev GPU the design says make f16 the default at 16k and below); when co-residency is actually
+  measured, since the top rung is a budget held FOR that co-residency and a measurement could
+  justify raising it; or when lane F adds a second VRAM arbiter - the window, `gpuLayers`, slots, KV type and reranker/VDU co-residency all compete
+  for the same VRAM and should be one memory plan at activation, not several.
+
 ### D-002: BGE-M3 VRAM budget — FP16+Flash at 3072 MB arena
 
 - **Choice:** FP16+Flash Attention with 3072 MB arena limit (`JUSTSEARCH_BGE_M3_GPU_MEM_MB=3072`).
@@ -325,6 +400,19 @@ picking up items here over inventing new experiments.
 - **Evidence:** tempdoc 360 (warm-up implementation); tempdoc 356 (identified the fix).
 
 ---
+
+### Q-002: What does q8_0 KV cost in tok/s on the dev GPU, and does the 32k top rung hold under co-residency?
+
+- **Context:** tempdoc 883 decision 2 ships `-ctk q8_0 -ctv q8_0` by default and decision 1 ships a
+  32768 top rung, both argued from launch-time fit (KV at 32k q8_0 measured at 544 MiB) rather than
+  from throughput or from behaviour under load.
+- **What to measure:** (a) generation tok/s with `-ctk/-ctv q8_0` vs `f16` at the same rung, on the
+  dev RTX 4070 - the design says that if q8_0 costs more than 10%, `f16` becomes the default at the
+  16k rung and below; (b) whether the 32k rung still fits with the reranker and a VDU batch
+  co-resident, or whether the top rung should stay at 16k until that is measured (the owner's own
+  open question in 883).
+- **Instrument:** `jseval llm-bench` / `llm-gate` (F-012) for tok/s; the recorded
+  `contextWindow.reason` on `/api/inference/status` for step-downs.
 
 ## Future Work
 
@@ -424,13 +512,51 @@ The control plane and flags (e.g., `-ngl`) exist today, but GPU acceleration onl
 *   **Crash diagnostics:** `waitForServerHealth()` parses llama-server stderr for known failure patterns (e.g., `unknown model architecture`) and surfaces user-facing error messages instead of opaque "failed to load model" errors.
 *   **Arguments:**
     *   `-m <model_path>`: Main GGUF model file.
-    *   `-c <ctx_size>`: Context window (critical for RAG).
+    *   `-c <ctx_size>`: Context window - a **derived resource**, not a preference (see the section below).
     *   `-ngl <layers>`: Number of GPU layers (offload).
+    *   `-np <slots>`: Parallel slots. `2` by default (`JUSTSEARCH_LLM_SLOTS`) so a background delegate cannot evict the foreground turn's prompt-cache prefix.
+    *   `-kvu`: Unified KV cache. Required *because* `-np` is explicit: passing `-np` at all disables llama-server's automatic `kv_unified`, and without `-kvu` two slots halve the window a request actually gets (`n_ctx_seq`) while `/props` still reports the full `n_ctx`.
+    *   `-ctk <type> -ctv <type>`: KV cache type, `q8_0` by default (`JUSTSEARCH_LLM_KV_TYPE`).
+    *   `-fa on`: Flash attention, explicitly on - a quantized V-cache aborts the launch without it, so this is never left at `auto`.
+    *   `-fit off`: Memory fitting off. llama-server defaults `--fit on` ("adjust unset arguments to fit in device memory") and it MAXIMIZES rather than fits - with `-c` omitted it chose 242,944 tokens and 4 GB of KV. JustSearch sets `-c` explicitly and needs a rung that does not fit to produce a hard, detectable abort, which is the signal the context ladder steps down on; a memory-adjusting heuristic running beside it could absorb that signal instead.
     *   `--mmproj`: Vision adapter path (for Qwen/Llava).
     *   `--port <port>`: HTTP port.
+    *   `--jinja`, `--metrics`, `--host 127.0.0.1`, and (when thinking is enabled) `--reasoning-format deepseek --reasoning-budget N`.
 *   **VDU mode flags** (applied only during VDU batch processing, not global):
-    *   `-np 1`: Single slot (multi-slot causes alternating 500s on vision)
+    *   `-np 1`: Single slot (multi-slot causes alternating 500s on vision) - pins the common `-np` above rather than adding a second one
     *   `--cache-ram 0`: Disable prompt cache (prevents silent crashes after ~7 pages)
+
+#### The context window (`-c`) is derived, not configured
+
+The packaged model trains at 262k tokens; the app used to run it at 4096 because that was the
+shipped value of a `UiSettings` field with no UI control, promoted to a system property so it
+outranked every other source. Since tempdoc 883 the window is a resource the runtime fits:
+
+* `ContextWindowPolicy` (`modules/app-inference`) produces a **ladder**: top rung 32768 with GPU
+  layers, 8192 at `-ngl 0` (CPU prefill at 32k is minutes per RAG ask), then 16384 -> 8192 -> 4096.
+* The Head contributes the top rung at ordinal 150 (`auto_detected` / `hardware_probe`) after GPU
+  detection, so `/api/debug/effective-config` explains the window with the same mechanism that
+  explains GPU detection.
+* If llama-server refuses a rung it exits immediately; `LlamaServerOps.waitForServerHealth` steps
+  down one rung and relaunches. A rung that does not fit costs context, not inference. This is why
+  `-fit off` is passed: the step-down reads a hard abort, so llama-server's default memory-fitting
+  pass must not be running alongside it.
+* An explicit `justsearch.context.size` (env, `-D`, `settings.json`, YAML) is a **one-rung ladder**:
+  honoured or the launch fails loud. `UiSettings.contextLength` `0` means auto.
+* What was launched is published on `/api/inference/status` as `contextWindow`
+  (`{rung, reason, freeVramBytes, slots, kvType}`, where reason is `top-rung`, `override` or
+  `stepped-from:<n>`) and on the runtime manifest as `ai.contextWindow` - "what did this
+  installation end up with", which is a fact about the machine rather than a setting anyone can
+  read back out of config. That is the INTENT. What the server reports - `/props` `n_ctx`, and
+  `n_ctx_seq` in its log - stays the authority for what a request actually gets, and is published
+  separately as `llmContextTokens`.
+* Caveat on `/props.n_ctx`: it reports the server's TOTAL context even when `kv_unified` is off, in
+  which case each request actually gets `n_ctx / n_parallel`. A matching `n_ctx` is therefore NOT
+  evidence that a request gets the full window; the guarantee is the argv (`-kvu` always
+  accompanying an explicit `-np`) plus reading `n_ctx_seq` from the llama-server log.
+* No VRAM arithmetic and no GGUF reader: the packaged model is a Gated-Delta-Net hybrid whose KV
+  footprint no dense-attention formula predicts within 4x, and `/props` does not expose
+  `n_ctx_train`. Free VRAM is recorded for diagnosis, never used as an input.
     *   `chat_template_kwargs: {"enable_thinking": false}`: Ensures VLM output goes to `content` field
 
 ### 2. `InferenceLifecycleManager` (The Manager)
@@ -682,9 +808,80 @@ Chunk-level hybrid (`CHUNK_HYBRID`) uses the `chunk_vector` field and is coverag
 Optional quality boost (disabled by default): a cross-encoder chunk reranker can rerank BM25 chunk hits under a tight time budget. GPU acceleration requires an ONNX Runtime CUDA-capable native runtime (see `docs/explanation/16-gpu-booster-pack.md`).
 
 ### Token budgets (current)
-`SummaryController` uses the configured `maxTokens` (persisted via `/api/settings/v2`) as the **output** budget for summarize/Q&A/chat. It also computes a safe **input** budget from the effective context window (`n_ctx`) to avoid llama-server 400s when input + output would exceed the server limit.
 
-The Head passes this input token budget to the Worker (`RetrieveContextRequest.max_context_tokens`) so the Worker can budget context during retrieval (avoids "Worker fetches 200K chars, Head truncates to 3K tokens" waste). The Head still keeps a safety-net truncation step and filters citations based on the returned `sections[]` to avoid "citations for dropped chunks" after truncation.
+Every window-sized quantity in the Head is derived from **one** request-scoped record,
+`ContextBudget` (`modules/core/src/main/java/io/justsearch/core/util/ContextBudget.java`). Each
+consumer builds one per request from the same two inputs — the live context window and the
+completion this turn reserves — and reads its derived accessors instead of carrying a literal of its
+own. (It is one derivation, not one object: the RAG injector, the history injector, the selection
+injector, the hierarchical runner and the agent loop each construct it, which is why the inputs and
+the arithmetic live in one place.)
+
+**Window precedence.** Observed llama-server `/props` `n_ctx` -> the configured launch window ->
+`ContextBudget.FALLBACK_WINDOW_TOKENS` (4096, the smallest rung of the launch ladder). "Unknown" is
+never treated as generous: it falls through to the next most authoritative value, and the last of
+them is the smallest window any server this app starts can end up with. The launch ladder itself is
+described in `docs/reference/configuration/runtime-config-ownership-matrix.md`
+(`justsearch.context.size`).
+
+**Input budget.** `inputBudget = TokenEstimation.computeSafeInputBudgetTokens(window, reserve)` —
+`(window - reserve - 256 - 256) * 0.9` (a prompt-overhead allowance and a safety allowance, 256
+tokens each), and `0` when the reservation leaves no room at all. At `n_ctx` 4096 with a 1024-token
+reserve that is 2304 tokens. The
+completion reserve is the turn's real `max_tokens` (the chat engine publishes it onto the request;
+reasoning tokens are spent *inside* it, never alongside it), so the budget cannot drift from what
+the server will actually enforce.
+
+**Derived quantities.** Each is `min(fraction x inputBudget, ceiling)`. The fraction makes the value
+scale with the window; the ceiling states the reason it should stop scaling.
+
+| Accessor | Derivation | Consumer | Why the ceiling |
+|---|---|---|---|
+| `hierarchicalThreshold()` | `inputBudget` (no ceiling) | `HierarchicalShapeRunner` — single-pass vs map-reduce | None: it *is* the budget. A document that does not fit the prompt cannot be summarized in one call. |
+| `sectionTarget()` | `inputBudget / 2`, max 4096 | `HierarchicalShapeRunner` — map-step size | A section is one blocking LLM call; past a few thousand tokens per-section latency, not the window, is what the user waits on. |
+| `externalContextCap()` | `inputBudget / 4`, max 2048 | `ExternalContextInjector` — prior conversation turns | History is low value per token next to the material this turn retrieved. |
+| `readDocumentPageTokens()` / `readDocumentPageChars()` | `inputBudget / 2`, max 4096 tokens | `ReadDocumentTool` — one page of a document | Agent-context hygiene: a 12k-token page at a 32k window fills the prompt with one document and defeats the compressor. **Today this fraction never binds** — see below. |
+| `toolResultCap()` / `toolResultCapChars()` | `inputBudget / 4`, max 2048 tokens | `AgentContextCompressor` Layer-2 cut, `SearchTool` result set | One tool result must not own the prompt; the agent loop's value is holding several at once. |
+
+The read page is additionally bounded by the Layer-2 cut minus a 600-char header allowance, because
+a page that arrives clipped is the excerpt-shaped result the read tool exists to replace. That second
+bound is the one that actually governs at every rung: the page fraction (`inputBudget / 2`, max 4096)
+is never smaller than the tool-result fraction (`inputBudget / 4`, max 2048) it must fit inside, so
+`readPageChars` always resolves to `toolResultCapChars() - 600`. The page accessor is kept as the
+page's OWN stated ceiling, so that raising the tool-result ceiling later cannot silently leave pages
+unbounded; `AgentContextBudgetsTest` pins both the dominance and the fit.
+
+**Character budgets.** Consumers that cut in characters (the Layer-2 tool-result cut, the read page,
+the selection injector) convert through `TokenEstimation.charsForTokens` — the documented inverse of
+the estimator's default heuristic (4 chars per token), and the only conversion any of them use.
+
+**Drops are reported, at two different altitudes.** A trimmed RAG context sets
+`rag.meta.context_truncated`, which reaches the user. A dropped prior conversation turn
+(`ExternalContextInjector`) and a cut selection (`SelectionContextInjector`) are reported at INFO in
+the backend log only — they have no wire flag today, so an operator can see them and a reader of the
+answer cannot. Putting those two on the wire is tracked as open work in tempdoc 883, not claimed
+here.
+
+**Agent knobs.** `justsearch.agent.max_tool_result_chars` and
+`justsearch.agent.max_completion_tokens` both default to `0 = derive from the window`, but a
+positive value does NOT mean the same thing for the two:
+
+- `max_tool_result_chars` is an operator ceiling honoured **verbatim**.
+- `max_completion_tokens` is a ceiling on a window **fraction**: the reserve is
+  `min(cap, window / 4)`, where `cap` is the configured value when set and `1024` otherwise. An
+  answer does not get longer because the window did, but at a window too small to afford the cap a
+  flat reserve starves the input instead — so a small window reduces it. Because that reduces a
+  number an operator typed, `AgentContextBudgets` reports the reduction at INFO, deduplicated per
+  `(cap, window)` pair.
+
+**Retrieval shape.** The Head passes `inputBudget` to the Worker
+(`RetrieveContextRequest.max_context_tokens`) so the Worker can budget context during retrieval
+(avoids "Worker fetches 200K chars, Head truncates to 3K tokens" waste), and derives how many
+passages to ask for from it: `inputBudget` divided by the fixed 500-token chunk size
+(`ChunkSplitter.DEFAULT_CHUNK_TOKENS`), bounded above by `justsearch.rag.top_k`. An
+explicit per-request `topK` still wins verbatim. The Head keeps a safety-net truncation step and
+resolves each citation to what that cut did with its passage, so a citation never claims a passage
+the prompt does not contain.
 
 ## Q&A (multi-file “Ask”)
 

@@ -51,8 +51,12 @@
       "outFile": "ai-install-status.ts",
       "consumers": [
         "modules/ui-web/src/api/domains/packs.ts",
-        "modules/ui-web/src/shell-v0/utils/aiInstallPoll.ts"
-      ]
+        "modules/ui-web/src/shell-v0/utils/aiInstallPoll.ts",
+        "modules/ui-web/src/shell-v0/state/installComponents.ts",
+        "modules/ui-web/src/shell-v0/substrates/ai/aiInstallBridge.ts",
+        "modules/ui-web/src/shell-v0/substrates/tasks/aiInstallTasksBridge.ts"
+      ],
+      "note": "The last three were flagged by contract-projection/undeclared-consumer and are genuine parse boundaries: each carries 'import type { AiInstallStatus } from .../schema-types/ai-install-status.js' (installComponents.ts:35, aiInstallBridge.ts:19, aiInstallTasksBridge.ts:21). Registered by tempdoc 884 lane B PR 2 as ADR-0038 register drift on the generated side."
     },
     {
       "name": "FolderBrowseResponse",
@@ -112,7 +116,10 @@
       "name": "AgentSessionsResponse",
       "schema": "SSOT/schemas/agent-sessions-response.v1.json",
       "outFile": "agent-sessions-response.ts",
-      "consumers": ["modules/ui-web/src/api/domains/agent.ts", "modules/ui-web/src/api/schemas.ts"]
+      "consumers": [
+        "modules/ui-web/src/api/domains/agent.ts",
+        "modules/ui-web/src/api/schemas.ts"
+      ]
     },
     {
       "name": "AgentHistoryResponse",
@@ -178,7 +185,15 @@
       "name": "SettingsV2",
       "schema": "SSOT/schemas/settings-v2.v1.json",
       "outFile": "settings-v2.ts",
-      "consumers": ["modules/ui-web/src/api/domains/settings.ts", "modules/ui-web/src/api/schemas.ts"]
+      "consumers": ["modules/ui-web/src/api/domains/settings.ts"],
+      "note": "api/schemas.ts was listed here until tempdoc 884 review S5 taught the gate to parse imports: its only occurrence of the module is the tempdoc-683 tombstone comment at :20-22 recording that the hand SettingsV2 schemas were DELETED and that the parse boundary moved to api/domains/settings.ts. It never imported this projection; the raw-substring matcher could not tell the difference."
+    },
+    {
+      "name": "SurfaceWire",
+      "schema": "SSOT/schemas/surface.v1.json",
+      "outFile": "surface.ts",
+      "consumers": ["modules/ui-web/src/api/types/surface.ts"],
+      "note": "Tempdoc 884 / ADR-0038 amendment. api/types/surface.ts was a hand-written mirror of Surface/SurfaceRef/Audience/Placement/SurfaceConsumes and a declared exception on the adr-0038-no-unregistered-fe-mirror probe; it is now a composing barrel over this generated projection, so the exception is dropped. It stays a hand-authored file rather than disappearing because it also carries two FE-only fields the backend never sends (factory, splitPairing) and two runtime consts (AUDIENCES, PLACEMENTS) with no Java counterpart - the ResourceWire/OperationWire barrel pattern in api/types/registry.ts."
     }
   ]
 }
