@@ -175,17 +175,6 @@
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "slow: python -m pytest -q scripts/jseval"
-    },
-    {
-      "id": "tempdoc-numbers-changeset-per-tempdoc-false-positive",
-      "match": [
-        "check-tempdoc-numbers"
-      ],
-      "claim": "`node scripts/ci/check-tempdoc-numbers.mjs` exits 1 whenever two in-flight `gates/*/.changesets/<tempdoc>-<slug>.md` files across parallel worktrees share a tempdoc number. That is the CONVENTION, not a collision: a changeset is named for the tempdoc that motivates it, and one tempdoc legitimately owns several. `origin/main` already carries two (`gates/config-surface/.changesets/885-extraction-sandbox-pool-keys.md` and `885-indexing-foreground-pacing-keys.md`), which the checker accepts only because they are settled on the merge base. The checker's unit is the NUMBER, which is right for `docs/tempdocs/<n>-*.md` (one number, one doc) and wrong for changesets. Do NOT renumber a changeset to silence it -- the prefix is its attribution, and a free number would name a tempdoc that did not motivate it.",
-      "evidence": "tempdoc 885 lane C: observed twice on worktree-lane-C4. First 2026-09-02 pre-merge (885-extraction-sandbox-pool-keys [lane-C] vs 885-indexing-foreground-pacing-keys [lane-C3/C4]) -- both merged unchanged and the report went quiet. Again 2026-09-02 after adding 885-advance-baseline-to-246.md (vs lane-C5's in-flight 885-nrt-cadence-keys.md). Fix tracked in 885 open items: scope the checker off gates/*/.changesets/**, or key changesets by their frontmatter `tempdoc:` field instead of the filename prefix.",
-      "added": "2026-09-02",
-      "reviewBy": "2026-09-30",
-      "exitProbe": "node scripts/ci/check-tempdoc-numbers.mjs"
     }
   ]
 }
