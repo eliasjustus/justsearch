@@ -1,7 +1,7 @@
 ---
 title: "CI enforcement closure, tier 1: a self-hosted Windows/GPU runner on the owner's machine for the perf ratchet, mutation ratchet, soak suite, full jseval pytest, and installer-over-release qualification"
 type: tempdocs
-status: CHARTERED (2026-09-02) — decision made by the orchestrating session under founder delegation; BLOCKED on one owner action (install the runner, §O) before any agent work
+status: CHARTERED (2026-09-02) — decision revised same day: use the EXISTING justsearch-perf runner (docs-lint.yml:20), threat evaluated in §Decision (fork-PR RCE already gated by check-workflow-triggers, tempdoc 747 P-D); owner action shrinks to confirming the runner + picking hours (§O); item 0 amends ADR-0044 and SHA-pins Actions
 created: 2026-09-02
 updated: 2026-09-02
 lane: 887 L2
@@ -28,30 +28,47 @@ labels below). Load `/ci-triage` for workflow work and `/jseval` for the perf/so
 Every new job is `workflow_dispatch` + a `schedule`, never on PR (ADR-0044; a self-hosted runner
 must not run untrusted PR code). One PR per item.
 
-## Decision (2026-09-02)
+## Decision (2026-09-02, revised the same day after the founder's challenge)
 
-The runner is the owner's development machine (the one every jseval/perf number in the register
-already came from — `MachineFingerprint` makes runs comparable), registered as a GitHub
-self-hosted runner with labels `self-hosted, windows, gpu, justsearch-dev`, running only
-scheduled and dispatched jobs, and only from `main`. No cloud GPU runner: the cost is recurring
-and the numbers would not be comparable with the register's baselines. Scheduled windows are
-nightly (fast items) and weekly (soak), at hours the owner sets in §O.
+**Use the self-hosted runner that already exists** — `docs-lint.yml:20` runs on
+`[self-hosted, Windows, X64, justsearch-perf]` on the owner's workstation (the machine every
+jseval/perf number in the register came from, so `MachineFingerprint` keeps runs comparable).
+No new runner, no cloud GPU runner. Jobs are `workflow_dispatch` plus a `schedule`, from `main`
+only. Adding `schedule` is the one step beyond ADR-0044 ("self-hosted and specialty workflows
+remain manually dispatched unless separately amended") — so item 0 below amends the ADR.
 
-## §O. Owner action (one-time, ~15 minutes)
+**Threat evaluation (public repository + runner on the maintainer's machine).** The classic
+vector — a fork pull request whose workflow executes on the self-hosted runner — is already
+closed mechanically, not by convention: `scripts/ci/check-workflow-triggers.mjs:15-25,120-124,
+290-299` carries a **hard, fail-closed invariant** (tempdoc 747 P-D) that any job whose
+`runs-on` is not a known hosted label may not use `pull_request`, `pull_request_target`,
+`pull_request_review`, `pull_request_review_comment` or the other externally triggerable events,
+with unknown labels treated as self-hosted. The realistic residuals are:
 
-1. Repository → Settings → Actions → Runners → New self-hosted runner (Windows x64); run the
-   printed `config.cmd` with `--labels self-hosted,windows,gpu,justsearch-dev --runasservice`.
-2. Restrict: Settings → Actions → General → "Require approval for all outside collaborators";
-   keep fork PRs off self-hosted by never adding `pull_request` triggers to these workflows
-   (`check-workflow-triggers` enforces the trigger policy).
-3. Choose the nightly hour and the weekly soak day; write them into §Schedule below.
-4. Confirm the dev stack is not leased during those windows (the jobs use `justsearch-dev`
-   tooling and will refuse under `OWNER_CONFLICT`).
+| residual | likelihood | handling |
+|---|---|---|
+| code the owner merged to `main` runs on the owner's machine on a schedule | certain, by design | same trust as the owner's daily local builds; branch protection + merge queue (829) already gate `main` |
+| a third-party Action referenced by a self-hosted workflow is compromised (tag-pinned today: `actions/checkout@v*`, `setup-java@v*`, `gradle/actions@v*`, `dtolnay/rust-toolchain@stable`) | low but real (the 2025 `tj-actions` class) | **SHA-pin every Action used by a self-hosted workflow** (item 0) and let Dependabot's `github-actions` ecosystem bump them |
+| a job on the runner reads repository secrets | avoidable | these jobs need none; verify the signing secrets are scoped to an Environment used only by the hosted `build-installer` workflow (item 0) |
+| persistence on a non-ephemeral runner after a compromise | only reachable via the two rows above | accepted: `--ephemeral` would discard the warm Gradle/model caches these jobs exist to use; the runner already runs as a service account |
+| surprise load on the workstation (ADR-0044's actual concern) | certain without care | owner-chosen nightly hour + weekly soak day; jobs refuse under a live dev-stack lease (`OWNER_CONFLICT`) |
+
+Net: proceed. The one vector that would make this a bad idea is the one the repo already forbids
+and gates.
+
+## §O. Owner action (five minutes)
+
+1. Confirm the `justsearch-perf` runner is online (`gh api repos/:owner/:repo/actions/runners`)
+   and note its labels; if it was decommissioned, say so and this lane pauses.
+2. Choose the nightly hour and the weekly soak day; write them into §Schedule below.
+3. Settings → Actions → General: "Require approval for all outside collaborators" (belt and
+   braces; the trigger gate is the real control).
 
 ## Scope
 
 | # | mechanism | today | job |
 |---|---|---|---|
+| 0 | **Preconditions** | ADR-0044 says manual-only for self-hosted; Actions tag-pinned; secret scoping unverified | amend ADR-0044 with a "scheduled self-hosted lanes" section (probes via `adr-coverage`); SHA-pin every `uses:` in workflows that target the runner; confirm `check-workflow-triggers.mjs` permits `schedule` on self-hosted jobs (if its policy forbids, stay dispatch-only and record that); move signing secrets into a `release` Environment bound to `build-installer.yml` only |
 | 1 | **Perf ratchet** `jseval perf-gate` (640/647) | advisory hook nudge only; `ci.yml` never runs it | nightly: clean lifecycle run on the standard strata → `perf-gate --mode gate`; red opens a GitHub issue via the workflow (labels `perf-regression`), never auto-rebaselines |
 | 2 | **Mutation ratchet** `test-efficacy` (555) | fully built; nothing produces `pit-strength-report.v1.json` | nightly: `./gradlew.bat pitest` over the 18 seams → `report-pit-strength.mjs` → `run.mjs --gate test-efficacy --mode gate`; strength regression opens an issue |
 | 3 | **Soak suite** (`SoakSuiteTest`, 4 h) | opt-in flag, no runner | weekly: `-PincludeSoakTests=true`; extend with the two disk-growth assertions 895 measures (index generations, log bytes) once 895 reports |
@@ -82,4 +99,6 @@ nightly: (owner fills) · weekly soak: (owner fills)
 
 ## §Status
 
-Chartered; blocked on §O.
+Chartered. First draft wrongly asked the owner to install a new runner and ignored the existing
+trigger invariant; corrected 2026-09-02 after the founder's challenge. Waiting on §O (confirm
+runner, pick hours).
