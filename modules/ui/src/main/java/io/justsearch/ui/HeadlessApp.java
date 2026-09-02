@@ -621,22 +621,21 @@ public class HeadlessApp {
     var settingsStore = new io.justsearch.app.services.settings.UiSettingsStore(mode);
     UiSettings settings = settingsStore.load();
 
-    if (settings.getIndexBasePath() != null && !settings.getIndexBasePath().isBlank()) {
-      SystemPropertyUtils.setSysPropIfBlankWithSource("justsearch.index.base_path",
-          settings.getIndexBasePath(), "justsearch.index.base_path.source", "ui_settings");
-    }
     if (settings.getLlamaLibPath() != null && !settings.getLlamaLibPath().isBlank()) {
+      // The last remaining settings→sysprop promotion, and a different shape from the ones retired:
+      // `llama.lib.path` is not a JustSearch config key at all (no EnvRegistry entry, no resolver
+      // key, no `.source` marker) — it is read by the llama.cpp JNI loader out of the raw system
+      // properties, so there is no ResolvedConfig for it to ride. Retiring it means giving it a
+      // config key first, which is a different change from this one.
       SystemPropertyUtils.setSysPropIfBlank("llama.lib.path", settings.getLlamaLibPath());
     }
-    if (settings.getLlmModelPath() != null && !settings.getLlmModelPath().isBlank()) {
-      SystemPropertyUtils.setSysPropIfBlankWithSource("justsearch.llm.model_path",
-          settings.getLlmModelPath(), "justsearch.llm.model_path.source", "ui_settings");
-    }
-    // Tempdoc 883 decision 4: there is no context-size (slice 1) nor server.exe / exclude-patterns /
-    // gpu.layers (slice 2) promotion here any more. Those keys ride settings.json at ordinal 300 via
-    // ConfigStoreRebuilder.contributeUiSettings; the derived window rides auto_detected at 150. An
-    // operator's -D / env var still wins at 500 / 400 — by the ordinal chain, not by a sysprop write
-    // that made a GUI value report as `jvm_arg` and then needed a `.source` marker to un-tell it.
+    // Tempdoc 883 decision 4 + its §C.5c residue: there is no settings→sysprop promotion left here
+    // for a resolver-backed key — not context-size (slice 1), not server.exe / exclude-patterns /
+    // gpu.layers (slice 2), and no longer index.base_path or llm.model_path. Every one of those
+    // rides settings.json at ordinal 300 via ConfigStoreRebuilder.contributeUiSettings; the derived
+    // window rides auto_detected at 150. An operator's -D / env var still wins at 500 / 400 — by
+    // the ordinal chain, not by a sysprop write that made a GUI value report as `jvm_arg` and then
+    // needed a `.source` marker to un-tell it.
 
     ResolvedConfigBuilder rcBuilder = ResolvedConfig.builder();
     Path detectionRoot = io.justsearch.configuration.RepoRootLocator.findRepoRootOrNull();
@@ -657,15 +656,47 @@ public class HeadlessApp {
     maybeMirrorOrtNativePath();
 
     Path dataDir = PlatformPaths.resolveDataDir();
-    try {
-      Path snapshotPath = dataDir.resolve("runtime").resolve("worker-config-snapshot.json");
-      resolvedConfig.toWorkerSnapshot(snapshotPath);
-      System.setProperty("justsearch.worker.config_snapshot", snapshotPath.toString());
-    } catch (Exception e) {
-      log.debug("Failed to write worker config snapshot (best-effort)", e);
+    SnapshotResult snapshot =
+        snapshotAfterPostBuildWrites(
+            configStore, settings, dataDir.resolve("runtime").resolve("worker-config-snapshot.json"));
+    if (snapshot.writtenSnapshot() != null) {
+      System.setProperty("justsearch.worker.config_snapshot", snapshot.writtenSnapshot().toString());
     }
 
-    return new ConfigPhaseResult(settingsStore, settings, resolvedConfig, configStore, dataDir);
+    return new ConfigPhaseResult(settingsStore, settings, snapshot.config(), configStore, dataDir);
+  }
+
+  /**
+   * The config the Worker snapshot was written from, and the snapshot path when the write actually
+   * succeeded ({@code null} otherwise — the sysprop must not name a file that is not there).
+   */
+  record SnapshotResult(ResolvedConfig config, Path writtenSnapshot) {}
+
+  /**
+   * Writes the Worker's config snapshot AFTER the two boot steps that write system properties the
+   * resolver has already read past — {@code maybeAutoSelectCuda12Variant} (the cuda12
+   * {@code server.exe}) and {@code maybeMirrorOrtNativePath}.
+   *
+   * <p>Tempdoc 883 §C.5c residue: the snapshot used to be written from the {@code ResolvedConfig}
+   * built BEFORE those writes, so a boot-time cuda12 auto-select never reached the Worker — the
+   * Head switched variants and the Worker's snapshot still named the old exe. Rebuilding through
+   * {@link io.justsearch.app.services.config.ConfigStoreRebuilder} rather than re-reading the
+   * sysprops by hand keeps ONE assembly path: the same ordinal-150 probe, ordinal-300 settings and
+   * base sources the initial build used, plus whatever the two steps just wrote at 500. The
+   * rebuilt config is also what the rest of boot sees, so the Head and the Worker cannot disagree
+   * about the exe the Head just selected.
+   */
+  static SnapshotResult snapshotAfterPostBuildWrites(
+      ConfigStore configStore, UiSettings settings, Path snapshotPath) {
+    io.justsearch.app.services.config.ConfigStoreRebuilder.rebuild(configStore, settings);
+    ResolvedConfig effectiveConfig = configStore.get();
+    try {
+      effectiveConfig.toWorkerSnapshot(snapshotPath);
+      return new SnapshotResult(effectiveConfig, snapshotPath);
+    } catch (Exception e) {
+      log.debug("Failed to write worker config snapshot (best-effort)", e);
+      return new SnapshotResult(effectiveConfig, null);
+    }
   }
 
   private static void maybeMirrorOrtNativePath() {

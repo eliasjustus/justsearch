@@ -21,9 +21,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * The {@code justsearch.gpu.layers} and {@code justsearch.server.exe} rows of
- * {@code /api/debug/effective-config} report the RESOLVER's provenance, and the retired
- * {@code *.source} marker sysprops cannot influence them (tempdoc 883 decision 4 slice 2).
+ * The {@code justsearch.gpu.layers}, {@code justsearch.server.exe}, {@code justsearch.index.base_path}
+ * and {@code justsearch.llm.model_path} rows of {@code /api/debug/effective-config} report the
+ * RESOLVER's provenance, and the {@code *.source} marker sysprops cannot influence them (tempdoc 883
+ * decision 4 slice 2 for the first two, its §C.5c residue for the last two — which were the report's
+ * final two marker readers).
  *
  * <p>Both markers are SET in every case below, which is what makes these assertions load-bearing:
  * a test that merely left them unset would pass on the pre-change controller too. On the
@@ -38,6 +40,10 @@ final class EffectiveConfigRetiredMarkersTest {
   private static final String GPU_LAYERS_MARKER = "justsearch.gpu.layers.source";
   private static final String SERVER_EXE = "justsearch.server.exe";
   private static final String SERVER_EXE_MARKER = "justsearch.server.exe.source";
+  private static final String INDEX_BASE_PATH = "justsearch.index.base_path";
+  private static final String INDEX_BASE_PATH_MARKER = "justsearch.index.base_path.source";
+  private static final String LLM_MODEL_PATH = "justsearch.llm.model_path";
+  private static final String LLM_MODEL_PATH_MARKER = "justsearch.llm.model_path.source";
 
   @AfterEach
   void clearMarkers() {
@@ -45,6 +51,10 @@ final class EffectiveConfigRetiredMarkersTest {
     System.clearProperty(SERVER_EXE_MARKER);
     System.clearProperty(GPU_LAYERS);
     System.clearProperty(SERVER_EXE);
+    System.clearProperty(INDEX_BASE_PATH_MARKER);
+    System.clearProperty(INDEX_BASE_PATH);
+    System.clearProperty(LLM_MODEL_PATH_MARKER);
+    System.clearProperty(LLM_MODEL_PATH);
   }
 
   @Test
@@ -111,6 +121,64 @@ final class EffectiveConfigRetiredMarkersTest {
     Map<?, ?> details = (Map<?, ?>) row.get("details");
     assertEquals(ResolvedConfigBuilder.ORDINAL_SETTINGS_JSON, details.get("sourceOrdinal"));
     assertEquals("C:/user/chosen/llama-server.exe", details.get("resolvedValue"));
+    assertNoOwnershipVocabulary(details);
+  }
+
+  // -- tempdoc 883 §C.5c residue: the last two promotions, and the last two marker readers ------
+
+  @Test
+  @DisplayName("a GUI index.base_path reports settings.json, not ui_settings from the marker")
+  void indexBasePathReportsSettingsJson() {
+    // Exactly the state the retired promotion produced: settings.json at 300 AND the sysprop the
+    // promotion wrote, with the marker beside it. The old row read the marker and said
+    // "ui_settings"; the ordinal chain says settings.json, which is the truth.
+    System.setProperty(INDEX_BASE_PATH_MARKER, "ui_settings");
+    System.setProperty(INDEX_BASE_PATH, "C:/user/chosen/index");
+    ResolvedConfigBuilder builder = ResolvedConfig.builder();
+    builder.putSettings(INDEX_BASE_PATH, "C:/user/chosen/index");
+
+    Map<String, Object> row = rowFor(INDEX_BASE_PATH, new ConfigStore(builder.build()));
+
+    assertEquals("settings.json", row.get("source"));
+    Map<?, ?> details = (Map<?, ?>) row.get("details");
+    assertEquals(ResolvedConfigBuilder.ORDINAL_SETTINGS_JSON, details.get("sourceOrdinal"));
+    assertEquals("C:/user/chosen/index", details.get("resolvedValue"));
+    assertNoOwnershipVocabulary(details);
+  }
+
+  @Test
+  @DisplayName("an operator -D index.base_path reports jvm_arg — the chain, not a marker, decides")
+  void indexBasePathReportsJvmArg() {
+    System.setProperty(INDEX_BASE_PATH_MARKER, "ui_settings");
+    System.setProperty(INDEX_BASE_PATH, "D:/operator/index");
+    ResolvedConfigBuilder builder = ResolvedConfig.builder();
+    builder.putSettings(INDEX_BASE_PATH, "C:/user/chosen/index");
+    builder.contributeEnvRegistry();
+
+    Map<String, Object> row = rowFor(INDEX_BASE_PATH, new ConfigStore(builder.build()));
+
+    assertEquals(
+        "jvm_arg",
+        row.get("source"),
+        "a real -D is the ONE case that should say jvm_arg; the marker made a GUI value say"
+            + " ui_settings and an unmarked one say system_property");
+    assertNoOwnershipVocabulary((Map<?, ?>) row.get("details"));
+  }
+
+  @Test
+  @DisplayName("a GUI llm.model_path reports settings.json, not ui_settings from the marker")
+  void llmModelPathReportsSettingsJson() {
+    System.setProperty(LLM_MODEL_PATH_MARKER, "ui_settings");
+    System.setProperty(LLM_MODEL_PATH, "C:/models/chat.gguf");
+    ResolvedConfigBuilder builder = ResolvedConfig.builder();
+    builder.putSettings(LLM_MODEL_PATH, "C:/models/chat.gguf");
+
+    Map<String, Object> row = rowFor(LLM_MODEL_PATH, new ConfigStore(builder.build()));
+
+    assertEquals("settings.json", row.get("source"));
+    Map<?, ?> details = (Map<?, ?>) row.get("details");
+    assertEquals(ResolvedConfigBuilder.ORDINAL_SETTINGS_JSON, details.get("sourceOrdinal"));
+    assertEquals("C:/models/chat.gguf", details.get("resolvedValue"));
     assertNoOwnershipVocabulary(details);
   }
 

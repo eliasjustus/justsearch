@@ -39,9 +39,15 @@ public final class ModelPathSource {
   public static final String SOURCE_PROP_LLM_MODEL_PATH = "justsearch.llm.model_path.source";
 
   /**
-   * Written by {@code HeadlessApp.resolveConfig} (boot-time settings promotion) and
-   * {@code SettingsController} when a settings-borne value is pushed into a system property. The
-   * value is a copy of {@code settings.json}, re-derivable at every boot.
+   * Written by {@code AiInstallService} and {@code AiPackImportService} when they save a model path
+   * into {@code settings.json} and then push the same value into a system property. The value is a
+   * copy of {@code settings.json}, re-derivable at every boot.
+   *
+   * <p>It is no longer written at boot: tempdoc 883 §C.5c retired {@code HeadlessApp.resolveConfig}'s
+   * settings→sysprop promotion (as decision 4 slice 2 had already retired {@code SettingsController}'s),
+   * so a GUI-chosen model path reaches the resolver at ordinal 300 and reports as
+   * {@code settings.json} on its own. The marker survives for the two writers above, which write a
+   * sysprop directly and would otherwise read as an operator lock.
    */
   public static final String UI_SETTINGS = "ui_settings";
 

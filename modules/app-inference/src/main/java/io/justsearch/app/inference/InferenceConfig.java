@@ -307,9 +307,12 @@ public record InferenceConfig(
    * Classifies the stored model path by <em>who wrote it</em>, using the resolution trace the
    * config chain already records plus the {@code .source} marker sysprop.
    *
-   * <p>The trace is the honest seam: a settings.json value promoted to a system property at boot
-   * arrives here as {@code jvm_arg}, indistinguishable from an operator {@code -D} flag by value
-   * alone. The marker is what separates the two, which is why
+   * <p>The trace is the honest seam. A settings.json value now arrives as {@code settings.json} at
+   * ordinal 300 — the boot-time promotion that made it look like {@code jvm_arg} was retired
+   * (tempdoc 883 §C.5c) — so that case classifies itself. The marker still matters for the writers
+   * that push a path straight into a system property ({@code AiInstallService},
+   * {@code AiPackImportService}, the CUDA auto-select): those DO arrive as {@code jvm_arg},
+   * indistinguishable from an operator {@code -D} by value alone, which is why
    * {@link ModelPathSource#isSystemOwned(String)} is shared rather than re-derived per call site.
    *
    * <p>Unknown/absent provenance is treated as an operator flag unless the marker says otherwise:
