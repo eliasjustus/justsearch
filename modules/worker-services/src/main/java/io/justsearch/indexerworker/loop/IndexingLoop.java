@@ -650,6 +650,7 @@ public class IndexingLoop implements Closeable {
           // Tempdoc 885 item 19: index.commit.idle_ms (default 0) can require the queue to have
           // stayed empty for a while first, so a bulk run's momentary drains stop forcing a commit.
           if (emptyPollSinceMs == 0L) emptyPollSinceMs = System.currentTimeMillis();
+          boolean hadUncommitted = indexedSinceCommit > 0;
           if (LoopPacingPolicy.isIdleCommitTriggered(
               indexedSinceCommit, System.currentTimeMillis() - emptyPollSinceMs, commitIdleMs())) {
             try {
@@ -658,10 +659,19 @@ public class IndexingLoop implements Closeable {
               log.debug("Committed index: {} docs, reason=batch idle", indexedSinceCommit);
               indexedSinceCommit = 0;
               lastCommitTime = System.currentTimeMillis();
-              journal.drainPending();
             } catch (RuntimeException e) {
               log.error("Failed to commit index on idle", e);
             }
+          }
+          // The journal drain is INGESTION PROGRESS, not durability, so it must not wait on the
+          // commit window. It used to sit inside the commit block, which was harmless while the
+          // idle commit fired on the first empty poll; once index.commit.idle_ms could delay that
+          // commit, the drain was delayed with it and ingestion advanced in idle_ms-sized bursts —
+          // 8.9 docs/s instead of 114 in the 885 live window's arm A3. The precondition is
+          // unchanged (uncommitted docs present), so at the default idle_ms=0 this is the same
+          // sequence as before: commit, then drain.
+          if (hadUncommitted) {
+            journal.drainPending();
           }
 
           // Tempdoc 516 Slice 4d (W6): BackfillScheduler owns the per-cycle backfill

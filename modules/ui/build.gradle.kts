@@ -2038,6 +2038,16 @@ val HEADLESS_AI_ENV_VARS = listOf(
     "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED",
     "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS",
     "JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR",
+    // Tempdoc 885 item 19 + item 14: the cadence and extraction-routing arms are selected per
+    // eval run, and an unlisted knob is silently dropped here — the arm then measures the
+    // default and the comparison table reads "no difference" for the wrong reason.
+    "JUSTSEARCH_INDEX_NRT_MODE",
+    "JUSTSEARCH_INDEX_NRT_BACKGROUND_REOPEN_MS",
+    "JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS",
+    "JUSTSEARCH_INDEX_COMMIT_IDLE_MS",
+    "JUSTSEARCH_BACKFILL_COMMIT_INTERVAL_MS",
+    "JUSTSEARCH_BACKFILL_MAX_DOCS_BEFORE_COMMIT",
+    "JUSTSEARCH_EXTRACTION_SANDBOX_MODE",
 )
 
 /** GPU/model env vars forwarded from operator shell for eval runs (tempdoc 329). */
