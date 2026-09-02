@@ -91,8 +91,12 @@ export const SV3_ASK_SHAPE_ID = 'core.rag-ask';
  *    Phase F7 wired (inventory C9).
  *  - `maxTokens` — `ConversationEngine.java:772-778`; absent means the engine's own
  *    `DEFAULT_MAX_TOKENS = 1024` (`:65`).
- *  - `topK` — `RAGContext.java:421-428`; precedence is body → configured → `DEFAULT_TOP_K = 5`
- *    (`:55`, `:88-94`), so an explicit per-request value always wins.
+ *  - `topK` — `RAGContext.extractTopK`; an explicit per-request value still always wins, verbatim.
+ *    What changed with tempdoc 883 decision 3 is the DEFAULT: it is no longer the flat
+ *    `DEFAULT_TOP_K = 5` but `max(1, min(configured, inputBudget / DEFAULT_CHUNK_TOKENS))` — how
+ *    many corpus-sized passages this turn's context budget can actually hold, bounded above by the
+ *    configured `justsearch.rag.top_k`. So a small window asks for fewer passages instead of asking
+ *    for five it cannot hold; only the request's own number escapes that bound.
  *
  * There is deliberately NO reasoning-effort or posture parameter in the table: the backend has
  * none (`buildRequestBody` declares question/prompt/docIds/schema/sessionId/selection and nothing
