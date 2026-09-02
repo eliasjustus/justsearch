@@ -1,7 +1,7 @@
 ---
 title: "Sensitive-content policy and the malicious-document adversary: what JustSearch must never index or serve by default, and how retrieved content is kept from steering the agent"
 type: tempdocs
-status: "DESIGN SETTLED (2026-09-02, fable) — decisions D1-D9 / E1-E8 made; parallel L4 audit (session 'L4', alt design parked at .claude/worktrees/887-improvement-landscape/tmp/901-alt-content-admission-and-origin-discipline.md) folded in 2026-09-02: 7 deltas, 6 accepted, 1 (egress filter) replaced by extraction-time span masking — see §B15-B20, D1, D5, E4, E7, E8, §G; four owner confirmations in §K; five opus chunks in §J, none started"
+status: "DESIGN SETTLED (2026-09-02, fable) — decisions D1-D9 / E1-E8 made; parallel L4 audit (session 'L4', alt design parked at .claude/worktrees/887-improvement-landscape/tmp/901-alt-content-admission-and-origin-discipline.md) folded in 2026-09-02: 7 deltas, 6 accepted, 1 (egress filter) replaced by extraction-time span masking — see §B15-B20, D1, D5, E4, E7, E8, §G; K1-K4 decided 2026-09-02 (§K); ready for opus takeover, C1 first; six chunks in §J, none started"
 created: 2026-09-02
 updated: 2026-09-02
 lane: 887 L4 (items 3.1 sensitive-content policy, 3.4 threat-model injection adversary)
@@ -404,10 +404,25 @@ is split, ship path rules + `.env` + hidden dirs first and the admission-authori
 second. C4 is now the largest chunk and should be three PRs: framer + orphan deletion; E2/E3/E7;
 E8 + E5 + E6.
 
-**Optional C6 (K4):** per-root `exposeToExternalAgents` projected onto the collection label and
-intersected into MCP scopes; `agent-history` non-exposed on the B16 bypass paths.
+**C6 (K4, decided — ships):** per-root `exposeToExternalAgents` (default `true`) projected onto
+the collection label and intersected into every MCP tool's scope (`McpToolSurface.java:216-256`);
+`agent-history` non-exposed on the B16 bypass paths. Acceptance: an MCP `justsearch_search` /
+`answer` / `browse` over a root with the flag off returns nothing from it while the desktop UI
+still does; `check-dev-mcp-doc-sync` and `--gate wire` green. Runs after C1/C2.
 
-## §K. Owner confirmations required before C1 starts
+## §K. Owner confirmations — DECIDED 2026-09-02
+
+Decided by the orchestrating session (887's) under founder delegation, relayed by cross-session
+message 2026-09-02; recorded here verbatim. All four follow this tempdoc's recommendations.
+
+| item | decision |
+|---|---|
+| K1 (D4) | **Skip all hidden directories by default**, per-rule toggle in the Library "Protected by default" list. Cost accepted: dot-folder note vaults need the root added directly (a watched root is always admitted). |
+| K2 (D7) | **Retroactive removal/masking on policy install or bump is automatic**, with a readiness notice naming the count; files on disk untouched. Same class of deterministic exclusion the skip policy already performs. |
+| K3 (E3) | **After a flagged read (INJECTION_HINT), a gated proposal in the same run escalates INLINE → TYPED.** One extra click on a false positive, reversible per run. |
+| K4 (C6) | **Per-root `exposeToExternalAgents` ships**, default `true`, projected onto the 811 collection label as the MCP-side allowlist; `agent-history` non-exposed on the B16 bypass paths. C6 is no longer optional. |
+
+Original questions, kept for the record:
 
 - **K1 (D4)** Skip *all* hidden directories by default, or only the enumerated sensitive ones?
   Recommendation: all, with the per-rule toggle. Cost: dot-folder note vaults need the root added
