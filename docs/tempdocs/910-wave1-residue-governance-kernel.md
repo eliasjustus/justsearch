@@ -607,6 +607,32 @@ miscounted in round 1.
 meaning invites exactly this: the shortest true sentence is often narrower than the shortest
 sentence that sounds authoritative.
 
+### F.10 — CI caught a key the local floor could not: a verification-floor gap of my own making
+
+`known-state-hint.test.mjs` failed on PR #611 with
+`entry ui-a11y-gate-settings-dialog-capture-timeout has unrecognised key exitProbeOmitted`.
+
+**The test was right and my pins were the problem.** `ALLOWED_PIN_KEYS` exists because nothing reads
+an unrecognised key, so a typo is invisible -- `exitProbe` misspelled silently downgrades a pin's
+exit discipline to `reviewBy` alone. I invented TWO keys in round 1 (`exitProbeOmitted`, `fixOwner`),
+argued for them at length in this tempdoc, and never registered either. Both are now in the set with
+a one-line meaning, and each was falsified separately: dropping `fixOwner` reproduces
+`has unrecognised key fixOwner`, dropping `exitProbeOmitted` reproduces its own.
+
+**Why the local floor missed it, which is the part worth keeping.** My §D floor ran
+`scripts/governance/run-all-tests.mjs` -- and `scripts/agent-analytics/**` is a SEPARATE suite with
+its own runner and its own CI step (`ci.yml:121-122`, `node scripts/agent-analytics/run-all-tests.mjs`,
+64 files). I edited `scripts/agent-analytics/expected-state.v1.json` in round 1 and ran only the
+gate that file has a *probe* for (`expected-state-probe.mjs --gate`, which checks shape and
+`reviewBy` but not the key vocabulary), never the suite that owns its schema. The governance suite
+being green read as "the tests pass" -- `subset-isnt-the-suite`, with the subset chosen by which
+runner I happened to know about.
+
+The generalizable rule: **the suite to run is the one that OWNS the file you edited, not the one
+nearest the work you think you are doing.** `expected-state.v1.json` lives under
+`scripts/agent-analytics/`, so it is that suite's contract regardless of the fact that my change was
+about governance gates.
+
 ## §E — Open items
 
 1. **`src/api/domains/indexing.ts` is still entirely dead** (885:3609-3618). This lane fixed the
@@ -634,7 +660,13 @@ sentence that sounds authoritative.
    turns CI red for every PR if none lands.
 6. **The three gate defects routed in round 1 are FIXED in this PR, not routed** — see §F.9 for the
    census and for the correction of my own wrong claim about `detectBaselineTamper`.
-7. **CLAUDE.md's pre-merge table still names only `StoreCatalog.java` · store construction sites as
+7. **No pre-merge-table row maps `scripts/agent-analytics/expected-state.v1.json` to its suite.**
+   The table routes an edited *subject* to the check that owns it, and this file has no row -- so a
+   pin edit gives no signal to run `node scripts/agent-analytics/run-all-tests.mjs`, which is what
+   §F.10 cost. Same shape and same owner as item 8 below; both are one table row, deliberately not
+   taken here because this lane's brief scopes CLAUDE.md out and it is under the
+   always-loaded-byte ratchet.
+8. **CLAUDE.md's pre-merge table still names only `StoreCatalog.java` · store construction sites as
    the trigger for `check-store-recoverability`.** Editing `governance/store-corruption-policies.v1.json`
    is now a third trigger and is not listed. Left unedited deliberately: this lane's brief scoped
    CLAUDE.md out, and the file is under the always-loaded-byte ratchet, so the row belongs to
