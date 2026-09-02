@@ -172,6 +172,10 @@ public final class FileOperationsTool implements OperationHandler {
       // Collect indices and resolved destinations from successfully executed ops
       Set<Integer> successIndices = new LinkedHashSet<>();
       Map<Integer, Path> resolvedDestinations = new HashMap<>();
+      // Tempdoc 909 items 7/8 — the content identity the COPY recorded for its destination, per op.
+      // Absent for every journal written before schema v2, which is what makes the legacy case
+      // detectable rather than silently deleted.
+      Map<Integer, String> recordedDigests = new HashMap<>();
       // Tempdoc 577 §2.14 Root III (#16) — the per-op completion time, the conflict-detection
       // baseline: a target whose mtime is later than this was changed AFTER the agent acted.
       Map<Integer, Instant> executedAt = new HashMap<>();
@@ -183,6 +187,9 @@ public final class FileOperationsTool implements OperationHandler {
           successIndices.add(index);
           if ("OK_RENAMED".equals(status) && entry.containsKey("resolvedDestination")) {
             resolvedDestinations.put(index, Path.of((String) entry.get("resolvedDestination")));
+          }
+          if (entry.get("destinationDigest") instanceof String digest && !digest.isBlank()) {
+            recordedDigests.put(index, digest);
           }
           Object ts = entry.get("timestamp");
           if (ts instanceof String s) {
@@ -236,8 +243,9 @@ public final class FileOperationsTool implements OperationHandler {
           case MOVE, RENAME ->
               reverseMovesAndRenames.add(
                   new FileOperation(FileOperation.OpType.MOVE, destination, source));
-          case MKDIR -> directActions.add(new UndoAction(opType, destination));
-          case COPY -> directActions.add(new UndoAction(opType, destination));
+          case MKDIR -> directActions.add(new UndoAction(opType, destination, null));
+          case COPY ->
+              directActions.add(new UndoAction(opType, destination, recordedDigests.get(idx)));
         }
       }
 
@@ -247,6 +255,12 @@ public final class FileOperationsTool implements OperationHandler {
       // Tempdoc 875 §C.6 — COPY-undo targets that no longer sit inside an indexed root. Skipped
       // rather than deleted, and named in the summary so the user knows what was left behind.
       List<Path> outOfRoots = new ArrayList<>();
+      // Tempdoc 909 items 7/8 — COPY-undo targets whose content no longer matches what the journal
+      // recorded at copy time, and those whose journal predates the recorded identity entirely.
+      // Both are preserved; they are reported apart because the remedy differs (one says "you
+      // changed this", the other says "this app cannot tell").
+      List<Path> contentChanged = new ArrayList<>();
+      List<Path> unverifiable = new ArrayList<>();
 
       // Execute reverse MOVE/RENAME through executor for index updates
       if (!reverseMovesAndRenames.isEmpty()) {
@@ -282,6 +296,26 @@ public final class FileOperationsTool implements OperationHandler {
                 outOfRoots.add(action.path);
                 LOG.warn(
                     "Skipping COPY undo: target is outside the indexed roots: {}", action.path);
+              } else if (action.recordedDigest == null) {
+                // Tempdoc 909 items 7/8 — a journal written before schema v2 recorded no content
+                // identity, so this undo cannot prove the file is still the agent's copy. Deleting
+                // on an unprovable claim is the failure mode this whole guard exists to end, so the
+                // conservative branch is the default one: preserve and say why.
+                skippedCount++;
+                unverifiable.add(action.path);
+                LOG.warn(
+                    "Skipping COPY undo: the journal records no content identity for {} (a journal"
+                        + " written before this check existed), so the copy cannot be proven"
+                        + " unchanged",
+                    action.path);
+              } else if (!FileContentDigest.matches(action.path, action.recordedDigest)) {
+                // The bytes are not the ones the agent wrote: the user replaced, edited or restored
+                // over the copy. mtime said nothing (a timestamp-preserving write is invisible to
+                // it), which is exactly why identity is checked by content here.
+                skippedCount++;
+                contentChanged.add(action.path);
+                LOG.warn(
+                    "Skipping COPY undo: {} no longer holds the content the agent copied", action.path);
               } else if (Files.isDirectory(action.path)) {
                 executor.deleteDirectory(action.path);
                 undoneCount++;
@@ -312,6 +346,21 @@ public final class FileOperationsTool implements OperationHandler {
                 ", %d outside the indexed root folders — not deleted: %s",
                 outOfRoots.size(),
                 outOfRoots.stream().map(Path::toString).collect(Collectors.joining(", "))));
+      }
+      if (!contentChanged.isEmpty()) {
+        result.append(
+            String.format(
+                ", %d no longer hold the content the agent copied — not deleted: %s",
+                contentChanged.size(),
+                contentChanged.stream().map(Path::toString).collect(Collectors.joining(", "))));
+      }
+      if (!unverifiable.isEmpty()) {
+        result.append(
+            String.format(
+                ", %d could not be verified against the operation log — not deleted, remove them"
+                    + " yourself if they are still unwanted: %s",
+                unverifiable.size(),
+                unverifiable.stream().map(Path::toString).collect(Collectors.joining(", "))));
       }
       // Tempdoc 577 §2.14 Root III (#16) — surface the conflict-skipped targets so the user knows
       // exactly what was NOT reverted (and why), instead of a silent partial undo.
@@ -481,7 +530,11 @@ public final class FileOperationsTool implements OperationHandler {
     }
   }
 
-  private record UndoAction(FileOperation.OpType opType, Path path) {}
+  /**
+   * One direct undo step. {@code recordedDigest} is the content identity the forward COPY wrote to
+   * the journal, or null for MKDIR (which needs none) and for COPY entries from a pre-v2 journal.
+   */
+  private record UndoAction(FileOperation.OpType opType, Path path, String recordedDigest) {}
 
   /** Callback for updating the search index after file MOVE/RENAME operations. */
   @FunctionalInterface
