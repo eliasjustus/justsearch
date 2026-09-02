@@ -1136,3 +1136,108 @@ the wire-format regression test is updated · Worker shutdown leaves no orphan c
 routing split on a real mixed corpus *including* the child spawn the unit benchmark excludes, and to
 confirm no ingestion regression. Optional refinement: an OOM driven by a genuinely hostile document
 rather than a deliberate allocator.
+
+## §SC-argfile — chunk 2c: the child command must not assume a short classpath (2026-09-02)
+
+### The report
+
+Lane C3's worker and lane B's full-suite run both hit
+`java.io.IOException: Cannot run program java.exe: CreateProcess error=206, The filename or
+extension is too long` in `PersistentExtractionSandboxTest` and
+`ExtractionSandboxLatencyBenchmarkTest` (and, on `main`, in the retired
+`ProcessExtractionSandboxTest`) when Gradle ran under an isolated
+`GRADLE_USER_HOME=C:\Users\Elias\AppData\Local\Temp\jsgh-C`.
+
+**Production was never at risk and still is not**: `WorkerSpawner.buildCommand` launches the Worker
+with `-cp lib\*` (`WorkerSpawner.java:584-587`), a wildcard the launcher expands itself, so the
+Worker's own `java.class.path` is a handful of characters. **But `ExtractionSandboxCommand` must not
+depend on that.** It copies whatever classpath the running JVM reports onto a child command line, so
+any embedder with an expanded classpath — a Gradle test JVM, and an isolated Gradle home in
+particular, where every cache entry carries a ~24-character-longer prefix — pushes it past Windows'
+32,767-character `CreateProcess` limit. The dependency was invisible because the one environment
+that mattered happened to be short.
+
+### The fix
+
+`ExtractionSandboxCommand` now chooses between two forms by length
+(`MAX_INLINE_COMMAND_CHARS = 30_000`, leaving margin for the launcher path, the main class, the
+`--parent-pid` the pool appends, and per-argument quoting):
+
+* **inline**, unchanged, when the assembled command line fits;
+* **argfile** otherwise — the JVM options (including `-cp <classpath>`) are written to a JDK
+  `@argfile` and the command becomes `java @<file> <main>`, which is a few hundred characters
+  regardless of classpath size.
+
+One argfile is written per built command and reused by every child the pool spawns from it. It
+cannot be deleted on child exit — the pool respawns children throughout the Worker's life and they
+all read the same file — so it is a temp file registered for deletion at Worker exit. In practice
+`DefaultWorkerAppServices` builds the command once, so that is one file per Worker.
+
+`PersistentExtractionSandboxTest.javaCommand` was making the *same* mistake for its stub children,
+so it routes through the same two production primitives (`commandLineLength` / `writeArgFile`)
+rather than growing a parallel copy.
+
+### Argfile encoding: what is actually true, measured rather than assumed
+
+The first version of this work asserted in a comment that "the backslash is an escape character
+inside a quoted token, so an unescaped `C:\dir` loses its separators". **The falsification run
+refuted that as written**: with the escaping removed entirely, the real-child test — which launches
+the production child from an argfile whose classpath begins with a directory containing a space —
+still passed.
+
+Probing further with a token designed to contain the sequences that differ produced the ground
+truth. Feeding `C:\tab\back\form\already\\doubled\dir with spaces\a"quoted".jar` through the JDK 25
+launcher unescaped and reading it back out of a child returned:
+
+```
+C:<TAB>ab<BS>ack<FF>orm...already\\doubled...dir with spaces...aquoted.jar
+```
+
+So: the backslash **is** an escape character inside a quoted token, but an **unrecognised** escape
+is passed through unchanged. That is why an ordinary Windows path survives unescaped, and why this
+would have been a latent, path-dependent corruption rather than an obvious break — the worst kind.
+Quoting every token and doubling every backslash is therefore not defensive; it is the only
+encoding that survives an arbitrary path. The javadoc on `argFileToken` now says this, with the
+measurement, instead of the claim that was wrong.
+
+### Tests
+
+| Test | Pins |
+|---|---|
+| `ExtractionSandboxCommandTest.switchesToAnArgfileWhenTheCommandLineWouldExceedTheWindowsLimit` | above the threshold the form is `java @file main`, the file exists, and the classpath round-trips into it |
+| `…inlineFormIsKeptBelowTheThreshold` | below it, nothing changes |
+| `…publicEntryPointPicksTheFormThatFitsThisRunnersClasspath` | the public entry point picks the form that fits **this** runner's classpath, and the chosen form always fits the limit — the branch that made the same suite pass under one Gradle home and die under another |
+| `…argFileTokenQuotesSpacesAndEscapesBackslashes` | the encoding, as a pure function |
+| `PersistentExtractionSandboxTest.argfileCommandLaunchesTheRealChildWithASpacedClasspathEntry` | the argfile form launches the **production** child, with a spaced classpath entry |
+| `PersistentExtractionSandboxTest.argFileEncodingRoundTripsThroughTheJdkParser` | a hostile token survives the JDK's **own** parser, out through a child JVM and back |
+
+The last two are deliberately different in kind: the launch test proves the 206 fix, and (as the
+falsification showed) it cannot discriminate on escaping; the probe is what does.
+
+**Falsification.** Replacing `argFileToken` with bare quoting reds exactly the two encoding tests
+(`argFileTokenQuotesSpacesAndEscapesBackslashes`, `argFileEncodingRoundTripsThroughTheJdkParser`)
+and leaves the other 18 green.
+
+### Verification, under both Gradle homes
+
+| | default `GRADLE_USER_HOME` | `GRADLE_USER_HOME=…\Temp\jsgh-C` |
+|---|---|---|
+| `:modules:worker-services:test` | **1100 tests, 0 failures** | **1100 tests, 0 failures** |
+| `:modules:indexer-worker:test` | 305 / 0 | — |
+| `:modules:adapters-lucene:test` | 592 / 0 | — |
+| `PersistentExtractionSandboxTest` | 14 / 0 | 14 / 0 |
+| `ExtractionSandboxCommandTest` | 7 / 0 | 7 / 0 |
+| `ExtractionSandboxLatencyBenchmarkTest` | 1 / 0 | 1 / 0 |
+| `ExtractionRoutingTest` | 3 / 0 | 3 / 0 |
+
+`error=206` appears nowhere in either run. The default-home figures are from a `--rerun-tasks`
+pass, because the two homes share the build directory and an up-to-date task would otherwise have
+reported the other home's results.
+
+### Ride-along
+
+`PruneByPathPrefixTest.java:332`'s comment described the abort checker as "user active", which
+stopped being what it means when breath-holding was replaced by the contention duty cycle (#598).
+PR #598 does not touch that file (checked against its file list), so the comment is corrected here.
+The method name `abortsOnUserActivity` carries the same staleness but is left to #598's own sweep
+rather than renamed across branches.
