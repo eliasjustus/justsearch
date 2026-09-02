@@ -74,6 +74,17 @@
       "reviewBy": "2026-09-30"
     },
     {
+      "id": "world-state-cli-10s-perf-budget",
+      "match": [
+        "agent-analytics/run-all-tests",
+        "world-state"
+      ],
+      "claim": "world-state.test.mjs's 'CLI smoke: completes in under 10s' budget has a thin margin, not a comfortable one: world-state.mjs measures 8.0-9.0s on a checkout with 27 registered worktrees, so ordinary parallel-agent load pushes it over 10s. A failure ONLY on that assertion is pre-existing; the other 15 checks in the file are unaffected. It is NOT the tempdoc-scan frontmatter read added in PR #604 -- collectClaims measures 195ms of the run.",
+      "evidence": "Observed 2026-09-02 on worktree-resid-kernel at 12354ms, then 8.0s / 8.1s / 9.0s across three consecutive bare runs and green on re-run. The budget was set in tempdoc 743 P-J when the checkout carried far fewer worktrees; the cost scales with worktree count because the scanner walks every registered worktree. Deliberately carries NO exitProbe: the condition is load-dependent, and an isolated re-run passes by construction, so a probe would report GONE against a live red (the defect this PR fixed in three other pins).",
+      "added": "2026-09-02",
+      "reviewBy": "2026-09-30"
+    },
+    {
       "id": "app-services-integrationtest-wallclock-flaky",
       "match": [
         "gradlew?(\\.bat)? (?!.*-x test)(?=.*\\bbuild\\b)",
