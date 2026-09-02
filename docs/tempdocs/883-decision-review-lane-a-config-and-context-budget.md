@@ -776,3 +776,127 @@ happened (the ladder's first rung loaded; no step-down) and sits correctly besid
 status/manifest javadocs, `05-ai-architecture.md`, `environment-variables.md` and register D-010
 updated. The measured evidence (three probes, 17.0 KiB/token) is recorded in D-010 as the design's
 justification rather than left in this tempdoc alone.
+
+## Live verification part 2 — B-F (2026-09-02, stack f3e569c7 built from f143a118)
+
+API `http://127.0.0.1:53366`, dataDir `modules/ui-web/.dev-data`, standard profile, RTX 4070.
+Binary identity confirmed by `contextWindow.reason == "top-rung"` (the value renamed in `f143a118`).
+
+**Activation route note.** `POST /api/ai/runtime/activate {variantId:"cuda12"}` returns
+`RUNTIME_VARIANT_NOT_INSTALLED` on this data dir (the install registry has no variant; the dev
+stack stages the binary without registering it). All arms below therefore drive the engine through
+the shipped desired-state path — `POST /api/settings/v2 {ui:{chatEnabled:...}}` → `RuntimeReconciler`
+— which is the tempdoc-737 autostart path and exercises exactly the same launch code.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| B1 | llama-server log at activation | **PASS** `n_ctx_seq 32768`, `n_ctx 32768`, `kv_unified true`, `n_seq_max 2`, `flash_attn enabled`, `K (q8_0)`/`V (q8_0)`, `offloaded 33/33`, KV 544.00 MiB, both slots `n_ctx = 32768` |
+| B2 | `/api/inference/status.contextWindow` | **PASS** `{rung:32768, reason:"top-rung", freeVramBytes:9468739584, slots:2, kvType:"q8_0"}`; `llmContextTokens` 32768 |
+| B3 | `/api/debug/effective-config` context row | **PASS** `source auto_detected`, `sourceOrdinal 150`, `sourceDetail hardware_probe`, value 32768. The candidate list shows `jvm_arg`(500) and `env_var`(400) present **with no value** — the promotion is gone |
+| B4 | runtime manifest `ai.contextWindow` | **PASS** present with the same shape; absent before activation |
+| C1 | `contextLength 16384` → resolver | **PASS** `settings.json` @ ordinal 300 wins; `auto_detected` 32768 visible as a losing candidate; the row honestly reports `source:"runtime"` (server still at 32768) with `conflicts:[{16384, settings.json}]` |
+| C2 | re-activate under the override | **PASS** `{rung:16384, reason:"override"}`, log `n_ctx_seq 16384`, KV **272.00 MiB** (exactly half of 544 — 17.0 KiB/token confirmed again), `llmContextTokens 16384` |
+| C3 | `contextLength 0` → auto | **PASS** the settings.json candidate disappears; resolver returns `auto_detected`/150/32768; re-activation gives `{rung:32768, reason:"top-rung"}`, log `n_ctx_seq 32768` |
+| C4 | `rememberAutoDetected` live | **PASS** after 5+ settings PUTs (each one a `ConfigStoreRebuilder.rebuild`), the ordinal-150 contribution is still present with its value. Without the fix in this PR it would have been dropped on the first PUT |
+| C5 | `JUSTSEARCH_CONTEXT_SIZE` env arm | **NOT RUN** — needs a restart the orchestrator owns (as briefed) |
+| D | forced step-down on the auto path | **PARTIAL — see below** |
+| E | adopted external server | **PASS** adopted a standalone at `-c 8192` on port 8082: `usingExternalLlamaServer true`, `verified true`, `contextTokens 8192`, **`contextTooSmall false`** (the review-item-3 fix; pre-fix this compared 8192 against the derived 32768 and would have been `true`). **`contextWindow: null`** — the app does not claim a window it did not choose |
+| 11 | schema-1 upgrade path | **PASS** — see below |
+| F12 | q8_0 vs f16 tok/s | **PASS — q8_0 is free.** See the table below |
+| F13 | 845 RAG arms | **NOT RUN** — out of the 90-minute box (needs a corpus ingest plus an enrichment wait) |
+
+### D — the step-down, and what could not be forced
+
+**VRAM pressure could not force a step-down on this machine, and that is itself a measurement.**
+The rungs are only ~272 MiB apart in VRAM (17.0 KiB/token times 16384), while observed free VRAM
+fluctuated by ~280 MiB between a reading taken seconds before activation and the value the launch
+itself recorded — the encoders release and re-acquire. Four sized hogs (partial-offload
+llama-server instances at `-ngl` 26 / 13 / 16 / 18, leaving 4067 / 5867 / 5511 / 5684 MiB free)
+either starved the whole ladder or still let 32768 load. The band is narrower than the noise.
+
+**The step-down code path was verified instead by the override arm, which is deterministic.**
+Setting `contextLength = 1000000` and activating produced, in order:
+
+```
+Context window: rung=1000000 reason=override slots=2 kv=q8_0 ladder=[1000000] freeVramBytes=9987952640 (-fit off)
+llama_context: n_ctx_seq     = 1000192
+llama_kv_cache:      CUDA0 KV buffer size = 16604.75 MiB
+CUDA error: out of memory
+```
+
+```
+ERROR io.justsearch.app.inference.LlamaServerOps —
+llama-server did not start at the explicitly configured context size 1000000
+(justsearch.context.size). This is an operator override, so it is NOT reduced to a smaller window:
+set it lower, or set it to 0 to let the window be derived from the backend.
+```
+
+```
+WARN RuntimeReconciler: transition failed; will retry with backoff
+io.justsearch.app.api.ModeTransitionException: [PROCESS_EXITED] llama-server process exited before
+becoming healthy (exit code -1073740791).
+```
+
+This proves the load-bearing links: the failure arrives as **`PROCESS_EXITED`** (the gate
+`relaunchAtLowerContextRung` reads — the wrong-gate check, confirmed on the real path rather than
+by reading code); `relaunchAtLowerContextRung` **is invoked** and takes its override branch; an
+override is **not** silently reduced; and the new ERROR message fires with the remedy. `rung` and
+`reason` stayed `1000000` / `override` — no `stepped-from:` was written.
+
+The auto-path log line confirms the ladder on every launch:
+`ladder=[32768, 16384, 8192, 4096] ... (-fit off)`.
+
+**Still unexercised live:** the successful rung-walk itself (`withFlagValue` rewriting `-c`, then a
+lower rung loading). It is covered by unit tests, A.2b proves the abort that triggers it, and the
+gate plus guard are now live-verified; only the relaunch line has no live witness. Forcing it needs
+a card where the rung gap exceeds VRAM noise, or a test seam — not this machine.
+
+### Item 11 — schema-1 upgrade path
+
+The data dir had no `settings.json` at first (recorded in part 1); once the store saved, the live
+file was `schemaVersion: 2, contextLength: 0`. A synthetic legacy file was then written
+(`{"schemaVersion":1, "settings":{... "contextLength":4096 ...}}`) and read back through
+`GET /api/settings/v2`, which calls `settingsStore.load()` on every request:
+
+- `llm.contextWindow` came back **0** — migrated.
+- **No `.corrupt-` sibling** was created: an older schema is a migration, not a quarantine.
+- The log carried the migration line verbatim:
+  `ui-settings schema 1 -> 2: contextLength 4096 (the pre-883 shipped default) migrated to 0 = auto;
+  the context window is now derived at activation.`
+- The next settings save rewrote the file at `schemaVersion 2, contextLength 0`.
+
+### F12 — q8_0 versus f16, same rung, same prompt
+
+Standalone, `-c 32768 -ngl 99 -np 2 -kvu -fa on -fit off`, 3 x 200 generated tokens,
+`cache_prompt:false`:
+
+| KV type | KV buffer | tok/s (3 runs) | median |
+|---|---|---|---|
+| `q8_0` | **544.00 MiB** | 69.71 / 69.66 / 69.33 | **69.66** |
+| `f16` | 1024.00 MiB | 68.97 / 69.61 / 69.54 | **69.54** |
+
+**q8_0 costs nothing — it is 0.2% FASTER than f16, inside run-to-run noise, while halving the KV
+cache.** Design decision 2's revisit trigger ("if q8_0 exceeds 10% on the dev GPU, make f16 the
+default at 16k and below") **does not fire**. q8_0 stays the default at every rung. Register Q-002
+is answered for the tok/s half.
+
+### Two reporting defects this window found
+
+Both are in the read-out layer; every launch decision above was correct.
+
+1. **`EffectiveConfigController.keyContextSize` reads the wrong "runtime" value.** It uses
+   `runtimeInfo.contextSize()`, which is `InferenceConfig.contextSize()` — the value the inference
+   layer was CONFIGURED with — not the observed `/props` window. Observed at C1: with the server
+   running at 32768 and the setting changed to 16384, the row reported `runtime: 32768`; after
+   re-activation at 16384 it still reported `runtime: 32768`, because `InferenceConfig` is rebuilt
+   on its own schedule. The honest source is `OnlineAiService.llmContextTokens()`
+   (`manager.lastKnownContextTokens()`), the `/props` readback, which was correct (16384)
+   throughout. This matters most in exactly the case the row exists for: after a step-down it would
+   report the PLANNED rung as the runtime value.
+2. **`contextWindow` survives engine shutdown.** With the engine stopped
+   (`mode=indexing, available=false`), `/api/inference/status.contextWindow` still returned the
+   last launch's `{rung:32768, reason:"top-rung"}`. It is cleared at the start of the next
+   `startLlamaServer` but not on stop, so it reads as current state for a server that is gone —
+   the "intent presented as an outcome" shape register D-009 warns about.
