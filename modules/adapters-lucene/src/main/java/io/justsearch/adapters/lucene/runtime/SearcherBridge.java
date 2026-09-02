@@ -69,16 +69,22 @@ final class SearcherBridge {
             session.nrtOnDemandMaxStaleMs);
     if (action == NrtOnDemandPolicy.Action.SKIP) return;
     try {
+      boolean covered;
       if (action == NrtOnDemandPolicy.Action.REFRESH_BLOCKING) {
-        mgr.maybeRefreshBlocking();
+        mgr.maybeRefreshBlocking(); // waits for the refresh lock, so it always reruns the refresh
+        covered = true;
       } else {
-        mgr.maybeRefresh();
+        // Lucene returns false when another thread held the refresh lock and this call did
+        // nothing. That other refresh may have STARTED BEFORE our write, so it does not
+        // necessarily cover writerSeqNo — advancing the watermark on false would let the next
+        // query skip and leave a just-written document invisible until the background thread
+        // catches up. Leave it; the next query retries.
+        covered = mgr.maybeRefresh();
       }
-      // The call returned without throwing, so the searcher now covers writerSeqNo — either it was
-      // reopened, or another thread's concurrent reopen already covered it. Recording it here (and
-      // not only in the refresh listener) is what stops an idle index from re-entering this branch
-      // on every query.
-      session.nrtStats.recordCovered(writerSeqNo);
+      // Recording here, and not only in the refresh listener, is what stops an index with nothing
+      // new from re-entering this branch on every query: the listener fires only when a reader was
+      // actually swapped, and a refresh that found nothing changed still proves currency.
+      if (covered) session.nrtStats.recordCovered(writerSeqNo);
     } catch (IOException | RuntimeException e) {
       // Best-effort: a failed refresh must not fail the query. The watermark is deliberately NOT
       // advanced, so the next search retries.
