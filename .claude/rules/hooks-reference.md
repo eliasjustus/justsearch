@@ -38,6 +38,7 @@ message names the allowed alternative; use it.
   dataset-cache-hint (corpus/dataset fetch — use the cache-backed `jseval corpus-fetch-*`, 709),
   exec-substrate-hint (scoop `&`-paste, `gh` wait-loops, piped py — use `run-gh`/`run-py.mjs`, 743).
 - Read-triggered: tempdoc-age-hint.
+- PostToolUse (886 PR 4): spawn-cost-hint (`Agent` return cost), context-ceiling-hint (300k/500k).
 
 ## Transparent (no action needed)
 

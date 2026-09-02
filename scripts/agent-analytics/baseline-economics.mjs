@@ -27,15 +27,22 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
-import readline from 'node:readline';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseSessionTokens, isKnownModel, mergeByModel, round } from './lib/transcript-cost.mjs';
 import { loadExclusionKeys, loadExclusionMatcher, fmtScopeExclusion } from './lib/telemetry-io.mjs';
+import {
+  DEFAULT_PROJECTS_ROOT,
+  discoverProjectDirs,
+  listSubagentPaths,
+  firstTranscriptTimestamp,
+} from './lib/transcript-store.mjs';
 
 export const DEFAULT_SINCE = '2026-06-18';
-export const DEFAULT_PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
+// Re-exported (886 §12 PR 5a: discovery migrated onto lib/transcript-store.mjs)
+// — record-merge.mjs imports DEFAULT_PROJECTS_ROOT/findSessionTranscript from
+// THIS module, so both names must keep resolving here.
+export { DEFAULT_PROJECTS_ROOT, firstTranscriptTimestamp };
 const MAIN_CHECKOUT_FALLBACK = 'F:\\justsearch-public';
 const MERGES_RELATIVE = path.join('tmp', 'agent-telemetry', 'session-merges.ndjson');
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -214,53 +221,14 @@ export function isoWeekKey(date) {
 }
 
 // --- Transcript discovery ------------------------------------------------
-
-/**
- * Stream a transcript just far enough to find the first parseable line
- * carrying a `timestamp` field, without slurping the whole (up to ~25MB)
- * file. Returns a Date, or null if no timestamped line was found within the
- * scan cap.
- */
-export function firstTranscriptTimestamp(filePath, { maxLines = 200 } = {}) {
-  return new Promise((resolve) => {
-    let settled = false;
-    let lineCount = 0;
-    let stream;
-    try {
-      stream = fs.createReadStream(filePath, { encoding: 'utf8' });
-    } catch {
-      resolve(null);
-      return;
-    }
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-      rl.close();
-      stream.destroy();
-    };
-    rl.on('line', (line) => {
-      lineCount += 1;
-      const t = line.trim();
-      if (t) {
-        try {
-          const obj = JSON.parse(t);
-          if (obj.timestamp) {
-            const d = new Date(obj.timestamp);
-            if (!Number.isNaN(d.getTime())) {
-              finish(d);
-              return;
-            }
-          }
-        } catch { /* skip malformed line */ }
-      }
-      if (lineCount >= maxLines) finish(null);
-    });
-    rl.on('close', () => finish(null));
-    stream.on('error', () => finish(null));
-  });
-}
+// Directory walk + subagent-path listing now come from lib/transcript-store.mjs
+// (886 §12 PR 5a — this was the last hand-rolled `.claude/projects` discovery
+// outside the ledger). `firstTranscriptTimestamp` moved there too (imported +
+// re-exported above) because it is the one piece of this module's discovery
+// that is NOT a duplicate of transcript-store's own walk: `discoverProjectDirs`
+// only lists directories and `listSessions` only offers mtime, but this
+// reader's whole point is `--since`/`--until` filtered on a session's
+// DEFINITIONAL start time, which needs the per-file timestamp scan.
 
 /**
  * Scan every /justsearch/i-matching project dir under `projectsRoot` for
@@ -272,16 +240,11 @@ export async function discoverSessions({ projectsRoot, sinceMs, untilMs, isExclu
   const included = [];
   let excludedCount = 0;
 
-  let dirEntries;
-  try {
-    dirEntries = fs.readdirSync(projectsRoot, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && /justsearch/i.test(e.name));
-  } catch {
-    return { sessions: [], excludedCount: 0 };
-  }
+  const dirEntries = discoverProjectDirs(projectsRoot);
+  if (dirEntries.length === 0) return { sessions: [], excludedCount: 0 };
 
   for (const dirEntry of dirEntries) {
-    const projectDir = path.join(projectsRoot, dirEntry.name);
+    const projectDir = dirEntry.path;
     let files;
     try {
       files = fs.readdirSync(projectDir, { withFileTypes: true });
@@ -305,13 +268,7 @@ export async function discoverSessions({ projectsRoot, sinceMs, untilMs, isExclu
         continue;
       }
 
-      const subagentDir = path.join(projectDir, sessionId, 'subagents');
-      let subagentPaths = [];
-      try {
-        subagentPaths = fs.readdirSync(subagentDir)
-          .filter((n) => n.startsWith('agent-') && n.endsWith('.jsonl'))
-          .map((n) => path.join(subagentDir, n));
-      } catch { /* no subagents dir */ }
+      const subagentPaths = listSubagentPaths(projectDir, sessionId);
 
       included.push({
         sessionId,
@@ -332,24 +289,11 @@ export async function discoverSessions({ projectsRoot, sinceMs, untilMs, isExclu
  * under any /justsearch/i-matching project dir.
  */
 export function findSessionTranscript(sessionId, projectsRoot = DEFAULT_PROJECTS_ROOT) {
-  let dirEntries;
-  try {
-    dirEntries = fs.readdirSync(projectsRoot, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && /justsearch/i.test(e.name));
-  } catch {
-    return null;
-  }
-  for (const dirEntry of dirEntries) {
-    const projectDir = path.join(projectsRoot, dirEntry.name);
+  for (const dirEntry of discoverProjectDirs(projectsRoot)) {
+    const projectDir = dirEntry.path;
     const mainPath = path.join(projectDir, `${sessionId}.jsonl`);
     if (!fs.existsSync(mainPath)) continue;
-    const subagentDir = path.join(projectDir, sessionId, 'subagents');
-    let subagentPaths = [];
-    try {
-      subagentPaths = fs.readdirSync(subagentDir)
-        .filter((n) => n.startsWith('agent-') && n.endsWith('.jsonl'))
-        .map((n) => path.join(subagentDir, n));
-    } catch { /* no subagents dir */ }
+    const subagentPaths = listSubagentPaths(projectDir, sessionId);
     return { sessionId, projectDir: dirEntry.name, mainPath, subagentPaths };
   }
   return null;

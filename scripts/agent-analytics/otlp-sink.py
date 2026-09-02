@@ -95,6 +95,103 @@ def decode_metrics(req):
                                    "time_unix_nano": getattr(dp, "time_unix_nano", 0)})
                 out.append({"signal": "metric", "name": m.name, "kind": kind,
                             "points": points, "resource": res})
+                out.extend(_genai_normalize(m.name, points, res))
+    return out
+
+
+# --- gen_ai.* normalisation (tempdoc 886 §12 PR 3, §10.3 option B) --------
+# Both harnesses this sink receives emit their own token-usage metric under a
+# harness-specific name and attribute vocabulary (Claude:
+# `claude_code.token.usage{type}`; Codex: `codex.turn.token_usage{token_type}`).
+# Neither emits the OTel GenAI semantic-convention names
+# (`gen_ai.usage.*` / `gen_ai.token.kind`), so a downstream reader that wants
+# "tokens by kind, harness-neutral" has to special-case every harness's own
+# vocabulary. This table is additive and one entry per harness: it does not
+# touch the original decoded records (kept verbatim, unchanged shape) and
+# instead appends a normalised TWIN record alongside them for every data
+# point whose raw type is a known token kind. A third harness is one new
+# entry here, not a new code path.
+#
+# Deliberately flat (not nested "points" like the original per-metric-batch
+# record): the acceptance criterion is "one normalised record per data
+# point", which is what a per-token-kind consumer actually wants to filter
+# on (`record.name == 'gen_ai.usage' and record.attributes['gen_ai.token.kind']
+# == 'cache_read'`) without re-flattening a points array first.
+#
+# Written to the SAME metrics.ndjson stream as the originals (these records
+# are appended into decode_metrics' own `out` list, so do_POST's existing
+# rotate/prune/write path for "/v1/metrics" picks them up with no separate
+# plumbing) rather than a second `metrics.genai.ndjson` file -- one rotation
+# policy, one RETENTION entry, one archive-glob to keep in sync, and metrics
+# is already the stream that is never pruned (RETENTION["metrics"] = None),
+# which the normalised records need exactly as much as the originals do.
+GENAI_TOKEN_MAP = {
+    "claude_code.token.usage": {
+        "system": "claude-code",
+        "attr": "type",
+        "kinds": {
+            "input": "input",
+            "output": "output",
+            "cacheRead": "cache_read",
+            "cacheCreation": "cache_creation",
+        },
+    },
+    "codex.turn.token_usage": {
+        "system": "codex-cli",
+        "attr": "token_type",
+        "kinds": {
+            "input": "input",
+            "cached_input": "cache_read",
+            "output": "output",
+            "reasoning_output": "reasoning",
+            # "total" is deliberately absent from this table: it is
+            # input + output (derivable from the other normalised points,
+            # per Codex's OpenAI-style convention where input already
+            # includes cached_input), not a new token axis -- so it is
+            # skipped rather than normalised.
+        },
+        "extra": {
+            # Codex's raw "input" INCLUDES cached_input (the OpenAI
+            # convention); Claude's "input" EXCLUDES cacheRead/cacheCreation
+            # (they are separate metric-attribute types). Flagged on the
+            # point itself so a reader summing "input" across harnesses
+            # cannot silently treat the two as the same quantity.
+            "input": {"gen_ai.input_includes_cache_read": True},
+        },
+    },
+}
+
+
+def _genai_normalize(metric_name, points, res):
+    """Additive `gen_ai.usage` twin records for a GENAI_TOKEN_MAP-mapped
+    metric's decoded `points` (see module comment above). Returns one flat
+    record per data point whose raw token-kind attribute is in the map;
+    an unmapped kind (e.g. Codex's `total`) or an unrecognised metric name
+    yields no records for that point -- silently, by design, not an error."""
+    spec = GENAI_TOKEN_MAP.get(metric_name)
+    if spec is None:
+        return []
+    out = []
+    for p in points:
+        attrs = p.get("attributes") or {}
+        raw_kind = attrs.get(spec["attr"])
+        kind = spec["kinds"].get(raw_kind)
+        if kind is None:
+            continue
+        norm_attrs = dict(attrs)
+        norm_attrs["gen_ai.system"] = spec["system"]
+        norm_attrs["gen_ai.request.model"] = attrs.get("model")
+        norm_attrs["gen_ai.token.kind"] = kind
+        norm_attrs.update(spec.get("extra", {}).get(raw_kind, {}))
+        out.append({
+            "signal": "metric",
+            "name": "gen_ai.usage",
+            "normalized": True,
+            "attributes": norm_attrs,
+            "value": p.get("value"),
+            "time_unix_nano": p.get("time_unix_nano", 0),
+            "resource": res,
+        })
     return out
 
 

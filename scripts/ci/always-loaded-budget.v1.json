@@ -7,10 +7,10 @@
     ".claude/rules/agent-lessons.md": 9699,
     ".claude/rules/branch-safety.md": 12921,
     ".claude/rules/context-efficiency.md": 1912,
-    ".claude/rules/hooks-reference.md": 2779,
+    ".claude/rules/hooks-reference.md": 2878,
     ".claude/rules/slice-execution.md": 4667
   },
-  "totalCeiling": 54300,
+  "totalCeiling": 54399,
   "bumps": [
     {
       "file": "CLAUDE.md",
@@ -144,6 +144,13 @@
       "to": 9699,
       "reason": "tempdoc 880 ride-along: parallel-agent CPU starvation makes class-scanning tests (WholeProgramDeadCodeTest, UnreferencedCodeTest, AgentGroundingSeamAuditTest, ArchUnit importers) red with TimeoutException; a genuinely cross-cutting platform constraint with no prior always-loaded coverage",
       "ts": "2026-08-31T22:29:20.161Z"
+    },
+    {
+      "file": ".claude/rules/hooks-reference.md",
+      "from": 2779,
+      "to": 2878,
+      "reason": "tempdoc 886 PR4: register spawn-cost-hint + context-ceiling-hint in the Hint hooks list (2 new PostToolUse advisory hooks)",
+      "ts": "2026-09-02T11:58:45.974Z"
     }
   ]
 }
