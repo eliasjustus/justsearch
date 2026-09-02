@@ -13,8 +13,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Tempdoc 876 §B.2a: a reconciliation trigger that is not an HTTP request.
  *
- * <p><b>The defect.</b> Every health tap in the head reconciles only from inside {@code
- * StatusLifecycleHandler.buildStatusMap()} — the {@code GET /api/status} handler. {@link
+ * <p><b>The defect, as it stood in 876.</b> Every health tap in the head reconciled only from
+ * inside {@code StatusLifecycleHandler}'s {@code GET /api/status} handler. {@link
  * LifecycleSnapshotTap} is the sole writer that asserts or clears {@code index.unavailable}, and
  * its only production caller is that handler; the same holds for {@link WorkerSnapshotTap}, the
  * index-drift tap, the at-rest tap and the conversation-protection tap. Request-driven
@@ -30,6 +30,12 @@ import org.slf4j.LoggerFactory;
  * readiness envelope is derived; this class only causes the same snapshot to be recomputed (and
  * therefore the same taps to reconcile) when a capability transitions, rather than when someone
  * asks.
+ *
+ * <p><b>Where it ended up (tempdoc 885 item 6).</b> This trigger's thunk is now the Worker status
+ * <em>sampler</em>: it performs the one {@code IndexStatus} unary AND is the only path that
+ * reconciles the taps, which no longer run on a request thread at all. So the relationship in the
+ * paragraph above is inverted — {@code GET /api/status} reads what this trigger last left behind,
+ * rather than this trigger being a second way to reach what a request would have done.
  *
  * <p>The shape mirrors {@code CapabilityHealthBridge.wireListeners} one layer down: subscribe to
  * {@link WorkerCapability} / {@link InferenceCapability} transitions, and replay current state at

@@ -251,6 +251,29 @@ describe('unifiedActivity (pure projection)', () => {
     const failed = rows.find(r => r.label.startsWith('Index failed'))!;
     expect(failed.label).toContain('help');
   });
+
+  it('a RETRY_EXHAUSTED index row is labelled distinctly from a parse failure', () => {
+    // Tempdoc 885 item 21b: without its own arm this state falls to the else branch and renders as
+    // "Indexed" — reporting a file that was never readable as successfully indexed.
+    const rows = unifiedActivity(
+      [
+        backendEntry({
+          id: 'index:2026-09-02T00:00:00.000Z:docs:aaa111:RETRY_EXHAUSTED',
+          kind: 'index',
+          originator: 'system',
+          pathHash: 'aaa111bbb222',
+          collection: 'docs',
+          state: 'RETRY_EXHAUSTED',
+          occurredAt: '2026-09-02T00:00:00.000Z',
+        }),
+      ],
+      [],
+    );
+    const exhausted = rows.find(r => r.kind === 'index')!;
+    expect(exhausted.label).toContain('Index gave up');
+    expect(exhausted.label).toContain('docs');
+    expect(exhausted.label).not.toContain('Index failed');
+  });
 });
 
 describe('ActionLedgerClient', () => {

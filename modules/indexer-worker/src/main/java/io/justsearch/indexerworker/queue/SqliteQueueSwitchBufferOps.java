@@ -79,7 +79,7 @@ final class SqliteQueueSwitchBufferOps {
             COALESCE(SUM(CASE WHEN state = 'PENDING' AND (retry_after IS NULL OR retry_after <= ?) THEN 1 ELSE 0 END), 0) AS pending_ready_count,
             COALESCE(SUM(CASE WHEN state = 'PROCESSING' THEN 1 ELSE 0 END), 0) AS processing_count,
             COALESCE(SUM(CASE WHEN state = 'DONE' THEN 1 ELSE 0 END), 0) AS done_count,
-            COALESCE(SUM(CASE WHEN state = 'FAILED' THEN 1 ELSE 0 END), 0) AS failed_count
+            COALESCE(SUM(CASE WHEN state IN ('FAILED', 'RETRY_EXHAUSTED') THEN 1 ELSE 0 END), 0) AS failed_count
           FROM jobs
           """;
       try (PreparedStatement stmt = conn.prepareStatement(sql)) {

@@ -102,6 +102,45 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * choice, so the age reported to consumers is never younger than the observation actually is.
    */
   private volatile long lastWorkerObservationAtMs;
+
+  /**
+   * Tempdoc 885 item 6 — one Worker observation, taken by the internal sampler.
+   *
+   * @param view the observed view, or a fallback view when {@code failed}
+   * @param failed the observation did not reach a live Worker (capability unavailable, or the RPC
+   *     threw). A failed sample is still a sample: it is what makes {@code workerRpcStale} true
+   *     without anyone having to call the Worker from a request thread to find out.
+   * @param failureReason exception class + message when the RPC threw; {@code null} otherwise
+   * @param sampledAtMs epoch-ms stamped immediately BEFORE the call
+   */
+  record WorkerViewSample(
+      WorkerOperationalView view, boolean failed, String failureReason, long sampledAtMs) {}
+
+  /** Sampling period while nothing is in progress (tempdoc 885 item 6, design decision 4). */
+  static final long SAMPLER_IDLE_PERIOD_MS = 10_000L;
+
+  /** Sampling period while indexing / backfill / AI activation is in progress. */
+  static final long SAMPLER_BUSY_PERIOD_MS = 2_000L;
+
+  /** How many sampling periods a sample may age before it is reported stale. */
+  static final int SAMPLE_STALE_PERIODS = 3;
+
+  /** The sampler's last observation; {@code null} until the first one. */
+  private volatile WorkerViewSample lastWorkerSample;
+
+  /**
+   * Wall clock for sample stamping and age. Injectable so the age-based staleness rule is testable:
+   * without a seam, proving "a sample older than {@link #SAMPLE_STALE_PERIODS} periods reads stale"
+   * would mean sleeping 30 s, so in practice it would not be proven at all — and a rule with no test
+   * is a rule that can be changed to any value and stay green.
+   */
+  private volatile java.util.function.LongSupplier clockMs = System::currentTimeMillis;
+
+  /** Visible for testing: drive the sampler's clock. */
+  void setClockForTesting(java.util.function.LongSupplier clock) {
+    this.clockMs = clock == null ? System::currentTimeMillis : clock;
+  }
+
   private final Path indexBasePath;
   private final Instant startTime;
   private final Supplier<String> diskPressureSupplier;
@@ -370,16 +409,102 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   }
 
   void handleStatus(Context ctx) {
-    ctx.json(buildStatusMap());
+    // Tempdoc 885 item 6: the request thread reads the internal sampler's last snapshot. The one
+    // debug escape hatch is ?fresh=true, which forces a synchronous sample.
+    boolean fresh = "true".equalsIgnoreCase(ctx.queryParam("fresh"));
+    ctx.json(fresh ? buildStatusMap(true) : buildStatusMap(false));
   }
 
   @Override
   public StatusResponse buildStatusSnapshot() {
-    return buildStatusMap();
+    return buildStatusMap(false);
   }
 
-  /** Builds the status response (reusable outside HTTP context). */
-  StatusResponse buildStatusMap() {
+  /**
+   * Tempdoc 885 item 6 — the internal Worker status sampler's entry point. Runs on the
+   * {@code readiness-reconcile} daemon thread, driven by {@code KnowledgeServerHealthMonitor}'s
+   * existing schedule (no new executor) and by every capability transition. This is the ONLY
+   * production path that performs the {@code IndexStatus} unary, and it is the path that feeds
+   * every health tap — the request thread reads what it left behind.
+   */
+  StatusResponse sampleAndBuildStatusSnapshot() {
+    return buildStatusMap(true);
+  }
+
+  /**
+   * The sampling period the health monitor should use before its next tick: fast while the Worker
+   * has index work in flight or the inference runtime is coming up, idle otherwise. Derived from
+   * the LAST sample, never from a fresh RPC — so this is safe to call from the monitor thread.
+   */
+  long samplingPeriodMs() {
+    WorkerViewSample sample = lastWorkerSample;
+    if (sample == null || sample.failed()) {
+      return SAMPLER_IDLE_PERIOD_MS;
+    }
+    if (hasActiveIndexWork(sample.view())) {
+      return SAMPLER_BUSY_PERIOD_MS;
+    }
+    // AI activation: the inference capability is mid-transition, so its readiness dimension is
+    // exactly the one a watcher is waiting on.
+    var inference = inferenceCapability;
+    if (inference != null) {
+      var health = inference.health();
+      if (health == io.justsearch.app.api.lifecycle.CapabilityHealth.PENDING
+          || health == io.justsearch.app.api.lifecycle.CapabilityHealth.RECOVERING) {
+        return SAMPLER_BUSY_PERIOD_MS;
+      }
+    }
+    var vdu = vduProcessingSupplier;
+    if (vdu != null) {
+      try {
+        if (Boolean.TRUE.equals(vdu.get())) {
+          return SAMPLER_BUSY_PERIOD_MS;
+        }
+      } catch (RuntimeException e) {
+        log.debug("VDU processing supplier failed while deriving the sampler period", e);
+      }
+    }
+    return SAMPLER_IDLE_PERIOD_MS;
+  }
+
+  /**
+   * Performs one Worker observation and caches it. Never throws — a failed observation is itself a
+   * recorded sample, which is what keeps {@code workerRpcStale} honest when the Worker is gone.
+   */
+  private WorkerViewSample observeWorker() {
+    // Stamped BEFORE the call, not after it, so the age reported to consumers is never younger
+    // than the observation actually is (the 821 §3-C1 convention, preserved).
+    long sampledAtMs = clockMs.getAsLong();
+    if (!workerCapability.available()) {
+      return new WorkerViewSample(
+          WorkerOperationalView.fallback(workerCapability.health().name()), true, null, sampledAtMs);
+    }
+    try {
+      WorkerOperationalView view = knowledgeServer.client().getWorkerOperationalView();
+      lastWorkerObservationAtMs = sampledAtMs;
+      return new WorkerViewSample(view, false, null, sampledAtMs);
+    } catch (Exception e) {
+      log.debug(
+          "Failed to fetch Knowledge Server status: {} - {}",
+          e.getClass().getSimpleName(),
+          e.getMessage(),
+          e);
+      return new WorkerViewSample(
+          WorkerOperationalView.fallback("UNAVAILABLE"),
+          true,
+          e.getClass().getSimpleName() + ": " + e.getMessage(),
+          sampledAtMs);
+    }
+  }
+
+  /**
+   * @param sampleWorker {@code true} on the sampler path (perform the {@code IndexStatus} unary and
+   *     reconcile every health tap); {@code false} on a read path (serve the cached sample and
+   *     touch no tap). The one exception: when no sample has ever been taken the read path takes
+   *     one synchronously, so a request arriving in the boot window before the sampler's self-seed
+   *     lands still reports the truth. That can happen at most once per process.
+   */
+  private StatusResponse buildStatusMap(boolean sampleWorker) {
     // Appendix D: stable lifecycle subset (schema v1).
     LifecycleSnapshotV1 lifecycleSnapshot = computeLifecycleSnapshot();
 
@@ -401,35 +526,25 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     // NOTE: Head MUST NOT touch Lucene index files. Index availability is reported by the Worker
     // when available.
     // Keep this field for UI backwards-compat, but treat it as "Worker-connected index available".
-    boolean indexAvailable = false;
-    WorkerOperationalView workerView;
-    String indexStatusReason = null;
-    boolean workerRpcStale;
-
-    // Capture the timestamp immediately before the Worker gRPC call for provenance tracking.
-    long workerRpcAtMs = System.currentTimeMillis();
-
-    if (workerCapability.available()) {
-      try {
-        workerView = knowledgeServer.client().getWorkerOperationalView();
-        indexAvailable = true;
-        workerRpcStale = false;
-        lastWorkerObservationAtMs = workerRpcAtMs;
-      } catch (Exception e) {
-        log.debug(
-            "Failed to fetch Knowledge Server status: {} - {}",
-            e.getClass().getSimpleName(),
-            e.getMessage(),
-            e);
-        indexStatusReason = e.getClass().getSimpleName() + ": " + e.getMessage();
-        workerView = WorkerOperationalView.fallback("UNAVAILABLE");
-        workerRpcStale = true;
-      }
-    } else {
-      workerView = WorkerOperationalView.fallback(workerCapability.health().name());
-      workerRpcStale = true;
+    // Tempdoc 885 item 6: the Worker observation is the sampler's, not this thread's.
+    WorkerViewSample sample = lastWorkerSample;
+    if (sampleWorker || sample == null) {
+      sample = observeWorker();
+      lastWorkerSample = sample;
     }
-    workerView = overlayVduCapability(workerView);
+
+    boolean indexAvailable = !sample.failed();
+    String indexStatusReason = sample.failureReason();
+    // workerRpcAtMs is the SAMPLE's observation time (tempdoc 885 item 6 moved the observation off
+    // the request thread); age = now - workerRpcAtMs. A sample is stale when it failed, or when it
+    // is older than SAMPLE_STALE_PERIODS sampling periods — which is how a wedged sampler surfaces
+    // as "contact lost" instead of as a silently-frozen snapshot served as fresh.
+    long workerRpcAtMs = sample.sampledAtMs();
+    boolean workerRpcStale =
+        sample.failed()
+            || (clockMs.getAsLong() - workerRpcAtMs)
+                > (long) SAMPLE_STALE_PERIODS * samplingPeriodMs();
+    WorkerOperationalView workerView = overlayVduCapability(sample.view());
 
     // Tempdoc 412 Phase 3: single inference status surface (replaces LlmStatusView + OnlineAiView).
     InferenceRuntimeView inference = buildInferenceView();
@@ -445,6 +560,44 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     ReadinessEnvelopeView readiness =
         buildReadinessEnvelope(workerView, lifecycleSnapshot, workerContact);
 
+    // Tempdoc 885 item 6: the taps reconcile on the SAMPLER path only. Before this item they
+    // reconciled on whichever thread happened to call buildStatusMap, which meant GET /api/status
+    // paid for the index-drift tap's getWatchedRoots() RPC — the second Worker call this item
+    // removes from the request thread. The sampler runs on every monitor tick and every capability
+    // transition, so the substrate advances at least as often as it did under the browser poll.
+    if (sampleWorker) {
+      feedHealthTaps(readiness, workerView, workerRpcStale);
+    }
+
+    // Legacy alias booleans remain exposed, but are derived from canonical typed readiness.
+    boolean aiReady = readinessComponentReady(readiness, "ai");
+    boolean embeddingReady = readinessComponentReady(readiness, "embedding");
+
+    return buildStatusResponse(
+        lifecycleSnapshot,
+        uptimeMs,
+        usedMemory,
+        totalMemory,
+        maxMemory,
+        diskPressure,
+        workerView,
+        indexAvailable,
+        indexStatusReason,
+        inference,
+        readiness,
+        aiReady,
+        embeddingReady,
+        workerRpcAtMs,
+        workerRpcStale);
+  }
+
+  /**
+   * Reconciles every health tap from one observation. The single home for tap feeding (tempdoc 885
+   * item 6): the sampler is the only caller, so "does the sampler feed the same taps the request
+   * path used?" is answered by there being exactly one such path.
+   */
+  private void feedHealthTaps(
+      ReadinessEnvelopeView readiness, WorkerOperationalView workerView, boolean workerRpcStale) {
     // Tempdoc 430 Phase 4: feed the readiness envelope into the HealthEvent substrate
     // tap. The tap reconciles each dim's (state, reasonCode) against ConditionStore and
     // broadcasts deltas through HealthEventChangeRegistry to SSE subscribers. Null when
@@ -520,11 +673,24 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
             e);
       }
     }
+  }
 
-    // Legacy alias booleans remain exposed, but are derived from canonical typed readiness.
-    boolean aiReady = readinessComponentReady(readiness, "ai");
-    boolean embeddingReady = readinessComponentReady(readiness, "embedding");
-
+  private StatusResponse buildStatusResponse(
+      LifecycleSnapshotV1 lifecycleSnapshot,
+      long uptimeMs,
+      long usedMemory,
+      long totalMemory,
+      long maxMemory,
+      String diskPressure,
+      WorkerOperationalView workerView,
+      boolean indexAvailable,
+      String indexStatusReason,
+      InferenceRuntimeView inference,
+      ReadinessEnvelopeView readiness,
+      boolean aiReady,
+      boolean embeddingReady,
+      long workerRpcAtMs,
+      boolean workerRpcStale) {
     return new StatusResponse(
         lifecycleSnapshot.schema_version(),
         lifecycleSnapshot.observed_at(),

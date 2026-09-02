@@ -1527,6 +1527,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
                 .setAttempts(job.attempts())
                 .setLastUpdatedMs(job.lastUpdatedMs())
                 .setCollection(job.collection() != null ? job.collection() : "")
+                .setState(job.state() != null ? job.state() : "")
                 .build());
       }
       responseObserver.onNext(resp.build());
@@ -1603,6 +1604,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
                 .setAttempts(job.attempts())
                 .setLastUpdatedMs(job.lastUpdatedMs())
                 .setCollection(job.collection() != null ? job.collection() : "")
+                .setState(job.state() != null ? job.state() : "")
                 .build());
       }
       responseObserver.onNext(resp.build());

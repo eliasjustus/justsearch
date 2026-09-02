@@ -257,7 +257,15 @@ export function projectBackend(e: BackendLedgerEntry): UnifiedActionEntry {
     // System/indexing terminal outcome: "Indexed · <collection>" / "Index failed · <collection>".
     // pathHash is a SHA-256 hex (not a raw path); a short prefix disambiguates without leaking.
     const where = `${e.collection ?? 'default'}${e.pathHash ? ' (' + e.pathHash.slice(0, 6) + ')' : ''}`;
-    label = e.state === 'FAILED' ? `Index failed · ${where}` : `Indexed · ${where}`;
+    // Tempdoc 885 item 21b: RETRY_EXHAUSTED is the other terminal failure — retried for a week
+    // and never readable. Named distinctly because "Index failed" would suggest a bad file.
+    if (e.state === 'FAILED') {
+      label = `Index failed · ${where}`;
+    } else if (e.state === 'RETRY_EXHAUSTED') {
+      label = `Index gave up · ${where}`;
+    } else {
+      label = `Indexed · ${where}`;
+    }
   } else if (isScanRollupRow(e)) {
     // tempdoc 812 D2 — the scan rollup: ONE row for a whole directory scan, stating what it DID
     // (counts are the backend's observed terminal job states). This is the audit record the

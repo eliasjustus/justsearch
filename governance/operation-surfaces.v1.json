@@ -161,7 +161,7 @@
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/IndexingJobsBridgeWiring.java",
       "guard": "test:IndexingJobsBridgeWiringTest",
       "consumesProjection": "head-bridge",
-      "note": "Tempdoc 550 thesis I — the system-operation contributor to the ONE action-event log. Subscribes the head bridge and emits a kind=index ActionEvent on TERMINAL job transitions (DONE/FAILED) only, so Activity shows indexing happened. In-flight states are NOT emitted (that is the rail's Resource projection); per-transition emission would flood the bounded action-event ring."
+      "note": "Tempdoc 550 thesis I — the system-operation contributor to the ONE action-event log. Subscribes the head bridge and emits a kind=index ActionEvent on TERMINAL job transitions (DONE/FAILED/RETRY_EXHAUSTED, tempdoc 885 item 21b) only, so Activity shows indexing happened. In-flight states are NOT emitted (that is the rail's Resource projection); per-transition emission would flood the bounded action-event ring."
     },
     {
       "id": "fe-rail-projection",
@@ -170,7 +170,7 @@
       "path": "modules/ui-web/src/shell-v0/substrates/tasks/indexingJobsBridge.ts",
       "guard": "gate:operation-surface",
       "consumesProjection": "head-sse-controller",
-      "note": "The FE rail projection: maps the change-feed into the Task substrate with truthful lifecycle states (PENDING→queued, PROCESSING→running, DONE→vanish) — in-flight derived from the authoritative job state, never asserted by membership (Thesis II). Rendered bounded by <jf-task-list> (Thesis III.b)."
+      "note": "The FE rail projection: maps the change-feed into the Task substrate with truthful lifecycle states (PENDING→queued, PROCESSING→running, DONE→vanish, FAILED/RETRY_EXHAUSTED→failed) — in-flight derived from the authoritative job state, never asserted by membership (Thesis II). Rendered bounded by <jf-task-list> (Thesis III.b)."
     },
     {
       "id": "fe-activity-index-projection",
@@ -215,7 +215,7 @@
       "path": "modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/ScanRollupLedger.java",
       "guard": "test:ScanRollupLedgerTest",
       "consumesProjection": "action-ledger-change-registry",
-      "note": "Tempdoc 812 D2: the scan-rollup aggregator — a projection of the SAME action-event log, not a second store. It observes terminal kind=index events (whose counts are the worker's real DONE/FAILED job states, carried by the capture-side scanId from jobs.scan_id) and emits ONE OPERATION-kind ActionEvent.ScanRollup per directory scan back into that log. It holds only in-flight per-scan counters for open scans; nothing is retained after a scan closes out. Import-invisible (same package); declared explicitly."
+      "note": "Tempdoc 812 D2: the scan-rollup aggregator — a projection of the SAME action-event log, not a second store. It observes terminal kind=index events (whose counts are the worker's real DONE/FAILED/RETRY_EXHAUSTED job states, carried by the capture-side scanId from jobs.scan_id) and emits ONE OPERATION-kind ActionEvent.ScanRollup per directory scan back into that log. It holds only in-flight per-scan counters for open scans; nothing is retained after a scan closes out. Import-invisible (same package); declared explicitly."
     },
     {
       "id": "action-ledger-change-registry",

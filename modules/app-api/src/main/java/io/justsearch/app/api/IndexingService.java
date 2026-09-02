@@ -293,9 +293,15 @@ public interface IndexingService {
    * @param attempts total attempts made
    * @param lastUpdatedMs epoch millis of last state transition
    * @param collection collection tag, or null for default
+   * @param state terminal state: {@code FAILED} or {@code RETRY_EXHAUSTED} (tempdoc 885 item 21b)
    */
   record FailedJobInfo(
-      String path, String errorMessage, int attempts, long lastUpdatedMs, String collection) {}
+      String path,
+      String errorMessage,
+      int attempts,
+      long lastUpdatedMs,
+      String collection,
+      String state) {}
 
   /** Lists jobs in FAILED state, ordered by most recent failure first. */
   default List<FailedJobInfo> listFailedJobs(int limit) {

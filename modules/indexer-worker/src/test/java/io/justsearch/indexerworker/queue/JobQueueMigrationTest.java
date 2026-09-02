@@ -617,9 +617,14 @@ final class JobQueueMigrationTest {
    * 812's to V9 could just as easily have left one rung shadowing the other, and a database stuck at
    * {@code user_version = 8} with a missing column is silent until a query fails in production.
    * Asserting BOTH columns after one ladder walk is what makes that class of collision loud.
+   *
+   * <p>V9 to V10 (tempdoc 885 item 21b) rides the same walk for the same reason: {@code
+   * first_failed_at} is the origin the seven-day retry bound is measured from, and a database that
+   * stopped one rung short would leave every failure run without one.
    */
   @Test
-  void migratesV7ThroughV9AddingBothSizeBytesAndScanIdAndPreservingRows() throws Exception {
+  void migratesV7ThroughV10AddingSizeBytesScanIdAndFirstFailedAtAndPreservingRows()
+      throws Exception {
     Path dbPath = tempDir.resolve("v7.db");
     String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
 
@@ -696,9 +701,12 @@ final class JobQueueMigrationTest {
       }
       assertTrue(hasColumn(stmt, "size_bytes"), "V8 should add the size_bytes column");
       assertTrue(hasColumn(stmt, "scan_id"), "V9 should add the scan_id column");
+      // Tempdoc 885 item 21b: the same walk now also has to reach V10.
+      assertTrue(
+          hasColumn(stmt, "first_failed_at"), "V10 should add the first_failed_at column");
       try (ResultSet rs =
           stmt.executeQuery(
-              "SELECT state, collection, size_bytes, scan_id FROM jobs"
+              "SELECT state, collection, size_bytes, scan_id, first_failed_at FROM jobs"
                   + " WHERE path = '/v7/file.txt'")) {
         assertTrue(rs.next());
         assertEquals("PENDING", rs.getString("state"));
@@ -706,6 +714,11 @@ final class JobQueueMigrationTest {
         rs.getLong("size_bytes");
         assertTrue(rs.wasNull(), "A pre-V8 row's size is unknown (NULL), not 0");
         assertNull(rs.getString("scan_id"), "A pre-V9 row belongs to no known scan");
+        rs.getLong("first_failed_at");
+        assertTrue(
+            rs.wasNull(),
+            "A pre-V10 row has no failure run in progress — NULL, not a fabricated epoch 0 that"
+                + " would read as 'first failed in 1970' and exhaust on the next failure");
       }
     } finally {
       jobQueue.close();

@@ -85,7 +85,14 @@ final class WorkerOpsPacingWireFormatRegressionTest {
               () -> 0L,
               pacing::pacedIntervalsTotal,
               pacing::observedDutyPct,
-              () -> (long) load.inFlight()));
+              () -> (long) load.inFlight(),
+              // Tempdoc 885 item 21e widened Sources with the queue throughput + contention
+              // suppliers. This case is about the pacing trio, so they are zeroed here rather
+              // than faked: WorkerOpsQueueMetricWireFormatTest owns their wire assertions.
+              () -> 0L,
+              () -> 0L,
+              () -> 0L,
+              () -> 0L));
 
       telemetry.flush();
       ndjson = Files.readString(tmp.resolve("telemetry").resolve("metrics-worker.ndjson"));

@@ -23,13 +23,15 @@ import java.util.function.LongSupplier;
  * {@link io.justsearch.telemetry.Telemetry#meter(String)} — now retired) and
  * {@code KnowledgeServer.registerTelemetryGauges} (legacy {@code Telemetry.gauge(...)}).
  *
- * <p>Covers 37 metrics:
+ * <p>Covers 42 metrics:
  * <ul>
  *   <li>16 observable counters from {@link OperationalMetrics} (LongAdder.sum()).
  *   <li>5 long-valued saturation gauges (last latencies, content-length count/min/max).
  *   <li>3 double-valued averages (avg latencies, avg content-length).
  *   <li>9 queue/buffer/state gauges read from a caller-supplied {@link Sources}.
  *   <li>3 foreground-pacing instruments (tempdoc 885 item 3), also {@link Sources}-driven.
+ *   <li>4 queue throughput/contention gauges + 1 per-outcome counter (tempdoc 885 item 21e,
+ *       RISK-002's instrument).
  *   <li>1 counter for switch-buffer write failures.
  * </ul>
  *
@@ -75,6 +77,36 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
   public static final String JOB_QUEUE_PENDING_READY_JOBS = "worker.job_queue.pending_ready_jobs";
   public static final String JOB_QUEUE_PENDING_BACKOFF_JOBS = "worker.job_queue.pending_backoff_jobs";
   public static final String SWITCH_BUFFER_DEPTH = "worker.switch_buffer.depth";
+
+  // Queue throughput + contention (tempdoc 885 item 21e) — RISK-002's missing instrument.
+
+  /**
+   * Rows admitted to the {@code jobs} table in the trailing minute. RISK-002's trigger is a
+   * ">2x throughput regression"; a ratio needs a rate on both sides, and until this metric the
+   * queue exposed only depth — a level that reads the same whether the queue is draining fast or
+   * not at all.
+   */
+  public static final String JOB_QUEUE_ENQUEUE_RATE_PER_MIN = "worker.job_queue.enqueue_rate_per_min";
+
+  /** Rows claimed for processing in the trailing minute — the drain side of the same ratio. */
+  public static final String JOB_QUEUE_DEQUEUE_RATE_PER_MIN = "worker.job_queue.dequeue_rate_per_min";
+
+  /**
+   * Worst wait, in ms, to acquire the queue's single write lock in the trailing minute. This is the
+   * quantity RISK-002 is actually about: one connection behind one {@code ReentrantLock}, with one
+   * dequeue caller and several enqueue callers on other threads.
+   */
+  public static final String JOB_QUEUE_LOCK_WAIT_MAX_MS = "worker.job_queue.lock_wait_max_ms";
+
+  /** Mean wait, in ms, to acquire the queue's write lock in the trailing minute. */
+  public static final String JOB_QUEUE_LOCK_WAIT_AVG_MS = "worker.job_queue.lock_wait_avg_ms";
+
+  /**
+   * Terminal ingestion outcomes by class, tagged with {@code outcome_class} (the 14
+   * {@code IngestionOutcomeClass} values plus {@code UNKNOWN}). One tagged counter rather than
+   * fourteen names: the classes are one vocabulary and are always read together.
+   */
+  public static final String JOB_QUEUE_OUTCOME_TOTAL = "worker.job_queue.outcome.total";
   public static final String INDEXING_PAUSED = "worker.indexing.paused";
   public static final String INDEX_PENDING_EMBEDDINGS = "worker.index.pending_embeddings";
   public static final String INDEX_PENDING_VDU = "worker.index.pending_vdu";
@@ -123,7 +155,12 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
       // Tempdoc 885 item 3
       LongSupplier pacedIntervals,
       LongSupplier dutyPct,
-      LongSupplier foregroundInFlight) {
+      LongSupplier foregroundInFlight,
+      // Tempdoc 885 item 21e — RISK-002's instrument.
+      LongSupplier enqueueRatePerMin,
+      LongSupplier dequeueRatePerMin,
+      LongSupplier lockWaitMaxMs,
+      LongSupplier lockWaitAvgMs) {
 
     /**
      * Default suppliers — used by tests / startup. {@code dutyPct} defaults to 100 (nothing
@@ -132,7 +169,8 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
     public static final Sources EMPTY =
         new Sources(
             () -> 0L, () -> 0L, () -> 0L, () -> 0L, () -> 0L, () -> 0L, () -> 0L, () -> 0L,
-            () -> 0L, () -> 0L, () -> 100L, () -> 0L);
+            () -> 0L, () -> 0L, () -> 100L, () -> 0L,
+            () -> 0L, () -> 0L, () -> 0L, () -> 0L);
   }
 
   public static final List<MetricDefinition> DEFINITIONS =
@@ -185,6 +223,29 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
           MetricDefinition.gauge(SWITCH_BUFFER_DEPTH)
               .unit(Unit.COUNT)
               .archivedTo(RrdArchive.STANDARD)
+              .build(),
+          // Tempdoc 885 item 21e: queue throughput + contention. Archived because RISK-002's
+          // trigger compares two runs, which needs the trend, not the instant.
+          MetricDefinition.gauge(JOB_QUEUE_ENQUEUE_RATE_PER_MIN)
+              .unit(Unit.COUNT)
+              .archivedTo(RrdArchive.STANDARD)
+              .build(),
+          MetricDefinition.gauge(JOB_QUEUE_DEQUEUE_RATE_PER_MIN)
+              .unit(Unit.COUNT)
+              .archivedTo(RrdArchive.STANDARD)
+              .build(),
+          MetricDefinition.gauge(JOB_QUEUE_LOCK_WAIT_MAX_MS)
+              .unit(Unit.MILLISECONDS)
+              .archivedTo(RrdArchive.STANDARD)
+              .build(),
+          MetricDefinition.gauge(JOB_QUEUE_LOCK_WAIT_AVG_MS)
+              .unit(Unit.MILLISECONDS)
+              .archivedTo(RrdArchive.STANDARD)
+              .build(),
+          MetricDefinition.counter(JOB_QUEUE_OUTCOME_TOTAL)
+              .unit(Unit.COUNT)
+              .tagKeys(java.util.Set.of(QueueOutcomeTags.KEY_OUTCOME_CLASS))
+              .cardinalityLimit(32)
               .build(),
           MetricDefinition.gauge(INDEXING_PAUSED).unit(Unit.COUNT).build(),
           MetricDefinition.gauge(INDEX_PENDING_EMBEDDINGS)
@@ -272,6 +333,16 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
   public final GaugeMetric<EmptyTags> jobQueuePendingReadyJobs;
   public final GaugeMetric<EmptyTags> jobQueuePendingBackoffJobs;
   public final GaugeMetric<EmptyTags> switchBufferDepth;
+  /** Tempdoc 885 item 21e. */
+  public final GaugeMetric<EmptyTags> jobQueueEnqueueRatePerMin;
+  /** Tempdoc 885 item 21e. */
+  public final GaugeMetric<EmptyTags> jobQueueDequeueRatePerMin;
+  /** Tempdoc 885 item 21e. */
+  public final GaugeMetric<EmptyTags> jobQueueLockWaitMaxMs;
+  /** Tempdoc 885 item 21e. */
+  public final GaugeMetric<EmptyTags> jobQueueLockWaitAvgMs;
+  /** Tempdoc 885 item 21e — tagged by {@code outcome_class}; incremented by the queue. */
+  public final CounterMetric<QueueOutcomeTags> jobQueueOutcomeTotal;
   public final GaugeMetric<EmptyTags> indexingPaused;
   public final GaugeMetric<EmptyTags> indexPendingEmbeddings;
   public final GaugeMetric<EmptyTags> indexPendingVdu;
@@ -393,6 +464,28 @@ public final class WorkerOpsMetricCatalog implements MetricCatalog {
             SWITCH_BUFFER_DEPTH,
             EmptyTags.INSTANCE,
             () -> (double) sources.switchBufferDepth().getAsLong());
+    // Tempdoc 885 item 21e: queue throughput + contention (RISK-002's instrument).
+    this.jobQueueEnqueueRatePerMin =
+        registry.buildGauge(
+            JOB_QUEUE_ENQUEUE_RATE_PER_MIN,
+            EmptyTags.INSTANCE,
+            () -> (double) sources.enqueueRatePerMin().getAsLong());
+    this.jobQueueDequeueRatePerMin =
+        registry.buildGauge(
+            JOB_QUEUE_DEQUEUE_RATE_PER_MIN,
+            EmptyTags.INSTANCE,
+            () -> (double) sources.dequeueRatePerMin().getAsLong());
+    this.jobQueueLockWaitMaxMs =
+        registry.buildGauge(
+            JOB_QUEUE_LOCK_WAIT_MAX_MS,
+            EmptyTags.INSTANCE,
+            () -> (double) sources.lockWaitMaxMs().getAsLong());
+    this.jobQueueLockWaitAvgMs =
+        registry.buildGauge(
+            JOB_QUEUE_LOCK_WAIT_AVG_MS,
+            EmptyTags.INSTANCE,
+            () -> (double) sources.lockWaitAvgMs().getAsLong());
+    this.jobQueueOutcomeTotal = registry.buildCounter(JOB_QUEUE_OUTCOME_TOTAL);
     this.indexingPaused =
         registry.buildGauge(
             INDEXING_PAUSED,
