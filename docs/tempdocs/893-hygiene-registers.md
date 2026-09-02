@@ -65,6 +65,18 @@ edits → load `/docs-maintenance` and run the regen sequence it names.
    promotion criterion); where it is declared (proposal: a `stage` attribute on
    `config-surface`'s matrix rows); the retirement gate. Reference 532 as the first case the
    policy would have resolved. The founder decides; you do not implement.
+7. **Canonical-doc claim sweep** (added 2026-09-02; the lens 887 offered and never itemised).
+   For every file under `docs/explanation`, `docs/reference`, `docs/how-to`: extract sentences
+   that assert a mechanism exists or a behaviour holds ("X is enforced by Y", "Z runs in CI",
+   "the walk applies …"), and verify each against `main` with a `file:line` or a run. Output: a
+   table in this tempdoc §S of stale claims with the one-line fix, then apply the fixes in one
+   docs PR (load `/docs-maintenance`). Known instances to seed the sweep: `03-knowledge-server.md:283`
+   (half-stale exclude claim, 889), `05-ai-architecture.md:83-85` (CUDA "deferred", 887 §Z-2),
+   `CLAUDE.md` "Build fails on PMD" (888), `check-ui-step-coverage.mjs` header (888),
+   `ui-a11y-baseline.v1.json` description (888), `297:26`, `ApiSecurityFilters.java:186`. Do
+   not build a doctest mechanism (non-goal); the sweep is a one-time audit plus a short
+   "how to keep claims checkable" paragraph in `writing-docs-for-ai.md` pointing at the
+   existing drift guards (`check-privacy-claims`, `check-frontend-stack-claims`).
 
 ## Acceptance criteria
 

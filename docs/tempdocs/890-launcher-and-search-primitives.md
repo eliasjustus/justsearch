@@ -64,6 +64,16 @@ help file documents that syntax to users (`SSOT/docs/help/search-syntax.md:13-25
    opens the main window on the query. The palette renders the existing search results
    projection — no new result component. Note 191:369 Wayland caveat (irrelevant on Windows;
    record it).
+5. **`forced-colors` support** (added 2026-09-02; register row 6.5's uncovered half). The Lit
+   stack has ~15 `prefers-reduced-motion` sites and zero `forced-colors` / `prefers-contrast`
+   queries; high contrast is an app-level `.high-contrast` class only. Add a `forced-colors: active`
+   layer to the token authority (`tokens.css`, via the theme token closure gate
+   `check-theme-token-closure`) so Windows High Contrast themes get system colors on every
+   atom, and verify with `ui-shot` under a forced-colors emulation (`ui_measure.py` supports
+   media emulation; add the step). Assistive-technology testing (NVDA on the palette, results,
+   and chat) is **owner-run**: this item ships a one-page checklist in `docs/how-to/` for it and
+   records the first run's findings in §Status; it does not claim screen-reader support until
+   that run exists.
 
 ## Acceptance criteria
 
