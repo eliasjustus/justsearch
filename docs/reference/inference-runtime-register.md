@@ -177,7 +177,7 @@ Settled empirical facts. Each was an open question that got answered.
   2808 / tg128 63.0** (NV_coopmat2); CPU (i7-12700K, 12 threads) 45.8 / 4.52.
   Qwen3.5-4B-Q4_K_M — CUDA 4616 / 86.9; Vulkan 4264 / 98.0; CPU 80.0 / 9.22. Vulkan is
   0.92-0.96x CUDA on prefill and 1.13-1.14x on generation here; the CPU tier is 53-64x slower on
-  prefill (an 8k RAG prefill is ~3 min on CPU) and 9-14x slower on generation. The raw `docs/ops/Vulkan.csv` confirms
+  prefill (an 8k RAG prefill is ~3 min on CPU) and 9-14x slower on generation. llama.cpp's upstream op-support table (`docs/ops/Vulkan.csv` in the ggml-org repo) confirms
   `GATED_DELTA_NET`, `SSM_CONV`, `SOLVE_TRI` and q8_0-KV `FLASH_ATTN_EXT` are supported, so the
   packaged hybrid runs fully offloaded with the D-010 launch line.
 - **Encoders (ORT WebGPU plugin EP, `onnxruntime-ep-webgpu` 0.3.0, from Java via
