@@ -223,11 +223,14 @@ public final class RunningRuntime implements LuceneRuntime {
    * internals via {@code /api/status} for jseval timeline consumption.
    */
   public LuceneRuntimeTypes.RuntimeGaugesSnapshot runtimeGaugesSnapshot() {
+    LifecycleSnapshot snap = session.snapshot;
     return new LuceneRuntimeTypes.RuntimeGaugesSnapshot(
         session.queueDepth.get(),
         session.pendingDocs.get(),
         session.commitCount.get(),
-        session.commitOps != null ? session.commitOps.refreshLagMs() : 0L);
+        session.commitOps != null ? session.commitOps.refreshLagMs() : 0L,
+        session.nrtStats.reopenTotal.get(),
+        session.nrtStats.segmentsSinceReopen(snap != null ? snap.writer() : null));
   }
 
   /** Package-private accessor for test/internal wiring. */

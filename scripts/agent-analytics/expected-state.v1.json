@@ -164,17 +164,6 @@
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
       "exitProbe": "node scripts/ci/check-runtime-manifest-closure.mjs"
-    },
-    {
-      "id": "jseval-pytest-missing-optional-deps-local-env",
-      "match": [
-        "python -m pytest"
-      ],
-      "claim": "`python -m pytest -q` under scripts/jseval is RED on THIS machine only because three OPTIONAL test dependencies are not installed in the local interpreter: `inspect_ai` (the `agent` extra), `hypothesis` and `jsonschema` (the `dev` extra). Everything else passes (2661 passed / 3 collection errors observed 2026-09-02). Fix, do not remember: `python -m pip install -e \"scripts/jseval[dev,agent]\"`. `jsonschema` was missing from the `dev` extra entirely until tempdoc 885 chunk 2 added it (scripts/jseval/pyproject.toml:31), so an older install cannot have had it.",
-      "evidence": "tempdoc 885 lane C chunk 1 (2026-09-02): full `python -m pytest -q` run in scripts/jseval reported 2661 passed with the only failures being ModuleNotFoundError for inspect_ai / hypothesis / jsonschema at collection time. scripts/jseval/tests/test_corpus_inject.py:710 is the sole jsonschema importer.",
-      "added": "2026-09-02",
-      "reviewBy": "2026-09-30",
-      "exitProbe": "slow: python -m pytest -q scripts/jseval"
     }
   ]
 }

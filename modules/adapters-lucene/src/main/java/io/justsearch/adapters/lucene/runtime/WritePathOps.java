@@ -626,7 +626,7 @@ public final class WritePathOps {
       if (refreshSnap != null && refreshSnap.searcherManager() != null) {
         refreshSnap.searcherManager().maybeRefreshBlocking();
       }
-      return bridge.withSearcher(searcher -> readModifyWrite(searcher, docId, updates));
+      return bridge.withSearcherNoRefresh(searcher -> readModifyWrite(searcher, docId, updates));
     } catch (IOException e) {
       log.error("Failed to update document {}", docId, e);
       throw new IndexRuntimeIOException(classifyIOException(e), "Failed to update document", e);
@@ -647,7 +647,7 @@ public final class WritePathOps {
         refreshSnap.searcherManager().maybeRefreshBlocking();
       }
       long tRefreshEnd = System.nanoTime();
-      var result = bridge.withSearcher(searcher -> readModifyWriteBatch(searcher, batchUpdates));
+      var result = bridge.withSearcherNoRefresh(searcher -> readModifyWriteBatch(searcher, batchUpdates));
       long tWriteEnd = System.nanoTime();
       log.info(
           "updateDocumentsBatch: refresh={}ms, withSearcher+RMW={}ms, total={}ms",
@@ -672,7 +672,7 @@ public final class WritePathOps {
       if (refreshSnap != null && refreshSnap.searcherManager() != null) {
         refreshSnap.searcherManager().maybeRefreshBlocking();
       }
-      return bridge.withSearcher(searcher -> updateDocumentPaths(searcher, oldPath, newPath));
+      return bridge.withSearcherNoRefresh(searcher -> updateDocumentPaths(searcher, oldPath, newPath));
     } catch (IOException e) {
       log.error("Failed to update document paths {} -> {}", oldPath, newPath, e);
       throw new IndexRuntimeIOException(

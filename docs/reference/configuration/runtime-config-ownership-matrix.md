@@ -73,7 +73,10 @@ Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for `justsearc
 | index.merge.tiered.max_merged_segment_mb | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.merge.tiered.segs_per_tier | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | - | JUSTSEARCH_INDEX_MIGRATION_CUTOVER_MAX_FAILED_JOBS | index.migration.cutover.max_failed_jobs | INDEX_MIGRATION_CUTOVER_MAX_FAILED_JOBS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| index.nrt.background_reopen_ms | JUSTSEARCH_INDEX_NRT_BACKGROUND_REOPEN_MS | index.nrt.background_reopen_ms | INDEX_NRT_BACKGROUND_REOPEN_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.nrt.max_stale_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| index.nrt.mode | JUSTSEARCH_INDEX_NRT_MODE | index.nrt.mode | INDEX_NRT_MODE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.nrt.on_demand_max_stale_ms | JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS | index.nrt.on_demand_max_stale_ms | INDEX_NRT_ON_DEMAND_MAX_STALE_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.nrt.target_max_stale_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.languages | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
