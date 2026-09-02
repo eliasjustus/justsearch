@@ -564,6 +564,21 @@ jobs:
       # upgrade-arrival -- passed locally against the run-30918470316 artifact. The
       # upgrade-arrival leg's repairNeeded assertions target fields that shipped with the 805
       # campaign (PR #362), so the leg runs here permanently.
+      # Tempdoc 884 §F row 7 -- the artifact half of check-installer-execution-level.mjs, which
+      # was invoked by nothing. ADR-0024's json-path probe already covers the CONFIG assertion
+      # (installMode: currentUser), so this step exists for the half the config cannot see: a
+      # change to modules/shell/src-tauri/nsis/installer-hooks.nsh can leave tauri.conf.json
+      # correct while the BUILT installer still requests elevation, which is a UAC prompt the
+      # README says will not appear. Runs before the verify lane so an elevating installer is
+      # named as such rather than surfacing as a downstream install failure.
+      - name: Built installer does not request elevation
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem -Path dist/installer -Filter "*-setup.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $setup) { throw "No *-setup.exe found in dist/installer after artifact download." }
+          node scripts/ci/check-installer-execution-level.mjs --installer $setup.FullName
+          if ($LASTEXITCODE -ne 0) { throw "Built installer requests elevation; see the check output above." }
+
       - name: Run packaged verify lane
         shell: pwsh
         run: |

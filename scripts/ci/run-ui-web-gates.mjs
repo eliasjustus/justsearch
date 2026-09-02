@@ -29,7 +29,9 @@ export function parseUiWebGateCommands(register) {
   const cmds = [];
   for (const line of entry.recipe) {
     if (/^Plus the kernel gates:/.test(line)) {
-      // `run.mjs --gate` takes ONE id; the recipe lists several — one invocation per id.
+      // One invocation per id. `--gate` is repeatable now, so a single call would work too; the
+      // per-id loop is kept deliberately, because it attributes a failure to the gate that caused
+      // it instead of to one combined run.
       const m = line.match(/--gate\s+([a-z0-9,-]+)/);
       for (const id of (m?.[1] ?? '').split(',').filter(Boolean)) {
         cmds.push(['node', 'scripts/governance/run.mjs', '--gate', id, '--mode', 'gate']);

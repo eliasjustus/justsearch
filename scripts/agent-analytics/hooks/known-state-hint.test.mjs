@@ -78,6 +78,34 @@ run('real expected-state.v1.json parses and all match regexes compile', () => {
     for (const p of e.match) new RegExp(p, 'i');
   }
 });
+
+// Nothing reads an unrecognised key, so a typo in one is invisible: `exitProbeRetired` misspelled
+// reads as a pin that simply has no note, and — worse — `exitProbe` misspelled reads as a pin with
+// no probe, which silently downgrades its exit discipline to reviewBy alone.
+const ALLOWED_PIN_KEYS = new Set([
+  'id', 'match', 'claim', 'evidence', 'added', 'reviewBy', 'exitProbe',
+  // Prose keys recording why a probe was removed or reshaped (PR #604).
+  'exitProbeRetired', 'exitProbeNote',
+]);
+run('real baseline: no entry carries an unrecognised key', () => {
+  const data = JSON.parse(fs.readFileSync(path.join(repoRoot, EXPECTED_STATE_FILE), 'utf8'));
+  for (const e of data.entries) {
+    for (const key of Object.keys(e)) {
+      assert.ok(
+        ALLOWED_PIN_KEYS.has(key),
+        `entry ${e.id} has unrecognised key \`${key}\` — add it to ALLOWED_PIN_KEYS if intended, `
+          + 'or fix the typo; an unread key is a silently ignored one',
+      );
+    }
+  }
+});
+
+run('the unrecognised-key check actually fires', () => {
+  // Pinning the pin: a schema check that cannot fail is the shape this whole PR is about.
+  const typo = { id: 'x', match: ['y'], claim: 'z', exitProbeRetried: 'typo' };
+  const bad = Object.keys(typo).filter((k) => !ALLOWED_PIN_KEYS.has(k));
+  assert.deepEqual(bad, ['exitProbeRetried']);
+});
 run('real baseline: every entry is reachable by its own exitProbe, and unambiguously so', () => {
   // Derived from the live entries rather than naming specific pins. Naming them made this test
   // fail the moment a pin was legitimately RETIRED (its red got fixed) — a green-blocking tripwire
