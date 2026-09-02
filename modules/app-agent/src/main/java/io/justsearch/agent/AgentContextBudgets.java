@@ -5,7 +5,10 @@ import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.core.util.ContextBudget;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.ToIntFunction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Tempdoc 883 decision 3 — the agent loop's view of {@link ContextBudget}: how a delegate run turns
@@ -20,9 +23,11 @@ import java.util.function.ToIntFunction;
  *
  * <p><b>The knobs.</b> {@code justsearch.agent.max_completion_tokens} and
  * {@code justsearch.agent.max_tool_result_chars} both default to {@code 0 = derive from the window};
- * a positive value is an explicit operator ceiling and is honoured verbatim, never silently reduced.
- * That is the same "0 means auto, an override is honoured or fails loud" shape tempdoc 883 PR 1 gave
- * {@code contextLength} — an operator who names a number gets that number.
+ * a positive value is an explicit operator CEILING. {@code max_tool_result_chars} is honoured
+ * verbatim. {@code max_completion_tokens} is a ceiling on a window fraction, so a window too small
+ * to afford it reduces it — and because reducing a number an operator typed is exactly the kind of
+ * thing that must not happen quietly, {@link #forCall} says so at INFO, once per distinct
+ * (cap, window) pair.
  */
 public final class AgentContextBudgets {
 
@@ -44,6 +49,11 @@ public final class AgentContextBudgets {
   /** The floor a tool-result cap is never taken below (mirrors the pre-883 clamp). */
   static final int MIN_TOOL_RESULT_CHARS = 100;
 
+  private static final Logger LOG = LoggerFactory.getLogger(AgentContextBudgets.class);
+
+  /** The last (cap, window) pair reported by {@link #warnOperatorCapReduced}; see its javadoc. */
+  private static final AtomicReference<String> lastReducedCapReported = new AtomicReference<>();
+
   private AgentContextBudgets() {}
 
   /**
@@ -55,9 +65,24 @@ public final class AgentContextBudgets {
   public static ContextBudget forCall(OnlineAiService onlineAiService) {
     Integer observed = onlineAiService == null ? null : onlineAiService.llmContextTokens();
     Integer configured = onlineAiService == null ? null : onlineAiService.configuredContextTokens();
-    int operatorCap = resolveInt(rc -> rc.agent().maxCompletionTokens());
+    return forCall(observed, configured, resolveInt(rc -> rc.agent().maxCompletionTokens()));
+  }
+
+  /**
+   * The same decision with the config read hoisted into a parameter.
+   *
+   * <p>Package-private so the operator-cap reduction is testable through the REAL path rather than
+   * by installing a process-global {@code ConfigStore}: the reporting branch only fires when an
+   * operator actually set the knob, which a test otherwise cannot arrange without global state.
+   *
+   * @param operatorCap {@code justsearch.agent.max_completion_tokens}; {@code <= 0} means derive
+   */
+  static ContextBudget forCall(Integer observed, Integer configured, int operatorCap) {
     int preferred = operatorCap > 0 ? operatorCap : PREFERRED_COMPLETION_TOKENS;
     ContextBudget budget = ContextBudget.withDerivedReserve(observed, configured, preferred);
+    if (operatorCap > 0 && budget.completionReserve() < operatorCap) {
+      warnOperatorCapReduced(operatorCap, budget);
+    }
     if (budget.completionReserve() >= MIN_COMPLETION_TOKENS) {
       return budget;
     }
@@ -76,6 +101,28 @@ public final class AgentContextBudgets {
     int operatorCap = resolveInt(rc -> rc.agent().maxToolResultChars());
     int cap = operatorCap > 0 ? operatorCap : budget.toolResultCapChars();
     return Math.max(MIN_TOOL_RESULT_CHARS, cap);
+  }
+
+  /**
+   * Says, once per distinct (cap, window) pair, that an operator's explicit completion cap did not
+   * fit the window.
+   *
+   * <p>Deduplicated because this runs on EVERY agent LLM call: an undeduplicated line would put one
+   * record per iteration in the log and train the reader to skip it, which is how a real message
+   * stops being read. The key is the pair, so a window CHANGE re-reports.
+   */
+  private static void warnOperatorCapReduced(int operatorCap, ContextBudget budget) {
+    String key = operatorCap + "@" + budget.windowTokens();
+    if (!key.equals(lastReducedCapReported.getAndSet(key))) {
+      LOG.info(
+          "justsearch.agent.max_completion_tokens={} does not fit a {}-token window ({}); using {}"
+              + " instead — a completion reserve is capped at a quarter of the window so the prompt"
+              + " is not crowded out.",
+          operatorCap,
+          budget.windowTokens(),
+          budget.source(),
+          budget.completionReserve());
+    }
   }
 
   /** Resolves an agent config int, or 0 when no ConfigStore is installed (tests, early boot). */

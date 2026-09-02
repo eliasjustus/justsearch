@@ -44,6 +44,10 @@ testing {
         implementation(testFixtures(project(":modules:telemetry")))
         implementation(platform(libs.junit.bom))
         implementation(libs.junit.jupiter.api)
+        // Tempdoc 883 decision 3 — AgentContextBudgetsTest asserts that an operator completion cap
+        // the window cannot afford is REPORTED, not silently reduced, so it captures the log.
+        implementation(libs.logback.classic)
+        implementation(libs.logback.core)
         runtimeOnly(libs.junit.jupiter.engine)
         runtimeOnly(libs.junit.platform.launcher)
         // Slice 487 Phase 1.7 audit-test (post-impl fix A2): ArchUnit-based

@@ -138,16 +138,26 @@ public final class ReadDocumentTool implements OperationHandler {
    * PreviewController}: "Treat docId as opaque"), so one {@code path} argument addresses both.
    */
   OperationResult execute(JsonNode args) {
-    int pageChars = readPageChars(budget.get());
+    ContextBudget currentBudget = budget.get();
+    int pageChars = readPageChars(currentBudget);
     if (pageChars < MIN_PAGE_CHARS) {
       // A configuration refusal, not an argument one — checked before any work so the operator sees
-      // the cause rather than a stream of uselessly small pages.
+      // the cause rather than a stream of uselessly small pages. It names the WINDOW as well as the
+      // config key: since tempdoc 883 the cap defaults to 0 = derive, so the usual cause of a
+      // too-small page is a small context window, and blaming the config key alone would send the
+      // operator to a setting they never touched.
       return OperationResult.failure(
-          "agent.maxToolResultChars is too small to page a document (it leaves "
+          "The context budget is too small to page a document (it leaves "
               + pageChars
               + " chars per page, minimum "
               + MIN_PAGE_CHARS
-              + "). Raise it to at least "
+              + "). The window is "
+              + currentBudget.windowTokens()
+              + " tokens ("
+              + currentBudget.source()
+              + "), giving an input budget of "
+              + currentBudget.inputBudget()
+              + " tokens. Raise the context window, or set agent.maxToolResultChars to at least "
               + (MIN_PAGE_CHARS + PAGE_HEADROOM_CHARS)
               + ", or use core_search_index to find passages instead.");
     }

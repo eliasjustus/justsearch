@@ -5,12 +5,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.justsearch.agent.tools.ReadDocumentTool;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.core.util.ContextBudget;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * Tempdoc 883 decision 3 — the two former CLASS-INIT constants now track the live window.
@@ -126,6 +131,90 @@ class AgentContextBudgetsTest {
               + ReadDocumentTool.PAGE_HEADROOM_CHARS
               + " cap="
               + layerTwo);
+    }
+  }
+
+  @Test
+  @DisplayName("S1: an operator completion cap the window cannot afford is REDUCED, and said so")
+  void operatorCapReductionIsReported() {
+    // The knob is a ceiling on a window FRACTION, not a verbatim value, so a 2048-token window
+    // cannot honour a configured 999. Reducing a number someone typed must not be silent: the
+    // javadoc used to promise "honoured verbatim, never silently reduced", which was false.
+    // The (cap, window) pair is deliberately unusual: the report is deduplicated per pair for the
+    // life of the JVM, so a pair another test also used could be swallowed here.
+    List<ILoggingEvent> logs =
+        captureFrom(
+            AgentContextBudgets.class,
+            () -> {
+              ContextBudget budget = AgentContextBudgets.forCall(2048, 2048, 999);
+              assertEquals(512, budget.completionReserve(), "the reduction is real");
+            });
+
+    ILoggingEvent reported =
+        logs.stream()
+            .filter(e -> e.getFormattedMessage().contains("max_completion_tokens"))
+            .findFirst()
+            .orElseThrow(
+                () ->
+                    new AssertionError(
+                        "no reduction was reported; logs were "
+                            + logs.stream().map(ILoggingEvent::getFormattedMessage).toList()));
+    assertEquals("INFO", reported.getLevel().toString());
+    assertTrue(reported.getFormattedMessage().contains("999"), reported.getFormattedMessage());
+    assertTrue(reported.getFormattedMessage().contains("512"), reported.getFormattedMessage());
+
+    // ...and it is said ONCE per pair: this runs on every LLM call, and a line repeated per
+    // iteration trains the reader to skip it.
+    List<ILoggingEvent> again =
+        captureFrom(AgentContextBudgets.class, () -> AgentContextBudgets.forCall(2048, 2048, 999));
+    assertTrue(again.isEmpty(), "the repeat must be deduplicated: " + again.size() + " records");
+  }
+
+  @Test
+  @DisplayName("S1: a cap the window CAN afford is applied quietly")
+  void unreducedOperatorCapIsNotReported() {
+    List<ILoggingEvent> logs =
+        captureFrom(
+            AgentContextBudgets.class,
+            () -> {
+              ContextBudget budget = AgentContextBudgets.forCall(32768, 32768, 1024);
+              assertEquals(1024, budget.completionReserve(), "honoured whole");
+            });
+    assertTrue(
+        logs.isEmpty(),
+        "a budget that honoured the cap must say nothing; logs were "
+            + logs.stream().map(ILoggingEvent::getFormattedMessage).toList());
+  }
+
+  @Test
+  @DisplayName("S5: the Layer-2 bound dominates the page fraction at every rung")
+  void pageFractionNeverBinds() {
+    // Stated because the doc table lists readDocumentPageTokens() as a derivation: today it never
+    // wins, because min(ib/2, 4096) >= min(ib/4, 2048) always. If a future change raises the
+    // tool-result ceiling above the page ceiling, this goes red and the table stops being a lie.
+    for (int window : new int[] {2048, 4096, 8192, 16384, 32768}) {
+      ContextBudget b = budgetAt(window);
+      assertTrue(
+          b.readDocumentPageChars() >= b.toolResultCapChars(),
+          "page fraction " + b.readDocumentPageChars() + " < cap " + b.toolResultCapChars());
+      assertEquals(
+          ToolResultCarrier.layerTwoCapChars(b) - ReadDocumentTool.PAGE_HEADROOM_CHARS,
+          ReadDocumentTool.readPageChars(b),
+          "the Layer-2 bound is what resolves the page at window " + window);
+    }
+  }
+
+  private static List<ILoggingEvent> captureFrom(Class<?> type, Runnable action) {
+    Logger logger = (Logger) LoggerFactory.getLogger(type);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      action.run();
+      return List.copyOf(appender.list);
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
     }
   }
 
