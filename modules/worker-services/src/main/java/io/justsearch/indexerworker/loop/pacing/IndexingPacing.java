@@ -15,10 +15,18 @@ import org.slf4j.LoggerFactory;
  * <p>The contract each call site gets is one method, {@link #pace()}, placed at a natural work
  * boundary (after a batch, after a document, at a walk throttle point). The policy measures the
  * wall time since it last released <i>that thread</i> — the thread's work slice — and, while
- * foreground work is in flight, yields enough of the following wall time that the caller's share
- * of the interval is at most {@code dutyPct}. Nothing stops: at the default 20% the loop still
- * indexes one fifth of the time under a continuous search load, where the old pause indexed
+ * foreground work is in flight, yields the wall time that brings the caller's share of the
+ * interval down toward {@code dutyPct}. Nothing stops: at the default 20% the loop still indexes
+ * roughly one fifth of the time under a continuous search load, where the old pause indexed
  * nothing at all.
+ *
+ * <p><b>{@code dutyPct} is a target, and the bounds below bias the error toward indexing, not away
+ * from it.</b> A work unit longer than {@link #MAX_WORK_SLICE_MS} claims credit for only that much,
+ * and the yield it earns is capped at {@link #MAX_DEBT_MS}, so a single long batch runs at a duty
+ * <i>above</i> the target — a 10 s batch yields 2 s (≈83%), not 40 s. The exact ratio holds for
+ * work units at or under the slice cap, which is the common case (a document, a sub-batch, a walk
+ * tick). Erring toward indexing is deliberate: the failure this item removes was indexing starved
+ * to zero, and an unbounded debt would reintroduce multi-second stalls inside the loop.
  *
  * <p>Bounds that make the yield safe to sit inside a loop that must stay responsive:
  *
@@ -215,9 +223,16 @@ public final class IndexingPacing {
   }
 
   /**
-   * Observed duty over the current (or, if it has no samples yet, the previous) window: the share
-   * of paced wall time actually spent working, {@code 0..100}. {@code 100} when nothing has been
-   * throttled.
+   * Observed duty over the current (or, if it has no samples yet, the previous) window:
+   * {@code worked / (worked + yielded)} as a percentage, {@code 0..100}.
+   *
+   * <p>The window accounts <b>every</b> {@link #pace()} interval, contended or not — an uncontended
+   * interval contributes its work slice and a zero yield. So this reads 100 while nothing is
+   * throttled, and during a mixed window it is the duty <i>over the whole window</i>, not over the
+   * throttled part of it: a minute that spent 50 s uncontended and 10 s contended reads far above
+   * {@link #dutyPct()}. That is the intended question for a field gauge ("what fraction of the last
+   * minute did indexing actually work"), but it means the gauge converges on {@link #dutyPct()}
+   * only under sustained load.
    */
   public synchronized long observedDutyPct() {
     long worked = windowWorkedNanos;

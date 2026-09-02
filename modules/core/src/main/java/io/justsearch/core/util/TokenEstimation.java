@@ -84,6 +84,30 @@ public final class TokenEstimation {
     return Math.max(wordEstimate, charEstimate);
   }
 
+  /**
+   * The inverse of {@link #estimateTokens}'s default heuristic: {@code chars = tokens * 4}.
+   *
+   * <p>Tempdoc 883 — {@link ContextBudget} is denominated in tokens, but several consumers cut in
+   * CHARACTERS (the agent's Layer-2 tool-result cut, its read-document page, the selection
+   * injector). This is the one conversion they share, so they cannot disagree about it.
+   *
+   * <p><b>It is an estimate, and it is the OPTIMISTIC one.</b> {@link #estimateTokens} returns
+   * {@code max(wordEstimate, charEstimate)} and switches {@code charEstimate} to {@code len/3} for
+   * dense text and {@code len} for CJK — so text of that kind, cut to this many characters, can
+   * still estimate above the token figure it came from. Callers whose cut MUST fit a hard downstream
+   * bound (the read page under the Layer-2 cut) keep a second char-against-char check rather than
+   * trusting this conversion alone.
+   *
+   * @param tokens a token budget
+   * @return the character budget it corresponds to for typical prose, never negative
+   */
+  public static int charsForTokens(int tokens) {
+    return Math.max(0, tokens) * DEFAULT_CHARS_PER_TOKEN;
+  }
+
+  /** The default heuristic's chars-per-token ({@code charEstimate = ceil(len / 4)}). */
+  private static final int DEFAULT_CHARS_PER_TOKEN = 4;
+
   // ==========================================================================
   // Budget Calculation
   // ==========================================================================

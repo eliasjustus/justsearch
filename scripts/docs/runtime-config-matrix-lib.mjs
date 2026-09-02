@@ -174,6 +174,36 @@ export function renderMatrixMarkdown(model) {
   lines.push("2. `YAML > default` for YAML-only keys (ConfigKey entries, no env var override).");
   lines.push("3. `sysprop > env > default` for env/sysprop-only runtime knobs.");
   lines.push("");
+  lines.push(
+    "The per-row notes above cover only the sources this table can derive from `EnvRegistry` /" +
+      " `ConfigKey`. The full ordinal chain in `ResolvedConfigBuilder` has more: `jvm_arg` 500 >" +
+      " `worker_snapshot` 450 > `env_var` 400 > `ci_profile` 350 > `settings.json` 300 > `yaml`" +
+      " 200 > `auto_detected` 150 > `default` 100. Two of those contributors are invisible here" +
+      " because they are written by callers rather than declared as keys:",
+  );
+  lines.push("");
+  lines.push(
+    "- **`settings.json` (300)** — `ConfigStoreRebuilder.contributeUiSettings` forwards a handful" +
+      " of `UiSettings` fields, including `justsearch.gpu.layers`, `justsearch.context.size`," +
+      " `justsearch.server.exe` and `justsearch.ui.exclude_patterns`.",
+  );
+  lines.push(
+    "- **`auto_detected` (150, detail `hardware_probe`)** — the Head's startup probe contributes" +
+      " GPU detection results (including the VRAM-tier `justsearch.gpu.layers`) and, since" +
+      " tempdoc 883, the DERIVED `justsearch.context.size` window rung.",
+  );
+  lines.push("");
+  lines.push(
+    "Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for" +
+      " `justsearch.context.size` (slice 1) and `justsearch.gpu.layers`," +
+      " `justsearch.server.exe`, `justsearch.ui.exclude_patterns` (slice 2), along with their" +
+      " `*.source=ui_settings` marker properties. Each of those keys now resolves `settings.json`" +
+      " when the user set one and `auto_detected` / `default` otherwise — never `jvm_arg` merely" +
+      " because the value came from the GUI, which is what the promotions used to make them" +
+      " report. `justsearch.server.exe.source` survives as the ownership token of the runtime" +
+      " GPU-variant switch (`RuntimeActivationService`), which is a different mechanism.",
+  );
+  lines.push("");
   lines.push("| YAML key | Env var | System property | EnvRegistry constant | Owner module | Precedence notes |");
   lines.push("| :--- | :--- | :--- | :--- | :--- | :--- |");
   for (const row of model.rows) {

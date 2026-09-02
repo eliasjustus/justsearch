@@ -238,7 +238,13 @@ public record ResolvedConfig(
       // Tempdoc 710 Wave 2 Move 1: undeclared model-capability facts fail startup for that
       // encoder lane instead of WARN + fallback (default false until 657 ships manifests in
       // packs — see EnvRegistry.CAPABILITY_CONTRACT_STRICT).
-      boolean capabilityContractStrict) {
+      boolean capabilityContractStrict,
+      // Tempdoc 883 decision 2 (append region — keep new components last so parallel lanes merge
+      // trivially): llama-server slot count (-np) and KV cache type (-ctk/-ctv). Both are launch
+      // arguments the engine used to choose for itself; naming them makes the choice reviewable
+      // and the argv reproducible.
+      int llmSlots,
+      String llmKvType) {
 
     /** BGE-M3 multi-vector retrieval configuration. */
     public record BgeM3(
@@ -590,8 +596,13 @@ public record ResolvedConfig(
    *
    * @param automationEnabled true if UI automation mode is enabled
    * @param forceDiagnostics true to force infra diagnostics overrides
+   * @param excludePatterns the user's exclude globs as a raw JSON array string, {@code ""} when
+   *     unset — the resolved form of the key {@code ConfigStoreRebuilder.contributeUiSettings}
+   *     contributes at ordinal 300 (tempdoc 883 decision 4 slice 2; before it, the key was
+   *     contributed but never resolved, so every reader had to go to the promoted sysprop instead)
    */
-  public record Ui(boolean automationEnabled, boolean forceDiagnostics) {}
+  public record Ui(
+      boolean automationEnabled, boolean forceDiagnostics, String excludePatterns) {}
 
   /**
    * File-system watcher configuration.

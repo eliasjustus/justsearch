@@ -4,6 +4,9 @@ type: decision
 status: stable
 description: "Public main receives curated squash commits from pull requests while branch commits remain workspace history."
 date: 2026-06-28
+probes:
+  - adr-0045-history-policy-checked
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0045: Public main history publication

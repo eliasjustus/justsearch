@@ -69,6 +69,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 
 ### Reference (Standards)
 - [API Contract Map](reference/api-contract-map.md): HTTP and gRPC contract sources, error sanitization.
+- [Architectural Risk Register](reference/architectural-risks.md): Living registry of consciously accepted trade-offs, monitored risks, and design tensions, each naming one instrument that can be checked.
 - [Module Dependencies (Gradle)](reference/architecture/module-deps.md): Generated Gradle dependency graph across all modules.
 - [Benchmark Methodology](reference/benchmarks/methodology.md): How JustSearch measures retrieval quality: the reproducible single-config release, honest comparison classes, and how to reproduce it.
 - [Engine-quality scorecard](reference/benchmarks/scorecard.md): Generated delta-vs-guard scorecard co-locating all engine-quality axes (quality + perf + leak) for the canonical release.
@@ -130,9 +131,8 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Two-Pronged Citation Strategy](decisions/0006-two-pronged-citation-strategy.md): LLM-generated citations backed by RAG metadata, supplemented by CPU cross-encoder post-hoc matching.
 - [Entity Faceting Over Full Knowledge Graph](decisions/0007-entity-faceting-over-knowledge-graph.md): Selective adoption of NER entity extraction for Lucene keyword facets with SQLite sidecar disambiguation, deferring full knowledge graph.
 - [Settings Are Ephemeral, Defaults Are Safe](decisions/0008-settings-ephemeral-defaults-safe.md): User settings (settings.json) are not migration-protected. An incompatible settings file is preserved as a timestamped .corrupt- sibling, replaced with defaults, and the reset is surfaced as a lifecycle condition.
-- [Distributed Readiness — Remote Shard SPI](decisions/0011-distributed-readiness-spi.md): Define a Remote Shard SPI for future multi-host search without breaking local-first architecture.
 - [Pipeline Definition and Schema Removal](decisions/0014-pipeline-definition-removal.md): Remove pipeline DAG definitions, budget profiles, and pipeline-schema module.
-- [MCP Tool Surface Design](decisions/0015-mcp-tool-surface-design.md): Consolidate MCP tools from 7 capability-oriented to 4 task-oriented for higher agent accuracy.
+- [MCP Tool Surface Design](decisions/0015-mcp-tool-surface-design.md): Consolidate the MCP surface from 7 capability-oriented tools to a short task-oriented list for higher agent accuracy; the shipped surface is six task-oriented tools (amended 2026-09-02).
 - [Query Understanding Soft-Boost](decisions/0016-query-understanding-soft-boost.md): Use soft boosts (SHOULD clauses) for QU-extracted signals, not hard filters.
 - [ai-bridge Module Decomposition](decisions/0017-ai-bridge-module-decomposition.md): Split ai-bridge monolith into ai-backend, gpu-bridge, and prompt-support; delete hollow app-ai and unused ai-worker.
 - [VLM PDF Extraction via Chat Model](decisions/0018-vlm-pdf-extraction-via-chat-model.md): Use existing chat model's vision capability (Qwen 3.5 VLM) for PDF layout extraction instead of adding Docling as a Python sidecar.
@@ -145,6 +145,8 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Core DTO Dual-Type Layering (gRPC vs REST)](decisions/0025-core-dto-dual-type-layering.md): Maintain separate core DTOs (gRPC-aligned) and app-api records (REST-aligned) as intentional layering, not duplication.
 - [MetricCatalog as the Telemetry Contract](decisions/0027-metric-catalog-as-telemetry-contract.md): Every metric the JustSearch processes emit flows through a typed `MetricCatalog`. Callsites build `MetricDefinition`s at module load, register them with `LocalTelemetry` at boot, and emit through compile-checked `Counter/Histogram/Gauge/ObservableCounter` instruments. The legacy `Telemetry.counter/timer/histogram/gauge/meter` surface is retired.
 - [Public main history publication](decisions/0045-public-main-history-publication.md): Public main receives curated squash commits from pull requests while branch commits remain workspace history.
+- [Local API trust boundary](decisions/0046-local-api-trust-boundary.md): The local HTTP API's trust boundary is the same-user native process: loopback bind, Host allowlist, MCP Origin validation, CORS pinned to the shell origin, and a per-boot session token on mutating routes. Same-user native processes are inside the boundary by construction.
+- [Context window is a derived resource](decisions/0047-context-window-is-a-derived-resource.md): The LLM context window is derived at activation from a ladder of explicit rungs (32k on GPU, 8k on CPU, stepped down on a launch abort) rather than configured as a user preference, and every prompt-side budget is a fraction of the live window rather than a constant.
 
 <!-- generated:end -->
 

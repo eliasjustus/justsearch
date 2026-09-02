@@ -4,9 +4,18 @@ type: decision
 status: stable
 description: "gRPC for structured data transfer, MMF for sub-millisecond signaling."
 date: 2026-02-03
+probes:
+  - adr-0002-mmf-layout-pinned
+  - adr-0002-mmf-constants-pinned
+  - adr-0002-grpc-present
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0002: Use gRPC + MMF Hybrid for IPC
+
+> **Under re-examination (decision-review lane F, engine merge, 2026-09).** The three-process
+> split this IPC design serves is being re-derived; this ADR is the record of the original
+> decision and may be superseded. Do not treat its Consequences as settled while lane F is open.
 
 ## Status
 

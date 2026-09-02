@@ -30,7 +30,9 @@ import type {
   SurfaceFactory,
   SurfaceRef,
 } from '../types/surface.js';
+import { surfaceCatalogSchema } from '../types/surface.js';
 import type { Provenance } from '../types/registry.js';
+import { parseWireContract } from '../schemas.js';
 
 /**
  * Tempdoc 571 — the host-assigned contributor id for the first-party CORE plugin. Provenance is
@@ -347,7 +349,15 @@ async function tryFetchAndPopulate(
 
     let body: SurfaceCatalog;
     try {
-      body = (await response.json()) as SurfaceCatalog;
+      // Tempdoc 884: validate the raw wire against the GENERATED Zod at the parse boundary
+      // (a mismatch logs `[WireContract]` loudly), then assert the tightened FE shape. The generated
+      // surfaceWireSchema is the single runtime authority for the Surface wire shape.
+      const raw: unknown = await response.json();
+      body = parseWireContract(
+        surfaceCatalogSchema,
+        raw,
+        'GET /api/registry/surfaces',
+      ) as unknown as SurfaceCatalog;
     } catch (parseErr) {
       console.debug('[SurfaceCatalogClient] response body parse failed', parseErr);
       return false;

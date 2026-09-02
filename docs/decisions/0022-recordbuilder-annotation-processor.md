@@ -4,6 +4,9 @@ type: decision
 status: stable
 description: "Use io.soabase record-builder v52 to generate fluent builders for Java records in app-api, enabling additive field evolution."
 date: 2026-04-07
+probes:
+  - adr-0022-record-builder-present
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0022: RecordBuilder Annotation Processor for API Records

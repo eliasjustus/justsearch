@@ -4,6 +4,8 @@ type: decision
 status: accepted
 description: "Streaming Resources share one multi-frame SSE envelope (initial snapshot frame + subsequent delta frames) rather than per-endpoint ad-hoc stream shapes."
 date: 2026-06-09
+probes: none - the SSE envelope shape is owned by the wire contract Category and its projection gate.
+last_reviewed: 2026-09-02
 ---
 
 

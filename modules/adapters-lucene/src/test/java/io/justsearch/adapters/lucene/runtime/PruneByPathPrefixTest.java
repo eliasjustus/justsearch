@@ -329,7 +329,8 @@ class PruneByPathPrefixTest {
       }
       commitAndRefresh();
 
-      // Abort checker that always returns true (user active)
+      // Abort checker that always returns true. What "abort" means is the caller's, not this
+      // layer's — see tempdoc 885 item 3 for the pacing signal behind it.
       int pruned = runtime.pruneOps().pruneByPathPrefix(
           testFilesDir.toString(),
           () -> true,  // Always abort

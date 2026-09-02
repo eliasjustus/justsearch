@@ -25,7 +25,7 @@ public record SurfaceConsumes(
     Set<OperationRef> operations,
     Set<PromptRef> prompts,
     Set<DiagnosticChannelRef> diagnosticChannels,
-    Set<ConversationShapeRef> conversationShapes) {
+    Set<ConversationShapeRef> conversationShapes) implements PreciseWire {
 
   public SurfaceConsumes {
     resources = resources == null ? Set.of() : Set.copyOf(resources);

@@ -4,6 +4,9 @@ type: decision
 status: stable
 description: "Use NSIS installer with per-user install to LocalAppData and post-install model download via Install AI flow."
 date: 2026-04-06
+probes:
+  - adr-0024-per-user-install
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0024: App Packaging: NSIS, Per-User Install, Download-on-Demand

@@ -1,44 +1,51 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Slice 449 phase 5 — hand-written TypeScript types for the Surface Manifest
- * primitive and its nested value types.
+ * Surface Manifest types — a **composing barrel** over the generated wire projection.
  *
- * Mirrors `modules/app-agent-api/src/main/java/io/justsearch/agent/api/registry/`
- * (Surface.java, SurfaceRef.java, Audience.java, Placement.java,
- * SurfaceConsumes.java).
+ * Tempdoc 884 (ADR-0038 amendment) retired the hand-written mirror that used to live here.
+ * The authority is now `SSOT/schemas/surface.v1.json`, emitted from
+ * `modules/app-agent-api/.../registry/Surface.java` by `SubstrateSchemaGenTest` and projected to
+ * TypeScript by `scripts/codegen/gen-wire-schema-types.mjs` (registered in
+ * `governance/contract-surfaces.v1.json` as `SurfaceWire`). Regenerate with
+ * `./gradlew.bat :modules:app-api:updateSchemas` then
+ * `node scripts/codegen/gen-wire-schema-types.mjs`; `check-wire-schema-types-regen` fails on drift.
  *
- * Per slice 449 §0 D1: Surface is a **Manifest** (composition over primitives),
- * not a fifth primitive. Surface's catalog is parallel-but-distinct from the
- * per-primitive catalogs (Resource / Operation / Prompt / DiagnosticChannel).
+ * This file is not a mirror and must not become one again. Everything below is one of:
+ *  1. a re-export or projection of `SurfaceWire` (the field SET comes from Java, mechanically);
+ *  2. a **client-side-only** concern the backend never sends — `factory` (478 §4.A dispatch token,
+ *     minted by the catalog at boot) and `splitPairing` (521 §22 Phase D, a plugin contribution
+ *     merged client-side; it has zero Java source);
+ *  3. a closed vocabulary list (`AUDIENCES`, `PLACEMENTS`) that exists as a runtime value, which a
+ *     type projection cannot provide.
  *
- * Wire-shape conventions match the Resource / DiagnosticChannel types:
- *  - Java enums serialize as bare strings.
- *  - SurfaceRef serializes as a bare string (Java record's @JsonValue).
- *  - Set<X> serializes as `X[]`.
+ * Per slice 449 §0 D1: Surface is a **Manifest** (composition over primitives), not a fifth
+ * primitive. Its catalog is parallel-but-distinct from the per-primitive catalogs
+ * (Resource / Operation / Prompt / DiagnosticChannel). Same pattern as `registry.ts`'s
+ * `ResourceWire` / `OperationWire` barrels.
  */
 
-import type { OperationRef, Presentation, Provenance } from './registry.js';
-import type { DiagnosticChannelRef } from './diagnostic.js';
-import type {
-  Altitude,
-  Audience as GenAudience,
-} from '../generated/registry-enums.generated.js';
+import { z } from 'zod';
+import type { Presentation, Provenance } from './registry.js';
+import type { Altitude } from '../generated/registry-enums.generated.js';
+import type { SurfaceWire } from '../generated/schema-types/surface.js';
+import { surfaceWireSchema } from '../generated/schema-types/surface.js';
+export { surfaceWireSchema };
+export type { SurfaceWire };
 
 export type { Altitude };
 
 // ============================================================
-// Discriminator vocabularies (mirror Java enums)
+// Discriminator vocabularies — projected from the wire
 // ============================================================
 
 /**
- * Access-control audience axis. Generated alias of the Java `Audience`
- * authority (`registry-enums.generated.ts`).
+ * Access-control audience axis, projected from `SurfaceWire`.
  *
  * Trust ordering for the audience-composition rule (slice 449 §0 D2):
  * `USER < OPERATOR < DEVELOPER`. AGENT is excluded from the comparison —
  * agent surfaces are consumed by headless tool APIs, not human chrome.
  */
-export type Audience = GenAudience;
+export type Audience = SurfaceWire['audience'];
 
 /** Closed list useful for exhaustive switches and test fixtures. */
 export const AUDIENCES: readonly Audience[] = [
@@ -49,24 +56,28 @@ export const AUDIENCES: readonly Audience[] = [
 ] as const;
 
 /**
- * Chrome-zone placement axis. Mirrors `Placement.java`.
+ * Chrome-zone placement axis, projected from `SurfaceWire`.
  *
- * V1 enum maps to today's React `<GlassShell>` 5-zone layout plus a few
- * audience-specific values (DEEPLINK, HEADLESS_AGENT_TOOL). Lumino-class
- * placement values land when the 3a.6+ runtime cutover ships.
+ * Adding a value is a Java change (`Placement.java`), not an edit here: the union is generated,
+ * so a new zone appears in this type automatically and `check-a11y-closure` then demands a
+ * landmark-role mapping for it.
  */
-export type Placement =
-  | 'COMMAND'
-  | 'RAIL'
-  | 'STAGE'
-  | 'HUD'
-  | 'STATUS'
-  | 'DRAWER'
-  | 'MODAL'
-  | 'DEEPLINK'
-  | 'HEADLESS_AGENT_TOOL';
+export type Placement = SurfaceWire['placement'];
 
-/** Closed list useful for exhaustive switches. */
+/**
+ * Closed list useful for exhaustive switches.
+ *
+ * This is a runtime VALUE, which is why it is hand-maintained rather than projected — and it is
+ * load-bearing beyond TypeScript: `scripts/ci/check-a11y-closure.mjs` parses this declaration's
+ * literal to assert every placement has a landmark role. Keep the declaration's exact shape and
+ * its quoted constants. (Do not restate the declaration's syntax anywhere above it in this file:
+ * that check takes the FIRST match in the file, so a prose copy of it shadows the real one and the
+ * gate reports zero placements.)
+ *
+ * The `readonly Placement[]` annotation checks only that every entry IS a `Placement` — a subset
+ * type-checks fine, so it cannot catch a dropped or newly-added zone. `PLACEMENT_CLOSURE` below is
+ * what makes that a compile error.
+ */
 export const PLACEMENTS: readonly Placement[] = [
   'COMMAND',
   'RAIL',
@@ -79,98 +90,129 @@ export const PLACEMENTS: readonly Placement[] = [
   'HEADLESS_AGENT_TOOL',
 ] as const;
 
+/**
+ * Compile-time closure over the generated `Placement` union: every member must appear as a key.
+ * Adding a zone in Java (`Placement.java`) regenerates the union, and this declaration then fails to
+ * type-check until the new zone is listed here AND in `PLACEMENTS` above — which is what forces the
+ * a11y gate to see it and demand a landmark-role mapping.
+ *
+ * Type-level only; `void`-consumed so it is not an unused binding. It is deliberately NOT exported:
+ * the registry barrel may not declare a second hand-authored wire shape (`contribution-surface`
+ * gate), and this is an assertion, not a shape.
+ */
+const PLACEMENT_CLOSURE: Record<Placement, true> = {
+  COMMAND: true,
+  RAIL: true,
+  STAGE: true,
+  HUD: true,
+  STATUS: true,
+  DRAWER: true,
+  MODAL: true,
+  DEEPLINK: true,
+  HEADLESS_AGENT_TOOL: true,
+};
+void PLACEMENT_CLOSURE;
+
 // ============================================================
 // Common value types
 // ============================================================
 
 /**
- * Surface id. Serialized as a bare string. Mirrors `SurfaceRef.java`.
- * Pattern: `core.<name>` or `vendor.<plugin-id>.<name>`.
+ * Surface id. Serialized as a bare string (`SurfaceRef.java`'s `@JsonValue`).
+ * Pattern: `core.<name>` or `vendor.<plugin-id>.<name>` — the generated schema carries the regex.
  */
-export type SurfaceRef = string;
+export type SurfaceRef = SurfaceWire['id'];
 
 /**
- * Typed cross-reference graph from a Surface to the primitives it consumes.
- * Mirrors `SurfaceConsumes.java`.
+ * Typed cross-reference graph from a Surface to the primitives it consumes — a direct projection of
+ * the wire's `consumes` object.
  *
- * Slice 491 §9.D Phase E (C0): adds `conversationShapes` to the consumption
- * graph. Surfaces hosting a chat shape (e.g., `core.agent-surface` consumes
- * `core.agent`; `core.ask-surface` consumes `core.ask`) declare it here. The
- * FE `<jf-chat-shape-mount>` reads this field to resolve which shape's view
- * factory to instantiate. Optional for back-compat with pre-Phase-E entries.
+ * `SurfaceConsumes.java` implements `PreciseWire` and its compact constructor defaults every `Set`
+ * to `Set.of()`, so the generated schema marks all five graphs `required` and non-null. Nothing is
+ * restated here: the field set, its cardinality and its nullability all come from Java
+ * mechanically, so a renamed or removed component changes this type rather than silently diverging
+ * from it.
+ *
+ * Slice 491 §9.D Phase E (C0): `conversationShapes` joins the graph. Surfaces hosting a chat shape
+ * (e.g. `core.agent-surface` consumes `core.agent`) declare it here, and `<jf-chat-shape-mount>`
+ * reads it to resolve which shape's view factory to instantiate. It is the ONE key relaxed to
+ * optional at the FE boundary — client-side Surface literals (plugin contributions, test fixtures)
+ * predate Phase E and omit it, even though the wire always carries it. Every other key comes
+ * through `Omit` untouched, so the required set is derived by exclusion rather than restated.
  */
-export interface SurfaceConsumes {
-  resources: OperationRef[];
-  operations: OperationRef[];
-  prompts: OperationRef[];
-  diagnosticChannels: DiagnosticChannelRef[];
-  /** Slice 491 §9.D Phase E — ConversationShape refs hosted by this surface. */
-  conversationShapes?: string[];
-}
+export type SurfaceConsumes = Omit<SurfaceWire['consumes'], 'conversationShapes'> &
+  Partial<Pick<SurfaceWire['consumes'], 'conversationShapes'>>;
 
 // ============================================================
 // Surface manifest
 // ============================================================
 
 /**
- * Wire shape of a Surface catalog entry. Mirrors
- * `modules/app-agent-api/.../Surface.java`.
+ * A Surface catalog entry as the FE holds it: the generated wire shape, plus the two client-side
+ * fields the backend never sends.
+ *
+ * `altitude` and `members` are relaxed to optional because the FE constructs Surface objects that
+ * predate them (`SurfaceCatalogClient` merge paths, plugin contributions, test fixtures); the wire
+ * always provides both, and an absent `altitude` is read as `PRODUCT`, mirroring the Java record's
+ * `null → PRODUCT` default. `riskTier` and `stateSchema` are backend concerns that ride the same
+ * wire; they are optional here for the same reason.
  */
-export interface Surface {
-  id: SurfaceRef;
+export type Surface = Omit<
+  SurfaceWire,
+  | 'presentation'
+  | 'provenance'
+  | 'consumes'
+  | 'altitude'
+  | 'members'
+  | 'riskTier'
+  | 'stateSchema'
+> & {
   presentation: Presentation;
-  audience: Audience;
-  placement: Placement;
-  consumes: SurfaceConsumes;
-  mountTag: string;
   provenance: Provenance;
+  consumes: SurfaceConsumes;
   /**
-   * Tempdoc 571 — the surface's **altitude**: the governing axis that determines its
-   * home (rail band) and its core-vs-plugin eligibility, as a projection of the primary
-   * authority it carries. Optional at the FE boundary: the wire always provides it (Jackson
-   * serializes the Java record's field, which defaults to `PRODUCT`), and consumers treat an
-   * absent value as `PRODUCT` — mirroring the backend record's `null → PRODUCT` default. The
-   * authoritative declaration and the foreclosures (`TRUST ⟹ CORE`; `channel ⟹ DIAGNOSTIC`)
-   * live in the Java `CoreSurfaceCatalog` + the `surface-altitude` gate.
+   * Tempdoc 571 — the surface's **altitude**: the governing axis that determines its home (rail
+   * band) and its core-vs-plugin eligibility, as a projection of the primary authority it carries.
+   * The authoritative declaration and the foreclosures (`TRUST ⟹ CORE`;
+   * `channel ⟹ DIAGNOSTIC`) live in the Java `CoreSurfaceCatalog` + the `surface-altitude` gate.
    */
   altitude?: Altitude;
   /**
-   * Tempdoc 571 §11 / 578 — the declared host/member composition relationship. A host surface
-   * names the member surfaces it presents inside itself (e.g. System hosts Health/Logs/Activity).
+   * Tempdoc 571 §11 / 578 — the declared host/member composition relationship. A host surface names
+   * the member surfaces it presents inside itself (e.g. System hosts Health/Logs/Activity).
    * Membership is the single home-authority: a member is excluded from the rail and its deep-link
    * resolves to the host. Order is the declared tab order. Absent/empty ⇒ this surface hosts
-   * nothing. Authored in the Java `CoreSurfaceCatalog`; the wire is the authority (CorePlugin omits
-   * it). The `surface-composition` gate enforces one-home integrity.
+   * nothing. The `surface-composition` gate enforces one-home integrity.
    */
   members?: SurfaceRef[];
+  /** Backend-only navigation risk tier (tempdoc 550 WA-4); on the wire, unused by the FE. */
+  riskTier?: SurfaceWire['riskTier'];
+  /** Backend-declared surface state schema; on the wire, unused by the FE. */
+  stateSchema?: SurfaceWire['stateSchema'];
   /**
-   * Tempdoc 521 §22 Phase D — declarative split pairing. When this
-   * surface is the primary pane of a split-stage layout and the user
-   * has not chosen a secondary surface explicitly, `Shell` reads
-   * `splitPairing.secondary` as the curated default. Plugins can
-   * declare their preferred pair without touching host code.
-   * Absent ⇒ no curated pair; fallback to "first non-primary rail
+   * Tempdoc 521 §22 Phase D — declarative split pairing. When this surface is the primary pane of
+   * a split-stage layout and the user has not chosen a secondary surface explicitly, `Shell` reads
+   * `splitPairing.secondary` as the curated default. Plugins can declare their preferred pair
+   * without touching host code. Absent ⇒ no curated pair; fallback to "first non-primary rail
    * surface."
+   *
+   * **Client-side only** — no Java counterpart exists; it is merged in by
+   * `mergePluginSurfaceContributions`, never served.
    */
   splitPairing?: {
     secondary: string;
   };
   /**
-   * 478 §4.A — SurfaceFactory minted by the FE catalog at
-   * boot/merge time. The factory captures the validated mountTag
-   * in a closure; consumers (Stage.render()) call factory.mount()
-   * to construct the surface element WITHOUT going through
-   * template-string interpolation.
+   * 478 §4.A — SurfaceFactory minted by the FE catalog at boot/merge time. The factory captures the
+   * validated mountTag in a closure; consumers (Stage.render()) call factory.mount() to construct
+   * the surface element WITHOUT going through template-string interpolation.
    *
-   * Optional (forward-compat): wire-shape Surfaces from the
-   * server initially have factory=undefined; the catalog stamps
-   * it on receipt. Plugin contributions get factory stamped at
-   * `mergePluginSurfaceContributions` time. Stage falls back to
-   * the legacy `mountTag` + customElements.get path when factory
-   * is absent (transitional; V1.5.2 marks factory required).
+   * **Client-side only** — wire-shape Surfaces arrive with `factory` undefined and the catalog
+   * stamps it on receipt. Stage falls back to the legacy `mountTag` + customElements.get path when
+   * it is absent (transitional; V1.5.2 marks factory required).
    */
   factory?: SurfaceFactory;
-}
+};
 
 /**
  * 478 §4.A — opaque dispatch token. The catalog is the only mint-
@@ -223,3 +265,17 @@ export interface SurfaceCatalog {
   primitive: 'Surface';
   entries: Surface[];
 }
+
+/**
+ * Runtime validator for the Surface catalog envelope (tempdoc 884; the 560 §4c Phase B parse
+ * boundary, extended to the Surface Manifest). Each entry is validated by the GENERATED
+ * `surfaceWireSchema` — the single runtime authority for the Surface wire shape.
+ */
+export const surfaceCatalogSchema = z.object({
+  $schema: z.string().optional(),
+  schemaVersion: z.string(),
+  catalogVersion: z.number(),
+  namespace: z.string(),
+  primitive: z.literal('Surface'),
+  entries: z.array(surfaceWireSchema),
+});

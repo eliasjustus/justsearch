@@ -23,6 +23,12 @@
  *                        `capability: 'advisory'` in the reaper's frozen `OCCASIONS` map, so it
  *                        can never obtain a kill list — a ready-to-run kill line is printed for
  *                        the observed tier, never auto-run.
+ *   (f) ADR REVIEW     — tempdoc 884 design decision 4: ADRs whose `last_reviewed` is past the
+ *                        declared review window. The `adr-coverage` gate already warns in CI, but
+ *                        a CI-only warning is the pile nobody reads — nothing is scheduled to
+ *                        re-read decisions, so this section is the schedule. The window and the
+ *                        date arithmetic come from the gate's own `review-window.mjs`; this is a
+ *                        second consumer of one rule, not a second rule.
  *
  * Every external probe (git, claude CLI, dev-runner state files) is wrapped in try/catch and
  * degrades to an explicit "unavailable"/"unknown" line — this tool must never crash the orienting
@@ -36,7 +42,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import matter from 'gray-matter';
 import { collectClaims, divergentInFlightCollisions, nextFreeNumber } from '../ci/lib/tempdoc-scan.mjs';
+import {
+  NON_ADR_FILES,
+  REVIEW_STALE_DAYS_DEFAULT,
+  daysSince,
+  loadReviewStaleDays,
+  normalizeDate,
+} from '../governance/gates/adr-coverage/review-window.mjs';
 
 // Tempdoc 861 §7.5 — the documented cross-format interop: an ESM tool pulls the shared `.cjs`
 // dev-stack libs in via `createRequire`, exactly as `otlp-sink-ensure.mjs` already does.
@@ -44,6 +58,10 @@ const require = createRequire(import.meta.url);
 const { gatherAgentSpawnOrientation, describeEntry, resolveCallerSessionId } = require('../dev/lib/agent-spawn-sweep.cjs');
 
 const STALE_DAYS_THRESHOLD = 3;
+
+// The tree this script actually lives in — NOT process.cwd() (the CLI is run from anywhere) and
+// NOT the main checkout (an ADR you are editing lives in YOUR worktree).
+const SELF_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // ---------------------------------------------------------------------------------------------
 // Pure functions (exported for tests — no I/O, no process access beyond their arguments).
@@ -158,6 +176,21 @@ export function renderMarkdown(data) {
 
   lines.push('## Stack', '');
   lines.push(data.stack.available ? data.stack.summary : `not running or unknown — use quick_health (${data.stack.reason})`);
+  lines.push('');
+
+  lines.push('## ADR review', '');
+  if (data.adrReview.available) {
+    const { staleCount, scanned, thresholdDays, rows } = data.adrReview;
+    lines.push(`${staleCount} of ${scanned} ADR(s) past the ${thresholdDays}-day review window`);
+    for (const r of rows) {
+      lines.push(`  - ${r.adr}: last_reviewed ${r.lastReviewed ?? 'missing'}${r.ageDays == null ? '' : ` (${r.ageDays}d ago)`}`);
+    }
+    if (staleCount > 0) {
+      lines.push('', 're-examine per docs/decisions/README.md § How to re-examine an ADR (amendments are append-only), then update `last_reviewed` and `probes:`.');
+    }
+  } else {
+    lines.push(`unavailable — ${data.adrReview.reason}`);
+  }
   lines.push('');
 
   lines.push('## Agent spawns', '');
@@ -301,6 +334,54 @@ function gatherStack() {
   }
 }
 
+/**
+ * ADRs whose `last_reviewed` is past the review window (tempdoc 884 design decision 4).
+ *
+ * Deterministic given its arguments: it reads `adrDir` and nothing else, and takes `now` so a
+ * test can pin a synthetic date instead of asserting against whatever today happens to make
+ * stale. A missing/unparseable `last_reviewed` counts as stale — an ADR that declares no review
+ * date is exactly the kind that goes unexamined (the enforcer's `verdictForReviewStale` makes
+ * the same call).
+ *
+ * @param {{adrDir: string, now?: number, thresholdDays?: number}} options
+ * @returns {{available: boolean, reason?: string, scanned: number, staleCount: number,
+ *            thresholdDays: number, rows: Array<{adr: string, lastReviewed: string|null, ageDays: number|null}>}}
+ */
+export function gatherAdrReview({ adrDir, now = Date.now(), thresholdDays = REVIEW_STALE_DAYS_DEFAULT }) {
+  const base = { scanned: 0, staleCount: 0, thresholdDays, rows: [] };
+  let entries;
+  try {
+    entries = fs.readdirSync(adrDir).filter((n) => n.endsWith('.md') && !NON_ADR_FILES.has(n));
+  } catch (e) {
+    return { available: false, reason: e.message, ...base };
+  }
+  const rows = [];
+  let scanned = 0;
+  for (const name of entries.sort()) {
+    let content;
+    try {
+      content = fs.readFileSync(path.join(adrDir, name), 'utf8');
+    } catch {
+      continue; // one unreadable ADR degrades that row, not the section
+    }
+    scanned += 1;
+    let data = {};
+    if (content.startsWith('---')) {
+      try {
+        data = matter(content).data ?? {};
+      } catch {
+        data = {}; // unparseable frontmatter has no review date — the gate fails it separately
+      }
+    }
+    const lastReviewed = normalizeDate(data.last_reviewed);
+    const ageDays = lastReviewed ? daysSince(lastReviewed, now) : null;
+    if (ageDays === null || ageDays > thresholdDays) {
+      rows.push({ adr: name, lastReviewed, ageDays });
+    }
+  }
+  return { available: true, scanned, staleCount: rows.length, thresholdDays, rows };
+}
+
 /** Tempdoc 861 §6.4 `orientation` occasion — read-only, never kills (enforced in the reaper's
  * frozen `OCCASIONS` map, not here: `capability: 'advisory'` mints no `reap` entry regardless of
  * what this gatherer passes in). `recordId === null` is how `reapEligible` marks an observed-tier
@@ -335,6 +416,10 @@ export async function buildReport() {
     sessions: gatherSessions(),
     tempdocNumbers: gatherTempdocNumbers(),
     stack: gatherStack(),
+    adrReview: gatherAdrReview({
+      adrDir: path.join(SELF_ROOT, 'docs', 'decisions'),
+      thresholdDays: loadReviewStaleDays(SELF_ROOT),
+    }),
     agentSpawns: await gatherAgentSpawns(),
   };
 }

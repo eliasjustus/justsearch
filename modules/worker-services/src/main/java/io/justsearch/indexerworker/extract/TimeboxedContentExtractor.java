@@ -214,7 +214,7 @@ public final class TimeboxedContentExtractor implements AutoCloseable {
       return extract(file);
     } catch (IOException | ExtractionException e) {
       log.debug("Safe extraction failed for {}: {}", file, e.getMessage());
-      return new ExtractionResult("", null, delegate.detectMimeType(file));
+      return new ExtractionResult("", null, detectMimeType(file));
     }
   }
 

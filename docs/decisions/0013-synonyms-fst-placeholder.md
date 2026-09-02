@@ -4,6 +4,8 @@ type: decision
 status: accepted - partially superseded by ADR-0043
 description: "Use deterministic text placeholders for synonym FST artifacts until a Java Lucene FST compiler is built."
 date: 2025-10-15
+probes: none - partially superseded by ADR-0043, which owns the surviving question; the placeholder artifacts are covered by the language-agnostic-analysis check through 0043.
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0013: Synonyms FST Placeholder

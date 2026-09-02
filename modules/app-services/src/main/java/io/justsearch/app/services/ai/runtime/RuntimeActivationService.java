@@ -1200,6 +1200,11 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     command.add("--port");
     command.add(String.valueOf(port));
 
+    // Tempdoc 883: this 4096 is a PROBE parameter, not the runtime window. The self-test measures a
+    // VRAM delta across a model load; raising it to the derived ladder rung would change what is
+    // measured and could fail the probe on small GPUs. It is also unchanged in behaviour by 883 —
+    // before, an unset contextLength defaulted to 4096 in UiSettings; now it defaults to 0 = auto
+    // and lands on this same fallback. The runtime window lives in ContextWindowPolicy.
     int ctx = (settings != null && settings.getContextLength() > 0) ? settings.getContextLength() : 4096;
     command.add("-c");
     command.add(String.valueOf(ctx));

@@ -4,6 +4,8 @@ type: decision
 status: stable
 description: "Any endpoint whose behavior varies by runtime mode must surface that mode in its response to prevent silent behavioral switches."
 date: 2026-03-30
+probes: none - "responses declare their runtime mode" is a per-endpoint property; no cheap whole-repo restatement exists. Candidate for an ArchUnit pin (tempdoc 884 PR 2 worklist).
+last_reviewed: 2026-09-02
 ---
 
 # ADR-0023: API Responses Declare Runtime Context

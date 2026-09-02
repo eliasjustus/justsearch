@@ -22,6 +22,8 @@ import io.justsearch.indexerworker.embed.EmbeddingFingerprint;
 import io.justsearch.indexerworker.embed.EmbeddingConfig;
 import io.justsearch.indexerworker.embed.EmbeddingMetadataOverlay;
 import io.justsearch.indexerworker.embed.EmbeddingService;
+import io.justsearch.indexerworker.loop.pacing.ForegroundLoad;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.index.IndexGenerationManager;
 import io.justsearch.indexerworker.recovery.IndexRecoveryPolicy;
 import io.justsearch.indexerworker.index.MigrationProgressSnapshot;
@@ -154,11 +156,11 @@ public final class KnowledgeServer implements Closeable {
    * the single interceptor that feeds the gauge — is not. A per-appServices gauge would be orphaned
    * from its only producer on the first reconstruction and silently stop throttling.
    */
-  private final io.justsearch.indexerworker.loop.pacing.ForegroundLoad foregroundLoad =
-      new io.justsearch.indexerworker.loop.pacing.ForegroundLoad();
+  private final ForegroundLoad foregroundLoad =
+      new ForegroundLoad();
 
-  private volatile io.justsearch.indexerworker.loop.pacing.IndexingPacing indexingPacing =
-      io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled();
+  private volatile IndexingPacing indexingPacing =
+      IndexingPacing.unthrottled();
   DelegatingSearchService searchWrapper;
   DelegatingIngestService ingestWrapper;
   DelegatingHealthService healthWrapper;
@@ -834,13 +836,13 @@ public final class KnowledgeServer implements Closeable {
   }
 
   /** Tempdoc 885 item 3: the process-scoped duty-cycle policy, built from resolved config. */
-  private io.justsearch.indexerworker.loop.pacing.IndexingPacing buildIndexingPacing() {
+  private IndexingPacing buildIndexingPacing() {
     ConfigStore store = ConfigStore.globalOrNull();
     ResolvedConfig.Ai.BackfillPacing pacing =
         store == null || store.get() == null
             ? ResolvedConfig.Ai.BackfillPacing.DEFAULTS
             : store.get().ai().backfillPacing();
-    return new io.justsearch.indexerworker.loop.pacing.IndexingPacing(
+    return new IndexingPacing(
         foregroundLoad, pacing.foregroundDutyPct(), pacing.foregroundCooldownMs());
   }
 

@@ -74,6 +74,12 @@ class UnreferencedCodeTest {
                   + "the cross-module seam it round-trips through; OnlineModeOpsTest calls "
                   + "OnlineModeOps directly, not this)"),
           Map.entry("InferenceLifecycleManager.extractUsageFromChatChunk", "LlamaServerUsageParsingTest"),
+          // Tempdoc 885 item 14: the pool's reuse and recycle properties have no other observable.
+          // "Three requests succeeded" is also true of three spawns, so the tests assert the child
+          // PID and the spawn/restart counts; without these they would pass for the wrong reason.
+          Map.entry("PersistentExtractionSandbox.spawnCount", "PersistentExtractionSandboxTest"),
+          Map.entry("PersistentExtractionSandbox.restartCount", "PersistentExtractionSandboxTest"),
+          Map.entry("PersistentExtractionSandbox.firstChildPid", "PersistentExtractionSandboxTest"),
           Map.entry("InferenceLifecycleManager.asIntOrNull", "InferenceLifecycleManagerUtilsTest"),
           Map.entry("InferenceLifecycleManager.asPositiveInt", "InferenceLifecycleManagerUtilsTest"),
           Map.entry("InferenceLifecycleManager.startLlamaServer", "ExternalServerTest"),

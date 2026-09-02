@@ -22,11 +22,16 @@ import java.util.Locale;
  * <p><b>Why {@link #THOROUGH_MULTIPLIER} is 15 — a structural bound, not a burn estimate.</b>
  *
  * <pre>
- *   spend(one call) &lt;= promptTokens + completionTokens &lt;= n_ctx + maxTokens   (maxTokens = 1024)
+ *   spend(one call) &lt;= promptTokens + completionTokens &lt;= n_ctx + maxTokens
  *   spend(run)      &lt;= maxIterations * (n_ctx + maxTokens)
  *   as a multiple    = maxIterations * (1 + maxTokens/n_ctx)
- *                    = 12.5x @ n_ctx 4096   = 10.3x @ n_ctx 32k   -&gt; 10x asymptote
+ *                    = 11.25x @ n_ctx 8192 (CPU rung)   = 10.3x @ n_ctx 32768 (GPU rung)
+ *                    -&gt; 10x asymptote
  * </pre>
+ *
+ * <p>{@code maxTokens} is {@link AgentContextBudgets}'s per-call completion cap: at most 1024, and
+ * LESS at a window too small to afford it (tempdoc 883 decision 3). It can only move the multiple
+ * down, so the bound below holds whatever the launch ladder derives.
  *
  * 15x clears that bound for every {@code n_ctx >= 2048} and for every burn SHAPE, because the bound
  * does not depend on burn at all. So Thorough means precisely: <em>tokens can never be what stops
@@ -44,8 +49,8 @@ import java.util.Locale;
  * pre-L1 value of 5 was fitted to a single earlier datapoint and under-funded that by a third: the
  * live Standard run hit the budget gate at 102.6% ({@code 21,013 / 20,480}) after 8 tool calls and
  * never answered. 8x funds the measured run with modest headroom and still sits UNDER the structural
- * bound above (12.5x @ 4096), so Standard remains a rung where tokens genuinely can stop a run —
- * which is what distinguishes it from Thorough.
+ * bound above at every rung the ladder derives, so Standard remains a rung where tokens genuinely
+ * can stop a run — which is what distinguishes it from Thorough.
  *
  * <p><b>No rung reduces today's allowance.</b> {@code 2 * n_ctx > n_ctx - 256} for every
  * {@code n_ctx}, so the leash is only INTER-rung: Quick is the smallest raise, never a restriction.
