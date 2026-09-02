@@ -93,7 +93,8 @@ final class CoreApiAssembly {
                 : DocumentService.unavailable()
             : DocumentService::unavailable;
     ChunkInfoController chunkInfoController = new ChunkInfoController(docSvcSupplier, telemetry);
-    // Foreground responsiveness: preview counts as user activity; signal the Worker so it can breath-hold indexing.
+    // Foreground responsiveness: preview counts as user activity; recorded for the Head's own
+    // idle checks (VDU pacing). The Worker is not signalled — it paces on its own foreground gauge.
     PreviewController previewController =
         b.knowledgeServer == null
             ? new PreviewController(
@@ -107,7 +108,7 @@ final class CoreApiAssembly {
                 java.time.Duration.ofSeconds(5),
                 () -> {
                   try {
-                    b.knowledgeServer.signalUserActivity();
+                    b.knowledgeServer.recordUserActivity();
                   } catch (Exception ignored) {
                     // best-effort
                   }

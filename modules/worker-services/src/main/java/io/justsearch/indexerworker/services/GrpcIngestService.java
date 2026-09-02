@@ -65,6 +65,7 @@ import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.queue.IndexingJobChangeFeed;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexerworker.queue.SwitchBufferCapableQueue;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.loop.IndexingLoop;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.index.IndexGenerationManager;
@@ -120,6 +121,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private final JobQueue jobQueue;
   private final IndexingLoop indexingLoop;
   private final WorkerSignalBus signalBus;
+  /** Tempdoc 885 item 3: foreground-contention duty cycle for the prune / sync walks. */
+  private final IndexingPacing indexingPacing;
   private final io.justsearch.adapters.lucene.runtime.RunningRuntime ingestLifecycle;
   private final IndexGenerationManager indexGenerationManager;
   private final OperationalMetrics metrics = OperationalMetrics.getInstance();
@@ -147,6 +150,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
    * @param jobQueue The job queue for persisting ingest jobs
    * @param indexingLoop The indexing loop for commit status
    * @param signalBus The signal bus for coordination metrics
+   * @param indexingPacing The foreground-contention duty cycle (tempdoc 885 item 3)
    * @param indexPath The path to the Lucene index directory (for size calculation)
    * @param ingestLifecycle The lifecycle manager for write/mutation operations
    * @param searchLifecycle The lifecycle manager for search/status reads
@@ -155,6 +159,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       JobQueue jobQueue,
       IndexingLoop indexingLoop,
       WorkerSignalBus signalBus,
+      IndexingPacing indexingPacing,
       Path indexBasePath,
       Path indexPath,
       io.justsearch.adapters.lucene.runtime.RunningRuntime ingestLifecycle,
@@ -165,6 +170,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
     this.jobQueue = jobQueue;
     this.indexingLoop = indexingLoop;
     this.signalBus = signalBus;
+    this.indexingPacing =
+        java.util.Objects.requireNonNull(indexingPacing, "indexingPacing");
     this.ingestLifecycle = ingestLifecycle;
     this.indexGenerationManager = indexBasePath == null ? null : new IndexGenerationManager(indexBasePath);
     this.migrationOps = new MigrationControlOps(this.indexGenerationManager, restartWorkerCallback);
@@ -196,7 +203,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         ingestLifecycle != null ? ingestLifecycle.pruneOps() : null,
         ingestLifecycle != null ? ingestLifecycle.commitOps() : null,
         jobQueue,
-        signalBus);
+        this.indexingPacing);
     this.switchBufferOps =
         new IngestSwitchBufferOps(jobQueue, this.indexGenerationManager, metrics);
   }
@@ -1077,9 +1084,13 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       }
 
       // Prune orphan documents - abort if user becomes active
+      // Tempdoc 885 item 3: the throttle callback is the pacing tick and never aborts — a prune
+      // that stops half-way on user activity leaves orphans behind, which is what the breath-hold
+      // did. `aborted` therefore stays false on this path; the response field remains for the
+      // force/abort contract PruneOps still exposes.
       int result = ingestLifecycle.pruneOps().pruneByPathPrefix(
           pathPrefix,
-          signalBus::isUserActive,  // Abort checker
+          indexingPacing::paceAndContinue,
           100  // Throttle batch size
       );
 
@@ -1135,14 +1146,6 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
             "syncDirectory",
             responseObserver,
             sbq -> switchBufferOps.bufferSyncDirectoryDuringSwitching(sbq, rootPath, force, responseObserver));
-        return;
-      }
-
-      // Check user activity (unless force=true)
-      if (!force && signalBus.isUserActive()) {
-        log.debug("syncDirectory skipped - user is active");
-        responseObserver.onNext(syncDirectorySkippedResponse());
-        responseObserver.onCompleted();
         return;
       }
 

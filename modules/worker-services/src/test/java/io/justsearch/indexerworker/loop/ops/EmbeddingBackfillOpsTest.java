@@ -9,6 +9,7 @@ import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexing.SchemaFields;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,7 @@ class EmbeddingBackfillOpsTest {
         indexingCoordinator,
         commitOps,
         signalBus,
+        IndexingPacing.unthrottled(),
         () -> embeddingProvider,
         () -> true,
         () -> true,
@@ -60,7 +62,6 @@ class EmbeddingBackfillOpsTest {
               eq(SchemaFields.EMBEDDING_STATUS_PENDING),
               anyInt()))
           .thenReturn(List.of("chunk1", "chunk2"));
-      when(signalBus.isUserActive()).thenReturn(false);
       when(signalBus.isMainGpuActive()).thenReturn(false);
       when(documentFieldOps.getDocumentField("chunk1", SchemaFields.CHUNK_CONTENT))
           .thenReturn("content one");
@@ -170,7 +171,6 @@ class EmbeddingBackfillOpsTest {
       when(documentFieldOps.queryDocIdsByField(
               eq(SchemaFields.EMBEDDING_STATUS), eq(SchemaFields.EMBEDDING_STATUS_PENDING), anyInt()))
           .thenReturn(List.of("doc1", "doc2"));
-      when(signalBus.isUserActive()).thenReturn(false);
       when(signalBus.isMainGpuActive()).thenReturn(false);
       when(documentFieldOps.getDocumentContentBatch(List.of("doc1", "doc2")))
           .thenReturn(Map.of("doc1", "content one", "doc2", "content two"));

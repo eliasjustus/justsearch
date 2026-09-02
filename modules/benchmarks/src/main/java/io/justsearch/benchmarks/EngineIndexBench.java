@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  * Claim A engine-only indexing benchmark.
  *
  * <p>Measures JustSearch Lucene runtime throughput without pipeline overhead (no watched roots, job
- * queue, breath-holding, or content extraction).
+ * queue, foreground pacing, or content extraction).
  *
  * <p>Usage: java EngineIndexBench --corpus=path/to/docs.ndjson --out-dir=tmp/bench/claim-a
  */

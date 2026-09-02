@@ -10,9 +10,9 @@ import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.embed.EmbeddingService;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.ner.NerResult;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
@@ -54,7 +54,6 @@ class CombinedEnrichmentBackfillOpsTest {
   @Mock DocumentFieldOps documentFieldOps;
   @Mock IndexingCoordinator indexingCoordinator;
   @Mock CommitOps commitOps;
-  @Mock WorkerSignalBus signalBus;
   @Mock EmbeddingProvider embeddingProvider;
   @Mock SpladeEncoder spladeEncoder;
   @Mock NerService nerService;
@@ -68,7 +67,6 @@ class CombinedEnrichmentBackfillOpsTest {
 
   @BeforeEach
   void wireFakeIndexAndDefaults() {
-    lenient().when(signalBus.isUserActive()).thenReturn(false);
     lenient().when(embeddingProvider.isAvailable()).thenReturn(true);
     lenient().when(nerService.isAvailable()).thenReturn(true);
 
@@ -174,7 +172,7 @@ class CombinedEnrichmentBackfillOpsTest {
         documentFieldOps,
         indexingCoordinator,
         commitOps,
-        signalBus,
+        IndexingPacing.unthrottled(),
         embedEnabled ? () -> embeddingProvider : () -> null,
         spladeEnabled ? () -> spladeEncoder : () -> null,
         nerEnabled ? () -> nerService : () -> null,

@@ -42,11 +42,6 @@ final class WorkerSignalBusTest {
   }
 
   @Test
-  void readActivityReturnsZeroInitially() {
-    assertEquals(0L, signalBus.readActivity());
-  }
-
-  @Test
   void readHeartbeatReturnsZeroInitially() {
     assertEquals(0L, signalBus.readHeartbeat());
   }
@@ -75,11 +70,6 @@ final class WorkerSignalBusTest {
       bus.open();
       assertFalse(bus.shouldDie());
     }
-  }
-
-  @Test
-  void isUserActiveReturnsFalseInitially() {
-    assertFalse(signalBus.isUserActive());
   }
 
   @Test

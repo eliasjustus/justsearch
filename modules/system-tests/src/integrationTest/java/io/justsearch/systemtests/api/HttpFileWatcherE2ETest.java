@@ -322,9 +322,10 @@ class HttpFileWatcherE2ETest {
         while (System.currentTimeMillis() < deadline) {
             try {
                 attempts++;
-                // IMPORTANT: /api/knowledge/search signals user activity, which can pause indexing
-                // (foreground responsiveness / breath-holding). Avoid polling search while the
-                // worker is actively processing jobs, otherwise watcher-driven indexing can stall.
+                // IMPORTANT: /api/knowledge/search is foreground load, which throttles indexing to
+                // its minimum duty (tempdoc 885 item 3 — it no longer stops it outright). Avoid
+                // polling search while the worker is actively processing jobs, otherwise
+                // watcher-driven indexing runs at a fraction of its rate and the test can time out.
                 JsonNode status = getKnowledgeStatus();
                 long queueDepth = status.path("queueDepth").asLong(0);
                 long processingJobs = status.path("processingJobsCount").asLong(0);

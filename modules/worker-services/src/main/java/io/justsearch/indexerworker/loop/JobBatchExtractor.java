@@ -3,7 +3,6 @@ package io.justsearch.indexerworker.loop;
 
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.extract.ContentExtractor;
 import io.justsearch.indexerworker.extract.ContentExtractor.BudgetExceededException;
 import io.justsearch.indexerworker.extract.ExtractionArtifact;
@@ -15,6 +14,7 @@ import io.justsearch.indexerworker.ingest.IngestionOutcomeClass;
 import io.justsearch.indexerworker.ingest.IngestionReasonCodes;
 import io.justsearch.indexerworker.ingest.IngestionRetryPolicy;
 import io.justsearch.indexerworker.loop.ops.BatchStats;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
 import io.justsearch.indexerworker.path.PathResolutionStore;
 import io.justsearch.indexerworker.queue.JobQueue;
@@ -65,7 +65,7 @@ public final class JobBatchExtractor {
   private final BatchStats batchStats;
   private final StaleSnapshotResolver staleResolver;
   private final StaleSourceHandler staleSourceHandler;
-  private final WorkerSignalBus signalBus;
+  private final IndexingPacing indexingPacing;
   private final AtomicBoolean running;
   private final Set<String> forcedPaths;
   private final Supplier<PathResolutionStore> pathResolutionStoreSupplier;
@@ -85,7 +85,7 @@ public final class JobBatchExtractor {
       BatchStats batchStats,
       StaleSnapshotResolver staleResolver,
       StaleSourceHandler staleSourceHandler,
-      WorkerSignalBus signalBus,
+      IndexingPacing indexingPacing,
       AtomicBoolean running,
       Set<String> forcedPaths,
       Supplier<PathResolutionStore> pathResolutionStoreSupplier,
@@ -101,7 +101,7 @@ public final class JobBatchExtractor {
     this.batchStats = batchStats;
     this.staleResolver = staleResolver;
     this.staleSourceHandler = staleSourceHandler;
-    this.signalBus = signalBus;
+    this.indexingPacing = indexingPacing;
     this.running = running;
     this.forcedPaths = forcedPaths;
     this.pathResolutionStoreSupplier = pathResolutionStoreSupplier;
@@ -125,12 +125,15 @@ public final class JobBatchExtractor {
     List<ExtractedJob> extracted = new ArrayList<>(jobs.size());
     for (JobQueue.IndexJob job : jobs) {
       if (!running.get()) break;
-      if (signalBus.isUserActive()) break;
 
       ExtractedJob ex = extractJob(job.path(), job.collection());
       if (ex != null) {
         extracted.add(ex);
       }
+      // Tempdoc 885 item 3: extraction is the CPU-heaviest step in the batch, so it paces per
+      // file. The predecessor abandoned the rest of the batch on user activity; the duty cycle
+      // slows it instead, which is why arm (c) can still make progress under continuous search.
+      indexingPacing.pace();
     }
     return extracted;
   }

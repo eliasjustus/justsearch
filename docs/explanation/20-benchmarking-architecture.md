@@ -123,7 +123,7 @@ Input is an NDJSON file (usually from BEIR tooling) and the bench measures Lucen
 
 This talks to the running dev stack and measures watched-root indexing end-to-end. It waits for “idle/quiescent” and then validates sentinel searchability.
 
-Important pitfall: “breath-holding” means tight interactive polling can alter the workload. Prefer waiting on status endpoints and validating searchability as a single check.
+Important pitfall: the indexing duty cycle means a tight interactive search loop alters the workload — it no longer stops indexing (that was the pre-885 breath-hold), but it does hold it at the configured minimum duty. Prefer waiting on status endpoints and validating searchability as a single check.
 
 ### Claim D: LLM inference
 

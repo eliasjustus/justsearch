@@ -120,16 +120,6 @@ public final class MainSignalBus implements Closeable {
     }
 
     /**
-     * Writes the current timestamp to the activity slot [0-7].
-     * Call this on user input to enable breath holding in the worker.
-     */
-    public synchronized void writeActivity() {
-        ensureOpen();
-        segment.set(LE_LONG, MmfWorkerSignalLayoutV1.OFFSET_ACTIVITY_EPOCH_MS,
-            System.currentTimeMillis());
-    }
-
-    /**
      * Writes the current timestamp to the heartbeat slot [8-15].
      * Call this every ~1000ms to keep the worker alive (suicide pact).
      */

@@ -59,9 +59,11 @@ import org.slf4j.LoggerFactory;
 /**
  * gRPC Search service implementation supporting text, vector, and hybrid search.
  *
- * <p>Executes search queries against the Lucene index and returns results.
- * This service does NOT respect the "breath holding" logic - user queries
- * take priority over background CPU savings.
+ * <p>Executes search queries against the Lucene index and returns results. Every method here is
+ * <b>foreground</b>: a {@code ServerInterceptor} counts each call in the Worker's foreground-load
+ * gauge for its duration, and the indexing loop throttles itself to a minimum duty while any is in
+ * flight (tempdoc 885 item 3). Search itself is never throttled — it is what indexing yields to.
+ * The one exception is {@code ListAllDocumentIds}, whose caller is a background pager, not a user.
  *
  * <p>Content returned via gRPC is trimmed to {@link #MAX_CONTENT_CHARS} to prevent
  * memory issues with very large documents.

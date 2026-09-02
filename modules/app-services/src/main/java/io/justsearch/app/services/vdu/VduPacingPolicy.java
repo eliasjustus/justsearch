@@ -13,9 +13,10 @@ package io.justsearch.app.services.vdu;
  * <p>Signals, each already existing elsewhere and reused here (no new sensing):
  *
  * <ul>
- *   <li><b>Recent activity</b> — {@code KnowledgeServerBootstrap.msSinceLastUserActivity}, a
- *       Head-local mirror of the same real search/suggest/folder-listing activity signal already
- *       fed to the Worker's own {@code isUserActive()} gate.
+ *   <li><b>Recent activity</b> — {@code KnowledgeServerBootstrap.msSinceLastUserActivity}, the
+ *       Head-local record of real search/suggest/folder-listing activity. Tempdoc 885 item 3
+ *       retired the Worker-side twin of this signal: the Worker now paces on its own in-flight
+ *       foreground-RPC gauge instead of on a Head-written activity byte.
  *   <li><b>Energy intent</b> — {@code EnergyState.reduced()} (tempdoc 630), already Head-native.
  *   <li><b>LLM exclusivity</b> — {@code inferenceManager.isOnline()}, used only by {@link
  *       #shouldTrigger}, checked <i>before</i> starting a batch (not during VDU's own run, which

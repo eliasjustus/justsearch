@@ -11,6 +11,7 @@ import io.justsearch.ipc.SyncDirectoryRequest;
 import io.justsearch.ipc.SyncDirectoryResponse;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.loop.IndexingLoop;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.SqliteJobQueue;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
@@ -141,7 +142,8 @@ final class GrpcIngestServiceSyncDirectoryPhaseTest {
     Files.createDirectories(indexBasePath);
     Files.createDirectories(indexPath);
     return new GrpcIngestService(
-        jobQueue, new StubIndexingLoop(), bus, indexBasePath, indexPath, lifecycle, lifecycle, null, 0L, null);
+        jobQueue, new StubIndexingLoop(), bus, IndexingPacing.unthrottled(), indexBasePath, indexPath,
+        lifecycle, lifecycle, null, 0L, null);
   }
 
   private static final class CapturingObserver<T> implements StreamObserver<T> {
@@ -203,11 +205,6 @@ final class GrpcIngestServiceSyncDirectoryPhaseTest {
     public void writePort(int port) {}
 
     @Override
-    public long readActivity() {
-      return 0;
-    }
-
-    @Override
     public long readHeartbeat() {
       return System.currentTimeMillis();
     }
@@ -219,11 +216,6 @@ final class GrpcIngestServiceSyncDirectoryPhaseTest {
 
     @Override
     public boolean shouldDie() {
-      return false;
-    }
-
-    @Override
-    public boolean isUserActive() {
       return false;
     }
 

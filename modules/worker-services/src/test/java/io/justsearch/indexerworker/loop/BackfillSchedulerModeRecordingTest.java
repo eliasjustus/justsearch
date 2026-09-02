@@ -74,7 +74,6 @@ class BackfillSchedulerModeRecordingTest {
 
   @BeforeEach
   void wireCommonMocks() {
-    lenient().when(signalBus.isUserActive()).thenReturn(false);
     lenient().when(signalBus.isMainGpuActive()).thenReturn(false);
     lenient().when(signalBus.isEnergyReduced()).thenReturn(false);
     lenient().when(signalBus.shouldYieldGpuBackfill()).thenReturn(false);
@@ -216,6 +215,7 @@ class BackfillSchedulerModeRecordingTest {
         indexCountOps,
         commitOps,
         signalBus,
+        io.justsearch.indexerworker.loop.pacing.IndexingPacing.unthrottled(),
         embeddingLifecycle,
         new AtomicBoolean(true),
         this::resolvedConfig,

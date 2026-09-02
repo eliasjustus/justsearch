@@ -15,11 +15,11 @@ import static org.mockito.Mockito.when;
 
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.extract.ContentExtractor;
 import io.justsearch.indexerworker.extract.TimeboxedContentExtractor;
 import io.justsearch.indexerworker.loop.ops.BatchStats;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.path.PathResolutionStore;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexerworker.util.PathNormalizer;
@@ -96,7 +96,7 @@ final class JobBatchExtractorForcedPathTest {
             batchStats,
             staleResolver,
             mock(StaleSourceHandler.class),
-            mock(WorkerSignalBus.class),
+            IndexingPacing.unthrottled(),
             new AtomicBoolean(true),
             forcedPaths,
             () -> mock(PathResolutionStore.class),

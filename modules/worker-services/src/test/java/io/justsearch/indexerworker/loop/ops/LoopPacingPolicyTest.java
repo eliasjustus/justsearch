@@ -64,16 +64,20 @@ final class LoopPacingPolicyTest {
   }
 
   @Test
-  @DisplayName("interrupt fires on energy-reduced + CPU (blocked), and on user-active")
+  @DisplayName("interrupt fires on energy-reduced + CPU (blocked), and on a GPU VRAM conflict")
   void interruptCovers() {
     // energy + CPU now blocks → interrupt true (pre-fix: not blocked on CPU).
-    assertTrue(LoopPacingPolicy.shouldInterruptBackfill(true, false, false, true, CPU));
-    // user active always interrupts.
-    assertTrue(LoopPacingPolicy.shouldInterruptBackfill(true, true, false, false, GPU));
+    assertTrue(LoopPacingPolicy.shouldInterruptBackfill(true, false, true, CPU));
+    // Tempdoc 885 item 3: userActive left the signature — foreground contention paces the
+    // backfill (IndexingPacing) instead of interrupting it. The surviving yield reason this slot
+    // used to cover is the GPU VRAM conflict: Main claimed the GPU and embeddings are on the GPU.
+    assertTrue(
+        LoopPacingPolicy.shouldInterruptBackfill(true, true, false, GPU),
+        "GPU VRAM conflict blocks the backfill ⇒ interrupt");
     // running, idle, no yield ⇒ no interrupt.
-    assertFalse(LoopPacingPolicy.shouldInterruptBackfill(true, false, false, false, CPU));
+    assertFalse(LoopPacingPolicy.shouldInterruptBackfill(true, false, false, CPU));
     // not running ⇒ interrupt.
-    assertTrue(LoopPacingPolicy.shouldInterruptBackfill(false, false, false, false, CPU));
+    assertTrue(LoopPacingPolicy.shouldInterruptBackfill(false, false, false, CPU));
   }
 
   @Test

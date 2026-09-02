@@ -425,7 +425,11 @@ final class IndexStatusOps {
             .setIsHealthy(healthy)
             .setState(state)
             .setLastCommitTimestamp(indexingLoop.getLastCommitTime())
-            .setSignalBusActivityTs(signalBus.readActivity())
+            // Tempdoc 885 item 3: signal_bus_activity_ts is no longer populated. The Worker no
+            // longer reads the Head-written activity byte at all (foreground load is observed
+            // in-process), so reporting it would be reporting a value nothing acts on. The proto
+            // field stays declared — removing it is a wire break, and lane F deletes the MMF
+            // activity byte and this field together.
             .setSignalBusHeartbeatTs(signalBus.readHeartbeat())
             .setUptimeMs(System.currentTimeMillis() - signalBus.startupTime())
             .setIndexSizeBytes(cachedIndexSizeIfFreshOrRefresh())

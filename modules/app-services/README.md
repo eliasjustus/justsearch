@@ -93,7 +93,7 @@ This module is the integration "glue" of the application. It bridges the gap bet
 | :--- | :--- | :--- |
 | `Knowledge Server is READY on port` | Worker started & MMF port discovery succeeded. | ✅ Normal |
 | `Worker heartbeat expired` | "Suicide Pact" triggered; worker terminated. | ⚠️ Check Main Process pauses |
-| `Breath holding triggered` | Indexing paused due to user activity (MMF). | ✅ Normal (Throttling) |
+| `Indexing paced by foreground load` | Indexing throttled to its minimum duty while search-family RPCs are in flight. | ✅ Normal (Throttling) |
 | `Found stale Lucene write.lock` | Self-healing active; recovering from previous crash. | ℹ️ Recovery |
 | `Started watching /path` | Local file watcher active (Legacy Mode). | ℹ️ Legacy Context |
 

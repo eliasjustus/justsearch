@@ -184,6 +184,8 @@ Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for `justsearc
 | justsearch.indexer.maxInFlightBytes | JUSTSEARCH_INDEXER_MAX_INFLIGHT_BYTES | justsearch.indexer.maxInFlightBytes | INDEXER_MAX_INFLIGHT_BYTES | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.indexer.port | JUSTSEARCH_INDEXER_PORT | justsearch.indexer.port | INDEXER_PORT | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.indexer.queueSize | JUSTSEARCH_INDEXER_QUEUE_SIZE | justsearch.indexer.queueSize | INDEXER_QUEUE_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| - | JUSTSEARCH_INDEXING_FOREGROUND_COOLDOWN_MS | justsearch.indexing.foreground_cooldown_ms | INDEXING_FOREGROUND_COOLDOWN_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_INDEXING_FOREGROUND_DUTY_PCT | justsearch.indexing.foreground_duty_pct | INDEXING_FOREGROUND_DUTY_PCT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_INFRA_HEALTH_HOST | justsearch.infra.health.host | INFRA_HEALTH_HOST | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_INFRA_HEALTH_PORT | justsearch.infra.health.port | INFRA_HEALTH_PORT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_INGESTION_SKIP_DIRECTORY_NAMES | justsearch.ingestion.skip.directory_names | INGESTION_SKIP_DIRECTORY_NAMES | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

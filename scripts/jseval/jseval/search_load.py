@@ -1,10 +1,11 @@
 """Background search load driven against the Head during ingestion (tempdoc 885).
 
-Lane C's throughput baseline needs the indexing pipeline measured *while foreground search
-traffic is present*, because `POST /api/knowledge/search` is the request that writes the
-Worker's MMF activity slot (`KnowledgeSearchController.java:304` ->
-`KnowledgeServerBootstrap.signalUserActivity()` -> `WorkerSpawner.signalUserActivity()`),
-and that slot is what makes `IndexingLoop` breath-hold (`IndexingLoop.java:604-610`).
+Lane C's throughput comparison needs the indexing pipeline measured *while foreground search
+traffic is present*. Before item 3 that was because `POST /api/knowledge/search` wrote the
+Worker's MMF activity slot and the slot made `IndexingLoop` breath-hold (pause outright). Since
+item 3 the search RPC itself is the signal: it increments the Worker's in-flight foreground
+gauge for its duration, which drives the indexing duty cycle (`IndexingPacing`). Either way this
+module's job is the same — hold real foreground traffic against the Worker while ingest runs.
 
 Two modes:
 

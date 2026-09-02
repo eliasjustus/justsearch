@@ -11,7 +11,6 @@ import java.util.function.BooleanSupplier;
  * <p>The signal bus enables inter-process communication for:
  * <ul>
  *   <li>Heartbeat monitoring (suicide pact liveness check)</li>
- *   <li>User activity tracking (breath holding/throttling)</li>
  *   <li>Shutdown signaling</li>
  *   <li>Port discovery</li>
  * </ul>
@@ -38,14 +37,6 @@ public interface WorkerSignalBus extends Closeable {
    * @param port The actual bound port number
    */
   void writePort(int port);
-
-  /**
-   * Reads the last activity timestamp.
-   * Used by the indexing loop for "breath holding" throttling.
-   *
-   * @return Last user activity timestamp (epoch millis)
-   */
-  long readActivity();
 
   /**
    * Reads the main process heartbeat.
@@ -75,14 +66,6 @@ public interface WorkerSignalBus extends Closeable {
    * @return true if the worker should terminate
    */
   boolean shouldDie();
-
-  /**
-   * Checks if user activity is recent.
-   * Used for "breath holding" to pause indexing during active user interaction.
-   *
-   * @return true if user was active recently
-   */
-  boolean isUserActive();
 
   /**
    * Checks if the Main process is actively using the GPU (Online Mode).
@@ -121,8 +104,8 @@ public interface WorkerSignalBus extends Closeable {
   /**
    * Whether primary indexing (ingest) work is waiting in the job queue right now (tempdoc 798).
    *
-   * <p>The third "yield to something more important" signal, alongside {@link #isUserActive()} and
-   * {@link #shouldYieldGpuBackfill()}: background enrichment backfill must never starve primary
+   * <p>The second "yield to something more important" signal, alongside {@link
+   * #shouldYieldGpuBackfill()}: background enrichment backfill must never starve primary
    * indexing. Backfill drains a finite population and can always resume next cycle; a queued
    * ingest job the user is waiting on cannot.
    *

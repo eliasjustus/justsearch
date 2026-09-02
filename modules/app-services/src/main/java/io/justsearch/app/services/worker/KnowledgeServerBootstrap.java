@@ -74,11 +74,11 @@ public final class KnowledgeServerBootstrap implements Closeable {
     private volatile RemoteKnowledgeClient client;
 
     /**
-     * Tempdoc 672 follow-up: epoch-ms of the most recent {@link #signalUserActivity()} call — the
-     * Head-local read-back of the same fact {@link #signalUserActivity()} already writes to the
-     * MMF for the Worker's benefit (that channel is Head-writes/Worker-reads only per
-     * MainSignalBus's own doc, so this is a small separate local mirror, not a re-read of the
-     * MMF). Lets a Head-side idle check ask "how recently was the user active" in-process.
+     * Tempdoc 672 follow-up: epoch-ms of the most recent {@link #recordUserActivity()} call. Since
+     * tempdoc 885 item 3 this is the <b>only</b> consumer of that fact: the Worker no longer
+     * receives a Head-written activity byte at all (it observes its own in-flight foreground RPCs),
+     * so what remains here is a purely Head-local signal for the Head's own idle checks — VDU
+     * pacing and the service-phase idle gate.
      */
     private final java.util.concurrent.atomic.AtomicLong lastUserActivityEpochMs =
         new java.util.concurrent.atomic.AtomicLong(0);
@@ -693,17 +693,16 @@ public final class KnowledgeServerBootstrap implements Closeable {
     }
 
     /**
-     * Signals user activity for breath holding.
+     * Records real user activity (search, suggest, folder listing, preview) for the Head's own
+     * idle checks. Tempdoc 885 item 3 removed the Head→Worker half of this call: the Worker paces
+     * indexing on its own in-flight foreground-RPC gauge, not on a wall-clock byte the Head writes.
      */
-    public void signalUserActivity() {
+    public void recordUserActivity() {
         lastUserActivityEpochMs.set(System.currentTimeMillis());
-        if (spawner != null) {
-            spawner.signalUserActivity();
-        }
     }
 
     /**
-     * Tempdoc 672 follow-up: milliseconds since the most recent {@link #signalUserActivity()}
+     * Tempdoc 672 follow-up: milliseconds since the most recent {@link #recordUserActivity()}
      * call, or {@link Long#MAX_VALUE} if none has ever been recorded (treated as "idle" by
      * callers, never as "just active" — mirrors {@code EnergyState.unknown()}'s
      * never-throttle-on-uncertainty posture).

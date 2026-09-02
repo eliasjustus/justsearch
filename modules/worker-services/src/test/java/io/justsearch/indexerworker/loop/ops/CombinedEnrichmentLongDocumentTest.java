@@ -13,8 +13,8 @@ import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
-import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
+import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.ner.NerResult;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
@@ -95,7 +95,6 @@ class CombinedEnrichmentLongDocumentTest {
   @Mock DocumentFieldOps documentFieldOps;
   @Mock IndexingCoordinator indexingCoordinator;
   @Mock CommitOps commitOps;
-  @Mock WorkerSignalBus signalBus;
   @Mock EmbeddingProvider embeddingProvider;
   @Mock SpladeEncoder spladeEncoder;
   @Mock NerService nerService;
@@ -111,7 +110,6 @@ class CombinedEnrichmentLongDocumentTest {
 
   @BeforeEach
   void wireFakeIndex() throws Exception {
-    lenient().when(signalBus.isUserActive()).thenReturn(false);
     lenient().when(embeddingProvider.isAvailable()).thenReturn(true);
     lenient().when(nerService.isAvailable()).thenReturn(true);
     lenient().when(indexingCoordinator.bulkDeleteEpoch()).thenReturn(0L);
@@ -282,7 +280,7 @@ class CombinedEnrichmentLongDocumentTest {
         documentFieldOps,
         indexingCoordinator,
         commitOps,
-        signalBus,
+        IndexingPacing.unthrottled(),
         () -> embeddingProvider,
         spladeEnabled ? () -> spladeEncoder : () -> null,
         nerEnabled ? () -> nerService : () -> null,

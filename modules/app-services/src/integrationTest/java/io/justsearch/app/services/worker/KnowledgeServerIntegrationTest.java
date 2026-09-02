@@ -95,7 +95,6 @@ class KnowledgeServerIntegrationTest {
 
         // Test write operations
         assertDoesNotThrow(() -> signalBus.writeHeartbeat());
-        assertDoesNotThrow(() -> signalBus.writeActivity());
         assertDoesNotThrow(() -> signalBus.zeroPort());
 
         // Port should be 0 initially
