@@ -666,9 +666,6 @@ public record ResolvedConfig(
    *     {@code continuous} mode
    * @param nrtOnDemandMaxStaleMs age past which a foreground search in {@code on_demand} mode
    *     escalates to a blocking refresh; ignored in {@code continuous} mode
-   * @param commitIdleMs ms the indexing loop must have found the queue empty before it commits
-   *     buffered documents; 0 (default) commits on the first empty poll, which is the historical
-   *     behaviour
    */
   public record Index(
       Integer writerRamBufferMb,
@@ -702,8 +699,7 @@ public record ResolvedConfig(
       Map<String, Double> boosts,
       String nrtMode,
       int nrtBackgroundReopenMs,
-      int nrtOnDemandMaxStaleMs,
-      int commitIdleMs) {
+      int nrtOnDemandMaxStaleMs) {
 
     /** Wire value of the default NRT reopen strategy (today's behaviour). */
     public static final String NRT_MODE_CONTINUOUS = "continuous";

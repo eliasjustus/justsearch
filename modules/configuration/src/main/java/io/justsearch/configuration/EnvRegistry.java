@@ -1268,18 +1268,7 @@ public enum EnvRegistry {
      * query cannot silently return a view older than this bound. Ignored in {@code continuous} mode.
      */
     INDEX_NRT_ON_DEMAND_MAX_STALE_MS(
-        "index.nrt.on_demand_max_stale_ms", "JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS", "1000"),
-
-    /**
-     * Milliseconds the indexing loop must have found the queue empty before it commits the
-     * documents it has buffered (default 0 = off, i.e. today's behaviour: commit on the first
-     * empty poll). Raising it is the commit half of the cadence candidate — it keeps a bulk run
-     * from committing every time the queue momentarily drains, which is what makes the
-     * {@code justsearch.backfill.commit_interval_ms} / {@code max_docs_before_commit} thresholds
-     * observable at all. NRT visibility does not depend on commit; this knob trades durability
-     * latency for commit count.
-     */
-    INDEX_COMMIT_IDLE_MS("index.commit.idle_ms", "JUSTSEARCH_INDEX_COMMIT_IDLE_MS", "0");
+        "index.nrt.on_demand_max_stale_ms", "JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS", "1000");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 

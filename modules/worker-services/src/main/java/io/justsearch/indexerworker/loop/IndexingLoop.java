@@ -178,12 +178,6 @@ public class IndexingLoop implements Closeable {
   private Thread loopThread;
   private long indexedSinceCommit = 0;
   private long lastCommitTime = System.currentTimeMillis();
-
-  /**
-   * When the current run of empty polls began, or 0 when the queue last had work (tempdoc 885
-   * item 19). Only read on the loop thread.
-   */
-  private long emptyPollSinceMs = 0L;
   // Tempdoc 516 Slice 4a.1: pendingMarkDone moved into IngestionOutcomeJournal, encapsulated.
   private final IngestionOutcomeJournal journal;
   // Tempdoc 516 Slice 4d (W6): SPLADE retry-backoff state + disambiguation latch moved to
@@ -455,15 +449,6 @@ public class IndexingLoop implements Closeable {
     return config != null ? config.ai().backfillPacing() : ResolvedConfig.Ai.BackfillPacing.DEFAULTS;
   }
 
-  /**
-   * Resolved {@code index.commit.idle_ms} (tempdoc 885 item 19); 0 — the historical
-   * commit-on-first-empty-poll behaviour — when no config is available.
-   */
-  private long commitIdleMs() {
-    ResolvedConfig config = resolvedConfigSupplier.get();
-    return config != null && config.index() != null ? config.index().commitIdleMs() : 0L;
-  }
-
   /** Returns a real span when tracing is enabled, or a no-op singleton when disabled. */
   private Span maybeSpan(String name) {
     if (!detailedTracing) return Span.getInvalid();
@@ -646,32 +631,17 @@ public class IndexingLoop implements Closeable {
           // The time-based commit strategy below runs only after processing jobs. If the queue becomes empty
           // and we go idle, we would otherwise never reach the commit check again, leaving the index
           // uncommitted (no segments_*), which makes the main process report indexAvailable=false.
-          //
-          // Tempdoc 885 item 19: index.commit.idle_ms (default 0) can require the queue to have
-          // stayed empty for a while first, so a bulk run's momentary drains stop forcing a commit.
-          if (emptyPollSinceMs == 0L) emptyPollSinceMs = System.currentTimeMillis();
-          boolean hadUncommitted = indexedSinceCommit > 0;
-          if (LoopPacingPolicy.isIdleCommitTriggered(
-              indexedSinceCommit, System.currentTimeMillis() - emptyPollSinceMs, commitIdleMs())) {
+          if (indexedSinceCommit > 0) {
             try {
               commitOps.commitAndTrack(CommitReason.INDEXING_LOOP_IDLE);
               metrics.recordCommit();
               log.debug("Committed index: {} docs, reason=batch idle", indexedSinceCommit);
               indexedSinceCommit = 0;
               lastCommitTime = System.currentTimeMillis();
+              journal.drainPending();
             } catch (RuntimeException e) {
               log.error("Failed to commit index on idle", e);
             }
-          }
-          // The journal drain is INGESTION PROGRESS, not durability, so it must not wait on the
-          // commit window. It used to sit inside the commit block, which was harmless while the
-          // idle commit fired on the first empty poll; once index.commit.idle_ms could delay that
-          // commit, the drain was delayed with it and ingestion advanced in idle_ms-sized bursts —
-          // 8.9 docs/s instead of 114 in the 885 live window's arm A3. The precondition is
-          // unchanged (uncommitted docs present), so at the default idle_ms=0 this is the same
-          // sequence as before: commit, then drain.
-          if (hadUncommitted) {
-            journal.drainPending();
           }
 
           // Tempdoc 516 Slice 4d (W6): BackfillScheduler owns the per-cycle backfill
@@ -695,9 +665,6 @@ public class IndexingLoop implements Closeable {
                   : LoopPacingPolicy.idleSleepMs());
           continue;
         }
-
-        // The queue is not empty, so the idle window restarts from the next empty poll.
-        emptyPollSinceMs = 0L;
 
         // Start new batch if transitioning from idle
         if (currentState != LoopState.RUNNING) {
