@@ -858,8 +858,11 @@ asserts an observable consequence instead: `IN_PROCESS` tolerates an empty child
    `IndexingLoop.java:23`; javadoc references relabelled in `ExtractionArtifact`,
    `ExtractorContributionRegistry` and `StdioMcpTransport`; the historical CI-incident comment in
    `JvmBaseConventionsPlugin.kt` labelled with the test's new name rather than rewritten, since it
-   records a dated event. `grep -rn ProcessExtractionSandbox` outside `docs/tempdocs/` now returns
-   only that labelled history comment.
+   records a dated event. Stated accurately: `grep -rn ProcessExtractionSandbox` outside
+   `docs/tempdocs/` still returns **four** hits, all deliberate history in prose —
+   `ExtractionSandboxChild:20`, `ExtractionSandboxCommand:19`, `SandboxExtractionException:9` and
+   the `JvmBaseConventionsPlugin.kt` incident comment. No code references the retired type; the
+   claim is "no live referencer", not "no occurrences".
 3. **`ExtractionSandboxCommand` added to the `IndexerWorkerGuardrailsTest` allowlist** (SB.1 (4)).
    Before allowlisting, the surface was minimised so the exemption covers as little as possible: the
    classpath comes from `ManagementFactory.getRuntimeMXBean().getClassPath()` and the launcher from
@@ -944,6 +947,11 @@ Run 2 (2026-09-02, full `:modules:worker-services:test` run, heavier load):
   have no wedge or OOM exposure to buy with it.
 
 ## Live/chaos-window acceptance items still open (item 14)
+
+> **SUPERSEDED by §SC-chaos (chunk 2b, 2026-09-02).** Items 1, 2, 4 and 5 below are closed —
+> the chaos tier ran green (14/14) and its evidence is recorded there. Only the real-corpus
+> throughput arm (item 3) is still open, plus the gap §SC-chaos records under "what the chaos
+> tier did NOT cover". This section is kept as the dated list the chunk was planned against.
 
 Nothing below can be checked without the shared dev stack or the `:modules:system-tests` chaos
 source set, which this chunk was scoped out of. Listed so the orchestrator can schedule one window.
@@ -1131,7 +1139,11 @@ with the reason, next file extracts normally, Worker never restarts · child cra
 exit code · child OOM → permanent parse failure · `extraction.sandbox_restart_total` increments and
 the wire-format regression test is updated · Worker shutdown leaves no orphan child.
 
-**Still open (needs the dev-stack window, not the chaos tier):** the real-corpus comparison —
+**Still open (needs the dev-stack window, not the chaos tier):** (a) **the shipped default child
+command and `auto` routing have never been launched from a real Worker dist** — the chaos harness
+overrides `JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` and forces `mode=process`, so
+`ExtractionSandboxCommand.defaultCommand` and the per-family router are covered by unit tests and
+by nothing live; the real-corpus arm closes both. (b) the real-corpus comparison —
 `jseval run --pipeline` on the standard corpus with `mode=auto` vs `mode=in_process`, to price the
 routing split on a real mixed corpus *including* the child spawn the unit benchmark excludes, and to
 confirm no ingestion regression. Optional refinement: an OOM driven by a genuinely hostile document
@@ -1241,3 +1253,96 @@ stopped being what it means when breath-holding was replaced by the contention d
 PR #598 does not touch that file (checked against its file list), so the comment is corrected here.
 The method name `abortsOnUserActivity` carries the same staleness but is left to #598's own sweep
 rather than renamed across branches.
+
+## §SC-review — independent review of #595, applied (chunk 2d, 2026-09-02)
+
+An independent reviewer reproduced the chaos tier (14/14, with the 60.0 s sandbox deadline firing
+before the 75 s backstop) and all three falsifications, then raised seven should-fixes. What each
+one changed, and what it changed my mind about.
+
+### 1. The stderr capture kept the HEAD, so a chatty parser could demote an OOM
+
+The real defect of the set. `StderrTail.append` stopped accepting once full, so the **newest** bytes
+were dropped — and the newest bytes are the ones that say how the child died. A parser that logged
+more than 64 KB before dying pushed its own `OutOfMemoryError` trace out of the capture, the
+substring test in `discardAndClassify` went false, and a permanent parse failure was reported as a
+**retryable** crash: the file would then be retried forever against a heap it cannot fit in. The
+OOM classification chunk 2 added was therefore only correct for quiet parsers.
+
+Fixed as a real ring (keep the last `maxBytes`), plus a `reset()` before each request so the
+reported tail belongs to the file that actually failed rather than to whatever the child logged
+handling earlier ones. Note which half is load-bearing: with a head buffer, resetting per request
+would **not** have helped, because the noise and the OOM are in the same request.
+
+Regression test `chattyParserCannotDemoteAnOomToRetryable` — the stub writes ~212 KB of chatter and
+then genuinely exhausts a 64 MB heap. **Falsified:** restoring the "stop when full" behaviour reds
+exactly that test (`15 tests completed, 1 failed`) and leaves the quiet-OOM test green, so the two
+discriminate on the ring and not on the OOM plumbing.
+
+### 2. Merge `origin/main`, and retire the stale pin
+
+Merged `origin/main` (#594, #596, #597). Three conflicts, resolved deliberately:
+
+* `docs/explanation/23-search-pipeline-overview.md` — both sides rewrote the same stage-2 row.
+  Kept main's VDU sentence (it removed the retired enable flag and renamed the threshold) and this
+  branch's sandbox sentence; neither side's fact was dropped.
+* `.claude/skills/search-quality/SKILL.md` — generated; regenerated from the resolved canonical doc
+  with `skills-sync` rather than hand-merged.
+* `scripts/agent-analytics/expected-state.v1.json` — both sides appended pins. Took main's set plus
+  this branch's one addition. **Caught while resolving:** a naive union would have resurrected
+  `ui-web-typecheck-ts5101`, which main deliberately retired — a merge that silently restores a pin
+  someone else just removed is exactly the residue the register exists to prevent.
+
+`process-extraction-sandbox-classpath-too-long` deleted in the same commit. That pin was written
+against the defect chunk 2c fixed at the root, and it names `ProcessExtractionSandboxTest`, which
+chunk 2 deleted — its own exit condition says "when the file is absent, delete this entry".
+`run-all-tests.mjs` 50/50; `expected-state-probe --gate` reports 15 pins, 0 shape/review problems.
+
+### 3. The Prune comment asserted a change that lands in a different PR
+
+Reworded to point at the tempdoc item rather than to state the duty-cycle outcome as already true.
+The reviewer is right that #598, not #595, is where that becomes a fact; a comment on this branch
+claiming it would be wrong for however long #598 takes to land.
+
+### 4. The shipped default command and `auto` routing have never run from a real Worker dist
+
+Accepted and recorded rather than papered over. The chaos harness sets
+`JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND` (to substitute the parser) and
+`JUSTSEARCH_EXTRACTION_SANDBOX_MODE=process` (so a `.txt` reaches the pool at all) — so the two
+things a default install actually uses, `ExtractionSandboxCommand.defaultCommand` and `auto`
+routing, are covered by unit tests and by nothing live. This is now the second entry on the
+still-open list, and the dev-stack real-corpus arm is what closes it.
+
+### 5. A bad child command was invisible until the first file
+
+Spawning is lazy, which is right for steady state, but it meant a broken command — a bad operator
+override, a missing JDK, an unreadable classpath — surfaced only as a per-file `IOException`, on
+every file, forever. `ExtractionSandboxFactory.probeChildCommand` now spawns one child at wiring
+time and runs a trivial extraction through it (bounded at `PROBE_TIMEOUT` = 20 s, so a broken
+command cannot stall Worker boot). On failure `DefaultWorkerAppServices` logs a WARN naming the
+reason and the command, records
+`extraction.sandbox_restart_total{reason=probe_failed}` as the lifecycle-visible signal, and falls
+back to in-process extraction **for the session** — degraded, but every document still indexes.
+Both branches are tested in `ExtractionRoutingTest` (the shipped command passes its own probe; a
+command that cannot launch returns a named failure).
+
+Honest limit: the fallback is per-session and silent to the UI. A user-visible condition would need
+the worker-condition path, which is item 6's territory, not this chunk's.
+
+### 6-7. Superseded pointer; EnvRegistry append region
+
+The old "Live/chaos-window acceptance items still open" list now carries a SUPERSEDED banner
+pointing at §SC-chaos. The three new `EXTRACTION_SANDBOX_*` constants moved from mid-enum to the
+end of `EnvRegistry`, where the cross-lane append rule puts them — they were added before that
+region existed on this base, and leaving them mid-enum is a merge conflict waiting for lane A.
+
+### Nits
+
+`SandboxFrames` javadoc corrected (the length is a **signed** 31-bit int — Java has no unsigned
+int, and the reader rejects a negative one); `TimeboxedContentExtractor.extractSafe` now routes
+through its own `detectMimeType`, which already null-guards the delegate, instead of dereferencing
+it (an extractor built on a bare sandbox has no delegate); §SC.5's sweep claim restated accurately
+(four prose mentions of the retired type remain, all deliberate history — the claim is "no live
+referencer", not "no occurrences"); the chaos test deletes its `%TEMP%\justsearch-sandbox-chaos`
+run directory on success and keeps it on failure, where the worker log and metrics NDJSON are the
+evidence; the argfile probe child uses `redirectErrorStream` so the two-pipe read cannot deadlock.
