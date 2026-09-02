@@ -7,7 +7,7 @@ updated: 2026-09-02
 lane: wave-1 residue R5 (governance kernel)
 model: opus (implementation)
 parent: 884-decision-review-lane-b-governance-loop
-coordination: "→ lane R4 (worktree resid2-stores) owns `governance/store-recoverability.v1.json` ROWS and may coin a new corruptionPolicy value; item 2 is built so R4's merge cannot break this lane — the row pin is a FLOOR (growth allowed) and a coined value fails with the remedy naming the file to extend, never silently. → lane R6 (worktree resid2-ui) owns the ui-a11y-gate settings-dialog capture fix that retires pin `ui-a11y-gate-settings-dialog-capture-timeout`. → lane R7 (worktree resid2-worker) owns the watcher fix that retires pin `worker-methvin-watcher-create-event-size-race`. Both pins name their fix owner inline and are deleted BY the fixing PR."
+coordination: "→ lane R4 (worktree resid2-stores) owns `governance/store-recoverability.v1.json` ROWS and may coin a new corruptionPolicy value; item 2 is built so R4's merge cannot break this lane — the row pin is a FLOOR (growth allowed) and a coined value fails with the remedy naming the file to extend, never silently. → lane R6 (worktree resid2-ui) owns the ui-a11y-gate settings-dialog capture fix that retires pin `ui-a11y-gate-settings-dialog-capture-timeout`. → lane R7's watcher fix MERGED as #612/`33ffc3bb` while this PR was in review, so its pin `worker-methvin-watcher-create-event-size-race` was deleted here before ever reaching `main`. Each pin names its fix owner inline and is deleted by whichever PR notices the red is gone."
 related:
   - 885-decision-review-lane-c-runtime-lifecycle-and-isolation   # UL.10 routed findings: the whole-file trap (:3609-3622), ui-a11y-gate (:3596-3605), WorkerMethvinWatcherTest (:3624-3641)
   - 884-decision-review-lane-b-governance-loop                    # wired the dead-code gate into CI; the rebalance changeset this one supersedes the unit of
@@ -141,20 +141,29 @@ spellings.
 **Merge-safety against lane R4** (§C.2 audits this): R4 adds rows — the floor allows growth. R4 may
 coin a value — the gate fails with the remedy naming the file, which is the designed outcome.
 
-### Item 3 — two pins
+### Item 3 — two pins, of which ONE ships
 
-Added to `scripts/agent-analytics/expected-state.v1.json` (now 19 pins):
+Added to `scripts/agent-analytics/expected-state.v1.json`, which ends this PR at **18 pins**:
 
 - `ui-a11y-gate-settings-dialog-capture-timeout` — matches `ui-a11y-gate`. Claim leads with the
   discriminator ("exit 2 means two steps could not be CAPTURED, not that accessibility regressed").
-  Fix owner: lane R6.
-- `worker-methvin-watcher-create-event-size-race` — matches a full `gradlew test` scoped to
-  worker-services, and an explicit `--tests *WorkerMethvinWatcher*` run. Claim states what it is
-  NOT (names no timeout → not covered by `worker-services-30s-timeout-under-load`). Fix owner:
-  lane R7.
+  Fix owner: lane R6, **not yet merged**, so the pin ships.
+- ~~`worker-methvin-watcher-create-event-size-race`~~ — **written, then deleted before merge: its
+  fix landed first.** Lane R7's PR #612 merged to `main` as `33ffc3bb` ("watcher records a
+  mid-write file's size as unknown, not zero"), which is exactly the pinned defect. Verified on
+  `origin/main` rather than taken from the merge title: the assertion the pin quoted (`The watcher
+  must record the file's real size, not the unknown-size sentinel ==> expected: <4096> but was:
+  <0>`) is **gone** from `deliversCreateEventToJobQueue` — the create-event case no longer asserts a
+  real size at all, so the race it named cannot recur.
 
-Both carry `reviewBy: 2026-09-30`, a `fixOwner`, and an `exitProbeOmitted` field saying why no
-automated probe exists — see §C.3.
+**This is the pin lifecycle working, not a wasted pin.** `expected-state.v1.json`'s own contract
+says a pin is a dated exception and "a pin whose red is gone is a lie; delete it in the fixing PR".
+The fixing PR was someone else's, so this one deletes it instead — which is the same rule, applied
+by whoever notices first. The pin carried a `fixOwner` naming lane R7 precisely so that this
+deletion needed no investigation.
+
+The surviving pin carries `reviewBy: 2026-09-30`, a `fixOwner`, and an `exitProbeOmitted` field
+saying why no automated probe exists — see §C.3.
 
 The full-kernel run also turned up a THIRD red on `main` that nothing pinned — `operation-surface`
 on `modules/ui-web/src/shell-v0/state/indexingJobStates.ts`. It was briefly pinned, and the pin was
@@ -256,7 +265,7 @@ All from `.claude/worktrees/resid2-gov`.
 | `node scripts/governance/run.mjs --gate register-guard-resolution --mode gate` | **pass, 0 findings** (second reader of the register I edited) |
 | `node scripts/ci/check-store-recoverability.mjs` | **OK — 6 catalog stores and 36 durable state authorities (floor 36), across 27 corruption policies** |
 | `node scripts/ci/check-store-recoverability.test.mjs` | **OK — 64 assertions passed** (was 51) |
-| `node scripts/agent-analytics/expected-state-probe.mjs --gate` | **19 pins; 0 shape/review problems; 0 exit-probes fired** |
+| `node scripts/agent-analytics/expected-state-probe.mjs --gate` | **18 pins; 0 shape/review problems; 0 exit-probes fired** (19 before R7's fix landed) |
 | `node scripts/ci/check-tempdoc-numbers.mjs` | recorded in §D.3 |
 | `node scripts/governance/run.mjs --mode gate` (full kernel) | **35 gates, 2 fail, 94 findings** — both pinned pre-existing; see §D.3 |
 
