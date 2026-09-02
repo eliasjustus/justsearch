@@ -2168,6 +2168,16 @@ seven-day bound and the attempts-cap behaviour are unit-tier by construction any
    root's documents as the default (the deferred 821 §L.3 fix). The root→collection mapping is now
    persisted in `watched_roots.json` (optional additive field, v1 unchanged) and read back by the
    listing, the watcher arm and the rewalk.
+   **One behaviour change rides with it, stated rather than discovered** (#605 review S3):
+   `getWatchedRoots().collection()` feeds `IngestCollectionPolicy.RootBinding`
+   (`AgentToolFactory.java:203`, `KnowledgeSearchController.java:815`), so an ad-hoc ingest that
+   names no collection, for a file under a LABELLED root, now inherits that root's label instead of
+   resolving to the index default. That is the correct semantics — the root's own scan has always
+   tagged those documents with the label, so the same file previously got a different collection
+   depending on which arm admitted it — and an unlabeled root is untouched, because only a non-default
+   label is stored. Pinned by `WatchedRootScanCollectionTest`'s
+   `adHocIngestUnderALabelledRootInheritsTheLabel`, which also holds the "explicit request still
+   wins" and "unlabeled root still resolves to null" arms.
 2. **The stack was serving mutating routes with an empty session token — checked, and by design.**
    `GET /api/mcp/token` returned `{"token":""}` and an unauthenticated `POST /api/indexing/roots`
    succeeded. Verified rather than assumed: `ApiSecurityFilters.setupSessionTokenEnforcement`

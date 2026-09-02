@@ -2,6 +2,7 @@
 package io.justsearch.app.services.worker;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
@@ -10,6 +11,7 @@ import io.grpc.Server;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
+import io.justsearch.app.api.knowledge.IngestCollectionPolicy;
 import io.justsearch.ipc.IngestServiceGrpc;
 import io.justsearch.ipc.ScanMode;
 import io.justsearch.ipc.ScanRootProgress;
@@ -17,6 +19,7 @@ import io.justsearch.ipc.ScanRootRequest;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -166,6 +169,41 @@ final class WatchedRootScanCollectionTest {
         "lane-c4-live",
         listed.get(0).collection(),
         "the listing must report the label the caller supplied, not null (rendered 'default')");
+  }
+
+  @Test
+  @DisplayName("an ad-hoc ingest under a labelled root inherits the label (the behaviour change)")
+  void adHocIngestUnderALabelledRootInheritsTheLabel() throws Exception {
+    Path root = Files.createDirectories(tempDir.resolve("inherit"));
+    Path unlabeledRoot = Files.createDirectories(tempDir.resolve("inherit-plain"));
+    Capture capture = new Capture("inherit-roots");
+    capture.ops.addWatchedRoot("my-notes", root);
+    capture.ops.addWatchedRoot(null, unlabeledRoot);
+    capture.drain();
+
+    // getWatchedRoots() feeds IngestCollectionPolicy.RootBinding at AgentToolFactory:203 and
+    // KnowledgeSearchController:815, so making the listing truthful CHANGES what an ad-hoc ingest
+    // with no explicit collection resolves to for a file under a labelled root: it now inherits the
+    // root's label instead of the index default. That is the correct semantics — the root's own
+    // scan has always tagged those documents with the label, so before this the same file got a
+    // different collection depending on which arm admitted it — but it is a behaviour change and is
+    // pinned here rather than left to be discovered.
+    List<IngestCollectionPolicy.RootBinding> bindings =
+        capture.ops.getWatchedRoots().stream()
+            .map(r -> new IngestCollectionPolicy.RootBinding(r.path(), r.collection()))
+            .toList();
+
+    assertEquals(
+        "my-notes",
+        IngestCollectionPolicy.resolve(null, root.resolve("note.md"), bindings),
+        "a file under a labelled root belongs to that root's collection");
+    assertNull(
+        IngestCollectionPolicy.resolve(null, unlabeledRoot.resolve("note.md"), bindings),
+        "an unlabeled root still resolves to the index default — null, exactly as before");
+    assertEquals(
+        "explicit",
+        IngestCollectionPolicy.resolve("explicit", root.resolve("note.md"), bindings),
+        "an explicitly requested collection still wins over the root's label");
   }
 
   @Test
