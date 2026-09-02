@@ -113,17 +113,19 @@ final class PersistentExtractionSandboxTest {
         ExtractionSandboxCommand.writeArgFile(
             List.of("-cp", System.getProperty("java.class.path"), "-Dsandbox.probe=" + hostile));
 
+    // redirectErrorStream: reading two pipes in sequence deadlocks if the child fills the one not
+    // being read. One merged stream removes the shape rather than relying on the output being small.
     Process probe =
         new ProcessBuilder(
                 ExtractionSandboxCommand.javaBinary(),
                 "@" + argFile,
                 ArgFileProbeChild.class.getName())
+            .redirectErrorStream(true)
             .start();
-    String stdout = new String(probe.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-    String stderr = new String(probe.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+    String output = new String(probe.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
     assertTrue(probe.waitFor(45, TimeUnit.SECONDS), "probe child must exit");
-    assertEquals(0, probe.exitValue(), "probe child failed: " + stderr);
-    assertEquals(hostile, stdout.trim(), "argfile encoding must round-trip; stderr: " + stderr);
+    assertEquals(0, probe.exitValue(), "probe child failed: " + output);
+    assertEquals(hostile, output.trim(), "argfile encoding must round-trip");
   }
 
   @Test
@@ -204,6 +206,34 @@ final class PersistentExtractionSandboxTest {
       assertTrue(
           failure.getMessage().contains("exhausted its heap"),
           "got: " + failure.getMessage());
+    }
+  }
+
+  /**
+   * A chatty parser must not be able to demote an OOM to a retryable failure.
+   *
+   * <p>The stderr capture is bounded at 64 KB. When it kept the HEAD, a parser that logged more
+   * than that before dying pushed its own {@code OutOfMemoryError} trace out of the buffer, the
+   * substring test in {@code discardAndClassify} went false, and a permanent parse failure was
+   * reported as a retryable crash — so the file would be retried forever against a heap it cannot
+   * fit in. The capture keeps the tail for exactly this case.
+   */
+  @Test
+  @Timeout(90)
+  void chattyParserCannotDemoteAnOomToRetryable() throws Exception {
+    try (PersistentExtractionSandbox sandbox =
+        sandbox(javaCommand(ScriptedChild.class, "-Xmx64m"), Duration.ofSeconds(60))) {
+      Path noisyOom = file("noisy-oom.txt");
+      ContentExtractor.ExtractionException failure =
+          assertThrows(ContentExtractor.ExtractionException.class, () -> sandbox.extract(noisyOom));
+
+      assertEquals(
+          ContentExtractor.ExtractionException.class,
+          failure.getClass(),
+          "64 KB of parser chatter must not push the OOM trace out of the capture: "
+              + failure.getMessage());
+      assertTrue(
+          failure.getMessage().contains("exhausted its heap"), "got: " + failure.getMessage());
     }
   }
 
@@ -427,6 +457,14 @@ final class PersistentExtractionSandboxTest {
           System.exit(3);
         }
         if (name.contains("oom")) {
+          if (name.contains("noisy")) {
+            // Overflow the parent's 64 KB stderr capture BEFORE dying, so the OutOfMemoryError
+            // trace is only visible to a capture that keeps the tail rather than the head.
+            for (int i = 0; i < 400; i++) {
+              System.err.println("chatty parser noise line " + i + " " + "x".repeat(512));
+            }
+            System.err.flush();
+          }
           while (true) {
             retained.add(new byte[8 * 1024 * 1024]);
           }

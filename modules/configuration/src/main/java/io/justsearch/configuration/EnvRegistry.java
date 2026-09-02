@@ -521,21 +521,6 @@ public enum EnvRegistry {
     EXTRACTION_SANDBOX_COMMAND(
         "justsearch.extraction.sandbox.command", "JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND"),
 
-    /** Number of persistent extraction child processes (default 1, one request in flight each). */
-    EXTRACTION_SANDBOX_POOL(
-        "justsearch.extraction.sandbox.pool", "JUSTSEARCH_EXTRACTION_SANDBOX_POOL"),
-
-    /**
-     * Max heap for an extraction child (e.g. {@code 768m}). Default: at least 4x the largest
-     * accepted input, floor 512m.
-     */
-    EXTRACTION_SANDBOX_HEAP(
-        "justsearch.extraction.sandbox.heap", "JUSTSEARCH_EXTRACTION_SANDBOX_HEAP"),
-
-    /** Requests one extraction child handles before it is recycled (leak guard; default 500). */
-    EXTRACTION_SANDBOX_MAX_REQUESTS(
-        "justsearch.extraction.sandbox.max_requests",
-        "JUSTSEARCH_EXTRACTION_SANDBOX_MAX_REQUESTS"),
 
     // ==================== Ingestion Skip Policy (tempdoc 410 §13) ====================
 
@@ -1232,7 +1217,23 @@ public enum EnvRegistry {
      * default (tempdoc 883 decision 2); requires flash attention, which is why {@code -fa on} is
      * passed explicitly rather than left to {@code auto}.
      */
-    LLM_KV_TYPE("justsearch.llm.kv_type", "JUSTSEARCH_LLM_KV_TYPE", "q8_0");
+    LLM_KV_TYPE("justsearch.llm.kv_type", "JUSTSEARCH_LLM_KV_TYPE", "q8_0"),
+
+    /** Number of persistent extraction child processes (default 1, one request in flight each). */
+    EXTRACTION_SANDBOX_POOL(
+        "justsearch.extraction.sandbox.pool", "JUSTSEARCH_EXTRACTION_SANDBOX_POOL"),
+
+    /**
+     * Max heap for an extraction child (e.g. {@code 768m}). Default: at least 4x the largest
+     * accepted input, floor 512m.
+     */
+    EXTRACTION_SANDBOX_HEAP(
+        "justsearch.extraction.sandbox.heap", "JUSTSEARCH_EXTRACTION_SANDBOX_HEAP"),
+
+    /** Requests one extraction child handles before it is recycled (leak guard; default 500). */
+    EXTRACTION_SANDBOX_MAX_REQUESTS(
+        "justsearch.extraction.sandbox.max_requests",
+        "JUSTSEARCH_EXTRACTION_SANDBOX_MAX_REQUESTS");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 
