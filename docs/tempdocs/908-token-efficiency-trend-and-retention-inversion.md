@@ -16,7 +16,7 @@ related:
 
 # 908 — Token efficiency trend + the retention inversion
 
-**Thesis, two parts.**
+**Thesis, three parts.**
 
 1. **The composition of spend shifted decisively, the existing stack structurally cannot see
    it, and the data needed to judge whether the shift was worth it does not exist.** Every reader
