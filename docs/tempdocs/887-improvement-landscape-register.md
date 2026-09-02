@@ -1,7 +1,7 @@
 ---
 title: "Improvement landscape register: breadth-first survey of un-chartered improvement areas, existence-checked per item, bucketed for owner / opus takeover / fable theorization"
 type: tempdocs
-status: "REGISTER COMPLETE (2026-09-02) — 75 items existence-checked by 10 pinned opus workers, 5 load-bearing claims spot-checked by the orchestrator; 19 candidate lanes proposed; NO lane chartered yet — awaiting owner selection (§L)"
+status: "REGISTER COMPLETE (2026-09-02) — 75 items existence-checked by 10 pinned opus workers, 5 load-bearing claims spot-checked by the orchestrator; decision-age audit (§S) applied to every superseded/rejected/deferred item — 1.1 non-NVIDIA re-opened (stale 2026-03 premise), 191's 2026-02 deferrals flagged; 19 candidate lanes proposed; NO lane chartered yet — awaiting owner selection (§L)"
 created: 2026-09-02
 updated: 2026-09-02
 author: agent (Fable orchestration), founder-directed 2026-09-02 ("determine what the remaining areas of work are, to improving the repo/project in general from any aspects … breadth first … theorize all angles with potential of providing meaningful general improvements")
@@ -57,6 +57,12 @@ can act on it next.
    enumerating every invocation site, not from executing the gates. Any repo-wide grep must
    exclude `.claude/worktrees/**` — hits there are copies of `main`.
 
+**Decision-age rule** (founder instruction 2026-09-02, applied after the first pass): a SUPERSEDED
+verdict, or a DROP that rests on a deliberate rejection/deferral, must carry the decision's **date
+and stated grounds**. If the decision is older than ~4 months, was made by an early-numbered
+tempdoc, or its stated premise has since changed, the row is flagged **RE-EXAMINE** and moves
+out of DROP. §S holds the audit.
+
 **Bucket rule** (decided before the checks ran, so the checks could not bend it):
 
 | Bucket | Meaning |
@@ -105,12 +111,25 @@ wait on a certificate purchase plus a GA tag (760 frontmatter). Lane L16.
 **X4. Three premises in the orchestrator's own theorization were wrong**, which is why the
 existence check was worth running: (a) a CPU-only inference tier is shipped, not fail-closed —
 the fail-closed note in `branch-safety.md` is about dev-worktree cuda staging; (b) DirectML/Vulkan
-was evaluated and rejected (311), not neglected; (c) end-user help content exists and is
+was evaluated and rejected (311), not neglected — though on a premise that has since expired (§S); (c) end-user help content exists and is
 searchable (`SSOT/docs/help/`, `HelpSurface.ts`).
 
 **X5. Search results have no abstention concept.** Chat has one grounding authority
 (`AnswerFrame`), extraction has a three-band gate (677), but a top-N of weak hits renders
 identically to a strong one (`Sv3ResultsStatus` is emptiness-only, no score floor). Lane L9.
+
+## §S. Decision-age audit (every superseded / rejected / deferred item)
+
+| item | decision | date | stated grounds | premise today | disposition |
+|---|---|---|---|---|---|
+| 1.1 non-NVIDIA | 311 rejected DirectML EP | 2026-03-16 | 2× slower than CUDA for transformers, sequential-only, leak reports; "AMD/Intel GPU support … not relevant for JustSearch's NVIDIA target" (`311:119`, `:489` "JustSearch (NVIDIA-only)") | **Premise changed.** The comparison was DirectML-vs-CUDA; for an AMD/Intel owner the alternative is the CPU tier. Since March the project shipped a CPU tier + booster-pack model (ADR-0019, 772), went public, and 761 (2026-07-21) raised a llama.cpp **Vulkan pivot** as an open supply-chain/ADR decision. llama.cpp Vulkan and ORT non-CUDA EPs have moved since. | **RE-EXAMINE** → L18 (FABLE): "non-NVIDIA acceleration, 2026 re-read" covering Vulkan for llama.cpp and DirectML/other for encoders, measured against the CPU tier, not CUDA |
+| 9.2 MSIX / Store | ADR-0024 rejected MSIX | 2026-04-06, `last_reviewed: 2026-09-02` | Store review friction, EV/organization cert required | Signing friction is the same blocker L16 must clear anyway; Store handles signing once a publisher identity exists. **Reviewed by the founder's lane B one day ago** — flagged, not re-opened here | flag to 884; revisit when L16's cert decision lands |
+| 6.6 UI localization | 742 removed Lingui | 2026-07-16 | catalog 100% dead after the Lit rewrite | Not a product decision — a dead-code sweep; ADR-0043 explicitly leaves UI language open | stays OWNER (L18); reworded from SUPERSEDED to "unowned" |
+| 5.3 near-dup / version family | 314 abandoned; 639 stub | 2026-03-17 (staleness audit 2026-05-18) | "Deprioritize until real-user duplicate evidence exists" (`314:55`) | Evidence path now exists (public release, demo corpus, feedback capture) — the precondition is satisfiable | stays OPUS-measure (L13); measurement is the re-examination |
+| 6.2 / 9.3 Explorer menu, file associations, browser extension | 191 deferred ("Long-term C", "marginal value", "Long-term K") | 2026-02-17 | effort/value guesses pre-launch, pre-MCP | 6.5 months old, earliest-model era; the product center moved to an agent-facing runtime (654), which changes the value of OS/host integrations | **RE-EXAMINE** → L18; treat 191's rankings as stale input, not decisions |
+| 9.7 rollback | 617 D5 locked forward-only | 2026-06-20 (updated 2026-07-31) | user-consented update tier makes "reinstall newer" acceptable | Recent, reasoned, still true | stays DROP |
+| 7.2 concurrency gate | 398 parked | ~2026-04 | "pick up reactively when `NativeSessionHandle`'s state machine is next touched" | Since then 819, 843, 862 each fixed a race one-off — the trigger has effectively fired three times without the gate being built | stays FABLE(short) → OPUS (L11); the parking condition is met |
+| 4.2 int8 default | 640 excluded `index_size_bytes` from ratchet; float32 kept "for backwards compatibility" | 2026-06 | merge non-determinism; compatibility | Blue/green re-embed (doc 11) makes a codec default change migratable; measurement first | stays OPUS-measure → OWNER (L6) |
 
 ## §R. Register
 
@@ -121,7 +140,7 @@ Columns: id · item · verdict · bucket · lane (§L) · one-line gap. Evidence
 
 | id | item | verdict | bucket | lane | gap |
 |---|---|---|---|---|---|
-| 1.1 | Non-NVIDIA inference (DirectML/Vulkan/ROCm) | SUPERSEDED | DROP | — | rejected in 311; only residue is a ROCm chip-label regex (`governance/chip-facts.v1.json:10`); Linux Vulkan pivot is an open owner call in 761 |
+| 1.1 | Non-NVIDIA inference (DirectML/Vulkan/ROCm) | SUPERSEDED (2026-03, stale premise) | **RE-EXAMINE** → FABLE | L18 | rejected in 311 on an "NVIDIA-only target" premise that no longer holds (§S); only residue is a ROCm chip-label regex (`governance/chip-facts.v1.json:10`); 761's Vulkan pivot is the live thread |
 | 1.2 | CPU-only degraded tier | SHIPPED | DROP | — | works (8k window, FP32 encoders); `05-ai-architecture.md:83-85` describes CUDA as "deferred to v3" while the cuda pack ships → §Z-2 |
 | 1.3 | Low-spec / laptop adaptation | PARTIAL | OPUS | L19 | only VRAM drives adaptation; Worker heap is a fixed constant (`WorkerSpawner.java:461`), battery gates only VDU pacing, thermal not sensed |
 | 1.4 | ARM64 Windows | ABSENT | OWNER | L18 | no build/ORT/llama target; platform decision |
@@ -186,11 +205,11 @@ Columns: id · item · verdict · bucket · lane (§L) · one-line gap. Evidence
 | id | item | verdict | bucket | lane | gap |
 |---|---|---|---|---|---|
 | 6.1 | Launcher-style quick search | PARTIAL | OPUS | L8 | tray, autostart, close-to-tray, single-instance focus shipped; **no global hotkey, no separate palette window**; 191 §A already specifies the design |
-| 6.2 | OS integration | PARTIAL | OWNER | L18 | deep-link, drag-drop, open/reveal shipped; Explorer context menu needs a shell-extension DLL (191 "Long-term C"); no file associations; no preview surface |
+| 6.2 | OS integration | PARTIAL | OWNER (RE-EXAMINE 191's 2026-02 rankings) | L18 | deep-link, drag-drop, open/reveal shipped; Explorer context menu needs a shell-extension DLL (191 "Long-term C"); no file associations ("marginal", 191); no preview surface — the deferrals predate launch and the agent-runtime product center (§S) |
 | 6.3 | Search UX primitives | PARTIAL | OPUS | L8 | pins shipped; **query history absent**, no size/folder filter, boolean syntax reachable by MCP/API but not the composer (`querySyntax` unset → SIMPLE) while `SSOT/docs/help/search-syntax.md:13-25` documents it → §Z-7; no grouping/dedup (→5.3) |
 | 6.4 | User-controlled indexing policy | ABSENT | FABLE ⇢882-C | L10 | settings schema has only `pauseIndexingDuringAi`; no pause/schedule/battery/CPU lever; 885 made pacing deliberately non-user-facing; 813 still deciding whether cancel is honest |
 | 6.5 | Accessibility on Lit stack | PARTIAL | OPUS | L1/L8 | three static gates in CI; live axe gate local-only (X1); no `forced-colors`; no assistive-tech testing (human); 200 is pre-Lit |
-| 6.6 | UI localization | SUPERSEDED (by teardown) | OWNER | L18 | Lingui + a German catalog were verified dead and removed (742); ADR-0043 explicitly leaves UI language open — unblocked but unowned |
+| 6.6 | UI localization | ABSENT (torn down 2026-07 as dead code, not decided) | OWNER | L18 | Lingui + a German catalog were verified dead and removed (742); ADR-0043 explicitly leaves UI language open — unblocked but unowned |
 | 6.7 | End-user documentation / help | SHIPPED | DROP | — | five help files auto-ingested into `justsearch-help`, Help view, Launchpad cards |
 | 6.8 | Product glossary authority | ABSENT | OPUS | L14 | 509 solved operation *button labels* only; no glossary for Head/Body/Brain, run/operation/job, passage/chunk, leg/lane; 509 left F-22/F-25 naming collisions unresolved |
 
@@ -199,7 +218,7 @@ Columns: id · item · verdict · bucket · lane (§L) · one-line gap. Evidence
 | id | item | verdict | bucket | lane | gap |
 |---|---|---|---|---|---|
 | 7.1 | Continuous fuzzing | ABSENT | OPUS | L12 | no Jazzer/JQF target, corpus, or job for Tika, proto/gRPC, HTTP, MCP JSON-RPC; only deterministic hostile fixtures + one MMF random-byte chaos thread; 410 invariant 12 asks for it |
-| 7.2 | Systematic concurrency audit | ABSENT | FABLE(short) → OPUS | L11 | five races fixed one-off (386/402/819/843/862); 8 `@GuardedBy`-family annotations repo-wide; no JCStress, no lock-order inventory; 398's gate parked; virtual threads adopted in 12 files |
+| 7.2 | Systematic concurrency audit | ABSENT | FABLE(short) → OPUS | L11 | five races fixed one-off (386/402/819/843/862); 8 `@GuardedBy`-family annotations repo-wide; no JCStress, no lock-order inventory; 398's gate parked ~2026-04 "until the state machine is next touched" — touched three times since (§S); virtual threads adopted in 12 files |
 | 7.3 | Nullness + static analysis | PARTIAL | OPUS | L1/L11 | **Error Prone is the only Java analyzer that gates**; PMD/SpotBugs unreachable (X1); no NullAway/JSpecify; CodeQL `workflow_dispatch` only, Java+JS scope |
 | 7.4 | Test-suite trustworthiness | PARTIAL | OPUS + OWNER-infra | L2 | PIT + `test-efficacy` ratchet fully built, fed by nothing (X1); 9 jqwik property classes shipped; retry configured, flake census unwired, no quarantine |
 | 7.5 | Frontend verification depth | PARTIAL | OPUS | L1 | typecheck + 463 vitest files run in **no** workflow (X1); live axe local-only; visual regression is baseline-less by policy; `check-ui-step-coverage` claims CI wiring it lacks → §Z-4 |
@@ -225,8 +244,8 @@ Columns: id · item · verdict · bucket · lane (§L) · one-line gap. Evidence
 | id | item | verdict | bucket | lane | gap |
 |---|---|---|---|---|---|
 | 9.1 | Code signing | PARTIAL | OWNER | L16 | three-mode signing + verify + sign-once mirrors wired and dormant; shipped builds unsigned pending cert/vendor purchase (760) |
-| 9.2 | Package-manager distribution | PARTIAL | OWNER → OPUS | L16 | winget skeleton committed, unsubmitted, no automation; MSIX/Store rejected (ADR-0024); Scoop/Chocolatey absent |
-| 9.3 | Integration plugins | ABSENT | OWNER/FABLE | L18 | PowerToys Run/Raycast/Obsidian appear only as prior art; browser extension is 191 "Long-term K" |
+| 9.2 | Package-manager distribution | PARTIAL | OWNER → OPUS | L16 | winget skeleton committed, unsubmitted, no automation; MSIX/Store rejected (ADR-0024, 2026-04, re-reviewed by lane B 2026-09-02 — flagged in §S, not re-opened here); Scoop/Chocolatey absent |
+| 9.3 | Integration plugins | ABSENT | OWNER/FABLE (RE-EXAMINE 191's 2026-02 deferral) | L18 | PowerToys Run/Raycast/Obsidian appear only as prior art; browser extension is 191 "Long-term K" (pre-launch, pre-MCP ranking, §S) |
 | 9.4 | Release notes / roadmap | PARTIAL | OPUS + OWNER(content) | L16 | `CHANGELOG.md` has only `[Unreleased]`, nothing reads or gates it; release body = blurb + `--generate-notes`; no roadmap doc |
 | 9.5 | NOTICE / license automation | SHIPPED | DROP | — | `gen-notices.mjs` projects Gradle+npm+Cargo+models, CI-gated; SPDX headers deferred (632 G) |
 | 9.6 | Model lifecycle pipeline | PARTIAL | OPUS (dep: 826/819) | L16 | every step exists as a separate tool; nothing sequences build→verify→registry→re-embed→eval→notices; 826 reports the fingerprint never persists; an interrupted `build-ner.py` went undetected until a 2.69× regression |
@@ -268,7 +287,7 @@ Each lane becomes a tempdoc only when picked. Bucket = who acts first.
 | **L15** | Open-items collector + ADR follow-up | 10.7, 10.8 | OPUS ⇢882-B | collector script over tempdoc open-items sections; extend `adr-coverage` to `## Follow-up`; one-time harvest feeds this register |
 | **L16** | Release unblock | 9.1, 9.2, 9.4, 9.6 | OWNER → OPUS | cert purchase + GA tag, then winget automation, CHANGELOG gate, model-swap runbook |
 | **L17** | Project operations | 10.1, 10.2, 10.5, 10.6, 3.6 | OPUS + OWNER | devcontainer, labels, succession doc (owner inputs), on-wire deprecation, SDK language decision, crash-report stance |
-| **L18** | Product bets (theorization menu) | 1.4, 2.9, 5.4, 5.7, 5.8 (enable), 6.2, 6.6, 9.3, 10.3 | OWNER/FABLE | each is a direction decision; none should be chartered without the founder picking it |
+| **L18** | Product bets (theorization menu) | **1.1 (non-NVIDIA re-read)**, 1.4, 2.9, 5.4, 5.7, 5.8 (enable), 6.2, 6.6, 9.3, 10.3 | OWNER/FABLE | each is a direction decision; none should be chartered without the founder picking it; 1.1, 6.2, 9.3 carry stale early-era rejections/deferrals (§S) — the re-read is the deliverable, not a presumption either way |
 | **L19** | Inference runtime residuals | 1.3, 1.5, 1.7, 1.8 | OPUS (+1 research) | RAM-derived heap, battery-aware pacing beyond VDU, device-lost classification, slot pinning; speculative decoding is a model-pack research item |
 
 Suggested first picks if the founder wants a default: **L1** (inert enforcement, zero infra),
