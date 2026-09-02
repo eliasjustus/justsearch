@@ -121,8 +121,12 @@ population.
   not less, because a crash in one JVM is now a crash of everything.
 - **A clean re-measure of `index.nrt.mode=on_demand`**, with a search-load arm. If it does not earn
   its keep, the three `index.nrt.*` keys are deleted.
-- **`CommitOps.COMMIT_TIMER_INTERVAL_MS` becoming configurable**, which is the precondition for any
-  commit-cadence work at all.
+- ~~**`CommitOps.COMMIT_TIMER_INTERVAL_MS` becoming configurable**~~ — **done**: it is
+  `index.commit.timer_interval_ms` (default `10000`, the constant it replaced), resolved onto
+  `ResolvedConfig.Index` and forwarded to the Worker through the ordinal-450 snapshot. That was only
+  the FIRST of the two preconditions for commit-cadence work; the second is still open — the
+  enrichment backfill's own commit sites (61 of 114 commits in the control arm) are governed by no
+  key, so an arm that moves only this timer still cannot reach most of the population.
 - **A mixed text+binary corpus existing on disk**, which would let the in-process families' sandbox
   round-trip be measured against the 10 ms/file bar that currently has no evidence either way.
 

@@ -70,7 +70,7 @@ final class WatchedRootsStoreTest {
     WatchedRootsStore store = new WatchedRootsStore(rootsFile, null);
 
     Instant ts = Instant.parse("2026-01-01T00:00:00Z");
-    store.persistRoots(Map.of(root.toAbsolutePath(), ts), Map.of(), java.util.Set.of());
+    store.persistRoots(Map.of(root.toAbsolutePath(), ts), Map.of(), java.util.Set.of(), Map.of());
 
     assertTrue(Files.exists(rootsFile));
     String written = Files.readString(rootsFile);
@@ -79,6 +79,51 @@ final class WatchedRootsStoreTest {
 
     Map<Path, Instant> loaded = store.loadPersistedRoots();
     assertEquals(ts, loaded.get(root.toAbsolutePath()));
+  }
+
+  @Test
+  @DisplayName("A root's collection label round-trips, and a file without one loads as unlabeled")
+  void collectionRoundTripsAndIsOptional() throws Exception {
+    Path labeled = tempDir.resolve("labeled");
+    Path unlabeled = tempDir.resolve("unlabeled");
+    Files.createDirectories(labeled);
+    Files.createDirectories(unlabeled);
+
+    Path rootsFile = tempDir.resolve("watched_roots.json");
+    WatchedRootsStore store = new WatchedRootsStore(rootsFile, null);
+    store.persistRoots(
+        Map.of(
+            labeled.toAbsolutePath(), WatchedRootsStore.NEVER_INDEXED,
+            unlabeled.toAbsolutePath(), WatchedRootsStore.NEVER_INDEXED),
+        Map.of(),
+        java.util.Set.of(),
+        Map.of(labeled.toAbsolutePath(), "my-notes"));
+
+    assertTrue(Files.readString(rootsFile).contains("\"my-notes\""));
+
+    var loaded = store.loadPersistedRootsWithErrors();
+    assertEquals("my-notes", loaded.collections().get(labeled.toAbsolutePath()));
+    assertNull(
+        loaded.collections().get(unlabeled.toAbsolutePath()),
+        "a root with no label must stay unlabeled rather than acquiring an empty one");
+  }
+
+  @Test
+  @DisplayName("A pre-collection file loads with no labels instead of failing")
+  void legacyFileWithoutCollectionField() throws Exception {
+    Path root = tempDir.resolve("legacy");
+    Files.createDirectories(root);
+    Path rootsFile = tempDir.resolve("watched_roots.json");
+    Files.writeString(
+        rootsFile,
+        "{\"schemaVersion\":1,\"roots\":[{\"path\":\""
+            + root.toAbsolutePath().toString().replace("\\", "\\\\")
+            + "\"}]}");
+
+    var loaded = new WatchedRootsStore(rootsFile, null).loadPersistedRootsWithErrors();
+
+    assertEquals(1, loaded.roots().size());
+    assertTrue(loaded.collections().isEmpty(), "no label recorded, none invented");
   }
 
   @Test

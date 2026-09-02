@@ -1286,7 +1286,24 @@ public enum EnvRegistry {
      * query cannot silently return a view older than this bound. Ignored in {@code continuous} mode.
      */
     INDEX_NRT_ON_DEMAND_MAX_STALE_MS(
-        "index.nrt.on_demand_max_stale_ms", "JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS", "1000");
+        "index.nrt.on_demand_max_stale_ms", "JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS", "1000"),
+
+    // ==================== Commit cadence (tempdoc 885 item 19 follow-up) ====================
+
+    /**
+     * Period, in ms, of the Worker's safety-net commit timer (default 10000 — the constant it
+     * replaces, so behaviour is unchanged). {@code CommitOps} commits whenever {@code pendingDocs >
+     * 0} on this period, which is why it is the ceiling on every other commit-cadence lever: 885's
+     * live window measured the indexing loop's own triggers going to zero while this timer's share
+     * rose 16 → 46, because deferring the loop's commits keeps {@code pendingDocs} above zero for
+     * longer and hands the timer MORE work. A commit-cadence arm cannot be measured until this is a
+     * knob, which is what the tracked item asked for.
+     *
+     * <p>Resolved onto {@code ResolvedConfig.Index} and read by the Worker from the ordinal-450
+     * config snapshot, not from a raw sysprop read inside the Worker JVM (the [R1] defect shape).
+     */
+    INDEX_COMMIT_TIMER_INTERVAL_MS(
+        "index.commit.timer_interval_ms", "JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS", "10000");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 

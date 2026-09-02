@@ -185,7 +185,8 @@ export function renderMatrixMarkdown(model) {
   lines.push(
     "- **`settings.json` (300)** — `ConfigStoreRebuilder.contributeUiSettings` forwards a handful" +
       " of `UiSettings` fields, including `justsearch.gpu.layers`, `justsearch.context.size`," +
-      " `justsearch.server.exe` and `justsearch.ui.exclude_patterns`.",
+      " `justsearch.server.exe`, `justsearch.ui.exclude_patterns`, `justsearch.index.base_path`" +
+      " and `justsearch.llm.model_path`.",
   );
   lines.push(
     "- **`auto_detected` (150, detail `hardware_probe`)** — the Head's startup probe contributes" +
@@ -196,12 +197,16 @@ export function renderMatrixMarkdown(model) {
   lines.push(
     "Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for" +
       " `justsearch.context.size` (slice 1) and `justsearch.gpu.layers`," +
-      " `justsearch.server.exe`, `justsearch.ui.exclude_patterns` (slice 2), along with their" +
-      " `*.source=ui_settings` marker properties. Each of those keys now resolves `settings.json`" +
-      " when the user set one and `auto_detected` / `default` otherwise — never `jvm_arg` merely" +
-      " because the value came from the GUI, which is what the promotions used to make them" +
-      " report. `justsearch.server.exe.source` survives as the ownership token of the runtime" +
-      " GPU-variant switch (`RuntimeActivationService`), which is a different mechanism.",
+      " `justsearch.server.exe`, `justsearch.ui.exclude_patterns` (slice 2), and its §C.5c residue" +
+      " deleted the last two, `justsearch.index.base_path` and `justsearch.llm.model_path`, along" +
+      " with every `*.source=ui_settings` marker property. Each of those keys now resolves" +
+      " `settings.json` when the user set one and `auto_detected` / `default` otherwise — never" +
+      " `jvm_arg` merely because the value came from the GUI, which is what the promotions used to" +
+      " make them report. Two `*.source` properties survive, neither of them a settings promotion:" +
+      " `justsearch.server.exe.source` is the ownership token of the runtime GPU-variant switch" +
+      " (`RuntimeActivationService`), and `justsearch.llm.model_path.source` labels the paths" +
+      " `AiInstallService` / `AiPackImportService` write directly so `InferenceConfig` can tell an" +
+      " installer-written path from an operator lock.",
   );
   lines.push("");
   lines.push("| YAML key | Env var | System property | EnvRegistry constant | Owner module | Precedence notes |");

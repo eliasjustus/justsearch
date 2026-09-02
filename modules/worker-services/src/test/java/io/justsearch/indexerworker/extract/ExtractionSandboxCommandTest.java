@@ -166,4 +166,68 @@ final class ExtractionSandboxCommandTest {
     assertEquals("\"-Xmx512m\"", ExtractionSandboxCommand.argFileToken("-Xmx512m"));
     assertEquals("\"say \\\"hi\\\"\"", ExtractionSandboxCommand.argFileToken("say \"hi\""));
   }
+
+  // ---- the operator override's argv (tempdoc 885 §UD residue) ----------------------------------
+  // JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND was `raw.trim().split("\\s+")`, so an operator whose JDK
+  // lives under "C:\Program Files\..." could not name it at all: the path split into two arguments
+  // and the spawn failed. Quoting fixes that WITHOUT changing the unquoted form.
+
+  @Test
+  void unquotedCommandsSplitOnWhitespaceExactlyAsBefore() {
+    assertEquals(
+        List.of("java", "-Xmx128m", "-cp", "C:\\jdk\\lib.jar", CHILD_MAIN),
+        ExtractionSandboxCommand.tokenize(
+            "  java   -Xmx128m\t-cp  C:\\jdk\\lib.jar\n" + CHILD_MAIN + " "));
+    assertEquals(List.of(), ExtractionSandboxCommand.tokenize("   "));
+    assertEquals(List.of(), ExtractionSandboxCommand.tokenize(null));
+  }
+
+  @Test
+  void aQuotedPathWithSpacesIsOneArgument() {
+    assertEquals(
+        List.of("C:\\Program Files\\jdk\\bin\\java.exe", "-cp", "C:\\Program Files\\app\\lib.jar"),
+        ExtractionSandboxCommand.tokenize(
+            "\"C:\\Program Files\\jdk\\bin\\java.exe\" -cp 'C:\\Program Files\\app\\lib.jar'"),
+        "a backslash inside quotes is a path separator, not an escape — the whole point is that a"
+            + " Windows path can be pasted in verbatim");
+  }
+
+  @Test
+  void escapesInsideDoubleQuotesAreQuoteAndBackslashOnly() {
+    assertEquals(List.of("say \"hi\""), ExtractionSandboxCommand.tokenize("\"say \\\"hi\\\"\""));
+    assertEquals(List.of("a\\b"), ExtractionSandboxCommand.tokenize("\"a\\\\b\""));
+    // Single quotes have no escapes at all, so a backslash there is always literal.
+    assertEquals(List.of("a\\\"b"), ExtractionSandboxCommand.tokenize("'a\\\"b'"));
+  }
+
+  @Test
+  void quotesGroupWithinAnArgumentAndAnEmptyQuotedArgumentSurvives() {
+    assertEquals(List.of("-Dopt=a b"), ExtractionSandboxCommand.tokenize("-Dopt=\"a b\""));
+    assertEquals(List.of("ab", "c"), ExtractionSandboxCommand.tokenize("a\"b\" c"));
+    assertEquals(List.of("java", ""), ExtractionSandboxCommand.tokenize("java \"\""));
+  }
+
+  @Test
+  void anUnterminatedQuoteIsRefusedRatherThanMisSplit() {
+    IllegalArgumentException e =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            IllegalArgumentException.class,
+            () -> ExtractionSandboxCommand.tokenize("java \"C:\\Program Files\\java.exe"));
+    assertTrue(e.getMessage().contains("unterminated"), e.getMessage());
+  }
+
+  /**
+   * The documented trailing-backslash caveat, pinned so the doc and the parser cannot drift: a
+   * directory written with its separator before the closing quote escapes the quote.
+   */
+  @Test
+  void aTrailingSeparatorBeforeTheClosingQuoteEscapesIt() {
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> ExtractionSandboxCommand.tokenize("java -cp \"C:\\dir\\\""));
+    assertEquals(
+        List.of("java", "-cp", "C:\\dir\\"),
+        ExtractionSandboxCommand.tokenize("java -cp \"C:\\dir\\\\\""),
+        "doubling the trailing separator is the documented way to express it");
+  }
 }

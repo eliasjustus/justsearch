@@ -149,8 +149,13 @@ final class PersistentExtractionSandboxTest {
   void hangingChildIsKilledAtTheDeadlineAndTheNextRequestSucceeds() throws Exception {
     try (TestMetricRegistry registry = new TestMetricRegistry(ExtractionMetricCatalog.DEFINITIONS)) {
       ExtractionMetricCatalog catalog = new ExtractionMetricCatalog(registry);
+      // 10 s, not 2: the property under test is "the hung child is killed at ITS deadline and a
+      // replacement serves the next request", not the deadline's value. The second extract has to
+      // spawn a cold JVM, and on Windows under concurrent-agent load that alone exceeds 2 s — the
+      // test then failed with the very ExtractionTimeoutException it had just asserted, on the
+      // NEXT call. The hang fixture still trips the deadline long before 10 s.
       try (PersistentExtractionSandbox sandbox =
-          sandbox(javaCommand(ScriptedChild.class), Duration.ofSeconds(2), catalog)) {
+          sandbox(javaCommand(ScriptedChild.class), Duration.ofSeconds(10), catalog)) {
         Path hanging = file("hang.txt");
         assertThrows(
             TimeboxedContentExtractor.ExtractionTimeoutException.class,
