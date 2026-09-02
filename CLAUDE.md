@@ -174,6 +174,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | `UnifiedChatView.ts` / `CoreConversationShapeCatalog.java` | `check-intent-tier-coverage` |
 | **`modules/ui-web/src/**`** (ui-web gate set) | pushed by the consult hook — authority: the `ui-web-gates` recipe in `governance/consult-register.v1.json` |
 | ui-shot harness · new RAIL surface | `check-ui-step-coverage` |
+| `expected-state.v1.json` pins | `node scripts/agent-analytics/run-all-tests.mjs` |
 
 ## Common Pitfalls
 
