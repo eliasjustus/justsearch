@@ -123,7 +123,10 @@ final class SchemaControllerTest {
     assertTrue(names.contains("knowledge-search-response.v1.json"));
     assertTrue(names.contains("ai-runtime-status-response.v1.json"));
     assertTrue(names.contains("effective-policy.v1.json"));
-    assertEquals(11, names.size());
+    // Tempdoc 911 (885 UL.9): the substrate failed-jobs response, referenced by RouteResponseSchemas
+    // for both /api/indexing-jobs/failed routes — same reason as the three above.
+    assertTrue(names.contains("failed-indexing-jobs-response.v1.json"));
+    assertEquals(12, names.size());
     assertFalse(names.contains("nonexistent.v1.json"));
   }
 }

@@ -11,6 +11,7 @@ import io.justsearch.app.api.AiRuntimeStatusResponse;
 import io.justsearch.app.api.EffectivePolicy;
 import io.justsearch.app.api.agent.AgentHistoryResponse;
 import io.justsearch.app.api.agent.AgentSessionsResponse;
+import io.justsearch.app.api.indexing.FailedIndexingJobsResponse;
 import io.justsearch.app.api.indexing.FailedJobsResponse;
 import io.justsearch.app.api.knowledge.FolderBrowseResponse;
 import io.justsearch.app.api.knowledge.FolderFilesResponse;
@@ -150,6 +151,17 @@ final class WireRecordSchemaGenTest {
   @DisplayName("FailedJobsResponse")
   void failedJobs() throws IOException {
     captureOrVerify(FailedJobsResponse.class, "failed-jobs-response.v1.json");
+  }
+
+  // Tempdoc 911 (885 UL.9): the substrate-shaped failed-jobs surfaces
+  // (/api/indexing-jobs/failed and .../by-prefix). Both hand-built a Map that was almost an
+  // IndexingJobView (scanId dropped), so nothing described the wire the FailedJobsDrawer reads
+  // `state` off — the field the RETRY_EXHAUSTED rendering depends on. Both records are PreciseWire,
+  // so the schema (and the FE Zod it generates) states required + non-null.
+  @Test
+  @DisplayName("FailedIndexingJobsResponse")
+  void failedIndexingJobs() throws IOException {
+    captureOrVerify(FailedIndexingJobsResponse.class, "failed-indexing-jobs-response.v1.json");
   }
 
   // Tempdoc 663 §L/Stage 4 — /api/inference/status moved off a hand-built Map onto this record; a
