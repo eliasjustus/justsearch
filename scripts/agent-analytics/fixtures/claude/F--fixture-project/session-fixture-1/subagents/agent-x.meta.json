@@ -1,0 +1,7 @@
+{
+  "agentType": "general-purpose",
+  "description": "fixture subagent for claude-adapter tests",
+  "model": "claude-sonnet-5",
+  "toolUseId": "tu-spawn-1",
+  "spawnDepth": 1
+}

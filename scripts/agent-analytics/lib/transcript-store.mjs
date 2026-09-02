@@ -40,15 +40,22 @@ import os from 'node:os';
 export const DEFAULT_PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
 
 /**
- * Every directory under `projectsRoot` whose slug matches /justsearch/i —
- * the main checkout, every worktree, and any jseval subdir each show up as a
- * distinct project dir under Claude Code's project-path slugging (743 Phase
- * 1 finding, reused verbatim as the matching rule here). Returns `[]` (never
- * throws) when `projectsRoot` doesn't exist — a fresh machine or a
- * contributor clone with no transcript history is a normal case, not an
- * error worth surfacing to every caller.
+ * Every directory under `projectsRoot` whose slug matches `filter` — default
+ * /justsearch/i, so every existing caller (this repo's own readers) is
+ * unaffected: the main checkout, every worktree, and any jseval subdir each
+ * show up as a distinct project dir under Claude Code's project-path
+ * slugging (743 Phase 1 finding, reused verbatim as the matching rule here).
+ * Returns `[]` (never throws) when `projectsRoot` doesn't exist — a fresh
+ * machine or a contributor clone with no transcript history is a normal
+ * case, not an error worth surfacing to every caller.
+ *
+ * `filter` was added by tempdoc 886 §12 PR 1 so `lib/ledger/claude-adapter.mjs`
+ * — which is harness-neutral by design and not scoped to this repo's own
+ * projects — can discover every project dir on the machine (`/./`-style
+ * always-match) or a caller-chosen subset, without this module hardcoding a
+ * second discovery function.
  */
-export function discoverProjectDirs(projectsRoot = DEFAULT_PROJECTS_ROOT) {
+export function discoverProjectDirs(projectsRoot = DEFAULT_PROJECTS_ROOT, filter = /justsearch/i) {
   let entries;
   try {
     entries = fs.readdirSync(projectsRoot, { withFileTypes: true });
@@ -56,7 +63,7 @@ export function discoverProjectDirs(projectsRoot = DEFAULT_PROJECTS_ROOT) {
     return [];
   }
   return entries
-    .filter((e) => e.isDirectory() && /justsearch/i.test(e.name))
+    .filter((e) => e.isDirectory() && filter.test(e.name))
     .map((e) => ({ name: e.name, path: path.join(projectsRoot, e.name) }));
 }
 

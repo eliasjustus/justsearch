@@ -88,3 +88,78 @@ cancelled Sonnet-5 price cliff sat in the table two weeks from silently overpric
 Sonnet-5 turn by 50%. The rates in `lib/transcript-cost.mjs` carry the date they were last
 verified against `platform.claude.com/docs/en/about-claude/pricing`; re-check them when a
 model ships or a promotional rate is announced, because nothing here will tell you.
+
+## Session ledger (886)
+
+Every reader above speaks Claude Code's own transcript shape. Tempdoc 886 found that the
+thing that actually sets the bill — context tokens re-presented per API call — is the same
+idea whether the harness is Claude Code or OpenAI Codex CLI; only the field names differ.
+`lib/ledger/` is the harness-neutral projection of that idea:
+
+```
+import { listCalls } from './lib/ledger/index.mjs';
+const { calls, toolEvents, sessions } = listCalls({ harnesses: ['claude-code', 'codex-cli'], sinceMs: Date.parse('2026-08-01') });
+```
+
+A `Call` carries `{harness, provider, project, sessionId, callId, lineage, ts, model, tokens,
+contextTokens, compactionBoundary}`; a `ToolEvent` carries `{harness, sessionId, callRef, role,
+name, inputChars, outputChars, isError, ts}`. **Absent token axes are `null`, never `0`** —
+Codex has no billable cache write, Claude has no reasoning-token axis, and a reader summing a
+`null` as zero spend would be quietly wrong in the direction that hides cost, not inflates it.
+
+Per-harness adapters:
+
+- `lib/ledger/claude-adapter.mjs` wraps `lib/transcript-store.mjs` discovery. Dedups by
+  `message.id` (Claude writes one JSONL line per content block, all sharing one id, with
+  identical `usage` repeated on each) while still registering every line's `tool_use` blocks —
+  a block can land on a line AFTER the one that carried the usage snapshot, so registering
+  before the dedup skip is what keeps the tool_result→tool-name join intact. Subagent lineage
+  (`spawn` vs `fork`) comes from the sibling `subagents/*.meta.json`.
+- `lib/ledger/codex-adapter.mjs` reads `~/.codex/sessions/**/rollout-*.jsonl` directly (no
+  shared discovery module exists for Codex yet). Every parsing rule is corpus-verified (886
+  §11's derisk pass, 51,740 `token_count` events / 289 sessions): `input_tokens` already
+  *includes* `cached_input_tokens` (the OpenAI convention); `last_token_usage` is a per-call
+  delta, and a `token_count` event whose cumulative total exactly repeats the previous one is
+  dropped as a duplicate, not counted as a new call (1,482 such repeats in that corpus); tool
+  outputs are capped at 64k chars with a `truncated` flag (some run past 750k uncapped). Every
+  Codex `Call` has `lineage.kind = 'main'` — `inter_agent_communication_metadata` is a real
+  signal, but on real payloads (`{trigger_turn: false}`) it names no PARENT, so no per-call
+  lineage edge is derivable from it; that fact surfaces instead as the session-level
+  `session.multiAgent` boolean. A `compacted` line with no following `token_count` event still
+  gets a synthetic zero-token boundary `Call` (`Call.synthetic = true` — every other `Call` is
+  `synthetic: false`). A file with no usable `sessionId` (missing/empty `session_meta.payload.id`)
+  is the ONE documented skip condition — collected into the returned `skipped: [{file, reason}]`
+  array, not silently dropped; any OTHER parsing exception propagates rather than being caught.
+  `session.selfCheck` reports `{deltaInputSum, maxCumulativeInput, resets, repeatsDropped}` —
+  `maxCumulativeInput` (renamed from an earlier `finalCumulativeInput`) is the largest cumulative
+  input-token counter observed, not merely the last one, and `resets` counts how many times that
+  cumulative counter DECREASED (a resumed thread restarting its counter).
+
+**`resume` and `thread` are RESERVED lineage vocabulary — no adapter in this PR produces
+either.** `record.mjs`'s `VALID_LINEAGE_KINDS` documents the evidence each would need: `thread`
+needs a real PARENT id in the payload (not just a boolean flag asserting multi-agent
+communication happened); `resume` needs an explicit resumed-FROM linkage (a Codex rollout
+naming the prior rollout it continues, or a Claude Code transcript carrying `--resume`'s source
+sessionId). Neither harness's log carries that evidence today.
+
+`lib/ledger/tool-roles.mjs` maps each harness's own tool names onto one shared role vocabulary
+(`read`/`edit`/`shell`/`search`/`spawn`/`wait`/`web`/`other`) so a cross-harness reader never
+needs a tool-name switch statement per harness. The Codex table is a corpus vocabulary snapshot
+(2026-09-02, 50,259 real calls/tool events) — `agent_message` maps to `spawn` for table
+completeness even though the adapter no longer emits a `ToolEvent` for it (its payloads are
+plain assistant reply text, not tool activity).
+
+**Boundary rule, enforced not just documented (886 §10.4):** this library is machine-level —
+every project on the machine could use it — while the hooks/gates elsewhere in this directory
+are this repo's own policy. Nothing under `lib/ledger/` may read `governance/`, `CLAUDE.md`, or
+`tmp/agent-telemetry` paths, or resolve a repo root via a relative `'..','..','..'` climb.
+`lib/ledger/boundary-check.mjs` exports the pure checker (`findBoundaryViolations`);
+`lib/ledger/boundary.test.mjs` runs it over every real file in the directory AND over crafted
+violation shapes (a side-effect import, a multi-line `import {...} from`) to prove the checker
+itself catches them, not just that today's files happen to pass.
+
+`cache-efficiency.mjs` is the first migrated consumer — its `--harness` flag (default
+`claude-code`) selects the provider, and file discovery now comes from the ledger's
+`listClaudeTranscriptFiles` instead of a second hand-rolled directory walk. Fixtures for both
+adapters live under `fixtures/claude/` and `fixtures/codex/` — synthetic content only, no real
+prompts or paths.

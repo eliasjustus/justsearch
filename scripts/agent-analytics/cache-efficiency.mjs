@@ -25,15 +25,35 @@
  * placeholder for a cause someone forgot to fill in. Settling it needs
  * request-layer visibility (tempdoc 622's native OTel spans).
  *
+ * FIRST LEDGER CONSUMER (tempdoc 886 §12 PR 1). File DISCOVERY now comes from
+ * `lib/ledger/claude-adapter.mjs`'s `listClaudeTranscriptFiles` — the same
+ * recursive depth-3 walk this reader used to do inline (`collectFiles` +
+ * a `discoverProjectDirs` call), now centralised in the ledger so it is
+ * provably the identical file set (bit-identical numbers before/after this
+ * migration). The per-file CLASSIFICATION below (`analyseTranscript` and its
+ * pure helpers) intentionally still reads `iterateTurns`/`message.usage`
+ * directly rather than a `Call` object: the cache TTL/invalidation taxonomy
+ * here is Claude-specific (prompt-cache write tiers, compaction boundaries)
+ * with no Codex equivalent, and `analyseTranscript`'s file-based signature is
+ * exercised directly by this file's own regression tests (notably the
+ * partial-dedup + compaction test), which this migration does not touch.
+ *
+ * `--harness` (default `claude-code`) selects the provider. `codex-cli` runs
+ * a much smaller ledger-only summary — Codex has no billable cache WRITE at
+ * all (OpenAI's convention: `cached_input_tokens` is a read discount, never a
+ * separate write charge), so the write axis prints as an explicit `n/a`
+ * rather than a `0` that would misleadingly imply "measured and found zero".
+ *
  * Usage:
- *   node scripts/agent-analytics/cache-efficiency.mjs [--since <ISO>] [--json]
+ *   node scripts/agent-analytics/cache-efficiency.mjs [--since <ISO>] [--json] [--harness claude-code|codex-cli]
  */
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { discoverProjectDirs, iterateTurns } from './lib/transcript-store.mjs';
+import { iterateTurns } from './lib/transcript-store.mjs';
 import { findPricing, isKnownModel, PER_M } from './lib/transcript-cost.mjs';
-import fs from 'node:fs';
+import { listClaudeTranscriptFiles } from './lib/ledger/claude-adapter.mjs';
+import { listCalls } from './lib/ledger/index.mjs';
 
 // --- classification constants (judgment calls, so they are named and visible) --
 
@@ -134,16 +154,6 @@ export function emptyReport() {
       byLine: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 },
     },
   };
-}
-
-function collectFiles(dir, out, depth = 0) {
-  let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of entries) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory() && depth < 3) collectFiles(p, out, depth + 1);
-    else if (e.isFile() && e.name.endsWith('.jsonl')) out.push(p);
-  }
 }
 
 export function analyseTranscript(file, report, { sinceMs = null } = {}) {
@@ -253,21 +263,99 @@ export function analyseTranscript(file, report, { sinceMs = null } = {}) {
 function fmtM(n) { return (n / 1e6).toFixed(1) + 'M'; }
 function pct(a, b) { return b ? (100 * a / b).toFixed(1) + '%' : 'n/a'; }
 
+/**
+ * `--harness codex-cli` summary. Codex has no billable cache WRITE at all —
+ * OpenAI's `cached_input_tokens` is a read discount folded into `input_tokens`,
+ * never a separate charge — so the Claude-shaped invalidation/TTL taxonomy in
+ * `analyseTranscript` above has no Codex analogue to migrate onto; this is a
+ * deliberately smaller ledger-only summary (886 §12 PR 1 first-consumer scope),
+ * not a parity rewrite of the Claude classification pipeline.
+ */
+/**
+ * A session's self-check (NIT 7, 886 §12 PR 1 independent-review fix-up):
+ * `deltaInputSum` (sum of per-call fresh-delta input) vs `maxCumulativeInput`
+ * (the largest cumulative `total_token_usage.input_tokens` this adapter saw)
+ * legitimately DIVERGE for a resumed thread — the derisk pass (886 §11 A2)
+ * found the corpus-wide gap runs 5.04B vs 6.51B for exactly that reason.
+ * This is a REPORTED ratio, not an assertion: a session over the 1% band is
+ * not a bug, it is "this session's history includes a resume".
+ */
+export const SELF_CHECK_DIVERGENCE_THRESHOLD = 0.01;
+
+export function countSelfCheckDivergent(sessions) {
+  let n = 0;
+  for (const s of sessions) {
+    const { deltaInputSum, maxCumulativeInput } = s.selfCheck || {};
+    const denom = Math.max(1, maxCumulativeInput || 0);
+    const diffPct = Math.abs((deltaInputSum || 0) - (maxCumulativeInput || 0)) / denom;
+    if (diffPct > SELF_CHECK_DIVERGENCE_THRESHOLD) n += 1;
+  }
+  return n;
+}
+
+function runCodex({ asJson, sinceMs }) {
+  const { calls, sessions } = listCalls({ harnesses: ['codex-cli'], sinceMs });
+
+  let read = 0;
+  let output = 0;
+  let input = 0;
+
+  for (const c of calls) {
+    read += c.tokens.cacheRead || 0;
+    output += c.tokens.output || 0;
+    input += c.tokens.fresh || 0;
+  }
+
+  const divergent = countSelfCheckDivergent(sessions);
+
+  if (asJson) {
+    console.log(JSON.stringify({
+      harness: 'codex-cli',
+      sessions: sessions.length,
+      calls: calls.length,
+      tokens: { read, write: null, output, input },
+      selfCheck: { divergentSessions: divergent, totalSessions: sessions.length, thresholdPct: SELF_CHECK_DIVERGENCE_THRESHOLD * 100 },
+    }, null, 2));
+    return;
+  }
+
+  console.log(`cache-efficiency [codex-cli] — ${sessions.length} sessions, ${calls.length} calls`);
+  console.log(`\ntokens: read=${fmtM(read)} write=n/a (provider has no billable cache write) `
+    + `output=${fmtM(output)} input=${fmtM(input)}`);
+  console.log(`\nself-check: ${divergent}/${sessions.length} sessions where `
+    + `|deltaInputSum - maxCumulativeInput| > ${SELF_CHECK_DIVERGENCE_THRESHOLD * 100}%`);
+}
+
+const VALID_HARNESSES = ['claude-code', 'codex-cli'];
+
 function main() {
   const argv = process.argv.slice(2);
   const asJson = argv.includes('--json');
   const sinceArg = argv[argv.indexOf('--since') + 1];
   const sinceMs = argv.includes('--since') && sinceArg ? Date.parse(sinceArg) : null;
+  const harnessIdx = argv.indexOf('--harness');
+  const harness = (harnessIdx !== -1 && argv[harnessIdx + 1]) ? argv[harnessIdx + 1] : 'claude-code';
 
-  const files = [];
-  for (const d of discoverProjectDirs()) collectFiles(d.path, files);
+  if (!VALID_HARNESSES.includes(harness)) {
+    console.error(`cache-efficiency: unknown --harness "${harness}" (expected one of: ${VALID_HARNESSES.join(', ')})`);
+    console.error('Usage: node scripts/agent-analytics/cache-efficiency.mjs [--since <ISO>] [--json] [--harness claude-code|codex-cli]');
+    process.exit(2);
+  }
+
+  if (harness === 'codex-cli') {
+    runCodex({ asJson, sinceMs });
+    return;
+  }
+
+  const files = listClaudeTranscriptFiles().map((f) => f.path);
   const report = emptyReport();
   for (const f of files) analyseTranscript(f, report, { sinceMs });
+  report.harness = harness;
 
   if (asJson) { console.log(JSON.stringify(report, null, 2)); return; }
 
   const t = report.tokens;
-  console.log(`cache-efficiency — ${report.transcripts.main} main + ${report.transcripts.subagent} subagent transcripts, `
+  console.log(`cache-efficiency [${harness}] — ${report.transcripts.main} main + ${report.transcripts.subagent} subagent transcripts, `
     + `${report.turns.main + report.turns.subagent} usage turns`);
   console.log(`\ntokens: read=${fmtM(t.read)} write=${fmtM(t.write)} output=${fmtM(t.output)} input=${fmtM(t.input)}`);
   console.log(`  read:write = ${(t.read / Math.max(1, t.write)).toFixed(1)} : 1`
