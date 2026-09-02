@@ -98,6 +98,24 @@
       "file": "agent-spawn-build-hint.mjs",
       "role": "advisory"
     },
+    "spawn-cost-hint": {
+      "file": "spawn-cost-hint.mjs",
+      "role": "advisory",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/spawn-cost-hint.test.mjs",
+        "note": "toolUseId/agentId spawn-transcript join + cost render (tempdoc 886 §12 PR 4 / §2.3)"
+      }
+    },
+    "context-ceiling-hint": {
+      "file": "context-ceiling-hint.mjs",
+      "role": "advisory",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/context-ceiling-hint.test.mjs",
+        "note": "tail-read + once-per-threshold delivery at 300k/500k (tempdoc 886 §12 PR 4 / §2.2)"
+      }
+    },
     "known-state-hint": {
       "file": "known-state-hint.mjs",
       "role": "advisory",
@@ -464,6 +482,24 @@
             "hookId": "dispatch",
             "timeout": 5,
             "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "hookId": "context-ceiling-hint",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "hookId": "spawn-cost-hint",
+            "timeout": 5
           }
         ]
       },

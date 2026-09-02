@@ -257,6 +257,26 @@ function collectJsonlFiles(dir, out, depth = 0) {
 }
 
 /**
+ * Parse ONE Claude Code transcript file (main or subagent) into `{calls,
+ * toolEvents}`, for a caller that already knows which file it wants (886 §12
+ * PR 4's `spawn-cost-hint.mjs`: it has already joined a PostToolUse `Agent`
+ * call to one `subagents/agent-*.jsonl` file via `tool_use_id`/`agentId` and
+ * needs that ONE file's calls, not `listClaudeCalls`' whole-corpus scan).
+ * Thin export of the module-private `processClaudeTranscript` — no second
+ * parse implementation. `sessionId` defaults to the file's own basename
+ * (mirrors `listClaudeCalls`' subagent id convention); `lineage` defaults to
+ * a bare `main` edge when the caller doesn't supply one.
+ */
+export function callsFromClaudeTranscript(filePath, { sessionId, project = null, lineage } = {}) {
+  const sid = sessionId ?? path.basename(filePath, '.jsonl');
+  return processClaudeTranscript(filePath, {
+    sessionId: sid,
+    project,
+    lineage: lineage ?? { parentSessionId: null, kind: 'main' },
+  });
+}
+
+/**
  * Every Claude Code transcript file this machine holds (main + subagent),
  * tagged by kind — for a consumer that needs raw FILE PATHS rather than
  * parsed `Call`s (`cache-efficiency.mjs`'s discovery, 886 §12 PR 1's first

@@ -269,3 +269,46 @@ cost-baseline source), so this growth accumulates indefinitely rather than self-
 main checkout's `tmp/agent-telemetry/otlp/` already carries ~146 MB of metrics archives as of
 this writing. Stated here as a known tradeoff — changing the retention policy is an owner
 decision, not made by this PR.
+
+## Control shims (886 PR 4)
+
+`hooks/spawn-cost-hint.mjs` and `hooks/context-ceiling-hint.mjs` are non-blocking PostToolUse
+advisories that surface tempdoc 886 §2.2/§2.3's two findings at the moment they matter, instead
+of only in a post-hoc report:
+
+- **`spawn-cost-hint.mjs`** (matcher `Agent`) fires when a subagent call returns. It resolves
+  the spawn's OWN `subagents/agent-*.jsonl` transcript — joining on `tool_use_id` against every
+  sibling `*.meta.json`'s `toolUseId` (the synchronous-spawn case), or on an `agentId:` line the
+  `tool_response` text carries for an async/background spawn with no `toolUseId` recorded — reads
+  it through `lib/ledger/claude-adapter.mjs`'s new `callsFromClaudeTranscript` (a single-file
+  parse, not a second implementation), and prints `spawn-cost: <calls> calls, peak ctx <N>k, out
+  <M>k, model <actual> (requested <meta.model>), ~$<cost> — <description>`. Cost is priced per
+  call via `lib/transcript-cost.mjs`'s `findPricing`; an unpriced call (unknown model, e.g.
+  Claude's own literal `<synthetic>` model-name turns) is counted, not treated as voiding the
+  whole line — the sum covers the PRICED calls and appends `(+N unpriced)` when `N > 0`, and
+  `n/a` is reserved for the case where ZERO calls are priceable (independent-review fix: one bad
+  axis previously collapsed an otherwise-known cost to `n/a`). Silent (no output) when the spawn
+  can't be resolved — this is an advisory delivering data that isn't always available, not a guard.
+- **`context-ceiling-hint.mjs`** (matcher: every tool) fires on every `PostToolUse` and reads only
+  the last ~256KB of `transcript_path` (never the whole file — transcripts reach hundreds of MB),
+  retrying once at ~2MB if no assistant usage line turns up (a single trailing tool_result can
+  exceed 256KB and push the last assistant line out of the first tail read), to find the LAST
+  assistant `usage` snapshot, computing `contextTokens = input + cache_read + cache_creation`.
+  Once per threshold per session (state under
+  `tmp/agent-telemetry/context-ceiling-state/<session_id>.json`), it prints a reminder at 300k and
+  500k tokens naming the two remedies 886 §2.2 identifies: `/compact <hint>` at the next task
+  boundary, or `/rewind` if abandoning the current path. **Re-arms**: any call whose context drops
+  back below 300k (e.g. after a `/compact`) clears both threshold flags for that session, so a
+  later climb back past 300k/500k fires again rather than staying silent forever (independent-review
+  fix — the pre-fix version fired once per session for life). Like `build-counter.mjs`'s per-session
+  state, `context-ceiling-state/<session_id>.json` is **not swept on SessionEnd**
+  (`dispatch.mjs`'s cleanup list covers `turn-count`/`repeat-buffer`/`build-fails` only) — a known,
+  small (one file per session, a few hundred bytes each), harmless pile, not yet addressed.
+
+Both are registered in `governance/agent-hooks.v1.json` (`role: "advisory"`) with a unit-test
+`bite` entry, wired into `.claude/settings.local.json[.example]` (regenerated via
+`node scripts/codegen/gen-agent-hooks-wiring.mjs` / `--emit-local-example` — never hand-edited),
+and listed in `.claude/rules/hooks-reference.md`'s Hint hooks section. `node scripts/governance/run.mjs
+--gate hook-integrity --mode gate` verifies wiring/load/bite; Codex's `hooks.json` equivalents are
+documented as optional in `docs/how-to/wire-codex-cli-into-the-otlp-sink.md` (886 PR 3) and are not
+governed by this manifest.

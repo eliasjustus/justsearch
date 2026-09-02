@@ -632,9 +632,87 @@ by these fixes — they touch `.mjs`/`.html` only); `node scripts/agent-analytic
 ### PR 4 — control shims (worktree `886-ledger-4`, after PR 1)
 
 - `hooks/spawn-cost-hint.mjs` (PostToolUse/Agent, advisory): on return, resolve the spawn's transcript via the ledger and print one line — calls, peak context, cost, model.
-- `hooks/context-ceiling-hint.mjs` (PostToolUse, advisory, once per threshold): last usage from `transcript_path`; at 300k and 500k print the number and the two remedies (`/compact <hint>` at a boundary; `/rewind` when abandoning a path).
-- Registration: `settings.local.json.example`, `agent-hooks.v1.json` (`role: advisory`), tier-register rows, `*.test.mjs`; `hook-integrity` gate green. Codex `hooks.json` equivalents documented as optional in the PR 3 how-to, not governed.
+- `hooks/context-ceiling-hint.mjs` (PostToolUse, advisory, once per threshold, re-armed after a drop below the lowest threshold): last usage from `transcript_path`; at 300k and 500k print the number and the two remedies (`/compact <hint>` at a boundary; `/rewind` when abandoning a path).
+- Registration: `settings.local.json.example`, `agent-hooks.v1.json` (`role: advisory`), `*.test.mjs`; `hook-integrity` gate green. Codex `hooks.json` equivalents documented as optional in the PR 3 how-to, not governed. **No tier-register rows** — reversed after independent review (30 of 41 manifest hooks have none; fire-time delivery already carries the finding, and hooks-reference.md deliberately no longer catalogs hooks either, tempdoc 681).
 - Routing: Sonnet-high.
+
+**PR 4 outcome (2026-09-02, branch `worktree-886-ledger-1`, stacked on PR 1-3).** Implemented as
+specified. `hooks/spawn-cost-hint.mjs` (PostToolUse/`Agent`) resolves a completed spawn's own
+`subagents/agent-*.jsonl` via a `tool_use_id`↔`*.meta.json.toolUseId` join (the corpus-verified
+primary path — every SYNCHRONOUS spawn's meta.json carries `toolUseId`), falling back to an
+`agentId: <hex>` line the async/background-spawn `tool_response` text carries when no
+`toolUseId` join is available (verified against a real `run_in_background` spawn's tool result:
+"Async agent launched successfully... agentId: a1eb439f3497374b1"). It reads the resolved file
+through a new small export, `lib/ledger/claude-adapter.mjs`'s `callsFromClaudeTranscript(filePath,
+{sessionId, project, lineage})` — a thin wrapper over the module's existing private
+`processClaudeTranscript`, not a second parse implementation — and prices each call via
+`lib/transcript-cost.mjs`'s `findPricing` (reports `n/a`, never a silent `$0`, if any call's model
+is unpriced). `hooks/context-ceiling-hint.mjs` (PostToolUse, every tool) reads only the LAST
+~256KB of `transcript_path` (never the whole file — real transcripts in this corpus reach
+~900MB+) and parses backwards for the last assistant `usage` snapshot, firing once per session at
+300k and 500k via a small state file (`tmp/agent-telemetry/context-ceiling-state/<session_id>.json`,
+same shape as `build-counter.mjs`/`repeat-guard.mjs`'s per-session state).
+
+Both hooks are wired through the existing manifest-generation path, not hand-edited:
+`governance/agent-hooks.v1.json` gained the two catalog entries (`role: "advisory"`, each with a
+`bite: {kind: "unit", test: ...}`) and PostToolUse bindings (`matcher: "Agent"` for
+spawn-cost-hint; `matcher: ""` for context-ceiling-hint, matching dispatch.mjs's own
+match-every-tool convention), then `node scripts/codegen/gen-agent-hooks-wiring.mjs` (live
+`.claude/settings.local.json`) and `--emit-local-example` (`.claude/settings.local.json.example`)
+regenerated both settings files — hand-editing either would have drifted from the manifest, per
+that generator's own contract. `node scripts/governance/run.mjs --gate hook-integrity --mode gate`
+is green (wiring, live-wiring, cwd-invariant exec-form, `node --check` load, bite, tier-sync,
+orphan-file phases all pass).
+
+Live manual checks (read-only, real transcripts under `C:\Users\Elias\.claude\projects\`, per
+CLAUDE.md's local-API-trust-boundary carve-out for read-only checks): `context-ceiling-hint.mjs`
+against a real transcript at 886k context tokens printed `context-ceiling: 886k tokens in context
+(past 500k) — every call now re-reads this; /compact <hint> at the next task boundary, or /rewind
+if abandoning a path (886 §2.2)`. `spawn-cost-hint.mjs` against a real completed spawn (joined via
+its real `toolUseId`) printed `spawn-cost: 12 calls, peak ctx 93k, out 0k, model claude-opus-5
+(requested opus), ~$0.89 — Enumerate retirement sweep surface` — cross-checked independently
+against the spawn's raw transcript (12 deduped assistant turns, 38 total output tokens, which
+rounds to `0k`, not a bug).
+
+**Independent review — approved conditional on one SHOULD-FIX, plus a reversal and two NITs, all
+addressed (same branch).** (1, SHOULD-FIX) `context-ceiling-hint.mjs`'s per-threshold state never
+cleared, so a session that crossed 300k/500k, dropped back under 300k via `/compact`, then climbed
+past 300k/500k again got NO second hint (reviewer-reproduced sequence: 310k fires, 520k fires, a
+post-compact 20k call is correctly silent, but so were 340k and 610k afterward — silently wrong).
+Fixed: a new pure `advanceState(contextTokens, prevState)` clears both `notified300`/`notified500`
+flags whenever `contextTokens` drops below the lowest threshold (300k) — a real re-arm, not just
+"nothing crossed this call" — and stamps `lastCtx` on every write so the transition is visible in
+the state file. 8 new tests, including the reviewer's exact sequence
+(`310k fires, 520k fires, 20k silent, 340k fires again, 610k fires again`) and a session hovering
+320k→330k→340k (never dropping below 300k) firing exactly once. (2, REVERSAL) The two tier-register
+rows (47/48) and their `.claude/rules/agent-lessons.md` bullets/anchors were REMOVED: 30 of the 41
+manifest hooks carry no tier-register row (rows are not required for every hook), and the bullets
+only restated what the hooks already print at fire time — exactly what `hooks-reference.md`'s own
+header says it no longer catalogs (tempdoc 681). `agent-lessons.md`'s always-loaded-budget ceiling
+was restored to its pre-PR value (9699, the bump entry deleted, `totalCeiling` recomputed as the
+sum of per-file ceilings and verified against the checker); `hooks-reference.md`'s one-line
+Hint-hooks addition (and its bump) stayed, since that IS the file's own catalog-of-record for
+matcher/trigger shape, unlike a full restatement of the fire-time message. `prose-tier-register`,
+`hook-integrity`, and `check-always-loaded-budget.mjs` are all green after the reversal. (3, NIT)
+`spawn-cost-hint.mjs`'s `costOfCalls` used to return `null` — voiding the WHOLE spawn's cost — the
+moment any single call's model was unpriced (e.g. Claude's own literal `<synthetic>` model-name
+turns), hiding an otherwise-known cost behind one bad axis. Fixed: it now returns
+`{total, priced, unpriced}`, summing only the priced calls; the rendered line appends
+`(+N unpriced)` when `N > 0` and reserves `n/a` for the case where ZERO calls are priceable. Test
+with one `<synthetic>` call among priced ones confirms the sum survives and the suffix appears.
+(5, NIT) `context-ceiling-hint.mjs` now retries once at a ~2MB tail when the default ~256KB tail
+finds no assistant usage line — a single trailing tool_result can exceed 256KB and push the last
+assistant line out of view. Tested with a 400KB trailing tool_result forcing the retry path.
+(4, NIT, documented only) Both the hook header and `README.md` now note that
+`context-ceiling-state/<session_id>.json` follows `build-counter.mjs`'s per-session state pattern
+and is, like it, NOT swept on `SessionEnd` (`dispatch.mjs`'s cleanup list covers
+`turn-count`/`repeat-buffer`/`build-fails` only) — a known, small, harmless pile, not fixed here.
+
+Full suite: `node scripts/agent-analytics/run-all-tests.mjs` → 62/62 `.test.mjs` files (60 → 62,
+the two new hook test files; test COUNT within those two files grew with the follow-up fixes —
+23 for `context-ceiling-hint.test.mjs`, 15 for `spawn-cost-hint.test.mjs`). `node --check` clean on
+both hooks. Codex `hooks.json` equivalents remain optional/undocumented-here per the PR 3 how-to;
+nothing new added for Codex.
 
 ### PR 5 — migrate the stale readers, role map, pricing provider (worktree `886-ledger-5`)
 
