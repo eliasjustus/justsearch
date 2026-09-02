@@ -387,9 +387,10 @@ public class LocalApiServer {
    * {@code this.app} directly, register handlers on the fresh instance.
    *
    * <p>Re-running setup on a second call is safe: each setup method registers handlers
-   * on whatever {@code this.app} currently is. Side-effect emissions (eventBuffer warns
-   * for token-enforcement-disabled, etc.) may fire twice in the rare bind-fallback
-   * path; acceptable.
+   * on whatever {@code this.app} currently is. Note that any side-effect emission placed
+   * inside a setup method fires TWICE on the bind-fallback path — which is one reason the
+   * fail-closed session-token refusal lives in the {@code ApiSecurityFilters} constructor
+   * (constructed once, above the try) rather than in its install path (tempdoc 884 item 23).
    */
   private void buildAndStartApp(int bindPort) {
     this.app = Javalin.create(config -> {
@@ -769,7 +770,7 @@ public class LocalApiServer {
    * Worker's ingest runtime via gRPC. Optional JSON body: {@code {"reason":"<tag>"}}.
    * Returns {@code {"swapDurationMs": N}}. Operator-only; no per-route auth — the
    * endpoint inherits loopback-only safety from the Javalin bind to {@code 127.0.0.1}
-   * at line 334 ({@code app.start("127.0.0.1", bindPort)}). See CLAUDE.md hard rule
+   * at line 582 ({@code app.start("127.0.0.1", bindPort)}). See CLAUDE.md hard rule
    * "Loopback-only network". A future change that flips the bind to {@code 0.0.0.0}
    * would silently expose this admin endpoint to the network.
    */

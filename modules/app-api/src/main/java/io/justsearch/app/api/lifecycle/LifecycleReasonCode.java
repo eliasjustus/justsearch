@@ -157,6 +157,15 @@ public enum LifecycleReasonCode {
   // re-author them. Deliberately NOT emitted for a FUTURE schemaVersion, which stays fail-loud.
   SETTINGS_RESET_FROM_CORRUPT("settings.reset_from_corrupt"),
 
+  // --- Local API (trust boundary) ---
+  // Tempdoc 884 item 23: prod mode was configured but no session token was supplied, so the ONE
+  // control gating mutating loopback requests could not be installed. The Head refuses to start
+  // the local API rather than binding it open to every local process (fail closed). Never held in
+  // a capability reason slot: ApiSecurityFilters throws from its constructor, before the loopback
+  // bind, so no readiness envelope, ConditionStore or SSE stream exists to carry it — the operator
+  // sees it in the fatal log line and the non-zero exit.
+  LOCAL_API_SESSION_TOKEN_MISSING("local_api.session_token_missing"),
+
   // --- GPU saturation (419 C3 V2 P3) ---
   // GPU pinned at high utilization with no current workload (idle leak detection). Monitored
   // by GpuSaturationMonitor + sampler in modules/ui (head-side NVML probe).
@@ -200,7 +209,9 @@ public enum LifecycleReasonCode {
    * {@code worker.unavailable} families are computed per-request in {@code StatusLifecycleHandler}
    * from worker views and never enter a reason slot — are classified {@link RetentionClass#TRANSIENT}
    * so the classification stays total: never-retained is the safe default for a code that cannot be
-   * held anyway.
+   * held anyway. The {@code local_api.*} family is never held for a different reason (tempdoc 884
+   * item 23) but takes the same class: it names a boot refusal thrown before the loopback bind, so
+   * the process is exiting and there is no reason slot to defend.
    */
   public RetentionClass retentionClass() {
     return switch (this) {
@@ -273,6 +284,11 @@ public enum LifecycleReasonCode {
           LAMBDAMART_NOT_CONFIGURED,
           LAMBDAMART_TRAINING,
           LAMBDAMART_FAILED,
+          // Tempdoc 884 item 23: a boot-refusal cause, not a held reason. The Head throws before
+          // the loopback bind and exits, so no Capability ever holds it and no later write could
+          // erase it — TRANSIENT is this vocabulary's documented total-classification default for
+          // a code that cannot be held at all (see the class doc on RetentionClass#TRANSIENT).
+          LOCAL_API_SESSION_TOKEN_MISSING,
           GPU_SATURATED -> RetentionClass.TRANSIENT;
     };
   }

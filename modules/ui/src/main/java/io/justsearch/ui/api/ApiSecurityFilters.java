@@ -9,6 +9,7 @@ import io.justsearch.app.api.OperationAdmissionClosedException;
 import io.justsearch.app.api.OperationLeaseHandle;
 import io.justsearch.app.services.HeadAssembly;
 import io.justsearch.app.api.OperationLeaseService;
+import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -99,6 +100,38 @@ final class ApiSecurityFilters {
     this.slowRequestExecutor = slowRequestExecutor;
     this.headAssembly = headAssembly;
     this.operationLeases = operationLeases;
+
+    // Tempdoc 884 item 23: FAIL CLOSED. This combination used to disable token enforcement with a
+    // WARN and serve the API anyway — fail-open on the one control that gates mutation.
+    //
+    // The refusal is in the CONSTRUCTOR, not in setupSessionTokenEnforcement, for four reasons:
+    //   1. prodMode/sessionToken are final, so the illegal state is a property of the object, not
+    //      of whichever Javalin it is later installed onto. Constructing it is the error.
+    //   2. It fires two layers before the bind (LocalApiServer constructs this, then
+    //      buildAndStartApp, then app.start("127.0.0.1", ...)), so no socket is ever opened.
+    //   3. buildAndStartApp runs TWICE on the ephemeral-port fallback path; a throw inside
+    //      install() would be evaluated twice, while the constructor runs once.
+    //   4. LocalApiServer.isBindFailure matches only BindException, and this construction sits
+    //      OUTSIDE the try that guards it, so the throw can never be re-dispatched into the retry.
+    if (prodMode && (sessionToken == null || sessionToken.isBlank())) {
+      String reasonCode = LifecycleReasonCode.LOCAL_API_SESSION_TOKEN_MISSING.code();
+      String message =
+          "Refusing to start the local API: prod mode is enabled but no session token was provided."
+              + " The session token is the only control gating mutating loopback requests, so"
+              + " starting without it would ship the API open to any local process. Reason code: "
+              + reasonCode
+              + ". Pass a token (HeadlessApp mints one per boot when justsearch.prod=true) or start"
+              + " in dev mode.";
+      log.error(message);
+      // eventBuffer is nullable (SlowRequestStreamExemptionTest constructs without one).
+      if (eventBuffer != null) {
+        eventBuffer.error(
+            "LocalApiServer",
+            "TOKEN_ENFORCEMENT_REFUSED",
+            Map.of("reason", "no_token_provided", "reasonCode", reasonCode, "prodMode", prodMode));
+      }
+      throw new IllegalStateException(message);
+    }
   }
 
   /** Installs the Host-allowlist, CORS, session-token, and capability-gate before-filters on the app. */
@@ -364,20 +397,6 @@ final class ApiSecurityFilters {
   }
 
   /**
-   * Sets up session token enforcement for non-GET requests in prod mode.
-   *
-   * <p>This is a security hardening measure to ensure that only the legitimate desktop UI
-   * can make mutating API calls. The token is generated at startup and delivered to the UI
-   * via the Tauri bridge.
-   *
-   * <p>Enforcement rules:
-   * <ul>
-   *   <li>OPTIONS (preflight) - always allowed (needed for CORS)
-   *   <li>GET - always allowed (read-only operations)
-   *   <li>POST/PUT/DELETE - require valid token in prod mode
-   * </ul>
-   */
-  /**
    * Whether a request must carry the session token — the ONE authority for that question, so the
    * enforcing filter and any test double read the same rule.
    *
@@ -410,15 +429,17 @@ final class ApiSecurityFilters {
     return TOKEN_REQUIRED_METHODS.contains(method);
   }
 
+  /**
+   * Installs the session-token filter. The token is minted per boot and delivered to the desktop
+   * UI via the Tauri bridge; {@link #requiresSessionToken} is the one authority for which requests
+   * must carry it.
+   *
+   * <p>Dev mode is the ONLY reason to skip installation. The (prod, no-token) combination cannot
+   * reach here — the constructor refuses it (tempdoc 884 item 23) — so this is not a re-statement
+   * of that rule in a second place where it could drift.
+   */
   private void setupSessionTokenEnforcement(Javalin app) {
-    // Only enforce in prod mode with a valid token
-    if (!prodMode || sessionToken == null || sessionToken.isBlank()) {
-      if (prodMode && (sessionToken == null || sessionToken.isBlank())) {
-        log.warn("Prod mode is enabled but no session token was provided - token enforcement is DISABLED");
-        eventBuffer.warn("LocalApiServer", "TOKEN_ENFORCEMENT_DISABLED", Map.of(
-            "reason", "no_token_provided",
-            "prodMode", prodMode));
-      }
+    if (!prodMode) {
       return;
     }
 
