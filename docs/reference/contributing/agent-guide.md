@@ -584,3 +584,40 @@ The `docs-granularity-hint` hook reminds you of this at `git push` if a branch's
 whole diff is working-history-only; it never blocks (granularity is judgment, not
 something a gate can adjudicate). Canonical-doc-only and docs+code branches don't
 trigger it.
+
+### 3.8. A tempdoc that changes a governed decision updates its ADR in the same PR
+
+A tempdoc that changes a decision an ADR governs updates that ADR's
+`last_reviewed:` and `probes:` in the **same PR** as the change.
+
+Why the same PR: a decision that moved in a tempdoc while its ADR still reads the
+old way is not a documentation lag, it is two authorities disagreeing — and the
+newer one is the one nobody consults. That is precisely the drift the premise-probe
+register (`governance/adr-probes.v1.json`, tempdoc 884) exists to catch, and it can
+only catch it if the probe is re-pointed at the *new* premise. A probe left restating
+the superseded decision is worse than no probe: it reports green about a claim the
+ADR no longer makes.
+
+How:
+
+- **Find the governing ADR** — grep `governance/adr-probes.v1.json` for the surface
+  you changed, or scan the Decision Log in `docs/decisions/README.md`. The
+  `architecture-decisions` row in `governance/consult-register.v1.json` pushes the
+  procedure at you the moment you edit anything under `docs/decisions/`.
+- **Amend, don't rewrite** — follow `docs/decisions/README.md` § How to re-examine
+  an ADR. Amendments are append-only; the superseded reasoning is the record, so add
+  a dated amendment rather than editing Context/Decision in place.
+- **Re-point the probe, then re-date** — update or replace the `probes:` entry so it
+  restates the new premise, and set `last_reviewed:` to today. Never edit a probe
+  merely to make it pass.
+- **Verify** — `node scripts/governance/run.mjs --gate adr-coverage --mode gate`.
+  Review staleness also surfaces at session start via
+  `node scripts/agent-analytics/world-state.mjs` (§ ADR review), because a CI-only
+  warning about a decision nobody is scheduled to re-read is the pile that produced
+  this rule.
+
+Predictable evasion: *"the ADR update can be a follow-up PR."* Follow-ups that never
+came are tempdoc 742's entire corpus — ~350 files of residue and two inert gates, all
+of it deferred by exactly that sentence. The ADR edit is small and you are already in
+the change that makes it necessary; there is no cheaper moment, and there will not be
+a later one.
