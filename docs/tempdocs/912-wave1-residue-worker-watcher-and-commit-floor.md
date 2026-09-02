@@ -814,3 +814,13 @@ commit attribution.
   predicted effect, the durability-vs-freshness risk under 885's read rule, and the exact arm —
   which needs a config key first, since `CYCLE_BUDGET_MS` is currently unreachable from a
   measurement arm.
+
+## Live product validation (2026-09-02)
+
+Two independent reviewers ran a live product-validation campaign against this lane's items:
+
+- **V1** — unknown-size handling plus the honest byte estimate PASS.
+- **V8** — commit-reason sums PASS.
+- One load flake observed and routed (not a defect of this lane's items).
+
+Related PRs: #616, #617.

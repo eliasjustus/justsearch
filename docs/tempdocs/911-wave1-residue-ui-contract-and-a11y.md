@@ -311,3 +311,16 @@ PR body.
    `IndexingController.toJobView`, replacing `SCAN_ID_NOT_PLUMBED`. Until then the by-prefix and
    substrate surfaces cannot distinguish "no scan" from "not asked". Owner: whoever next touches the
    worker's failed-jobs read path.
+
+## Live product validation (2026-09-02)
+
+Two independent reviewers ran a live product-validation campaign against this lane's items:
+
+- **V2** — wire contract PASS: both endpoints schema-valid, and the failed-jobs drawer renders
+  degrade-free.
+- **V3** — the Security tab opens live, and the `security` ui-shot step in live mode does NOT
+  time out.
+- Follow-ups routed to PR #616 (not fixed here): the drawer's 22 px column, the chip flicker, and
+  the collection field.
+
+Related PRs: #616, #617.

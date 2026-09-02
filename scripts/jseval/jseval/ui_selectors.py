@@ -15,7 +15,6 @@ TID_SEARCH_INPUT = "search-input"
 TID_SEARCH_RESULT_ROW = "search-result-row"
 TID_RESULT_ROW_SNIPPET_TOGGLE = "result-row-snippet-toggle"
 TID_GLOBAL_COMMAND_CHROME = "global-command-chrome"
-TID_SKELETON_LIBRARY = "skeleton-library"
 TID_BRAIN_SWITCH_TO_ADVANCED = "brain-switch-to-advanced"
 # Tempdoc 840 Phase 5 — the per-component install list and the consent dialog it leads into.
 TID_INSTALL_COMPONENT_LIST = "install-component-list"
@@ -110,6 +109,16 @@ CSS_CHAT_HEADER = '.header'
 # sum" denominator the D7.1 share assertion divides against.
 CSS_CONVERSATION_ZONE = '.conversation-zone'
 CSS_SURFACE_HOST = 'jf-unified-chat-view'
+# The Library surface's LOADING branch, for the `skeleton-library` step. There is no
+# `data-testid` here and none is added: the surface already has an observable loading state —
+# `LibrarySurface.render()` swaps in a single `<div class="empty">Loading…</div>` while the
+# `/api/indexing-roots/substrate` fetch is in flight (`this.loading`, set before the fetch and
+# cleared in its `finally`). Anchored on the TEXT, not on `.empty`: that same class also renders
+# the "No watched folders" and "Rebuilding index…" rows, so a class-only selector would go green
+# on exactly the states this step exists to distinguish itself from. "Loading" appears once in
+# the whole surface.
+CSS_LIBRARY_SURFACE_HOST = 'jf-library-surface'
+TEXT_LIBRARY_LOADING = 'Loading'
 # `.composer` is the composer BLOCK div (687 R5a's protected element — row-consolidation
 # happens inside it, never replacing it); `.activity-rail` is the agent-mode `<details>`
 # run-summary band (renders whenever `affordance === 'agent'`, even before a run reports
