@@ -755,6 +755,36 @@ commit attribution.
    itself (PR #603) and is not in this branch's diff. Not pinned in
    `expected-state.v1.json` here because lane R5 owns that file this wave; routed to the
    orchestrator to pin + assign.
+11. **`BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402`
+    (`modules/adapters-lucene/src/test/java/io/justsearch/adapters/lucene/runtime/BatchUpdateIntegrationTest.java:562`)
+    is load-flaky under a whole-repo `./gradlew test` only.** Observed 2026-09-02 on PR #613's
+    full-suite run after merging `main` at `31a26b0d`: red under the full run, green isolated
+    (12/12, `:modules:adapters-lucene:test --tests
+    "*BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402*"`) and green
+    for the whole module (622/622, `:modules:adapters-lucene:test`). Pinned as
+    `adapters-lucene-batchupdate-rmw-coordinator-load-flake` in
+    `scripts/agent-analytics/expected-state.v1.json` (`added: 2026-09-02`,
+    `reviewBy: 2026-09-30`, `exitProbeOmitted` — it passes in isolation, so a probe would report a
+    false GONE; `fixOwner: "tempdoc 912 open item (lane R7 successor)"`).
+
+    **Whether #612 altered timing on this path, checked rather than assumed.** `git log -3
+    --oneline -- <the test file>` shows its three most recent touches are `967f94bf` (798
+    ingest-livelock fix), `a8b24b2a` (742 residue sweep) and `4e9a17fa` (711 RMW field
+    preservation) — **#612 (`33ffc3bb`) never touched the test file itself**, and `git show
+    33ffc3bb --stat` confirms it also never touched `IndexingCoordinator.java`, the class under
+    test. But `33ffc3bb` did touch two files in the same `adapters.lucene.runtime` package the
+    test exercises directly: `CommitOps.java` (17 lines changed per `git show 33ffc3bb --stat`,
+    the new `CommitCounters` accounting) and `RuntimeSession.java` (7 lines changed) — and the
+    test's racing loop calls
+    `runtime.commitOps().commitAndTrack()` / `.maybeRefreshBlocking()` once per iteration
+    (`:591-592`) inside the same 50-iteration loop that races the two coordinator threads. So a
+    timing-impact hypothesis is plausible (the commit path the loop calls every iteration changed
+    shape) but not confirmed — it is equally consistent with a pre-existing starvation artefact
+    that any full-suite load surfaces, the same shape as the `WatchedRootScanCollectionTest` and
+    `InferenceLifecycleManagerExternalServer` pins already in `expected-state.v1.json`. Deciding
+    between the two needs either a targeted load-repro (run this test alongside a concurrent
+    Gradle lane, pre- and post-#612) or a next full-suite sighting to see whether the flake
+    persists past `33ffc3bb` — neither is done here.
 
 ---
 
