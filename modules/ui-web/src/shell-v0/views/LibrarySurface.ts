@@ -74,6 +74,8 @@ import { UNKNOWN, type Maybe } from '../state/known.js';
 import { openFailedJobs } from '../state/failedJobsDrawer.js';
 // Tempdoc 599 §9.4 — gate the Add button with a reachable reason (596 operability authority).
 import { unavailableBecause, AVAILABLE } from '../state/availability.js';
+// Tempdoc 914 D3 — the failed chip's shared look (one authority for both render sites).
+import { failedChipStyles } from '../components/failedChipPresentation.js';
 
 /** Tempdoc 599 §9.4 — add-time path validation result from /api/indexing-roots/preview. */
 interface FolderPreview {
@@ -341,20 +343,6 @@ export class LibrarySurface extends JfElement {
       color: var(--text-secondary);
       margin-top: 0.25rem;
     }
-    /* Tempdoc 599 §16/B1 — the clickable "N failed" chip (danger tone) opens the failed-files drawer. */
-    .failed-chip {
-      margin-left: 0.4rem;
-      --jf-button-color: var(--text-danger);
-      color: var(--text-danger);
-    }
-    /* Tempdoc 914 D3 / review S2-2 — a LAST-KNOWN count is muted + italic, the same treatment
-       StatusDeck's .val.stale rule gives a last-known value. Sighted users see that the number is not
-       this tick's, which the accessible name and the hover title say in words. */
-    .failed-chip[data-last-known='true'] {
-      --jf-button-color: var(--text-muted);
-      color: var(--text-muted);
-      font-style: italic;
-    }
     .status-icon {
       flex-shrink: 0;
     }
@@ -492,6 +480,9 @@ export class LibrarySurface extends JfElement {
       animation: jf-spin 1s linear infinite;
     }
   `,
+    // Tempdoc 914 D3 — the failed chip's look is shared with the declared FolderCardRenderer so the
+    // two render sites cannot drift; see failedChipPresentation.ts.
+    failedChipStyles,
   ];
 
   // 569 §14 — re-render when the active presentation changes (the declared cards region appears
@@ -930,10 +921,11 @@ export class LibrarySurface extends JfElement {
     const path = this.pendingPath.trim();
     if (!path) return unavailableBecause('Enter a folder path', true);
     // Tempdoc 914 D4 — a supplied collection must not name an app-internal corpus. The AUTHORITY is
-    // `IngestCollectionPolicy`, which both the REST route and (since #617 / tempdoc 913 D6) the
-    // Operation handler this surface invokes now enforce. This check is defence in depth: it gives
-    // the reason at the keystroke, in the field, with the Add button disabled — instead of a round
-    // trip that comes back as an error banner after the user has committed to the action.
+    // `IngestCollectionPolicy`, enforced by the REST route and, since tempdoc 913 D6, by the
+    // Operation handler this surface actually invokes (`AddWatchedRootHandler.java:72-77` routes the
+    // value through `normalizeRequested` and returns INVALID_REQUEST). This check is defence in
+    // depth, not the enforcement: it gives the reason at the keystroke, in the field, with Add
+    // disabled — instead of a round trip that returns an error banner after the user has committed.
     const collection = this.pendingCollection.trim();
     if (collection && isReservedCollection(collection)) {
       return unavailableBecause(`"${collection}" is reserved for JustSearch's own documents`);

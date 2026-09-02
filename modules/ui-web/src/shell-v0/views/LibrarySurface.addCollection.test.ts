@@ -193,9 +193,10 @@ describe('LibrarySurface — Add Folder carries the collection (914 D4)', () => 
     try {
       await openAddForm(el);
       typeInto(el, '.add-row input', 'F:\\corpus\\reports');
-      // `IngestCollectionPolicy.RESERVED`, case-insensitively. The backend is the authority (#617
-      // routes the Operation handler through the same policy); this guard is the early, in-field
-      // half of it, so the user is told before the round trip rather than after.
+      // `IngestCollectionPolicy.RESERVED`, case-insensitively. The backend is the authority — since
+      // tempdoc 913 D6 the Operation handler routes the value through `normalizeRequested`
+      // (`AddWatchedRootHandler.java:72-77`) — and this guard is the early, in-field half of it, so
+      // the user is told before the round trip rather than after.
       typeInto(el, '[data-testid="library-add-collection"]', 'Agent-History');
       await submit(el);
 

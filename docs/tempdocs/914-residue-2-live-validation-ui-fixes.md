@@ -59,7 +59,7 @@ fix (#605) made the label persist."
 | D3 sample distribution | **Reproduced independently** | my own 60 samples at 300 ms on the same root: `inFlight=0 failed=2` x56, `inFlight=2 failed=0` x4 (`tmp/resid3-fixtures/d3-before.txt`). Same phenomenon, slightly different split. |
 | D4 `LibrarySurface.ts:799` sends `{ path }` only | **Confirmed exactly** | `:799` `await this.invoke(OP_ADD, { path });` — and `:784` `await this.invoke(OP_ADD, { path: picked });` is the Tauri twin the finding does not name but shares the defect. |
 | D4 "the Head assigns `default` (`IndexingController.java:142`)" | **Corrected** | `:142` is `handleListRoots`' PROJECTION default (`entry.put("collection", root.collection() != null ? … : "default")`) — it is what the LIST shows, not what the ADD stores. The default that actually applies to this surface is `AddWatchedRootHandler.java:50-54` (`collectionNode … : "default"`), because LibrarySurface invokes the **Operation**, not the REST route. |
-| D4 "the endpoint accepts `collection` (:163-189)" | **Confirmed for the REST route only** | `IndexingController.handleAddRoot` reads `collection` at `:163` and validates it through `IngestCollectionPolicy.normalizeRequested` at `:180`. **The Operation handler does not**: `AddWatchedRootHandler.java:50-54` takes the string as-is with no policy call. See §O-1. |
+| D4 "the endpoint accepts `collection` (:163-189)" | **Confirmed for the REST route only** | `IndexingController.handleAddRoot` reads `collection` at `:163` and validates it through `IngestCollectionPolicy.normalizeRequested` at `:180`. **The Operation handler did not**: `AddWatchedRootHandler.java:50-54` took the string as-is with no policy call. Routed as §O-1 and since fixed by #617 — see §O-1. |
 | D4 "is the operation's arg schema governed?" (possible blocker) | **Not blocked** | `governance/operation-surfaces.v1.json` contains no `add-watched-root` entry; `CoreOperationCatalog.java:138-144` declares the ref and documents the args in prose only (`{"path": string, "collection"?: string}`); `AddWatchedRootHandler` parses free-form JSON. Passing `collection` needs no governance edit. |
 | D4 allowed charset / length for `collection` | **There is none** | `IngestCollectionPolicy.normalizeRequested` (`:68-85`) rejects exactly two things: a supplied-but-blank value, and a RESERVED name (`justsearch-help`, `agent-history`, trimmed + lowercased, `:43`/`:56-58`). No charset or length rule exists, so the FE must not invent one. |
 
@@ -69,7 +69,8 @@ fix (#605) made the label persist."
 |---|---|---|
 | S2-1: three branches precede the patched one and return the RAW `failed` | **Confirmed exactly** | `folderStatus.ts` (pre-fix): `if (ctx.provisional)` :223-235, `if (row.status === 'unavailable')` :240-256, `if (walkError)` :258-260 — all three `return { …, inFlight, failed }` with the raw value, and all three outrank `if (inFlight > 0)` at :262. |
 | S2-1: my "45/45" evidence did not hold | **Accepted** | It was measured over a window in which the shell stayed settled, so it only ever exercised the one branch I patched. A green measured only where the fix applies is not evidence about where it does not (`interrogate results`). The superseded number is kept in §E.2 rather than deleted. |
-| S2-1: the shell sits in `provisional` on the majority path | **Confirmed, with the cause** | `LibrarySurface.ts:523` sets `provisional` from `s.stability.kind`; `aiVerdict.ts:41-43` documents `stale-poll` — "the backend poll itself is currently stale" — as a provisional CAUSE. So provisional is not just the rare global rebuild I had assumed; an ordinary starved `/api/status` produces it. My own re-run: **170 of 250 renders provisional** (§E.2b). |
+| S2-1: the shell sits in `provisional` on the majority path | **Confirmed** | `LibrarySurface.ts:536` sets `provisional` from `s.stability.kind`. So provisional is not just the rare global rebuild I had assumed; an ordinary starved `/api/status` produces it. My own re-run: **173 of 250 renders provisional** (§E.2b). |
+| *(my own follow-up error, caught in delta re-review N1)* | **Corrected** | I first attributed that to `stale-poll` from `aiVerdict.ts:41-43` — **wrong axis**. `aiStateStore.stability` is `verdict.ts`'s `Stability` (`aiStateStore.ts:248`, computed at `:829` via `computeStability`), whose `ProvisionalCause` union (`verdict.ts:42-53`) is `initial-load \| channel-stale \| rebuilding \| generation-switch \| worker-restart \| catching-up \| updating`. A starved poll lands on `channel-stale` (`verdict.ts:178`) or `updating` (`verdict.ts:216`). `stale-poll` is an `AiProvisionalCause` (`aiVerdict.ts:41-43`) — a SIBLING union for the AI-engine axis, not a member of this one. The conclusion (starving `/api/status` drives the shell provisional, and it is the majority path) is unchanged; only the cause name and file were wrong. |
 | S2-2: the qualifier was invisible to sighted users | **Confirmed** | `data-last-known` was written at both render sites and consumed by no stylesheet (`grep 'data-last-known' modules/ui-web/src` matched only the two writers); the only carrier of the wording was `label` → `aria-label`. |
 | Nit: the `addRootArgs` WHY-comment was false | **Confirmed** | `AddWatchedRootHandler.java:50-54` and `RootLifecycleOps.java:286-294` both normalize null/blank to `IngestCollectionPolicy.DEFAULT_COLLECTION`, so `{}`, `""` and `"default"` converge on the same stored value. Reworded to the reason that IS true. |
 | Nit: the "re-ran the picker" assertion was vacuous | **Confirmed** | The stub returned one constant path, so re-run and no-op were indistinguishable. The stub now returns a different path per call. |
@@ -174,9 +175,26 @@ Review round, on top of the above:
 | File | Change |
 |---|---|
 | `folderStatus.ts` | the carry hoisted above the branch chain (`failedShown` / `failedIsLastKnown`) and applied in the `provisional` / `unavailable` / `walkError` returns as well as `inFlight > 0`; `failedChipLabel` → `failedChipCopy` returning `{text, label, title}` with `label` starting with `text`; `rememberFailedCounts` takes `{provisional}` and will not discharge on a transitional zero |
-| `LibrarySurface.ts` | chip extracted to `renderFailedChip()` using the shared copy + a `[data-last-known='true']` muted-italic rule; passes `provisional` into the fold; the `addRootArgs` WHY-comment corrected; the reserved-name guard re-framed as defence-in-depth now that #617 routes the handler through `IngestCollectionPolicy` |
+| `LibrarySurface.ts` | chip extracted to `renderFailedChip()` using the shared copy + a `[data-last-known='true']` muted-italic rule; passes `provisional` into the fold; the `addRootArgs` WHY-comment corrected; the reserved-name guard re-framed as defence-in-depth, the backend being the authority since #617 (`AddWatchedRootHandler.java:72-77`) |
 | `FolderCardRenderer.ts` | same chip treatment via `renderFailedChip()`, same CSS rule |
 | tests | three new `folderStatus` branch cases + two fold cases; the whole new `FolderCardRenderer.failedChip.test.ts`; the picker stub now returns a different path per call |
+
+Delta re-review round, on top of both:
+
+| File | Change |
+|---|---|
+| `components/failedChipPresentation.ts` (new) | `failedChipStyles` — the chip's look authored once and folded into both render sites' `static styles` |
+| `LibrarySurface.ts` · `FolderCardRenderer.ts` | consume the shared fragment instead of each carrying a copy; guard/doc comments corrected per N2/N3 |
+| `LibrarySurface.failedChip.test.ts` (new) | the surface's own chip in all three states, incl. that the shared fragment applies in ITS shadow root |
+
+## §B3 — Delta re-review round (N1-N3 + the dedupe nit)
+
+| Item | Verdict | What changed |
+|---|---|---|
+| **N1** — §B2/§E.2b cited the wrong provisional axis | **Confirmed; my error** | I attributed the majority-provisional path to `stale-poll` (`aiVerdict.ts:41-43`). That is the AI-ENGINE axis. `LibrarySurface.ts:536` reads `s.stability.kind`, i.e. `aiStateStore.stability: Stability` (`aiStateStore.ts:248`) computed by `computeStability` (`:829`); its `ProvisionalCause` union is `verdict.ts:42-53` and a starved poll lands on `channel-stale` (`verdict.ts:178`) or `updating` (`verdict.ts:216`). `stale-poll` is a SIBLING union's member, never reachable here. Citations corrected in both sections; **the conclusion is unchanged** — starving `/api/status` does drive the shell provisional, and it is the majority path (173/250). |
+| **N2** — the guard comment claimed #617 "now enforces" while #617 was open | **Confirmed; resolved by the merge** | #617 merged as `f6f8433d`; this branch merged `origin/main`. On the merged tree `AddWatchedRootHandler.java:72-77` routes a supplied collection through `IngestCollectionPolicy.normalizeRequested` and returns `INVALID_REQUEST`, deliberately outside the JSON try. Comment now cites that line and keeps the FE guard framed as defence in depth; `LibrarySurface.addCollection.test.ts` wording matched; **§O-1 moved from "open bypass" to "SETTLED by #617"** and the §B row reworded to past tense. |
+| **N3** — `FolderCardRenderer.ts:37-38` still named the deleted `failedChipLabel` with the aria-only framing | **Confirmed** | The `failedLastKnown` doc now matches `folderStatus.ts:56-61`: the count is marked "visibly AND in the accessible name (`failedChipCopy`)". No `failedChipLabel` reference survives outside the §D history rows, which are a dated record of round 1. |
+| **Nit** — duplicated `[data-last-known]` CSS | **Taken, as the dedupe rather than the test-only option** — and the test too | The two render sites share one reason to change ("how a last-known count looks" is one design decision), which is the AHA test for unifying. New `components/failedChipPresentation.ts` exports `failedChipStyles`, folded into both components' `static styles` — the house pattern for a shared `css` fragment (`resultRowPresentation.ts`'s `highlightStyles`, `atRestCard.ts`'s `atRestCardStyles`). New `LibrarySurface.failedChip.test.ts` asserts the fragment applies in the SURFACE's shadow root (not only the renderer's), so the dedupe cannot silently stop reaching one site. |
 
 ## §E — Live evidence (stack on `127.0.0.1:50656`, worktree FE served on `:5174`)
 
@@ -217,8 +235,10 @@ results` — a green measured only where the fix applies proves nothing about wh
 (fetch, wire parse, memory fold, `folderStatus`, render) is production code against the running
 backend. `window.fetch` is wrapped to capture each substrate response, so every render is correlated
 with the wire row that produced it. Iterations 80-169 run with `/api/status` starved, which is what a
-stale poll IS in production (a poll that does not arrive) and drives the store's real `stale-poll`
-provisional cause — nothing about the seam, the row or the backend is faked.
+stale poll IS in production (a poll that does not arrive) and drives the store's real `Stability`
+axis provisional — `channel-stale` (`verdict.ts:178`) or `updating` (`verdict.ts:216`), the union at
+`verdict.ts:42-53`, reached through `computeStability` (`aiStateStore.ts:829`) and read by
+`LibrarySurface.ts:536`. Nothing about the seam, the row or the backend is faked.
 
 *Two measurement artifacts had to be fixed before the numbers meant anything* (`interrogate results`):
 a sample taken at the surface's own `updateComplete` catches the NESTED folder card mid-swap with no
@@ -288,14 +308,15 @@ Mapped ui-shot steps for `LibrarySurface.ts` / `folderStatus.ts`, re-captured in
 | `PROVISIONAL` / `UNAVAILABLE` / `WALK ERROR` keep the chip (S2-1) | reverted the three hoisted branches to the raw `failed` (the pre-review shape) | all three fail: `AssertionError: expected +0 to be 2` |
 | `while PROVISIONAL a transitional zero cannot discharge the memory` | dropped `&& opts.provisional !== true` from the fold's `settled` test | `AssertionError: expected {} to deeply equal { a: 2 }` |
 | `a LAST-KNOWN count says so in the visible text` (S2-2) | removed the `[data-last-known]` CSS rule and rendered the bare count again (the aria-only shape) | `AssertionError: expected '2 failed' to contain '2 failed · last known'` |
+| `a CARRIED count … takes the muted-italic treatment` (LibrarySurface half) | dropped `failedChipStyles` from `LibrarySurface`'s `static styles` array | `AssertionError: expected 'normal' to be 'italic'` — i.e. the test does detect the shared fragment failing to reach this site |
 | `the native picker fills the SAME form` + `the header button re-opens the picker` | pointed the header button back at `handleAddRoot()` (the pre-split shape) | all six D4 cases fail — `AssertionError: .add-row input must be present in the add form: expected null to be truthy` (the header no longer opens the flow at all) |
 
 ## §G — Verification commands (verbatim results)
 
 - `npm run typecheck` → clean (no output past the tsc banner).
-- `npm run test:unit:run` → `Test Files 467 passed (467)` / `Tests 6264 passed (6264)`.
-  (The first round reported 6253; the reviewer's 6255 and this 6264 are the same suite growing as
-  each round's tests land — the number is only meaningful with its run.)
+- `npm run test:unit:run` → **`Test Files 468 passed (468)` / `Tests 6267 passed (6267)`**, run after
+  merging `origin/main` (#617 `f6f8433d`). (Rounds reported 6253 → 6255 → 6264 → 6267 as each round's
+  tests landed; the number is only meaningful with its run.)
 - `node scripts/ci/run-ui-web-gates.mjs` → `ui-web gates: 40/40 passed`.
 - `npm --prefix modules/ui-web run knip:report` + `node scripts/governance/run.mjs --gate dead-code --mode gate`
   → `governance: 1 gate evaluated, 0 fail, 0 findings` / `dead-code: pass`. No new export is unused,
@@ -305,22 +326,33 @@ Mapped ui-shot steps for `LibrarySurface.ts` / `folderStatus.ts`, re-captured in
 - `node scripts/ci/check-ui-step-coverage.mjs` → `ui-step-coverage gate OK — 44 step-index source path(s) …`.
 - `node scripts/ci/check-tempdoc-numbers.mjs` → `OK — … no collisions across 11 worktree(s) + origin/main`.
 - `python -m jseval ui-a11y-gate --ui-url http://localhost:5174` → `exit_code: 0`, 20 ok / 0 ERROR (§E.4).
+- Post-merge re-run of the whole set after `git merge origin/main`: typecheck clean · 468 files /
+  6267 tests · `ui-web gates: 40/40 passed` · fresh `knip:report` + `dead-code: pass` (0 findings) ·
+  `tempdoc-numbers: OK — 617 distinct numbers … no collisions` · `ui-step-coverage` OK.
+- **No Gradle run.** `git diff origin/main -- '*.java' '*.gradle.kts' '*.mjs' '*.cjs' 'governance/**'`
+  is EMPTY: this branch contributes zero Java/script/governance bytes, so the merged backend tree is
+  byte-identical to `origin/main`, which #617's own CI validated. The semantic-merge hazard
+  `subset-isnt-the-suite` warns about needs changes on both sides of a file; there are none here, and
+  the FE suite (the only side this branch touches) ran in full.
 - Diff hygiene: `git diff origin/main | grep -P '^\+.*[^\x00-\x7F]'` shows only intended typography
   — the added non-ASCII set is exactly `§ · — … → ≠ ≥ ⟹` (prose and comments);
   `git diff origin/main | grep -cP '\x00'` = **0**.
 
 ## §O — Open items (routed, not investigated further)
 
-**§O-1 — `core.add-watched-root` bypasses `IngestCollectionPolicy`.** The REST route
-`POST /api/indexing/roots` validates a supplied collection through
-`IngestCollectionPolicy.normalizeRequested` (`IndexingController.java:176-186`), but the Operation
-handler every UI and agent path actually uses does not
-(`AddWatchedRootHandler.java:50-54` assigns the raw string). An agent invoking the operation can
-therefore create a watched root tagged `agent-history` and have its documents inherit that corpus's
-default-EXCLUDED search posture — exactly what 811 C-2a's reserved list exists to prevent. This lane
-owns `modules/ui-web/**` only, so the fix (route the handler through the same policy, mirroring the
-REST branch) belongs to whoever owns `modules/app-services/**`. The FE guard added here closes the UI
-path only; it is not the authority.
+**§O-1 — `core.add-watched-root` bypassed `IngestCollectionPolicy`. SETTLED by #617 (`f6f8433d`,
+tempdoc 913 D6).** As found: the REST route `POST /api/indexing/roots` validated a supplied
+collection through `IngestCollectionPolicy.normalizeRequested` (`IndexingController.java:176-186`),
+but the Operation handler every UI and agent path actually uses did not
+(`AddWatchedRootHandler.java:50-54` assigned the raw string), so an agent could create a watched root
+tagged `agent-history` and have its documents inherit that corpus's default-EXCLUDED search posture —
+what 811 C-2a's reserved list exists to prevent. Routed out (this lane owns `modules/ui-web/**`), and
+fixed there: on the merged tree `AddWatchedRootHandler.java:72-77` routes the value through
+`normalizeRequested` and returns `INVALID_REQUEST` on rejection, deliberately outside the
+JSON-parsing try so a rejected name is a caller error rather than a malformed-arguments failure, with
+`AddWatchedRootHandlerTest` covering it. **The backend is the authority; the FE guard this PR adds is
+defence in depth** — it gives the reason at the keystroke with Add disabled, instead of a round trip
+that returns an error banner after the user has committed.
 
 **§O-3 — `serve-worktree-fe.cjs`'s readiness gate races the listener, so the Vite it starts is never
 registered and cannot be reaped.** Reproduced first-hand this session: the script printed

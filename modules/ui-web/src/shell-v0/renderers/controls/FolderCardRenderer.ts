@@ -23,8 +23,11 @@ import { registerXUiRenderer } from './xUiRendererRegistry.js';
 import { icon } from '../../components/Icon.js';
 import '../../components/Button.js';
 // Tempdoc 914 D3 — the chip's copy comes from the folder-status seam, so this renderer and
-// LibrarySurface's hand-authored card cannot word the last-known qualifier differently.
+// LibrarySurface's hand-authored card cannot word the last-known qualifier differently: a carried
+// count is marked visibly AND in the accessible name (see `failedChipCopy`).
 import { failedChipCopy } from '../../state/folderStatus.js';
+// Tempdoc 914 D3 — the chip's look, shared with LibrarySurface's hand-authored card.
+import { failedChipStyles } from '../../components/failedChipPresentation.js';
 
 interface FolderCard {
   readonly pathHash?: string;
@@ -34,13 +37,16 @@ interface FolderCard {
   readonly walkError?: string;
   /** Tempdoc 599 §16/B1 — failed-job count; >0 renders a clickable chip that opens the drill-down. */
   readonly failed?: number;
-  /** Tempdoc 914 D3 — `failed` is a count carried across a retry re-queue window, not this poll's
-   *  own number; the chip's accessible name says so (`failedChipLabel`). */
+  /** Tempdoc 914 D3 — `failed` is a count carried across a window in which this root has no settled
+   *  answer, not this poll's own number. The chip marks it visibly AND in the accessible name
+   *  (`failedChipCopy`), which is what review finding S2-2 required. */
   readonly failedLastKnown?: boolean;
 }
 
 export class FolderCardRenderer extends JsonFormsRendererBase {
-  static styles = css`
+  static styles = [
+    failedChipStyles,
+    css`
     :host {
       display: block;
     }
@@ -98,25 +104,13 @@ export class FolderCardRenderer extends JsonFormsRendererBase {
     .walk-error {
       color: var(--text-danger);
     }
-    /* Tempdoc 599 §16/B1 — clickable "N failed" chip → opens the failed-files drawer. */
-    .failed-chip {
-      margin-left: 0.4rem;
-      --jf-button-color: var(--text-danger);
-      color: var(--text-danger);
-    }
-    /* Tempdoc 914 D3 / review S2-2 — a LAST-KNOWN count is muted + italic (StatusDeck's .val.stale
-       treatment), so the qualifier is not aria-only. */
-    .failed-chip[data-last-known='true'] {
-      --jf-button-color: var(--text-muted);
-      color: var(--text-muted);
-      font-style: italic;
-    }
     .empty {
       padding: 1rem;
       color: var(--text-secondary);
       font-size: var(--font-size-sm);
     }
-  `;
+  `,
+  ];
 
   override render(): TemplateResult {
     if (!this.visible) return html``;
