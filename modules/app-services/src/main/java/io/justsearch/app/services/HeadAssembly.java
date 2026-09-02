@@ -966,6 +966,14 @@ public final class HeadAssembly implements AutoCloseable {
   }
 
   /**
+   * Tempdoc 883 decision 1: the derived context window this engine was launched with and why;
+   * null when there is no inference manager, or when it launched nothing (adopted server).
+   */
+  public io.justsearch.app.api.OnlineAiRuntimeIntrospection.ContextWindow launchedContextWindow() {
+    return this.inferenceManager == null ? null : this.inferenceManager.launchedContextWindow();
+  }
+
+  /**
    * Tempdoc 842 §2.5: the chat identity the engine is <em>actually</em> running — profile claim,
    * loaded model file, projector attached — or {@code null} when no engine is up.
    *

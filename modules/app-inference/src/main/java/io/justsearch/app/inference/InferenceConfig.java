@@ -27,7 +27,8 @@ import org.slf4j.LoggerFactory;
  * @param modelPath path to main VLM model (e.g., qwen3-vl-8b-instruct-q4_k_m.gguf)
  * @param mmprojPath path to vision projector model (e.g., mmproj-model-f16.gguf)
  * @param serverPort port for llama-server HTTP API
- * @param contextSize context window size (default: 4096)
+ * @param contextSize context window size in tokens; always positive on a built record — 0 means
+ *     "auto" only at the builder, which resolves it through {@link ContextWindowPolicy}
  * @param gpuLayers number of layers to offload to GPU (default: 0 = CPU mode)
  * @param vduMode when true, server launches with vision-safe flags ({@code -np 1},
  *     {@code --cache-ram 0}) that prevent multi-slot vision errors and prompt cache corruption
@@ -93,9 +94,8 @@ public record InferenceConfig(
    *   <li>JUSTSEARCH_SERVER_EXE - path to llama-server.exe</li>
    *   <li>JUSTSEARCH_MODELS_DIR - directory containing model files</li>
    *   <li>JUSTSEARCH_SERVER_PORT - HTTP port (default: 8080)</li>
-   *   <li>JUSTSEARCH_CONTEXT_SIZE - context window size (default: 8192, resolved by
-   *       {@code ResolvedConfigBuilder}; the 4096 below is only the floor applied when the
-   *       resolved value is non-positive)</li>
+   *   <li>JUSTSEARCH_CONTEXT_SIZE - context window size; unset means auto, and the window is
+   *       derived by {@link ContextWindowPolicy} (tempdoc 883)</li>
    *   <li>JUSTSEARCH_GPU_LAYERS - GPU layers to offload (default: 0)</li>
    * </ul>
    *
@@ -130,10 +130,13 @@ public record InferenceConfig(
       int apiPort = rc.ports().apiPort();
       port = apiPort > 0 && apiPort != 8081 ? 8081 : 8082;
     }
-    int ctxSize = rc.ai().contextSize();
-    if (ctxSize <= 0) ctxSize = 4096;
     // Locked decision: CPU fallback must work by default.
     int layers = rc.ai().gpuLayers();
+    // Tempdoc 883: 0 = auto. The one default for this quantity is the ladder's top rung for this
+    // backend, not a literal — the Head normally contributes the same value at ordinal 150, so this
+    // branch only fires where no resolver contribution exists (worker snapshots, tests, tools).
+    int ctxSize = rc.ai().contextSize();
+    if (ctxSize <= 0) ctxSize = ContextWindowPolicy.autoTopRung(layers > 0);
     log.debug("  Server port: {}, context size: {}, GPU layers: {}", port, ctxSize, layers);
 
     // Tempdoc 374 alpha.13 fix A1: derive CUDA availability from the resolved
@@ -568,7 +571,8 @@ public record InferenceConfig(
     private Path modelPath;
     private Path mmprojPath;
     private int serverPort = 8080;
-    private int contextSize = 4096;
+    // Tempdoc 883: 0 = auto; build() resolves it through the ladder policy rather than a literal.
+    private int contextSize = 0;
     private int gpuLayers = 0;
     private boolean vduMode = false;
     private String chatProfileId;
@@ -626,7 +630,7 @@ public record InferenceConfig(
           modelPath,
           mmprojPath,
           serverPort,
-          contextSize,
+          contextSize > 0 ? contextSize : ContextWindowPolicy.autoTopRung(gpuLayers > 0),
           gpuLayers,
           vduMode,
           chatProfileId

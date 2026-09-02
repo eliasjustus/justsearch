@@ -89,7 +89,15 @@ class RuntimeManifestControllerRedactionTest {
             .build();
     RuntimeManifest.AiInfo ai =
         new RuntimeManifest.AiInfo(
-            "READY", true, null, "2026-05-20T20:02:00Z", "b8571", "b8571", "SUPPORTED");
+            "READY",
+            true,
+            null,
+            "2026-05-20T20:02:00Z",
+            "b8571",
+            "b8571",
+            "SUPPORTED",
+            new io.justsearch.app.api.OnlineAiRuntimeIntrospection.ContextWindow(
+                16384, "stepped-from:32768", 5_368_709_120L, 2, "q8_0"));
     RuntimeManifest manifest =
         RuntimeManifestBuilder.builder()
             .schemaVersion(1)
@@ -113,6 +121,11 @@ class RuntimeManifestControllerRedactionTest {
     assertEquals("b8571", publicView.ai().serverBuildActual());
     // Tempdoc 835: the thinking-capability verdict is a capability fact, not a credential.
     assertEquals("SUPPORTED", publicView.ai().thinkingSupport());
+    // Tempdoc 883: the derived context window is a capability fact too — it is what this machine
+    // ended up able to do, and free VRAM is already public on /api/inference/status.gpu.
+    assertNotNull(publicView.ai().contextWindow(), "context window must survive projection");
+    assertEquals(16384, publicView.ai().contextWindow().rung());
+    assertEquals("stepped-from:32768", publicView.ai().contextWindow().reason());
     assertNull(publicView.head().sessionToken());
   }
 

@@ -43,8 +43,6 @@ public class SettingsController {
   private static final String EXCLUDE_PATTERNS_SOURCE_PROP = "justsearch.ui.exclude_patterns.source";
   private static final String GPU_LAYERS_SYS_PROP = "justsearch.gpu.layers";
   private static final String GPU_LAYERS_SOURCE_PROP = "justsearch.gpu.layers.source";
-  private static final String CONTEXT_SIZE_SYS_PROP = "justsearch.context.size";
-  private static final String CONTEXT_SIZE_SOURCE_PROP = "justsearch.context.size.source";
   private static final String SOURCE_UI_SETTINGS = "ui_settings";
   private final UiSettingsStore settingsStore;
   private final Path defaultIndexBasePath;
@@ -127,7 +125,6 @@ public class SettingsController {
       maybeApplyServerExeSysProp(merged);
       maybeApplyExcludePatternsSysProp(merged);
       maybeApplyGpuLayersSysProp(merged);
-      maybeApplyContextSizeSysProp(merged);
       rebuildConfigStore(merged);
       if (chatEnabledChanged != null
           && !java.util.Objects.equals(chatEnabledBefore, merged.getChatEnabled())) {
@@ -301,29 +298,6 @@ public class SettingsController {
     SystemAccess.setSysProp(GPU_LAYERS_SOURCE_PROP, SOURCE_UI_SETTINGS);
   }
 
-  private static void maybeApplyContextSizeSysProp(UiSettings settings) {
-    if (settings == null) return;
-    Integer contextLength = settings.getContextLength();
-    String source = SystemAccess.sysProp(CONTEXT_SIZE_SOURCE_PROP, "");
-    String existing = SystemAccess.sysProp(CONTEXT_SIZE_SYS_PROP, "");
-
-    boolean owned = SOURCE_UI_SETTINGS.equalsIgnoreCase(source);
-    boolean unset = existing == null || existing.isBlank();
-    if (!owned && !unset) {
-      // Respect explicit operator overrides (sysprop set outside UI settings).
-      return;
-    }
-
-    if (contextLength == null || contextLength <= 0) {
-      SystemAccess.clearSysProp(CONTEXT_SIZE_SYS_PROP);
-      SystemAccess.clearSysProp(CONTEXT_SIZE_SOURCE_PROP);
-      return;
-    }
-
-    SystemAccess.setSysProp(CONTEXT_SIZE_SYS_PROP, String.valueOf(contextLength));
-    SystemAccess.setSysProp(CONTEXT_SIZE_SOURCE_PROP, SOURCE_UI_SETTINGS);
-  }
-
   /**
    * Rebuilds the ResolvedConfig with updated settings and swaps it into the ConfigStore.
    *
@@ -429,7 +403,7 @@ public class SettingsController {
     current.setMode("simple");
     current.setTrustLoopNudgeSeen(false);
     current.setExcludePatterns(new ArrayList<>());
-    current.setContextLength(4096);
+    current.setContextLength(0);
     current.setMaxTokens(1024);
     current.setGpuLayers(0);
 
@@ -444,7 +418,6 @@ public class SettingsController {
     settingsStore.save(current);
     maybeApplyExcludePatternsSysProp(current);
     maybeApplyGpuLayersSysProp(current);
-    maybeApplyContextSizeSysProp(current);
     rebuildConfigStore(current);
 
     SettingsV2 v2 = toSettingsV2(current);
