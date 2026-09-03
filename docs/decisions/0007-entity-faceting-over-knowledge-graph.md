@@ -85,29 +85,28 @@ shipped and is live. Nothing below changes it.
 
 What has changed since 2026-01 is the *other* half of the entity surface: the ICU-analyzed
 **boost** fields `entity_persons_text` / `entity_organizations_text` / `entity_locations_text`,
-which feed a search-side score boost rather than a facet filter. Those are scheduled for
-retirement by **decision-review lane D**, and the search-side boost is **already off by default**:
+which fed a search-side score boost rather than a facet filter. Decision-review lane D split their
+retirement into two safe steps. PR-C0 removed the functional query/configuration path; PR-C2 removes
+the physical fields and their writers in the fingerprint-moving bundle:
 
-- `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java:1336`
-  resolves `justsearch.search.entity_boost` with a default of **`0.0`**.
-- `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/TextQueryOps.java:183-201`
-  only adds the entity disjuncts when `entityBoost > 0.0f`
-  (`hasEntities = entityQueries != null && !entityQueries.isEmpty() && entityBoost > 0.0f`).
-  At the shipped default the boost clauses are never constructed.
-- `SSOT/catalogs/fields.v1.json:388,404,420` still declares the three `entity_*_text` fields, so
-  they are indexed and inert — cost without effect, which is what lane D removes.
+- `TextQueryOps` now constructs only the `content` + `title` + `author` disjuncts; it has no entity
+  query builder or boost resolver.
+- `justsearch.search.entity_boost` / `JUSTSEARCH_SEARCH_ENTITY_BOOST` are no longer configuration
+  inputs. The public `entityBoost` status property remains as an always-zero compatibility
+  tombstone; protobuf field 9 is not deleted or reused.
+- `SSOT/catalogs/fields.v1.json` still declares the three `entity_*_text` fields until PR-C2, so C0
+  is fingerprint-neutral. They are indexed but no longer queried.
 
 The `entity_*_raw` keyword fields named in the Decision section are unaffected: they are the
 facet fields, and faceting is the shipped decision.
 
 ### The probe spans the migration
 
-`adr-0007-entity-boost-retired-or-off` is an `any-of` probe with two alternatives — the boost
-default is `0.0`, **or** the `entity_*_text` fields are gone from `SSOT/catalogs/fields.v1.json`.
-Today the first holds; after lane D lands, the second holds too. It fails only if *both* fail:
-the boost re-enabled **and** the fields still present, i.e. someone turned the boost back on
-without re-reading this ADR. That is the drift worth catching; a probe that went red the day
-lane D shipped would only have taught the next agent to delete it.
+`adr-0007-entity-boost-retired-or-off` is an `any-of` probe with two alternatives — the functional
+configuration/query machinery is absent, **or** the `entity_*_text` fields are gone from
+`SSOT/catalogs/fields.v1.json`. C0 satisfies the first; C2 satisfies both. It fails only if query
+machinery returns while the fields still exist. The compatibility tombstone is intentionally not
+scanned because its continued presence protects the public wire contract.
 
 `any-of` was added to the probe engine for this case
 (`scripts/governance/gates/adr-coverage/probes.mjs`). It is for a premise that is true for two

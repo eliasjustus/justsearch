@@ -117,6 +117,12 @@ jobs:
         # audit duplicates it through an unbounded advisory POST and has blocked this lane for 5m.
         run: npm ci --audit=false
 
+      - name: Test language-agnostic authored-word-list scanner
+        run: node scripts/ci/lib/language-agnostic-word-lists.test.mjs
+
+      - name: Search analysis remains language-agnostic
+        run: node scripts/ci/check-language-agnostic-analysis.mjs
+
       # Tempdoc 745 D6. These ~26 files (743's baseline-economics/record-merge suites
       # included) previously ran in CI NOWHERE — manual-only, i.e. only when someone
       # remembered. That is the exact failure mode 745 documents: a layer nothing

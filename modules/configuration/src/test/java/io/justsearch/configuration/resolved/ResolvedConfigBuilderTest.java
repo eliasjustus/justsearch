@@ -840,11 +840,41 @@ final class ResolvedConfigBuilderTest {
       assertEquals(45, config.hybridSearch().rrfK());
       assertEquals(0.80, config.hybridSearch().vectorRrfWeight(), 0.001);
       assertEquals(6, config.hybridSearch().vectorSkipMinChars());
+      assertEquals(0.25, config.hybridSearch().vectorSkipMinDfFraction(), 0.001);
       assertEquals("rrf", config.hybridSearch().branchFusionStrategy());
       assertEquals(0.65, config.hybridSearch().branchCcWeightChunk(), 0.001);
       assertEquals(0.50, config.hybridSearch().branchChunkMinWeightMultiplier(), 0.001);
       assertEquals(2000L, config.hybridSearch().branchRampFullWeightMaxTokens());
       assertEquals(6000L, config.hybridSearch().branchRampZeroWeightMinTokens());
+    }
+
+    @Test
+    @DisplayName("dense-skip DF threshold defaults to 0.25 and resolves its sysprop")
+    void denseSkipDfThresholdDefaultAndSysprop() {
+      String key = "index.hybrid.vector_skip_min_df_fraction";
+      String previous = System.getProperty(key);
+      try {
+        System.clearProperty(key);
+        ResolvedConfig defaults = new ResolvedConfigBuilder().contributeEnvRegistry().build();
+        assertEquals(0.25, defaults.hybridSearch().vectorSkipMinDfFraction(), 0.001);
+
+        System.setProperty(key, "0.40");
+        ResolvedConfig overridden = new ResolvedConfigBuilder().contributeEnvRegistry().build();
+        assertEquals(0.40, overridden.hybridSearch().vectorSkipMinDfFraction(), 0.001);
+      } finally {
+        if (previous != null) System.setProperty(key, previous);
+        else System.clearProperty(key);
+      }
+    }
+
+    @Test
+    @DisplayName("retired entity boost is absent from the configuration authority")
+    void retiredEntityBoostIsAbsent() {
+      ResolvedConfig config = new ResolvedConfigBuilder().contributeEnvRegistry().build();
+      assertFalse(config.resolutions().containsKey("justsearch.search.entity_boost"));
+      assertTrue(
+          java.util.Arrays.stream(EnvRegistry.values())
+              .noneMatch(entry -> entry.configKey().equals("justsearch.search.entity_boost")));
     }
 
     @Test
@@ -1369,6 +1399,18 @@ final class ResolvedConfigBuilderTest {
       builder = new ResolvedConfigBuilder();
       builder.putDefault("index.hybrid.vector_rrf_weight", "-0.3");
       assertEquals(0.0, builder.build().hybridSearch().vectorRrfWeight(), 0.001);
+    }
+
+    @Test
+    @DisplayName("HybridSearch vector_skip_min_df_fraction is clamped to [0.0, 1.0]")
+    void hybridVectorSkipMinDfFractionClamped() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.putDefault("index.hybrid.vector_skip_min_df_fraction", "1.5");
+      assertEquals(1.0, builder.build().hybridSearch().vectorSkipMinDfFraction(), 0.001);
+
+      builder = new ResolvedConfigBuilder();
+      builder.putDefault("index.hybrid.vector_skip_min_df_fraction", "-0.5");
+      assertEquals(0.0, builder.build().hybridSearch().vectorSkipMinDfFraction(), 0.001);
     }
 
     @Test

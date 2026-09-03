@@ -949,6 +949,7 @@ message SearchConfig {
   double branch_cc_weight_chunk = 6;
   double branch_chunk_min_weight_multiplier = 7;
   double title_boost = 8;
+  // Retired compatibility tombstone. Producers and public mappers always emit 0.0; do not reuse.
   double entity_boost = 9;
   bool query_classification_enabled = 10;
   // Next available field number: 11

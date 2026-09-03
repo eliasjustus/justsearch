@@ -52,18 +52,10 @@ public final class TextQueryOps {
   static final float EXACT_BOOST = 2.0f;
   /** 306-B1: title field boost in DisjunctionMaxQuery (industry standard 1.5-3x). */
   static final float TITLE_BOOST = 3.0f;
-  /** 326: entity field boost — disabled by default (0.5 still hurts bm25_splade by -2.2%). */
-  static final float ENTITY_BOOST = 0.0f;
   /** 326: author/sender field boost — matches on document author are a strong relevance signal. */
   static final float AUTHOR_BOOST = 3.0f;
   /** 306-B1: tie-breaker for DisjunctionMaxQuery — 10% of secondary field score added. */
   static final float TITLE_TIE_BREAKER = 0.1f;
-
-  /** 326: Entity text fields for BM25 matching (ICU-analyzed, populated by NER backfill). */
-  private static final List<String> ENTITY_TEXT_FIELDS = List.of(
-      SchemaFields.ENTITY_PERSONS_TEXT,
-      SchemaFields.ENTITY_ORGANIZATIONS_TEXT,
-      SchemaFields.ENTITY_LOCATIONS_TEXT);
 
   private final RuntimeSession session;
   private final SearcherBridge bridge;
@@ -107,7 +99,7 @@ public final class TextQueryOps {
   }
 
   /**
-   * Builds the content+title+author+entity DisjunctionMaxQuery for {@code syntax}, without any
+   * Builds the content+title+author DisjunctionMaxQuery for {@code syntax}, without any
    * filters. Shared by {@link #buildTextQuery} and {@link #searchTextWithFilter} so the two cannot
    * drift on which fields participate or how each is parsed.
    */
@@ -124,17 +116,13 @@ public final class TextQueryOps {
       titleQuery = buildFieldQuery(queryText, SchemaFields.TITLE, QuerySyntax.LUCENE);
     }
 
-    // 326: Build entity field queries (ICU-analyzed text fields populated by NER backfill).
-    // Documents with NER-extracted entities matching query terms get a relevance boost.
-    List<Query> entityQueries = buildEntityFieldQueries(queryText, syntax);
-
     // 326: Author/sender field query — matches on document author boost relevance.
     Query authorQuery = buildFieldQuery(queryText, SchemaFields.AUTHOR, syntax);
 
-    // 306-B1 + 326: Multi-field search — query content, title, author, and entity fields using
+    // 306-B1 + 326: Multi-field search — query content, title, and author using
     // DisjunctionMaxQuery (Elasticsearch best_fields pattern). Best field score drives ranking,
-    // with tie-breaker from other fields. Documents without titles/author/entities are unaffected.
-    return combineMultiField(contentQuery, titleQuery, authorQuery, entityQueries);
+    // with tie-breaker from other fields. Documents without titles/author are unaffected.
+    return combineMultiField(contentQuery, titleQuery, authorQuery);
   }
 
   /**
@@ -172,21 +160,17 @@ public final class TextQueryOps {
   }
 
   /**
-   * Wraps content, title, author, and entity queries in a {@link DisjunctionMaxQuery} so that the
-   * best field's score drives ranking, with a small tie-breaker from other fields. Title is boosted
-   * by {@link #TITLE_BOOST}, author by {@link #AUTHOR_BOOST}, entity fields by {@link
-   * #ENTITY_BOOST}.
+   * Wraps content, title, and author queries in a {@link DisjunctionMaxQuery} so that the best
+   * field's score drives ranking, with a small tie-breaker from other fields. Title is boosted by
+   * {@link #TITLE_BOOST} and author by {@link #AUTHOR_BOOST}.
    */
-  static Query combineMultiField(
-      Query contentQuery, Query titleQuery, Query authorQuery, List<Query> entityQueries) {
+  static Query combineMultiField(Query contentQuery, Query titleQuery, Query authorQuery) {
     float titleBoost = resolveTitleBoost();
-    float entityBoost = resolveEntityBoost();
 
     boolean hasTitle = titleQuery != null && titleBoost > 0.0f;
     boolean hasAuthor = authorQuery != null && AUTHOR_BOOST > 0.0f;
-    boolean hasEntities = entityQueries != null && !entityQueries.isEmpty() && entityBoost > 0.0f;
 
-    if (!hasTitle && !hasAuthor && !hasEntities) return contentQuery;
+    if (!hasTitle && !hasAuthor) return contentQuery;
 
     List<Query> disjuncts = new ArrayList<>();
     disjuncts.add(contentQuery);
@@ -195,11 +179,6 @@ public final class TextQueryOps {
     }
     if (hasAuthor) {
       disjuncts.add(new BoostQuery(authorQuery, AUTHOR_BOOST));
-    }
-    if (hasEntities) {
-      for (Query eq : entityQueries) {
-        disjuncts.add(new BoostQuery(eq, entityBoost));
-      }
     }
     return new DisjunctionMaxQuery(disjuncts, TITLE_TIE_BREAKER);
   }
@@ -211,38 +190,6 @@ public final class TextQueryOps {
       return (float) cs.get().search().titleBoost();
     }
     return TITLE_BOOST;
-  }
-
-  /** Reads entity boost from ConfigStore, falling back to ENTITY_BOOST constant. */
-  private static float resolveEntityBoost() {
-    ConfigStore cs = ConfigStore.globalOrNull();
-    if (cs != null) {
-      return (float) cs.get().search().entityBoost();
-    }
-    return ENTITY_BOOST;
-  }
-
-  /**
-   * Builds parsed queries for each NER entity text field. Entity text fields are ICU-analyzed,
-   * so this uses the same QueryParser approach as title queries. Returns an empty list if no
-   * entity fields are configured or the query produces no parseable output.
-   */
-  private List<Query> buildEntityFieldQueries(String queryText, QuerySyntax syntax) {
-    float boost = resolveEntityBoost();
-    if (boost <= 0.0f) return List.of();
-
-    List<Query> queries = new ArrayList<>();
-    for (String field : ENTITY_TEXT_FIELDS) {
-      try {
-        Query q = buildFieldQuery(queryText, field, syntax);
-        if (q != null) {
-          queries.add(q);
-        }
-      } catch (org.apache.lucene.queryparser.classic.ParseException e) {
-        log.debug("Failed to parse entity query for field {}: {}", field, e.getMessage());
-      }
-    }
-    return queries;
   }
 
   /**
@@ -560,7 +507,7 @@ public final class TextQueryOps {
    * Returns per-term QPP (Query Performance Prediction) signals for the given terms in one searcher
    * acquisition.
    *
-   * <p>Collects docFreq, totalTermFreq per term, plus global statistics (numDocs,
+   * <p>Collects docFreq, totalTermFreq per term, plus field statistics (fieldDocCount,
    * sumTotalTermFreq) needed to compute MaxIDF, AvgICTF, and QueryScope.
    *
    * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
@@ -573,7 +520,7 @@ public final class TextQueryOps {
       return bridge.withSearcher(
           searcher -> {
             IndexReader reader = searcher.getIndexReader();
-            long numDocs = reader.numDocs();
+            long fieldDocCount = reader.getDocCount(field);
 
             // Sum total term frequency across all leaves for the field
             long sumTotal = 0;
@@ -591,7 +538,7 @@ public final class TextQueryOps {
               dfs.put(term, reader.docFreq(t));
               cfs.put(term, reader.totalTermFreq(t));
             }
-            return new QppSignals(numDocs, dfs, cfs, sumTotal);
+            return new QppSignals(fieldDocCount, dfs, cfs, sumTotal);
           });
     } catch (IOException e) {
       return new QppSignals(0L, Map.of(), Map.of(), 0L);
@@ -654,10 +601,10 @@ public final class TextQueryOps {
   /**
    * Text search with a Lucene Query filter applied, parsing the user's text with {@code syntax}.
    *
-   * <p>Builds the full multi-field query (content + title + entity fields) with {@code syntax}, then
+   * <p>Builds the full multi-field query (content + title + author) with {@code syntax}, then
    * combines with the provided Lucene filter using a BooleanQuery. This ensures the 2-leg hybrid
-   * path (HybridSearchOps) gets the same title boost and entity boost as the direct text search
-   * path — and, since tempdoc 821 §P, the same honouring of the request's {@code query_syntax}.
+   * path (HybridSearchOps) gets the same field boosts as the direct text search path — and, since
+   * tempdoc 821 §P, the same honouring of the request's {@code query_syntax}.
    *
    * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
    */
@@ -666,10 +613,9 @@ public final class TextQueryOps {
       return new SearchResult(List.of(), 0, 0, null);
     }
     try {
-      // 326: Use the shared multi-field build (content + title + author + entity) instead of
-      // content-only. The old code called buildSimpleContentQuery() which missed title boost
-      // (306-B1) and entity boost (326), causing the 2-leg hybrid path to rank differently from
-      // the direct text search and 3-way paths.
+      // Use the shared multi-field build (content + title + author) instead of content-only. The
+      // old code called buildSimpleContentQuery(), causing the 2-leg hybrid path to rank
+      // differently from the direct text search and 3-way paths.
       Query multiFieldQuery = buildMultiFieldQuery(queryText, syntax);
 
       BooleanQuery.Builder combined = new BooleanQuery.Builder();

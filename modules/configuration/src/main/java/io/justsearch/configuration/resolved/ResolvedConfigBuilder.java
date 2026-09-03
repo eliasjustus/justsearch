@@ -1443,7 +1443,6 @@ public final class ResolvedConfigBuilder {
         resolveString("justsearch.index.collection", "default"),
         resolveBoolean("justsearch.search.query_classification.enabled", true),
         resolveDouble("justsearch.search.title_boost", 3.0),
-        resolveDouble("justsearch.search.entity_boost", 0.0),
         resolveBoolean("search.chunk_aware.enabled", true),
         // 775 §I / founder flip decision (2026-07-22): both evidence flags default-ON. The
         // putDefault above is the effective source; this fallback matches it for the no-putDefault
@@ -1713,6 +1712,11 @@ public final class ResolvedConfigBuilder {
     return new ResolvedConfig.HybridSearch(
         resolveInt("index.hybrid.rrf_k", 60),
         resolveInt("index.hybrid.vector_skip_min_chars", 4),
+        Math.max(
+            0.0,
+            Math.min(
+                1.0,
+                resolveDouble("index.hybrid.vector_skip_min_df_fraction", 0.25))),
         Math.max(1, resolveInt("index.hybrid.candidate_limit_max", 100)),
         Math.max(1, resolveInt("index.hybrid.text_candidate_multiplier", 10)),
         Math.max(1, resolveInt("index.hybrid.vector_candidate_multiplier", 10)),

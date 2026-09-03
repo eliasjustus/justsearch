@@ -83,12 +83,38 @@ final class SearchTraceProjectorTest {
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),
+            Optional.empty(),
             new ChunkMergeDirective.Skip(SearchReasonCode.SKIPPED_DISABLED));
     SearchTrace t = SearchTraceProjector.project(decision, emptyOutcome(), null);
     assertEquals("executed", status(t, "sparse-retrieval"));
     assertEquals("skipped", status(t, "dense-retrieval"));
     assertEquals("skipped", status(t, "splade-retrieval"));
     assertEquals("skipped", status(t, "fusion"));
+  }
+
+  @Test
+  @DisplayName("planned dense skip is reported truthfully and is not an encoding fallback")
+  void plannedDenseSkipIsReportedTruthfully() {
+    var decision =
+        new SearchDecision.MultiLegDecision(
+            LuceneRuntimeTypes.QuerySyntax.SIMPLE,
+            new LegSet.Bm25Only(10),
+            Optional.empty(),
+            Optional.of(SearchReasonCode.SKIPPED_NO_DISCRIMINATIVE_TERM),
+            Optional.empty(),
+            Optional.empty(),
+            new ChunkMergeDirective.Skip(SearchReasonCode.SKIPPED_DISABLED));
+
+    SearchTrace t = SearchTraceProjector.project(decision, emptyOutcome(), null);
+    TraceStage dense = stageNode(t, "dense-retrieval");
+    assertEquals("skipped", dense.getStatus());
+    assertEquals(SearchReasonCode.SKIPPED_NO_DISCRIMINATIVE_TERM.name(), dense.getReason());
+    assertTrue(t.getDegradation().getVectorBlocked());
+    assertEquals(
+        SearchReasonCode.SKIPPED_NO_DISCRIMINATIVE_TERM.name(),
+        t.getDegradation().getVectorBlockedReason());
+    assertFalse(t.getDegradation().getHybridFallback());
+    assertTrue(t.getDegradation().getHybridFallbackReason().isBlank());
   }
 
   @Test
@@ -126,6 +152,7 @@ final class SearchTraceProjectorTest {
         new SearchDecision.MultiLegDecision(
             LuceneRuntimeTypes.QuerySyntax.SIMPLE,
             new LegSet.Bm25Only(10),
+            Optional.empty(),
             Optional.empty(),
             Optional.empty(),
             Optional.empty(),

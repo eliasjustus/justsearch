@@ -181,11 +181,27 @@ describe('searchTraceExplain strategy (549 D1 + 577 Phase 3 altitude cut)', () =
     'NO_EMBEDDING_SERVICE',
     'EMBEDDING_GENERATION_FAILED',
     'EMBEDDING_EXCEPTION',
+    'SKIPPED_SHORT_QUERY',
+    'SKIPPED_NO_DISCRIMINATIVE_TERM',
   ];
 
   it('602 R6 — DEGRADATION_REASON_WORDING covers the user-tier reason vocabulary exactly', () => {
     expect(Object.keys(DEGRADATION_REASON_WORDING).sort()).toEqual(
       [...DEGRADATION_WORDED_CODES].sort(),
+    );
+  });
+
+  it('planned dense omission is worded as a skip, not an embedding block', () => {
+    const trace: SearchTrace = searchTraceSchema.parse({
+      version: 1,
+      effectiveMode: 'TEXT',
+      degradation: {
+        vectorBlocked: true,
+        vectorBlockedReason: 'SKIPPED_NO_DISCRIMINATIVE_TERM',
+      },
+    });
+    expect(userSummaryParts(trace)).toContain(
+      'Semantic ranking was skipped — every word in this query is common across your documents.',
     );
   });
 

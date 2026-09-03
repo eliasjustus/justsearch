@@ -908,7 +908,7 @@ final class IndexStatusOps {
     return gpu.build();
   }
 
-  private io.justsearch.ipc.SearchConfig buildSearchConfig() {
+  io.justsearch.ipc.SearchConfig buildSearchConfig() {
     io.justsearch.ipc.SearchConfig.Builder sc = io.justsearch.ipc.SearchConfig.newBuilder();
     if (resolvedConfigSupplier != null) {
       var config = resolvedConfigSupplier.get();
@@ -923,7 +923,9 @@ final class IndexStatusOps {
             .setBranchCcWeightChunk(hybrid.branchCcWeightChunk())
             .setBranchChunkMinWeightMultiplier(hybrid.branchChunkMinWeightMultiplier())
             .setTitleBoost(search.titleBoost())
-            .setEntityBoost(search.entityBoost())
+            // Compatibility tombstone: field 9 remains on the wire but the retired query boost is
+            // never active.
+            .setEntityBoost(0.0)
             .setQueryClassificationEnabled(search.queryClassificationEnabled());
       }
     }

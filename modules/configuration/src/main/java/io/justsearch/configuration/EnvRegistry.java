@@ -385,12 +385,6 @@ public enum EnvRegistry {
     /** 306: title field boost in BM25 DisjunctionMaxQuery (default: 3.0 via builder, 0 to disable). */
     SEARCH_TITLE_BOOST("justsearch.search.title_boost", "JUSTSEARCH_SEARCH_TITLE_BOOST", LifecycleStage.PERMANENT),
 
-    /** 326: NER entity field boost in BM25 DisjunctionMaxQuery (default: 2.0, 0 to disable). */
-    SEARCH_ENTITY_BOOST(
-        "justsearch.search.entity_boost",
-        "JUSTSEARCH_SEARCH_ENTITY_BOOST",
-        LifecycleStage.PERMANENT),
-
     /** 343: enable/disable chunk-aware merge in search (default: true via builder). */
     SEARCH_CHUNK_AWARE_ENABLED(
         "search.chunk_aware.enabled", "JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED", LifecycleStage.PERMANENT),
@@ -1050,6 +1044,11 @@ public enum EnvRegistry {
     /** Min chars before vector search is skipped (short-query optimization). */
     HYBRID_VECTOR_SKIP_MIN_CHARS("index.hybrid.vector_skip_min_chars",
         "JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_CHARS", LifecycleStage.PERMANENT),
+    /** Minimum content-field document-frequency fraction for skipping a redundant dense leg. */
+    HYBRID_VECTOR_SKIP_MIN_DF_FRACTION(
+        "index.hybrid.vector_skip_min_df_fraction",
+        "JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_DF_FRACTION",
+        LifecycleStage.PERMANENT),
     /** Max candidate limit for hybrid search results. */
     HYBRID_CANDIDATE_LIMIT_MAX("index.hybrid.candidate_limit_max",
         "JUSTSEARCH_INDEX_HYBRID_CANDIDATE_LIMIT_MAX", LifecycleStage.PERMANENT),

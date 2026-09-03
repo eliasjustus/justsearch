@@ -55,6 +55,7 @@ describe('fixtures.mjs shape', () => {
     expect(w).toHaveProperty('enrichment')
     const sc = w.searchConfig as Record<string, unknown>
     expect(sc).toHaveProperty('chunkAwareEnabled')
+    expect(sc.entityBoost).toBe(0.0)
   })
 
   it('DEFAULT_SETTINGS has all required top-level keys', () => {
