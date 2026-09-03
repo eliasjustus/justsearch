@@ -2,18 +2,18 @@
 title: "Verify your JustSearch download"
 type: how-to
 status: stable
-description: "Checking the installer's SHA-256 against SHA256SUMS, why Windows SmartScreen and Smart App Control react to an unsigned installer, and the build-from-source alternative if you'd rather not run it at all."
+description: "Checking the installer's SHA-256 and Authenticode identity, understanding Windows reputation warnings, and using the build-from-source alternative."
 audience: user
 related: docs/how-to/cut-a-release.md; README.md
 ---
 
 # Verify your JustSearch download
 
-JustSearch's installer is currently **unsigned** (see [Status](../../README.md#status)) — solo-dev
-alpha, code signing is planned but not yet in place. An unsigned Windows executable is
-indistinguishable, to Windows itself, from anything else unsigned, so this page gives you three
-independent ways to decide whether to trust the specific bytes you downloaded: check the hash,
-understand what the OS warnings do and don't mean, or skip the binary and build it yourself.
+JustSearch installers are **Authenticode-signed as of v0.2.0**; the expected publisher is
+**Elias Justus**. This page gives you three independent checks on the bytes you downloaded: verify
+the release hash, inspect the publisher/signature that Windows sees, or skip the binary and build it
+yourself. A valid signature proves publisher identity and byte integrity; it is not a claim that the
+software is bug-free or that Windows reputation warnings can never appear.
 
 ## 1. Check the SHA-256 hash
 
@@ -49,42 +49,39 @@ This only tells you the file wasn't corrupted or swapped in transit — it does 
 maintainer is trustworthy or that the code is safe. It's the same guarantee a checksum always
 gives: "this is the exact file CI produced," nothing more.
 
-## 2. Understand the OS warnings (don't just click past them)
+## 2. Check the signature and understand OS warnings
+
+In PowerShell:
+
+```powershell
+$signature = Get-AuthenticodeSignature .\JustSearch_<version>_x64-setup.exe
+$signature.Status
+$signature.SignerCertificate.Subject
+```
+
+For a published build from v0.2.0 onward, `Status` must be `Valid` and the subject must identify
+Elias Justus. Stop if the signature is absent, invalid, or names an unexpected publisher even when
+the SHA-256 matches.
 
 ### SmartScreen ("Windows protected your PC")
 
-Because the installer isn't signed with a code-signing certificate, Windows SmartScreen shows an
-"unknown publisher" warning the first time you run it. This is expected and is the **only** thing
-the warning means — SmartScreen has no reputation data for an unsigned binary, signed or not, so it
-warns by default. It does not mean malware was detected; a scanning engine finding something
-specific would show a different, more alarming message. Since 2024, even legitimate EV-signed
-certificates only build SmartScreen reputation gradually, so this warning would still appear (more
-briefly) even after JustSearch is signed.
-
-If you've verified the hash above and are comfortable with an open-source, unsigned alpha build:
-click **More info**, then **Run anyway**.
-
-If you are not comfortable running an unsigned executable, see the build-from-source path below —
-it's the alternative that doesn't require trusting the binary at all.
+Windows may still show a SmartScreen reputation warning for a newly signed application or
+certificate. That warning is separate from Authenticode validity: verify both the hash and the
+publisher rather than treating “Run anyway” as the verification step. A specific malware detection
+is a different signal and should not be bypassed. If the checks above do not match, stop and use the
+build-from-source path below.
 
 ### Windows Smart App Control (SAC)
 
-Smart App Control is a stricter, opt-in Windows 11 security mode. Unlike SmartScreen, **it blocks
-unsigned executables outright at launch** rather than warning — and unlike SmartScreen, there is no
-per-app "run anyway" override once SAC has decided an app is unsigned. If your machine has SAC
-turned on, the unsigned JustSearch installer (and the app it installs) will not run.
+Smart App Control is a stricter Windows 11 policy and may block software that its trust evaluation
+does not accept. The signed v0.2.0 installer removes the old “necessarily unsigned” condition, but
+only a clean-machine observation can establish the current Windows reputation experience. Do not
+disable a security control merely to make an unexplained signature or publisher mismatch disappear.
 
-Per Microsoft's own guidance, an app listed in the **winget** package repository installs without
-SAC interference, independent of whether the installer itself carries a signing certificate —
-listing in a curated, Microsoft-vetted repository is itself a trust signal SAC accounts for. This
-is one motivation for pursuing a winget listing (see
-[`packaging/winget/README.md`](../../packaging/winget/README.md)) ahead of, and independent of, the
-signing-certificate decision.
-
-If SAC is currently blocking JustSearch and you don't want to wait for a winget listing, your
-options are: turn SAC off (`Windows Security` → `App & browser control` → `Smart App Control`), or
-build from source below — though note that a local **build** runs into SAC too, for a different
-reason (it trips SAC's unsigned-build-script check, not the installed-app check described above).
+The repository now contains deterministic WinGet 1.12 manifests and a manual
+`Prepare WinGet Manifests` workflow for already-published stable releases. Upstream submission to
+`microsoft/winget-pkgs` is an owner action; the presence of generated manifests in this repository
+does not mean the package is already listed.
 
 ## 3. Build from source instead
 
@@ -118,7 +115,7 @@ release asset matches what CI produces from the same commit.
 
 - [`cut-a-release.md`](cut-a-release.md) — the full release pipeline, including where
   `SHA256SUMS` and the MCPB bundle come from.
-- [`packaging/winget/README.md`](../../packaging/winget/README.md) — winget manifest + submission
-  runbook.
+- [`packaging/winget/package.v1.json`](../../packaging/winget/package.v1.json) — product metadata
+  used by the deterministic WinGet projection.
 - [Threat model](../reference/security/threat-model.md) — what JustSearch does and doesn't send
   over the network, independent of the installer's signing status.

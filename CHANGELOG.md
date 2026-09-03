@@ -13,6 +13,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-13
+
 ### Added
 - Public open-source release of JustSearch (Apache-2.0): local-first hybrid search; an optional on-device LLM (cited Q&A, chat, summarize/extract, and a consent-gated file-acting agent); and a production MCP server so external AI agents (Claude Code, Cursor, Claude Desktop) can drive search and retrieval.
 

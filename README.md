@@ -50,8 +50,8 @@ cba354165c38c90628082020d40fe00986814a3fa57da49c62dd18acb0f11772  JustSearch_0.2
 <!-- hash verified 2026-08-13 against the asset downloaded from the published v0.2.0 GitHub
      release (Authenticode Valid, CN=Elias Justus, timestamped; size 249.1 MB measured). -->
 
-Full walkthrough (hash verification, why SmartScreen/Smart App Control react to an unsigned
-installer, build-from-source alternative): [`docs/how-to/verify-your-download.md`](docs/how-to/verify-your-download.md).
+Full walkthrough (hash and publisher verification, Windows reputation guidance,
+build-from-source alternative): [`docs/how-to/verify-your-download.md`](docs/how-to/verify-your-download.md).
 
 ## System requirements
 
@@ -100,7 +100,7 @@ publication policy, and no result currently meets the bar for publication — se
 
 **As a desktop app** *(for non-developers)*
 Follow [Install (Windows)](#install-windows) above, point it at a folder, and search.
-*(Windows; alpha; currently unsigned — see [Status](#status).)*
+*(Windows; alpha; code-signed as of v0.2.0 — see [Status](#status).)*
 
 ## Why JustSearch
 
