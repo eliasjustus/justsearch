@@ -554,11 +554,6 @@ public final class ChunkSearchOps {
       return searchChunksFiltered(queryText, docIds, effectiveLimit, additionalFilter);
     }
 
-    if (hybridSearchOps.shouldSkipVectorSearch(queryText)) {
-      log.debug("searchChunksHybrid: trivial query '{}', using BM25 only", queryText);
-      return searchChunksFiltered(queryText, docIds, effectiveLimit, additionalFilter);
-    }
-
     long startTime = System.currentTimeMillis();
 
     int docCandidateLimit = Math.min(docIds.size(), effectiveLimit * 2);
@@ -615,12 +610,6 @@ public final class ChunkSearchOps {
       return new SearchResult(List.of(), 0, 0);
     }
     int effectiveLimit = limit <= 0 ? 5 : limit;
-
-    if (hybridSearchOps.shouldSkipVectorSearch(queryText)) {
-      log.debug(
-          "searchChunksHybrid (Phase 6): trivial query '{}', using BM25 only", queryText);
-      return searchChunksFiltered(queryText, docIds, effectiveLimit, additionalFilter);
-    }
 
     long startTime = System.currentTimeMillis();
 
@@ -725,8 +714,7 @@ public final class ChunkSearchOps {
     if (queryText == null || queryText.isBlank()) {
       return new SearchResult(List.of(), 0, 0);
     }
-    boolean vectorUsable = queryVector != null && queryVector.length > 0
-        && !hybridSearchOps.shouldSkipVectorSearch(queryText);
+    boolean vectorUsable = queryVector != null && queryVector.length > 0;
     if (!vectorUsable) {
       return searchFullDocs(queryText, docIds, limit, additionalFilter);
     }

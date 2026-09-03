@@ -16,12 +16,12 @@ package io.justsearch.indexerworker.services;
  *   <li><b>9 embedding-compat codes</b> — produced upstream by {@code
  *       EmbeddingCompatibilityController} and mapped at the orchestrator boundary
  *       via {@link #fromCompatString(String)}.
- *   <li><b>5 search-routing codes</b> — emitted for vector/hybrid degradation
+ *   <li><b>7 search-routing codes</b> — emitted for vector/hybrid degradation
  *       (encoding failed, service unavailable, etc.).
  *   <li><b>11 chunk-merge codes</b> — emitted by chunk-augmentation gating.
  * </ul>
  *
- * <p>Plus a 26th member {@link #EMBEDDING_COMPATIBILITY_UNKNOWN} as the
+ * <p>Plus {@link #EMBEDDING_COMPATIBILITY_UNKNOWN} as the
  * fall-through for unrecognised compat strings.
  *
  * <p>This type is package-private to {@code services/} — minimum-surface
@@ -47,15 +47,17 @@ public enum SearchReasonCode {
    */
   REBUILD_FAILED_NO_VECTORS,
 
-  /** 26th member: fall-through for unrecognised compat strings via {@link #fromCompatString}. */
+  /** Fall-through for unrecognised compat strings via {@link #fromCompatString}. */
   EMBEDDING_COMPATIBILITY_UNKNOWN,
 
-  // === 5 search-routing codes ===
+  // === 7 search-routing codes ===
   UNKNOWN,
   EMBEDDING_COMPATIBILITY_BLOCKED,
   NO_EMBEDDING_SERVICE,
   EMBEDDING_GENERATION_FAILED,
   EMBEDDING_EXCEPTION,
+  SKIPPED_SHORT_QUERY,
+  SKIPPED_NO_DISCRIMINATIVE_TERM,
 
   // === 11 chunk-merge codes ===
   APPLIED,

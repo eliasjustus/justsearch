@@ -76,12 +76,6 @@ class CalibrationConstantsTest {
   }
 
   @Test
-  void defaultVectorSkipMinCharsMatchesResolvedConfigBuilder() {
-    // ResolvedConfigBuilder: resolveInt("index.hybrid.vector_skip_min_chars", 4)
-    assertEquals(4, HybridSearchOps.DEFAULT_VECTOR_SKIP_MIN_CHARS);
-  }
-
-  @Test
   void defaultVectorOnlyCapLowSignalMatchesResolvedConfigBuilder() {
     // ResolvedConfigBuilder: resolveInt("index.hybrid.vector_only_cap_low_signal", 3)
     assertEquals(3, HybridSearchOps.DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL);

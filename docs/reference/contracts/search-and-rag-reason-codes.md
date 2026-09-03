@@ -16,10 +16,11 @@ Worker-emitted reason codes are treated as a contract: they are allowlisted by `
 Degradation fields on `SearchResponse` (`modules/ipc-common/src/main/proto/indexing.proto`):
 
 - `effective_mode`: `"TEXT" | "VECTOR" | "HYBRID"`
-- `vector_blocked`: `true` when VECTOR search is blocked by embedding compatibility
-- `vector_blocked_reason`: stable reason code for why VECTOR is blocked
-- `hybrid_fallback`: `true` when HYBRID fell back to TEXT
-- `hybrid_fallback_reason`: stable reason code for why HYBRID fell back
+- `vector_blocked`: `true` when dense retrieval did not run, either because it was unavailable or
+  because the planner deliberately omitted a redundant dense leg
+- `vector_blocked_reason`: stable reason code for why dense retrieval did not run
+- `hybrid_fallback`: `true` when HYBRID lost dense retrieval because query encoding failed
+- `hybrid_fallback_reason`: stable encoding-failure reason; deliberate planner skips do not populate it
 
 ### Embedding compatibility reason codes (`EmbeddingCompatibilityController.reasonCode()`)
 
@@ -44,6 +45,15 @@ Used when HYBRID cannot run as requested (may also appear for VECTOR when the co
 - `NO_EMBEDDING_SERVICE`: no embedding service available to generate a query vector
 - `EMBEDDING_GENERATION_FAILED`: query embedding returned null/empty
 - `EMBEDDING_EXCEPTION`: query embedding threw an exception
+- `SKIPPED_SHORT_QUERY`: dense retrieval was runnable but omitted because the query was shorter than
+  `index.hybrid.vector_skip_min_chars` and another retrieval leg could answer
+- `SKIPPED_NO_DISCRIMINATIVE_TERM`: dense retrieval was runnable but omitted because every analyzed
+  query term occurred in at least `index.hybrid.vector_skip_min_df_fraction` of content-bearing
+  documents. This corpus-relative rule is disabled below 100 content-bearing documents.
+
+Both planner skips apply only to multi-leg search. Dense-only search and the direct RAG retrieval
+paths remain recall-first and always run a usable dense leg. The trace reports the dense stage as
+`skipped` with the exact reason; neither reason masquerades as an embedding failure.
 
 ### Cross-encoder skip reason codes (`CrossEncoderSkipReason`, Head-owned)
 
@@ -126,4 +136,6 @@ Reason codes are validated by the CI checks `scripts/ci/check-readiness-reason-c
 
 **Case convention:** Java source uses `UPPER_CASE` IDs; FE/wire equivalents use `lower_snake_case` (`no_embedding_service` ↔ `NO_EMBEDDING_SERVICE`). The mapping is a trivial case-fold. The contract test allowlists in `GrpcSearchServiceReasonCodeContractTest` serve as the compile-time safety net.
 
-**Category design:** `embedding` (5 codes) covers search execution failures from `GrpcSearchService`. `embedding_compat` (8 codes) covers lifecycle states from `EmbeddingCompatibilityController`.
+**Category design:** the search-routing partition has seven codes: five execution failures and two
+planner-owned dense-skip decisions. The embedding-compatibility partition covers lifecycle states
+from `EmbeddingCompatibilityController`, plus an explicit unknown-string fall-through.

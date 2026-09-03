@@ -61,6 +61,18 @@ class GrpcSearchServiceQppTest {
                 SchemaFields.CONTENT, content)));
   }
 
+  private void indexChunk(String parentDocId, int chunkIndex, String content) throws Exception {
+    String chunkId = parentDocId + "#chunk_" + chunkIndex;
+    lifecycle.indexingCoordinator().indexSingle(
+        new IndexDocument(
+            Map.of(
+                SchemaFields.DOC_ID, chunkId,
+                SchemaFields.DOC_UID, parentDocId + "#" + chunkIndex,
+                SchemaFields.PARENT_DOC_ID, parentDocId,
+                SchemaFields.IS_CHUNK, "true",
+                SchemaFields.CHUNK_CONTENT, content)));
+  }
+
   private SearchResponse search(String query, SearchMode mode) {
     AtomicReference<SearchResponse> result = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
@@ -181,6 +193,25 @@ class GrpcSearchServiceQppTest {
       assertTrue(
           resp.getSearchTrace().getQpp().getAvgIctf() > 0f,
           () -> "avgIctf must be positive for terms found in the collection: " + resp.getSearchTrace().getQpp().getAvgIctf());
+    }
+
+    @Test
+    @DisplayName("chunk documents do not inflate the content-field QPP denominator")
+    void textMode_chunkDocsDoNotInflateFieldDocCount() throws Exception {
+      indexDoc("doc-1", "common parent one");
+      indexDoc("doc-2", "common parent two");
+      for (int i = 0; i < 20; i++) {
+        indexChunk("doc-1", i, "chunk-only material " + i);
+      }
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      SearchResponse resp = search("common", SearchMode.SEARCH_MODE_TEXT);
+      assertEquals(
+          0f,
+          resp.getSearchTrace().getQpp().getMaxIdf(),
+          0.001f,
+          "both content-bearing parents contain the term, so field-local IDF is zero");
     }
   }
 

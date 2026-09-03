@@ -2713,6 +2713,13 @@ above)*
 
 - **Original claim:** Dense retrieval broken for non-BGE-M3 configs. `prepareQueryVector()` falls through to `NO_EMBEDDING_SERVICE`.
 - **Correction:** Dense retrieval WAS working with gte-multilingual-base all along. Two separate issues were conflated: (1) EmbeddingGemma's FP16 NaN (head_dim=256, model-specific, resolved by 358 model change), (2) `KnowledgeHttpApiAdapter.buildPipelineExecution()` never emitted `dense: executed` component status on success — only reported `dense: skipped` on failure. jseval's pipeline tracking saw no `dense` in components and reported `requested_dense_but_not_observed`. Fixed: added `dense: executed` reporting when `pipelineConfig.denseEnabled()` and `!vectorBlocked && !hybridFallback`.
+- **Lane D C0 trace qualification (2026-09):** pre-C0 traces could also over-report dense execution
+  in the opposite direction: the planner selected a dense leg, then a lower-level English stop-word
+  or short-query guard silently skipped KNN. Therefore historical per-query dense skip rates are not
+  trustworthy. C0 moved the decision into `SearchPlanner`, replaced the authored list with a
+  content-field document-frequency signal, and emits a typed skipped dense stage. This does not
+  invalidate the corpus-level quality scores above; it qualifies only claims derived from the old
+  per-query execution trace.
 - **Impact:** All splade-v3+gemma `full` mode baselines (with gte-multilingual-base auto-discovered) were true 3-way fusion (bm25+splade+dense). Confidence upgraded from C to A. The full vs bm25_splade quality gap IS the dense contribution.
 
 ### F-013: SPLADE-v3 sparse quality is 20% below BGE-M3 sparse on SciFact
@@ -3439,7 +3446,7 @@ Three retrieval models can run in any combination:
 
 | Leg                         | Model / Engine                  | Index Field                 | Key Parameters                                  |
 | --------------------------- | ------------------------------- | --------------------------- | ----------------------------------------------- |
-| **BM25** (sparse)           | Lucene BM25                     | `content` / `chunk_content` | k1=0.9, b=0.4; SIMPLE prefix expansion ≥3 chars; `combineMultiField()` builds `DisjunctionMaxQuery` with up to 6 disjuncts: `content` + `title`×3.0 + 3 entity text fields×2.0 (326). Entity boost configurable via `ResolvedConfig.Search.entityBoost()`, default 0.0 (disabled per F-010) |
+| **BM25** (sparse)           | Lucene BM25                     | `content` / `chunk_content` | k1=0.9, b=0.4; SIMPLE prefix expansion ≥3 chars; `combineMultiField()` builds a 3-disjunct `DisjunctionMaxQuery`: `content` + `title`×3.0 + `author`×3.0. The retired `entityBoost` status property remains an always-zero compatibility tombstone until the wire can be versioned. |
 | **Dense** (KNN)             | gte-multilingual-base (768-dim)                                          | `vector` / `chunk_vector`   | ef_search=100; HNSW M=16                        |
 | **SPLADE** (learned sparse) | opensearch-neural-sparse-encoding-multilingual-v1 (12L BERT-multilingual, 105K vocab) | `FeatureField` entries      | Optional IDF-weighted query encoding            |
 
@@ -3459,7 +3466,7 @@ via virtual threads, then converge at the fusion stage.
 
 | #   | Stage                                 | What It Does                                                                                                                                                        |
 | --- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 3   | **QPP Computation**                   | `maxIdf`, `avgIctf`, `queryScope` per query term; O(1) via IndexReader; forwarded but not yet used for routing                                                      |
+| 3   | **QPP Computation**                   | `maxIdf`, `avgIctf`, `queryScope`, field-local document count, and minimum analyzed-term document-frequency fraction; O(1) via IndexReader; the planner uses the field-local values for dense-skip routing |
 | 4   | **Filter Parsing + Entity Expansion** | gRPC filters → Lucene queries; entity facet filters expanded via disambiguation cluster snapshot                                                                    |
 | 5   | **Staged Retrieval Dispatch**         | Dispatches to enabled legs; standard combos use optimized methods (`searchHybrid`, `searchHybridSplade`); novel combos use pairwise RRF fusion via `fuseLegs()`     |
 | 6   | **BM25 Search** ‖                     | Lucene `Query`-based retrieval; fetches 10× limit for over-retrieval (capped at `candidate_limit_max`, default 100)                                                  |
@@ -3467,7 +3474,7 @@ via virtual threads, then converge at the fusion stage.
 | 8   | **SPLADE Search** ‖                   | `FeatureField` query with learned sparse weights                                                                                                                    |
 | 9   | **CC / RRF Fusion**                   | **CC** (default): min-max normalized convex combination with per-leg weights; **RRF** (alternative): `score = Σ(weight / (K + rank)) + bm25_boost × raw_score` (K=60, vectorWeight=0.75). 3-way variant (`fuseWithCC3`) available when SPLADE is active |
 | 10  | **Low-Signal Gating**                 | Caps vector-only results (default 3) when vector top score <0.40; prevents semantic hijack                                                                          |
-| 11  | **Stop-Word Short-Circuit**           | Skips vector search for trivial queries (<4 chars or single stop words)                                                                                             |
+| 11  | **Planner-Owned Dense Skip**          | When BM25 or SPLADE can run, skips dense retrieval for queries <4 characters or queries whose analyzed terms all occur in at least 25% of a `content` corpus with ≥100 field documents; dense-only search and direct RAG remain recall-first |
 | 12  | **Fuzzy Correction**                  | Two-stage on SIMPLE queries: (a) full Levenshtein fuzzy retry fires when the query returns **zero** hits; (b) per-term augmentation of zero-`docFreq` terms fires when the query returns **nonzero** hits (can still change which document ranks first) |
 
 ‖ = parallel execution

@@ -2704,6 +2704,13 @@ above)*
 
 - **Original claim:** Dense retrieval broken for non-BGE-M3 configs. `prepareQueryVector()` falls through to `NO_EMBEDDING_SERVICE`.
 - **Correction:** Dense retrieval WAS working with gte-multilingual-base all along. Two separate issues were conflated: (1) EmbeddingGemma's FP16 NaN (head_dim=256, model-specific, resolved by 358 model change), (2) `KnowledgeHttpApiAdapter.buildPipelineExecution()` never emitted `dense: executed` component status on success — only reported `dense: skipped` on failure. jseval's pipeline tracking saw no `dense` in components and reported `requested_dense_but_not_observed`. Fixed: added `dense: executed` reporting when `pipelineConfig.denseEnabled()` and `!vectorBlocked && !hybridFallback`.
+- **Lane D C0 trace qualification (2026-09):** pre-C0 traces could also over-report dense execution
+  in the opposite direction: the planner selected a dense leg, then a lower-level English stop-word
+  or short-query guard silently skipped KNN. Therefore historical per-query dense skip rates are not
+  trustworthy. C0 moved the decision into `SearchPlanner`, replaced the authored list with a
+  content-field document-frequency signal, and emits a typed skipped dense stage. This does not
+  invalidate the corpus-level quality scores above; it qualifies only claims derived from the old
+  per-query execution trace.
 - **Impact:** All splade-v3+gemma `full` mode baselines (with gte-multilingual-base auto-discovered) were true 3-way fusion (bm25+splade+dense). Confidence upgraded from C to A. The full vs bm25_splade quality gap IS the dense contribution.
 
 ### F-013: SPLADE-v3 sparse quality is 20% below BGE-M3 sparse on SciFact

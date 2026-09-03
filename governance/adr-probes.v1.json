@@ -100,16 +100,17 @@
     {
       "id": "adr-0007-entity-boost-retired-or-off",
       "adr": "0007",
-      "premise": "ADR-0007 chose entity FACETS over a knowledge graph. Faceting shipped and is live; the separate entity_*_text BOOST fields are being retired by decision-review lane D, and the search-side boost is already off by default. The premise this probe pins is 'the entity boost is retired or off' - it must hold both before and after lane D lands.",
+      "premise": "ADR-0007 chose entity FACETS over a knowledge graph. Faceting shipped and is live; decision-review lane D C0 retired the separate entity_*_text query boost and its configuration, while C2 removes the now-unqueried physical text fields. The premise this probe pins is 'the entity boost is retired' throughout that two-step migration.",
       "kind": "any-of",
       "alternatives": [
         {
-          "kind": "grep-present",
-          "pattern": "resolveDouble\\(\"justsearch\\.search\\.entity_boost\", 0\\.0\\)",
+          "kind": "grep-absent",
+          "pattern": "justsearch\\.search\\.entity_boost|SEARCH_ENTITY_BOOST|ENTITY_TEXT_FIELDS|resolveEntityBoost|buildEntityFieldQueries",
           "paths": [
-            "modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java"
-          ],
-          "expect": 1
+            "modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java",
+            "modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java",
+            "modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/TextQueryOps.java"
+          ]
         },
         {
           "kind": "grep-absent",
@@ -119,7 +120,7 @@
           ]
         }
       ],
-      "note": "Two alternatives, one premise across a planned migration. TODAY alternative 1 holds: justsearch.search.entity_boost defaults to 0.0 (ResolvedConfigBuilder.java:1336) and TextQueryOps only applies the boost when entityBoost > 0.0f, so the boost fields are declared but inert. AFTER lane D retires the entity_*_text fields, alternative 2 also holds and alternative 1 may disappear with the config key. This is NOT a probe that gives a failure a second chance: BOTH failing means the boost is on AND the fields still exist - i.e. the boost was re-enabled without an ADR read, which is exactly the drift to catch. Honest limit: the default is a config value, not a build constant, so an operator can still set justsearch.search.entity_boost > 0 at runtime; the probe pins the shipped default, which is what the ADR decides."
+      "note": "Two alternatives, one premise across a planned migration. In C0 alternative 1 proves the functional configuration and query machinery are absent while the physical entity_*_text fields remain for C2. After C2, alternative 2 additionally proves catalog absence. The protobuf/status entityBoost compatibility tombstone is deliberately outside the scanned paths and remains field 9, always projected as 0.0. This is NOT a probe that gives a failure a second chance: BOTH failing means query machinery returned while the physical fields exist — exactly the drift to catch."
     },
     {
       "id": "adr-0008-settings-reset-surfaced",

@@ -350,6 +350,7 @@ message SearchConfigView {
   double branch_cc_weight_chunk = 6 [json_name = "branchCcWeightChunk"];
   double branch_chunk_min_weight_multiplier = 7 [json_name = "branchChunkMinWeightMultiplier"];
   double title_boost = 8 [json_name = "titleBoost"];
+  // Retired compatibility tombstone. Producers and public mappers always emit 0.0; do not reuse.
   double entity_boost = 9 [json_name = "entityBoost"];
   bool query_classification_enabled = 10 [json_name = "queryClassificationEnabled"];
 }
