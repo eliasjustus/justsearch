@@ -1,7 +1,7 @@
 ---
 title: "Release hardening, package projections, changelog-driven notes, and model promotion"
 type: tempdocs
-status: IMPLEMENTED (2026-09-03) — redesigned release-hardening and read-only planner slices complete; owner production/publication actions and 617 live updater evidence remain open
+status: MERGED (2026-09-03) — release hardening is on main; protected signing environment and release URL configured; WinGet submission open; SSL.com credential recovery/validation, provider budget, 617 updater evidence, and real model promotion remain open
 created: 2026-09-02
 updated: 2026-09-03
 lane: 887 L16
@@ -732,3 +732,45 @@ Residual owner actions:
    before a real model promotion.
 7. Complete tempdoc 617's exact published-installer N→N+1 normal, interrupted, and reconciliation
    lanes; neither a fresh install nor successful publication substitutes for those observations.
+
+## Operational follow-through (2026-09-03)
+
+- PR `justsearch-app/justsearch#629` merged through the protected merge queue as
+  `7aa4a916fbee342ac4678bcf5603570f5fc1a0a0`. Merge-group CI run `33797308631` and post-merge
+  `main` CI run `33797753403` passed. The published merge tree exactly matched the reviewed PR head.
+- GitHub Environment `release-signing` now requires reviewer `eliasjustus`, permits self-review so
+  the sole owner is not locked out, disables administrator bypass, and restricts deployment refs to
+  branch `main` or tags matching `v*`. No paid workflow was dispatched.
+- Repository variable `JUSTSEARCH_RELEASE_DESCRIPTOR_URL` now points to
+  `https://github.com/justsearch-app/justsearch/releases/latest/download/release.v1.json`.
+- A credential-safe temporary helper was adapted from the earlier tempdoc-760 script. It prompts in
+  a separate terminal and targets only Environment secrets. Repository-scoped copies remain in place
+  until the Environment values are present and both workflows can be validated without guessing the
+  provider allowance. The owner then reported that the SSL.com credentials were lost, so the helper
+  was closed without writing any Environment secret. GitHub cannot reveal the existing encrypted
+  repository-scoped values, and those copies were deliberately left untouched. Before the helper can
+  be rerun, recover the SSL.com login through the provider's password-reset flow, then use the
+  certificate order to reset/re-enrol eSigner 2FA and retrieve the signing credential ID. If login,
+  eSigner PIN, or order access cannot be recovered through those self-service paths, open an SSL.com
+  support ticket rather than guessing or rotating repository state.
+- A narrow, explicitly non-qualifying whole-product Windows Sandbox probe used WinGet `v1.29.290`.
+  The clean final result validated the schema-1.12 manifest bundle, downloaded the published v0.2.0
+  installer, verified SHA-256
+  `cba354165c38c90628082020d40fe00986814a3fa57da49c62dd18acb0f11772`, installed silently,
+  observed the expected `JustSearch` version `0.2.0` registration, verified the installed executable's
+  Authenticode status as `Valid` with the Elias Justus signer, and observed a successful 20-second
+  boot. Earlier probe attempts are retained as harness evidence: Windows Sandbox lacks WinGet until
+  the documented `Microsoft.WinGet.Client` bootstrap runs; `--exact` is invalid with `--manifest`;
+  and pre-submission `winget list --id` cannot map a local-manifest identity back to the ARP record.
+- The upstream-ready bundle was submitted from `eliasjustus/winget-pkgs` as
+  `microsoft/winget-pkgs#429017`. Local duplicate checks found no existing package or open PR before
+  submission. The first six Microsoft validation stages passed; installer scanning and the remaining
+  automated stages were still running when this note was recorded. Microsoft's policy bot requires
+  the owner to personally accept its CLA before merge; no agent accepted that legal agreement on the
+  owner's behalf. Microsoft validation/review and that one-time CLA ceremony remain external.
+
+Residual owner-dependent work is now limited to SSL.com account/eSigner recovery followed by
+successful Environment credential entry, a provider-authoritative remaining-signature count before
+any paid dispatch, validation of both signing workflows before deleting repository-scoped copies,
+tempdoc 617's exact N→N+1 updater lanes, and a future model candidate with approved immutable assets,
+provenance, license, quality, and publication authority. Scoop remains deliberately deferred.
