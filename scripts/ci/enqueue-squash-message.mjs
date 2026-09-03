@@ -23,7 +23,7 @@ import {
   sha256Utf8,
 } from './lib/github-async-merge.mjs';
 import { buildSquashMessageProjection } from './lib/squash-message-projection.mjs';
-import { loadPublicationSnapshot, splitRepoSlug } from './preview-squash-message.mjs';
+import { loadPublicationSnapshot, splitRepoSlug } from './lib/github-publication-snapshot.mjs';
 
 const MAX_API_CALL_TIMEOUT_MS = 30_000;
 const FULL_SHA_RE = /^[0-9a-f]{40}$/i;
@@ -203,7 +203,7 @@ async function main() {
       const checkStatus = await checksWait(resolveGhBin(), opts.pr, opts.timeoutSec, true);
       if (checkStatus !== 0) throw new Error(`Required-check watcher stopped with status ${checkStatus}; no publication snapshot or merge request was sent.`);
     }
-    const pr = loadPublicationSnapshot(opts);
+    const pr = loadPublicationSnapshot({ repo: opts.repo, pr: opts.pr, snapshotJson: opts.prJson });
     const plan = buildEnqueuePlan({ repoSlug: opts.repo, pr });
     process.stdout.write(renderEnqueuePlan(plan));
     if (plan.projection.errors.length) {

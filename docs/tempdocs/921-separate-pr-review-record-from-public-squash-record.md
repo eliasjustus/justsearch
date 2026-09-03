@@ -1162,9 +1162,10 @@ the root agent.
   evidence, and the publication-specific `dependabot[bot]` trust case. Treat uncertain
   transcript/log prose as a warning rather than inventing a broad scoring regex. Return
   structured errors and warnings rather than exiting inside the module.
-- [x] Replace preview v1's exact-`Testing` and whole-body heuristics with the v2
-  projection. Preserve a human-readable full preview and provide a versioned JSON result
-  for scripts; no live consumer requires the v1 result shape.
+- [ ] After the live proof, replace preview v1's exact-`Testing` and whole-body heuristics
+  with the v2 projection in the atomic activation slice. Preserve a human-readable full
+  preview and provide a versioned JSON result for scripts; no live consumer requires the
+  v1 result shape. The proof-substrate PR deliberately retains v1 compatibility.
 - [x] Add adversarial fixtures for fenced, quoted, and raw-HTML headings; Unicode and
   multiline content; duplicate/missing/reordered sections; checklist/log/comment
   leakage; malformed session IDs; every authorship class; and warning/error thresholds.
@@ -1259,7 +1260,7 @@ user: implementation and local verification continue autonomously.
 
 ## 17. Local implementation evidence — 2026-09-03
 
-Slices A and B are implemented in this worktree. No GitHub write endpoint was invoked,
+The inert parts of Slices A and B are implemented in this worktree. No GitHub write endpoint was invoked,
 no branch was pushed, no PR was created or edited, and no repository/ruleset setting was
 changed.
 
@@ -1273,8 +1274,10 @@ changed.
   in fences, raw HTML, blockquotes, lists, or indented code are rejected and cannot satisfy
   agent/mixed attribution, so a valid projected commit cannot disagree with the later raw
   history reader.
-- `preview-squash-message.mjs` now fetches GitHub's live projected squash subject and
-  prints the exact v2 body. It has no mutation path.
+- `scripts/ci/lib/github-publication-snapshot.mjs` owns the live GraphQL snapshot used by
+  the queue client. The existing v1 `preview-squash-message.mjs` remains supported until
+  the live proof permits the template/workflow/skill activation slice; the queue client's
+  dry-run is the exact v2 subject/body preview for proof PRs.
 - `scripts/ci/lib/github-async-merge.mjs` owns request construction, HTTP response parsing,
   sanitized diagnostics, receipt metadata validation, request-state classification, and
   bounded polling. Expected PR head and landed merge-commit SHA are distinct fields.
@@ -1308,16 +1311,18 @@ The bounded read-only subagent review found and the implementation corrected:
    cause one PUT and zero polls/retries;
 7. unchecked head shape — fixed with a local 40-hex object-ID precondition.
 
-The remaining review warning is intentional: v2 locally replaces the supported preview
-while the repository template and publish skills still emit the old schema. Therefore
-this branch is **not shippable as-is**. The live proof and atomic activation slice in
-§16.3–16.4 must precede publication.
+The remaining review warning was resolved before publication preparation: the supported
+v1 preview and its tests were restored, the GraphQL snapshot moved to a queue-client
+library, and the v2 projection retained its own focused test. This branch therefore ships
+only inert proof substrate; template/workflow/skill/ADR activation remains deferred until
+the live proof passes.
 
 ### 17.3 Verification
 
 - `npm ci` — passed from the lockfile.
 - `node scripts/dev/run-gh.test.mjs` — all 24 checks passed.
 - `node scripts/ci/test-preview-squash-message.mjs` — passed.
+- `node scripts/ci/test-squash-message-projection.mjs` — passed.
 - `node scripts/ci/test-enqueue-squash-message.mjs` — passed.
 - `node scripts/ci/check-workflow-triggers.mjs` — passed; workflow policy remains aligned.
 - `npm run test:governance` — all 28 governance test files passed.
@@ -1353,9 +1358,8 @@ The session-closeout helper sweep deleted nothing. It left another session's liv
 purpose is to outlive sessions. Neither process belonged to this worktree, so both were
 correctly left alone.
 
-**BLOCKED ON YOU:** authorize the specific push/PR/live-proof actions when you want the
-§16.3 experiment to proceed. A fresh queued merge is irreversible and is the only
-remaining way to prove GitHub preserves the explicit body.
+**BLOCKED ON YOU:** none. The user explicitly authorized publication after this closeout,
+including the ordinary branch push, PR, and one fresh queue request needed for §16.3.
 
 **PROCEEDING / DONE:** the local v2 projection, preview, fail-closed enqueue client,
 required-check preflight, response parser/state machine, process boundary, CI wiring,

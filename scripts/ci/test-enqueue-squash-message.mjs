@@ -113,7 +113,7 @@ function snapshot(overrides = {}) {
   assert.equal(classifyAsyncResult(response(200, { status: 'merged', details: { sha: 'c'.repeat(40) } }), expected).state, 'merged');
   assert.equal(classifyAsyncResult(response(200, { status: 'failed', details: { message: 'rules failed' } }), expected).state, 'failed');
   assert.throws(() => classifyAsyncResult(response(200, { status: 'enqueued', details: { merge_action: 'direct_merge' } }), expected), /action mismatch/);
-  assert.throws(() => classifyAsyncResult(response(200, pending({ uuid: 'different' })), { ...expected, uuid: UUID }), /UUID mismatch/);
+  assert.throws(() => classifyAsyncResult(response(200, pending({ uuid: '730b9d5e-3f2a-4f7e-8b0c-2d5f9a8c1e42' })), { ...expected, uuid: UUID }), /UUID mismatch/);
   assert.throws(() => classifyAsyncResult(response(200, { status: 'mystery' }), expected), /Unknown/);
   const mergedDiagnostic = responseDiagnostic(response(200, { status: 'merged', details: { sha: 'c'.repeat(40) } }));
   assert.equal(mergedDiagnostic.expectedHeadSha, null);

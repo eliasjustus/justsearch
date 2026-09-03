@@ -204,8 +204,11 @@ jobs:
       # run-all-tests.mjs only discovers scripts/agent-analytics/**. 856 added trailer checks
       # to that script, which would have landed equally unrun. Wired here rather than left as
       # a follow-up, per retire-with-a-sweep's evasion clause.
-      - name: Test squash-message projection and preview
+      - name: Test squash-message preview
         run: node scripts/ci/test-preview-squash-message.mjs
+
+      - name: Test v2 squash-message projection
+        run: node scripts/ci/test-squash-message-projection.mjs
 
       - name: Test asynchronous squash-queue transport
         run: node scripts/ci/test-enqueue-squash-message.mjs
