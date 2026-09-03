@@ -1,7 +1,7 @@
 ---
 title: "Project operations: cross-platform contributor onramp, contract lifecycle signals, succession, and diagnostic handoff"
 type: tempdocs
-status: "FOCUSED SDK D6 S1+S2 IMPLEMENTED (2026-09-03) — other 899 workstreams remain"
+status: "FOCUSED SDK D6 S1+S2 IMPLEMENTED AND LIVE-VERIFIED (2026-09-03) — other 899 workstreams remain"
 created: 2026-09-02
 updated: 2026-09-03
 lane: 887 L17
@@ -480,7 +480,7 @@ clipboard workstreams remain separate changes because they do not gate the six-o
   TypeScript build/typecheck, packed-file inspection, mocked-fetch status/body tests, and a Node 20
   runtime smoke to the owning governance/CI path. Run focused Java and Node checks, then the
   repository-required build and affected tests once the shared Gradle lease is clear.
-- [ ] **Prove live compatibility and close out.** Start an owned development stack, call all six
+- [x] **Prove live compatibility and close out.** Start an owned development stack, call all six
   generated operations through the package (including a normal lifecycle-unavailable outcome where
   feasible), verify the runtime-contract compatibility check, stop the owned stack, update canonical
   runtime-contract/contributor documentation and this evidence ledger, perform a refute-first review,
@@ -525,10 +525,21 @@ clipboard workstreams remain separate changes because they do not gate the six-o
   The `llmstxt --check`, `skills-sync --check`, canonical-link, module-dependency, runtime-config,
   workflow-trigger, and workflow-policy checks passed, as did `git diff --check` before final
   closeout.
-- Unverified historical context: the session observed the built package calling all six operations
-  against a local Runtime Contract `0.2.0` process owned by worktree 893, with readiness `503` and
-  health `200`. No durable run id, output artifact, or evidence bundle was retained, so this is not a
-  verification claim and does not substitute for the owned-stack proof below.
+- Owned live verification ran from a clean detached worktree at reviewed commit
+  `7c8801514a45d20186f714916dd5cffd4ddea024`. The dev runner accepted `distFrom: 899-sdk-live`,
+  built the distributions, reached `ready_worker`, and assigned run
+  `663985c3-c434-4b19-b30f-edc4a060f921` at `http://127.0.0.1:54589`. The package's exact live-smoke
+  result was `runtime-client live smoke passed (contract 0.2.0, readiness 503, health 200)`. Factory
+  construction first fetched the manifest and enforced compatibility; the smoke then called all six
+  generated operations. The readiness `503` was the declared, typed lifecycle-unavailable outcome,
+  while the runner's independent Worker-readiness gate was green.
+- Teardown targeted that exact run id and completed with `disposition: normal_stop`,
+  `portsClosed: true`, and no errors. The runner retained its local machine record at
+  `tmp/dev-runner/runs/663985c3-c434-4b19-b30f-edc4a060f921/stop-report.json`; this ledger preserves
+  the run identity, reviewed commit, endpoint, exact smoke result, and teardown outcome as durable
+  branch evidence. The temporary resolver junction used to expose the existing
+  `F:\scoop\apps\temurin25-jdk\current` installation to the long-lived MCP process was removed, its
+  target was preserved, and the disposable worktree was removed after the stack stopped.
 - The independent refute-first review found three issues, all fixed before closeout: nested manifest
   objects now expose their actual typed public fields while retaining the contract's additive-field
   tolerance; the client compatibility constant is generated from the OpenAPI runtime-contract
@@ -540,16 +551,12 @@ clipboard workstreams remain separate changes because they do not gate the six-o
   The transport now forces `redirect: "error"`, the async factory verifies compatibility before it
   returns a client, npm subprocesses run through the active npm CLI with launch errors surfaced, and
   `LocalApiHostValidationTest` installs the production filter set and exercises all six SDK routes.
-- Remaining proof before publication: run the same six-operation smoke against an owned stack built
-  from this worktree. After the neighboring jseval run released the shared port, the dev-runner
-  rejected this Codex sibling worktree path as `INVALID_DIST_FROM`. A clean detached worktree at the
-  same commit was then created beneath `.claude/worktrees`, preflighted, and removed after the runner
-  failed before launch: `justsearch-dev preflight` accepted that checkout, but `justsearch-dev start`
-  reported that its long-lived MCP process could not resolve a JDK >=24, although `java -XshowSettings`
-  in the shell proved PATH Java is JDK 25 at `F:\scoop\apps\temurin25-jdk\current`. No backend was started.
-  Repository policy forbids bypassing the runner, and mutating machine-wide environment or disposable
-  tooling would not be valid product evidence. No durable runner output was retained, so reproduce the
-  JDK-resolution failure rather than treating this historical diagnosis as verified evidence.
+- The prior JDK-resolution blocker was environmental and is closed: the resolver's standard Scoop
+  fallback assumes `%USERPROFILE%\scoop`, while this host's existing installation is rooted at
+  `F:\scoop`. A temporary user-path junction let the unmodified runner resolve that JDK for this run;
+  no repository code, global environment, or machine installation was changed. Canonical runtime-
+  contract and security documentation had already been updated in the reviewed implementation
+  commits, and both refute-first review rounds were complete before this final live proof.
 
 ### Design reach
 
