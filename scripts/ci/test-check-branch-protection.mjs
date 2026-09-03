@@ -5,10 +5,14 @@ import assert from 'node:assert/strict';
 import {
   protectedStatusChecksFromProtection,
   requiredStatusChecksFromPolicy,
+  requiredStatusChecksStrictFromPolicy,
   validateBranchProtection,
 } from './check-branch-protection.mjs';
 
 const policy = {
+  branchProtection: {
+    requireBranchesUpToDateBeforeMerging: false,
+  },
   workflows: [
     {
       name: 'CI',
@@ -21,7 +25,7 @@ const policy = {
   ],
 };
 
-function protection({ strict = true, contexts = [], checks = [] } = {}) {
+function protection({ strict = false, contexts = [], checks = [] } = {}) {
   return {
     required_status_checks: {
       strict,
@@ -29,6 +33,10 @@ function protection({ strict = true, contexts = [], checks = [] } = {}) {
       checks,
     },
   };
+}
+
+{
+  assert.deepEqual(requiredStatusChecksStrictFromPolicy(policy), { strict: false, errors: [] });
 }
 
 {
@@ -47,7 +55,7 @@ function protection({ strict = true, contexts = [], checks = [] } = {}) {
       checks: [{ context: 'Build (no model blobs)' }, { context: 'Secret scan' }, { context: 'cla-assistant' }],
     })
   );
-  assert.equal(actual.strict, true);
+  assert.equal(actual.strict, false);
   assert.deepEqual(actual.contexts, ['Build (no model blobs)', 'cla-assistant', 'Public claims', 'Secret scan']);
 }
 
@@ -69,8 +77,22 @@ function protection({ strict = true, contexts = [], checks = [] } = {}) {
       contexts: ['Public claims', 'Build (no model blobs)', 'Secret scan', 'cla-assistant'],
     }),
   });
+  assert.equal(report.ok, true);
+  assert.equal(report.strict, false);
+  assert.equal(report.expectedStrict, false);
+  assert.equal(report.actualStrict, false);
+}
+
+{
+  const report = validateBranchProtection({
+    policy,
+    protection: protection({
+      strict: true,
+      contexts: ['Public claims', 'Build (no model blobs)', 'Secret scan', 'cla-assistant'],
+    }),
+  });
   assert.equal(report.ok, false);
-  assert.match(report.errors.join('\n'), /not strict/);
+  assert.match(report.errors.join('\n'), /strict setting is true, but policy requires false/);
 }
 
 {
@@ -97,11 +119,23 @@ function protection({ strict = true, contexts = [], checks = [] } = {}) {
 
 {
   const report = validateBranchProtection({
-    policy: { workflows: [{ name: 'CI', requiredStatusChecks: ['Secret scan', 'Secret scan'] }] },
+    policy: {
+      branchProtection: { requireBranchesUpToDateBeforeMerging: false },
+      workflows: [{ name: 'CI', requiredStatusChecks: ['Secret scan', 'Secret scan'] }],
+    },
     protection: protection({ contexts: ['Secret scan'] }),
   });
   assert.equal(report.ok, false);
   assert.match(report.errors.join('\n'), /duplicate required status check/);
+}
+
+{
+  const report = validateBranchProtection({
+    policy: { workflows: [{ name: 'CI', requiredStatusChecks: ['Secret scan'] }] },
+    protection: protection({ contexts: ['Secret scan'] }),
+  });
+  assert.equal(report.ok, false);
+  assert.match(report.errors.join('\n'), /must declare branchProtection\.requireBranchesUpToDateBeforeMerging/);
 }
 
 console.log('test-check-branch-protection: PASS');

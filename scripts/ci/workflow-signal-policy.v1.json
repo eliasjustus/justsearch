@@ -1,7 +1,10 @@
 {
   "kind": "justsearch-workflow-signal-policy.v1",
-  "version": 4,
+  "version": 5,
   "defaultStaleDays": 14,
+  "branchProtection": {
+    "requireBranchesUpToDateBeforeMerging": false
+  },
   "workflows": [
     {
       "name": "CI",
