@@ -791,7 +791,7 @@ on the leak clause independently of the R@10 noise floor (0.0068). The single po
 - **Ratchets, with the exact flags used** — legal ON arm `20260903T034732_mixed_legal-clerc-200`
   (λ0.3 r0), no `--allow-*` override on any of them:
 
-  ```
+  ```bash
   python -m jseval <gate> --dataset mixed/legal-clerc-200 \
       --run-dir tmp/916-J/mixed_legal-clerc-200/l0.3-r0/20260903T034732_mixed_legal-clerc-200
   ```
