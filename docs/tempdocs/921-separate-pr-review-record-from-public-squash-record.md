@@ -1,7 +1,7 @@
 ---
 title: "Separate the PR review record from the public squash record"
 type: tempdocs
-status: "PARTIALLY IMPLEMENTED (2026-09-03) — stale branch-protection prerequisite fixed and verified; live merge-queue body proof still blocks PR 1–3"
+status: "TRANSPORT REFUTED (2026-09-03) — prerequisite merged in PR #625; live queue discarded the explicit body and published PR_BODY; redesign required before PR 1–3"
 created: 2026-09-03
 updated: 2026-09-03
 charter: "make rich agent PR evidence compatible with concise, durable public main history"
@@ -529,6 +529,45 @@ version, and landed commit. Acceptance:
 If any item fails, stop. Keep `PR_BODY`, record the exact queue behavior, and redesign the
 transport. Do not switch the default on documentation alone.
 
+#### Live result — failed on PR #625 (2026-09-03)
+
+The authorized experiment refuted the proposed transport:
+
+| Fact | Observed value |
+|---|---|
+| GitHub CLI | `gh` 2.90.0 (2026-04-16) |
+| PR / verified head | #625 / `854e55347bea6a4e51296947617f0d9c7de707d2` |
+| Queue invocation | `gh pr merge 625 --match-head-commit <head> --body-file <scoped-file>`; no subject override |
+| Live projected subject | `fix(ci): align branch strictness with merge queue (#625)` |
+| Sent body | 387 characters; SHA-256 `0A5654681CA06B65159A0345764D66ED1AD51407BF4239C7D62F674D5FCA75F3` |
+| Unique sentinel | `Publication-Proof: tempdoc-921-pr625-body-v1` |
+| Merge-group CI | Run `33781022045`, success |
+| Landed commit | `ab6a0150b5fb597e213d903f7051b9c8ad2c0dbc` |
+| Subject equality | Pass: landed subject exactly matched `viewerMergeHeadlineText(SQUASH)` |
+| Body equality | **Fail:** landed body was the 1,153-character PR review body; the 387-character supplied body and sentinel were absent |
+| Attribution | Pass: `merge-links.mjs` found the projected `Session-Id` in the landed PR body |
+
+The exact supplied body was:
+
+```text
+Align branch-protection verification with the active merge queue.
+
+- Declare that pull-request branches need not be updated before merging.
+- Validate GitHub's live strictness against policy instead of assuming strict mode.
+- Keep ADR-0044 aligned with the enforced repository configuration.
+
+Publication-Proof: tempdoc-921-pr625-body-v1
+
+Session-Id: 01a06701-37fd-7670-9c2c-5497ef806031
+```
+
+The queue accepted the invocation and ran against the expected head, but the resulting
+commit used the PR body. Therefore the end-to-end queue path does not preserve this CLI
+body input, regardless of the lower-level source fields found during derisking. The
+repository setting remains `PR_BODY`; PRs 1–3 are stopped pending a replacement
+transport design. Do not implement the extractor or switch the default to `BLANK` on
+the assumption that `--body-file` is authoritative for a queued merge.
+
 ### 8.2 PR 1 — parser, preview, template, and report-only check
 
 - implement the pure v2 projection parser and fixtures;
@@ -730,18 +769,14 @@ Primary source anchors:
 9. **Stale branch-protection checker added to prerequisite scope.** A new check cannot
    be safely registered while the verifier contradicts the intentional queue setting.
 
-### 12.3 Remaining uncertainty and the minimum experiment
+### 12.3 Transport uncertainty resolved by the live experiment
 
-One uncertainty remains load-bearing: whether GitHub's server preserves the supplied
-`commitBody` through this repository's live merge queue and which co-author/separator
-material it appends. Source inspection strongly predicts yes, but this repository's own
-tempdoc 829 correctly required a live PR for the original `PR_TITLE/PR_BODY` contract.
-The replacement deserves the same standard.
-
-The minimum experiment is §8.1: one low-risk authorized PR, one distinctive body
-sentinel, `--match-head-commit`, no subject override, and exact post-merge comparison.
-It is intentionally not performed by this derisk task because enqueue/merge is a
-consequential action requiring explicit per-action authorization.
+PR #625 performed §8.1's minimum experiment after explicit authorization. The queue
+accepted the expected head, merge-group CI passed, and the subject matched GitHub's
+live projection. The body did not: the merge commit contains the full PR body and none
+of the supplied 387-character body or its unique sentinel. This refutes the transport
+assumption and reduces implementation confidence until a replacement publication seam
+is designed and proved.
 
 Two non-blocking observations should be measured during rollout rather than guessed:
 
@@ -753,11 +788,10 @@ Two non-blocking observations should be measured during rollout rather than gues
 
 ### 12.4 Confidence and implementation recommendation
 
-**Confidence: 8/10.** The architecture, parser seam, secure workflow shape, title
-projection, and head-SHA lock now have direct local/source evidence. The score is not 9
-or 10 because the only irreversible transport fact—the body that actually emerges from
-the live queue—has not been observed, and because same-SHA body-edit check selection
-still needs rollout evidence.
+**Original derisk confidence: 8/10; post-experiment transport confidence: 2/10.** The
+parser seam, secure workflow shape, title projection, and head-SHA lock retain direct
+evidence. The intended body transport is refuted by PR #625, so the overall rollout is
+stopped until redesign. Same-SHA body-edit check selection also remains unmeasured.
 
 **Difficulty: 7/10 (moderately hard).** The parser itself is small. The difficulty is
 coordinating a GitHub metadata check, merge-group no-op, branch-protection policy,
@@ -796,15 +830,15 @@ Verification evidence:
 - `node scripts/docs/skills-sync.mjs --check` — pass, 5 generated skills / 9 sources;
 - `node scripts/docs/verify-canonical-doc-links.mjs` — pass, 157 files.
 
-No GitHub setting, PR body, queue entry, or merge was mutated. PRs 1–3 remain
-deliberately unstarted because §8.1's live queue/body proof is still load-bearing and
-requires explicit authorization for the enqueue/merge action. Once that proof is
-recorded, the next code slice is §8.2's parser, preview, template, and report-only check.
-Closeout state: the prerequisite is committed locally on
-`codex/921-pr-publication-record`; the branch has not been pushed and no PR was opened.
+The prerequisite merged through PR #625 as commit
+`ab6a0150b5fb597e213d903f7051b9c8ad2c0dbc`. Its PR checks and merge-group run
+`33781022045` passed. The live body-transport proof failed exactly as recorded in §8.1:
+the subject and `Session-Id` survived, but the queue published the full PR body instead
+of the explicit `--body-file` input. The repository default was not changed.
 
 ## Status
 
-Design and derisk pass complete on 2026-09-03. The stale branch-protection prerequisite
-is implemented and verified. The next action remains §8.1's live transport proof in an
-isolated, explicitly authorized PR; no repository-setting change may precede it.
+The stale branch-protection prerequisite is merged and verified. The proposed merge-
+queue body transport is refuted. Keep `PR_BODY`, do not start PRs 1–3, and redesign the
+publication seam from the observed PR #625 behavior before changing repository settings
+or enforcing a public-projection contract.
