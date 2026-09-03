@@ -613,6 +613,9 @@ six were fixed and the same reviewer confirmed no residual actionable defect in 
 - [x] Accept the targeted W23 hardening found during workaround disposition: production bootstrap now
   ignores file-backed fake-capability overrides. The source Javadoc, threat model, and regression test
   describe the same production boundary.
+- [x] Classify the offline OpenAPI exporter's committed, reproducible snapshot write as a non-durable
+  build projection in the store-recoverability register after the first hosted PR run proved that the
+  broadened persistence-write gate detects the new exporter.
 
 ## V. Implementation and verification record (2026-09-03)
 
