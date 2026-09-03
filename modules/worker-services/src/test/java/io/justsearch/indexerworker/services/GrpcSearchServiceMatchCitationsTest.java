@@ -14,6 +14,7 @@ import io.justsearch.ipc.MatchCitationsRequest;
 import io.justsearch.ipc.MatchCitationsResponse;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -31,6 +32,7 @@ class GrpcSearchServiceMatchCitationsTest {
 
   @TempDir Path tempDir;
   private RunningRuntime lifecycle;
+  private final Map<String, String> parentContentById = new HashMap<>();
 
   @BeforeEach
   void setUp() throws Exception {
@@ -200,6 +202,18 @@ class GrpcSearchServiceMatchCitationsTest {
   // ==================== Helpers ====================
 
   private void indexChunk(String parentDocId, int chunkIndex, String content) throws Exception {
+    String previous = parentContentById.getOrDefault(parentDocId, "");
+    String separator = previous.isEmpty() ? "" : "\n";
+    int start = previous.length() + separator.length();
+    String parentContent = previous + separator + content;
+    parentContentById.put(parentDocId, parentContent);
+    lifecycle.indexingCoordinator().indexSingle(
+        new IndexDocument(
+            Map.of(
+                SchemaFields.DOC_ID, parentDocId,
+                SchemaFields.DOC_UID, parentDocId + "#0",
+                SchemaFields.PATH, parentDocId,
+                SchemaFields.CONTENT, parentContent)));
     lifecycle.indexingCoordinator().indexSingle(
         new IndexDocument(
             Map.of(
@@ -211,8 +225,8 @@ class GrpcSearchServiceMatchCitationsTest {
                 SchemaFields.CHUNK_INDEX, String.valueOf(chunkIndex),
                 SchemaFields.CHUNK_TOTAL, "2",
                 SchemaFields.CHUNK_CONTENT, content,
-                SchemaFields.CHUNK_START_CHAR, "0",
-                SchemaFields.CHUNK_END_CHAR, String.valueOf(content.length()))));
+                SchemaFields.CHUNK_START_CHAR, String.valueOf(start),
+                SchemaFields.CHUNK_END_CHAR, String.valueOf(start + content.length()))));
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
   }

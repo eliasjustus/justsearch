@@ -3,6 +3,7 @@ package io.justsearch.adapters.lucene.runtime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RuntimeSearchSort;
@@ -11,7 +12,10 @@ import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -41,6 +45,7 @@ class ChunkSearchIntegrationTest {
   private RunningRuntime runtime;
   private Path tempDir;
   private String prevConfig;
+  private final Map<String, Map<String, Object>> parentDocuments = new HashMap<>();
 
   @BeforeEach
   void setup() throws Exception {
@@ -227,13 +232,74 @@ class ChunkSearchIntegrationTest {
     assertNotNull(result);
     assertFalse(result.hits().isEmpty(), "Should find chunks matching 'neural'");
 
-    // The matching chunk should have chunk_content containing "neural"
-    boolean foundNeuralChunk = result.hits().stream()
-        .anyMatch(hit -> {
-          String content = hit.fields().get(SchemaFields.CHUNK_CONTENT);
-          return content != null && content.toLowerCase(Locale.ROOT).contains("neural");
-        });
-    assertTrue(foundNeuralChunk, "Should find chunk containing 'neural'");
+    // The public hit map still carries the exact text even though the Lucene field is not stored.
+    var neuralHit =
+        result.hits().stream()
+            .filter(
+                hit -> {
+                  String content = hit.fields().get(SchemaFields.CHUNK_CONTENT);
+                  return content != null && content.toLowerCase(Locale.ROOT).contains("neural");
+                })
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("Should find chunk containing 'neural'"));
+    assertEquals(
+        "Introduction to neural networks",
+        neuralHit.fields().get(SchemaFields.CHUNK_CONTENT));
+  }
+
+  @Test
+  @DisplayName("generic ReadPath projection reconstructs non-stored chunk_content")
+  void genericReadPathProjectionReconstructsChunkContent() throws Exception {
+    indexDoc("doc-slices", "Parent prefix");
+    String firstId = indexChunk("doc-slices", 0, 2, " first 🚀 slice\r\n");
+    String secondId = indexChunk("doc-slices", 1, 2, "```java\r\nsecond();\r\n```");
+    commitAndRefresh();
+    assertChunkContentNotStored(firstId);
+    assertChunkContentNotStored(secondId);
+
+    var result =
+        runtime
+            .readPathOps()
+            .search(
+                new org.apache.lucene.search.TermQuery(
+                    new org.apache.lucene.index.Term(
+                        SchemaFields.PARENT_DOC_ID, "doc-slices")),
+                10,
+                Set.of(SchemaFields.CHUNK_CONTENT, SchemaFields.CHUNK_INDEX),
+                RuntimeSearchSort.RELEVANCE,
+                null);
+
+    Map<String, String> contentById = new HashMap<>();
+    for (var hit : result.hits()) {
+      contentById.put(hit.docId(), hit.fields().get(SchemaFields.CHUNK_CONTENT));
+      assertFalse(
+          hit.fields().containsKey(SchemaFields.PARENT_DOC_ID),
+          "internally fetched parent id must not leak through projection semantics");
+      assertFalse(
+          hit.fields().containsKey(SchemaFields.CHUNK_START_CHAR),
+          "internally fetched slice geometry must not leak through projection semantics");
+      assertFalse(
+          hit.fields().containsKey(SchemaFields.CHUNK_END_CHAR),
+          "internally fetched slice geometry must not leak through projection semantics");
+    }
+
+    assertEquals(" first 🚀 slice\r\n", contentById.get(firstId));
+    assertEquals("```java\r\nsecond();\r\n```", contentById.get(secondId));
+  }
+
+  @Test
+  @DisplayName("DocumentFieldOps reconstructs sibling chunks from one parent batch")
+  void documentContentBatchReconstructsSiblingChunks() throws Exception {
+    indexDoc("doc-batch", "Parent prefix");
+    String firstId = indexChunk("doc-batch", 0, 2, "alpha slice");
+    String secondId = indexChunk("doc-batch", 1, 2, "beta slice");
+    commitAndRefresh();
+
+    Map<String, String> content =
+        runtime.documentFieldOps().getDocumentContentBatch(List.of(firstId, secondId));
+
+    assertEquals("alpha slice", content.get(firstId));
+    assertEquals("beta slice", content.get(secondId));
   }
 
   @Test
@@ -840,23 +906,23 @@ class ChunkSearchIntegrationTest {
   // ========== Helper Methods ==========
 
   private void indexDoc(String docId, String content) {
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
-        SchemaFields.DOC_ID, docId,
-        SchemaFields.DOC_UID, docId + "#0",
-        SchemaFields.CONTENT, content,
-        SchemaFields.PATH, docId
-    )));
+    Map<String, Object> fields = new LinkedHashMap<>();
+    fields.put(SchemaFields.DOC_ID, docId);
+    fields.put(SchemaFields.DOC_UID, docId + "#0");
+    fields.put(SchemaFields.CONTENT, content);
+    fields.put(SchemaFields.PATH, docId);
+    indexParent(fields);
   }
 
   /** Indexes a parent document carrying a collection tag (585 D4b). */
   private void indexDocInCollection(String docId, String content, String collection) {
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
-        SchemaFields.DOC_ID, docId,
-        SchemaFields.DOC_UID, docId + "#0",
-        SchemaFields.CONTENT, content,
-        SchemaFields.PATH, docId,
-        SchemaFields.COLLECTION, collection
-    )));
+    Map<String, Object> fields = new LinkedHashMap<>();
+    fields.put(SchemaFields.DOC_ID, docId);
+    fields.put(SchemaFields.DOC_UID, docId + "#0");
+    fields.put(SchemaFields.CONTENT, content);
+    fields.put(SchemaFields.PATH, docId);
+    fields.put(SchemaFields.COLLECTION, collection);
+    indexParent(fields);
   }
 
   /**
@@ -866,16 +932,19 @@ class ChunkSearchIntegrationTest {
   private void indexChunkInCollection(
       String parentDocId, int index, int total, String content, String collection) {
     String chunkId = parentDocId + "#chunk_" + index;
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
-        SchemaFields.DOC_ID, chunkId,
-        SchemaFields.DOC_UID, chunkId + "#0",
-        SchemaFields.IS_CHUNK, "true",
-        SchemaFields.PARENT_DOC_ID, parentDocId,
-        SchemaFields.CHUNK_INDEX, String.valueOf(index),
-        SchemaFields.CHUNK_TOTAL, String.valueOf(total),
-        SchemaFields.CHUNK_CONTENT, content,
-        SchemaFields.PATH, parentDocId,
-        SchemaFields.COLLECTION, collection
+    int[] offsets = appendChunkToParent(parentDocId, content);
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.ofEntries(
+        Map.entry(SchemaFields.DOC_ID, chunkId),
+        Map.entry(SchemaFields.DOC_UID, chunkId + "#0"),
+        Map.entry(SchemaFields.IS_CHUNK, "true"),
+        Map.entry(SchemaFields.PARENT_DOC_ID, parentDocId),
+        Map.entry(SchemaFields.CHUNK_INDEX, String.valueOf(index)),
+        Map.entry(SchemaFields.CHUNK_TOTAL, String.valueOf(total)),
+        Map.entry(SchemaFields.CHUNK_CONTENT, content),
+        Map.entry(SchemaFields.CHUNK_START_CHAR, String.valueOf(offsets[0])),
+        Map.entry(SchemaFields.CHUNK_END_CHAR, String.valueOf(offsets[1])),
+        Map.entry(SchemaFields.PATH, parentDocId),
+        Map.entry(SchemaFields.COLLECTION, collection)
     )));
   }
 
@@ -886,9 +955,10 @@ class ChunkSearchIntegrationTest {
    * backward compatibility with existing tests that check for specific IDs.
    * New production code uses opaque UUID-based chunk IDs.
    */
-  private void indexChunk(String parentDocId, int index, int total, String content) {
+  private String indexChunk(String parentDocId, int index, int total, String content) {
     // Use legacy format for tests that verify specific chunk IDs
     String chunkId = parentDocId + "#chunk_" + index;
+    int[] offsets = appendChunkToParent(parentDocId, content);
     runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
         SchemaFields.DOC_ID, chunkId,
         SchemaFields.DOC_UID, chunkId + "#0",
@@ -897,23 +967,29 @@ class ChunkSearchIntegrationTest {
         SchemaFields.CHUNK_INDEX, String.valueOf(index),
         SchemaFields.CHUNK_TOTAL, String.valueOf(total),
         SchemaFields.CHUNK_CONTENT, content,
+        SchemaFields.CHUNK_START_CHAR, String.valueOf(offsets[0]),
+        SchemaFields.CHUNK_END_CHAR, String.valueOf(offsets[1]),
         SchemaFields.PATH, parentDocId
     )));
+    return chunkId;
   }
 
   private String indexChunkWithVector(
       String parentDocId, int index, int total, String content, float[] vector) {
     String chunkId = parentDocId + "#chunk_" + index;
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
-        SchemaFields.DOC_ID, chunkId,
-        SchemaFields.DOC_UID, chunkId + "#0",
-        SchemaFields.IS_CHUNK, "true",
-        SchemaFields.PARENT_DOC_ID, parentDocId,
-        SchemaFields.CHUNK_INDEX, String.valueOf(index),
-        SchemaFields.CHUNK_TOTAL, String.valueOf(total),
-        SchemaFields.CHUNK_CONTENT, content,
-        SchemaFields.CHUNK_VECTOR, vector,
-        SchemaFields.PATH, parentDocId
+    int[] offsets = appendChunkToParent(parentDocId, content);
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.ofEntries(
+        Map.entry(SchemaFields.DOC_ID, chunkId),
+        Map.entry(SchemaFields.DOC_UID, chunkId + "#0"),
+        Map.entry(SchemaFields.IS_CHUNK, "true"),
+        Map.entry(SchemaFields.PARENT_DOC_ID, parentDocId),
+        Map.entry(SchemaFields.CHUNK_INDEX, String.valueOf(index)),
+        Map.entry(SchemaFields.CHUNK_TOTAL, String.valueOf(total)),
+        Map.entry(SchemaFields.CHUNK_CONTENT, content),
+        Map.entry(SchemaFields.CHUNK_START_CHAR, String.valueOf(offsets[0])),
+        Map.entry(SchemaFields.CHUNK_END_CHAR, String.valueOf(offsets[1])),
+        Map.entry(SchemaFields.CHUNK_VECTOR, vector),
+        Map.entry(SchemaFields.PATH, parentDocId)
     )));
     return chunkId;
   }
@@ -926,6 +1002,7 @@ class ChunkSearchIntegrationTest {
    */
   private void indexChunkOpaque(String parentDocId, int index, int total, String content) {
     String chunkId = "chunk:" + java.util.UUID.randomUUID().toString();
+    int[] offsets = appendChunkToParent(parentDocId, content);
     runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
         SchemaFields.DOC_ID, chunkId,
         SchemaFields.DOC_UID, chunkId + "#0",
@@ -934,8 +1011,33 @@ class ChunkSearchIntegrationTest {
         SchemaFields.CHUNK_INDEX, String.valueOf(index),
         SchemaFields.CHUNK_TOTAL, String.valueOf(total),
         SchemaFields.CHUNK_CONTENT, content,
+        SchemaFields.CHUNK_START_CHAR, String.valueOf(offsets[0]),
+        SchemaFields.CHUNK_END_CHAR, String.valueOf(offsets[1]),
         SchemaFields.PATH, parentDocId
     )));
+  }
+
+  private void indexParent(Map<String, Object> fields) {
+    String docId = fields.get(SchemaFields.DOC_ID).toString();
+    Map<String, Object> copy = new LinkedHashMap<>(fields);
+    parentDocuments.put(docId, copy);
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(new LinkedHashMap<>(copy)));
+  }
+
+  /** Appends without changing earlier offsets, then rewrites the parent with its full content. */
+  private int[] appendChunkToParent(String parentDocId, String chunkContent) {
+    Map<String, Object> parent = parentDocuments.get(parentDocId);
+    if (parent == null) {
+      throw new IllegalStateException("Chunk fixture has no parent document: " + parentDocId);
+    }
+    String oldContent = parent.getOrDefault(SchemaFields.CONTENT, "").toString();
+    String separator = oldContent.isEmpty() ? "" : "\n";
+    int start = oldContent.length() + separator.length();
+    String newContent = oldContent + separator + chunkContent;
+    int end = newContent.length();
+    parent.put(SchemaFields.CONTENT, newContent);
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(new LinkedHashMap<>(parent)));
+    return new int[] {start, end};
   }
 
   private boolean docExists(String docId) {
@@ -945,6 +1047,27 @@ class ChunkSearchIntegrationTest {
             new org.apache.lucene.index.Term(SchemaFields.DOC_ID, docId)),
         1, Set.of(), RuntimeSearchSort.RELEVANCE, null);
     return !result.hits().isEmpty();
+  }
+
+  private void assertChunkContentNotStored(String chunkId) throws Exception {
+    runtime
+        .readPathOps()
+        .withSearcher(
+            searcher -> {
+              var result =
+                  searcher.search(
+                      new org.apache.lucene.search.TermQuery(
+                          new org.apache.lucene.index.Term(SchemaFields.DOC_ID, chunkId)),
+                      1);
+              assertEquals(1, result.scoreDocs.length, "chunk fixture must exist");
+              assertNull(
+                  searcher
+                      .storedFields()
+                      .document(result.scoreDocs[0].doc)
+                      .get(SchemaFields.CHUNK_CONTENT),
+                  "chunk_content must be indexed but not stored");
+              return null;
+            });
   }
 
   private int countAllDocs() {

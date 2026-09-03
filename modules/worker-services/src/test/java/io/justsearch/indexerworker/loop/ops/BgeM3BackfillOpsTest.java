@@ -16,6 +16,7 @@ import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexing.SchemaFields;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -67,8 +68,11 @@ class BgeM3BackfillOpsTest {
           + "EMBEDDING_STATUS NOT written, SPLADE written")
   void chunkDoc_writesChunkFieldPair_notParentFieldPair() throws Exception {
     stubPending("chunk-1");
-    when(documentFieldOps.getDocumentField("chunk-1", SchemaFields.CHUNK_CONTENT))
-        .thenReturn("chunk text");
+    when(documentFieldOps.getDocumentContentBatch(List.of("chunk-1")))
+        .thenReturn(Map.of("chunk-1", "chunk text"));
+    when(documentFieldOps.getDocumentFieldsBatch(
+            List.of("chunk-1"), Set.of(SchemaFields.IS_CHUNK)))
+        .thenReturn(Map.of("chunk-1", Map.of(SchemaFields.IS_CHUNK, "true")));
     when(encoder.encodeBatch(List.of("chunk text")))
         .thenReturn(List.of(new BgeM3Output(new float[] {1f, 2f}, Map.of("tok", 1.0f))));
     when(indexingCoordinator.updateDocumentsBatch(anyList()))
@@ -77,9 +81,11 @@ class BgeM3BackfillOpsTest {
     boolean result = BgeM3BackfillOps.processBgeM3Backfill(context()).success();
 
     assertTrue(result);
-    // Content came from CHUNK_CONTENT — getDocumentContent (the parent-doc fallback) must not
-    // be consulted at all for a chunk doc.
-    verify(documentFieldOps, never()).getDocumentContent(anyString());
+    verify(documentFieldOps).getDocumentContentBatch(List.of("chunk-1"));
+    verify(documentFieldOps)
+        .getDocumentFieldsBatch(List.of("chunk-1"), Set.of(SchemaFields.IS_CHUNK));
+    verify(documentFieldOps, never())
+        .getDocumentField("chunk-1", SchemaFields.CHUNK_CONTENT);
     verify(indexingCoordinator)
         .updateDocumentsBatch(
             argThat(
@@ -106,9 +112,11 @@ class BgeM3BackfillOpsTest {
           + " no CHUNK_* fields")
   void parentDoc_writesParentFieldPair_unchanged() throws Exception {
     stubPending("parent-1");
-    when(documentFieldOps.getDocumentField("parent-1", SchemaFields.CHUNK_CONTENT))
-        .thenReturn(null);
-    when(documentFieldOps.getDocumentContent("parent-1")).thenReturn("parent text");
+    when(documentFieldOps.getDocumentContentBatch(List.of("parent-1")))
+        .thenReturn(Map.of("parent-1", "parent text"));
+    when(documentFieldOps.getDocumentFieldsBatch(
+            List.of("parent-1"), Set.of(SchemaFields.IS_CHUNK)))
+        .thenReturn(Map.of("parent-1", Map.of()));
     when(encoder.encodeBatch(List.of("parent text")))
         .thenReturn(List.of(new BgeM3Output(new float[] {3f, 4f}, Map.of("tok", 2.0f))));
     when(indexingCoordinator.updateDocumentsBatch(anyList()))
@@ -143,10 +151,15 @@ class BgeM3BackfillOpsTest {
     // Mixed batch (one failing + one succeeding chunk) so the batch-wide systemic-failure
     // short-circuit doesn't mask the per-doc escalation write under test.
     stubPending("chunk-bad", "chunk-ok");
-    when(documentFieldOps.getDocumentField("chunk-bad", SchemaFields.CHUNK_CONTENT))
-        .thenReturn("poison chunk text");
-    when(documentFieldOps.getDocumentField("chunk-ok", SchemaFields.CHUNK_CONTENT))
-        .thenReturn("good chunk text");
+    when(documentFieldOps.getDocumentContentBatch(List.of("chunk-bad", "chunk-ok")))
+        .thenReturn(
+            Map.of("chunk-bad", "poison chunk text", "chunk-ok", "good chunk text"));
+    when(documentFieldOps.getDocumentFieldsBatch(
+            List.of("chunk-bad", "chunk-ok"), Set.of(SchemaFields.IS_CHUNK)))
+        .thenReturn(
+            Map.of(
+                "chunk-bad", Map.of(SchemaFields.IS_CHUNK, "true"),
+                "chunk-ok", Map.of(SchemaFields.IS_CHUNK, "true")));
     when(encoder.encodeBatch(anyList())).thenThrow(new OrtException("batch encode boom"));
     when(encoder.encode("poison chunk text")).thenThrow(new OrtException("per-doc encode boom"));
     when(encoder.encode("good chunk text"))
@@ -177,12 +190,12 @@ class BgeM3BackfillOpsTest {
     // Mixed batch (one failing + one succeeding parent) so the batch-wide systemic-failure
     // short-circuit doesn't mask the per-doc escalation write under test.
     stubPending("parent-bad", "parent-ok");
-    when(documentFieldOps.getDocumentField("parent-bad", SchemaFields.CHUNK_CONTENT))
-        .thenReturn(null);
-    when(documentFieldOps.getDocumentContent("parent-bad")).thenReturn("poison parent text");
-    when(documentFieldOps.getDocumentField("parent-ok", SchemaFields.CHUNK_CONTENT))
-        .thenReturn(null);
-    when(documentFieldOps.getDocumentContent("parent-ok")).thenReturn("good parent text");
+    when(documentFieldOps.getDocumentContentBatch(List.of("parent-bad", "parent-ok")))
+        .thenReturn(
+            Map.of("parent-bad", "poison parent text", "parent-ok", "good parent text"));
+    when(documentFieldOps.getDocumentFieldsBatch(
+            List.of("parent-bad", "parent-ok"), Set.of(SchemaFields.IS_CHUNK)))
+        .thenReturn(Map.of("parent-bad", Map.of(), "parent-ok", Map.of()));
     when(encoder.encodeBatch(anyList())).thenThrow(new OrtException("batch encode boom"));
     when(encoder.encode("poison parent text"))
         .thenThrow(new OrtException("per-doc encode boom"));
