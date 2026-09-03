@@ -281,7 +281,7 @@ public final class SearchInputCapture {
       BgeM3Output bgeQueryOutput,
       EmbeddingProvider embeddingProvider) {
     if (!vectorList.isEmpty()) {
-      return new VectorEncoding.Success(new ArrayList<>(vectorList), "explicit");
+      return normalizedVectorEncoding(VectorUtils.toFloatArray(vectorList), "explicit");
     }
     if (!allowQueryEmbeddings) {
       SearchReasonCode reason =
@@ -291,11 +291,7 @@ public final class SearchInputCapture {
       return new VectorEncoding.Failed(reason);
     }
     if (bgeQueryOutput != null && bgeQueryOutput.denseVector() != null) {
-      List<Float> list = new ArrayList<>(bgeQueryOutput.denseVector().length);
-      for (float v : bgeQueryOutput.denseVector()) {
-        list.add(v);
-      }
-      return new VectorEncoding.Success(list, "bgem3");
+      return normalizedVectorEncoding(bgeQueryOutput.denseVector(), "bgem3");
     }
     if (embeddingProvider != null
         && embeddingProvider.isAvailable()
@@ -305,17 +301,26 @@ public final class SearchInputCapture {
         if (vec == null || vec.length == 0) {
           return new VectorEncoding.Failed(SearchReasonCode.EMBEDDING_GENERATION_FAILED);
         }
-        List<Float> list = new ArrayList<>(vec.length);
-        for (float v : vec) {
-          list.add(v);
-        }
-        return new VectorEncoding.Success(list, "embedding-service");
+        return normalizedVectorEncoding(vec, "embedding-service");
       } catch (RuntimeException e) {
         log.warn("Embedding generation failed: {}", e.getMessage());
         return new VectorEncoding.Failed(SearchReasonCode.EMBEDDING_EXCEPTION);
       }
     }
     return new VectorEncoding.Failed(SearchReasonCode.NO_EMBEDDING_SERVICE);
+  }
+
+  static VectorEncoding normalizedVectorEncoding(float[] vector, String source) {
+    try {
+      float[] normalized = VectorUtils.l2NormalizedCopy(vector);
+      List<Float> values = new ArrayList<>(normalized.length);
+      for (float value : normalized) {
+        values.add(value);
+      }
+      return new VectorEncoding.Success(values, source);
+    } catch (IllegalArgumentException e) {
+      return new VectorEncoding.Failed(SearchReasonCode.EMBEDDING_GENERATION_FAILED);
+    }
   }
 
   private SpladeEncoding prepareSpladeWeights(

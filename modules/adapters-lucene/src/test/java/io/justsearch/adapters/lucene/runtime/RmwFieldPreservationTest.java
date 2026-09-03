@@ -36,6 +36,8 @@ class RmwFieldPreservationTest {
     withConfig(
         (runtime) -> {
           indexDoc(runtime, "doc-0", VEC, SchemaFields.SPLADE_STATUS_COMPLETED);
+          float[] storedBeforeRmw = readVector(runtime, SchemaFields.VECTOR, "doc-0");
+          assertNotNull(storedBeforeRmw, "precondition: normalized vector was stored");
 
           assertTrue(
               runtime.indexingCoordinator().updateDocument(
@@ -43,7 +45,7 @@ class RmwFieldPreservationTest {
           commit(runtime);
 
           assertArrayEquals(
-              VEC,
+              storedBeforeRmw,
               readVector(runtime, SchemaFields.VECTOR, "doc-0"),
               "vector must survive an RMW that omits it (preserve-reread)");
         },
@@ -56,6 +58,8 @@ class RmwFieldPreservationTest {
     withConfig(
         (runtime) -> {
           indexDoc(runtime, "doc-0", VEC, SchemaFields.SPLADE_STATUS_COMPLETED);
+          float[] storedBeforeRmw = readVector(runtime, SchemaFields.VECTOR, "doc-0");
+          assertNotNull(storedBeforeRmw, "precondition: normalized vector was stored");
 
           assertTrue(
               runtime.indexingCoordinator().updateDocument(
@@ -64,7 +68,7 @@ class RmwFieldPreservationTest {
           commit(runtime);
 
           assertArrayEquals(
-              VEC,
+              storedBeforeRmw,
               readVector(runtime, SchemaFields.VECTOR, "doc-0"),
               "vector must survive a VDU-only RMW");
         },
@@ -97,6 +101,8 @@ class RmwFieldPreservationTest {
     withConfig(
         (runtime) -> {
           indexDoc(runtime, "doc-0", VEC, SchemaFields.SPLADE_STATUS_COMPLETED);
+          float[] storedBeforeRmw = readVector(runtime, SchemaFields.VECTOR, "doc-0");
+          assertNotNull(storedBeforeRmw, "precondition: normalized vector was stored");
 
           List<Map.Entry<String, Map<String, Object>>> batch = new ArrayList<>();
           batch.add(Map.entry("doc-0", Map.of("entity_persons_raw", "Alice")));
@@ -105,7 +111,7 @@ class RmwFieldPreservationTest {
           commit(runtime);
 
           assertArrayEquals(
-              VEC,
+              storedBeforeRmw,
               readVector(runtime, SchemaFields.VECTOR, "doc-0"),
               "vector must survive two same-doc RMWs in one batch");
         },
@@ -210,6 +216,9 @@ class RmwFieldPreservationTest {
           seedParentForChunk(runtime, chunk, "chunk body");
           runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
           commit(runtime);
+          float[] storedBeforeRmw =
+              readVector(runtime, SchemaFields.CHUNK_VECTOR, "chunk-0");
+          assertNotNull(storedBeforeRmw, "precondition: normalized chunk vector was stored");
 
           assertTrue(
               runtime.indexingCoordinator().updateDocument(
@@ -217,7 +226,7 @@ class RmwFieldPreservationTest {
           commit(runtime);
 
           assertArrayEquals(
-              VEC,
+              storedBeforeRmw,
               readVector(runtime, SchemaFields.CHUNK_VECTOR, "chunk-0"),
               "chunk_vector must survive an RMW that omits it");
         },
@@ -356,6 +365,9 @@ class RmwFieldPreservationTest {
           seedParentForChunk(runtime, chunk, "chunk body");
           runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
           commit(runtime);
+          float[] storedBeforeRmw =
+              readVector(runtime, SchemaFields.CHUNK_VECTOR, "chunk-0");
+          assertNotNull(storedBeforeRmw, "precondition: normalized chunk vector was stored");
 
           assertTrue(
               runtime.indexingCoordinator().updateDocument(
@@ -363,7 +375,7 @@ class RmwFieldPreservationTest {
           commit(runtime);
 
           assertArrayEquals(
-              VEC,
+              storedBeforeRmw,
               readVector(runtime, SchemaFields.CHUNK_VECTOR, "chunk-0"),
               "present chunk_vector must survive an RMW that omits it (preserve-reread-or-reset)");
           assertEquals(

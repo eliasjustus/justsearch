@@ -24,6 +24,18 @@ class BgeM3PostProcessTest {
   }
 
   @Test
+  void denseOutputNormalizationProducesUnitVectorAndRejectsInvalidInput() {
+    assertArrayEquals(
+        new float[] {0.6f, 0.8f}, BgeM3Encoder.l2Normalize(new float[] {3.0f, 4.0f}), 0.0001f);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> BgeM3Encoder.l2Normalize(new float[] {0.0f, 0.0f}));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> BgeM3Encoder.l2Normalize(new float[] {Float.NaN, 1.0f}));
+  }
+
+  @Test
   void basicSparseExtraction() {
     long[] inputIds = {0, 4, 5, 6, 1, 2}; // <s> the court held </s> <pad>
     long[] attentionMask = {1, 1, 1, 1, 1, 0};

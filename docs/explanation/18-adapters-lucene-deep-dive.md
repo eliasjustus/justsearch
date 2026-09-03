@@ -46,9 +46,9 @@ The `runtime/` package is the largest. It is organized around focused ops classe
 // Default: MMapDirectory for memory-mapped I/O
 Directory directory = new MMapDirectory(indexPath);
 
-// IndexWriter with custom codec
+// IndexWriter with the restart-safe per-field codec
 IndexWriterConfig config = new IndexWriterConfig(indexAnalyzer);
-config.setCodec(new JustSearchCodec(knnVectorsFormat));
+config.setCodec(new JustSearchCodecV2(knnVectorsFormat));
 config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
 
 // Soft deletes merge policy
@@ -184,34 +184,47 @@ void maybeRefreshBlockingIfCommittedSinceRefresh() {
 
 ## 3. HNSW Vector Search
 
-### 3.1 JustSearchCodec
+### 3.1 JustSearchCodecV2
 
-Custom codec wrapping `Lucene104Codec` with pluggable vector format:
+New segments use a restart-safe codec wrapping `Lucene104Codec`:
 
 ```java
-public final class JustSearchCodec extends FilterCodec {
-    // HNSW Parameters
-    private static final int DEFAULT_M = 16;              // max connections per node
-    private static final int DEFAULT_EF_CONSTRUCTION = 200; // build-time beam width
-
-    // Float32 format (current default)
-    public static KnnVectorsFormat float32Format() {
-        return new Lucene99HnswVectorsFormat(DEFAULT_M, DEFAULT_EF_CONSTRUCTION);
+public final class JustSearchCodecV2 extends FilterCodec {
+    public JustSearchCodecV2() {
+        this(quantizedFormat()); // shipped write default
     }
 
-    // Int8 scalar-quantized format (~75% memory reduction)
-    // Tested with Lucene 10.3.1 - enable via index.vector.quantization.enabled=true
-    public static KnnVectorsFormat quantizedFormat() {
-        return new Lucene104HnswScalarQuantizedVectorsFormat(DEFAULT_M, DEFAULT_EF_CONSTRUCTION);
+    public JustSearchCodecV2(KnnVectorsFormat writeFormat) {
+        super("JustSearchCodecV2", new Lucene104Codec());
+        this.perFieldFormat = new FixedPerFieldKnnVectorsFormat(writeFormat);
+    }
+
+    @Override
+    public KnnVectorsFormat knnVectorsFormat() {
+        return perFieldFormat;
     }
 }
 ```
 
-**Memory Impact**:
-| Format | 768 dims | Savings |
-|--------|----------|---------|
+The per-field wrapper is the compatibility boundary. Lucene records the underlying format name and
+suffix on each vector field, then resolves that stored name on reopen. Changing a configuration
+default therefore cannot make a V2 Float32 segment open with the Int8 reader, or vice versa. The
+legacy `JustSearchCodec` remains in the codec service registry solely to read pre-V2 Float32
+segments; its no-argument behavior must stay Float32.
+
+The default quantized factory explicitly selects
+`Lucene104ScalarQuantizedVectorsFormat.ScalarEncoding.UNSIGNED_BYTE` (8 bits). The Float32 factory
+uses `Lucene99HnswVectorsFormat`. Both factories consume the same effective HNSW `m` and
+`efConstruction` values that the index fingerprint records.
+
+**Raw vector encoding width** (not total index size or process RSS):
+| Format | 768 dims | Value-byte savings |
+|--------|----------|--------------------|
 | Float32 | 3,072 bytes/doc | Baseline |
-| Int8 | 768 bytes/doc | ~75% reduction |
+| Int8 | 768 bytes/doc | ~75% |
+
+Graph, metadata, and other index structures are additional. Tempdoc 915 owns the deferred measured
+index-size and RSS comparison; these raw widths are not a release claim.
 
 ### 3.2 KnnFloatVectorQuery Variants
 
@@ -264,7 +277,7 @@ For current HNSW tuning parameters (M, efConstruction, efSearch), see [`docs/exp
 | `index.vector.ef_search` | Query-time search breadth (oversampling k) |
 | `index.vector.hnsw.m` | Max connections per HNSW node |
 | `index.vector.hnsw.ef_construction` | Build-time beam width |
-| `index.vector.quantization.enabled` | Enable Int8 quantization |
+| `index.vector.quantization.enabled` | Write Int8 vectors (default `true`); `false` writes Float32 |
 
 ## 4. Hybrid Search Architecture
 

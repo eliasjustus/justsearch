@@ -34,7 +34,7 @@ import tools.jackson.databind.ObjectMapper;
  */
 class StatusArtifactContractTest {
 
-  private static final float[] VEC = {0.25f, -0.5f, 0.75f, 1.0f};
+  private static final float[] VEC = {0.5f, -0.5f, 0.5f, 0.5f};
 
   // ---- the mapping is derived from the catalog, not authored ----
 

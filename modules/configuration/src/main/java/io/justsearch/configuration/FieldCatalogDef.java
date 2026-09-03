@@ -194,7 +194,8 @@ public final class FieldCatalogDef {
             if ("vector".equals(f.type()) && f.vector() != null) {
                 updated.add(new FieldDef(
                         f.id(), f.type(), f.stored(), f.docValues(),
-                        f.roles(), new VectorSpec(newDim), f.analyzer(), f.multiValued(), f.rmwPolicy()));
+                        f.roles(), new VectorSpec(newDim, f.vector().similarity()), f.analyzer(),
+                        f.multiValued(), f.rmwPolicy()));
             } else {
                 updated.add(f);
             }
@@ -271,6 +272,11 @@ public final class FieldCatalogDef {
             return vector != null ? vector.dimension() : null;
         }
 
+        /** Returns the declared vector similarity, or null for non-vector fields. */
+        public String vectorSimilarity() {
+            return vector != null ? vector.similarity() : null;
+        }
+
         public boolean hasRole(String role) {
             return roles.contains(role);
         }
@@ -282,12 +288,24 @@ public final class FieldCatalogDef {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static final class VectorSpec {
         private final int dimension;
+        private final String similarity;
 
         @JsonCreator
-        public VectorSpec(@JsonProperty("dimension") int dimension) {
+        public VectorSpec(
+                @JsonProperty("dimension") int dimension,
+                @JsonProperty("similarity") String similarity) {
             this.dimension = dimension;
+            this.similarity = similarity == null || similarity.isBlank()
+                    ? "dot_product"
+                    : similarity;
+        }
+
+        /** Convenience constructor for the current dot-product field contract. */
+        public VectorSpec(int dimension) {
+            this(dimension, "dot_product");
         }
 
         public int dimension() { return dimension; }
+        public String similarity() { return similarity; }
     }
 }

@@ -184,16 +184,17 @@ final class ComponentsFactory {
 
       int hnswM = idx.effectiveVectorHnswM();
       int efConstruction = idx.effectiveVectorHnswEfConstruction();
-      boolean quantEnabled = Boolean.TRUE.equals(idx.vectorQuantizationEnabled());
-      // F6: Select vector format based on quantization config
+      boolean quantEnabled = idx.vectorQuantizationEnabledOrDefault();
+      // Select the write format from config. JustSearchCodecV2's per-field wrapper persists the
+      // concrete format so both choices remain readable after a restart.
       KnnVectorsFormat kf =
           knnVectorsFormatOverride == null
               ? (quantEnabled
-                  ? JustSearchCodec.quantizedFormat(hnswM, efConstruction)
-                  : JustSearchCodec.float32Format(hnswM, efConstruction))
+                  ? JustSearchCodecV2.quantizedFormat(hnswM, efConstruction)
+                  : JustSearchCodecV2.float32Format(hnswM, efConstruction))
               : knnVectorsFormatOverride;
       IndexWriterConfig cfg = new IndexWriterConfig(analyzer);
-      cfg.setCodec(new JustSearchCodec(kf));
+      cfg.setCodec(new JustSearchCodecV2(kf));
       // Merge policy knobs (configurable)
       TieredMergePolicy tmp = new TieredMergePolicy();
       Integer segsPerTier = idx.mergeTieredSegsPerTier();

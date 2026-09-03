@@ -7,38 +7,33 @@ import org.junit.jupiter.api.Test;
 /**
  * Pins the tempdoc-702 dense-score calibration constants in {@link HybridSearchOps}.
  *
- * <p>The dense KNN field is indexed with Lucene's default EUCLIDEAN similarity ({@code
- * FieldMapper}'s 2-arg {@code KnnFloatVectorField} constructor), not COSINE, but vectors are
- * L2-normalized so {@code score_euc = 1/(3-2*cos)} and ranking is identical either way. These
- * constants were originally authored in cosine-score terms and mis-set for the actual EUCLIDEAN
- * score space; this test guards against a future "tidy the magic number" edit silently
- * reintroducing the miscalibration.
+ * <p>The dense KNN fields now use explicit DOT_PRODUCT similarity and unit-normalized vectors, so
+ * Lucene's score is {@code (1 + dot) / 2}. These constants retain the intended cosine-score
+ * boundaries from tempdoc 702 directly in that score space; this test guards against a future
+ * "tidy the magic number" edit silently reintroducing the pre-wave-2 EUCLIDEAN conversion.
  */
 class CalibrationConstantsTest {
 
   @Test
-  void arbitrationDenseConfidentMinMatchesEuclideanConversionOfIntendedCosZero() {
-    // Intended: cos >= 0 ("not anti-correlated"). score_euc = 1/(3-2*cos) at cos=0 is 1/3.
+  void arbitrationDenseConfidentMinMatchesDotProductScoreOfIntendedCosZero() {
+    // Unit vectors: dot=cos, and Lucene's DOT_PRODUCT score is (1+dot)/2. cos=0 therefore scores .5.
     assertEquals(
-        1.0 / 3.0,
+        0.5,
         HybridSearchOps.ARBITRATION_DENSE_CONFIDENT_MIN,
         1e-9,
-        "ARBITRATION_DENSE_CONFIDENT_MIN must equal 1/(3-2*cos) at the intended cos=0 gate"
-            + " ('not anti-correlated'), i.e. 1.0/3.0 (tempdoc 702). Do not replace with a"
-            + " re-derived or eyeballed value.");
+        "ARBITRATION_DENSE_CONFIDENT_MIN must equal (1+dot)/2 at the intended cos=dot=0 gate"
+            + " ('not anti-correlated'), i.e. 0.5 (tempdocs 702/915).");
   }
 
   @Test
-  void defaultVectorLowSignalThresholdMatchesEuclideanConversionOfIntendedCosinePoint40() {
-    // Intended: cosine-score (1+cos)/2 == 0.40 <=> cos == -0.2.
-    // score_euc = 1/(3-2*cos) at cos=-0.2 is 1/3.4 ~= 0.294.
+  void defaultVectorLowSignalThresholdMatchesDotProductScorePoint40() {
+    // Intended: cosine-score (1+cos)/2 == 0.40. DOT_PRODUCT uses that score for unit vectors.
     assertEquals(
-        0.294,
+        0.40,
         HybridSearchOps.DEFAULT_VECTOR_LOW_SIGNAL_THRESHOLD,
-        1e-3,
-        "DEFAULT_VECTOR_LOW_SIGNAL_THRESHOLD must equal 1/(3-2*cos) at the intended cosine-score"
-            + " 0.40 gate (cos=-0.2), i.e. 1/3.4 ~= 0.294 (tempdoc 702). Do not replace with a"
-            + " re-derived or eyeballed value.");
+        1e-9,
+        "DEFAULT_VECTOR_LOW_SIGNAL_THRESHOLD must retain the intended 0.40 cosine-score gate"
+            + " directly in DOT_PRODUCT score space (tempdocs 702/915).");
   }
 
   // ---- Fallback-default drift pins ----

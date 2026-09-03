@@ -1008,7 +1008,7 @@ public enum EnvRegistry {
     INDEX_VECTOR_EF_SEARCH("index.vector.ef_search", "JUSTSEARCH_INDEX_VECTOR_EF_SEARCH", LifecycleStage.PERMANENT),
     /** Enable vector quantization for index storage. */
     INDEX_VECTOR_QUANTIZATION_ENABLED("index.vector.quantization.enabled",
-        "JUSTSEARCH_INDEX_VECTOR_QUANTIZATION_ENABLED", LifecycleStage.PERMANENT),
+        "JUSTSEARCH_INDEX_VECTOR_QUANTIZATION_ENABLED", "true", LifecycleStage.PERMANENT),
 
     // ==================== RAG Pipeline (tempdoc 347 D2: sysProp = configKey) ====================
 

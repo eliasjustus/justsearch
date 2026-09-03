@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.FeatureField;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.KnnFloatVectorField;
 import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.NumericDocValuesField;
@@ -32,6 +33,7 @@ import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.index.VectorSimilarityFunction;
 
 /**
  * Maps {@link io.justsearch.indexing.api.IndexDocument} instances to Lucene Documents using a field catalog.
@@ -58,17 +60,35 @@ public final class FieldMapper {
     final boolean docValues;
     final List<String> roles;
     final Integer vectorDim; // nullable
+    final String vectorSimilarity; // nullable
+    final FieldType vectorFieldType; // nullable
     final String analyzerKey; // nullable
     final boolean multiValued;
     final String rmwPolicy; // nullable (tempdoc 711)
 
-    FieldDef(String id, String type, boolean stored, boolean docValues, List<String> roles, Integer vectorDim, String analyzerKey, boolean multiValued, String rmwPolicy) {
+    FieldDef(
+        String id,
+        String type,
+        boolean stored,
+        boolean docValues,
+        List<String> roles,
+        Integer vectorDim,
+        String vectorSimilarity,
+        String analyzerKey,
+        boolean multiValued,
+        String rmwPolicy) {
       this.id = id;
       this.type = type;
       this.stored = stored;
       this.docValues = docValues;
       this.roles = roles;
       this.vectorDim = vectorDim;
+      this.vectorSimilarity = vectorSimilarity;
+      this.vectorFieldType =
+          "vector".equals(type) && vectorDim != null
+              ? KnnFloatVectorField.createFieldType(
+                  vectorDim, parseVectorSimilarity(vectorSimilarity))
+              : null;
       this.analyzerKey = analyzerKey;
       this.multiValued = multiValued;
       this.rmwPolicy = rmwPolicy;
@@ -76,13 +96,18 @@ public final class FieldMapper {
 
     /** Creates a FieldDef from the configuration POJO. */
     static FieldDef fromPojo(FieldCatalogDef.FieldDef pojo) {
+      Integer vectorDimension = pojo.vectorDimension();
+      if (vectorDimension != null && vectorDimension == 0) {
+        vectorDimension = null;
+      }
       return new FieldDef(
           pojo.id(),
           pojo.type(),
           pojo.stored(),
           pojo.docValues(),
           pojo.roles(),
-          pojo.vectorDimension(),
+          vectorDimension,
+          pojo.vectorSimilarity(),
           pojo.analyzer(),
           pojo.multiValued(),
           pojo.rmwPolicy()
@@ -434,7 +459,14 @@ public final class FieldMapper {
           if (def.vectorDim != null && vec.length != def.vectorDim) {
             throw new IllegalArgumentException("vector dimension mismatch for " + def.id + ": expected " + def.vectorDim + ", got " + vec.length);
           }
-          doc.add(new KnnFloatVectorField(def.id, vec));
+          if (def.vectorFieldType == null) {
+            throw new IllegalStateException("vector field is missing a dimension: " + def.id);
+          }
+          float[] indexedVector =
+              def.vectorFieldType.vectorSimilarityFunction() == VectorSimilarityFunction.DOT_PRODUCT
+                  ? VectorNormalization.l2NormalizedCopy(vec, "vector field " + def.id)
+                  : vec;
+          doc.add(new KnnFloatVectorField(def.id, indexedVector, def.vectorFieldType));
           count++;
         }
       }
@@ -498,14 +530,42 @@ public final class FieldMapper {
       for (JsonNode roleNode : n.withArray("roles")) roles.add(roleNode.asText());
       Integer dim = n.has("vector") ? n.path("vector").path("dimension").asInt() : null;
       if (dim != null && dim == 0) dim = null;
+      String vectorSimilarity =
+          n.has("vector") ? n.path("vector").path("similarity").asText("dot_product") : null;
       String analyzer = n.has("analyzer") ? n.path("analyzer").asText(null) : null;
       if (analyzer != null && analyzer.isBlank()) analyzer = null;
       boolean multiValued = n.path("multiValued").asBoolean(false);
       String rmwPolicy = n.has("rmwPolicy") ? n.path("rmwPolicy").asText(null) : null;
       if (rmwPolicy != null && rmwPolicy.isBlank()) rmwPolicy = null;
-      map.put(id, new FieldDef(id, type, stored, docValues, roles, dim, analyzer, multiValued, rmwPolicy));
+      map.put(
+          id,
+          new FieldDef(
+              id,
+              type,
+              stored,
+              docValues,
+              roles,
+              dim,
+              vectorSimilarity,
+              analyzer,
+              multiValued,
+              rmwPolicy));
     }
     return map;
+  }
+
+  private static VectorSimilarityFunction parseVectorSimilarity(String similarity) {
+    String normalized =
+        similarity == null || similarity.isBlank()
+            ? "dot_product"
+            : similarity.trim().toLowerCase(Locale.ROOT);
+    return switch (normalized) {
+      case "dot_product" -> VectorSimilarityFunction.DOT_PRODUCT;
+      case "cosine" -> VectorSimilarityFunction.COSINE;
+      case "euclidean" -> VectorSimilarityFunction.EUCLIDEAN;
+      case "maximum_inner_product" -> VectorSimilarityFunction.MAXIMUM_INNER_PRODUCT;
+      default -> throw new IllegalArgumentException("unsupported vector similarity: " + similarity);
+    };
   }
 
   /**

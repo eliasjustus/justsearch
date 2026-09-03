@@ -347,6 +347,36 @@ class BenchmarkUtilsTest {
     }
   }
 
+  @Test
+  void randomUnitVectorHasUnitMagnitude() {
+    float[] vector = BenchmarkUtils.randomUnitVector(new Random(42), 768);
+    double squaredNorm = 0.0;
+    for (float value : vector) {
+      squaredNorm += (double) value * value;
+    }
+    assertEquals(1.0, Math.sqrt(squaredNorm), 0.00001);
+  }
+
+  @Test
+  void l2NormalizedCopyNormalizesWithoutMutatingInput() {
+    float[] input = {3.0f, 4.0f};
+
+    float[] normalized = BenchmarkUtils.l2NormalizedCopy(input);
+
+    assertArrayEquals(new float[] {3.0f, 4.0f}, input);
+    assertArrayEquals(new float[] {0.6f, 0.8f}, normalized, 0.000001f);
+  }
+
+  @Test
+  void l2NormalizedCopyRejectsInvalidVectors() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> BenchmarkUtils.l2NormalizedCopy(new float[] {0.0f, 0.0f}));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> BenchmarkUtils.l2NormalizedCopy(new float[] {Float.NaN, 1.0f}));
+  }
+
   @Nested
   class HeapSnapshotTests {
 

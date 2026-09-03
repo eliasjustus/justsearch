@@ -2,7 +2,7 @@
 package io.justsearch.benchmarks;
 
 import tools.jackson.databind.ObjectMapper;
-import io.justsearch.adapters.lucene.runtime.JustSearchCodec;
+import io.justsearch.adapters.lucene.runtime.JustSearchCodecV2;
 import io.justsearch.benchmarks.util.BenchmarkUtils;
 import io.justsearch.benchmarks.util.MachineFingerprint;
 import java.io.IOException;
@@ -18,16 +18,16 @@ import java.util.Map;
 import java.util.Random;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.codecs.KnnVectorsFormat;
-import org.apache.lucene.codecs.lucene104.Lucene104HnswScalarQuantizedVectorsFormat;
-import org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.KnnFloatVectorField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.TieredMergePolicy;
+import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnFloatVectorQuery;
 import org.apache.lucene.search.Query;
@@ -51,13 +51,6 @@ public final class VectorQuantizationGate {
 
   private static final Logger log = LoggerFactory.getLogger(VectorQuantizationGate.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
-
-  // HNSW M=16: Number of bidirectional links per node (Lucene default)
-  // Higher M = better recall but slower builds and larger index
-  private static final int DEFAULT_M = 16;
-  // HNSW efConstruction=100: Build-time quality factor (Lucene default)
-  // Higher values improve recall at cost of slower indexing
-  private static final int DEFAULT_EF_CONSTRUCTION = 100;
 
   public static void main(String[] args) throws Exception {
     String outDir = "tmp/bench/quantization-gate";
@@ -95,7 +88,7 @@ public final class VectorQuantizationGate {
 
     // Random seed 999: Query vector generation
     // Different from corpus seed (123) to avoid query-in-corpus bias
-    float[] queryVector = BenchmarkUtils.randomVector(new Random(999), vectorDim);
+    float[] queryVector = BenchmarkUtils.randomUnitVector(new Random(999), vectorDim);
 
     List<Mode> modes =
         List.of(
@@ -157,13 +150,15 @@ public final class VectorQuantizationGate {
       // Step 1: index + commit
       KnnVectorsFormat format =
           mode.quantized
-              ? new Lucene104HnswScalarQuantizedVectorsFormat(DEFAULT_M, DEFAULT_EF_CONSTRUCTION)
-              : new Lucene99HnswVectorsFormat(DEFAULT_M, DEFAULT_EF_CONSTRUCTION);
+              ? JustSearchCodecV2.quantizedFormat()
+              : JustSearchCodecV2.float32Format();
+      FieldType vectorFieldType =
+          KnnFloatVectorField.createFieldType(vectorDim, VectorSimilarityFunction.DOT_PRODUCT);
 
       try (Directory dir = FSDirectory.open(indexPath)) {
         IndexWriterConfig cfg = new IndexWriterConfig(new StandardAnalyzer());
         cfg.setUseCompoundFile(mode.useCompoundFile);
-        cfg.setCodec(new JustSearchCodec(format));
+        cfg.setCodec(new JustSearchCodecV2(format));
         TieredMergePolicy mp = new TieredMergePolicy();
         if (mode.useCompoundFile) {
           mp.setNoCFSRatio(1.0);
@@ -184,7 +179,9 @@ public final class VectorQuantizationGate {
           for (int i = 0; i < docCount; i++) {
             Document d = new Document();
             d.add(new StringField("doc_id", "doc-" + i, Field.Store.YES));
-            d.add(new KnnFloatVectorField("vector", BenchmarkUtils.randomVector(rnd, vectorDim)));
+            d.add(
+                new KnnFloatVectorField(
+                    "vector", BenchmarkUtils.randomUnitVector(rnd, vectorDim), vectorFieldType));
             w.addDocument(d);
           }
           w.commit();

@@ -1,1 +1,2 @@
 io.justsearch.adapters.lucene.runtime.JustSearchCodec
+io.justsearch.adapters.lucene.runtime.JustSearchCodecV2

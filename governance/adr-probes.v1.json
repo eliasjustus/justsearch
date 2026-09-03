@@ -69,6 +69,14 @@
       ]
     },
     {
+      "id": "adr-0003-v2-vector-codec-default",
+      "adr": "0003",
+      "premise": "Direct Lucene production writes use the restart-safe JustSearchCodecV2 and select its quantized vector format by default.",
+      "kind": "test",
+      "file": "modules/adapters-lucene/src/test/java/io/justsearch/adapters/lucene/runtime/ComponentsFactoryTest.java",
+      "test": "io.justsearch.adapters.lucene.runtime.ComponentsFactoryTest#buildWithDefaultConfigUsesRestartSafeQuantizedCodec"
+    },
+    {
       "id": "adr-0004-gpu-mutual-exclusion",
       "adr": "0004",
       "premise": "Backfill yields the GPU when Main has claimed it, and the energy reason stays distinct from the VRAM-conflict reason.",

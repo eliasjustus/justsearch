@@ -242,6 +242,34 @@ public final class BenchmarkUtils {
     return v;
   }
 
+  /** Generate a deterministic random unit vector for DOT_PRODUCT benchmarks. */
+  public static float[] randomUnitVector(Random rnd, int dim) {
+    return l2NormalizedCopy(randomVector(rnd, dim));
+  }
+
+  /** Returns an L2-normalized copy suitable for DOT_PRODUCT benchmark fields and queries. */
+  public static float[] l2NormalizedCopy(float[] vector) {
+    if (vector == null || vector.length == 0) {
+      throw new IllegalArgumentException("vector must not be null or empty");
+    }
+    double squaredNorm = 0.0;
+    for (float value : vector) {
+      if (!Float.isFinite(value)) {
+        throw new IllegalArgumentException("vector values must be finite");
+      }
+      squaredNorm += (double) value * value;
+    }
+    if (!(squaredNorm > 0.0) || !Double.isFinite(squaredNorm)) {
+      throw new IllegalArgumentException("vector must have a finite, non-zero magnitude");
+    }
+    double inverseNorm = 1.0 / Math.sqrt(squaredNorm);
+    float[] normalized = new float[vector.length];
+    for (int i = 0; i < normalized.length; i++) {
+      normalized[i] = (float) (vector[i] * inverseNorm);
+    }
+    return normalized;
+  }
+
   /**
    * Snapshot of JVM heap memory state.
    *

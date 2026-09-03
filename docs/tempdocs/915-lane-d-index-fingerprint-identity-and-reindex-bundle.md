@@ -1,7 +1,7 @@
 ---
 title: "Lane D: one truthful index fingerprint, stable document identity, and the reindex bundle"
 type: tempdocs
-status: "PHASE 1 MERGED; PHASE 2 PR-A IMPLEMENTED AND LOCALLY VERIFIED, PR-B PENDING; PHASE 3 PR-C0 AND PR-C2 IMPLEMENTED AND SHORT-CHECKED, PR-C1 PENDING (2026-09-03). PR-C0's six-corpus evaluation, PR-C2's long storage/read-cost measurement, and PR-C1's overnight evidence campaign remain deferred and block their respective merges."
+status: "PHASE 1 MERGED; PHASE 2 PR-A IMPLEMENTED AND LOCALLY VERIFIED, PR-B PENDING; PHASE 3 PR-C0, PR-C2, AND PR-C1 IMPLEMENTED AND SHORT-CHECKED (2026-09-03). PR-C0's six-corpus evaluation, PR-C2's long storage/read-cost measurement, and PR-C1's multi-hour quality/recall campaign remain deferred and block their respective merges."
 created: 2026-09-03
 updated: 2026-09-03
 lane: D (decision re-examination programme, wave 2)
@@ -22,8 +22,8 @@ related:
 Lane D of the decision re-examination programme. The brief (`lane-D-index-identity-migration.md`,
 written before wave 1 merged) is the contract; every `file:line` in it was a hypothesis, and §B
 records what re-verification found. Phase 1 is merged. Phase 2 is split between the implemented
-Worker-side PR-A and the pending Head-side PR-B. Phase 3 PR-C0 and PR-C2 are implemented and
-short-checked; PR-C1 remains pending, and the deferred evidence campaigns still block merge.
+Worker-side PR-A and the pending Head-side PR-B. Phase 3 PR-C0, PR-C2, and PR-C1 are implemented and
+short-checked; their deferred evidence campaigns still block merge.
 
 ---
 
@@ -154,14 +154,21 @@ short-checked; PR-C1 remains pending, and the deferred evidence campaigns still 
       Execution evidence is recorded separately from this implementation checklist.
 - [x] B6b. PR-B owns the remaining label-store-survives-full-rebuild row.
 
-### Phase 3 — the reindex bundle, one migration for users (PR-C0/PR-C2 IMPLEMENTED; PR-C1 PENDING)
+### Phase 3 — the reindex bundle, one migration for users (PR-C0/PR-C2/PR-C1 IMPLEMENTED)
 
-- [ ] C1. Quantized vectors by default, with jseval nDCG@10 / recall@50 evidence (delta ≤ 1%
-      absolute), index size and RSS before/after; binary-quantized HNSW on `chunk_vector` as a
-      report-only experiment.
-- [ ] C2. Pin vector similarity: add `vector.similarity: dot_product` to both catalog copies,
-      construct the field with an explicit `FieldType`, add a unit-norm encoder test, recalibrate
-      the 702 thresholds with jseval evidence, update `SsotValidatorFingerprintTest`.
+- [x] C1a. Make quantized vectors the default through restart-safe `JustSearchCodecV2`; preserve the
+      legacy Float32 codec reader; pin unsigned-byte scalar encoding and the shared HNSW 16/200
+      defaults; cover Float32, Int8, mixed-segment, force-merge, and legacy-upgrade reopen paths.
+- [ ] C1b. Record jseval nDCG@10 / recall@50 evidence (delta ≤ 1% absolute), index size and RSS
+      before/after; run binary-quantized HNSW on `chunk_vector` as a report-only experiment.
+- [x] C2a. Pin `vector.similarity: dot_product` in both catalog copies, construct fields with an
+      explicit `FieldType`, enforce unit normalization at encoder and Lucene indexing/query
+      boundaries, move the 702 candidate thresholds into DOT_PRODUCT score space, and prove the
+      physical fingerprint moves in `CatalogPhysicalProjectionTest`. `SsotValidatorFingerprintTest`
+      is analyzer-only and is deliberately not the owner of this assertion.
+- [ ] C2b. Recalibrate/confirm the candidate thresholds with the registered scifact + legal jseval
+      comparison. Until that evidence passes, the defaults are implemented candidates, not accepted
+      quality conclusions.
 - [x] C3. Stop storing `chunk_content` (`stored:false`, still indexed); slice the parent `content`
       by `chunk_start_char`/`chunk_end_char`. Exact reconstruction and one-parent-read semantics are
       implemented and short-checked; the long per-hit stored-field/storage measurement is deferred
@@ -202,8 +209,8 @@ Verdict counts: **21 verified · 6 moved · 5 wrong · 1 superseded**.
 | 3b | `doc_uid` is `UUID.randomUUID()` on every write (`ChunkDocumentWriter.java:132`) | **verified**, and the parent too | `ChunkDocumentWriter.java:132`; parent at `IndexingDocumentOps.java:145` |
 | 3c | Rename rewrites parent plus up to 10,000 chunks (`WritePathOps.java:536-583`) | **verified** | `WritePathOps.updateDocumentPaths` spans `:536-592`; `searcher.search(chunkQuery, 10_000)` at `:569` |
 | 3d | Feedback/LambdaMART/GPL key on `docId` = path | **verified** | `LabelProjection.java:64`, `FeatureSnapshot.java:25`, `GplTrainingTripleStore.java:370`, `AgentDispositionWiring.java:106`; source is `SearchTool.java:388` (`parent_doc_id`, populated with the path at `WritePathOps.java:563`) |
-| 4 | `JustSearchCodec.java:28-66` — quantization demoted, no-arg constructor is float32 | **verified** | `JustSearchCodec.java:39-45`, `this(float32Format())` |
-| 5a | `FieldMapper.java:422-431` uses `new KnnFloatVectorField(id, vec)` (Lucene default EUCLIDEAN) | **verified** | `FieldMapper.java:428` |
+| 4 | `JustSearchCodec.java:28-66` — quantization demoted, no-arg constructor is float32 | **verified pre-change; superseded by §P3.F** | `JustSearchCodec.java:39-45`, `this(float32Format())` |
+| 5a | `FieldMapper.java:422-431` uses `new KnnFloatVectorField(id, vec)` (Lucene default EUCLIDEAN) | **verified pre-change; superseded by §P3.F** | `FieldMapper.java:428` |
 | 5b | Vectors L2-normalised by `OnnxEmbeddingEncoder:1062-1076` | **verified** | `OnnxEmbeddingEncoder.java:1062-1076`, `l2Normalize` |
 | 5c | `fields.v1.json:172-197` declares `dimension` only | **verified** | `:182` and `:195`; the only two `dimension` occurrences. Root and adapters-lucene copies are byte-identical (SHA-256 `ef8291…f18aa4`). |
 | 6a | `content` (`:53-62`) and `chunk_content` (`:301-308`) both `stored:true`; 62 of 67 fields stored | **verified exactly** | 67 fields, 62 with `stored:true` |
@@ -214,7 +221,7 @@ Verdict counts: **21 verified · 6 moved · 5 wrong · 1 superseded**.
 
 | # | Claim | Verdict | Evidence |
 |---|---|---|---|
-| D1 | `ComponentsFactory.java:179-186` `quantEnabled` default | **verified** | `:183`, `Boolean.TRUE.equals(idx.vectorQuantizationEnabled())` → false unless explicitly true |
+| D1 | `ComponentsFactory.java:179-186` `quantEnabled` default | **verified pre-change; superseded by §P3.F** | `:183`, `Boolean.TRUE.equals(idx.vectorQuantizationEnabled())` → false unless explicitly true |
 | D2 | `TextQueryOps.java:64-66,183-220` entity text-boost path | **verified** | `ENTITY_TEXT_FIELDS` `:63-66`; `resolveEntityBoost` / `combineMultiField` `:180-221` |
 | D3 | `HighlightingOps.java:63,66,278-307` reads chunk stored fields | **wrong** | `HighlightingOps.java` has **zero** references to `SchemaFields.CHUNK_CONTENT`. `:63`/`:66` read `CONTENT_PREVIEW`/`TITLE`/`CONTENT`; `:278-307` uses `CONTENT`. Chunk text arrives as a plain string parameter from the caller. **Phase 3 C3's consumer list is wrong here.** |
 | D4 | `RagContextOps.java:815-822,835,1044,1422` reads `chunk_content` | **wrong** | `:815`, `:835`, `:1044` read `SchemaFields.CONTENT` (whole-doc), not `CHUNK_CONTENT`. The single real `CHUNK_CONTENT` read is at `:1418` (`excerptTextFor`), with a `CONTENT` fallback at `:1422`. |
@@ -329,9 +336,9 @@ Per field, sorted by `id`: `id`, `type`, `stored`, `doc_values`, `multi_valued`,
 (`IndexFingerprint.effectiveVectorDimension()`), not the catalog's declared 768 — see §B.1 claim 1c
 for why the previous instance-setter approach was silently inconsistent.
 
-`vector.similarity` falls back to `"euclidean"`, which is what Lucene's two-arg
-`KnnFloatVectorField` constructor actually applies (`FieldMapper.java:428`). Recording the real
-default is what makes Phase 3's `dot_product` a genuine fingerprint change rather than a no-op.
+`vector.similarity` now falls back to `"dot_product"`, matching the explicit production field type.
+Before §P3.F, the two-arg `KnnFloatVectorField` constructor silently applied EUCLIDEAN; changing the
+catalog and construction together makes the Phase 3 transition a genuine fingerprint move.
 
 **`rmwPolicy` is excluded.** `FieldMapper.validateRmwPolicies` rejects an `rmwPolicy` on any stored
 or doc-values field, so by construction it can only describe fields that are never read back from
@@ -1309,7 +1316,7 @@ trigger-happy: with the shape unchanged it emits nothing (arm 4c, arm 5 second b
 
 Verbatim, arm 1 (`logs/arm1-worker-migration.log`), the O7 evidence line **before** the handler:
 
-```
+```text
 07:26:06.436 WARN PRE-OPEN PARITY_DIFF key=index_fingerprint stored=9814df37…3a3 expected=02353ae7…23b hint="The effective index shape changed (…). Reindex or run schema migration."
 07:26:06.578 WARN Schema mismatch detected on active generation …\indices\g-20260903-052152. Starting Blue/Green migration (policy=BLUE_GREEN_MIGRATE, attempt 1 of 3)...
 ```
@@ -1324,7 +1331,7 @@ byte-identical.
 Worker. `inspectCommittedParity` logs the non-fatal WARN and hands the question to the open, which
 recovers:
 
-```
+```text
 07:48:07.282 WARN Could not read committed parity metadata at …\g-20260903-054724 (IndexFormatTooOldException: …)
 07:48:07.344 WARN Corrupted index detected at …. Auto-recovery enabled, attempting backup-first rebuild...
 07:48:07.453 WARN Index at … was recovered to empty (reason=corrupt_index). Rebuilding from source via blue/green...
@@ -1500,7 +1507,7 @@ Fingerprint determinism held across heads: the same two values as round 1 — de
 **D1 — fixed, confirmed twice in opposite directions.** Mid-migration, the compat surface now reports
 the generation the user's searches actually reach. Arm 1 (09:08:39, Blue built at `HNSW_M=32`):
 
-```
+```text
 migrationState=MIGRATING  servingSearchGenerationId=g-20260903-070331  servingIngestGenerationId=g-20260903-070817
 indexSchemaFpStored=9814df378e0e…   <- BLUE's, not Green's
 indexSchemaFpCurrent=02353ae765fd…
@@ -1527,7 +1534,7 @@ verification` is gone.
 
 **D2 / D3 — fixed.** Braked state (arm 3b, worker connected, stable at t+20 s):
 
-```
+```text
 indexedDocuments=1005  searchableDocuments=1005  activeIndexedDocuments=1005   (round 1: 5 vs 205)
 indexSchemaFpStored=9814df378e0e…                                             (round 1: "")
 indexSchemaFpCurrent=02353ae765fd…  indexSchemaCompatState=BLOCKED_REBUILD_BRAKE
@@ -1574,7 +1581,7 @@ half of D.46 works; the Head half does not.**
 the whole supervision arc (boot 09:13:39, watched to a terminal state that then held unchanged for
 85 s):
 
-```
+```text
 09:13:41.361  NOT_READY  worker.spawn.failed
 09:13:52.132  DEGRADED   worker.recovering
 09:16:06.475  NOT_READY  worker.spawn_recovery_exhausted     <- terminal, stable through 09:17:31
@@ -1688,7 +1695,7 @@ Blue at `HNSW_M=32` as the round-2 pass, booted with `JUSTSEARCH_INDEX_SCHEMA_MI
 `knowledgeServerStartError = "Worker process crashed (exit code 1) before writing port to signal
 file"`. At this head, 2.6 s after boot:
 
-```
+```text
 readiness.components.workerControlPlane = NOT_READY / worker.index_schema_mismatch
 readiness.composites.retrieval          = NOT_READY / [worker.index_schema_mismatch, index.not_healthy, lambdamart.not_configured]
 knowledgeServerStartError = "The search index was built with a different index shape than this
@@ -1699,7 +1706,7 @@ knowledgeServerStartError = "The search index was built with a different index s
 **A6 — the ladder short-circuits.** One `Spawning worker:` for the whole boot, zero boot-recovery
 re-attempts, and the veto is narrated rather than silent (Head log, UTF-8):
 
-```
+```text
 10:15:20.313 INFO  Spawning worker: …                                   <- the only one
 10:15:21.537 WARN  Knowledge Server failed to start: The search index was built with a different index shape … (worker …
 10:15:31.538 ERROR Boot recovery declining to re-attempt: the worker refused with worker.index_schema_mismatch — the condition is on disk, so re-spawning would read the same bytes and refuse the same way
@@ -1714,7 +1721,7 @@ landing on `worker.spawn_recovery_exhausted` ~150 s in.
 `currentRecoveryInput(true)`, which withholds the `INDEX_FATAL` veto and clears the latched give-up
 for that veto only). Observed:
 
-```
+```text
 10:18:40.379  POST /api/worker/restart -> HTTP 202 {"recovery":"ACCEPTED","success":true}
 10:18:40.367  Boot recovery: re-attempting Knowledge Server start (1/4)     <- the give-up re-opened
 10:18:40.370  Spawning worker: …
@@ -1911,7 +1918,8 @@ change. The hour-scale Lane E benchmark campaign is deliberately not part of PR-
 The accepted order is PR-A → PR-C0 → PR-C2 → PR-C1 → lane E constants → PR-B. PR-C0 is deliberately
 fingerprint-neutral. PR-C2 and PR-C1 each move the fingerprint for independently attributable
 storage/codec changes; all fingerprint-moving PRs still land before one release so users pay for one
-rebuild. PR-C1 remains blocked by its codec/versioning work and 12–18 machine-hour evidence campaign.
+rebuild. PR-C1's codec/versioning work is implemented; its merge remains blocked by the deferred
+multi-hour evidence campaign.
 
 The hour-scale Lane E benchmarks are not PR-C0 verification and were not run. PR-C0's six-corpus
 multilingual comparison is also deferred for the current work window, but it is **not waived**: its
@@ -2008,5 +2016,77 @@ LLM-index, Markdown, tempdoc-number, and pre-merge-table checks pass.
 
 The hour-scale storage/read-cost benchmark was deliberately not run in this work window. No storage
 or latency reduction is claimed yet, and PR-C2 must not merge until that pre-registered measurement
-is run and recorded. PR-C1 and its 12–18 machine-hour codec/quality campaign remain entirely
-deferred; no PR-C1 implementation is claimed by this section.
+is run and recorded. PR-C1 is described separately in §P3.F; its quality campaign remains deferred.
+
+### §P3.F PR-C1 implementation, focused verification, and deferred evidence (2026-09-03)
+
+`JustSearchCodecV2` is a new Lucene SPI name whose vector format is always a
+`PerFieldKnnVectorsFormat`. New segments therefore persist the concrete vector format name and
+suffix needed to reopen them after a restart. The no-arg V2 writer selects unsigned-byte scalar
+quantization; an explicit `index.vector.quantization.enabled=false` selects Float32. Both use the
+fingerprint-owned HNSW defaults 16/200. The old `JustSearchCodec` SPI remains registered and keeps
+its no-arg Float32 reader so legacy Float32 segments remain readable. A legacy segment written as
+Int8 under the old outer-only name cannot be reconstructed generically and requires rebuild.
+
+The codec regression suite writes more than 100 documents per segment to both `vector` and
+`chunk_vector`, closes and reopens through SPI, performs real KNN queries, and checks persisted
+per-field format metadata. It covers V2 Float32, V2 Int8, mixed V2 segments consolidated by a
+force-merge, and a legacy Float32 → V2 Int8 upgrade/merge. `VectorFormatDetector` reads through the
+actual soft-deletion wrapper, requires complete and consistent known per-field format metadata, and
+fails closed on partial, unknown, or conflicting segment evidence. It uses commit metadata only when
+there are no vector-bearing segments; a text-only index can report the configured overall policy but
+still reports zero vector-segment counts.
+
+Both dense fields declare `dot_product` in the canonical and packaged field catalogs. `FieldMapper`
+constructs an explicit Lucene `FieldType`; BGE-M3 output plus the Worker query boundary and final
+Lucene indexing/query boundaries normalize dense vectors and reject zero/non-finite inputs. The
+physical-projection test, rather than the analyzer-only `SsotValidatorFingerprintTest`, proves a
+similarity change moves `index_fingerprint`. Candidate low-signal and arbitration thresholds are
+`0.40` and `0.50` in DOT_PRODUCT score space.
+
+The independent refute-first review found and drove fixes for the soft-deletion detector boundary,
+fail-closed classification tests, text-only observability, benchmark artifact configuration drift,
+benchmark sentinel normalization, effective-default commit metadata/fingerprint coverage, stale
+canonical codec prose, and an RMW fixture that could otherwise hide normalization. After those fixes,
+the full affected suite passed: **283 configuration tests**, **670 adapters-lucene tests**, **304
+worker-core tests** (16 skipped), **1,170 worker-services tests** (2 skipped), **108 benchmark tests**,
+and **17 ssot-tools tests**, all with zero failures or errors. `ssotValidate` also passed for five
+artifacts and four golden intents. The final repository-wide `build -x test` check passed, as did the
+LLM index, skill projection, canonical-link, module-boundary, runtime-configuration matrix, canonical
+Markdown, tempdoc Markdown, ADR coverage, SSOT catalog sync, locale-invariance, tempdoc-number, and
+pre-merge-table checks. This is implementation evidence, not quality acceptance.
+
+The short-run evidence pointers are the successful command outputs from:
+
+- `.\gradlew.bat :modules:configuration:test :modules:adapters-lucene:test
+  :modules:worker-core:test :modules:worker-services:test :modules:benchmarks:test
+  :modules:ssot-tools:test ssotValidate`; fresh JUnit XML is under each affected module's
+  `build/test-results/test/` directory.
+- `.\gradlew.bat build -x test`.
+- `node scripts/docs/llmstxt-generate.mjs --check`,
+  `node scripts/docs/skills-sync.mjs --check`,
+  `node scripts/docs/verify-canonical-doc-links.mjs`,
+  `node scripts/architecture/module-deps.mjs --check-canonical`, and
+  `node scripts/docs/verify-runtime-config-matrix.mjs`.
+- `npm run lint:md` and
+  `npx markdownlint docs/tempdocs/915-lane-d-index-fingerprint-identity-and-reindex-bundle.md`.
+- `node scripts/governance/run.mjs --gate adr-coverage --mode gate`,
+  `node scripts/governance/run.mjs --gate ssot-catalog-sync --mode gate`,
+  `node scripts/ci/check-language-agnostic-analysis.mjs`,
+  `node scripts/ci/check-tempdoc-numbers.mjs`, and
+  `node scripts/ci/check-premerge-table.mjs`.
+
+The deferred campaign remains a merge prerequisite and must use jseval where applicable:
+
+1. Compare Float32 and Int8 on scifact and Enron in hybrid and vector modes; require absolute
+   nDCG@10 and R@10 deltas ≤ 0.010, zero query errors, ANN proof, complete chunk coverage, and the
+   same corpus/query/config identity.
+2. Run `EngineVectorIndexBench` with recall@50 ≥ 97% for Float32 and Int8 no more than one absolute
+   point below it; report index bytes and process RSS before/after.
+3. Confirm the `0.40` / `0.50` similarity-space candidates on scifact and the legal corpus in hybrid
+   mode under the same comparability rules.
+4. Run `SINGLE_BIT_QUERY_NIBBLE` on `chunk_vector` as report-only evidence; it cannot become a
+   default from this campaign.
+
+A clean pass is expected to take roughly 3–4 machine-hours and 4–6 hours if reruns are needed. No
+quality, recall, storage, RSS, or latency improvement is claimed until those artifacts are recorded.

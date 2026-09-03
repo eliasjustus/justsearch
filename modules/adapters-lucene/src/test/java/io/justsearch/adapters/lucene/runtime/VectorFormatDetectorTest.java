@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.KnnFloatVectorField;
@@ -27,8 +28,8 @@ class VectorFormatDetectorTest {
   private static final int VECTOR_DIM = 8; // Small dimension for tests
 
   @Test
-  @DisplayName("Detects Float32 format from commit metadata")
-  void detectsFloat32FormatFromMetadata() throws Exception {
+  @DisplayName("Detects Float32 format from segment metadata")
+  void detectsFloat32FormatFromSegments() throws Exception {
     Path indexPath = tempDir.resolve("float32-index");
     Files.createDirectories(indexPath);
 
@@ -56,14 +57,14 @@ class VectorFormatDetectorTest {
   }
 
   @Test
-  @DisplayName("Detects Int8 scalar-quantized format from commit metadata")
-  void detectsQuantizedFormatFromMetadata() throws Exception {
+  @DisplayName("Detects Int8 scalar-quantized format from segment metadata")
+  void detectsQuantizedFormatFromSegments() throws Exception {
     Path indexPath = tempDir.resolve("quantized-index");
     Files.createDirectories(indexPath);
 
     try (FSDirectory dir = FSDirectory.open(indexPath)) {
       IndexWriterConfig config = new IndexWriterConfig();
-      config.setCodec(new JustSearchCodec(JustSearchCodec.quantizedFormat()));
+      config.setCodec(new JustSearchCodecV2(JustSearchCodecV2.quantizedFormat()));
 
       try (IndexWriter writer = new IndexWriter(dir, config)) {
         Document doc = new Document();
@@ -104,6 +105,36 @@ class VectorFormatDetectorTest {
 
         // Empty index with metadata should return the format from metadata
         assertEquals("FLOAT32", summary.overallState());
+      }
+    }
+  }
+
+  @Test
+  @DisplayName("Metadata fallback does not relabel text-only leaves as vector segments")
+  void metadataFallbackKeepsTextOnlySegmentCountsAtZero() throws Exception {
+    Path indexPath = tempDir.resolve("text-only-index");
+    Files.createDirectories(indexPath);
+
+    try (FSDirectory dir = FSDirectory.open(indexPath)) {
+      IndexWriterConfig config = new IndexWriterConfig();
+      config.setCodec(new JustSearchCodecV2());
+
+      try (IndexWriter writer = new IndexWriter(dir, config)) {
+        Document doc = new Document();
+        doc.add(new StringField("id", "text-only", Field.Store.YES));
+        writer.addDocument(doc);
+        writer.setLiveCommitData(Map.of("vector_format", "int8_sq").entrySet());
+        writer.commit();
+      }
+
+      try (DirectoryReader reader = DirectoryReader.open(dir)) {
+        assertFalse(reader.leaves().isEmpty(), "precondition: the text-only index has a segment");
+        VectorFormatDetector.Summary summary = VectorFormatDetector.inspect(reader);
+
+        assertEquals("INT8_SQ", summary.overallState());
+        assertEquals(0, summary.float32Count());
+        assertEquals(0, summary.quantizedCount());
+        assertTrue(summary.segments().isEmpty());
       }
     }
   }
@@ -156,7 +187,7 @@ class VectorFormatDetectorTest {
 
     try (FSDirectory dir = FSDirectory.open(indexPath)) {
       IndexWriterConfig config = new IndexWriterConfig();
-      config.setCodec(new JustSearchCodec(JustSearchCodec.quantizedFormat()));
+      config.setCodec(new JustSearchCodecV2(JustSearchCodecV2.quantizedFormat()));
       config.setUseCompoundFile(true); // CFS enabled
 
       try (IndexWriter writer = new IndexWriter(dir, config)) {
@@ -173,7 +204,7 @@ class VectorFormatDetectorTest {
       try (DirectoryReader reader = DirectoryReader.open(dir)) {
         VectorFormatDetector.Summary summary = VectorFormatDetector.inspect(reader);
 
-        // Detection via commit metadata works regardless of CFS
+        // Segment metadata remains readable inside compound files.
         assertEquals("INT8_SQ", summary.overallState());
       }
     }
@@ -214,6 +245,27 @@ class VectorFormatDetectorTest {
         assertEquals(2, summary.segments().size());
       }
     }
+  }
+
+  @Test
+  void segmentClassificationFailsClosedForMissingUnknownOrConflictingFieldFormats() {
+    String float32 = JustSearchCodecV2.float32Format().getName();
+    String int8 = JustSearchCodecV2.quantizedFormat().getName();
+
+    assertEquals(
+        VectorFormatDetector.FormatType.UNKNOWN,
+        VectorFormatDetector.resolveSegmentFormat(List.of(float32), 2, float32),
+        "a recognized sibling must not hide a vector field with missing metadata");
+    assertEquals(
+        VectorFormatDetector.FormatType.UNKNOWN,
+        VectorFormatDetector.resolveSegmentFormat(List.of("future-hnsw-format"), 1, float32));
+    assertEquals(
+        VectorFormatDetector.FormatType.UNKNOWN,
+        VectorFormatDetector.resolveSegmentFormat(List.of(float32, int8), 2, float32));
+    assertEquals(
+        VectorFormatDetector.FormatType.FLOAT32,
+        VectorFormatDetector.resolveSegmentFormat(List.of(), 2, float32),
+        "legacy codec fallback applies only when every vector field lacks per-field metadata");
   }
 
   private static float[] randomVector() {

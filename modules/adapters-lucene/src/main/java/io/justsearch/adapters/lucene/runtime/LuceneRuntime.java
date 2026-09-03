@@ -82,8 +82,7 @@ public sealed interface LuceneRuntime extends AutoCloseable
 
   /** Configured vector format ("float32" or "int8_sq") from resolved config. */
   default String configuredVectorFormat() {
-    Boolean enabled = resolvedConfig().index().vectorQuantizationEnabled();
-    return Boolean.TRUE.equals(enabled) ? "int8_sq" : "float32";
+    return resolvedConfig().index().vectorQuantizationEnabledOrDefault() ? "int8_sq" : "float32";
   }
 
   /** Stored vector format from commit metadata; empty for legacy indexes. */

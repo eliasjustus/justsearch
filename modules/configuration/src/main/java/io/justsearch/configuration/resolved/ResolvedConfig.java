@@ -656,7 +656,7 @@ public record ResolvedConfig(
    * @param vectorHnswM HNSW M parameter
    * @param vectorHnswEfConstruction HNSW ef_construction parameter
    * @param vectorEfSearch ef_search parameter
-   * @param vectorQuantizationEnabled whether vector quantization is enabled
+   * @param vectorQuantizationEnabled whether vector quantization is enabled (default true)
    * @param indexAutoRecovery whether auto-recovery is enabled for corrupted index
    * @param schemaMismatchPolicy schema mismatch handling policy
    * @param indexIntegrityCheck open-time integrity verification tier ({@code OFF} / {@code STRUCTURAL}
@@ -743,6 +743,11 @@ public record ResolvedConfig(
           : DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION;
     }
 
+    /** Whether the effective write format is Int8 scalar-quantized HNSW (default true). */
+    public boolean vectorQuantizationEnabledOrDefault() {
+      return !Boolean.FALSE.equals(this.vectorQuantizationEnabled());
+    }
+
     public Index {
       sort = sort != null ? List.copyOf(sort) : List.of();
       boosts = boosts != null
@@ -826,9 +831,9 @@ public record ResolvedConfig(
    * @param vectorCandidateMultiplier vector candidate multiplier
    * @param vectorRrfWeight vector RRF weight
    * @param bm25ScoreBoostWeight additive BM25 score boost weight
-   * @param vectorLowSignalTopScoreThreshold low-signal vector top-score threshold (EUCLIDEAN score
-   *     space — the dense field is EUCLIDEAN, not cosine; default 0.294 corresponds to intended
-   *     cosine-score 0.40, tempdoc 702)
+   * @param vectorLowSignalTopScoreThreshold low-signal vector top-score threshold (DOT_PRODUCT
+   *     score space; unit-normalized embeddings make the default 0.40 the intended cosine-score
+   *     boundary directly, tempdoc 702/915)
    * @param bm25LowSignalTopScoreThreshold low-signal BM25 top-score threshold
    * @param bm25LowSignalTotalHitsThreshold low-signal BM25 total-hits threshold
    * @param vectorOnlyCapLowSignal max vector-only docs in low-signal fusion

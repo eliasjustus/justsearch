@@ -18,6 +18,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.FeatureField;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.index.DocValuesType;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -102,11 +103,27 @@ class FieldMapperTest {
   void mapsVectorWithDimensionCheck() {
     // Use a catalog with dim=4 and a matching 4-dim vector
     FieldMapper fm = new FieldMapper(createTestCatalog(4));
-    float[] vec = new float[4];
+    float[] vec = {3.0f, 4.0f, 0.0f, 0.0f};
     Map<String, Object> in = Map.of("vector", vec);
     Document doc = fm.toDocument(in);
     assertNotNull(doc);
     assertTrue(doc.getFields().size() >= 1);
+    assertEquals(
+        VectorSimilarityFunction.DOT_PRODUCT,
+        doc.getField("vector").fieldType().vectorSimilarityFunction(),
+        "the catalog similarity must reach Lucene through an explicit vector FieldType");
+  }
+
+  @Test
+  void rejectsZeroAndNonFiniteVectorsForDotProduct() {
+    FieldMapper fm = new FieldMapper(createTestCatalog(4));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> fm.toDocument(Map.of("vector", new float[4])));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> fm.toDocument(Map.of("vector", new float[] {Float.NaN, 0.0f, 0.0f, 0.0f})));
   }
 
   @Test
@@ -165,7 +182,8 @@ class FieldMapperTest {
     // Use a catalog with dim=4 and a matching 4-element list
     FieldMapper fm = new FieldMapper(createTestCatalog(4));
     List<Double> lst = new ArrayList<>();
-    for (int i = 0; i < 4; i++) lst.add(0.0);
+    lst.add(1.0);
+    for (int i = 1; i < 4; i++) lst.add(0.0);
     Map<String, Object> in =
         Map.of(
             "vector", lst,
@@ -217,7 +235,7 @@ class FieldMapperTest {
     assertEquals(Integer.valueOf(16), dim16Mapper.ssotVectorDimensionOrNull());
 
     // 4-dim vector should work with dim4Mapper but fail with dim16Mapper
-    float[] vec4 = new float[4];
+    float[] vec4 = {1.0f, 0.0f, 0.0f, 0.0f};
     Map<String, Object> in = Map.of("vector", vec4);
 
     assertNotNull(dim4Mapper.toDocument(in), "4-dim vector should work with dim=4 catalog");

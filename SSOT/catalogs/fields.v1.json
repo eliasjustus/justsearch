@@ -179,7 +179,8 @@
       ],
       "rmwPolicy": "preserve-reread-or-reset:embedding_status",
       "vector": {
-        "dimension": 768
+        "dimension": 768,
+        "similarity": "dot_product"
       }
     },
     {
@@ -192,7 +193,8 @@
       ],
       "rmwPolicy": "preserve-reread-or-reset:chunk_embedding_status",
       "vector": {
-        "dimension": 768
+        "dimension": 768,
+        "similarity": "dot_product"
       }
     },
     {
