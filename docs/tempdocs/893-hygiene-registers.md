@@ -208,7 +208,8 @@ version in the register is forbidden.
 
 Lifecycle policy is a discriminated value, because the evidence has different shapes:
 
-- `fixed-date`: a vendor publishes a support end, so `supportUntil` is meaningful;
+- `fixed-date`: a vendor publishes a calendar support horizon, so `supportUntil` is meaningful at
+  the source's stated day or month precision;
 - `release-relative`: support ends when a named successor is released, as with Gradle minors;
 - `rolling`: the supported product follows a modern/current-version policy with no announced end;
 - `compatibility-matrix`: support is the intersection of two authorities, as for CUDA toolkit and
@@ -606,6 +607,12 @@ six were fixed and the same reviewer confirmed no residual actionable defect in 
   focused capture has zero accessibility violations and no overflow.
 - [x] Run the live Head capture, then make Java and Node OpenAPI pretty-printing byte-identical so the
   live projection also passes the offline regeneration check.
+- [x] Preserve source date precision in platform evidence: Temurin publishes `At least Sep 2031`, so
+  the register carries `2031-09` and the checker evaluates month precision conservatively from the
+  first day rather than inventing a September 30 deadline.
+- [x] Accept the targeted W23 hardening found during workaround disposition: production bootstrap now
+  ignores file-backed fake-capability overrides. The source Javadoc, threat model, and regression test
+  describe the same production boundary.
 
 ## V. Implementation and verification record (2026-09-03)
 

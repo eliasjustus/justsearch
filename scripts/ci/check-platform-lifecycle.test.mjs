@@ -95,6 +95,18 @@ test('support within warning window and evidence inside grace are warnings, not 
   assert.equal(shouldFail('gate', result), false);
 });
 
+test('month-precision support horizons preserve vendor precision and check from month start', () => {
+  const register = clone(fixtures.evaluationRegister);
+  register.platforms = register.platforms.filter((row) => row.id === 'fixed');
+  register.platforms[0].policy.supportUntil = '2026-10';
+  const result = evaluateRegister(register, {
+    readSource: reader({ 'fixed.kt': fixtures.evaluationSources['fixed.kt'] }),
+    asOf: fixtures.asOf,
+  });
+  assert.equal(result.findings[0]?.severity, 'warning');
+  assert.match(result.findings[0]?.message ?? '', /month precision, checked from month start/);
+});
+
 test('evidence overdue exactly at the declared grace is a failure', () => {
   const register = clone(fixtures.evaluationRegister);
   const rolling = register.platforms.find((row) => row.id === 'rolling');

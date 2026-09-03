@@ -18,7 +18,7 @@
       "reviewBy": "2027-03-03",
       "policy": {
         "kind": "fixed-date",
-        "supportUntil": "2031-09-30"
+        "supportUntil": "2031-09"
       },
       "note": "Temurin is the distribution installed by repository CI; Oracle commercial support dates are not used."
     },

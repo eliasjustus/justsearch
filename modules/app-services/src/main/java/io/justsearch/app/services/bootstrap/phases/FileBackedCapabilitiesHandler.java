@@ -12,8 +12,9 @@ import java.util.Objects;
 
 /**
  * Tempdoc 519 §10 final-push: extracted from {@code HeadAssembly}. Test fixture path that
- * serves a static JSON file at {@code /infra/capabilities}. Used when the test sysprop
- * {@code app.api.fake_capabilities} or env var {@code APP_API_FAKE_CAPABILITIES} is set.
+ * serves a static JSON file at {@code /infra/capabilities}. Used outside production when the test
+ * sysprop {@code app.api.fake_capabilities} or env var {@code APP_API_FAKE_CAPABILITIES} is set.
+ * Production bootstrap ignores both overrides and always uses the live capabilities controller.
  */
 public final class FileBackedCapabilitiesHandler implements HttpHandler {
 

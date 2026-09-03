@@ -70,6 +70,14 @@ function isoDate(value, context) {
   return date;
 }
 
+function supportHorizon(value, context) {
+  requiredString(value, context);
+  if (/^\d{4}-\d{2}$/.test(value)) {
+    return { date: isoDate(`${value}-01`, context), precision: 'month' };
+  }
+  return { date: isoDate(value, context), precision: 'day' };
+}
+
 function httpsUrl(value, context) {
   requiredString(value, context);
   let parsed;
@@ -96,7 +104,7 @@ function validatePolicy(policy, context) {
   switch (policy.kind) {
     case 'fixed-date':
       exactKeys(policy, ['kind', 'supportUntil'], context);
-      isoDate(policy.supportUntil, `${context}.supportUntil`);
+      supportHorizon(policy.supportUntil, `${context}.supportUntil`);
       break;
     case 'release-relative':
       exactKeys(policy, ['kind', 'successorVersion', 'successorObservedOn'], context);
@@ -371,20 +379,27 @@ export function evaluateRegister(register, { readSource, asOf }) {
     }
 
     if (row.policy.kind === 'fixed-date') {
-      const supportDays = daysBetween(today, isoDate(row.policy.supportUntil, `${row.id}.supportUntil`));
+      const horizon = supportHorizon(row.policy.supportUntil, `${row.id}.supportUntil`);
+      const supportDays = daysBetween(today, horizon.date);
+      const precisionNote =
+        horizon.precision === 'month' ? '; month precision, checked from month start' : '';
       if (supportDays <= 0) {
         findings.push({
           id: row.id,
           category: 'support',
           severity: 'failure',
-          message: `published support horizon reached (supportUntil ${row.policy.supportUntil})`,
+          message:
+            `published support horizon reached (supportUntil ${row.policy.supportUntil}` +
+            `${precisionNote})`,
         });
       } else if (supportDays <= register.supportWarningDays) {
         findings.push({
           id: row.id,
           category: 'support',
           severity: 'warning',
-          message: `published support horizon is ${supportDays} day(s) away (supportUntil ${row.policy.supportUntil})`,
+          message:
+            `published support horizon is ${supportDays} day(s) away ` +
+            `(supportUntil ${row.policy.supportUntil}${precisionNote})`,
         });
       }
     } else if (row.policy.kind === 'release-relative') {

@@ -17,7 +17,7 @@ exactly one pin.
 
 | Kind | Use when |
 |---|---|
-| `fixed-date` | The vendor publishes an absolute support end date. |
+| `fixed-date` | The vendor publishes an absolute support horizon, at day or month precision. |
 | `release-relative` | Support ends when a successor release appears. |
 | `rolling` | The vendor supports only the continuously updated/current line. |
 | `compatibility-matrix` | Compatibility depends on an intersection of versions rather than one EOL date. |
@@ -27,6 +27,11 @@ Every row declares an evidence owner, primary source URL, evidence-check date,
 review deadline, live pin source, and one policy shape. Missing, malformed,
 ambiguous, stale, or unsupported evidence is a finding; unknown policy and
 adapter kinds are invalid input and fail closed.
+
+`fixed-date.supportUntil` preserves the vendor's published precision: `YYYY-MM-DD`
+for a stated day or `YYYY-MM` for a stated month. Month-precision horizons are
+evaluated from the first day of that month. This deliberately warns early rather
+than inventing an unsupported last-day claim.
 
 ## Running the check
 
