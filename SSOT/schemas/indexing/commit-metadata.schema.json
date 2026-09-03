@@ -5,7 +5,6 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_ver",
     "schema_fp",
     "field_catalog_hash",
     "synonyms_hash",
@@ -13,18 +12,19 @@
     "grammar_hash",
     "template_ver",
     "prompt_pack_hash",
-    "analyzer_fp",
     "build_state",
     "commit_id",
     "commit_time"
   ],
   "properties": {
-    "schema_ver": { "type": "string" },
     "schema_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "field_catalog_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "index_schema_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "synonyms_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "analyzer_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "index_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 over the canonical JSON of the effective physical index shape: catalog schema version, per-field physical projection (type/stored/docValues/multiValued/analyzer/roles/vector dimension+similarity), analyzer fingerprint, vector storage format, HNSW build parameters, chunking parameters, and the embedding + SPLADE model digests. The one rebuild-requiring parity key. Absent when a configured model's digest could not be resolved, because an indeterminate input must not be stamped as an identity (tempdoc 915)."
+    },
     "similarity_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "boosts_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "dag_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },

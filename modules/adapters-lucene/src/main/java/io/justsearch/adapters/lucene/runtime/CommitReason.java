@@ -36,6 +36,8 @@ public enum CommitReason {
   BACKFILL_COMBINED("backfill/combined"),
   BACKFILL_COMBINED_FINAL("backfill/combined-final"),
   BACKFILL_BGE_M3("backfill/bge-m3"),
+  MIGRATION_CUTOVER("migration/cutover"),
+  SWITCH_BUFFER_REPLAY("migration/switch-buffer-replay"),
   UNKNOWN("unknown");
 
   private static final Map<String, CommitReason> BY_WIRE;

@@ -54,21 +54,23 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
           log.warn(diff.marker());
         }
         if (allowMismatch()) {
+          // Operator escape hatch. Nothing sets this by default any more: the Head used to set it
+          // unconditionally at two sites, which is why the guard never enforced anything for its
+          // whole life (tempdoc 804, tempdoc 915 §C). It stays reachable so an operator can open a
+          // known-divergent index read-only for diagnosis, and nothing else.
           log.warn("Parity mismatch detected but {}=true; continuing in WARN mode.", ALLOW_MISMATCH_PROP);
           return;
         }
-        // A mismatch on a rebuild-requiring key (analyzer_fp / index_schema_fp / schema_ver) means
-        // the index content was built with different analysis/field-schema than the current SSOT
-        // catalogs. Surface it as SCHEMA_MISMATCH so RuntimeSession's recovery wrapper rebuilds the
-        // index (backup-first) on upgrade instead of crashing the worker — the same treatment a
-        // field-schema change already gets (tempdoc 581 §13). Query-time-only keys (similarity_fp /
-        // boosts_fp) do not require a reindex and stay read-only until the config is realigned.
+        // A mismatch on index_fingerprint means the bytes on disk were written under a different
+        // effective physical shape than this runtime produces. Surface it as SCHEMA_MISMATCH so the
+        // recovery path acts on it: under the production default BLUE_GREEN_MIGRATE the Worker
+        // builds a Green generation while Blue keeps serving reads (tempdoc 915 §C). boosts_fp is
+        // query-time config — it stays read-only until the config is realigned, never a reindex.
         if (ParityDiagnostics.requiresRebuild(diffs)) {
           throw new IndexRuntimeIOException(
               IndexRuntimeIOException.Reason.SCHEMA_MISMATCH,
-              "Index built with different analyzer/schema metadata than the current SSOT catalogs"
-                  + " (parity mismatch on a rebuild-requiring key). Triggering schema-mismatch"
-                  + " recovery to rebuild the index.",
+              "Index was built with a different effective index shape than this runtime produces"
+                  + " (index_fingerprint mismatch). Triggering schema-mismatch recovery.",
               null);
         }
         throw new IllegalStateException("Shard is read-only due to parity mismatch");

@@ -349,7 +349,6 @@ public class HeadlessApp {
 
   private static InfraPhaseResult setupInfra(ConfigPhaseResult configPhase) {
     System.setProperty("justsearch.infra.health.grpc.disable", "true");
-    System.setProperty("justsearch.index.parity.allow_mismatch", "true");
     System.setProperty("justsearch.infra.health.port", "0");
 
     Path dataDir = configPhase.dataDir();
@@ -779,8 +778,6 @@ public class HeadlessApp {
     long tPrev;
     log.info("Starting JustSearch HeadlessApp...");
 
-    // In sidecar contexts we prefer to keep going even when index parity is off (dev/demo usage).
-    System.setProperty("justsearch.index.parity.allow_mismatch", "true");
     // Avoid infra health port conflicts; allow ephemeral bind.
     System.setProperty("justsearch.infra.health.port", "0");
     System.setProperty("justsearch.infra.health.host", "127.0.0.1");

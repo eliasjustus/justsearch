@@ -8,15 +8,13 @@ import java.util.regex.Pattern;
 /** Minimal validator that enforces required keys and hex-format constraints. */
 public final class RequiredFieldsCommitMetadataValidator implements CommitMetadataValidator {
   private static final String[] REQUIRED = new String[] {
-      "schema_ver",
       "schema_fp",
       "field_catalog_hash",
       "synonyms_hash",
       "grammar_ver",
       "grammar_hash",
       "template_ver",
-      "prompt_pack_hash",
-      "analyzer_fp"
+      "prompt_pack_hash"
   };
 
   private static final Pattern HEX64 = Pattern.compile("^[a-f0-9]{64}$");
@@ -33,8 +31,13 @@ public final class RequiredFieldsCommitMetadataValidator implements CommitMetada
     checkHex(metadata, "synonyms_hash");
     checkHex(metadata, "grammar_hash");
     checkHex(metadata, "prompt_pack_hash");
-    checkHex(metadata, "analyzer_fp");
     checkInt(metadata, "template_ver");
+    // index_fingerprint is optional-but-well-formed: absent means an input was indeterminate and
+    // no fingerprint could be computed truthfully (IndexFingerprint's tri-state). Present means it
+    // must be a real digest, so a malformed one cannot pass itself off as an identity.
+    if (metadata.containsKey(IndexFingerprint.COMMIT_META_KEY)) {
+      checkHex(metadata, IndexFingerprint.COMMIT_META_KEY);
+    }
   }
 
   private static void checkHex(Map<String, Object> m, String key) {

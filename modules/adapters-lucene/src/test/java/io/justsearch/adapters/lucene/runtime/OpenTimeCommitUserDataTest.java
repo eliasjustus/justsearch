@@ -49,14 +49,14 @@ class OpenTimeCommitUserDataTest {
   }
 
   @Test
-  void openTimeSnapshotPreservesOriginalSchemaFp(@TempDir Path dir) throws Exception {
+  void openTimeSnapshotPreservesOriginalIndexFingerprint(@TempDir Path dir) throws Exception {
     CommitMetadataValidator validator = new JsonSchemaCommitMetadataValidator();
 
     // Phase 1: Create an index with a bogus schema fingerprint.
     CommitMetadataSource bogusMeta =
         () -> {
           Map<String, Object> m = new java.util.HashMap<>(new SsotCommitMetadataSource().build());
-          m.put("index_schema_fp", BOGUS_SCHEMA_FP);
+          m.put("index_fingerprint", BOGUS_SCHEMA_FP);
           return m;
         };
     var first = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), bogusMeta, validator).atPath(dir).open();
@@ -80,10 +80,10 @@ class OpenTimeCommitUserDataTest {
     assertFalse(openTime.isEmpty(), "Open-time snapshot must not be empty");
     assertEquals(
         BOGUS_SCHEMA_FP,
-        openTime.get("index_schema_fp"),
+        openTime.get("index_fingerprint"),
         "Open-time snapshot must contain the original (bogus) schema fingerprint");
 
-    // Now index a doc and commit — this overwrites the stored schema_fp with the real one.
+    // Now index a doc and commit — this overwrites the stored fingerprint with the real one.
     second
         .indexingCoordinator()
         .indexSingle(
@@ -93,7 +93,7 @@ class OpenTimeCommitUserDataTest {
 
     // The latest commit now has the real fingerprint (different from bogus).
     Map<String, String> latest = second.latestCommitUserDataBestEffort();
-    String latestFp = latest.get("index_schema_fp");
+    String latestFp = latest.get("index_fingerprint");
     assertNotEquals(
         BOGUS_SCHEMA_FP,
         latestFp,
@@ -103,7 +103,7 @@ class OpenTimeCommitUserDataTest {
     Map<String, String> openTimeAfterCommit = second.openTimeCommitUserData();
     assertEquals(
         BOGUS_SCHEMA_FP,
-        openTimeAfterCommit.get("index_schema_fp"),
+        openTimeAfterCommit.get("index_fingerprint"),
         "Open-time snapshot must be immutable — still the bogus fingerprint after new commits");
 
     second.close();

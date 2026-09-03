@@ -4,7 +4,9 @@ package io.justsearch.indexerworker.server.ops;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import io.grpc.stub.StreamObserver;
+import io.justsearch.adapters.lucene.commit.IndexFingerprint;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
+import io.justsearch.adapters.lucene.runtime.CommitReason;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntime;
 import io.justsearch.adapters.lucene.runtime.RunningRuntime;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
@@ -221,7 +223,10 @@ public final class KnowledgeServerMigrationOps {
           // Phase 5 (folded into Phase 2-3 Step C): commitWithBuildState replaces the
           // setBuildState + commit two-step. Updates ctx.buildState then commits, so
           // the final commit (and any subsequent timer commit) stamps build_state=COMPLETE.
-          ingestLifecycle.commitOps().commitWithBuildState(LuceneRuntimeTypes.BuildState.COMPLETE);
+          ingestLifecycle
+              .commitOps()
+              .commitWithBuildState(
+                  LuceneRuntimeTypes.BuildState.COMPLETE, CommitReason.MIGRATION_CUTOVER);
         } catch (Exception e) {
           context.log().warn(
               "Migration cutover failed: final commit failed (keeping Blue): {}", e.getMessage());
@@ -303,8 +308,8 @@ public final class KnowledgeServerMigrationOps {
 
   /**
    * Pure verification of a green generation's committed user-data (the IO-free core of
-   * {@link #verifyGreenCommitMetadataBestEffort}). Package-private so the build-state / schema-fp /
-   * embedding-fp rules can be unit-tested without a (sealed) {@link LuceneRuntime} double.
+   * {@link #verifyGreenCommitMetadataBestEffort}). Package-private so the build-state /
+   * index-fingerprint / embedding-fp rules can be unit-tested without a (sealed) {@link LuceneRuntime} double.
    */
   static boolean verifyGreenMetadata(
       java.util.Map<String, String> ud, String expectedEmbeddingFp, Logger log) {
@@ -313,18 +318,27 @@ public final class KnowledgeServerMigrationOps {
       log.warn("Green verification failed: build_state={} (expected COMPLETE)", buildState);
       return false;
     }
-    String committedSchemaFp = ud.get("index_schema_fp");
-    String expectedSchemaFp =
-        String.valueOf(new SsotCommitMetadataSource().build().get("index_schema_fp"));
-    if (committedSchemaFp == null || committedSchemaFp.isBlank()) {
-      log.warn("Green verification failed: committed index_schema_fp is missing");
+    String committedFingerprint = ud.get(IndexFingerprint.COMMIT_META_KEY);
+    Object expectedRaw = new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY);
+    String expectedFingerprint = expectedRaw == null ? null : String.valueOf(expectedRaw);
+    if (committedFingerprint == null || committedFingerprint.isBlank()) {
+      log.warn("Green verification failed: committed index_fingerprint is missing");
       return false;
     }
-    if (!Objects.equals(committedSchemaFp, expectedSchemaFp)) {
+    if (expectedFingerprint == null || expectedFingerprint.isBlank()) {
+      // This runtime cannot compute a truthful fingerprint right now, so it cannot attest that the
+      // green it just built is the shape it meant to build. Refuse the promotion rather than
+      // promote on an absence of evidence; the cutover retries on the next boot.
       log.warn(
-          "Green verification failed: index_schema_fp mismatch committed={} expected={}",
-          committedSchemaFp,
-          expectedSchemaFp);
+          "Green verification failed: this runtime could not compute an expected index_fingerprint"
+              + " (a configured model digest is unresolvable)");
+      return false;
+    }
+    if (!Objects.equals(committedFingerprint, expectedFingerprint)) {
+      log.warn(
+          "Green verification failed: index_fingerprint mismatch committed={} expected={}",
+          committedFingerprint,
+          expectedFingerprint);
       return false;
     }
     // 598 R3: embedding fingerprint — only enforced when an embedding model is resolvable.
@@ -768,7 +782,15 @@ public final class KnowledgeServerMigrationOps {
 
     if (mutatedLucene && context.ingestLifecycle() != null) {
       try {
-        context.ingestLifecycle().commitOps().commit();
+        // Tempdoc 912 item 2: this used to call the low-level CommitOps.commit(), which skips the
+        // per-reason counter, the pendingDocs reset, the commit telemetry and the
+        // CommitCompletedListener that keeps EmbeddingCompatibilityController's fingerprint in
+        // sync. The low-level primitive is package-private now, so this bypass is a compile error
+        // rather than an allowlist entry.
+        context
+            .ingestLifecycle()
+            .commitOps()
+            .commitAndTrack(CommitReason.SWITCH_BUFFER_REPLAY);
       } catch (Exception e) {
         allApplied = false;
         context.log().warn("Failed to commit buffered DELETE ops (will retry later): {}", e.getMessage());

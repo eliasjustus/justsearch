@@ -24,10 +24,11 @@ import org.junit.jupiter.api.Test;
  * attribution wrong (`audit-without-test`).
  *
  * <p>Scope limit, stated rather than implied: ArchUnit sees this module's classes, and
- * {@code IndexWriter} write access is confined to this module. The one bypass that lives elsewhere
- * — {@code KnowledgeServerMigrationOps} calling the low-level {@link CommitOps#commit()} in
- * {@code modules/indexer-worker} — is outside this importer's reach and stays a routed open item
- * (912 §D.2).
+ * {@code IndexWriter} write access is confined to this module. The one bypass that used to live
+ * outside that reach — {@code KnowledgeServerMigrationOps} in {@code modules/indexer-worker}
+ * calling the low-level {@code CommitOps.commit()} — is closed by construction rather than by this
+ * rule: {@code commit()} is package-private, so no other module can call it at all (tempdoc 915,
+ * closing 912 §D.2). Making the bypass impossible beats widening an allowlist.
  */
 class CommitFunnelArchTest {
 
@@ -82,7 +83,7 @@ class CommitFunnelArchTest {
   }
 
   /**
-   * The low-level {@link CommitOps#commit()} commits without touching the counter or telemetry —
+   * The low-level {@code CommitOps.commit()} commits without touching the counter or telemetry —
    * it exists for {@code commitAndTrack} to build on. Nothing else in this module may call it, so
    * the funnel stays the only in-module way to produce a counted commit.
    */

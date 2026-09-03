@@ -41,7 +41,7 @@ import org.junit.jupiter.api.io.TempDir;
  * Disabled in CI: This test spawns servers and has environment dependencies
  * that don't work reliably on CI runners.
  */
-@DisplayName("Schema mismatch contract: /api/status exposes reindexRequired (index_schema_fp)")
+@DisplayName("Schema mismatch contract: /api/status exposes reindexRequired (index_fingerprint)")
 @DisabledIfEnvironmentVariable(named = "CI", matches = "true")
 // 120s, not 60s: setUp uses the Head's own bounded worker-start retry, whose worst case is three
 // spawn+validate rounds. A budget that a legal slow path can exceed turns a diagnosable failure
@@ -285,7 +285,7 @@ final class SchemaMismatchStatusContractTest {
             (proxy, method, args) -> {
               if ("build".equals(method.getName()) && method.getParameterCount() == 0) {
                 Map<String, Object> m = new HashMap<>(new SsotCommitMetadataSource().build());
-                m.put("index_schema_fp", bogusFp);
+                m.put("index_fingerprint", bogusFp);
                 return Map.copyOf(m);
               }
               throw new UnsupportedOperationException("Unexpected CommitMetadataSource method: " + method);

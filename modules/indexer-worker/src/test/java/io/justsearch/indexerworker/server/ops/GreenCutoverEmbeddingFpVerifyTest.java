@@ -25,14 +25,14 @@ class GreenCutoverEmbeddingFpVerifyTest {
   private static final String EMBED_KEY = EmbeddingCompatibilityController.COMMIT_META_KEY;
 
   /** The real current schema fingerprint, so the schema check passes and we isolate the embed check. */
-  private static String schemaFp() {
-    return String.valueOf(new SsotCommitMetadataSource().build().get("index_schema_fp"));
+  private static String indexFingerprint() {
+    return String.valueOf(new SsotCommitMetadataSource().build().get("index_fingerprint"));
   }
 
   private static Map<String, String> completeGreen() {
     Map<String, String> ud = new HashMap<>();
     ud.put("build_state", "COMPLETE");
-    ud.put("index_schema_fp", schemaFp());
+    ud.put("index_fingerprint", indexFingerprint());
     return ud;
   }
 

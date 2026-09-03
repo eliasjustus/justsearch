@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.indexerworker.services;
 
+import io.justsearch.adapters.lucene.commit.IndexFingerprint;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
@@ -1096,7 +1097,8 @@ final class IndexStatusOps {
 
   private String safeSchemaFingerprintCurrent() {
     try {
-      Object fp = new SsotCommitMetadataSource().build().get("index_schema_fp");
+      Object fp =
+          new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY);
       return fp == null ? "" : String.valueOf(fp);
     } catch (Exception e) {
       log.debug("Failed to get current schema fingerprint: {}", e.getMessage());
@@ -1119,7 +1121,7 @@ final class IndexStatusOps {
       if (ud == null) {
         return "";
       }
-      String fp = ud.get("index_schema_fp");
+      String fp = ud.get(IndexFingerprint.COMMIT_META_KEY);
       return fp == null ? "" : fp;
     } catch (Exception e) {
       log.debug("Failed to get stored schema fingerprint: {}", e.getMessage());
@@ -1132,10 +1134,12 @@ final class IndexStatusOps {
     String stored = safeSchemaFingerprintStored();
 
     if (current.isEmpty()) {
+      // This runtime could not compute a truthful fingerprint (a configured model's digest was
+      // unresolvable). UNAVAILABLE, never COMPATIBLE — an absent answer is not a clean bill.
       return "UNAVAILABLE";
     }
     if (stored.isEmpty()) {
-      // Legacy index without schema fingerprint
+      // Legacy index without a fingerprint, or one committed while an input was indeterminate.
       // Check if there are any docs - if so, it's a legacy index needing reindex
       long docCount = ingestCountOps == null ? 0 : ingestCountOps.docCount();
       return docCount > 0 ? "BLOCKED_LEGACY" : "COMPATIBLE";

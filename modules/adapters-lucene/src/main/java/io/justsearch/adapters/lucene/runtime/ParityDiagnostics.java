@@ -12,21 +12,30 @@ import java.util.Set;
 public final class ParityDiagnostics {
   private ParityDiagnostics() {}
 
+  /**
+   * The two keys that describe an index's identity: {@code index_fingerprint} — the effective
+   * physical shape, a mismatch on which means the bytes on disk cannot be what this runtime would
+   * write — and {@code boosts_fp}, query-time scoring config that is worth reporting but never
+   * worth a reindex.
+   *
+   * <p>Tempdoc 915 §C replaced five keys with these two. {@code schema_ver} tracked the
+   * search-intent grammar version and could never fire; {@code index_schema_fp} hashed the catalog
+   * <em>file</em>, so annotation-only edits demanded a reindex of a physically compatible index
+   * (tempdoc 804); {@code analyzer_fp} and the vector dimension are now inputs to
+   * {@code index_fingerprint} rather than separate keys; {@code similarity_fp} (BM25 k1/b) is
+   * query-time and was demoted to plain observability.
+   */
   public static final Set<String> PARITY_KEYS =
-      Set.of("analyzer_fp", "schema_ver", "similarity_fp", "boosts_fp", "index_schema_fp");
+      Set.of(io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY, "boosts_fp");
 
   /**
-   * Parity keys whose mismatch means the on-disk index <em>content</em> was built with different
-   * analysis or field schema than the current SSOT catalogs — so the only correct response is to
-   * rebuild the index. A mismatch on one of these is routed into {@code SCHEMA_MISMATCH}
-   * auto-recovery (backup-first rebuild) instead of marking the shard read-only, so an
-   * analyzer/schema-catalog change migrates transparently on upgrade rather than crashing the
-   * worker (tempdoc 581 §13). The remaining parity keys ({@code similarity_fp}, {@code boosts_fp})
-   * are query-time scoring config that does <em>not</em> require reindexing, so they stay
-   * read-only until the config is realigned.
+   * Parity keys whose mismatch means the on-disk index <em>content</em> was built with a different
+   * physical shape than this runtime produces — so the only correct response is to rebuild. A
+   * mismatch here is routed into {@code SCHEMA_MISMATCH}, which under the production default
+   * {@code BLUE_GREEN_MIGRATE} builds a Green generation while Blue keeps serving reads.
    */
   public static final Set<String> REBUILD_REQUIRING_KEYS =
-      Set.of("analyzer_fp", "schema_ver", "index_schema_fp");
+      Set.of(io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY);
 
   /**
    * True if any of the supplied diffs is on a {@link #REBUILD_REQUIRING_KEYS rebuild-requiring}
@@ -43,20 +52,24 @@ public final class ParityDiagnostics {
 
   private static final Map<String, String> PARITY_HINTS =
       Map.of(
-          "analyzer_fp", "Regenerate analyzers via SSOT tools and rebuild the index.",
-          "schema_ver", "Refresh SSOT schemas and rerun commit metadata generation.",
-          "similarity_fp", "Align BM25 similarity settings in `config/application.yaml`.",
-          "boosts_fp", "Align `index.boosts` configuration with committed SSOT metadata.",
-          "index_schema_fp", "Index schema changed (field catalog/mapping). Reindex or run schema migration.");
+          io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY,
+              "The effective index shape changed (field catalog, analyzers, vector format/dimension,"
+                  + " HNSW build params, chunking, or an embedding/SPLADE model). Reindex or run"
+                  + " schema migration.",
+          "boosts_fp", "Align `index.boosts` configuration with committed SSOT metadata.");
 
   public static List<Diff> diff(Map<String, String> stored, Map<String, Object> expected) {
     List<Diff> diffs = new ArrayList<>();
     for (String key : PARITY_KEYS) {
       String storedRaw = asString(stored == null ? null : stored.get(key));
       String expectedRaw = asString(expected == null ? null : expected.get(key));
-      // Back-compat: legacy indexes may not have newer parity keys stamped yet.
-      // Treat missing stored values as "unknown" rather than a hard mismatch.
-      if ("index_schema_fp".equals(key) && (storedRaw == null || storedRaw.isBlank())) {
+      // Tri-state, both directions. A blank side is "unknown", never "different":
+      //  - stored blank  -> a legacy index predating this key, or one committed while an input was
+      //    unresolvable;
+      //  - expected blank -> this runtime could not compute a truthful fingerprint (a configured
+      //    model's digest was unreadable — IndexFingerprint returns empty rather than guessing).
+      // Reporting either as a mismatch would spend a full rebuild on an absence of evidence.
+      if (isBlank(storedRaw) || isBlank(expectedRaw)) {
         continue;
       }
       if (!Objects.equals(storedRaw, expectedRaw)) {
@@ -70,6 +83,10 @@ public final class ParityDiagnostics {
       }
     }
     return List.copyOf(diffs);
+  }
+
+  private static boolean isBlank(String value) {
+    return value == null || value.isBlank();
   }
 
   private static String asString(Object value) {

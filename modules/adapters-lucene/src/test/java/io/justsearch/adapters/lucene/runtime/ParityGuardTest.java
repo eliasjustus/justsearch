@@ -22,49 +22,6 @@ class ParityGuardTest {
     @Override public Map<String, Object> build() { return new SsotCommitMetadataSource().build(); }
   }
 
-  static class BadMeta implements CommitMetadataSource {
-    private final Map<String, Object> base;
-    BadMeta() { this.base = new SsotCommitMetadataSource().build(); }
-    @Override public Map<String, Object> build() {
-      Map<String, Object> m = new HashMap<>(base);
-      // Flip similarity_fp only (a query-time scoring key) to a different value (64 hex chars).
-      // similarity_fp is NOT a rebuild-requiring key, so the guard marks the shard read-only
-      // rather than triggering a rebuild (tempdoc 581 §13). Rebuild-requiring keys (analyzer_fp,
-      // index_schema_fp, schema_ver) are covered by parityGuardTriggersRebuildOnAnalyzerMismatch.
-      m.put("similarity_fp", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-      return m;
-    }
-  }
-
-  @Test
-  void parityGuardMarksReadOnlyOnMismatch() throws Exception {
-    Path dir = Files.createTempDirectory("lucene-parity-test");
-    CommitMetadataValidator validator = new JsonSchemaCommitMetadataValidator();
-
-    // First runtime writes a commit with GOOD metadata
-    var r1 = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new GoodMeta(), validator).atPath(dir).open();
-    r1.indexingCoordinator().indexSingle(
-        new IndexDocument(
-            Map.of(SchemaFields.DOC_ID, "parity-1", SchemaFields.DOC_UID, "parity-1#0")));
-    r1.commitOps().commitAndTrack();
-    r1.close();
-
-    // Second runtime with BAD metadata: open() runs the parity guard and throws.
-    var e =
-        assertThrows(
-            IllegalStateException.class,
-            () ->
-                io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
-                        FieldCatalogDef.forTesting(768), new BadMeta(), validator)
-                    .atPath(dir)
-                    .open());
-    assertTrue(e.getMessage().contains("read-only"));
-    assertTrue(
-        e.getMessage().contains("metadata") || e.getMessage().contains("mismatch")
-            || e.getMessage().contains("analyzer_fp") || e.getMessage().contains("similarity_fp"),
-        "error should mention metadata mismatch, got: " + e.getMessage());
-  }
-
   @Test
   void parityGuardAllowsWritesWhenMetadataMatches() throws Exception {
     Path dir = Files.createTempDirectory("lucene-parity-ok");
@@ -123,10 +80,10 @@ class ParityGuardTest {
   }
 
   @Test
-  void parityGuardTriggersRebuildOnAnalyzerMismatch() throws Exception {
-    // A mismatch on a rebuild-requiring key (analyzer_fp) must surface as SCHEMA_MISMATCH so the
-    // RuntimeSession recovery wrapper rebuilds the index (backup-first) instead of crashing the
-    // worker read-only — analyzer/schema-catalog changes migrate transparently (tempdoc 581 §13).
+  void parityGuardTriggersRebuildOnFingerprintMismatch() throws Exception {
+    // A mismatch on index_fingerprint must surface as SCHEMA_MISMATCH so the recovery path acts on
+    // it — under the production default that means blue/green, with Blue still serving reads
+    // (tempdoc 915 §C). This is the half of the two-key split that costs a rebuild.
     Path dir = Files.createTempDirectory("lucene-parity-rebuild");
     CommitMetadataValidator validator = new JsonSchemaCommitMetadataValidator();
 
@@ -138,15 +95,17 @@ class ParityGuardTest {
     r1.commitOps().commitAndTrack();
     r1.close();
 
-    // Drive the guard directly with an expected analyzer_fp that differs from what was stored.
+    // Drive the guard directly with an expected fingerprint that differs from what was stored.
     Map<String, Object> expected = new HashMap<>(new SsotCommitMetadataSource().build());
-    expected.put("analyzer_fp", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expected.put(
+        "index_fingerprint", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     IndexMetadataParityGuard guard = new IndexMetadataParityGuard(() -> dir, () -> expected);
 
     var e = assertThrows(IndexRuntimeIOException.class, guard::checkOnOpen);
     assertEquals(
         IndexRuntimeIOException.Reason.SCHEMA_MISMATCH,
         e.reason(),
-        "analyzer_fp mismatch must surface as SCHEMA_MISMATCH so recovery rebuilds, not read-only");
+        "index_fingerprint mismatch must surface as SCHEMA_MISMATCH so recovery rebuilds,"
+            + " not read-only");
   }
 }

@@ -88,6 +88,17 @@ public final class ChunkSplitter {
     }
   }
 
+  /**
+   * Version of the splitting <em>algorithm</em>, as opposed to its tunable sizes. Bump it whenever
+   * a change here would put existing chunk documents at different boundaries even with the token
+   * counts unchanged — new boundary patterns, a different token estimator, a changed CJK rule.
+   *
+   * <p>It is an {@code index_fingerprint} input (tempdoc 915 §C): chunk boundaries are on-disk
+   * shape, so a silent algorithm change would otherwise leave an index whose chunks no longer match
+   * what the runtime would produce, with nothing to detect it.
+   */
+  public static final String ALGORITHM_VERSION = "v1";
+
   /** Default target chunk size in tokens (~1.3 tokens per word). */
   public static final int DEFAULT_CHUNK_TOKENS = 500;
 

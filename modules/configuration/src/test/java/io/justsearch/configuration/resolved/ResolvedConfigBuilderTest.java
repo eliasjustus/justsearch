@@ -1481,13 +1481,18 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
-    @DisplayName("null/blank defaults to FAIL_CLOSED in prod mode")
-    void nullDefaultsToFailClosedInProd() {
+    @DisplayName("null/blank defaults to BLUE_GREEN_MIGRATE in prod mode")
+    void nullDefaultsToBlueGreenInProd() {
+      // Tempdoc 915 §C. The old FAIL_CLOSED default meant a schema-changing upgrade left a
+      // production user with an index that refused to open and no way forward; blue/green keeps
+      // the existing index serving reads while the new one is built beside it. Asserted on the
+      // exact value, not merely "not FAIL_CLOSED", so a future accidental flip to
+      // REBUILD_BACKUP_FIRST (which destroys the old index) fails here.
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.putDefault("justsearch.prod", "true");
 
       ResolvedConfig config = builder.build();
-      assertEquals("FAIL_CLOSED", config.index().schemaMismatchPolicy());
+      assertEquals("BLUE_GREEN_MIGRATE", config.index().schemaMismatchPolicy());
     }
   }
 

@@ -69,12 +69,11 @@ final class NdjsonSpanExporter implements SpanExporter {
       // commit metadata snapshot; governs runtime index identity.
       "commit.schema_fp",
       "commit.field_catalog_hash",
-      "commit.analyzer_fp",
       "commit.synonyms_hash",
       "commit.grammar_hash",
       "commit.similarity_fp",
       "commit.boosts_fp",
-      "commit.index_schema_fp",
+      "commit.index_fingerprint",
       // Per-ORT-call span attrs (400 LR2-a). Emitted on encoder.ort_run spans
       // produced by OnnxEmbeddingEncoder, SpladeEncoder, BertNerInference,
       // and BgeM3Encoder around each ai.onnxruntime.OrtSession#run call.

@@ -18,7 +18,10 @@ import io.justsearch.indexerworker.WorkerConfig;
 import io.justsearch.indexerworker.coordination.MmfWorkerSignalBus;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
+import io.justsearch.adapters.lucene.commit.IndexFingerprint;
+import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.indexerworker.embed.EmbeddingFingerprint;
+import io.justsearch.indexerworker.splade.SpladeFingerprint;
 import io.justsearch.indexerworker.embed.EmbeddingConfig;
 import io.justsearch.indexerworker.embed.EmbeddingMetadataOverlay;
 import io.justsearch.indexerworker.embed.EmbeddingService;
@@ -504,6 +507,19 @@ public final class KnowledgeServer implements Closeable {
 
       logConfiguration();
 
+      // The embedding and SPLADE model digests are index_fingerprint inputs, but they are only
+      // knowable in the Worker's model modules. Install them process-wide BEFORE the first commit
+      // metadata is built, so the commit path, the parity guard's expected snapshot and the
+      // green-cutover verification all compute the same fingerprint (tempdoc 915 §C). Tri-state:
+      // a resolvable model file with an unreadable digest is INDETERMINATE, not absent.
+      IndexFingerprint.installModelFingerprintProviders(
+          () ->
+              IndexFingerprint.ModelFingerprint.of(
+                  EmbeddingFingerprint.modelPath().isPresent(), EmbeddingFingerprint.get()),
+          () ->
+              IndexFingerprint.ModelFingerprint.of(
+                  SpladeFingerprint.modelPath().isPresent(), SpladeFingerprint.get()));
+
       // 4. Initialize Lucene runtimes.
       // - searchLifecycle serves queries (Blue during migration)
       // - ingestLifecycle performs all writes (Green during migration; Active when not migrating)
@@ -635,11 +651,34 @@ public final class KnowledgeServer implements Closeable {
           String schemaMismatchPolicy = rc.index().schemaMismatchPolicy();
           if (e.reason() == IndexRuntimeIOException.Reason.SCHEMA_MISMATCH
               && "blue_green_migrate".equalsIgnoreCase(schemaMismatchPolicy)) {
+            // Repeat-rebuild brake. A green that never finishes leaves the same mismatch on the
+            // next boot, so an unbounded auto-start rebuilds forever. The budget is per target
+            // fingerprint, so a later, different upgrade is not refused for an earlier one's
+            // failures. Recorded BEFORE the rebuild starts: a build that crashes the process must
+            // still spend its attempt (tempdoc 915 §C).
+            String targetFingerprint =
+                String.valueOf(
+                    new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY));
+            int attempt = genManager.recordAutoRebuildAttempt(targetFingerprint);
+            if (attempt > IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS) {
+              log.error(
+                  "Schema mismatch on active generation {}, but {} automatic rebuilds for the same"
+                      + " target fingerprint have already been attempted. Refusing to start"
+                      + " another; an operator must rebuild the index, or clear auto_rebuild_count"
+                      + " in state.json to grant a fresh budget.",
+                  activeIndexPath,
+                  IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
+                  e);
+              throw e;
+            }
             // Auto-start Blue/Green migration on schema mismatch when enabled.
             log.warn(
-                "Schema mismatch detected on active generation {}. Starting Blue/Green migration (policy={})...",
+                "Schema mismatch detected on active generation {}. Starting Blue/Green migration"
+                    + " (policy={}, attempt {} of {})...",
                 activeIndexPath,
                 schemaMismatchPolicy,
+                attempt,
+                IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
                 e);
 
             // Blue: open existing index in read-only mode for serving search.
@@ -1524,23 +1563,22 @@ public final class KnowledgeServer implements Closeable {
       log.info("Field catalog: vector dimension overridden to 1024 (BGE-M3 active)");
     }
 
-    // Create metadata source with dimension override for schema fingerprint
+    // The same dimension the FieldMapper above builds vector fields with, published process-wide
+    // so index_fingerprint records the dimension actually in force rather than the catalog's
+    // declared 768 (tempdoc 915 §C). This used to be an instance setter on one
+    // SsotCommitMetadataSource, so the status surface's own fresh instance computed a different
+    // fingerprint than the commit path did — a near-miss of exactly the kind this key exists to
+    // eliminate.
     final int effectiveDimension = "bge-m3".equalsIgnoreCase(sparseModel) ? 1024 : 0;
+    IndexFingerprint.installEffectiveVectorDimension(
+        () -> effectiveDimension > 0 ? effectiveDimension : null);
 
     // Create runtime with embedding + SPLADE fingerprint overlays
     java.util.function.Supplier<io.justsearch.indexing.runtime.CommitMetadataSource>
         metadataSupplier =
-            () -> {
-              var ssot =
-                  new io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource();
-              if (effectiveDimension > 0) {
-                ssot.setVectorDimensionOverride(effectiveDimension);
-              }
-              return new EmbeddingMetadataOverlay(
-                  ssot,
-                  fingerprintSupplier,
-                  io.justsearch.indexerworker.splade.SpladeFingerprint::get);
-            };
+            () ->
+                new EmbeddingMetadataOverlay(
+                    new SsotCommitMetadataSource(), fingerprintSupplier, SpladeFingerprint::get);
 
     IndexSchema schema =
         new IndexSchema(
