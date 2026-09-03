@@ -1,6 +1,6 @@
 ---
 title: "Wave-2 kernel residue — declared growth must re-pin in the same diff; wire the hermetic kernel gates into CI"
-status: "IMPLEMENTED (2026-09-03) — both items landed with tests, a live bite test and a 20-gate census"
+status: "IMPLEMENTED (2026-09-03) — both items landed with tests, a live bite test and a 20-gate census; independent review round applied (§C.7)"
 created: 2026-09-03
 updated: 2026-09-03
 supersedes: []
@@ -228,8 +228,10 @@ step (`:272-276`) whose pattern #617 established:
 - `scripts/wire-contract/package-lock.json` added to the `Setup Node` `cache-dependency-path`
   (`:70`) so the buf install is cached like the other two.
 
-Registered-gate CI coverage goes **15 → 33 of 35**; the two that remain are `ts-any` and
-`test-efficacy`, both with a stated blocker (§D).
+Registered-gate CI coverage goes **15 → 33 of 35**, and the arithmetic reconciles after the review
+moved three gates rather than dropping them: 15 wired on the base, **+14** (hermetic step) **+1**
+(`wire`) **+3** (registry-snapshot step in the unit-tests lane) = 33. The two that remain are
+`ts-any` and `test-efficacy`, both with a stated blocker (§D).
 
 ### C.6 — One pin field added
 
@@ -241,6 +243,64 @@ the consequence: `ts-any` is the one gate excluded from the hermetic CI step *be
 so the counting fix has a consumer instead of a backstop date. (`fixOwner` is in `ALLOWED_PIN_KEYS`,
 `known-state-hint.test.mjs:99`, registered by 910 §F.10.)
 
+### C.7 — Independent-review round (2026-09-03, PR #619 → NEEDS-FIXES)
+
+Three findings I should have caught, each a green that measured nothing — the same class this
+tempdoc is about, turned on its own work.
+
+**B1 — three of my "hermetic" gates inspected nothing.** `consumer-presence`, `host-owns-truth` and
+`runtime-witness` all read `tmp/consumer-presence/registry-snapshot.json`, a **Gradle** artifact
+(`RegistrySnapshotExporterTest`), and **soft-fail to `pass`** when it is absent
+(`consumer-presence/enforcer.mjs:36-46`). `public-claims` runs no Gradle, so all three were
+permanent vacuous greens. **The evidence was in my own §F and I read past it:** the step logged
+`17 gates evaluated, 0 fail, 15 findings` — 12 `consumer-drift` notes plus exactly three
+`snapshot-missing` warnings. I recorded the number and never asked what the findings were. Fixed by
+moving the three into the `unit-tests` **app-ui** lane, which already runs `:modules:app-services:test`
+(the producer), behind the same anti-vacuous assertion the `wire` step uses. Depth-1 checkout is
+sufficient: none of the three resolves a git baseline (registry: `diffStrategy: "none"` / no baseline).
+
+**B2 — `test-to-code` could not fail.** `gates/test-to-code/baseline.txt` was **0 bytes**, and
+`enforcer.mjs:107` reads `const base = baseline.get(mod) ?? cur` — every floor equalled its own
+measurement, so the gate I wired into CI was structurally incapable of any verdict but `pass`.
+Seeded with 32 module rows **derived by the gate's own `--rebalance` path** rather than by a
+reimplementation of `moduleRatio`: a sentinel floor of `-1` per candidate module makes every
+*measured* module a rebalance target, and the modules that keep `-1` are exactly the ones the gate
+does not measure (no `src/main`, or zero main LOC), which are then dropped. No changeset was
+required — `cur == base` is not a regression, and this gate has no baseline-shift block — and
+nothing turned red. F9 is the positive control that the ratchet is now real.
+
+**B3 — `--explain` was broken for 6 of the 11 repin ids.** `explain.mjs` reads only the
+registry-declared `ruleDescriptions` MODULE, and `config-surface`, `todo-fixme`, `npm-audit`,
+`test-efficacy`, `style-literal-ratchet` and `atom-fork-ratchet` merge `repinRuleDescription` into
+the enforcer's **return value**. So `--explain` printed "No description registered" and the
+`-without-repin` remedy block I added in the same PR sat *after* the `if (!description) return` bail,
+unreachable for those six. Fixed with a fallback resolving the description from the rule module
+itself, gated on the same "does this gate wire the rule" predicate `repin-coverage.test.mjs` uses,
+so an exempt gate does not get a fabricated rule. Now asserted for all 11 ids plus one negative.
+
+**S1** — the factory called `repinFinding` without `measured`/`livePin`, so both ratchet-factory
+gates emitted "The baseline in … does not carry this row" for rows that DO exist. Threaded through,
+and the two `detect()` shapes are now handled explicitly (style-literal carries a per-class `cls`;
+atom-fork does not). **S2** — the step is now genuinely above `npm ci --prefix modules/ui-web`, so
+CI demonstrates hermeticity instead of the comment asserting it. **S3** — the "a pin raise without a
+changeset fails" sentence was false for five gates and for new rows; rewritten in
+`discipline-gate-kernel.md` as an explicit list of what is and is not enforced.
+
+**Nits:** the now-unreachable `ts-any/declared-growth` description deleted with a note;
+`config-surface` units are per-metric (`yaml_keys` is not "config keys"); the `git-utils.mjs` range
+corrected; `atom-fork-ratchet` driven for real rather than assumed equivalent to its factory
+sibling; the census's "1 note" rows corrected to `warning`.
+
+### C.7a — Ride-along: `covers.mjs` retired
+
+`scripts/governance/lib/covers.mjs` + `covers.test.mjs` deleted. The tempdoc 576 §4
+bounded-exception protocol never gained a second consumer: its only one, the `ui-bundle` gate, was
+removed for go-public (tempdoc 634), and the lift-out outlived it — no `covers:` frontmatter exists
+anywhere in `gates/` or `contracts/`, and the only importer was its own test. The prose mention at
+`docs/tempdocs/576-enforcement-strength-ladder.md:500` is labelled RETIRED in the same commit
+(`retire-with-a-sweep`). This was §G.4 of the first round, routed rather than fixed; the review
+decided it.
+
 ## §D — The 20-gate census
 
 Measured on the untouched base `39d38f73`, each gate run bare:
@@ -251,23 +311,23 @@ against checked-in files alone.
 
 | # | Gate | Base result | Runtime | Inputs needed | Decision | Where wired / why not |
 |---|---|---|---|---|---|---|
-| 1 | `consumer-drift` | pass (12 notes) | 1400 ms | none | (a) wire | ci.yml "Hermetic kernel gates" |
-| 2 | `consumer-presence` | pass (1 note) | 90 ms | none | (a) wire | same step |
+| 1 | `consumer-drift` | pass (12 notes) | 1400 ms | none | (a) wire | ci.yml `public-claims` → "Hermetic kernel gates (14…)" |
+| 2 | `consumer-presence` | pass **vacuously** — 1 `warning` `consumer-presence/snapshot-missing`, verdict `pass` by soft-fail (`enforcer.mjs:36-46`) | 90 ms | `tmp/consumer-presence/registry-snapshot.json` — a **Gradle** artifact (`RegistrySnapshotExporterTest`, `modules/app-services`) | (a) wire, but **in the Gradle lane** | ci.yml `unit-tests` app-ui lane → "Registry-snapshot gates", after `:modules:app-services:test`, + an assertion that `snapshot-missing` is absent |
 | 3 | `contract-projection` | pass | 635 ms | none | (a) wire | same step |
 | 4 | `contribution-surface` | pass | 218 ms | none | (a) wire | same step |
-| 5 | `hook-integrity` | pass | 2090 ms | none (reads tracked `.claude/**`; passes with `settings.local.json` absent) | (a) wire | same step |
-| 6 | `host-owns-truth` | pass (1 note) | 98 ms | none | (a) wire | same step |
+| 5 | `hook-integrity` | pass | 2090 ms | none (reads tracked `.claude/**`; passes with `settings.local.json` absent) | (a) wire | same hermetic step |
+| 6 | `host-owns-truth` | pass **vacuously** — 1 `warning` `host-owns-truth/snapshot-missing` | 98 ms | same registry snapshot | (a) wire, **in the Gradle lane** | same "Registry-snapshot gates" step |
 | 7 | `interaction-surface` | pass | 410 ms | none | (a) wire | same step |
 | 8 | `observed-happening` | pass | 410 ms | none | (a) wire | same step |
 | 9 | `prose-tier-register` | pass | 440 ms | none | (a) wire | same step |
 | 10 | `runtime-state` | pass | 680 ms | none | (a) wire | same step |
-| 11 | `runtime-witness` | pass (1 note) | 95 ms | none | (a) wire | same step |
+| 11 | `runtime-witness` | pass **vacuously** — 1 `warning` `runtime-witness/snapshot-missing` | 95 ms | same registry snapshot | (a) wire, **in the Gradle lane** | same "Registry-snapshot gates" step |
 | 12 | `ssot-catalog-sync` | pass | 275 ms | none | (a) wire | same step |
 | 13 | `stage-completeness` | pass | 235 ms | none | (a) wire | same step |
 | 14 | `surface-altitude` | pass | 272 ms | none | (a) wire | same step |
 | 15 | `tempdoc-wiring` | pass | 210 ms | none | (a) wire | same step |
 | 16 | `test-to-code` | pass | 400 ms | none | (a) wire | same step |
-| 17 | `todo-fixme` | pass | 458 ms | none | (a) wire | same step |
+| 17 | `todo-fixme` | pass | 458 ms | none | (a) wire | same hermetic step |
 | 18 | `wire` | pass **vacuously** (`contract-governance/buf-cli-missing`, verdict still pass) | 251 ms bare | buf CLI — `npm ci --prefix scripts/wire-contract`, 2 packages, committed lockfile, ~1 s | (a) wire **with its install** | ci.yml "Wire contract gate", + a SARIF assertion that `buf-cli-missing` is absent |
 | 19 | `ts-any` | **fail** — 5 × `ts-any/silent-growth` | 381 ms | none | (b) do not wire red | pin `ts-any-gate-counts-english-prose` (exists; `fixOwner` added). Blocked by: `countAny` (`gates/ts-any/enforcer.mjs:29-31`) counting the English word "any" in comments. Owner: governance-kernel lane |
 | 20 | `test-efficacy` | **skipped** (`kernel/input-skipped`, exit 0) | 88 ms | `tmp/pit-strength-report.v1.json` — an **on-demand** input produced by `node scripts/ci/report-pit-strength.mjs --run`, i.e. a PIT mutation run under Gradle | (c) needs an environment this job lacks | Not wired: the runner SKIPS an absent on-demand input, so a step here could only ever report a vacuous green. Unblocked by a lane that produces the PIT report; belongs beside `dead-code-jvm` in the unit-test lane, not in `public-claims` |
@@ -279,7 +339,10 @@ against checked-in files alone.
 | `ts-any` | `countAny` scores prose; fixing it needs comment-stripping (`scripts/ci/check-readiness-reason-codes.mjs:116-148` has the pattern) then a rebalance of 18 rows | 884 §F row 1 → this tempdoc's §G, pin `ts-any-gate-counts-english-prose` |
 | `test-efficacy` | needs a Gradle `:pitest` run to produce its on-demand input | 913 open item 1 → §G here |
 
-Verified after wiring: the 17-gate command exits 0 (0 fail, 15 notes); the same command **with
+Verified after wiring: the **14**-gate command exits 0 with `0 fail, 12 findings`, all `note`-level
+and all from `consumer-drift` — no `warning`, and `snapshot-missing` absent from the SARIF. (The
+first version of this step ran 17 gates and logged `0 fail, 15 findings`: the extra three WERE the
+three `snapshot-missing` warnings, which is how the review caught it.) The same command **with
 `ts-any` added exits 1** (§E, F6); `--gate test-efficacy` exits 0 with verdict `skipped` (F6b).
 
 ## §E — Falsification record
@@ -298,9 +361,17 @@ committed); it restores each file and re-runs the full kernel suite at the end.
 | F6b | `test-efficacy` treated as wireable | the command itself | `governance: 1 gate evaluated, 0 fail` · `test-efficacy: skipped`, exit 0 — a green that measured nothing |
 | F7 | the **`wrong-gate` shape**: `config-surface` keeps the import and the call, but the branch is made unreachable (`&& false`) | only `repin-fires-per-gate.test.mjs` | `repin-coverage.test: all 3 checks passed` (**exit 0 — the static test does not notice**) vs `repin-fires-per-gate.test: 1 FAILED, 6 passed` · `✗ config-surface: expected config-surface/declared-growth-without-repin, got []` (exit 1) |
 
-Restore verified: `governance run-all-tests: all 29 test files passed` after each sweep. F7 is the
+| F8 | the three registry-snapshot gates run WITHOUT their Gradle-built input (the shape review B1 found) | the new anti-vacuous assertion in the CI step | the gate command itself exits **0 — a green** — while the assertion exits 1: `registry snapshot absent: these three gates inspected nothing` |
+| F9 | one seeded `test-to-code` floor raised 50 above its measured ratio | the gate | exit 1 · `[test-to-code] test-to-code/silent-regression: modules/core: ratio 123.3% → 118.3% without declared changeset`. With the 0-byte baseline this was impossible by construction (`base = baseline.get(mod) ?? cur`) |
+| F10 | the `--explain` fallback removed | `repin-fires-per-gate.test.mjs` | `repin-fires-per-gate.test: 6 FAILED, 14 passed` · `✗ --explain config-surface/declared-growth-without-repin: … has no description` — exactly the six gates that merge the description at return time |
+| F11 | the factory stops threading `measured`/`livePin` | same | `2 FAILED, 18 passed` · `✗ style-literal-ratchet …: message fell back to the row-absent wording: … The baseline in scripts/ci/style-literal-ratchet-baseline.v1.json does not carry this row` — a false sentence about a row that exists |
+
+Restore verified: `governance run-all-tests: all 28 test files passed` after each sweep. F7 is the
 one that justifies the second test file existing at all — it is the failure mode the postmortem
 register calls `wrong-gate`, reproduced deliberately, with the static check green over it.
+
+The suite count moved 29 → 28 in the review round: `covers.test.mjs` went with `covers.mjs`
+(§C.7), and no test was removed for any other reason.
 
 ### E.1 — The live bite test (the #614 shape, on the real repo)
 
@@ -354,14 +425,17 @@ Commands verbatim, from `F:/justsearch-public/.claude/worktrees/918-kernel-resid
 |---|---|
 | `node scripts/governance/run.mjs --mode gate` | exit 1 — `35 gates evaluated, 4 fail, 82 findings`. Error-level breakdown: `{ 'kernel/input-missing': 3, 'ts-any/silent-growth': 5 }`. All four are pinned pre-existing state: `npm-audit`, `dead-code`, `dead-code-jvm` are `kernel/input-missing` (`governance-kernel-inputs-unbuilt`; I produced the two node-only inputs, so `config-surface` and `module-deps` now **pass**, down from the pin's 5), and `ts-any` is `ts-any-gate-counts-english-prose`. **Zero findings carry a `…-without-repin` id** — the new rule is inert on this base, as §G.1 argues it must be. |
 | `node scripts/governance/run.mjs --self-test --mode gate` | exit 0 — 58 fixture verdicts, 0 mismatches |
-| `node scripts/governance/run-all-tests.mjs` | `governance run-all-tests: all 29 test files passed` (26 on the base + the 3 added here) |
+| `node scripts/governance/run-all-tests.mjs` | `governance run-all-tests: all 28 test files passed` (26 on the base + 3 added here − `covers.test.mjs`, deleted with its module) |
 | `node scripts/agent-analytics/run-all-tests.mjs` | `agent-analytics: 64/64 test files passed` (run because `expected-state.v1.json` was edited — the pre-merge row 910 §F.10 bought). A later re-run under heavier parallel-worktree load reported `failed: 861-w5-agent-spawn-sweep.test.mjs`; re-run alone it is `16 passed / 0 skipped`, exit 0 — which is exactly what the `agent-analytics-suite-wallclock-flaky-under-load` pin describes, and the pin's own instruction ("re-run it with `node <file>` before believing it") is what was followed. Not caused by this diff, which touches no wall-clock-budgeted code. |
 | `node scripts/ci/check-workflow-triggers.mjs` | `OK (workflow triggers match workflow-signal-policy.v1.json)` |
 | `node scripts/docs/llmstxt-generate.mjs --check` | `OK (115 docs indexed)` |
 | `node scripts/docs/skills-sync.mjs --check` | `OK (5 skills, 9 sources)` |
 | `node scripts/docs/verify-canonical-doc-links.mjs` | `OK (files=156)` |
 | `node scripts/ci/check-always-loaded-budget.mjs` | `pass — every always-loaded file within its ratchet ceiling` |
-| the 17-gate CI step, exactly as written in `ci.yml` | exit 0 — `17 gates evaluated, 0 fail, 15 findings` |
+| the 14-gate CI step, exactly as written in `ci.yml` | exit 0 — `14 gates evaluated, 0 fail, 12 findings`, all `note`-level, `snapshot-missing` absent |
+| `--gate consumer-presence --gate host-owns-truth --gate runtime-witness` (the moved three) | exit 0 with 3 `snapshot-missing` warnings **locally, where no Gradle has run** — which is why they are wired in the unit-tests lane behind an assertion, not here |
+| `--gate test-to-code --mode gate` on the seeded baseline | exit 0 — `1 gate evaluated, 0 fail, 0 findings`; no changeset needed (`cur == base` is not a regression, and this gate has no baseline-shift block) |
+| `--explain` for all 11 repin rule ids | each prints `Rule: <id>` + the re-pin remedy; `prose-tier-register/declared-growth-without-repin` (an exempt gate) correctly still says `No description registered` |
 | `npm ci --prefix scripts/wire-contract` then `--gate wire --mode gate` | exit 0 — `1 gate evaluated, 0 fail, 0 findings`; `grep -c buf-cli-missing tmp/wire-real.sarif` → `0`. The gate really inspected the protos |
 
 No Gradle was run (brief constraint); no gate in this diff needs it.
@@ -395,7 +469,7 @@ green is not the fail-open one the pin warns about.
 **Does the rule turn `main` red?** No, and the argument is mechanical rather than hopeful. The rule
 fires only when a growth-licensing changeset is in PR scope AND a row exceeds its live pin. On a
 `push` to `main`, `GITHUB_BASE_REF` is empty and `merge-base(HEAD, origin/main) === HEAD`, so
-`resolveGitBase` (`git-utils.mjs:196-215`) falls through to `HEAD~1` — only the last commit's
+`resolveGitBase` (`git-utils.mjs:180-226`) falls through to `HEAD~1` — only the last commit's
 changesets are in scope. The most recent changeset added to `main` is
 `gates/dead-code/.changesets/915-…` in `a83de156` (#615), two commits back, and that PR *did* advance
 its pin. On a PR, scope is the merge base; this branch adds no changeset at all. Confirmed
@@ -408,28 +482,34 @@ needed on the base.**
    on `main` to catch — but it means the *live* evidence for the rule is the bite test (§E.1) and the
    fixtures, not a production firing. The first PR to author a growth changeset is the real
    confirmation; if it reports the finding and the author re-pins, the loop 883 named is closed.
-2. **`ts-any` is still red and still unwired.** `countAny` (`gates/ts-any/enforcer.mjs:29-31`) runs
+2. **`ts-any` is still red and still unwired — owner: the next kernel-facing lane** (coordinator
+   decision 2026-09-03: explicitly NOT this PR; the `reviewBy: 2026-09-30` backstop stands). `countAny` (`gates/ts-any/enforcer.mjs:29-31`) runs
    its regex over raw text, scoring the English word "any" in comments. The fix is comment-stripping
    (pattern at `scripts/ci/check-readiness-reason-codes.mjs:116-148`) plus a rebalance — but note the
    rebalance must now itself respect the re-pin rule, and 884 §F row 1 warns the 18 existing rows may
    be overstated by the same bug, so the rebalance is a re-measurement, not a `--rebalance` run.
    This is the single remaining blocker on the last-but-one gate. Owner: recorded as `fixOwner` on
    the pin.
-3. **`test-efficacy` needs a PIT-producing lane.** It should join `dead-code-jvm` in the unit-test
+3. **`test-efficacy` needs a PIT-producing lane — owner: the unit-test lane** (coordinator decision
+   2026-09-03). It should join `dead-code-jvm` in the unit-test
    lane (which already builds a Gradle-produced gate input) rather than `public-claims`. Not done
    here: the brief is node-only, and adding a `:pitest` invocation to a test lane is a walltime
    decision that belongs to whoever owns that lane's budget.
-4. **`scripts/governance/lib/covers.mjs` has no production consumer.** `persistentlyCovers` /
-   `coversBoundFor` / `parseCovers` — the tempdoc 576 §4 bounded-exception protocol — are imported
-   only by `covers.test.mjs`. Its one consumer (the `ui-bundle` gate) was removed for go-public
-   (tempdoc 634) and the lift-out survived it. This is `retire-with-a-sweep` residue: 74 lines of
-   registered-looking substrate that no gate can reach, and it is adjacent to this work because a
-   reader designing a new ratchet will find it and assume it is live. Routed here rather than fixed:
-   deleting it or wiring it is the 576/634 owner's call. Owner: the governance-kernel lane.
+4. **~~`covers.mjs` has no production consumer~~ — DELETED in the review round** (§C.7a). Kept as
+   a numbered item so the first round's §G still resolves rather than silently renumbering.
 5. **910 §E item 8 remains open** (`CLAUDE.md`'s pre-merge table does not list
    `governance/store-corruption-policies.v1.json` as a `check-store-recoverability` trigger). Item 7
    is closed (§B.6). Still deliberately untouched: byte-ratcheted file, brief scopes it out.
-6. **`adr-coverage` loads changesets and discards them** (`enforcer.mjs:388-395`). Not a defect this
+6. **Baseline-shift detection is missing from five ratchet gates.** `ts-any`, `test-to-code`,
+   `dead-code-jvm`, `style-literal-ratchet` and `atom-fork-ratchet` have no `silent-baseline-shift`
+   rule at all, so raising a pinned number by hand passes as `rebalance-available` — and a NEW row
+   is unchecked baseline-side even in the six gates that DO have the block (`priorPin === undefined`
+   skips, deliberately, so a new file is not read as "everything grew"). Found while rewriting the
+   over-claiming paragraph the review flagged as S3; `discipline-gate-kernel.md` now states the gap
+   rather than papering over it. `readPriorBaselineText` + a `verdictForBaselineShift` per gate is
+   the shape; the `dead-code` and `todo-fixme` blocks are the templates. Owner: the next
+   kernel-facing lane.
+7. **`adr-coverage` loads changesets and discards them** (`enforcer.mjs:388-395`). Not a defect this
    lane creates — the call validates the classification vocabulary and nothing else, which may be
    intentional — but a reader will read it as coverage. Left alone; noted so the next kernel lane can
    decide between deleting the call and using its result.
@@ -442,10 +522,14 @@ into CI`, against `main` from `worktree-918-kernel-residue` (base `39d38f73`).
 **Items done.** Both, in full. Item 1: the re-pin rule as a shared module reaching eleven gates, a
 new rule id per gate, an `--explain` remedy, fixtures covering all four cases, a coverage test that
 fails a future gate that forgets it, and the two docs. Item 2: the 20-gate census measured on the
-base, 18 of the 20 wired (17 hermetic + `wire` with its install and an anti-vacuous-green assertion),
+base, 18 of the 20 wired (14 hermetic in `public-claims`, 3 registry-snapshot gates in the Gradle
+lane that builds their input, and `wire` with its install — the last two each carrying an
+anti-vacuous-green assertion),
 the two exclusions each with a named blocker and an owner.
 
-**Deviated.** Three, each stated where it happens. (a) The "shared layer" is a rule *module* called
+**Deviated.** Three, each stated where it happens (a fourth arrived with the review round: the
+CI wiring is split across two jobs rather than one, because three gates need a Gradle artifact —
+§C.7 B1). (a) The "shared layer" is a rule *module* called
 per gate, not a runner pass — §B.8 records the counter-example that killed the runner design, and
 §C.2's coverage test buys back the inheritance guarantee the brief wanted. (b) The kernel doc
 paragraph was *written*, not promoted: §B.3 found the "already documented" remedy the brief cites
@@ -454,8 +538,8 @@ creating a pin, because the pin already existed with everything else the brief a
 
 **Skipped.** Nothing.
 
-**Evidence.** §F, ten commands with verbatim results. §E, eight falsifications (including the `wrong-gate` shape
-reproduced deliberately) plus a three-step live bite test on the real repo.
+**Evidence.** §F, thirteen commands with verbatim results. §E, twelve falsifications (including the `wrong-gate` shape
+reproduced deliberately, and one per review fix) plus a three-step live bite test on the real repo.
 
 **Residue routed.** §G items 2-6 — `ts-any`'s counting bug (to its pin, now with an owner),
 `test-efficacy`'s Gradle input (to the unit-test lane), dead `covers.mjs` (to the governance-kernel
@@ -465,8 +549,14 @@ lane), 910 item 8 (still open, still out of scope), `adr-coverage`'s discarded l
 - **The changeset protocol changed shape.** A growth changeset without a pin advance is now a build
   failure, not a warning. If you write one, write the baseline line in the same commit; the finding
   tells you the exact text.
-- **CI now runs 33 of 35 registered gates.** A gate you add is expected to be wired the day it lands;
-  the census in §D is the template for arguing it cannot be.
+- **CI now runs 33 of 35 registered gates, across two jobs.** 14 hermetic + `wire` in
+  `public-claims`; 3 registry-snapshot gates in the `unit-tests` app-ui lane, because their input is
+  a Gradle artifact and all three SOFT-FAIL to `pass` without it. A gate you add is expected to be
+  wired the day it lands; §D is the template for arguing it cannot be.
+- **Wiring a gate is not the same as the gate being able to fail.** Two of the ones this PR wired
+  could not: three inspected a missing artifact and passed, and `test-to-code` had a 0-byte baseline
+  that made every floor equal its own measurement. Both were found by review, not by me, and both
+  were visible in evidence I had already printed. Before wiring a gate, make it fail once.
 - **`wire` finally runs, and it fails open.** If a step ever "passes" the wire gate without the buf
   install, it inspected nothing. The `ci.yml` step asserts that explicitly — keep the assertion.
 - **A fixture cannot catch a wrong sentence in an error message.** §E.2: the bite test on real state

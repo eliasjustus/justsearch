@@ -9,9 +9,29 @@
  * protocol works."
  */
 
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { repinRuleDescription } from './declared-growth-repin.mjs';
+
+/**
+ * Whether a gate actually wires the repin rule — the same predicate `repin-coverage.test.mjs`
+ * asserts on, so `--explain` never invents a rule for a gate that is exempt from it.
+ */
+function gateWiresRepinRule(gate, repoRoot) {
+  try {
+    const enforcerPath = resolve(repoRoot, gate.enforcer);
+    const text = readFileSync(enforcerPath, 'utf8');
+    if (text.includes('declared-growth-repin')) return true;
+    // Gates built on the shared per-file ratchet factory inherit the rule from it.
+    if (text.includes('ratchet-gate.mjs')) {
+      return readFileSync(resolve(dirname(enforcerPath), '../../lib/ratchet-gate.mjs'), 'utf8')
+        .includes('declared-growth-repin');
+    }
+  } catch { /* unreadable enforcer — not our question to answer here */ }
+  return false;
+}
 
 export async function explainRule({ ruleId, gates, repoRoot }) {
   // The ruleId is namespaced by gate-id (e.g., `class-size/silent-growth`).
@@ -33,6 +53,20 @@ export async function explainRule({ ruleId, gates, repoRoot }) {
       }
     }
     if (description) break;
+  }
+
+  // The repin rule (tempdoc 918) is described by the SHARED module, and six of the eleven gates
+  // that carry it merge that description into their enforcer's RETURN VALUE rather than into the
+  // registry-declared `ruleDescriptions` module the loop above reads. `--explain` therefore
+  // answered "No description registered" for exactly those six. Resolving it from the rule module
+  // keeps one authority and covers any gate that wires the rule later.
+  if (!description && namespace) {
+    const gate = gates.find(g => g.id === namespace);
+    if (gate && gateWiresRepinRule(gate, repoRoot)) {
+      const suffix = ruleId.slice(namespace.length + 1);
+      description = repinRuleDescription(namespace, suffix)[ruleId] ?? null;
+      if (description) owningGate = gate;
+    }
   }
 
   if (!description) {

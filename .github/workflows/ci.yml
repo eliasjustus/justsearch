@@ -223,6 +223,34 @@ jobs:
       # 2.7s (knip) and 4.5s (npm audit) -- so the reason they were missing was wiring, not budget.
       # dead-code-jvm's producer is a Gradle run, so it lives in the unit-test lane that already
       # builds it rather than here.
+      # Tempdoc 918 item 2, closing 913 open item 1. Each of the 20 unwired gates was run bare on
+      # the base and classified (census: tempdoc 918 §D). These 14 are green on `main` AND hermetic
+      # -- they read checked-in registers, catalogs and source text, and need no produced artifact,
+      # no Gradle output, no protoc and no dev stack. The step sits DELIBERATELY above the
+      # `npm ci --prefix modules/ui-web` below, so the job itself demonstrates the claim rather
+      # than asserting it: if one of these ever starts needing an install, it fails here.
+      #
+      # Six of the 20 are NOT in this step:
+      #   - consumer-presence, host-owns-truth, runtime-witness
+      #                  all three read tmp/consumer-presence/registry-snapshot.json, a Gradle
+      #                  artifact (RegistrySnapshotExporterTest), and SOFT-FAIL to `pass` when it
+      #                  is absent (consumer-presence/enforcer.mjs:36-46). Running them here would
+      #                  have inspected nothing -- the first version of this step did exactly that
+      #                  and logged three `snapshot-missing` warnings as part of a green. They now
+      #                  run in the unit-tests app-ui lane, after the task that builds the snapshot.
+      #   - ts-any       red on `main` behind expected-state pin `ts-any-gate-counts-english-prose`
+      #                  (countAny scores the English word "any"); wiring a known red would make
+      #                  every PR red for a reason no PR caused. Wire it with the counting fix.
+      #   - test-efficacy its PIT strength report is an ON-DEMAND input, so without a `:pitest` run
+      #                  the runner SKIPS it (kernel/input-skipped, verdict `skipped`, exit 0).
+      #                  Wiring it here would add a step that can only ever report a vacuous green.
+      #                  It belongs in a lane that produces the report.
+      #   - wire         has its own step below: it needs the buf CLI, and its failure mode without
+      #                  it is a PASS, which is worse than being unwired.
+      - name: Hermetic kernel gates (14, no produced inputs, no install)
+        run: |
+          node scripts/governance/run.mjs             --gate consumer-drift --gate contract-projection --gate contribution-surface             --gate hook-integrity --gate interaction-surface --gate observed-happening             --gate prose-tier-register --gate runtime-state --gate ssot-catalog-sync             --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring             --gate test-to-code --gate todo-fixme             --mode gate
+
       - name: Build kernel gate inputs
         run: |
           npm ci --prefix modules/ui-web
@@ -273,34 +301,6 @@ jobs:
         run: |
           node scripts/governance/run.mjs \
             --gate operation-surface --gate execution-surface --gate register-guard-resolution \
-            --mode gate
-
-      # Tempdoc 918 item 2, closing 913 open item 1. Each of the 20 unwired gates was run bare on
-      # the base and classified (census: tempdoc 918 §D). These 17 are green on `main` AND hermetic
-      # -- measured in a worktree with no node_modules anywhere, so they need no install step, no
-      # Gradle output, no protoc and no dev stack; the whole set runs in ~8.4s. They read checked-in
-      # registers, catalogs and source text, which is why they can sit above the ui-web install
-      # rather than after it.
-      #
-      # Three of the 20 are deliberately NOT here:
-      #   - ts-any       red on `main` behind expected-state pin `ts-any-gate-counts-english-prose`
-      #                  (countAny scores the English word "any"); wiring a known red would make
-      #                  every PR red for a reason no PR caused. Wire it with the counting fix.
-      #   - test-efficacy its PIT strength report is an ON-DEMAND input, so without a `:pitest` run
-      #                  the runner SKIPS it (kernel/input-skipped, verdict `skipped`, exit 0).
-      #                  Wiring it here would add a step that can only ever report a vacuous green.
-      #                  It belongs in a lane that produces the report.
-      #   - wire         has its own step below: it needs the buf CLI, and its failure mode without
-      #                  it is a PASS, which is worse than being unwired.
-      - name: Hermetic kernel gates (17, no produced inputs)
-        run: |
-          node scripts/governance/run.mjs \
-            --gate consumer-drift --gate consumer-presence --gate contract-projection \
-            --gate contribution-surface --gate hook-integrity --gate host-owns-truth \
-            --gate interaction-surface --gate observed-happening --gate prose-tier-register \
-            --gate runtime-state --gate runtime-witness --gate ssot-catalog-sync \
-            --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring \
-            --gate test-to-code --gate todo-fixme \
             --mode gate
 
       # The `wire` gate (protobuf breaking-change detection) ran in NO workflow and no job covers
@@ -588,6 +588,12 @@ jobs:
             artifact: unit-test-attribution-app-ui
             runner_label: ubuntu-latest/app-ui
             fetch_depth: 1
+            # This lane runs :modules:app-services:test, which IS RegistrySnapshotExporterTest --
+            # the producer of tmp/consumer-presence/registry-snapshot.json. The three gates that
+            # read that snapshot therefore run here (tempdoc 918 B1), same pattern as
+            # run_dead_code_jvm on the platform-contracts lane. None of the three resolves a git
+            # baseline (registry: diffStrategy "none" / no baseline), so depth 1 is enough.
+            run_snapshot_gates: "true"
             gradle_tasks: >-
               :modules:app-agent:test
               :modules:app-agent-api:test
@@ -677,6 +683,17 @@ jobs:
       - name: JVM dead-code gate (input built by the tasks above)
         if: matrix.run_dead_code_jvm == 'true'
         run: node scripts/governance/run.mjs --gate dead-code-jvm --mode gate
+
+      # Tempdoc 918 B1. consumer-presence, host-owns-truth and runtime-witness read the registry
+      # snapshot the task above writes, and each returns verdict `pass` with a `snapshot-missing`
+      # WARNING when it is absent -- a soft-fail that makes them vacuous anywhere else. The third
+      # line is the anti-vacuous assertion: if the snapshot was not built, the finding is present
+      # and this step fails rather than reporting a green that inspected nothing.
+      - name: Registry-snapshot gates (input built by the tasks above)
+        if: matrix.run_snapshot_gates == 'true'
+        run: |
+          node scripts/governance/run.mjs             --gate consumer-presence --gate host-owns-truth --gate runtime-witness             --mode gate --out tmp/snapshot-gates.sarif
+          node -e "if (require('fs').readFileSync('tmp/snapshot-gates.sarif','utf8').includes('snapshot-missing')) { console.error('registry snapshot absent: these three gates inspected nothing'); process.exit(1); }"
 
       - name: Report unit-test attribution
         if: always()

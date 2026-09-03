@@ -57,6 +57,13 @@ function deadBaselineUri(gate) {
 /** The gate's own vocabulary plus the shared repin rule (tempdoc 918). */
 const RULE_DESCRIPTIONS = { ...CONFIG_SURFACE_RULE_DESCRIPTIONS, ...repinRuleDescription('config-surface') };
 
+/** What each metric COUNTS — `yaml_keys` is not "config keys", and the finding says so. */
+const METRIC_UNITS = {
+  yaml_keys: 'application.yaml keys',
+  env_sysprop_pairs: 'env/sysprop pairs',
+  config_keys: 'runtime config keys',
+};
+
 const METRICS = {
   yaml_keys: 'yamlKeyCount',
   env_sysprop_pairs: 'envSyspropPairCount',
@@ -155,7 +162,7 @@ export async function enforceConfigSurface(options) {
       findings.push(repinFinding({
         rulePrefix: 'config-surface', classification: coveringClassification, row: metric,
         measured: current, livePin: pinned, priorPin: priorMetricBaseline?.get(metric),
-        baselineFile: gate.baseline.path, unit: 'config keys',
+        baselineFile: gate.baseline.path, unit: METRIC_UNITS[metric] ?? 'entries',
         pinLine: `${metric} ${current} <today>`, uri: gate.baseline.path,
       }));
     } else if (v.status === 'fail') {

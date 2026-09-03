@@ -277,9 +277,26 @@ baseline in the same commit as the change so the gate sees nothing wrong."
 Both the *live state* and the *baseline state* are gated.
 
 The complementary direction — a changeset that licenses growth but leaves the
-pin where it was — is gated too, by the re-pin rule above. Together: growth
-without a changeset fails; a pin raise without a changeset fails; a changeset
-without a pin raise fails. The only passing shape is both, in one commit.
+pin where it was — is gated too, by the re-pin rule above. What the kernel
+actually enforces today, stated with its gaps rather than as a slogan:
+
+- **A live value over its pin fails everywhere** — `silent-growth` without a
+  changeset, `declared-growth-without-repin` with one. No gaps.
+- **A pin RAISE without a changeset fails only where a baseline-shift block
+  exists** — `config-surface`, `dead-code`, `module-deps`, `npm-audit`,
+  `test-efficacy`, `todo-fixme`. It is **not** detected by `ts-any`,
+  `test-to-code`, `dead-code-jvm`, `style-literal-ratchet` or
+  `atom-fork-ratchet`, which have no such block: raising a `ts-any` row 1 → 9
+  by hand yields only `rebalance-available`.
+- **Even where the block exists, a NEW row is not a raise.** The comparison is
+  per row against the same row at the PR base, and `priorPin === undefined`
+  skips (`dead-code/enforcer.mjs`, `todo-fixme/enforcer.mjs`) — deliberately, so
+  a genuinely new file is not read as "everything grew", but it does mean a row
+  added at any value is unchecked baseline-side.
+
+So the closure is complete on the live-value axis and partial on the
+baseline-edit axis. Extending baseline-shift detection to the five gates that
+lack it is tracked in tempdoc 918 §G.
 
 ## Truth-table shape contract
 

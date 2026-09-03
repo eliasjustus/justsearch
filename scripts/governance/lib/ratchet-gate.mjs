@@ -29,6 +29,7 @@ export function makeRatchetGate({
   rulePrefix,
   ruleDescriptions,
   classifications,
+  measuredUnit = 'occurrences',
 }) {
   return async function enforce(options) {
     const {
@@ -72,13 +73,26 @@ export function makeRatchetGate({
         // Tempdoc 918: the changeset licenses the pin advance, not an unpinned overflow. `detect()`
         // compares each file against the LIVE baseline, so a file still in `failures` is by
         // definition one whose pin was not advanced to its measured value in this diff.
+        //
+        // `count` and `base` are threaded through so the finding states the numbers. Without them
+        // the shared message degrades to "the baseline does not carry this row", which for these
+        // two gates is usually FALSE — the row exists, it is the per-class number that is stale.
+        // The two factory clients report slightly different failure shapes: style-literal carries a
+        // per-class `cls` (its baseline row is an object of class counts), atom-fork does not (its
+        // row is a bare number). Both carry `count`/`base`, which is what the message needs.
+        const baselineFile = gate.baseline?.path ?? '(gate baseline)';
         verdict = 'fail';
         findings.push(repinFinding({
           rulePrefix,
           classification: coveringCls,
           row: f.file,
-          baselineFile: gate.baseline?.path ?? '(gate baseline)',
-          pinLine: `${f.file} → its measured value (\`node scripts/governance/run.mjs --gate ${gate.id} --rebalance\` only shrinks)`,
+          measured: f.count,
+          livePin: f.base,
+          baselineFile,
+          unit: f.cls ? `raw ${f.cls} literals` : measuredUnit,
+          pinLine: f.cls
+            ? `"${f.file}": { "${f.cls}": ${f.count}, … } in ${baselineFile}`
+            : `"${f.file}": ${f.count} in ${baselineFile}`,
           uri: f.file,
         }));
       } else {

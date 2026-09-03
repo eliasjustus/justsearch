@@ -19,7 +19,9 @@ export const TS_ANY_CLASSIFICATIONS = new Set(['declared-growth', 'merge-import'
 export const TS_ANY_RULE_DESCRIPTIONS = {
   'ts-any/within-baseline': 'TS `any` count at or below baseline',
   'ts-any/silent-growth': 'TS `any` count grew without a declared changeset',
-  'ts-any/declared-growth': 'TS `any` count grew; classification covers it',
+  // 'ts-any/declared-growth' was deleted with the branch that emitted it (tempdoc 918): a covered
+  // exceedance is now `declared-growth-without-repin`, so nothing can produce the old id. A rule
+  // description whose rule cannot fire claims a hole is covered.
   ...repinRuleDescription('ts-any'),
   'ts-any/merge-import': 'TS `any` growth via merge; classification supplied',
   'ts-any/emergency-override': 'Growth permitted via emergency-override',

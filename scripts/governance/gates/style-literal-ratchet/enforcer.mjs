@@ -41,6 +41,7 @@ export const enforceStyleLiteralRatchet = makeRatchetGate({
   srcSubdir: 'modules/ui-web/src',
   toolName: 'justsearch-style-literal-ratchet',
   rulePrefix: 'style-literal-ratchet',
+  measuredUnit: 'raw style literals',
   ruleDescriptions: STYLE_LITERAL_RULE_DESCRIPTIONS,
   classifications: STYLE_LITERAL_CLASSIFICATIONS,
 });
