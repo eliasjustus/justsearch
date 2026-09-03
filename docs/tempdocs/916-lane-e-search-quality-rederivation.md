@@ -326,7 +326,9 @@ at index time, not just at query time).
 | B. Test-only system property | `Long.getLong("justsearch.chunk.…")` read directly in `ChunkSplitter` | 0 declared, but fails `checkNoDirectJustsearchSysProp` outside `io.justsearch.configuration` | Rejected — the build gate forbids it, and routing around a gate to avoid declaring a key is the evasion the gate exists for |
 | C. Build-time constant override | Recompile per arm | 0 | Rejected — a recompile between arms is a confounder (885 item 19's argument), and 12 arms × a full build is slower than a restart |
 
-**Recommendation: A, with the same "measured or removed" commitment this PR's changeset makes.**
+**Recommendation: A — owner-approved 2026-09-03, on one condition, which is binding:
+the PR that lands the chosen constants DELETES the three keys and re-pins `config-surface` in the
+same commit.** Same "measured or removed" shape as this PR's changeset.
 The keys are the instrument; if Part 1 concludes with one chosen triple, the PR that changes the
 constants also **deletes the keys**, leaving the constants as constants. That keeps the permanent
 config surface at +0 while making the campaign a restart rather than a rebuild. Declared cost during
@@ -370,13 +372,20 @@ SPLADE truncation rate (F-033's mechanism — this is the metric most likely to 
 size, since 512 tokens is above 128/256/384 and below 500); index size on disk; primary-indexing
 docs/s; `leg_union_recall`, `leak_rate`, `chunk_completeness`; CE stage p50.
 
-RAG answer quality: **the 845/881 sets do not exist (§B.11).** Replacement: build one committed
-question set of ~60 questions over `mixed/enron-qa` and `mixed/legal-clerc-200` documents with
-recorded gold spans, filed under `scripts/jseval/916-corpora/rag-answer-quality-v1/`, and judge with
-the AI tier per `docs/explanation/09-testing-strategy.md`. Needs `ai_activate {chatProfile:"standard"}`
-— quality-sensitive, so the compact profile does not qualify. Cost: one build pass plus ~12 judged
-arms; this is the single largest line item in Part 1 and the owner should confirm it is wanted
-before it is built, since it is a new durable fixture rather than a measurement.
+RAG answer quality: **the 845/881 sets do not exist (§B.11).**
+
+> **Part 1 step 0 (owner-approved 2026-09-03, and it is the FIRST Part 1 deliverable, not a
+> by-product of the sweep):** build one committed question set — ~60 questions over
+> `mixed/enron-qa` and `mixed/legal-clerc-200` documents with recorded gold spans — filed under
+> `scripts/jseval/916-corpora/rag-answer-quality-v1/` alongside the other `NNN-corpora` artefacts,
+> carrying a `recipe.json` (the regenerable-source pattern the register's dataset catalog requires
+> of every corpus) and a **`query_gold_sha256`** digest, so the cell signatures are bound the way
+> `corpus_certify.py:107,274,292` binds every other committed corpus. Judge tier: the **AI judge**
+> per `docs/explanation/09-testing-strategy.md`, which needs `ai_activate {chatProfile:"standard"}`
+> — quality-sensitive, so the compact dev-default profile does not qualify.
+>
+> It is step 0 because every later Part 1 arm reports against it: building it after the sweep would
+> mean re-running all 12 arms to get the RAG column. It is **not** built in this PR.
 
 ### C.5 Wall-clock and total machine time
 
@@ -705,7 +714,12 @@ machine's owner during the enron **build** arm and closed before it finished. Si
 So **all six measured arms ran on a quiet machine**; the contamination is confined to one index
 build, whose only output is the index both arms then share. Its cost is visible and is reported,
 not hidden: enron `primary_docs_s` **56.8** against 885's 112.6 baseline and `ingest_docs_s` **3.6**
-against 18.2. No throughput number from this campaign is comparable to 885's, and none is used.
+against 18.2.
+
+> **No throughput or latency number from this campaign is cited as evidence anywhere — not in this
+> tempdoc, not in F-056, not in the PR.** The index build was contended, so every such number is
+> void by construction; only the quality metrics, which are computed from a shared index by arms
+> that each ran on a quiet machine, carry any weight here.
 
 ### G.2 The first legal pair was void, and the guard is what said so
 
@@ -826,6 +840,66 @@ green" would have been false; claiming a regression would also have been false.
 (identical), scifact 56 / 215 (identical). Identical across arms, as expected for a query-only
 difference. Per 912 §E-live the floor is `BackfillScheduler.CYCLE_BUDGET_MS = 5_000`; the fix is 912
 open items 8/9 and is **not** this lane's.
+
+---
+
+## §I λ sweep (owner-authorised follow-up arm) — PRE-REGISTERED BEFORE RUNNING
+
+The §G verdict parked λ=0.3 on a split. λ=0.3 was the lane brief's starting guess, and the one
+attractive point on the axis (λ=0.1, +0.0102 nDCG / +0.0150 R@10 / −0.0150 leak on legal) was
+**void** for `degraded-ce`, so the axis is unswept rather than explored and rejected. The owner
+authorised exactly one clean sweep to settle whether the two keys stay or the mechanism reverts.
+
+### I.1 Design
+
+- **λ ∈ {0.05, 0.10, 0.15}** at `overfetch_multiplier = 5`, on `mixed/enron-qa` and
+  `mixed/legal-clerc-200`, same-index per corpus, backend restarted per arm.
+- **2 replicates per ON arm.** OFF is measured once per corpus: §G.3 established σ(OFF) = 0.0000
+  across 3 identical replicates, so replicating the control again buys nothing. The ON arms are
+  where variance can appear (they are the ones that can trip the CE deadline tail), so that is where
+  the replicates go.
+- **Multiplier probe:** `multiplier ∈ {3, 5}` at λ=0.10 (the axis midpoint), 2 replicates, run inside
+  the same per-corpus index window because the index is wiped between corpora. Chosen at the
+  midpoint rather than "at the best λ" because the best λ is not known until the index is gone.
+- **`beir/scifact` control at the winning λ only** — it is `chunk-free`, so the expectation is
+  bit-identical output; it is a wrong-gate detector, not a tuning target.
+
+### I.2 Admissibility (hard, per arm — checked before any number is read)
+
+An arm is **void** unless `ce_coverage.verdict == "ok"` AND `per_mode.hybrid.comparable == true`.
+A void arm is **re-run, never cited** — this is the rule that already saved this tempdoc twice
+(§G.2 reversed the legal sign; §G.5's λ=0.1 was the campaign's most attractive number and was
+discarded). Machine signature recorded before and after every arm; an arm whose signature shows a
+game process or elevated GPU is re-run.
+
+### I.3 Decision rule — WRITTEN AND COMMITTED BEFORE THE SWEEP RAN
+
+> Let `spread(λ)` = max−min across an arm's admissible replicates on R@10, and let the noise
+> reference be `max(spread, 0.0068)` — the 2σ figure §D.7 borrowed from F-055 — so a measured
+> spread can only ever make the test *stricter*, never looser. This is the same guard against
+> "σ came out 0, therefore everything is significant" that §G.3 flagged.
+>
+> **SHIP a λ** (flip both defaults to `multiplier 5, λ=<winner>`) only if ALL hold:
+> 1. **R@10 improves on BOTH chunked corpora** by more than the noise reference, at the same λ;
+> 2. `beir/scifact` at that λ is **bit-identical** to OFF (it is chunk-free — anything else is a
+>    wrong-gate signal, not a quality result);
+> 3. `leak_rate` does not worsen on either chunked corpus;
+> 4. every contributing arm admissible per §I.2, and `relevance-gate` / `leak-gate` /
+>    `union-recall-gate` green on the shipped ON arm.
+>
+> **PARK and KEEP the keys** if no λ satisfies (1)-(4). The owner has already accepted the
+> reachable-code-not-dead-code reasoning, so a second park does **not** trigger key removal; it
+> triggers writing the sweep table into F-056 so nobody re-runs this blind.
+>
+> **A split at every λ is a park**, not "pick the least-bad λ" — the same clause that decided §G.
+> **Monotonicity is not a tiebreaker:** a λ that wins on one corpus and loses on the other is a
+> split even if the trend across λ looks encouraging. Predictable evasion to name now, before the
+> numbers exist: "λ=0.05 is directionally right on both and would probably win at 0.03" — an
+> unmeasured extrapolation is not a measurement, and the axis does not get a second extension.
+
+### I.4 Sweep results
+
+*(filled in after the run)*
 
 ---
 
