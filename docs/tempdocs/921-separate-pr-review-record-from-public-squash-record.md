@@ -1,7 +1,7 @@
 ---
 title: "Separate the PR review record from the public squash record"
 type: tempdocs
-status: "LOCAL TRANSPORT IMPLEMENTED (2026-09-03) — v2 projection and fail-closed async enqueue client pass offline/live-read checks; custom-body preservation still requires one separately authorized live proof"
+status: "PUBLICATION AUTHORIZED (2026-09-03) — inert queue-proof substrate caught up and fully verified; preparing the fresh live proof PR"
 created: 2026-09-03
 updated: 2026-09-03
 charter: "make rich agent PR evidence compatible with concise, durable public main history"
@@ -109,6 +109,9 @@ Audit date: 2026-09-03. The history sample is the latest 100 merged PRs and thei
 resulting commits from `justsearch-app/justsearch`; the broader policy sample covers
 573 merged PRs since the 2026-06-28 policy landed. HTML comments and known generated
 blocks were removed only for the separately labelled "visible body" measurement.
+These are dated session observations from GitHub PR/commit API responses, not canonical
+repository metrics; the one-off query output was not checked in and the values should be
+recomputed rather than reused for a later policy decision.
 
 | Signal | Current result | What it means |
 |---|---:|---|
@@ -1027,7 +1030,7 @@ the request/result schema queries and a deliberately unknown result UUID.
 | Question | Evidence gathered | Conclusion |
 |---|---|---|
 | Is the endpoint real and reachable on this host? | A request using `X-GitHub-Api-Version: 2026-03-10` selected that exact version. `GET .../merge-async/<unknown-uuid>` returned the endpoint-specific documentation URL. GitHub's 2026-03-10 OpenAPI marks both submit and result operations as not cloud-only and enabled for GitHub Apps. | **High confidence.** Only a real `PUT` can prove submit permission, but route/version availability is no longer speculative. |
-| Does the repository satisfy the transport prerequisites? | The live repository reports squash merging enabled with `PR_TITLE` / `PR_BODY`; open PR #622 reports `isMergeQueueEnabled=true`. The authenticated classic token has repository scope, which covers the documented Contents-write requirement. | **High confidence, pending the first submit.** |
+| Does the repository satisfy the transport prerequisites? | The live repository reports squash merging enabled with `PR_TITLE` / `PR_BODY`; open PR #622 reports `isMergeQueueEnabled=true`. The authenticated session passed the read-only prerequisite probes; submit permission remains deliberately unproved. | **High confidence, pending the first submit.** |
 | Can one read produce a coherent publication snapshot? | Live GraphQL exposes PR title/body, `headRefOid`, `updatedAt`, `viewerMergeHeadlineText(SQUASH)`, `isInMergeQueue`, `mergeQueueEntry`, and `autoMergeRequest`. | **Yes.** Fetch them in one query immediately before mutation. |
 | What can be locked? | The REST `sha` field cancels the request if the PR head changes. Neither REST nor the live GraphQL inputs expose an expected PR `updatedAt` for the merge request. | **Code is locked; title/body are a snapshot, not an atomic metadata lock.** Print and send the same in-memory value with no saved-preview reuse. |
 | Can the installed CLI transport exact JSON safely? | `gh api --input -` accepted a JSON buffer through standard input in a read-only GraphQL probe. `--include` returned status, headers, and JSON; on a real `404`, `gh` exited nonzero but retained the response body on stdout. A scratch parser passed documented `200`, `202`, and `409` fixtures plus the live HTTP/2 response. | **Yes.** Use `spawnSync` with an argument vector and a UTF-8 `Buffer`; do not pipe JSON through Windows PowerShell or put the body in argv. |
@@ -1366,3 +1369,31 @@ required-check preflight, response parser/state machine, process boundary, CI wi
 tests, and implementation evidence are complete. Template/workflow/skill/ADR activation,
 repository-default changes, required-check registration, and the 30-merge audit remain
 deliberately deferred until the live proof passes.
+
+## 18. Publication preparation — 2026-09-03
+
+The user explicitly authorized publication. The candidate remains the inert proof
+substrate: it does not change the PR template, publish skills, repository merge default,
+branch protection, or ADR-0045's shipped contract. The existing v1 preview and its test
+are byte-identical to `origin/main`; v2 is exercised by the queue client's dry-run and a
+separate focused test.
+
+`git fetch origin` found the candidate zero commits behind `origin/main`. Before the first
+push, the caught-up candidate passed:
+
+- `./gradlew.bat build -x test --console=plain` — `BUILD SUCCESSFUL` (251 tasks);
+- `./gradlew.bat test --console=plain` — `BUILD SUCCESSFUL` (186 tasks);
+- root `npm ci`, 65/65 agent-analytics test files, 28/28 governance test files,
+  workflow-trigger policy, skill sync, and `llms.txt` generation checks;
+- UI `npm ci`, TypeScript typecheck, and 468/468 files / 6,267/6,267 unit tests;
+- v1 preview, v2 projection, async enqueue, and `run-gh` focused tests;
+- `git diff --check` and a six-commit `gitleaks` scan.
+
+The read-only subagent audit found no secret value, machine-local path, or internal-only
+URL in the public diff. It did identify unnecessary disclosure of credential type/scope;
+that metadata was removed. The history-comparison counts are now explicitly labelled as
+dated session observations whose one-off API output is not a canonical metric.
+
+The first Gradle attempt correctly stopped before starting because other worktrees held
+the shared build slot. Verification resumed only after the wrapper-process check reported
+the slot free; no foreign process was interrupted.
