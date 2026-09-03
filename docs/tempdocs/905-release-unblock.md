@@ -810,7 +810,11 @@ Residual owner actions:
   that test into public CI. The focused regression passes locally. No retry of the paid signing build
   is justified for this harness-only failure; the fix can be validated without another provider call.
   The regression also passes on Windows under the workflow's exact Node `24.14.0`; the post-merge full
-  Gradle build/test suites, frontend typecheck, and all 6,269 frontend unit tests pass.
+  Gradle build/test suites, frontend typecheck, and all 6,269 frontend unit tests pass. After the fix
+  was pushed to `codex/905-operational-closeout`, ordinary no-signing CI run `33810680856` passed every
+  Windows-native, public-claims, license/notices, build, unit, integration, Rust, secret-scan, and
+  reporting lane. In particular, the new evidence-capture regression passed on GitHub's Windows runner
+  with Node `24.14.0`; this validates the harness correction without consuming another signing credit.
 
 Residual owner-dependent work is now limited to validation of the mirror signer during its next
 natural upstream refresh before deleting repository-scoped credential copies, a fresh
