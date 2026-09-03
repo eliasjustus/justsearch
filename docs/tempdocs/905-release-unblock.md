@@ -746,13 +746,14 @@ Residual owner actions:
 - A credential-safe temporary helper was adapted from the earlier tempdoc-760 script. It prompts in
   a separate terminal and targets only Environment secrets. Repository-scoped copies remain in place
   until the Environment values are present and both workflows can be validated without guessing the
-  provider allowance. The owner then reported that the SSL.com credentials were lost, so the helper
-  was closed without writing any Environment secret. GitHub cannot reveal the existing encrypted
-  repository-scoped values, and those copies were deliberately left untouched. Before the helper can
-  be rerun, recover the SSL.com login through the provider's password-reset flow, then use the
-  certificate order to reset/re-enrol eSigner 2FA and retrieve the signing credential ID. If login,
-  eSigner PIN, or order access cannot be recovered through those self-service paths, open an SSL.com
-  support ticket rather than guessing or rotating repository state.
+  provider allowance. The owner retains the SSL.com username and password but reported that the
+  eSigner-specific values were lost, so the helper was closed without writing any Environment secret.
+  GitHub cannot reveal the existing encrypted repository-scoped values, and those copies were
+  deliberately left untouched. Before the helper can be rerun, use the certificate order to verify
+  the signing credential ID and recover or replace the eSigner TOTP enrollment secret. SSL.com's
+  self-service QR reset requires the 4-digit eSigner PIN; its PIN reset requires either a current OTP
+  or the current PIN. If neither factor remains available, open an SSL.com support ticket rather than
+  guessing or rotating repository state.
 - A narrow, explicitly non-qualifying whole-product Windows Sandbox probe used WinGet `v1.29.290`.
   The clean final result validated the schema-1.12 manifest bundle, downloaded the published v0.2.0
   installer, verified SHA-256
@@ -769,8 +770,8 @@ Residual owner actions:
   the owner to personally accept its CLA before merge; no agent accepted that legal agreement on the
   owner's behalf. Microsoft validation/review and that one-time CLA ceremony remain external.
 
-Residual owner-dependent work is now limited to SSL.com account/eSigner recovery followed by
-successful Environment credential entry, a provider-authoritative remaining-signature count before
+Residual owner-dependent work is now limited to eSigner factor recovery followed by successful
+Environment credential entry, a provider-authoritative remaining-signature count before
 any paid dispatch, validation of both signing workflows before deleting repository-scoped copies,
 tempdoc 617's exact N→N+1 updater lanes, and a future model candidate with approved immutable assets,
 provenance, license, quality, and publication authority. Scoop remains deliberately deferred.
