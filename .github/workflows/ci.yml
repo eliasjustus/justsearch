@@ -204,8 +204,11 @@ jobs:
       # run-all-tests.mjs only discovers scripts/agent-analytics/**. 856 added trailer checks
       # to that script, which would have landed equally unrun. Wired here rather than left as
       # a follow-up, per retire-with-a-sweep's evasion clause.
-      - name: Test squash-message preview (session-id trailer + title/body checks)
+      - name: Test squash-message projection and preview
         run: node scripts/ci/test-preview-squash-message.mjs
+
+      - name: Test asynchronous squash-queue transport
+        run: node scripts/ci/test-enqueue-squash-message.mjs
 
       # Tempdoc 884 PR 2. Same shape again, third time in this file: check-tempdoc-numbers is a
       # merge gate, and its collision rule had no test at all until 884 had to loosen one branch

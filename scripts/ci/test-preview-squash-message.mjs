@@ -1,277 +1,172 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  buildSquashMessagePreview,
-  renderMarkdown,
-  renderText,
-} from './preview-squash-message.mjs';
+import { buildSquashMessageProjection, PROJECTION_KIND } from './lib/squash-message-projection.mjs';
+import { renderMarkdown, renderText } from './preview-squash-message.mjs';
 
-const repo = {
-  squash_merge_commit_title: 'PR_TITLE',
-  squash_merge_commit_message: 'PR_BODY',
-};
+const SESSION = '1568032c-aff9-459c-9afd-7adb22e80473';
 
-function report(pr, repoOverride = repo) {
-  return buildSquashMessagePreview({
+function validBody({ publicBody = `Why this durable change was needed.\n\n- Adds one outcome.\n\nSession-Id: ${SESSION}`, authorship = 'agent' } = {}) {
+  return [
+    '<!-- template guidance outside the projection -->',
+    '## Public commit', '', publicBody, '',
+    '## Review record', '', `Authorship: ${authorship}`, '',
+    '### Scope and risk', '', 'Only publication tooling is affected.', '',
+    '### Verification evidence', '', 'Node regression tests passed.', '',
+    '### Review state', '', 'No unresolved review items.',
+  ].join('\n');
+}
+
+function project(overrides = {}) {
+  return buildSquashMessageProjection({
     repoSlug: 'justsearch-app/justsearch',
-    repo: repoOverride,
     pr: {
       number: 123,
-      title: 'docs: improve publication guidance',
-      url: 'https://github.com/justsearch-app/justsearch/pull/123',
+      title: 'fix: preserve public squash record',
+      body: validBody(),
       headRefName: 'codex/example',
+      headRefOid: 'a'.repeat(40),
+      updatedAt: '2026-09-03T12:00:00Z',
+      baseRefName: 'main',
       isDraft: false,
       state: 'OPEN',
       mergeStateStatus: 'CLEAN',
-      ...pr,
+      author: { login: 'eliasjustus' },
+      viewerMergeHeadlineText: 'fix: preserve public squash record (#123)',
+      ...overrides,
     },
   });
 }
 
-function ids(reportValue) {
-  return reportValue.warnings.map((warning) => warning.id);
+function ids(findings) {
+  return findings.map((item) => item.id);
 }
 
 {
-  const clean = report({
-    body: [
-      '## Summary',
-      '',
-      'Clarifies the maintainer publication workflow.',
-      '',
-      '## Changes',
-      '',
-      '- Adds a focused maintainer note.',
-      '',
-      '## Testing',
-      '',
-      'Verified with the relevant script checks.',
-      '',
-      '## Related Issues',
-      '',
-      'None.',
-      '',
-      'Session-Id: 1568032c-aff9-459c-9afd-7adb22e80473',
-    ].join('\n'),
+  const result = project();
+  assert.equal(result.kind, PROJECTION_KIND);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.authorship, 'agent');
+  assert.deepEqual(result.sessionIds, [SESSION]);
+  assert.equal(result.body, `Why this durable change was needed.\n\n- Adds one outcome.\n\nSession-Id: ${SESSION}`);
+  assert.match(renderText(result), /preview-squash-message: OK/);
+  assert.match(renderMarkdown(result), /## Exact body/);
+}
+
+{
+  const publicBody = `First line with trailing spaces.  \n\n- Unicode outcome: café Δ\n\nSession-Id: ${SESSION}`;
+  const body = validBody({ publicBody }).replace(/\n/g, '\r\n');
+  const result = project({ body });
+  assert.equal(result.body, `First line with trailing spaces.  \n\n- Unicode outcome: café Δ\n\nSession-Id: ${SESSION}`);
+  assert.deepEqual(result.errors, []);
+}
+
+{
+  const body = [
+    '```markdown', '## Public commit', 'fake', '```', '',
+    '> ## Public commit', '',
+    '<div>', '## Public commit', '</div>', '',
+    validBody(),
+  ].join('\n');
+  const result = project({ body });
+  assert(!ids(result.errors).includes('public-section-cardinality'));
+  assert.match(result.body, /^Why this durable change/m);
+}
+
+{
+  const duplicate = project({ body: `${validBody()}\n\n## Public commit\n\nsecond` });
+  assert(ids(duplicate.errors).includes('public-section-cardinality'));
+  const reversed = project({ body: validBody().replace('## Public commit', '## TEMP').replace('## Review record', '## Public commit').replace('## TEMP', '## Review record') });
+  assert(ids(reversed.errors).includes('section-order'));
+}
+
+for (const [snippet, errorId] of [
+  ['- [ ] hidden work', 'public-checklist'],
+  ['<!-- hidden -->', 'public-html-comment'],
+  ['<details>noise</details>', 'public-details'],
+  ['WIP: not ready', 'public-process-marker'],
+  ['Stack: a -> b', 'public-stack-base-log'],
+  ['```base-log\nmain..head\n```', 'public-stack-base-log'],
+  ['Generated with Claude Code', 'public-provider-banner'],
+]) {
+  const result = project({ body: validBody({ publicBody: `${snippet}\n\nSession-Id: ${SESSION}` }) });
+  assert(ids(result.errors).includes(errorId), `${snippet} should produce ${errorId}`);
+}
+
+{
+  const malformed = project({ body: validBody({ publicBody: 'Why.\n\nSession-Id:' }) });
+  assert(ids(malformed.errors).includes('malformed-session-id'));
+  assert(ids(malformed.errors).includes('missing-session-id'));
+  for (const opaque of [
+    `Why.\n\n~~~text\nSession-Id: ${SESSION}\n~~~`,
+    `Why.\n\n<div>\nSession-Id: ${SESSION}\n</div>`,
+    `Why.\n\n> Session-Id: ${SESSION}`,
+  ]) {
+    const result = project({ body: validBody({ publicBody: opaque }) });
+    assert(ids(result.errors).includes('session-id-not-root-content'));
+    assert(ids(result.errors).includes('missing-session-id'));
+  }
+}
+
+{
+  const human = project({ body: validBody({ publicBody: 'Why a maintainer changed this.', authorship: 'human' }) });
+  assert.deepEqual(human.errors, []);
+  const humanWithSession = project({ body: validBody({ authorship: 'human' }) });
+  assert(ids(humanWithSession.errors).includes('unexpected-session-id'));
+  const bot = project({
+    author: { login: 'dependabot[bot]' },
+    body: validBody({ publicBody: 'Bumps the durable dependency.', authorship: 'trusted-bot' }),
   });
-  assert.equal(clean.settings.matchesPrTitleBody, true);
-  assert.deepEqual(ids(clean), []);
-  assert.match(renderMarkdown(clean), /Squash Message Preview/);
-  assert.match(renderText(clean), /preview-squash-message: OK/);
-}
-
-{
-  const emptyTemplate = report({
-    body: ['## Summary', '', '## Changes', '', '## Testing', '', '## Related Issues', ''].join('\n'),
+  assert.deepEqual(bot.errors, []);
+  const untrustedBot = project({
+    author: { login: 'random-bot[bot]' },
+    body: validBody({ publicBody: 'Changes a dependency.', authorship: 'trusted-bot' }),
   });
-  assert.deepEqual(ids(emptyTemplate), ['empty-template-sections', 'missing-testing-signal', 'missing-session-id-line']);
-  assert.match(emptyTemplate.warnings[0].message, /Summary, Changes, Testing, Related Issues/);
-}
-
-// --- tempdoc 856 §3: Session-Id trailer (ADVISORY — warning only) ---
-{
-  const noTrailer = report({ body: '## Testing\n\nVerified locally.' });
-  assert(ids(noTrailer).includes('missing-session-id-line'));
-  // The suggestion falls back to a placeholder when no session id is supplied.
-  const warning = noTrailer.warnings.find((w) => w.id === 'missing-session-id-line');
-  assert.match(warning.message, /Session-Id: <session-uuid>/);
+  assert(ids(untrustedBot.errors).includes('untrusted-bot-actor'));
 }
 
 {
-  const withSessionId = buildSquashMessagePreview({
-    repoSlug: 'justsearch-app/justsearch',
-    repo,
-    sessionId: '1568032c-aff9-459c-9afd-7adb22e80473',
-    pr: { number: 1, title: 'fix: thing', body: '## Testing\n\nVerified.' },
-  });
-  const warning = withSessionId.warnings.find((w) => w.id === 'missing-session-id-line');
-  assert.match(warning.message, /Session-Id: 1568032c-aff9-459c-9afd-7adb22e80473/);
+  const missingReviewContent = project({ body: validBody().replace('Node regression tests passed.', '') });
+  assert(ids(missingReviewContent.errors).includes('empty-review-section'));
+  const fencedAuthorship = project({ body: validBody().replace('Authorship: agent', '```text\nAuthorship: agent\n```') });
+  assert(ids(fencedAuthorship.errors).includes('authorship-cardinality'));
+  const missingSubject = project({ viewerMergeHeadlineText: '' });
+  assert(ids(missingSubject.errors).includes('missing-projected-subject'));
+  const longSubject = project({ viewerMergeHeadlineText: `${'x'.repeat(73)}` });
+  assert(ids(longSubject.errors).includes('subject-too-long'));
+  const aboveTarget = project({ title: 'x'.repeat(61) });
+  assert(ids(aboveTarget.warnings).includes('title-above-target'));
 }
 
 {
-  const lastLine = report({
-    body: ['## Testing', '', 'Verified locally.', '', 'Session-Id: 1568032c-aff9-459c-9afd-7adb22e80473'].join('\n'),
-  });
-  assert(!ids(lastLine).includes('missing-session-id-line'));
-}
-
-{
-  // POSITION DOES NOT MATTER. An earlier revision warned when the line was not
-  // in the final paragraph; that premise was refuted — GitHub appends its own
-  // `---------` / `Co-authored-by:` paragraph on squash, so a trailing position
-  // is not achievable, and merge-links.mjs scans the whole message instead.
-  const midBody = report({
-    body: [
-      'Session-Id: 1568032c-aff9-459c-9afd-7adb22e80473',
-      '',
-      '## Testing',
-      '',
-      'Verified locally.',
-    ].join('\n'),
-  });
-  assert(!ids(midBody).includes('missing-session-id-line'));
-  assert.deepEqual(ids(midBody).filter((id) => id.includes('session-id')), []);
-}
-
-{
-  // No space after the colon is accepted, because merge-links.mjs's reader
-  // accepts it — the preview imports that predicate rather than owning a second
-  // one, so the two cannot disagree.
-  const noSpace = report({
-    body: ['## Testing', '', 'Verified.', '', 'Session-Id:1568032c-aff9-459c-9afd-7adb22e80473'].join('\n'),
-  });
-  assert(!ids(noSpace).includes('missing-session-id-line'));
-}
-
-{
-  // A mid-line mention is not a declaration, and the preview must agree with
-  // the reader that this body carries nothing.
-  const mention = report({
-    body: ['## Testing', '', 'Verified.', '', 'Write Session-Id: <uuid> into the body.'].join('\n'),
-  });
-  assert(ids(mention).includes('missing-session-id-line'));
-}
-
-{
-  // Advisory: an empty body already warns via missing-body and must not gain a
-  // Session-Id warning on top of it.
-  const emptyBody = report({ body: '' });
-  assert(!ids(emptyBody).includes('missing-session-id-line'));
-}
-
-{
-  const generated = report({
-    title: 'chore(deps): bump actions/checkout from 6 to 7',
-    body: [
-      'Bumps [actions/checkout](https://github.com/actions/checkout) from 6 to 7.',
-      '<details>',
-      '<summary>Release notes</summary>',
-      '<blockquote>',
-      '<h2>v7.0.0</h2>',
-      '<ul>',
-      '<li>Generated release note.</li>',
-      '</ul>',
-      '<!-- raw HTML omitted -->',
-      '</blockquote>',
-      '</details>',
-      'x'.repeat(5100),
-    ].join('\n'),
-  });
-  assert(ids(generated).includes('very-long-body'));
-  assert(ids(generated).includes('html-details'));
-  assert(ids(generated).includes('html-comment'));
-  assert(ids(generated).includes('missing-testing-signal'));
-}
-
-{
-  const settingsMismatch = report(
-    {
-      body: '## Testing\n\nVerified locally.',
-    },
-    {
-      squash_merge_commit_title: 'COMMIT_OR_PR_TITLE',
-      squash_merge_commit_message: 'COMMIT_MESSAGES',
-    }
-  );
-  assert(ids(settingsMismatch).includes('repo-settings-not-pr-title-body'));
-  assert.equal(settingsMismatch.settings.matchesPrTitleBody, false);
-}
-
-{
-  const missingBody = report({ body: '' });
-  assert(ids(missingBody).includes('missing-body'));
-}
-
-{
-  const releaseNotesDraftWord = report({
-    title: 'chore(deps): bump actions/cache from 5 to 6',
-    body: [
-      'Bumps actions/cache from 5 to 6.',
-      '',
-      '## Testing',
-      '',
-      'Verified by public CI.',
-      '',
-      '<details>',
-      '<summary>Release notes</summary>',
-      'Later instructions say to draft a new release after publishing.',
-      '</details>',
-    ].join('\n'),
-  });
-  assert(!ids(releaseNotesDraftWord).includes('draft-publication-marker'));
-}
-
-{
-  const generatedWithIncidentalTestingWord = report({
-    title: 'chore(deps): bump generated dependency',
-    body: [
-      'Bumps example from 1 to 2.',
-      '<details>',
-      '<summary>Release notes</summary>',
-      'The upstream project tested a new release process.',
-      '</details>',
-    ].join('\n'),
-  });
-  assert(ids(generatedWithIncidentalTestingWord).includes('missing-testing-signal'));
-}
-
-{
-  const topLevelTestingLabel = report({
-    body: ['## Summary', '', 'Small change.', '', 'Testing: verified locally.'].join('\n'),
-  });
-  assert(!ids(topLevelTestingLabel).includes('missing-testing-signal'));
-}
-
-{
-  const wipOpening = report({
-    title: 'WIP: docs publication preview',
-    body: '## Testing\n\nNot ready yet.',
-  });
-  assert(ids(wipOpening).includes('draft-publication-marker'));
-}
-
-{
-  const fencedPreview = report({
-    title: 'docs: include fenced preview',
-    body: ['## Summary', '', '```powershell', 'node scripts/ci/example.mjs', '```', '', '## Testing', '', 'Verified.'].join('\n'),
-  });
-  const md = renderMarkdown(fencedPreview);
-  assert.match(md, /^````markdown$/m);
-  assert.match(md, /^````$/m);
-  assert.match(md, /```powershell/);
-  assert(!ids(fencedPreview).includes('missing-testing-signal'));
+  const warning = project({ body: validBody({ publicBody: `Why.\n\nPinned source ${'d'.repeat(40)}.\n\nSession-Id: ${SESSION}` }) });
+  assert(ids(warning.warnings).includes('public-raw-sha'));
+  const longBody = `${'x'.repeat(1250)}\n\nSession-Id: ${SESSION}`;
+  assert(ids(project({ body: validBody({ publicBody: longBody }) }).warnings).includes('public-body-large'));
+  const oversized = `${'x'.repeat(2050)}\n\nSession-Id: ${SESSION}`;
+  assert(ids(project({ body: validBody({ publicBody: oversized }) }).errors).includes('public-body-too-large'));
 }
 
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'justsearch-squash-preview-'));
   try {
-    const repoFile = path.join(dir, 'repo.json');
     const prFile = path.join(dir, 'pr.json');
-    fs.writeFileSync(repoFile, `${JSON.stringify(repo)}\n`, 'utf8');
-    fs.writeFileSync(
-      prFile,
-      `${JSON.stringify({
-        number: 77,
-        title: 'docs: fixture preview',
-        body: '## Summary\n\nFixture body.\n\n## Testing\n\nFixture verified.\n\nSession-Id: 1568032c-aff9-459c-9afd-7adb22e80473',
-      })}\n`,
-      'utf8'
-    );
+    fs.writeFileSync(prFile, `${JSON.stringify({ ...project().pr, body: validBody() })}\n`, 'utf8');
     const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'preview-squash-message.mjs');
-    const out = execFileSync(process.execPath, [script, '--repo-json', repoFile, '--pr-json', prFile, '--json'], {
-      encoding: 'utf8',
-      windowsHide: true,
+    const run = spawnSync(process.execPath, [script, '--repo', 'justsearch-app/justsearch', '--pr-json', prFile, '--json'], {
+      encoding: 'utf8', windowsHide: true,
     });
-    const cliReport = JSON.parse(out);
-    assert.equal(cliReport.pr.number, 77);
-    assert.deepEqual(cliReport.warnings, []);
+    assert.equal(run.status, 0, run.stderr);
+    const cliReport = JSON.parse(run.stdout);
+    assert.equal(cliReport.source.prNumber, 123);
+    assert.deepEqual(cliReport.errors, []);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

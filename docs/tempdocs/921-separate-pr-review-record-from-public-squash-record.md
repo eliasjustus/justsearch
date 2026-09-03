@@ -1,7 +1,7 @@
 ---
 title: "Separate the PR review record from the public squash record"
 type: tempdocs
-status: "REST FIX DERISKED (2026-09-03) — route, version, queue state machine, and CLI transport proved read-only; custom-body preservation still requires one authorized live proof"
+status: "LOCAL TRANSPORT IMPLEMENTED (2026-09-03) — v2 projection and fail-closed async enqueue client pass offline/live-read checks; custom-body preservation still requires one separately authorized live proof"
 created: 2026-09-03
 updated: 2026-09-03
 charter: "make rich agent PR evidence compatible with concise, durable public main history"
@@ -1134,3 +1134,208 @@ the route, API-version, CLI-process, response-parser, preflight, and queue-state
 levels, but custom-body persistence is still unproved. Keep `PR_BODY`, do not start PRs
 1–3, and do not change repository settings until §14.5 passes or the storage-separation
 fallback is selected and designed.
+
+## 16. Implementation plan — 2026-09-03
+
+This plan followed both repository projections of the `plan` skill. It separates local,
+reversible implementation from GitHub mutations because implementation authorization is
+not publication authorization. The current branch remains a dedicated worktree; the root
+agent owns all shared-state and publication decisions. A bounded read-only subagent was
+asked to challenge the integration seams and test matrix, while code changes remain with
+the root agent.
+
+### 16.1 Slice A — pure publication projection
+
+- [x] Declare `markdown-it` as a direct development dependency; do not rely on
+  `markdownlint-cli`'s transitive installation.
+- [x] Extract a pure v2 projection module that parses top-level Markdown structure with
+  token maps and slices the original normalized source, preserving public-body bytes
+  apart from documented boundary-newline normalization: convert the GitHub body to LF,
+  remove only blank lines adjacent to the section boundaries, and preserve all interior
+  characters and lines, including trailing spaces.
+- [x] Make `## Public commit` the only landed-body source and `## Review record` the
+  review-only source. Reuse the canonical session-ID helpers instead of defining another
+  session syntax.
+- [x] Validate subject, section cardinality/order, public-body size and a closed set of
+  forbidden public markers (`Session-Id:`, Markdown task boxes, HTML comments, and exact
+  fenced-log labels defined in fixtures), review authorship, verification/scope/review
+  evidence, and the publication-specific `dependabot[bot]` trust case. Treat uncertain
+  transcript/log prose as a warning rather than inventing a broad scoring regex. Return
+  structured errors and warnings rather than exiting inside the module.
+- [x] Replace preview v1's exact-`Testing` and whole-body heuristics with the v2
+  projection. Preserve a human-readable full preview and provide a versioned JSON result
+  for scripts; no live consumer requires the v1 result shape.
+- [x] Add adversarial fixtures for fenced, quoted, and raw-HTML headings; Unicode and
+  multiline content; duplicate/missing/reordered sections; checklist/log/comment
+  leakage; malformed session IDs; every authorship class; and warning/error thresholds.
+
+### 16.2 Slice B — asynchronous merge transport, inert by default
+
+- [x] Add a pure parser/classifier for `gh api --include` responses. Cover final HTTP/1.1
+  and HTTP/2 blocks, CRLF/LF, non-2xx JSON bodies, malformed/duplicate headers, missing
+  fields, and all documented asynchronous states.
+- [x] Add an enqueue command that performs one GraphQL PR snapshot, builds the v2
+  projection in memory, validates repository/PR/head/queue preconditions, and displays
+  the exact subject/body plus a SHA-256 body fingerprint.
+- [x] Keep dry-run as the default. Require an explicit execute flag plus matching expected
+  head SHA and expected body fingerprint before any mutation. Never accept a saved body
+  file as the source for a later submit.
+- [x] Submit an authorized request as a UTF-8 standard-input buffer to `gh api`, using the
+  shared `resolveGhBin` helper, an argument vector, API version `2026-03-10`,
+  `merge_method=squash`, `merge_action=merge_queue`, and the same in-memory subject/body.
+- [x] Require a fresh `202 pending` response with UUID and exact method/action/SHA. Treat
+  `200`, `409`, malformed responses, mismatches, and all other statuses as fail-closed
+  diagnostics; never retry blindly or fall back to direct merge.
+- [x] Poll only the request phase (`pending -> enqueued|merged|failed`) with a bounded
+  timeout and dependency-injected process/time boundaries. At `enqueued`, stop with an
+  explicit handoff to the repository's currently manual PR/merge-group procedure rather
+  than claiming that prose-only procedure is existing reusable observer code.
+- [x] Add unit/integration-fixture coverage for the full §15.4 matrix, including exact
+  Unicode bytes through stdin, pre-existing queue state, moved head, timeout, and proof
+  that the rich review record never enters the request payload or diagnostic output.
+
+### 16.3 Live proof — blocked on publication authorization
+
+- [ ] Select a legitimate single-author, single-commit change whose publication is useful
+  independently of this experiment; do not create a one-tempdoc proof PR.
+- [ ] Open/update that PR with unique public and review sentinels, obtain required checks,
+  and run the enqueue command with a fresh `202`. These are remote mutations and require
+  explicit per-action authorization.
+- [ ] Observe the UUID only to `enqueued`, then the queue entry, `merge_group` checks, PR
+  merge, landed commit, and final `main` CI.
+- [ ] Prove exact subject and public-body preservation and prove review-sentinel absence.
+  Record the raw status/state evidence without credentials or the rich PR body.
+- [ ] If the proof fails, stop rollout and design the storage-separation fallback. Do not
+  weaken equality, silently accept provider transformations, or resurrect direct merge.
+
+### 16.4 Rollout only after the proof passes
+
+- [ ] Add the PR template's explicit `Public commit` and `Review record` schema and a
+  report-only metadata workflow on `pull_request`, `pull_request_target`, and/or
+  `merge_group` only after validating the same-SHA event behavior.
+- [ ] Update both publish skills together, retaining each harness's native interaction
+  style while replacing `gh pr merge --body-file` with the proved enqueue command and
+  two-phase observer. Before editing `.agents/skills`, resolve the conflict between the
+  current injected instruction that calls it generated and the checked-in prompt-surface
+  governance document that calls it independently hand-authored; do not guess a missing
+  generator.
+- [ ] Update canonical publication guidance in the agent guide, `MAINTAINING.md`, and
+  `CLAUDE.md`; remove superseded CLI-body instructions and old template prose in the same
+  change.
+- [ ] Amend ADR-0045 and `docs/decisions/README.md` when the shipped publication behavior
+  changes. Update the active risk register/temporary history rather than presenting the
+  pre-proof design as current truth.
+- [ ] Add a forward supersession note to tempdoc 653's whole-PR-body source assertion.
+- [ ] Regenerate governed/derived documentation and skill projections using the
+  repository maintenance workflow; never hand-edit generated regions.
+- [ ] After report-only evidence, change the repository squash default from `PR_BODY` to
+  `BLANK`, update the history-policy source/check/tests, register the required check, and
+  audit at least 30 subsequent landed commits before closing the migration.
+
+### 16.5 Teardown and verification contract
+
+- [ ] Delete preview v1's exact-`Testing`, 5,000-character, whole-body-comment, and
+  review-in-commit assumptions when v2 replaces it. Do not keep dual schemas or a hidden
+  v1 compatibility path with no consumer.
+- [ ] Remove every live `gh pr merge --squash --body-file` publication instruction when
+  the new route ships. Keep historical tempdocs intact and mark superseded plans as such.
+- [ ] Either promote proof-only fixtures/helpers into maintained production tests or
+  delete them in the rollout change; no orphan experimental transport remains.
+- [ ] Run the focused Node tests for projection, preview, transport, workflow/policy, and
+  skill/documentation governance after each slice, and explicitly register every new
+  Node test in CI rather than assuming file discovery. Then run the repository's complete
+  agent/governance verification sequence and inspect the diff for secrets, generated
+  drift, stale instructions, and unsourced claims.
+- [ ] Do not claim the feature complete while the live proof, rollout, settings migration,
+  and post-merge audit remain unchecked. Local Slice A/B completion is an implementation
+  milestone, not publication success.
+
+### 16.6 Current execution boundary
+
+Proceed now with Slices A and B in this worktree. They are local and reversible. The live
+proof, PR creation/update, push, merge, branch-protection changes, and repository settings
+changes remain blocked on separate explicit authorization. Nothing else is blocked on the
+user: implementation and local verification continue autonomously.
+
+## 17. Local implementation evidence — 2026-09-03
+
+Slices A and B are implemented in this worktree. No GitHub write endpoint was invoked,
+no branch was pushed, no PR was created or edited, and no repository/ruleset setting was
+changed.
+
+### 17.1 Implemented seams
+
+- `scripts/ci/lib/squash-message-projection.mjs` owns the v2 Markdown projection. It
+  normalizes GitHub CRLF input to LF, trims only blank boundary lines, preserves interior
+  content, accepts headings only from Markdown token maps, and keeps the rich review body
+  out of its returned PR summary.
+- Root-level `Session-Id:` declarations reuse `merge-links.mjs` validation. Declarations
+  in fences, raw HTML, blockquotes, lists, or indented code are rejected and cannot satisfy
+  agent/mixed attribution, so a valid projected commit cannot disagree with the later raw
+  history reader.
+- `preview-squash-message.mjs` now fetches GitHub's live projected squash subject and
+  prints the exact v2 body. It has no mutation path.
+- `scripts/ci/lib/github-async-merge.mjs` owns request construction, HTTP response parsing,
+  sanitized diagnostics, receipt metadata validation, request-state classification, and
+  bounded polling. Expected PR head and landed merge-commit SHA are distinct fields.
+- `enqueue-squash-message.mjs` is dry-run by default. Execution first waits for required
+  checks, then takes a fresh GraphQL snapshot. Mutation requires exact head, body, and full
+  request fingerprints. JSON goes to `gh api` as a UTF-8 buffer, never argv or a shell.
+  Every API child process has a bounded timeout; an ambiguous PUT timeout reports unknown
+  external state and explicitly forbids retry.
+- The command accepts only a fresh `202 pending` receipt with a valid UUID and matching
+  method/action/head. `200`, `409`, every other non-202 status, response mismatch, malformed
+  data, and already-queued/auto-merge preflight state stop without retry or direct-merge
+  fallback. Receipt polling stops at `enqueued`, `merged`, or `failed` and hands later
+  reconciliation to the still-manual publication procedure.
+- Both focused tests are wired into the existing CI fact lane; `checksWait` is exported
+  from the established `run-gh.mjs` substrate rather than duplicated.
+
+### 17.2 Refute-first corrections
+
+The bounded read-only subagent review found and the implementation corrected:
+
+1. a title-edit race not covered by head/body confirmation — fixed with a full request
+   fingerprint and regression fixture;
+2. unbounded child processes around an irreversible request — fixed with per-call
+   deadlines and an explicit unknown-state/no-retry diagnostic;
+3. opaque-block session examples satisfying authorship — fixed with root-content
+   classification and fence/raw-HTML/blockquote fixtures;
+4. merged commit SHA being mislabeled as expected head SHA — fixed with separate fields;
+5. a stub-only process test — fixed with an injected fake spawn boundary that asserts
+   binary/argv/stdin/timeout behavior and transport failure classification;
+6. insufficient one-shot failure evidence — fixed by proving 400/403/404/409/422 each
+   cause one PUT and zero polls/retries;
+7. unchecked head shape — fixed with a local 40-hex object-ID precondition.
+
+The remaining review warning is intentional: v2 locally replaces the supported preview
+while the repository template and publish skills still emit the old schema. Therefore
+this branch is **not shippable as-is**. The live proof and atomic activation slice in
+§16.3–16.4 must precede publication.
+
+### 17.3 Verification
+
+- `npm ci` — passed from the lockfile.
+- `node scripts/dev/run-gh.test.mjs` — all 24 checks passed.
+- `node scripts/ci/test-preview-squash-message.mjs` — passed.
+- `node scripts/ci/test-enqueue-squash-message.mjs` — passed.
+- `node scripts/ci/check-workflow-triggers.mjs` — passed; workflow policy remains aligned.
+- `npm run test:governance` — all 28 governance test files passed.
+- `npm run test:agent-analytics` — all 65 agent-analytics test files passed.
+- `node scripts/docs/skills-sync.mjs --check` — passed; generated Claude skill regions
+  remain aligned.
+- `node scripts/docs/llmstxt-generate.mjs --check` — passed; the 116-document index is
+  current.
+- Root npm audit ratchet — passed at 11 high / 0 critical against a 16 high / 0 critical
+  baseline. The broader report warned that its `ssot-tools` audit subprocess could not
+  spawn `cmd.exe`; that unrelated target was not used as evidence for this implementation.
+- Live read-only GraphQL/preview against PR #622 returned its projected subject, head SHA,
+  queue state, and the expected v2 contract errors. The enqueue command's default dry-run
+  repeated that result without invoking `PUT`.
+
+Two verification batches had invocation errors: the first named the existing `run-gh`
+test incorrectly and stopped before the implementation tests ran; a later static search
+used a Unix-style wildcard that Windows rejected after the syntax checks passed.
+Repository CI triage identified the actual `scripts/dev/run-gh.test.mjs`, and the search
+was rerun with `rg -g`. The corrected commands and all intended checks passed. Neither
+incident was a suppressed test failure.
