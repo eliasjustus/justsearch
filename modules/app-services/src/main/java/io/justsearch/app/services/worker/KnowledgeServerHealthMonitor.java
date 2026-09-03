@@ -430,6 +430,7 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
         return;
       } catch (Exception e) {
         log.warn("Boot recovery attempt {} failed: {}", attemptNo, e.toString());
+        settleAfterFailedAttempt();
         return;
       }
       if (bootstrap.hasClient()) {
@@ -503,14 +504,17 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
                 + " on disk, so re-spawning would read the same bytes and refuse the same way",
             cause == null ? "a fatal index reason" : cause.code());
         if (cause != null) {
-          // Already-held is the ordinary case (the boot-time final catch narrated it); re-stamping
-          // would emit a second worker-down occurrence for one event.
-          if (!cause.code().equals(bootstrap.workerCapability().pendingReason())) {
-            bootstrap
-                .workerCapability()
-                .transition(
-                    CapabilityHealth.DEGRADED, cause.code(), bootstrap.indexFatalDetail());
-          }
+          // Unconditional, and deliberately so (R2). An earlier draft skipped the write when the
+          // reason slot already held the cause — a wrong-gate: it compared the REASON and ignored the
+          // HEALTH, so an operator-requested attempt that re-refused left the capability parked at
+          // the RECOVERING this arm had set before the spawn. The reason was right and the state was
+          // a lie: readinessNotice.ts renders it as "recovering" for a condition that never recovers
+          // on its own, which live R2 watched sit there for two minutes. This cannot double-narrate:
+          // WorkerCapability.transition fires listeners only when the health OR the effective reason
+          // changes, and the sticky reason is retained, so the already-terminal case is a no-op.
+          bootstrap
+              .workerCapability()
+              .transition(CapabilityHealth.DEGRADED, cause.code(), bootstrap.indexFatalDetail());
         }
       }
       case SUPERVISION_ENGAGED ->
@@ -534,6 +538,40 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
                     + " recovery attempt(s) did not bring it up");
       }
     }
+  }
+
+  /**
+   * Tempdoc 915 R2: re-ask the decision the moment an attempt fails, instead of leaving the
+   * capability parked at the RECOVERING this arm set before the spawn until the next tick happens to
+   * come round. Runs on the executor thread (its only caller is the attempt itself), asks the same
+   * pure function the tick asks, and narrates through the same funnel — so it can only reach a state
+   * the periodic arm would have reached anyway, sooner. Live R2 watched an operator-requested retry
+   * that re-refused report "recovering" for two minutes; a condition that cannot recover on its own
+   * must not be rendered as one that is recovering.
+   *
+   * <p>Scoped to {@link BootRecoveryDecision.Veto#INDEX_FATAL} on purpose. It is the only veto whose
+   * cause is already known-terminal at the instant the attempt fails, and the only one this arm
+   * narrates. The budget-exhaustion give-up keeps its designed timing (narrated by the tick after the
+   * last attempt) — {@code KnowledgeServerBootRecoveryTest.arcGivesUpOnceAfterTheBudget} pins that,
+   * and pulling it forward here would be a scheduling change R2 did not ask for.
+   */
+  private void settleAfterFailedAttempt() {
+    BootRecoveryDecision.Decision decision =
+        BootRecoveryDecision.decide(currentRecoveryInput(), recoveryPolicy);
+    if (decision.action() == BootRecoveryDecision.Action.GIVE_UP
+        && decision.veto() == BootRecoveryDecision.Veto.INDEX_FATAL) {
+      narrateGiveUp(decision.veto());
+    }
+  }
+
+  /** Boot-recovery attempts spent in this arc. Visible for tests. */
+  int recoveryAttemptsMadeForTest() {
+    return recoveryAttemptsMade;
+  }
+
+  /** Whether an attempt holds the single attempt slot right now. Visible for tests. */
+  boolean recoveryAttemptRunningForTest() {
+    return recoveryAttemptRunning.get();
   }
 
   /** Records the terminal state AND which veto produced it, so the two can never disagree. */

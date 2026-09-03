@@ -739,6 +739,8 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 | D.53 | **R1, the narration + the hatch.** `KnowledgeServerHealthMonitor`: `currentRecoveryInput(operatorRequested)`; `gaveUpVeto` records WHICH veto latched the give-up; `narrateGiveUp`'s `INDEX_FATAL` arm stamps the latched cause when the capability does not already hold it (the case where the whole boot arc was suppressed and nothing else will ever say it). An operator request withholds the veto **and** re-opens that one give-up — the budget and the supervision vetoes are untouched, because the documented remedy for both fatal index causes is a settings or filesystem change the next spawn reads | `KnowledgeServerHealthMonitor.java` |
 | D.54 | **R1, the user-facing string.** `HeadlessApp.startErrorFor(bootstrap, e)` prefers the latched remedy over `summarizeStartError(e)`, so `knowledgeServerStartError` — rendered verbatim in the 503 body — names the refusal instead of "Worker process crashed (exit code 1) before writing port to signal file". The `:540-542` narration comment now enumerates both fatal index codes and the latch | `HeadlessApp.java` |
 | D.55 | **R1 tests.** New `SchemaMismatchFatalArcTest` (7 cases over a real bootstrap + a real monitor: the suppressed-attempt arc, the ladder short-circuit, STICKY through recovering/exhausted, the supervision-guard carve-out, the give-up narrating a swallowed cause, the READY clear, and a no-marker control) and `HeadlessAppStartErrorTest` (3). `BootRecoveryDecisionTest` +4 ranking cases; `StatusLifecycleWorkerReasonTest` +1 wire-projection case driving the full live sequence | see §F round 8 |
+| D.56 | **R2 — a wrong-gate inside R1's own fix.** The `INDEX_FATAL` give-up skipped its capability write when the reason slot already held the cause. That compared the REASON and ignored the HEALTH, so an operator-requested attempt that re-refused left the capability parked at the `RECOVERING` the arm had set before the spawn — `readinessNotice.ts` renders that as "recovering" for a condition that never recovers on its own, and live R2 watched it sit there for 120 s. The write is unconditional now; it cannot double-narrate, because `WorkerCapability.transition` fires listeners only when the health OR the effective reason changes and the sticky reason is retained | `KnowledgeServerHealthMonitor.java` — `narrateGiveUp`'s `INDEX_FATAL` arm |
+| D.57 | **R2 — the second half.** A failed attempt only `return`ed, so nothing re-asked the decision until the next tick. `settleAfterFailedAttempt()` re-runs the same pure function on the same executor thread and narrates through the same funnel. Scoped to `Veto.INDEX_FATAL`: it is the only veto whose cause is known-terminal the instant the attempt fails, and pulling the budget-exhaustion give-up forward would change a timing `KnowledgeServerBootRecoveryTest.arcGivesUpOnceAfterTheBudget` pins — which is exactly how that scoping error was caught (the unscoped first cut turned that test red) | `KnowledgeServerHealthMonitor.java` |
 | D.23 | **Review round.** `ParityDiagnostics`: `LEGACY_INDEX_HINT` + the asymmetric blank-side rule (§C.5a). `IndexMetadataParityGuard`: `warnIfFingerprintUncomputable`, once per process. `ResolvedConfig.Index`: `DEFAULT_VECTOR_HNSW_M` / `DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION` + `effectiveVectorHnsw*()`; `ComponentsFactory` reads them instead of its own 16/200. `IndexFingerprint`: `Analysis`, `threshold_chars`, `preview.max_chars`, `ner_model_sha256`, three-arg provider install. New `NerFingerprint` (worker-core). `SpladeFingerprint`: a missing model file is `NOT_CONFIGURED`. `ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS` made public; both constants mirrored into `SsotCommitMetadataSource` with a drift test. `KnowledgeServer`: `recordAutoRebuildAttemptOrSkip` (no budget for an unattributable boot), `expectedIndexFingerprintOrNull` (guarded), and exhaustion opens Blue read-only. `LifecycleReasonCode.INDEX_REBUILD_BRAKE_EXHAUSTED`; `StatusLifecycleHandler.compatBlockedReason` maps `BLOCKED_REBUILD_BRAKE`; `IndexStatusOps` produces it. `readinessNotice.ts`: corrected comment + new `index.rebuild_brake_exhausted` row, added to `REINDEX_CAUSE_CODES`. `WorkerSpawner` comment; `SchemaMismatchStatusContractTest` states its escape use; `environment-variables.md` documents the per-mode default | see §F round 2 |
 
 ---
@@ -873,6 +875,8 @@ would otherwise have read as "every break survived".
 | G56 | stop the give-up narrating a cause the boot arc swallowed | `SchemaMismatchFatalArcTest` | `expected: <worker.index_schema_mismatch> but was: <worker.not_connected>` — the shape where the whole boot arc was suppressed and nothing else will ever say it |
 | G57 | never clear the latch on READY | `SchemaMismatchFatalArcTest` | `READY is where the latch is dropped; this assertion fails if only the capability's ReasonRetention clears and the bootstrap keeps its copy ==> expected: <null>`. The anti-staleness direction is pinned too: without it an OOM death an hour later is reported as the old schema mismatch |
 | G58 | `knowledgeServerStartError` falls back to the spawn symptom | `HeadlessAppStartErrorTest` | `the user must be told which setting produced the refusal; got: Worker process crashed (exit code 1) before writing port to signal file` — the live string, character for character |
+| G59a | **R2.** restore the reason-only guard on the give-up stamp | `SchemaMismatchFatalArcTest` | `expected: <DEGRADED> but was: <RECOVERING>` — the live symptom exactly: the reason slot was right the whole time and the HEALTH was the lie |
+| G59b | **R2.** stop settling after a failed attempt — wait for the next tick | `SchemaMismatchFatalArcTest` | same assertion. Both halves are load-bearing: the guard made the write a no-op, and without the settle nothing calls the funnel until a tick lands |
 
 | ID | Break | Test that caught it | Observed failure |
 |---|---|---|---|
@@ -1146,7 +1150,120 @@ Re-run in full after O14; every line below is from that run. The integration-tes
 
 ## Report-back
 
-See the PR body and §F/§G. Extended by Phases 2 and 3.
+**Phase 1 complete.** Extended by Phases 2 and 3, which have not started.
+
+### PRs
+
+- **#620** — `feat(915): one truthful index fingerprint, blue/green as the production default (lane D
+  phase 1)`. Open, green, **not merged** (no merge authorisation given). It carries the whole of
+  Phase 1 plus the wave-1 fold-ins and eight rounds of review/validation fixes. No other PR was
+  opened for this tempdoc; the canonical-doc and tempdoc edits ride along in it (`docs-ride-along`).
+
+### Items: done, deviated, skipped
+
+**Done as specified:** A1-A3, A5-A13 and W1-W5 (§A checkboxes, evidence per row in §D).
+
+**Deviated, with the reason recorded where the deviation lives:**
+
+- **A4** — `SsotCommitMetadataSource` no longer sources the index's identity from
+  `SSOT/versions/catalog.json`, but `grammar_ver` / `template_ver` were **not** deleted: they are
+  observability with live consumers, and the index's identity does not depend on them (§C.6, O1 —
+  closed by owner decision). The coupling is cut; the fields stay.
+- **A2 input list** — grew during the review round beyond the original draft: `ner_model_sha256`,
+  `threshold_chars`, `preview.max_chars`, `ChunkSplitter.ALGORITHM_VERSION`, and
+  `analysis.lucene_version` / `analysis.icu_version` were added, and HNSW `m`/`ef_construction` are
+  hashed as the **effective** values rather than the raw nullable config. Each addition is a physical
+  input that was missing, not scope creep; the `lucene_version`/`icu_version` pair is deliberately
+  coarse (one rebuild per library bump) and says so in `11-index-schema-migration.md`.
+- **A9** — the brake bounds auto-rebuilds per `index_fingerprint` (`MAX_AUTO_REBUILD_ATTEMPTS = 3`),
+  and the exhausted state **serves Blue read-only** rather than refusing to start. That is more than
+  "rate-limit"; it came out of delta-review B3 and is what makes the state observable at all.
+
+**Skipped, and why:** nothing on the Phase 1 list. The two things NOT done are scheduled work, not
+skips: the live blue/green loop was open item O3 until the validator ran it (now closed by the
+2026-09-03 arms), and the size/RSS measurements belong to Phase 3.
+
+### Evidence
+
+- **Static:** §G (full kernel 35 gates / 1 inherited `ts-any` fail; `check-readiness-reason-codes`
+  56 emittable / 50 worded; ui-web 40/40; 6267 FE unit tests; full JVM suite green under
+  `cleanTest --no-build-cache`).
+- **Falsification:** §F, F1-F5 and G30-G59b — every new or modified guarantee broken once, watched
+  fail with the observed assertion text, restored from byte copies. Two driver defects were caught by
+  the driver's own zero-XML invariant rather than by luck (§F rounds 5 and 8).
+- **Live, by an independent validator (not the implementer):**
+  - `419aadb7` — the seven-arm run at `12955fe9`. Arms 0, 2-6 PASS; arm 1 produced D1-D4.
+  - `51c7e1c2` — re-validation at `403f4b30`. Arms 1, 3, 4, 5, 6 PASS (D1-D4, O14, the
+    budget-cleared-by-hand path and the legacy upgrade all confirmed live); one FAIL, R1.
+  - `56e75cd7` — arm 2 re-run at `c06d8b25`. All ten assertions PASS; one residual, R2, fixed here.
+  - Arm 2's headline fact: under `FAIL_CLOSED` the index was left **byte-identical** — `state.json`
+    SHA-256 `E3BF2686…` before and after, 26 index files identical by name and size.
+
+### Measurements
+
+The only Phase 1 measurement is the **fingerprint input list itself** — what is in the hash and what
+is deliberately out. It is documented as current truth in
+`docs/explanation/11-index-schema-migration.md` § "Index fingerprint (`index_fingerprint`)": in are
+the catalog schema version, the per-field physical projection, the analyzer definitions,
+`vector_format`, effective HNSW `m`/`ef_construction`, the chunking parameters + splitter algorithm
+version, `preview.max_chars`, `analysis.lucene_version`/`icu_version`, and the three model shas; out
+are `rmwPolicy` annotations, all query-time scoring (BM25 `k1`/`b`, boosts, `ef_search`), and the
+search-intent grammar / prompt packs / templates.
+
+**No index-size or RSS numbers are reported, by design** — they are Phase 3's subject, and quoting a
+number here that nothing measured would be worse than the gap.
+
+**The search-quality register was not updated, because Phase 1 changed no number.** Every exclusion
+above is exclusion of a *query-time* lever from an *index-identity* hash: retrieval behaviour,
+fusion, reranking and the eval baselines are untouched. The register is for numbers that moved.
+
+### Cross-lane
+
+- **Lane E — authorised, four lines, after #620 merges.** `SsotCommitMetadataSource` reads the
+  chunking constants from `ChunkSplitter`; lane E may change those reads to the `effectiveChunk*()`
+  accessors. It is a mechanical four-line edit and lane D has no objection — but it must land
+  **after** #620, not as a conflicting concurrent edit, because the same file is rewritten by A4.
+  Also standing: `ChunkSplitter.ALGORITHM_VERSION` is new and additive; bump it when the splitting
+  *algorithm* changes with token counts unchanged (token counts are already fingerprint inputs).
+- **Lane B** — RISK-011 instrumented at `tempdoc:915#C`, deliberately left **Monitoring**.
+- **Lane C** — Phase 1 touches `IndexGenerationManager` (worker-core) and `IndexStatusOps`
+  (worker-services), outside lane D's declared file list but on the migration/status path.
+- **Lane F** — two things to know. (1) The worker↔Head fatal-reason channel now carries **two**
+  codes, `index_corrupt` and `index_schema_mismatch`, and the Head **latches** either on read because
+  the marker is one-shot; anything new that consumes `WorkerFatalReasonMarker` must not assume a
+  second read is possible. (2) `BootRecoveryDecision` gained `Veto.INDEX_FATAL`, so a fatal index
+  cause now short-circuits the respawn ladder for **both** axes — a behaviour change on the
+  corruption axis too, and the operator hatch is the documented exemption.
+
+### Residue routed
+
+- **O2** (proto/FE field names still say `schema_fp`) → UI/wire lane, TRACKED.
+- **O8** (braked ingest queue is unbounded and silent) → lane C / 885 successor.
+- **O9** (`TYPED_CONFIRM` + `X-JustSearch-Session` for `core.rebuild-index` undocumented) →
+  dev-tooling lane.
+- **O10** (`SearcherManager not available` health-check noise on deferred-open boots, pre-existing)
+  → lane C.
+- **D4** (`commit_by_reason` never carries `migration/cutover` live) → 912 metrics lane; the
+  ≤30-line half that was in files lane D owns (the cutover flush) is done here.
+- **`falsify-restore-from-backup`** → postmortem #29 + the `agent-lessons.md` handle list, paid for
+  by a trim elsewhere in that file (the byte budget is ratcheted).
+
+### What Phase 2 and Phase 3 must know
+
+1. **`index_fingerprint` is now the single rebuild-requiring key.** Adding an input costs every user
+   a rebuild; adding a query-time lever must cost nothing. If Phase 2 or 3 introduces a physical
+   input, it goes in the hash **and** in the `11-…md` list, which is the doc a reader is entitled to
+   treat as complete.
+2. **The production default is `BLUE_GREEN_MIGRATE`.** A change that moves the fingerprint no longer
+   bricks a boot; it starts a migration the user pays for in disk and time. Phase 3's size work
+   should measure that cost, since it is now the default path.
+3. **The compatibility surface describes the generation being SEARCHED**, never the one being
+   written. Four fields were wired the wrong way round and the live run caught it; the rule and its
+   two exceptions are documented.
+4. **Tri-state model fingerprints: indeterminate is not a mismatch.** Any new model input must
+   preserve that, or an unconfigured model becomes a rebuild trigger.
+5. **The repeat-rebuild brake bounds Phase 3's experiments too.** Three auto-rebuilds against the
+   same fingerprint and the worker serves Blue read-only until an operator intervenes.
 
 ## Live product validation (2026-09-03)
 

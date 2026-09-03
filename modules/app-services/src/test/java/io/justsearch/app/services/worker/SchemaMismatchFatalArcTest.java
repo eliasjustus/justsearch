@@ -194,6 +194,49 @@ final class SchemaMismatchFatalArcTest {
 
   @Test
   @Timeout(180)
+  @DisplayName("an operator retry that re-refuses re-latches the cause, not a stuck 'recovering'")
+  void anOperatorRetryThatReRefusesReLatchesTheVerdict(@TempDir Path tempDir) throws Exception {
+    var bootstrap = refusedBoot(tempDir);
+    var monitor =
+        new KnowledgeServerHealthMonitor(bootstrap, 10_000, System::currentTimeMillis, NO_WAIT);
+    monitor.tick();
+    assertEquals(MISMATCH, bootstrap.workerCapability().pendingReason(), "precondition: latched");
+
+    // The operator fixes nothing and asks anyway — the case R2 observed live. The refusal repeats,
+    // so the worker rewrites the marker and the arm re-latches; what must NOT survive is
+    // worker.recovering, which readinessNotice.ts renders as "recovering" for a condition that
+    // never recovers on its own. The request withholds the VETO, never the VERDICT.
+    WorkerFatalReasonMarker.write(tempDir, WorkerFatalReasonMarker.INDEX_SCHEMA_MISMATCH);
+    assertEquals(
+        WorkerRecoveryAuthority.Verdict.ACCEPTED,
+        monitor.requestRecoveryNow(),
+        "the hatch stays open: an index-fatal give-up is the one terminal state an operator reopens");
+    awaitAttemptSettled(monitor);
+
+    assertEquals(1, monitor.recoveryAttemptsMadeForTest(), "exactly one attempt was spent");
+    assertEquals(
+        MISMATCH,
+        bootstrap.workerCapability().pendingReason(),
+        "terminal readiness is the cause again, not a transient the user waits out forever");
+    assertTrue(
+        bootstrap.workerCapability().pendingDetail().contains("index.schema_mismatch.policy"));
+    assertEquals(CapabilityHealth.DEGRADED, bootstrap.workerCapability().health());
+  }
+
+  /** Bounded poll: requestRecoveryNow schedules the attempt on the arm's own executor. */
+  private static void awaitAttemptSettled(KnowledgeServerHealthMonitor monitor) throws Exception {
+    long deadline = System.currentTimeMillis() + 120_000;
+    while (System.currentTimeMillis() < deadline) {
+      if (!monitor.recoveryAttemptRunningForTest() && monitor.recoveryAttemptsMadeForTest() > 0) {
+        return;
+      }
+      Thread.sleep(50);
+    }
+    throw new AssertionError("the operator-requested attempt never ran");
+  }
+
+  @Test
+  @Timeout(180)
   @DisplayName("an unrelated later death is NOT reported as the old refusal")
   void theLatchIsClearedWhenTheWorkerServes(@TempDir Path tempDir) {
     var bootstrap = refusedBoot(tempDir);
