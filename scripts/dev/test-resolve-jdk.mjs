@@ -93,10 +93,10 @@ check('selectFromCandidates: non-existent home → null (no throw)', () => {
 
 // --- javaHomesFromPath ---
 check('javaHomesFromPath: scans past an obsolete Windows shim to a JDK bin', () => {
-  const pathValue = 'C:\\Oracle\\java8path;"F:\\scoop\\apps\\temurin25-jdk\\current\\bin"';
+  const pathValue = 'C:\\Oracle\\java8path;"D:\\tools\\jdk-25\\bin"';
   const existing = new Set([
     'C:\\Oracle\\java8path\\java.exe',
-    'F:\\scoop\\apps\\temurin25-jdk\\current\\bin\\java.exe',
+    'D:\\tools\\jdk-25\\bin\\java.exe',
   ]);
   assert.deepEqual(
     javaHomesFromPath(
@@ -105,7 +105,7 @@ check('javaHomesFromPath: scans past an obsolete Windows shim to a JDK bin', () 
       (candidate) => existing.has(candidate),
       (candidate) => candidate,
     ),
-    ['C:\\Oracle', 'F:\\scoop\\apps\\temurin25-jdk\\current'],
+    ['C:\\Oracle', 'D:\\tools\\jdk-25'],
   );
 });
 
