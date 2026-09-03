@@ -137,6 +137,7 @@ public class IndexingLoop implements Closeable {
   // setPathResolutionStore() at boot.
   private volatile io.justsearch.indexerworker.path.PathResolutionStore pathResolutionStore =
       io.justsearch.indexerworker.path.PathResolutionStore.NOOP;
+  private final io.justsearch.indexerworker.identity.DocumentIdentityStore documentIdentityStore;
 
   // Pipeline tracing (312 Phase 0) — zero-cost when detailedTracing is false.
   private final Tracer tracer = GlobalOpenTelemetry.getTracer("indexing");
@@ -339,6 +340,7 @@ public class IndexingLoop implements Closeable {
     IndexingLoopOptions opts = options != null ? options : IndexingLoopOptions.withDefaults();
     this.detailedTracing = opts.detailedTracing();
     this.pathResolutionStore = opts.pathResolutionStore();
+    this.documentIdentityStore = opts.documentIdentityStore();
     this.migrationActiveSupplier = opts.migrationActiveSupplier();
     this.commitMetadataSupplier = opts.commitMetadataSupplier();
     if (opts.detailedTracing()) {
@@ -417,6 +419,7 @@ public class IndexingLoop implements Closeable {
             running,
             forcedPaths,
             () -> pathResolutionStore,
+            () -> documentIdentityStore,
             this::recordStageMs,
             () -> detailedTracing,
             (long delta) -> indexedSinceCommit += delta);

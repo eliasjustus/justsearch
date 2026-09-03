@@ -10,6 +10,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
@@ -34,6 +37,9 @@ public final class DocumentFieldOps {
   private final String idField;
   private final RuntimeSession session;
   private final ReadPathOps readPathOps;
+
+  /** Stored parent identity used to seed/rebuild the Worker document-identity store. */
+  public record StoredDocumentIdentity(String docId, String docUid) {}
 
   DocumentFieldOps(
       RuntimeSession session,
@@ -415,6 +421,62 @@ public final class DocumentFieldOps {
     } catch (IOException e) {
       log.debug("Failed to query {}={}: {}", field, value, e.getMessage());
       return List.of();
+    }
+  }
+
+  /**
+   * Reads every live parent document's stored identity from one searcher snapshot.
+   *
+   * <p>This deliberately has no corpus-size cap: omitting a tail of the active index during an
+   * identity-store import would cause those documents to be re-minted on their next write. I/O
+   * failure is surfaced rather than converted to an empty result because this is recovery data,
+   * not a best-effort UI query.
+   */
+  public List<StoredDocumentIdentity> listParentDocumentIdentities() {
+    try {
+      maybeRefreshBlockingIfCommittedSinceRefresh();
+      return bridge.withSearcher(
+          searcher -> {
+            List<StoredDocumentIdentity> identities = new ArrayList<>();
+            for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
+              SortedDocValues docIds = DocValues.getSorted(leaf.reader(), SchemaFields.DOC_ID);
+              SortedDocValues docUids = DocValues.getSorted(leaf.reader(), SchemaFields.DOC_UID);
+              SortedDocValues isChunks = DocValues.getSorted(leaf.reader(), SchemaFields.IS_CHUNK);
+              var liveDocs = leaf.reader().getLiveDocs();
+              for (int doc = 0; doc < leaf.reader().maxDoc(); doc++) {
+                if (liveDocs != null && !liveDocs.get(doc)) {
+                  continue;
+                }
+                if (isChunks.advanceExact(doc)
+                    && "true".equals(isChunks.lookupOrd(isChunks.ordValue()).utf8ToString())) {
+                  continue;
+                }
+                if (!docIds.advanceExact(doc) || !docUids.advanceExact(doc)) {
+                  throw new IndexRuntimeIOException(
+                      IndexRuntimeIOException.Reason.CORRUPT_INDEX,
+                      "Live parent document is missing doc_id or doc_uid at Lucene doc "
+                          + (leaf.docBase + doc),
+                      null);
+                }
+                String docId = docIds.lookupOrd(docIds.ordValue()).utf8ToString();
+                String docUid = docUids.lookupOrd(docUids.ordValue()).utf8ToString();
+                if (docId.isBlank() || docUid.isBlank()) {
+                  throw new IndexRuntimeIOException(
+                      IndexRuntimeIOException.Reason.CORRUPT_INDEX,
+                      "Live parent document has a blank doc_id or doc_uid at Lucene doc "
+                          + (leaf.docBase + doc),
+                      null);
+                }
+                identities.add(new StoredDocumentIdentity(docId, docUid));
+              }
+            }
+            return Collections.unmodifiableList(identities);
+          });
+    } catch (IOException e) {
+      throw new IndexRuntimeIOException(
+          IndexRuntimeIOException.Reason.DISK_IO,
+          "Failed to read parent document identities",
+          e);
     }
   }
 }

@@ -149,6 +149,7 @@ public final class KnowledgeServer implements Closeable {
   // Tempdoc 419 / T5.1 (ADR-0028): scoped reverse-lookup store. Constructed in init() against
   // the same jobs.db as JobQueue; closed in shutdown alongside JobQueue.
   private io.justsearch.indexerworker.queue.SqlitePathResolutionStore pathResolutionStore;
+  private io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore documentIdentityStore;
   private LuceneRuntime searchLifecycle;
   private LuceneRuntime ingestLifecycle;
   EmbeddingService embeddingService;
@@ -292,6 +293,33 @@ public final class KnowledgeServer implements Closeable {
   public KnowledgeServer(WorkerConfig config) {
     this.config = config;
     this.dataDir = config.dataDir();
+  }
+
+  /**
+   * Seeds the jobs.db identity table from the serving index before indexing starts.
+   * The same pass handles first adoption and reconstruction after restoring an older SQLite
+   * backup; existing store rows remain authoritative during a normal or mid-migration restart.
+   */
+  private void importDocumentIdentitiesFromActiveIndex() {
+    LuceneRuntime authority = searchLifecycle;
+    if (authority == null || documentIdentityStore == null) {
+      return;
+    }
+    long nowMs = System.currentTimeMillis();
+    java.util.List<io.justsearch.indexerworker.identity.DocumentIdentityStore.ImportedIdentity>
+        imported = new java.util.ArrayList<>();
+    for (var identity : authority.documentFieldOps().listParentDocumentIdentities()) {
+      String normalizedKey =
+          io.justsearch.indexerworker.util.PathNormalizer.normalizeKey(
+              java.nio.file.Path.of(identity.docId()));
+      String pathHash =
+          io.justsearch.indexerworker.identity.DocumentIdentityStore.pathHash(normalizedKey);
+      imported.add(
+          new io.justsearch.indexerworker.identity.DocumentIdentityStore.ImportedIdentity(
+              pathHash, identity.docUid()));
+    }
+    documentIdentityStore.importExisting(imported, nowMs);
+    log.info("Document identity import verified {} serving parent documents", imported.size());
   }
 
   /**
@@ -847,6 +875,13 @@ public final class KnowledgeServer implements Closeable {
         ingestLifecycle.schema().validateIndexableFields(SchemaFields.INDEXABLE_FIELDS);
       }
 
+      // Identity authority must exist before any queued or switch-buffered mutation can write.
+      // Import from the serving generation (Blue during migration) before the first possible
+      // drain, so replay, enumeration, and ordinary indexing all resolve through one authority.
+      this.documentIdentityStore =
+          new io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore(dbPath);
+      importDocumentIdentitiesFromActiveIndex();
+
       // Apply any durable SWITCHING buffer ops. In deferred-writer mode, this is deferred
       // to the background task (after IndexWriter opens). In migration mode, run synchronously.
       // Skipped when the rebuild brake is exhausted: ingest is the READ-ONLY Blue runtime then, so
@@ -881,7 +916,8 @@ public final class KnowledgeServer implements Closeable {
               this::migrationProgressSnapshot,
               MIGRATION_SWITCHING_MAX_DURATION_MS,
               this::initiateShutdown,
-              pathResolutionStore);
+              pathResolutionStore,
+              documentIdentityStore);
       // Tempdoc 885 item 3: build the duty-cycle policy from resolved config before the app
       // services that consume it. The duty/cooldown arrive through the ordinal-450 worker config
       // snapshot, not through a raw Worker sysprop — a key the Worker cannot see is the [R1]
@@ -2289,7 +2325,15 @@ public final class KnowledgeServer implements Closeable {
       }
     }
 
-    // Close path-resolution store (must close BEFORE job queue since both connect to jobs.db).
+    // Close auxiliary jobs.db stores before the queue connection.
+    if (documentIdentityStore != null) {
+      try {
+        documentIdentityStore.close();
+      } catch (Exception e) {
+        log.warn("Error closing document-identity store", e);
+      }
+    }
+
     if (pathResolutionStore != null) {
       try {
         pathResolutionStore.close();
@@ -2352,6 +2396,14 @@ public final class KnowledgeServer implements Closeable {
 
   LuceneRuntime lifecycleManagerForTests() {
     return ingestLifecycle;
+  }
+
+  IndexGenerationManager indexGenerationManagerForTests() {
+    return indexGenerationManager;
+  }
+
+  void releaseModelReadyLatchForTests() {
+    modelReadyLatch.countDown();
   }
 
   private static IndexGenerationManager.MigrationState parseMigrationState(String raw) {

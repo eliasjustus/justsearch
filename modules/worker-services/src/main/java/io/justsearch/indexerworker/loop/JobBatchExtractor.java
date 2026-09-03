@@ -13,6 +13,7 @@ import io.justsearch.indexerworker.extract.ValidatedExtractionArtifact;
 import io.justsearch.indexerworker.ingest.IngestionOutcomeClass;
 import io.justsearch.indexerworker.ingest.IngestionReasonCodes;
 import io.justsearch.indexerworker.ingest.IngestionRetryPolicy;
+import io.justsearch.indexerworker.identity.DocumentIdentityStore;
 import io.justsearch.indexerworker.loop.ops.BatchStats;
 import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
@@ -69,6 +70,7 @@ public final class JobBatchExtractor {
   private final AtomicBoolean running;
   private final Set<String> forcedPaths;
   private final Supplier<PathResolutionStore> pathResolutionStoreSupplier;
+  private final Supplier<DocumentIdentityStore> documentIdentityStoreSupplier;
   private final IndexingDocumentOps.StageRecorder stageRecorder;
   private final BooleanSupplier detailedTracingSupplier;
   private final LongConsumer indexedDelta;
@@ -89,6 +91,7 @@ public final class JobBatchExtractor {
       AtomicBoolean running,
       Set<String> forcedPaths,
       Supplier<PathResolutionStore> pathResolutionStoreSupplier,
+      Supplier<DocumentIdentityStore> documentIdentityStoreSupplier,
       IndexingDocumentOps.StageRecorder stageRecorder,
       BooleanSupplier detailedTracingSupplier,
       LongConsumer indexedDelta) {
@@ -105,6 +108,7 @@ public final class JobBatchExtractor {
     this.running = running;
     this.forcedPaths = forcedPaths;
     this.pathResolutionStoreSupplier = pathResolutionStoreSupplier;
+    this.documentIdentityStoreSupplier = documentIdentityStoreSupplier;
     this.stageRecorder = stageRecorder;
     this.detailedTracingSupplier = detailedTracingSupplier;
     this.indexedDelta = indexedDelta;
@@ -191,6 +195,32 @@ public final class JobBatchExtractor {
       // reverse-lookup store so the activity panel can later answer "which file is this hash?".
       pathResolutionStoreSupplier.get().record(
           envelope.pathHash(), envelope.normalizedPath(), envelope.observedAtMs());
+      String docUid;
+      try {
+        docUid =
+            documentIdentityStoreSupplier
+                .get()
+                .resolve(envelope.pathHash(), envelope.observedAtMs())
+                .docUid();
+      } catch (RuntimeException identityError) {
+        log.error("Document identity persistence failed for: {}", filePath, identityError);
+        FileEnvelope admittedEnvelope = envelope;
+        journal.recordOutcomeSafely(
+            filePath,
+            "WRITE_FAILED(document_identity)",
+            () ->
+                jobQueue.markFailed(
+                    filePath,
+                    journal.outcome(
+                        IngestionOutcomeClass.WRITE_FAILED,
+                        IngestionReasonCodes.WRITE_FAILED,
+                        IngestionRetryPolicy.RETRY_WITH_BACKOFF,
+                        failureDetail(identityError)),
+                    ledgerEntry(admittedEnvelope, collection, null)));
+        journal.recordFailedMetric(filePath, null);
+        batchStats.recordFailed();
+        return null;
+      }
       try {
         String normalizedPath = envelope.normalizedPath();
         boolean forceReindex = forcedPaths.remove(normalizedPath);
@@ -236,7 +266,7 @@ public final class JobBatchExtractor {
         return null;
       }
 
-      return new ExtractedJob(filePath, collection, artifact, startTime, envelope);
+      return new ExtractedJob(filePath, collection, artifact, startTime, envelope, docUid);
 
     } catch (BudgetExceededException e) {
       log.warn("Extraction budget exceeded for: {} - {}", filePath, e.getMessage());

@@ -73,6 +73,7 @@ public final class TestDocumentBuilder {
         NOOP_RECORDER,
         LoggerFactory.getLogger(TestDocumentBuilder.class),
         /* precomputedEmbedding */ null,
-        /* sourceMetadata */ null);
+        /* sourceMetadata */ null,
+        /* docUid */ java.util.UUID.randomUUID().toString());
   }
 }

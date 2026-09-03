@@ -6,6 +6,7 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.codecs.KnnVectorsFormat;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.MergePolicy;
+import org.apache.lucene.document.Document;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.Sort;
@@ -110,6 +111,14 @@ final class LifecycleTestAccessor {
     if (mgr != null && searcher != null) {
       mgr.release(searcher);
     }
+  }
+
+  void addRawDocument(Document document) throws IOException {
+    IndexWriter w = writer();
+    if (w == null) {
+      throw new IllegalStateException("IndexWriter not initialized");
+    }
+    w.addDocument(document);
   }
 
   private IndexWriter writer() {

@@ -121,7 +121,8 @@ public final class JobBatchWriter {
               log,
               precomputedEmbedding,
               new IndexingDocumentOps.SourceFileMetadata(
-                  ex.envelope().sizeBytes(), ex.envelope().modifiedAtMs()));
+                  ex.envelope().sizeBytes(), ex.envelope().modifiedAtMs()),
+              ex.docUid());
 
       long writeStart = System.currentTimeMillis();
       indexingCoordinator.indexSingle(doc);
@@ -141,7 +142,8 @@ public final class JobBatchWriter {
               documentFieldOps,
               indexingCoordinator,
               parentMetadata,
-              ex.collection());
+              ex.collection(),
+              ex.docUid());
       if (chunksIndexed > 0) {
         indexedDelta.accept(chunksIndexed);
         log.debug("Indexed {} chunks for: {}", chunksIndexed, ex.filePath().getFileName());

@@ -71,6 +71,42 @@ final class WorkerBootFixture {
     }
   }
 
+  /** Commits one parent document with an explicit durable identity. */
+  static void seedDocument(
+      Path path,
+      String fingerprintOverride,
+      String docId,
+      String docUid,
+      String content)
+      throws Exception {
+    Map<String, Object> meta = new HashMap<>(new SsotCommitMetadataSource().build());
+    if (NO_FINGERPRINT.equals(fingerprintOverride)) {
+      meta.remove(IndexFingerprint.COMMIT_META_KEY);
+    } else if (fingerprintOverride != null) {
+      meta.put(IndexFingerprint.COMMIT_META_KEY, fingerprintOverride);
+    }
+    Map<String, Object> frozen = Map.copyOf(meta);
+    try (RunningRuntime r =
+        IndexSchema.fromCatalog(
+                productionCatalog(), () -> frozen, new JsonSchemaCommitMetadataValidator())
+            .atPath(path)
+            .open()) {
+      r.indexingCoordinator()
+          .indexSingle(
+              new IndexDocument(
+                  Map.of(
+                      SchemaFields.DOC_ID,
+                      docId,
+                      SchemaFields.DOC_UID,
+                      docUid,
+                      SchemaFields.PATH,
+                      docId,
+                      SchemaFields.CONTENT,
+                      content)));
+      r.commitOps().commitAndTrack(CommitReason.DRAIN);
+    }
+  }
+
   /** Publishes a config pinning the data dir, the index base and the mismatch policy. */
   static void publishConfig(Path dataDir, Path indexBase, String policy) {
     publishConfig(dataDir, indexBase, policy, Map.of());
