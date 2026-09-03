@@ -440,6 +440,40 @@ Commands verbatim, from `F:/justsearch-public/.claude/worktrees/918-kernel-resid
 
 No Gradle was run (brief constraint); no gate in this diff needs it.
 
+### F.2 — PR #619 CI after the review round, 12/12 green (run 33700423699, head `915f0dfc`)
+
+Step-level proof for the gates the review MOVED, from the job that now hosts them
+(`unit-tests` / **app-ui**, job 100478311835):
+
+```
+success  Unit tests with model-dependent tests self-skipping   <- writes the registry snapshot
+success  Registry-snapshot gates (input built by the tasks above)
+```
+
+That second line is load-bearing in a way the first round's was not: the step's third command fails
+if the SARIF contains `snapshot-missing`, so its success means the snapshot existed and the three
+gates actually inspected it. On the `platform-contracts` lane the same step correctly reports
+`skipped` (`matrix.run_snapshot_gates` is set only on app-ui).
+
+And from `Public claims` (job 100478311835's sibling), in file order — the hermetic step running
+BEFORE the install is the S2 fix demonstrating itself:
+
+```
+success  Hermetic kernel gates (14, no produced inputs, no install)
+success  Build kernel gate inputs                                     <- npm ci --prefix modules/ui-web
+success  Kernel gates with built inputs (config-surface, dead-code, npm-audit, module-deps)
+success  Wire contract gate (protobuf breaking changes)
+```
+
+**One infrastructure flake, not a red.** The first attempt of `Unit tests (platform-contracts)`
+failed in `:modules:benchmarks:compileJava` with `Could not GET
+'https://repo.maven.apache.org/maven2/com/github/oshi/oshi-core/6.10.0/oshi-core-6.10.0.pom'.
+Received status code 429 from server: Too Many Requests` — Maven Central rate-limiting a dependency
+download. The gate steps after it were `skipped`, not failed. Re-run (`run rerun --failed`,
+attempt 2, job 100479828229): `success Unit tests…` + `success JVM dead-code gate`. Recorded rather
+than silently re-run: a 429 on a fixed dependency version says nothing about this diff, and the next
+reader of this run should not have to re-derive that.
+
 ### F.1 — PR #619 CI, all 12 checks green (run 33697768148)
 
 `Build (no model blobs)` 1m28s · `CI wall-clock attribution` 21s · `Integration tests
