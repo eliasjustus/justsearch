@@ -72,3 +72,6 @@ acceptable.
   regenerating the Codex skill projections, `gradlew build -x test` and
   `gradlew test` completed successfully with Temurin JDK 25. Frontend
   `typecheck` and the complete frontend unit suite also passed.
+- PR verification exposed a pre-existing cache-side-effect defect in the
+  registry-snapshot lane: a cached unit-test task did not recreate its snapshot.
+  CI now invokes the dedicated always-run exporter before the anti-vacuous gates.

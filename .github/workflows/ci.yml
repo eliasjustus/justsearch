@@ -688,13 +688,18 @@ jobs:
         run: node scripts/governance/run.mjs --gate dead-code-jvm --mode gate
 
       # Tempdoc 918 B1. consumer-presence, host-owns-truth and runtime-witness read the registry
-      # snapshot the task above writes, and each returns verdict `pass` with a `snapshot-missing`
-      # WARNING when it is absent -- a soft-fail that makes them vacuous anywhere else. The third
-      # line is the anti-vacuous assertion: if the snapshot was not built, the finding is present
-      # and this step fails rather than reporting a green that inspected nothing.
-      - name: Registry-snapshot gates (input built by the tasks above)
+      # snapshot exported below, and each returns verdict `pass` with a `snapshot-missing` WARNING
+      # when it is absent -- a soft-fail that makes them vacuous anywhere else. The dedicated
+      # exporter must run explicitly because a cached Gradle test task does not replay its
+      # filesystem side effect. The final line is the anti-vacuous assertion: if the snapshot was
+      # not built, the finding is present and this step fails rather than reporting a green that
+      # inspected nothing.
+      - name: Registry-snapshot gates (fresh explicit input)
         if: matrix.run_snapshot_gates == 'true'
         run: |
+          chmod +x ./gradlew 2>/dev/null || true
+          GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
+          "$GW" :modules:app-services:exportRegistrySnapshot -PskipWebBuild=true --console=plain
           node scripts/governance/run.mjs             --gate consumer-presence --gate host-owns-truth --gate runtime-witness             --mode gate --out tmp/snapshot-gates.sarif
           node -e "if (require('fs').readFileSync('tmp/snapshot-gates.sarif','utf8').includes('snapshot-missing')) { console.error('registry snapshot absent: these three gates inspected nothing'); process.exit(1); }"
 
