@@ -534,15 +534,17 @@ needed on the base.**
 5. **910 §E item 8 remains open** (`CLAUDE.md`'s pre-merge table does not list
    `governance/store-corruption-policies.v1.json` as a `check-store-recoverability` trigger). Item 7
    is closed (§B.6). Still deliberately untouched: byte-ratcheted file, brief scopes it out.
-6. **Baseline-shift detection is missing from five ratchet gates.** `ts-any`, `test-to-code`,
+6. **Baseline-shift detection is missing from five ratchet gates — NOT this PR; owner: the next
+   kernel-facing lane** (coordinator decision 2026-09-03, alongside item 2). The gap is already
+   *stated* rather than papered over: the S3 rewrite in `discipline-gate-kernel.md` lists exactly
+   which gates enforce a pin raise and which do not, so nothing in canonical docs over-claims
+   while this stays open. `ts-any`, `test-to-code`,
    `dead-code-jvm`, `style-literal-ratchet` and `atom-fork-ratchet` have no `silent-baseline-shift`
    rule at all, so raising a pinned number by hand passes as `rebalance-available` — and a NEW row
    is unchecked baseline-side even in the six gates that DO have the block (`priorPin === undefined`
-   skips, deliberately, so a new file is not read as "everything grew"). Found while rewriting the
-   over-claiming paragraph the review flagged as S3; `discipline-gate-kernel.md` now states the gap
-   rather than papering over it. `readPriorBaselineText` + a `verdictForBaselineShift` per gate is
-   the shape; the `dead-code` and `todo-fixme` blocks are the templates. Owner: the next
-   kernel-facing lane.
+   skips, deliberately, so a new file is not read as "everything grew"). `readPriorBaselineText` + a
+   `verdictForBaselineShift` per gate is the shape; the `dead-code` and `todo-fixme` blocks are the
+   templates.
 7. **`adr-coverage` loads changesets and discards them** (`enforcer.mjs:388-395`). Not a defect this
    lane creates — the call validates the classification vocabulary and nothing else, which may be
    intentional — but a reader will read it as coverage. Left alone; noted so the next kernel lane can
