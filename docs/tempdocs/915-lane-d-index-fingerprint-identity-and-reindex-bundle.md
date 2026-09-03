@@ -1,7 +1,7 @@
 ---
 title: "Lane D: one truthful index fingerprint, stable document identity, and the reindex bundle"
 type: tempdocs
-status: "PHASE 1 IMPLEMENTED + INDEPENDENT REVIEW APPLIED (2026-09-03) — five parity keys replaced by index_fingerprint + boosts_fp; the Head no longer disables the parity guard; production default is BLUE_GREEN_MIGRATE with a bounded repeat-rebuild brake. Phases 2 (document identity) and 3 (reindex bundle) are PENDING."
+status: "PHASE 1 MERGED; PHASE 2 PR-A IMPLEMENTED AND LOCALLY VERIFIED, PR-B PENDING; PHASE 3 PENDING (2026-09-03). Phase 2 adds durable path-free document identity in jobs.db without backfilling legacy Head feedback/GPL rows."
 created: 2026-09-03
 updated: 2026-09-03
 lane: D (decision re-examination programme, wave 2)
@@ -21,7 +21,8 @@ related:
 
 Lane D of the decision re-examination programme. The brief (`lane-D-index-identity-migration.md`,
 written before wave 1 merged) is the contract; every `file:line` in it was a hypothesis, and §B
-records what re-verification found. Phase 1 is implemented in this PR. Phases 2 and 3 are pending.
+records what re-verification found. Phase 1 is merged. Phase 2 is split between the implemented
+Worker-side PR-A and the pending Head-side PR-B; Phase 3 remains pending.
 
 ---
 
@@ -133,19 +134,24 @@ records what re-verification found. Phase 1 is implemented in this PR. Phases 2 
 - [x] R-O7d. Six boot-level tests (a-e) plus the classifier, each falsified (§F round 4).
 - [x] R-O7e. `11-index-schema-migration.md`: the caveat is replaced by the mechanism. O7 CLOSED.
 
-### Phase 2 — stable document identity (PENDING)
+### Phase 2 — stable document identity (PR-A IMPLEMENTED; PR-B PENDING)
 
-- [ ] B1. Mint `doc_uid` once per logical document; preserve across rename, re-extraction, full
-      reindex.
-- [ ] B2. Persist the path→uid map in SQLite next to the existing path store (ADR-0028:
+- [x] B1. Mint `doc_uid` once per logical document; preserve across API-supported rename,
+      re-extraction, and full reindex.
+- [x] B2. Persist the `path_hash`→uid map in SQLite next to the existing path store (ADR-0028:
       hash-keyed reverse lookups); decide and document which file.
-- [ ] B3. Deterministic chunk uids: `uid + "#" + chunkIndex`.
-- [ ] B4. `IndexingDocumentOps`, `ChunkDocumentWriter`, `WritePathOps.updateDocumentPaths` and the
-      migration enumerator use the store.
-- [ ] B5. Feedback/GPL stores key on `doc_uid` with a one-time backfill from path
-      (`LabelProjection`, `FeatureSnapshot`, `AgentDispositionWiring`, `GplTrainingTripleStore`).
-- [ ] B6. Tests: rename keeps uid; delete-and-reindex keeps uid; same content → different uids;
-      the label store survives a full rebuild.
+- [x] B3. Deterministic chunk uids: `uid + "#" + chunkIndex`.
+- [x] B4. Worker admission carries the store-resolved UID through `IndexingDocumentOps` and
+      `ChunkDocumentWriter`; `GrpcIngestService` re-keys it around API path updates; `KnowledgeServer`
+      imports serving-index identities before normal or migration indexing starts.
+- [ ] B5. PR-B moves new feedback/GPL writes to `doc_uid` keys. Accepted compatibility rule:
+      **no path-to-uid backfill** for pre-Phase-2 rows; legacy path-keyed rows remain readable as
+      legacy data, while newly projected feedback/triples use uid keys.
+- [x] B6a. PR-A test sources cover durable mint/reopen/import, distinct paths with equal content,
+      API rename, delete/reindex, v10→v11 migration and rollback, chunk uid determinism, serving-
+      index boot import, Blue→Green preservation, retry/idempotency, and fail-closed behavior.
+      Execution evidence is recorded separately from this implementation checklist.
+- [ ] B6b. PR-B owns the remaining label-store-survives-full-rebuild row.
 
 ### Phase 3 — the reindex bundle, one migration for users (PENDING)
 
@@ -1150,14 +1156,15 @@ Re-run in full after O14; every line below is from that run. The integration-tes
 
 ## Report-back
 
-**Phase 1 complete.** Extended by Phases 2 and 3, which have not started.
+**Phase 1 is merged. Phase 2 PR-A is implemented and locally verified; PR-B and Phase 3 remain
+pending.** The accepted Phase 2 design, split, and PR-A evidence are captured in §P2 below.
 
 ### PRs
 
 - **#620** — `feat(915): one truthful index fingerprint, blue/green as the production default (lane D
-  phase 1)`. Open, green, **not merged** (no merge authorisation given). It carries the whole of
-  Phase 1 plus the wave-1 fold-ins and eight rounds of review/validation fixes. No other PR was
-  opened for this tempdoc; the canonical-doc and tempdoc edits ride along in it (`docs-ride-along`).
+  phase 1)`. **Merged** at `b9b1c2c0`. It carries the whole of Phase 1 plus the wave-1 fold-ins and
+  eight rounds of review/validation fixes. Phase 2 is intentionally split into Worker-side PR-A and
+  Head-side PR-B (§P2.D); Phase 3 remains separate.
 
 ### Items: done, deviated, skipped
 
@@ -1759,3 +1766,126 @@ RTX 4070, 12282 MiB. Before: 976 MiB used, 2 % util, port 33221 free, 0 Head/Wor
 (GPU at 2 %); every assertion in this arm is a log string, an HTTP status/body or a `state.json`
 field, none is a throughput measurement. Boots: 10:15:19 (main arc), 10:20:05 (marker + health +
 operator follow-up), 10:23:35 (`/api/health` re-measurement).
+
+---
+
+## §P2 Phase 2 — accepted design and PR boundaries
+
+This section carries forward the accepted Phase 2 design from the pre-implementation pass. It is the
+authority for the implementation split; the older Phase 1 report above remains historical evidence
+and must not be read as saying that Phase 2 is still unstarted.
+
+### §P2.B Verified facts and invariants
+
+- Lucene already stores a random parent `doc_uid`, but before PR-A no durable authority mapped a
+  logical document's path to that UID outside an index generation. The stable identity therefore
+  has to be recovered from the serving index once, then owned outside Blue and Green.
+- Identity is content-independent: two paths with byte-identical content receive different UIDs.
+  Content hashes and file keys are not identity authorities.
+- There is one minting authority. Admission resolves or mints through the SQLite store before
+  extraction; an unavailable or corrupt authority fails the job closed for queue retry. There is no
+  random fallback.
+- Phase 2 adds no search, MCP, protobuf, or frontend field. `doc_uid` remains an internal stored
+  field used by Worker-side indexing and, in PR-B, Head-side projection/storage plumbing.
+- Phase 2 does not change the physical index shape, so it does not bump `RENDERING_VERSION` or the
+  Phase 1 index fingerprint. Existing parent UIDs are imported instead of rewritten.
+
+### §P2.C Implemented PR-A design
+
+1. **Store and migration.** Schema V11 adds
+   `document_identity(path_hash PRIMARY KEY, doc_uid NOT NULL UNIQUE, first_seen_at, last_seen_at)`
+   plus the UID uniqueness index to the existing `jobs.db`. It stores no raw path, has no scheduled
+   GC, and uses the same transaction, backup, future-version refusal, and recovery boundary as the
+   queue. `governance/store-recoverability.v1.json` therefore updates the existing `jobs-db` row from
+   its stale version 7 to the actual version 11; there is no new durable-store row, `StoreCatalog`
+   member, corruption-policy term, catalog copy, or updater/wire change.
+2. **Resolve and mint.** The Worker resolves the normalized path hash beside the existing
+   path-resolution admission step. A new UUID is minted only when that hash is absent. The resolved
+   UID travels through extraction and write plumbing and is written to the parent document.
+3. **Boot import and rebuild.** Before indexing begins, the Worker scans only parent documents in
+   the serving Lucene index and atomically imports missing `doc_id`/`doc_uid` pairs. Existing SQLite
+   rows win, including after a completed rename. During Blue/Green migration, Blue is the import
+   source and Green re-ingests through the ordinary store-backed path; no UID is copied directly
+   from Blue to Green.
+4. **Rename and deletion.** An API-driven rename re-keys the SQLite mapping before rewriting Lucene
+   path fields and preserves the moving source UID even when a stale historical destination row
+   exists. A retry after an identity-only move is successful. Delete does not remove the mapping,
+   so later re-indexing reuses it. Filesystem-watcher renames still arrive as delete plus create and
+   are explicitly outside the preservation contract.
+5. **Chunks.** Chunk UIDs are deterministic: `parentDocUid + "#" + chunkIndex`. Regeneration uses
+   the same formula, with no second identity store or schema field.
+6. **Recovery limit.** A pre-V11 `jobs.db.bak` can be restored and migrated, after which boot import
+   reconstructs missing mappings from the serving index. If the identity database and backup **and**
+   the serving index are all lost or unreadable, old random UIDs cannot be reconstructed; later
+   admission mints new identities and UID-keyed derived/feedback links may be orphaned. This is the
+   accepted total-data-loss boundary.
+
+### §P2.D Boundaries, tests, docs, and gates
+
+**PR split.** PR-A is the Worker-side migration, store, boot import, admission/write plumbing,
+rename re-key, chunk UID derivation, canonical documentation, and governance update. PR-B alone owns
+Head-side feedback/GPL re-keying (`FeatureSnapshot(s)`, `SearchTool`, `KnowledgeSearchController`,
+`LabelProjection`, `AgentDispositionWiring`, and `GplTrainingTripleStore`) and the label-survival
+test. PR-A does not expose UID on the wire or change the frontend. Lane E overlaps only
+`ChunkDocumentWriter.java`; whichever change lands second must rebase while preserving both Lane E's
+chunk constants and Lane D's UID derivation.
+
+The pre-implementation plan listed **ten conceptual test rows**. Its older “six of ten” PR-A label
+was a counting error: PR-A owns nine rows and PR-B owns only the label-survival row.
+
+| # | Contract row | Owner | Implemented source/evidence |
+|---:|---|---|---|
+| 1 | Mint once, reopen, re-key, import | PR-A | `SqliteDocumentIdentityStoreTest` |
+| 2 | Equal content at different paths gets different UIDs | PR-A | `SqliteDocumentIdentityStoreTest.distinctPathHashesReceiveDistinctContentIndependentUids` |
+| 3 | API rename moves paths and preserves UID | PR-A | `GrpcIngestServiceDocumentIdentityTest.renameRekeysStoreAndPreservesEveryUid` |
+| 4 | Delete then re-index preserves UID | PR-A | `GrpcIngestServiceDocumentIdentityTest.deleteAndReindexPreservesUid` |
+| 5 | Full Blue/Green rebuild preserves the imported UID | PR-A | `DocumentIdentityBootImportTest.blueUidIsImportedBeforePausedMigrationReindexesIntoGreen` |
+| 6 | Chunk UID regeneration is deterministic | PR-A | `ChunkDocumentWriterTest`; `GrpcIngestServiceChunkRegenerationTest` |
+| 7 | Feedback labels survive a full rebuild by UID | **PR-B** | Pending: `LabelStoreSurvivesRebuildTest` |
+| 8 | V10→V11 migration/refusal/rollback preserves queue data | PR-A | `JobQueueMigrationTest` |
+| 9 | Backup restore and fresh-store boot import recover identity | PR-A | `JobQueueMigrationTest`; `DocumentIdentityBootImportTest` |
+| 10 | ADR-0028 path-free schema and fail-closed authority | PR-A | runnable ADR probe targets `JobQueueMigrationTest#migratesV10ToV11WithPathFreeIdentitySchemaAndPreservesJobs`; `DocumentIdentityScanTest`; `SqliteDocumentIdentityStoreTest.unavailableStoreFailsClosed` |
+
+Retry, idempotency, blank-rename refusal, stale-index precedence, boot-order, parent-only import,
+production gRPC wiring, canonical parent/chunk path linkage, non-destructive missing-parent-UID
+refusal, and rename refusal during the cutover fence are additional PR-A regressions beyond the
+original ten-row matrix.
+
+Required documentation is carried by `docs/explanation/04-storage-engine.md`,
+`docs/explanation/11-index-schema-migration.md`,
+`docs/explanation/18-adapters-lucene-deep-dive.md`, the ADR-0028 amendment, its decision-log row, and
+the `jobs-db` recoverability entry. No `docs/llms.txt` regeneration is required because no indexed
+title or description changed; the ADR decision-log projection has been refreshed.
+
+**PR-A local verification (2026-09-03).** The focused identity, migration, rename, chunk,
+fail-closed, and adversarial-ingestion tests passed. Clean module suites passed for `worker-core`,
+`adapters-lucene`, `worker-services`, and `indexer-worker` (the first combined run exposed a brittle
+corruption fixture whose file-midpoint overwrite no longer hit SQLite metadata after schema V11;
+the test now corrupts page 1 deterministically, passed alone, and the full clean indexer-worker
+suite then passed). Formatting and Markdown lint passed. `adr-coverage`,
+`check-store-recoverability`, `check-language-agnostic-analysis`, `check-live-witness`,
+`check-tempdoc-numbers`, `check-premerge-table`, `check:llmstxt`, and `git diff --check` all passed.
+The wire gate and SSOT catalog regeneration are not required because there is no wire or catalog
+change. The hour-scale Lane E benchmark campaign is deliberately not part of PR-A.
+
+### §P2.E Accepted decisions (Q1–Q8)
+
+- **Q1 — Head files:** grant `FeatureSnapshots.java`, `SearchTool.java`, and
+  `KnowledgeSearchController.java` to PR-B so UID reaches Head-side feedback plumbing without a wire
+  or frontend change.
+- **Q2 — Worker ownership:** the expired Lane C grants do not block PR-A. Worker-services,
+  indexer-worker, and `KnowledgeServer.java` identity changes belong to PR-A; coordinate the single
+  `ChunkDocumentWriter.java` overlap with Lane E by rebase.
+- **Q3 — legacy feedback:** accept **no backfill**. Pre-Phase-2 snapshots contain no UID and Head has
+  no path-to-UID authority. Old rows keep their path keys, new rows use UID keys, and derived GPL
+  triples are re-projected.
+- **Q4 — versioning:** do not bump `RENDERING_VERSION`. First boot imports existing stored parent
+  UIDs, and Phase 3's later physical-shape changes will move the fingerprint independently.
+- **Q5 — updater closed set:** route the latent “new durable-store row” updater refusal to its
+  governance owner. PR-A adds no row, so it neither triggers nor fixes that separate issue.
+- **Q6 — register version:** update `jobs-db.currentVersion` from the stale 7 to 11, matching
+  `SqliteSchema.TARGET_VERSION` after the V10→V11 migration.
+- **Q7 — retention:** accept no GC for identity rows. Revisit only from measured table growth, not a
+  calendar schedule.
+- **Q8 — authority failure:** fail closed and let the queue retry. Never mint from a fallback
+  authority when the durable identity store is unavailable.

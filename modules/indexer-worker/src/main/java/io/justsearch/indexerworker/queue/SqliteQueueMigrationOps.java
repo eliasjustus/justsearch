@@ -255,6 +255,14 @@ final class SqliteQueueMigrationOps {
             conn, "first_failed_at", SqliteSchema.MIGRATE_V9_TO_V10_ADD_FIRST_FAILED_AT);
         log.info("V9 to V10: Ensured first_failed_at column on jobs table (tempdoc 885 item 21)");
       }
+      case 11 -> {
+        try (Statement stmt = conn.createStatement()) {
+          for (String sql : SqliteSchema.MIGRATE_V10_TO_V11_ADD_DOCUMENT_IDENTITY) {
+            stmt.execute(sql);
+          }
+          log.info("V10 to V11: Ensured document_identity table and uid index (tempdoc 915)");
+        }
+      }
       default -> throw new SQLException("Unknown migration version: " + version);
     }
   }

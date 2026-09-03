@@ -385,6 +385,13 @@ The Worker wires two runtimes during migration:
 - `searchRuntime` → Blue (read-only)
 - `ingestRuntime` → Green (read/write)
 
+Document identity lives outside both generations. Before either runtime can start indexing, the
+Worker verifies/imports the serving Blue parent `doc_id` + `doc_uid` pairs into the path-free
+`document_identity` table in `jobs.db`. Green then re-ingests source files through the ordinary
+admission path and resolves the same UID from that table; identities are not preserved by copying
+stored fields from Blue. The boot import also reconstructs the table after an older pre-V11
+`jobs.db.bak` is restored.
+
 Cutover is performed as a **`state.json` pointer swap + Worker restart** (restart-based cutover), which avoids in-process hot-swapping complexity and is easier to make crash-safe.
 
 ## Embedding readiness gate (`embeddingReadyLatch`)
@@ -457,5 +464,4 @@ The UI and dev tooling should treat `GET /api/status` as the primary “what’s
 Key fields include migration state/pointers, per-generation counts, switch-buffer depth, and queue drain breakdowns.
 
 See `docs/explanation/08-observability.md` for the current `/api/status` field map.
-
 
