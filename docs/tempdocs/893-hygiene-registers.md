@@ -616,6 +616,9 @@ six were fixed and the same reviewer confirmed no residual actionable defect in 
 - [x] Classify the offline OpenAPI exporter's committed, reproducible snapshot write as a non-durable
   build projection in the store-recoverability register after the first hosted PR run proved that the
   broadened persistence-write gate detects the new exporter.
+- [x] Declare and repin the UI module's 913-to-912 test-to-code ratio movement after hosted CI exercised
+  the full kernel. The module gained focused renderer/exporter tests; the one-point decrease reflects
+  the larger production projection rather than missing coverage or removed tests.
 
 ## V. Implementation and verification record (2026-09-03)
 
