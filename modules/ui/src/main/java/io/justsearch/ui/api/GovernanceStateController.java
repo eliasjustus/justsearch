@@ -75,6 +75,8 @@ public final class GovernanceStateController {
     // Tempdoc 622 §17 — local-runtime activation efficacy (which gates ever fire / find anything),
     // joined against the committed roster. Present on every response path; absent-gracefully.
     out.put("efficacy", loadEfficacyProjection(registry));
+    // Tempdoc 893 §D.4 — latest versioned run-level repository facts from the same local history.
+    out.put("repositoryHealth", loadRepositoryHealthProjection());
     if (!Files.exists(sarifPath)) {
       out.put("available", false);
       out.put("gates", List.of());
@@ -231,6 +233,45 @@ public final class GovernanceStateController {
       log.warn("Failed to read history at {}: {}", historyPath, ex.getMessage());
       out.put("available", false);
       out.put("byGate", List.of());
+      return out;
+    }
+  }
+
+  /** Latest versioned repository-health row; legacy gate rows remain valid and are ignored here. */
+  private Map<String, Object> loadRepositoryHealthProjection() {
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("available", false);
+    out.put("scope", "local");
+    if (!Files.exists(historyPath)) {
+      return out;
+    }
+    try {
+      List<String> lines = Files.readAllLines(historyPath);
+      int from = Math.max(0, lines.size() - HISTORY_MAX_LINES);
+      for (int i = lines.size() - 1; i >= from; i--) {
+        String line = lines.get(i);
+        if (line.isBlank()) {
+          continue;
+        }
+        JsonNode entry;
+        try {
+          entry = mapper.readTree(line);
+        } catch (tools.jackson.core.JacksonException badLine) {
+          continue;
+        }
+        if (!"repository-health".equals(entry.path("kind").asText())
+            || entry.path("schemaVersion").asInt() != 2
+            || !entry.path("metrics").isObject()) {
+          continue;
+        }
+        out.put("available", true);
+        out.put("capturedAt", entry.path("ts").asText());
+        out.put("metrics", entry.path("metrics"));
+        return out;
+      }
+      return out;
+    } catch (IOException ex) {
+      log.warn("Failed to read repository health at {}: {}", historyPath, ex.getMessage());
       return out;
     }
   }

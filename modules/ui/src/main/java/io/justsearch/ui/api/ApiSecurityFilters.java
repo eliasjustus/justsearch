@@ -183,7 +183,7 @@ final class ApiSecurityFilters {
    * Tempdoc 633 §1a: Host-header allowlist — the DNS-rebinding defense. The loopback bind (Hard
    * Invariant #2) and the CORS Origin allowlist are necessary but not sufficient: after a DNS-rebinding
    * attack a malicious page becomes *same-origin* with the loopback service, so CORS no longer applies,
-   * and the token-exempt GET reads (e.g. {@code /api/knowledge/search}) would still execute and return
+   * and token-exempt GET reads that return runtime data (e.g. {@code /api/status}) would still execute and return
    * data. The canonical defense (MCP security best-practices "Local MCP Server Compromise"; Ollama
    * CVE-2024-28224) is to reject any request whose {@code Host} header is not a loopback host — even when
    * rebinding points the browser at 127.0.0.1, the server still sees the attacker's domain in {@code

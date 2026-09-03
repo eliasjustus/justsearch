@@ -1,19 +1,21 @@
 /**
  * Run-history substrate — Layer 3 §3.7a of tempdoc 530.
  *
- * After each gate run, append a one-line summary to
- * `tmp/governance-history.ndjson`. Each line:
- *   {"ts":"<iso>", "gate":"<id>", "verdict":"pass|fail", "findings":{"error":N,"warning":N,"note":N}}
+ * After each kernel invocation, append one versioned line per gate plus one run-level repository-health
+ * line to `tmp/governance-history.ndjson`. Readers retain the unversioned V1 gate-row shape.
  *
- * History is local-only (under tmp/, gitignored). CI artifact retention or
- * a separately-committed history file are out-of-scope for V1 — the local
- * file is enough to drive a dashboard that runs locally or in CI.
+ * History is local-only (under tmp/, gitignored). CI may retain the per-run file as an artifact,
+ * but no separately committed or cross-run rolling history exists. The local file drives the
+ * dashboard and API projection while that checkout exists.
  */
 
 import { existsSync, appendFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
+import { collectRepositoryHealth } from './repository-health.mjs';
+
 export const DEFAULT_HISTORY_PATH = 'tmp/governance-history.ndjson';
+export const HISTORY_SCHEMA_VERSION = 2;
 
 export function appendRunRecord({ repoRoot, path = DEFAULT_HISTORY_PATH, runs, verdicts }) {
   const ts = new Date().toISOString();
@@ -25,9 +27,23 @@ export function appendRunRecord({ repoRoot, path = DEFAULT_HISTORY_PATH, runs, v
     for (const f of matching?.findings ?? []) {
       counts[f.level] = (counts[f.level] ?? 0) + 1;
     }
-    const line = JSON.stringify({ ts, gate: v.gate, verdict: v.verdict, findings: counts });
+    const line = JSON.stringify({
+      schemaVersion: HISTORY_SCHEMA_VERSION,
+      kind: 'gate-run',
+      ts,
+      gate: v.gate,
+      verdict: v.verdict,
+      findings: counts,
+    });
     appendFileSync(full, line + '\n');
   }
+  const health = {
+    schemaVersion: HISTORY_SCHEMA_VERSION,
+    kind: 'repository-health',
+    ts,
+    metrics: collectRepositoryHealth(repoRoot),
+  };
+  appendFileSync(full, JSON.stringify(health) + '\n');
 }
 
 export function readHistory({ repoRoot, path = DEFAULT_HISTORY_PATH }) {
@@ -41,4 +57,17 @@ export function readHistory({ repoRoot, path = DEFAULT_HISTORY_PATH }) {
     try { out.push(JSON.parse(line)); } catch { /* skip malformed */ }
   }
   return out;
+}
+
+/** V1 rows had no kind/schemaVersion; a string gate keeps them readable during migration. */
+export function readGateHistory(options) {
+  return readHistory(options).filter(
+    entry => typeof entry?.gate === 'string' && (entry.kind == null || entry.kind === 'gate-run'),
+  );
+}
+
+export function readRepositoryHealthHistory(options) {
+  return readHistory(options).filter(
+    entry => entry?.kind === 'repository-health' && entry.schemaVersion === HISTORY_SCHEMA_VERSION,
+  );
 }

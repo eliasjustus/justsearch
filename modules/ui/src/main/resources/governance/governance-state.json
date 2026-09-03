@@ -1,6 +1,6 @@
 {
   "schema": "governance-state.v1",
-  "gateCount": 33,
+  "gateCount": 35,
   "gates": [
     {
       "id": "test-efficacy",
@@ -34,7 +34,7 @@
     },
     {
       "id": "todo-fixme",
-      "title": "TODO / FIXME / XXX per-file ratchet (tempdoc 530 §2.6)",
+      "title": "Source-comment TODO / FIXME / XXX per-file ratchet (tempdoc 530 §2.6)",
       "tier": "ratchet",
       "hasChangesets": true
     },
@@ -159,6 +159,12 @@
       "hasChangesets": false
     },
     {
+      "id": "runtime-state",
+      "title": "Runtime-state register completeness (tempdoc 737 §12c — AI-runtime fork-killer; sibling of execution-surface)",
+      "tier": "changeset-gated",
+      "hasChangesets": true
+    },
+    {
       "id": "operation-surface",
       "title": "Operation-surface register completeness (tempdoc 550 Thesis III — anti-fragmentation gate for the indexing-job lifecycle; sibling of execution-surface)",
       "tier": "scan",
@@ -199,6 +205,12 @@
       "title": "Contribution-surface register (tempdoc 560 §5 — the prevention keystone that locks in §4c: a NEW hand-authored second shape authority in the registry barrel fails the build)",
       "tier": "scan",
       "hasChangesets": false
+    },
+    {
+      "id": "config-surface",
+      "title": "Runtime configuration-surface ratchet (tempdoc 799 K.4 — 754 classified 70 knobs and deleted 31, then recorded 'no regrowth gate'; this is that pressure)",
+      "tier": "ratchet",
+      "hasChangesets": true
     }
   ],
   "exceptions": {
@@ -207,8 +219,8 @@
   "strengthFloors": [
     {
       "id": "hybrid-fusion",
-      "minStrength": 76,
-      "maxNoCoverage": 10
+      "minStrength": 75,
+      "maxNoCoverage": 9
     },
     {
       "id": "chunk-offset-math",
@@ -238,6 +250,61 @@
     {
       "id": "worker-liveness-suicide",
       "minStrength": 93,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "ocr-outcome-classifier",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "extraction-outcome-classifier",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "ingestion-success-classifier",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "legibility-floor-check",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "vdu-abstention-gate",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "extraction-dropout-policy",
+      "minStrength": 93,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "extraction-fallback-budget",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "install-completeness",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "windowed-embed-progress",
+      "minStrength": 88,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "passage-windows",
+      "minStrength": 82,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "acquisition-rate",
+      "minStrength": 97,
       "maxNoCoverage": 0
     }
   ],

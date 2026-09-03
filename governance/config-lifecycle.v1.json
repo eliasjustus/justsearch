@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "declaration": "EnvRegistry.FILTER_NORM_ENABLED",
+      "owner": "Search pipeline",
+      "rationale": "The deterministic normalization tier is useful, but the optional LLM fallback remains default-off until its incremental semantic-gap recovery and latency are measured on representative supported hardware.",
+      "introducedOn": "2026-03-30",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A representative end-to-end evaluation shows semantic-gap recovery beyond the deterministic tier, no retrieval-quality regression, and p95 normalization latency within the search timeout on supported CPU and GPU tiers.",
+        "removeWhen": "The LLM fallback adds no material recovery beyond deterministic normalization, exceeds the supported-tier latency budget, or is superseded by a non-LLM normalization path."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md#f-020-hybrid-deterministicllm-filter-normalization"
+    },
+    {
+      "declaration": "EnvRegistry.QU_ENABLED",
+      "owner": "Search pipeline",
+      "rationale": "Soft-boost query understanding remains default-off until representative user-query incidence and supported-hardware preprocessing latency justify adding an automatic LLM stage to every eligible search.",
+      "introducedOn": "2026-03-30",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Representative local-query evaluation demonstrates positive retrieval impact and p95 preprocessing latency within the search budget on supported CPU and GPU tiers, with no unresolved scheduling contention.",
+        "removeWhen": "Representative evaluation shows non-positive retrieval impact, unacceptable supported-tier latency, or explicit agent and user filters make the automatic preprocessing stage redundant."
+      },
+      "evidenceLink": "docs/decisions/0016-query-understanding-soft-boost.md"
+    }
+  ]
+}

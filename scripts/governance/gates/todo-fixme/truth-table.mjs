@@ -11,26 +11,26 @@ export function verdictForFile(input) {
       return {
         ruleId: 'todo-fixme/rebalance-available',
         status: 'info',
-        reason: `${path}: ${current} ≤ pinned ${pinned} (rebalance available)`,
+        reason: `${path}: ${current} source-comment markers ≤ pinned ${pinned} (rebalance available)`,
       };
     }
     return {
       ruleId: 'todo-fixme/within-baseline',
       status: 'pass',
-      reason: `${path}: ${current} at baseline`,
+      reason: `${path}: ${current} source-comment markers at baseline`,
     };
   }
   if (classification === 'silent-growth') {
     return {
       ruleId: 'todo-fixme/silent-growth',
       status: 'fail',
-      reason: `${path}: ${pinned} → ${current} TODOs without declared changeset`,
+      reason: `${path}: ${pinned} → ${current} source-comment markers without declared changeset`,
     };
   }
   return {
     ruleId: `todo-fixme/${classification}`,
     status: 'pass',
-    reason: `${path}: ${pinned} → ${current} TODOs; '${classification}' covers`,
+    reason: `${path}: ${pinned} → ${current} source-comment markers; '${classification}' covers`,
   };
 }
 

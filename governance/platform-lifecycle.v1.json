@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "supportWarningDays": 90,
+  "evidenceGraceDays": 30,
+  "platforms": [
+    {
+      "id": "jdk",
+      "name": "Eclipse Temurin JDK",
+      "scope": "build",
+      "pinSource": {
+        "path": "build-logic/src/main/kotlin/conventions/JvmBaseConventionsPlugin.kt",
+        "adapter": "gradle-java-toolchain",
+        "selector": "languageVersion"
+      },
+      "evidenceOwner": "build-toolchain",
+      "sourceUrl": "https://adoptium.net/support/",
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "fixed-date",
+        "supportUntil": "2031-09-30"
+      },
+      "note": "Temurin is the distribution installed by repository CI; Oracle commercial support dates are not used."
+    },
+    {
+      "id": "gradle",
+      "name": "Gradle",
+      "scope": "build",
+      "pinSource": {
+        "path": "gradle/wrapper/gradle-wrapper.properties",
+        "adapter": "gradle-wrapper-distribution",
+        "selector": "distributionUrl"
+      },
+      "evidenceOwner": "build-toolchain",
+      "sourceUrl": "https://docs.gradle.org/current/userguide/feature_lifecycle.html",
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "release-relative",
+        "successorVersion": "9.7.1",
+        "successorObservedOn": "2026-09-03"
+      },
+      "note": "Gradle ends support for a minor line when its successor minor is released; there is no honest ISO EOL date for the pin."
+    },
+    {
+      "id": "lucene",
+      "name": "Apache Lucene",
+      "scope": "runtime",
+      "pinSource": {
+        "path": "gradle/libs.versions.toml",
+        "adapter": "toml-version",
+        "selector": "lucene"
+      },
+      "evidenceOwner": "search-runtime",
+      "sourceUrl": "https://lucene.apache.org/core/downloads",
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "no-published-eol"
+      }
+    },
+    {
+      "id": "tauri",
+      "name": "Tauri",
+      "scope": "distribution",
+      "pinSource": {
+        "path": "modules/shell/src-tauri/Cargo.lock",
+        "adapter": "cargo-lock-package",
+        "selector": "tauri"
+      },
+      "evidenceOwner": "desktop-shell",
+      "sourceUrl": "https://github.com/tauri-apps/tauri/security/policy",
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "rolling"
+      }
+    },
+    {
+      "id": "webview2",
+      "name": "Microsoft Edge WebView2 integration",
+      "scope": "integration",
+      "pinSource": {
+        "path": "modules/shell/src-tauri/Cargo.lock",
+        "adapter": "cargo-lock-package",
+        "selector": "webview2-com"
+      },
+      "evidenceOwner": "desktop-shell",
+      "sourceUrl": "https://learn.microsoft.com/en-us/lifecycle/products/microsoft-edge-webview2",
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "rolling"
+      },
+      "note": "The resolved pin is the Rust integration crate; the installed WebView2 Evergreen Runtime itself follows Microsoft's Modern Lifecycle and is not version-pinned by this repository."
+    },
+    {
+      "id": "cuda",
+      "name": "NVIDIA CUDA compatibility target",
+      "scope": "runtime",
+      "pinSource": {
+        "path": "modules/ui/build.gradle.kts",
+        "adapter": "llama-cuda-asset",
+        "selector": "llamaCudaAsset"
+      },
+      "evidenceOwner": "inference-runtime",
+      "sourceUrl": "https://docs.nvidia.com/datacenter/tesla/drivers/supported-drivers-and-cuda-toolkit-versions.html",
+      "additionalSourceUrls": [
+        "https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html"
+      ],
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "compatibility-matrix",
+        "basis": "Bundled CUDA toolkit compatibility must intersect a supported NVIDIA driver branch and the toolkit/driver minor-version compatibility matrix."
+      }
+    },
+    {
+      "id": "onnx-runtime",
+      "name": "ONNX Runtime",
+      "scope": "runtime",
+      "pinSource": {
+        "path": "gradle/libs.versions.toml",
+        "adapter": "toml-version",
+        "selector": "onnxruntime"
+      },
+      "evidenceOwner": "inference-runtime",
+      "sourceUrl": "https://onnxruntime.ai/docs/reference/releases-servicing.html",
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "no-published-eol"
+      }
+    },
+    {
+      "id": "node",
+      "name": "Node.js",
+      "scope": "build",
+      "pinSource": {
+        "path": ".github/workflows/ci.yml",
+        "adapter": "github-actions-env",
+        "selector": "NODE_VERSION"
+      },
+      "evidenceOwner": "build-toolchain",
+      "sourceUrl": "https://nodejs.org/en/about/eol",
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "fixed-date",
+        "supportUntil": "2028-04-30"
+      },
+      "note": "The CI workflow is the selected build pin authority; workflow parity is governed separately."
+    },
+    {
+      "id": "llama-cpp",
+      "name": "llama.cpp prebuilt runtime",
+      "scope": "runtime",
+      "pinSource": {
+        "path": "modules/ui/build.gradle.kts",
+        "adapter": "kotlin-string-constant",
+        "selector": "llamaPrebuiltVersion"
+      },
+      "evidenceOwner": "inference-runtime",
+      "sourceUrl": "https://github.com/ggml-org/llama.cpp/releases",
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "no-published-eol"
+      }
+    },
+    {
+      "id": "tesseract",
+      "name": "Tesseract Windows runtime",
+      "scope": "runtime",
+      "pinSource": {
+        "path": "packaging/runtime/tesseract-windows.v1.json",
+        "adapter": "json-pointer",
+        "selector": "/version"
+      },
+      "evidenceOwner": "desktop-packaging",
+      "sourceUrl": "https://github.com/tesseract-ocr/tesseract/releases",
+      "sourceCheckedOn": "2026-09-03",
+      "reviewBy": "2027-03-03",
+      "policy": {
+        "kind": "no-published-eol"
+      }
+    }
+  ]
+}

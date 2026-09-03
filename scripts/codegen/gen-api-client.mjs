@@ -12,18 +12,19 @@
  *
  *   1. Capture (needs a running backend, once per route-surface change):
  *        node scripts/codegen/gen-api-client.mjs --from-live=http://127.0.0.1:<apiPort>
- *      → writes the committed snapshot modules/ui-web/src/api/generated/route-manifest.snapshot.json AND the generated client.
+ *      → fetches both live Java projections, verifies their identities/count/digest, then writes
+ *        route-manifest.snapshot.json, reference-client-openapi.snapshot.json, and the client.
  *   2. Regenerate (offline, from the committed snapshot — this is what CI runs):
  *        node scripts/codegen/gen-api-client.mjs            # write the client
  *        node scripts/codegen/gen-api-client.mjs --check    # exit non-zero on drift
  *
  * Honest scope (the user accepted this as future-proofing, tempdoc 583 §D.7): the committed snapshot
  * is a point-in-time capture and can drift if routes change without a re-capture; the offline --check
- * only guarantees the GENERATED CLIENT matches the SNAPSHOT, not that the snapshot matches the live
- * server (CI has no live backend — ADR-0026). Re-run --from-live after changing the route surface.
+ * only guarantees the GENERATED DERIVATIVES match the SNAPSHOT, not that the snapshot matches the
+ * live server (CI has no live backend — ADR-0026). Re-run --from-live after changing the route surface.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -51,6 +52,25 @@ const OUT_PATH = join(
   'generated',
   'apiRoutes.ts',
 );
+const OPENAPI_SNAPSHOT_PATH = join(
+  REPO_ROOT,
+  'modules',
+  'ui-web',
+  'src',
+  'api',
+  'generated',
+  'reference-client-openapi.snapshot.json',
+);
+const HTTP_METHODS = new Set([
+  'delete',
+  'get',
+  'head',
+  'options',
+  'patch',
+  'post',
+  'put',
+  'trace',
+]);
 
 /** Render the typed client TS from a manifest object ({ schemaVersion, count, routes:[...] }). */
 export function renderClient(manifest) {
@@ -106,16 +126,92 @@ export function requiredCapabilities(key: ApiRouteKey): readonly string[] {
 `;
 }
 
-async function captureFromLive(baseUrl) {
-  const url = `${baseUrl.replace(/\/$/, '')}/api/meta/routes`;
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error(`capture failed: GET ${url} -> HTTP ${res.status}`);
-  const manifest = await res.json();
+function normalizeOpenApiPath(path) {
+  let normalized = path.replaceAll('<', '{').replaceAll('>', '}');
+  if (normalized.endsWith('/*')) normalized = `${normalized.slice(0, -1)}{wildcard}`;
+  return normalized.replaceAll('*', '{wildcard}');
+}
+
+/**
+ * Check the two live Java projections before either committed snapshot is replaced.
+ * This validates identities; it does not re-render OpenAPI in Node.
+ */
+export function validateLivePair(manifest, openApi) {
   if (!manifest || !Array.isArray(manifest.routes)) {
-    throw new Error(`capture failed: ${url} returned no routes array`);
+    throw new Error('live route manifest returned no routes array');
   }
-  writeFileSync(SNAPSHOT_PATH, JSON.stringify(manifest, null, 2) + '\n');
-  console.log(`captured ${manifest.routes.length} routes -> ${SNAPSHOT_PATH}`);
+  if (manifest.count !== manifest.routes.length) {
+    throw new Error(`live route manifest count ${manifest.count} != ${manifest.routes.length} routes`);
+  }
+  const surface = openApi?.['x-justsearch-surface'];
+  if (
+    surface?.classification !== 'reference-client-structural-inventory' ||
+    surface?.runtimeContract !== false
+  ) {
+    throw new Error('live OpenAPI document is not classified as a non-Runtime-Contract inventory');
+  }
+  const source = openApi?.['x-justsearch-route-source'];
+  if (
+    source?.routeCount !== manifest.routes.length ||
+    !/^sha256:[0-9a-f]{64}$/.test(manifest.routeDigest ?? '') ||
+    source?.routeDigest !== manifest.routeDigest
+  ) {
+    throw new Error('live route/OpenAPI descriptor count or digest is missing or inconsistent');
+  }
+
+  const manifestOperations = new Set(
+    manifest.routes.map((route) => `${route.method.toLowerCase()} ${normalizeOpenApiPath(route.path)}`),
+  );
+  if (manifestOperations.size !== manifest.routes.length) {
+    throw new Error('live route manifest contains duplicate method/path identities');
+  }
+  const openApiOperations = new Set();
+  for (const [path, item] of Object.entries(openApi.paths ?? {})) {
+    for (const method of Object.keys(item ?? {})) {
+      if (HTTP_METHODS.has(method)) openApiOperations.add(`${method} ${path}`);
+    }
+  }
+  const missing = [...manifestOperations].filter((operation) => !openApiOperations.has(operation));
+  const extra = [...openApiOperations].filter((operation) => !manifestOperations.has(operation));
+  if (missing.length || extra.length) {
+    throw new Error(
+      `live route/OpenAPI identities differ (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'})`,
+    );
+  }
+  return Object.freeze({ routeCount: source.routeCount, routeDigest: source.routeDigest });
+}
+
+function atomicWriteJson(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.tmp-${process.pid}`;
+  try {
+    writeFileSync(temporary, JSON.stringify(value, null, 2) + '\n');
+    renameSync(temporary, path);
+  } finally {
+    if (existsSync(temporary)) rmSync(temporary, { force: true });
+  }
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, { headers: { accept: 'application/json' } });
+  if (!response.ok) throw new Error(`capture failed: GET ${url} -> HTTP ${response.status}`);
+  return response.json();
+}
+
+export async function captureFromLive(
+  baseUrl,
+  { routePath = SNAPSHOT_PATH, openApiPath = OPENAPI_SNAPSHOT_PATH } = {},
+) {
+  const base = baseUrl.replace(/\/$/, '');
+  const [manifest, openApi] = await Promise.all([
+    fetchJson(`${base}/api/meta/routes`),
+    fetchJson(`${base}/api/meta/openapi.json`),
+  ]);
+  const capture = validateLivePair(manifest, openApi);
+  atomicWriteJson(routePath, manifest);
+  atomicWriteJson(openApiPath, openApi);
+  console.log(`captured ${capture.routeCount} routes -> ${routePath}`);
+  console.log(`captured matching OpenAPI (${capture.routeDigest}) -> ${openApiPath}`);
   return manifest;
 }
 

@@ -1,4 +1,7 @@
+import { CONFIG_LIFECYCLE_RULE_DESCRIPTIONS } from './lifecycle.mjs';
+
 export const CONFIG_SURFACE_RULE_DESCRIPTIONS = {
+  ...CONFIG_LIFECYCLE_RULE_DESCRIPTIONS,
   'config-surface/within-baseline': 'Configuration-surface metric is at or below baseline',
   'config-surface/silent-growth':
     'The runtime configuration surface grew without a declared changeset. Every knob is a decision deferred to runtime; 754 showed a one-shot cleanup without regrowth pressure just gets re-paid. Declare the growth or delete a knob.',

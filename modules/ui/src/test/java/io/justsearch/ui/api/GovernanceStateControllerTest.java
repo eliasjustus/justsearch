@@ -64,6 +64,7 @@ class GovernanceStateControllerTest {
         """
         {"ts":"2026-06-21T05:00:00Z","gate":"test-efficacy","verdict":"pass","findings":{"error":0,"warning":0,"note":0}}
         {"ts":"2026-06-21T06:00:00Z","gate":"test-efficacy","verdict":"fail","findings":{"error":3,"warning":0,"note":1}}
+        {"schemaVersion":2,"kind":"repository-health","ts":"2026-06-21T06:00:01Z","metrics":{"gradleModuleCount":34,"testFileCount":912,"productionSourceLocByModule":{"ui":1200}}}
         {"ts":"2026-06-21T07:00:00Z","gate":"retired-gate-xyz","verdict":"pass","findings":{"error":0,"warning":0,"note":0}}
         """);
     GovernanceStateController controller =
@@ -100,5 +101,13 @@ class GovernanceStateControllerTest {
     // A roster gate with no history line must appear as never-fired (0 local runs, not dead).
     boolean hasNeverFired = byGate.stream().anyMatch(g -> "never-fired".equals(g.get("status")));
     assertTrue(hasNeverFired, "roster gates absent from local history surface as never-fired");
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> repositoryHealth = (Map<String, Object>) out.get("repositoryHealth");
+    assertEquals(true, repositoryHealth.get("available"), "latest versioned health row is available");
+    assertEquals("local", repositoryHealth.get("scope"), "health history is local-only");
+    JsonNode metrics = (JsonNode) repositoryHealth.get("metrics");
+    assertEquals(34, metrics.path("gradleModuleCount").asInt());
+    assertEquals(912, metrics.path("testFileCount").asInt());
   }
 }

@@ -26,7 +26,7 @@ interface Efficacy {
   }>;
 }
 
-function stateBody(efficacy?: Efficacy): unknown {
+function stateBody(efficacy?: Efficacy, withHealth = false): unknown {
   return {
     source: 'tmp/governance-report.sarif',
     registry: {
@@ -41,6 +41,20 @@ function stateBody(efficacy?: Efficacy): unknown {
       classSizeDebt: { files: 0, totalDebt: 0, worst: [] },
     },
     ...(efficacy ? { efficacy } : {}),
+    ...(withHealth
+      ? {
+          repositoryHealth: {
+            available: true,
+            scope: 'local',
+            capturedAt: '2026-09-03T12:00:00Z',
+            metrics: {
+              gradleModuleCount: 34,
+              testFileCount: 912,
+              productionSourceLocByModule: { ui: 1200, core: 800 },
+            },
+          },
+        }
+      : {}),
     available: false,
     gates: [],
   };
@@ -106,5 +120,15 @@ describe('GovernanceView — activation efficacy (tempdoc 622 §17/§18)', () =>
     // no efficacy entries → both gate rows show the empty marker, no run-labels
     expect(t).not.toContain('runs ·');
     expect(t).toContain('—');
+  });
+
+  it('renders the latest local repository-health snapshot without implying durable history', async () => {
+    const el = await mount(stateBody(undefined, true));
+    const t = text(el);
+    expect(t).toContain('Latest local repository snapshot');
+    expect(t).toContain('34');
+    expect(t).toContain('912');
+    expect(t).toContain('2000');
+    expect(t).toContain('not durable cross-machine history');
   });
 });
