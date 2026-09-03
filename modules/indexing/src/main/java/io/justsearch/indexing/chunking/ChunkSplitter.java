@@ -88,6 +88,32 @@ public final class ChunkSplitter {
     }
   }
 
+  /**
+   * Version of the splitting <em>algorithm</em>, as opposed to its tunable sizes. Bump it whenever
+   * a change here would put existing chunk documents at different boundaries even with the token
+   * counts unchanged — new boundary patterns, a different token estimator, a changed CJK rule.
+   *
+   * <p>It is an {@code index_fingerprint} input (tempdoc 915 §C): chunk boundaries are on-disk
+   * shape, so a silent algorithm change would otherwise leave an index whose chunks no longer match
+   * what the runtime would produce, with nothing to detect it.
+   */
+  public static final String ALGORITHM_VERSION = "v1";
+
+  /**
+   * Content length at or above which a document is split into chunk documents at all. It lives
+   * here, with the other splitting constants, because it is a property of the splitting policy
+   * rather than of any one writer: {@code ChunkDocumentWriter} and {@code IndexingDocumentOps}
+   * both gate on it, and {@code index_fingerprint} hashes it (tempdoc 915 §C) because it
+   * decides whether chunk documents exist on disk.
+   */
+  public static final int CHUNK_THRESHOLD_CHARS = 2000;
+
+  /**
+   * Bounds {@code content_preview}, a {@code stored:true} field derived from the same content
+   * this class splits. An {@code index_fingerprint} input for that reason (tempdoc 915 §C).
+   */
+  public static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
+
   /** Default target chunk size in tokens (~1.3 tokens per word). */
   public static final int DEFAULT_CHUNK_TOKENS = 500;
 

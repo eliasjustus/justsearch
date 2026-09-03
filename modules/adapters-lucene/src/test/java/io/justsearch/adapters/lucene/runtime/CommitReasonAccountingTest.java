@@ -96,6 +96,60 @@ class CommitReasonAccountingTest {
   }
 
   /**
+   * The blue/green cutover commit — the single most consequential commit in the system, the one
+   * that stamps {@code build_state=COMPLETE} on the Green about to be promoted — used to be
+   * recorded as {@code UNKNOWN}, because {@code commitWithBuildState} called the no-arg
+   * {@code commitAndTrack()} (tempdoc 912 item 1). Asserting UNKNOWN stays at zero is the half of
+   * this that would have caught the original defect.
+   */
+  @Test
+  void theCutoverCommitIsAttributedToMigrationCutoverNotUnknown() throws Exception {
+    try (RunningRuntime runtime = openWithPendingDoc("cutover", 1)) {
+      CommitCounters counters = runtime.session().commitCount;
+      runtime
+          .commitOps()
+          .commitWithBuildState(
+              LuceneRuntimeTypes.BuildState.COMPLETE, CommitReason.MIGRATION_CUTOVER);
+
+      assertEquals(1L, counters.get(CommitReason.MIGRATION_CUTOVER));
+      assertEquals(
+          0L,
+          counters.get(CommitReason.UNKNOWN),
+          "the cutover commit must not fall through to UNKNOWN");
+      assertEquals(
+          "COMPLETE",
+          runtime.latestCommitUserDataBestEffort().get("build_state"),
+          "attribution must not have cost the build-state stamp the cutover depends on");
+    }
+  }
+
+  /**
+   * The switch-buffer replay used to call the low-level {@code CommitOps.commit()} directly, which
+   * skips the counter, the {@code pendingDocs} reset, the telemetry event and the
+   * {@code CommitCompletedListener}. That primitive is package-private now, so this pins the
+   * behaviour the routing restored rather than merely that it compiles.
+   */
+  @Test
+  void theSwitchBufferReplayCommitIsCountedAndNotifiesTheListener() throws Exception {
+    try (RunningRuntime runtime = openWithPendingDoc("switchbuffer", 3)) {
+      CommitCounters counters = runtime.session().commitCount;
+      java.util.List<CommitReason> notified = new java.util.ArrayList<>();
+      runtime.commitOps().setCommitCompletedListener(notified::add);
+
+      assertTrue(runtime.session().pendingDocs.get() > 0, "documents are pending before the commit");
+      runtime.commitOps().commitAndTrack(CommitReason.SWITCH_BUFFER_REPLAY);
+
+      assertEquals(1L, counters.get(CommitReason.SWITCH_BUFFER_REPLAY));
+      assertEquals(
+          0L, runtime.session().pendingDocs.get(), "the funnel resets pendingDocs; commit() did not");
+      assertEquals(
+          java.util.List.of(CommitReason.SWITCH_BUFFER_REPLAY),
+          notified,
+          "the post-commit listener — which keeps the embedding fingerprint in sync — must fire");
+    }
+  }
+
+  /**
    * A null reason is attributed to UNKNOWN rather than dropped. Dropping it would break the
    * total-equals-sum property in the one case a caller is most likely to hit by accident.
    */

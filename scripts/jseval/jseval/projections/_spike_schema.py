@@ -72,12 +72,11 @@ CANONICAL_SCHEMA: dict = {
                 "all_of": [
                     "commit.schema_fp",
                     "commit.field_catalog_hash",
-                    "commit.analyzer_fp",
                     "commit.synonyms_hash",
                     "commit.grammar_hash",
                     "commit.similarity_fp",
                     "commit.boosts_fp",
-                    "commit.index_schema_fp",
+                    "commit.index_fingerprint",
                 ],
             },
             "optional_attrs": [
@@ -125,12 +124,11 @@ CANONICAL_SCHEMA: dict = {
         },
         "commit.schema_fp": {"type": "string", "format": "hex-sha256"},
         "commit.field_catalog_hash": {"type": "string", "format": "hex-sha256"},
-        "commit.analyzer_fp": {"type": "string", "format": "hex-sha256"},
         "commit.synonyms_hash": {"type": "string", "format": "hex-sha256"},
         "commit.grammar_hash": {"type": "string", "format": "hex-sha256"},
         "commit.similarity_fp": {"type": "string", "format": "hex-sha256"},
         "commit.boosts_fp": {"type": "string", "format": "hex-sha256"},
-        "commit.index_schema_fp": {"type": "string", "format": "hex-sha256"},
+        "commit.index_fingerprint": {"type": "string", "format": "hex-sha256"},
     },
 }
 
@@ -152,7 +150,7 @@ def required_attrs_for_kind(kind: str) -> list[str]:
 
 def identity_attrs_for_kind(kind: str) -> list[str]:
     """Return the `all_of` identity-attrs list the emitter MUST
-    include (e.g., the 8 commit.* hashes on search/retrieval)."""
+    include (e.g., the 7 commit.* hashes on search/retrieval)."""
     k = CANONICAL_SCHEMA["span_kinds"].get(kind)
     if k is None:
         raise KeyError(f"schema has no kind {kind!r}")

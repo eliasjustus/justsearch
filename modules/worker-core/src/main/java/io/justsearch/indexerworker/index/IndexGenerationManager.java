@@ -73,7 +73,16 @@ public final class IndexGenerationManager {
       String activeGenerationId,
       Path activeGenerationPath) {}
 
-  /** On-disk pointer for the active generation. */
+  /**
+   * On-disk pointer for the active generation.
+   *
+   * <p>{@code auto_rebuild_key} / {@code auto_rebuild_count} / {@code auto_rebuild_first_ms} are
+   * the repeat-rebuild brake (tempdoc 915 §C). An index that fails to build a valid Green will
+   * present the same mismatch on the next boot, so without a bound the Worker would rebuild
+   * forever, burning the machine and never converging. The key is the {@code index_fingerprint}
+   * the attempt targeted, so a genuinely new upgrade resets the count instead of inheriting the
+   * previous failure's budget.
+   */
   public record State(
       int format_version,
       String active_generation,
@@ -83,7 +92,10 @@ public final class IndexGenerationManager {
       Boolean migration_paused,
       String pause_reason,
       Long paused_at_ms,
-      long updated_at_ms) {}
+      long updated_at_ms,
+      String auto_rebuild_key,
+      Integer auto_rebuild_count,
+      Long auto_rebuild_first_ms) {}
 
   /** Migration lifecycle states (stored in state.json as strings). */
   public enum MigrationState {
@@ -232,8 +244,70 @@ public final class IndexGenerationManager {
             false,
             null,
             null,
-            System.currentTimeMillis());
+            System.currentTimeMillis(),
+            normalized.auto_rebuild_key(),
+            normalized.auto_rebuild_count(),
+            normalized.auto_rebuild_first_ms());
     writeState(next);
+    return next;
+  }
+
+  /**
+   * Discards the current building generation: clears {@code building_generation}, returns {@code
+   * migration_state} to {@code IDLE} and marks the abandoned directory for deletion, so a following
+   * {@link #startMigration(String)} allocates a FRESH Green instead of returning the old one.
+   *
+   * <p>Exists because {@code startMigration} deliberately no-ops while a migration is in flight
+   * (see its contract above), which is right for concurrent callers and wrong for the one case that
+   * needs the opposite: a resumed migration whose Green is itself unusable. Retrying the same
+   * generation there re-raises the same failure on every boot — the Worker died three boots running
+   * before the brake could even fire (tempdoc 915 B5).
+   *
+   * <p>The auto-rebuild budget is carried over unchanged. Abandoning a Green is not evidence the
+   * rebuild converged, so it must not refresh the brake; the caller spends its attempt.
+   *
+   * @param reason short label for the log line
+   * @return the updated normalized state, or the unchanged state when there is no building
+   *     generation to abandon
+   */
+  public State abandonBuildingGeneration(String reason) throws IOException {
+    State current = readStateBestEffort();
+    if (current == null) {
+      return null;
+    }
+    State normalized = normalizeAndUpgradeStateIfNeeded(current);
+    String building = normalized.building_generation();
+    if (building == null || building.isBlank()) {
+      return normalized;
+    }
+    String safeBuilding = requireSafeGenerationId(building, "state.json building_generation");
+    State next =
+        new State(
+            STATE_FORMAT_VERSION,
+            normalized.active_generation(),
+            null,
+            normalized.previous_generation(),
+            MigrationState.IDLE.name(),
+            false,
+            null,
+            null,
+            System.currentTimeMillis(),
+            normalized.auto_rebuild_key(),
+            normalized.auto_rebuild_count(),
+            normalized.auto_rebuild_first_ms());
+    writeState(next);
+    log.warn(
+        "Abandoned building generation {} (reason={}); migration_state reset to IDLE",
+        safeBuilding,
+        reason == null || reason.isBlank() ? "unspecified" : reason.trim());
+    // Marked AFTER the pointer is gone, and best-effort: a crash between the two leaves an orphan
+    // directory the GC reaps, whereas marking first would leave state.json pointing at a directory
+    // already being deleted.
+    try {
+      SafeIndexPathOps.markForDeletion(resolveGenerationPath(safeBuilding), indicesDir);
+    } catch (Exception e) {
+      log.debug("Failed to mark abandoned generation {} for deletion: {}", safeBuilding, e.getMessage());
+    }
     return next;
   }
 
@@ -263,7 +337,10 @@ public final class IndexGenerationManager {
             nextPaused,
             nextReason,
             nextPausedAt,
-            now);
+            now,
+            normalized.auto_rebuild_key(),
+            normalized.auto_rebuild_count(),
+            normalized.auto_rebuild_first_ms());
     writeState(next);
     return next;
   }
@@ -313,8 +390,82 @@ public final class IndexGenerationManager {
             normalized.migration_paused(),
             normalized.pause_reason(),
             normalized.paused_at_ms(),
-            System.currentTimeMillis());
+            System.currentTimeMillis(),
+            normalized.auto_rebuild_key(),
+            normalized.auto_rebuild_count(),
+            normalized.auto_rebuild_first_ms());
     writeState(next);
+  }
+
+  /**
+   * How many times the Worker will auto-start a rebuild for the same target fingerprint before it
+   * stops and leaves the decision to an operator. Three is enough to absorb a transient failure
+   * (a crash mid-build, a full disk that clears) and few enough that a genuinely unbuildable index
+   * stops costing a full rebuild on every boot.
+   */
+  public static final int MAX_AUTO_REBUILD_ATTEMPTS = 3;
+
+  /**
+   * Records an attempt to auto-start a rebuild targeting {@code targetKey} and returns the attempt
+   * number, 1-based. The count resets whenever {@code targetKey} differs from the last recorded
+   * one, so a new upgrade is never refused because an older one exhausted the budget.
+   *
+   * <p>Persisted before the rebuild starts, not after it succeeds: a rebuild that crashes the
+   * process must still consume its attempt, or a crash loop is invisible to the brake.
+   *
+   * @param targetKey the {@code index_fingerprint} the rebuild is meant to produce
+   * @return the 1-based attempt number for this key
+   */
+  public int recordAutoRebuildAttempt(String targetKey) throws IOException {
+    State current = readStateBestEffort();
+    if (current == null) {
+      initializeOrLoad();
+      current = readStateBestEffort();
+      if (current == null) {
+        return 1;
+      }
+    }
+    State normalized = normalizeAndUpgradeStateIfNeeded(current);
+    String key = targetKey == null || targetKey.isBlank() ? "<unknown>" : targetKey;
+    boolean sameTarget = key.equals(normalized.auto_rebuild_key());
+    int nextCount =
+        sameTarget && normalized.auto_rebuild_count() != null
+            ? normalized.auto_rebuild_count() + 1
+            : 1;
+    long now = System.currentTimeMillis();
+    Long firstMs =
+        sameTarget && normalized.auto_rebuild_first_ms() != null
+            ? normalized.auto_rebuild_first_ms()
+            : now;
+    writeState(
+        new State(
+            STATE_FORMAT_VERSION,
+            normalized.active_generation(),
+            normalized.building_generation(),
+            normalized.previous_generation(),
+            normalized.migration_state(),
+            normalized.migration_paused(),
+            normalized.pause_reason(),
+            normalized.paused_at_ms(),
+            now,
+            key,
+            nextCount,
+            firstMs));
+    return nextCount;
+  }
+
+  /**
+   * The attempt count already recorded for {@code targetKey}, or 0 if the last recorded attempt
+   * targeted something else. Read-only — use it to decide before spending
+   * {@link #recordAutoRebuildAttempt}.
+   */
+  public int autoRebuildAttemptsFor(String targetKey) {
+    State current = readStateBestEffort();
+    if (current == null || current.auto_rebuild_count() == null) {
+      return 0;
+    }
+    String key = targetKey == null || targetKey.isBlank() ? "<unknown>" : targetKey;
+    return key.equals(current.auto_rebuild_key()) ? current.auto_rebuild_count() : 0;
   }
 
   /**
@@ -347,7 +498,12 @@ public final class IndexGenerationManager {
             false,
             null,
             null,
-            System.currentTimeMillis());
+            System.currentTimeMillis(),
+            // A completed cutover is the proof the rebuild converged: release the brake so a
+            // future, unrelated upgrade starts with a full budget.
+            null,
+            null,
+            null);
     writeState(next);
     return next;
   }
@@ -385,7 +541,10 @@ public final class IndexGenerationManager {
             false,
             null,
             null,
-            System.currentTimeMillis());
+            System.currentTimeMillis(),
+            normalized.auto_rebuild_key(),
+            normalized.auto_rebuild_count(),
+            normalized.auto_rebuild_first_ms());
     writeState(next);
     return next;
   }
@@ -525,7 +684,10 @@ public final class IndexGenerationManager {
         false,
         null,
         null,
-        System.currentTimeMillis());
+        System.currentTimeMillis(),
+        null,
+        null,
+        null);
   }
 
   private State normalizeAndUpgradeStateIfNeeded(State state) throws IOException {
@@ -563,7 +725,19 @@ public final class IndexGenerationManager {
     String pauseReason = state.pause_reason();
     Long pausedAtMs = state.paused_at_ms();
     State normalized =
-        new State(STATE_FORMAT_VERSION, active, building, previous, mig, paused, pauseReason, pausedAtMs, updated);
+        new State(
+            STATE_FORMAT_VERSION,
+            active,
+            building,
+            previous,
+            mig,
+            paused,
+            pauseReason,
+            pausedAtMs,
+            updated,
+            state.auto_rebuild_key(),
+            state.auto_rebuild_count(),
+            state.auto_rebuild_first_ms());
 
     if (v != STATE_FORMAT_VERSION) {
       // Upgrade v1 -> v2 in-place (best-effort).

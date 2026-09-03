@@ -46,17 +46,30 @@ public final class CleanShutdownMarker {
   }
 
   /**
-   * Returns whether the previous shutdown was clean, and clears the marker so a crash in <em>this</em>
-   * session is detectable on the next open. Absent marker (crash or first run) → {@code false}.
+   * Whether the previous shutdown was clean. Absent marker (crash or first run) → {@code false}.
+   * Non-destructive: reading the answer and invalidating it are separate acts, because only one of
+   * them is a consequence of opening (tempdoc 915, open item O14).
    */
-  public static boolean consumeWasClean(Path indexDir) {
-    Path p = pathFor(indexDir);
-    boolean existed = Files.exists(p);
+  public static boolean wasClean(Path indexDir) {
+    return Files.exists(pathFor(indexDir));
+  }
+
+  /**
+   * Clears the marker, so a crash in <em>this</em> session is detectable on the next open.
+   *
+   * <p>Called when a WRITER opens, which is the moment an unclean death becomes possible — not when
+   * the index is merely read. This used to be fused into the read: an open consumed the marker
+   * whether or not it could ever invalidate it, so a runtime that serves the active generation
+   * read-only for its whole life (a blue/green migration, and every boot of the exhausted-brake
+   * state) deleted a marker it would never re-write, and the following boot declared an unclean
+   * shutdown that had not happened and paid a FULL integrity verification for it. Live validation
+   * saw one generation do that on five consecutive boots.
+   */
+  public static void consume(Path indexDir) {
     try {
-      Files.deleteIfExists(p);
+      Files.deleteIfExists(pathFor(indexDir));
     } catch (IOException e) {
-      // best-effort
+      // best-effort: a marker that survives a crash costs a missed FULL scan, never correctness.
     }
-    return existed;
   }
 }

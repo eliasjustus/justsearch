@@ -95,6 +95,15 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
   private volatile int recoveryAttemptsMade;
   private volatile long lastRecoveryAttemptMs = -1;
   private volatile boolean recoveryGaveUp;
+
+  /**
+   * Which veto (if any) produced {@link #recoveryGaveUp}. Tempdoc 915 R1: the give-up latch is what
+   * keeps the terminal state terminal, but an {@link BootRecoveryDecision.Veto#INDEX_FATAL} give-up
+   * must not also brick the operator hatch — the operator's remedy changes the very bytes the veto is
+   * a function of. Recording WHICH veto latched is what lets exactly that one be re-openable by an
+   * explicit request while every other terminal state stays permanent.
+   */
+  private volatile BootRecoveryDecision.Veto gaveUpVeto;
   private final AtomicBoolean recoveryAttemptRunning = new AtomicBoolean(false);
 
   /**
@@ -305,6 +314,17 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
 
   /** The observable state the boot-recovery decision is a function of. */
   private BootRecoveryDecision.Input currentRecoveryInput() {
+    return currentRecoveryInput(false);
+  }
+
+  /**
+   * @param operatorRequested when true, the {@link BootRecoveryDecision.Veto#INDEX_FATAL} veto is
+   *     withheld: the operator's remedy for both fatal index causes is a settings or filesystem
+   *     change the NEXT spawn reads, so an explicit request is the one input that can make a
+   *     deterministic refusal stop being deterministic (tempdoc 915 R1). The budget and the two
+   *     supervision vetoes are untouched — this is a reason to try again, not a reason to try more.
+   */
+  private BootRecoveryDecision.Input currentRecoveryInput(boolean operatorRequested) {
     long sinceLastAttempt =
         lastRecoveryAttemptMs < 0 ? Long.MAX_VALUE : nowMs.getAsLong() - lastRecoveryAttemptMs;
     return new BootRecoveryDecision.Input(
@@ -313,8 +333,13 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
         LifecycleReasonCode.WORKER_RESTART_EXHAUSTED
             .code()
             .equals(bootstrap.workerCapability().pendingReason()),
+        !operatorRequested && bootstrap.indexFatalCode() != null,
         recoveryAttemptsMade,
-        recoveryGaveUp,
+        // Withholding the veto is not enough on its own: the give-up it produced has already latched,
+        // and a latched give-up short-circuits to NONE before any veto is consulted. So an operator
+        // request re-opens exactly the INDEX_FATAL terminal state and no other.
+        recoveryGaveUp
+            && !(operatorRequested && gaveUpVeto == BootRecoveryDecision.Veto.INDEX_FATAL),
         sinceLastAttempt);
   }
 
@@ -346,7 +371,7 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
       // a burst of manual requests out-spends the declared budget and can re-spawn over a live
       // worker. This is also why the attempt NUMBER comes from the decision rather than the caller.
       BootRecoveryDecision.Decision decision =
-          BootRecoveryDecision.decide(currentRecoveryInput(), recoveryPolicy);
+          BootRecoveryDecision.decide(currentRecoveryInput(operatorRequested), recoveryPolicy);
       if (decision.action() == BootRecoveryDecision.Action.GIVE_UP) {
         // The budget was spent (or a veto appeared) between the request and this runnable. The
         // decision to stop is still a decision: narrate it here rather than dropping quietly, or a
@@ -368,6 +393,11 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
         return;
       }
       int attemptNo = decision.nextAttempt();
+      // An operator re-opening an INDEX_FATAL give-up gets a genuinely live arc back: clearing the
+      // latch is what lets the NEXT failure narrate its terminal state again instead of falling
+      // silent (narrateGiveUp returns early while the latch is set).
+      recoveryGaveUp = false;
+      gaveUpVeto = null;
       recoveryAttemptsMade = recoveryAttemptsMade + 1;
       lastRecoveryAttemptMs = nowMs.getAsLong();
       WorkerCapability cap = bootstrap.workerCapability();
@@ -400,6 +430,7 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
         return;
       } catch (Exception e) {
         log.warn("Boot recovery attempt {} failed: {}", attemptNo, e.toString());
+        settleAfterFailedAttempt();
         return;
       }
       if (bootstrap.hasClient()) {
@@ -452,11 +483,39 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
           // under supervision's own terminal code — which the fixture now fails fast on too, so this
           // path no longer costs a blind wait (review F2(b)).
       {
-        recoveryGaveUp = true;
+        latchGaveUp(veto);
         log.warn(
             "Boot recovery giving up: supervision has already declared {} — that verdict is"
                 + " terminal and is not superseded",
             LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code());
+      }
+      // Tempdoc 915 R1. The one veto this authority NARRATES, because it is the one whose cause the
+      // Head owns and may never have said out loud: the bootstrap latched it from the dying worker's
+      // fatal-reason marker, and that read can land inside a suppressed boot arc (all three
+      // startWithRetry attempts are suppressed, and each one consumes the marker the worker just
+      // rewrote). Stamping it here is what makes the terminal readiness carry
+      // worker.index_schema_mismatch / worker.index_corrupt WITH its remedy instead of this arm's
+      // generic worker.spawn_recovery_exhausted — the exact substitution live arm 2 observed.
+      case INDEX_FATAL -> {
+        latchGaveUp(veto);
+        LifecycleReasonCode cause = bootstrap.indexFatalCode();
+        log.error(
+            "Boot recovery declining to re-attempt: the worker refused with {} — the condition is"
+                + " on disk, so re-spawning would read the same bytes and refuse the same way",
+            cause == null ? "a fatal index reason" : cause.code());
+        if (cause != null) {
+          // Unconditional, and deliberately so (R2). An earlier draft skipped the write when the
+          // reason slot already held the cause — a wrong-gate: it compared the REASON and ignored the
+          // HEALTH, so an operator-requested attempt that re-refused left the capability parked at
+          // the RECOVERING this arm had set before the spawn. The reason was right and the state was
+          // a lie: readinessNotice.ts renders it as "recovering" for a condition that never recovers
+          // on its own, which live R2 watched sit there for two minutes. This cannot double-narrate:
+          // WorkerCapability.transition fires listeners only when the health OR the effective reason
+          // changes, and the sticky reason is retained, so the already-terminal case is a no-op.
+          bootstrap
+              .workerCapability()
+              .transition(CapabilityHealth.DEGRADED, cause.code(), bootstrap.indexFatalDetail());
+        }
       }
       case SUPERVISION_ENGAGED ->
           // Unreachable: a live supervisor yields STAND_DOWN, which never reaches this method
@@ -464,7 +523,7 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
           // deliberately not routed here by the decision.
           log.warn("Boot recovery give-up requested while a supervisor is live — ignoring");
       case NONE -> {
-        recoveryGaveUp = true;
+        latchGaveUp(veto);
         log.error(
             "Boot recovery exhausted after {} attempt(s); the knowledge server will not be retried"
                 + " again in this process",
@@ -479,6 +538,46 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
                     + " recovery attempt(s) did not bring it up");
       }
     }
+  }
+
+  /**
+   * Tempdoc 915 R2: re-ask the decision the moment an attempt fails, instead of leaving the
+   * capability parked at the RECOVERING this arm set before the spawn until the next tick happens to
+   * come round. Runs on the executor thread (its only caller is the attempt itself), asks the same
+   * pure function the tick asks, and narrates through the same funnel — so it can only reach a state
+   * the periodic arm would have reached anyway, sooner. Live R2 watched an operator-requested retry
+   * that re-refused report "recovering" for two minutes; a condition that cannot recover on its own
+   * must not be rendered as one that is recovering.
+   *
+   * <p>Scoped to {@link BootRecoveryDecision.Veto#INDEX_FATAL} on purpose. It is the only veto whose
+   * cause is already known-terminal at the instant the attempt fails, and the only one this arm
+   * narrates. The budget-exhaustion give-up keeps its designed timing (narrated by the tick after the
+   * last attempt) — {@code KnowledgeServerBootRecoveryTest.arcGivesUpOnceAfterTheBudget} pins that,
+   * and pulling it forward here would be a scheduling change R2 did not ask for.
+   */
+  private void settleAfterFailedAttempt() {
+    BootRecoveryDecision.Decision decision =
+        BootRecoveryDecision.decide(currentRecoveryInput(), recoveryPolicy);
+    if (decision.action() == BootRecoveryDecision.Action.GIVE_UP
+        && decision.veto() == BootRecoveryDecision.Veto.INDEX_FATAL) {
+      narrateGiveUp(decision.veto());
+    }
+  }
+
+  /** Boot-recovery attempts spent in this arc. Visible for tests. */
+  int recoveryAttemptsMadeForTest() {
+    return recoveryAttemptsMade;
+  }
+
+  /** Whether an attempt holds the single attempt slot right now. Visible for tests. */
+  boolean recoveryAttemptRunningForTest() {
+    return recoveryAttemptRunning.get();
+  }
+
+  /** Records the terminal state AND which veto produced it, so the two can never disagree. */
+  private void latchGaveUp(BootRecoveryDecision.Veto veto) {
+    gaveUpVeto = veto;
+    recoveryGaveUp = true;
   }
 
   /**
@@ -505,7 +604,7 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
     }
     boolean slotHandedOff = false;
     BootRecoveryDecision.Decision decision =
-        BootRecoveryDecision.decide(currentRecoveryInput(), recoveryPolicy);
+        BootRecoveryDecision.decide(currentRecoveryInput(true), recoveryPolicy);
     try {
       return switch (decision.action()) {
         case NONE -> recoveryGaveUp ? Verdict.EXHAUSTED : Verdict.NOT_APPLICABLE;
@@ -520,7 +619,10 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
           yield switch (decision.veto()) {
             case RESTART_EXHAUSTED -> Verdict.VETOED_RESTART_EXHAUSTED;
             case SUPERVISION_ENGAGED -> Verdict.VETOED_SUPERVISION;
-            case NONE -> Verdict.EXHAUSTED;
+            // INDEX_FATAL is withheld from the operator input above, so this arm is unreachable from
+            // here by construction; it is mapped to the terminal answer for switch totality rather
+            // than growing a Verdict constant no caller can ever observe.
+            case NONE, INDEX_FATAL -> Verdict.EXHAUSTED;
           };
         }
         // WAIT is an ATTEMPT whose backoff has not elapsed; the request is what makes it due. The

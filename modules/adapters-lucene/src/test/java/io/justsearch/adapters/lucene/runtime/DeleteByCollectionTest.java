@@ -40,9 +40,9 @@ final class DeleteByCollectionTest {
   private static final CommitMetadataSource TEST_METADATA_SOURCE =
       () ->
           Map.of(
-              "schema_ver", "delete-by-collection-test-1.0.0",
+              "index_fingerprint", "delete-by-collection-test-1.0.0",
               "schema_fp", "test-fingerprint",
-              "analyzer_fp", "test-analyzer",
+              "boosts_fp", "test-boosts",
               "dag_hash", "test-dag-hash",
               "pipeline_budget_profile", "test-profile",
               "field_catalog_hash", "test-catalog-hash",

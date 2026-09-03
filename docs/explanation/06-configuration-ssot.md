@@ -191,8 +191,10 @@ These are the key runtime knobs that affect schema compatibility and migration b
   - YAML: `index.schema_mismatch.policy`
   - Env/sysprop: `JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY` / `index.schema_mismatch.policy`
   - Values: `FAIL_CLOSED` | `REBUILD_BACKUP_FIRST` | `BLUE_GREEN_MIGRATE`
-- **Parity guard allow-mismatch (dev convenience)**:
-  - `-Djustsearch.index.parity.allow_mismatch=true` (set in dev so schema evolution doesn’t brick local runs)
+- **Parity guard allow-mismatch (operator escape hatch)**:
+  - `-Djustsearch.index.parity.allow_mismatch=true` — not set by default anywhere (tempdoc 915 removed
+    the Head's unconditional set-sites); an operator sets this explicitly to open a known-divergent
+    index read-only for diagnosis.
 - **Cutover guardrail (optional)**:
   - `JUSTSEARCH_INDEX_MIGRATION_CUTOVER_MAX_FAILED_JOBS` /
     `-Dindex.migration.cutover.max_failed_jobs=<n>`

@@ -99,7 +99,8 @@ import org.slf4j.LoggerFactory;
 public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImplBase {
   private static final Logger log = LoggerFactory.getLogger(GrpcIngestService.class);
   /** Maximum chars stored in `content_preview` (result list snippet field). */
-  private static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
+  private static final int CONTENT_PREVIEW_MAX_CHARS =
+      io.justsearch.indexerworker.rag.ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
 
   /** Maximum files allowed in a single batch request. */
   private static final int MAX_BATCH_SIZE = 10_000;
@@ -188,10 +189,18 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
             ingestCountOps,
             searchCountOps,
             ingestLifecycle != null ? ingestLifecycle::configuredVectorFormat : null,
-            ingestLifecycle != null ? ingestLifecycle::storedVectorFormat : null,
+            // Everything STORED — the committed identity of the index — describes the generation the
+            // user's queries reach, so it is read off the SEARCH runtime. Off the ingest runtime it
+            // described Green during a migration (freshly stamped with the CURRENT shape, so the
+            // compat surface reported COMPATIBLE while every query was answered from the stale-shape
+            // Blue), and nothing at all in the exhausted-brake and deferred-open states, where there
+            // is no write runtime and the supplier was null (so the stored fingerprint came back
+            // empty — which the status path reads as BLOCKED_LEGACY, the wrong remedy). The search
+            // runtime is non-null in every one of those states. Live validation, 2026-09-03, D1/D3.
+            searchLifecycle != null ? searchLifecycle::storedVectorFormat : null,
             ingestLifecycle != null ? ingestLifecycle::queryVectorFormatActual : null,
-            ingestLifecycle != null ? ingestLifecycle::openTimeCommitUserData : null,
-            ingestLifecycle != null ? ingestLifecycle::latestCommitUserDataBestEffort : null,
+            searchLifecycle != null ? searchLifecycle::openTimeCommitUserData : null,
+            searchLifecycle != null ? searchLifecycle::latestCommitUserDataBestEffort : null,
             this.indexGenerationManager,
             migrationProgressSupplier,
             metrics,

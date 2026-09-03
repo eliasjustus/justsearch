@@ -149,7 +149,7 @@ def execute_preflight(
             "embedding_model_sha256": commit_meta.get("embedding_model_sha256"),
             "field_catalog_hash": commit_meta.get("field_catalog_hash"),
             "schema_fp": commit_meta.get("schema_fp"),
-            "index_schema_fp": commit_meta.get("index_schema_fp"),
+            "index_fingerprint": commit_meta.get("index_fingerprint"),
         }
 
     # F4: Model wiring validation — distinguish "path found" from "loaded and wired"

@@ -51,7 +51,7 @@ class NerBackfillOpsTest {
       NerBackfillOps.processNerBackfill(context);
 
       verify(indexingCoordinator, never()).updateDocumentsBatch(anyList());
-      verify(commitOps, never()).commit();
+      verify(commitOps, never()).commitAndTrack(org.mockito.ArgumentMatchers.any());
     }
 
     @Test

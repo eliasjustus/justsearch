@@ -110,15 +110,22 @@ class RecoveryIntegrationTest extends RuntimeTestBase {
             .withIndexOpenGuard(guardSpy)
             .open();
 
-    // Item 17: assert the parity guard was invoked at least once AND surfaced the
-    // re-classified CORRUPT_INDEX exception (Gap D wiring proof).
+    // The guard is still on the open path (wiring proof), and it deliberately does NOT raise for
+    // corruption any more. Tempdoc 915 B4: the parity inspection answers "does the last commit
+    // record this runtime's shape?", and an unreadable commit leaves that question UNANSWERED
+    // rather than answering "no". It used to re-classify the read failure as CORRUPT_INDEX, which
+    // was harmless from inside the open and fatal from the pre-open call site added in the same
+    // tempdoc - that site sits outside openComponentsWithRecovery, so raising there killed the
+    // Worker on an index the product recovers from. ComponentsFactory classifies corruption on the
+    // reader/writer open independently, which is what the rest of this test goes on to prove:
+    // backup taken, fresh index served, writes accepted.
     assertTrue(
         guardSpy.invocations.get() >= 1,
         "parity guard should have been invoked during recovery; got: " + guardSpy.invocations.get());
-    assertTrue(
+    assertFalse(
         guardSpy.observedCorruptionClassification.get(),
-        "parity guard should have surfaced an IndexRuntimeIOException(CORRUPT_INDEX) — Gap D"
-            + " wiring proof. Observed exceptions: "
+        "the parity guard must not raise CORRUPT_INDEX: recovery is the OPEN path's job and the"
+            + " same throw would kill the boot from the pre-open call site. Observed exceptions: "
             + guardSpy.observedExceptions);
 
     // Assert: a sibling backup exists.
@@ -401,10 +408,17 @@ class RecoveryIntegrationTest extends RuntimeTestBase {
   }
 
   @Test
-  void cleanCloseWritesMarkerAndOpenConsumesIt() throws Exception {
+  void cleanCloseWritesMarkerAndTheWriterOpenConsumesIt() throws Exception {
     // tempdoc 628 Gap 1: the clean-shutdown marker is what gates the STRUCTURAL→FULL escalation. A
-    // graceful writable close must write it; the next open must consume it (so a crash THIS session is
-    // detectable next time). (FULL's body-bit-rot detection itself is covered by IndexIntegrityCheckTest.)
+    // graceful writable close must write it, and the next WRITER open must consume it (so a crash
+    // THIS session is detectable next time). (FULL's body-bit-rot detection itself is covered by
+    // IndexIntegrityCheckTest.)
+    //
+    // Tempdoc 915 O14 corrected which open does the consuming. This case asserted that ANY open
+    // did, including a read-only one — and that is the defect: a read-only open takes no writer, so
+    // it cannot leave the index unclean, and clearing a marker it will never re-write made every
+    // later read-only boot report a crash that had not happened. The read-only half is now pinned
+    // the other way in CleanShutdownMarkerLifecycleTest.
     Path dataRoot = dataDir();
     Path indexPath = dataRoot.resolve("marker-lifecycle-idx");
     Files.createDirectories(indexPath);
@@ -425,12 +439,19 @@ class RecoveryIntegrationTest extends RuntimeTestBase {
         Files.exists(CleanShutdownMarker.pathFor(indexPath)),
         "a graceful writable close must write the clean-shutdown marker");
 
-    // A subsequent open consumes the marker so an unclean shutdown of this session would be detected.
     ReadOnlyRuntime ro = schema.atPath(indexPath).withFallbackIndexPath(dataRoot).openReadOnly();
     ro.close();
+    assertTrue(
+        Files.exists(CleanShutdownMarker.pathFor(indexPath)),
+        "a read-only open reads the marker to decide whether to escalate, and leaves it: it writes"
+            + " nothing, so it cannot be the session that dirties the index");
+
+    // A writer CAN die mid-commit, so its open is what invalidates the previous clean shutdown.
+    RunningRuntime rw2 = schema.atPath(indexPath).withFallbackIndexPath(dataRoot).open();
     assertFalse(
         Files.exists(CleanShutdownMarker.pathFor(indexPath)),
-        "opening the index must consume (clear) the clean-shutdown marker");
+        "opening a WRITER must consume (clear) the clean-shutdown marker");
+    rw2.close();
   }
 
   // ==========================================================================

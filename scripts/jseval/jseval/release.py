@@ -11,9 +11,9 @@ Key design points (tempdoc 623, verified against on-disk artifacts):
 
 - **The config-cohort key is the *config-global subset only*** (T-1 / resolved
   ledger U1). A naive "hash every non-dataset manifest field" key would *never*
-  group ``beir/scifact`` with the ``mixed/*`` corpora, because four
-  ``commit_metadata`` fingerprints (``field_catalog_hash``, ``index_schema_fp``,
-  ``analyzer_fp``, ``synonyms_hash``) are **corpus-dependent** — they describe
+  group ``beir/scifact`` with the ``mixed/*`` corpora, because three
+  ``commit_metadata`` fingerprints (``field_catalog_hash``, ``index_fingerprint``,
+  ``synonyms_hash``) are **corpus-dependent** — they describe
   which fields a corpus populates, not a configuration choice. So
   :func:`config_cohort_key` hashes an explicit allow-list and excludes those.
 
@@ -78,11 +78,11 @@ _CONFIG_GLOBAL_COMMIT_METADATA = (
     "grammar_hash",
 )
 # commit_metadata fingerprints that are CORPUS-dependent (differ scifact vs
-# mixed) — documented here so the exclusion is legible, never hashed into the key:
+# mixed) — documented here so the exclusion is legible, never hashed into the key.
+# tempdoc 915: index_schema_fp/analyzer_fp were folded into index_fingerprint.
 _CORPUS_DEPENDENT_COMMIT_METADATA = (
     "field_catalog_hash",
-    "index_schema_fp",
-    "analyzer_fp",
+    "index_fingerprint",
     "synonyms_hash",
 )
 # model_fingerprints keys that are execution-context (vary GPU vs CPU), excluded
@@ -151,7 +151,7 @@ def config_cohort_key(manifest: dict) -> str:
     regardless of corpus. Hashes ONLY: ``git_sha``, ``eval_protocol_hash``,
     ``policy_hash``, the four config-global ``commit_metadata`` fps, and model
     identity (minus the ``*_gpu`` flags). Excludes the dataset family and the
-    four corpus-dependent ``commit_metadata`` fps — including those would refuse
+    three corpus-dependent ``commit_metadata`` fps — including those would refuse
     every multi-corpus release (the U1 finding).
     """
     cm = manifest.get("commit_metadata") or {}

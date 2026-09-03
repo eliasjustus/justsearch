@@ -1008,14 +1008,32 @@ public final class ResolvedConfigBuilder {
    */
   private static String normalizeSchemaMismatchPolicy(String raw, boolean isProd) {
     if (raw == null || raw.isBlank()) {
-      return isProd ? "FAIL_CLOSED" : "REBUILD_BACKUP_FIRST";
+      // Production defaults to BLUE_GREEN_MIGRATE (tempdoc 915 §C). FAIL_CLOSED was the old
+      // default and it is the wrong answer for a desktop app: a schema-changing upgrade left the
+      // user with an index that refuses to open and no path forward. Blue/green keeps the existing
+      // index serving reads while the new one is built beside it. Dev stays REBUILD_BACKUP_FIRST —
+      // a developer wants the fast rebuild, not a second generation on disk.
+      return isProd ? "BLUE_GREEN_MIGRATE" : "REBUILD_BACKUP_FIRST";
     }
     return switch (raw.trim().toLowerCase(Locale.ROOT)) {
       case "fail_closed", "fail-closed", "fail" -> "FAIL_CLOSED";
       case "rebuild_backup_first", "rebuild-backup-first", "rebuild" -> "REBUILD_BACKUP_FIRST";
       case "blue_green_migrate", "blue-green-migrate", "blue_green", "blue-green" ->
           "BLUE_GREEN_MIGRATE";
-      default -> raw.trim();
+      default -> {
+        // An unrecognised value is a typo, and it used to be returned verbatim — so it matched no
+        // branch anywhere, which after tempdoc 915 §C.12 meant the pre-open detection forced a
+        // writable open, the guard raised, recovery refused it and the Worker did not start. A
+        // misspelled policy must not be a boot failure: fall back to the mode default, loudly
+        // (the same shape normalizeIntegrityCheck already uses).
+        String fallback = isProd ? "BLUE_GREEN_MIGRATE" : "REBUILD_BACKUP_FIRST";
+        LOG.warn(
+            "Unrecognised index.schema_mismatch.policy \"{}\"; falling back to {}. Valid values:"
+                + " FAIL_CLOSED, REBUILD_BACKUP_FIRST, BLUE_GREEN_MIGRATE.",
+            raw.trim(),
+            fallback);
+        yield fallback;
+      }
     };
   }
 

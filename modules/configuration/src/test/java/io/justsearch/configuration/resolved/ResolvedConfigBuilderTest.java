@@ -1439,6 +1439,23 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
+    @DisplayName("an unrecognised value falls back to the mode default rather than passing through")
+    void unknownPolicyFallsBackToTheModeDefault() {
+      // It used to be returned verbatim, so it matched no branch anywhere. After tempdoc 915 §C.12
+      // that stopped being merely inert: pre-open detection forced a writable open for any policy
+      // it did not recognise, the guard raised, recovery refused the destructive rebuild and the
+      // Worker failed to start. A typo in one config key must not be a boot failure.
+      ResolvedConfigBuilder dev = new ResolvedConfigBuilder();
+      dev.putDefault("index.schema_mismatch.policy", "blue-green-migrat");
+      assertEquals("REBUILD_BACKUP_FIRST", dev.build().index().schemaMismatchPolicy());
+
+      ResolvedConfigBuilder prod = new ResolvedConfigBuilder();
+      prod.putDefault("index.schema_mismatch.policy", "blue-green-migrat");
+      prod.putDefault("justsearch.prod", "true");
+      assertEquals("BLUE_GREEN_MIGRATE", prod.build().index().schemaMismatchPolicy());
+    }
+
+    @Test
     @DisplayName("fail_closed variants all normalize to FAIL_CLOSED")
     void failClosedVariants() {
       for (String variant : new String[] {"fail_closed", "FAIL_CLOSED", "fail-closed", "fail"}) {
@@ -1481,13 +1498,18 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
-    @DisplayName("null/blank defaults to FAIL_CLOSED in prod mode")
-    void nullDefaultsToFailClosedInProd() {
+    @DisplayName("null/blank defaults to BLUE_GREEN_MIGRATE in prod mode")
+    void nullDefaultsToBlueGreenInProd() {
+      // Tempdoc 915 §C. The old FAIL_CLOSED default meant a schema-changing upgrade left a
+      // production user with an index that refused to open and no way forward; blue/green keeps
+      // the existing index serving reads while the new one is built beside it. Asserted on the
+      // exact value, not merely "not FAIL_CLOSED", so a future accidental flip to
+      // REBUILD_BACKUP_FIRST (which destroys the old index) fails here.
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.putDefault("justsearch.prod", "true");
 
       ResolvedConfig config = builder.build();
-      assertEquals("FAIL_CLOSED", config.index().schemaMismatchPolicy());
+      assertEquals("BLUE_GREEN_MIGRATE", config.index().schemaMismatchPolicy());
     }
   }
 

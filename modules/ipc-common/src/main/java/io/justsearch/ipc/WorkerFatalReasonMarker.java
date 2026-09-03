@@ -26,6 +26,14 @@ public final class WorkerFatalReasonMarker {
   /** Reason value: the index was corrupt and could not be auto-recovered. */
   public static final String INDEX_CORRUPT = "index_corrupt";
 
+  /**
+   * Reason value: the committed index shape is not the one this runtime writes, and {@code
+   * index.schema_mismatch.policy} refuses to rebuild it. Distinct from {@link #INDEX_CORRUPT}
+   * because the remedy differs - the index is intact, it is the wrong shape - and because without
+   * it the refusal reaches the Head as a bare non-zero exit, indistinguishable from a crash.
+   */
+  public static final String INDEX_SCHEMA_MISMATCH = "index_schema_mismatch";
+
   private static final String FILE = "worker-fatal-reason";
 
   private WorkerFatalReasonMarker() {}

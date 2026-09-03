@@ -27,7 +27,8 @@ import org.slf4j.Logger;
 
 public final class IndexingDocumentOps {
   private static final int CHUNK_THRESHOLD_CHARS = ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS;
-  private static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
+  private static final int CONTENT_PREVIEW_MAX_CHARS =
+      ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
   private static final String DEFAULT_LANGUAGE = resolveDefaultLanguageTag();
 
   private IndexingDocumentOps() {}

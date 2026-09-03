@@ -712,8 +712,18 @@ public final class EngineVectorIndexBench {
       knobs.put("timer_start", timerStart.name().toLowerCase(Locale.ROOT));
       knobs.put("vectors_path", vectors.toAbsolutePath().toString());
       knobs.put("query_limit", queryLimit);
-      knobs.put("ann_hnsw_m", rcIdx != null && rcIdx.vectorHnswM() != null ? rcIdx.vectorHnswM() : 16);
-      knobs.put("ann_ef_construction", rcIdx != null && rcIdx.vectorHnswEfConstruction() != null ? rcIdx.vectorHnswEfConstruction() : 200);
+      // Report what the codec will actually build with, not a second copy of the defaults: a
+      // bench whose knobs drift from the runtime is measuring a configuration nobody ships.
+      knobs.put(
+          "ann_hnsw_m",
+          rcIdx != null
+              ? rcIdx.effectiveVectorHnswM()
+              : io.justsearch.configuration.resolved.ResolvedConfig.Index.DEFAULT_VECTOR_HNSW_M);
+      knobs.put(
+          "ann_ef_construction",
+          rcIdx != null
+              ? rcIdx.effectiveVectorHnswEfConstruction()
+              : io.justsearch.configuration.resolved.ResolvedConfig.Index.DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION);
       knobs.put("ann_ef_search_or_null", rcIdx != null ? rcIdx.vectorEfSearch() : null);
       knobs.put("ann_quantization_enabled", rcIdx != null && rcIdx.vectorQuantizationEnabled() != null ? rcIdx.vectorQuantizationEnabled() : false);
       if (queriesVectorsPath != null && !queriesVectorsPath.isBlank()) {

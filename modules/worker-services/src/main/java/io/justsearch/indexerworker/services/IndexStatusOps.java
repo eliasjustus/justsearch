@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.indexerworker.services;
 
+import io.justsearch.adapters.lucene.commit.IndexFingerprint;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
+import io.justsearch.adapters.lucene.runtime.ParityDiagnostics;
 import io.justsearch.adapters.lucene.runtime.QueryFilterBuilder;
 import io.justsearch.adapters.lucene.runtime.VectorFormatDetector;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
@@ -279,10 +281,17 @@ final class IndexStatusOps {
       activeDocCount = totalDocs - chunkDocs;
     }
 
+    // "Documents indexed" counts the generation being WRITTEN while one exists — during a rebuild
+    // that is Green, and reporting Blue there would hide the build's progress. When nothing is being
+    // written (the exhausted-brake state, and the deferred window before the writer upgrade) it falls
+    // back to the reader that SERVES search, not to a job-queue counter: `completedCount()` counts
+    // DONE rows in jobs.db, which are ingest jobs and are pruned, so it has no relationship to corpus
+    // size. Live validation caught it reporting 5 while 205 documents were searchable.
+    IndexCountOps writtenOrServedCountOps = ingestCountOps != null ? ingestCountOps : activeCountOps;
     long docCount;
-    if (ingestCountOps != null) {
-      long totalDocs = ingestCountOps.docCount();
-      int chunkDocs = ingestCountOps.countByField(SchemaFields.IS_CHUNK, "true");
+    if (writtenOrServedCountOps != null) {
+      long totalDocs = writtenOrServedCountOps.docCount();
+      int chunkDocs = writtenOrServedCountOps.countByField(SchemaFields.IS_CHUNK, "true");
       docCount = totalDocs - chunkDocs;
     } else {
       docCount = jobQueue.completedCount();
@@ -424,7 +433,13 @@ final class IndexStatusOps {
             .setSearchableDocCount(searchableDocCount)
             .setIsHealthy(healthy)
             .setState(state)
-            .setLastCommitTimestamp(indexingLoop.getLastCommitTime())
+            // Null-tolerant on purpose: a Worker can legitimately have no indexing loop.
+            // Deferred-writer mode leaves it null until the writer upgrade reconstructs
+            // appServices (DefaultWorkerAppServices.startIndexingLoop already guards for
+            // that), and an exhausted rebuild brake never starts one at all. Dereferencing
+            // it here threw the whole status response into its ERROR fallback, which is how
+            // the reason code for the brake became unreachable (tempdoc 915 §C.8).
+            .setLastCommitTimestamp(indexingLoop == null ? 0L : indexingLoop.getLastCommitTime())
             // Tempdoc 885 item 3: signal_bus_activity_ts is no longer populated. The Worker no
             // longer reads the Head-written activity byte at all (foreground load is observed
             // in-process), so reporting it would be reporting a value nothing acts on. The proto
@@ -1096,7 +1111,8 @@ final class IndexStatusOps {
 
   private String safeSchemaFingerprintCurrent() {
     try {
-      Object fp = new SsotCommitMetadataSource().build().get("index_schema_fp");
+      Object fp =
+          new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY);
       return fp == null ? "" : String.valueOf(fp);
     } catch (Exception e) {
       log.debug("Failed to get current schema fingerprint: {}", e.getMessage());
@@ -1119,7 +1135,7 @@ final class IndexStatusOps {
       if (ud == null) {
         return "";
       }
-      String fp = ud.get("index_schema_fp");
+      String fp = ud.get(IndexFingerprint.COMMIT_META_KEY);
       return fp == null ? "" : fp;
     } catch (Exception e) {
       log.debug("Failed to get stored schema fingerprint: {}", e.getMessage());
@@ -1132,21 +1148,53 @@ final class IndexStatusOps {
     String stored = safeSchemaFingerprintStored();
 
     if (current.isEmpty()) {
+      // This runtime could not compute a truthful fingerprint (a configured model's digest was
+      // unresolvable). UNAVAILABLE, never COMPATIBLE — an absent answer is not a clean bill.
       return "UNAVAILABLE";
     }
-    if (stored.isEmpty()) {
-      // Legacy index without schema fingerprint
-      // Check if there are any docs - if so, it's a legacy index needing reindex
-      long docCount = ingestCountOps == null ? 0 : ingestCountOps.docCount();
-      return docCount > 0 ? "BLOCKED_LEGACY" : "COMPATIBLE";
+    if (autoRebuildBrakeExhausted(current)) {
+      // The Worker has stopped rebuilding this shape by itself. Reported ahead of the plain
+      // mismatch because the remedy is different: waiting will not fix it.
+      return "BLOCKED_REBUILD_BRAKE";
     }
-    return current.equals(stored) ? "COMPATIBLE" : "BLOCKED_MISMATCH";
+    long docCount = ingestCountOps == null ? 0 : ingestCountOps.docCount();
+    if (stored.isEmpty()) {
+      // No recorded shape: either the index predates the key or a commit was made while an
+      // input was indeterminate. Which one it is cannot be told from the commit, so the same
+      // predicate the open-time guard uses decides it here — one rule, two consumers, so a
+      // brand-new empty index is never reported as needing a rebuild by one and not the other.
+      return ParityDiagnostics.isIndexWithoutRecordedFingerprint(stored, docCount)
+          ? "BLOCKED_LEGACY"
+          : "COMPATIBLE";
+    }
+    if (current.equals(stored)) {
+      return "COMPATIBLE";
+    }
+    // A STALE fingerprint on an index holding nothing is the same non-event as an absent one: the
+    // next commit rewrites the whole user-data map. Through the guard's own predicate, so the two
+    // surfaces cannot disagree about an empty index in one direction after agreeing in the other.
+    return ParityDiagnostics.holdsNothingToMigrate(docCount) ? "COMPATIBLE" : "BLOCKED_MISMATCH";
+  }
+
+  /** True once the Worker has spent its automatic-rebuild budget on the current target shape. */
+  private boolean autoRebuildBrakeExhausted(String currentFingerprint) {
+    if (indexGenerationManager == null || currentFingerprint.isEmpty()) {
+      return false;
+    }
+    try {
+      return indexGenerationManager.autoRebuildAttemptsFor(currentFingerprint)
+          > IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS;
+    } catch (RuntimeException e) {
+      log.debug("Failed to read the auto-rebuild brake: {}", e.getMessage());
+      return false;
+    }
   }
 
   private boolean isReindexRequired() {
     String schemaState = safeSchemaCompatState();
     String embeddingState = safeEmbeddingCompatState();
     return "BLOCKED_MISMATCH".equals(schemaState)
+        || "BLOCKED_REBUILD_BRAKE".equals(schemaState)
         || "BLOCKED_LEGACY".equals(schemaState)
         || "BLOCKED_MISMATCH".equals(embeddingState)
         || "BLOCKED_LEGACY".equals(embeddingState);
@@ -1154,6 +1202,9 @@ final class IndexStatusOps {
 
   private String reindexRequiredReason() {
     String schemaState = safeSchemaCompatState();
+    if ("BLOCKED_REBUILD_BRAKE".equals(schemaState)) {
+      return "rebuild_brake_exhausted";
+    }
     if ("BLOCKED_MISMATCH".equals(schemaState)) {
       return "schema_mismatch";
     }

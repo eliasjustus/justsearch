@@ -43,17 +43,19 @@ class CommitMetadataIntegrationTest {
     try (var d = new MMapDirectory(dir); var reader = DirectoryReader.open(d)) {
       IndexCommit c = reader.getIndexCommit();
       Map<String, String> ud = c.getUserData();
-      assertNotNull(ud.get("schema_ver"));
-      assertNotNull(ud.get("analyzer_fp"));
+      assertNotNull(ud.get("index_fingerprint"));
+      assertNotNull(ud.get("boosts_fp"));
       assertNotNull(ud.get("schema_fp"));
       assertNotNull(ud.get("field_catalog_hash"));
       assertNotNull(ud.get("synonyms_hash"));
       assertEquals(
           expectedMetaKeys(meta),
           ud.keySet().stream().filter(key -> !key.startsWith("commit_")).collect(Collectors.toSet()));
-      // Compare a known value
-      String expectedSchemaVer = String.valueOf(meta.build().get("schema_ver"));
-      assertEquals(expectedSchemaVer, ud.get("schema_ver"));
+      // Compare a known value. index_fingerprint specifically: it is the key a mismatch on which
+      // costs the user a full rebuild, so "the commit stamped SOME string" is not enough — it must
+      // be the same string this runtime computes.
+      String expectedFingerprint = String.valueOf(meta.build().get("index_fingerprint"));
+      assertEquals(expectedFingerprint, ud.get("index_fingerprint"));
       assertEquals("COMPLETE", ud.get("build_state"));
     }
   }
@@ -73,8 +75,7 @@ class CommitMetadataIntegrationTest {
           supplierCalls.incrementAndGet();
           return () ->
               Map.of(
-                  "schema_ver", "1.0.0",
-                  "analyzer_fp", "fp",
+                  "index_fingerprint", "fp",
                   "similarity_fp", "sim",
                   "boosts_fp", "boosts");
         };
@@ -116,7 +117,7 @@ class CommitMetadataIntegrationTest {
     String previous = System.getProperty("justsearch.config");
     System.setProperty("justsearch.config", cfg.toString());
     AtomicInteger validatorCalls = new AtomicInteger();
-    CommitMetadataSource source = () -> Map.of("schema_ver", "ignored");
+    CommitMetadataSource source = () -> Map.of("index_fingerprint", "ignored");
     CommitMetadataValidator validator = metadata -> validatorCalls.incrementAndGet();
     try {
       var runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), source, validator).atPath(dir).open();
@@ -145,7 +146,7 @@ class CommitMetadataIntegrationTest {
     CommitMetadataSource badSource =
         () -> {
           Map<String, Object> m = new HashMap<>();
-          m.put("schema_ver", "1.0.0");
+          m.put("index_fingerprint", "1.0.0");
           // Intentionally omit required fields like schema_fp
           return m;
         };

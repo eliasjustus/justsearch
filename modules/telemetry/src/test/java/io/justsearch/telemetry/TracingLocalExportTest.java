@@ -33,8 +33,7 @@ class TracingLocalExportTest {
           .setAttribute("pipeline_name", "search_default")
           .setAttribute("commit.schema_fp", "fp-schema")
           .setAttribute("commit.field_catalog_hash", "fp-fc")
-          .setAttribute("commit.analyzer_fp", "fp-analyzer")
-          .setAttribute("commit.index_schema_fp", "fp-idx-schema")
+                    .setAttribute("commit.index_fingerprint", "fp-index")
           .startSpan();
       try {
         var stage = tracer.spanBuilder("pipeline.stage.rerank").setSpanKind(SpanKind.INTERNAL)
@@ -57,8 +56,7 @@ class TracingLocalExportTest {
     // allowlist filter.
     assertTrue(content.contains("\"commit.schema_fp\":\"fp-schema\""));
     assertTrue(content.contains("\"commit.field_catalog_hash\":\"fp-fc\""));
-    assertTrue(content.contains("\"commit.analyzer_fp\":\"fp-analyzer\""));
-    assertTrue(content.contains("\"commit.index_schema_fp\":\"fp-idx-schema\""));
+        assertTrue(content.contains("\"commit.index_fingerprint\":\"fp-index\""));
   }
 
   @Test

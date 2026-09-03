@@ -43,6 +43,21 @@ public final class SpladeFingerprint {
     return computeAndCache();
   }
 
+  /**
+   * The resolved SPLADE model file, if one was discovered. Distinguishes "no SPLADE model is
+   * configured for this deployment" (empty) from "a model file exists but its digest could not be
+   * read" (present here, empty from {@link #get()}) — a distinction {@code index_fingerprint} needs,
+   * because only the first is a determinate answer (tempdoc 915 §C).
+   */
+  public static Optional<Path> modelPath() {
+    CachedResult cached = cachedResult.get();
+    if (cached == null) {
+      computeAndCache();
+      cached = cachedResult.get();
+    }
+    return cached != null ? cached.modelPath() : Optional.empty();
+  }
+
   /** Forces recomputation of the fingerprint on next access. */
   public static void invalidate() {
     cachedResult.set(null);
@@ -59,7 +74,7 @@ public final class SpladeFingerprint {
     SpladeModelDiscovery.Result discovery = SpladeModelDiscovery.resolve(explicitPath);
     if (discovery == null || discovery.modelDir() == null) {
       log.info("No SPLADE model found; fingerprint unavailable");
-      cachedResult.set(new CachedResult(Optional.empty()));
+      cachedResult.set(new CachedResult(Optional.empty(), Optional.empty()));
       return Optional.empty();
     }
 
@@ -72,14 +87,17 @@ public final class SpladeFingerprint {
     if (!Files.isRegularFile(modelFile)) {
       log.info(
           "SPLADE model file not found at {}; fingerprint unavailable", discovery.modelDir());
-      cachedResult.set(new CachedResult(Optional.empty()));
+      // A model directory with no model file in it is a determinate "no SPLADE model here", not an
+      // unanswered question: leaving modelPath empty keeps index_fingerprint computable instead of
+      // silently disabling the parity check forever (tempdoc 915 §C).
+      cachedResult.set(new CachedResult(Optional.empty(), Optional.empty()));
       return Optional.empty();
     }
 
     Optional<String> sha256 = Sha256SidecarCache.getOrCompute(modelFile);
-    cachedResult.set(new CachedResult(sha256));
+    cachedResult.set(new CachedResult(Optional.of(modelFile), sha256));
     return sha256;
   }
 
-  private record CachedResult(Optional<String> fingerprint) {}
+  private record CachedResult(Optional<Path> modelPath, Optional<String> fingerprint) {}
 }

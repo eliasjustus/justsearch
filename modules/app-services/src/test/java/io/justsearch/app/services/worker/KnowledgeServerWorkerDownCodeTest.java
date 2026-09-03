@@ -62,6 +62,30 @@ final class KnowledgeServerWorkerDownCodeTest {
   }
 
   @Test
+  @DisplayName("a refused schema mismatch overrides the generic code too, with its own remedy")
+  void schemaMismatchMarkerOverridesTheGenericCode(@TempDir Path tempDir) {
+    // Tempdoc 915 (live validation). FAIL_CLOSED did its job - the index was left byte-identical -
+    // and the user was told "Worker process crashed (exit code 1)", because the corruption axis was
+    // the only fatal reason a dying worker could name. A deliberate refusal is not a crash, and its
+    // remedy is a policy that permits a rebuild, not a corruption repair.
+    WorkerFatalReasonMarker.write(tempDir, WorkerFatalReasonMarker.INDEX_SCHEMA_MISMATCH);
+    var bootstrap = new KnowledgeServerBootstrap(configFor(tempDir));
+
+    bootstrap.transitionWorkerDown(
+        LifecycleReasonCode.WORKER_SPAWN_FAILED,
+        "Worker process crashed (exit code 1) before writing port to signal file");
+
+    var cap = bootstrap.workerCapability();
+    assertEquals(LifecycleReasonCode.WORKER_INDEX_SCHEMA_MISMATCH.code(), cap.pendingReason());
+    assertTrue(
+        cap.pendingDetail().contains("index.schema_mismatch.policy"),
+        "and names the setting that produced the refusal, which the crash message never could");
+    assertFalse(
+        Files.exists(WorkerFatalReasonMarker.pathFor(tempDir)),
+        "readAndClear consumed it, same as its corruption sibling");
+  }
+
+  @Test
   @DisplayName("the corruption axis overrides either generic code, and carries the remedy as detail")
   void corruptMarkerOverridesTheGenericCode(@TempDir Path tempDir) {
     WorkerFatalReasonMarker.write(tempDir, WorkerFatalReasonMarker.INDEX_CORRUPT);

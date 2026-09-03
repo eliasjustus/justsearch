@@ -80,7 +80,7 @@ public final class CommitOps {
    *
    * @return elapsed time in milliseconds for the Lucene commit operation
    */
-  public long commit() {
+  long commit() {
     boolean metaEnabled = session.commitMetadataEnabled;
     Map<String, String> ud;
     if (metaEnabled) {
@@ -139,11 +139,16 @@ public final class CommitOps {
    * scheduled timer commits) stamp the new build state. Replaces the deprecated
    * {@code setBuildState + commit} two-step pattern from
    * {@code LuceneLifecycleManager}.
+   *
+   * <p>The reason is required rather than defaulted: this method's only caller is the blue/green
+   * cutover, and defaulting it to {@link CommitReason#UNKNOWN} is exactly how the most consequential
+   * commit in the system came to be the one commit with no attribution (tempdoc 912 item 1).
    */
-  public void commitWithBuildState(LuceneRuntimeTypes.BuildState state) {
+  public void commitWithBuildState(LuceneRuntimeTypes.BuildState state, CommitReason reason) {
     java.util.Objects.requireNonNull(state, "state");
+    java.util.Objects.requireNonNull(reason, "reason");
     this.currentBuildState = state;
-    commitAndTrack();
+    commitAndTrack(reason);
   }
 
   /**

@@ -156,11 +156,20 @@ Schema mismatches are **not** treated as “corruption”.
 
 - **Typed reason**: `IndexRuntimeIOException.Reason.SCHEMA_MISMATCH`
 - **Policy-controlled** via `index.schema_mismatch.policy` (also overridable via `JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY` / `-Dindex.schema_mismatch.policy=...`):
-  - `FAIL_CLOSED`: refuse to rebuild; require operator action (recommended prod default)
-  - `REBUILD_BACKUP_FIRST`: rename-to-backup and rebuild empty (dev convenience)
-  - `BLUE_GREEN_MIGRATE`: orchestrate a blue/green migration (serve read-only Blue while building Green)
+  - `FAIL_CLOSED`: refuse to rebuild; require operator action
+  - `REBUILD_BACKUP_FIRST`: rename-to-backup and rebuild empty (**dev default**)
+  - `BLUE_GREEN_MIGRATE`: orchestrate a blue/green migration, serving read-only Blue while building Green (**production default**, tempdoc 915)
 
 Stable migration architecture is described in `docs/explanation/11-index-schema-migration.md`.
+
+**Index identity:** what triggers `SCHEMA_MISMATCH` is a mismatch on `index_fingerprint`, a
+SHA-256 stamped into Lucene commit user-data by `IndexFingerprint`
+(`modules/adapters-lucene/.../commit/IndexFingerprint.java`) over the canonical JSON of the effective
+*physical* index shape — catalog schema version, each field's physical projection, the analyzer
+fingerprint, vector format, HNSW `m`/`ef_construction`, chunking parameters, and the
+embedding/SPLADE model digests. It is the one rebuild-requiring parity key; `boosts_fp` (query-time
+field boosts) is the other tracked key but never triggers a rebuild. Full input list, exclusions, and
+the enforcement mechanics live in `docs/explanation/11-index-schema-migration.md`.
 
 ### 3. Commit Strategy
 Writing to disk is expensive. `IndexingLoop` controls commits, but `LuceneIndexRuntime` enforces the physical write.

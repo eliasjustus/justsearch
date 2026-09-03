@@ -349,7 +349,6 @@ public class HeadlessApp {
 
   private static InfraPhaseResult setupInfra(ConfigPhaseResult configPhase) {
     System.setProperty("justsearch.infra.health.grpc.disable", "true");
-    System.setProperty("justsearch.index.parity.allow_mismatch", "true");
     System.setProperty("justsearch.infra.health.port", "0");
 
     Path dataDir = configPhase.dataDir();
@@ -538,12 +537,16 @@ public class HeadlessApp {
       apiServer.lateBindKnowledgeServer(null, knowledgeServerStartError);
       // Deliberately NO transition here. The bootstrap that just failed is the producer of this
       // verdict and has already narrated it exactly once (startWithRetry's final catch), with the
-      // code it actually knows to be true — worker.spawn.failed, worker.index_corrupt, or
-      // supervision's terminal worker.restart_exhausted, which that catch now explicitly refuses to
-      // overwrite (review F1: both are FAULT, so ReasonRetention lets an incoming spawn-failed win,
-      // and before the guard the restart_exhausted case could never survive a real boot). Re-stamping
-      // the generic code here would destroy the specific one all over again — and the boot-recovery
-      // veto reads exactly that slot to decide whether supervision's verdict stands.
+      // code it actually knows to be true — worker.spawn.failed, either fatal index code
+      // (worker.index_corrupt / worker.index_schema_mismatch), or supervision's terminal
+      // worker.restart_exhausted, which that catch now explicitly refuses to overwrite (review F1:
+      // both are FAULT, so ReasonRetention lets an incoming spawn-failed win, and before the guard the
+      // restart_exhausted case could never survive a real boot). Tempdoc 915 R1 added the
+      // schema-mismatch code and the latch that carries either fatal index cause across the three
+      // SUPPRESSED start attempts that each consumed the one-shot marker — without it this branch
+      // logged, and /api/health served, the generic spawn failure for a deliberate refusal.
+      // Re-stamping the generic code here would destroy the specific one all over again — and the
+      // boot-recovery veto reads exactly that slot to decide whether supervision's verdict stands.
       healthMonitor = startHealthMonitor(bootstrap, apiServer, knowledgeServer);
       log.warn(
           "Knowledge Server failed to start: {} (worker reason: {}) — boot recovery armed",
@@ -779,8 +782,6 @@ public class HeadlessApp {
     long tPrev;
     log.info("Starting JustSearch HeadlessApp...");
 
-    // In sidecar contexts we prefer to keep going even when index parity is off (dev/demo usage).
-    System.setProperty("justsearch.index.parity.allow_mismatch", "true");
     // Avoid infra health port conflicts; allow ephemeral bind.
     System.setProperty("justsearch.infra.health.port", "0");
     System.setProperty("justsearch.infra.health.host", "127.0.0.1");
@@ -1170,8 +1171,21 @@ public class HeadlessApp {
           "To fix: {}",
           io.justsearch.app.services.worker.WorkerStartFailures.operatorHint(e));
       log.error("Stack trace:", e);
-      return new KnowledgeServerStartResult(bootstrap, summarizeStartError(e));
+      return new KnowledgeServerStartResult(bootstrap, startErrorFor(bootstrap, e));
     }
+  }
+
+  /**
+   * Tempdoc 915 R1: when the worker refused deterministically it wrote a fatal index reason before
+   * exiting, and the bootstrap latched it. That sentence — not the spawn symptom the Head happened to
+   * observe — is what {@code knowledgeServerStartError} must carry, because the string is rendered
+   * verbatim to the user. Live arm 2 showed the alternative: "Worker process crashed (exit code 1)
+   * before writing port to signal file" for an index the worker had deliberately left untouched. The
+   * exception itself is still logged above at ERROR with its stack, so nothing is lost.
+   */
+  static String startErrorFor(KnowledgeServerBootstrap bootstrap, Exception e) {
+    String indexFatal = bootstrap == null ? null : bootstrap.indexFatalDetail();
+    return indexFatal != null ? indexFatal : summarizeStartError(e);
   }
 
   private static String summarizeStartError(Exception e) {
