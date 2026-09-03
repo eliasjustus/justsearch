@@ -896,3 +896,14 @@ also remains intentionally unexecuted; URL resolution and all failure/security s
 **Post-review confidence: 8.5/10 for the implementation, 6.5/10 for final D1 acceptance until the
 container workflow is run.** No unresolved code finding remains from the independent review; the
 remaining deduction is execution-environment evidence, not design uncertainty.
+
+### D1 session closeout
+
+The D1 implementation is committed on `codex/899-project-operations-onboarding` as `2207733f`,
+`e7368538`, `7ba480d6`, and review-closeout commit `8a3212e8`. The worktree was clean at closeout.
+The branch is intentionally unpushed because this session had no authorization to push, open a PR,
+dispatch the manual workflow, or publish.
+
+The required session-closeout process sweep reaped nothing. It left one live `ui-shot` owned by
+another session as contention, retained one already-gone `ui-shot` record after identity mismatch,
+and reported the ownerless `otlp-sink` singleton as designed; none belonged to this D1 work.
