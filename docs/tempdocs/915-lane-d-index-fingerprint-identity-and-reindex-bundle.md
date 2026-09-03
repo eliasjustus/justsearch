@@ -665,6 +665,7 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 | D.40 | **S15.** `normalizeSchemaMismatchPolicy`'s `default` branch falls back to the mode default with a WARN instead of returning an unrecognised value verbatim — the shape `normalizeIntegrityCheck` already used | `ResolvedConfigBuilder.java:1009-1039` |
 | D.41 | **Nit.** `ParityDiagnostics.holdsNothingToMigrate(docCount)`: the empty-index exclusion now applies to the changed branch as well as the blank one, and `IndexStatusOps` reports through the same predicate | `ParityDiagnostics.java`, `IndexStatusOps.java` (`safeSchemaCompatState`) |
 | D.42 | **Round-4 tests.** `ResumedMigrationMismatchBootTest` (B5 at a FRESH budget — the boot the brake test cannot reach); `PreOpenSchemaMismatchBootTest` +4 (`PRE-OPEN` WARN asserted under FAIL_CLOSED (S14); `REBUILD_BACKUP_FIRST` backs Blue up before emptying it, asserted on the backup's doc count (S15); an unrecognised policy boots; a corrupt index still self-heals (B4)); `ParityGuardTest` +3 (unreadable commit, empty-index-with-stale-fingerprint, expected-metadata build count on an existing index); `SchemaCompatFreshInstallTest` +1; `ResolvedConfigBuilderTest` +1. `BrakeExhaustedWorkerServesReadOnlyTest` rewritten onto `WorkerBootFixture` (S16) and drives the `startMigration` RPC rather than the generation manager (S17) | see §F round 4 |
+| D.43 | **B4 consequence.** `RecoveryIntegrationTest`'s "Gap D" assertion inverted: the parity guard is still invoked on the open path and must no longer raise `CORRUPT_INDEX`. The test's outcome assertions (backup, fresh index, writes accepted) are untouched and are what proves the open path still recovers. Also `SchemaMismatchStatusContractTest` seeds one document — its fixture committed an EMPTY index with a bogus fingerprint, which the empty-index rule now (correctly) reports COMPATIBLE | `RecoveryIntegrationTest.java`, `SchemaMismatchStatusContractTest.java` |
 | D.23 | **Review round.** `ParityDiagnostics`: `LEGACY_INDEX_HINT` + the asymmetric blank-side rule (§C.5a). `IndexMetadataParityGuard`: `warnIfFingerprintUncomputable`, once per process. `ResolvedConfig.Index`: `DEFAULT_VECTOR_HNSW_M` / `DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION` + `effectiveVectorHnsw*()`; `ComponentsFactory` reads them instead of its own 16/200. `IndexFingerprint`: `Analysis`, `threshold_chars`, `preview.max_chars`, `ner_model_sha256`, three-arg provider install. New `NerFingerprint` (worker-core). `SpladeFingerprint`: a missing model file is `NOT_CONFIGURED`. `ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS` made public; both constants mirrored into `SsotCommitMetadataSource` with a drift test. `KnowledgeServer`: `recordAutoRebuildAttemptOrSkip` (no budget for an unattributable boot), `expectedIndexFingerprintOrNull` (guarded), and exhaustion opens Blue read-only. `LifecycleReasonCode.INDEX_REBUILD_BRAKE_EXHAUSTED`; `StatusLifecycleHandler.compatBlockedReason` maps `BLOCKED_REBUILD_BRAKE`; `IndexStatusOps` produces it. `readinessNotice.ts`: corrected comment + new `index.rebuild_brake_exhausted` row, added to `REINDEX_CAUSE_CODES`. `WorkerSpawner` comment; `SchemaMismatchStatusContractTest` states its escape use; `environment-variables.md` documents the per-mode default | see §F round 2 |
 
 ---
@@ -782,6 +783,43 @@ restored. Driver: `tmp/falsify.sh` + `tmp/falsify-patch.py` (deleted before comm
 | F11 | `startMigration` repoints `active_generation` to Green | `IndexRebuildBrakeTest` | `migrationBuildsGreenBesideBlueAndOnlyPromotionSwitches` FAILED (`IndexRebuildBrakeTest.java:43`) |
 | F12 | `rmwPolicy` put back into the physical projection | `CatalogPhysicalProjectionTest` | `theProjectionDropsRmwPolicyEntirely` FAILED (`:89`); `anRmwPolicyAnnotationDoesNotCostTheUserAReindex` FAILED (`:75`) |
 
+### Round 5 — B4, B5 and the round-4 review items
+
+Driver `tmp/falsify4.mjs` (deleted before commit), rebuilt on postmortem #29's remedy: byte
+copy-aside backups, a per-case anchor assertion, per-case result wipes, and a final byte-compare
+proving the restore. It grew a second guard this round, from its own failure — see below.
+
+| ID | Break | Test that caught it | Observed failure |
+|---|---|---|---|
+| G31 | B4: restore the `CORRUPT_INDEX` throw in `inspectCommittedParity` | `PreOpenSchemaMismatchBootTest` | `aCorruptIndexStillSelfHealsAtBoot` FAILED — `java.io.IOException: Failed to start KnowledgeServer`, which is the blocker verbatim: a corrupt index that recovers today takes the Worker down instead |
+| G32 | B5: stop abandoning a mismatched Green before retrying | `ResumedMigrationMismatchBootTest` | `aResumedMigrationWithAMismatchedGreenStartsOverInsteadOfKillingTheWorker` FAILED — `java.io.IOException: Failed to start KnowledgeServer`. At a FRESH budget, i.e. boot #1 of 3 |
+| G33 | B5 ride-along: open a second read-only runtime on Blue instead of reusing the first | `ResumedMigrationMismatchBootTest` | `Blue is opened once, and reused: the handler must not open a second runtime over it ==> expected: <1> but was: <2>` |
+| G34 | S14: stop emitting the `PRE-OPEN` marker, routing untouched | `PreOpenSchemaMismatchBootTest` | `the pre-open routing must be what refused; got: [Starting KnowledgeServer…, …]` — the assertion the reviewer asked for, and it distinguishes pre-open routing from the second line, which the old `isSchemaMismatch`+`IDLE` pair did not |
+| G35 | S15: return an unrecognised policy value verbatim again | `ResolvedConfigBuilderTest`, `PreOpenSchemaMismatchBootTest` | `expected: <REBUILD_BACKUP_FIRST> but was: <blue-green-migrat>`; and `anUnrecognisedPolicyFallsBackInsteadOfKillingTheWorker` FAILED with `Failed to start KnowledgeServer` — the boot failure the pass-through now causes, not merely inertness |
+| G36a | empty-index nit, guard half: drop the exclusion from the CHANGED branch | `ParityGuardTest` | `an index with no documents has no content whose shape could be wrong ==> expected: <true> but was: <false>` |
+| G36b | empty-index nit, status half: report `BLOCKED_MISMATCH` regardless | `SchemaCompatFreshInstallTest` | `a stale shape recorded against no documents describes nothing … ==> expected: <COMPATIBLE> but was: <BLOCKED_MISMATCH>` |
+| G37 | S15: stop forcing a writable open for `REBUILD_BACKUP_FIRST` | `PreOpenSchemaMismatchBootTest` | `the mismatched index must be backed up, never deleted: this policy empties the active generation and the backup is the user's only copy ==> expected: not <null>` |
+| G38 | S17: make the `startMigration` RPC reject | `BrakeExhaustedWorkerServesReadOnlyTest` | `the operator rebuild is reachable from here: BREAK G38 ==> expected: <true> but was: <false>` — which is the point of S17: arm (d) now fails when the WIRE fails, where the fixture call could not have noticed |
+| G39 | S16 interrogation: seed through `FieldCatalogDef.forTesting(768)`, the catalog the inline copy used | — | **NO FAILURE OBSERVED, and that is the honest answer.** The stamped fingerprint comes from `SsotCommitMetadataSource` either way, so the forked catalog changed nothing observable here. S16 is drift prevention, not a live defect — recorded as such rather than claimed as a fix |
+
+| G40 | (not injected — a real consequence of B4, caught by the full suite) `RecoveryIntegrationTest.corruptIndexAutoRecoveryProducesBackupAndFreshIndex` asserted the parity guard was what re-classified the read failure as `CORRUPT_INDEX` ("Gap D wiring proof") | `RecoveryIntegrationTest` | `parity guard should have surfaced an IndexRuntimeIOException(CORRUPT_INDEX) … Observed exceptions: [] ==> expected: <true> but was: <false>`. Every OUTCOME assertion in the same test still passed — backup taken, fresh index served, new writes accepted — so what B4 removed is a redundant classification, not the recovery. The mechanism assertion is inverted rather than deleted: the guard must **not** raise, because the identical throw from the pre-open site is the blocker |
+
+**Two harness defects, both caught by the driver's own guards rather than by luck.**
+
+1. Every case reported `NO FAILURE OBSERVED` on the first run. The cause was not the code: `execSync`
+   runs through `cmd.exe`, where `./gradlew.bat` does not resolve, so nothing ran — and the driver
+   had just wiped the results directory, so "no failures found" and "no tests found" were the same
+   observation. This is postmortem #29's *other* half, and the fix is a rule the driver now enforces:
+   **a case with zero result XMLs is a DRIVER ERROR, never a survived break.** With that assertion in
+   place the second run reported nine driver errors instead of nine false negatives, which is what
+   sent us to look at the invocation (`.\gradlew.bat` inside a JS template literal is a third bug —
+   `\g` is not an escape, so the string became `.gradlew.bat`; an absolute path settled it).
+2. `SchemaCompatFreshInstallTest.anEmptyIndexWithAStaleFingerprintIsCompatible` survived G36b when it
+   was first written. It passed for the wrong reason: `buildStatus()` passed `null` for the
+   open-time commit user-data supplier, so `safeSchemaFingerprintStored()` returned `""` and the case
+   routed through the BLANK branch, never reaching the comparison it exists to pin. The test now
+   supplies the stale snapshot explicitly, and G36b reds.
+
 ### Round 4 — the O7 fix
 
 | ID | Break | Test that caught it | Observed failure |
@@ -873,24 +911,25 @@ is not a guarantee.
 ## §G Verification results
 
 Gradle home: `C:\Users\Elias\AppData\Local\Temp\jsgh-R1` (isolated from the other lanes).
-Re-run in full after the O7 round; every line below is from that run. The integration-test counts in the previous version of this table were wrong — they were read from a results directory holding an earlier run's XML, which is the same stale-artefact mistake the round-3 falsification harness made (§F). Counts here are from a `cleanIntegrationTest` run.
+Re-run in full after the round-4 review (B4/B5/S14-S17); every line below is from that run. The integration-test counts in the previous version of this table were wrong — they were read from a results directory holding an earlier run's XML, which is the same stale-artefact mistake the round-3 falsification harness made (§F). Counts here are from a `cleanIntegrationTest` run.
 
 | Command | Result |
 |---|---|
 | `spotlessApply -PskipWebBuild=true` | exit 0 |
 | `build -x test -PskipWebBuild=true` | BUILD SUCCESSFUL |
-| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 4m 32s — **1456 suites, 8894 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console). The run before this one was RED, and usefully so: it caught the eager metadata build the O7 extraction introduced (§F G30) |
+| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 5m 2s — **1457 suites, 8903 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console). The run before this one was RED, and usefully so: `RecoveryIntegrationTest` caught a real consequence of B4 that no targeted run would have (§F G40) — the same value the O7 round got from G30 |
 | `cleanIntegrationTest :modules:indexing:integrationTest --no-build-cache` | BUILD SUCCESSFUL — `InvariantSuiteIT` **9 tests**, 0 failures. Forced: an unforced attempt reports `UP-TO-DATE`, which is a replay, not a run |
-| `:modules:indexer-worker:test --tests "*PreOpenSchemaMismatchBootTest*"` | BUILD SUCCESSFUL — 6 boot-level cases (a-e plus the classifier). Boot-level because every one of them passes at unit level against the O7 defect |
+| `:modules:indexer-worker:test --tests "*PreOpenSchemaMismatchBootTest*"` | BUILD SUCCESSFUL — **10** boot-level cases now (a-e, the classifier, and the four added this round: the FAIL_CLOSED `PRE-OPEN` WARN, `REBUILD_BACKUP_FIRST` backup-before-empty, an unrecognised policy, a corrupt index self-healing). Boot-level because every one of them passes at unit level against the defect it pins |
+| `:modules:indexer-worker:test --tests "*ResumedMigrationMismatchBootTest*"` | BUILD SUCCESSFUL — B5 at a FRESH budget, the boot the brake test structurally cannot reach |
 | `:modules:ui:integrationTest` | BUILD SUCCESSFUL — **9 tests across 4 suites**, 1 skipped, 0 failures (includes `SchemaMismatchStatusContractTest`). The earlier "16 across 5" was a stale-directory miscount, as the reviewer said |
 | `:modules:worker-core:test` (named explicitly — the brake tests live there) | BUILD SUCCESSFUL — included in the full-suite totals above; run standalone as well |
 | `:modules:indexer-worker:test --tests "*BrakeExhaustedWorkerServesReadOnlyTest*"` | BUILD SUCCESSFUL — the emit-chain test boots a real `KnowledgeServer`, so this is the first tier in this tempdoc above "compiles and unit-tests" |
-| Full kernel: `governance/run.mjs --produce-inputs --mode gate` | 33 pass, 1 fail — `ts-any`, **inherited**. (Two gates went red during this round and were FIXED, not baselined: `prose-tier-register` wanted a register row for the new `falsify-restore-from-backup` rule anchor — row 47 added; `config-surface` correctly reported `vectorHnswM` / `vectorHnswEfConstruction` as accessors no production code calls, because the bench nit moved its last two callers to the effective accessors — the effective accessors now call them.) All 5 findings are `ts-any/silent-growth` in files this branch does not touch (`citationResolve.test.ts`, `MarkdownBlock.ts`, `indexingProgress.ts`, `sv3-sessions.test.ts`, `searchResultViewModel.ts`); pinned as `ts-any-gate-counts-english-prose` (the gate scores the English word "any" in comments). `readinessNotice.ts`, the one ui-web file this branch edits, is not among them. |
+| Full kernel: `governance/run.mjs --produce-inputs --mode gate` | 35 gates evaluated, 34 pass, 1 fail (`test-efficacy` skipped) — `ts-any`, **inherited**. (Two gates went red during this round and were FIXED, not baselined: `prose-tier-register` wanted a register row for the new `falsify-restore-from-backup` rule anchor — row 47 added; `config-surface` correctly reported `vectorHnswM` / `vectorHnswEfConstruction` as accessors no production code calls, because the bench nit moved its last two callers to the effective accessors — the effective accessors now call them.) All `ts-any` findings are `silent-growth` in files this branch does not touch (`citationResolve.test.ts`, `MarkdownBlock.ts`, `indexingProgress.ts`, `sv3-sessions.test.ts`, `searchResultViewModel.ts`); pinned as `ts-any-gate-counts-english-prose` (the gate scores the English word "any" in comments). `readinessNotice.ts`, the one ui-web file this branch edits, is not among them. |
 | `check-readiness-reason-codes` | OK — 55 emittable codes, 49 worded rows (was 54/48: the new code is wired on both sides) |
 | `check-live-witness` · `check-store-recoverability` · `check-search-degradation-reason-codes` · `check-language-agnostic-analysis` · `check-tempdoc-numbers` · `check-premerge-table` | all OK |
 | `docs/verify-canonical-doc-links.mjs` · `llmstxt-generate --check` · `skills-sync --check` · `verify-runtime-config-matrix` | OK (156 files) · OK (115 docs) · OK (5 skills) · OK (yaml=111, pairs=250, rows=306) |
 | `docs-validate.mjs` | exit 1, **inherited** — repo-wide `heading-case` advisories, pinned as `docs-validate-heading-case-repo-wide`; no finding names a heading this branch touched |
-| `run-ui-web-gates.mjs` (the `ui-web-gates` recipe) | **40/40 passed** (delta-review round; the O7 round changed no `modules/ui-web/src/**` file, so the recipe's trigger did not fire) |
+| `run-ui-web-gates.mjs` (the `ui-web-gates` recipe) | **40/40 passed** (delta-review round). Neither the O7 round nor this one changed any `modules/ui-web/src/**` file — `git diff 183a7145 --name-only` over that path is empty — so the recipe's trigger did not fire and the 40/40 stands |
 | `cd modules/ui-web && npm run typecheck` | exit 0 |
 | `cd modules/ui-web && npm run test:unit:run` | 468 files, **6267 tests passed** |
 | Diff hygiene | NUL bytes in the diff: 0. Every added non-ASCII line is an intended em-dash / `§` / `→`; no `Ã` / `â€` / `Â` mojibake. No whole-file CRLF rewrite — `--numstat` shows large adds only for genuinely new files. |
@@ -941,7 +980,24 @@ Re-run in full after the O7 round; every line below is from that run. The integr
    level, not unit level, because the defect was never in a unit: §F G24-G29, including the
    legacy-index case that was the real upgrade path this broke.
 
-7. **O6 — correction to my own earlier report.** I reported
+7. **O8 — CLOSED (round-4 review, B4).** Moving detection ahead of the open took it outside the
+   corruption-recovery envelope, so a corrupt index that used to self-heal at boot killed the
+   Worker — and the same throw swallowed the older-Lucene-major upgrade path. Pre-open inspection is
+   non-fatal on any unreadable commit now (§C.14); §F G31, plus G40, which is the more interesting
+   evidence: the existing `RecoveryIntegrationTest` caught the consequence in the full suite before
+   any targeted run would have.
+8. **O9 — CLOSED (round-4 review, B5).** A resumed migration whose Green was itself mismatched
+   killed `start()` on attempts 1-3, because `startMigration` no-ops on an in-flight migration and
+   the handler retried the same generation. The Green is abandoned and rebuilt now, one attempt is
+   spent, and Blue is reused rather than re-opened (§C.14); §F G32, G33.
+9. **O10 — OPEN, and it is the reason O3 matters.** Every property in §C.14 is verified at boot
+   level against a real `KnowledgeServer` over a real generation layout, which is a strictly higher
+   tier than the unit level the defects hid below — but still not a running Worker under a real
+   corpus. The reviewer's 7-arm live procedure, which the programme owner schedules, is the tier
+   that can falsify the ordering claims (backup taken before the writer touches Blue; Blue serving
+   throughout a real cutover) rather than merely observing their file-system traces.
+
+10. **O6 — correction to my own earlier report.** I reported
    `BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402` as an unpinned
    load flake and asked whether to pin it. That was wrong: it is already pinned
    (`adapters-lucene-batchupdate-rmw-coordinator-load-flake`), as is the `OnnxEmbeddingEncoder`

@@ -201,3 +201,15 @@ commit makes even a restore bug recoverable, which a backup file in `tmp/` does 
 itself is what deletes it. The driver also asserts the break actually matched before it trusts
 the run, and wipes the result directories per case. The general form — `NO FAILURE OBSERVED` is a
 claim about the harness before it is a claim about the test, and it must be diagnosed as such.
+
+**Follow-up, same tempdoc, round 5.** The rewritten driver reported `NO FAILURE OBSERVED` for all
+nine cases on its first run. Nothing had run at all: `execSync` goes through `cmd.exe`, where
+`./gradlew.bat` does not resolve, and the driver had just wiped the result directories — so "no
+failures found" and "no tests found" were the same observation, exactly as in the original incident.
+Per-case result wiping is necessary and it manufactures this ambiguity, so it must be paired with
+its complement: **zero result XMLs for a case is a DRIVER ERROR, never a survived break.** With that
+assertion the next run named nine driver errors instead of nine false negatives. (Two adjacent
+Windows traps, both worth knowing: `.\gradlew.bat` inside a JS template literal silently becomes
+`.gradlew.bat`, since `\g` is not an escape sequence — build the command from an absolute path
+instead; and the same round found a *test* that survived its break because a null constructor
+argument routed it down a different branch, which is the same lesson one layer up.)

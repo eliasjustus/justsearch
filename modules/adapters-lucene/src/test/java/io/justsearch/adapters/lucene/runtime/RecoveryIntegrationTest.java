@@ -110,15 +110,22 @@ class RecoveryIntegrationTest extends RuntimeTestBase {
             .withIndexOpenGuard(guardSpy)
             .open();
 
-    // Item 17: assert the parity guard was invoked at least once AND surfaced the
-    // re-classified CORRUPT_INDEX exception (Gap D wiring proof).
+    // The guard is still on the open path (wiring proof), and it deliberately does NOT raise for
+    // corruption any more. Tempdoc 915 B4: the parity inspection answers "does the last commit
+    // record this runtime's shape?", and an unreadable commit leaves that question UNANSWERED
+    // rather than answering "no". It used to re-classify the read failure as CORRUPT_INDEX, which
+    // was harmless from inside the open and fatal from the pre-open call site added in the same
+    // tempdoc - that site sits outside openComponentsWithRecovery, so raising there killed the
+    // Worker on an index the product recovers from. ComponentsFactory classifies corruption on the
+    // reader/writer open independently, which is what the rest of this test goes on to prove:
+    // backup taken, fresh index served, writes accepted.
     assertTrue(
         guardSpy.invocations.get() >= 1,
         "parity guard should have been invoked during recovery; got: " + guardSpy.invocations.get());
-    assertTrue(
+    assertFalse(
         guardSpy.observedCorruptionClassification.get(),
-        "parity guard should have surfaced an IndexRuntimeIOException(CORRUPT_INDEX) — Gap D"
-            + " wiring proof. Observed exceptions: "
+        "the parity guard must not raise CORRUPT_INDEX: recovery is the OPEN path's job and the"
+            + " same throw would kill the boot from the pre-open call site. Observed exceptions: "
             + guardSpy.observedExceptions);
 
     // Assert: a sibling backup exists.

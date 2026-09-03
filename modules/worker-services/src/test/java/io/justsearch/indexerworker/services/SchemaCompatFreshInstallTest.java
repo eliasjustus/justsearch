@@ -107,7 +107,11 @@ final class SchemaCompatFreshInstallTest {
     runtime.commitOps().commitAndTrack();
     runtime.commitOps().maybeRefreshBlocking();
 
-    StatusResponse status = buildStatus();
+    StatusResponse status =
+        buildStatus(
+            Map.of(
+                io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY,
+                "a".repeat(64)));
     assertEquals(
         "COMPATIBLE",
         status.getCompatibility().getSchemaCompatState(),
@@ -118,6 +122,16 @@ final class SchemaCompatFreshInstallTest {
 
   /** Drives the production {@code buildStatusResponse} over a real index. */
   private StatusResponse buildStatus() {
+    return buildStatus(null);
+  }
+
+  /**
+   * As above, with an explicit open-time commit user-data snapshot. Passing {@code null} (the
+   * default) makes {@code safeSchemaFingerprintStored()} return "" — which is right for the
+   * absent-fingerprint cases but would silently route a STALE-fingerprint case through the blank
+   * branch, so the test would pass without ever reaching the comparison it exists to pin.
+   */
+  private StatusResponse buildStatus(Map<String, String> openTimeUserData) {
     JobQueue jobQueue = mock(JobQueue.class);
     when(jobQueue.jobStateCounts()).thenReturn(new JobQueue.JobStateCounts(0, 0, 0, 0, 0));
     when(jobQueue.pendingBytes()).thenReturn(JobQueue.PendingBytes.EMPTY);
@@ -131,7 +145,7 @@ final class SchemaCompatFreshInstallTest {
             null,
             null,
             null,
-            null,
+            openTimeUserData == null ? null : () -> openTimeUserData,
             null,
             null,
             null,
