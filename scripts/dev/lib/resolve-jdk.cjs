@@ -2,13 +2,13 @@
 /**
  * Tempdoc 696 — single JDK resolver for dev tooling.
  *
- * The Gradle wrapper and every dev JVM launcher (`ui.bat`, worker, hot-swap,
- * installDist) use whatever `JAVA_HOME` points at, with NO version check. When a
- * stale JDK 8 lands on `JAVA_HOME` (e.g. a scoop temurin8 install rewrote the
- * user env — see observations), `dev_start`/hot-swap/prepare-worktree fail with
- * an opaque "Gradle assemble failed" or a 15s port timeout, because Gradle 9.6.1
- * needs 17+ and the build's `-XX:+UseCompactObjectHeaders` /
- * `--sun-misc-unsafe-memory-access=warn` need 24+.
+ * The checked-in Gradle Daemon JVM criteria pins the build daemon to JDK 25, but
+ * dev JVM launchers (`ui.bat`, worker, hot-swap, installDist) still use whatever
+ * `JAVA_HOME` points at. When a stale JDK 8 lands on `JAVA_HOME` (e.g. a scoop
+ * temurin8 install rewrote the user env — see observations), those launchers can
+ * fail with an opaque assemble error, UnsupportedClassVersionError, or a 15s port
+ * timeout. Their JVM flags also require 24+ (`-XX:+UseCompactObjectHeaders` and
+ * `--sun-misc-unsafe-memory-access=warn`).
  *
  * This module resolves a JDK whose `java` is >= 24 (canonical target: Temurin 25)
  * and is consumed by dev-runner.cjs, justsearch-dev-mcp/server.mjs (hot-swap) and

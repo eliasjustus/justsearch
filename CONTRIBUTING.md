@@ -50,11 +50,10 @@ readable while contributors can work naturally on branches.
 **To build + test the code** (the contributor front door — this is all you need to send a PR):
 
 - Windows 10/11
-- A JDK to bootstrap Gradle — **the Gradle toolchain auto-resolves the required JDK 25**, so any recent JDK to
-  launch the wrapper is enough. "Recent" means 17+ (24+ to run the build's JVM args); an old JDK on
-  `JAVA_HOME`/`PATH` (e.g. JDK 8) will fail with "Gradle requires JVM 17 or later" — point `JAVA_HOME` at a
-  JDK 25. (The dev-runner resolves this automatically for the dev stack; direct `./gradlew` calls inherit
-  your ambient `JAVA_HOME`.)
+- A JVM to launch the Gradle wrapper. The checked-in Daemon JVM criteria selects and, when necessary,
+  auto-provisions Temurin JDK 25 for the build, independent of the wrapper client's ambient Java. Keeping
+  `JAVA_HOME` and `PATH` on JDK 25 is still recommended so direct `java`/`javac` use and non-Gradle tooling
+  agree; the dev-runner also resolves a suitable JDK explicitly for the Head and Worker processes.
 - Node.js 20+ (for the `modules/ui-web` frontend) — `scripts/setup/bootstrap-node-win.ps1` can install it for you
 
 That's it. `./gradlew build` (compile + unit tests) does **not** require the Rust/Tauri toolchain (the desktop
