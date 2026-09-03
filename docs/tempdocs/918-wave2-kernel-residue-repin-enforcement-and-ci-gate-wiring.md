@@ -366,6 +366,32 @@ Commands verbatim, from `F:/justsearch-public/.claude/worktrees/918-kernel-resid
 
 No Gradle was run (brief constraint); no gate in this diff needs it.
 
+### F.1 — PR #619 CI, all 12 checks green (run 33697768148)
+
+`Build (no model blobs)` 1m28s · `CI wall-clock attribution` 21s · `Integration tests
+(system-tests tier)` 1m35s · `License and notices` 3m3s · **`Public claims` 2m23s** · `Secret scan`
+17s · `Shell crate tests (Rust)` 1m31s · `Unit tests (app-ui)` 1m28s · `Unit tests
+(platform-contracts)` 59s · `Unit tests (search-worker)` 1m2s · `Windows-native tests` 1m33s ·
+`cla-assistant` 7s — all `pass`.
+
+Step-level confirmation that the new steps RAN rather than being skipped
+(`gh api .../jobs/100470278556 --jq '.steps[]'`):
+
+```
+success  Kernel gates with built inputs (config-surface, dead-code, npm-audit, module-deps)
+success  Register-family gates (operation-surface, execution-surface, guard resolution)
+success  Hermetic kernel gates (17, no produced inputs)
+success  Wire contract gate (protobuf breaking changes)
+```
+
+Two things that only CI could establish. **(1)** `Kernel gates with built inputs` is the step that
+runs `dead-code`, `npm-audit`, `config-surface` and `module-deps` against REAL produced inputs — the
+knip report and the npm-audit report a local node-only run cannot build. It passed under this change,
+which is the "does the rule turn `main` red" question answered against the full input set rather than
+by argument. **(2)** The `Wire contract gate` step's third line asserts the SARIF has no
+`buf-cli-missing`; its success means buf installed and the gate genuinely inspected the protos, so the
+green is not the fail-open one the pin warns about.
+
 **Does the rule turn `main` red?** No, and the argument is mechanical rather than hopeful. The rule
 fires only when a growth-licensing changeset is in PR scope AND a row exceeds its live pin. On a
 `push` to `main`, `GITHUB_BASE_REF` is empty and `merge-base(HEAD, origin/main) === HEAD`, so
