@@ -63,6 +63,11 @@ jobs:
             grep -Eq '\''^stable-'\'' <<< "$rust_toolchain"
           '
 
+      - name: Verify bootstrap check mode
+        run: >-
+          devcontainer exec --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL"
+          node scripts/setup/bootstrap.mjs --check
+
       - name: Build required distributions
         run: >-
           devcontainer exec --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL"

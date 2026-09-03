@@ -6,26 +6,34 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Get-DistributionBaseUri([string]$baseUrl) {
+function Get-DistributionBaseUri([string]$baseUrl, [bool]$resolveOnlyMode) {
   try {
     $uri = [Uri]::new($baseUrl, [UriKind]::Absolute)
   } catch {
     throw "DistributionBaseUrl must be an absolute HTTP(S) URL. Received '$baseUrl'."
   }
 
-  if ($uri.Scheme -notin @('http', 'https') -or $uri.Query -or $uri.Fragment) {
-    throw "DistributionBaseUrl must be an absolute HTTP(S) URL without a query or fragment. Received '$baseUrl'."
+  if ($uri.Scheme -notin @('http', 'https') -or $uri.Query -or $uri.Fragment -or $uri.UserInfo) {
+    throw "DistributionBaseUrl must be an absolute HTTP(S) URL without credentials, a query, or a fragment. Received '$baseUrl'."
+  }
+  if ($uri.Scheme -eq 'http' -and (-not $resolveOnlyMode -or -not $uri.IsLoopback)) {
+    throw "DistributionBaseUrl must use HTTPS. Plain HTTP is allowed only for a loopback ResolveOnly test fixture. Received '$baseUrl'."
   }
 
-  return [Uri]::new($uri.AbsoluteUri.TrimEnd('/') + '/')
+  $normalized = [Uri]::new($uri.AbsoluteUri.TrimEnd('/') + '/')
+  if (-not $resolveOnlyMode -and $normalized.AbsoluteUri -ne 'https://nodejs.org/dist/') {
+    throw "Normal installation only downloads from the official https://nodejs.org/dist/ origin. Use ResolveOnly for a custom test index."
+  }
+
+  return $normalized
 }
 
-function Get-NodeZipUrl([string]$major, [string]$distributionBaseUrl) {
+function Get-NodeZipUrl([string]$major, [string]$distributionBaseUrl, [bool]$resolveOnlyMode) {
   if ($major -notmatch '^[0-9]+$') {
     throw "Major must contain only digits. Received '$major'."
   }
 
-  $baseUri = Get-DistributionBaseUri -baseUrl $distributionBaseUrl
+  $baseUri = Get-DistributionBaseUri -baseUrl $distributionBaseUrl -resolveOnlyMode $resolveOnlyMode
   $indexUri = [Uri]::new($baseUri, "latest-v$major.x/")
 
   try {
@@ -50,7 +58,7 @@ function Get-NodeZipUrl([string]$major, [string]$distributionBaseUrl) {
 }
 
 if ($ResolveOnly) {
-  Get-NodeZipUrl -major $Major -distributionBaseUrl $DistributionBaseUrl
+  Get-NodeZipUrl -major $Major -distributionBaseUrl $DistributionBaseUrl -resolveOnlyMode $true
   return
 }
 
@@ -60,7 +68,7 @@ New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
 # If already present, skip download
 $existing = Get-ChildItem -Path $toolsDir -Filter "node-v$Major.*-win-x64" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $existing) {
-  $url = Get-NodeZipUrl -major $Major -distributionBaseUrl $DistributionBaseUrl
+  $url = Get-NodeZipUrl -major $Major -distributionBaseUrl $DistributionBaseUrl -resolveOnlyMode $false
   $zip = Join-Path $toolsDir "node-$Major.zip"
   Write-Host "Downloading Node from $url ..."
   try {

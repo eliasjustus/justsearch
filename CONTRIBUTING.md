@@ -128,6 +128,7 @@ Code style is enforced automatically:
 - **TypeScript**: ESLint + Prettier
 
 To fix formatting issues:
+
 ```text
 # Replace gradlew.bat with ./gradlew in the dev container or on Unix.
 ./gradlew.bat spotlessApply

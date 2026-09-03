@@ -125,6 +125,25 @@ export function resolveNpmInvocation({
   return { command: 'npm', prefixArgs: [] };
 }
 
+export function probeSupportedPython(candidates, runner = runProcess) {
+  let firstReadable = null;
+  for (const [command, args] of candidates) {
+    try {
+      const output = runner(command, args);
+      const candidate = { command, output };
+      firstReadable ??= candidate;
+      const version = parsePythonVersion(output);
+      if (version?.major === TOOL_FLOORS.pythonMajor
+          && version.minor >= TOOL_FLOORS.pythonMinor) {
+        return candidate;
+      }
+    } catch {
+      // Try the next platform spelling. The caller reports one actionable failure.
+    }
+  }
+  return firstReadable;
+}
+
 function probeFirst(candidates, runner = runProcess) {
   for (const [command, args] of candidates) {
     try {
@@ -134,6 +153,23 @@ function probeFirst(candidates, runner = runProcess) {
     }
   }
   return null;
+}
+
+export function validateGradleJavaHome({ ambientJavaHome, resolvedJdkHome, inspect }) {
+  if (!ambientJavaHome) return;
+  let ambientMajor = null;
+  try {
+    ambientMajor = parseJavaMajor(inspect(javaExeIn(ambientJavaHome)));
+  } catch {
+    // Treat an unusable JAVA_HOME the same as an obsolete one: Gradle will prefer it and fail.
+  }
+  if (ambientMajor == null || ambientMajor < TOOL_FLOORS.java) {
+    throw new Error(
+      `JAVA_HOME points at ${ambientJavaHome}, which is not a usable JDK ${TOOL_FLOORS.java}+. `
+      + `Gradle will prefer it over the JDK ${TOOL_FLOORS.java}+ found at ${resolvedJdkHome}. `
+      + 'Point JAVA_HOME at that resolved JDK, then rerun bootstrap.',
+    );
+  }
 }
 
 export function applySetup({
@@ -195,9 +231,14 @@ export async function main(argv = process.argv.slice(2)) {
   } catch (error) {
     throw new Error(error.message);
   }
+  validateGradleJavaHome({
+    ambientJavaHome: process.env.JAVA_HOME,
+    resolvedJdkHome: jdkHome,
+    inspect: (javaExe) => runProcess(javaExe, ['-version']),
+  });
   const javaVersionOutput = runProcess(javaExeIn(jdkHome), ['-version']);
   const javaMajor = parseJavaMajor(javaVersionOutput);
-  const pythonProbe = probeFirst(process.platform === 'win32'
+  const pythonProbe = probeSupportedPython(process.platform === 'win32'
     ? [['python', ['--version']], ['py', ['-3.13', '--version']]]
     : [['python3', ['--version']], ['python', ['--version']]]);
   const rustProbe = probeFirst([['rustc', ['--version']]]);

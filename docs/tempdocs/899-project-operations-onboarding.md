@@ -1,9 +1,9 @@
 ---
 title: "Project operations: cross-platform contributor onramp, contract lifecycle signals, succession, and diagnostic handoff"
 type: tempdocs
-status: "FOCUSED SDK D6 S1+S2 IMPLEMENTED AND LIVE-VERIFIED (2026-09-03) — other 899 workstreams remain"
+status: "SDK D6 S1+S2 LIVE-VERIFIED; D1 IMPLEMENTED, CONTAINER EXECUTION PENDING (2026-09-04)"
 created: 2026-09-02
-updated: 2026-09-03
+updated: 2026-09-04
 lane: 887 L17
 model: opus (takeover)
 parent: 887-improvement-landscape-register
@@ -811,34 +811,88 @@ This plan owns only D1. It extends the existing onramp and worktree setup author
 replace `prepare-worktree.cjs`, `doctor.mjs`, or `test-onramp-first-success.mjs`, and it keeps
 `bootstrap-node-win.ps1` as the Windows pre-Node entry point.
 
-- [ ] **Pin the contributor container.** Add a strict-JSON `.devcontainer/devcontainer.json` using
+- [x] **Pin the contributor container.** Add a strict-JSON `.devcontainer/devcontainer.json` using
   the Ubuntu 24.04/noble base, official major-pinned Java/Node/Python/Rust Features, Temurin 25,
   Node 24, Python 3.13, and stable Rust. Run bootstrap then doctor in `postCreateCommand`, and make
   `waitFor` cover that command. Add no GPU, model, Docker-in-Docker, host mount, or Linux product-
   support claim.
-- [ ] **Build the post-Node coordinator behind pure seams.** Add `scripts/setup/bootstrap.mjs` with
+- [x] **Build the post-Node coordinator behind pure seams.** Add `scripts/setup/bootstrap.mjs` with
   a main guard and exported parsers/planners. Validate Node >=20, resolve and validate JDK >=24 via
   `resolve-jdk.cjs`, require Python 3.13, report Rust without making it a core failure, verify the
   Gradle wrapper, and run explicit lockfile-preserving installs for the five reviewed npm roots.
   `--check` must execute no install, chmod, download, profile edit, or package-manager selection.
-- [ ] **Make bootstrap behavior executable evidence.** Add Node tests for version parsing, floor
+- [x] **Make bootstrap behavior executable evidence.** Add Node tests for version parsing, floor
   rejection, explicit install-plan coverage, fail-fast command errors, advisory Rust, platform-
   correct Gradle handling, and structural non-mutation in `--check`. Wire a root package command so
   contributors and CI can run the suite directly.
-- [ ] **Repair the Windows pre-Node entry point.** Correct its patch-version regex, eliminate the
+- [x] **Repair the Windows pre-Node entry point.** Correct its patch-version regex, eliminate the
   fictitious/silent fallback URL, provide actionable network/parse/download failures, and add a
   resolve-only seam exercised against a local HTTP fixture. Preserve its existing default install
   behavior and session-local PATH update.
-- [ ] **Make the container proof reproducible.** Extend the manual `onramp-smoke.yml` specialty
+- [x] **Make the container proof reproducible.** Extend the manual `onramp-smoke.yml` specialty
   workflow with an Ubuntu job using an exact Dev Container CLI version. Build/up the container,
   verify all four tool versions, build the two runtime distributions, force an empty models
   directory, run the existing Tier-0 smoke inside the container, and always remove the container.
   Do not dispatch the workflow without explicit publication/outward-action authorization.
-- [ ] **Update contributor truth.** Present native Windows and devcontainer routes side by side in
+- [x] **Update contributor truth.** Present native Windows and devcontainer routes side by side in
   `CONTRIBUTING.md`; explain post-Node versus pre-Node bootstrap; use platform-neutral wrapper
   notation where it is genuinely portable; preserve the Windows-only packaged-product boundary.
-- [ ] **Verify and review.** Run the pure bootstrap and PowerShell fixture tests, native
+- [x] **Verify and review.** Run the pure bootstrap and PowerShell fixture tests, native
   `bootstrap.mjs --check`, JSON/config validation, root README/docs/governance checks, and the
   repository build required for the changed scripts. Record the unavailable local container proof
   honestly, perform a refute-first review, fix findings, update this ledger, and commit explicit
   paths without pushing, opening a PR, dispatching CI, or publishing.
+
+### Devcontainer/bootstrap implementation evidence (2026-09-04)
+
+D1 is implemented as a reviewable contributor lane. `.devcontainer/devcontainer.json` supplies the
+CPU-only noble environment and runs the shared bootstrap plus doctor. `bootstrap.mjs` owns only the
+post-Node portable work: it validates the native floors, resolves the existing JDK authority,
+checks or repairs the Unix wrapper mode, and installs the five explicitly reviewed npm lock roots.
+The Windows script remains the pre-Node path and now fails closed on malformed indexes and custom
+download origins; plain HTTP is accepted only by the loopback `ResolveOnly` fixture seam.
+
+The manual onramp workflow now retains the Windows proof and adds an Ubuntu devcontainer job that
+pins Dev Container CLI `0.89.0`, disables GPU discovery, asserts all four toolchains, explicitly
+runs `bootstrap.mjs --check`, builds the runtime distributions, forces an empty models directory,
+runs the existing Tier-0 smoke, and removes the labeled container in an `always()` step.
+
+Refute-first review found seven substantive defects in the first implementation: stale
+`JAVA_HOME` could survive a successful bootstrap; the Windows fixture URL could feed a normal
+installation over arbitrary HTTP; Python probing stopped at an unsupported first spelling; the
+workflow omitted the explicit check-mode proof; CONTRIBUTING misstated the JDK floor; the
+multi-root install test used one root; and resolver selection tests exercised a copied loop rather
+than production. All seven were corrected. One first reviewer did not return after bounded waits
+and was shut down; a replacement independent reviewer supplied the findings above and made no
+edits.
+
+Concrete evidence on the owned Windows worktree:
+
+- `npm run test:bootstrap`: 18/18 passed, including loopback PowerShell fixtures, HTTP/custom-origin
+  rejection, mixed Python spellings, stale `JAVA_HOME`, all five install roots, strict devcontainer
+  JSON, and workflow invariants.
+- `npm run test:resolve-jdk`: 12/12 passed; candidate ranking now invokes the exported production
+  selector over temporary candidate homes.
+- `npm run bootstrap:check`: passed with Node 24.12.0, JDK 25, Python 3.13.14, npm 11.6.2, and all
+  five lockfile roots; Rust absence remained advisory.
+- A negative real-process check with an invalid ambient `JAVA_HOME` failed before claiming ready
+  and named the resolved JDK 25 remedy. A live `ResolveOnly` lookup against nodejs.org resolved
+  `v24.20.0` without downloading or installing it.
+- `npm run bootstrap`: completed all five real `npm ci` operations. Existing root/frontend npm
+  audit advisories remained visible; no audit suppression or automatic dependency mutation was
+  performed.
+- `./gradlew.bat build -x test --console=plain`: `BUILD SUCCESSFUL`, 251 actionable tasks.
+- `npx markdownlint CONTRIBUTING.md`, `llmstxt-generate --check`, canonical-link verification,
+  root-README verification, workflow-trigger verification and its regression test, strict JSON/
+  YAML parsing, PowerShell parser validation, and `git diff --check` all passed.
+
+The blocking D1 acceptance proof is still external: this host has no Docker, Podman, Dev Container
+CLI installation, or WSL distribution, and workflow dispatch is an outward action that was not
+authorized. Therefore no honest container build/up, Feature-install, in-container doctor, or
+Tier-0 keyword-result output exists yet. The checked-in workflow is the reproducible way to obtain
+that evidence on a container-capable host. The normal Windows Node archive download/extraction path
+also remains intentionally unexecuted; URL resolution and all failure/security seams are covered.
+
+**Post-review confidence: 8.5/10 for the implementation, 6.5/10 for final D1 acceptance until the
+container workflow is run.** No unresolved code finding remains from the independent review; the
+remaining deduction is execution-environment evidence, not design uncertainty.

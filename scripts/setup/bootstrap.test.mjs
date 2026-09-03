@@ -12,8 +12,10 @@ import {
   parseNodeMajor,
   parsePythonVersion,
   parseRustVersion,
+  probeSupportedPython,
   resolveNpmInvocation,
   runProcess,
+  validateGradleJavaHome,
   validatePrerequisites,
 } from './bootstrap.mjs';
 
@@ -38,6 +40,31 @@ test('enforces native floors while Rust remains advisory', () => {
   });
   assert.equal(unsupported.ok, false);
   assert.equal(unsupported.failures.length, 3);
+});
+
+test('Python probing continues past an older interpreter to a supported spelling', () => {
+  const outputs = new Map([
+    ['python3', 'Python 3.12.10'],
+    ['python', 'Python 3.13.7'],
+  ]);
+  const result = probeSupportedPython(
+    [['python3', ['--version']], ['python', ['--version']]],
+    (command) => outputs.get(command),
+  );
+  assert.deepEqual(result, { command: 'python', output: 'Python 3.13.7' });
+});
+
+test('stale JAVA_HOME fails before bootstrap advertises a Gradle-ready environment', () => {
+  assert.throws(() => validateGradleJavaHome({
+    ambientJavaHome: '/old-jdk',
+    resolvedJdkHome: '/jdk-25',
+    inspect: () => 'openjdk version "17.0.12"',
+  }), /Gradle will prefer it.*Point JAVA_HOME/s);
+  assert.doesNotThrow(() => validateGradleJavaHome({
+    ambientJavaHome: '/jdk-24',
+    resolvedJdkHome: '/jdk-24',
+    inspect: () => 'openjdk version "24.0.2"',
+  }));
 });
 
 test('install plan is explicit and requires a lockfile at every reviewed root', () => {
@@ -91,17 +118,22 @@ test('mutating setup repairs Unix wrapper mode and installs every planned root',
   let chmodMode = null;
   const installed = [];
   try {
+    const installPlan = NPM_LOCK_ROOTS.map((relativeRoot) => ({
+      relativeRoot,
+      cwd: path.join(root, relativeRoot),
+      args: ['ci'],
+    }));
     applySetup({
       check: false,
       platform: 'linux',
       gradlePath,
-      installPlan: [{ relativeRoot: '.', cwd: root, args: ['ci'] }],
+      installPlan,
       install: (entry) => installed.push(entry.relativeRoot),
       chmod: (_file, mode) => { chmodMode = mode; },
       log: () => {},
     });
     assert.equal(chmodMode, 0o755);
-    assert.deepEqual(installed, ['.']);
+    assert.deepEqual(installed, [...NPM_LOCK_ROOTS]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

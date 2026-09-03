@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import fs from 'node:fs';
 import { createServer } from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -67,6 +69,27 @@ function resolveFrom(baseUrl) {
   });
 }
 
+function installFrom(script, baseUrl) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'powershell.exe',
+      [
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', script, '-Major', '24', '-DistributionBaseUrl', baseUrl,
+      ],
+      { windowsHide: true },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
+
 test('resolve-only parses a multi-digit patch version from a local index', { skip: !isWindows }, async () => {
   const result = await withDistributionIndex(
     '<a href="node-v24.12.11-win-x64.zip">node-v24.12.11-win-x64.zip</a>',
@@ -101,4 +124,40 @@ test('resolve-only reports an unavailable local index as a fetch failure', { ski
   assert.notEqual(result.code, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /Unable to fetch the Node\.js distribution index/);
   assert.match(`${result.stdout}\n${result.stderr}`, /network or proxy settings/);
+});
+
+test('resolve-only rejects non-loopback plain HTTP before making a request', { skip: !isWindows }, async () => {
+  const result = await resolveFrom('http://example.invalid/dist');
+
+  assert.notEqual(result.code, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /must use HTTPS/);
+  assert.match(`${result.stdout}\n${result.stderr}`, /loopback ResolveOnly test fixture/);
+});
+
+test('installation rejects plain HTTP even for loopback fixtures', { skip: !isWindows }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'justsearch-node-bootstrap-'));
+  const isolatedScript = path.join(root, 'setup', 'bootstrap-node-win.ps1');
+  fs.mkdirSync(path.dirname(isolatedScript), { recursive: true });
+  fs.copyFileSync(scriptPath, isolatedScript);
+  try {
+    const result = await installFrom(isolatedScript, 'http://127.0.0.1:9/dist');
+    assert.notEqual(result.code, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /must use HTTPS/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('installation rejects custom HTTPS origins reserved for resolve-only tests', { skip: !isWindows }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'justsearch-node-bootstrap-'));
+  const isolatedScript = path.join(root, 'setup', 'bootstrap-node-win.ps1');
+  fs.mkdirSync(path.dirname(isolatedScript), { recursive: true });
+  fs.copyFileSync(scriptPath, isolatedScript);
+  try {
+    const result = await installFrom(isolatedScript, 'https://example.invalid/dist');
+    assert.notEqual(result.code, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /only downloads from the official/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

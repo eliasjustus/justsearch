@@ -8,6 +8,8 @@
  * do not launch a real JDK — filesystem and version probes are injected.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -44,7 +46,7 @@ check('parseJavaMajor: garbage/empty → null', () => {
   assert.equal(parseJavaMajor(null), null);
 });
 
-// --- selectFromCandidates (inject a probe keyed on the home name) ---
+// --- selectFromCandidates (real existence gate, injected version probe) ---
 const majorByHome = {
   jdk8: 8,
   jdk17: 17,
@@ -53,37 +55,48 @@ const majorByHome = {
   jdk25: 25,
   broken: null, // exists on disk but java won't run
 };
-// The candidates below use names that also exist as real dirs? No — selectFromCandidates
-// checks fs.existsSync(javaExeIn(home)) BEFORE probing, so to unit-test selection purely we
-// bypass existence by using a probe that also asserts existence-independence. Instead we test
-// the probe-driven ranking via a wrapper that treats every candidate as existing.
-function selectAssumingExist(candidates, probe) {
-  // mirror selectFromCandidates' semantics but skip the fs.existsSync gate (pure ranking test)
-  for (const home of candidates) {
-    if (!home) continue;
-    const major = probe(home);
-    if (major != null && major >= MIN_MAJOR) return home;
+function withFakeHomes(names, run) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'justsearch-jdk-selection-'));
+  const homes = Object.fromEntries(names.map((name) => {
+    const home = path.join(root, name);
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, process.platform === 'win32' ? 'java.exe' : 'java'), 'fixture');
+    return [name, home];
+  }));
+  try {
+    return run(homes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
-  return null;
 }
-const probe = (home) => majorByHome[path.basename(home)] ?? null;
+const probe = (javaExe) => majorByHome[path.basename(path.dirname(path.dirname(javaExe)))] ?? null;
 
 check(`MIN_MAJOR is ${MIN_MAJOR} (>= 24)`, () => {
   assert.ok(MIN_MAJOR >= 24, `MIN_MAJOR should be >= 24, got ${MIN_MAJOR}`);
 });
 check('selection: first >= 24 wins, older/lower skipped', () => {
-  assert.equal(selectAssumingExist(['jdk8', 'jdk17', 'jdk23', 'jdk25'], probe), 'jdk25');
-  assert.equal(selectAssumingExist(['jdk24', 'jdk25'], probe), 'jdk24'); // first acceptable wins
+  withFakeHomes(['jdk8', 'jdk17', 'jdk23', 'jdk24', 'jdk25'], (homes) => {
+    assert.equal(selectFromCandidates(
+      [homes.jdk8, homes.jdk17, homes.jdk23, homes.jdk25], probe), homes.jdk25);
+    assert.equal(selectFromCandidates([homes.jdk24, homes.jdk25], probe), homes.jdk24);
+  });
 });
 check('selection: all < 24 → null', () => {
-  assert.equal(selectAssumingExist(['jdk8', 'jdk17', 'jdk23'], probe), null);
+  withFakeHomes(['jdk8', 'jdk17', 'jdk23'], (homes) => {
+    assert.equal(selectFromCandidates([homes.jdk8, homes.jdk17, homes.jdk23], probe), null);
+  });
 });
 check('selection: unprobeable (null) candidates skipped', () => {
-  assert.equal(selectAssumingExist(['broken', 'jdk8', 'jdk25'], probe), 'jdk25');
+  withFakeHomes(['broken', 'jdk8', 'jdk25'], (homes) => {
+    assert.equal(selectFromCandidates([homes.broken, homes.jdk8, homes.jdk25], probe), homes.jdk25);
+  });
 });
 check('selection: empty/falsey candidates skipped, empty list → null', () => {
-  assert.equal(selectAssumingExist([null, '', 'jdk25'], probe), 'jdk25');
-  assert.equal(selectAssumingExist([], probe), null);
+  withFakeHomes(['jdk25'], (homes) => {
+    assert.equal(selectFromCandidates([null, '', homes.jdk25], probe), homes.jdk25);
+  });
+  assert.equal(selectFromCandidates([], probe), null);
 });
 
 // Sanity: the real selectFromCandidates rejects a non-existent home without throwing.
