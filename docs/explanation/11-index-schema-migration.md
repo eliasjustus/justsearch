@@ -172,6 +172,37 @@ Override sources:
 - YAML: `index.schema_mismatch.policy`
 - Env/sysprop: `JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY` / `-Dindex.schema_mismatch.policy=...`
 
+### A `FAIL_CLOSED` refusal is a verdict, not a crash (tempdoc 915 R1)
+
+`FAIL_CLOSED` refusing to open the index is a **deliberate, deterministic** outcome, and the Head
+reports it as such:
+
+- The refusing Worker writes `<dataDir>/worker-fatal-reason` = `index_schema_mismatch` before it
+  exits, the same way an unrecoverable corruption writes `index_corrupt`.
+- `KnowledgeServerBootstrap` **latches** the verdict when it reads that marker. The marker is deleted
+  as it is read and the read happens before the two narration guards (`narrationSuppressed()`,
+  `supervisionVerdictHeld()`) decide whether the verdict is applied — so without the latch, the three
+  suppressed `startWithRetry` attempts each consumed a freshly-rewritten marker and the one call
+  allowed to narrate found nothing and reported the generic `worker.spawn.failed`. The latch is
+  cleared when the capability reaches READY, and by nothing else.
+- Head readiness therefore carries `worker.index_schema_mismatch` (a `STICKY` reason code, so the
+  boot-recovery ladder's own narration cannot overwrite it) with the policy remedy as its detail, and
+  `knowledgeServerStartError` carries that remedy rather than the spawn symptom.
+
+**The boot-recovery ladder does not re-attempt.** A fatal index reason vetoes it
+(`BootRecoveryDecision.Veto.INDEX_FATAL` ⇒ `GIVE_UP`): the refusal is a function of the bytes in the
+index directory, so every attempt would read the same bytes and refuse the same way — the budget buys
+delay and nothing else. This is a **915 decision, not an inherited one**: before it, neither fatal
+index cause short-circuited the ladder, and 915 R1 unified the two axes rather than forking them. The
+veto is ranked below supervision's terminal `worker.restart_exhausted` (which is already on the wire
+under its own code) and above the attempt budget, and unlike the other two vetoes it is *narrated* —
+it is the one whose cause the Head owns and might otherwise never say out loud.
+
+An **operator** request (`POST /api/worker/restart` → `WorkerRecoveryAuthority`) is exempt from this
+veto and re-opens that one terminal state, because the documented remedy for both fatal index causes
+is a settings or filesystem change the next spawn will read. The attempt budget and the supervision
+vetoes are untouched: an operator asking is a reason to try again, never a reason to try more times.
+
 ### Repeat-rebuild brake
 
 Because the production default auto-starts a rebuild on a `SCHEMA_MISMATCH`, and an index that fails

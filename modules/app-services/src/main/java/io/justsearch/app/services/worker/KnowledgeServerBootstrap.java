@@ -124,6 +124,26 @@ public final class KnowledgeServerBootstrap implements Closeable {
     private volatile boolean bootRecoveryInFlight;
 
     /**
+     * Tempdoc 915 R1: the last fatal INDEX verdict this bootstrap read out of the dying worker's
+     * {@link io.justsearch.ipc.WorkerFatalReasonMarker}, remembered because the marker is deleted as
+     * it is read and the read happens BEFORE the two narration guards decide whether the verdict is
+     * applied.
+     *
+     * <p>Live validation caught the whole class: under {@code index.schema_mismatch.policy=FAIL_CLOSED}
+     * the worker refused deterministically on all three {@link #startWithRetry} attempts, each
+     * per-attempt catch consumed the freshly-written marker while {@code retryPending} suppressed the
+     * narration, and the final catch — the one call that IS allowed to narrate — found no marker and
+     * reported the generic {@code worker.spawn.failed}. Head readiness then rode the boot-recovery
+     * ladder to {@code worker.spawn_recovery_exhausted} and the real cause never reached the user.
+     * The corruption axis has the identical hole; it escapes only when its first worker-down call
+     * happens to land outside a suppressed arc.
+     *
+     * <p>Cleared on READY (the worker opened the index, so no index verdict stands) — the same
+     * anti-staleness bound {@link io.justsearch.app.services.lifecycle.ReasonRetention} uses.
+     */
+    private volatile WorkerDown latchedIndexFatalVerdict;
+
+    /**
      * Tempdoc 825 §D4: countdown for the prod-guarded boot fault injector. Each remaining count fails
      * one PID validation with the exact 821 §O.4 signature, then the injector stops — which is what
      * makes CONVERGENCE (not just the pin) reproducible. Zero unless
@@ -162,6 +182,16 @@ public final class KnowledgeServerBootstrap implements Closeable {
         this.config = config;
         this.telemetry = telemetry != null ? telemetry : new NoopTelemetry();
         this.workerCapability = workerCapability != null ? workerCapability : new WorkerCapability();
+        // Tempdoc 915 R1: drop the fatal-index latch wherever READY comes from, rather than at the
+        // two sites that happen to write it today. READY means the worker opened the index and is
+        // serving, so no index verdict stands — the same anti-staleness bound ReasonRetention uses,
+        // and the reason it needs no timer. Placed here so a future READY path inherits it.
+        this.workerCapability.addListener(
+            (prev, next) -> {
+                if (next == CapabilityHealth.READY) {
+                    latchedIndexFatalVerdict = null;
+                }
+            });
         this.bootFaultCountdown =
             new java.util.concurrent.atomic.AtomicInteger(
                 config != null ? config.bootFaultInjectAttempts() : 0);
@@ -758,13 +788,54 @@ public final class KnowledgeServerBootstrap implements Closeable {
     private WorkerDown workerDownCode(LifecycleReasonCode generic, String detail) {
         String fatal = io.justsearch.ipc.WorkerFatalReasonMarker.readAndClear(config.dataDir());
         if (io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_CORRUPT.equals(fatal)) {
-            return new WorkerDown(LifecycleReasonCode.WORKER_INDEX_CORRUPT, INDEX_CORRUPT_DETAIL);
+            return latchIndexFatal(
+                    new WorkerDown(LifecycleReasonCode.WORKER_INDEX_CORRUPT, INDEX_CORRUPT_DETAIL));
         }
         if (io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_SCHEMA_MISMATCH.equals(fatal)) {
-            return new WorkerDown(
-                    LifecycleReasonCode.WORKER_INDEX_SCHEMA_MISMATCH, INDEX_SCHEMA_MISMATCH_DETAIL);
+            return latchIndexFatal(
+                    new WorkerDown(
+                            LifecycleReasonCode.WORKER_INDEX_SCHEMA_MISMATCH, INDEX_SCHEMA_MISMATCH_DETAIL));
+        }
+        // Tempdoc 915 R1: no marker on disk does NOT mean no fatal index verdict — an earlier call in
+        // this same boot arc already consumed it. Re-offering the latched one is what makes the
+        // observation survive a suppressed attempt; without it the arc's ONE narrating call reports
+        // the generic code and the cause is unrecoverable.
+        WorkerDown latched = latchedIndexFatalVerdict;
+        if (latched != null) {
+            return latched;
         }
         return new WorkerDown(generic, detail);
+    }
+
+    private WorkerDown latchIndexFatal(WorkerDown verdict) {
+        latchedIndexFatalVerdict = verdict;
+        return verdict;
+    }
+
+    /**
+     * Tempdoc 915 R1: whether a verdict is one of the two fatal INDEX causes, which are the ones a
+     * respawn cannot change — the condition lives in the index directory, not in the process.
+     */
+    private static boolean isIndexFatal(LifecycleReasonCode code) {
+        return code == LifecycleReasonCode.WORKER_INDEX_CORRUPT
+                || code == LifecycleReasonCode.WORKER_INDEX_SCHEMA_MISMATCH;
+    }
+
+    /**
+     * The remedy sentence behind the latched fatal index verdict, or {@code null} if none stands.
+     * Read by the Head so {@code knowledgeServerStartError} names the refusal instead of the spawn
+     * symptom ("Worker process crashed (exit code 1) before writing port to signal file"), which is
+     * what the user actually saw in tempdoc 915's live arm 2.
+     */
+    public String indexFatalDetail() {
+        WorkerDown latched = latchedIndexFatalVerdict;
+        return latched == null ? null : latched.detail();
+    }
+
+    /** The reason code of the latched fatal index verdict, or {@code null} if none stands. */
+    public LifecycleReasonCode indexFatalCode() {
+        WorkerDown latched = latchedIndexFatalVerdict;
+        return latched == null ? null : latched.code();
     }
 
     /**
@@ -780,9 +851,11 @@ public final class KnowledgeServerBootstrap implements Closeable {
      * so an overwrite silently converts "supervision gave up, stop for good" into "nobody knows, keep
      * re-attempting".
      *
-     * <p>The corrupt-index verdict is the one exception, and it is computed BEFORE the guard so the
-     * unrepeatable marker is still consumed: it explains WHY supervision exhausted itself and is
-     * strictly better information (its {@code STICKY} class says the same).
+     * <p>The two fatal INDEX verdicts ({@link #isIndexFatal}) are the exception, and they are computed
+     * BEFORE the guard so the unrepeatable marker is still consumed: they explain WHY supervision
+     * exhausted itself and are strictly better information (their {@code STICKY} class says the same).
+     * Tempdoc 915 R1 widened this from corruption alone — the schema-mismatch refusal is the same kind
+     * of fact, and leaving it out meant a FAIL_CLOSED boot narrated {@code worker.spawn.failed}.
      */
     void transitionWorkerDown(LifecycleReasonCode generic, String detail) {
         WorkerDown down = workerDownCode(generic, detail);
@@ -797,7 +870,7 @@ public final class KnowledgeServerBootstrap implements Closeable {
                 down.code().code());
             return;
         }
-        if (supervisionVerdictHeld() && down.code() != LifecycleReasonCode.WORKER_INDEX_CORRUPT) {
+        if (supervisionVerdictHeld() && !isIndexFatal(down.code())) {
             log.warn(
                 "Not overwriting supervision's terminal {} with {}: the supervisor's verdict stands",
                 LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code(),
