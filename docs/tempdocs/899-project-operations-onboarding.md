@@ -1,7 +1,7 @@
 ---
 title: "Project operations: cross-platform contributor onramp, contract lifecycle signals, succession, and diagnostic handoff"
 type: tempdocs
-status: "TAKEOVER + FOCUSED SDK RESEARCH/DESIGN/DERISK COMPLETE (2026-09-03) — implementation not started; SDK staged behind contract projection"
+status: "FOCUSED SDK D6 S1+S2 IMPLEMENTED (2026-09-03) — other 899 workstreams remain"
 created: 2026-09-02
 updated: 2026-09-03
 lane: 887 L17
@@ -443,6 +443,97 @@ URL and injected fetch, preserve `200` versus typed lifecycle `503` versus error
 OpenAPI 3.1 nullable/reference shapes, and generate fully offline from the self-contained snapshot.
 Validate that snapshot offline before either generator runs. The generator version and config become
 reviewed inputs to the regen gate; generated output is committed.
+
+#### Active SDK implementation plan (2026-09-03)
+
+This is the active implementation scope for the present worktree. It completes D6 S1 and S2 end to
+end; the contributor-container, community-intake, lifecycle-header/MCP, succession, and diagnostic-
+clipboard workstreams remain separate changes because they do not gate the six-operation client.
+
+- [x] **Establish the contract authority.** Add an immutable `RouteContractPolicy` keyed by HTTP
+  method and route pattern, with stable operation ids, SDK exposure, request/query declarations,
+  status-to-schema declarations, and security metadata derived from `ApiSecurityFilters`. Validate
+  duplicate keys, duplicate operation ids, orphaned routes, and incomplete SDK rows. Migrate every
+  `RouteResponseSchemas` row and delete the superseded class in this same change.
+- [x] **Make the six public responses schema-complete and safe.** Add canonical schemas for the
+  public runtime manifest (without the session token), ready/live probes, lifecycle health/status
+  subset, Host rejection, and sanitized application failures. Route manifest serialization failures
+  through `ApiErrorHandler`; prove hostile exception messages and paths cannot escape.
+- [x] **Project a self-contained SDK OpenAPI document.** Extend the existing in-process Javalin route
+  enumeration rather than maintaining a second route list. Produce only the six allowlisted GET
+  operations, stable operation ids, exact declared statuses, enforcement-derived security details,
+  and bundled local component schemas. Keep the existing full structural OpenAPI and shell
+  `apiRoutes.ts` projection intact.
+- [x] **Close both drift classes.** Add a byte-for-byte source-to-committed-snapshot test and a
+  deterministic regeneration command. Separately execute each declared route outcome and validate
+  its status and serialized body against the policy's schema; include lifecycle `503`, Host `403`,
+  sanitized application failure, and public-projection negative fixtures.
+- [x] **Select and pin the generator.** Run the checked-in snapshot through exact versions of Hey API
+  and Orval using the same fixture. Record the winner from deterministic ESM output, injected-fetch
+  and runtime-base-url support, typed non-2xx bodies, OpenAPI 3.1 shape fidelity, offline generation,
+  and Node 20 runtime compatibility. Remove the losing bakeoff artifacts and dependency.
+- [x] **Ship `@justsearch/runtime-client`.** Add `packages/runtime-client` with committed generated
+  endpoint methods and types plus only a small hand-written loopback/transport/contract-version
+  factory. Keep package SemVer independent of the application and do not expose endpoint paths or
+  response types from hand-written code.
+- [x] **Wire release-quality gates.** Add offline OpenAPI validation, deterministic client regen,
+  TypeScript build/typecheck, packed-file inspection, mocked-fetch status/body tests, and a Node 20
+  runtime smoke to the owning governance/CI path. Run focused Java and Node checks, then the
+  repository-required build and affected tests once the shared Gradle lease is clear.
+- [ ] **Prove live compatibility and close out.** Start an owned development stack, call all six
+  generated operations through the package (including a normal lifecycle-unavailable outcome where
+  feasible), verify the runtime-contract compatibility check, stop the owned stack, update canonical
+  runtime-contract/contributor documentation and this evidence ledger, perform a refute-first review,
+  and commit explicit paths without publishing or opening a PR.
+
+#### Focused SDK implementation evidence (2026-09-03)
+
+- `RouteContractPolicy` now supersedes `RouteResponseSchemas`. The six SDK rows carry stable
+  operation ids, exact status/schema maps, explicit empty query shapes, and security projected by
+  `ApiSecurityFilters.contractSecurity`; duplicate routes/operation ids and orphaned SDK rows fail
+  closed. The existing nine internal schema rows moved into the same policy.
+- Five canonical response schemas now cover the public manifest, readiness, liveness, lifecycle
+  minimum, and ordinary API errors. Real HTTP tests validate manifest/mirror `200`/`503`, readiness
+  `200`/`503`, liveness `200`, health `200`/`503`, status `200`, Host rejection `403`, and a hostile
+  manifest serialization failure `500`. The last case confirms that exception text, a token-like
+  value, and a private path do not reach the response.
+- `generateRuntimeClientOpenApi` registers the production `RuntimeApiRoutes` and the lifecycle
+  registration seam, then emits a self-contained OpenAPI 3.1 snapshot containing exactly six GET
+  operations and bundled schemas. `SdkOpenApiProjectionTest` compares that output byte-for-byte
+  with the committed snapshot and rejects internal/MCP/token/SSE leakage.
+- Generator bakeoff used the same committed snapshot. `@hey-api/openapi-ts@0.99.0` plus its exact
+  TypeScript peer failed on the valid self-contained fixture with an unresolved `finalName`; no Hey
+  API artifact or dependency remains. `orval@8.27.0` generated deterministic Fetch/ESM output and
+  preserved the typed `200`/`403`/`500`/`503` unions, so it is pinned with TypeScript `5.9.3` and
+  `@types/node@20.19.43`.
+- `@justsearch/runtime-client@0.1.0` is a pack-ready, ESM-only Node 20+ package. Only generated
+  endpoint methods/types plus a small loopback-only, injected-fetch, per-client transport and an
+  exact Runtime Contract `0.2.0` compatibility check are exposed. Package inputs/config/source are
+  excluded from the tarball; `LICENSE` and `NOTICE` are required and checked against repository
+  copies. npm publication was not performed.
+- CI's existing Build lane installs the pinned generator under Node 24 and rejects generated-source
+  drift. After the repository assemble, it switches to Node 20 and runs package build/tests plus
+  packed-file inspection. The app-ui unit lane independently closes Java route-source → OpenAPI
+  snapshot drift.
+- Verification: full `:modules:ui:test` passed (938 tests, one skipped before the final two added
+  HTTP assertions; the full rerun after those assertions also passed), launcher
+  `UnreferencedCodeTest` passed, repository `build -x test` passed (251 tasks), package regen/tests/
+  pack passed, direct Node 20 tests passed 4/4, docs regeneration/checks passed, workflow policy
+  tests passed, and `git diff --check` passed before final closeout.
+- Outside-plan live evidence: the built package called all six operations against the active local
+  JustSearch Runtime Contract `0.2.0` process and passed with readiness `503` and health `200`. That
+  process was a live jseval backend owned by worktree 893, so this is honest cross-worktree contract
+  compatibility evidence, not a claim that this worktree's server distribution was launched.
+- The independent refute-first review found three issues, all fixed before closeout: nested manifest
+  objects now expose their actual typed public fields while retaining the contract's additive-field
+  tolerance; the client compatibility constant is generated from the OpenAPI runtime-contract
+  extension and its test reads that same extension; and the factory rejects path-prefixed base URLs
+  while generated absolute paths resolve from the loopback origin.
+- Remaining proof before publication: run the same six-operation smoke against an owned stack built
+  from this worktree. The neighboring jseval run released the shared port, but the dev-runner then
+  rejected this Codex sibling worktree path as `INVALID_DIST_FROM` because it currently accepts only
+  main or worktrees beneath `.claude/worktrees`. Repository policy forbids bypassing that runner with
+  a manual backend launch.
 
 ### Design reach
 

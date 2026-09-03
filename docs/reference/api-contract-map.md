@@ -11,6 +11,25 @@ This doc answers: "Where is the source of truth for JustSearch API schemas and s
 
 ## HTTP (Local API)
 
+### Route contract policy and SDK projection
+
+`modules/ui/src/main/java/io/justsearch/ui/api/RouteContractPolicy.java` is the declarative route
+contract overlay keyed by HTTP method and route pattern. It records response schemas and status
+codes for documented routes, and marks the small public subset eligible for generated SDKs with a
+stable operation id. Security metadata is derived from `ApiSecurityFilters`, not copied into a
+parallel allowlist.
+
+`SdkOpenApiProjection` applies that policy to routes discovered from the real `RuntimeApiRoutes`
+and lifecycle route registrars. Its committed, byte-stable output is
+`packages/runtime-client/openapi/runtime-client.openapi.json`; tests reject duplicate operation
+ids, policy rows with no registered route, public routes without complete response mappings, and
+internal routes leaking into the SDK. Canonical response schemas live in `SSOT/schemas/` and are
+served by `SchemaController` as well as embedded into the SDK projection.
+
+The projection currently contains exactly six read-only operations: runtime manifest and mirror,
+readiness, liveness, health, and status. See [Runtime Contract](runtime-contract.md#generated-node-client)
+for package scope and regeneration commands.
+
 ### Lifecycle schema v1 (minimum stable subset)
 
 **Source of truth:** `modules/ui/src/test/java/io/justsearch/ui/api/LifecycleContractTest.java`

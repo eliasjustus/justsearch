@@ -88,6 +88,8 @@ final class LifecycleContractTest {
               HttpResponse.BodyHandlers.ofString());
 
       assertEquals(200, resp.statusCode());
+      ContractSchemaAssertions.assertConforms(
+          "GET /api/health status 200", "lifecycle-snapshot.v1.json", resp.body());
       JsonNode json = MAPPER.readTree(resp.body());
       assertSchemaV1(json);
       assertEquals("LIFECYCLE_STATE_DEGRADED", json.path("lifecycle").path("state").asText());
@@ -121,6 +123,8 @@ final class LifecycleContractTest {
               HttpResponse.BodyHandlers.ofString());
 
       assertEquals(503, resp.statusCode());
+      ContractSchemaAssertions.assertConforms(
+          "GET /api/health status 503", "lifecycle-snapshot.v1.json", resp.body());
       JsonNode json = MAPPER.readTree(resp.body());
       assertSchemaV1(json);
       assertEquals("LIFECYCLE_STATE_ERROR", json.path("lifecycle").path("state").asText());
@@ -149,6 +153,8 @@ final class LifecycleContractTest {
               HttpResponse.BodyHandlers.ofString());
 
       assertEquals(200, resp.statusCode());
+      ContractSchemaAssertions.assertConforms(
+          "GET /api/status status 200", "lifecycle-snapshot.v1.json", resp.body());
       JsonNode json = MAPPER.readTree(resp.body());
       // /api/status is a superset of the schema v1 health fields;
       // check the required v1 fields are present, not exact match.

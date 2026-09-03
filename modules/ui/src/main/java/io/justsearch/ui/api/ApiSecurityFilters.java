@@ -43,6 +43,17 @@ final class ApiSecurityFilters {
   private static final String TAURI_WEBVIEW_HOST = "tauri.localhost";
   /** Methods that require the session token in prod mode. */
   private static final Set<String> TOKEN_REQUIRED_METHODS = Set.of("POST", "PUT", "DELETE");
+
+  /** Contract-facing projection of the filters that actually enforce this route. */
+  record ContractSecurity(
+      boolean loopbackHostRequired, boolean sessionTokenRequired, boolean mcpOriginValidated) {}
+
+  static ContractSecurity contractSecurity(String method, String path) {
+    return new ContractSecurity(
+        true,
+        requiresSessionToken(method, path),
+        MCP_ENDPOINT_PATH.equals(path) || MCP_TOKEN_PATH.equals(path));
+  }
   /**
    * The MCP Streamable-HTTP endpoint path, shared with the route registration in {@link
    * LocalApiServer} so the guarded path and the routed path cannot drift. The spec's

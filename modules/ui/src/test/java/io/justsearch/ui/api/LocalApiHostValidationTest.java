@@ -60,20 +60,22 @@ class LocalApiHostValidationTest {
   @DisplayName("Live: a token-exempt GET read with a foreign Host is rejected with 403")
   void liveGetReadWithForeignHostIsForbidden() throws Exception {
     startHostGuardedServer();
-    int status = rawGet("evil.com", "/api/knowledge/search");
-    assertEquals(403, status, "A foreign Host must be rejected even on a token-exempt GET read");
+    RawResponse response = rawGet("evil.com", "/api/knowledge/search");
+    assertEquals(403, response.status(), "A foreign Host must be rejected even on a token-exempt GET read");
+    ContractSchemaAssertions.assertConforms(
+        "Host rejection status 403", "api-error-response.v1.json", response.body());
   }
 
   @Test
   @DisplayName("Live: the same GET read with the real loopback Host succeeds")
   void liveLoopbackHostSucceeds() throws Exception {
     startHostGuardedServer();
-    int status = rawGet("127.0.0.1:" + port, "/api/knowledge/search");
-    assertEquals(200, status, "Legitimate loopback Host must pass the guard");
+    RawResponse response = rawGet("127.0.0.1:" + port, "/api/knowledge/search");
+    assertEquals(200, response.status(), "Legitimate loopback Host must pass the guard");
   }
 
-  /** Sends a raw HTTP/1.1 GET with an explicit Host header and returns the response status code. */
-  private int rawGet(String hostHeader, String path) throws Exception {
+  /** Sends a raw HTTP/1.1 GET with an explicit Host header and returns its status and body. */
+  private RawResponse rawGet(String hostHeader, String path) throws Exception {
     try (java.net.Socket socket = new java.net.Socket()) {
       socket.connect(new java.net.InetSocketAddress("127.0.0.1", port), 2000);
       socket.setSoTimeout(3000);
@@ -84,17 +86,20 @@ class LocalApiHostValidationTest {
               + "\r\n";
       socket.getOutputStream().write(request.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
       socket.getOutputStream().flush();
-      var reader =
-          new java.io.BufferedReader(
-              new java.io.InputStreamReader(
-                  socket.getInputStream(), java.nio.charset.StandardCharsets.US_ASCII));
-      String statusLine = reader.readLine(); // e.g. "HTTP/1.1 403 Forbidden"
+      String wire =
+          new String(socket.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+      int separator = wire.indexOf("\r\n\r\n");
+      assertTrue(separator >= 0, "Expected HTTP headers and a response body: " + wire);
+      String headers = wire.substring(0, separator);
+      String statusLine = headers.lines().findFirst().orElse(null); // e.g. "HTTP/1.1 403 Forbidden"
       assertNotNull(statusLine, "Expected an HTTP status line");
       String[] parts = statusLine.split(" ");
       assertTrue(parts.length >= 2, "Malformed status line: " + statusLine);
-      return Integer.parseInt(parts[1]);
+      return new RawResponse(Integer.parseInt(parts[1]), wire.substring(separator + 4));
     }
   }
+
+  private record RawResponse(int status, String body) {}
 
   /**
    * Minimal hermetic server that installs ONLY the Host-validation guard (the same predicate the
@@ -105,6 +110,8 @@ class LocalApiHostValidationTest {
       cfg.showJavalinBanner = false;
       cfg.jsonMapper(new io.justsearch.ui.json.Jackson3JsonMapper());
     });
+    // Production preserves a body already written by a filter while propagating its status.
+    app.exception(io.javalin.http.HttpResponseException.class, (e, ctx) -> ctx.status(e.getStatus()));
 
     app.before(
         ctx -> {

@@ -23,8 +23,7 @@ public final class StatusRoutes {
       SettingsController settingsController,
       PolicyController policyController,
       DiagnosticsController diagnosticsController) {
-    app.get("/api/status", statusHandler);
-    app.get("/api/health", healthHandler);
+    registerLifecycleRoutes(app, statusHandler, healthHandler);
 
     if (telemetry instanceof LocalTelemetry lt) {
       var telemetryHealthController = new TelemetryHealthController(lt::getHealthSnapshot);
@@ -44,5 +43,12 @@ public final class StatusRoutes {
     app.post("/api/diagnostics/export", diagnosticsController::handleExport);
     // Tempdoc 518 Appendix G Wave D.1: in-product trace explorer endpoint.
     app.get("/api/diagnostics/traces", diagnosticsController::handleRecentTraces);
+  }
+
+  /** Shared registration seam used by the runtime-client contract projection tests. */
+  public static void registerLifecycleRoutes(
+      Javalin app, Handler statusHandler, Handler healthHandler) {
+    app.get("/api/status", statusHandler);
+    app.get("/api/health", healthHandler);
   }
 }

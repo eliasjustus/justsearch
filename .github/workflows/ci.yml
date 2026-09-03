@@ -585,9 +585,16 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             modules/ui-web/package-lock.json
+            packages/runtime-client/package-lock.json
 
       - name: Install root dependencies
         run: npm ci
+
+      - name: Install runtime client generator dependencies
+        run: npm ci --prefix packages/runtime-client --ignore-scripts
+
+      - name: Runtime client generated source is in sync
+        run: npm --prefix packages/runtime-client run check:regen
 
       - name: Assemble without model blobs
         shell: bash
@@ -608,6 +615,16 @@ jobs:
             build/ci/build-attribution.md
             build/ci/build-task-timing.json
           if-no-files-found: warn
+
+      - name: Setup runtime client minimum Node version
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Test and inspect the packed runtime client
+        run: |
+          npm --prefix packages/runtime-client test
+          npm --prefix packages/runtime-client run check:pack
 
   unit-tests:
     name: Unit tests (${{ matrix.lane }})

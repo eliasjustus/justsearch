@@ -156,6 +156,16 @@ tasks.withType<Test>().configureEach {
   }
 }
 
+tasks.register<JavaExec>("generateRuntimeClientOpenApi") {
+  group = "code generation"
+  description = "Regenerate the self-contained @justsearch/runtime-client OpenAPI snapshot."
+  dependsOn(tasks.named("testClasses"))
+  mainClass.set("io.justsearch.ui.api.SdkOpenApiSnapshotMain")
+  classpath = sourceSets["test"].runtimeClasspath
+  args(rootProject.file("packages/runtime-client/openapi/runtime-client.openapi.json").absolutePath)
+  jvmArgs("-Dnet.bytebuddy.experimental=true")
+}
+
 // Integration tests must be hermetic and must not read/write real machine policy locations.
 // The production code resolves machine policy from %PROGRAMDATA%\\JustSearch\\policy.v1.json on Windows.
 // We sandbox PROGRAMDATA for the integrationTest JVM process so tests can create/delete policy files safely.

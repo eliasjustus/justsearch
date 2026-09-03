@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/api-error-response.v1.json",
+  "title": "JustSearch API error response",
+  "type": "object",
+  "properties": {
+    "error": { "type": "string" },
+    "errorCode": { "type": "string" },
+    "errorClass": { "type": "string" },
+    "retryable": { "type": "boolean" },
+    "i18nKey": { "type": "string" },
+    "requestId": { "type": "string" }
+  },
+  "required": ["error", "errorCode"],
+  "additionalProperties": false
+}

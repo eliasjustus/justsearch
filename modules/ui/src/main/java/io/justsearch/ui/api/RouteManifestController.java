@@ -38,9 +38,8 @@ import tools.jackson.databind.json.JsonMapper;
  *       ApiModule#ownedRoutePaths()} — REAL ownership, not a guess. Routes bound by the static
  *       handler-passing {@code *Routes} registrars (deliberately not instance-modules, AHA) have no
  *       owningModule.
- *   <li><b>responseSchema</b> (§D.3a schema dimension) — the generated wire-record JSON Schema a
- *       route returns, from {@link RouteResponseSchemas} (documented wire routes only; partial by
- *       design — see that class).
+ *   <li><b>responseSchema</b> (§D.3a schema dimension) — the 200-response JSON Schema a route
+ *       returns, from {@link RouteContractPolicy} (documented wire routes only; partial by design).
  * </ul>
  *
  * <p>Stateless and constructed inside {@link MetaApiModule} (no LocalApiServer field — keeps the §D.4
@@ -135,7 +134,9 @@ final class RouteManifestController {
                     RouteCohorts.cohortOf(path),
                     ownerByPath.get(path),
                     caps,
-                    RouteResponseSchemas.schemaFor(method, path));
+                    java.util.Optional.ofNullable(RouteContractPolicy.forRoute(method, path))
+                        .map(RouteContractPolicy.Contract::primaryResponseSchema)
+                        .orElse(null));
               } catch (RuntimeException e) {
                 log.warn(
                     "Route manifest: skipping un-classifiable route {} {} — {}",
