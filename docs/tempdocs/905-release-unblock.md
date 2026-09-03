@@ -754,10 +754,13 @@ Residual owner actions:
   self-service QR reset requires the 4-digit eSigner PIN; its PIN reset requires either a current OTP
   or the current PIN. The owner then reported three unsuccessful PIN attempts followed by a provider
   disablement message. Treat this as a signing-credential lockout pending provider confirmation:
-  SSL.com's error reference says only its support team can re-enable a backend-disabled credential.
-  Do not order another token or credential, and do not guess further PINs. Ask support to re-enable the
-  existing credential and restore the PIN/QR/TOTP enrollment path rather than rotating repository
-  state.
+  SSL.com's error reference says only its support team can re-enable a credential showing the exact
+  `key status is disabled` error. Its public eSigner documentation does not state a three-attempt
+  threshold, so the reported sequence does not by itself prove that exact backend state; preserve the
+  literal portal message for support. Do not order another token or credential, and do not guess
+  further PINs. The portal's additional-token path purchases a separate physical YubiKey, whereas
+  JustSearch uses eSigner cloud CodeSignTool. Ask support to re-enable the existing credential and
+  restore the PIN/QR/TOTP enrollment path rather than rotating repository state.
 - A narrow, explicitly non-qualifying whole-product Windows Sandbox probe used WinGet `v1.29.290`.
   The clean final result validated the schema-1.12 manifest bundle, downloaded the published v0.2.0
   installer, verified SHA-256
