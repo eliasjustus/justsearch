@@ -22,6 +22,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
+import { repinFinding, repinRuleDescription } from '../../lib/declared-growth-repin.mjs';
 
 const TOOL_NAME = 'justsearch-dead-code-jvm';
 const TOOL_VERSION = '0.1.0';
@@ -37,6 +38,7 @@ export const DEAD_CODE_JVM_RULE_DESCRIPTIONS = {
   'dead-code-jvm/new-dead-class':
     'A class became whole-program-unreferenced without a declared changeset (potential dead code)',
   'dead-code-jvm/declared-growth': 'New dead class is covered by a declared changeset',
+  ...repinRuleDescription('dead-code-jvm'),
   'dead-code-jvm/rebalance-available':
     'A baseline dead class is gone from the report; the ratchet can be shrunk (--rebalance)',
   'dead-code-jvm/rebalanced': 'Baseline auto-shrunk',
@@ -106,6 +108,9 @@ export async function enforce(options) {
   const growthCovered = decls.some((d) =>
     ['declared-growth', 'test-wired-infra', 'emergency-override'].includes(d.classification),
   );
+  const growthCls = decls.find((d) =>
+    ['declared-growth', 'test-wired-infra', 'emergency-override'].includes(d.classification),
+  )?.classification ?? 'declared-growth';
 
   let verdict = 'pass';
 
@@ -113,7 +118,13 @@ export async function enforce(options) {
   for (const sym of [...current].sort()) {
     if (baseline.has(sym)) continue;
     if (growthCovered) {
-      findings.push({ ruleId: 'dead-code-jvm/declared-growth', level: 'note', message: `${sym}: new dead class; classification covers`, uri: sym });
+      // Tempdoc 918: the changeset licenses the baseline row, not its absence. This ratchet's
+      // "pin" is set membership, so the re-pin is adding the symbol to baseline.txt.
+      verdict = 'fail';
+      findings.push(repinFinding({
+        rulePrefix: 'dead-code-jvm', classification: growthCls, row: sym,
+        baselineFile: gate.baseline.path, pinLine: sym,
+      }));
     } else {
       verdict = 'fail';
       findings.push({ ruleId: 'dead-code-jvm/new-dead-class', level: 'error', message: `${sym}: newly whole-program-unreferenced without a declared changeset`, uri: sym });

@@ -1,0 +1,35 @@
+# test-to-code ratio ratchet — tempdoc 530 §2.10, seeded by tempdoc 918.
+# <module> <test_loc*1000/main_loc> <date>. Only ratchets UP: a module whose ratio falls below
+# its row fails test-to-code/silent-regression. Derived by the gate's own --rebalance path.
+modules/adapters-lucene 1296 2026-09-03
+modules/ai-backend 305 2026-09-03
+modules/api-contract-projection-java 5395 2026-09-03
+modules/app-agent 1271 2026-09-03
+modules/app-agent-api 287 2026-09-03
+modules/app-api 397 2026-09-03
+modules/app-config 414 2026-09-03
+modules/app-inference 804 2026-09-03
+modules/app-launcher 2823 2026-09-03
+modules/app-observability 738 2026-09-03
+modules/app-services 882 2026-09-03
+modules/app-util 278 2026-09-03
+modules/benchmarks 240 2026-09-03
+modules/configuration 638 2026-09-03
+modules/core 1183 2026-09-03
+modules/core-contracts 868 2026-09-03
+modules/extension-substrate 588 2026-09-03
+modules/gpu-bridge 557 2026-09-03
+modules/indexer-worker 1166 2026-09-03
+modules/indexing 963 2026-09-03
+modules/infra-core 347 2026-09-03
+modules/ipc-common 806 2026-09-03
+modules/ort-common 727 2026-09-03
+modules/prompt-support 158 2026-09-03
+modules/reranker 821 2026-09-03
+modules/ssot-tools 379 2026-09-03
+modules/system-tests 436 2026-09-03
+modules/telemetry 733 2026-09-03
+modules/test-support 385 2026-09-03
+modules/ui 913 2026-09-03
+modules/worker-core 632 2026-09-03
+modules/worker-services 990 2026-09-03

@@ -8,6 +8,8 @@
 import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { resolve, relative, join } from 'node:path';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
+import { repinFinding, repinRuleDescription, REPIN_REGRESSION_RULE_SUFFIX } from '../../lib/declared-growth-repin.mjs';
 
 export const TEST_TO_CODE_CLASSIFICATIONS = new Set([
   'declared-regression', 'merge-import', 'emergency-override', 'ratio-improvement',
@@ -15,6 +17,7 @@ export const TEST_TO_CODE_CLASSIFICATIONS = new Set([
 export const TEST_TO_CODE_RULE_DESCRIPTIONS = {
   'test-to-code/within-baseline': 'Ratio meets or exceeds baseline',
   'test-to-code/silent-regression': 'Test-to-code ratio dropped without a declared changeset',
+  ...repinRuleDescription('test-to-code', REPIN_REGRESSION_RULE_SUFFIX),
   'test-to-code/declared-regression': 'Ratio declined; classification covers',
   'test-to-code/rebalance-available': 'Ratio improved; baseline can be raised',
 };
@@ -90,6 +93,12 @@ export async function enforceTestToCode(options) {
     fixtureMode,
   }) : [];
   const covered = decls.some(d => ['declared-regression','merge-import','emergency-override'].includes(d.classification));
+  const coveringCls = decls.find(d => ['declared-regression','merge-import','emergency-override'].includes(d.classification))?.classification ?? 'declared-regression';
+  // Tempdoc 918: the repin rule needs the floor as it stood at the PR base.
+  const priorText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  const priorBaseline = priorText === null ? null : parseBaseline(priorText);
 
   const findings = [];
   let verdict = 'pass';
@@ -104,7 +113,15 @@ export async function enforceTestToCode(options) {
         verdict = 'fail';
         findings.push({ ruleId: 'test-to-code/silent-regression', level: 'error', message: `${mod}: ratio ${(base/10).toFixed(1)}% → ${(cur/10).toFixed(1)}% without declared changeset`, uri: mod });
       } else {
-        findings.push({ ruleId: 'test-to-code/declared-regression', level: 'note', message: `${mod}: ratio dropped; classification covers`, uri: mod });
+        // Tempdoc 918: the changeset licenses the floor being LOWERED, not a floor left in place
+        // above the measured ratio. The direction is inverted here — this is a floor, not a ceiling.
+        verdict = 'fail';
+        findings.push(repinFinding({
+          rulePrefix: 'test-to-code', classification: coveringCls, row: mod, measured: cur,
+          livePin: base, priorPin: priorBaseline?.get(mod), baselineFile: gate.baseline.path,
+          unit: 'ratio×1000', suffix: REPIN_REGRESSION_RULE_SUFFIX, direction: 'regression',
+          pinLine: `${mod} ${cur} <today>`,
+        }));
       }
     } else if (cur > base) {
       findings.push({ ruleId: 'test-to-code/rebalance-available', level: 'note', message: `${mod}: ratio improved ${(base/10).toFixed(1)}% → ${(cur/10).toFixed(1)}%`, uri: mod });
