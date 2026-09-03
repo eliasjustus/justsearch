@@ -1,7 +1,7 @@
 ---
 title: "Release hardening, package projections, changelog-driven notes, and model promotion"
 type: tempdocs
-status: MERGED (2026-09-03) — release hardening is on main; protected signing credentials and release URL configured; WinGet submission open; paid signing validation, 617 updater evidence, and real model promotion remain open
+status: MERGED (2026-09-03) — release hardening is on main; protected installer signing proven; packaged-verifier cleanup fix pending; WinGet review, 617 updater evidence, and real model promotion remain open
 created: 2026-09-02
 updated: 2026-09-03
 lane: 887 L16
@@ -791,9 +791,32 @@ Residual owner actions:
   automated stages were still running when this note was recorded. Microsoft's policy bot requires
   the owner to personally accept its CLA before merge; no agent accepted that legal agreement on the
   owner's behalf. Microsoft validation/review and that one-time CLA ceremony remain external.
+- With explicit owner authorization, non-release `build-installer.yml` run `33807983478` used the
+  protected `release-signing` Environment with a reviewed provider balance of 240 and a hard ceiling
+  of 12. The signing/build job passed: the attempt journal reserved exactly **8/12** provider calls,
+  all eight were locally verified, the final installer signature passed `signtool`, the extracted
+  installer census accepted 178 MZ files with zero rejected, and no release was published. This proves
+  the migrated Environment credential for the installer workflow and bounds this run's provider usage
+  to eight signatures. The later portal read reached a signed-out session, so **232** is only the
+  arithmetic expectation from 240 minus eight, not a provider-authoritative post-run balance; it must
+  not be reused as admission evidence for another paid dispatch.
+- The separate packaged-verification job then passed its fresh-install, restart/session-token, and
+  upgrade-arrival product legs before its EvidenceBundle Node process aborted during stdout teardown
+  with Windows exit `0xC0000409` / libuv `UV_HANDLE_CLOSING`. The bundle path had already been emitted;
+  the failure was the capture CLI's direct `process.exit()` racing Node's delayed fetch/Undici and
+  stdout-pipe cleanup, not a signing or packaged-product failure. The follow-up replaces forced exit
+  with `process.exitCode` so Node drains naturally, adds a loopback-fetch child-process regression that
+  enforces the one-line stdout contract and forbids forced exits on both completion paths, and wires
+  that test into public CI. The focused regression passes locally. No retry of the paid signing build
+  is justified for this harness-only failure; the fix can be validated without another provider call.
+  The regression also passes on Windows under the workflow's exact Node `24.14.0`; the post-merge full
+  Gradle build/test suites, frontend typecheck, and all 6,269 frontend unit tests pass.
 
-Residual owner-dependent work is now limited to an explicit paid-dispatch decision, validation of
-both signing workflows before deleting repository-scoped copies, a fresh provider-authoritative
-remaining-signature read before every later paid dispatch, tempdoc 617's exact N→N+1 updater lanes,
-and a future model candidate with approved immutable assets, provenance, license, quality, and
-publication authority. Scoop remains deliberately deferred.
+Residual owner-dependent work is now limited to validation of the mirror signer during its next
+natural upstream refresh before deleting repository-scoped credential copies, a fresh
+provider-authoritative remaining-signature read before every later paid dispatch, tempdoc 617's exact
+N→N+1 updater lanes, the external WinGet review/CLA, and a future model candidate with approved
+immutable assets, provenance, license, quality, and publication authority. Re-signing unchanged
+mirrors solely to exercise the same Environment would waste roughly 120 metered signatures, so the
+repository-scoped rollback copies remain until the next necessary mirror refresh. Scoop remains
+deliberately deferred.

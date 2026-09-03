@@ -771,6 +771,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Evidence capture exits cleanly after Windows fetch teardown
+        run: node --test scripts/release/evidence-capture-exit.test.mjs
+
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
