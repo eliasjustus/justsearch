@@ -146,14 +146,14 @@ final class SearchExecutorChunkCollapseIndexIntegrationTest {
   @DisplayName("the two new keys resolve onto the accessors the chunk branch reads")
   void configReachesTheCollapseParameters() {
     ResolvedConfig.HybridSearch off = new ResolvedConfigBuilder().build().hybridSearch();
-    assertEquals(1, off.chunkCollapseOverfetchMultiplier(), "shipped default is the control arm");
+    assertEquals(1, off.chunkCollapseScanCapMultiplier(), "shipped default is the control arm");
     assertEquals(0.0, off.chunkCollapseAggregationLambda(), 0.0);
 
     ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-    builder.put("index.hybrid.chunk_collapse_overfetch_multiplier", 400, "env_var", null, "5");
+    builder.put("index.hybrid.chunk_collapse_scan_cap_multiplier", 400, "env_var", null, "5");
     builder.put("index.hybrid.chunk_collapse_aggregation_lambda", 400, "env_var", null, "0.3");
     ResolvedConfig.HybridSearch on = builder.build().hybridSearch();
-    assertEquals(5, on.chunkCollapseOverfetchMultiplier());
+    assertEquals(5, on.chunkCollapseScanCapMultiplier());
     assertEquals(0.3, on.chunkCollapseAggregationLambda(), 0.0001);
   }
 

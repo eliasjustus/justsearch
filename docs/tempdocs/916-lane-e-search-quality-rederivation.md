@@ -976,6 +976,88 @@ already (§G.2).
 
 ---
 
+## §J Independent review (NEEDS-FIXES) — the lever did not do what its javadoc said
+
+An independent review of #621 at `a6558f09` confirmed the λ=0 bit-identity under a **stronger oracle
+than mine** (full `SearchResult` equality, 60k cases) and confirmed the pre-registrations are
+genuine. It then found the mechanism itself was not wired.
+
+### J.1 BL-1, verified at source before acting on it
+
+`CollapsedParent.toHit()` returned `hit`, whose score is `winner.score()` — the parent's **max**
+(`SearchExecutor.java:1173`, `mergeCollapsedChunkParentHit`). The aggregate was a **sort key that
+never left the method**. Downstream, branch fusion is `cc` by default
+(`ResolvedConfigBuilder.java:535`) and `fuseWithCCNamed` blends **min-max-normalized scores keyed by
+docId** (`HybridFusionUtils.java:506`, `:511`, `:521-524`); the per-branch ranks it also collects are
+debug-only.
+
+So λ's only reachable effect was **set membership at the cut** — and at the shipped
+`scan_cap_multiplier = 1`, `scanCap == limit == collapseLimit`, so λ was **inert end-to-end**.
+
+**What that means for §G and §I: they measured "does a wider collapse scan change set membership"
+(answer: essentially no), never "does score aggregation help".** Both prior verdicts stand as
+correct answers to the wrong question. My §D.4 claim that "only within-branch order and relative
+spacing reach the blend" was **wrong**: the emitted score was the max, so the aggregate's ordering
+reached nothing. This is a `wrong-gate` instance in my own work — I grepped that the accessors were
+read and that the numbers moved, but never checked that the quantity I computed was the quantity the
+next stage consumes.
+
+### J.2 The fix
+
+The aggregate is now the parent's **emitted chunk-branch score**:
+
+```
+emitted = (max + λ·Σ_{i≥1} 0.5^(i-1)·s_i) / (1 + 2λ)
+```
+
+**Normalization, stated:** the decay series sums to 2, so the aggregate is bounded above by
+`max·(1+2λ)`. Dividing by exactly that bound keeps the chunk branch inside `[0,1]` whenever its input
+was, is a **single uniform divisor** so it preserves the aggregate ordering exactly, and is the
+**identity at λ=0** (divisor 1, aggregate = max), which is what keeps the control arm bit-identical.
+A data-dependent min-max over the collapsed set was rejected: it would rescale the λ=0 case and
+destroy bit-identity.
+
+Also fixed in the same change: the maximum is now **tracked** rather than assumed to arrive first
+(production input is descending, but that is an assumption of the caller, not a guarantee of this
+method); `limit <= 0` reproduces the pre-916 edge behaviour (one hit) instead of throwing; λ is
+clamped to `[0,1]` at the method as it already was in `ResolvedConfigBuilder`.
+
+**Key renamed** `chunk_collapse_overfetch_multiplier` → **`chunk_collapse_scan_cap_multiplier`**
+(my call, per the review's nit): it caps how many distinct parents the collapse *scans*, and never
+fetched anything — the chunk legs already over-fetch at ×10 independently. Renamed across
+`EnvRegistry`, `ResolvedConfig`, `ResolvedConfigBuilder`, tests, `environment-variables.md`, the
+regenerated ownership matrix, the changeset and the register in one commit; `config-surface` counts
+are unchanged (113 / 252 / 56) because a rename is not growth.
+
+### J.3 Pre-registered rule for the decisive A/B — COMMITTED BEFORE THE RUN
+
+Driver: **`scripts/jseval/916_collapse_ab.py`** — committed, not gitignored, because the review's
+point that the admissibility filter deciding which arms count was itself untracked is correct.
+
+> Arms: `mixed/legal-clerc-200` and `mixed/enron-qa`, one index each, OFF plus λ ∈ {0.1, 0.3} at
+> `scan_cap_multiplier = 5`, **2 replicates per ON arm**, backend restart per arm, machine signature
+> before and after each. Admissibility unchanged (§I.2): `ce_coverage == "ok"` AND
+> `comparable == true`, enforced in the committed driver; a void arm is re-run, never cited.
+> Noise reference `max(replicate spread, 0.0068)` — a measured spread can only tighten it.
+>
+> **SHIP** the winning λ (flip both defaults) only if: (1) R@10 beats the noise reference on **both**
+> chunked corpora at the same λ; (2) `leak_rate` does not worsen on either; (3) `beir/scifact` at
+> that λ is bit-identical to OFF; (4) all four ratchets green on the shipped ON arm.
+>
+> **REVERT** — mechanism *and* both keys, `config-surface` pin back to 111/250 in the same commit —
+> if no λ satisfies (1)-(3). This is the owner's "no third round" instruction and it is binding: a
+> parked mechanism does not merge. A split is a revert, not a "pick the better corpus".
+>
+> Predictable evasion, named before the numbers exist: "the mechanism is now correct so the earlier
+> parks do not count against it". They do not count *for* it either — this arm is the whole
+> evidence, and it is the last one.
+
+### J.4 Results
+
+*(filled in after the run)*
+
+---
+
 ## §H Register updates made
 
 - **`F-056`** added to `docs/reference/search-quality-register.md` — the Part 2 result: the

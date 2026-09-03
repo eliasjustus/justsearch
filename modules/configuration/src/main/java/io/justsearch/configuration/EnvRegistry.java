@@ -1169,9 +1169,9 @@ public enum EnvRegistry {
     /** Tempdoc 774 Stage 1: chunk-branch collapse cap multiplier (parents = limit × this). */
     HYBRID_CHUNK_COLLAPSE_LIMIT_MULTIPLIER("index.hybrid.chunk_collapse_limit_multiplier",
         "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_LIMIT_MULTIPLIER"),
-    /** Tempdoc 916 Part 2: chunk-collapse over-fetch multiplier (parents scanned = collapse cap x this). */
-    HYBRID_CHUNK_COLLAPSE_OVERFETCH_MULTIPLIER("index.hybrid.chunk_collapse_overfetch_multiplier",
-        "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_OVERFETCH_MULTIPLIER"),
+    /** Tempdoc 916 Part 2: chunk-collapse scan cap multiplier (distinct parents scanned = collapse cap x this). */
+    HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER("index.hybrid.chunk_collapse_scan_cap_multiplier",
+        "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER"),
     /** Tempdoc 916 Part 2: chunk-collapse per-parent aggregation weight for the non-best chunks (0 = max-only). */
     HYBRID_CHUNK_COLLAPSE_AGGREGATION_LAMBDA("index.hybrid.chunk_collapse_aggregation_lambda",
         "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_AGGREGATION_LAMBDA"),

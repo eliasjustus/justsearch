@@ -7,7 +7,7 @@ description: "Canonical YAML/env/sysprop ownership and precedence map."
 
 # Runtime Config Ownership Matrix
 
-Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-09-02.
+Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-09-03.
 
 Precedence note:
 1. `YAML > sysprop > env > default` where a YAML key and env/sysprop fallback both exist.
@@ -55,7 +55,7 @@ Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for `justsearc
 | index.hybrid.chunk_cc_zero_exclude | JUSTSEARCH_HYBRID_CHUNK_CC_ZERO_EXCLUDE | index.hybrid.chunk_cc_zero_exclude | HYBRID_CHUNK_CC_ZERO_EXCLUDE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.chunk_collapse_aggregation_lambda | JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_AGGREGATION_LAMBDA | index.hybrid.chunk_collapse_aggregation_lambda | HYBRID_CHUNK_COLLAPSE_AGGREGATION_LAMBDA | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.chunk_collapse_limit_multiplier | JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_LIMIT_MULTIPLIER | index.hybrid.chunk_collapse_limit_multiplier | HYBRID_CHUNK_COLLAPSE_LIMIT_MULTIPLIER | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| index.hybrid.chunk_collapse_overfetch_multiplier | JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_OVERFETCH_MULTIPLIER | index.hybrid.chunk_collapse_overfetch_multiplier | HYBRID_CHUNK_COLLAPSE_OVERFETCH_MULTIPLIER | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.chunk_collapse_scan_cap_multiplier | JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER | index.hybrid.chunk_collapse_scan_cap_multiplier | HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.chunk_leg_recall_complete_enabled | JUSTSEARCH_HYBRID_CHUNK_LEG_RECALL_COMPLETE_ENABLED | index.hybrid.chunk_leg_recall_complete_enabled | HYBRID_CHUNK_LEG_RECALL_COMPLETE_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.chunk_leg_recall_complete_top_n | JUSTSEARCH_HYBRID_CHUNK_LEG_RECALL_COMPLETE_TOP_N | index.hybrid.chunk_leg_recall_complete_top_n | HYBRID_CHUNK_LEG_RECALL_COMPLETE_TOP_N | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.fusion_strategy | JUSTSEARCH_HYBRID_FUSION_STRATEGY | index.hybrid.fusion_strategy | HYBRID_FUSION_STRATEGY | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

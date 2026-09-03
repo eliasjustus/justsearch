@@ -2,6 +2,7 @@
 package io.justsearch.indexerworker.services.execute;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.SearchHit;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.SearchResult;
@@ -10,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,7 +22,7 @@ import org.junit.jupiter.api.Test;
  * <p>The pre-916 collapse stopped scanning the fused chunk list the instant it had enough distinct
  * parents, so a document whose evidence is spread over several mid-ranked chunks could never
  * surface behind a handful of documents that owned the top chunks. These tests pin the replacement:
- * over-fetch, aggregate per parent, cut last — and pin the shipped defaults as an exact
+ * widen the scan, aggregate per parent, cut last — and pin the shipped defaults as an exact
  * reproduction of the old behaviour so the lever doubles as an A/B control.
  */
 @DisplayName("SearchExecutor chunk collapse — aggregate-then-cut (916 Part 2)")
@@ -36,24 +38,76 @@ final class SearchExecutorChunkCollapseAggregationTest {
   }
 
   /**
-   * The pre-916 collapse, reimplemented here as the no-regression oracle: first-wins by input order,
-   * stop the instant {@code limit} distinct parents exist. Asserting the shipped defaults against
-   * this rather than against hand-written expectations is what makes "lambda 0 reproduces the old
-   * behaviour" a checkable claim instead of a comment.
+   * The pre-916 collapse, reimplemented VERBATIM as the no-regression oracle — returning the whole
+   * {@link SearchResult}, not just the parent ids. The 916 §J review demonstrated that an id-only
+   * oracle is too weak: the first implementation passed it while emitting a score the rest of the
+   * pipeline could not see. Equality here is record equality over hits, scores, fields, debug
+   * scores, provenance and totalHits, which is the property "bit-for-bit" actually claims.
    */
-  private static List<String> pre916Collapse(SearchResult chunkResult, int limit) {
-    Map<String, Float> bestPerParent = new LinkedHashMap<>();
+  private static SearchResult pre916Collapse(SearchResult chunkResult, int limit) {
+    java.util.Map<String, SearchHit> bestPerParent = new LinkedHashMap<>();
     for (SearchHit hit : chunkResult.hits()) {
       String parentId = hit.fields().get(SchemaFields.PARENT_DOC_ID);
       if (parentId == null || parentId.isEmpty()) {
         parentId = hit.docId();
       }
-      bestPerParent.putIfAbsent(parentId, hit.score());
+      SearchHit normalized = pre916Normalize(hit, parentId);
+      SearchHit existing = bestPerParent.get(parentId);
+      if (existing == null) {
+        bestPerParent.put(parentId, normalized);
+      } else {
+        bestPerParent.put(parentId, pre916Merge(existing, normalized));
+      }
       if (bestPerParent.size() >= limit) {
         break;
       }
     }
-    return new ArrayList<>(bestPerParent.keySet());
+    List<SearchHit> collapsed = new ArrayList<>(bestPerParent.values());
+    return new SearchResult(collapsed, collapsed.size(), chunkResult.tookMs(), null);
+  }
+
+  private static SearchHit pre916Normalize(SearchHit hit, String parentId) {
+    if (parentId == null || parentId.isEmpty()) {
+      return hit;
+    }
+    java.util.Map<String, String> f = new java.util.HashMap<>(hit.fields());
+    f.putIfAbsent(SchemaFields.PARENT_DOC_ID, parentId);
+    if (hit.docId() != null && !hit.docId().equals(parentId)) {
+      f.put("_chunk_source_doc_id", hit.docId());
+    }
+    return new SearchHit(parentId, hit.score(), Map.copyOf(f), hit.debugScores(), hit.provenance());
+  }
+
+  private static SearchHit pre916Merge(SearchHit winner, SearchHit sibling) {
+    java.util.Map<String, String> f = new java.util.HashMap<>(winner.fields());
+    for (var e : sibling.fields().entrySet()) {
+      f.putIfAbsent(e.getKey(), e.getValue());
+    }
+    java.util.Map<String, Float> d = new java.util.HashMap<>(winner.debugScores());
+    for (var e : sibling.debugScores().entrySet()) {
+      String k = e.getKey();
+      Float v = e.getValue();
+      if (v == null) {
+        continue;
+      }
+      Float w = d.get(k);
+      if (Set.of("chunk_sparse", "chunk_vector", "chunk_splade").contains(k)) {
+        d.put(k, w == null ? v : Math.max(w, v));
+      } else if (Set.of("chunk_sparse_rank", "chunk_vector_rank", "chunk_splade_rank").contains(k)) {
+        if (w == null) {
+          d.put(k, v);
+        } else if (w > 0f && v > 0f) {
+          d.put(k, Math.min(w, v));
+        } else if (!(w > 0f) && v > 0f) {
+          d.put(k, v);
+        }
+      } else {
+        d.putIfAbsent(k, v);
+      }
+    }
+    return new SearchHit(
+        winner.docId(), winner.score(), Map.copyOf(f), Map.copyOf(d),
+        winner.provenance() != null ? winner.provenance() : sibling.provenance());
   }
 
   private static List<String> parentIds(SearchResult result) {
@@ -73,25 +127,41 @@ final class SearchExecutorChunkCollapseAggregationTest {
   }
 
   @Test
-  @DisplayName("lambda 0 with over-fetch 1 reproduces the pre-916 collapse exactly")
+  @DisplayName("lambda 0 with scan-cap multiplier 1 reproduces the pre-916 collapse EXACTLY")
   void defaultsReproducePre916() {
-    SearchResult in = spreadEvidenceFixture();
-    for (int limit = 1; limit <= 5; limit++) {
-      SearchResult out = SearchExecutor.collapseChunkHitsToParents(in, limit, 1, 0.0);
-      assertEquals(
-          pre916Collapse(in, limit),
-          parentIds(out),
-          "shipped defaults must be the pre-916 collapse at limit=" + limit);
+    for (SearchResult in : List.of(spreadEvidenceFixture(), richFixture())) {
+      for (int limit = 1; limit <= 6; limit++) {
+        assertEquals(
+            pre916Collapse(in, limit),
+            SearchExecutor.collapseChunkHitsToParents(in, limit, 1, 0.0),
+            "shipped defaults must be the pre-916 collapse, whole-result, at limit=" + limit);
+      }
     }
-    SearchResult out = SearchExecutor.collapseChunkHitsToParents(in, 3, 1, 0.0);
-    assertEquals(0.90f, out.hits().get(0).score(), "best chunk score is carried verbatim");
-    assertEquals(0.80f, out.hits().get(1).score());
-    assertEquals(0.55f, out.hits().get(2).score());
+  }
+
+  /** Carries fields, debug scores and provenance so record equality is a real constraint. */
+  private static SearchResult richFixture() {
+    SearchHit a =
+        new SearchHit("c-a0", 0.9f,
+            Map.of(SchemaFields.PARENT_DOC_ID, "p-a", "title", "A"),
+            Map.of("chunk_sparse", 0.4f, "chunk_vector_rank", 3f, "other", 1f));
+    SearchHit a2 =
+        new SearchHit("c-a1", 0.7f,
+            Map.of(SchemaFields.PARENT_DOC_ID, "p-a", "extra", "x"),
+            Map.of("chunk_sparse", 0.8f, "chunk_vector_rank", 1f, "other", 2f));
+    SearchHit b =
+        new SearchHit("c-b0", 0.6f, Map.of(SchemaFields.PARENT_DOC_ID, "p-b"),
+            Map.of("chunk_splade", 0.2f, "chunk_sparse_rank", 0f));
+    SearchHit b2 =
+        new SearchHit("c-b1", 0.5f, Map.of(SchemaFields.PARENT_DOC_ID, "p-b"),
+            Map.of("chunk_splade", 0.1f, "chunk_sparse_rank", 5f));
+    SearchHit c = new SearchHit("c-c0", 0.3f, Map.of(SchemaFields.PARENT_DOC_ID, "p-c"));
+    return fused(List.of(a, a2, b, b2, c));
   }
 
   @Test
-  @DisplayName("over-fetch alone (lambda 0) still ranks by max — no parent overtakes another")
-  void overfetchWithoutLambdaIsOrderPreserving() {
+  @DisplayName("a wider scan alone (lambda 0) still ranks by max — no parent overtakes another")
+  void scanCapWithoutLambdaIsOrderPreserving() {
     SearchResult out =
         SearchExecutor.collapseChunkHitsToParents(spreadEvidenceFixture(), 3, 5, 0.0);
     assertEquals(List.of("p-top", "p-mid", "p-spread"), parentIds(out));
@@ -105,15 +175,18 @@ final class SearchExecutorChunkCollapseAggregationTest {
         SearchExecutor.collapseChunkHitsToParents(spreadEvidenceFixture(), 3, 5, 0.3);
     // p-spread aggregate = 0.55 + 0.3*(1*0.54 + 0.5*0.53 + 0.25*0.52) = 0.8305 > p-mid 0.80.
     assertEquals(List.of("p-top", "p-spread", "p-mid"), parentIds(out));
-    // The delivered hit score stays the best chunk score; only the ordering key aggregates.
-    assertEquals(0.55f, out.hits().get(1).score());
+    // The delivered SCORE is the aggregate, normalized by the 1+2*lambda inflation bound. This is
+    // the property the 916 §J review found missing: branch fusion blends scores, not ranks, so an
+    // aggregate that stays a sort key never reaches the blend.
+    assertEquals(0.8305 / 1.6, out.hits().get(1).score(), 1e-6);
+    assertEquals(0.90 / 1.6, out.hits().get(0).score(), 1e-6);
   }
 
   @Test
   @DisplayName("the limit cut happens AFTER aggregation — a parent first-wins would drop is kept")
   void cutAfterAggregation() {
     SearchResult in = spreadEvidenceFixture();
-    assertEquals(List.of("p-top", "p-mid"), pre916Collapse(in, 2));
+    assertEquals(List.of("p-top", "p-mid"), parentIds(pre916Collapse(in, 2)));
     assertEquals(
         List.of("p-top", "p-mid"),
         parentIds(SearchExecutor.collapseChunkHitsToParents(in, 2, 1, 0.0)));
@@ -185,11 +258,56 @@ final class SearchExecutorChunkCollapseAggregationTest {
   }
 
   @Test
-  @DisplayName("an over-fetch multiplier below 1 is clamped, not treated as a zero scan cap")
-  void overfetchClampedToOne() {
+  @DisplayName("a scan-cap multiplier below 1 is clamped, not treated as a zero scan cap")
+  void scanCapClampedToOne() {
     SearchResult in = spreadEvidenceFixture();
     assertEquals(
         parentIds(SearchExecutor.collapseChunkHitsToParents(in, 3, 1, 0.0)),
         parentIds(SearchExecutor.collapseChunkHitsToParents(in, 3, 0, 0.0)));
+  }
+
+  @Test
+  @DisplayName("the emitted score IS the aggregate, and the branch stays inside [0,1]")
+  void emittedScoreIsTheNormalizedAggregate() {
+    SearchResult out = SearchExecutor.collapseChunkHitsToParents(spreadEvidenceFixture(), 3, 5, 0.3);
+    for (SearchHit h : out.hits()) {
+      assertTrue(h.score() >= 0.0f && h.score() <= 1.0f, "chunk branch must stay in [0,1]: " + h);
+    }
+    // Descending, so the collapse output is directly consumable by fuseWithCCNamed.
+    for (int i = 1; i < out.hits().size(); i++) {
+      assertTrue(out.hits().get(i - 1).score() >= out.hits().get(i).score(), "must be descending");
+    }
+  }
+
+  @Test
+  @DisplayName("a non-descending input still aggregates against the parent's true maximum")
+  void nonDescendingInputTracksTheMaximum() {
+    // fuseWithCC3 always emits descending, but "the caller sorted for me" is an assumption. Here
+    // p-x's BEST chunk arrives second; the aggregate must use 0.80 as the max and demote 0.20.
+    SearchResult in =
+        fused(List.of(chunk("c-lo", "p-x", 0.20f), chunk("c-hi", "p-x", 0.80f)));
+    SearchResult out = SearchExecutor.collapseChunkHitsToParents(in, 1, 5, 0.5);
+    // (0.80 + 0.5*0.20) / (1 + 2*0.5) = 0.90 / 2.0
+    assertEquals(0.90 / 2.0, out.hits().get(0).score(), 1e-6);
+  }
+
+  @Test
+  @DisplayName("limit <= 0 reproduces the pre-916 edge behaviour (one hit) instead of throwing")
+  void nonPositiveLimitMatchesPre916() {
+    SearchResult in = spreadEvidenceFixture();
+    for (int limit : new int[] {0, -1, -7}) {
+      SearchResult out = SearchExecutor.collapseChunkHitsToParents(in, limit, 1, 0.0);
+      assertEquals(1, out.hits().size(), "pre-916 returned one hit at limit=" + limit);
+      assertEquals("p-top", out.hits().get(0).docId());
+    }
+  }
+
+  @Test
+  @DisplayName("lambda above 1 is clamped, matching the resolved-config clamp")
+  void lambdaClampedToOne() {
+    SearchResult in = spreadEvidenceFixture();
+    assertEquals(
+        SearchExecutor.collapseChunkHitsToParents(in, 3, 5, 1.0).hits(),
+        SearchExecutor.collapseChunkHitsToParents(in, 3, 5, 9.0).hits());
   }
 }

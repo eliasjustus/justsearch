@@ -863,11 +863,11 @@ public record ResolvedConfig(
       // fusion = limit × this; default 2 reproduces the old hardcoded 2×limit).
       int chunkCollapseLimitMultiplier,
       // Tempdoc 916 Part 2 (lane E) - aggregate-then-cut parent collapse. The collapse scans
-      // limit x chunkCollapseLimitMultiplier x chunkCollapseOverfetchMultiplier distinct parents,
+      // limit x chunkCollapseLimitMultiplier x chunkCollapseScanCapMultiplier distinct parents,
       // scores each parent as max + lambda * sum(geometrically decayed remaining chunk scores),
       // and only then cuts to the collapse cap. Defaults (1, 0.0) reproduce the pre-916
       // first-wins/max collapse bit-for-bit, so they are also the A/B control arm.
-      int chunkCollapseOverfetchMultiplier,
+      int chunkCollapseScanCapMultiplier,
       double chunkCollapseAggregationLambda,
       // Tempdoc 774 Stage 1 — chunk-side recall-complete: splice the chunk branch's per-leg top-N
       // parents into the merged list (the passage-granularity twin of the doc-side guarantee).

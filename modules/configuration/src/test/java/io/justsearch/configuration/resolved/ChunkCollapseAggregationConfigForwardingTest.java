@@ -28,16 +28,16 @@ import org.junit.jupiter.api.io.TempDir;
  */
 final class ChunkCollapseAggregationConfigForwardingTest {
 
-  private static final String OVERFETCH_KEY = "index.hybrid.chunk_collapse_overfetch_multiplier";
+  private static final String SCAN_CAP_KEY = "index.hybrid.chunk_collapse_scan_cap_multiplier";
   private static final String LAMBDA_KEY = "index.hybrid.chunk_collapse_aggregation_lambda";
 
   @Test
   @DisplayName("both keys are declared in EnvRegistry with the documented names")
   void keysAreDeclared() {
-    assertEquals(OVERFETCH_KEY, EnvRegistry.HYBRID_CHUNK_COLLAPSE_OVERFETCH_MULTIPLIER.configKey());
+    assertEquals(SCAN_CAP_KEY, EnvRegistry.HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER.configKey());
     assertEquals(
-        "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_OVERFETCH_MULTIPLIER",
-        EnvRegistry.HYBRID_CHUNK_COLLAPSE_OVERFETCH_MULTIPLIER.envVar());
+        "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER",
+        EnvRegistry.HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER.envVar());
     assertEquals(LAMBDA_KEY, EnvRegistry.HYBRID_CHUNK_COLLAPSE_AGGREGATION_LAMBDA.configKey());
     assertEquals(
         "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_AGGREGATION_LAMBDA",
@@ -51,7 +51,7 @@ final class ChunkCollapseAggregationConfigForwardingTest {
     builder.contributeEnvRegistry();
     ResolvedConfig.HybridSearch h = builder.build().hybridSearch();
 
-    assertEquals(1, h.chunkCollapseOverfetchMultiplier());
+    assertEquals(1, h.chunkCollapseScanCapMultiplier());
     assertEquals(0.0, h.chunkCollapseAggregationLambda(), 0.0);
   }
 
@@ -60,16 +60,16 @@ final class ChunkCollapseAggregationConfigForwardingTest {
   void overrideReachesTheWorkerThroughTheSnapshot(@TempDir Path tmp) throws IOException {
     ResolvedConfigBuilder head = new ResolvedConfigBuilder();
     head.contributeEnvRegistry();
-    head.put(OVERFETCH_KEY, 400, "env_var", OVERFETCH_KEY, "5");
+    head.put(SCAN_CAP_KEY, 400, "env_var", SCAN_CAP_KEY, "5");
     head.put(LAMBDA_KEY, 400, "env_var", LAMBDA_KEY, "0.3");
     ResolvedConfig headConfig = head.build();
-    assertEquals(5, headConfig.hybridSearch().chunkCollapseOverfetchMultiplier());
+    assertEquals(5, headConfig.hybridSearch().chunkCollapseScanCapMultiplier());
     assertEquals(0.3, headConfig.hybridSearch().chunkCollapseAggregationLambda(), 0.0001);
 
     Path snapshot = tmp.resolve("worker-config-snapshot.json");
     headConfig.toWorkerSnapshot(snapshot);
     String json = Files.readString(snapshot);
-    assertTrue(json.contains(OVERFETCH_KEY), "the key must actually be written to the snapshot");
+    assertTrue(json.contains(SCAN_CAP_KEY), "the key must actually be written to the snapshot");
     assertTrue(json.contains(LAMBDA_KEY));
 
     // Worker side: exactly what IndexerWorker does — snapshot at ordinal 450 over EnvRegistry.
@@ -80,8 +80,8 @@ final class ChunkCollapseAggregationConfigForwardingTest {
 
     assertEquals(
         5,
-        workerHybrid.chunkCollapseOverfetchMultiplier(),
-        "the Worker must see the Head's over-fetch multiplier, not the default");
+        workerHybrid.chunkCollapseScanCapMultiplier(),
+        "the Worker must see the Head's scan cap multiplier, not the default");
     assertEquals(
         0.3,
         workerHybrid.chunkCollapseAggregationLambda(),
@@ -102,7 +102,7 @@ final class ChunkCollapseAggregationConfigForwardingTest {
     worker.contributeEnvRegistry();
     ResolvedConfig.HybridSearch h = worker.build().hybridSearch();
 
-    assertEquals(1, h.chunkCollapseOverfetchMultiplier());
+    assertEquals(1, h.chunkCollapseScanCapMultiplier());
     assertEquals(0.0, h.chunkCollapseAggregationLambda(), 0.0);
   }
 }
