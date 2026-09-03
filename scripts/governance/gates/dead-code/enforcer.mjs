@@ -24,6 +24,7 @@ import { loadChangesets } from '../../lib/changeset-loader.mjs';
 import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
 import { loadTypeScript, normalizeWholeFileCount } from './export-count.mjs';
 import { verdictForBaselineShift } from './truth-table.mjs';
+import { repinFinding, repinRuleDescription } from '../../lib/declared-growth-repin.mjs';
 
 export const DEAD_CODE_CLASSIFICATIONS = new Set([
   'declared-growth', 'merge-import', 'emergency-override', 'unused-export-shrink',
@@ -42,6 +43,7 @@ export const DEAD_CODE_RULE_DESCRIPTIONS = {
   'dead-code/report-malformed': 'Knip JSON report could not be parsed (fail-closed)',
   'dead-code/whole-file-uncounted': 'A whole-file finding could not be normalized to its export count (fail-closed)',
   'dead-code/silent-baseline-shift': 'Baseline relaxed in this PR without a declared changeset',
+  ...repinRuleDescription('dead-code'),
 };
 
 /**
@@ -164,6 +166,15 @@ export async function enforceDeadCode(options) {
     fixtureMode,
   }) : [];
   const growthCovered = decls.some(d => GROWTH_COVERING.includes(d.classification));
+  const growthCls = decls.find(d => GROWTH_COVERING.includes(d.classification))?.classification ?? 'declared-growth';
+
+  // Read the prior baseline ONCE, before the count loop: the repin rule (tempdoc 918) needs the
+  // pin's pre-PR value to say whether it moved, and the baseline-shift block below needs the same
+  // text. null means "no prior state" — a new baseline, or a ref without the file.
+  const priorText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  const priorBaseline = priorText === null ? null : parseBaseline(priorText);
 
   const rebalanceWrites = new Map();
   for (const [p, cur] of counts) {
@@ -173,7 +184,13 @@ export async function enforceDeadCode(options) {
         verdict = 'fail';
         findings.push({ ruleId: 'dead-code/silent-growth', level: 'error', message: `${p}: ${pinned} → ${cur} unused exports without declared changeset`, uri: p });
       } else {
-        findings.push({ ruleId: 'dead-code/declared-growth', level: 'note', message: `${p}: ${pinned} → ${cur}; classification covers`, uri: p });
+        // Tempdoc 918: the changeset licenses the pin advance, not an unpinned overflow.
+        verdict = 'fail';
+        findings.push(repinFinding({
+          rulePrefix: 'dead-code', classification: growthCls, row: p, measured: cur,
+          livePin: pinned, priorPin: priorBaseline?.get(p), baselineFile: gate.baseline.path,
+          unit: 'unused exports', pinLine: `${p} ${cur} <today>`,
+        }));
       }
     } else if (cur < pinned) {
       findings.push({ ruleId: rebalance ? 'dead-code/rebalanced' : 'dead-code/rebalance-available', level: 'note', message: `${p}: ${cur} < pinned ${pinned}`, uri: p });
@@ -186,11 +203,7 @@ export async function enforceDeadCode(options) {
   // report `rebalance-available` — a pass. Mirrors todo-fixme/enforcer.mjs:129-149, the closest
   // sibling (same `<path> <count> <date>` shape, same per-file dynamic key set).
   // null means "no prior state" (a new baseline, or a ref without the file) — skip, never "all grew".
-  const priorText = readPriorBaselineText({
-    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
-  });
-  if (priorText !== null) {
-    const priorBaseline = parseBaseline(priorText);
+  if (priorBaseline !== null) {
     const covering = decls.find(d => BASELINE_SHIFT_COVERING.includes(d.classification));
     const cls = covering ? covering.classification : 'silent-growth';
     for (const [p, livePin] of baseline.entries()) {

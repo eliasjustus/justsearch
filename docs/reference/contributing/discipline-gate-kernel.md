@@ -93,6 +93,34 @@ in the PR's diff vs. the baseline ref count. Changesets present at baseline
 are ignored. In `fixtureMode` (self-test), all `.md` files in the directory
 count (no git diff).
 
+### A growth-licensing changeset must re-pin in the same diff (enforced)
+
+**A changeset licenses the PIN ADVANCE, not an unpinned overflow.** If a row's
+measured value exceeds its live pin, the gate fails even with a covering
+changeset present — with `<gate>/declared-growth-without-repin` (or
+`…/declared-regression-without-repin` for the floor-shaped gates) rather than
+`<gate>/silent-growth`. The finding names the pin file, the row, the measured
+value and the line to write. Advance the pin to at least the measured value in
+the **same commit**; keep the changeset, because for the gates that also ratchet
+their baseline file the changeset is what licenses that edit.
+
+This used to be advice, and being advice is what made it a recurring incident.
+PR-scope discovery means a changeset without a re-pin buys exactly one PR of
+silence: at squash-merge the changeset leaves the diff, the live value still
+exceeds the pin, and the *next* push to `main` fails `silent-growth` on a row
+nobody touched. Observed three times — #517→854 and #595→885 (`config-surface`,
+tempdoc 883) and #614→#613/#615 (`dead-code`, tempdoc 910 §E.9) — each found by a
+later lane rather than by the lane that caused it. Tempdoc 918 made it a rule.
+
+Where the rule lives: `scripts/governance/lib/declared-growth-repin.mjs` (id,
+description, wording, fail decision) called from each gate's live-exceedance
+branch. It is a library rather than a runner-level pass because gates emit the
+same `<gate>/declared-growth` id from their *baseline-shift* block for a pin
+that WAS raised under a changeset — the case the rule exists to permit — so only
+the gate can tell its two notes apart. `repin-coverage.test.mjs` asserts every
+registered gate whose vocabulary licenses growth either calls the rule or is
+listed exempt with a reason.
+
 ## CLI
 
 ```bash
@@ -247,6 +275,11 @@ changed, a consumer-drift slot's `expectedMin` lowered or a slot removed
 This closes the silent escape-hatch class the tempdoc named: "edit the
 baseline in the same commit as the change so the gate sees nothing wrong."
 Both the *live state* and the *baseline state* are gated.
+
+The complementary direction — a changeset that licenses growth but leaves the
+pin where it was — is gated too, by the re-pin rule above. Together: growth
+without a changeset fails; a pin raise without a changeset fails; a changeset
+without a pin raise fails. The only passing shape is both, in one commit.
 
 ## Truth-table shape contract
 

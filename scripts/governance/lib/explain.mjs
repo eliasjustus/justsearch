@@ -52,6 +52,21 @@ export async function explainRule({ ruleId, gates, repoRoot }) {
   console.log(`  ${description}`);
   console.log();
 
+  // The repin rule (tempdoc 918) is the one fail-shaped rule whose remedy is NOT a changeset — the
+  // author already wrote one. Checked FIRST: `declared-regression-without-repin` matches the
+  // 'regression' substring below and would otherwise be answered with the changeset template it
+  // is telling the author is insufficient.
+  if (ruleId.endsWith('-without-repin')) {
+    console.log('Remedy: advance the baseline pin for the named row, in the SAME commit as the');
+    console.log('changeset, to at least the measured value. Do NOT write a second changeset — you');
+    console.log('already have one, and it is what licenses the pin edit. The finding names the pin');
+    console.log('file, the row and the value to write.');
+    console.log();
+    console.log(`See docs/reference/contributing/discipline-gate-kernel.md (Changeset escape-hatch`);
+    console.log(`protocol) and gates/${owningGate.id}/.changesets/README.md.`);
+    return;
+  }
+
   // For fail-ruleIds, print a template changeset.
   if (ruleId.includes('silent-') || ruleId.includes('exceeded') || ruleId.includes('untagged') || ruleId.includes('unresolved') || ruleId.includes('regression')) {
     console.log(`Template changeset (write to gates/${owningGate.id}/.changesets/<name>.md):`);

@@ -67,6 +67,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             modules/ui-web/package-lock.json
+            scripts/wire-contract/package-lock.json
 
       - name: Setup Python for zero-cost claim replay
         uses: actions/setup-python@v7
@@ -273,6 +274,47 @@ jobs:
           node scripts/governance/run.mjs \
             --gate operation-surface --gate execution-surface --gate register-guard-resolution \
             --mode gate
+
+      # Tempdoc 918 item 2, closing 913 open item 1. Each of the 20 unwired gates was run bare on
+      # the base and classified (census: tempdoc 918 §D). These 17 are green on `main` AND hermetic
+      # -- measured in a worktree with no node_modules anywhere, so they need no install step, no
+      # Gradle output, no protoc and no dev stack; the whole set runs in ~8.4s. They read checked-in
+      # registers, catalogs and source text, which is why they can sit above the ui-web install
+      # rather than after it.
+      #
+      # Three of the 20 are deliberately NOT here:
+      #   - ts-any       red on `main` behind expected-state pin `ts-any-gate-counts-english-prose`
+      #                  (countAny scores the English word "any"); wiring a known red would make
+      #                  every PR red for a reason no PR caused. Wire it with the counting fix.
+      #   - test-efficacy its PIT strength report is an ON-DEMAND input, so without a `:pitest` run
+      #                  the runner SKIPS it (kernel/input-skipped, verdict `skipped`, exit 0).
+      #                  Wiring it here would add a step that can only ever report a vacuous green.
+      #                  It belongs in a lane that produces the report.
+      #   - wire         has its own step below: it needs the buf CLI, and its failure mode without
+      #                  it is a PASS, which is worse than being unwired.
+      - name: Hermetic kernel gates (17, no produced inputs)
+        run: |
+          node scripts/governance/run.mjs \
+            --gate consumer-drift --gate consumer-presence --gate contract-projection \
+            --gate contribution-surface --gate hook-integrity --gate host-owns-truth \
+            --gate interaction-surface --gate observed-happening --gate prose-tier-register \
+            --gate runtime-state --gate runtime-witness --gate ssot-catalog-sync \
+            --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring \
+            --gate test-to-code --gate todo-fixme \
+            --mode gate
+
+      # The `wire` gate (protobuf breaking-change detection) ran in NO workflow and no job covers
+      # `contracts/**` either, so a breaking .proto change had nothing to stop it. It is wired with
+      # its install rather than without, because `buf` absent is not a failure in this gate -- it
+      # emits `contract-governance/buf-cli-missing` and still returns verdict `pass`
+      # (expected-state pin `wire-gate-buf-cli-missing` documents exactly this fail-open). A step
+      # that ran the gate without installing buf would be a permanent green that inspects nothing.
+      # The install is a 2-package `npm ci` against a committed lockfile (~1s locally).
+      - name: Wire contract gate (protobuf breaking changes)
+        run: |
+          npm ci --prefix scripts/wire-contract
+          node scripts/governance/run.mjs --gate wire --mode gate --out tmp/wire-gate.sarif
+          node -e "if (require('fs').readFileSync('tmp/wire-gate.sarif','utf8').includes('buf-cli-missing')) { console.error('wire gate ran without the buf CLI: its pass is vacuous'); process.exit(1); }"
 
       # Tempdoc 884 review B1, same shape as the note above: the kernel's own gate tests
       # (18 *.test.mjs files) ran NOWHERE -- standalone `node <file>` scripts nobody
