@@ -16,28 +16,161 @@ function repoRootFromCwd() {
   return cwd;
 }
 
+function maskJavaCommentsAndLiterals(text) {
+  const chars = [...text];
+  let state = "code";
+  for (let i = 0; i < chars.length; i++) {
+    const current = chars[i];
+    const next = chars[i + 1];
+    if (state === "code") {
+      if (current === "/" && next === "/") {
+        chars[i] = chars[i + 1] = " ";
+        i++;
+        state = "line-comment";
+      } else if (current === "/" && next === "*") {
+        chars[i] = chars[i + 1] = " ";
+        i++;
+        state = "block-comment";
+      } else if (current === '"' && next === '"' && chars[i + 2] === '"') {
+        chars[i] = chars[i + 1] = chars[i + 2] = " ";
+        i += 2;
+        state = "text-block";
+      } else if (current === '"') {
+        chars[i] = " ";
+        state = "string";
+      } else if (current === "'") {
+        chars[i] = " ";
+        state = "char";
+      }
+    } else if (state === "line-comment") {
+      if (current === "\n" || current === "\r") {
+        state = "code";
+      } else {
+        chars[i] = " ";
+      }
+    } else if (state === "block-comment") {
+      chars[i] = " ";
+      if (current === "*" && next === "/") {
+        chars[i + 1] = " ";
+        i++;
+        state = "code";
+      }
+    } else if (state === "text-block") {
+      chars[i] = " ";
+      if (current === '"' && next === '"' && chars[i + 2] === '"') {
+        chars[i + 1] = chars[i + 2] = " ";
+        i += 2;
+        state = "code";
+      }
+    } else {
+      chars[i] = " ";
+      if (current === "\\") {
+        if (i + 1 < chars.length) chars[++i] = " ";
+      } else if ((state === "string" && current === '"')
+          || (state === "char" && current === "'")) {
+        state = "code";
+      }
+    }
+  }
+  if (state !== "code" && state !== "line-comment") {
+    throw new Error(`Unterminated Java ${state}`);
+  }
+  return chars.join("");
+}
+
+/**
+ * Lexically inventories every top-level enum constant independently of the argument-shape parser.
+ * A parity mismatch makes a reformatted declaration fail instead of disappearing from governance.
+ */
+export function censusJavaEnumConstants(text, enumName) {
+  const masked = maskJavaCommentsAndLiterals(text);
+  const header = new RegExp(`\\benum\\s+${enumName}\\b`).exec(masked);
+  if (!header) throw new Error(`Could not find enum ${enumName}`);
+  const open = masked.indexOf("{", header.index + header[0].length);
+  if (open < 0) throw new Error(`Could not find constant block for enum ${enumName}`);
+
+  const names = [];
+  let cursor = open + 1;
+  let expectConstant = true;
+  let parens = 0;
+  let braces = 0;
+  let brackets = 0;
+  for (; cursor < masked.length; cursor++) {
+    if (expectConstant) {
+      while (/\s/.test(masked[cursor] ?? "")) cursor++;
+      if (masked[cursor] === ";") return names;
+      const name = /^[A-Z][A-Z0-9_]*/.exec(masked.slice(cursor));
+      if (!name) {
+        throw new Error(`Could not census enum ${enumName} constant near offset ${cursor}`);
+      }
+      names.push(name[0]);
+      cursor += name[0].length - 1;
+      expectConstant = false;
+      continue;
+    }
+
+    const char = masked[cursor];
+    if (char === "(") parens++;
+    else if (char === ")") parens--;
+    else if (char === "{") braces++;
+    else if (char === "}") braces--;
+    else if (char === "[") brackets++;
+    else if (char === "]") brackets--;
+    else if (parens === 0 && braces === 0 && brackets === 0 && char === ",") {
+      expectConstant = true;
+    } else if (parens === 0 && braces === 0 && brackets === 0 && char === ";") {
+      return names;
+    }
+    if (parens < 0 || braces < 0 || brackets < 0) {
+      throw new Error(`Unbalanced enum ${enumName} constant block near offset ${cursor}`);
+    }
+  }
+  throw new Error(`Enum ${enumName} constant block has no terminating semicolon`);
+}
+
+function assertDeclarationParity(enumName, census, parsed, sourcePath) {
+  const parsedNames = parsed.map((entry) => entry.constant);
+  const parsedSet = new Set(parsedNames);
+  const censusSet = new Set(census);
+  const missing = census.filter((name) => !parsedSet.has(name));
+  const unexpected = parsedNames.filter((name) => !censusSet.has(name));
+  const duplicates = parsedNames.filter((name, index) => parsedNames.indexOf(name) !== index);
+  if (missing.length || unexpected.length || duplicates.length || census.length !== parsed.length) {
+    throw new Error(
+      `${enumName} declaration parity failed in ${sourcePath}: `
+        + `missing=[${missing.join(", ")}] unexpected=[${unexpected.join(", ")}] `
+        + `duplicates=[${[...new Set(duplicates)].join(", ")}] `
+        + `census=${census.length} parsed=${parsed.length}`,
+    );
+  }
+}
+
 /**
  * Parses EnvRegistry.java for operator-facing (sysprop, envVar) pairs.
  * Handles both 2-arg and 3-arg constructors.
  */
 export function parseEnvRegistry(envRegistryPath) {
   const text = fs.readFileSync(envRegistryPath, "utf8");
+  const census = censusJavaEnumConstants(text, "EnvRegistry");
   const bySysprop = new Map();
   const byEnvVar = new Map();
   const entries = [];
 
   const constantPattern =
-    /([A-Z0-9_]+)\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*(?:,\s*"[^"]*")?\s*\)\s*[,;]/g;
+    /([A-Z0-9_]+)\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*(?:,\s*"[^"]*")?\s*,\s*LifecycleStage\.(PERMANENT|EXPERIMENTAL|DEPRECATED)\s*\)\s*[,;]/g;
   for (const match of text.matchAll(constantPattern)) {
     const constant = match[1];
     const sysprop = match[2];
     const envVar = match[3];
-    entries.push({ constant, sysprop, envVar });
+    const lifecycleStage = match[4].toLowerCase();
+    entries.push({ constant, sysprop, envVar, lifecycleStage });
     bySysprop.set(sysprop, constant);
     byEnvVar.set(envVar, constant);
   }
 
-  return { entries, bySysprop, byEnvVar };
+  assertDeclarationParity("EnvRegistry", census, entries, envRegistryPath);
+
+  return { entries, bySysprop, byEnvVar, declarationCount: census.length };
 }
 
 /**
@@ -48,13 +181,20 @@ export function parseConfigKeys(configKeyPath) {
     return { entries: [] };
   }
   const text = fs.readFileSync(configKeyPath, "utf8");
+  const census = censusJavaEnumConstants(text, "ConfigKey");
   const entries = [];
 
-  const pattern = /([A-Z0-9_]+)\s*\(\s*"([^"]+)"\s*\)\s*[,;]/g;
+  const pattern =
+    /([A-Z0-9_]+)\s*\(\s*"([^"]+)"\s*,\s*LifecycleStage\.(PERMANENT|EXPERIMENTAL|DEPRECATED)\s*\)\s*[,;]/g;
   for (const match of text.matchAll(pattern)) {
-    entries.push({ constant: match[1], configKey: match[2] });
+    entries.push({
+      constant: match[1],
+      configKey: match[2],
+      lifecycleStage: match[3].toLowerCase(),
+    });
   }
-  return { entries };
+  assertDeclarationParity("ConfigKey", census, entries, configKeyPath);
+  return { entries, declarationCount: census.length };
 }
 
 /**
@@ -104,6 +244,8 @@ export function buildMatrixModel(opts = {}) {
   for (const entry of envRegistry.entries) {
     const hasYaml = yamlKeySet.has(entry.sysprop);
     rows.push({
+      declaration: `EnvRegistry.${entry.constant}`,
+      lifecycleStage: entry.lifecycleStage,
       yamlKey: hasYaml ? entry.sysprop : "",
       envVar: entry.envVar,
       sysprop: entry.sysprop,
@@ -118,6 +260,8 @@ export function buildMatrixModel(opts = {}) {
   // ConfigKey entries: YAML-only, no env var or sysprop
   for (const entry of configKeys.entries) {
     rows.push({
+      declaration: `ConfigKey.${entry.constant}`,
+      lifecycleStage: entry.lifecycleStage,
       yamlKey: entry.configKey,
       envVar: "",
       sysprop: "",
@@ -173,6 +317,7 @@ export function renderMatrixMarkdown(model) {
   lines.push("1. `YAML > sysprop > env > default` where a YAML key and env/sysprop fallback both exist.");
   lines.push("2. `YAML > default` for YAML-only keys (ConfigKey entries, no env var override).");
   lines.push("3. `sysprop > env > default` for env/sysprop-only runtime knobs.");
+  lines.push("4. Every declaration explicitly carries `permanent`, `experimental`, or `deprecated`; non-permanent rows require joined review metadata in `governance/config-lifecycle.v1.json`.");
   lines.push("");
   lines.push(
     "The per-row notes above cover only the sources this table can derive from `EnvRegistry` /" +
@@ -209,11 +354,11 @@ export function renderMatrixMarkdown(model) {
       " installer-written path from an operator lock.",
   );
   lines.push("");
-  lines.push("| YAML key | Env var | System property | EnvRegistry constant | Owner module | Precedence notes |");
-  lines.push("| :--- | :--- | :--- | :--- | :--- | :--- |");
+  lines.push("| Declaration | Lifecycle | YAML key | Env var | System property | EnvRegistry constant | Owner module | Precedence notes |");
+  lines.push("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |");
   for (const row of model.rows) {
     lines.push(
-      `| ${mdCell(row.yamlKey)} | ${mdCell(row.envVar)} | ${mdCell(row.sysprop)} | ${mdCell(row.envRegistryConstant)} | ${mdCell(row.ownerModule)} | ${mdCell(row.precedenceNotes)} |`,
+      `| ${mdCell(row.declaration)} | ${mdCell(row.lifecycleStage)} | ${mdCell(row.yamlKey)} | ${mdCell(row.envVar)} | ${mdCell(row.sysprop)} | ${mdCell(row.envRegistryConstant)} | ${mdCell(row.ownerModule)} | ${mdCell(row.precedenceNotes)} |`,
     );
   }
   lines.push("");

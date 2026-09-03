@@ -74,17 +74,22 @@ final class RouteManifestController {
   void handle(Context ctx) {
     try {
       List<RouteEntry> routes = build(appSupplier.get(), modulesSupplier.get());
-      Map<String, Object> envelope = new LinkedHashMap<>();
-      envelope.put("$schema", "https://ssot.justsearch/v1/schemas/route-manifest.json");
-      envelope.put("schemaVersion", SCHEMA_VERSION);
-      envelope.put("namespace", "meta-routes");
-      envelope.put("count", routes.size());
-      envelope.put("routes", routes);
-      ctx.contentType("application/json").result(MAPPER.writeValueAsBytes(envelope));
+      ctx.contentType("application/json").result(MAPPER.writeValueAsBytes(envelope(routes)));
     } catch (Exception e) {
       log.error("Failed to build/serialize route manifest", e);
       throw new IllegalStateException("Route manifest serialization failed", e);
     }
+  }
+
+  static Map<String, Object> envelope(List<RouteEntry> routes) {
+    Map<String, Object> envelope = new LinkedHashMap<>();
+    envelope.put("$schema", "https://ssot.justsearch/v1/schemas/route-manifest.json");
+    envelope.put("schemaVersion", SCHEMA_VERSION);
+    envelope.put("namespace", "meta-routes");
+    envelope.put("count", routes.size());
+    envelope.put("routeDigest", RouteDescriptorDigest.sha256(routes));
+    envelope.put("routes", routes);
+    return envelope;
   }
 
   /** The set of HTTP-method route paths currently bound on {@code app} (mutable copy). */

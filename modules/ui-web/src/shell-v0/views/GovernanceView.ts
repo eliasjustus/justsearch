@@ -45,6 +45,16 @@ interface EfficacyProjection {
   scope?: string;
   byGate: GateEfficacy[];
 }
+interface RepositoryHealthProjection {
+  available: boolean;
+  scope?: string;
+  capturedAt?: string;
+  metrics?: {
+    gradleModuleCount: number;
+    testFileCount: number;
+    productionSourceLocByModule: Record<string, number>;
+  };
+}
 interface StrengthFloor {
   id: string;
   minStrength: number;
@@ -79,10 +89,16 @@ export class GovernanceView extends JfElement {
   private load: LoadState = { kind: 'loading' };
   // Joined by gate id; empty when the local history is absent (clean checkout / CI).
   private efficacyByGate = new Map<string, GateEfficacy>();
+  private repositoryHealth?: RepositoryHealthProjection;
 
   constructor() {
     super();
     this.apiBase = '';
+    // The host is this surface's scroll container. Keep the long gate roster reachable by
+    // keyboard and name the nested region for assistive technology.
+    this.tabIndex = 0;
+    this.setAttribute('role', 'region');
+    this.setAttribute('aria-label', 'Governance details');
   }
 
   override connectedCallback(): void {
@@ -110,6 +126,7 @@ export class GovernanceView extends JfElement {
       const body = (await res.json()) as {
         registry?: GovernanceState;
         efficacy?: EfficacyProjection;
+        repositoryHealth?: RepositoryHealthProjection;
       };
       const state = body.registry;
       if (!state || !Array.isArray(state.gates)) {
@@ -121,6 +138,7 @@ export class GovernanceView extends JfElement {
       this.efficacyByGate = new Map(
         (body.efficacy?.byGate ?? []).map((e) => [e.gate, e]),
       );
+      this.repositoryHealth = body.repositoryHealth;
       this.load = { kind: 'ready', state };
     } catch (e) {
       this.load = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
@@ -248,6 +266,8 @@ export class GovernanceView extends JfElement {
         ${this.gateTable(s.gates)}
       </section>
 
+      ${this.repositoryHealthBlock()}
+
       <section>
         <h2>Mutation-strength floors (rung 2)</h2>
         ${this.strengthTable(s.strengthFloors)}
@@ -265,6 +285,25 @@ export class GovernanceView extends JfElement {
       <div class="value">${value}</div>
       <div class="label">${label}</div>
     </div>`;
+  }
+
+  private repositoryHealthBlock(): TemplateResult | typeof nothing {
+    const snapshot = this.repositoryHealth;
+    if (!snapshot?.available || !snapshot.metrics) return nothing;
+    const totalLoc = Object.values(snapshot.metrics.productionSourceLocByModule ?? {})
+      .reduce((sum, value) => sum + value, 0);
+    return html`<section>
+      <h2>Latest local repository snapshot</h2>
+      <p class="disclaimer">
+        Captured ${snapshot.capturedAt ?? 'at an unknown time'} by a local governance run. This is
+        retention-bounded inspection evidence, not durable cross-machine history.
+      </p>
+      <div class="summary">
+        ${this.stat(String(snapshot.metrics.gradleModuleCount), 'Gradle modules')}
+        ${this.stat(String(snapshot.metrics.testFileCount), 'test source files')}
+        ${this.stat(String(totalLoc), 'production source LOC')}
+      </div>
+    </section>`;
   }
 
   private gateTable(gates: GateRow[]): TemplateResult {

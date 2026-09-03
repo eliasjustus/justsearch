@@ -1,7 +1,8 @@
 {
   "$schema": "https://ssot.justsearch/v1/schemas/route-manifest.json",
-  "count": 201,
+  "count": 243,
   "namespace": "meta-routes",
+  "routeDigest": "sha256:9a1ee92e4593d204692792f458554f87ad4165ce51634e76059a1981af0047e6",
   "routes": [
     {
       "method": "GET",
@@ -128,6 +129,14 @@
     },
     {
       "method": "POST",
+      "path": "/api/chat/agent/{sessionId}/ag-ui",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
       "path": "/api/chat/agent/{sessionId}/attach",
       "cohort": "agent",
       "owningModule": null,
@@ -151,8 +160,48 @@
       "responseSchema": null
     },
     {
+      "method": "DELETE",
+      "path": "/api/ai/install/packages/{packageId}/decline",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/install/packages/{packageId}/decline",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/install/pause",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/install/plan-preview",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
       "method": "POST",
       "path": "/api/ai/install/repair",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/install/resume",
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
@@ -169,6 +218,14 @@
     {
       "method": "GET",
       "path": "/api/ai/install/status",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/models/status",
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
@@ -335,8 +392,72 @@
       "responseSchema": null
     },
     {
+      "method": "POST",
+      "path": "/api/chat/conversations/{sessionId}/compact",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/chat/conversations/{sessionId}/context-floor",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/conversations/{sessionId}/context-floor",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/conversations/{sessionId}/context-floor/summary",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
       "method": "GET",
       "path": "/api/chat/conversations/{sessionId}/history",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/conversations/{sessionId}/messages/{messageId}/exclude",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/conversations/{sessionId}/sources/exclude",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/chat/conversations/{sessionId}/title",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/conversations/{sessionId}/title",
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
@@ -377,6 +498,30 @@
     {
       "method": "POST",
       "path": "/api/chat/reject",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/runs",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/runs/live",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/runs/{runId}/observe",
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
@@ -425,6 +570,14 @@
     {
       "method": "GET",
       "path": "/api/chat/sessions/{id}/events",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/sessions/{id}/fork",
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
@@ -663,11 +816,29 @@
       "responseSchema": null
     },
     {
+      "method": "POST",
+      "path": "/api/indexing-roots/preview",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
       "method": "GET",
       "path": "/api/indexing-roots/substrate",
       "cohort": "indexing",
       "owningModule": null,
       "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/indexing/collections",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
       "responseSchema": null
     },
     {
@@ -894,6 +1065,22 @@
     },
     {
       "method": "GET",
+      "path": "/api/feedback/capture",
+      "cohort": "interaction",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/feedback/capture",
+      "cohort": "interaction",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
       "path": "/api/memory",
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
@@ -935,6 +1122,14 @@
     {
       "method": "GET",
       "path": "/api/thread/{id}",
+      "cohort": "interaction",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/thread/{id}/events",
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
@@ -1251,10 +1446,90 @@
       "responseSchema": null
     },
     {
+      "method": "GET",
+      "path": "/api/conversations/encryption",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations/encryption/change-passphrase",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations/encryption/export",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations/encryption/import",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations/encryption/lock",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations/encryption/recover",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations/encryption/regenerate-recovery",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations/encryption/setup",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/conversations/encryption/unlock",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
       "method": "POST",
       "path": "/api/library/resolve-hash",
       "cohort": "other",
       "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/lifecycle/shutdown",
+      "cohort": "other",
+      "owningModule": "LifecycleApiModule",
       "requiredCapabilities": [],
       "responseSchema": null
     },
@@ -1284,6 +1559,14 @@
     },
     {
       "method": "GET",
+      "path": "/api/shell-events/stream",
+      "cohort": "other",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
       "path": "/api/ui/ready",
       "cohort": "other",
       "owningModule": null,
@@ -1295,6 +1578,38 @@
       "path": "/api/ui/ready",
       "cohort": "other",
       "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/upgrade/cancel",
+      "cohort": "other",
+      "owningModule": "UpgradeApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/upgrade/commit-shutdown",
+      "cohort": "other",
+      "owningModule": "UpgradeApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/upgrade/prepare",
+      "cohort": "other",
+      "owningModule": "UpgradeApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/upgrade/reconcile",
+      "cohort": "other",
+      "owningModule": "UpgradeApiModule",
       "requiredCapabilities": [],
       "responseSchema": null
     },
@@ -1420,6 +1735,14 @@
     },
     {
       "method": "GET",
+      "path": "/api/advisory/authorization-pending/stream",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
       "path": "/api/advisory/health-recoverable/stream",
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
@@ -1468,6 +1791,14 @@
     },
     {
       "method": "GET",
+      "path": "/api/authorizations/pending/{id}",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
       "path": "/api/condition-recovery-index",
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
@@ -1496,7 +1827,15 @@
       "cohort": "resource",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": "failed-indexing-jobs-response.v1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/api/indexing-jobs/failed/by-prefix",
+      "cohort": "resource",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": "failed-indexing-jobs-response.v1.json"
     },
     {
       "method": "GET",

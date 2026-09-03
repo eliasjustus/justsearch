@@ -1,0 +1,5 @@
+# Source-comment TODO/FIXME/XXX marker ratchet — tempdoc 530 §2.6. <path> <count> <date>
+modules/system-tests/src/integrationTest/java/io/justsearch/systemtests/agent/AgentBatteryTest.java 2 2026-09-03
+scripts/ci/url-grammar-fixtures/generate.mjs 1 2026-09-03
+scripts/ci/verify-installer-nsis-win.ps1 1 2026-09-03
+scripts/docs/tempdoc-staleness-triage.mjs 2 2026-09-03

@@ -80,6 +80,7 @@
     "settings", "settings-light"
   ],
   "shell-v0/views/HelpSurface.ts": ["help", "help-light"],
+  "shell-v0/views/GovernanceView.ts": ["governance", "governance-light"],
 
   "shell-v0/shell/Shell.ts": ["shell-v0-demo"],
   "shell-v0/shell/LitWidget.ts": ["shell-v0-demo"],

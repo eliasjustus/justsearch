@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.javalin.Javalin;
 import io.justsearch.ui.api.RouteManifestController.RouteEntry;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -85,6 +86,10 @@ class RouteManifestControllerTest {
 
     // Manifest is sorted by (cohort, path, method) and non-empty.
     assertTrue(routes.size() >= 6, "manifest should contain all registered routes");
+
+    Map<String, Object> envelope = RouteManifestController.envelope(routes);
+    assertEquals(routes.size(), envelope.get("count"));
+    assertEquals(RouteDescriptorDigest.sha256(routes), envelope.get("routeDigest"));
   }
 
   @Test

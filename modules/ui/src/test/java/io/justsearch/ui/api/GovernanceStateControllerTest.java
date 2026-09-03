@@ -1,6 +1,7 @@
 package io.justsearch.ui.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -64,6 +65,7 @@ class GovernanceStateControllerTest {
         """
         {"ts":"2026-06-21T05:00:00Z","gate":"test-efficacy","verdict":"pass","findings":{"error":0,"warning":0,"note":0}}
         {"ts":"2026-06-21T06:00:00Z","gate":"test-efficacy","verdict":"fail","findings":{"error":3,"warning":0,"note":1}}
+        {"schemaVersion":2,"kind":"repository-health","ts":"2026-06-21T06:00:01Z","metrics":{"gradleModuleCount":34,"testFileCount":912,"productionSourceLocByModule":{"ui":1200}}}
         {"ts":"2026-06-21T07:00:00Z","gate":"retired-gate-xyz","verdict":"pass","findings":{"error":0,"warning":0,"note":0}}
         """);
     GovernanceStateController controller =
@@ -100,5 +102,59 @@ class GovernanceStateControllerTest {
     // A roster gate with no history line must appear as never-fired (0 local runs, not dead).
     boolean hasNeverFired = byGate.stream().anyMatch(g -> "never-fired".equals(g.get("status")));
     assertTrue(hasNeverFired, "roster gates absent from local history surface as never-fired");
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> repositoryHealth = (Map<String, Object>) out.get("repositoryHealth");
+    assertEquals(true, repositoryHealth.get("available"), "latest versioned health row is available");
+    assertEquals("local", repositoryHealth.get("scope"), "health history is local-only");
+    JsonNode metrics = (JsonNode) repositoryHealth.get("metrics");
+    assertEquals(34, metrics.path("gradleModuleCount").asInt());
+    assertEquals(912, metrics.path("testFileCount").asInt());
+  }
+
+  @Test
+  @DisplayName("handle() projects only the newest 5,000 rows from a legacy oversized history")
+  void boundsLegacyHistoryReadToNewestRows(@TempDir Path tmp) throws IOException {
+    Path history = tmp.resolve("governance-history.ndjson");
+    StringBuilder rows = new StringBuilder();
+    rows.append(
+        "{\"ts\":\"old-1\",\"gate\":\"outside-tail\",\"verdict\":\"fail\",\"findings\":{\"error\":99}}\n");
+    rows.append(
+        "{\"ts\":\"old-2\",\"gate\":\"outside-tail\",\"verdict\":\"fail\",\"findings\":{\"error\":99}}\n");
+    for (int i = 0; i < 4_999; i++) {
+      rows.append(
+          "{\"ts\":\"new-"
+              + i
+              + "\",\"gate\":\"test-efficacy\",\"verdict\":\"pass\",\"findings\":{}}\n");
+    }
+    rows.append(
+        "{\"schemaVersion\":2,\"kind\":\"repository-health\",\"ts\":\"newest\",\"metrics\":{\"gradleModuleCount\":35}}\n");
+    Files.writeString(history, rows);
+
+    GovernanceStateController controller =
+        new GovernanceStateController(Path.of("does-not-exist.sarif"), history);
+    Context ctx = mock(Context.class);
+    controller.handle(ctx);
+
+    ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+    verify(ctx).json(captor.capture());
+    @SuppressWarnings("unchecked")
+    Map<String, Object> out = (Map<String, Object>) captor.getValue();
+    @SuppressWarnings("unchecked")
+    Map<String, Object> efficacy = (Map<String, Object>) out.get("efficacy");
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> byGate = (List<Map<String, Object>>) efficacy.get("byGate");
+
+    assertFalse(
+        byGate.stream().anyMatch(g -> "outside-tail".equals(g.get("gate"))),
+        "rows older than the bounded tail must not influence the API projection");
+    Map<String, Object> testEfficacy =
+        byGate.stream().filter(g -> "test-efficacy".equals(g.get("gate"))).findFirst().orElseThrow();
+    assertEquals(4_999, testEfficacy.get("totalRuns"));
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> repositoryHealth = (Map<String, Object>) out.get("repositoryHealth");
+    assertEquals(true, repositoryHealth.get("available"));
+    assertEquals("newest", repositoryHealth.get("capturedAt"));
   }
 }
