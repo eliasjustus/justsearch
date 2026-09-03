@@ -18,7 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 class AgentDispositionWiringTest {
 
   @Test
-  void register_persistsDispositionsOnlyOnDoneEvent(@TempDir Path dataDir) throws IOException {
+  void register_omitsDispositionWithoutUidBearingSnapshot(@TempDir Path dataDir) throws IOException {
     AtomicReference<BiConsumer<String, Map<String, Object>>> ref = new AtomicReference<>();
     AgentDispositionWiring.register(
         ref::set,
@@ -36,16 +36,14 @@ class AgentDispositionWiringTest {
             "citations", List.of(Map.of("sourceIndex", 0, "similarity", 0.9)));
 
     ref.get().accept("tool_call", payload); // non-done → ignored
-    ref.get().accept("done", payload); // → 2 dispositions (d1 CITED, d2 SHOWN)
+    ref.get().accept("done", payload); // no prior UID-bearing snapshot → fail closed
 
     List<ResultDisposition> all =
         new NdjsonAppendStore<>(
                 dataDir.resolve("feedback").resolve("result-dispositions.ndjson"),
                 ResultDisposition.class)
             .readAll();
-    assertEquals(2, all.size());
-    assertEquals(
-        ResultDisposition.Contributor.AGENT_CITATION, all.get(0).contributor());
+    assertEquals(0, all.size());
   }
 
   @Test
@@ -69,9 +67,9 @@ class AgentDispositionWiringTest {
                 Map.of(
                     "feedbackFeatures",
                     List.of(
-                        Map.of("docId", "d1", "rank", 1, "sparse", 2.0f, "dense", 1.0f,
+                        Map.of("docId", "d1", "docUid", "uid-1", "rank", 1, "sparse", 2.0f, "dense", 1.0f,
                             "splade", 0.5f, "fused", 1.5f),
-                        Map.of("docId", "d2", "rank", 2, "sparse", 0.4f, "dense", 0.3f,
+                        Map.of("docId", "d2", "docUid", "uid-2", "rank", 2, "sparse", 0.4f, "dense", 0.3f,
                             "splade", 0.1f, "fused", 0.3f))));
     ref.get().accept("tool_exec_completed", toolDone);
 
@@ -98,13 +96,21 @@ class AgentDispositionWiringTest {
     assertEquals(1, snaps.size(), "one agent snapshot keyed by sessionId");
     assertEquals("s1", snaps.get(0).interactionId());
     assertEquals(2, snaps.get(0).hits().size());
+    assertEquals("uid-1", snaps.get(0).hits().get(0).docId());
+    assertEquals("d1", snaps.get(0).hits().get(0).sourceDocId());
     assertEquals(2, disps.size(), "d1 CITED + d2 SHOWN, both keyed by sessionId s1");
     assertEquals("s1", disps.get(0).interactionId());
+    assertEquals("uid-1", disps.get(0).docId());
+    assertEquals("uid-2", disps.get(1).docId());
 
     // THE FIX: the dispositions now JOIN their snapshot → real labels (was 0 before Fix B).
     var store = new GplTrainingTripleStore(dataDir, "feedback/real-feedback-triples.ndjson");
     LabelProjection.Result result = LabelProjection.project(disps, snaps, store);
     assertEquals(2, result.triples(), "d1 (CITED→positive) + d2 (SHOWN→negative) both join the snapshot");
     assertTrue(result.contrastGroups() >= 1, "the run is a contrast group (a positive AND a negative)");
+    String triples = java.nio.file.Files.readString(store.storeFile());
+    assertTrue(triples.contains("\"doc_id\":\"uid-1\""));
+    assertTrue(triples.contains("\"doc_id\":\"uid-2\""));
+    assertTrue(!triples.contains("\"doc_id\":\"d1\""));
   }
 }

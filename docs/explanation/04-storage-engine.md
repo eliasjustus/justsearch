@@ -109,6 +109,16 @@ without adding a second schema field. API-driven moves re-key the parent mapping
 fields are rewritten. Filesystem-watcher renames still arrive as delete plus create events and do not
 currently carry rename identity.
 
+The Head's authored feedback streams use the same stable parent identity. New
+`FeatureSnapshot.HitFeatures.docId` and `ResultDisposition.docId` values are parent UIDs; the snapshot
+also retains a path-oriented `sourceDocId` solely to correlate the unchanged search UI and agent
+citation events before persistence. Chunk-only search results receive the parent UID through the
+Worker's existing parent-metadata enrichment. Missing or conflicting UID evidence produces no new
+feedback row rather than falling back to a path key. Pre-Phase-2 NDJSON rows omit `sourceDocId` and
+remain readable and re-projectable with their legacy path keys; there is no path-to-UID backfill.
+The derived `real-feedback-triples.ndjson` file keeps the trainer-compatible JSON property name
+`doc_id`, whose value is the stable UID for new real-feedback labels.
+
 **Notes on new field groups:**
 
 - `meta_*` keyword fields are lowercased at both index time and query time (same pattern as `mime_base`). See [ADR-0020](../decisions/0020-structured-metadata-filterable-facets.md) for the full design rationale.

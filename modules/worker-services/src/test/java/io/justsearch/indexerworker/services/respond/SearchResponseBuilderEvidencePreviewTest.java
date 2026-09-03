@@ -50,7 +50,7 @@ final class SearchResponseBuilderEvidencePreviewTest {
             new IndexDocument(
                 Map.of(
                     SchemaFields.DOC_ID, "parent-1",
-                    SchemaFields.DOC_UID, "parent-1#0",
+                    SchemaFields.DOC_UID, "stable-parent-uid",
                     SchemaFields.TITLE, "Parent Title",
                     SchemaFields.CONTENT, "unrelated filler content")));
     lifecycle.commitOps().commitAndTrack();
@@ -141,6 +141,10 @@ final class SearchResponseBuilderEvidencePreviewTest {
         preview,
         "ON: chunk-only hit's content_preview is the winning chunk's text capped at 4096");
     assertEquals(CAP, preview.length(), "ON: preview is capped at 4096 chars");
+    assertEquals(
+        "stable-parent-uid",
+        chunkOnly.getFieldsMap().get(SchemaFields.DOC_UID),
+        "a chunk-only result must carry its stable parent UID for Head-side feedback");
   }
 
   @Test
