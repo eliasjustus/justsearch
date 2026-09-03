@@ -2085,6 +2085,29 @@ explicit in each PR body so a reader does not think the release rule was violate
 | Q-P3-7 | Lane E is mid-sweep and both lanes will want the machine for these arms. The Phase-3 campaign is roughly **20 fingerprint-moving arms** (each `--clean`: cold start + full ingest + enrichment + query pass) plus **12 query-only arms** (no re-ingest). At the register's observed ingest rates that is on the order of **12-18 machine-hours**, best run as one detached overnight driver per PR. | **Schedule PR-C1's arms as a single overnight campaign after lane E's Part 1 window closes**, with `leaseDurationSec` set for the whole run. Do not interleave with lane E. The estimate is mine, from arm count × the register's ingest wall-clock figures (`search-quality-register.md:78`) — replace it with lane E's measured `primary_docs_s`/`enrich_docs_s` before committing to a window. |
 | Q-P3-8 | P37 means every historical trace-derived claim about dense-leg execution on short/stop-word queries was wrong, including anything in the register that read `dense: executed`. | **Do not audit history.** Fix forward in PR-C0 and add one line to the register under F-012 (the closest existing entry, same defect class) noting that pre-PR-C0 traces over-report dense execution for queries under `vector_skip_min_chars` or single stop words. |
 
+### §P3.E Orchestrator decisions (2026-09-03, wave-2 orchestrator)
+
+All eight recommendations in §P3.C(9) are **accepted**. Specifically:
+
+- **Q-P3-1** codec versioning (`JustSearchCodecV2` + legacy read-only reader) is in scope for PR-C1;
+  O15 is a blocker for any quantization default and is fixed there, never worked around.
+- **Q-P3-3** `SearchPlanner.java` and `SearchTraceProjector.java` are granted to lane D for PR-C0
+  (no active lane claims them; 854 is an unstarted charter and its W2-fix touches
+  `HybridFusionUtils`/`KnowledgeSearchEngine`, not the planner). PR-C0 also fixes O16.
+- **Q-P3-4** split instruments (bench for ANN recall@50, jseval for R@10 + `leg_union_recall`) —
+  recorded as a wording deviation from the brief, same as 916 §K.
+- **Q-P3-5** three fingerprint moves on `main`, one rebuild for users — accepted; the release note
+  names it.
+- **Q-P3-7** PR-C1's evidence arms run as one detached overnight campaign after lane E's Part 1
+  window; the machine-hour figure is re-estimated from lane E's measured `primary_docs_s` /
+  `enrich_docs_s` before a window is armed.
+- The threshold table's "exact arithmetic" rows still get one confirming jseval arm (scifact +
+  legal, hybrid) in PR-C1 — a closed-form mapping is an argument, not a measurement.
+
+**PR order on `main`:** #620 (Phase 1) → PR-A → PR-C0 → PR-C2 → PR-C1 → lane E constants → PR-B.
+Implementation of PR-A starts when lane E's sweep releases the machine (Gradle contaminates its
+throughput columns) and #620 has been re-checked on the operator arm (R2).
+
 ---
 
 ## Report-back
