@@ -42,6 +42,30 @@ lever, these two keys come out rather than being left behind as selectable dead 
 thing that would keep a parked lever is a follow-up arm the owner asks for; absent that, the
 same "the losing arm's keys are removed" commitment 885 made applies here.
 
+## Post-measurement status (2026-09-03) — PARKED, and why the keys are still here
+
+The rule parked it on a split: legal-clerc-200 **+0.0050 R@10 / −0.0050 leak**, enron-qa
+**−0.0067 R@10**, scifact bit-identical (916 §G.4, register F-056). Defaults are unchanged, so
+the shipped engine behaves exactly as it did before this PR.
+
+That triggers the commitment above, and it is **not yet honoured** — deliberately, and flagged
+rather than quietly skipped. Deleting the keys now would leave the aggregate-then-cut code
+permanently pinned to `(1, 0.0)` and therefore **unreachable**: dead *code* instead of dead
+*config*, which is the worse of the two. The coherent alternatives are (a) keep the keys and run
+one more arm, or (b) revert the mechanism entirely.
+
+(b) is premature on the evidence: the mechanism demonstrably helps one chunked corpus on both
+recall and leak, is provably inert on the short-corpus control, and was measured at exactly one
+point of a one-dimensional axis — λ=0.3, a value the lane brief supplied as a starting guess, not
+a tuned one. The λ arm that looked best (0.1: +0.0102 nDCG, +0.0150 R@10, −0.0150 leak) was
+**discarded** for a degraded-CE defect, so the axis is genuinely unswept rather than explored
+and rejected.
+
+**Decision requested from the owner** (916 open item 8): authorise one clean λ ∈ {0.05, 0.1, 0.15}
+sweep across *both* chunked corpora, or say no — in which case this PR's mechanism and both keys
+should be reverted together, as one sweep, not left parked indefinitely. "Parked forever" is not
+one of the options this changeset offers.
+
 ## Baseline advance (same commit, tempdoc 883 rule)
 
 `gates/config-surface/baseline.txt` moves in this commit, alongside the keys it accounts for:
