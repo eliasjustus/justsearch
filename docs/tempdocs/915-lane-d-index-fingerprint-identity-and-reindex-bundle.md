@@ -1516,6 +1516,38 @@ leaving anything half-built: PR-A alone is complete and correct, it just does no
   `AUTHORED` SQLite store has no precedent in `StoreCatalog`'s `Framing` vocabulary. Under the
   recommended design the `corruptionPolicy` vocabulary needs **no** new value.
 
+### §P2.E Orchestrator decisions (2026-09-03, wave-2 orchestrator)
+
+Every design choice in §P2.C (1)–(9) is **accepted as written**. The open questions resolve as:
+
+- **Q1 (grant).** `FeatureSnapshots.java`, `SearchTool.java`, `KnowledgeSearchController.java` are
+  granted to lane D for PR-B. No active lane owns them (lane C is closed and merged; the UI lane's
+  scope is `modules/ui-web/**`), so the file-ownership contract has no other claimant.
+- **Q2 (lane C carve-out).** Lane C's wholesale `worker-services/**` + `indexer-worker/**` grant
+  expired when lane C closed (#602 merged). The six wiring files and `KnowledgeServer.java` are lane
+  D's for PR-A. Whichever of lane D / lane E lands second on `ChunkDocumentWriter.java` rebases.
+- **Q3 (no backfill).** Accepted, recorded as a deviation from the brief with the reason in §P2.C(4):
+  pre-Phase-2 snapshots carry no uid and the Head cannot resolve path→uid. Old rows keep path keys;
+  new rows key on `doc_uid`; the derived triples file is re-projected.
+- **Q4 (release ordering / rendering bump).** No `RENDERING_VERSION` bump in Phase 2. Existing
+  documents already carry a random per-write `doc_uid`; PR-A's first boot **imports** those uids from
+  the index's stored `doc_uid`+`doc_id` into `document_identity` (the same rebuild-from-index path the
+  corruption policy names), so the random uid becomes the stable one without a rebuild. Phase 3's
+  catalog edits move the fingerprint anyway; Phase 2 does not need to.
+- **Q5 (updater closed set).** Routed to the governance lane (918 successor) as a latent defect: the
+  register cannot gain a `durableStores` row after the first release without `updater.rs:874-876`
+  refusing in-app updates. Not lane D's; Phase 2 adds no row, so it does not trigger it.
+- **Q6.** Fix `jobs-db.currentVersion` (7 → the real `SqliteSchema.TARGET_VERSION` at PR-A time) in
+  PR-A, with the migration V10→V11 bumping it once more.
+- **Q7 (no GC).** Accepted.
+- **Q8 (store unavailable).** **Fail closed**: if `document_identity` cannot be read or written, the
+  indexing write for that document fails and is retried by the job queue; never mint a fallback uid.
+  Two authorities for one identity is the fork this phase exists to remove.
+
+Sequencing: PR-A and PR-B are built after #620 merges and after lane E's Part 1 sweep window
+releases the machine (Gradle builds contaminate its throughput columns). Phase 3's pre-implementation
+pass runs in this worktree next, read-only.
+
 ---
 
 ## Report-back
