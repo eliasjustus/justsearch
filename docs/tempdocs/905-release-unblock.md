@@ -752,8 +752,12 @@ Residual owner actions:
   deliberately left untouched. Before the helper can be rerun, use the certificate order to verify
   the signing credential ID and recover or replace the eSigner TOTP enrollment secret. SSL.com's
   self-service QR reset requires the 4-digit eSigner PIN; its PIN reset requires either a current OTP
-  or the current PIN. If neither factor remains available, open an SSL.com support ticket rather than
-  guessing or rotating repository state.
+  or the current PIN. The owner then reported three unsuccessful PIN attempts followed by a provider
+  disablement message. Treat this as a signing-credential lockout pending provider confirmation:
+  SSL.com's error reference says only its support team can re-enable a backend-disabled credential.
+  Do not order another token or credential, and do not guess further PINs. Ask support to re-enable the
+  existing credential and restore the PIN/QR/TOTP enrollment path rather than rotating repository
+  state.
 - A narrow, explicitly non-qualifying whole-product Windows Sandbox probe used WinGet `v1.29.290`.
   The clean final result validated the schema-1.12 manifest bundle, downloaded the published v0.2.0
   installer, verified SHA-256
