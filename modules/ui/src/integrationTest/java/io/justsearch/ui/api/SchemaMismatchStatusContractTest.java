@@ -73,6 +73,10 @@ final class SchemaMismatchStatusContractTest {
     // Force ephemeral port even if a developer has JUSTSEARCH_API_PORT set.
     System.setProperty("justsearch.api.port", "0");
     // Allow Worker startup even when commit-metadata parity is mismatched (we assert the surfaced mismatch via /api/status).
+    // The operator escape, used here for what it is: this test deliberately opens an index whose
+    // fingerprint does not match, to assert the STATUS surface reports it. Without the escape the
+    // parity guard would (correctly) refuse the open and the status contract could never be
+    // exercised. Nothing in production sets this (tempdoc 915 §C).
     System.setProperty("justsearch.index.parity.allow_mismatch", "true");
 
     // Initialize ConfigStore so that RerankerConfig.fromEnv() (called during LocalApiServer construction) resolves.

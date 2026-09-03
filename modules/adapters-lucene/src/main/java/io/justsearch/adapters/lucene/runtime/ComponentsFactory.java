@@ -177,9 +177,8 @@ final class ComponentsFactory {
       }
       Analyzer analyzer = analyzerRegistry.buildPerFieldAnalyzer(fieldAnalyzers);
 
-      int hnswM = idx.vectorHnswM() != null ? idx.vectorHnswM() : 16;
-      int efConstruction =
-          idx.vectorHnswEfConstruction() != null ? idx.vectorHnswEfConstruction() : 200;
+      int hnswM = idx.effectiveVectorHnswM();
+      int efConstruction = idx.effectiveVectorHnswEfConstruction();
       boolean quantEnabled = Boolean.TRUE.equals(idx.vectorQuantizationEnabled());
       // F6: Select vector format based on quantization config
       KnnVectorsFormat kf =

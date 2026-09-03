@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.server.ops;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.adapters.lucene.commit.IndexFingerprint;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
 import java.util.HashMap;
@@ -50,8 +51,54 @@ class GreenCutoverEmbeddingFpVerifyTest {
     assertFalse(KnowledgeServerMigrationOps.verifyGreenMetadata(completeGreen(), "abc123", LOG));
   }
 
+  /**
+   * Tempdoc 915 §C, the third refusal. If THIS runtime cannot compute an expected
+   * {@code index_fingerprint}, it cannot attest that the green it just built is the shape it meant
+   * to build. Promoting anyway would swap in a generation on no evidence, so the cutover refuses and
+   * retries on the next boot. Distinct from a mismatch: nothing here disagrees, we simply do not
+   * know.
+   */
   @Test
-  @DisplayName("mismatched embedding fingerprint → green REJECTED")
+  @DisplayName("expected fingerprint uncomputable -> green REJECTED rather than promoted blind")
+  void uncomputableExpectedFingerprintRejects() {
+    Map<String, String> ud = completeGreen();
+    ud.put(EMBED_KEY, "abc123");
+    // Sanity: with everything resolvable this same green verifies, so the refusal below is
+    // attributable to the indeterminate input and nothing else.
+    assertTrue(KnowledgeServerMigrationOps.verifyGreenMetadata(ud, "abc123", LOG));
+    ch.qos.logback.classic.Logger captured =
+        (ch.qos.logback.classic.Logger)
+            LoggerFactory.getLogger("green-verify-uncomputable-expected");
+    ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+        new ch.qos.logback.core.read.ListAppender<>();
+    appender.start();
+    captured.addAppender(appender);
+    try {
+      IndexFingerprint.installModelFingerprintProviders(
+          IndexFingerprint.ModelFingerprint::indeterminate,
+          IndexFingerprint.ModelFingerprint::notConfigured,
+          IndexFingerprint.ModelFingerprint::notConfigured);
+      assertFalse(KnowledgeServerMigrationOps.verifyGreenMetadata(ud, "abc123", captured));
+      // The verdict alone is not evidence: without the refusal the code falls through to the
+      // mismatch branch and returns false anyway, for a reason that is not true. Pin the reason.
+      assertTrue(
+          appender.list.stream()
+              .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+              .anyMatch(m -> m.contains("could not compute an expected index_fingerprint")),
+          "the refusal must be attributed to the uncomputable expected value, not reported as a"
+              + " mismatch: "
+              + appender.list.stream()
+                  .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                  .toList());
+    } finally {
+      IndexFingerprint.resetModelFingerprintProviders();
+      captured.detachAppender(appender);
+      appender.stop();
+    }
+  }
+
+  @Test
+  @DisplayName("mismatched embedding fingerprint -> green REJECTED")
   void mismatchedFpRejected() {
     Map<String, String> ud = completeGreen();
     ud.put(EMBED_KEY, "stale-model-sha");

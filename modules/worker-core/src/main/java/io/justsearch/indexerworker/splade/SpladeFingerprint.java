@@ -87,7 +87,10 @@ public final class SpladeFingerprint {
     if (!Files.isRegularFile(modelFile)) {
       log.info(
           "SPLADE model file not found at {}; fingerprint unavailable", discovery.modelDir());
-      cachedResult.set(new CachedResult(Optional.of(modelFile), Optional.empty()));
+      // A model directory with no model file in it is a determinate "no SPLADE model here", not an
+      // unanswered question: leaving modelPath empty keeps index_fingerprint computable instead of
+      // silently disabling the parity check forever (tempdoc 915 §C).
+      cachedResult.set(new CachedResult(Optional.empty(), Optional.empty()));
       return Optional.empty();
     }
 

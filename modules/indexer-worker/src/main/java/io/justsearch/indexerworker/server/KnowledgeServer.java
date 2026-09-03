@@ -518,7 +518,11 @@ public final class KnowledgeServer implements Closeable {
                   EmbeddingFingerprint.modelPath().isPresent(), EmbeddingFingerprint.get()),
           () ->
               IndexFingerprint.ModelFingerprint.of(
-                  SpladeFingerprint.modelPath().isPresent(), SpladeFingerprint.get()));
+                  SpladeFingerprint.modelPath().isPresent(), SpladeFingerprint.get()),
+          () ->
+              IndexFingerprint.ModelFingerprint.of(
+                  io.justsearch.indexerworker.ner.NerFingerprint.modelPath().isPresent(),
+                  io.justsearch.indexerworker.ner.NerFingerprint.get()));
 
       // 4. Initialize Lucene runtimes.
       // - searchLifecycle serves queries (Blue during migration)
@@ -656,20 +660,30 @@ public final class KnowledgeServer implements Closeable {
             // fingerprint, so a later, different upgrade is not refused for an earlier one's
             // failures. Recorded BEFORE the rebuild starts: a build that crashes the process must
             // still spend its attempt (tempdoc 915 §C).
-            String targetFingerprint =
-                String.valueOf(
-                    new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY));
-            int attempt = genManager.recordAutoRebuildAttempt(targetFingerprint);
+            // A fingerprint we cannot compute must not be charged to a shared budget: without a
+            // distinct sentinel every indeterminate boot would spend an attempt against the literal
+            // string "null" and exhaust the brake for an unrelated real target.
+            String targetFingerprint = expectedIndexFingerprintOrNull();
+            int attempt = recordAutoRebuildAttemptOrSkip(genManager, targetFingerprint);
             if (attempt > IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS) {
+              // Do NOT rethrow. Rethrowing fails start(), which is the same dead-end the old
+              // FAIL_CLOSED default produced, three boots later and with no explanation. Open the
+              // existing index read-only instead: search keeps working on what is already there,
+              // and the status surface carries index.rebuild_brake_exhausted so a user is told why
+              // ingestion has stopped (tempdoc 915 §C).
               log.error(
                   "Schema mismatch on active generation {}, but {} automatic rebuilds for the same"
-                      + " target fingerprint have already been attempted. Refusing to start"
-                      + " another; an operator must rebuild the index, or clear auto_rebuild_count"
-                      + " in state.json to grant a fresh budget.",
+                      + " target fingerprint have already been attempted. Serving the existing index"
+                      + " read-only instead of rebuilding again. Remedy: rebuild the index from the"
+                      + " UI, or clear the auto_rebuild_* fields in state.json to grant a fresh"
+                      + " budget.",
                   activeIndexPath,
                   IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
                   e);
-              throw e;
+              this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
+              this.ingestLifecycle = this.searchLifecycle;
+              this.buildingIndexPath = null;
+              return;
             }
             // Auto-start Blue/Green migration on schema mismatch when enabled.
             log.warn(
@@ -1788,6 +1802,44 @@ public final class KnowledgeServer implements Closeable {
 
     sentinelThread.setDaemon(true);
     sentinelThread.start();
+  }
+
+  /**
+   * The {@code index_fingerprint} this runtime would stamp, or null when it cannot be computed.
+   *
+   * <p>Guarded: {@code SsotCommitMetadataSource.build()} reads SSOT artifacts off disk and throws
+   * {@code IllegalStateException} when any is unreadable. Letting that escape from inside the
+   * schema-mismatch catch would replace the real, actionable mismatch with an unrelated IO failure.
+   */
+  /**
+   * Charges one rebuild attempt to {@code targetFingerprint}, or charges nothing when there is no
+   * target to charge it to.
+   *
+   * <p>An uncomputable fingerprint is not a target. Folding those boots into a shared bucket (the
+   * literal string {@code "null"}, which is what {@code String.valueOf} produces) would let three
+   * boots with an unreadable model file exhaust the budget for a completely unrelated real shape,
+   * so the index that genuinely needed a rebuild would never get one. Package-private so the
+   * distinction is testable without a running Worker.
+   */
+  static int recordAutoRebuildAttemptOrSkip(
+      IndexGenerationManager genManager, String targetFingerprint) throws IOException {
+    if (targetFingerprint == null) {
+      return 1;
+    }
+    return genManager.recordAutoRebuildAttempt(targetFingerprint);
+  }
+
+  private static String expectedIndexFingerprintOrNull() {
+    try {
+      Object fp = new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY);
+      String s = fp == null ? null : String.valueOf(fp);
+      return s == null || s.isBlank() ? null : s;
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not compute the target index_fingerprint for the rebuild brake: {}",
+          ex.getMessage());
+      return null;
+    }
   }
 
   private static boolean hasLuceneSegments(Path indexPath) {

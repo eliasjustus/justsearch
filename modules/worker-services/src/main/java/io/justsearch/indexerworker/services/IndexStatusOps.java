@@ -1138,6 +1138,11 @@ final class IndexStatusOps {
       // unresolvable). UNAVAILABLE, never COMPATIBLE — an absent answer is not a clean bill.
       return "UNAVAILABLE";
     }
+    if (autoRebuildBrakeExhausted(current)) {
+      // The Worker has stopped rebuilding this shape by itself. Reported ahead of the plain
+      // mismatch because the remedy is different: waiting will not fix it.
+      return "BLOCKED_REBUILD_BRAKE";
+    }
     if (stored.isEmpty()) {
       // Legacy index without a fingerprint, or one committed while an input was indeterminate.
       // Check if there are any docs - if so, it's a legacy index needing reindex
@@ -1147,10 +1152,25 @@ final class IndexStatusOps {
     return current.equals(stored) ? "COMPATIBLE" : "BLOCKED_MISMATCH";
   }
 
+  /** True once the Worker has spent its automatic-rebuild budget on the current target shape. */
+  private boolean autoRebuildBrakeExhausted(String currentFingerprint) {
+    if (indexGenerationManager == null || currentFingerprint.isEmpty()) {
+      return false;
+    }
+    try {
+      return indexGenerationManager.autoRebuildAttemptsFor(currentFingerprint)
+          > IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS;
+    } catch (RuntimeException e) {
+      log.debug("Failed to read the auto-rebuild brake: {}", e.getMessage());
+      return false;
+    }
+  }
+
   private boolean isReindexRequired() {
     String schemaState = safeSchemaCompatState();
     String embeddingState = safeEmbeddingCompatState();
     return "BLOCKED_MISMATCH".equals(schemaState)
+        || "BLOCKED_REBUILD_BRAKE".equals(schemaState)
         || "BLOCKED_LEGACY".equals(schemaState)
         || "BLOCKED_MISMATCH".equals(embeddingState)
         || "BLOCKED_LEGACY".equals(embeddingState);
@@ -1158,6 +1178,9 @@ final class IndexStatusOps {
 
   private String reindexRequiredReason() {
     String schemaState = safeSchemaCompatState();
+    if ("BLOCKED_REBUILD_BRAKE".equals(schemaState)) {
+      return "rebuild_brake_exhausted";
+    }
     if ("BLOCKED_MISMATCH".equals(schemaState)) {
       return "schema_mismatch";
     }

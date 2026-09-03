@@ -120,6 +120,33 @@ final class IndexRebuildBrakeTest {
   }
 
   /**
+   * Exhaustion has to survive a restart, or the brake is not a brake: a Worker that forgot its
+   * attempts on every boot would rebuild forever in exactly the loop this exists to stop. Pinned on
+   * a freshly-constructed manager reading the same directory, which is what a restart is.
+   */
+  @Test
+  void exhaustionIsRememberedAcrossARestart(@TempDir Path tempDir) throws Exception {
+    Path base = tempDir.resolve("index");
+    IndexGenerationManager mgr = new IndexGenerationManager(base);
+    mgr.initializeOrLoad();
+    for (int i = 0; i <= IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS; i++) {
+      mgr.recordAutoRebuildAttempt(TARGET_A);
+    }
+    assertTrue(
+        mgr.autoRebuildAttemptsFor(TARGET_A) > IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS);
+
+    IndexGenerationManager afterRestart = new IndexGenerationManager(base);
+    assertTrue(
+        afterRestart.autoRebuildAttemptsFor(TARGET_A)
+            > IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
+        "a restart must not hand the index a fresh rebuild budget");
+    assertEquals(
+        0,
+        afterRestart.autoRebuildAttemptsFor(TARGET_B),
+        "the exhausted budget is scoped to its target, not to the index");
+  }
+
+  /**
    * A truncated {@code state.json} — the shape a crash mid-write leaves behind. The manager keeps a
    * {@code state.json.prev} snapshot precisely for this, so the correct outcome is recovery, not
    * absence: the generation pointer survives and search still knows which directory to open.

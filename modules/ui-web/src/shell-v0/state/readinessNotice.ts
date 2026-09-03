@@ -374,20 +374,33 @@ const CAUSE_ROWS: ReadonlyArray<{
     remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
     severity: 'warn',
   },
-  // Tempdoc 804 §D1 — ADVISORY, not degrading, and therefore NOT in REINDEX_CAUSE_CODES below.
-  // `index_schema_fp` is a content hash of the canonical `SSOT/catalogs/fields.v1.json`
-  // (SsotCommitMetadataSource.java:81-93, compared at IndexStatusOps.java:995) and has ZERO
-  // query-path consumers: the dense leg is gated by the EMBEDDING fingerprint
-  // (SearchPlanner.java:87 via allowQueryEmbeddings()), never by this one. Sandbox round 10
-  // reproduced the consequence of getting this wrong — `schema_mismatch` true while dense retrieval
-  // was provably live, under a red "results may be keyword-only" banner. A rebuild picks up newer
-  // index features; it does not restore anything that is broken ⇒ `info`, rebuild remedy retained.
+  // Tempdoc 804 §D1, amended by tempdoc 915 — still ADVISORY, and therefore still NOT in
+  // REINDEX_CAUSE_CODES below, but the reason changed. The compared value is no longer
+  // `index_schema_fp` (a content hash of the whole `fields.v1.json` file, which flipped on
+  // annotation-only edits); it is `index_fingerprint`, a hash of the effective PHYSICAL index shape
+  // (IndexFingerprint.java, compared at IndexStatusOps.safeSchemaCompatState,
+  // IndexStatusOps.java:1097-1180). It still has ZERO query-path consumers: the dense leg is gated
+  // by the EMBEDDING fingerprint (SearchPlanner.java:87 via allowQueryEmbeddings()), never by this
+  // one. Sandbox round 10 reproduced the consequence of getting this wrong — `schema_mismatch` true
+  // while dense retrieval was provably live, under a red "results may be keyword-only" banner. What
+  // did change is that a mismatch is now acted on: under the production BLUE_GREEN_MIGRATE default
+  // the Worker rebuilds beside the live index, so search keeps working throughout ⇒ `info`.
   {
     code: 'index.schema_mismatch',
     wording:
       'The index format is out of date — search is fully working; rebuilding picks up newer index features.',
     remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
     severity: 'info',
+  },
+  // Tempdoc 915 §C — the Worker gave up rebuilding this index shape by itself after three
+  // attempts. Unlike `index.schema_mismatch` (which resolves itself), this one stays until a person
+  // acts, and ingestion does not resume meanwhile ⇒ `warn` and a place in REINDEX_CAUSE_CODES.
+  {
+    code: 'index.rebuild_brake_exhausted',
+    wording:
+      'The index could not be rebuilt after repeated attempts — search still works on what is already indexed, but new files are not being added. Rebuild the index to try again.',
+    remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
+    severity: 'warn',
   },
   // Tempdoc 837 S6 removed the `index.rebuilding` row that used to sit here. Its code was emitted
   // only inside the window the verdict forces to `transitioning`, where this projection returns null,
@@ -443,11 +456,12 @@ const REINDEX_CAUSE_CODES: ReadonlySet<string> = new Set([
   'index.blocked_legacy',
   'index.embedding_legacy',
   'index.embedding_mismatch',
+  'index.rebuild_brake_exhausted',
 ]);
 
 /**
- * The advisory index-format code (804 §D1): the stored catalog fingerprint differs from the current
- * one, with no query-path consequence. Named here so surfaces that already headline the rebuild
+ * The advisory index-format code (804 §D1, 915): the stored index fingerprint differs from the one
+ * this runtime would produce, with no query-path consequence. Named here so surfaces that already headline the rebuild
  * story do not have to string-match it (the round-2 "dedup by code, not wording" ruling).
  */
 export const INDEX_SCHEMA_MISMATCH = 'index.schema_mismatch';

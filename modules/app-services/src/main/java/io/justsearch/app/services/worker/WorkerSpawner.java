@@ -92,7 +92,9 @@ public final class WorkerSpawner implements Closeable {
         EnvRegistry.EMBED_GPU_ENABLED,
         EnvRegistry.SPLADE_GPU_ENABLED,
         EnvRegistry.NER_GPU_ENABLED,
-        EnvRegistry.INDEX_PARITY_ALLOW_MISMATCH, // dev/demo parity bypass
+        // Operator escape, forwarded so the Worker honours it when a person sets it. Nothing sets
+        // it by default any more (tempdoc 915 §C deleted the Head's two unconditional set-sites).
+        EnvRegistry.INDEX_PARITY_ALLOW_MISMATCH,
 
         // --- Index policy: forwarded for belt-and-suspenders safety ---
         EnvRegistry.INDEX_BASE_PATH,   // index base path override from UI settings

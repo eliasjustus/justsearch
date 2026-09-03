@@ -28,7 +28,11 @@ public final class ChunkDocumentWriter {
   public static final int CHUNK_THRESHOLD_CHARS = 2000;
   public static final int CHUNK_TARGET_TOKENS = ChunkSplitter.DEFAULT_CHUNK_TOKENS;
   public static final int CHUNK_OVERLAP_TOKENS = ChunkSplitter.DEFAULT_OVERLAP_TOKENS;
-  private static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
+  /**
+   * Bounds {@code content_preview}, a {@code stored:true} field, so it is an {@code
+   * index_fingerprint} input (tempdoc 915 §C). Public for that reason, not for reuse.
+   */
+  public static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
 
   private ChunkDocumentWriter() {}
 

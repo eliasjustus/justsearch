@@ -66,8 +66,11 @@ final class CatalogPhysicalProjectionTest {
             parse(catalogJson), effectiveDimension),
         "analyzer-fp",
         "float32",
-        new Hnsw(16, 100),
-        new Chunking(500, 50, 100, "v1"),
+        new Hnsw(16, 200),
+        new Chunking(500, 50, 100, 2000, "v1"),
+        4096,
+        new IndexFingerprint.Analysis("10.2.1", "76.1"),
+        ModelFingerprint.notConfigured(),
         ModelFingerprint.notConfigured(),
         ModelFingerprint.notConfigured());
   }

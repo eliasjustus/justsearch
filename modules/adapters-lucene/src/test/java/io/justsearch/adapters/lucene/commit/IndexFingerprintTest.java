@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.adapters.lucene.commit.IndexFingerprint.Analysis;
 import io.justsearch.adapters.lucene.commit.IndexFingerprint.Chunking;
 import io.justsearch.adapters.lucene.commit.IndexFingerprint.FieldShape;
 import io.justsearch.adapters.lucene.commit.IndexFingerprint.Hnsw;
@@ -13,6 +14,7 @@ import io.justsearch.adapters.lucene.commit.IndexFingerprint.ModelFingerprint;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -47,248 +49,243 @@ final class IndexFingerprintTest {
         List.of(textField(), vectorField(768, "euclidean")),
         "analyzer-fp-1",
         "float32",
-        new Hnsw(16, 100),
-        new Chunking(500, 50, 100, "v1"),
+        new Hnsw(16, 200),
+        new Chunking(500, 50, 100, 2000, "v1"),
+        4096,
+        new Analysis("10.2.1", "76.1"),
         ModelFingerprint.present("a".repeat(64)),
+        ModelFingerprint.notConfigured(),
         ModelFingerprint.notConfigured());
   }
 
-  private static String fingerprintOf(Inputs inputs) {
-    return IndexFingerprint.compute(inputs).orElseThrow();
+  /** Rebuilds {@link #baseline()} with one component replaced. */
+  private static Inputs with(UnaryOperator<Inputs> mutation) {
+    return mutation.apply(baseline());
+  }
+
+  private static Inputs fields(Inputs in, List<FieldShape> fields) {
+    return new Inputs(
+        in.catalogSchemaVersion(),
+        fields,
+        in.analyzerFingerprint(),
+        in.vectorFormat(),
+        in.hnsw(),
+        in.chunking(),
+        in.contentPreviewMaxChars(),
+        in.analysis(),
+        in.embeddingModel(),
+        in.spladeModel(),
+        in.nerModel());
+  }
+
+  private static String fp(Inputs in) {
+    return IndexFingerprint.compute(in).orElseThrow();
+  }
+
+  private static void moves(String what, Inputs mutated) {
+    assertNotEquals(fp(baseline()), fp(mutated), what + " must move the fingerprint");
   }
 
   @Test
   void identicalInputsGiveIdenticalFingerprints() {
-    assertEquals(fingerprintOf(baseline()), fingerprintOf(baseline()));
+    assertEquals(fp(baseline()), fp(baseline()));
   }
 
   @Test
   void fieldOrderIsNotAnInput() {
-    Inputs reordered =
-        new Inputs(
-            "1.0.0",
-            List.of(vectorField(768, "euclidean"), textField()),
-            "analyzer-fp-1",
-            "float32",
-            new Hnsw(16, 100),
-            new Chunking(500, 50, 100, "v1"),
-            ModelFingerprint.present("a".repeat(64)),
-            ModelFingerprint.notConfigured());
     assertEquals(
-        fingerprintOf(baseline()),
-        fingerprintOf(reordered),
-        "the catalog's field order is authoring convenience, not index shape");
+        fp(baseline()),
+        fp(with(in -> fields(in, List.of(vectorField(768, "euclidean"), textField())))),
+        "the catalog field order is authoring convenience, not index shape");
   }
 
   @Test
   void everyPhysicalInputMovesTheFingerprint() {
-    Inputs base = baseline();
-    String baseFp = fingerprintOf(base);
+    moves(
+        "catalog_schema_version",
+        with(
+            in ->
+                new Inputs(
+                    "2.0.0",
+                    in.fields(),
+                    in.analyzerFingerprint(),
+                    in.vectorFormat(),
+                    in.hnsw(),
+                    in.chunking(),
+                    in.contentPreviewMaxChars(),
+                    in.analysis(),
+                    in.embeddingModel(),
+                    in.spladeModel(),
+                    in.nerModel())));
+    moves(
+        "vector dimension",
+        with(in -> fields(in, List.of(textField(), vectorField(1024, "euclidean")))));
+    moves(
+        "vector similarity (phase 3 flips this and must invalidate EUCLIDEAN indexes)",
+        with(in -> fields(in, List.of(textField(), vectorField(768, "dot_product")))));
+    moves(
+        "analyzer fingerprint",
+        with(
+            in ->
+                new Inputs(
+                    in.catalogSchemaVersion(),
+                    in.fields(),
+                    "analyzer-fp-2",
+                    in.vectorFormat(),
+                    in.hnsw(),
+                    in.chunking(),
+                    in.contentPreviewMaxChars(),
+                    in.analysis(),
+                    in.embeddingModel(),
+                    in.spladeModel(),
+                    in.nerModel())));
+    moves(
+        "vector storage format",
+        with(
+            in ->
+                new Inputs(
+                    in.catalogSchemaVersion(),
+                    in.fields(),
+                    in.analyzerFingerprint(),
+                    "int8_sq",
+                    in.hnsw(),
+                    in.chunking(),
+                    in.contentPreviewMaxChars(),
+                    in.analysis(),
+                    in.embeddingModel(),
+                    in.spladeModel(),
+                    in.nerModel())));
+    moves("HNSW m", withHnsw(new Hnsw(32, 200)));
+    moves("HNSW ef_construction", withHnsw(new Hnsw(16, 400)));
+    moves("chunk target tokens", withChunking(new Chunking(400, 50, 100, 2000, "v1")));
+    moves("chunk overlap tokens", withChunking(new Chunking(500, 60, 100, 2000, "v1")));
+    moves("chunk minimum tokens", withChunking(new Chunking(500, 50, 120, 2000, "v1")));
+    moves(
+        "the chunk threshold, which decides whether chunk documents exist at all",
+        withChunking(new Chunking(500, 50, 100, 3000, "v1")));
+    moves("chunker algorithm version", withChunking(new Chunking(500, 50, 100, 2000, "v2")));
+    moves("content_preview bound", withPreview(8192));
+    moves("Lucene version", withAnalysis(new Analysis("10.3.0", "76.1")));
+    moves("ICU version", withAnalysis(new Analysis("10.2.1", "77.1")));
+    moves("embedding model digest", withModels(ModelFingerprint.present("b".repeat(64)), null, null));
+    moves("SPLADE model digest", withModels(null, ModelFingerprint.present("c".repeat(64)), null));
+    moves("NER model digest", withModels(null, null, ModelFingerprint.present("d".repeat(64))));
+  }
 
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                "2.0.0",
-                base.fields(),
-                base.analyzerFingerprint(),
-                base.vectorFormat(),
-                base.hnsw(),
-                base.chunking(),
-                base.embeddingModel(),
-                base.spladeModel())),
-        "catalog_schema_version");
+  private static Inputs withHnsw(Hnsw hnsw) {
+    Inputs in = baseline();
+    return new Inputs(
+        in.catalogSchemaVersion(),
+        in.fields(),
+        in.analyzerFingerprint(),
+        in.vectorFormat(),
+        hnsw,
+        in.chunking(),
+        in.contentPreviewMaxChars(),
+        in.analysis(),
+        in.embeddingModel(),
+        in.spladeModel(),
+        in.nerModel());
+  }
 
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                List.of(textField(), vectorField(1024, "euclidean")),
-                base.analyzerFingerprint(),
-                base.vectorFormat(),
-                base.hnsw(),
-                base.chunking(),
-                base.embeddingModel(),
-                base.spladeModel())),
-        "vector dimension");
+  private static Inputs withChunking(Chunking chunking) {
+    Inputs in = baseline();
+    return new Inputs(
+        in.catalogSchemaVersion(),
+        in.fields(),
+        in.analyzerFingerprint(),
+        in.vectorFormat(),
+        in.hnsw(),
+        chunking,
+        in.contentPreviewMaxChars(),
+        in.analysis(),
+        in.embeddingModel(),
+        in.spladeModel(),
+        in.nerModel());
+  }
 
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                List.of(textField(), vectorField(768, "dot_product")),
-                base.analyzerFingerprint(),
-                base.vectorFormat(),
-                base.hnsw(),
-                base.chunking(),
-                base.embeddingModel(),
-                base.spladeModel())),
-        "vector similarity — phase 3 flips this and must invalidate float32 EUCLIDEAN indexes");
+  private static Inputs withPreview(int maxChars) {
+    Inputs in = baseline();
+    return new Inputs(
+        in.catalogSchemaVersion(),
+        in.fields(),
+        in.analyzerFingerprint(),
+        in.vectorFormat(),
+        in.hnsw(),
+        in.chunking(),
+        maxChars,
+        in.analysis(),
+        in.embeddingModel(),
+        in.spladeModel(),
+        in.nerModel());
+  }
 
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                base.fields(),
-                "analyzer-fp-2",
-                base.vectorFormat(),
-                base.hnsw(),
-                base.chunking(),
-                base.embeddingModel(),
-                base.spladeModel())),
-        "analyzer fingerprint");
+  private static Inputs withAnalysis(Analysis analysis) {
+    Inputs in = baseline();
+    return new Inputs(
+        in.catalogSchemaVersion(),
+        in.fields(),
+        in.analyzerFingerprint(),
+        in.vectorFormat(),
+        in.hnsw(),
+        in.chunking(),
+        in.contentPreviewMaxChars(),
+        analysis,
+        in.embeddingModel(),
+        in.spladeModel(),
+        in.nerModel());
+  }
 
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                base.fields(),
-                base.analyzerFingerprint(),
-                "int8_sq",
-                base.hnsw(),
-                base.chunking(),
-                base.embeddingModel(),
-                base.spladeModel())),
-        "vector storage format");
-
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                base.fields(),
-                base.analyzerFingerprint(),
-                base.vectorFormat(),
-                new Hnsw(32, 100),
-                base.chunking(),
-                base.embeddingModel(),
-                base.spladeModel())),
-        "HNSW m");
-
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                base.fields(),
-                base.analyzerFingerprint(),
-                base.vectorFormat(),
-                new Hnsw(16, 200),
-                base.chunking(),
-                base.embeddingModel(),
-                base.spladeModel())),
-        "HNSW ef_construction");
-
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                base.fields(),
-                base.analyzerFingerprint(),
-                base.vectorFormat(),
-                base.hnsw(),
-                new Chunking(400, 50, 100, "v1"),
-                base.embeddingModel(),
-                base.spladeModel())),
-        "chunk target tokens");
-
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                base.fields(),
-                base.analyzerFingerprint(),
-                base.vectorFormat(),
-                base.hnsw(),
-                new Chunking(500, 50, 100, "v2"),
-                base.embeddingModel(),
-                base.spladeModel())),
-        "chunker algorithm version");
-
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                base.fields(),
-                base.analyzerFingerprint(),
-                base.vectorFormat(),
-                base.hnsw(),
-                base.chunking(),
-                ModelFingerprint.present("b".repeat(64)),
-                base.spladeModel())),
-        "embedding model digest");
-
-    assertNotEquals(
-        baseFp,
-        fingerprintOf(
-            new Inputs(
-                base.catalogSchemaVersion(),
-                base.fields(),
-                base.analyzerFingerprint(),
-                base.vectorFormat(),
-                base.hnsw(),
-                base.chunking(),
-                base.embeddingModel(),
-                ModelFingerprint.present("c".repeat(64)))),
-        "SPLADE model digest");
+  private static Inputs withModels(
+      ModelFingerprint embedding, ModelFingerprint splade, ModelFingerprint ner) {
+    Inputs in = baseline();
+    return new Inputs(
+        in.catalogSchemaVersion(),
+        in.fields(),
+        in.analyzerFingerprint(),
+        in.vectorFormat(),
+        in.hnsw(),
+        in.chunking(),
+        in.contentPreviewMaxChars(),
+        in.analysis(),
+        embedding == null ? in.embeddingModel() : embedding,
+        splade == null ? in.spladeModel() : splade,
+        ner == null ? in.nerModel() : ner);
   }
 
   /**
-   * "A model was never configured here" and "a model is configured but I could not read it" are
+   * "A model was never configured here" and "a model is configured but I could not digest it" are
    * different answers, and only the first is an answer. Conflating them is how a transiently
    * unreadable model file would cost a user a full reindex.
    */
   @Test
   void anIndeterminateModelYieldsNoFingerprintAtAll() {
-    Inputs base = baseline();
-    Inputs indeterminateEmbedding =
-        new Inputs(
-            base.catalogSchemaVersion(),
-            base.fields(),
-            base.analyzerFingerprint(),
-            base.vectorFormat(),
-            base.hnsw(),
-            base.chunking(),
-            ModelFingerprint.indeterminate(),
-            base.spladeModel());
-    assertTrue(IndexFingerprint.compute(indeterminateEmbedding).isEmpty());
+    assertTrue(
+        IndexFingerprint.compute(withModels(ModelFingerprint.indeterminate(), null, null)).isEmpty(),
+        "embedding");
+    assertTrue(
+        IndexFingerprint.compute(withModels(null, ModelFingerprint.indeterminate(), null)).isEmpty(),
+        "splade");
+    assertTrue(
+        IndexFingerprint.compute(withModels(null, null, ModelFingerprint.indeterminate())).isEmpty(),
+        "ner");
+  }
 
-    Inputs indeterminateSplade =
-        new Inputs(
-            base.catalogSchemaVersion(),
-            base.fields(),
-            base.analyzerFingerprint(),
-            base.vectorFormat(),
-            base.hnsw(),
-            base.chunking(),
-            base.embeddingModel(),
-            ModelFingerprint.indeterminate());
-    assertTrue(IndexFingerprint.compute(indeterminateSplade).isEmpty());
+  /** A skipped comparison has to be able to say which question went unanswered. */
+  @Test
+  void indeterminateInputsAreNamed() {
+    assertEquals(
+        List.of("embedding_model_sha256", "ner_model_sha256"),
+        withModels(ModelFingerprint.indeterminate(), null, ModelFingerprint.indeterminate())
+            .indeterminateInputs());
+    assertEquals(List.of(), baseline().indeterminateInputs());
   }
 
   @Test
   void notConfiguredIsADeterminateAnswerDistinctFromAnyDigest() {
-    Inputs base = baseline();
-    Inputs spladePresent =
-        new Inputs(
-            base.catalogSchemaVersion(),
-            base.fields(),
-            base.analyzerFingerprint(),
-            base.vectorFormat(),
-            base.hnsw(),
-            base.chunking(),
-            base.embeddingModel(),
-            ModelFingerprint.present("c".repeat(64)));
     assertNotEquals(
-        fingerprintOf(base),
-        fingerprintOf(spladePresent),
+        fp(baseline()),
+        fp(withModels(null, ModelFingerprint.present("c".repeat(64)), null)),
         "installing a SPLADE model changes what is written into the sparse fields");
   }
 
@@ -322,9 +319,16 @@ final class IndexFingerprintTest {
             "hnsw",
             "ef_construction",
             "chunking",
+            "threshold_chars",
             "algorithm_version",
+            "preview",
+            "max_chars",
+            "analysis",
+            "lucene_version",
+            "icu_version",
             "embedding_model_sha256",
             "splade_model_sha256",
+            "ner_model_sha256",
             "similarity",
             "doc_values",
             "multi_valued",
@@ -344,11 +348,16 @@ final class IndexFingerprintTest {
         () -> {
           throw new IllegalStateException("model store unavailable");
         },
+        ModelFingerprint::notConfigured,
         ModelFingerprint::notConfigured);
     assertEquals(
         IndexFingerprint.ModelState.INDETERMINATE,
         IndexFingerprint.embeddingModel().state(),
         "a provider that fails has told us nothing, not that the model is gone");
+    assertEquals(
+        List.of("embedding_model_sha256"),
+        IndexFingerprint.indeterminateModelInputs(),
+        "the guard must be able to name the input it could not resolve");
   }
 
   @Test
@@ -357,5 +366,7 @@ final class IndexFingerprintTest {
         IndexFingerprint.ModelState.NOT_CONFIGURED, IndexFingerprint.embeddingModel().state());
     assertEquals(
         IndexFingerprint.ModelState.NOT_CONFIGURED, IndexFingerprint.spladeModel().state());
+    assertEquals(IndexFingerprint.ModelState.NOT_CONFIGURED, IndexFingerprint.nerModel().state());
+    assertEquals(List.of(), IndexFingerprint.indeterminateModelInputs());
   }
 }

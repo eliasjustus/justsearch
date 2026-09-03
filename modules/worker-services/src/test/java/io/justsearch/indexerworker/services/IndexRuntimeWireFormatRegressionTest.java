@@ -255,6 +255,56 @@ final class IndexRuntimeWireFormatRegressionTest {
         "A reason that never committed must not appear as a series; got:\n" + ndjson);
   }
 
+  /**
+   * Tempdoc 915 — the two migration reasons are the whole point of the 912 fold-in, and a reason
+   * that never reaches the wire is attribution nobody can read. Asserted at the NDJSON, not at
+   * CommitCounters: the counter and the exporter are different code, and only the exporter is what
+   * jseval cadence attributes from.
+   */
+  @Test
+  void theMigrationCommitReasonsReachTheWireAsTheirOwnSeries() throws Exception {
+    String ndjson;
+    try (LocalTelemetry telemetry =
+        new LocalTelemetry(
+            tmp,
+            500,
+            "test",
+            "0",
+            "metrics-migration-reasons.ndjson",
+            List.of(
+                io.justsearch.telemetry.catalog.MetricCatalog.of(
+                    IndexRuntimeMetricCatalog.NAMESPACE,
+                    IndexRuntimeMetricCatalog.DEFINITIONS)))) {
+      WorkerLuceneTelemetryAdapter adapter =
+          new WorkerLuceneTelemetryAdapter(new IndexRuntimeMetricCatalog(telemetry.registry()));
+
+      adapter.onCommit(10L, CommitReason.MIGRATION_CUTOVER);
+      adapter.onCommit(11L, CommitReason.SWITCH_BUFFER_REPLAY);
+      adapter.onCommit(12L, CommitReason.SWITCH_BUFFER_REPLAY);
+
+      telemetry.flush();
+      ndjson =
+          Files.readString(tmp.resolve("telemetry").resolve("metrics-migration-reasons.ndjson"));
+    }
+
+    List<String> lines = anyLineWithName(ndjson, "index.runtime.commit_total");
+    assertTrue(
+        lines.stream()
+            .anyMatch(
+                l -> l.contains("\"reason\":\"migration/cutover\"") && l.contains("\"value\":1")),
+        "the cutover commit must reach the wire under its own label; got:\n" + ndjson);
+    assertTrue(
+        lines.stream()
+            .anyMatch(
+                l ->
+                    l.contains("\"reason\":\"migration/switch-buffer-replay\"")
+                        && l.contains("\"value\":2")),
+        "the switch-buffer replay must reach the wire under its own label; got:\n" + ndjson);
+    assertFalse(
+        lines.stream().anyMatch(l -> l.contains("\"reason\":\"unknown\"")),
+        "neither migration commit may fall through to unknown; got:\n" + ndjson);
+  }
+
   private static boolean containsLine(String ndjson, String name, String fragment) {
     for (String line : ndjson.split("\n")) {
       if (line.contains("\"name\":\"" + name + "\"") && line.contains(fragment)) {

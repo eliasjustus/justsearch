@@ -50,6 +50,15 @@ public final class ParityDiagnostics {
     return false;
   }
 
+  /**
+   * Hint used when the index predates {@code index_fingerprint} entirely. Named rather than folded
+   * into the generic mismatch hint so the log line and the status surface can say WHY the migration
+   * started: not "your shape changed" but "this index was built before the shape was recorded".
+   */
+  public static final String LEGACY_INDEX_HINT =
+      "legacy-index-without-fingerprint: this index predates index_fingerprint, so its physical"
+          + " shape cannot be verified. Rebuilding once records it.";
+
   private static final Map<String, String> PARITY_HINTS =
       Map.of(
           io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY,
@@ -63,13 +72,25 @@ public final class ParityDiagnostics {
     for (String key : PARITY_KEYS) {
       String storedRaw = asString(stored == null ? null : stored.get(key));
       String expectedRaw = asString(expected == null ? null : expected.get(key));
-      // Tri-state, both directions. A blank side is "unknown", never "different":
-      //  - stored blank  -> a legacy index predating this key, or one committed while an input was
-      //    unresolvable;
-      //  - expected blank -> this runtime could not compute a truthful fingerprint (a configured
-      //    model's digest was unreadable — IndexFingerprint returns empty rather than guessing).
-      // Reporting either as a mismatch would spend a full rebuild on an absence of evidence.
-      if (isBlank(storedRaw) || isBlank(expectedRaw)) {
+      // A blank EXPECTED means this runtime could not compute a truthful fingerprint (a
+      // configured model digest was unreadable). That is an unanswered question, not a difference,
+      // and spending a full rebuild on an absence of evidence would be the destructive reading.
+      // The guard logs which input went unresolved rather than going silent.
+      if (isBlank(expectedRaw)) {
+        continue;
+      }
+      // A blank STORED on a rebuild-requiring key is different, and this is the case the first cut
+      // of this change got wrong: every index built before this key existed has a blank stored side
+      // forever, so skipping it left the guard permanently inert on exactly the installs it was
+      // meant to protect. An index whose physical shape was never recorded cannot be shown to match
+      // this runtime, so it is treated as a mismatch and migrated once — the deliberate one-time
+      // upgrade rebuild the wave-2 release is built around. Benign keys still skip: an unverifiable
+      // boosts_fp is not worth reporting, let alone acting on.
+      if (isBlank(storedRaw)) {
+        if (!REBUILD_REQUIRING_KEYS.contains(key)) {
+          continue;
+        }
+        diffs.add(new Diff(key, stringify(storedRaw), stringify(expectedRaw), LEGACY_INDEX_HINT));
         continue;
       }
       if (!Objects.equals(storedRaw, expectedRaw)) {

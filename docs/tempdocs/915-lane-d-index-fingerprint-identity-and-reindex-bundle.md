@@ -1,7 +1,7 @@
 ---
 title: "Lane D: one truthful index fingerprint, stable document identity, and the reindex bundle"
 type: tempdocs
-status: "PHASE 1 IMPLEMENTED (2026-09-03) — five parity keys replaced by index_fingerprint + boosts_fp; the Head no longer disables the parity guard; production default is BLUE_GREEN_MIGRATE with a bounded repeat-rebuild brake. Phases 2 (document identity) and 3 (reindex bundle) are PENDING."
+status: "PHASE 1 IMPLEMENTED + INDEPENDENT REVIEW APPLIED (2026-09-03) — five parity keys replaced by index_fingerprint + boosts_fp; the Head no longer disables the parity guard; production default is BLUE_GREEN_MIGRATE with a bounded repeat-rebuild brake. Phases 2 (document identity) and 3 (reindex bundle) are PENDING."
 created: 2026-09-03
 updated: 2026-09-03
 lane: D (decision re-examination programme, wave 2)
@@ -66,6 +66,34 @@ records what re-verification found. Phase 1 is implemented in this PR. Phases 2 
 - [x] W3. Tempdoc 884 cross-lane request — `docs/reference/architectural-risks.md` RISK-011's
       instrument moved from `none - lane D has no tempdoc yet` to `tempdoc:915#C Design (Phase 1),
       tightened`.
+
+### Review round (independent review returned NEEDS-FIXES; all decisions applied)
+
+- [x] R-B1. **The guard was inert on every pre-PR index.** A blanket blank-side skip meant a legacy
+      index (which has a blank stored `index_fingerprint` forever) could never mismatch. Blank
+      STORED on a rebuild-requiring key is now a mismatch carrying a
+      `legacy-index-without-fingerprint` hint — the deliberate one-time upgrade rebuild. Blank
+      EXPECTED still skips, now with a once-per-boot WARN naming the unresolved input.
+- [x] R-B2. `readinessNotice.ts`'s comment still described the retired file-hash and cited a stale
+      line; §B.4/§D.14 claimed a fix that had not been made. Comment relabelled (the relabel §C.11
+      promised); §B.4/§D.14 corrected below.
+- [x] R-S1. HNSW params are hashed as **effective** values, so an explicitly-written default is no
+      longer a spurious reindex. One home for the fallbacks (`ResolvedConfig.Index`).
+- [x] R-S2. Added `chunking.threshold_chars` and `preview.max_chars` — both decide what is written.
+- [x] R-S3. Added `ner_model_sha256` via a new `NerFingerprint`, mirroring `SpladeFingerprint`.
+- [x] R-S4. Added `analysis.lucene_version` + `analysis.icu_version`.
+- [x] R-S5. Brake exhaustion opens Blue **read-only** instead of failing `start()`; new reason code
+      `index.rebuild_brake_exhausted`; uncomputable targets get no budget; the metadata build inside
+      the catch is guarded so it cannot mask the original mismatch.
+- [x] R-S6. The second `allow_mismatch` writer (a test) now states it is exercising the operator
+      escape; `WorkerSpawner`'s comment no longer calls it a dev/demo bypass; §E1 corrected.
+- [x] R-S7. A missing SPLADE/NER model file is `NOT_CONFIGURED`, not `INDETERMINATE`.
+- [x] R-S8. The env-var row documents the per-mode default.
+- [x] R-S9. Added the green-verification third-refusal test and a wire-level assertion that both new
+      commit reasons reach `index.runtime.commit_total` as their own series.
+- [x] R-nits. Replaced-set corrected, line references refreshed, the `CommitFunnelArchTest` claim
+      restated (the allowlist did not shrink — the bypass was closed by making
+      `CommitOps.commit()` package-private).
 
 ### Phase 2 — stable document identity (PENDING)
 
@@ -197,14 +225,26 @@ still read for `/infra/capabilities` at `CapabilitiesService.java:282`),
 
 ### §B.4 One pre-existing doc-drift fix, ridden along
 
-`readinessNotice.ts:358-391`'s comment cites `IndexStatusOps.java:995` for the schema-fp helpers;
-they are at `:1097-1171`. Corrected in this PR (§D.14).
+`readinessNotice.ts:358-391`'s comment described `index_schema_fp` as a content hash of
+`fields.v1.json` and cited `IndexStatusOps.java:995` for the comparison; the helpers are at
+`:1097-1180` and the compared value is now `index_fingerprint`.
+
+**Correction (review round):** the first cut of this tempdoc claimed this was fixed, and it was not —
+the PR touched no `modules/ui-web` file at all, so the comment stayed wrong and the claim was false.
+It is fixed now (§D.23), and the ui-web gate set + `npm run typecheck` were run for that edit.
 
 ---
 
 ## §C Design (Phase 1), tightened
 
 ### §C.1 `index_fingerprint` — the exact input list
+
+**The replaced set, stated exactly** (the class Javadoc says the same, and the two must not drift):
+`index_fingerprint` replaces **four** of the five keys that were parity-checked — `schema_ver`,
+`analyzer_fp`, `index_schema_fp`, `similarity_fp`. The fifth, `boosts_fp`, survives unchanged as the
+benign key (§C.4). `schema_fp` (the search-intent schema hash) was never a parity key and stays
+plain observability. "Five keys become two" is the count of *parity keys before and after*, not a
+claim that five were deleted.
 
 SHA-256 over a canonical JSON document (`IndexFingerprint.canonicalJson`). Keys are emitted from
 `TreeMap`s, so **key order is lexicographic at every level**; the `fields` array is sorted by `id`
@@ -216,8 +256,11 @@ and each field's `roles` array is sorted. The rendering is stable across JVMs an
 | `catalog_schema_version` | `SSOT/catalogs/fields.v1.json → version` | The catalog author's deliberate break lever. |
 | `analyzer_fp` | `SsotAnalyzerRegistry.AnalyzerFingerprintingService` over all analyzer ids | Index-time analysis decides the postings on disk. |
 | `vector_format` | `index.vector.quantization.enabled` → `float32` \| `int8_sq` | A different `KnnVectorsFormat` is a different on-disk encoding. |
-| `hnsw.m`, `hnsw.ef_construction` | `ResolvedConfig.Index.vectorHnswM/vectorHnswEfConstruction` | These two shape the graph that is written. |
-| `chunking.target_tokens` / `overlap_tokens` / `min_tokens` / `algorithm_version` | `ChunkSplitter.DEFAULT_CHUNK_TOKENS` / `DEFAULT_OVERLAP_TOKENS` / `MIN_CHUNK_TOKENS` / `ALGORITHM_VERSION` | Chunk boundaries are on-disk shape. `ALGORITHM_VERSION` is new (§D.3) and is the lever lane E bumps if the splitting *algorithm* changes with the token counts unchanged. |
+| `hnsw.m`, `hnsw.ef_construction` | `ResolvedConfig.Index.effectiveVectorHnswM()` / `effectiveVectorHnswEfConstruction()` | These two shape the graph that is written. **Effective**, not raw: the config is nullable and the codec falls back to 16/200, so hashing the raw value made writing a default out explicitly look like a schema change. One home for the fallback constants, read by both the codec and the fingerprint. |
+| `preview.max_chars` | `ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS` (mirrored) | Bounds `content_preview`, a `stored:true` field. |
+| `analysis.lucene_version`, `analysis.icu_version` | `org.apache.lucene.util.Version.LATEST`, `com.ibm.icu.util.VersionInfo.ICU_VERSION` | The libraries that do index-time analysis. An upgrade changes the postings with every descriptor unchanged. Deliberately coarse (§C.3). |
+| `ner_model_sha256` | `NerFingerprint.get()` via the installed provider | `entity_*_raw` are `stored`+`docValues` fields written from NER output (`NerBackfillOps.java:217`), so the model is index content. |
+| `chunking.target_tokens` / `overlap_tokens` / `min_tokens` / `threshold_chars` / `algorithm_version` | `ChunkSplitter.DEFAULT_CHUNK_TOKENS` / `DEFAULT_OVERLAP_TOKENS` / `MIN_CHUNK_TOKENS` / `ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS` (mirrored) / `ChunkSplitter.ALGORITHM_VERSION` | Chunk boundaries are on-disk shape, and `threshold_chars` decides whether chunk documents exist at all. `ALGORITHM_VERSION` is new (§D.3) and is the lever lane E bumps if the splitting *algorithm* changes with the token counts unchanged. |
 | `embedding_model_sha256` | `EmbeddingFingerprint.get()` via the installed provider | The model whose output is stored in `vector` / `chunk_vector`. |
 | `splade_model_sha256` | `SpladeFingerprint.get()` via the installed provider | The model whose output is stored in the sparse fields. |
 | `fields[]` | the physical projection of `fields.v1.json` (§C.2) | What each document actually carries. |
@@ -253,6 +296,10 @@ physically compatible index. Pinned by `CatalogPhysicalProjectionTest`, falsifie
   index. `schema_ver` was the false detector: pinned at `"1.0.0"` since 2026-01-04, it could never
   fire.
 - **`rmwPolicy`** — see §C.2.
+- **Not excluded, but deliberately coarse:** `analysis.lucene_version` / `analysis.icu_version`. A
+  Lucene or ICU minor bump will trigger one rebuild even where the analysis did not actually change.
+  That cost is accepted because the alternative is a postings change that no detector can see —
+  every per-field descriptor stays identical while the tokens on disk differ.
 - **`field_catalog_hash`** — retained as a separate observability key (it is the honest answer to
   "which catalog file was on disk"), but it is not the identity and not a parity key.
 
@@ -271,8 +318,14 @@ A model fingerprint is tri-state:
 - `PRESENT` — digest read.
 - `INDETERMINATE` — a model file exists but its digest could not be read.
 
+A **missing** model file is `NOT_CONFIGURED`, not `INDETERMINATE` — most installs have no SPLADE or
+NER model, and reading their absence as "no answer" would switch the parity check off on every one
+of them. Only a resolvable model file whose digest cannot be read is indeterminate.
+
 If any input is `INDETERMINATE`, `IndexFingerprint.compute` returns empty, **no fingerprint is
-stamped**, and `ParityDiagnostics.diff` skips the key when either side is blank. A transiently
+stamped**, and `ParityDiagnostics.diff` skips the key when the *expected* side is blank, with a
+once-per-boot WARN from the guard naming the unresolved input (a check that is not running must not
+look like a check that passed). A transiently
 unreadable model file must not be indistinguishable from a swapped one, because the consequence of
 the latter is now an automatic full rebuild (`green-masked-destructive`). The same rule flows
 through: `IndexStatusOps.safeSchemaCompatState` reports `UNAVAILABLE`, never `COMPATIBLE`; green
@@ -280,6 +333,24 @@ verification **refuses** the promotion rather than promoting on an absence of ev
 
 `EmbeddingFingerprint` already distinguishes the two absences (`modelPath()` vs `get()`);
 `SpladeFingerprint` did not, so it gained a `modelPath()` accessor (§D.9).
+
+### §C.5a A blank STORED fingerprint is a mismatch (the legacy path)
+
+The tri-state above is about the *expected* side. The **stored** side is not symmetric, and the first
+cut of this change got that wrong: it skipped a blank stored value too, which meant every index built
+before this key existed had a blank stored side forever and could never mismatch — the guard was
+inert on exactly the installs it exists to protect (independent review, reproduced: diffs on a legacy
+index = 0).
+
+An index whose physical shape was never recorded cannot be shown to match this runtime. So a blank
+stored value on a **rebuild-requiring** key is a mismatch, carrying the
+`ParityDiagnostics.LEGACY_INDEX_HINT` (`legacy-index-without-fingerprint`) so the log and the status
+surface say *why* the migration started — not "your shape changed" but "this index predates the
+record". Under the production `BLUE_GREEN_MIGRATE` default that is one rebuild, beside the live
+index, with search serving throughout: the deliberate one-time upgrade the programme's wave-2
+release rule already assumes ("existing installs pay for one rebuild, carried by the blue/green
+default"). A blank stored value on the **benign** key still skips — an unverifiable `boosts_fp` is
+not worth reporting, let alone acting on.
 
 ### §C.6 Where the two keys are written
 
@@ -380,28 +451,29 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 
 | # | Change | Location |
 |---|---|---|
-| D.1 | New `IndexFingerprint`: tri-state `ModelFingerprint`, `FieldShape` / `Chunking` / `Hnsw` / `Inputs`, `compute` → `Optional<String>`, `canonicalJson`, process-wide model + vector-dimension providers | `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/commit/IndexFingerprint.java` (new, 310 lines) |
+| D.1 | New `IndexFingerprint`: tri-state `ModelFingerprint`, `FieldShape` / `Chunking` / `Hnsw` / `Analysis` / `Inputs`, `compute` → `Optional<String>`, `canonicalJson`, `indeterminateInputs()` / `indeterminateModelInputs()`, process-wide model + vector-dimension providers | `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/commit/IndexFingerprint.java` (new) |
 | D.2 | `SsotCommitMetadataSource`: deleted the `intent_v1.schema_ver` read, `schema_ver`, `index_schema_fp`, `analyzer_fp`, and the dead `setVectorDimensionOverride`; added `indexFingerprint()`, `projectFields()`, `parseCatalog()`, `vectorFormat()`, `DEFAULT_VECTOR_SIMILARITY` | `SsotCommitMetadataSource.java:40,62-118,120-208` |
 | D.3 | `ChunkSplitter.ALGORITHM_VERSION = "v1"` (additive; lane E bumps it if the splitting algorithm changes) | `ChunkSplitter.java:91-99` |
-| D.4 | `ParityDiagnostics`: `PARITY_KEYS` → `{index_fingerprint, boosts_fp}`, `REBUILD_REQUIRING_KEYS` → `{index_fingerprint}`, hints rewritten, the `index_schema_fp`-only blank skip generalised to a both-sides tri-state skip | `ParityDiagnostics.java:15-31,44-52,60-70,88-90` |
+| D.4 | `ParityDiagnostics`: `PARITY_KEYS` → `{index_fingerprint, boosts_fp}`, `REBUILD_REQUIRING_KEYS` → `{index_fingerprint}`, hints rewritten; blank-side handling made asymmetric (§C.5a): blank *expected* skips, blank *stored* on a rebuild-requiring key is a mismatch carrying `LEGACY_INDEX_HINT` | `ParityDiagnostics.java` — `PARITY_KEYS`, `REBUILD_REQUIRING_KEYS`, `LEGACY_INDEX_HINT`, `diff()` |
 | D.5 | `IndexMetadataParityGuard`: message and comments describe `index_fingerprint`; the `allow_mismatch` branch documents that nothing sets it any more | `IndexMetadataParityGuard.java:56-73` |
 | D.6 | `HeadlessApp`: both `allow_mismatch=true` set-sites deleted | `HeadlessApp.java:351` (was `:352`), `:781` (was `:783`) |
 | D.7 | `ResolvedConfigBuilder`: prod default → `BLUE_GREEN_MIGRATE` | `ResolvedConfigBuilder.java:1009-1026` |
 | D.8 | `KnowledgeServer`: installs the model-fingerprint + effective-vector-dimension providers before the first commit; repeat-rebuild brake in the `SCHEMA_MISMATCH` catch; metadata supplier simplified (the dead instance override removed) | `KnowledgeServer.java:507-520`, `:638-670`, `:1566-1580` |
 | D.9 | `SpladeFingerprint`: `CachedResult` widened with the resolved model path; new `modelPath()` so "not configured" and "digest unreadable" are distinguishable | `SpladeFingerprint.java:46-60,77,90,95,99` |
-| D.10 | `IndexGenerationManager`: `State` gains the three brake fields (all 7 construction sites); `MAX_AUTO_REBUILD_ATTEMPTS`, `recordAutoRebuildAttempt`, `autoRebuildAttemptsFor`; `promoteBuildingGenerationToActive` clears the brake | `IndexGenerationManager.java:77-101`, `:320-390`, and the widened constructors |
+| D.10 | `IndexGenerationManager`: `State` gains the three brake fields (all **8** `new State(` construction sites — `startMigration`, `setMigrationPaused`, `updateMigrationState`, `promoteBuildingGenerationToActive`, `rollbackToPreviousGeneration`, `newIdleState`, `normalizeAndUpgradeStateIfNeeded`, `recordAutoRebuildAttempt`); `MAX_AUTO_REBUILD_ATTEMPTS`, `recordAutoRebuildAttempt`, `autoRebuildAttemptsFor`; `promoteBuildingGenerationToActive` clears the brake | `IndexGenerationManager.java` — `State` record, `recordAutoRebuildAttempt` / `autoRebuildAttemptsFor`, and the widened constructors |
 | D.11 | `CommitOps`: `commitWithBuildState` takes a required `CommitReason` (912 item 1); the low-level `commit()` is package-private so the cross-module bypass is a compile error (912 item 2) | `CommitOps.java:83`, `:143-158` |
 | D.12 | `CommitReason`: `MIGRATION_CUTOVER`, `SWITCH_BUFFER_REPLAY` | `CommitReason.java:39-40` |
-| D.13 | `KnowledgeServerMigrationOps`: cutover commit attributed `MIGRATION_CUTOVER`; switch-buffer replay routed through the funnel as `SWITCH_BUFFER_REPLAY`; green verification compares `index_fingerprint` and refuses on an uncomputable expected value | `KnowledgeServerMigrationOps.java:224-227`, `:316-345`, `:775-786` |
-| D.14 | `IndexStatusOps`: both fingerprint helpers read `IndexFingerprint.COMMIT_META_KEY`; the `UNAVAILABLE` branch documents that an absent answer is not a clean bill | `IndexStatusOps.java:1097-1148` |
+| D.13 | `KnowledgeServerMigrationOps`: cutover commit attributed `MIGRATION_CUTOVER`; switch-buffer replay routed through the funnel as `SWITCH_BUFFER_REPLAY`; green verification compares `index_fingerprint` and refuses on an uncomputable expected value | `KnowledgeServerMigrationOps.java:229`, `:325-345`, `:793` |
+| D.14 | `IndexStatusOps`: both fingerprint helpers read `IndexFingerprint.COMMIT_META_KEY`; the `UNAVAILABLE` branch documents that an absent answer is not a clean bill | `IndexStatusOps.java:1101`, `:1124`, `:1138-1139` |
 | D.15 | `RequiredFieldsCommitMetadataValidator`: `schema_ver`/`analyzer_fp` off the required list; `index_fingerprint` validated as well-formed **when present** (optional by the tri-state rule) | `RequiredFieldsCommitMetadataValidator.java:10-45` |
 | D.16 | `commit-metadata.schema.json`: `schema_ver` / `index_schema_fp` / `analyzer_fp` removed; `index_fingerprint` added with a description | `SSOT/schemas/indexing/commit-metadata.schema.json` |
 | D.17 | `CommitMetadataSpanAttrs.KEYS` and `NdjsonSpanExporter.ALLOWED_ATTRS`: 8 `commit.*` keys → 7 | `CommitMetadataSpanAttrs.java:19-26`, `NdjsonSpanExporter.java:70-76` |
-| D.18 | `CommitFunnelArchTest`: the routed 912 §D.2 open item is closed by construction; doc updated to say so instead of widening an allowlist | `CommitFunnelArchTest.java:26-31,84-88` |
+| D.18 | `CommitFunnelArchTest`: the routed 912 §D.2 open item is closed by construction. To be exact, since the first cut of this row overstated it — **the `ALLOWED` allowlist is unchanged** (still `CommitOps`, `RuntimeSession`, `ComponentsFactory`). What closed the cross-module bypass is that `CommitOps.commit()` is package-private now, so `KnowledgeServerMigrationOps` cannot call it at all; only the class Javadoc changed | `CommitFunnelArchTest.java` (Javadoc only) |
 | D.19 | jseval: `index_identity.py`, `manifest.py`, `preflight.py`, `release.py`, `projections/_spike_schema.py` + 5 test files | `scripts/jseval/**` |
 | D.20 | Docs: `11-index-schema-migration.md` (fingerprint section, enforcement status 2026-09, policy defaults + brake), `04-storage-engine.md`, `06-configuration-ssot.md`, `08-observability.md`, `09-testing-strategy.md`, `18-adapters-lucene-deep-dive.md`, `index-schema-mismatch-reindex-noop.md` (superseded banner + inline strikes), `environment-variables.md`, ADR-0014 (dated append, history not rewritten) | `docs/**` |
 | D.21 | RISK-011 instrumented to `tempdoc:915#C Design (Phase 1), tightened`; notes explain why it stays open rather than closed | `docs/reference/architectural-risks.md:264-282` |
 | D.22 | New tests: `IndexFingerprintTest`, `CatalogPhysicalProjectionTest`, `SchemaMismatchPolicyBranchTest`, `IndexRebuildBrakeTest`; extended `CommitReasonAccountingTest`, `InvariantSuiteIT`; updated 14 fixture files | see §G |
+| D.23 | **Review round.** `ParityDiagnostics`: `LEGACY_INDEX_HINT` + the asymmetric blank-side rule (§C.5a). `IndexMetadataParityGuard`: `warnIfFingerprintUncomputable`, once per process. `ResolvedConfig.Index`: `DEFAULT_VECTOR_HNSW_M` / `DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION` + `effectiveVectorHnsw*()`; `ComponentsFactory` reads them instead of its own 16/200. `IndexFingerprint`: `Analysis`, `threshold_chars`, `preview.max_chars`, `ner_model_sha256`, three-arg provider install. New `NerFingerprint` (worker-core). `SpladeFingerprint`: a missing model file is `NOT_CONFIGURED`. `ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS` made public; both constants mirrored into `SsotCommitMetadataSource` with a drift test. `KnowledgeServer`: `recordAutoRebuildAttemptOrSkip` (no budget for an unattributable boot), `expectedIndexFingerprintOrNull` (guarded), and exhaustion opens Blue read-only. `LifecycleReasonCode.INDEX_REBUILD_BRAKE_EXHAUSTED`; `StatusLifecycleHandler.compatBlockedReason` maps `BLOCKED_REBUILD_BRAKE`; `IndexStatusOps` produces it. `readinessNotice.ts`: corrected comment + new `index.rebuild_brake_exhausted` row, added to `REINDEX_CAUSE_CODES`. `WorkerSpawner` comment; `SchemaMismatchStatusContractTest` states its escape use; `environment-variables.md` documents the per-mode default | see §F round 2 |
 
 ---
 
@@ -410,8 +482,11 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 **E1. Wrong-gate check — every gate the change depends on, set-site grepped.**
 
 - `allow_mismatch`: grepped for every set-site of `justsearch.index.parity.allow_mismatch`.
-  Remaining writers after the change: only `OpenTimeCommitUserDataTest:38-47` (a test that sets and
-  restores it deliberately). `WorkerSpawner.java` *forwards* `INDEX_PARITY_ALLOW_MISMATCH` when
+  **Correction (review round):** the first cut of this bullet said there was one remaining writer.
+  There were two — `OpenTimeCommitUserDataTest:38-47` and `SchemaMismatchStatusContractTest:76`, the
+  latter in a file this PR modified. Both are tests that set and restore it deliberately, and both
+  now say in a comment that they are exercising the operator escape on purpose. No production code
+  sets it. `WorkerSpawner.java` *forwards* `INDEX_PARITY_ALLOW_MISMATCH` when
   present — it does not set it, so with nothing setting it the Worker inherits nothing. Verified by
   grep, not by symbol existence.
 - `schemaMismatchPolicy`: the blue/green branch compares `"blue_green_migrate".equalsIgnoreCase(...)`
@@ -443,9 +518,16 @@ the file directly, confirmed zero matches.
   FAIL_CLOSED", so an accidental flip to the destructive `REBUILD_BACKUP_FIRST` fails there.
 
 **E4. Tri-state lookups.** Three places now distinguish unknown from healthy and from mismatched:
-`IndexFingerprint.compute` (empty on INDETERMINATE), `ParityDiagnostics.diff` (skips when *either*
-side is blank — previously only the stored side, and only for one key), `verifyGreenMetadata`
+`IndexFingerprint.compute` (empty on INDETERMINATE), `ParityDiagnostics.diff`, `verifyGreenMetadata`
 (refuses on an uncomputable expected value). §F F3, F4 falsify the first two.
+
+**Corrected in the review round.** The first cut of this bullet claimed the `diff` skip was the
+tri-state handling and treated symmetry as the improvement. It was the defect: skipping a blank
+*stored* value made the guard inert on every index built before this key existed — the whole
+installed base. The skip is now asymmetric (§C.5a), and "unknown" on the expected side is no longer
+silent either: `IndexMetadataParityGuard.warnIfFingerprintUncomputable` logs once per process naming
+the unresolved input, because a check that is not running must not look like a check that passed.
+§F G1-G3 falsify the new rule.
 
 **E5. Asymmetric lifecycle.** `installModelFingerprintProviders` has a matching
 `resetModelFingerprintProviders` used by `IndexFingerprintTest`'s `@AfterEach`, so a test that
@@ -453,6 +535,16 @@ installs a throwing provider cannot leak it into the rest of the fork.
 
 **E6. Actionable findings from this pass: 2** — the corrupt-state assertion (E3) and the
 second blue/green trigger (E2/§B.1 2c). Both changed the implementation.
+
+**E7. What this pass missed, and why (review round).** The independent review found the inert-guard
+defect (B1) that E4 had walked straight past. The pass asked "does this conflate unknown with
+healthy?" and answered yes-handled — but only for the *expected* side, because that is the side the
+tri-state design was about. The stored side was never interrogated, so a blanket skip written for
+one narrow case (a key that legitimately had no stored value) silently generalised to the case that
+mattered. The transferable lesson: when a guard is made symmetric, check each side against its own
+adverse scenario — symmetry is an aesthetic property, not a correctness one, and the legacy index is
+exactly the `green-masked-destructive` shape (a green my dev machine's freshly-built index happened
+to satisfy). E7 also revises E6: **actionable findings, counting the review: 3.**
 
 ---
 
@@ -463,7 +555,7 @@ restored. Driver: `tmp/falsify.sh` + `tmp/falsify-patch.py` (deleted before comm
 
 | ID | Break | Test that caught it | Failing assertion |
 |---|---|---|---|
-| F1 | `REBUILD_REQUIRING_KEYS` → `Set.of()` | `ParityGuardTest`, `SchemaMismatchPolicyBranchTest` | `parityGuardTriggersRebuildOnFingerprintMismatch` FAILED; `blueGreenMigratePropagatesTheMismatchAndKeepsEveryDocument` FAILED (`SchemaMismatchPolicyBranchTest.java:127`); `failClosedRefusesAndKeepsEveryDocument` FAILED (`:158`) |
+| F1 | `REBUILD_REQUIRING_KEYS` → `Set.of()` | `ParityGuardTest`, `SchemaMismatchPolicyBranchTest`, `InvariantSuiteIT` | four tests red, not three — `parityGuardTriggersRebuildOnFingerprintMismatch` FAILED; `aLegacyIndexWithNoFingerprintIsMigratedRatherThanIgnored` FAILED; `blueGreenMigratePropagatesTheMismatchAndKeepsEveryDocument` FAILED (`SchemaMismatchPolicyBranchTest.java:127`); `failClosedRefusesAndKeepsEveryDocument` FAILED (`:158`) |
 | F2 | drop `boosts_fp` from `PARITY_KEYS` | `ParityGuardTest` | `parityGuardCatchesBoostsMismatch` FAILED (`ParityGuardTest.java:68`) |
 | F3 | `diff()` blank-skip → only skip when both sides null | `InvariantSuiteIT` | `anIndeterminateExpectedFingerprintIsNotAMismatch` FAILED (`InvariantSuiteIT.java:99`) |
 | F4 | `compute()` no longer returns empty on INDETERMINATE | `IndexFingerprintTest` | `anIndeterminateModelYieldsNoFingerprintAtAll` FAILED (`IndexFingerprintTest.java:261`) |
@@ -475,6 +567,31 @@ restored. Driver: `tmp/falsify.sh` + `tmp/falsify-patch.py` (deleted before comm
 | F10 | prod default back to `FAIL_CLOSED` | `ResolvedConfigBuilderTest` | `null/blank defaults to BLUE_GREEN_MIGRATE in prod mode` FAILED (`ResolvedConfigBuilderTest.java:1495`) |
 | F11 | `startMigration` repoints `active_generation` to Green | `IndexRebuildBrakeTest` | `migrationBuildsGreenBesideBlueAndOnlyPromotionSwitches` FAILED (`IndexRebuildBrakeTest.java:43`) |
 | F12 | `rmwPolicy` put back into the physical projection | `CatalogPhysicalProjectionTest` | `theProjectionDropsRmwPolicyEntirely` FAILED (`:89`); `anRmwPolicyAnnotationDoesNotCostTheUserAReindex` FAILED (`:75`) |
+
+### Round 2 — one break per review decision
+
+| ID | Break | Test that caught it | Failing assertion |
+|---|---|---|---|
+| G1 | blank-stored skip restored for all keys (the original defect) | `InvariantSuiteIT` | `aLegacyIndexWithNoFingerprintIsMigratedRatherThanIgnored` FAILED (`:103`); `aLegacyIndexDiffNamesItselfAsLegacyRatherThanAsAShapeChange` FAILED (`:118`) |
+| G2 | legacy diff carries the generic hint instead of naming itself | `InvariantSuiteIT` | `aLegacyIndexDiffNamesItselfAsLegacyRatherThanAsAShapeChange` FAILED (`InvariantSuiteIT.java:119`) |
+| G3 | benign keys migrated too (a legacy `boosts_fp` would rebuild) | `InvariantSuiteIT` | `aBlankBenignKeyOnALegacyIndexIsNotAMismatch` FAILED (`:139`) |
+| G4 | the HNSW fallback diverges from the codec's | `FingerprintInputSourcesTest` | `anExplicitlyWrittenHnswDefaultIsIndistinguishableFromLeavingItUnset` FAILED (`:36`) |
+| G5 | `chunking.threshold_chars` dropped from the hash | `IndexFingerprintTest` | `everyPhysicalInputMovesTheFingerprint` FAILED (`:86`) |
+| G6 | `preview.max_chars` dropped from the hash | `IndexFingerprintTest` | `everyPhysicalInputMovesTheFingerprint` FAILED (`:86`) |
+| G7 | the mirrored `CHUNK_THRESHOLD_CHARS` drifts from `ChunkDocumentWriter` | `ChunkWriterFingerprintMirrorTest` | `theFingerprintMirrorsTheChunkWriterConstants` FAILED (`:22`) |
+| G8 | `ner_model_sha256` no longer contributes | `IndexFingerprintTest` | `everyPhysicalInputMovesTheFingerprint` FAILED (`:86`) |
+| G9 | `analysis.lucene_version` / `icu_version` pinned to a constant | `IndexFingerprintTest` | `everyPhysicalInputMovesTheFingerprint` FAILED (`:86`) |
+| G10 | brake exhaustion forgotten across a restart | `IndexRebuildBrakeTest` | `exhaustionIsRememberedAcrossARestart` FAILED (`:135`); `repeatRebuildsForTheSameTargetExhaustTheBudget` FAILED (`:82`); `aSuccessfulCutoverClearsTheBrake` FAILED |
+| G11 | a missing SPLADE model file becomes INDETERMINATE again | `SpladeFingerprintTriStateTest` | `aDirectoryWithNoModelFileIsNotConfiguredRatherThanIndeterminate` FAILED (`:51`) |
+| G12 | green verification promotes on an uncomputable expected fingerprint | `GreenCutoverEmbeddingFpVerifyTest` | `expected fingerprint uncomputable -> green REJECTED rather than promoted blind` FAILED (`:84`) |
+| G13 | both migration reasons collapse to `unknown` on the wire | `IndexRuntimeWireFormatRegressionTest` | `theMigrationCommitReasonsReachTheWireAsTheirOwnSeries` FAILED (`:291`) |
+| G14 | the indeterminate sentinel removed, so unattributable boots share one budget | `KnowledgeServerBrakeSentinelTest` | `anUncomputableTargetNeverConsumesBudget` FAILED (`:30`) |
+
+**G12 caught a test-precision defect in my own new test.** On its first run G12 reported *NO FAILURE
+OBSERVED*: with the refusal branch removed the code fell through to the mismatch branch and returned
+`false` anyway, so the test passed — for a reason that was not true. The test now captures the logger
+and asserts the refusal *reason*, not merely the verdict. A test that cannot be made to fail is not
+evidence; a test that fails for the wrong reason is worse, because it looks like evidence.
 
 **F12 is the reason this section exists.** On the first falsification run F12 reported
 *NO FAILURE OBSERVED*: the headline property of the whole phase — that an annotation-only catalog
@@ -488,7 +605,26 @@ is not a guarantee.
 ## §G Verification results
 
 Gradle home: `C:\Users\Elias\AppData\Local\Temp\jsgh-R1` (isolated from the other lanes).
-Results are recorded in the §G table of the report-back below and in the PR body.
+Re-run in full after the review round; every line below is from that run, not the first one.
+
+| Command | Result |
+|---|---|
+| `spotlessApply -PskipWebBuild=true` | exit 0 |
+| `build -x test -PskipWebBuild=true` | BUILD SUCCESSFUL |
+| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 4m 17s — **1454 suites, 8879 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console; the XML timestamps span 01:29:33Z–01:33:47Z, so the results were executed, not replayed from cache) |
+| `cleanIntegrationTest :modules:indexing:integrationTest --no-build-cache` | BUILD SUCCESSFUL — `InvariantSuiteIT` 7 tests, 0 failures. Forced: the first attempt reported `UP-TO-DATE`, which is a replay, not a run |
+| `:modules:ui:integrationTest` | BUILD SUCCESSFUL — 16 tests across 5 suites, 0 failures (includes `SchemaMismatchStatusContractTest`) |
+| Full kernel: `governance/run.mjs --produce-inputs --mode gate` | 33 pass, 1 fail — `ts-any`, **inherited**. All 5 findings are `ts-any/silent-growth` in files this branch does not touch (`citationResolve.test.ts`, `MarkdownBlock.ts`, `indexingProgress.ts`, `sv3-sessions.test.ts`, `searchResultViewModel.ts`); pinned as `ts-any-gate-counts-english-prose` (the gate scores the English word "any" in comments). `readinessNotice.ts`, the one ui-web file this branch edits, is not among them. |
+| `check-readiness-reason-codes` | OK — 55 emittable codes, 49 worded rows (was 54/48: the new code is wired on both sides) |
+| `check-live-witness` · `check-store-recoverability` · `check-search-degradation-reason-codes` · `check-language-agnostic-analysis` · `check-tempdoc-numbers` · `check-premerge-table` | all OK |
+| `docs/verify-canonical-doc-links.mjs` · `llmstxt-generate --check` · `skills-sync --check` · `verify-runtime-config-matrix` | OK (156 files) · OK (115 docs) · OK (5 skills) · OK (yaml=111, pairs=250, rows=306) |
+| `docs-validate.mjs` | exit 1, **inherited** — repo-wide `heading-case` advisories, pinned as `docs-validate-heading-case-repo-wide`; no finding names a heading this branch touched |
+| `run-ui-web-gates.mjs` (the `ui-web-gates` recipe) | **40/40 passed** |
+| `cd modules/ui-web && npm run typecheck` | exit 0 |
+| `cd modules/ui-web && npm run test:unit:run` | 468 files, **6267 tests passed** |
+| Diff hygiene | NUL bytes in the diff: 0. Every added non-ASCII line is an intended em-dash / `§` / `→`; no `Ã` / `â€` / `Â` mojibake. No whole-file CRLF rewrite — `--numstat` shows large adds only for genuinely new files. |
+
+**Not run, and why.** No live-stack verification: the brief forbids starting the dev stack, the eval backend, or any JVM on the shared ports, and the orchestrator owns those resources. The blue/green loop is therefore verified at the state-machine and policy-branch level only — recorded as open item O3, not as a passed tier.
 
 ---
 
@@ -508,15 +644,18 @@ Results are recorded in the §G table of the report-back below and in the PR bod
 
 ## Open items
 
-1. **O1 (decision needed).** `SsotCommitMetadataSource` still reads `SSOT/versions/catalog.json`
-   for `grammar_ver` / `template_ver`, which are not index identity. Delete them from commit
-   metadata too (a wider observability retirement, touching ADR-0014, telemetry and jseval), or
-   keep? §C.6.
-2. **O2 (decision needed).** The proto/FE field names still say `schema_fp` / `index_schema_fp`.
-   Keep (current choice, §C.11) or rename in a follow-up that lane D does not own?
-3. **O3.** The full blue/green loop end-to-end — Blue serving live queries while Green ingests, then
-   a real cutover — is verified at the state-machine and policy-branch level here, not with a
-   running Worker. A live jseval/dev-stack pass belongs to the wave-2 release window.
+1. **O1 — CLOSED (owner decision, review round).** `grammar_ver` / `template_ver` stay: they are
+   observability with live consumers, and retiring them is separate work if it ever happens. The
+   index's identity does not depend on them (§C.6).
+2. **O2 — TRACKED, owner: UI/wire lane.** The proto/FE field names still say `schema_fp` /
+   `index_schema_fp_*` (`contracts/wire/status.proto:213-223,429-435`,
+   `modules/ipc-common/src/main/proto/indexing.proto:764-777`). They name a concept
+   `index_fingerprint` still is, so they are correct-but-dated rather than wrong. Renaming is a
+   follow-up lane D does not own; the comment relabel promised by §C.11 is done here (§D.23).
+3. **O3 — SCHEDULED.** The full blue/green loop end-to-end (Blue serving live queries while Green
+   ingests, then a real cutover) is verified at the state-machine and policy-branch level here, not
+   with a running Worker. The programme owner schedules the live run after lane E's measurement
+   window closes; the reviewer's 5-arm procedure is the script.
 4. **O4 (routed, pre-existing).** Phase 3's consumer list for `chunk_content` is wrong:
    `HighlightingOps` never reads it, and three of the four cited `RagContextOps` lines read whole-doc
    `CONTENT` (§B.2 D3/D4). Phase 3 must re-derive that list rather than trust the brief.
@@ -524,6 +663,11 @@ Results are recorded in the §G table of the report-back below and in the PR bod
    commit path's instance, never to the two comparison paths (§B.1 claim 1c). Fixed here as a
    side-effect; recorded because it is the exact shape of defect the one-fingerprint design exists
    to prevent, and it survived undetected only because the guard was off.
+6. **O6 — correction to my own earlier report.** I reported
+   `BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402` as an unpinned
+   load flake and asked whether to pin it. That was wrong: it is already pinned
+   (`adapters-lucene-batchupdate-rmw-coordinator-load-flake`), as is the `OnnxEmbeddingEncoder`
+   long-doc forensic case. No pin is needed and none was added.
 
 ## Report-back
 

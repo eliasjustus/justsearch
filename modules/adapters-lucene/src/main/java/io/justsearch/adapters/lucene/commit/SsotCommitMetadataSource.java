@@ -39,6 +39,18 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
    */
   private static final String DEFAULT_VECTOR_SIMILARITY = "euclidean";
 
+  /**
+   * Mirrors {@code ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS} and
+   * {@code ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS}. Both decide what is written to disk (the
+   * first decides whether chunk documents exist at all, the second bounds a stored field), so both
+   * are index_fingerprint inputs. They are duplicated rather than imported because
+   * {@code ChunkDocumentWriter} lives in worker-services, which adapters-lucene must not depend on;
+   * {@code ChunkDocumentWriterFingerprintInputsTest} fails if the two ever drift.
+   */
+  public static final int CHUNK_THRESHOLD_CHARS = 2000;
+
+  public static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
+
   private final File repoRoot;
   private final SsotAnalyzerRegistry analyzerRegistry;
   private final SsotAnalyzerRegistry.AnalyzerFingerprintingService fingerprintingService;
@@ -151,15 +163,25 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
             analyzerFingerprint(),
             vectorFormat(),
             new IndexFingerprint.Hnsw(
-                rc == null ? null : rc.index().vectorHnswM(),
-                rc == null ? null : rc.index().vectorHnswEfConstruction()),
+                rc == null
+                    ? ResolvedConfig.Index.DEFAULT_VECTOR_HNSW_M
+                    : rc.index().effectiveVectorHnswM(),
+                rc == null
+                    ? ResolvedConfig.Index.DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION
+                    : rc.index().effectiveVectorHnswEfConstruction()),
             new IndexFingerprint.Chunking(
                 ChunkSplitter.DEFAULT_CHUNK_TOKENS,
                 ChunkSplitter.DEFAULT_OVERLAP_TOKENS,
                 ChunkSplitter.MIN_CHUNK_TOKENS,
+                CHUNK_THRESHOLD_CHARS,
                 ChunkSplitter.ALGORITHM_VERSION),
+            CONTENT_PREVIEW_MAX_CHARS,
+            new IndexFingerprint.Analysis(
+                org.apache.lucene.util.Version.LATEST.toString(),
+                com.ibm.icu.util.VersionInfo.ICU_VERSION.toString()),
             IndexFingerprint.embeddingModel(),
-            IndexFingerprint.spladeModel()));
+            IndexFingerprint.spladeModel(),
+            IndexFingerprint.nerModel()));
   }
 
   /**

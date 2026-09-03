@@ -87,6 +87,59 @@ final class InvariantSuiteIT {
   }
 
   /**
+   * The case the first cut of tempdoc 915 got wrong. Every index built before {@code
+   * index_fingerprint} existed has a blank stored side FOREVER, so skipping a blank stored value
+   * left the guard permanently inert on exactly the installs it was meant to protect. An index
+   * whose physical shape was never recorded cannot be shown to match this runtime, so it migrates
+   * once — the deliberate one-time upgrade rebuild the wave-2 release is built around.
+   */
+  @Test
+  void aLegacyIndexWithNoFingerprintIsMigratedRatherThanIgnored() throws Exception {
+    seedIndex(tempDir, legacyMetadata());
+    IndexOpenGuard guard =
+        new IndexMetadataParityGuard(() -> tempDir, InvariantSuiteIT::stableMetadata);
+
+    IndexRuntimeIOException ex =
+        assertThrows(IndexRuntimeIOException.class, guard::checkOnOpen);
+    assertEquals(IndexRuntimeIOException.Reason.SCHEMA_MISMATCH, ex.reason());
+  }
+
+  /** The diff has to say WHY, or the log and the status surface cannot explain the rebuild. */
+  @Test
+  void aLegacyIndexDiffNamesItselfAsLegacyRatherThanAsAShapeChange() throws Exception {
+    seedIndex(tempDir, legacyMetadata());
+    Logger logger = (Logger) LoggerFactory.getLogger(IndexMetadataParityGuard.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      IndexOpenGuard guard =
+          new IndexMetadataParityGuard(() -> tempDir, InvariantSuiteIT::stableMetadata);
+      assertThrows(IndexRuntimeIOException.class, guard::checkOnOpen);
+      assertTrue(
+          appender.list.stream()
+              .map(ILoggingEvent::getFormattedMessage)
+              .anyMatch(msg -> msg.contains("legacy-index-without-fingerprint")),
+          "the PARITY_DIFF marker must carry the legacy hint, not the generic shape-change one");
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
+  }
+
+  /**
+   * A legacy index is only migrated on the key that costs a rebuild. An unverifiable benign key is
+   * not worth reporting, let alone acting on, so a legacy index missing only boosts_fp opens.
+   */
+  @Test
+  void aBlankBenignKeyOnALegacyIndexIsNotAMismatch() throws Exception {
+    seedIndex(tempDir, Map.of("index_fingerprint", "baseline-shape", "dag_hash", "deadbee"));
+    IndexOpenGuard guard =
+        new IndexMetadataParityGuard(() -> tempDir, InvariantSuiteIT::stableMetadata);
+    assertDoesNotThrow(guard::checkOnOpen);
+  }
+
+  /**
    * Neither side blank: with the stored fingerprint present but the runtime unable to compute one,
    * the guard must say nothing rather than declare a mismatch. An absent answer is not evidence of
    * difference, and the cost of getting this wrong is a full rebuild.
@@ -123,6 +176,15 @@ final class InvariantSuiteIT {
   /** Expected metadata from a runtime that could not compute a fingerprint at all. */
   private static Map<String, Object> fingerprintUnavailableMetadata() {
     return Map.of("dag_hash", "deadbee", "boosts_fp", "none");
+  }
+
+  /** An index committed before index_fingerprint existed: the retired keys, and none of the new. */
+  private static Map<String, Object> legacyMetadata() {
+    return Map.of(
+        "index_schema_fp", "old-catalog-file-hash",
+        "analyzer_fp", "old-analyzers",
+        "schema_ver", "1.0.0",
+        "boosts_fp", "none");
   }
 
   private static void seedIndex(Path indexPath, Map<String, Object> metadata) throws IOException {

@@ -23,8 +23,10 @@ import tools.jackson.databind.json.JsonMapper;
  * the <em>effective physical index shape</em> — everything that decides what bytes end up in the
  * Lucene directory, and nothing else.
  *
- * <p>It replaces the five parity keys {@code schema_ver} / {@code schema_fp} /
- * {@code index_schema_fp} / {@code analyzer_fp} / {@code similarity_fp}. Those were untruthful in
+ * <p>It replaces four of the five keys that used to be parity-checked -- {@code schema_ver},
+ * {@code analyzer_fp}, {@code index_schema_fp} and {@code similarity_fp}. The fifth,
+ * {@code boosts_fp}, survives unchanged as the benign one; {@code schema_fp} (the search-intent
+ * schema hash) was never a parity key and stays plain observability. Those four were untruthful in
  * both directions: {@code schema_ver} tracked the search-intent grammar version and could never
  * fire, while {@code index_schema_fp} hashed the whole catalog <em>file</em>, so an annotation-only
  * edit (an {@code rmwPolicy} added to a field) flipped it against an index that was physically
@@ -46,10 +48,14 @@ import tools.jackson.databind.json.JsonMapper;
  *       {@code KnnVectorsFormat} on disk.
  *   <li>{@code hnsw} — {@code m} and {@code ef_construction}, the two parameters that shape the
  *       graph that is written.
- *   <li>{@code chunking} — target/overlap/minimum tokens plus the splitter's algorithm version:
- *       these decide where chunk documents begin and end.
- *   <li>{@code embedding_model_sha256} / {@code splade_model_sha256} — the models whose output is
- *       stored in the vector and sparse fields.
+ *   <li>{@code chunking} — target/overlap/minimum tokens, the character threshold above which a
+ *       document is chunked at all, and the splitter algorithm version: together these decide
+ *       whether chunk documents exist and where they begin and end.
+ *   <li>{@code preview.max_chars} — bounds {@code content_preview}, a stored field.
+ *   <li>{@code analysis.lucene_version} / {@code analysis.icu_version} — the libraries that do the
+ *       analysis. An upgrade changes the postings with every descriptor unchanged.
+ *   <li>{@code embedding_model_sha256} / {@code splade_model_sha256} / {@code ner_model_sha256} —
+ *       the models whose output is stored in the vector, sparse and entity fields.
  * </ul>
  *
  * <h2>What is deliberately out</h2>
@@ -151,12 +157,26 @@ public final class IndexFingerprint {
     }
   }
 
-  /** Chunk-splitting parameters that decide chunk document boundaries. */
+  /**
+   * Chunk-splitting parameters. {@code thresholdChars} decides whether a document is chunked at
+   * all, so it governs whether chunk documents exist, not merely where they end.
+   */
   public record Chunking(
-      int targetTokens, int overlapTokens, int minTokens, String algorithmVersion) {}
+      int targetTokens,
+      int overlapTokens,
+      int minTokens,
+      int thresholdChars,
+      String algorithmVersion) {}
 
-  /** HNSW graph-construction parameters. Nulls mean "Lucene default". */
-  public record Hnsw(Integer m, Integer efConstruction) {}
+  /**
+   * HNSW graph-construction parameters, already resolved to the values the codec will use. Not
+   * nullable on purpose: hashing the raw config would make writing a default out explicitly look
+   * like a schema change and cost a full reindex for a no-op edit.
+   */
+  public record Hnsw(int m, int efConstruction) {}
+
+  /** Versions of the libraries that perform index-time analysis. */
+  public record Analysis(String luceneVersion, String icuVersion) {}
 
   /** The complete, ordered input set. */
   public record Inputs(
@@ -166,16 +186,39 @@ public final class IndexFingerprint {
       String vectorFormat,
       Hnsw hnsw,
       Chunking chunking,
+      int contentPreviewMaxChars,
+      Analysis analysis,
       ModelFingerprint embeddingModel,
-      ModelFingerprint spladeModel) {
+      ModelFingerprint spladeModel,
+      ModelFingerprint nerModel) {
     public Inputs {
       Objects.requireNonNull(fields, "fields");
       Objects.requireNonNull(analyzerFingerprint, "analyzerFingerprint");
       Objects.requireNonNull(vectorFormat, "vectorFormat");
       Objects.requireNonNull(hnsw, "hnsw");
       Objects.requireNonNull(chunking, "chunking");
+      Objects.requireNonNull(analysis, "analysis");
       Objects.requireNonNull(embeddingModel, "embeddingModel");
       Objects.requireNonNull(spladeModel, "spladeModel");
+      Objects.requireNonNull(nerModel, "nerModel");
+    }
+
+    /**
+     * Names the model inputs that could not be resolved, so a skipped parity check can report which
+     * question went unanswered instead of just going quiet.
+     */
+    public List<String> indeterminateInputs() {
+      List<String> out = new ArrayList<>();
+      if (embeddingModel.state() == ModelState.INDETERMINATE) {
+        out.add("embedding_model_sha256");
+      }
+      if (spladeModel.state() == ModelState.INDETERMINATE) {
+        out.add("splade_model_sha256");
+      }
+      if (nerModel.state() == ModelState.INDETERMINATE) {
+        out.add("ner_model_sha256");
+      }
+      return List.copyOf(out);
     }
   }
 
@@ -185,8 +228,7 @@ public final class IndexFingerprint {
    */
   public static Optional<String> compute(Inputs inputs) {
     Objects.requireNonNull(inputs, "inputs");
-    if (inputs.embeddingModel().state() == ModelState.INDETERMINATE
-        || inputs.spladeModel().state() == ModelState.INDETERMINATE) {
+    if (!inputs.indeterminateInputs().isEmpty()) {
       return Optional.empty();
     }
     return Optional.of(sha256Hex(canonicalJson(inputs)));
@@ -213,11 +255,22 @@ public final class IndexFingerprint {
     chunking.put("target_tokens", inputs.chunking().targetTokens());
     chunking.put("overlap_tokens", inputs.chunking().overlapTokens());
     chunking.put("min_tokens", inputs.chunking().minTokens());
+    chunking.put("threshold_chars", inputs.chunking().thresholdChars());
     chunking.put("algorithm_version", inputs.chunking().algorithmVersion());
     root.put("chunking", chunking);
 
+    TreeMap<String, Object> preview = new TreeMap<>();
+    preview.put("max_chars", inputs.contentPreviewMaxChars());
+    root.put("preview", preview);
+
+    TreeMap<String, Object> analysis = new TreeMap<>();
+    analysis.put("lucene_version", inputs.analysis().luceneVersion());
+    analysis.put("icu_version", inputs.analysis().icuVersion());
+    root.put("analysis", analysis);
+
     root.put("embedding_model_sha256", modelValue(inputs.embeddingModel()));
     root.put("splade_model_sha256", modelValue(inputs.spladeModel()));
+    root.put("ner_model_sha256", modelValue(inputs.nerModel()));
 
     List<FieldShape> sortedFields = new ArrayList<>(inputs.fields());
     sortedFields.sort((a, b) -> a.id().compareTo(b.id()));
@@ -288,6 +341,8 @@ public final class IndexFingerprint {
       new AtomicReference<>(ModelFingerprint::notConfigured);
   private static final AtomicReference<Supplier<ModelFingerprint>> SPLADE_PROVIDER =
       new AtomicReference<>(ModelFingerprint::notConfigured);
+  private static final AtomicReference<Supplier<ModelFingerprint>> NER_PROVIDER =
+      new AtomicReference<>(ModelFingerprint::notConfigured);
 
   private static final AtomicReference<Supplier<Integer>> VECTOR_DIMENSION_PROVIDER =
       new AtomicReference<>(() -> null);
@@ -317,15 +372,19 @@ public final class IndexFingerprint {
 
   /** Installs the process-wide model-fingerprint providers. Call once, early, from the Worker. */
   public static void installModelFingerprintProviders(
-      Supplier<ModelFingerprint> embedding, Supplier<ModelFingerprint> splade) {
+      Supplier<ModelFingerprint> embedding,
+      Supplier<ModelFingerprint> splade,
+      Supplier<ModelFingerprint> ner) {
     EMBEDDING_PROVIDER.set(Objects.requireNonNull(embedding, "embedding"));
     SPLADE_PROVIDER.set(Objects.requireNonNull(splade, "splade"));
+    NER_PROVIDER.set(Objects.requireNonNull(ner, "ner"));
   }
 
   /** Restores the NOT_CONFIGURED defaults. For tests that installed a provider. */
   public static void resetModelFingerprintProviders() {
     EMBEDDING_PROVIDER.set(ModelFingerprint::notConfigured);
     SPLADE_PROVIDER.set(ModelFingerprint::notConfigured);
+    NER_PROVIDER.set(ModelFingerprint::notConfigured);
     VECTOR_DIMENSION_PROVIDER.set(() -> null);
   }
 
@@ -337,6 +396,30 @@ public final class IndexFingerprint {
   /** The SPLADE model's tri-state identity, per the installed provider. */
   public static ModelFingerprint spladeModel() {
     return safeGet(SPLADE_PROVIDER.get());
+  }
+
+  /** The NER model's tri-state identity, per the installed provider. */
+  public static ModelFingerprint nerModel() {
+    return safeGet(NER_PROVIDER.get());
+  }
+
+  /**
+   * Names the model inputs the installed providers currently cannot resolve. The parity guard uses
+   * it to say WHICH question went unanswered when it declines to compare, so an operator sees a
+   * cause instead of silence.
+   */
+  public static List<String> indeterminateModelInputs() {
+    List<String> out = new ArrayList<>();
+    if (embeddingModel().state() == ModelState.INDETERMINATE) {
+      out.add("embedding_model_sha256");
+    }
+    if (spladeModel().state() == ModelState.INDETERMINATE) {
+      out.add("splade_model_sha256");
+    }
+    if (nerModel().state() == ModelState.INDETERMINATE) {
+      out.add("ner_model_sha256");
+    }
+    return List.copyOf(out);
   }
 
   private static ModelFingerprint safeGet(Supplier<ModelFingerprint> supplier) {

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.adapters.lucene.runtime;
 
+import io.justsearch.adapters.lucene.commit.IndexFingerprint;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.indexing.runtime.IndexOpenGuard;
 import java.io.IOException;
@@ -22,6 +23,10 @@ import org.slf4j.LoggerFactory;
 public final class IndexMetadataParityGuard implements IndexOpenGuard {
   private static final Logger log = LoggerFactory.getLogger(IndexMetadataParityGuard.class);
   private static final String ALLOW_MISMATCH_PROP = "justsearch.index.parity.allow_mismatch";
+
+  /** One WARN per process, not one per index open: the cause is process-wide. */
+  private static final java.util.concurrent.atomic.AtomicBoolean uncomputableWarned =
+      new java.util.concurrent.atomic.AtomicBoolean(false);
 
   private final Supplier<Path> indexPathSupplier;
   private final Supplier<Map<String, Object>> expectedMetadataSupplier;
@@ -46,6 +51,7 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
       try (DirectoryReader reader = DirectoryReader.open(directory)) {
         Map<String, String> stored = reader.getIndexCommit().getUserData();
         Map<String, Object> expected = expectedMetadataSupplier.get();
+        warnIfFingerprintUncomputable(expected);
         var diffs = ParityDiagnostics.diff(stored, expected);
         if (diffs.isEmpty()) {
           return;
@@ -108,6 +114,26 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
     }
     return LuceneRuntimeUtils.classifyIOException(e)
         == IndexRuntimeIOException.Reason.CORRUPT_INDEX;
+  }
+
+  /**
+   * When this runtime cannot compute an {@code index_fingerprint}, the parity check declines to
+   * compare rather than declaring a mismatch. Declining silently would be indistinguishable from
+   * passing, so say it once per boot and name the input that went unresolved.
+   */
+  private static void warnIfFingerprintUncomputable(Map<String, Object> expected) {
+    Object fingerprint =
+        expected == null ? null : expected.get(IndexFingerprint.COMMIT_META_KEY);
+    boolean computable = fingerprint != null && !String.valueOf(fingerprint).isBlank();
+    if (computable || !uncomputableWarned.compareAndSet(false, true)) {
+      return;
+    }
+    var unresolved = IndexFingerprint.indeterminateModelInputs();
+    log.warn(
+        "Index parity is NOT being checked: this runtime could not compute an index_fingerprint"
+            + " ({}). The index is opened without verifying its physical shape; fix the model"
+            + " resolution to restore the check.",
+        unresolved.isEmpty() ? "no model input could be resolved" : "unresolved: " + unresolved);
   }
 
   private static boolean allowMismatch() {

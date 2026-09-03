@@ -722,6 +722,29 @@ public record ResolvedConfig(
     /** Wire value of the reopen-on-demand candidate (tempdoc 885 item 19). */
     public static final String NRT_MODE_ON_DEMAND = "on_demand";
 
+    /** HNSW max-connections used when {@code index.vector.hnsw.m} is unset. */
+    public static final int DEFAULT_VECTOR_HNSW_M = 16;
+
+    /** HNSW beam width used when {@code index.vector.hnsw.ef_construction} is unset. */
+    public static final int DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION = 200;
+
+    /**
+     * The HNSW max-connections the graph is actually built with. Both the codec and the
+     * {@code index_fingerprint} read this rather than applying their own fallback: writing the
+     * default out explicitly is a no-op change, and a fingerprint that moved on it would demand a
+     * full reindex for an edit that changes nothing (tempdoc 915 §C).
+     */
+    public int effectiveVectorHnswM() {
+      return vectorHnswM != null ? vectorHnswM : DEFAULT_VECTOR_HNSW_M;
+    }
+
+    /** The HNSW beam width the graph is actually built with. See {@link #effectiveVectorHnswM}. */
+    public int effectiveVectorHnswEfConstruction() {
+      return vectorHnswEfConstruction != null
+          ? vectorHnswEfConstruction
+          : DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION;
+    }
+
     public Index {
       sort = sort != null ? List.copyOf(sort) : List.of();
       boosts = boosts != null

@@ -54,10 +54,23 @@ it against an index that was physically still perfectly compatible (tempdoc 804)
     `roles`, and for vector fields `dimension` + `similarity`.
   - The analyzer definitions (index-time analysis fingerprint).
   - `vector_format` (`float32` vs `int8_sq`).
-  - HNSW `m` + `ef_construction` (graph-construction parameters).
-  - Chunking: target/overlap/minimum tokens plus the splitter's algorithm version.
-  - `embedding_model_sha256` / `splade_model_sha256` — the models whose output is stored in the
-    vector and sparse fields.
+  - HNSW `m` + `ef_construction` (graph-construction parameters), hashed as the **effective**
+    values the codec builds with (`ResolvedConfig.Index.effectiveVectorHnswM()` and friends), not
+    the raw nullable config — so writing a default out explicitly stays a no-op instead of costing a
+    reindex.
+  - Chunking: target/overlap/minimum tokens, `threshold_chars` (the size above which a document is
+    chunked at all, so it decides whether chunk documents exist), and the splitter's algorithm
+    version.
+  - `preview.max_chars` — the bound on `content_preview`, a `stored:true` field.
+  - `analysis.lucene_version` + `analysis.icu_version` — the libraries that perform index-time
+    analysis. An analyzer upgrade changes the postings with every descriptor unchanged, so the
+    versions are inputs. Deliberately coarse: a Lucene or ICU minor bump triggers one rebuild even
+    when the analysis is unchanged in practice. That is the intended trade — the alternative is a
+    silent postings change no detector can see.
+  - `embedding_model_sha256` / `splade_model_sha256` / `ner_model_sha256` — the models whose output
+    is stored in the vector, sparse and entity fields. (`entity_*_raw` are `stored` + `docValues`
+    fields written from NER output, so swapping the NER model changes index content with no other
+    descriptor moving.)
 - **Deliberately excluded:**
   - **`rmwPolicy` field annotations** — the read-modify-write preservation policy never changes
     bytes on disk (`FieldMapper` rejects an `rmwPolicy` on any stored/doc-values field by
@@ -72,10 +85,22 @@ it against an index that was physically still perfectly compatible (tempdoc 804)
   answer. `INDETERMINATE` (a model file is configured but its digest could not be read) is *not* an
   answer: `IndexFingerprint.compute()` returns empty rather than inventing one, and
   `SsotCommitMetadataSource` then stamps **no** `index_fingerprint` key at all into commit
-  user-data. `ParityDiagnostics.diff()` treats a blank stored *or* blank expected side as "unknown,
-  never different" and skips the comparison. **A transiently unreadable model file must never look
-  like a swapped one** — the consequence of the latter is a full rebuild, so an indeterminate input
-  means no fingerprint is stamped and no comparison is made, never a mismatch.
+  user-data. `ParityDiagnostics.diff()` skips the comparison when the **expected** side is blank,
+  and `IndexMetadataParityGuard` logs a WARN once per boot naming the input that went unresolved, so
+  a check that is not running never looks like a check that passed. **A transiently unreadable model
+  file must never look like a swapped one** — the consequence of the latter is a full rebuild.
+  A *missing* model file is a different thing and is read as `NOT_CONFIGURED`, a determinate answer:
+  most installs have no SPLADE or NER model, and reading their absence as "no answer" would switch
+  the parity check off on every one of them.
+- **Legacy indexes migrate once, by design.** Every index built before this key existed has a blank
+  *stored* fingerprint, and it always will. Skipping that case would leave the guard permanently
+  inert on exactly the installs it exists to protect, so a blank stored value on a rebuild-requiring
+  key **is** a mismatch: the diff carries the `legacy-index-without-fingerprint` hint, and under the
+  production `BLUE_GREEN_MIGRATE` default the Worker rebuilds once, beside the live index, while
+  search keeps serving. This is the deliberate one-time upgrade rebuild the wave-2 release is built
+  around — existing installs pay for it once, and afterwards their shape is recorded. A blank stored
+  value on the *benign* key (`boosts_fp`) is still skipped: an unverifiable scoring descriptor is not
+  worth reporting, let alone acting on.
 - **Stamping:** on commit, the Worker writes `index_fingerprint` into Lucene commit user-data via
   `SsotCommitMetadataSource` (rendering version `IndexFingerprint.RENDERING_VERSION`).
 - **Validation:** on startup/open, `IndexMetadataParityGuard.checkOnOpen()` compares the stored
@@ -85,7 +110,8 @@ it against an index that was physically still perfectly compatible (tempdoc 804)
   wire field names as before (unchanged by the 915 rename, now backed by `index_fingerprint`):
   - `indexSchemaFpStored`, `indexSchemaFpCurrent`
   - `indexSchemaCompatState`
-  - `reindexRequired` + `reindexRequiredReason` (stable reason code: `schema_mismatch`)
+  - `reindexRequired` + `reindexRequiredReason` (stable reason codes: `schema_mismatch`,
+    `rebuild_brake_exhausted`)
 - **Consumers:** none on the query path. `IndexStatusOps.safeSchemaCompatState()` computes the state
   for status reporting only; no planner, executor, or retrieval-leg decision reads it. The dense leg
   is gated by the *embedding* fingerprint below (`EmbeddingCompatibilityController.allowQueryEmbeddings()`,
@@ -165,6 +191,18 @@ the decision to an operator (`IndexGenerationManager`, tempdoc 915 §C):
 - Cleared (`auto_rebuild_key`/`count`/`first_ms` all set back to `null`) on a successful cutover —
   `IndexGenerationManager.promoteBuildingGenerationToActive()` releases the brake once the rebuild has
   converged, so a future, unrelated upgrade starts with a full budget.
+- A boot whose target fingerprint is **uncomputable** charges nothing. Folding those into a shared
+  bucket would let three boots with an unreadable model file exhaust the budget for an unrelated real
+  shape, so the index that genuinely needed a rebuild would never get one.
+
+**On exhaustion the Worker does not fail to start.** Refusing to open would be the same dead-end the
+old `FAIL_CLOSED` default produced, three boots later and with no explanation. Instead the existing
+index is opened **read-only**: search keeps serving everything already indexed, ingestion stops, and
+the status surface carries it explicitly —
+`indexSchemaCompatState = BLOCKED_REBUILD_BRAKE` → `reindexRequiredReason = rebuild_brake_exhausted`
+→ the `index.rebuild_brake_exhausted` readiness reason code, worded and given a rebuild remedy on the
+frontend. The operator remedies are to rebuild from the UI, or to clear the `auto_rebuild_*` fields in
+`state.json` to grant a fresh budget.
 
 ## Enforcement status (2026-09)
 

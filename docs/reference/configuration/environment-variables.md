@@ -213,7 +213,7 @@ Scope:
 | `JUSTSEARCH_DEV_HOTRELOAD_CLASSES_DIR` | `justsearch.dev.hotreload.classesDir` | Path | Worker-services classes directory for DevReloadManager. Auto-set by `WorkerSpawner` when hot-reload is enabled. Override for non-standard layouts. |
 | **Indexing & Storage** | | | |
 | `JUSTSEARCH_INDEX_BASE_PATH` | `justsearch.index.base_path` | Path | Overrides the effective index root (contains `state.json` and `indices/`). |
-| `JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY` | `index.schema_mismatch.policy` | String | Policy for schema incompatibility (`FAIL_CLOSED`, `REBUILD_BACKUP_FIRST`, `BLUE_GREEN_MIGRATE`). |
+| `JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY` | `index.schema_mismatch.policy` | String | Policy for schema incompatibility (`FAIL_CLOSED`, `REBUILD_BACKUP_FIRST`, `BLUE_GREEN_MIGRATE`). Default depends on mode: `BLUE_GREEN_MIGRATE` in production (rebuild beside the live index, which keeps serving reads), `REBUILD_BACKUP_FIRST` in dev (back up and rebuild empty — faster, and destructive by design). Tempdoc 915. |
 | `JUSTSEARCH_INDEX_MIGRATION_CUTOVER_MAX_FAILED_JOBS` | `index.migration.cutover.max_failed_jobs` | Int | Optional failure budget to block auto-cutover during migration. |
 | `JUSTSEARCH_LLM_ACCEL` |  | String | Selects the native llama backend variant for in-process llama.cpp (embeddings). Values: `cuda`, `metal`, `vulkan`, `cpu`. If unset, JustSearch chooses based on detected hardware (prefers CUDA, then Metal, else CPU). |
 | `JUSTSEARCH_POLICY_GPU_ACCELERATION_ENABLED` | `policy.gpu_acceleration_enabled` | Bool | System-wide GPU policy gate (forces CPU-only behavior when false). |
