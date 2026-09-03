@@ -378,9 +378,6 @@ public enum EnvRegistry {
     /** 306: title field boost in BM25 DisjunctionMaxQuery (default: 3.0 via builder, 0 to disable). */
     SEARCH_TITLE_BOOST("justsearch.search.title_boost", "JUSTSEARCH_SEARCH_TITLE_BOOST"),
 
-    /** 326: NER entity field boost in BM25 DisjunctionMaxQuery (default: 2.0, 0 to disable). */
-    SEARCH_ENTITY_BOOST("justsearch.search.entity_boost", "JUSTSEARCH_SEARCH_ENTITY_BOOST"),
-
     /** 343: enable/disable chunk-aware merge in search (default: true via builder). */
     SEARCH_CHUNK_AWARE_ENABLED(
         "search.chunk_aware.enabled", "JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED"),
@@ -683,13 +680,22 @@ public enum EnvRegistry {
         "JUSTSEARCH_BACKFILL_SPLADE_INTERLEAVE_INTERVAL_MS",
         "5000"),
 
-    /** Time-based commit trigger interval in ms (default 10000). */
+    /**
+     * Time-based commit trigger interval in ms (default 10000). Despite the {@code backfill.} key,
+     * this is read by {@code LoopPacingPolicy.isTimeCommitTriggered} for the PRIMARY indexing loop;
+     * no backfill op reads it (tempdoc 912 §E — the mislabelling is what led 885's A3 arm to
+     * believe it had relaxed backfill commits when it had relaxed none).
+     */
     BACKFILL_COMMIT_INTERVAL_MS(
         "justsearch.backfill.commit_interval_ms",
         "JUSTSEARCH_BACKFILL_COMMIT_INTERVAL_MS",
         "10000"),
 
-    /** Buffer-based commit trigger: doc count since last commit (default 1000). */
+    /**
+     * Buffer-based commit trigger: doc count since last commit (default 1000). Despite the
+     * {@code backfill.} key, this is read by {@code LoopPacingPolicy.isBufferCommitTriggered} for
+     * the PRIMARY indexing loop; no backfill op reads it (tempdoc 912 §E).
+     */
     BACKFILL_MAX_DOCS_BEFORE_COMMIT(
         "justsearch.backfill.max_docs_before_commit",
         "JUSTSEARCH_BACKFILL_MAX_DOCS_BEFORE_COMMIT",
@@ -1031,6 +1037,10 @@ public enum EnvRegistry {
     /** Min chars before vector search is skipped (short-query optimization). */
     HYBRID_VECTOR_SKIP_MIN_CHARS("index.hybrid.vector_skip_min_chars",
         "JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_CHARS"),
+    /** Minimum content-field document-frequency fraction for skipping a redundant dense leg. */
+    HYBRID_VECTOR_SKIP_MIN_DF_FRACTION(
+        "index.hybrid.vector_skip_min_df_fraction",
+        "JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_DF_FRACTION"),
     /** Max candidate limit for hybrid search results. */
     HYBRID_CANDIDATE_LIMIT_MAX("index.hybrid.candidate_limit_max",
         "JUSTSEARCH_INDEX_HYBRID_CANDIDATE_LIMIT_MAX"),

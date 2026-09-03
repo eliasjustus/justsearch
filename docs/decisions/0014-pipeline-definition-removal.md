@@ -5,7 +5,7 @@ status: stable
 description: "Remove pipeline DAG definitions, budget profiles, and pipeline-schema module."
 date: 2026-03-16
 probes: none - a removal decision; its premise is carried by the consumer-drift gate, whose slot-retraction classification cites ADR-0014 (scripts/governance/gates/consumer-drift/classifications.mjs).
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-03
 ---
 
 # ADR-0014: Pipeline Definition and Schema Removal
@@ -56,3 +56,13 @@ Remove all pipeline definition infrastructure:
 - The `/api/capabilities` endpoint no longer exposes pipeline stage lists or budget summaries.
 - The Node.js toolchain loses `resolve-pipeline.mjs` (one fewer script to maintain).
 - ~450 LOC of Java code removed, ~200 lines of JSON definitions removed, ~100 lines of Gradle configuration removed.
+
+## 2026-09-03 note (tempdoc 915)
+
+The Rationale section above (2026-03-16) listed `schema_fp`, `field_catalog_hash`, `analyzer_fp`,
+`synonyms_hash`, `grammar_hash`, `similarity_fp`, `boosts_fp`, and `index_schema_fp` as the commit
+metadata surviving this removal. Tempdoc 915 later folded `schema_ver` (a separate key not listed
+above, but present in commit metadata at the time), `index_schema_fp`, and `analyzer_fp` into a
+single rebuild-requiring `index_fingerprint` key — see `docs/explanation/11-index-schema-migration.md`.
+This is a downstream refinement of the commit-metadata surface described here, not a reversal of this
+decision.

@@ -76,9 +76,9 @@ class CommitOpsTest {
     CommitMetadataSource source =
         () ->
             Map.of(
-                "schema_ver", "test-1.0",
+                "index_fingerprint", "test-1.0",
                 "schema_fp", "fp",
-                "analyzer_fp", "afp",
+                "boosts_fp", "afp",
                 "field_catalog_hash", "fch",
                 "synonyms_hash", "sh");
     CommitMetadataValidator validator = metadata -> validatorCalls.incrementAndGet();
@@ -100,7 +100,7 @@ class CommitOpsTest {
         assertEquals("BUILDING", userData.get("build_state"));
         assertNotNull(userData.get("commit_id"));
         assertNotNull(userData.get("commit_time"));
-        assertEquals("test-1.0", userData.get("schema_ver"));
+        assertEquals("test-1.0", userData.get("index_fingerprint"));
       }
     }
   }
@@ -211,7 +211,7 @@ class CommitOpsTest {
     try (MMapDirectory dir = new MMapDirectory(tempDir)) {
       IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig());
       RuntimeSession session =
-          new RuntimeSession(schemaWith(() -> () -> Map.of("schema_ver", "v1"), metadata -> {}));
+          new RuntimeSession(schemaWith(() -> () -> Map.of("index_fingerprint", "v1"), metadata -> {}));
       session.snapshot = new LifecycleSnapshot(dir, writer, null, tempDir, false, null);
       session.commitMetadataEnabled = true;
       CommitOps ops = new CommitOps(session, LuceneRuntimeTypes.BuildState.COMPLETE);

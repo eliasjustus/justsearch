@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -27,8 +28,9 @@ import org.junit.jupiter.api.condition.EnabledIf;
  * backfill crash-looped with a native Rust panic in {@code
  * TokenizersLibrary.getTokenCharSpans} during {@code HuggingFaceTokenizer.batchEncode} (3
  * identical hs_err dumps, thread "indexing-loop"). This harness replays EXACTLY the strings
- * production tokenized — every stored {@code content} and {@code chunk_content} field from the
- * crashed run's on-disk Lucene index — through the same tokenizer in production-shaped batches.
+ * production tokenized — every parent {@code content} plus every chunk's exact parent-offset slice
+ * from the crashed run's on-disk Lucene index — through the same tokenizer in production-shaped
+ * batches. Legacy snapshots may still supply stored {@code chunk_content} as a fallback.
  *
  * <p>A poison document ⇒ deterministic crash at a fixed position (named by the progress file
  * tmp/686-crash-harness-progress.txt, written before each batch). No crash over the full corpus
@@ -107,7 +109,7 @@ class SpladeIndexContentCrashHarnessTest {
   @Test
   @EnabledIf("assetsAvailable")
   @Timeout(value = 30, unit = TimeUnit.MINUTES)
-  @DisplayName("batch-encode every stored content/chunk_content from the crashed run's index")
+  @DisplayName("batch-encode every parent and reconstructed chunk text from the crashed index")
   void replayAllIndexContents() throws Exception {
     List<String> batchTexts = new ArrayList<>(BATCH);
     List<String> batchIds = new ArrayList<>(BATCH);
@@ -118,11 +120,20 @@ class SpladeIndexContentCrashHarnessTest {
             HuggingFaceTokenizer.newInstance(
                 TOKENIZER_PATH, Map.of("truncation", "false", "padding", "false"))) {
       StoredFields stored = reader.storedFields();
+      Map<String, String> parentContent = new HashMap<>();
+      for (int i = 0; i < reader.maxDoc(); i++) {
+        org.apache.lucene.document.Document doc = stored.document(i);
+        String id = firstNonNull(doc.get("doc_id"), doc.get("doc_uid"));
+        String content = doc.get("content");
+        if (id != null && content != null) {
+          parentContent.put(id, content);
+        }
+      }
       for (int i = 0; i < reader.maxDoc(); i++) {
         org.apache.lucene.document.Document doc = stored.document(i);
         String id = firstNonNull(doc.get("doc_id"), doc.get("doc_uid"), "lucene#" + i);
         String content = doc.get("content");
-        String chunk = doc.get("chunk_content");
+        String chunk = reconstructChunk(doc, parentContent);
         if (content != null && !content.isBlank()) {
           batchTexts.add(content);
           batchIds.add(id + ":content");
@@ -140,6 +151,26 @@ class SpladeIndexContentCrashHarnessTest {
       }
     }
     log("COMPLETED WITHOUT CRASH: " + total + " texts");
+  }
+
+  private static String reconstructChunk(
+      org.apache.lucene.document.Document doc, Map<String, String> parentContent) {
+    String parentId = doc.get("parent_doc_id");
+    String startRaw = doc.get("chunk_start_char");
+    String endRaw = doc.get("chunk_end_char");
+    String parent = parentId == null ? null : parentContent.get(parentId);
+    if (parent != null && startRaw != null && endRaw != null) {
+      try {
+        int start = Integer.parseInt(startRaw);
+        int end = Integer.parseInt(endRaw);
+        if (start >= 0 && end >= start && end <= parent.length()) {
+          return parent.substring(start, end);
+        }
+      } catch (NumberFormatException ignored) {
+        // Fall through to the legacy stored field below.
+      }
+    }
+    return doc.get("chunk_content");
   }
 
   private long flushBatch(

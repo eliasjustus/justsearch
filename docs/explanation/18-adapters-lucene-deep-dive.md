@@ -153,6 +153,12 @@ RRD) describe the reopen/commit cadence:
 | `index.runtime.reopen_count` | reopens that swapped in a new reader, across every reopen path (background thread, `CommitOps.maybeRefresh*`, the on-demand seam). |
 | `index.runtime.segments_since_reopen` | `IndexWriter.getSegmentInfosCounter()` delta since the last reopen — the backlog of new segments the next reopen has to open. |
 
+Alongside them, one reason-tagged **counter** says *which trigger* fired each commit:
+
+| Metric | Meaning |
+| :--- | :--- |
+| `index.runtime.commit_total{reason}` | commits by `CommitReason` (`timer`, `indexing-loop/idle`, `backfill/ner`, …). Not a second authority for `commit_count`: both are written at the one funnel from the same reason, and `RuntimeSession.commitCount` (a `CommitCounters`) derives its total by **summing** its per-reason slots, so attribution cannot drift from the total. It differs only in lifetime — this counter accumulates across sessions, the gauge resets with the session. jseval surfaces it as `cadence.commit_by_reason`. |
+
 `IndexWriter` does not expose its segment count publicly (`getSegmentCount()` is
 package-private), so the segment-naming counter is the readable proxy; `DirectoryReader.leaves()`
 on an acquired searcher gives the complementary "segments currently visible" reading.
@@ -308,9 +314,12 @@ Detects weak signal from either ranking and adjusts fusion. When low signal is d
 
 For current low-signal detection thresholds and cap values, see [`docs/explanation/23-search-pipeline-overview.md` §Stage 10](23-search-pipeline-overview.md).
 
-### 4.5 Stop-Word Short-Circuit
+### 4.5 Planner-Owned Dense Skip
 
-Skips expensive vector search for trivial queries (very short queries or single-word common stop words). For current thresholds, see [`docs/explanation/23-search-pipeline-overview.md` §Stage 11](23-search-pipeline-overview.md).
+When another retrieval leg can run, the planner skips vector search for queries shorter than four
+characters or queries whose analyzed terms are all common in the indexed `content` corpus. It never
+applies this optimization to dense-only search or direct RAG. For current thresholds, see
+[`docs/explanation/23-search-pipeline-overview.md` §Stage 11](23-search-pipeline-overview.md).
 
 ## 4B. SPLADE (Learned Sparse Retrieval)
 
@@ -491,7 +500,7 @@ boolean hasMore = topDocs.scoreDocs.length > limit;
 | Field | Type | Purpose |
 |-------|------|---------|
 | `doc_id` / `_id` | keyword | Primary key |
-| `doc_uid` | keyword | Tiebreaker for search-after |
+| `doc_uid` | keyword | Stable document identity and tiebreaker for search-after |
 | `vector` | vector | Document embeddings |
 | `chunk_vector` | vector | Chunk-level embeddings |
 | `parent_doc_id` | keyword | Links chunks to parent |
@@ -557,29 +566,47 @@ Analyzer perField = analyzerRegistry.buildPerFieldAnalyzer(fieldToAnalyzerKey);
 
 ### 9.1 Fingerprinting Strategy
 
-`SsotCommitMetadataSource` generates deterministic fingerprints:
+`SsotCommitMetadataSource` stamps observability fields plus the two parity keys (tempdoc 915 —
+`schema_ver`, `index_schema_fp`, and `analyzer_fp` as a standalone key were retired and folded into
+`index_fingerprint`):
 
 ```java
-Map<String, String> metadata = Map.of(
-    "schema_ver", schemaVersion,
-    "schema_fp", sha256(canonicalJson(fieldsCatalog)),
-    "analyzer_fp", sha256(sortedAnalyzerDefs),
-    "synonyms_hash", sha256(concat(synonymFiles)),
-    "boosts_fp", sha256(boostsConfig),
-    "similarity_fp", sha256(bm25Descriptor)
-);
+Map<String, String> metadata = new HashMap<>();
+// Observability (never compared for parity):
+metadata.put("schema_fp", sha256(canonicalJson(fieldsCatalog)));
+metadata.put("synonyms_hash", sha256(concat(synonymFiles)));
+metadata.put("similarity_fp", sha256(bm25Descriptor));
+metadata.put("grammar_hash", sha256(intentGrammar));
+// ... plus grammar_ver, template_ver, prompt_pack_hash, vector_format, build_state,
+// commit_id, commit_time, embedding_model_sha256, splade_model_sha256.
+
+// Parity keys — the ONLY two compared by IndexMetadataParityGuard:
+indexFingerprint(fieldsCatalog, analyzerDefs, vectorFormat, hnswParams, chunking,
+        embeddingModelSha, spladeModelSha)   // IndexFingerprint.compute(...)
+    .ifPresent(fp -> metadata.put("index_fingerprint", fp));   // omitted, never guessed, if indeterminate
+metadata.put("boosts_fp", sha256(boostsConfig));               // benign — never a rebuild trigger
 ```
 
 ### 9.2 Parity Guards
 
-`IndexMetadataParityGuard` validates consistency on open:
+`IndexMetadataParityGuard` validates only the two parity keys (`ParityDiagnostics.PARITY_KEYS =
+{index_fingerprint, boosts_fp}`) on open — everything else in commit metadata is observability and is
+never compared:
 
 ```java
-void checkOnOpen(Path indexPath, Map<String, String> expected) {
+void checkOnOpen(Path indexPath, Map<String, Object> expected) {
     Map<String, String> stored = readCommitMetadata(indexPath);
-    if (!expected.equals(stored)) {
-        throw new SchemaMismatchException(diff(expected, stored));
+    List<Diff> diffs = ParityDiagnostics.diff(stored, expected);  // blank either side => skip, never "mismatch"
+    if (diffs.isEmpty()) {
+        return;
     }
+    if (allowMismatch()) {
+        return; // operator escape hatch, WARN-only
+    }
+    if (ParityDiagnostics.requiresRebuild(diffs)) {   // true iff index_fingerprint is among the diffs
+        throw new IndexRuntimeIOException(SCHEMA_MISMATCH, ...);
+    }
+    throw new IllegalStateException("Shard is read-only due to parity mismatch"); // boosts_fp-only diff
 }
 ```
 
@@ -587,9 +614,9 @@ void checkOnOpen(Path indexPath, Map<String, String> expected) {
 
 | Policy | Behavior |
 |--------|----------|
-| `FAIL_CLOSED` | Refuse startup (production default) |
-| `REBUILD_BACKUP_FIRST` | Backup then rebuild (dev default) |
-| `BLUE_GREEN_MIGRATE` | Read-only + background rebuild |
+| `FAIL_CLOSED` | Refuse startup |
+| `REBUILD_BACKUP_FIRST` | Backup then rebuild (**dev default**) |
+| `BLUE_GREEN_MIGRATE` | Read-only + background rebuild (**production default**, tempdoc 915) |
 
 ## 10. Configuration Reference
 

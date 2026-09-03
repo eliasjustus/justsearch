@@ -269,15 +269,15 @@ A second, independent obstacle was measured on 2026-09-02 while running the full
 
 **Impact:** A change that alters derived index content without moving a stamped fingerprint leaves stale documents in a live index with no signal. The failure is silent and only shows up as degraded results.
 
-**Reassess when:** Decision-review lane D reports, or a rebuild-worthy change ships without a corresponding detector.
+**Reassess when:** A rebuild-worthy change ships without a corresponding detector, or a fingerprint input is added without a test that moves it.
 
-**Instrument:** `none - decision-review lane D owns this and has no tempdoc number yet, so there is no heading to point at. This row must gain a tempdoc: instrument the moment lane D's tempdoc is numbered.`
+**Instrument:** `tempdoc:915#C Design (Phase 1), tightened`
 
-**Owner tempdoc:** decision-review lane D — **not yet numbered**. Do not invent a number for it; amend this row when the lane files its tempdoc.
+**Owner tempdoc:** 915 (decision-review lane D).
 
-**Last reviewed:** 2026-09-02
+**Last reviewed:** 2026-09-03
 
-**Notes:** New row, 2026-09-02, opened by the decision review. Deliberately carries a `none - <reason>` instrument rather than a guessed tempdoc number: a `tempdoc:` reference to a document that does not exist would fail the gate for the wrong reason, and a plausible-looking wrong number is worse than an honest gap. The row raises `adr-coverage/risk-no-instrument` on every run until lane D is numbered, which is the intended nag.
+**Notes:** New row, 2026-09-02, opened by the decision review; instrumented 2026-09-03 when lane D filed tempdoc 915. Partly addressed by 915 Phase 1: the five parity keys became one `index_fingerprint` over the effective physical index shape, the Head stopped disabling the guard unconditionally, and `CatalogPhysicalProjectionTest` / `IndexFingerprintTest` pin both directions (every physical input moves it; annotations do not). The risk stays open rather than closed because it is about *coverage*, and coverage is still a judgment call: the fingerprint covers the inputs 915 §C enumerates, and a future change that alters derived content through some other path would still be silent. Phases 2-3 of 915 (document identity, the reindex bundle) extend what it covers.
 
 ## RISK-012: The job queue runs on a single SQLite connection
 

@@ -1,5 +1,6 @@
 package io.justsearch.app.services.agenthistory;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -90,6 +91,103 @@ class AgentHistoryIndexerTest {
     assertTrue(content.contains("RESTORED answer marker ZQXRESTORE."), "the answer is indexed (searchable)");
     assertTrue(content.contains("What the agent found"), "grounding sources are indexed");
     assertTrue(content.contains("Doc A"), "source title indexed");
+  }
+
+  // ===== Tempdoc 909 item 1 — the transcript recovery policy =====
+
+  /** One terminal `done` event whose answer carries {@code marker}. */
+  private static List<Map<String, Object>> doneEvents(String marker) {
+    return List.of(
+        Map.of("eventType", "started", "payload", Map.of()),
+        Map.of(
+            "eventType",
+            "done",
+            "payload",
+            Map.of(
+                "finalResponse", marker,
+                "iterationsUsed", 1,
+                "toolCallsExecuted", 0,
+                "totalTokensUsed", 10)));
+  }
+
+  @Test
+  @DisplayName("909: a MISSING transcript is re-derived from the run's terminal event")
+  void reconcileRebuildsAMissingTranscript() throws Exception {
+    Path historyDir = tempDir.resolve("h-missing");
+    var indexer = new AgentHistoryIndexer(historyDir, () -> null);
+
+    int rebuilt =
+        indexer.reconcileNow(() -> List.of("sess-gone"), id -> doneEvents("REBUILT-ZQX-1"));
+
+    assertEquals(1, rebuilt);
+    assertTrue(
+        Files.readString(historyDir.resolve("sess-gone.md")).contains("REBUILT-ZQX-1"),
+        "the transcript is re-derived from agent-runs, not left permanently un-searchable");
+  }
+
+  @Test
+  @DisplayName("909: a TORN transcript (zero-length or foreign bytes) is replaced, not kept")
+  void reconcileReplacesATornTranscript() throws Exception {
+    Path historyDir = Files.createDirectories(tempDir.resolve("h-torn"));
+    Files.writeString(historyDir.resolve("sess-torn.md"), ""); // a torn write's observable shape
+    // NUL-prefixed on purpose (written as escapes so this file stays text): a crash after the
+    // rename but before the bytes land leaves a zero-filled prefix, which is the second shape
+    // a torn transcript takes on disk.
+    Files.writeString(historyDir.resolve("sess-garbage.md"), "\0\0not a transcript");
+    var indexer = new AgentHistoryIndexer(historyDir, () -> null);
+
+    int rebuilt =
+        indexer.reconcileNow(
+            () -> List.of("sess-torn", "sess-garbage"), id -> doneEvents("REBUILT-ZQX-" + id));
+
+    assertEquals(2, rebuilt);
+    assertTrue(Files.readString(historyDir.resolve("sess-torn.md")).contains("REBUILT-ZQX-sess-torn"));
+    assertTrue(
+        Files.readString(historyDir.resolve("sess-garbage.md")).contains("REBUILT-ZQX-sess-garbage"));
+  }
+
+  /**
+   * The destructive-branch half of the policy, and the reason it is not "drop what cannot be
+   * rebuilt": on an encrypted install with the store locked, the run store lists nothing and reads
+   * nothing — indistinguishable from "the run was deleted". A rule that deleted the unrebuildable
+   * transcript would erase the user's whole agent history on the first locked boot.
+   */
+  @Test
+  @DisplayName("909: an unreadable transcript whose run is unavailable is PRESERVED, never deleted")
+  void reconcilePreservesWhatItCannotRebuild() throws Exception {
+    Path historyDir = Files.createDirectories(tempDir.resolve("h-locked"));
+    Path unreadable = historyDir.resolve("sess-locked.md");
+    Files.writeString(unreadable, "\0\0not a transcript");
+    var indexer = new AgentHistoryIndexer(historyDir, () -> null);
+
+    // A locked store: sessions list, but reading their events yields nothing.
+    int rebuilt = indexer.reconcileNow(() -> List.of("sess-locked"), id -> List.of());
+
+    assertEquals(0, rebuilt);
+    assertTrue(Files.exists(unreadable), "the bytes must survive a pass that cannot rebuild them");
+    assertEquals(
+        "\0\0not a transcript",
+        Files.readString(unreadable),
+        "…and survive unmodified");
+  }
+
+  @Test
+  @DisplayName("909: a healthy transcript is left exactly as it is (no rewrite, no re-index)")
+  void reconcileLeavesAHealthyTranscriptAlone() throws Exception {
+    Path historyDir = Files.createDirectories(tempDir.resolve("h-healthy"));
+    Path good = historyDir.resolve("sess-good.md");
+    Files.writeString(good, AgentHistoryIndexer.TRANSCRIPT_HEADER + "\n\nthe original answer\n");
+    var indexer = new AgentHistoryIndexer(historyDir, () -> null);
+
+    int rebuilt =
+        indexer.reconcileNow(
+            () -> List.of("sess-good"),
+            id -> {
+              throw new AssertionError("a healthy transcript must not load its run's events");
+            });
+
+    assertEquals(0, rebuilt);
+    assertTrue(Files.readString(good).contains("the original answer"));
   }
 
   @Test

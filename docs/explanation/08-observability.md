@@ -561,9 +561,9 @@ Span tree per indexing batch:
 ```text
 indexing.batch  {batch.polled=16, batch.extracted=16,       [~90ms deferred, ~1650ms inline]
                  commit.schema_fp=..., commit.field_catalog_hash=...,
-                 commit.analyzer_fp=..., commit.synonyms_hash=...,
-                 commit.grammar_hash=..., commit.similarity_fp=...,
-                 commit.boosts_fp=..., commit.index_schema_fp=...}
+                 commit.synonyms_hash=..., commit.grammar_hash=...,
+                 commit.similarity_fp=..., commit.boosts_fp=...,
+                 commit.index_fingerprint=...}
 ├── indexing.extract  {doc=report.pdf}                       [2.5ms]
 ├── indexing.embed_batch {size=16, gpu=true}                 [726ms, only during migration]
 ├── indexing.write {doc=report.pdf}                          [2.5ms]
@@ -594,9 +594,9 @@ search/retrieval  {search.mode=TEXT|HYBRID|VECTOR|SPLADE,    [parent; always emi
                    search.took_ms=N,
                    search.searcher_generation=g-<ts>,
                    commit.schema_fp=..., commit.field_catalog_hash=...,
-                   commit.analyzer_fp=..., commit.synonyms_hash=...,
-                   commit.grammar_hash=..., commit.similarity_fp=...,
-                   commit.boosts_fp=..., commit.index_schema_fp=...}
+                   commit.synonyms_hash=..., commit.grammar_hash=...,
+                   commit.similarity_fp=..., commit.boosts_fp=...,
+                   commit.index_fingerprint=...}
 ├── search/branch  {search.retrieval.branch=lexical}         [3-leg fan-out only]
 ├── search/branch  {search.retrieval.branch=dense}           [when sparse+dense+splade
 ├── search/branch  {search.retrieval.branch=splade}           all available]
@@ -642,10 +642,13 @@ merge). Format: `g-<ISO-ms-timestamp>` matching the id surfaced on
 Worker's cached commit-metadata snapshot (`KnowledgeServer`'s startup read of
 `client().getCommitMetadata()`) and govern runtime index identity. A missing attr
 means the batch fired before the first commit was visible (expected on fresh
-`--clean` ingest; self-corrects after the first commit). The 8 fields (`schema_fp`,
-`field_catalog_hash`, `analyzer_fp`, `synonyms_hash`, `grammar_hash`, `similarity_fp`,
-`boosts_fp`, `index_schema_fp`) replace the retired `pipeline_hash` / `budget_profile`
-slot (ADR 0014).
+`--clean` ingest; self-corrects after the first commit). The 7 fields (`schema_fp`,
+`field_catalog_hash`, `synonyms_hash`, `grammar_hash`, `similarity_fp`,
+`boosts_fp`, `index_fingerprint`) replace the retired `pipeline_hash` / `budget_profile`
+slot (ADR 0014). Tempdoc 915 folded the old `schema_ver` / `index_schema_fp` /
+`analyzer_fp` parity keys into the single `index_fingerprint`; only `index_fingerprint`
+and `boosts_fp` are actually compared for parity (`docs/explanation/11-index-schema-migration.md`)
+— the other five are observability-only.
 
 Spans are exported via `NdjsonSpanExporter` to `<dataDir>/telemetry/traces.ndjson` (10 MB rotation, 7-day retention). `BatchSpanProcessor` defaults: 2048 queue, 512 batch, 5s interval. Only attrs listed in `NdjsonSpanExporter.ALLOWED_ATTRS` survive export — unlisted attrs are silently dropped.
 
@@ -721,11 +724,12 @@ calibrated non-determinism envelope for this cohort (if one exists).
 
 - `git_sha` (full SHA at run start)
 - `dataset`, `doc_count`, `query_count`
-- `commit_metadata` — 8 identity fields filtered from
+- `commit_metadata` — 7 identity fields filtered from
   `/api/debug/commit-metadata` (`schema_fp`, `field_catalog_hash`,
-  `analyzer_fp`, `synonyms_hash`, `grammar_hash`, `similarity_fp`,
-  `boosts_fp`, `index_schema_fp`). Mirrors LR2-d.2's `commit.*` span
-  attrs — same set, single source of truth.
+  `synonyms_hash`, `grammar_hash`, `similarity_fp`,
+  `boosts_fp`, `index_fingerprint`). Mirrors `NdjsonSpanExporter`'s `commit.*` span
+  attrs — same set, single source of truth. Tempdoc 915 folded the retired
+  `schema_ver` / `index_schema_fp` / `analyzer_fp` parity keys into `index_fingerprint`.
 - `corpus_identity` — profile_id + signature from environment.
 - `model_fingerprints` — from `/api/status` model snapshot.
 - `policy_hash` — hash of `/api/debug/session-policies` response

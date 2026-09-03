@@ -41,7 +41,7 @@ import org.junit.jupiter.api.io.TempDir;
  * Disabled in CI: This test spawns servers and has environment dependencies
  * that don't work reliably on CI runners.
  */
-@DisplayName("Schema mismatch contract: /api/status exposes reindexRequired (index_schema_fp)")
+@DisplayName("Schema mismatch contract: /api/status exposes reindexRequired (index_fingerprint)")
 @DisabledIfEnvironmentVariable(named = "CI", matches = "true")
 // 120s, not 60s: setUp uses the Head's own bounded worker-start retry, whose worst case is three
 // spawn+validate rounds. A budget that a legal slow path can exceed turns a diagnosable failure
@@ -73,6 +73,10 @@ final class SchemaMismatchStatusContractTest {
     // Force ephemeral port even if a developer has JUSTSEARCH_API_PORT set.
     System.setProperty("justsearch.api.port", "0");
     // Allow Worker startup even when commit-metadata parity is mismatched (we assert the surfaced mismatch via /api/status).
+    // The operator escape, used here for what it is: this test deliberately opens an index whose
+    // fingerprint does not match, to assert the STATUS surface reports it. Without the escape the
+    // parity guard would (correctly) refuse the open and the status contract could never be
+    // exercised. Nothing in production sets this (tempdoc 915 §C).
     System.setProperty("justsearch.index.parity.allow_mismatch", "true");
 
     // Initialize ConfigStore so that RerankerConfig.fromEnv() (called during LocalApiServer construction) resolves.
@@ -285,7 +289,7 @@ final class SchemaMismatchStatusContractTest {
             (proxy, method, args) -> {
               if ("build".equals(method.getName()) && method.getParameterCount() == 0) {
                 Map<String, Object> m = new HashMap<>(new SsotCommitMetadataSource().build());
-                m.put("index_schema_fp", bogusFp);
+                m.put("index_fingerprint", bogusFp);
                 return Map.copyOf(m);
               }
               throw new UnsupportedOperationException("Unexpected CommitMetadataSource method: " + method);
@@ -305,6 +309,20 @@ final class SchemaMismatchStatusContractTest {
             .open();
 
     try {
+      // One document, deliberately. A stale fingerprint on an index holding NOTHING is not a
+      // mismatch: there is no content that could have been written under the wrong shape and the
+      // next commit re-stamps the whole user-data map, so ParityDiagnostics excludes it and the
+      // status surface reports COMPATIBLE through the same predicate (tempdoc 915 C.14). Committing
+      // an empty index here made this contract test assert a state the product no longer produces.
+      runtime
+          .indexingCoordinator()
+          .indexSingle(
+              new io.justsearch.indexing.api.IndexDocument(
+                  Map.of(
+                      io.justsearch.indexing.SchemaFields.DOC_ID, "legacy-doc",
+                      io.justsearch.indexing.SchemaFields.DOC_UID, "legacy-doc#0",
+                      io.justsearch.indexing.SchemaFields.CONTENT,
+                          "written under a shape this runtime does not produce")));
       runtime.commitOps().commitAndTrack();
     } finally {
       runtime.close();

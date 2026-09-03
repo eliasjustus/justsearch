@@ -306,7 +306,8 @@ final class WorkerStatusMapper {
                 sc.getBranchCcWeightChunk(),
                 sc.getBranchChunkMinWeightMultiplier(),
                 sc.getTitleBoost(),
-                sc.getEntityBoost(),
+                // Compatibility tombstone: do not expose a legacy Worker's nonzero boost as live.
+                0.0,
                 sc.getQueryClassificationEnabled());
     }
 

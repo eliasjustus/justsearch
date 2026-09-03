@@ -41,6 +41,8 @@ export type { TimeseriesSnapshot } from './timeseries-snapshot.js';
 export { timeseriesSnapshotSchema } from './timeseries-snapshot.js';
 export type { FailedJobsResponse } from './failed-jobs-response.js';
 export { failedJobsResponseSchema } from './failed-jobs-response.js';
+export type { FailedIndexingJobsResponse } from './failed-indexing-jobs-response.js';
+export { failedIndexingJobsResponseSchema } from './failed-indexing-jobs-response.js';
 export type { ResourceWire } from './resource.js';
 export { resourceWireSchema } from './resource.js';
 export type { PresentationWire } from './presentation.js';

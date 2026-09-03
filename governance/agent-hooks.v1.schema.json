@@ -21,6 +21,8 @@
         "properties": {
           "file": { "type": "string", "pattern": "\\.mjs$" },
           "role": { "enum": ["blocking", "advisory", "telemetry"] },
+          "wiring": { "enum": ["opt-in", "codex-adapter"] },
+          "wiringNote": { "type": "string" },
           "bite": {
             "type": "object",
             "required": ["kind"],

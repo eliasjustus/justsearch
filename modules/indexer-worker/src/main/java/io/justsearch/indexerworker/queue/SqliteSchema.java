@@ -19,6 +19,7 @@ package io.justsearch.indexerworker.queue;
  *   <li>V8: Added nullable size_bytes column to jobs (tempdoc 813 Slice B)</li>
  *   <li>V9: Added nullable scan_id column to jobs (tempdoc 812 D2)</li>
  *   <li>V10: Added nullable first_failed_at column to jobs (tempdoc 885 item 21)</li>
+ *   <li>V11: Added durable, path-free document_identity table (tempdoc 915 Phase 2)</li>
  * </ul>
  */
 public final class SqliteSchema {
@@ -31,7 +32,7 @@ public final class SqliteSchema {
    * Target schema version. The migrate() method will upgrade the database
    * to this version using the migration ladder.
    */
-  public static final int TARGET_VERSION = 10;
+  public static final int TARGET_VERSION = 11;
 
   // ==================== Table: jobs ====================
 
@@ -183,6 +184,22 @@ public final class SqliteSchema {
       ON path_resolution(removed_at)
       """;
 
+  // ==================== Table: document_identity (tempdoc 915 Phase 2) ====================
+
+  public static final String CREATE_DOCUMENT_IDENTITY_TABLE = """
+      CREATE TABLE IF NOT EXISTS document_identity (
+        path_hash TEXT PRIMARY KEY,
+        doc_uid TEXT NOT NULL,
+        first_seen_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL
+      )
+      """;
+
+  public static final String CREATE_DOCUMENT_IDENTITY_UID_INDEX = """
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_document_identity_uid
+      ON document_identity(doc_uid)
+      """;
+
   // ==================== Migration SQL ====================
 
   /**
@@ -283,6 +300,11 @@ public final class SqliteSchema {
   public static final String MIGRATE_V9_TO_V10_ADD_FIRST_FAILED_AT = """
       ALTER TABLE jobs ADD COLUMN first_failed_at INTEGER DEFAULT NULL
       """;
+
+  static final String[] MIGRATE_V10_TO_V11_ADD_DOCUMENT_IDENTITY = {
+      CREATE_DOCUMENT_IDENTITY_TABLE,
+      CREATE_DOCUMENT_IDENTITY_UID_INDEX
+  };
 
   // ==================== Utility Methods ====================
 

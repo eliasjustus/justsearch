@@ -122,13 +122,43 @@ async function pickPort(start) {
   throw new Error(`no free port in ${start}..${start + 50}`);
 }
 
-/** Poll until something answers on `port`, or give up at `timeoutMs`. Resolves `true`/`false`. */
+/**
+ * Poll until something answers on `port`, or give up at `timeoutMs`. Resolves `true`/`false`.
+ *
+ * Probes BOTH loopback stacks, for the same reason `isFree` above does: Vite binds `localhost`,
+ * which on Windows resolves to `::1` FIRST, so the listener is IPv6-only and a `127.0.0.1`-only
+ * probe reports "never started accepting connections" against a server that is already serving.
+ * That false negative skipped registration entirely, leaving a Vite that `agent-spawn-sweep.cjs`
+ * could not reap and two reviewers had to `taskkill` by hand.
+ */
 async function waitForPortListening(port, { timeoutMs = 30_000, intervalMs = 250, probe = portInUse } = {}) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (await probe(port, '127.0.0.1')) return true;
+    const [v4, v6] = await Promise.all([probe(port, '127.0.0.1'), probe(port, '::1')]);
+    if (v4 || v6) return true;
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/**
+ * Kill the spawned server and everything below it. On win32 `child.pid` is the `cmd.exe` shim
+ * (`shell: isWin`), and killing it does NOT cascade to the `node vite.js` grandchild that owns the
+ * port — the [A3] acceptance test proves exactly that — so the tree must be killed by `taskkill /T`.
+ * Returns `{ ok }` or `{ ok: false, reason }`; never throws.
+ */
+function killSpawnTree(child) {
+  if (!child || !child.pid) return { ok: false, reason: 'no child process to kill' };
+  try {
+    if (process.platform === 'win32') {
+      const res = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { encoding: 'utf8' });
+      if (res.status === 0) return { ok: true };
+      return { ok: false, reason: (res.stderr || res.stdout || `taskkill exited ${res.status}`).trim() };
+    }
+    child.kill('SIGTERM');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err.message };
   }
 }
 
@@ -186,19 +216,34 @@ function fileTimeToEpochMs(fileTimeStr) {
  * success) would otherwise be corroborated as if it were ours. So an explicit port additionally
  * requires the listener to have started AFTER this call began — a listener that PREDATES the
  * spawn is, by construction, not the process we just started.
+ *
+ * REGISTER-OR-KILL: readiness is what makes a spawn reapable — the record is built from the port's
+ * listener, so no readiness means no record, and an unrecorded child is invisible to
+ * `agent-spawn-sweep.cjs` forever. Leaving it running is therefore the one outcome this function
+ * must not produce: if readiness is never observed, the child's tree is killed and the kill is
+ * reported. (Only THIS branch kills. When readiness IS observed but the identity or the F5
+ * corroboration fails, something else may own the port — killing there could take out a stranger.)
  */
 async function registerServedVite({
   port,
   explicitPort = false,
   spawnStartTime = Date.now(),
   sessionId = resolveSessionId(),
+  child = null,
   waitForPort = waitForPortListening,
   resolveIdentity = resolveListenerIdentity,
+  killChild = killSpawnTree,
 } = {}) {
   try {
     const ready = await waitForPort(port);
     if (!ready) {
-      console.error(`[serve-worktree-fe] port ${port} never started accepting connections; not registering`);
+      const killed = killChild(child);
+      console.error(
+        `[serve-worktree-fe] port ${port} never started accepting connections; ` +
+        (killed.ok
+          ? 'killed the unregistered child so it cannot leak past this session'
+          : `could NOT kill the unregistered child (${killed.reason}) — check for a stray vite on port ${port}`),
+      );
       return null;
     }
     const identity = resolveIdentity(port);
@@ -289,7 +334,7 @@ async function main(argv = process.argv) {
 
   // Fire-and-track, never block the serve on registration (861 [A3]/W3).
   const registered = isWin
-    ? registerServedVite({ port, explicitPort: !!explicitPortArg, spawnStartTime })
+    ? registerServedVite({ port, explicitPort: !!explicitPortArg, spawnStartTime, child })
     : Promise.resolve(null);
 
   child.on('exit', async (code) => {
@@ -325,6 +370,7 @@ module.exports = {
   isFree,
   pickPort,
   waitForPortListening,
+  killSpawnTree,
   resolveListenerIdentity,
   fileTimeToEpochMs,
   registerServedVite,

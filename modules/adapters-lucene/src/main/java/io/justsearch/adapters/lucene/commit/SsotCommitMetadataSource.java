@@ -11,6 +11,7 @@ import io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry;
 import io.justsearch.configuration.JustSearchConfigurationLoader;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.ResolvedConfig;
+import io.justsearch.indexing.chunking.ChunkSplitter;
 import io.justsearch.indexing.runtime.CommitMetadataSource;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -18,9 +19,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -29,31 +32,22 @@ import java.util.stream.Collectors;
 public final class SsotCommitMetadataSource implements CommitMetadataSource {
   private static final ObjectMapper M =
       JsonMapper.builder().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
+  /**
+   * The similarity Lucene's two-arg {@code KnnFloatVectorField} constructor applies when the
+   * catalog does not declare one. Named here so the fingerprint records the similarity actually in
+   * force, and so declaring {@code vector.similarity} in the catalog later moves the fingerprint.
+   */
+  private static final String DEFAULT_VECTOR_SIMILARITY = "euclidean";
+
   private final File repoRoot;
   private final SsotAnalyzerRegistry analyzerRegistry;
   private final SsotAnalyzerRegistry.AnalyzerFingerprintingService fingerprintingService;
   private volatile String cachedAnalyzerFingerprint;
-  private volatile Integer vectorDimensionOverride;
 
   public SsotCommitMetadataSource() {
     this.repoRoot = resolveRepoRoot();
     this.analyzerRegistry = new SsotAnalyzerRegistry();
     this.fingerprintingService = new SsotAnalyzerRegistry.AnalyzerFingerprintingService();
-  }
-
-  /**
-   * Sets a vector dimension override that modifies the {@code index_schema_fp} fingerprint.
-   *
-   * <p>When the effective vector dimension differs from the SSOT catalog's declared dimension
-   * (e.g., 1024 for BGE-M3 vs 768 for nomic-embed), this override ensures the schema fingerprint
-   * changes, triggering the parity check and schema migration on startup.
-   *
-   * <p>The raw {@code field_catalog_hash} is unaffected — it always reflects the on-disk file.
-   *
-   * @param dimension the effective vector dimension (e.g., 1024)
-   */
-  public void setVectorDimensionOverride(int dimension) {
-    this.vectorDimensionOverride = dimension;
   }
 
   private static File resolveRepoRoot() {
@@ -69,35 +63,28 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
     try {
       Map<String, Object> out = new LinkedHashMap<>();
 
-      // versions/catalog.json
+      // versions/catalog.json — grammar/template observability only. The index's identity no
+      // longer depends on this file: `schema_ver` used to be sourced from `intent_v1.schema_ver`
+      // (the search-intent grammar version, pinned at "1.0.0" since 2026-01-04), which made it a
+      // rebuild-requiring parity key that could never fire (tempdoc 915 §B, tempdoc 804).
       JsonNode versions = M.readTree(file("SSOT/versions/catalog.json"));
-      String schemaVer = versions.path("intent_v1").path("schema_ver").asText();
       String grammarVer = versions.path("intent_v1").path("grammar_ver").asText();
       int templateVer = versions.path("intent_v1").path("template_ver").get(0).asInt();
 
       // required hashes (canonical JSON for JSON, raw bytes concatenation for text/gbnf)
-      out.put("schema_ver", schemaVer);
       out.put("schema_fp", sha256Json(file("SSOT/schemas/domain/search-intent.schema.json")));
       String fieldCatalogHash = sha256Json(file("SSOT/catalogs/fields.v1.json"));
       out.put("field_catalog_hash", fieldCatalogHash);
-      // index_schema_fp: incorporates runtime overrides (e.g., vector dimension) that affect
-      // the effective schema without modifying the on-disk catalog file.
-      String indexSchemaFp = fieldCatalogHash;
-      Integer dimOverride = this.vectorDimensionOverride;
-      if (dimOverride != null) {
-        indexSchemaFp =
-            sha256Bytes(
-                (fieldCatalogHash + ":vectorDim=" + dimOverride)
-                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-      }
-      out.put("index_schema_fp", indexSchemaFp);
+      // The one rebuild-requiring key: a hash over the effective *physical* index shape. Absent
+      // when a configured model's digest is unresolvable — see IndexFingerprint's class Javadoc on
+      // why an indeterminate input must not be stamped as an answer.
+      indexFingerprint().ifPresent(fp -> out.put(IndexFingerprint.COMMIT_META_KEY, fp));
       // Per-language synonym lists were removed in tempdoc 581 §13 / ADR-0043 (native
       // multilingual, no per-language levers). synonyms_hash is retained as a commit-metadata /
       // observability identity field (consumed by telemetry spans + jseval) and is now the
       // SHA-256 of the empty synonym set. It is NOT a parity key, so this value change does not
       // affect existing on-disk indices.
       out.put("synonyms_hash", sha256Bytes(new byte[0]));
-      out.put("analyzer_fp", analyzerFingerprint());
 
       // grammar/templates/prompts
       out.put("grammar_ver", grammarVer);
@@ -107,7 +94,10 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
           file("SSOT/prompts/en/intent.v1.json"),
           file("SSOT/prompts/en/summary.v1.json"))));
 
-      // Optional descriptors: similarity_fp (from config, defaults applied) and boosts_fp
+      // Query-time scoring descriptors. Neither changes a byte on disk, so neither is a parity
+      // key: similarity_fp is BM25 k1/b (observability only), boosts_fp is the one *benign*
+      // parity key — a mismatch means the running config disagrees with the index, which is worth
+      // reporting but never worth a reindex.
       out.put("similarity_fp", sha256Bytes(similarityDescriptorFromConfig().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
       // boosts fingerprint from app-config index.boosts (deterministic)
       String boostsJson = boostsCanonicalJson();
@@ -116,15 +106,10 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
       // feature toggle for grammar (default ON in this slice)
       out.put("grammar_on", true);
 
-      // F6: Vector quantization format stamp (storage optimization, not parity-checked)
-      try {
-        ResolvedConfig rc = resolvedConfigOrFallback();
-        boolean quantized =
-            rc != null && Boolean.TRUE.equals(rc.index().vectorQuantizationEnabled());
-        out.put("vector_format", quantized ? "int8_sq" : "float32");
-      } catch (Exception e) {
-        out.put("vector_format", "float32"); // fallback for tests
-      }
+      // Vector storage format stamp. Also an index_fingerprint input (a different
+      // KnnVectorsFormat is a different on-disk encoding); kept as its own key because
+      // VectorFormatDetector and the status surface report it directly.
+      out.put("vector_format", vectorFormat());
 
       return Map.copyOf(out);
     } catch (IOException e) {
@@ -133,6 +118,132 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
   }
 
   private File file(String relative) { return new File(repoRoot, relative); }
+
+  /**
+   * Reduces a library version to {@code major.minor}. The analysis libraries are fingerprint
+   * inputs because an upgrade can change the postings with every field descriptor unchanged, but
+   * hashing the full version would make a patch release — which by both projects' compatibility
+   * policy does not change analysis output — cost every install a full reindex. The residual
+   * risk is accepted and named in tempdoc 915 §C.3: a patch that did change tokenisation would
+   * go undetected.
+   */
+  static String majorMinor(String version) {
+    if (version == null || version.isBlank()) {
+      return "";
+    }
+    String[] parts = version.trim().split("\\.");
+    if (parts.length < 2) {
+      return version.trim();
+    }
+    return parts[0] + "." + parts[1];
+  }
+
+  /** {@code float32} unless vector quantization is enabled. */
+  private static String vectorFormat() {
+    try {
+      ResolvedConfig rc = resolvedConfigOrFallback();
+      boolean quantized = rc != null && Boolean.TRUE.equals(rc.index().vectorQuantizationEnabled());
+      return quantized ? "int8_sq" : "float32";
+    } catch (RuntimeException e) {
+      return "float32";
+    }
+  }
+
+  /**
+   * Assembles the {@link IndexFingerprint} inputs and computes the digest, or empty when a
+   * configured model's digest is unresolvable.
+   *
+   * <p>The catalog is projected to its <em>physical</em> shape here rather than hashed as a file:
+   * {@code rmwPolicy} is dropped because it cannot describe a stored or doc-values field (see
+   * {@code FieldMapper.validateRmwPolicies}), so it never changes what is written. That single
+   * exclusion is what the old {@code index_schema_fp} lacked, and why three annotation-only catalog
+   * edits each falsely demanded a reindex (tempdoc 804).
+   */
+  Optional<String> indexFingerprint() throws IOException {
+    JsonNode catalog = M.readTree(file("SSOT/catalogs/fields.v1.json"));
+    ResolvedConfig rc = resolvedConfigOrNull();
+
+    return IndexFingerprint.compute(
+        new IndexFingerprint.Inputs(
+            catalog.path("version").asText(),
+            projectFields(catalog, IndexFingerprint.effectiveVectorDimension()),
+            analyzerFingerprint(),
+            vectorFormat(),
+            new IndexFingerprint.Hnsw(
+                rc == null
+                    ? ResolvedConfig.Index.DEFAULT_VECTOR_HNSW_M
+                    : rc.index().effectiveVectorHnswM(),
+                rc == null
+                    ? ResolvedConfig.Index.DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION
+                    : rc.index().effectiveVectorHnswEfConstruction()),
+            new IndexFingerprint.Chunking(
+                ChunkSplitter.DEFAULT_CHUNK_TOKENS,
+                ChunkSplitter.DEFAULT_OVERLAP_TOKENS,
+                ChunkSplitter.MIN_CHUNK_TOKENS,
+                ChunkSplitter.CHUNK_THRESHOLD_CHARS,
+                ChunkSplitter.ALGORITHM_VERSION),
+            ChunkSplitter.CONTENT_PREVIEW_MAX_CHARS,
+            new IndexFingerprint.Analysis(
+                majorMinor(org.apache.lucene.util.Version.LATEST.toString()),
+                majorMinor(com.ibm.icu.util.VersionInfo.ICU_VERSION.toString())),
+            IndexFingerprint.embeddingModel(),
+            IndexFingerprint.spladeModel(),
+            IndexFingerprint.nerModel()));
+  }
+
+  /**
+   * Projects the catalog to the per-field properties that decide what is written to disk.
+   *
+   * <p>Package-private so the exclusions can be tested directly against two catalogs that differ
+   * only in an annotation. That test is the guard on tempdoc 804's actual complaint: hashing the
+   * catalog <em>file</em> made three annotation-only edits each demand a reindex of an index that
+   * was physically identical to what the runtime would have written.
+   *
+   * @param catalog the parsed field catalog
+   * @param effectiveDimension the runtime's vector dimension, or null to use each field's declared
+   *     one
+   */
+  static List<IndexFingerprint.FieldShape> projectFields(
+      JsonNode catalog, Integer effectiveDimension) {
+    List<IndexFingerprint.FieldShape> fields = new ArrayList<>();
+    for (JsonNode f : catalog.path("fields")) {
+      JsonNode vector = f.path("vector");
+      Integer declaredDimension =
+          vector.isObject() && vector.has("dimension") ? vector.path("dimension").asInt() : null;
+      Integer dimension =
+          declaredDimension == null
+              ? null
+              : (effectiveDimension != null ? effectiveDimension : declaredDimension);
+      String similarity =
+          vector.isObject() && vector.has("similarity")
+              ? vector.path("similarity").asText()
+              : (declaredDimension == null ? null : DEFAULT_VECTOR_SIMILARITY);
+      List<String> roles = new ArrayList<>();
+      for (JsonNode role : f.path("roles")) {
+        roles.add(role.asText());
+      }
+      fields.add(
+          new IndexFingerprint.FieldShape(
+              f.path("id").asText(),
+              f.path("type").asText(),
+              f.path("stored").asBoolean(false),
+              f.path("docValues").asBoolean(false),
+              f.path("multiValued").asBoolean(false),
+              f.has("analyzer") ? f.path("analyzer").asText() : null,
+              roles,
+              dimension,
+              similarity));
+    }
+    return fields;
+  }
+
+  private static ResolvedConfig resolvedConfigOrNull() {
+    try {
+      return resolvedConfigOrFallback();
+    } catch (RuntimeException e) {
+      return null;
+    }
+  }
 
   private String analyzerFingerprint() {
     String fp = cachedAnalyzerFingerprint;

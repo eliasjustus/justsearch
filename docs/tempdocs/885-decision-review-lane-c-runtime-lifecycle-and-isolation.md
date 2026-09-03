@@ -1,5 +1,5 @@
 ---
-status: IMPLEMENTED pending #602 merge — lane C closed. Items 14, 3, 6 and 21 done and live-verified (PRs #595, #598, #600 merged). Item 19 measured and REJECTED as implemented: both cadence axes were worse than control, the window exposed two implementation defects (seam polarity — fixed here; index.commit.idle_ms coupling — key deleted), and index.nrt.mode ships opt-in at continuous pending a clean re-run of arm A2. Defaults unchanged throughout. Tracked follow-ups: A2 re-run; CommitOps' 10 s timer configurability before any commit-cadence work; the residual drain coupling
+status: IMPLEMENTED pending #602 merge — lane C closed. Items 14, 3, 6 and 21 done and live-verified (PRs #595, #598, #600 merged). Item 19 measured and REJECTED as implemented: both cadence axes were worse than control, the window exposed two implementation defects (seam polarity — fixed here; index.commit.idle_ms coupling — key deleted), and index.nrt.mode ships opt-in at continuous pending a clean re-run of arm A2. Defaults unchanged throughout. Tracked follow-ups: A2 re-run; CommitOps' 10 s timer configurability before any commit-cadence work; the residual drain coupling. Wave-1 residue items (UL.9/UL.10 routed findings, the Residue live window part A commit-floor open question) are settled by tempdocs 909-912 (PRs #611-#614) — see inline "Settled" notes.
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
@@ -3526,6 +3526,145 @@ for by trimming eleven older bullets' wording — content preserved, ~330 B reco
 * **`ForegroundLoad` is a `worker-services` type**, not a gRPC concept — it survives the merge, and
   item 19's reopen seam now depends on it as a `BooleanSupplier`.
 
+### UL.9 Live pass part 1 (2026-09-02) — roots collection + the exhausted-state UI
+
+Run by the wave-1 UI residue lane (PR #603) against the orchestrator-owned stack built from
+`resid-product` @ `505d0fdd`: runId `e57fb789-2ecb-4133-8906-2ec635f1dfa2`, API
+`http://127.0.0.1:63275`, dataDir `.claude/worktrees/resid-product/modules/ui-web/.dev-data`.
+HTTP only (the lane did not hold the lease). Part 2 — the post-restart re-check — is recorded
+separately after the orchestrator restarts the stack.
+
+| # | Check | Result |
+|---|---|---|
+| 3a | `POST /api/indexing/roots` with a collection | **PASS** `{"path":"…/resid-ui/docs/explanation","collection":"residue-live"}` → `{"status":"ok"}` |
+| 3b | The listing keeps it | **PASS** `GET /api/indexing/roots` → `collection: "residue-live"` on the root (not dropped, which is the R2 defect this fixes) |
+| 3c | It survives to disk | **PASS** `watched_roots.json` contains `"collection" : "residue-live"` beside the path, `walkCompleted: true` |
+| 3d | Indexed documents carry it | **PASS** after the walk settled, all 8 hits for `architecture` under that root return `fields.collection = residue-live` via `POST /api/knowledge/search` |
+| 3e (S3) | Ad-hoc ingest INHERITS it | **PASS** a file created under the root and ingested with `POST /api/knowledge/ingest {"paths":[…]}` and **no `collection` field** came back searchable with `fields.collection = residue-live`. The probe file was deleted immediately after the reading. |
+| 6 | `RETRY_EXHAUSTED` in the drawer | **UNIT-TIER ONLY**, as briefed — a genuinely exhausted job needs a transient failure recurring across the seven-day retry window and cannot be seeded in a live session. Covered by `FailedJobsDrawer.test.ts` (a `RETRY_EXHAUSTED` row and a `FAILED` row rendering differently, plus the no-state fallback) and `indexingJobsBridge.test.ts`. |
+
+**A checklist item that is not observable where it was expected.**
+`justsearch.index.commit.timer_interval_ms` does not appear on
+`/api/debug/effective-config`: that endpoint exposes 16 curated Head-side keys and this is a
+WORKER-side key read through `session.resolvedConfig()` in `CommitOps.commitTimerIntervalMs`. Nor
+is it in the worker log — `CommitOps.startCommitTimer` logs the interval at DEBUG, below the
+running level, and the only INFO/WARN line is the invalid-value branch, which did not fire. So the
+default is consistent with what was observed (no override was set on this run, and
+`EnvRegistry.java:1306` declares the default `10000`) but it was **not observed**, and this pass
+does not claim it was. Making it observable would mean either promoting the key onto the
+effective-config surface or raising that one log line to INFO.
+
+**Routed, not investigated (this lane's own findings from the run):**
+
+* `jseval ui-a11y-gate` exits **2 (capture error)** on `security` / `security-light` — both time
+  out on `jf-settings-window dialog[open]`. Reproduced **identically against main's own frontend**
+  (`:5173`, no worktree changes): 18 ok / 2 ERROR / 0 new violations on both. Pre-existing on
+  `main`, not caused by #603; a red local gate belongs in
+  `scripts/agent-analytics/expected-state.v1.json` with a fix item rather than being rediscovered.
+* The substrate failed-jobs wire has **no parse-boundary contract**.
+  `SSOT/schemas/indexing-job-view.v1.json` exists and does describe `pathHash` / `state` /
+  `retryAfterMs`, but there is no generated TS projection for it (`schema-types/` carries only
+  `failed-jobs-response.ts`, the legacy `path`-carrying shape), and the `by-prefix` envelope is
+  hand-built as `Map<String,Object>` in `IndexingController.handleListFailedJobsByPathPrefix`
+  (which also omits `scanId`, so it is not quite an `IndexingJobView`). `FailedJobsDrawer.refresh`
+  therefore reads `state` off untyped JSON with zero contract coverage — the field UL.9 row 6 above
+  depends on.
+
+  **Settled (2026-09-02).** Tempdoc 911 item 1 (#614): both substrate failed-jobs endpoints now emit
+  one typed `FailedIndexingJobsResponse` record with a generated schema and a generated FE
+  `parseWireContract` boundary; `scanId` is present (empty — the Head has no source for it yet, a
+  separately routed gap). See 911 §C item 1, §E.
+
+### UL.10 Live pass part 2 (2026-09-02) — the roots collection survives a restart
+
+Stack restarted from the same `resid-product` dist (skipBuild), same dataDir: runId
+`f9bc186d-ee2c-456a-8541-77215e89a478`, API `http://127.0.0.1:57051`. This is the half UL.9 could
+not cover, and the half that matters: 821 §L.3 is a PERSISTENCE defect, so a collection that is
+merely correct in memory proves nothing.
+
+| # | Check | Result |
+|---|---|---|
+| a1 | The listing survives the restart | **PASS** `GET /api/indexing/roots` → `collection: "residue-live"`, `lastIndexed` refreshed to `15:40:16` (i.e. re-walked, not just re-read) |
+| a2 | Disk survives the restart | **PASS** `watched_roots.json` still `"collection" : "residue-live"`, `walkCompleted: true` |
+| a3 | **RE-WALKED documents still carry it** | **PASS** 8/8 hits for `architecture` under that root return `fields.collection = residue-live`; the set of distinct collections across the result set is exactly `["residue-live"]` |
+| a4 | The deleted probe file left the index | **PASS** the UL.9 S3 fixture, deleted from disk between the two passes, is absent from the re-walked results — the rewalk is a real rewalk, which is what makes a3 mean something |
+
+**a3 is the live witness for 821 §L.3.** The collection is not a request-scoped label that happens
+to be echoed back: it round-tripped through `watched_roots.json`, a full backend restart, a
+directory re-walk, and re-indexing, and came back on the documents.
+
+**Teardown.** The root was removed at the end (`DELETE /api/indexing/roots` → `{"deletedJobs":30,
+"status":"ok"}`; the listing is `{"roots":[]}` and `watched_roots.json` is `"roots" : [ ]`), the AI
+runtime deactivated (engine `Down`, `chatEnabledSpec false`), both served-FE processes stopped, and
+the ad-hoc probe files deleted. The stack is left running for its owner.
+
+**On the `ui-a11y-gate` residue routed in UL.9:** it is deliberately NOT pinned in
+`scripts/agent-analytics/expected-state.v1.json` — that file is shared and was touched on `main` by
+another lane in this same wave, so a second concurrent edit buys a merge conflict for a note. It
+stays here, with the evidence that makes it actionable without re-investigation: `security` and
+`security-light` time out on `jf-settings-window dialog[open]`, and the run is **identical against
+main's own frontend** (18 ok / 2 ERROR / 0 new violations, exit 2, on both `:5174` serving this
+branch and `:5173` serving `main`). Pre-existing, not #603. The next kernel-facing PR can pin it or
+fix it from this paragraph alone.
+
+**Settled (2026-09-02).** Tempdoc 911 item 2 (#614): the timeout was neither a stale gate step nor a
+product defect — `scripts/jseval/jseval/ui_fixtures.py::_surface_entry`'s fixture had not been
+updated after 884 tightened `/api/registry/surfaces` parsing to the generated strict-schema Zod, so
+the harness's own test double had been silently invalid since #597. Fixed by making the fixture
+schema-COMPLETE against `surfaceWireSchema`; `jseval ui-a11y-gate` now exits 0 (20 ok / 0 ERROR). See
+911 §C item 2, §D, §E.
+
+**A second routed finding, surfaced by the `dead-code` gate on this PR (#604's new built-inputs
+step).** `modules/ui-web/src/api/domains/indexing.ts` is an ENTIRELY unimported HTTP-client module:
+9 exported functions (`addRoot`, `removeRoot`, `reindex`, `getSuggestedRoots`, `applyExcludes`,
+`previewExcludes`, `startMigration`, `listFailedJobs`, `clearFailedJobs`) and 4 exported types, with
+zero importers anywhere in `src/`. knip reports it as a single whole-file finding, which is why the
+`gates/dead-code/baseline.txt` row reads `src/api/domains/indexing.ts 1` rather than `13` — the
+count is "one dead file", not "one dead export".
+
+That masking is the part worth recording, because it has a sharp edge: importing ONE symbol from
+such a file flips knip out of whole-file mode into per-export mode, and the row jumps `1 → 13` with
+no new dead code anywhere. This PR hit exactly that when it first placed a shared state constant
+there; the fix was to put the constant beside its three consumers
+(`shell-v0/state/indexingJobStates.ts`) rather than to declare growth for 12 exports that were
+already dead. **Do not declare a `1 → N` jump on one of these rows as growth** — check first
+whether the baselined `1` is a whole-file finding, because then the N is pre-existing and the
+honest fix is either deleting the module or not reaching into it. The same trap is armed on every
+other whole-file row in that baseline (22 files report whole-file-unused in the current report,
+e.g. `src/api/domains/browse.ts 1`).
+
+**Settled (2026-09-02).** Tempdoc 910 item 1 (#611): the `dead-code` gate now normalizes a whole-file
+finding to the module's own declared export count (floored at 1) instead of counting it as `1`, so
+`1 → N` on a first import reads as `N → (≤N)` — a shrink — while a genuinely new dead export still
+pushes past the pin. 23 of 186 baseline rows were in this trap; 11 changed value. See 910 §A item 1,
+§B.4-B.6.
+
+**A third routed finding: `WorkerMethvinWatcherTest` has a size race with no pin.** The full
+`./gradlew.bat test` run for this PR's merge produced 18 failures across `ui`, `worker-core` and
+`worker-services`. Sixteen are `java.util.concurrent.TimeoutException: … timed out after 30/40
+seconds`, i.e. the shape `worker-services-30s-timeout-under-load` and
+`worker-core-onnx-longdoc-forensic-timeout` already pin; one is
+`ReadinessTriggerCompositionTest` failing with the pinned message verbatim
+(`index.unavailable was still asserted after 5000ms`). All were re-run isolated and pass.
+
+The eighteenth is not covered by any pin and does not name a timeout anywhere:
+`WorkerMethvinWatcherTest.deliversCreateEventToJobQueue` fails as
+`The watcher must record the file's real size, not the unknown-size sentinel ==> expected: <4096>
+but was: <0>`. It passes in isolation (`:modules:worker-services:cleanTest test --tests …`,
+BUILD SUCCESSFUL). The shape is a create-event race — the watcher reads the file's size after a
+CREATE notification but before the write has flushed, so it sees `0` and records the sentinel —
+which widens under load rather than being caused by it. It is a **watcher** defect, not a
+starvation artefact, so it wants either a deterministic write-then-notify fixture or a pin of its
+own; it is filed here rather than in `expected-state.v1.json` for the same reason as the
+`ui-a11y-gate` entry above (that file is shared and was touched on `main` in this same wave).
+Nothing in PR #603 touches Java behaviour — its only Java-side change is a comment and one
+message-catalog line — so this is pre-existing either way.
+
+**Settled (2026-09-02).** Tempdoc 912 item 1 (#612, `33ffc3bb`): fixed at the encoding, not with a
+timing budget — the watcher no longer fabricates a `0` for a mid-write create event; it now records
+the unknown-size sentinel `UNKNOWN_SIZE_BYTES` and lets the consumer re-stat. Three tests, each
+falsified; 5/5 consecutive clean runs. See 912 §A / §A2-A3, Report-back.
+
 ## Residue live window, part A (2026-09-02)
 
 Wave-1 residue measurement arms, run from `worktree-resid-product` @ `505d0fdd`
@@ -3728,3 +3867,12 @@ regression on the user-visible first-search path with no measured throughput gai
 (it is A/B-able by construction, which is why it exists). The commit-cadence knobs are likewise not
 worth defaulting away from 10s/10s/1000; the open question is what actually floors the commit
 count, which A3 shows is none of the three levers tested.
+
+**Settled (2026-09-02), the open question answered, the fix not yet taken.** Tempdoc 912 §E-live
+ran the per-trigger commit attribution this window could not (data dir recycled by the aborted A1b):
+the floor is `BackfillScheduler.CYCLE_BUDGET_MS` — a hardcoded 5 s pacing constant no config key
+reaches (`BackfillScheduler.java:63`) — which chops enrichment into ~5 s cycles each ending in a
+durable `backfill/combined-final` commit, measured at 48 of 69 commits (70 %) live. This is why A3
+could triple three knobs and move the count only 17 %: none of them is on this path. The fix
+(making `CYCLE_BUDGET_MS` configurable so it is A/B-able) is deliberately not attempted in 912 —
+912 open items 8/9.

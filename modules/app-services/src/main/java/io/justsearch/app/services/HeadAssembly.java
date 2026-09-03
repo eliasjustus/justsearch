@@ -82,6 +82,11 @@ public final class HeadAssembly implements AutoCloseable {
   private final io.justsearch.app.services.vdu.OfflineCoordinator offlineCoordinator;
   private final Telemetry telemetry;
   private final KnowledgeHttpApiAdapter agentSearchAdapter;
+  // Tempdoc 913 D5: the ONE file-operation journal for the process. Held for the same reason
+  // agentSearchAdapter is — connectKnowledgeServer hands it to AgentToolHandlers.registerLateBound
+  // so the write side (FileOperationsTool) and the read side (AgentRunQueryService.operationHistory
+  // → GET /api/chat/agent/history) are the same instance over the same directory.
+  private final FileOperationLog fileOperationLog;
   // Tempdoc 832 (lane D): published by LocalApiServer (its owner) before connectKnowledgeServer, so
   // the late-bound agent ingest adapter can be bound to the same scan-progress stream.
   private volatile io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry;
@@ -110,6 +115,14 @@ public final class HeadAssembly implements AutoCloseable {
   // Tempdoc 629 (#E faithful import): held so the agent-run BackupSink can re-index a RESTORED run into
   // the searchable agent-history collection (import doesn't fire the live listener).
   private io.justsearch.app.services.agenthistory.AgentHistoryIndexer agentHistoryIndexer;
+
+  /**
+   * Tempdoc 909 item 1 — the number of persisted runs one agent-history reconciliation pass
+   * considers. Matches {@code AgentRunReconciler.SCAN_LIMIT}: far above any plausible run count,
+   * and {@code listSessions} clamps below it. Note this is a LISTING bound, not a work bound —
+   * the per-run cost of a pass is recorded on {@code AgentHistoryIndexer.MAX_REBUILDS_PER_PASS}.
+   */
+  private static final int AGENT_HISTORY_SCAN_LIMIT = 100_000;
   // Tempdoc 778 — the default-on local feedback-capture flag, shared by every capture site + the
   // /api/feedback/capture surface.
   private io.justsearch.app.services.feedback.FeedbackCaptureSettings feedbackCaptureSettings;
@@ -412,7 +425,7 @@ public final class HeadAssembly implements AutoCloseable {
     this.offlineCoordinator = serviceOut.offlineCoordinator();
     this.agentSearchAdapter = serviceOut.agentTools().agentSearchAdapter();
     this.excludes = serviceOut.excludes();
-    FileOperationLog fileOperationLog = serviceOut.agentTools().fileOperationLog();
+    this.fileOperationLog = serviceOut.agentTools().fileOperationLog();
 
     // Tempdoc 629 (LAYER): seal agent-run meta.json + events.ndjson with the data key (lazy reads → no
     // reload-listener needed; while locked the ledger is empty until unlock).
@@ -625,6 +638,29 @@ public final class HeadAssembly implements AutoCloseable {
               agentRunStore::addEventListener,
               dataDir.resolve("agent-history"),
               () -> this.knowledgeClient);
+      // Tempdoc 909 item 1 — a transcript is a DERIVED projection of the run's terminal event, but
+      // nothing re-derived one outside faithful backup import: a transcript lost to a torn write or
+      // a partial restore stayed un-searchable forever. Re-derive the missing/unreadable ones at
+      // boot, and AGAIN on unlock, because a locked store lists no sessions at all (the same 834 R5
+      // trap AgentRunReconciler names just above). The pass is idempotent and runs off the boot
+      // thread.
+      final io.justsearch.agent.AgentRunStore runStoreForHistory = agentRunStore;
+      final io.justsearch.app.services.agenthistory.AgentHistoryIndexer historyIndexer =
+          this.agentHistoryIndexer;
+      Runnable reindexMissingTranscripts =
+          () ->
+              historyIndexer.reconcile(
+                  () ->
+                      runStoreForHistory.listSessions(AGENT_HISTORY_SCAN_LIMIT).stream()
+                          .map(summary -> summary.get("sessionId"))
+                          .filter(String.class::isInstance)
+                          .map(String.class::cast)
+                          .toList(),
+                  sessionId -> runStoreForHistory.runEvents().readEvents(sessionId));
+      reindexMissingTranscripts.run();
+      new io.justsearch.app.services.encryption.UnlockDeferredScan(
+              "agent-history-reconciler", reindexMissingTranscripts)
+          .attachTo(this.dataKeyManager);
     }
 
     // §4 Phase 5 — OrchestrationPhase: composes CapabilityHealthBridge + AgentLoopWiring +
@@ -632,7 +668,7 @@ public final class HeadAssembly implements AutoCloseable {
     final OnlineAiService onlineAiServiceFinal = onlineAiService;
     final IndexingService indexingForOrchestration = indexingService;
     final DocumentService documentForOrchestration = documentService;
-    final FileOperationLog fileOperationLogFinal = fileOperationLog;
+    final FileOperationLog fileOperationLogFinal = this.fileOperationLog;
     final Supplier<List<String>> agentRootPathsFinal = agentRootPaths;
     var orchestrationOut =
         tracedPhase(
@@ -793,6 +829,7 @@ public final class HeadAssembly implements AutoCloseable {
                   this.services.inference().onlineAi(),
                   this.lambdaMartReranker,
                   this.agentSearchAdapter,
+                  this.fileOperationLog,
                   this.memoryStore,
                   this.scanProgressRegistry,
                   scanRollupLedgerOrNull(),
@@ -866,6 +903,7 @@ public final class HeadAssembly implements AutoCloseable {
     this.runtimeReconciler = null;
     this.offlineCoordinator = null;
     this.agentSearchAdapter = null;
+    this.fileOperationLog = null;
     this.excludes = null;
     this.serviceOut = null;
     this.gplJobCoordinator = null;

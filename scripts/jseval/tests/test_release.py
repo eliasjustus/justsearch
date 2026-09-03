@@ -28,14 +28,12 @@ _CONFIG_GLOBAL = {
 # corpus-dependent fps — DIFFER between scifact (BEIR) and the mixed corpora.
 _SCIFACT_CORPUS_FPS = {
     "field_catalog_hash": "fc-scifact",
-    "index_schema_fp": "is-scifact",
-    "analyzer_fp": "an-scifact",
+    "index_fingerprint": "is-scifact",
     "synonyms_hash": "syn-empty",
 }
 _MIXED_CORPUS_FPS = {
     "field_catalog_hash": "fc-mixed",
-    "index_schema_fp": "is-mixed",
-    "analyzer_fp": "an-mixed",
+    "index_fingerprint": "is-mixed",
     "synonyms_hash": "syn-mixed",
 }
 

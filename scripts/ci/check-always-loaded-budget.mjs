@@ -2,8 +2,9 @@
 /**
  * Always-loaded agent-doc budget ratchet (tempdoc 620 Move 3).
  *
- * CLAUDE.md + every .claude/rules/*.md is injected into EVERY agent session
- * unconditionally — it taxes every task regardless of relevance. The Part I.E
+ * AGENTS.md is injected into every Codex session; CLAUDE.md + every
+ * .claude/rules/*.md is injected into every Claude session. These files tax
+ * every task in their respective harnesses regardless of relevance. The Part I.E
  * finding: the existing bloat guard (prose-tier-register's sentence-scan) only
  * governs ANCHORED rule sentences, so the largest bloat (the Pre-merge list,
  * common-workflows procedures) grew invisible to it. This ratchet closes that
@@ -132,9 +133,9 @@ if (mode === 'bump') {
     console.error('--bump requires a file: --bump <path> [--reason "<why the growth is justified>"]');
     process.exit(2);
   }
-  const isBaselineable = file === 'CLAUDE.md' || /^\.claude\/rules\/[^/]+\.md$/.test(file);
+  const isBaselineable = file === 'AGENTS.md' || file === 'CLAUDE.md' || /^\.claude\/rules\/[^/]+\.md$/.test(file);
   if (!(file in ceilings) && !isBaselineable) {
-    console.error(`--bump: "${file}" is not an always-loaded file (CLAUDE.md or .claude/rules/*.md).`);
+    console.error(`--bump: "${file}" is not an always-loaded file (AGENTS.md, CLAUDE.md, or .claude/rules/*.md).`);
     process.exit(2);
   }
   const actual = sizeOf(file);

@@ -74,6 +74,7 @@ variable before launching; the actual port in use is always written to
 [`docs/reference/mcp-production-server.md`](docs/reference/mcp-production-server.md). Connect your agent:
 
 - **Claude Code:** `claude mcp add justsearch --transport http http://127.0.0.1:8080/mcp`
+- **Codex CLI:** `codex mcp add justsearch --url http://127.0.0.1:8080/mcp`
 - **Cursor / VS Code** (clients that accept an HTTP `url` directly — e.g. `.cursor/mcp.json`):
   ```json
   { "mcpServers": { "justsearch": { "url": "http://127.0.0.1:8080/mcp" } } }

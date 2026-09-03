@@ -436,7 +436,6 @@ public record ResolvedConfig(
    * @param collection primary index collection name
    * @param queryClassificationEnabled 306: enable query classification for CE/expansion gating
    * @param titleBoost 306: title field boost in DisjunctionMaxQuery (0 to disable)
-   * @param entityBoost 326: NER entity field boost in DisjunctionMaxQuery (0 to disable)
    * @param evidenceSpanEnabled 775: enable answer-bearing EvidenceSpan-backed excerpt selection
    *     (default TRUE since the 775 §I flip, 2026-07-22; flag-off reproduces the IDF-only delivery
    *     excerpt byte-for-byte)
@@ -453,7 +452,6 @@ public record ResolvedConfig(
       String collection,
       boolean queryClassificationEnabled,
       double titleBoost,
-      double entityBoost,
       boolean chunkAwareEnabled,
       // Tempdoc 774 Stage 2 — when true, chunk-sourced hits emit the winning chunk's text as
       // content_preview (evidence-coherent CE input + delivery). Default TRUE since the 775 §I flip
@@ -722,6 +720,29 @@ public record ResolvedConfig(
     /** Wire value of the reopen-on-demand candidate (tempdoc 885 item 19). */
     public static final String NRT_MODE_ON_DEMAND = "on_demand";
 
+    /** HNSW max-connections used when {@code index.vector.hnsw.m} is unset. */
+    public static final int DEFAULT_VECTOR_HNSW_M = 16;
+
+    /** HNSW beam width used when {@code index.vector.hnsw.ef_construction} is unset. */
+    public static final int DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION = 200;
+
+    /**
+     * The HNSW max-connections the graph is actually built with. Both the codec and the
+     * {@code index_fingerprint} read this rather than applying their own fallback: writing the
+     * default out explicitly is a no-op change, and a fingerprint that moved on it would demand a
+     * full reindex for an edit that changes nothing (tempdoc 915 §C).
+     */
+    public int effectiveVectorHnswM() {
+      return this.vectorHnswM() != null ? this.vectorHnswM() : DEFAULT_VECTOR_HNSW_M;
+    }
+
+    /** The HNSW beam width the graph is actually built with. See {@link #effectiveVectorHnswM}. */
+    public int effectiveVectorHnswEfConstruction() {
+      return this.vectorHnswEfConstruction() != null
+          ? this.vectorHnswEfConstruction()
+          : DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION;
+    }
+
     public Index {
       sort = sort != null ? List.copyOf(sort) : List.of();
       boosts = boosts != null
@@ -798,6 +819,8 @@ public record ResolvedConfig(
    *
    * @param rrfK RRF constant K
    * @param vectorSkipMinChars min query chars before vector search is attempted
+   * @param vectorSkipMinDfFraction minimum analyzed-term document-frequency fraction at which a
+   *     redundant dense leg is skipped
    * @param candidateLimitMax max candidates per retrieval system
    * @param textCandidateMultiplier BM25 candidate multiplier
    * @param vectorCandidateMultiplier vector candidate multiplier
@@ -818,6 +841,7 @@ public record ResolvedConfig(
   public record HybridSearch(
       int rrfK,
       int vectorSkipMinChars,
+      double vectorSkipMinDfFraction,
       int candidateLimitMax,
       int textCandidateMultiplier,
       int vectorCandidateMultiplier,

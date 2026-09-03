@@ -18,8 +18,13 @@ import io.justsearch.indexerworker.WorkerConfig;
 import io.justsearch.indexerworker.coordination.MmfWorkerSignalBus;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
+import io.justsearch.adapters.lucene.commit.IndexFingerprint;
+import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.indexerworker.embed.EmbeddingFingerprint;
+import io.justsearch.indexerworker.splade.SpladeFingerprint;
 import io.justsearch.indexerworker.embed.EmbeddingConfig;
+import io.justsearch.adapters.lucene.runtime.IndexMetadataParityGuard;
+import io.justsearch.adapters.lucene.runtime.ParityDiagnostics;
 import io.justsearch.indexerworker.embed.EmbeddingMetadataOverlay;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexerworker.loop.pacing.ForegroundLoad;
@@ -79,6 +84,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
@@ -143,6 +149,7 @@ public final class KnowledgeServer implements Closeable {
   // Tempdoc 419 / T5.1 (ADR-0028): scoped reverse-lookup store. Constructed in init() against
   // the same jobs.db as JobQueue; closed in shutdown alongside JobQueue.
   private io.justsearch.indexerworker.queue.SqlitePathResolutionStore pathResolutionStore;
+  private io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore documentIdentityStore;
   private LuceneRuntime searchLifecycle;
   private LuceneRuntime ingestLifecycle;
   EmbeddingService embeddingService;
@@ -195,6 +202,43 @@ public final class KnowledgeServer implements Closeable {
    * {@code EmbeddingCompatibilityController.permitStampWithoutEmbeddingEvidence}.
    */
   private boolean corruptionRecoveryRebuildStarted;
+
+  /**
+   * Set when this boot found a schema mismatch it has already tried to rebuild away
+   * {@link IndexGenerationManager#MAX_AUTO_REBUILD_ATTEMPTS} times. The Worker then serves the
+   * existing index READ-ONLY and does not ingest: it must still finish starting, because a Worker
+   * that returns early from {@code start()} never binds gRPC, never writes its port, and exits with
+   * no explanation — the same silent dead-end the old FAIL_CLOSED default produced, which is the
+   * whole thing this brake exists to avoid (tempdoc 915 §C.8).
+   *
+   * <p>The durable form of this state is {@code auto_rebuild_*} in {@code state.json}; this field is
+   * only the in-process consequence for the remainder of {@code start()}.
+   */
+  private volatile boolean rebuildBrakeExhausted;
+
+  /**
+   * Whether this boot took the exhausted-brake path. A test seam, and a necessary one: every
+   * externally visible consequence of that path (a bound port, a served search, a status state
+   * read out of state.json) is ALSO true of an ordinary boot, so a test asserting only those
+   * passes whether or not the branch ran — which is exactly how the first version of
+   * BrakeExhaustedWorkerServesReadOnlyTest passed against a restored early return.
+   */
+  boolean rebuildBrakeExhaustedForTest() {
+    return rebuildBrakeExhausted;
+  }
+
+  /** Read-only runtimes constructed so far. See {@link #readOnlyOpensForTest()}. */
+  private final AtomicInteger readOnlyOpens = new AtomicInteger();
+
+  /**
+   * How many read-only runtimes this boot constructed. A test seam for a defect with no other
+   * observable: opening Blue a second time and overwriting the field leaks a {@code Directory} +
+   * {@code SearcherManager} that nothing will ever close, and a leaked handle is invisible to every
+   * assertion a passing boot can make (tempdoc 915 B5 ride-along).
+   */
+  int readOnlyOpensForTest() {
+    return readOnlyOpens.get();
+  }
 
   // Migration enumerator progress (best-effort observability)
   private final AtomicBoolean migrationEnumeratorRunning = new AtomicBoolean(false);
@@ -249,6 +293,33 @@ public final class KnowledgeServer implements Closeable {
   public KnowledgeServer(WorkerConfig config) {
     this.config = config;
     this.dataDir = config.dataDir();
+  }
+
+  /**
+   * Seeds the jobs.db identity table from the serving index before indexing starts.
+   * The same pass handles first adoption and reconstruction after restoring an older SQLite
+   * backup; existing store rows remain authoritative during a normal or mid-migration restart.
+   */
+  private void importDocumentIdentitiesFromActiveIndex() {
+    LuceneRuntime authority = searchLifecycle;
+    if (authority == null || documentIdentityStore == null) {
+      return;
+    }
+    long nowMs = System.currentTimeMillis();
+    java.util.List<io.justsearch.indexerworker.identity.DocumentIdentityStore.ImportedIdentity>
+        imported = new java.util.ArrayList<>();
+    for (var identity : authority.documentFieldOps().listParentDocumentIdentities()) {
+      String normalizedKey =
+          io.justsearch.indexerworker.util.PathNormalizer.normalizeKey(
+              java.nio.file.Path.of(identity.docId()));
+      String pathHash =
+          io.justsearch.indexerworker.identity.DocumentIdentityStore.pathHash(normalizedKey);
+      imported.add(
+          new io.justsearch.indexerworker.identity.DocumentIdentityStore.ImportedIdentity(
+              pathHash, identity.docUid()));
+    }
+    documentIdentityStore.importExisting(imported, nowMs);
+    log.info("Document identity import verified {} serving parent documents", imported.size());
   }
 
   /**
@@ -504,6 +575,29 @@ public final class KnowledgeServer implements Closeable {
 
       logConfiguration();
 
+      // The embedding and SPLADE model digests are index_fingerprint inputs, but they are only
+      // knowable in the Worker's model modules. Install them process-wide BEFORE the first commit
+      // metadata is built, so the commit path, the parity guard's expected snapshot and the
+      // green-cutover verification all compute the same fingerprint (tempdoc 915 §C). Tri-state:
+      // a resolvable model file with an unreadable digest is INDETERMINATE, not absent.
+      IndexFingerprint.installModelFingerprintProviders(
+          () ->
+              IndexFingerprint.ModelFingerprint.of(
+                  EmbeddingFingerprint.modelPath().isPresent(), EmbeddingFingerprint.get()),
+          () ->
+              IndexFingerprint.ModelFingerprint.of(
+                  SpladeFingerprint.modelPath().isPresent(), SpladeFingerprint.get()),
+          () ->
+              IndexFingerprint.ModelFingerprint.of(
+                  io.justsearch.indexerworker.ner.NerFingerprint.modelPath().isPresent(),
+                  io.justsearch.indexerworker.ner.NerFingerprint.get()));
+
+      // The effective vector dimension is the other input only this process knows, and it has to be
+      // installed HERE rather than inside buildIndexRuntime: pre-open detection (below) computes the
+      // expected fingerprint before any runtime is built, and a dimension installed later would make
+      // the boot-time comparison disagree with every later one under BGE-M3.
+      IndexFingerprint.installEffectiveVectorDimension(effectiveVectorDimensionSupplier());
+
       // 4. Initialize Lucene runtimes.
       // - searchLifecycle serves queries (Blue during migration)
       // - ingestLifecycle performs all writes (Green during migration; Active when not migrating)
@@ -523,9 +617,47 @@ public final class KnowledgeServer implements Closeable {
       java.util.function.Supplier<java.util.Optional<String>> fpSupplier =
           () -> embeddingFingerprintSupplier.get().get();
 
+      // The schema-mismatch handling below covers BOTH branches. It used to wrap only the normal
+      // one, so a resumed migration whose Green was itself mismatched threw straight out of start()
+      // — no policy branch, no brake, no read-only fall-through — which is the repeat-failure shape
+      // the brake exists to bound (tempdoc 915 §C.8). Wrapping it was necessary and not sufficient:
+      // the handler ABANDONS a mismatched Green before retrying, because startMigration() no-ops on
+      // an in-flight migration and would otherwise hand back the same broken generation (§C.14, B5).
+      // Tempdoc 915 §C.12 (open item O7). Decide whether this index has the shape this runtime
+      // writes BEFORE choosing how to open it. The check used to live inside the open, where a
+      // deferred open arrives as read-only and ComponentsFactory only logs the mismatch — so on the
+      // boot path most installs take (an existing index WITH segments) the automatic migration was
+      // never triggered at all. Reading the last commit's user data needs no writer and no
+      // RuntimeSession, so it can happen here, where the policy handler below can act on it.
+      //
+      // Same predicate, same call: ParityDiagnostics via the guard's own inspection helper. The
+      // legacy-blank rule, the empty-index exclusion and the model tri-state therefore apply
+      // identically at both sites, by construction rather than by agreement.
+      boolean preOpenMismatch = false;
+      if (!inProgress) {
+        var preOpenDiffs =
+            IndexMetadataParityGuard.inspectCommittedParity(
+                activeIndexPath, () -> expectedCommitMetadata(fpSupplier));
+        preOpenMismatch = ParityDiagnostics.requiresRebuild(preOpenDiffs);
+        if (preOpenMismatch) {
+          for (var diff : preOpenDiffs) {
+            log.warn("PRE-OPEN {}", diff.marker());
+          }
+        }
+      }
+
+      // Blue, once it is open read-only. Held so the schema-mismatch handler can REUSE it instead
+      // of opening a second runtime on the same directory: the resumed-migration branch below opens
+      // Blue before it touches Green, and overwriting that field without closing it leaked a
+      // Directory + SearcherManager holding Windows file handles on Blue for the Worker's whole
+      // lifetime — in the exhausted-brake state, which is precisely the state that keeps running
+      // (tempdoc 915 B5 ride-along).
+      LuceneRuntime blueReadOnly = null;
+      try {
       if (inProgress) {
         // Serve search from active generation (Blue) while writing to building generation (Green).
-        this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
+        blueReadOnly = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
+        this.searchLifecycle = blueReadOnly;
         this.buildingIndexPath = genManager.resolveGenerationPathStrict(buildingGenId);
         this.ingestLifecycle =
             buildIndexRuntime(buildingIndexPath, fpSupplier)
@@ -540,8 +672,19 @@ public final class KnowledgeServer implements Closeable {
         // which returns a fresh RunningRuntime. KS reconstructs appServices and
         // swaps the gRPC wrappers via reconstructAppServicesAfterDeferredUpgrade()
         // so write methods become available without restarting the gRPC server.
-        boolean useDeferredWriter = hasLuceneSegments(activeIndexPath);
-        try {
+        // A detected mismatch is raised here for the two policies whose handling lives in the
+        // catch below. REBUILD_BACKUP_FIRST is deliberately NOT raised: its backup-then-rebuild
+        // recovery lives inside RuntimeSession.openComponentsWithRecovery and is the one
+        // implementation of that policy — but it only runs on a WRITABLE open, so the pre-open
+        // detection's job there is to force one rather than to duplicate the recovery.
+        String policy = rc.index().schemaMismatchPolicy();
+        boolean policyHandledInCatch =
+            "blue_green_migrate".equalsIgnoreCase(policy) || "fail_closed".equalsIgnoreCase(policy);
+        if (preOpenMismatch && policyHandledInCatch) {
+          throw IndexMetadataParityGuard.schemaMismatch();
+        }
+        boolean useDeferredWriter = hasLuceneSegments(activeIndexPath) && !preOpenMismatch;
+        {
           LuceneRuntimeBuilder builder =
               buildIndexRuntime(activeIndexPath, fpSupplier)
                   .withBuildState(LuceneRuntimeTypes.BuildState.COMPLETE);
@@ -631,39 +774,93 @@ public final class KnowledgeServer implements Closeable {
               }
             }
           }
-        } catch (IndexRuntimeIOException e) {
-          String schemaMismatchPolicy = rc.index().schemaMismatchPolicy();
+        }
+      }
+      } catch (IndexRuntimeIOException e) {
+        String schemaMismatchPolicy = rc.index().schemaMismatchPolicy();
           if (e.reason() == IndexRuntimeIOException.Reason.SCHEMA_MISMATCH
               && "blue_green_migrate".equalsIgnoreCase(schemaMismatchPolicy)) {
-            // Auto-start Blue/Green migration on schema mismatch when enabled.
-            log.warn(
-                "Schema mismatch detected on active generation {}. Starting Blue/Green migration (policy={})...",
-                activeIndexPath,
-                schemaMismatchPolicy,
-                e);
-
-            // Blue: open existing index in read-only mode for serving search.
-            this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
-
-            // Green: create a new generation and start a writable runtime.
-            IndexGenerationManager.State migrated = genManager.startMigration(MigrationSource.SCHEMA_MISMATCH.wire());
-            String greenGenId =
-                migrated == null ? null : migrated.building_generation();
-            if (greenGenId == null || greenGenId.isBlank()) {
-              throw new IOException(
-                  "Failed to start migration: building_generation missing in state.json");
+            // Repeat-rebuild brake. A green that never finishes leaves the same mismatch on the
+            // next boot, so an unbounded auto-start rebuilds forever. The budget is per target
+            // fingerprint, so a later, different upgrade is not refused for an earlier one's
+            // failures. Recorded BEFORE the rebuild starts: a build that crashes the process must
+            // still spend its attempt (tempdoc 915 §C).
+            // A fingerprint we cannot compute must not be charged to a shared budget: without a
+            // distinct sentinel every indeterminate boot would spend an attempt against the literal
+            // string "null" and exhaust the brake for an unrelated real target.
+            if (inProgress) {
+              // The mismatch was raised opening GREEN, not Blue — a read-only open of Blue cannot
+              // raise it, ComponentsFactory logs guard failures on read-only opens. So this boot
+              // resumed a migration whose building generation carries a shape this runtime does not
+              // write, and startMigration() no-ops while a migration is in flight. Without
+              // discarding that Green first, the branch below re-resolved the SAME generation and
+              // re-opened it: the second SCHEMA_MISMATCH was raised inside this catch, uncaught, and
+              // killed start() on attempts 1-3 — three dead Workers before the brake could even
+              // report anything (tempdoc 915 B5). Discard it, spend an attempt, build a fresh one.
+              genManager.abandonBuildingGeneration(MigrationSource.SCHEMA_MISMATCH.wire());
+              this.buildingIndexPath = null;
             }
-            this.buildingIndexPath = genManager.resolveGenerationPathStrict(greenGenId);
-            this.ingestLifecycle =
-                buildIndexRuntime(buildingIndexPath, fpSupplier)
-                    .withBuildState(LuceneRuntimeTypes.BuildState.BUILDING)
-                    .open();
+            String targetFingerprint = expectedIndexFingerprintOrNull();
+            int attempt = recordAutoRebuildAttemptOrSkip(genManager, targetFingerprint);
+            LuceneRuntime blue =
+                blueReadOnly != null
+                    ? blueReadOnly
+                    : buildReadOnlyRuntime(activeIndexPath).openReadOnly();
+            if (attempt > IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS) {
+              // Do NOT rethrow. Rethrowing fails start(), which is the same dead-end the old
+              // FAIL_CLOSED default produced, three boots later and with no explanation. Open the
+              // existing index read-only instead: search keeps working on what is already there,
+              // and the status surface carries index.rebuild_brake_exhausted so a user is told why
+              // ingestion has stopped (tempdoc 915 §C).
+              log.error(
+                  "Schema mismatch on active generation {}, but {} automatic rebuilds for the same"
+                      + " target fingerprint have already been attempted. Serving the existing index"
+                      + " read-only and STOPPING ingestion instead of rebuilding again. The Worker"
+                      + " still starts and search keeps working; status reports"
+                      + " index.rebuild_brake_exhausted. RECOVERY: run Rebuild index from the UI"
+                      + " (core.rebuild-index) - a successful rebuild promotes the new generation"
+                      + " and clears the brake. Clearing the auto_rebuild_* fields in state.json"
+                      + " grants a fresh automatic budget without rebuilding.",
+                  activeIndexPath,
+                  IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
+                  e);
+              this.searchLifecycle = blue;
+              this.ingestLifecycle = this.searchLifecycle;
+              this.buildingIndexPath = null;
+              this.rebuildBrakeExhausted = true;
+            } else {
+              // Auto-start Blue/Green migration on schema mismatch when enabled.
+              log.warn(
+                  "Schema mismatch detected on active generation {}. Starting Blue/Green migration"
+                      + " (policy={}, attempt {} of {})...",
+                  activeIndexPath,
+                  schemaMismatchPolicy,
+                  attempt,
+                  IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
+                  e);
 
-            // Kick off background enumeration to populate Green.
-            startMigrationEnumeratorBestEffort(rc);
-          } else {
-            throw e;
-          }
+              // Blue: serve search from the existing index, read-only.
+              this.searchLifecycle = blue;
+
+              // Green: create a new generation and start a writable runtime.
+              IndexGenerationManager.State migrated = genManager.startMigration(MigrationSource.SCHEMA_MISMATCH.wire());
+              String greenGenId =
+                  migrated == null ? null : migrated.building_generation();
+              if (greenGenId == null || greenGenId.isBlank()) {
+                throw new IOException(
+                    "Failed to start migration: building_generation missing in state.json");
+              }
+              this.buildingIndexPath = genManager.resolveGenerationPathStrict(greenGenId);
+              this.ingestLifecycle =
+                  buildIndexRuntime(buildingIndexPath, fpSupplier)
+                      .withBuildState(LuceneRuntimeTypes.BuildState.BUILDING)
+                      .open();
+
+              // Kick off background enumeration to populate Green.
+              startMigrationEnumeratorBestEffort(rc);
+            }
+        } else {
+          throw e;
         }
       }
 
@@ -678,9 +875,20 @@ public final class KnowledgeServer implements Closeable {
         ingestLifecycle.schema().validateIndexableFields(SchemaFields.INDEXABLE_FIELDS);
       }
 
+      // Identity authority must exist before any queued or switch-buffered mutation can write.
+      // Import from the serving generation (Blue during migration) before the first possible
+      // drain, so replay, enumeration, and ordinary indexing all resolve through one authority.
+      this.documentIdentityStore =
+          new io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore(dbPath);
+      importDocumentIdentitiesFromActiveIndex();
+
       // Apply any durable SWITCHING buffer ops. In deferred-writer mode, this is deferred
       // to the background task (after IndexWriter opens). In migration mode, run synchronously.
-      if (ingestLifecycle != null && !(ingestLifecycle instanceof DeferredRuntime)) {
+      // Skipped when the rebuild brake is exhausted: ingest is the READ-ONLY Blue runtime then, so
+      // there is no writer to drain into.
+      if (!rebuildBrakeExhausted
+          && ingestLifecycle != null
+          && !(ingestLifecycle instanceof DeferredRuntime)) {
         drainSwitchBufferBestEffort();
       }
 
@@ -708,7 +916,8 @@ public final class KnowledgeServer implements Closeable {
               this::migrationProgressSnapshot,
               MIGRATION_SWITCHING_MAX_DURATION_MS,
               this::initiateShutdown,
-              pathResolutionStore);
+              pathResolutionStore,
+              documentIdentityStore);
       // Tempdoc 885 item 3: build the duty-cycle policy from resolved config before the app
       // services that consume it. The duty/cooldown arrive through the ordinal-450 worker config
       // snapshot, not through a raw Worker sysprop — a key the Worker cannot see is the [R1]
@@ -769,7 +978,21 @@ public final class KnowledgeServer implements Closeable {
       tPrev = tPhase;
 
       // 6. Start indexing loop (runs immediately; null-gates embedding/SPLADE until wired)
-      appServices.startIndexingLoop();
+      // ...unless the rebuild brake is exhausted. The loop's whole job is to write into
+      // ingestLifecycle, which is the READ-ONLY Blue runtime in that state, so starting it would
+      // spend the machine turning every queued job into an exception. Search still serves, and the
+      // status surface says why ingestion stopped (BLOCKED_REBUILD_BRAKE ->
+      // index.rebuild_brake_exhausted). Recovery is an operator-initiated rebuild, which clears the
+      // brake at promotion (IndexGenerationManager.promoteBuildingGenerationToActive).
+      if (rebuildBrakeExhausted) {
+        log.error(
+            "Ingestion is STOPPED: the automatic-rebuild budget for this index shape is spent."
+                + " Search continues to serve the existing index read-only. To recover, run"
+                + " Rebuild index from the UI, which starts a fresh migration and restores the"
+                + " budget when it completes.");
+      } else {
+        appServices.startIndexingLoop();
+      }
 
       // 7. Start sentinel thread for liveness monitoring
       startSentinelThread();
@@ -793,15 +1016,69 @@ public final class KnowledgeServer implements Closeable {
       // tempdoc 628 Stage D-part2: if startup failed because the index is corrupt and could not be
       // auto-recovered (FAIL_CLOSED / recovery-failed), stamp a fatal-reason marker so the Head can
       // offer a "Rebuild index" affordance instead of blind-restarting. This is a controlled exit (the
-      // throw below → IndexerWorker's handler → System.exit), so the write is reliable. Only corruption
-      // writes it — other fatal causes stay generic.
+      // throw below → IndexerWorker's handler → System.exit), so the write is reliable.
+      //
+      // A FAIL_CLOSED schema mismatch is the same kind of fact and was missing (tempdoc 915, live
+      // validation): the refusal reached the Head only as "Worker process crashed (exit code 1)",
+      // with the actual cause visible nowhere but worker.log. It is a deliberate refusal, not a
+      // crash, and it has its own remedy. Other fatal causes stay generic.
       if (isCorruptIndexCause(e)) {
         io.justsearch.ipc.WorkerFatalReasonMarker.write(
             dataDir, io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_CORRUPT);
+      } else if (isSchemaMismatch(e)) {
+        io.justsearch.ipc.WorkerFatalReasonMarker.write(
+            dataDir, io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_SCHEMA_MISMATCH);
       }
       closeQuietly();
       throw new IOException("Failed to start KnowledgeServer", e);
     }
+  }
+
+  /**
+   * How a background-model-init failure is reported. Extracted so the one decision it makes is
+   * testable: a {@code SCHEMA_MISMATCH} arriving from {@code DeferredRuntime.upgradeWriter()} means
+   * ingestion has STOPPED — the index cannot accept writes under this runtime's shape — and filing
+   * that under the generic "non-fatal" background-init line is how it stayed invisible while the
+   * automatic migration silently never ran (tempdoc 915 §C.12, open item O7).
+   *
+   * <p>It is reported loudly rather than propagated: this runs on a background
+   * {@code CompletableFuture} with no caller left to receive it, {@code start()} having long
+   * returned. The durable handling is the NEXT boot's pre-open detection, which sees the same
+   * mismatch before it chooses an open mode and routes it into the policy handler; meanwhile the
+   * status surface already reports {@code BLOCKED_MISMATCH} with {@code reindex_required} from the
+   * same fingerprint comparison, so the user is not left waiting for a restart to be told.
+   */
+  static void logBackgroundInitFailure(Exception e) {
+    if (isSchemaMismatch(e)) {
+      log.error(
+          "Ingestion is STOPPED: the deferred writer upgrade found a schema mismatch"
+              + " (index_fingerprint). Search continues on the read-only runtime. This is NOT a"
+              + " degraded-capability warning - restart the Worker to run the schema-mismatch"
+              + " policy (index.schema_mismatch.policy), or run Rebuild index from the UI.",
+          e);
+      return;
+    }
+    log.error("Background model initialization failed (non-fatal)", e);
+  }
+
+  /**
+   * True if {@code t} or any cause in its chain is a {@code SCHEMA_MISMATCH}. Walks the chain
+   * because the deferred upgrade wraps: the guard's exception arrives inside whatever
+   * {@code upgradeWriter()} threw.
+   */
+  static boolean isSchemaMismatch(Throwable t) {
+    for (Throwable c = t; c != null; c = c.getCause()) {
+      if (c instanceof io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException ire
+          && ire.reason()
+              == io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException.Reason
+                  .SCHEMA_MISMATCH) {
+        return true;
+      }
+      if (c == c.getCause()) {
+        break;
+      }
+    }
+    return false;
   }
 
   /** True if a startup failure was caused by an unrecoverable corrupt Lucene index (628 Stage D-part2). */
@@ -1309,7 +1586,7 @@ public final class KnowledgeServer implements Closeable {
           disambiguationService);
 
     } catch (Exception e) {
-      log.error("Background model initialization failed (non-fatal)", e);
+      logBackgroundInitFailure(e);
       long bgMs = (System.nanoTime() - bgStart) / 1_000_000;
       log.info("Background model init failed after ({}ms)", bgMs);
       return new ModelContext(
@@ -1524,23 +1801,12 @@ public final class KnowledgeServer implements Closeable {
       log.info("Field catalog: vector dimension overridden to 1024 (BGE-M3 active)");
     }
 
-    // Create metadata source with dimension override for schema fingerprint
-    final int effectiveDimension = "bge-m3".equalsIgnoreCase(sparseModel) ? 1024 : 0;
-
     // Create runtime with embedding + SPLADE fingerprint overlays
     java.util.function.Supplier<io.justsearch.indexing.runtime.CommitMetadataSource>
         metadataSupplier =
-            () -> {
-              var ssot =
-                  new io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource();
-              if (effectiveDimension > 0) {
-                ssot.setVectorDimensionOverride(effectiveDimension);
-              }
-              return new EmbeddingMetadataOverlay(
-                  ssot,
-                  fingerprintSupplier,
-                  io.justsearch.indexerworker.splade.SpladeFingerprint::get);
-            };
+            () ->
+                new EmbeddingMetadataOverlay(
+                    new SsotCommitMetadataSource(), fingerprintSupplier, SpladeFingerprint::get);
 
     IndexSchema schema =
         new IndexSchema(
@@ -1566,7 +1832,33 @@ public final class KnowledgeServer implements Closeable {
     return builder;
   }
 
+  /**
+   * The vector dimension the {@code FieldMapper} actually builds vector fields with, published
+   * process-wide so {@code index_fingerprint} records the dimension in force rather than the
+   * catalog's declared 768 (tempdoc 915 §C). It used to be an instance setter on one
+   * {@code SsotCommitMetadataSource}, so the status surface's own fresh instance computed a
+   * different fingerprint than the commit path did.
+   */
+  private static java.util.function.Supplier<Integer> effectiveVectorDimensionSupplier() {
+    boolean bgeM3 = "bge-m3".equalsIgnoreCase(EnvRegistry.SPARSE_MODEL.getString("splade"));
+    return () -> bgeM3 ? 1024 : null;
+  }
+
+  /**
+   * The metadata this runtime would commit — the "expected" side of every parity comparison. One
+   * builder, so the pre-open check, the open-time guard and the commit itself cannot disagree.
+   */
+  private java.util.Map<String, Object> expectedCommitMetadata(
+      java.util.function.Supplier<java.util.Optional<String>> fingerprintSupplier) {
+    return new EmbeddingMetadataOverlay(
+            new io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource(),
+            fingerprintSupplier,
+            SpladeFingerprint::get)
+        .build();
+  }
+
   private LuceneRuntimeBuilder buildReadOnlyRuntime(Path indexPath) {
+    readOnlyOpens.incrementAndGet();
     io.justsearch.configuration.JustSearchConfigurationLoader loader =
         new io.justsearch.configuration.JustSearchConfigurationLoader();
     io.justsearch.configuration.FieldCatalogDef catalog = loader.loadFieldCatalog();
@@ -1750,6 +2042,44 @@ public final class KnowledgeServer implements Closeable {
 
     sentinelThread.setDaemon(true);
     sentinelThread.start();
+  }
+
+  /**
+   * The {@code index_fingerprint} this runtime would stamp, or null when it cannot be computed.
+   *
+   * <p>Guarded: {@code SsotCommitMetadataSource.build()} reads SSOT artifacts off disk and throws
+   * {@code IllegalStateException} when any is unreadable. Letting that escape from inside the
+   * schema-mismatch catch would replace the real, actionable mismatch with an unrelated IO failure.
+   */
+  /**
+   * Charges one rebuild attempt to {@code targetFingerprint}, or charges nothing when there is no
+   * target to charge it to.
+   *
+   * <p>An uncomputable fingerprint is not a target. Folding those boots into a shared bucket (the
+   * literal string {@code "null"}, which is what {@code String.valueOf} produces) would let three
+   * boots with an unreadable model file exhaust the budget for a completely unrelated real shape,
+   * so the index that genuinely needed a rebuild would never get one. Package-private so the
+   * distinction is testable without a running Worker.
+   */
+  static int recordAutoRebuildAttemptOrSkip(
+      IndexGenerationManager genManager, String targetFingerprint) throws IOException {
+    if (targetFingerprint == null) {
+      return 1;
+    }
+    return genManager.recordAutoRebuildAttempt(targetFingerprint);
+  }
+
+  private static String expectedIndexFingerprintOrNull() {
+    try {
+      Object fp = new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY);
+      String s = fp == null ? null : String.valueOf(fp);
+      return s == null || s.isBlank() ? null : s;
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not compute the target index_fingerprint for the rebuild brake: {}",
+          ex.getMessage());
+      return null;
+    }
   }
 
   private static boolean hasLuceneSegments(Path indexPath) {
@@ -1995,7 +2325,15 @@ public final class KnowledgeServer implements Closeable {
       }
     }
 
-    // Close path-resolution store (must close BEFORE job queue since both connect to jobs.db).
+    // Close auxiliary jobs.db stores before the queue connection.
+    if (documentIdentityStore != null) {
+      try {
+        documentIdentityStore.close();
+      } catch (Exception e) {
+        log.warn("Error closing document-identity store", e);
+      }
+    }
+
     if (pathResolutionStore != null) {
       try {
         pathResolutionStore.close();
@@ -2060,6 +2398,14 @@ public final class KnowledgeServer implements Closeable {
     return ingestLifecycle;
   }
 
+  IndexGenerationManager indexGenerationManagerForTests() {
+    return indexGenerationManager;
+  }
+
+  void releaseModelReadyLatchForTests() {
+    modelReadyLatch.countDown();
+  }
+
   private static IndexGenerationManager.MigrationState parseMigrationState(String raw) {
     return KnowledgeServerMigrationOps.parseMigrationState(raw);
   }
@@ -2085,11 +2431,22 @@ public final class KnowledgeServer implements Closeable {
                         this::verifyGreenCommitMetadataBestEffort,
                         this::drainSwitchBufferBestEffort,
                         this::initiateShutdown,
+                        this::flushTelemetryBestEffort,
                         dataDir,
                         log)),
             "migration-cutover");
     migrationCutoverThread.setDaemon(true);
     migrationCutoverThread.start();
+  }
+
+  /**
+   * Writes the pending worker metrics snapshot now rather than at the next 60s tick. Called before
+   * the cutover restart, which otherwise discards the counters the cutover itself produced.
+   */
+  private void flushTelemetryBestEffort() {
+    if (telemetry instanceof LocalTelemetry lt) {
+      lt.flush();
+    }
   }
 
   /**

@@ -23,6 +23,7 @@ function runtime(overrides: Partial<AiRuntime> = {}): AiRuntime {
     modelId: null,
     modelLabel: null,
     contextWindow: null,
+    contextWindowDerived: null,
     gpu: null,
     installed: UNKNOWN as Maybe<boolean>,
     installing: UNKNOWN as Maybe<boolean>,

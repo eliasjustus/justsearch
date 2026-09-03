@@ -137,7 +137,9 @@ The `/api/registry/{operations,resources}` wire is a generated projection of a t
 ## After modifying docs
 Load `/docs-maintenance` for the full regeneration checklist and doc quality rules.
 - Regenerate llms.txt: `node scripts/docs/llmstxt-generate.mjs`
-- Sync skills from canonical docs: `node scripts/docs/skills-sync.mjs`
+- Sync Claude skills and the generated Codex skill projection: `node scripts/docs/skills-sync.mjs`
+- After changing cross-harness invariants: `node scripts/docs/agent-instructions-sync.mjs`
+- After changing hook bindings: `node scripts/codegen/gen-agent-hooks.mjs && node scripts/codegen/gen-codex-hooks.mjs`
 - After module changes: `node scripts/architecture/module-deps.mjs --update-canonical`
 - After config changes: `node scripts/docs/generate-runtime-config-matrix.mjs --write-doc docs/reference/configuration/runtime-config-ownership-matrix.md`
 

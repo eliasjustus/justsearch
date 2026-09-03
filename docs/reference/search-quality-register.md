@@ -670,6 +670,141 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-056: audit finding 2 is MEASURED AND REFUTED at both the set-membership and the score-aggregation level, and the aggregate-then-cut parent collapse is REVERTED — three campaigns over two chunked corpora and three index builds found no lambda that helps R@10 without worsening leak; durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (no lambda can rescue a bottom-ranked parent), that sigma(R@10) on clean arms is 0.0000 but sigma(nDCG@10) is not, and that a degraded-ce arm on legal is biased UPWARD above the 2% tolerance (2026-09-03, tempdoc 916 Part 2 + sections I and J, lane E)
+
+- **The question.** The 2026-09-01 audit's finding 2: `SearchExecutor.collapseChunkHitsToParents`
+  stops scanning the fused chunk list the instant it has enough distinct parents, so a parent whose
+  relevance is spread over several mid-ranked chunks is crowded out by parents with one strong chunk.
+  Proposed fix: over-scan, aggregate per parent as `max + λ·Σ 0.5^(i-1)·scoreᵢ`, cut last.
+- **The answer: no.** It was built, measured, found inert, fixed after an independent review found
+  the fix itself was inert, re-measured, and **reverted**. Shipped behaviour is unchanged and this
+  entry exists so the next reader of the audit finds the measurement instead of re-running it.
+  Executable statement of the limitation, deliberately pinned as accepted:
+  `SearchExecutorChunkCollapseCharacterizationTest.parentDominatingTheTopChunksCrowdsOutSpreadEvidence`.
+- **Method (all three campaigns).** One index per corpus, backend restarted per arm, OFF and ON both
+  `--skip-ingest` so they are symmetric; `--modes lexical,vector,splade,hybrid`. Per-arm machine
+  signature recorded before and after (`nvidia-smi` + game-process scan); **every cited arm ran with
+  0 game processes**. Hard admissibility per arm: `ce_coverage.verdict == "ok"` AND
+  `per_mode.<mode>.comparable`. A void arm is re-run and never cited — the filter is committed at
+  `scripts/jseval/916_collapse_ab.py`, not hidden in a gitignored script.
+
+**Campaign 1 (916 §G) — λ=0.3, multiplier ×5, one build per corpus.** legal-clerc-200 nDCG +0.0010 /
+R@10 +0.0050 / leak −0.0050; enron-qa nDCG −0.0053 / R@10 −0.0067 / leak +0.0033; scifact (short
+corpus, chunk merge skipped) bit-identical to 4 dp on every metric. `leg_union_recall` unchanged on
+all three — the legs are identical and only the collapse moved, which is what makes the deltas
+attributable. **PARK** by the pre-registered split-result clause.
+
+**Campaign 2 (916 §I) — the λ and multiplier axes, owner-authorised, rule committed in `96a088f5`
+before the run.** 18 arms, 17 admissible, 40 machine signatures, GPU flat at 754-755 MiB, replicate
+spread 0.0000 on R@10:
+
+| arm | legal Δ R@10 | enron Δ R@10 | legal Δ leak | enron Δ leak |
+| :--- | ---: | ---: | ---: | ---: |
+| λ0.05 m5 | +0.0000 | −0.0033 | +0.0000 | +0.0033 |
+| λ0.10 m5 | +0.0000 | −0.0033 | +0.0000 | +0.0033 |
+| λ0.15 m5 | +0.0000 | −0.0033 | +0.0000 | +0.0033 |
+| λ0.10 **m3** | +0.0000 | −0.0033 | +0.0000 | +0.0033 |
+
+On legal, R@10 and leak are unmoved at every λ; nDCG@10 is unmoved at λ 0.10/0.15 but **λ0.05 is
+−0.0017** (0.5778 against OFF 0.5795), so an earlier "identical to four decimals at every λ" claim
+was wrong and is corrected here. On enron every λ costs the same −0.0033 R@10 / +0.0033 leak, flat —
+the cost is not λ-proportional in this range. The **multiplier axis is inert** (m3 ≡ m5 at λ=0.10 on
+both corpora), so the earlier arms were not multiplier-starved. **PARK again.**
+
+**The independent review that invalidated both campaigns.** `CollapsedParent.toHit()` returned
+`winner.score()` — the parent's max — so the aggregate was a **sort key that never left the method**.
+Branch fusion defaults to `cc`, and `fuseWithCCNamed` blends min-max-normalized **scores** keyed by
+docId (`HybridFusionUtils.java:506,511,521-524`); the ranks it also collects are debug-only. λ's only
+reachable effect was set membership at the cut, and at the shipped multiplier of 1 the scan cap
+equals the collapse cap — so λ was **inert end-to-end at defaults**. Campaigns 1 and 2 therefore
+measured whether a wider collapse scan changes set membership, never whether aggregation helps.
+
+**Campaign 3 (916 §J) — the decisive A/B, after emitting the aggregate as the score** (divided by the
+`1+2λ` inflation bound, a uniform divisor that preserves aggregate ordering exactly and keeps the
+branch in [0,1]). Rule committed in `52d35001` at 03:34:57 UTC, **7m37s before the first arm** at
+`20260903T034234`. **10 arms, 10 admissible**; 24 machine signatures, 0 game processes, GPU
+754-758 MiB; replicate spread 0.0000 on R@10.
+
+| corpus | arm | run id | nDCG@10 | R@10 | leak |
+| :--- | :--- | :--- | ---: | ---: | ---: |
+| legal | OFF | `20260903T034234_mixed_legal-clerc-200` | 0.6040 | 0.8350 | 0.1000 |
+| legal | λ0.1 r0 / r1 | `20260903T034414` / `20260903T034553` | 0.6033 | 0.8400 | 0.1000 |
+| legal | λ0.3 r0 / r1 | `20260903T034732` / `20260903T034910` | 0.5957 | 0.8300 | 0.1150 |
+| enron | OFF | `20260903T040949_mixed_enron-qa` | 0.7990 | 0.9167 | 0.0467 |
+| enron | λ0.1 r0 / r1 | `20260903T041147` / `20260903T041345` | 0.7934 | 0.9100 | 0.0567 |
+| enron | λ0.3 r0 / r1 | `20260903T041550` / `20260903T041751` | 0.7978 | 0.9167 | 0.0500 |
+
+**The lever is genuinely live here** — at λ0.3 legal moves −0.0050 R@10 / +0.0150 leak where the
+dead-sort-key version moved it 0.0000 — so this measures aggregation, not scan breadth. **And
+aggregation loses:** at λ0.1 enron drops −0.0067 R@10 with leak +0.0100; at λ0.3 legal drops −0.0050
+with leak +0.0150. **`leak_rate` worsens on at least one corpus at every λ tested**, so the rule fails
+on the leak clause independently of the R@10 noise floor (0.0068). The single positive cell (legal
++0.0050 at λ0.1) is below that floor. **REVERT** — mechanism and both config keys removed, the
+`config-surface` pin returned to 111 / 250 in the same commit.
+
+- **Finding 1 — the CC pool floor is a hard bound on this whole class of fix.** `fuseWithCC3` min-max
+  normalizes, so the *worst* candidate in the chunk pool is exactly `0.0`. A parent whose every chunk
+  sits at that floor aggregates to `0 + λ·0 = 0` for any λ. The lever reaches parents in the middle
+  of the score distribution, never the bottom of it. Found by a failing integration test, not by
+  review — the design implicitly assumed raw comparable scores. Any future "aggregate the passage
+  evidence" proposal inherits this bound.
+- **Finding 2 — σ(R@10) is 0.0000 on clean arms; σ(nDCG@10) is NOT.** Three identical legal OFF
+  replicates produced bit-identical R@10, leak and P@1. **This supersedes the σ ≈ 0.0034 borrowed
+  from F-055** for clean-machine cohorts; that figure was measured under contention and is an upper
+  bound. But nDCG@10 still moves in the fifth decimal from CE deadline drops that `ce_coverage`
+  *tolerates* rather than flags: `20260903T023442_mixed_enron-qa` (5 drops, verdict `ok`) 0.79685
+  against `20260903T023643_mixed_enron-qa` (0 drops) 0.79764. Quote the R@10 figure, not a general
+  "σ is 0".
+- **Finding 3 — `ce_coverage` is what kept the result from being backwards.** The first legal pair
+  reported nDCG −0.0132 for ON; its OFF arm had 13 silent CE drops (`degraded-ce`) against ON's 1.
+  Re-run clean, legal **reversed sign** to +0.0010/+0.0050. Separately a λ=0.1 arm produced the best
+  numbers of the whole programme (nDCG +0.0102, R@10 +0.0150, leak −0.0150) and is **discarded for
+  the same defect** — recorded so the next agent re-runs it rather than citing it.
+- **Finding 4 — above the 2% tolerance a `degraded-ce` arm on legal is biased UPWARD; below it,
+  drops are ordinary jitter.** Four legal void arms, four for four higher than their clean
+  comparators, at drop rates 4.5-20.5%: `20260903T004513_mixed_legal-clerc-200` (13 drops, 0.6008 vs
+  0.5816), `20260903T010858_mixed_legal-clerc-200` (33, 0.5888 vs 0.5826),
+  `20260903T011647_mixed_legal-clerc-200` (9, 0.5918 vs 0.5816),
+  `20260903T015846_mixed_legal-clerc-200` (41, 0.6176 vs 0.5778). Mechanism: F-055 measured that on
+  legal, delivering **fusion order instead of the cross-encoder's is worth +0.131 nDCG@10** — quote
+  that figure only with F-055's own caveat (contended machine, OOM-produced CE-off arms), i.e. as
+  directional evidence, not a calibrated magnitude. **The bias does not extend below the tolerance:**
+  the enron pair in finding 2 (5 drops, 1.7%, verdict `ok`) scored *lower* than its 0-drop sibling.
+  Rule: **above 2% on legal, re-run; below it, expect sub-0.001 nDCG jitter and do not average it
+  away.**
+- **Finding 5 — scifact is a genuine inert control for chunk-branch work.** It is `chunk-free`, so
+  the chunk merge is skipped entirely and every metric is bit-identical across arms at the strongest
+  λ tested. Use it to prove a chunk-branch change is scoped, not to measure its effect.
+- **Withdrawn claim (916 §J review, BL-2): the legal +0.0050 R@10 is index-build-specific.** An
+  independent reviewer rebuilt legal and measured ON at 0.8100/0.1300, identical to OFF; the §I sweep
+  on a third build measured OFF 0.8150 with every λ also 0.8150. Across three builds it appeared
+  once. Only the enron sign and the scifact inertness are cross-build claims.
+- **Ratchets, with the exact flags used** — legal ON arm `20260903T034732_mixed_legal-clerc-200`
+  (λ0.3 r0), no `--allow-*` override on any of them:
+
+  ```bash
+  python -m jseval <gate> --dataset mixed/legal-clerc-200 \
+      --run-dir tmp/916-J/mixed_legal-clerc-200/l0.3-r0/20260903T034732_mixed_legal-clerc-200
+  ```
+
+  `relevance-gate` **ok** (0.5957 against floor 0.5580), `leak-gate` **ok** (0.1150 against floor
+  0.1850), `union-recall-gate` **ok** (0.9350 against floor 0.8850).
+  `perf-gate` reports `ce_p50_ms: ok` and `retrieval_p50_ms: ok` but **fails five checks**
+  (`primary_docs_s`, `enrich_docs_s`, `resident_bytes`, `embed_bytes`, `splade_bytes`) — and the OFF
+  control arm `20260903T034234_mixed_legal-clerc-200` fails **the same five, check for check**. It is
+  therefore a property of `--skip-ingest` query-only arms, not an effect of the change; perf-gate is
+  **not evaluable** on this arm shape. Earlier drafts of this entry named only two of the five, which
+  understated the gate's silence.
+- **What would reopen this.** Not another λ point — that axis is swept at both levels. A *different
+  aggregation shape* that is not bounded by finding 1's pool floor, or a corpus whose relevance is
+  genuinely spread over many mid-ranked passages, which neither chunked corpus in this register
+  turns out to be.
+- **Evidence:** every claim above carries its `2026MMDDTHHMMSS_<corpus>` run id. Run trees are
+  gitignored; this entry and tempdoc 916 §G/§I/§J are the durable record, and the A/B driver with its
+  admissibility filter is committed at `scripts/jseval/916_collapse_ab.py`. **No throughput or
+  latency number from any of these campaigns is cited as evidence anywhere** — §G's index build was
+  contended, so those numbers are void by construction.
+
 ### F-055: the 854 W2 depth levers are BOTH PARKED by the pre-registered rule, and each exposed a coupling defect — the recall-complete pool `top_n` is splice-coupled to the shared `limit` (raising it alone DISCARDS the fused prefix: legal −0.263, enron −0.421, leak 4-11× with legs unchanged), and `JUSTSEARCH_RERANK_TOP_K` impurely moves retrieval depth for every mode (2026-08-19, 854 W2 campaign)
 
 - **Method:** shared-index per corpus (legal-clerc-200 / enron-qa / scifact), backend restarted
@@ -2555,9 +2690,9 @@ above)*
 
 ### F-010: Entity-boosted BM25 does not improve search quality
 
-- **Answer:** Entity text fields (populated by NER backfill) contain the same tokens as the content field. DMQ entity boost at 2.0 hurts nDCG by 4.3%; at 0.5 hurts bm25_splade by 2.2%; at 0.0 is neutral. No positive signal at any boost level.
+- **Answer:** The retired analyzed entity-text fields contained the same tokens as the content field. DMQ entity boost at 2.0 hurt nDCG by 4.3%; at 0.5 it hurt bm25_splade by 2.2%; at 0.0 it was neutral. No positive signal appeared at any boost level, so 915 PR-C0 removed the query/configuration path and PR-C2 removed the duplicate physical fields.
 - **Evidence:** tempdoc 326 Phase 7 (A/B isolation on EnronQA, filtered entities + multiple boost values).
-- **Conditions/caveats:** Entity boost would add value if entity fields contained variant tokens NOT in the content field — this requires Phase 4 cluster expansion ("Jim" → "James"). Entity filtering (MIN_ENTITY_LENGTH=2) eliminates the catastrophic regression from noisy single-char entities. Default disabled (0.0).
+- **Conditions/caveats:** A future entity signal would need variant tokens not already present in content (for example cluster expansion from "Jim" to "James") and fresh evidence before activation. The retained `entity_*_raw` keyword fields still serve filtering and faceting; there is no entity-boost setting.
 
 ### F-011: NER model quality is sound (F1=0.91 on CoNLL-2003 validation)
 
@@ -2569,6 +2704,13 @@ above)*
 
 - **Original claim:** Dense retrieval broken for non-BGE-M3 configs. `prepareQueryVector()` falls through to `NO_EMBEDDING_SERVICE`.
 - **Correction:** Dense retrieval WAS working with gte-multilingual-base all along. Two separate issues were conflated: (1) EmbeddingGemma's FP16 NaN (head_dim=256, model-specific, resolved by 358 model change), (2) `KnowledgeHttpApiAdapter.buildPipelineExecution()` never emitted `dense: executed` component status on success — only reported `dense: skipped` on failure. jseval's pipeline tracking saw no `dense` in components and reported `requested_dense_but_not_observed`. Fixed: added `dense: executed` reporting when `pipelineConfig.denseEnabled()` and `!vectorBlocked && !hybridFallback`.
+- **Lane D C0 trace qualification (2026-09):** pre-C0 traces could also over-report dense execution
+  in the opposite direction: the planner selected a dense leg, then a lower-level English stop-word
+  or short-query guard silently skipped KNN. Therefore historical per-query dense skip rates are not
+  trustworthy. C0 moved the decision into `SearchPlanner`, replaced the authored list with a
+  content-field document-frequency signal, and emits a typed skipped dense stage. This does not
+  invalidate the corpus-level quality scores above; it qualifies only claims derived from the old
+  per-query execution trace.
 - **Impact:** All splade-v3+gemma `full` mode baselines (with gte-multilingual-base auto-discovered) were true 3-way fusion (bm25+splade+dense). Confidence upgraded from C to A. The full vs bm25_splade quality gap IS the dense contribution.
 
 ### F-013: SPLADE-v3 sparse quality is 20% below BGE-M3 sparse on SciFact

@@ -12,7 +12,8 @@ package io.justsearch.app.services.worker;
  * with exponential backoff and then to exactly one terminal {@code GIVE_UP}
  * ({@code worker.spawn_recovery_exhausted}) — never to silence, and never to an unbounded loop. Two
  * other-authority conditions outrank the budget, and review F2 established that they are NOT the
- * same kind of thing:
+ * same kind of thing (tempdoc 915 R1 added a third, which is neither: a cause this authority itself
+ * owns):
  *
  * <ul>
  *   <li>{@link Veto#RESTART_EXHAUSTED} ⇒ {@link Action#GIVE_UP}, permanently and silently.
@@ -26,6 +27,12 @@ package io.justsearch.app.services.worker;
  *       re-asks. Making this one permanent (the pre-review shape) meant a supervised-then-abandoned
  *       boot got zero attempts, no terminal code, and a dead operator hatch — silence, which this
  *       law forbids.
+ *   <li>{@link Veto#INDEX_FATAL} ⇒ {@link Action#GIVE_UP}, permanently — and NARRATED, unlike the
+ *       other two. The worker wrote a fatal index reason before exiting, so the refusal is a
+ *       function of the index directory rather than of the attempt; the terminal state is the cause
+ *       itself ({@code worker.index_corrupt} / {@code worker.index_schema_mismatch}) with its
+ *       remedy, not this arm's generic {@code worker.spawn_recovery_exhausted}. The operator hatch
+ *       bypasses it, because fixing the cause is exactly what an operator request means here.
  * </ul>
  */
 public final class BootRecoveryDecision {
@@ -70,7 +77,25 @@ public final class BootRecoveryDecision {
      * {@link Action#GIVE_UP}: permanent, by owner decision 2 — and the state is already legible on
      * the wire under supervision's own code, so this authority adds nothing by narrating.
      */
-    RESTART_EXHAUSTED
+    RESTART_EXHAUSTED,
+    /**
+     * The dying worker named a fatal INDEX cause ({@code worker.index_corrupt} or
+     * {@code worker.index_schema_mismatch}). Pairs with {@link Action#GIVE_UP}: permanent for the
+     * AUTOMATIC ladder, because the condition lives in the index directory and a respawn cannot
+     * change it — every attempt would spawn a JVM that reads the same bytes and refuses the same way.
+     *
+     * <p>Tempdoc 915 R1 decision, stated rather than inherited: corruption did NOT short-circuit the
+     * ladder before this (there was no such veto), so the two axes are unified here rather than
+     * forked. Live arm 2 spent the whole budget respawning a worker that had already written its
+     * refusal to disk, and the only thing the attempts produced was a 2.5-minute delay before the
+     * terminal state. Unlike the other two vetoes this one IS narrated — the recovery authority holds
+     * the cause and the ladder is where a suppressed boot arc's verdict would otherwise die unspoken.
+     *
+     * <p>An OPERATOR request is exempt: the remedy for both causes is a settings/filesystem change the
+     * next spawn will read, so "the operator asked, having just fixed it" is precisely the case a
+     * deterministic-refusal veto must not swallow.
+     */
+    INDEX_FATAL
   }
 
   /**
@@ -83,6 +108,11 @@ public final class BootRecoveryDecision {
    *     ({@code KnowledgeServerBootstrap.supervisionActive()}) — a live question, re-asked every
    *     tick, not a latch (review F2)
    * @param restartExhaustedHeld the capability currently holds {@code worker.restart_exhausted}
+   * @param indexFatalHeld the bootstrap has latched a fatal INDEX verdict from the dying worker's
+   *     fatal-reason marker ({@code KnowledgeServerBootstrap.indexFatalCode()}). Deliberately read
+   *     from the LATCH and not from {@code pendingReason()}: the marker read can happen inside a
+   *     suppressed arc, in which case the cause is known but has not been narrated yet — gating on
+   *     the wire state would make the veto depend on whether anyone had spoken (tempdoc 915 R1)
    * @param attemptsMade boot-recovery attempts already made in this arc
    * @param gaveUp this arc has already narrated its terminal state (so it must not narrate twice)
    * @param msSinceLastAttempt elapsed time since the last attempt; {@link Long#MAX_VALUE} when none
@@ -95,6 +125,7 @@ public final class BootRecoveryDecision {
       boolean clientBound,
       boolean supervisionActive,
       boolean restartExhaustedHeld,
+      boolean indexFatalHeld,
       int attemptsMade,
       boolean gaveUp,
       long msSinceLastAttempt) {}
@@ -143,6 +174,13 @@ public final class BootRecoveryDecision {
     // its own code, so this authority stops and stays quiet (owner decision 2).
     if (in.restartExhaustedHeld()) {
       return Decision.giveUp(Veto.RESTART_EXHAUSTED);
+    }
+    // Tempdoc 915 R1: a fatal INDEX cause is a property of the bytes on disk, so re-spawning is not a
+    // retry of anything — it is the same read producing the same refusal, N more times. Ranked below
+    // supervision's terminal verdict (that one is already on the wire and outranks every other
+    // authority) and above the attempt budget, which exists for failures a retry could plausibly fix.
+    if (in.indexFatalHeld()) {
+      return Decision.giveUp(Veto.INDEX_FATAL);
     }
     // Supervision merely ENGAGED is a different animal (review F2): supervisionEngaged() latches on
     // restartCount > 0, so it says a supervised restart happened, not that supervision failed or is

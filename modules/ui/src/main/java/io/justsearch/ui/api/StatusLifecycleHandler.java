@@ -1453,6 +1453,12 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     if (compat == null) {
       return null;
     }
+    // Checked before the plain mismatch: both describe the same shape disagreement, but this one
+    // additionally says the Worker has stopped trying to fix it by itself, which is the more
+    // actionable of the two.
+    if ("BLOCKED_REBUILD_BRAKE".equals(compat.indexSchemaCompatState())) {
+      return LifecycleReasonCode.INDEX_REBUILD_BRAKE_EXHAUSTED.code();
+    }
     if ("BLOCKED_MISMATCH".equals(compat.indexSchemaCompatState())) {
       return LifecycleReasonCode.INDEX_SCHEMA_MISMATCH.code();
     }

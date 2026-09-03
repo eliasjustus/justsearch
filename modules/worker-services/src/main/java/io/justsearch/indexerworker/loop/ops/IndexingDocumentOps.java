@@ -27,7 +27,8 @@ import org.slf4j.Logger;
 
 public final class IndexingDocumentOps {
   private static final int CHUNK_THRESHOLD_CHARS = ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS;
-  private static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
+  private static final int CONTENT_PREVIEW_MAX_CHARS =
+      ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
   private static final String DEFAULT_LANGUAGE = resolveDefaultLanguageTag();
 
   private IndexingDocumentOps() {}
@@ -46,9 +47,10 @@ public final class IndexingDocumentOps {
      *     this record because it is a property of the indexing job, not of the extracted content
      *     {@code deriveParentMetadata} sees.
      */
-    public ChunkDocumentWriter.ParentChunkMetadata toChunkMetadata(String collection) {
+    public ChunkDocumentWriter.ParentChunkMetadata toChunkMetadata(
+        String collection, String parentDocUid) {
       return new ChunkDocumentWriter.ParentChunkMetadata(
-          mime, mimeBase, fileKind, language, parentTokenCount, collection);
+          mime, mimeBase, fileKind, language, parentTokenCount, collection, parentDocUid);
     }
   }
 
@@ -100,7 +102,11 @@ public final class IndexingDocumentOps {
       StageRecorder stageRecorder,
       Logger log,
       float[] precomputedEmbedding,
-      SourceFileMetadata sourceMetadata) {
+      SourceFileMetadata sourceMetadata,
+      String docUid) {
+    if (docUid == null || docUid.isBlank()) {
+      throw new IllegalStateException("A persisted document identity is required before indexing");
+    }
     return buildDocumentInternal(
         filePath,
         artifact.result(),
@@ -113,7 +119,8 @@ public final class IndexingDocumentOps {
         stageRecorder,
         log,
         precomputedEmbedding,
-        withArtifact(sourceMetadata, artifact));
+        withArtifact(sourceMetadata, artifact),
+        docUid);
   }
 
   private static IndexDocument buildDocumentInternal(
@@ -128,10 +135,11 @@ public final class IndexingDocumentOps {
       StageRecorder stageRecorder,
       Logger log,
       float[] precomputedEmbedding,
-      SourceFileMetadata sourceMetadata) {
+      SourceFileMetadata sourceMetadata,
+      String docUid) {
     EmbeddingProvider ep =
         embeddingProvider != null ? embeddingProvider : NoOpEmbeddingProvider.INSTANCE;
-    String absolutePath = PathNormalizer.normalizePath(filePath.toAbsolutePath().toString());
+    String absolutePath = PathNormalizer.normalizeKey(filePath);
     String fileName = filePath.getFileName().toString();
 
     ParentIndexMetadata metadata =
@@ -142,7 +150,7 @@ public final class IndexingDocumentOps {
 
     Map<String, Object> fields = new HashMap<>();
     fields.put(SchemaFields.DOC_ID, absolutePath);
-    fields.put(SchemaFields.DOC_UID, java.util.UUID.randomUUID().toString());
+    fields.put(SchemaFields.DOC_UID, docUid);
     fields.put(SchemaFields.PATH, absolutePath);
     fields.put(SchemaFields.FILENAME, fileName);
     fields.put(SchemaFields.CONTENT, extraction.content());
@@ -398,9 +406,10 @@ public final class IndexingDocumentOps {
       DocumentFieldOps documentFieldOps,
       IndexingCoordinator indexingCoordinator,
       ParentIndexMetadata parentMetadata,
-      String collection) {
+      String collection,
+      String parentDocUid) {
     String content = extraction.content();
-    String parentDocId = PathNormalizer.normalizePath(filePath.toAbsolutePath().toString());
+    String parentDocId = PathNormalizer.normalizeKey(filePath);
 
     if (content == null || content.length() < CHUNK_THRESHOLD_CHARS) {
       ChunkDocumentWriter.regenerateChunks(documentFieldOps, indexingCoordinator, parentDocId, "", null);
@@ -417,7 +426,7 @@ public final class IndexingDocumentOps {
         indexingCoordinator,
         parentDocId,
         content,
-        metadata.toChunkMetadata(collection));
+        metadata.toChunkMetadata(collection, parentDocUid));
   }
 
   public static ParentIndexMetadata deriveParentMetadata(

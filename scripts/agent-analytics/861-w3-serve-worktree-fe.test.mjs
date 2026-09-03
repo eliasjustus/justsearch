@@ -78,6 +78,85 @@ await check('waitForPortListening gives up at the timeout and returns false', as
   assert.equal(ok, false);
 });
 
+/* ── The dual-stack readiness probe (O-3) ─────────────────────────────────────────────────────
+ *
+ * Vite binds `localhost`, which on Windows resolves to `::1` FIRST — so the dev server that is
+ * demonstrably serving (curl answers, `netstat` shows `TCP [::1]:5174 LISTENING`) is IPv6-ONLY.
+ * A readiness poll that probed just `127.0.0.1` therefore reported "never started accepting
+ * connections", skipped registration, and left a Vite no `agent-spawn-sweep.cjs` run could reap.
+ * These two use the REAL default probe against REAL one-stack listeners — a fake probe cannot
+ * catch this class, because the bug lives in which HOST the poll asks about.
+ */
+
+/** Bind a throwaway listener to exactly one loopback stack. Resolves `null` if that stack is absent. */
+async function listenOnStack(host) {
+  const port = await sw.pickPort(15960);
+  const srv = net.createServer((s) => { s.on('error', () => {}); });
+  const bound = await new Promise((resolve) => {
+    srv.once('error', () => resolve(false));
+    srv.listen(port, host, () => resolve(true));
+  });
+  if (!bound) return null;
+  return { port, address: srv.address().address, close: () => new Promise((r) => srv.close(r)) };
+}
+
+for (const [host, otherStack] of [['::1', '127.0.0.1'], ['127.0.0.1', '::1']]) {
+  await check(`waitForPortListening sees a listener bound ONLY to ${host}`, async () => {
+    const srv = await listenOnStack(host);
+    if (!srv) {
+      // Never silently green: an unavailable stack is reported, not counted as a pass.
+      throw new Error(`could not bind a listener on ${host} — this host has no ${host} loopback, so the assertion was not exercised`);
+    }
+    try {
+      assert.equal(srv.address, host, `expected the listener on the ${host} stack, got ${srv.address}`);
+      const ok = await sw.waitForPortListening(srv.port, { timeoutMs: 4_000, intervalMs: 100 });
+      assert.equal(
+        ok, true,
+        `a server listening on ${host} must be seen as ready; a probe that asks only ${otherStack} misses it`,
+      );
+    } finally {
+      await srv.close();
+    }
+  });
+}
+
+/* ── Register-or-kill: an unready spawn must never be left running unregistered ───────────── */
+
+await check('registerServedVite kills the child when readiness is never observed', async () => {
+  let killedWith = 'not called';
+  const child = { pid: 4242 };
+  const result = await sw.registerServedVite({
+    port: 5196,
+    sessionId: 'o3-test',
+    child,
+    waitForPort: async () => false,
+    killChild: (c) => { killedWith = c; return { ok: true }; },
+  });
+  assert.equal(result, null, 'an unready spawn must not be registered');
+  assert.equal(killedWith, child, 'the unregistered child must be killed — no record means no reaper can ever collect it');
+});
+
+await check('registerServedVite does NOT kill when readiness IS observed but identity fails', async () => {
+  // Something answers on the port, so it may not be ours — refusing to register is right, killing is not.
+  let killCalls = 0;
+  const result = await sw.registerServedVite({
+    port: 5195,
+    sessionId: 'o3-test',
+    child: { pid: 4243 },
+    waitForPort: async () => true,
+    resolveIdentity: () => ({ ok: false, reason: 'nothing resolvable' }),
+    killChild: () => { killCalls += 1; return { ok: true }; },
+  });
+  assert.equal(result, null);
+  assert.equal(killCalls, 0, 'a listening port may belong to a stranger — never kill on the identity branch');
+});
+
+await check('killSpawnTree reports a reason rather than throwing when there is no child', () => {
+  const verdict = sw.killSpawnTree(null);
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /no child process/);
+});
+
 /* ── Pure-unit: resolveListenerIdentity, fully injected ───────────────────────────────────── */
 
 const T = '134320479841300350';

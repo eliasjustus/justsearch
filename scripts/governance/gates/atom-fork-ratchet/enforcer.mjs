@@ -39,6 +39,7 @@ export const enforceAtomForkRatchet = makeRatchetGate({
   srcSubdir: 'modules/ui-web/src/shell-v0',
   toolName: 'justsearch-atom-fork-ratchet',
   rulePrefix: 'atom-fork-ratchet',
+  measuredUnit: 'raw atom-class rules',
   ruleDescriptions: ATOM_FORK_RULE_DESCRIPTIONS,
   classifications: ATOM_FORK_CLASSIFICATIONS,
 });

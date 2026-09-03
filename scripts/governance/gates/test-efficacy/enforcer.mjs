@@ -23,7 +23,8 @@ import {
 } from './classifications.mjs';
 import { TEST_EFFICACY_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
+import { repinFinding, repinRuleDescription, REPIN_REGRESSION_RULE_SUFFIX } from '../../lib/declared-growth-repin.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
 
 const TOOL = { toolName: 'justsearch-test-efficacy', toolVersion: '0.1.0' };
 
@@ -33,7 +34,10 @@ export async function enforceTestEfficacy(options) {
   const reportPath = resolve(sourceRoot, gate.config?.reportPath ?? 'tmp/pit-strength-report.v1.json');
   const baselinePath = resolve(sourceRoot, gate.baseline.path);
 
-  const ruleDescriptions = TEST_EFFICACY_RULE_DESCRIPTIONS;
+  const ruleDescriptions = {
+    ...TEST_EFFICACY_RULE_DESCRIPTIONS,
+    ...repinRuleDescription('test-efficacy', REPIN_REGRESSION_RULE_SUFFIX),
+  };
 
   // Report presence is the runner's contract (tempdoc 742 D1): `tmp/pit-strength-report.v1.json`
   // is an `on-demand` input under config.inputs, so an absent report SKIPS this gate at the runner
@@ -130,9 +134,20 @@ export async function enforceTestEfficacy(options) {
     }
     const current = Number(reportSeams[seam].strength ?? 0);
     const currentNoCov = Number(reportSeams[seam].noCoverage ?? 0);
-    if (current < baseFloor) {
-      const level = regressionRuleId === 'silent-regression' ? 'error' : 'note';
-      if (regressionRuleId === 'silent-regression') verdict = 'fail';
+    if (current < baseFloor && regressionRuleId !== 'silent-regression') {
+      // Tempdoc 918: the changeset licenses the FLOOR being lowered, not a floor left standing
+      // above the measured strength. A floor left in place re-fails on the next push, when the
+      // PR-scoped changeset is no longer in any diff.
+      verdict = 'fail';
+      findings.push(repinFinding({
+        rulePrefix: 'test-efficacy', classification: regressionRuleId, row: seam,
+        measured: current, livePin: baseFloor, baselineFile: gate.baseline.path,
+        unit: 'test-strength', suffix: REPIN_REGRESSION_RULE_SUFFIX, direction: 'regression',
+        pinLine: `seams["${seam}"].minStrength = ${current}`, uri: gate.baseline.path,
+      }));
+    } else if (current < baseFloor) {
+      const level = 'error';
+      verdict = 'fail';
       findings.push({
         ruleId: `test-efficacy/${regressionRuleId}`,
         level,
@@ -162,8 +177,17 @@ export async function enforceTestEfficacy(options) {
 
     // F3 (coverage-erosion guard): no-coverage may only DECREASE. Rising no-coverage means new
     // untested branches were added to the seam — strength (killed/covered) would miss this.
-    if (currentNoCov > baseNoCovCeiling) {
-      if (regressionRuleId === 'silent-regression') verdict = 'fail';
+    if (currentNoCov > baseNoCovCeiling && regressionRuleId !== 'silent-regression') {
+      // Tempdoc 918, same shape one metric over: the ceiling must be raised in this diff.
+      verdict = 'fail';
+      findings.push(repinFinding({
+        rulePrefix: 'test-efficacy', classification: regressionRuleId, row: seam,
+        measured: currentNoCov, livePin: baseNoCovCeiling, baselineFile: gate.baseline.path,
+        unit: 'uncovered mutations', suffix: REPIN_REGRESSION_RULE_SUFFIX,
+        pinLine: `seams["${seam}"].maxNoCoverage = ${currentNoCov}`, uri: gate.baseline.path,
+      }));
+    } else if (currentNoCov > baseNoCovCeiling) {
+      verdict = 'fail';
       findings.push({
         ruleId: `test-efficacy/${regressionRuleId === 'silent-regression' ? 'silent-regression' : regressionRuleId}`,
         level: regressionRuleId === 'silent-regression' ? 'error' : 'note',
@@ -242,15 +266,22 @@ function checkSchema(obj, expected, uri) {
   return null;
 }
 
-function readPriorBaseline({ fixtureMode, repoRoot, sourceRoot, baselineRef, baselinePath }) {
+export function readPriorBaseline({ fixtureMode, repoRoot, sourceRoot, baselineRef, baselinePath }) {
   if (fixtureMode) {
     // In fixture mode there is no git history; treat the live fixture baseline as the prior too.
+    // NOTE this makes prior === live, so fixture mode can never observe a shift -- which is why
+    // the real branch below needs a test of its own (tempdoc 910: it was broken for exactly as
+    // long as the fixtures were the only thing exercising this function).
     const p = resolve(sourceRoot, baselinePath);
     return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
   }
-  if (!baselineRef) return null;
   try {
-    const text = readFileAtRef({ repoRoot, ref: baselineRef, path: baselinePath });
+    // This used to call readFileAtRef with an OPTIONS OBJECT against its POSITIONAL signature, so
+    // git ran `show [object Object]:undefined`, threw, and returned null through the catch below:
+    // the prior baseline was ALWAYS null outside fixture mode and
+    // test-efficacy/silent-baseline-shift could never fire in a real run (tempdoc 910). It now goes
+    // through the shared reader, so there is one call site to get wrong instead of six.
+    const text = readPriorBaselineText({ sourceRoot: repoRoot, baselineRef, baselinePath });
     return text ? JSON.parse(text) : null;
   } catch {
     return null;

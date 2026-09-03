@@ -48,15 +48,15 @@ class TestSchemaIntrospection:
         }
 
     def test_identity_attrs_for_search_retrieval(self):
-        """§23.9.4 #10: all 8 commit.* attrs are all_of-required.
+        """§23.9.4 #10: all 7 commit.* attrs are all_of-required.
         Schema should structurally enforce this."""
         ids = identity_attrs_for_kind("search/retrieval")
-        assert len(ids) == 8
+        assert len(ids) == 7
         for expected in [
             "commit.schema_fp", "commit.field_catalog_hash",
-            "commit.analyzer_fp", "commit.synonyms_hash",
+            "commit.synonyms_hash",
             "commit.grammar_hash", "commit.similarity_fp",
-            "commit.boosts_fp", "commit.index_schema_fp",
+            "commit.boosts_fp", "commit.index_fingerprint",
         ]:
             assert expected in ids
 
@@ -111,7 +111,7 @@ class TestValidator:
         assert sum(1 for e in errs if "required attr" in e) == 3
 
     def test_missing_identity_all_of_flagged(self):
-        """§23.9.4 #10 in action: search/retrieval without all 8
+        """§23.9.4 #10 in action: search/retrieval without all 7
         commit.* attrs is a schema violation. Emission-side guard."""
         span = {
             "trace_id": "t", "span_id": "s", "parent_span_id": None,
@@ -120,13 +120,13 @@ class TestValidator:
             "attrs": {
                 "search.mode": "HYBRID",
                 "commit.schema_fp": "abc",
-                # missing 7 other commit.* attrs
+                # missing 6 other commit.* attrs
             },
         }
         errs = validate_span(span)
-        # 7 identity-all_of errors expected.
+        # 6 identity-all_of errors expected.
         ident_errs = [e for e in errs if "identity-all_of" in e]
-        assert len(ident_errs) == 7
+        assert len(ident_errs) == 6
 
 
 class TestCrossLanguageExport:

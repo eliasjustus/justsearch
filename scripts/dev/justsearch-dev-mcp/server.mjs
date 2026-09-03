@@ -124,7 +124,7 @@ import {
 // createRequire (the same interop pattern the dev-runner test uses).
 import { createRequire } from 'node:module';
 const _ownReq = createRequire(import.meta.url);
-const { computeOwnershipVerdict, readSessionActivity, computeDisplacedNotice, recommendedTakeoverFor } = _ownReq('../lib/ownership-verdict.cjs');
+const { computeOwnershipVerdict, readSessionActivity, computeDisplacedNotice, computeProvenanceMismatch, recommendedTakeoverFor } = _ownReq('../lib/ownership-verdict.cjs');
 // Tempdoc 696: resolve a >= 24 JDK (Temurin 25) for hot-swap's java + gradle compile,
 // so a stale JDK-8 JAVA_HOME/PATH can't break `--source 25` hot-swap. Reuses _ownReq (CJS interop).
 const { resolveJavaExe, resolveJdkHome } = _ownReq('../lib/resolve-jdk.cjs');
@@ -172,8 +172,6 @@ async function readOwnershipOpLeases(mainRepoRoot) {
  * the ONE verdict function, returning the advisory `ownership` block (with the
  * prescriptive `verdict` + `recommendedAction`) and the raw `decision`.
  */
-function _normPath(p) { return typeof p === 'string' ? p.replace(/\\/g, '/').replace(/\/+$/, '') : p; }
-
 async function buildOwnershipProjection({ mainRepoRoot, callerRepoRoot, callerSessionId, takeover = 'deny', active, runJson }) {
   if (!active?.holder) return { ownership: null, decision: null };
   if (runJson === undefined) {
@@ -186,11 +184,10 @@ async function buildOwnershipProjection({ mainRepoRoot, callerRepoRoot, callerSe
   const opLeases = await readOwnershipOpLeases(mainRepoRoot);
   // Tempdoc 606 Piece 2: provenance mismatch — the running stack was built from a
   // different checkout than where this caller is working (the dominant stale-jar case).
+  // Tempdoc 913 T1: the predicate moved to ownership-verdict.cjs (pure, unit-tested) so a
+  // `distFrom` launch is not reported as a mismatch against the caller it was launched from.
   const leaseProv = active.provenance || null;
-  const provenanceMismatch = !!(
-    leaseProv?.repoRoot && callerRepoRoot &&
-    _normPath(leaseProv.repoRoot) !== _normPath(callerRepoRoot)
-  );
+  const provenanceMismatch = computeProvenanceMismatch(leaseProv, callerRepoRoot);
   const decision = computeOwnershipVerdict({
     active, callerSessionId, selfCheck: true, supervisorAlive, leaseExpired,
     ownerActivity, opLeases, takeover, provenance: { mismatch: provenanceMismatch }, now: Date.now(),
@@ -703,6 +700,10 @@ export const API_CALL_ALLOWLIST = [
   { path: '/api/indexing-roots/substrate', methods: ['GET'] },
   { path: '/api/indexing-roots/preview', methods: ['POST'] },
   { path: '/api/indexing-jobs/failed/by-prefix', methods: ['GET'] },
+  // Tempdoc 913 T2 — the index-wide sibling of the by-prefix route above. Only the folder-scoped
+  // one was allowlisted, so "what failed anywhere" (IndexingRoutes.java:32) was unreachable from
+  // the dev tools while "what failed under this folder" was.
+  { path: '/api/indexing-jobs/failed', methods: ['GET'] },
   { path: '/api/indexing/reindex', methods: ['POST'] },
   { path: '/api/indexing/excludes/apply', methods: ['POST'] },
   { path: '/api/indexing/migration/start', methods: ['POST'] },
@@ -752,6 +753,16 @@ export const API_CALL_ALLOWLIST = [
   // Diagnostics & knowledge
   { path: '/api/diagnostics/export', methods: ['POST'] },
   { path: '/api/knowledge/status', methods: ['GET'] },
+  // Wire schemas (tempdoc 913 T2). SchemaController serves the JSON Schema a route's response
+  // record projects to (LocalApiServer.java:664); it is the primary-source way to check a wire
+  // shape from the dev tools instead of inferring it from one sampled response body. The schema
+  // name is a path segment, so this matches by pattern — `path` stays the human-readable form
+  // used in the not-allowlisted message, like the install-packages entry above.
+  {
+    path: '/api/schemas/{name}',
+    pattern: /^\/api\/schemas\/[A-Za-z0-9._-]+$/,
+    methods: ['GET'],
+  },
   // Debug & telemetry
   { path: '/api/debug/events', methods: ['GET'] },
   { path: '/api/debug/worker-log', methods: ['GET'] },
@@ -1287,6 +1298,10 @@ export async function main() {
         sessionId: input.sessionId,
         leaseDurationSec: input.leaseDurationSec,
         chatProfile: input.chatProfile,
+        // Tempdoc 913 T1: only when a distFrom was actually asked for — distRoot.distFrom is null
+        // on the caller-checkout path, and recording a "requested root" there would exonerate a
+        // drift the check exists to catch.
+        distFromRoot: distRoot.distFrom ? effRepoRoot : null,
       });
       maybeAppendNdjson(mainRepoRoot, { event: 'tool_start', tool: 'justsearch.dev.start', args: { apiPort, uiPort, clean, distFrom: input.distFrom ?? null } });
 

@@ -18,7 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const {
   computeOwnershipVerdict, classifyActivity, readSessionActivity, mergeSessionActivity,
-  computeDisplacedNotice, recommendedTakeoverFor, DEFAULT_THRESHOLDS,
+  computeDisplacedNotice, computeProvenanceMismatch, recommendedTakeoverFor, DEFAULT_THRESHOLDS,
 } = require(path.join(__dirname, 'lib', 'ownership-verdict.cjs'));
 
 const NOW = 1_000_000_000_000;
@@ -252,6 +252,49 @@ const tests = [
   }],
   ['recommendedTakeoverFor: critical op → null', () => {
     assert.equal(recommendedTakeoverFor({ action: 'conflict', verdict: 'WAIT_CRITICAL_OP' }), null);
+  }],
+
+  // --- 913 T1: computeProvenanceMismatch ---
+  // THE DEFECT. quick_health reported rebuildFirst:true / "runs different code than your
+  // worktree" for a stack the caller had itself launched with distFrom, from exactly that tree.
+  ['provenance: distFrom launch matching the running root is NOT a mismatch', () => {
+    assert.equal(
+      computeProvenanceMismatch(
+        { repoRoot: 'F:/repo/.claude/worktrees/lane-x', distFromRoot: 'F:/repo/.claude/worktrees/lane-x' },
+        'F:/repo'),
+      false);
+  }],
+  // Separator/trailing-slash normalization must not resurrect the false positive on Windows,
+  // where the caller path arrives with backslashes and the record is stored POSIX.
+  ['provenance: distFrom match survives separator + trailing-slash differences', () => {
+    assert.equal(
+      computeProvenanceMismatch(
+        { repoRoot: 'F:/repo/.claude/worktrees/lane-x/', distFromRoot: 'F:\\repo\\.claude\\worktrees\\lane-x' },
+        'F:\\repo'),
+      false);
+  }],
+  // The check must still bite: a running root that is neither the caller's nor the one the
+  // launch asked for is the stale/foreign-dist case tempdoc 606 Piece 2 added it for.
+  ['provenance: running root is neither the caller nor the requested root → mismatch', () => {
+    assert.equal(
+      computeProvenanceMismatch(
+        { repoRoot: 'F:/repo/.claude/worktrees/lane-OLD', distFromRoot: 'F:/repo/.claude/worktrees/lane-x' },
+        'F:/repo'),
+      true);
+  }],
+  ['provenance: no distFrom recorded + different root → still a mismatch', () => {
+    assert.equal(
+      computeProvenanceMismatch({ repoRoot: 'F:/repo/.claude/worktrees/lane-x', distFromRoot: null }, 'F:/repo'),
+      true);
+  }],
+  ['provenance: same root → no mismatch (the ordinary case)', () => {
+    assert.equal(computeProvenanceMismatch({ repoRoot: 'F:/repo' }, 'F:/repo'), false);
+  }],
+  // Unknowns must not be reported as a mismatch — an absent fact is not a negative finding.
+  ['provenance: missing repoRoot or callerRepoRoot → no mismatch', () => {
+    assert.equal(computeProvenanceMismatch(null, 'F:/repo'), false);
+    assert.equal(computeProvenanceMismatch({ repoRoot: 'F:/repo' }, null), false);
+    assert.equal(computeProvenanceMismatch({}, 'F:/repo'), false);
   }],
 ];
 

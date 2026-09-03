@@ -345,13 +345,14 @@ public final class EmbeddingBackfillOps {
         return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
-      // Phase 1: Collect chunk content
+      // Phase 1: reconstruct chunk text in one batch (distinct parents are read once).
+      Map<String, String> contentByChunkId =
+          context.documentFieldOps().getDocumentContentBatch(pendingChunkIds);
       List<String> batchChunkIds = new ArrayList<>(pendingChunkIds.size());
       List<String> batchContents = new ArrayList<>(pendingChunkIds.size());
       for (String chunkId : pendingChunkIds) {
         try {
-          String chunkContent =
-              context.documentFieldOps().getDocumentField(chunkId, SchemaFields.CHUNK_CONTENT);
+          String chunkContent = contentByChunkId.get(chunkId);
           if (chunkContent == null || chunkContent.isBlank()) {
             context.log().warn("Chunk backfill: Content missing for {}", chunkId);
             markedFailed +=

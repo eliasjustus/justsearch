@@ -239,30 +239,38 @@ public final class SearchInputCapture {
 
     LuceneRuntimeTypes.QppSignals signals =
         textQueryOps.getQppSignals(SchemaFields.CONTENT, terms);
-    long numDocs = signals.numDocs();
-    if (numDocs <= 0) return QppMetrics.ZERO;
+    long fieldDocCount = signals.fieldDocCount();
+    if (fieldDocCount <= 0) return QppMetrics.ZERO;
 
     float maxIdf = 0f;
     double sumIctf = 0.0;
     double queryScope = 1.0;
+    double minTermDocFreqFraction = 1.0;
 
     for (String term : terms) {
       int df = signals.docFreqs().getOrDefault(term, 0);
       long tf = signals.termCollFreqs().getOrDefault(term, 0L);
 
-      float idf = (float) Math.log((numDocs + 1.0) / (df + 1.0));
+      float idf = (float) Math.log((fieldDocCount + 1.0) / (df + 1.0));
       if (idf > maxIdf) maxIdf = idf;
 
       long S = signals.sumTotalTermFreq();
       double ictf = Math.log((S + 1.0) / (tf + 1.0));
       sumIctf += ictf;
 
-      queryScope *= (1.0 - (double) df / numDocs);
+      double docFreqFraction = (double) df / fieldDocCount;
+      queryScope *= (1.0 - docFreqFraction);
+      minTermDocFreqFraction = Math.min(minTermDocFreqFraction, docFreqFraction);
     }
 
     float avgIctf = (float) (sumIctf / terms.size());
     float qs = (float) (1.0 - queryScope);
-    return new QppMetrics(maxIdf, avgIctf, Math.max(0f, Math.min(1f, qs)));
+    return new QppMetrics(
+        maxIdf,
+        avgIctf,
+        Math.max(0f, Math.min(1f, qs)),
+        fieldDocCount,
+        (float) Math.max(0.0, Math.min(1.0, minTermDocFreqFraction)));
   }
 
   private VectorEncoding prepareQueryVector(

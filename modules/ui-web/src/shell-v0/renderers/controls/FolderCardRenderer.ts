@@ -22,6 +22,12 @@ import { JsonFormsRendererBase } from '../JsonFormsRendererBase.js';
 import { registerXUiRenderer } from './xUiRendererRegistry.js';
 import { icon } from '../../components/Icon.js';
 import '../../components/Button.js';
+// Tempdoc 914 D3 — the chip's copy comes from the folder-status seam, so this renderer and
+// LibrarySurface's hand-authored card cannot word the last-known qualifier differently: a carried
+// count is marked visibly AND in the accessible name (see `failedChipCopy`).
+import { failedChipCopy } from '../../state/folderStatus.js';
+// Tempdoc 914 D3 — the chip's look, shared with LibrarySurface's hand-authored card.
+import { failedChipStyles } from '../../components/failedChipPresentation.js';
 
 interface FolderCard {
   readonly pathHash?: string;
@@ -31,10 +37,16 @@ interface FolderCard {
   readonly walkError?: string;
   /** Tempdoc 599 §16/B1 — failed-job count; >0 renders a clickable chip that opens the drill-down. */
   readonly failed?: number;
+  /** Tempdoc 914 D3 — `failed` is a count carried across a window in which this root has no settled
+   *  answer, not this poll's own number. The chip marks it visibly AND in the accessible name
+   *  (`failedChipCopy`), which is what review finding S2-2 required. */
+  readonly failedLastKnown?: boolean;
 }
 
 export class FolderCardRenderer extends JsonFormsRendererBase {
-  static styles = css`
+  static styles = [
+    failedChipStyles,
+    css`
     :host {
       display: block;
     }
@@ -92,18 +104,13 @@ export class FolderCardRenderer extends JsonFormsRendererBase {
     .walk-error {
       color: var(--text-danger);
     }
-    /* Tempdoc 599 §16/B1 — clickable "N failed" chip → opens the failed-files drawer. */
-    .failed-chip {
-      margin-left: 0.4rem;
-      --jf-button-color: var(--text-danger);
-      color: var(--text-danger);
-    }
     .empty {
       padding: 1rem;
       color: var(--text-secondary);
       font-size: var(--font-size-sm);
     }
-  `;
+  `,
+  ];
 
   override render(): TemplateResult {
     if (!this.visible) return html``;
@@ -156,14 +163,7 @@ export class FolderCardRenderer extends JsonFormsRendererBase {
           ${f.metaText ?? ''}${f.walkError
             ? html` · <span class="walk-error">${f.walkError}</span>`
             : nothing}${(f.failed ?? 0) > 0
-            ? html`<jf-button
-                class="failed-chip"
-                variant="ghost"
-                size="sm"
-                label=${`Show ${f.failed} failed file${f.failed === 1 ? '' : 's'}`}
-                .onActivate=${() => this.emitShowFailed(f.pathHash ?? '')}
-                >${icon({ name: 'alert-circle', size: 12 })} ${f.failed} failed</jf-button
-              >`
+            ? this.renderFailedChip(f)
             : nothing}
         </div>
       </div>
@@ -176,6 +176,26 @@ export class FolderCardRenderer extends JsonFormsRendererBase {
         ${icon({ name: 'trash-2', size: 14 })} Remove
       </jf-button>
     </div>`;
+  }
+
+  /**
+   * Tempdoc 599 §16/B1 + 914 D3 (review S2-2) — the clickable "N failed" chip. A carried count is
+   * marked VISIBLY (shared `failedChipCopy` text + the muted-italic `[data-last-known]` rule); the
+   * `label` starts with that same visible text, which is what WCAG 2.5.3 requires.
+   */
+  private renderFailedChip(f: FolderCard): TemplateResult {
+    const lastKnown = f.failedLastKnown === true;
+    const copy = failedChipCopy(f.failed ?? 0, lastKnown);
+    return html`<jf-button
+      class="failed-chip"
+      data-last-known=${lastKnown ? 'true' : 'false'}
+      variant="ghost"
+      size="sm"
+      label=${copy.label}
+      title=${copy.title || nothing}
+      .onActivate=${() => this.emitShowFailed(f.pathHash ?? '')}
+      >${icon({ name: 'alert-circle', size: 12 })} ${copy.text}</jf-button
+    >`;
   }
 
   /**

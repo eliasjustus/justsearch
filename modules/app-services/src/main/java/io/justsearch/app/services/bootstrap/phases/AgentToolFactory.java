@@ -51,8 +51,19 @@ public final class AgentToolFactory {
       ReadDocumentTool readDocumentTool) {}
 
   /**
-   * Build the eager-path agent-tool instances. Returns an all-null output when either
-   * {@code knowledgeClient} or {@code indexingService} is null.
+   * Build the eager-path agent-tool instances. Every TOOL is null when either
+   * {@code knowledgeClient} or {@code indexingService} is null — but {@code fileOperationLog} is
+   * not, because it does not depend on either (tempdoc 913 D5).
+   *
+   * <p>D5: the log is a directory reader/writer over {@code dataDir/file-operations}. It used to
+   * ride the all-null guard arm, and on the real boot that arm is the one taken —
+   * {@code HeadlessApp} constructs {@code HeadAssembly} with a null knowledgeServer and lets the
+   * Worker connect asynchronously. So {@code AgentLoopService} value-captured a null log into a
+   * final field with no rebind path, {@code AgentRunQueryService.operationHistory} returned
+   * {@code List.of()} forever, and {@code GET /api/chat/agent/history} reported no batches while
+   * the journals were on disk the whole time. Returning the log here is what makes the null
+   * impossible rather than tolerated: a filesystem reader was gated on Worker availability, which
+   * is a dependency it never had.
    */
   public static Output build(
       Path dataDir,
@@ -63,7 +74,7 @@ public final class AgentToolFactory {
       LambdaMartReranker lambdaMartReranker,
       DocumentService documentService) {
     if (knowledgeClient == null || indexingService == null) {
-      return new Output(null, null, null, null, null, null, null);
+      return new Output(null, fileOperationLog(dataDir), null, null, null, null, null);
     }
     return assemble(
         dataDir,
@@ -75,7 +86,18 @@ public final class AgentToolFactory {
         null,
         null,
         null,
+        null,
         documentService);
+  }
+
+  /**
+   * The ONE construction rule for the file-operation journal: {@code dataDir/file-operations}.
+   * Null only when no data dir is known, which is also the only case in which no journal can be
+   * named. Kept as a named method so the path is spelled once — both entry points and the
+   * late-bound reuse path go through it.
+   */
+  private static FileOperationLog fileOperationLog(Path dataDir) {
+    return dataDir == null ? null : new FileOperationLog(dataDir.resolve("file-operations"));
   }
 
   /**
@@ -88,6 +110,13 @@ public final class AgentToolFactory {
    *     late-bound path passes the eager-path adapter when the eager path produced one; on the
    *     normal (async-Worker) boot it is null and the adapter built here is the one
    *     {@code IngestTool} actually drives.
+   * @param existingFileOperationLog reuse this journal when non-null, otherwise build a fresh one —
+   *     the same reuse contract as {@code existingAdapter}, added by tempdoc 913 D5. On the normal
+   *     boot the eager path always produces one now, so the late-bound path receives it and the
+   *     process holds exactly ONE instance: the one the read side (agent history / undo) queries is
+   *     the one {@code FileOperationsTool} writes through. It also drops the second run of the
+   *     constructor's 30-day retention prune that {@code AgentToolHandlers} calls out as the reason
+   *     re-assembling is not side-effect free.
    * @param scanProgressRegistry scan-progress SSE registry, bound onto whichever adapter is used;
    *     null on the eager path, where neither collaborator exists yet (see
    *     {@link #bindScanObservability}).
@@ -104,6 +133,7 @@ public final class AgentToolFactory {
       OnlineAiService onlineAiService,
       LambdaMartReranker lambdaMartReranker,
       KnowledgeHttpApiAdapter existingAdapter,
+      FileOperationLog existingFileOperationLog,
       io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry,
       io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger,
       DocumentService documentService) {
@@ -112,7 +142,8 @@ public final class AgentToolFactory {
             ? existingAdapter
             : new KnowledgeHttpApiAdapter(knowledgeServer, onlineAiService, lambdaMartReranker);
     bindScanObservability(agentSearchAdapter, scanProgressRegistry, scanRollupLedger);
-    FileOperationLog fileOperationLog = new FileOperationLog(dataDir.resolve("file-operations"));
+    FileOperationLog fileOperationLog =
+        existingFileOperationLog != null ? existingFileOperationLog : fileOperationLog(dataDir);
     Supplier<List<BrowseTool.RootInfo>> rootsSupplier =
         () ->
             indexingService.getWatchedRoots().stream()

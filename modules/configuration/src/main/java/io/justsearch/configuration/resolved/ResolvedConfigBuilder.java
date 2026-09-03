@@ -1008,14 +1008,32 @@ public final class ResolvedConfigBuilder {
    */
   private static String normalizeSchemaMismatchPolicy(String raw, boolean isProd) {
     if (raw == null || raw.isBlank()) {
-      return isProd ? "FAIL_CLOSED" : "REBUILD_BACKUP_FIRST";
+      // Production defaults to BLUE_GREEN_MIGRATE (tempdoc 915 §C). FAIL_CLOSED was the old
+      // default and it is the wrong answer for a desktop app: a schema-changing upgrade left the
+      // user with an index that refuses to open and no path forward. Blue/green keeps the existing
+      // index serving reads while the new one is built beside it. Dev stays REBUILD_BACKUP_FIRST —
+      // a developer wants the fast rebuild, not a second generation on disk.
+      return isProd ? "BLUE_GREEN_MIGRATE" : "REBUILD_BACKUP_FIRST";
     }
     return switch (raw.trim().toLowerCase(Locale.ROOT)) {
       case "fail_closed", "fail-closed", "fail" -> "FAIL_CLOSED";
       case "rebuild_backup_first", "rebuild-backup-first", "rebuild" -> "REBUILD_BACKUP_FIRST";
       case "blue_green_migrate", "blue-green-migrate", "blue_green", "blue-green" ->
           "BLUE_GREEN_MIGRATE";
-      default -> raw.trim();
+      default -> {
+        // An unrecognised value is a typo, and it used to be returned verbatim — so it matched no
+        // branch anywhere, which after tempdoc 915 §C.12 meant the pre-open detection forced a
+        // writable open, the guard raised, recovery refused it and the Worker did not start. A
+        // misspelled policy must not be a boot failure: fall back to the mode default, loudly
+        // (the same shape normalizeIntegrityCheck already uses).
+        String fallback = isProd ? "BLUE_GREEN_MIGRATE" : "REBUILD_BACKUP_FIRST";
+        LOG.warn(
+            "Unrecognised index.schema_mismatch.policy \"{}\"; falling back to {}. Valid values:"
+                + " FAIL_CLOSED, REBUILD_BACKUP_FIRST, BLUE_GREEN_MIGRATE.",
+            raw.trim(),
+            fallback);
+        yield fallback;
+      }
     };
   }
 
@@ -1425,7 +1443,6 @@ public final class ResolvedConfigBuilder {
         resolveString("justsearch.index.collection", "default"),
         resolveBoolean("justsearch.search.query_classification.enabled", true),
         resolveDouble("justsearch.search.title_boost", 3.0),
-        resolveDouble("justsearch.search.entity_boost", 0.0),
         resolveBoolean("search.chunk_aware.enabled", true),
         // 775 §I / founder flip decision (2026-07-22): both evidence flags default-ON. The
         // putDefault above is the effective source; this fallback matches it for the no-putDefault
@@ -1695,6 +1712,11 @@ public final class ResolvedConfigBuilder {
     return new ResolvedConfig.HybridSearch(
         resolveInt("index.hybrid.rrf_k", 60),
         resolveInt("index.hybrid.vector_skip_min_chars", 4),
+        Math.max(
+            0.0,
+            Math.min(
+                1.0,
+                resolveDouble("index.hybrid.vector_skip_min_df_fraction", 0.25))),
         Math.max(1, resolveInt("index.hybrid.candidate_limit_max", 100)),
         Math.max(1, resolveInt("index.hybrid.text_candidate_multiplier", 10)),
         Math.max(1, resolveInt("index.hybrid.vector_candidate_multiplier", 10)),

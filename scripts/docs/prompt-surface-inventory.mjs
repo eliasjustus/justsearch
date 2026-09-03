@@ -12,6 +12,7 @@ import path from "node:path";
 
 const GENERATED_START = "<!-- generated:start";
 const GENERATED_END = "<!-- generated:end";
+const GENERATED_CODEX_SKILL = "<!-- generated from .claude/skills";
 
 const STALE_PATTERNS = [
   "justsearch_dev_",
@@ -75,12 +76,25 @@ function collectSurfaces(root) {
     surfaces.push({ file, kind: "skill" });
   }
 
+  for (const file of walk(path.join(root, ".agents", "skills"), (f) =>
+    f.endsWith("SKILL.md") || f.endsWith("openai.yaml"))) {
+    surfaces.push({ file, kind: "codex-skill-projection" });
+  }
+
   for (const file of walk(path.join(root, ".claude", "rules"), (f) => f.endsWith(".md"))) {
     surfaces.push({ file, kind: "rule" });
   }
 
   for (const file of existing(root, [".claude/settings.json", ".claude/settings.local.json"])) {
     surfaces.push({ file, kind: "hook-routing" });
+  }
+
+  for (const file of existing(root, [".codex/config.toml", ".codex/hooks.json"])) {
+    surfaces.push({ file, kind: "codex-routing" });
+  }
+
+  for (const file of walk(path.join(root, ".codex", "agents"), (f) => f.endsWith(".toml"))) {
+    surfaces.push({ file, kind: "codex-agent-role" });
   }
 
   for (const file of walk(path.join(root, "scripts", "agent-analytics", "hooks"), (f) => f.endsWith(".mjs"))) {
@@ -114,7 +128,9 @@ function analyze(root, surface) {
   const rel = path.relative(root, surface.file).replaceAll("\\", "/");
   const lines = raw.length === 0 ? 0 : raw.split(/\r\n|\r|\n/).length;
   const words = raw.trim() === "" ? 0 : raw.trim().split(/\s+/).length;
-  const generated = raw.includes(GENERATED_START) || raw.includes(GENERATED_END);
+  const generated = raw.includes(GENERATED_START) || raw.includes(GENERATED_END) ||
+    raw.includes(GENERATED_CODEX_SKILL) || surface.kind === "codex-skill-projection" ||
+    rel === ".codex/hooks.json";
   const staleTokens = STALE_PATTERNS.filter((pattern) => raw.includes(pattern));
   return {
     ...surface,

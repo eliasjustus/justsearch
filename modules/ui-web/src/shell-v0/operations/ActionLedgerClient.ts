@@ -31,6 +31,8 @@ import { present } from '../display/present.js';
 // Tempdoc 613 §6/§10 + 612 §3 — the Activity-inclusion routing predicates: routine local-ack effects /
 // navigation, and the operation-significance grade over the declared OperationCatalog facets.
 import { isRoutineActivity, isRoutineOperation } from '../state/messageRouting.js';
+// Tempdoc 885 item 21b — the ONE spelling of the exhausted terminal state (see its javadoc).
+import { JOB_STATE_RETRY_EXHAUSTED } from '../state/indexingJobStates.js';
 // 612 §3 — resolve an operation row's declared significance facets (sync singleton; the same registry
 // `present()` already joins for labels in this module).
 import { getOperation } from '../../api/registry/OperationCatalogClient.js';
@@ -261,7 +263,7 @@ export function projectBackend(e: BackendLedgerEntry): UnifiedActionEntry {
     // and never readable. Named distinctly because "Index failed" would suggest a bad file.
     if (e.state === 'FAILED') {
       label = `Index failed · ${where}`;
-    } else if (e.state === 'RETRY_EXHAUSTED') {
+    } else if (e.state === JOB_STATE_RETRY_EXHAUSTED) {
       label = `Index gave up · ${where}`;
     } else {
       label = `Indexed · ${where}`;

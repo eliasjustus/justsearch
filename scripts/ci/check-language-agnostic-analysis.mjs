@@ -12,6 +12,7 @@
  *   3. No NON-EMPTY per-language synonym / dictionary file under the catalogs dir (hand-curated
  *      per-language synonym sets are a per-language lever).
  *   4. The query path references no `content_<lang>` field literal (no per-language field routing).
+ *   5. The query path contains no authored Set.of/List.of natural-language word list.
  *
  * A NEW language must require NO new authored artifact (581 §1). SCOPE IS THE SEARCH ENGINE ONLY —
  * UI localization (SSOT/messages, SSOT/prompts, i18n) is a separate, legitimately per-language
@@ -23,6 +24,7 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { stripComments as stripCommentsShared } from '../lib/strip-comments.mjs';
+import { scanAuthoredWordLists } from './lib/language-agnostic-word-lists.mjs';
 
 const REGISTER = 'governance/language-agnostic-analysis.v1.json';
 const reg = JSON.parse(readFileSync(REGISTER, 'utf8'));
@@ -33,6 +35,7 @@ const stripComments = (s) => stripCommentsShared(s, { withHtml: false });
 const failures = [];
 const allowedProviders = new Set(reg.allowedProviders);
 const localeFieldRe = new RegExp(reg.localeFieldPattern);
+const queryCodeScopes = reg.queryCodeScopes ?? [reg.queryCodeScope].filter(Boolean);
 
 // 1. Analyzers: locale-invariant + language-agnostic provider (no per-language analyzer).
 {
@@ -51,6 +54,19 @@ const localeFieldRe = new RegExp(reg.localeFieldPattern);
       );
     }
   }
+}
+
+// 5. Query path: no authored natural-language word lists. This catches the literal shape used by
+// the retired English STOP_WORDS gate while leaving field-name/status-code collections alone.
+{
+  const minEntries = Number(reg.authoredWordListMinEntries || 6);
+  failures.push(
+    ...scanAuthoredWordLists({
+      scopes: queryCodeScopes,
+      minEntries,
+      naturalLanguageWordPattern: reg.naturalLanguageWordPattern,
+    }),
+  );
 }
 
 // 2. Fields: no locale-suffixed content_<lang> field (route every language through `content`).
@@ -96,13 +112,15 @@ if (existsSync(reg.synonymDir)) {
     }
     return acc;
   };
-  for (const f of walk(reg.queryCodeScope, [])) {
-    const src = stripComments(readFileSync(f, 'utf8'));
-    if (litRe.test(src)) {
-      failures.push(
-        `${norm(f)}: references a content_<lang> field literal — query routing to a per-language ` +
-          `analyzer field is forbidden (581/ADR-0043). Query 'content' (locale-invariant) only.`,
-      );
+  for (const scope of queryCodeScopes) {
+    for (const f of walk(scope, [])) {
+      const src = stripComments(readFileSync(f, 'utf8'));
+      if (litRe.test(src)) {
+        failures.push(
+          `${norm(f)}: references a content_<lang> field literal — query routing to a per-language ` +
+            `analyzer field is forbidden (581/ADR-0043). Query 'content' (locale-invariant) only.`,
+        );
+      }
     }
   }
 }
@@ -115,5 +133,6 @@ if (failures.length > 0) {
 }
 console.log(
   '✓ language-agnostic-analysis gate OK — analysis is locale-invariant; no per-language analyzer, ' +
-    'content_<lang> field, non-empty synonym file, or per-language field routing (581/ADR-0043).',
+    'content_<lang> field, non-empty synonym file, per-language field routing, or authored query ' +
+      'word list (581/ADR-0043).',
 );

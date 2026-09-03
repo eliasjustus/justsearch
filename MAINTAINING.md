@@ -1,6 +1,6 @@
 # Maintaining JustSearch — the agent-driven development process
 
-JustSearch is developed in the open with AI coding agents (Claude Code) under a deliberate
+JustSearch is developed in the open with AI coding agents (Claude Code and OpenAI Codex) under a deliberate
 discipline system. **This document is for maintainers. Contributors do not need it** — to
 contribute, see [`CONTRIBUTING.md`](CONTRIBUTING.md) (clone → build → test). None of the machinery
 below is required, and a fresh clone does **not** impose it on you.
@@ -11,11 +11,13 @@ the apparatus is visible and documented, never forced on a contributor.
 
 ## The machinery (all published; none required to contribute)
 
-- **`CLAUDE.md`** — project instructions auto-loaded by Claude Code (hard invariants, architecture,
-  build commands). Contributor-grade by design.
+- **`AGENTS.md`** — compact cross-harness instructions loaded by Codex and other compatible agents.
+- **`CLAUDE.md`** — Claude-specific delivery; its hard-invariant block is generated from `AGENTS.md`.
 - **`.claude/rules/`** — always-loaded discipline rules: general engineering discipline plus the
   maintainer-only operational rules listed below.
-- **`.claude/skills/`** — task-specific playbooks, loaded on demand.
+- **`.claude/skills/`** — task-specific playbook authority. `.agents/skills/` is the committed,
+  generated Codex projection.
+- **`.codex/`** — repository-safe Codex MCP config, generated hooks, and native agent roles.
 - **`governance/`, `gates/`, `scripts/{governance,ci}/`** — the discipline-gate kernel (CI checks).
 - **`scripts/agent-analytics/`** — the discipline hooks (guards + hints) plus maintainer
   telemetry/analytics tooling.
@@ -26,8 +28,10 @@ the apparatus is visible and documented, never forced on a contributor.
   [`.claude/rules/branch-safety.md`](.claude/rules/branch-safety.md).
 - **Shared local dev stack** — one local backend at a time, with an ownership/lease handshake. See
   the `/dev-stack` skill.
-- **Hooks** — the universally-safe discipline guards/hints are the published wiring
-  (`.claude/settings.json`). Maintainer-local analytics hooks — the telemetry sink, MCP
+- **Hooks** — the universally-safe discipline guards/hints are published for both harnesses.
+  `governance/agent-hooks.v1.json` is the binding authority; `.codex/hooks.json` is generated
+  from it and adapts Codex payloads through one checked entry point. Claude's published wiring is
+  `.claude/settings.json`. Maintainer-local analytics hooks — the telemetry sink, MCP
   session-injection, session attribution, and the analytics dispatch pipeline — are wired only in a
   maintainer's own gitignored `settings.local.json`, not committed.
 
@@ -56,6 +60,11 @@ the apparatus is visible and documented, never forced on a contributor.
   (`record-merge.mjs`) is skipped — sessions still work, they are just unattributed. The new
   session's `SessionStart` hook writes the pointer; to attribute the *current* session immediately,
   write the raw session id to `tmp/agent-telemetry/current-session-id` once.
+- **Codex setup** — trust the repository, sign in with `codex login`, and use the tracked
+  `.codex/config.toml`; it registers `justsearch-dev` without a secret. Machine-local OTel
+  export belongs in `~/.codex/config.toml`. Follow
+  [`docs/how-to/use-codex-for-development.md`](docs/how-to/use-codex-for-development.md) for
+  installation, Claude-to-Codex mapping, verification, and troubleshooting.
 - **Telemetry** — local-only OpenTelemetry capture of agent sessions, for measuring
   agent-assisted development. It never leaves the machine.
 

@@ -740,15 +740,15 @@ public final class SearchResponseBuilder {
         signal, terms -> textQueryOps.getTermDocFreqs(SchemaFields.CONTENT, terms), numDocs);
   }
 
-  /** Concatenates a hit's stored NER entity-text fields for the NER-membership entity signal. */
-  private static String concatDocEntityText(Map<String, String> fields) {
+  /** Concatenates a hit's stored raw NER fields for the NER-membership entity signal. */
+  static String concatDocEntityText(Map<String, String> fields) {
     if (fields == null || fields.isEmpty()) return "";
     StringBuilder sb = new StringBuilder();
     for (String f :
         List.of(
-            SchemaFields.ENTITY_PERSONS_TEXT,
-            SchemaFields.ENTITY_ORGANIZATIONS_TEXT,
-            SchemaFields.ENTITY_LOCATIONS_TEXT)) {
+            SchemaFields.ENTITY_PERSONS_RAW,
+            SchemaFields.ENTITY_ORGANIZATIONS_RAW,
+            SchemaFields.ENTITY_LOCATIONS_RAW)) {
       String v = fields.get(f);
       if (v != null && !v.isBlank()) sb.append(v).append(' ');
     }

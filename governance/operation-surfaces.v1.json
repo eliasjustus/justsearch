@@ -137,6 +137,15 @@
       "note": "Serves /api/indexing-jobs/stream from bridge.latestSnapshot() + deltas. Import-invisible (raw items); declared explicitly."
     },
     {
+      "id": "head-failed-jobs-controller",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java",
+      "guard": "test:IndexingControllerFailedJobsWireContractTest",
+      "consumesProjection": "canonical-record",
+      "note": "Tempdoc 911 (#614), registered by 913 — the TERMINAL-state read projection: GET /api/indexing-jobs/failed and /failed/by-prefix, both served by the one toJobView mapper (IndexingController.java:931) that maps IndexingService.FailedJobInfo onto the canonical IndexingJobView wire record. It consumes canonical-record rather than head-bridge because the lineage is SqliteJobQueue.listFailedJobs → gRPC DelegatingIngestService → RemoteKnowledgeClient → here: it queries the one jobs table directly and never touches IndexingJobsChangeStream — the same shape as count-projection, a second direct read of the one record rather than a derivation of another projection. It is a PROJECTION, not a fork: before #614 both routes hand-built an almost-IndexingJobView Map that dropped scanId, which is precisely the F-2 drift class this register exists to catch; typing them onto the canonical record is what made this file a declarable surface. The named guard pins the other end (the JSON the live route returns validates against SSOT/schemas/failed-indexing-jobs-response.v1.json), so a handler reverting to a hand-built map fails there. NOT EXHAUSTIVE for this file: a THIRD failed-jobs route lives in it, GET /api/indexing/failed-jobs (IndexingController.java:604-636, registered at IndexingRoutes.java:26), which serves the older non-canonical FailedJobsResponse/FailedJob shape (tempdoc 564 Phase 5) and does NOT go through toJobView. It is not a second lifecycle model — it is the pre-substrate spelling of the same jobs-table read — but this row governs the two IndexingJobView-typed routes only, so do not read the file's registration here as covering it. Known projection gap, tracked in 911 §F: scanId is emitted as SCAN_ID_NOT_PLUMBED because four layers between SqliteJobQueue and here drop the column — declared here so the gap is reviewable against the canonical record rather than invisible."
+    },
+    {
       "id": "count-projection",
       "kind": "projection",
       "lang": "java",
@@ -171,6 +180,15 @@
       "guard": "gate:operation-surface",
       "consumesProjection": "head-sse-controller",
       "note": "The FE rail projection: maps the change-feed into the Task substrate with truthful lifecycle states (PENDING→queued, PROCESSING→running, DONE→vanish, FAILED/RETRY_EXHAUSTED→failed) — in-flight derived from the authoritative job state, never asserted by membership (Thesis II). Rendered bounded by <jf-task-list> (Thesis III.b)."
+    },
+    {
+      "id": "fe-indexing-job-state-vocabulary",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/state/indexingJobStates.ts",
+      "guard": "gate:operation-surface",
+      "consumesProjection": "canonical-record",
+      "note": "Tempdoc 885 item 21b, registered by 910 — the shell-side spelling of IndexingJobView.STATE_*. It is the ONE vocabulary source for the three surfaces that classify on job state (operations/ActionLedgerClient.ts, substrates/tasks/indexingJobsBridge.ts, components/FailedJobsDrawer.ts), so a state literal is typed once rather than three times independently; three literals is three chances to typo one into a silent default arm. It consumes the canonical record directly rather than another projection: it mirrors the STATE_* constants, it does not derive from the SSE feed. Import-invisible to the scanner in the usual way — it is detected by naming IndexingJobView in its own header, which is exactly the reference that makes it a surface."
     },
     {
       "id": "fe-activity-index-projection",

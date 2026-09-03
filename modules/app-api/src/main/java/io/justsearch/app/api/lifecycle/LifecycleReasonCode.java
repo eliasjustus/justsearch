@@ -53,6 +53,12 @@ public enum LifecycleReasonCode {
   // WorkerFatalReasonMarker; the Head reads it once (readAndClear DELETES it), so this cause is
   // observable exactly once per crash and WorkerCapability latches it until READY.
   WORKER_INDEX_CORRUPT("worker.index_corrupt"),
+  // Tempdoc 915 (live validation D-obs): the worker refused to start because the committed index
+  // shape is not the one this runtime writes, under index.schema_mismatch.policy=FAIL_CLOSED.
+  // Same marker mechanism as WORKER_INDEX_CORRUPT and the same once-per-crash observability; a
+  // separate code because the remedy differs - a rebuild under a policy that permits one, or a
+  // policy change, not a corruption repair.
+  WORKER_INDEX_SCHEMA_MISMATCH("worker.index_schema_mismatch"),
   // Tempdoc 837 S3 — orderly teardown (KnowledgeServerBootstrap.closeForUpgrade). Not a failure:
   // distinguishing it from worker.not_configured keeps "we stopped it" from reading as
   // "it was never set up".
@@ -66,6 +72,10 @@ public enum LifecycleReasonCode {
   INDEX_NOT_HEALTHY("index.not_healthy"),
   INDEX_BLOCKED_LEGACY("index.blocked_legacy"),
   INDEX_SCHEMA_MISMATCH("index.schema_mismatch"),
+  // Tempdoc 915 §C: the Worker gave up on automatic rebuilds for this index shape after
+  // MAX_AUTO_REBUILD_ATTEMPTS. Search still serves the existing index read-only; ingestion does
+  // not resume without an operator.
+  INDEX_REBUILD_BRAKE_EXHAUSTED("index.rebuild_brake_exhausted"),
   // Tempdoc 837 S6 (§2.1/§2.2) RETIRED the INDEX_REBUILDING member here. (Its code string is
   // deliberately not repeated in this comment: the gate's enum extractor does not strip comments, so
   // a prose mention in the NAME-plus-quoted-string shape would re-create the phantom it deleted.)
@@ -216,7 +226,7 @@ public enum LifecycleReasonCode {
   public RetentionClass retentionClass() {
     return switch (this) {
       // Unrepeatable: the fatal-reason marker is deleted as it is read (tempdoc 628/837 §3.1).
-      case WORKER_INDEX_CORRUPT -> RetentionClass.STICKY;
+      case WORKER_INDEX_CORRUPT, WORKER_INDEX_SCHEMA_MISMATCH -> RetentionClass.STICKY;
 
       // Tempdoc 882 item 24: observed exactly once, at load, and never re-derived. The file that
       // proved it has already been moved aside. A later TRANSIENT write must not erase the only
@@ -264,6 +274,7 @@ public enum LifecycleReasonCode {
           INDEX_NOT_HEALTHY,
           INDEX_BLOCKED_LEGACY,
           INDEX_SCHEMA_MISMATCH,
+          INDEX_REBUILD_BRAKE_EXHAUSTED,
           INDEX_EMBEDDING_REBUILDING,
           INDEX_EMBEDDING_LEGACY,
           INDEX_EMBEDDING_MISMATCH,

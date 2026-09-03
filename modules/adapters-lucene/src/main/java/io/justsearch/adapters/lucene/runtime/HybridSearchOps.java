@@ -14,7 +14,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -26,8 +25,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Internal hybrid-search collaborator for {@link LuceneLifecycleManager}.
  *
- * <p>Encapsulates the low-signal gating logic and vector-skip heuristic that were previously
- * duplicated across three near-identical hybrid search methods in the facade.
+ * <p>Encapsulates the low-signal gating logic that was previously duplicated across three
+ * near-identical hybrid search methods in the facade.
  *
  * <p>Lifecycle: instances are created in {@code applyComponents()} and discarded on {@code close()}.
  * Access from the runtime must go through a volatile snapshot to ensure visibility across threads.
@@ -49,7 +48,6 @@ public final class HybridSearchOps {
   // <=> cos == -0.2 <=> score_euc = 1/(3-2*(-0.2)) = 1/3.4 ~= 0.294 (tempdoc 702).
   // Package-private (not private) so CalibrationConstantsTest can pin the derivation.
   static final double DEFAULT_VECTOR_LOW_SIGNAL_THRESHOLD = 0.294;
-  static final int DEFAULT_VECTOR_SKIP_MIN_CHARS = 4;
   static final int DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL = 3;
   static final double DEFAULT_VECTOR_RRF_WEIGHT_LOW_SIGNAL = 0.25;
 
@@ -74,21 +72,6 @@ public final class HybridSearchOps {
   static final double ARBITRATION_DENSE_CONFIDENT_MIN = 1.0 / 3.0;
   /** Cross-leg top-K doc-id Jaccard at/above which the legs "agree" (no intervention). */
   private static final double ARBITRATION_OVERLAP_MAX = 0.1;
-
-  /**
-   * Common English stop words whose vector embeddings are semantically meaningless.
-   */
-  private static final Set<String> STOP_WORDS = Set.of(
-      "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-      "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
-      "be", "have", "has", "had", "do", "does", "did", "will", "would",
-      "could", "should", "may", "might", "must", "shall", "can", "need",
-      "it", "its", "this", "that", "these", "those", "i", "you", "he",
-      "she", "we", "they", "what", "which", "who", "whom", "how", "when",
-      "where", "why", "all", "each", "every", "both", "few", "more", "most",
-      "other", "some", "such", "no", "not", "only", "own", "same", "so",
-      "than", "too", "very", "just", "also", "now", "here", "there"
-  );
 
   private final RuntimeSession session;
   private final TextQueryOps textQueryOps;
@@ -117,33 +100,6 @@ public final class HybridSearchOps {
 
   /** Result of low-signal gating computation for hybrid search RRF fusion. */
   record LowSignalGating(int vectorOnlyCap, double vectorWeight) {}
-
-  /**
-   * Determines if vector search should be skipped for this query.
-   *
-   * <p>Short-circuits vector search for:
-   * <ul>
-   *   <li>Queries shorter than the configured minimum characters</li>
-   *   <li>Single-word queries that are common stop words</li>
-   * </ul>
-   *
-   * @param queryText the query to evaluate
-   * @return true if vector search should be skipped
-   */
-  boolean shouldSkipVectorSearch(String queryText) {
-    ResolvedConfig rc = session.resolvedConfig;
-    ResolvedConfig.HybridSearch hs = rc != null ? rc.hybridSearch() : null;
-    int minChars = hs != null ? hs.vectorSkipMinChars() : DEFAULT_VECTOR_SKIP_MIN_CHARS;
-    if (queryText.length() < minChars) {
-      return true;
-    }
-    String normalized = queryText.trim().toLowerCase(Locale.ROOT);
-    // Single word that's a stop word
-    if (!normalized.contains(" ") && STOP_WORDS.contains(normalized)) {
-      return true;
-    }
-    return false;
-  }
 
   /**
    * Computes low-signal gating parameters for RRF fusion.
@@ -354,45 +310,6 @@ public final class HybridSearchOps {
       boolean debug,
       String logPrefix) {
     long startTime = System.currentTimeMillis();
-
-    // Short-circuit: skip vector search for trivial queries.
-    // E2E-8: Always populate "sparse"/"vector" debug scores (matching fuseWithRRF key names)
-    // so LambdaMART feature collection works even for trivial queries.
-    if (shouldSkipVectorSearch(queryText)) {
-      log.debug("Skipping vector search for trivial query: '{}'", queryText);
-      SearchResult textResult = textLeg.search(queryText, limit);
-      int[] sparseRank = {1}; // mutable counter for lambda
-      List<SearchHit> annotatedHits =
-          textResult.hits().stream()
-              .map(
-                  hit -> {
-                    Map<String, Float> scores = new HashMap<>();
-                    scores.put("sparse", hit.score());
-                    scores.put("sparse_rank", (float) sparseRank[0]++);
-                    scores.put("vector", 0.0f);
-                    scores.put("vector_rank", 0f);
-                    if (debug) {
-                      // No RRF fusion happened â€” vector leg was skipped entirely.
-                      // sparse_rrf/vector_rrf are the per-leg RRF contributions (no fusion â†’ 0).
-                      // sparse_boost is the BM25 boost term (no boost applied â†’ 0).
-                      // rrf_base is the raw RRF score before boost (no fusion â†’ 0).
-                      // rrf = final score, which is just the raw BM25 score here.
-                      scores.put("sparse_rrf", 0.0f);
-                      scores.put("vector_rrf", 0.0f);
-                      scores.put("sparse_boost", 0.0f);
-                      scores.put("rrf_base", 0.0f);
-                      scores.put("rrf", hit.score());
-                    }
-                    return new SearchHit(
-                        hit.docId(), hit.score(), hit.fields(), Map.copyOf(scores));
-                  })
-              .toList();
-      long tookMs = System.currentTimeMillis() - startTime;
-      // Tempdoc 549 Slice 3c (U2): single BM25 leg, vector skipped, no fusion.
-      SearchResult skipResult = new SearchResult(annotatedHits, textResult.totalHits(), tookMs);
-      return HitProvenanceProjector.attachRetrieval(
-          skipResult, HitProvenanceProjector.indexLeg(skipResult), null, null, null);
-    }
 
     // Compute candidate limits from config
     ResolvedConfig rc = session.resolvedConfig;

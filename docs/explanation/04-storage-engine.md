@@ -49,7 +49,7 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | Field | Type | Purpose |
 | :--- | :--- | :--- |
 | `doc_id` | keyword | Primary Key (Normalized file path). |
-| `doc_uid` | keyword | Unique ID (UUID) assigned at ingest/reindex (useful tie-breaker in some pipelines; not stable across full reindex). |
+| `doc_uid` | keyword | Stable, content-independent identity plus the search-after tie-breaker. Parent UIDs survive reindex and supported renames; chunk UIDs derive from the parent UID and chunk ordinal. |
 | `content` | text | Main searchable text (tokenized). |
 | `content_preview` | text | Small stored snippet source (first few KB) for fast results list rendering. |
 | `title` | text | Optional extracted title (stored). |
@@ -66,7 +66,7 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | `is_chunk` | boolean | "true" if this is a chunk, absent otherwise. |
 | `chunk_index` | int | Sequential index of the chunk (0, 1, 2...). |
 | `chunk_total` | int | Total number of chunks for the parent document. |
-| `chunk_content` | text | Searchable chunk text used for BM25 chunk retrieval. |
+| `chunk_content` | text (indexed, not stored) | Searchable chunk text used for BM25 retrieval; read paths reconstruct it from the stored parent `content` and chunk offsets. |
 | `chunk_start_char` | int | Start character offset (0-based) into the parent document’s extracted text. |
 | `chunk_end_char` | int | End character offset (exclusive, 0-based) into the parent document’s extracted text. |
 | `chunk_start_line` | int | Optional start line number (1-based) for citation/navigation UX. |
@@ -76,18 +76,29 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | `chunk_vector` | floats | 768-dim chunk embeddings (HNSW) used for chunk-level hybrid retrieval. |
 | `chunk_embedding_status` | keyword | Chunk embedding generation status (`PENDING|COMPLETED|FAILED`). |
 | `chunk_embedding_retry_count` | long | Retry count for chunk embedding poison-pill protection. |
-| `entity_persons_raw` | keyword (SortedSetDocValues) | Person entity facet values (filter/facet). |
-| `entity_organizations_raw` | keyword (SortedSetDocValues) | Organization entity facet values (filter/facet). |
-| `entity_locations_raw` | keyword (SortedSetDocValues) | Location entity facet values (filter/facet). |
-| `entity_persons_text` | text (ICU-analyzed, stored) | Person entities for BM25 scoring. |
-| `entity_organizations_text` | text (ICU-analyzed, stored) | Organization entities for BM25 scoring. |
-| `entity_locations_text` | text (ICU-analyzed, stored) | Location entities for BM25 scoring. |
+| `entity_persons_raw` | keyword (SortedSetDocValues) | Person entity values for filtering, faceting, and NER-membership evidence selection. |
+| `entity_organizations_raw` | keyword (SortedSetDocValues) | Organization entity values for filtering, faceting, and NER-membership evidence selection. |
+| `entity_locations_raw` | keyword (SortedSetDocValues) | Location entity values for filtering, faceting, and NER-membership evidence selection. |
 | `meta_source` | keyword (stored, DocValues) | Document source for filter/facet. |
 | `meta_author` | keyword (stored, DocValues) | Document author for filter/facet. |
 | `meta_category` | keyword (stored, DocValues) | Document category for filter/facet. |
 | `meta_published_at` | long (stored, DocValues) | Publication timestamp for filter/sort. |
 | `extraction_method` | keyword | Extraction tier used (e.g., STRUCTURED_TIKA, FLAT_TIKA). |
 | `extraction_quality_score` | double | Numeric quality score 0.0–1.0 for provenance. |
+
+### Document identity
+
+The Worker keeps the parent mapping `path_hash → doc_uid` in the path-free
+`document_identity` table inside `jobs.db`. Admission resolves that mapping before extraction, so a
+normal rewrite, delete-and-reindex, or Blue/Green rebuild writes the same UID. On the first V11 boot,
+the serving index seeds the empty table from its stored parent `doc_id` and `doc_uid` fields before
+indexing starts. SQLite identity failures are fail-closed: the queue retries the document rather than
+minting from a second authority.
+
+Chunk documents use `parentDocUid + "#" + chunkIndex`, making chunk regeneration deterministic
+without adding a second schema field. API-driven moves re-key the parent mapping before Lucene path
+fields are rewritten. Filesystem-watcher renames still arrive as delete plus create events and do not
+currently carry rename identity.
 
 **Notes on new field groups:**
 
@@ -100,6 +111,15 @@ Large documents are split into overlapping chunks (default 500 tokens) to suppor
 *   **Storage:** Chunks are stored as separate Lucene documents.
 *   **Linkage:** They are linked to the original file via `parent_doc_id`.
 *   **Retrieval:** Searches can target `is_chunk:true` to find specific relevant passages rather than whole files.
+
+`chunk_content` contributes analyzed postings but is deliberately not stored a second time. A read
+that explicitly projects it loads each distinct parent at most once and returns the exact Java
+UTF-16 substring `content.substring(chunk_start_char, chunk_end_char)`—including original CRLF,
+fence, whitespace, and non-BMP characters, with no trimming or normalization. Missing parents and
+invalid or out-of-range offsets fail closed without fabricated text (batch/generic projections omit
+the value; the chunk-search envelope retains its existing empty-string fallback). Read-modify-write
+operations apply the catalog policy `rederive-parent-slice` so unrelated updates do not erase the
+chunk's indexed postings.
 
 Chunk-level vector retrieval uses **field separation**:
 - Full documents embed into `vector`
@@ -156,11 +176,20 @@ Schema mismatches are **not** treated as “corruption”.
 
 - **Typed reason**: `IndexRuntimeIOException.Reason.SCHEMA_MISMATCH`
 - **Policy-controlled** via `index.schema_mismatch.policy` (also overridable via `JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY` / `-Dindex.schema_mismatch.policy=...`):
-  - `FAIL_CLOSED`: refuse to rebuild; require operator action (recommended prod default)
-  - `REBUILD_BACKUP_FIRST`: rename-to-backup and rebuild empty (dev convenience)
-  - `BLUE_GREEN_MIGRATE`: orchestrate a blue/green migration (serve read-only Blue while building Green)
+  - `FAIL_CLOSED`: refuse to rebuild; require operator action
+  - `REBUILD_BACKUP_FIRST`: rename-to-backup and rebuild empty (**dev default**)
+  - `BLUE_GREEN_MIGRATE`: orchestrate a blue/green migration, serving read-only Blue while building Green (**production default**, tempdoc 915)
 
 Stable migration architecture is described in `docs/explanation/11-index-schema-migration.md`.
+
+**Index identity:** what triggers `SCHEMA_MISMATCH` is a mismatch on `index_fingerprint`, a
+SHA-256 stamped into Lucene commit user-data by `IndexFingerprint`
+(`modules/adapters-lucene/.../commit/IndexFingerprint.java`) over the canonical JSON of the effective
+*physical* index shape — catalog schema version, each field's physical projection, the analyzer
+fingerprint, vector format, HNSW `m`/`ef_construction`, chunking parameters, and the
+embedding/SPLADE model digests. It is the one rebuild-requiring parity key; `boosts_fp` (query-time
+field boosts) is the other tracked key but never triggers a rebuild. Full input list, exclusions, and
+the enforcement mechanics live in `docs/explanation/11-index-schema-migration.md`.
 
 ### 3. Commit Strategy
 Writing to disk is expensive. `IndexingLoop` controls commits, but `LuceneIndexRuntime` enforces the physical write.

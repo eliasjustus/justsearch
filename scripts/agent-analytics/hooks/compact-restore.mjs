@@ -165,12 +165,16 @@ async function main() {
 
     const context = buildContext(state, sessionId);
 
-    // Primary: write stamped rules file (persists in system prompt across turns).
-    try {
-      fs.mkdirSync(path.dirname(RULES_FILE), { recursive: true });
-      fs.writeFileSync(RULES_FILE, context, 'utf8');
-    } catch {
-      // If rules file write fails, fall back to additionalContext only
+    // Claude reloads .claude/rules; Codex does not. For Codex, avoid creating a
+    // misleading dirty file and rely on SessionStart additionalContext, which
+    // Codex delivers immediately after both manual and automatic compaction.
+    if (process.env.JUSTSEARCH_AGENT_HARNESS !== 'codex-cli') {
+      try {
+        fs.mkdirSync(path.dirname(RULES_FILE), { recursive: true });
+        fs.writeFileSync(RULES_FILE, context, 'utf8');
+      } catch {
+        // If rules file write fails, fall back to additionalContext only
+      }
     }
 
     // Fallback: also emit additionalContext (one-shot, may not persist, but immediate)

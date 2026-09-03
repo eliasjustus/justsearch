@@ -171,7 +171,7 @@ export async function readRunJson({ repoRoot, runId }) {
   return JSON.parse(raw);
 }
 
-export function buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload, sessionId, leaseDurationSec, chatProfile }) {
+export function buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload, sessionId, leaseDurationSec, chatProfile, distFromRoot }) {
   const out = [
     'start',
     '--json',
@@ -193,6 +193,12 @@ export function buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeo
   // Tempdoc 842 §2.4: forward the chat model profile; dev-runner.cjs owns the "compact" dev
   // default when this is omitted.
   if (chatProfile) out.push(`--chat-profile=${chatProfile}`);
+  // Tempdoc 913 T1: the checkout the caller ASKED to launch from, resolved. Forwarded so the run's
+  // provenance can say "launched where asked" — without it, a `distFrom` launch is indistinguishable
+  // from a stack that drifted onto a foreign checkout, and quick_health called every one of them
+  // `rebuildFirst`. Omitted (not empty) when the caller passed no distFrom, so the record does not
+  // claim a requested root that was never requested.
+  if (distFromRoot) out.push(`--dist-from=${distFromRoot}`);
   return out;
 }
 

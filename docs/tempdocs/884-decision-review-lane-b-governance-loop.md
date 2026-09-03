@@ -1,5 +1,5 @@
 ---
-status: IN REVIEW — PR 1 landed (#594: premise probes + 45-ADR frontmatter sweep); PR 2 implemented and open for independent review (ADR amendments, ADR-0046, risk register, fail-closed token, 0038 generation, review cadence)
+status: IN REVIEW — PR 1 landed (#594: premise probes + 45-ADR frontmatter sweep); PR 2 implemented and open for independent review (ADR amendments, ADR-0046, risk register, fail-closed token, 0038 generation, review cadence). The store-recoverability register residue and the governance-kernel dead-code/module-deps/test-efficacy gate residue are settled by tempdocs 909 (#613) and 910 (#611) — see "Residue routed".
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; no dev stack needed)
@@ -1011,6 +1011,18 @@ no-over-refusal case, and a live 401/200 install check.
 Eight items in §F, each with an owner and the place it is acted on. The two that are load-bearing
 for the next agent: **CLAUDE.md has 1 byte of headroom**, and **`docs/llms.txt` is missing 13 live
 ADRs** because their frontmatter says `accepted` rather than `stable`.
+
+**Settled (2026-09-02) — cross-lane, credited here because the governance kernel is this lane's
+subject.** The `store-recoverability.v1.json` register's `pendingDurableClassification` (parked
+sites, capped, each naming its blocker — see 885's UL-window §3496-3505, the register's actual
+home) is now empty: tempdoc 909 (#613) did the real product work behind all eight parked sites and
+promoted each to a READY `durableStores` row (42 rows total; `cap: 8` retained on the now-empty
+list). Tempdoc 910 (#611), the governance-kernel residue lane parented on this tempdoc, closed the
+register's other open edge in the same wave: a closed `corruptionPolicy` vocabulary (26 values) plus
+an external count ratchet (floor + `pendingDurableClassificationCap` ceiling) in the new
+`governance/store-corruption-policies.v1.json`, alongside the `dead-code` gate's whole-file masking
+fix (§F row 9 above) and `module-deps`/test-efficacy fixes surfaced by the same independent-review
+round, and a shared prior-baseline reader so both gates read one baseline-diff helper instead of two.
 
 ### What the next lane must know
 

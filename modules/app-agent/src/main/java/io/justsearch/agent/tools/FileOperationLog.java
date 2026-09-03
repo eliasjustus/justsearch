@@ -30,7 +30,14 @@ import org.slf4j.LoggerFactory;
  */
 public final class FileOperationLog {
   private static final Logger LOG = LoggerFactory.getLogger(FileOperationLog.class);
-  private static final int CURRENT_SCHEMA_VERSION = 1;
+  /**
+   * v2 (tempdoc 909 items 7/8) adds {@code executed[].destinationDigest} for COPY operations — the
+   * content identity a COPY-undo must match before it deletes the file. v1 journals stay readable
+   * (nothing was removed or re-shaped), and a v1 entry's ABSENT digest is what tells the undo it
+   * cannot prove identity, so it preserves rather than deletes. The bump is what makes an older app
+   * refuse a v2 journal loudly instead of undoing it under v1's weaker guarantee.
+   */
+  private static final int CURRENT_SCHEMA_VERSION = 2;
   private static final ObjectMapper MAPPER =
       JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
 
@@ -67,7 +74,16 @@ public final class FileOperationLog {
     writeBatchLog(batchId, log);
   }
 
-  void recordSuccess(String batchId, int index) {
+  /**
+   * Records a successful operation.
+   *
+   * @param destinationDigest the content identity of what the operation left at the destination, or
+   *     null when it has none (schema v2, tempdoc 909 items 7/8). Only a COPY records one: undoing a
+   *     COPY DELETES the destination, so it is the one undo that must prove it is deleting the
+   *     agent's own bytes. A MOVE-undo moves the file back, which loses nothing, and MKDIR-undo only
+   *     removes an empty directory.
+   */
+  void recordSuccess(String batchId, int index, String destinationDigest) {
     updateBatchLog(
         batchId,
         log -> {
@@ -77,6 +93,9 @@ public final class FileOperationLog {
           entry.put("index", index);
           entry.put("status", "OK");
           entry.put("timestamp", Instant.now().toString());
+          if (destinationDigest != null && !destinationDigest.isBlank()) {
+            entry.put("destinationDigest", destinationDigest);
+          }
           executed.add(entry);
         });
   }
@@ -111,7 +130,9 @@ public final class FileOperationLog {
         });
   }
 
-  void recordRename(String batchId, int index, Path originalDest, Path resolvedDest) {
+  /** As {@link #recordSuccess}, for an operation whose destination was auto-suffixed. */
+  void recordRename(
+      String batchId, int index, Path originalDest, Path resolvedDest, String destinationDigest) {
     updateBatchLog(
         batchId,
         log -> {
@@ -123,6 +144,9 @@ public final class FileOperationLog {
           entry.put("originalDestination", originalDest.toString());
           entry.put("resolvedDestination", resolvedDest.toString());
           entry.put("timestamp", Instant.now().toString());
+          if (destinationDigest != null && !destinationDigest.isBlank()) {
+            entry.put("destinationDigest", destinationDigest);
+          }
           executed.add(entry);
         });
   }

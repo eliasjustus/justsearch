@@ -67,6 +67,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             modules/ui-web/package-lock.json
+            scripts/wire-contract/package-lock.json
 
       - name: Setup Python for zero-cost claim replay
         uses: actions/setup-python@v7
@@ -113,6 +114,12 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
+      - name: Test language-agnostic authored-word-list scanner
+        run: node scripts/ci/lib/language-agnostic-word-lists.test.mjs
+
+      - name: Search analysis remains language-agnostic
+        run: node scripts/ci/check-language-agnostic-analysis.mjs
+
       # Tempdoc 745 D6. These ~26 files (743's baseline-economics/record-merge suites
       # included) previously ran in CI NOWHERE — manual-only, i.e. only when someone
       # remembered. That is the exact failure mode 745 documents: a layer nothing
@@ -120,6 +127,9 @@ jobs:
       # *.test.mjs so a new test is covered the moment it lands.
       - name: Test agent-analytics instrument (node)
         run: node scripts/agent-analytics/run-all-tests.mjs
+
+      - name: Verify Codex agent parity
+        run: node scripts/ci/check-codex-agent-parity.mjs
 
       - name: Test OTLP telemetry sink (Python)
         # otlp-sink.py hard-imports opentelemetry.proto.* to decode OTLP protobuf,
@@ -222,6 +232,34 @@ jobs:
       # 2.7s (knip) and 4.5s (npm audit) -- so the reason they were missing was wiring, not budget.
       # dead-code-jvm's producer is a Gradle run, so it lives in the unit-test lane that already
       # builds it rather than here.
+      # Tempdoc 918 item 2, closing 913 open item 1. Each of the 20 unwired gates was run bare on
+      # the base and classified (census: tempdoc 918 §D). These 14 are green on `main` AND hermetic
+      # -- they read checked-in registers, catalogs and source text, and need no produced artifact,
+      # no Gradle output, no protoc and no dev stack. The step sits DELIBERATELY above the
+      # `npm ci --prefix modules/ui-web` below, so the job itself demonstrates the claim rather
+      # than asserting it: if one of these ever starts needing an install, it fails here.
+      #
+      # Six of the 20 are NOT in this step:
+      #   - consumer-presence, host-owns-truth, runtime-witness
+      #                  all three read tmp/consumer-presence/registry-snapshot.json, a Gradle
+      #                  artifact (RegistrySnapshotExporterTest), and SOFT-FAIL to `pass` when it
+      #                  is absent (consumer-presence/enforcer.mjs:36-46). Running them here would
+      #                  have inspected nothing -- the first version of this step did exactly that
+      #                  and logged three `snapshot-missing` warnings as part of a green. They now
+      #                  run in the unit-tests app-ui lane, after the task that builds the snapshot.
+      #   - ts-any       red on `main` behind expected-state pin `ts-any-gate-counts-english-prose`
+      #                  (countAny scores the English word "any"); wiring a known red would make
+      #                  every PR red for a reason no PR caused. Wire it with the counting fix.
+      #   - test-efficacy its PIT strength report is an ON-DEMAND input, so without a `:pitest` run
+      #                  the runner SKIPS it (kernel/input-skipped, verdict `skipped`, exit 0).
+      #                  Wiring it here would add a step that can only ever report a vacuous green.
+      #                  It belongs in a lane that produces the report.
+      #   - wire         has its own step below: it needs the buf CLI, and its failure mode without
+      #                  it is a PASS, which is worse than being unwired.
+      - name: Hermetic kernel gates (14, no produced inputs, no install)
+        run: |
+          node scripts/governance/run.mjs             --gate consumer-drift --gate contract-projection --gate contribution-surface             --gate hook-integrity --gate interaction-surface --gate observed-happening             --gate prose-tier-register --gate runtime-state --gate ssot-catalog-sync             --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring             --gate test-to-code --gate todo-fixme             --mode gate
+
       - name: Build kernel gate inputs
         run: |
           npm ci --prefix modules/ui-web
@@ -235,6 +273,57 @@ jobs:
           node scripts/governance/run.mjs \
             --gate config-surface --gate dead-code --gate npm-audit --gate module-deps \
             --mode gate
+
+      # Tempdoc 913 T1/T2, the same shape as the block below it. The dev-MCP surface's doc-sync
+      # gate and the two pure suites that cover its verdict logic ran in no workflow at all, which
+      # is why an allowlist could lose an endpoint and the ownership verdict could report
+      # `rebuildFirst` on every distFrom launch with nothing to contradict either. All three are
+      # pure (no dev stack, no Gradle): check-dev-mcp-doc-sync spawns the MCP server over stdio and
+      # calls tools/list, which touches no run state.
+      - name: Dev-MCP surface (doc sync + pure unit suites)
+        run: |
+          node scripts/ci/check-dev-mcp-doc-sync.mjs
+          node scripts/dev/test-dev-mcp-surface-honesty.mjs
+          node scripts/dev/test-ownership-verdict.mjs
+
+      # Tempdoc 913 D1, the same shape a fourth time, one register-family out. The
+      # operation-surface gate ran NOWHERE: not in any workflow, not in build.gradle.kts.
+      # The self-test step below does exercise it, but only against its fixtures -- it never
+      # applies the enforcer to the repo tree, so the enforcer being green says nothing about
+      # main being green. #614 typed IndexingController onto the canonical IndexingJobView and
+      # landed with the register missing a row for it; PR CI and the merge group both passed
+      # and main was red on `--gate operation-surface` from that merge onward.
+      #
+      # These three are input-free (they read the register JSONs + walk the source tree, no
+      # produced artifact), so they cost nothing to run here. Scoped to the register family
+      # implicated by D1 rather than "the rest of the kernel": ts-any is red on main behind an
+      # expected-state pin, and `wire` is environment-sensitive (needs the buf CLI installed),
+      # so a blanket full-kernel step would land CI red for reasons unrelated to the fix.
+      #
+      # Census (corrected by review of #617 -- the first count missed the six kernel gates the
+      # "ui-web pre-merge gate set" step above runs via run-ui-web-gates.mjs, which expands the
+      # `ui-web-gates` recipe: ambient-purity, style-literal-ratchet, atom-fork-ratchet,
+      # modality-contract, transient-arbitration, modal-arbitration). Of 35 registered gates,
+      # 12 ran in CI before this step and 15 do with it -- so 20 remain unwired, tracked in
+      # tempdoc 913 open items with the full list.
+      - name: Register-family gates (operation-surface, execution-surface, guard resolution)
+        run: |
+          node scripts/governance/run.mjs \
+            --gate operation-surface --gate execution-surface --gate register-guard-resolution \
+            --mode gate
+
+      # The `wire` gate (protobuf breaking-change detection) ran in NO workflow and no job covers
+      # `contracts/**` either, so a breaking .proto change had nothing to stop it. It is wired with
+      # its install rather than without, because `buf` absent is not a failure in this gate -- it
+      # emits `contract-governance/buf-cli-missing` and still returns verdict `pass`
+      # (expected-state pin `wire-gate-buf-cli-missing` documents exactly this fail-open). A step
+      # that ran the gate without installing buf would be a permanent green that inspects nothing.
+      # The install is a 2-package `npm ci` against a committed lockfile (~1s locally).
+      - name: Wire contract gate (protobuf breaking changes)
+        run: |
+          npm ci --prefix scripts/wire-contract
+          node scripts/governance/run.mjs --gate wire --mode gate --out tmp/wire-gate.sarif
+          node -e "if (require('fs').readFileSync('tmp/wire-gate.sarif','utf8').includes('buf-cli-missing')) { console.error('wire gate ran without the buf CLI: its pass is vacuous'); process.exit(1); }"
 
       # Tempdoc 884 review B1, same shape as the note above: the kernel's own gate tests
       # (18 *.test.mjs files) ran NOWHERE -- standalone `node <file>` scripts nobody
@@ -508,6 +597,12 @@ jobs:
             artifact: unit-test-attribution-app-ui
             runner_label: ubuntu-latest/app-ui
             fetch_depth: 1
+            # This lane runs :modules:app-services:test, which IS RegistrySnapshotExporterTest --
+            # the producer of tmp/consumer-presence/registry-snapshot.json. The three gates that
+            # read that snapshot therefore run here (tempdoc 918 B1), same pattern as
+            # run_dead_code_jvm on the platform-contracts lane. None of the three resolves a git
+            # baseline (registry: diffStrategy "none" / no baseline), so depth 1 is enough.
+            run_snapshot_gates: "true"
             gradle_tasks: >-
               :modules:app-agent:test
               :modules:app-agent-api:test
@@ -597,6 +692,22 @@ jobs:
       - name: JVM dead-code gate (input built by the tasks above)
         if: matrix.run_dead_code_jvm == 'true'
         run: node scripts/governance/run.mjs --gate dead-code-jvm --mode gate
+
+      # Tempdoc 918 B1. consumer-presence, host-owns-truth and runtime-witness read the registry
+      # snapshot exported below, and each returns verdict `pass` with a `snapshot-missing` WARNING
+      # when it is absent -- a soft-fail that makes them vacuous anywhere else. The dedicated
+      # exporter must run explicitly because a cached Gradle test task does not replay its
+      # filesystem side effect. The final line is the anti-vacuous assertion: if the snapshot was
+      # not built, the finding is present and this step fails rather than reporting a green that
+      # inspected nothing.
+      - name: Registry-snapshot gates (fresh explicit input)
+        if: matrix.run_snapshot_gates == 'true'
+        run: |
+          chmod +x ./gradlew 2>/dev/null || true
+          GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
+          "$GW" :modules:app-services:exportRegistrySnapshot -PskipWebBuild=true --console=plain
+          node scripts/governance/run.mjs             --gate consumer-presence --gate host-owns-truth --gate runtime-witness             --mode gate --out tmp/snapshot-gates.sarif
+          node -e "if (require('fs').readFileSync('tmp/snapshot-gates.sarif','utf8').includes('snapshot-missing')) { console.error('registry snapshot absent: these three gates inspected nothing'); process.exit(1); }"
 
       - name: Report unit-test attribution
         if: always()

@@ -142,16 +142,10 @@ public final class SchemaFields {
   // NER Entity fields
   /** Raw person entity names extracted by NER (multi-valued keyword for filter/facet). */
   public static final String ENTITY_PERSONS_RAW = "entity_persons_raw";
-  /** Analyzed person entity names for BM25 search (ICU-tokenized text). */
-  public static final String ENTITY_PERSONS_TEXT = "entity_persons_text";
   /** Raw organization entity names extracted by NER (multi-valued keyword for filter/facet). */
   public static final String ENTITY_ORGANIZATIONS_RAW = "entity_organizations_raw";
-  /** Analyzed organization entity names for BM25 search (ICU-tokenized text). */
-  public static final String ENTITY_ORGANIZATIONS_TEXT = "entity_organizations_text";
   /** Raw location entity names extracted by NER (multi-valued keyword for filter/facet). */
   public static final String ENTITY_LOCATIONS_RAW = "entity_locations_raw";
-  /** Analyzed location entity names for BM25 search (ICU-tokenized text). */
-  public static final String ENTITY_LOCATIONS_TEXT = "entity_locations_text";
   /** NER processing status for this document. */
   public static final String NER_STATUS = "ner_status";
   public static final String NER_STATUS_PENDING = "PENDING";

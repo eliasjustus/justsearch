@@ -75,6 +75,30 @@ final class StatusLifecycleWorkerReasonTest {
   }
 
   @Test
+  @DisplayName("915 R1: a refused schema mismatch reaches /api/health as the cause, through the ladder")
+  void schemaMismatchSurvivesTheLadderOntoTheWire() {
+    WorkerCapability cap = new WorkerCapability();
+    // The producer's own call, then the ladder's writes in the order live arm 2 observed them. The
+    // failure this pins is not the mapping (KnowledgeServerWorkerDownCodeTest owns that) but the
+    // SEQUENCE: /api/health reported worker.spawn_recovery_exhausted and the user was told to
+    // restart the application, for an index that needed one policy change.
+    cap.transition(
+        CapabilityHealth.DEGRADED,
+        LifecycleReasonCode.WORKER_INDEX_SCHEMA_MISMATCH.code(),
+        "Set index.schema_mismatch.policy=BLUE_GREEN_MIGRATE ...");
+    cap.transition(
+        CapabilityHealth.RECOVERING, LifecycleReasonCode.WORKER_RECOVERING.code(), "attempt 1");
+    cap.transition(
+        CapabilityHealth.DEGRADED,
+        LifecycleReasonCode.WORKER_SPAWN_RECOVERY_EXHAUSTED.code(),
+        "recovery attempts did not bring it up");
+
+    LifecycleSnapshotV1.Component c = workerComponent(cap);
+    assertEquals(LifecycleState.LIFECYCLE_STATE_ERROR, c.state());
+    assertEquals(LifecycleReasonCode.WORKER_INDEX_SCHEMA_MISMATCH.code(), c.reason_code());
+  }
+
+  @Test
   @DisplayName("worker.spawn.failed still reports itself — it is now TRUE when it fires")
   void neverStartedStillReportsSpawnFailed() {
     WorkerCapability cap = new WorkerCapability();

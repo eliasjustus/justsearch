@@ -80,7 +80,7 @@ public final class CommitOps {
    *
    * @return elapsed time in milliseconds for the Lucene commit operation
    */
-  public long commit() {
+  long commit() {
     boolean metaEnabled = session.commitMetadataEnabled;
     Map<String, String> ud;
     if (metaEnabled) {
@@ -139,11 +139,16 @@ public final class CommitOps {
    * scheduled timer commits) stamp the new build state. Replaces the deprecated
    * {@code setBuildState + commit} two-step pattern from
    * {@code LuceneLifecycleManager}.
+   *
+   * <p>The reason is required rather than defaulted: this method's only caller is the blue/green
+   * cutover, and defaulting it to {@link CommitReason#UNKNOWN} is exactly how the most consequential
+   * commit in the system came to be the one commit with no attribution (tempdoc 912 item 1).
    */
-  public void commitWithBuildState(LuceneRuntimeTypes.BuildState state) {
+  public void commitWithBuildState(LuceneRuntimeTypes.BuildState state, CommitReason reason) {
     java.util.Objects.requireNonNull(state, "state");
+    java.util.Objects.requireNonNull(reason, "reason");
     this.currentBuildState = state;
-    commitAndTrack();
+    commitAndTrack(reason);
   }
 
   /**
@@ -156,11 +161,24 @@ public final class CommitOps {
     // No separate writer null-check here — commit() performs its own atomic snapshot read
     // and throws ISE if the writer is unavailable. A separate check would be a redundant
     // volatile read that could see a different snapshot than commit() sees.
+    CommitReason effectiveReason = reason == null ? CommitReason.UNKNOWN : reason;
+    long pendingAtCommit = session.pendingDocs.get();
     long elapsedMs = commit();
     session.lastCommitNanos.set(System.nanoTime());
-    session.commitCount.incrementAndGet();
+    session.commitCount.increment(effectiveReason);
     session.pendingDocs.set(0L);
-    CommitReason effectiveReason = reason == null ? CommitReason.UNKNOWN : reason;
+    // Tempdoc 912 item 2: one line per commit naming WHICH trigger fired, so a live run can be
+    // attributed without inferring the trigger from timing. Per commit, never per document.
+    // Guarded because commitCount.get() sums all 23 reason slots on every call.
+    if (log.isDebugEnabled()) {
+      log.debug(
+          "Commit reason={} pendingDocs={} elapsedMs={} sessionCommits(reason)={} sessionCommits(total)={}",
+          effectiveReason.wireValue(),
+          pendingAtCommit,
+          elapsedMs,
+          session.commitCount.get(effectiveReason),
+          session.commitCount.get());
+    }
     LuceneRuntimeTypes.TelemetryEvents events = session.telemetryEvents;
     if (events != null) {
       events.onCommit(elapsedMs, effectiveReason);

@@ -13,7 +13,8 @@ import { TODO_FIXME_CLASSIFICATIONS, aggregateTodoFixmeClassifications } from '.
 import { TODO_FIXME_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
 import { verdictForFile, verdictForBaselineShift } from './truth-table.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
+import { repinFinding, repinRuleDescription } from '../../lib/declared-growth-repin.mjs';
 
 const TODO_PATTERN = /\b(TODO|FIXME|XXX)\b/g;
 
@@ -107,6 +108,13 @@ export async function enforceTodoFixme(options) {
   let verdict = 'pass';
   const rebalanceWrites = new Map();
 
+  // Tempdoc 918: the repin rule needs the pin as it stood at the PR base, so the prior baseline is
+  // read BEFORE the count loop; the baseline-shift block below reuses it.
+  const priorText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  const priorBaseline = priorText === null ? null : parseBaselineContent(priorText);
+
   const files = collectFiles(sourceRoot, gate.config?.sourceGlobs ?? [], gate.config?.excludeGlobs);
   const liveCounts = new Map();
   for (const file of files) {
@@ -117,6 +125,18 @@ export async function enforceTodoFixme(options) {
     const pinned = baseline.get(rel) ?? 0;
     const cls = !aggregated.growthCovered ? 'silent-growth' : aggregated.classifications.find(c => ['declared-growth','merge-import','emergency-override'].includes(c)) ?? 'silent-growth';
     const v = verdictForFile({ path: rel, current: count, pinned, classification: cls });
+    // Tempdoc 918: a covering changeset licenses the pin advance, not an unpinned overflow.
+    // `verdictForFile` returns pass for both "at baseline" and "over baseline but covered";
+    // `count > pinned` is what separates them.
+    if (v.status === 'pass' && count > pinned) {
+      verdict = 'fail';
+      findings.push(repinFinding({
+        rulePrefix: 'todo-fixme', classification: cls, row: rel, measured: count,
+        livePin: pinned, priorPin: priorBaseline?.get(rel), baselineFile: gate.baseline.path,
+        unit: 'TODO/FIXME markers', pinLine: `${rel} ${count} <today>`,
+      }));
+      continue;
+    }
     if (v.status === 'fail') {
       verdict = 'fail';
       findings.push({ ruleId: v.ruleId, level: 'error', message: v.reason, uri: rel });
@@ -127,15 +147,7 @@ export async function enforceTodoFixme(options) {
   }
 
   // Baseline-shift detection.
-  let priorBaseline = null;
-  if (fixtureMode && fixtureRoot) {
-    const p = resolve(fixtureRoot, '_baseline', gate.baseline.path);
-    if (existsSync(p)) priorBaseline = parseBaselineContent(readFileSync(p, 'utf8'));
-  } else if (baselineRef) {
-    const content = readFileAtRef(baselineRef, gate.baseline.path, sourceRoot);
-    if (content !== null) priorBaseline = parseBaselineContent(content);
-  }
-  if (priorBaseline) {
+  if (priorBaseline !== null) {
     const cls = !aggregated.growthCovered ? 'silent-growth' : (aggregated.classifications[0] ?? 'silent-growth');
     for (const [path, livePin] of baseline.entries()) {
       const priorPin = priorBaseline.get(path);
@@ -163,7 +175,7 @@ export async function enforceTodoFixme(options) {
     toolVersion: '0.1.0',
     findings,
     verdict,
-    ruleDescriptions: TODO_FIXME_RULE_DESCRIPTIONS,
+    ruleDescriptions: { ...TODO_FIXME_RULE_DESCRIPTIONS, ...repinRuleDescription('todo-fixme') },
     rebalanceWrites: [...rebalanceWrites.entries()].map(([path, c]) => ({ file: path, before: '', after: String(c) })),
   };
 }

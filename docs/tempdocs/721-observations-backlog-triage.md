@@ -222,8 +222,15 @@ on `main` or are CI-excluded/pinned.
 
 - **README badge placeholder** (`unanchored-general-50`) — wire real build/release/nDCG
   badges, or remove the placeholder comment.
-- **`skeleton-library` ui-shot step** (`unanchored-drift-20`) — implement the missing FE
-  `data-testid`, or drop the harness step.
+- ~~**`skeleton-library` ui-shot step** (`unanchored-drift-20`) — implement the missing FE
+  `data-testid`, or drop the harness step.~~ **RESOLVED 2026-09-03** by a third option neither
+  branch of the call considered: the surface already HAS an observable loading state
+  (`LibrarySurface.ts:1197-1198` renders `<div class="empty">Loading…</div>` while the
+  `/api/indexing-roots/substrate` fetch is in flight), so nothing was missing in the FE. What the
+  step lacked was a way to hold that state open — it now stubs the route itself and answers late,
+  and waits on the real text. No `data-testid` was added to production, and the step was not
+  dropped. The phantom `TID_SKELETON_LIBRARY` constant and the unread `e2e_view_delay_ms` query
+  param are swept in the same change.
 - **`coreplugin` audience drift** — `core.health-surface`/`core.activity-surface` are
   `OPERATOR` in FE `CorePlugin.ts` but `USER` in Java `CoreSurfaceCatalog`; align one way.
 

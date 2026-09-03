@@ -129,6 +129,61 @@ export function lastAssistantUsage(transcriptPath, { tailBytes = TAIL_BYTES, ret
   return null;
 }
 
+/** Last Codex token_count snapshot from a rollout tail. */
+function readTailCodexContext(transcriptPath, tailBytes) {
+  let stat;
+  try { stat = fs.statSync(transcriptPath); } catch { return null; }
+  const start = Math.max(0, stat.size - tailBytes);
+  const len = stat.size - start;
+  if (len <= 0) return null;
+  const fd = fs.openSync(transcriptPath, 'r');
+  let buf;
+  try {
+    buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, start);
+  } finally {
+    fs.closeSync(fd);
+  }
+  let text = buf.toString('utf8');
+  if (start > 0) {
+    const nl = text.indexOf('\n');
+    text = nl === -1 ? '' : text.slice(nl + 1);
+  }
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let entry;
+    try { entry = JSON.parse(lines[i]); } catch { continue; }
+    if (entry?.type !== 'event_msg' || entry?.payload?.type !== 'token_count') continue;
+    const info = entry.payload.info;
+    const contextTokens = info?.last_token_usage?.input_tokens;
+    const contextWindow = info?.model_context_window;
+    if (Number.isFinite(contextTokens) && Number.isFinite(contextWindow) && contextWindow > 0) {
+      return { contextTokens, contextWindow };
+    }
+  }
+  return null;
+}
+
+export function lastCodexContext(transcriptPath, { tailBytes = TAIL_BYTES, retryTailBytes = RETRY_TAIL_BYTES } = {}) {
+  return readTailCodexContext(transcriptPath, tailBytes)
+    ?? (retryTailBytes > tailBytes ? readTailCodexContext(transcriptPath, retryTailBytes) : null);
+}
+
+export function nextCodexThreshold({ contextTokens, contextWindow }, state) {
+  const ratio = contextTokens / contextWindow;
+  if (ratio >= 0.9 && !state?.codexNotified90) return { key: 'codexNotified90', ratio, label: '90%' };
+  if (ratio >= 0.75 && !state?.codexNotified75) return { key: 'codexNotified75', ratio, label: '75%' };
+  return null;
+}
+
+function advanceCodexState(snapshot, prevState) {
+  const ratio = snapshot.contextTokens / snapshot.contextWindow;
+  const carried = ratio < 0.7
+    ? { ...(prevState ?? {}), codexNotified75: false, codexNotified90: false }
+    : { ...(prevState ?? {}) };
+  return { ...carried, lastCtx: snapshot.contextTokens, lastWindow: snapshot.contextWindow };
+}
+
 function stateFile(sessionId) {
   return path.join(STATE_DIR, `${sessionId}.json`);
 }
@@ -183,11 +238,32 @@ async function main() {
   const input = await readJsonStdin();
   if (!input || !input.session_id || !input.transcript_path) return;
 
+  const prevState = loadState(input.session_id);
+  if (process.env.JUSTSEARCH_AGENT_HARNESS === 'codex-cli') {
+    const snapshot = lastCodexContext(input.transcript_path);
+    if (!snapshot) return;
+    const armedState = advanceCodexState(snapshot, prevState);
+    const threshold = nextCodexThreshold(snapshot, armedState);
+    if (!threshold) {
+      saveState(input.session_id, armedState);
+      return;
+    }
+    const nextState = { ...armedState, codexNotified75: true };
+    if (threshold.key === 'codexNotified90') nextState.codexNotified90 = true;
+    saveState(input.session_id, nextState);
+    const percent = Math.round(threshold.ratio * 100);
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        additionalContext: `context-ceiling: ${percent}% of the Codex context window is resident — use /compact <hint> at the next task boundary`,
+      },
+    }));
+    return;
+  }
+
   const usage = lastAssistantUsage(input.transcript_path);
   if (!usage) return;
   const contextTokens = contextTokensOf(usage);
-
-  const prevState = loadState(input.session_id);
   const armedState = advanceState(contextTokens, prevState);
   const threshold = nextThreshold(contextTokens, armedState);
   if (!threshold) {

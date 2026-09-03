@@ -12,13 +12,17 @@ import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { resolve, relative, join } from 'node:path';
 
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
-import { readFileAtRef } from '../../lib/git-utils.mjs';
+import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
+import { repinFinding, repinRuleDescription } from '../../lib/declared-growth-repin.mjs';
 
 export const TS_ANY_CLASSIFICATIONS = new Set(['declared-growth', 'merge-import', 'emergency-override', 'monotonic-shrink']);
 export const TS_ANY_RULE_DESCRIPTIONS = {
   'ts-any/within-baseline': 'TS `any` count at or below baseline',
   'ts-any/silent-growth': 'TS `any` count grew without a declared changeset',
-  'ts-any/declared-growth': 'TS `any` count grew; classification covers it',
+  // 'ts-any/declared-growth' was deleted with the branch that emitted it (tempdoc 918): a covered
+  // exceedance is now `declared-growth-without-repin`, so nothing can produce the old id. A rule
+  // description whose rule cannot fire claims a hole is covered.
+  ...repinRuleDescription('ts-any'),
   'ts-any/merge-import': 'TS `any` growth via merge; classification supplied',
   'ts-any/emergency-override': 'Growth permitted via emergency-override',
   'ts-any/rebalance-available': 'TS `any` count shrunk; rebalance available',
@@ -87,6 +91,12 @@ export async function enforceTsAny(options) {
   const growthCovered = decls.some(d => ['declared-growth','merge-import','emergency-override'].includes(d.classification));
   const coveringCls = decls.find(d => ['declared-growth','merge-import','emergency-override'].includes(d.classification))?.classification ?? 'declared-growth';
 
+  // Tempdoc 918: the repin rule needs the pin as it stood at the PR base.
+  const priorText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  const priorBaseline = priorText === null ? null : parseBaseline(priorText);
+
   const files = collectFiles(sourceRoot, gate.config?.sourceGlobs ?? [], gate.config?.excludeGlobs);
   const findings = [];
   let verdict = 'pass';
@@ -102,7 +112,13 @@ export async function enforceTsAny(options) {
         verdict = 'fail';
         findings.push({ ruleId: 'ts-any/silent-growth', level: 'error', message: `${rel}: ${pinned} → ${c} any-casts without declared changeset`, uri: rel });
       } else {
-        findings.push({ ruleId: `ts-any/${coveringCls}`, level: 'note', message: `${rel}: ${pinned} → ${c}; '${coveringCls}' covers`, uri: rel });
+        // Tempdoc 918: the changeset licenses the pin advance, not an unpinned overflow.
+        verdict = 'fail';
+        findings.push(repinFinding({
+          rulePrefix: 'ts-any', classification: coveringCls, row: rel, measured: c,
+          livePin: pinned, priorPin: priorBaseline?.get(rel), baselineFile: gate.baseline.path,
+          unit: 'any-casts', pinLine: `${rel} ${c} <today>`,
+        }));
       }
     } else if (c < pinned) {
       findings.push({ ruleId: rebalance ? 'ts-any/rebalanced' : 'ts-any/rebalance-available', level: 'note', message: `${rel}: ${c} < pinned ${pinned}`, uri: rel });

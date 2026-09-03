@@ -124,10 +124,11 @@ const EXPANSION_SKIP_WORDING: Record<string, string> = {
  * 593 walkthrough showed the raw code interpolated to the user ("blocked
  * (LEGACY_INDEX_NO_FINGERPRINT)") — the Nielsen "no error codes" violation. These
  * are lowercase cause phrases so they read after a context prefix
- * ("semantic ranking blocked — the index needs a one-time rebuild").
+ * ("semantic ranking blocked — the index needs a one-time rebuild"). The two planner-owned
+ * `SKIPPED_*` values are complete sentences because the deliberate omission is not a block.
  *
- * Covers the 14 embedding-compat + routing codes that can populate the three
- * fields. The 11 chunk-merge codes (APPLIED / SKIPPED_*) feed the chunk-merge stage
+ * Covers every embedding-compat + routing code that can populate the three
+ * fields. The chunk-merge codes (APPLIED / SKIPPED_*) feed the chunk-merge stage
  * (a diagnostic-tier stage reason), not these fields, and are declared
  * `noWordingExempt` in `governance/search-degradation-reason-codes.v1.json`. The
  * `check-search-degradation-reason-codes` gate enforces this map ↔ `SearchReasonCode`
@@ -151,6 +152,10 @@ export const DEGRADATION_REASON_WORDING: Record<string, string> = {
   NO_EMBEDDING_SERVICE: 'the embedding service is offline',
   EMBEDDING_GENERATION_FAILED: 'query encoding failed',
   EMBEDDING_EXCEPTION: 'query encoding hit an error',
+  SKIPPED_SHORT_QUERY:
+    'Semantic ranking was skipped because the query is too short to produce a useful semantic signal.',
+  SKIPPED_NO_DISCRIMINATIVE_TERM:
+    'Semantic ranking was skipped — every word in this query is common across your documents.',
 };
 
 /**
@@ -225,7 +230,14 @@ export function userSummaryParts(trace: SearchTrace): string[] {
   // window-level banner carries the full cause+remedy.
   const d = trace.degradation;
   if (d?.vectorBlocked && d.vectorBlockedReason) {
-    parts.push(degradationPhrase('semantic ranking blocked', d.vectorBlockedReason));
+    if (d.vectorBlockedReason.startsWith('SKIPPED_')) {
+      parts.push(
+        DEGRADATION_REASON_WORDING[d.vectorBlockedReason]
+          ?? `Semantic ranking was skipped (${d.vectorBlockedReason})`,
+      );
+    } else {
+      parts.push(degradationPhrase('semantic ranking blocked', d.vectorBlockedReason));
+    }
   }
   if (d?.hybridFallback && d.hybridFallbackReason) {
     parts.push(degradationPhrase('fell back from hybrid', d.hybridFallbackReason));

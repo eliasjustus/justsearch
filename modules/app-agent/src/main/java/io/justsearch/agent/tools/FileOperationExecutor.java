@@ -225,11 +225,17 @@ final class FileOperationExecutor {
         pathMappings.putAll(opMappings);
         results.add(ExecutionResult.success(i, op));
 
+        // Tempdoc 909 items 7/8 — record WHAT the copy left behind, not just that it happened.
+        // Undoing a COPY deletes the destination, and by then it is an ordinary file in the user's
+        // folders; without a recorded content identity the undo can only compare mtimes, which any
+        // timestamp-preserving edit defeats. Only COPY needs it (see recordSuccess's javadoc).
+        String destinationDigest =
+            op.op() == FileOperation.OpType.COPY ? FileContentDigest.of(op.destination()) : null;
         if (renamed) {
           transactionLog.recordRename(
-              batchId, i, operations.get(i).destination(), op.destination());
+              batchId, i, operations.get(i).destination(), op.destination(), destinationDigest);
         } else {
-          transactionLog.recordSuccess(batchId, i);
+          transactionLog.recordSuccess(batchId, i, destinationDigest);
         }
       } catch (Exception e) {
         LOG.error("File operation {} failed: {}", i, op, e);

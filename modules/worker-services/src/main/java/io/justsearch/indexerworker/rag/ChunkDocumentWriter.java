@@ -11,7 +11,6 @@ import io.justsearch.indexing.chunking.ChunkSplitter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,10 +24,10 @@ public final class ChunkDocumentWriter {
 
   private static final Logger log = LoggerFactory.getLogger(ChunkDocumentWriter.class);
 
-  public static final int CHUNK_THRESHOLD_CHARS = 2000;
+  public static final int CHUNK_THRESHOLD_CHARS = ChunkSplitter.CHUNK_THRESHOLD_CHARS;
   public static final int CHUNK_TARGET_TOKENS = ChunkSplitter.DEFAULT_CHUNK_TOKENS;
   public static final int CHUNK_OVERLAP_TOKENS = ChunkSplitter.DEFAULT_OVERLAP_TOKENS;
-  private static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
+  public static final int CONTENT_PREVIEW_MAX_CHARS = ChunkSplitter.CONTENT_PREVIEW_MAX_CHARS;
 
   private ChunkDocumentWriter() {}
 
@@ -46,7 +45,8 @@ public final class ChunkDocumentWriter {
       String fileKind,
       String language,
       Long parentTokenCount,
-      String collection) {}
+      String collection,
+      String parentDocUid) {}
 
   /**
    * Regenerates chunk docs for a parent doc by loading metadata from the existing parent document.
@@ -67,6 +67,7 @@ public final class ChunkDocumentWriter {
         documentFieldOps.getDocumentField(parentDocId, SchemaFields.PARENT_TOKEN_COUNT);
     // Tempdoc 811 item 3 — inherit the parent's collection tag so the chunk branch can scope on it.
     String collection = documentFieldOps.getDocumentField(parentDocId, SchemaFields.COLLECTION);
+    String parentDocUid = documentFieldOps.getDocumentField(parentDocId, SchemaFields.DOC_UID);
 
     boolean isMarkdown = "markdown".equalsIgnoreCase(fileKind);
     String preview = LanguageUtils.contentPreview(content, CONTENT_PREVIEW_MAX_CHARS, isMarkdown);
@@ -81,7 +82,8 @@ public final class ChunkDocumentWriter {
         indexingCoordinator,
         parentDocId,
         content,
-        new ParentChunkMetadata(mime, mimeBase, fileKind, language, parentTokenCount, collection));
+        new ParentChunkMetadata(
+            mime, mimeBase, fileKind, language, parentTokenCount, collection, parentDocUid));
   }
 
   /**
@@ -97,14 +99,8 @@ public final class ChunkDocumentWriter {
       return 0;
     }
 
-    // Always delete existing chunks first (prevents stale/orphan chunks).
-    try {
-      indexingCoordinator.deleteChunksForParentDocId(parentDocId);
-    } catch (RuntimeException e) {
-      log.debug("Failed to delete existing chunks for {}: {}", parentDocId, e.getMessage());
-    }
-
     if (content == null || content.length() < CHUNK_THRESHOLD_CHARS) {
+      deleteExistingChunks(indexingCoordinator, parentDocId);
       return 0;
     }
 
@@ -115,8 +111,17 @@ public final class ChunkDocumentWriter {
     List<ChunkSplitter.Chunk> chunks =
         ChunkSplitter.splitWithMetadata(content, CHUNK_TARGET_TOKENS, CHUNK_OVERLAP_TOKENS, mode);
     if (chunks.size() <= 1) {
+      deleteExistingChunks(indexingCoordinator, parentDocId);
       return 0;
     }
+    if (meta == null || meta.parentDocUid == null || meta.parentDocUid.isBlank()) {
+      throw new IllegalStateException(
+          "A persisted parent document identity is required before chunk indexing");
+    }
+
+    // Validate every prerequisite for replacement before deleting the currently searchable
+    // chunks. A transient parent-identity read failure must fail closed without data loss.
+    deleteExistingChunks(indexingCoordinator, parentDocId);
 
     // ChunkSplitter offsets are now relative to the original content (including leading whitespace).
     int indexed = 0;
@@ -129,7 +134,7 @@ public final class ChunkDocumentWriter {
       Map<String, Object> fields = new HashMap<>();
       String chunkId = ChunkIds.newChunkDocId();
       fields.put(SchemaFields.DOC_ID, chunkId);
-      fields.put(SchemaFields.DOC_UID, UUID.randomUUID().toString());
+      fields.put(SchemaFields.DOC_UID, meta.parentDocUid + "#" + chunk.index());
       fields.put(SchemaFields.IS_CHUNK, "true");
       fields.put(SchemaFields.PARENT_DOC_ID, parentDocId);
       fields.put(SchemaFields.CHUNK_INDEX, String.valueOf(chunk.index()));
@@ -203,6 +208,15 @@ public final class ChunkDocumentWriter {
     }
 
     return indexed;
+  }
+
+  private static void deleteExistingChunks(
+      IndexingCoordinator indexingCoordinator, String parentDocId) {
+    try {
+      indexingCoordinator.deleteChunksForParentDocId(parentDocId);
+    } catch (RuntimeException e) {
+      log.debug("Failed to delete existing chunks for {}: {}", parentDocId, e.getMessage());
+    }
   }
 
   // ========== F8 Tier 2: Line Number & Heading Extraction ==========

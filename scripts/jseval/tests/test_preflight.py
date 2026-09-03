@@ -48,7 +48,7 @@ class TestExecutePreflight:
                 "embedding_model_sha256": "sha256abcdef",
                 "field_catalog_hash": "hash123",
                 "schema_fp": "fp456",
-                "index_schema_fp": "ifp789",
+                "index_fingerprint": "ifp789",
             },
         ]
 

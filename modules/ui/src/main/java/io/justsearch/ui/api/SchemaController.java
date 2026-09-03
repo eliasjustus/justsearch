@@ -77,7 +77,10 @@ public final class SchemaController {
           // RouteResponseSchemasCoverageTest enforces RouteResponseSchemas ⊆ servedNames().
           "knowledge-search-response.v1.json",
           "ai-runtime-status-response.v1.json",
-          "effective-policy.v1.json");
+          "effective-policy.v1.json",
+          // Tempdoc 911 (885 UL.9): the substrate failed-jobs response, referenced by
+          // RouteResponseSchemas for both /api/indexing-jobs/failed routes.
+          "failed-indexing-jobs-response.v1.json");
 
   private final Telemetry telemetry;
   private final Map<String, byte[]> bodyByName;

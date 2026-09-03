@@ -146,6 +146,12 @@
       "consumers": ["modules/ui-web/src/api/domains/indexing.ts"]
     },
     {
+      "name": "FailedIndexingJobsResponse",
+      "schema": "SSOT/schemas/failed-indexing-jobs-response.v1.json",
+      "outFile": "failed-indexing-jobs-response.ts",
+      "consumers": ["modules/ui-web/src/shell-v0/components/FailedJobsDrawer.ts"]
+    },
+    {
       "name": "ResourceWire",
       "schema": "SSOT/schemas/resource.v1.json",
       "outFile": "resource.ts",

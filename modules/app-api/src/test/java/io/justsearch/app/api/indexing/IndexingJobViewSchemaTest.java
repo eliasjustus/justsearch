@@ -4,13 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import com.github.victools.jsonschema.generator.OptionPreset;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
-import com.github.victools.jsonschema.generator.SchemaGeneratorConfig;
-import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
-import com.github.victools.jsonschema.generator.SchemaVersion;
-import com.github.victools.jsonschema.module.jackson.JacksonModule;
-import com.github.victools.jsonschema.module.jackson.JacksonOption;
+import io.justsearch.app.api.schema.WireSchemaConfig;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,15 +34,13 @@ final class IndexingJobViewSchemaTest {
 
   @BeforeAll
   static void setupSchemaGenerator() {
-    JacksonModule jacksonModule =
-        new JacksonModule(
-            JacksonOption.RESPECT_JSONPROPERTY_ORDER,
-            JacksonOption.RESPECT_JSONPROPERTY_REQUIRED);
-    SchemaGeneratorConfig config =
-        new SchemaGeneratorConfigBuilder(SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
-            .with(jacksonModule)
-            .build();
-    schemaGenerator = new SchemaGenerator(config);
+    // Tempdoc 911 review S2-2: this used to build its OWN plain victools config, so
+    // `IndexingJobView`'s PreciseWire marker was a no-op here and this baseline said "all optional,
+    // all nullable" while the same record inlined in failed-indexing-jobs-response.v1.json said
+    // "all required, non-null" — two generated schemas disagreeing about one record, i.e. a fork.
+    // The shared WireSchemaConfig is the single generator authority; this file now describes what
+    // both producers (RemoteIndexingJobsBridge.toView, IndexingController.toJobView) actually emit.
+    schemaGenerator = WireSchemaConfig.generator();
     Path cursor = Path.of("").toAbsolutePath();
     while (cursor != null && !Files.isDirectory(cursor.resolve("SSOT/schemas"))) {
       cursor = cursor.getParent();

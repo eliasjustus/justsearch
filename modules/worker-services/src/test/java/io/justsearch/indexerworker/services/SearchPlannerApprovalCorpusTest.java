@@ -1,6 +1,9 @@
 package io.justsearch.indexerworker.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -28,6 +31,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -173,6 +177,142 @@ final class SearchPlannerApprovalCorpusTest {
                 new BgeM3Encoding.NotRequested()),
             true);
     captureOrVerify("multi-leg-three-way.v1.json", inputs);
+  }
+
+  @Test
+  @DisplayName("common analyzed terms skip only the redundant dense leg")
+  void commonTermsSkipRedundantDenseLeg() {
+    SearchInputs inputs =
+        baseInputs(
+            "common term",
+            PipelineConfig.newBuilder().setSparseEnabled(true).setDenseEnabled(true).build(),
+            new EncodingResults(
+                new VectorEncoding.Success(List.of(0.1f, 0.2f, 0.3f, 0.4f), "bgem3"),
+                new SpladeEncoding.NotRequested(),
+                new BgeM3Encoding.NotRequested()),
+            true,
+            new QppMetrics(0f, 0f, 1f, 200L, 0.50f));
+
+    SearchDecision.MultiLegDecision decision =
+        assertInstanceOf(SearchDecision.MultiLegDecision.class, planner.plan(inputs));
+    assertInstanceOf(LegSet.Bm25Only.class, decision.legs());
+    assertEquals(
+        Optional.of(SearchReasonCode.SKIPPED_NO_DISCRIMINATIVE_TERM),
+        decision.denseSkipReason());
+    assertTrue(decision.hybridFallback().isEmpty(), "a planned skip is not an encoding failure");
+    ChunkMergeDirective.EligibleApply merge =
+        assertInstanceOf(ChunkMergeDirective.EligibleApply.class, decision.chunkMerge());
+    assertNull(merge.inputs().chunkQueryVector(), "skipped dense must not leak into chunk retrieval");
+  }
+
+  @Test
+  @DisplayName("one discriminative analyzed term retains dense")
+  void discriminativeTermRetainsDenseLeg() {
+    SearchInputs inputs =
+        baseInputs(
+            "common rare",
+            PipelineConfig.newBuilder().setSparseEnabled(true).setDenseEnabled(true).build(),
+            new EncodingResults(
+                new VectorEncoding.Success(List.of(0.1f, 0.2f, 0.3f, 0.4f), "bgem3"),
+                new SpladeEncoding.NotRequested(),
+                new BgeM3Encoding.NotRequested()),
+            true,
+            new QppMetrics(2f, 1f, 0.6f, 200L, 0.01f));
+
+    SearchDecision.MultiLegDecision decision =
+        assertInstanceOf(SearchDecision.MultiLegDecision.class, planner.plan(inputs));
+    assertInstanceOf(LegSet.Bm25Dense.class, decision.legs());
+    assertTrue(decision.denseSkipReason().isEmpty());
+    ChunkMergeDirective.EligibleApply merge =
+        assertInstanceOf(ChunkMergeDirective.EligibleApply.class, decision.chunkMerge());
+    assertEquals(
+        List.of(0.1f, 0.2f, 0.3f, 0.4f),
+        merge.inputs().chunkQueryVector(),
+        "a retained dense leg must carry its vector into chunk retrieval");
+  }
+
+  @Test
+  @DisplayName("tiny corpora never use document frequency to skip dense")
+  void tinyCorpusRetainsDenseLeg() {
+    SearchInputs inputs =
+        baseInputs(
+            "common term",
+            PipelineConfig.newBuilder().setSparseEnabled(true).setDenseEnabled(true).build(),
+            new EncodingResults(
+                new VectorEncoding.Success(List.of(0.1f, 0.2f, 0.3f, 0.4f), "bgem3"),
+                new SpladeEncoding.NotRequested(),
+                new BgeM3Encoding.NotRequested()),
+            true,
+            new QppMetrics(0f, 0f, 1f, 99L, 1.0f));
+
+    SearchDecision.MultiLegDecision decision =
+        assertInstanceOf(SearchDecision.MultiLegDecision.class, planner.plan(inputs));
+    assertInstanceOf(LegSet.Bm25Dense.class, decision.legs());
+  }
+
+  @Test
+  @DisplayName("short hybrid queries skip dense with a typed reason")
+  void shortHybridQuerySkipsDenseLeg() {
+    SearchInputs inputs =
+        baseInputs(
+            "abc",
+            PipelineConfig.newBuilder().setSparseEnabled(true).setDenseEnabled(true).build(),
+            new EncodingResults(
+                new VectorEncoding.Success(List.of(0.1f, 0.2f, 0.3f, 0.4f), "bgem3"),
+                new SpladeEncoding.NotRequested(),
+                new BgeM3Encoding.NotRequested()),
+            true);
+
+    SearchDecision.MultiLegDecision decision =
+        assertInstanceOf(SearchDecision.MultiLegDecision.class, planner.plan(inputs));
+    assertInstanceOf(LegSet.Bm25Only.class, decision.legs());
+    assertEquals(Optional.of(SearchReasonCode.SKIPPED_SHORT_QUERY), decision.denseSkipReason());
+  }
+
+  @Test
+  @DisplayName("dense-only queries remain recall-first even when short")
+  void denseOnlyShortQueryStillRunsDense() {
+    SearchInputs inputs =
+        baseInputs(
+            "abc",
+            PipelineConfig.newBuilder().setDenseEnabled(true).build(),
+            new EncodingResults(
+                new VectorEncoding.Success(List.of(0.1f, 0.2f, 0.3f, 0.4f), "bgem3"),
+                new SpladeEncoding.NotRequested(),
+                new BgeM3Encoding.NotRequested()),
+            true,
+            new QppMetrics(0f, 0f, 1f, 200L, 1.0f));
+
+    SearchDecision.MultiLegDecision decision =
+        assertInstanceOf(SearchDecision.MultiLegDecision.class, planner.plan(inputs));
+    assertInstanceOf(LegSet.DenseOnly.class, decision.legs());
+    assertTrue(decision.denseSkipReason().isEmpty());
+  }
+
+  @Test
+  @DisplayName("common terms remove dense but retain both sparse alternatives")
+  void commonTermsMapThreeWayToBm25Splade() {
+    SearchInputs inputs =
+        baseInputs(
+            "common term",
+            PipelineConfig.newBuilder()
+                .setSparseEnabled(true)
+                .setDenseEnabled(true)
+                .setSpladeEnabled(true)
+                .build(),
+            new EncodingResults(
+                new VectorEncoding.Success(List.of(0.1f, 0.2f, 0.3f, 0.4f), "bgem3"),
+                new SpladeEncoding.Success(Map.of("common", 0.5f)),
+                new BgeM3Encoding.NotRequested()),
+            true,
+            new QppMetrics(0f, 0f, 1f, 200L, 0.50f));
+
+    SearchDecision.MultiLegDecision decision =
+        assertInstanceOf(SearchDecision.MultiLegDecision.class, planner.plan(inputs));
+    assertInstanceOf(LegSet.Bm25Splade.class, decision.legs());
+    assertEquals(
+        Optional.of(SearchReasonCode.SKIPPED_NO_DISCRIMINATIVE_TERM),
+        decision.denseSkipReason());
   }
 
   @Test
@@ -329,13 +469,22 @@ final class SearchPlannerApprovalCorpusTest {
       PipelineConfig pipeline,
       EncodingResults encoding,
       boolean allowQueryEmbeddings) {
+    return baseInputs(query, pipeline, encoding, allowQueryEmbeddings, QppMetrics.ZERO);
+  }
+
+  private static SearchInputs baseInputs(
+      String query,
+      PipelineConfig pipeline,
+      EncodingResults encoding,
+      boolean allowQueryEmbeddings,
+      QppMetrics qpp) {
     return new SearchInputs(
         SearchRequest.newBuilder().setQuery(query).setLimit(10).setPipeline(pipeline).build(),
         LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder().build(),
         null,
         new CorpusCapabilities(true, false, 200L, 0.5),
         encoding,
-        QppMetrics.ZERO,
+        qpp,
         EmbeddingCompatBoundary.of(null, allowQueryEmbeddings),
         Map.of(),
         null);
@@ -358,7 +507,7 @@ final class SearchPlannerApprovalCorpusTest {
         new ResolvedConfig.Search.Corrections(correctionsEnabled, 1, 2, true);
     ResolvedConfig.Search search =
         new ResolvedConfig.Search(
-            "default", "search.v1", "main", false, 0.0, 0.0, chunkAwareEnabled,
+            "default", "search.v1", "main", false, 0.0, chunkAwareEnabled,
             /* evidencePreviewEnabled= */ false, /* lambdamartEnabled= */ false,
             /* evidenceSpanEnabled= */ false, /* entitySignal= */ "df_rarity",
             /* mcpDeliveryBudgetBytes= */ ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES,

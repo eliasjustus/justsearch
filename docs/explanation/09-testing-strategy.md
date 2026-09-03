@@ -62,7 +62,7 @@ These tests exist to prevent architectural drift and contract breakage in a mult
   - `modules/ui/src/test/java/io/justsearch/ui/api/LocalApiUiTokenPolicyTest.java` asserts prod-mode session-token enforcement for non-GET requests (`X-JustSearch-Session`) and CORS allow-headers.
 
 * **Schema mismatch status contract**:
-  - `modules/ui/src/integrationTest/java/io/justsearch/ui/api/SchemaMismatchStatusContractTest.java` seeds a mismatched `index_schema_fp` and asserts `/api/status` surfaces `reindexRequired=true` with a stable reason.
+  - `modules/ui/src/integrationTest/java/io/justsearch/ui/api/SchemaMismatchStatusContractTest.java` seeds a mismatched `index_fingerprint` and asserts `/api/status` surfaces `reindexRequired=true` with a stable reason.
 
 ## Tier 3: System Tests (Slow)
 This is the most critical tier for verifying the "3-Process Architecture".

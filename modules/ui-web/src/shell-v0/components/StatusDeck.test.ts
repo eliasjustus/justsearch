@@ -17,7 +17,7 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     readiness: UNKNOWN,
     capabilities: { chat: false, rag: false, extract: false, embedding: false },
     connection: { reachable: true, lastSuccessMs: Date.now(), lastContactMs: Date.now(), consecutiveFailures: 0 },
-    runtime: { mode: 'offline', modelId: null, modelLabel: null, contextWindow: null, gpu: null, installed: known(false), installing: known(false), loadStartedAtMs: null },
+    runtime: { mode: 'offline', modelId: null, modelLabel: null, contextWindow: null, contextWindowDerived: null, gpu: null, installed: known(false), installing: known(false), loadStartedAtMs: null },
     activity: { state: 'idle', shapeId: null, startedAtMs: null, canCancel: false, cancel: null },
     index: { documentCount: known(0), searchableDocumentCount: known(0), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
     realized: {
@@ -552,7 +552,7 @@ describe('StatusDeck (slice 461)', () => {
         statusLabel: 'Service degraded',
         statusTone: 'warning',
         // …while the AI engine itself is up: the mode readout the chip falls back to.
-        runtime: { mode: 'online', modelId: 'm', modelLabel: 'Qwen', contextWindow: null, gpu: null, installed: known(true), installing: known(false), loadStartedAtMs: null },
+        runtime: { mode: 'online', modelId: 'm', modelLabel: 'Qwen', contextWindow: null, contextWindowDerived: null, gpu: null, installed: known(true), installing: known(false), loadStartedAtMs: null },
         aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
       });
       return el;
