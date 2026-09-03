@@ -8,10 +8,6 @@ description: >-
   (`.measure.json`), the live-shell-v0 step registry, server/backend
   requirements, the coverage gate, and worktree auto-serve.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # UI Check & Visual + Measurement Feedback
 
 `jseval ui-shot <step>` captures the **live Lit `shell-v0` UI** and writes a PNG **plus** a structured
@@ -82,7 +78,7 @@ gate a11y regressions with `ui-a11y-gate` (local-first, ADR-0026 — not CI-wire
 when deliberately iterating on one surface; `ui-critic`/`ui-fuzz` are deeper, situational passes. The
 `ui-shot-hint` PostToolUse hook surfaces the *contextually-relevant* verb when you edit a `shell-v0` file.
 
-## These verbs vs the browser (`claude-in-chrome`) <!-- rule:harness-for-assertions -->
+## Instrumented assertions vs interactive inspection <!-- rule:harness-for-assertions -->
 
 > **Use the instrumented harness for anything you will assert on. Use the browser for things you are
 > only looking at.**
@@ -96,15 +92,11 @@ Where the browser is the right tool and this rule does not apply: external desig
 unfamiliar third-party flow, reading console/network output during a live debug, or anything with no
 harness step. Those are genuine uses — the rule steers *local dev-UI verification*, not exploration.
 
-Why it is written down (tempdoc 844 §6.4, §12.3 D4): `claude-in-chrome` was measured at ~1,773 calls
-and ~58.7 MB of tool-result bytes — roughly **98% of all MCP result volume**, and the single largest
-MCP consumer by a factor of ~87x over `justsearch-dev` — concentrated in 17 sessions and pointed
-mostly at `127.0.0.1`, i.e. this harness's own territory. (Across *all* tools it is ~25% of
-tool-result bytes; Read and Bash are larger. §6.4's "two-thirds" used an MCP-scoped denominator and
-is corrected there.) It was also the only agent capability mentioned in no
-repo rule at all. This lives here rather than in `CLAUDE.md` because the always-loaded budget is at
-its ceiling and this skill's own trigger ("capturing UI screenshots") already fires at exactly the
-moment the choice is made.
+This guidance lives in the UI skill because its trigger (capturing or judging UI
+screenshots) fires at the moment the agent must choose between exploratory
+inspection and reproducible evidence. Interactive browser or computer-use tools
+are appropriate for exploration; claims used for review or regression decisions
+must come from the instrumented harness.
 
 ## Server & data requirements (there is NO mock data)
 | Step kind | Needs | Notes |
@@ -122,8 +114,8 @@ steps (from `ui_step_index.json`). Run the suggested `jseval ui-shot <step>`, th
 (facts) and/or the PNG (gestalt).
 
 ## Coverage + freshness gate — tempdoc 615 §6.1a
-`node scripts/ci/check-ui-step-coverage.mjs` (register `governance/ui-step-coverage.v1.json`; wired in ci.yml +
-the CLAUDE.md pre-merge list) keeps the harness honest: every source path the step index maps MUST resolve on
+`node scripts/ci/check-ui-step-coverage.mjs` (register `governance/ui-step-coverage.v1.json`; wired in CI and
+the shared pre-merge guidance) keeps the harness honest: every source path the step index maps MUST resolve on
 disk (a deleted/renamed file is a build failure — this is what stops the index silently rotting back to dead
 code, as it did against the retired React stack), and every `placement:'RAIL'` surface in `CORE_SURFACES` must
 have a covering view step or a declared exemption. Run it after editing `shell-v0/**` or the harness.
@@ -188,7 +180,7 @@ excerpt; the highest-fan-out entries are:
 Two methods look plausible and fail silently. Don't use them:
 
 - **Manual "prepare window, ask user to screenshot" workflow is unreliable.** Verified once: ~15 "READY — capture X" requests produced zero saved files. Never trust "I've taken a screenshot" — verify the file exists at the expected path (`find <dir> -newer <marker>` or equivalent) before reporting success.
-- **`claude-in-chrome`'s `resize_window` is unreliable for viewport control.** It silently succeeds without resizing roughly half the time (window snap/focus contention), producing misleadingly same-size "wide"/"narrow" pairs. Don't trust it for before/after comparisons.
+- **Interactive window resizing is not reliable viewport control.** Window snap, focus contention, or browser chrome can produce misleadingly same-size "wide"/"narrow" pairs. Do not trust it for before/after comparisons.
 
 **Use a standalone Playwright script instead**, written to a scratch dir — do NOT modify the shared `scripts/jseval/jseval/ui_check.py`. Launch headless Chromium, set an exact viewport, and capture full-page:
 

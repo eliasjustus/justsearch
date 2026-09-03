@@ -4,13 +4,9 @@ description: >-
   TRIGGER only for deep inference-runtime work: GPU detection, ORT sessions,
   VRAM limits, Worker encoder model loading, BFCArena config, or
   NER/SPLADE/reranker/citation inference code. Do not load for ordinary AI
-  module ownership questions; use /module-arch or canonical architecture docs
+  module ownership questions; use $module-arch or canonical architecture docs
   instead.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # Inference Runtime Context
 
 Read this before starting any inference runtime work. Do not re-run
@@ -20,7 +16,7 @@ This is intentionally a heavy skill. Use it when runtime baselines or settled
 experiments matter; avoid loading it for general agent, prompt, or module
 ownership questions.
 
-<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
+<!-- manually maintained Codex copy; source documentation listed below -->
 
 <!-- source: docs/reference/inference-runtime-register.md -->
 
@@ -529,7 +525,7 @@ picking up items here over inventing new experiments.
 - **Also open here:** whether `GPU_TOP_RUNG` (32768) needs a UMA/iGPU rung (prefill on an
   8060S-class iGPU is ~5-10x slower than a 4070); WebGPU session lifecycle under the
   `main_gpu_active` lease and co-residency with llama-server (F-010 budgets are CUDA-arena
-  numbers). Owner: 903 §6's opus chunk records what it could and could not measure; the vendor
+  numbers). Historical evidence: tempdoc 903 §6's Opus-run chunk records what it could and could not measure; the vendor
   rows stay open until hardware exists.
 
 ## Future Work
@@ -1220,4 +1216,4 @@ The removed deep-dive material described these obsolete implementation concepts:
 
 This breadcrumb section exists so older tempdocs, ADRs, and commit messages remain intelligible without making the deprecated architecture look current.
 
-<!-- generated:end -->
+<!-- end manually maintained Codex copy -->

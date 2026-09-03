@@ -5,10 +5,6 @@ description: >-
   schema fields, or editing adapters-lucene/src/main/resources/SSOT/catalogs/.
   Loads the dual-copy sync requirement and field addition checklist.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # SSOT Catalog Modification
 
 ## Critical: Dual-Copy Sync

@@ -7,10 +7,6 @@ description: >-
   post-edit regeneration sequence, doc quality rules, and the drift-audit
   procedure.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # Docs Maintenance
 
 After editing any canonical doc, run this regeneration sequence.
@@ -23,17 +19,22 @@ Run these commands after every canonical doc change:
 # 1. Always — regenerate the docs index
 node scripts/docs/llmstxt-generate.mjs
 
-# 2. Always — sync skills from canonical docs (if any synced skill sources changed)
+# 2. When a canonical source embedded in a Claude skill changed — refresh it
 node scripts/docs/skills-sync.mjs
 
-# 3. After module architecture changes — update dependency graph
+# 3. When shared skill behavior or source material changed — manually review
+#    the corresponding .agents/skills Codex copy
+
+# 4. After module architecture changes — update dependency graph
 node scripts/architecture/module-deps.mjs --update-canonical
 
-# 4. After configuration changes — update runtime config matrix
+# 5. After configuration changes — update runtime config matrix
 node scripts/docs/generate-runtime-config-matrix.mjs --write-doc docs/reference/configuration/runtime-config-ownership-matrix.md
 ```
 
-Steps 1 and 2 are always required. Steps 3 and 4 are conditional.
+Step 1 is always required. Steps 2–5 are conditional. `skills-sync.mjs`
+updates canonical-document sections in `.claude/skills` only; Codex skills are
+manually maintained in `.agents/skills`.
 
 ## Verification (CI gate)
 
@@ -44,6 +45,9 @@ node scripts/docs/verify-canonical-doc-links.mjs
 node scripts/architecture/module-deps.mjs --check-canonical
 node scripts/docs/verify-runtime-config-matrix.mjs
 ```
+
+The skills-sync check covers Claude skill embeddings only. Review affected
+Codex skills directly; do not infer semantic parity from this check.
 
 For prompt-surface or agent-instruction changes, also run:
 
