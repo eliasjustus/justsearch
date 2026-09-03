@@ -1,7 +1,7 @@
 ---
 title: "Project operations: cross-platform contributor onramp, contract lifecycle signals, succession, and diagnostic handoff"
 type: tempdocs
-status: "TAKEOVER + RESEARCH + DESIGN + DERISK COMPLETE (2026-09-03) — implementation not started; SDK deferred on typed-contract coverage"
+status: "TAKEOVER + FOCUSED SDK RESEARCH/DESIGN/DERISK COMPLETE (2026-09-03) — implementation not started; SDK staged behind contract projection"
 created: 2026-09-02
 updated: 2026-09-03
 lane: 887 L17
@@ -23,7 +23,8 @@ Fresh start. Read this file and 887 Appendix A10 (§10.1, 10.2, 10.5, 10.6) + A3
 worktree. Root community files (`CONTRIBUTING.md`, `MAINTAINING.md`, `SUPPORT.md`,
 `.github/`) are public-facing: `check-root-readme` and the docs-lint checks apply. Anything
 outward-facing that is not a file in this repo (creating GitHub labels/issues, npm publish) is
-**drafted here for the founder**, not executed. Five small PRs.
+**drafted here for the founder**, not executed. Six immediate PRs plus one conditional generated-
+package PR.
 
 ## Thesis
 
@@ -43,14 +44,14 @@ is no runtime-contract client SDK in any language, and 660 has sat open since Ju
   JDK and platform-command mechanics already in `scripts/dev/lib/resolve-jdk.cjs` and
   `scripts/dev/prepare-worktree.cjs`. Keep the `.ps1` as the Windows pre-Node implementation.
 - **On-wire deprecation:** HTTP — RFC-correct `Deprecation`, optional `Sunset`, and documentation
-  `Link` headers projected from `RouteLifecyclePolicy`, plus manifest/OpenAPI projections and CORS
+  `Link` headers projected from `RouteContractPolicy`, plus manifest/OpenAPI projections and CORS
   exposure. MCP — namespaced Tool `_meta`, description fallback, and a versioned experimental
   capability projected from `McpToolSurface`; standard annotations remain untouched. Focused
   closed-world contract/snapshot tests replace the unrelated protobuf `wire` gate.
-- **SDK:** decision — **TypeScript first and generated**, but blocked beyond 893's structural
-  snapshot until the explicitly enumerated SDK HTTP surface has complete operation ids, request,
-  success/error, and trust-boundary shapes plus a source/snapshot coherence gate. Do not hand-write
-  a client or treat `/mcp` as a generic OpenAPI JSON-RPC binding.
+- **SDK:** decision — **TypeScript first and generated**. First land a six-operation, read-only,
+  Node-native public-contract projection with complete schemas and a source/snapshot coherence gate;
+  then generate `@justsearch/runtime-client` conditionally. Do not hand-write endpoint methods or
+  treat `/mcp` as a generic OpenAPI JSON-RPC binding.
 - **Crash reporting:** no submit path (NON-GOALS). Instead: a "Copy diagnostic summary" action
   that puts an allowlisted, size-bounded Head-local summary on the clipboard for pasting into a
   GitHub issue — user-initiated, no network, no log/ZIP reuse, and no payload-bearing effect journal.
@@ -68,6 +69,9 @@ is no runtime-contract client SDK in any language, and 660 has sat open since Ju
    founder knows.
 5. "Copy diagnostic summary" action (typed Head-local allowlist + non-journaling clipboard path) +
    the bug-report template field.
+6. SDK prerequisite: HTTP contract authority, canonical public schemas, SDK-filtered OpenAPI
+   snapshot, and non-vacuous source-to-snapshot gate. Generated package follows only after this is
+   green and the generator bakeoff passes.
 
 ## Acceptance criteria
 
@@ -77,6 +81,10 @@ is no runtime-contract client SDK in any language, and 660 has sat open since Ju
 - Item 5: ui-web gates + typecheck/tests; hostile values cannot escape the allowlist or enter the
   journal/persistence/export surfaces, clipboard failure is visible, and 297 redaction coverage is
   extended independently.
+- Item 6: every v0.1 SDK operation has an operation id, exact request/query shape, every observed
+  success/lifecycle/error status, schema, and enforcement-derived security projection; the committed
+  SDK OpenAPI projection is self-contained and byte-stable with the in-process route source;
+  executable handler tests validate every declared status/body pair against its schema.
 - `node scripts/ci/check-root-readme.mjs` and docs-lint green.
 
 ## Constraints
@@ -112,11 +120,12 @@ The charter identifies real project-operability gaps, but four premises changed 
 behaviour; it is not pure teardown/rename/config deletion.
 
 **Verdict: GO now, with the corrected scope below.** Implement the devcontainer/onramp, issue
-drafts, succession skeleton, lifecycle authorities, and allowlisted diagnostic summary. Do not
-implement the SDK yet. The SDK trigger is not merely "893 item 2 landed"; it is "the committed
-OpenAPI document describes the request and response shapes of the enumerated public-contract HTTP
-operations well enough for a compile-tested generated client." Keep the wider plugin-authoring
-onramp in 660 distinct from this future runtime client.
+drafts, succession skeleton, HTTP/MCP lifecycle authorities, allowlisted diagnostic summary, and
+the SDK contract-projection prerequisite. Generate the SDK only after that projection and its
+coherence gate are green. The trigger is not merely "893 item 2 landed"; it is "the committed SDK
+OpenAPI projection completely describes its enumerated operations and is proven coherent with the
+in-process route source." Keep the wider plugin-authoring onramp in 660 distinct from this runtime
+client.
 
 The cheapest decisive evidence is already partly present:
 
@@ -137,8 +146,10 @@ What this displaces or extends:
 
 - `bootstrap.mjs` becomes the cross-platform **post-Node coordinator**; it does not delete or hide
   `bootstrap-node-win.ps1`, which remains the Windows pre-Node entry point.
-- `RouteLifecyclePolicy` follows the existing `RouteCapabilityPolicy` seam. The live route manifest
-  and OpenAPI are projections, not new authorities.
+- `RouteContractPolicy` follows the existing `RouteCapabilityPolicy` seam and supersedes both the
+  current `RouteResponseSchemas` map and the previously proposed, unimplemented
+  `RouteLifecyclePolicy`. Existing response-schema rows migrate into it. The live route manifest,
+  full structural OpenAPI, and SDK-filtered OpenAPI are projections, not new authorities.
 - MCP lifecycle metadata extends `McpToolSurface`'s catalog and names itself as a JustSearch
   extension; it does not misuse standard `annotations`.
 - The diagnostic action extends `DiagnosticsService`, `CoreOperationCatalog`, the existing Help
@@ -227,19 +238,26 @@ These drafts are intentionally documentation/tooling/test tasks with tight seams
 issue is sequenced after the CLI seam to prevent two contributors creating competing main guards.
 If any becomes owned by another lane before opening, replace it rather than creating duplicate work.
 
-#### D3. One lifecycle authority, projected to HTTP, OpenAPI, and MCP
+#### D3. One HTTP contract authority, projected to HTTP, OpenAPI, and lifecycle signals
 
-**HTTP.** Add `RouteLifecyclePolicy`, parallel to `RouteCapabilityPolicy`, keyed by method + route
-pattern. A lifecycle row contains a machine-readable stability class, `deprecatedSince`, optional
-`sunsetAt`, optional replacement route, and a documentation URI. A pre-1.0 exception is an explicit
-row field containing its rationale and decision-document URI, never an implicit bypass. Construction
-validates chronology, requires the exception record when a public-contract sunset is inside the
-90-day floor, and rejects exception records on other rows. This lifecycle registry is the initial
-machine-readable classification authority for deprecated routes; canonical prose remains the
-authority for routes with no lifecycle row until a broader classification projection is justified.
-The route manifest adds these nullable fields and bumps its schema version. OpenAPI projects
-standard `deprecated: true`, standard `externalDocs`, `x-deprecated-since`, optional `x-sunset`, and
-an explicitly named `x-justsearch-replacement` extension.
+**HTTP.** Add `RouteContractPolicy`, parallel to `RouteCapabilityPolicy`, keyed by method + route
+pattern. It is the machine-readable HTTP contract authority for the deliberately small set of routes
+that need more than structural enumeration. A row carries stability class, optional SDK exposure and
+stable `operationId`, request/query schema references, status-to-response-schema mappings, security
+projection reference, and an optional lifecycle block (`deprecatedSince`, optional `sunsetAt`,
+replacement, and documentation URI). Security metadata must call or project the same predicates
+used by `ApiSecurityFilters`; copied labels would become a second trust-boundary authority. Migrate
+every `RouteResponseSchemas` entry into this registry and delete that superseded map in the same
+change; do not copy it into a third table.
+
+A pre-1.0 lifecycle exception is an explicit row field containing its rationale and decision-
+document URI, never an implicit bypass. Construction validates chronology, requires the exception
+record when a public-contract sunset is inside the 90-day floor, and rejects exception records on
+other rows. Canonical prose remains the authority for routes with no contract row until a broader
+classification projection is justified. The route manifest adds the applicable fields and bumps its
+schema version. OpenAPI projects standard `deprecated: true`, standard `externalDocs`,
+`x-deprecated-since`, optional `x-sunset`, and an explicitly named
+`x-justsearch-replacement` extension.
 
 A single Javalin matched-route filter reads that policy and stamps responses. `Deprecation` uses the
 RFC 9745 `@epochSeconds` syntax. `Sunset` uses an IMF-fixdate and is absent when no shutdown date is
@@ -259,11 +277,14 @@ obtained from the surface, keeping protocol transport ignorant of tool details. 
 
 Do not extend the protobuf `wire` gate for this. It governs `contracts/wire` protobuf evolution.
 Instead, add focused route-lifecycle and MCP lifecycle contract tests and extend the relevant
-snapshot/regen checks. When 893's OpenAPI snapshot lands, its diff gate becomes the HTTP lifecycle
-drift guard. An actual deprecated tool requires a tool-surface version change; adding the empty
+snapshot/regen checks. 893's full structural OpenAPI snapshot remains useful for route inspection,
+but S1's SDK-filtered snapshot and in-process comparison are the public-client drift guard. An
+actual deprecated tool requires a tool-surface version change; adding the empty
 capability mechanism alone does not. Both lifecycle catalogs are closed-world: construction or a
 contract test must reject duplicates and orphaned/misspelled keys, require each entry to resolve to
-exactly one live route/tool, and prove each deprecated entry appears in every required projection.
+exactly one live route/tool, require every SDK `operationId` to be nonblank and globally unique, and
+prove each deprecated entry appears in every required projection. Add a deliberate duplicate-
+operation-id fixture as well as duplicate/orphan route keys.
 
 Update `docs/reference/runtime-contract.md`, `docs/reference/contracts/api-evolution.md`, and
 `docs/reference/mcp-production-server.md`. The docs must distinguish standard HTTP fields, standard
@@ -332,31 +353,105 @@ redaction regression coverage while this privacy seam is open: the current imple
 direct test, and its Windows regex is not sufficient evidence for paths containing spaces or other
 edge cases.
 
-#### D6. SDK decision: TypeScript first remains correct; implementation is deferred further
+#### D6. SDK decision: stage a small Node-native runtime client behind its contract projection
 
-The first runtime client remains TypeScript and must be generated, not hand-written. Package it
-separately from `@justsearch/plugin-api`: one is a client for the public local runtime contract; the
-other is an authoring SDK for in-process extensions.
+The first runtime client is `@justsearch/runtime-client`: TypeScript, ESM, Node 20+ at runtime, and
+generated endpoint methods. It is separate from `@justsearch/plugin-api`: one talks to the local
+Head HTTP contract from a same-user native process; the other authors in-process extensions. Reuse
+the plugin package's metadata/exports/files/prepublish shape only after correcting its unproven
+ESM/CommonJS assumptions; do not inherit its contract version or publication status.
 
-Do not start generation when 893 merely commits the current structural OpenAPI. Start only when all
-public-contract HTTP operations intended for the SDK have stable `operationId`s, request shapes,
-success/error response shapes, and authentication/session requirements in the snapshot. Add an
-explicit, reviewed SDK operation allowlist and require 100% coverage of it (not all ~201 internal
-routes and not `/mcp` as a generic OpenAPI JSON-RPC binding). Before settling that allowlist, resolve
-whether `/api/mcp/token` must be promoted into the public-contract classification because external
-MCP clients depend on it. Require a source/live-route-to-snapshot coherence gate as well as the
-existing snapshot-to-generated-code gate. The first generated package then needs a compile smoke
-and a live compatibility smoke against the advertised runtime-contract version.
-LangChain/LlamaIndex adapters remain 660 follow-ons after one real generated client has users.
+**v0.1 allowlist — six read-only JSON operations:**
+
+1. `GET /api/runtime/manifest`
+2. `GET /.well-known/justsearch/manifest.json`
+3. `GET /api/runtime/ready`
+4. `GET /api/runtime/live`
+5. `GET /api/health`
+6. `GET /api/status`, exposing only the stable lifecycle subset and treating undeclared response
+   properties as unknown/additive; the reference-client `fresh` query is not in v0.1.
+
+The package accepts an injected `fetch` and a runtime base URL. A small hand-written factory may
+validate that the URL is loopback, configure transport defaults, and check the advertised runtime-
+contract compatibility range; it must not contain hand-written endpoint paths, serialization, or
+response types. The generated methods preserve status distinctions: readiness/health `503` bodies
+are typed lifecycle results, not collapsed into a generic thrown error. Model the global Host
+rejection separately from true application failures. Before declaring an application-error schema,
+route the manifest's current raw-exception `500` through the existing sanitizing `ApiErrorHandler`;
+add a hostile exception/path fixture proving no raw message escapes.
+
+**Explicit v0.1 exclusions:**
+
+- `POST`/`DELETE`/`GET /mcp`: use the official MCP TypeScript SDK; one OpenAPI operation cannot
+  faithfully represent the stateful JSON-RPC protocol.
+- `GET /api/mcp/token`: no v0.1 operation mutates state or calls MCP, so the credential bootstrap is
+  unnecessary and remains outside the runtime-client promise. Reclassify it only with a future
+  native mutation/MCP client design.
+- `HEAD /api/runtime/ready` and `/live`: implementation conveniences not named by the canonical
+  public-contract table.
+- `GET /api/runtime/manifest/stream`: remains public-contract but enters a later runtime-client
+  version only after a generated SSE transport proves reset/resume semantics, cancellation, and
+  typed frames. v0.1 is explicitly the snapshot/probe subset, not the entire runtime contract.
+
+**Two implementation phases clear the no-go:**
+
+- **S1 — contract projection (start now):** implement `RouteContractPolicy`; add canonical schemas
+  for the public manifest, probe bodies, lifecycle snapshot/status subset, Host rejection, and
+  sanitized application failures; normalize the manifest's unsafe `500`; generate a self-contained
+  SDK-filtered OpenAPI 3.1 snapshot (bundled components or checked-in relative references, never
+  runtime `/api/schemas/...` references) from the same in-process Javalin registration used by
+  `OpenApiController`; and add a Java test that compares that projection byte-for-byte with the
+  committed snapshot. Separately, invoke every declared route outcome and validate its actual
+  serialized body/status against the declared schema. Snapshot equality closes projection drift;
+  executable handler tests close policy-versus-behavior drift.
+- **S2 — generated package (conditional):** after S1 is green, pin the selected generator exactly,
+  generate `packages/runtime-client`, and add deterministic regen, TypeScript build/typecheck,
+  package-content, Node 20 runtime, mocked-fetch contract, and live compatibility smokes. Package
+  SemVer is independent; it declares the runtime-contract versions it supports rather than copying
+  the desktop application version. npm publication remains a founder action.
+
+The current `apiRoutes.ts` generator remains the shell's internal typed route table; it is not
+renamed or exported as the SDK. The current `RouteResponseSchemas` map is retired into
+`RouteContractPolicy`. LangChain/LlamaIndex adapters remain 660 follow-ons after one generated
+runtime client has real users.
+
+#### Focused SDK research and generator decision (2026-09-03)
+
+Research was warranted because TypeScript OpenAPI generators and their runtime/SSE support changed
+in 2026. No external code was copied. The design uses an evidence-gated selection rather than
+committing a dependency from feature lists alone:
+
+- OpenAPI Generator 7.25 is Apache-2.0 and offers a stable `typescript-fetch` generator, but its own
+  compatibility table still labels OpenAPI 3.1 support beta and the generator feature matrix has
+  material gaps ([upstream compatibility](https://github.com/OpenAPITools/openapi-generator/blob/master/README.md),
+  [TypeScript Fetch matrix](https://openapi-generator.tech/docs/generators/typescript-fetch/)).
+- `openapi-typescript` supports OpenAPI 3.1 well, but its maintainers put `openapi-fetch` into
+  maintenance mode in the 2026 roadmap. Use it only as a type-generation comparator, not as the
+  runtime-client choice ([upstream roadmap](https://github.com/openapi-ts/openapi-typescript/discussions/2559)).
+- Hey API's generator is MIT-licensed, generates Fetch SDKs and SSE paths, and is the front-runner,
+  but it is pre-1.0 and its generator requires Node 22.18+. Pin an exact version, run generation only
+  under the Node 24 contributor/CI toolchain, and prove the generated package itself still runs on
+  Node 20 ([upstream package](https://github.com/hey-api/openapi-ts),
+  [release history](https://github.com/hey-api/hey-api/releases)).
+- Orval is the fallback comparator: MIT-licensed, stable major, native Fetch output, but also
+  requires Node 22.18+ and has less decisive evidence for this SSE contract
+  ([upstream Fetch docs](https://orval.dev/docs/guides/fetch/)).
+
+Before S2 chooses a generator, run the same checked-in contract fixture through the front-runner and
+fallback. The winner must produce deterministic ESM, compile/run on Node 20, accept a runtime base
+URL and injected fetch, preserve `200` versus typed lifecycle `503` versus error envelopes, support
+OpenAPI 3.1 nullable/reference shapes, and generate fully offline from the self-contained snapshot.
+Validate that snapshot offline before either generator runs. The generator version and config become
+reviewed inputs to the regen gate; generated output is committed.
 
 ### Design reach
 
-**Immediate design.** Five implementation PRs remain the right publication shape: (1) container +
+**Immediate design.** Six implementation PRs remain the right publication shape: (1) container +
 bootstrap + contributor docs, (2) issue drafts/intake docs, (3) HTTP/MCP lifecycle authority + docs,
-(4) succession skeleton, and (5) diagnostic summary + issue-template field. SDK implementation is
-not one of those PRs.
+(4) succession skeleton, (5) diagnostic summary + issue-template field, and (6) SDK contract
+projection S1. Generated package S2 is a seventh conditional PR after S1 and the bakeoff pass.
 
-**Broader reach.** This work reveals two reusable principles but does not justify new generalized
+**Broader reach.** This work reveals three reusable principles but does not justify new generalized
 frameworks:
 
 1. **Lifecycle metadata is authored once per governed surface and projected into every transport's
@@ -371,6 +466,12 @@ frameworks:
    explicit code/test change. Retire the separate text builder only if the diagnostics bundle gains
    a typed, privacy-reviewed manifest with the same strict field/size contract; do not retire it in
    favor of free-form log scrubbing.
+3. **A generated client is a projection of an explicit support boundary, never a projection of all
+   registered routes.** This applies to later language SDKs and reference-client codegen. Evidence it
+   earns its keep: an internal route cannot appear in the SDK snapshot, and every SDK-exposed route
+   has complete request/status/security metadata enforced by one coverage test. Retire the separate
+   SDK-filtered projection only if the full HTTP surface itself becomes intentionally public and
+   equally complete; route count alone is not that condition.
 
 Do not build a universal lifecycle registry across HTTP, MCP, operations, and configuration now.
 Their identifiers, version rules, and consumers differ. Reconsider only after a third surface needs
@@ -395,8 +496,14 @@ shape.
   collide with, but active worktree churn still requires a re-check before opening the five drafts.
 - **Closed:** HTTP syntax and MCP extension placement are settled by primary specifications. The
   repository's current `api-evolution.md` syntax is stale and must be fixed in the lifecycle PR.
-- **Closed:** the SDK dependency is measurable. Current response-schema coverage is 7/201 (3.5%) and
-  request bodies are absent, so deferral is evidence-based.
+- **Closed:** the SDK dependency is measurable. The committed route snapshot's response-schema
+  coverage is 7/201 (3.5%) and request bodies are absent, so deferral is evidence-based.
+- **Closed:** the v0.1 SDK boundary is now explicit: Node-native, six read-only JSON operations,
+  stable status subset only, with MCP/token/HEAD/SSE excluded for stated reasons. This removes the
+  mutation-token and stream-parser risks from the first package.
+- **Closed:** source/snapshot drift is not hypothetical. Current Java maps the two failed-indexing-
+  job routes to a schema while the committed route snapshot still records `null`; S1 therefore uses
+  an in-process byte-for-byte snapshot test rather than relying on manual live capture.
 - **Closed:** Help already mounts the diagnostics operation and the clipboard utility is reusable,
   but the generic clipboard Effect is not: it journals, persists, and exports the payload. The
   dedicated awaitable action must keep summary text out of every journal/persistence surface and
@@ -415,12 +522,18 @@ shape.
   explicit CORS exposure without weakening Host/Origin admission.
 - **Residual:** generic MCP clients may ignore custom `_meta`; the description prefix is the required
   legibility fallback. This is an interoperability ceiling, not a reason to forge standard fields.
+- **Residual:** the public manifest, probes, lifecycle subset, Host rejection, and sanitized
+  application failures do not all have canonical JSON Schemas today. S1 must author/generate them
+  without exposing internal status fields or `head.sessionToken`.
+- **Residual:** generator selection is not proven until the same fixture demonstrates Node 20
+  runtime compatibility and typed lifecycle `503` handling. Hey API is only a front-runner, not an
+  accepted dependency.
 - **Residual:** succession values known only to the founder remain explicit placeholders. Their
   absence does not block the skeleton or secret-name inventory.
 
 #### Bounded subagent review
 
-Two read-only subagents challenged disjoint parts of the design; neither edited files, ran builds,
+Five read-only subagents challenged disjoint parts of the design; none edited files, ran builds,
 touched the shared stack, or mutated GitHub:
 
 - A refute-first contract/privacy reviewer found one design blocker: the generic clipboard Effect
@@ -432,6 +545,16 @@ touched the shared stack, or mutated GitHub:
   platform wording/version alignment, reuse of existing setup seams, issue sequencing, SDK surface
   enumeration/coherence, and succession variables. D1, D2, D4, and D6 now incorporate those
   corrections.
+- A focused SDK route explorer enumerated the six JSON candidates and resolved v0.1's target and
+  exclusions; a packaging/codegen explorer found real route-snapshot drift, confirmed that the
+  existing `apiRoutes.ts` is only an internal route table, and identified the contract-projection
+  gate as the reusable governance seam. Their evidence produced S1/S2 rather than one oversized SDK
+  change.
+- A final refute-first SDK reviewer showed that byte-stable projection alone cannot prove handler
+  behavior, runtime-served `$ref`s are not an offline generator input, the manifest's raw exception
+  response is unsafe to standardize, and copied security labels would fork the trust boundary. S1
+  now requires executable status/body schema tests, a self-contained snapshot, sanitized failures,
+  and enforcement-derived security metadata.
 
 Subagents are useful during implementation only where write ownership stays disjoint: container +
 bootstrap, intake/succession prose, lifecycle, and diagnostics can each be separate worktree/PR
@@ -448,13 +571,16 @@ succession values remain with the coordinating agent/founder.
 | Issue drafts + succession | 9/10 | Low; writing judgment and founder placeholders only. |
 | HTTP/MCP lifecycle | 7/10 | Medium-high; cross-transport projection and Javalin middleware tests. |
 | Diagnostic summary | 7/10 | Medium-high; typed composition, an awaitable non-journaling copy path, and adversarial privacy/persistence tests. |
-| Generated SDK | 2/10 now | Do not implement; dependency condition is unmet. |
+| SDK contract projection S1 | 7/10 | Medium-high; six routes, canonical schemas, sanitized failures, enforcement-derived security, and both projection and executable-handler closure. |
+| Generated runtime client S2 | 7/10 plan / 3/10 ship-now readiness | Medium after S1; generator bakeoff, Node 20 runtime proof, package and live smokes remain. |
 
-**Overall confidence for the remaining authorized implementation: 7/10.** Use an Opus-class /
+**Overall confidence for the remaining authorized implementation remains 7/10.** The SDK is no
+longer an unbounded unknown: S1 can begin at 7/10 confidence, while S2 remains conditional rather
+than pretending absent schemas are implementation-ready. Use an Opus-class /
 high-reasoning implementation pass (for Codex: `gpt-5.6-sol` at high or xhigh) for the lifecycle
-and diagnostic PRs; the docs/intake PRs fit a Sonnet-class / medium-effort pass. Keep the five PRs
-separate so the container proof, contract projection, founder-input skeleton, and privacy surface can
-each be reviewed and reverted independently.
+and diagnostic PRs; the docs/intake PRs fit a Sonnet-class / medium-effort pass. Keep the six
+immediate PRs separate so the container proof, contract projection, founder-input skeleton, and
+privacy surface can each be reviewed and reverted independently.
 
 #### Closeout evidence
 
