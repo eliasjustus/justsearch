@@ -563,29 +563,47 @@ Analyzer perField = analyzerRegistry.buildPerFieldAnalyzer(fieldToAnalyzerKey);
 
 ### 9.1 Fingerprinting Strategy
 
-`SsotCommitMetadataSource` generates deterministic fingerprints:
+`SsotCommitMetadataSource` stamps observability fields plus the two parity keys (tempdoc 915 —
+`schema_ver`, `index_schema_fp`, and `analyzer_fp` as a standalone key were retired and folded into
+`index_fingerprint`):
 
 ```java
-Map<String, String> metadata = Map.of(
-    "schema_ver", schemaVersion,
-    "schema_fp", sha256(canonicalJson(fieldsCatalog)),
-    "analyzer_fp", sha256(sortedAnalyzerDefs),
-    "synonyms_hash", sha256(concat(synonymFiles)),
-    "boosts_fp", sha256(boostsConfig),
-    "similarity_fp", sha256(bm25Descriptor)
-);
+Map<String, String> metadata = new HashMap<>();
+// Observability (never compared for parity):
+metadata.put("schema_fp", sha256(canonicalJson(fieldsCatalog)));
+metadata.put("synonyms_hash", sha256(concat(synonymFiles)));
+metadata.put("similarity_fp", sha256(bm25Descriptor));
+metadata.put("grammar_hash", sha256(intentGrammar));
+// ... plus grammar_ver, template_ver, prompt_pack_hash, vector_format, build_state,
+// commit_id, commit_time, embedding_model_sha256, splade_model_sha256.
+
+// Parity keys — the ONLY two compared by IndexMetadataParityGuard:
+indexFingerprint(fieldsCatalog, analyzerDefs, vectorFormat, hnswParams, chunking,
+        embeddingModelSha, spladeModelSha)   // IndexFingerprint.compute(...)
+    .ifPresent(fp -> metadata.put("index_fingerprint", fp));   // omitted, never guessed, if indeterminate
+metadata.put("boosts_fp", sha256(boostsConfig));               // benign — never a rebuild trigger
 ```
 
 ### 9.2 Parity Guards
 
-`IndexMetadataParityGuard` validates consistency on open:
+`IndexMetadataParityGuard` validates only the two parity keys (`ParityDiagnostics.PARITY_KEYS =
+{index_fingerprint, boosts_fp}`) on open — everything else in commit metadata is observability and is
+never compared:
 
 ```java
-void checkOnOpen(Path indexPath, Map<String, String> expected) {
+void checkOnOpen(Path indexPath, Map<String, Object> expected) {
     Map<String, String> stored = readCommitMetadata(indexPath);
-    if (!expected.equals(stored)) {
-        throw new SchemaMismatchException(diff(expected, stored));
+    List<Diff> diffs = ParityDiagnostics.diff(stored, expected);  // blank either side => skip, never "mismatch"
+    if (diffs.isEmpty()) {
+        return;
     }
+    if (allowMismatch()) {
+        return; // operator escape hatch, WARN-only
+    }
+    if (ParityDiagnostics.requiresRebuild(diffs)) {   // true iff index_fingerprint is among the diffs
+        throw new IndexRuntimeIOException(SCHEMA_MISMATCH, ...);
+    }
+    throw new IllegalStateException("Shard is read-only due to parity mismatch"); // boosts_fp-only diff
 }
 ```
 
@@ -593,9 +611,9 @@ void checkOnOpen(Path indexPath, Map<String, String> expected) {
 
 | Policy | Behavior |
 |--------|----------|
-| `FAIL_CLOSED` | Refuse startup (production default) |
-| `REBUILD_BACKUP_FIRST` | Backup then rebuild (dev default) |
-| `BLUE_GREEN_MIGRATE` | Read-only + background rebuild |
+| `FAIL_CLOSED` | Refuse startup |
+| `REBUILD_BACKUP_FIRST` | Backup then rebuild (**dev default**) |
+| `BLUE_GREEN_MIGRATE` | Read-only + background rebuild (**production default**, tempdoc 915) |
 
 ## 10. Configuration Reference
 

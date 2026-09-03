@@ -62,22 +62,23 @@ _VOLATILE_FIELDS = frozenset({
     "telemetry_health_tag",
 })
 
-# The 8 identity-stable fields inside ``/api/debug/commit-metadata`` —
+# The 7 identity-stable fields inside ``/api/debug/commit-metadata`` —
 # fingerprints/hashes of the current index identity that survive a
-# restart. Mirrors the span-attribute set emitted by
-# ``modules/worker-services/.../CommitMetadataSpanAttrs.java::KEYS``
-# (LR2-d.2). Changing this list should be done in lockstep with the
+# restart. Mirrors the ``commit.*`` allowlist emitted by
+# ``modules/telemetry/.../NdjsonSpanExporter.java::ALLOWED_ATTRS``
+# (tempdoc 915). Changing this list should be done in lockstep with the
 # Java side so the Python manifest and Java span attributes hash the
-# same identity surface.
+# same identity surface. ``index_fingerprint`` is the one rebuild-requiring
+# key (tempdoc 915); it replaced the retired ``schema_ver`` /
+# ``index_schema_fp`` / ``analyzer_fp`` parity keys.
 _COMMIT_METADATA_IDENTITY_FIELDS = frozenset({
     "schema_fp",
     "field_catalog_hash",
-    "analyzer_fp",
     "synonyms_hash",
     "grammar_hash",
     "similarity_fp",
     "boosts_fp",
-    "index_schema_fp",
+    "index_fingerprint",
 })
 
 # State endpoints captured for manifest identity. Each contributes either
@@ -181,26 +182,28 @@ def _extract_telemetry_tag(state_snapshots: dict) -> str:
 
 
 def _normalise_commit_metadata(raw: dict) -> dict:
-    """Filter commit metadata to the 8 identity-stable fields (Phase 2.0).
+    """Filter commit metadata to the 7 identity-stable fields (tempdoc 915).
 
-    The raw ``/api/debug/commit-metadata`` response carries ~17 fields,
-    most of which are identity (schema_fp, field_catalog_hash, ...) but
-    three are runtime artefacts that change every Lucene commit:
+    The raw ``/api/debug/commit-metadata`` response carries observability
+    fields beyond the identity set (schema_fp, field_catalog_hash, ... plus
+    ``index_fingerprint``, the one rebuild-requiring key) but several are
+    runtime artefacts that change every Lucene commit or are not parity
+    keys at all:
 
     - ``commit_id`` — a random UUID assigned per commit
     - ``commit_time`` — an ISO timestamp per commit
-    - several versioned / build-state fields (``schema_ver``,
-      ``grammar_ver``, ``template_ver``, ``prompt_pack_hash``,
-      ``vector_format``, ``splade_model_sha256``, ``build_state``,
-      ``grammar_on``) that can vary without the index identity
-      changing or are redundant with the 8 core hashes.
+    - several versioned / build-state fields (``grammar_ver``,
+      ``template_ver``, ``prompt_pack_hash``, ``vector_format``,
+      ``splade_model_sha256``, ``build_state``, ``grammar_on``) that can
+      vary without the index identity changing or are redundant with the
+      7 core hashes.
 
     Pre-Phase-2.0 the normaliser passed all fields through, which meant
     ``commit_id`` + ``commit_time`` destabilised the cohort hash across
     every identical re-run (Q1 finding in tempdoc 400 §24). Filtering to
-    ``_COMMIT_METADATA_IDENTITY_FIELDS`` keeps the same 8 fields that
-    LR2-d.2's ``commit.*`` span attributes already commit to — single
-    authority of truth across Python + Java telemetry.
+    ``_COMMIT_METADATA_IDENTITY_FIELDS`` keeps the same 7 fields that
+    ``NdjsonSpanExporter``'s ``commit.*`` span attributes already commit to
+    — single authority of truth across Python + Java telemetry.
     """
     if not isinstance(raw, dict):
         return {}

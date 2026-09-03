@@ -125,17 +125,19 @@ _INDEX_SHAPING_ENV_VARS = (
     "JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED",
 )
 
-# Commit-metadata fields that enter the live key. The four index fingerprints
-# (751 sec A.3 item 4) plus the two model content hashes (sec O.3) plus
-# vector_format. build_state / commit_time are attestation-side (they vary per
-# build) and are NOT read here -- the publish step (WP3) assembles them into the
-# entry attestation, not into the identity key.
+# Commit-metadata fields that enter the live key: the rebuild-requiring
+# `index_fingerprint` (tempdoc 915 -- replaces the old five-key parity set,
+# including the retired `index_schema_fp` / `analyzer_fp` this dict used to
+# carry separately), `field_catalog_hash` + `synonyms_hash` (751 sec A.3 item
+# 4), plus the two model content hashes (sec O.3) plus vector_format.
+# build_state / commit_time are attestation-side (they vary per build) and
+# are NOT read here -- the publish step (WP3) assembles them into the entry
+# attestation, not into the identity key.
 _LIVE_KEY_META_FIELDS = (
     "embedding_model_sha256",
     "splade_model_sha256",
     "field_catalog_hash",
-    "index_schema_fp",
-    "analyzer_fp",
+    "index_fingerprint",
     "synonyms_hash",
     "vector_format",
 )
@@ -743,8 +745,9 @@ def compute_live_identity(
 ) -> IndexIdentity:
     """Authoritative index identity from the running backend (751 sec M.1).
 
-    The config-derived fingerprints (embed/SPLADE model content, the four index
-    fingerprints, vector_format) come from the backend's own
+    The config-derived fingerprints (embed/SPLADE model content,
+    ``index_fingerprint``, ``field_catalog_hash``, ``synonyms_hash``,
+    ``vector_format``) come from the backend's own
     ``/api/debug/commit-metadata`` -- jseval never re-derives a Java fingerprint
     in Python. git identity + working-tree dirt come from
     ``JUSTSEARCH_REPO_ROOT`` (or the resolved checkout); the NER hash comes from
@@ -776,8 +779,7 @@ def compute_live_identity(
         "splade_model_sha256": meta["splade_model_sha256"],
         "ner_model_hash": ner,
         "field_catalog_hash": meta["field_catalog_hash"],
-        "index_schema_fp": meta["index_schema_fp"],
-        "analyzer_fp": meta["analyzer_fp"],
+        "index_fingerprint": meta["index_fingerprint"],
         "synonyms_hash": meta["synonyms_hash"],
         "vector_format": meta["vector_format"],
         "runtime_config": _runtime_config(spawn_env),

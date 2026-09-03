@@ -37,16 +37,59 @@ This prevents “schema evolution” from being treated as “corruption” (whi
 
 JustSearch fingerprints both the Lucene schema and the embedding model, stamping them into Lucene commit metadata so mismatches can be detected deterministically.
 
-### Schema fingerprint (`index_schema_fp`)
+### Index fingerprint (`index_fingerprint`)
 
-- **Stamping:** on commit, the Worker writes `index_schema_fp` into Lucene commit user-data. It is the SHA-256 of the canonical `SSOT/catalogs/fields.v1.json` file (`SsotCommitMetadataSource.java:81-93`), optionally re-hashed with a runtime vector-dimension override.
-- **Validation:** on startup/open, `IndexMetadataParityGuard` compares the stored fp vs the current fp and classifies compatibility (compatible, legacy/missing, mismatch). **This guard does not currently enforce** — see [Enforcement status](#enforcement-status-2026-08) below.
-- **UI/automation signal:** the Worker surfaces schema state via `/api/status`:
+Tempdoc 915 replaced the old five-key parity set (`schema_ver` / `schema_fp` / `index_schema_fp` /
+`analyzer_fp` / `similarity_fp`) with a single rebuild-requiring key, `index_fingerprint`, plus the
+one benign (never-rebuild) key `boosts_fp`. The old keys were untruthful in both directions:
+`schema_ver` tracked the search-intent grammar version and could never fire, while `index_schema_fp`
+hashed the whole catalog *file*, so an annotation-only edit (an `rmwPolicy` added to a field) flipped
+it against an index that was physically still perfectly compatible (tempdoc 804).
+
+- **What it is:** a SHA-256 over canonical JSON of the effective *physical* index shape —
+  everything that decides what bytes end up in the Lucene directory, and nothing else
+  (`IndexFingerprint.java`). Inputs:
+  - `catalog_schema_version` — the catalog's own declared `version`.
+  - Per-field physical projection: `id`, `type`, `stored`, `docValues`, `multiValued`, `analyzer`,
+    `roles`, and for vector fields `dimension` + `similarity`.
+  - The analyzer definitions (index-time analysis fingerprint).
+  - `vector_format` (`float32` vs `int8_sq`).
+  - HNSW `m` + `ef_construction` (graph-construction parameters).
+  - Chunking: target/overlap/minimum tokens plus the splitter's algorithm version.
+  - `embedding_model_sha256` / `splade_model_sha256` — the models whose output is stored in the
+    vector and sparse fields.
+- **Deliberately excluded:**
+  - **`rmwPolicy` field annotations** — the read-modify-write preservation policy never changes
+    bytes on disk (`FieldMapper` rejects an `rmwPolicy` on any stored/doc-values field by
+    construction), so it can only affect runtime backfill behaviour. This exclusion is the specific
+    fix for the 804 over-trigger.
+  - **Query-time scoring:** BM25 `k1`/`b` (`similarity_fp`), field boosts (`boosts_fp`), and HNSW
+    `ef_search`. These change ranking, not storage, so a change to them must never cost the user a
+    reindex.
+  - The search-intent grammar, prompt packs, and templates — they never touched the index.
+- **Tri-state model inputs:** a model fingerprint is tri-state (`IndexFingerprint.ModelState`):
+  `NOT_CONFIGURED` (no model resolvable for this deployment) hashes as JSON `null` — a determinate
+  answer. `INDETERMINATE` (a model file is configured but its digest could not be read) is *not* an
+  answer: `IndexFingerprint.compute()` returns empty rather than inventing one, and
+  `SsotCommitMetadataSource` then stamps **no** `index_fingerprint` key at all into commit
+  user-data. `ParityDiagnostics.diff()` treats a blank stored *or* blank expected side as "unknown,
+  never different" and skips the comparison. **A transiently unreadable model file must never look
+  like a swapped one** — the consequence of the latter is a full rebuild, so an indeterminate input
+  means no fingerprint is stamped and no comparison is made, never a mismatch.
+- **Stamping:** on commit, the Worker writes `index_fingerprint` into Lucene commit user-data via
+  `SsotCommitMetadataSource` (rendering version `IndexFingerprint.RENDERING_VERSION`).
+- **Validation:** on startup/open, `IndexMetadataParityGuard.checkOnOpen()` compares the stored
+  value vs the current value. See [Enforcement status](#enforcement-status-2026-09) below — the
+  guard now enforces.
+- **UI/automation signal:** the Worker surfaces schema state via `/api/status` under the same
+  wire field names as before (unchanged by the 915 rename, now backed by `index_fingerprint`):
   - `indexSchemaFpStored`, `indexSchemaFpCurrent`
   - `indexSchemaCompatState`
   - `reindexRequired` + `reindexRequiredReason` (stable reason code: `schema_mismatch`)
-- **Consumers:** none on the query path. `IndexStatusOps.safeSchemaCompatState()` computes the state for status reporting only; no planner, executor, or retrieval-leg decision reads it. The dense leg is gated by the *embedding* fingerprint below (`EmbeddingCompatibilityController.allowQueryEmbeddings()`, consumed at `SearchPlanner.java:87`). An index can therefore report `schema_mismatch` and still serve fully hybrid results — sandbox round 10 reproduced exactly that, which is why the frontend words this state as advisory (`info` severity, not a reindex cause).
-- **Sensitivity:** because it hashes the whole catalog file, *any* byte edit flips it — including annotation-only edits with no physical index consequence. The three post-v0.1.0 catalog edits (a dead-field deletion and three `rmwPolicy` annotations) each flipped `index_schema_fp` against v0.1.0 indexes that remained physically compatible. A fingerprint over the *physical* schema (or per-field consequence classes) would be needed to make the signal truthful; that is not implemented.
+- **Consumers:** none on the query path. `IndexStatusOps.safeSchemaCompatState()` computes the state
+  for status reporting only; no planner, executor, or retrieval-leg decision reads it. The dense leg
+  is gated by the *embedding* fingerprint below (`EmbeddingCompatibilityController.allowQueryEmbeddings()`,
+  consumed at `SearchPlanner.java:87`).
 
 ### Embedding model fingerprint (`embedding_model_sha256`)
 
@@ -86,27 +129,65 @@ The Worker always opens Lucene against a **specific generation directory**, neve
 
 When the Worker detects `SCHEMA_MISMATCH` at startup, behavior is policy-controlled:
 
-- **`FAIL_CLOSED`**: refuse to rebuild automatically (the value a production profile resolves to by default, `ResolvedConfigBuilder.normalizeSchemaMismatchPolicy`).
+- **`FAIL_CLOSED`**: refuse to rebuild automatically.
   - The Worker fails startup; the Head keeps the HTTP server up and surfaces the worker start error in `/api/status`.
-  - In practice only the `ComponentsFactory` `FieldInfos` detector reaches this policy today; the fingerprint detector is disabled (below).
-- **`REBUILD_BACKUP_FIRST`**: rename-to-backup and rebuild an empty index (dev convenience).
+  - This is the pre-915 default and remains available as an explicit opt-in, but it is no longer what a production profile resolves to (see defaults below).
+- **`REBUILD_BACKUP_FIRST`**: rename-to-backup and rebuild an empty index.
   - Backup-first, guarded filesystem operations (no recursive deletes).
+  - This is the **dev default** — a developer wants the fast rebuild, not a second generation on disk.
 - **`BLUE_GREEN_MIGRATE`**: availability-first migration.
   - Serve the existing active generation (“Blue”) **read-only** for search while building a new generation (“Green”) for writes.
+  - This is the **production default** (tempdoc 915 §C). `FAIL_CLOSED` was the old default and is the wrong answer for a desktop app: a schema-changing upgrade left the user with an index that refuses to open and no path forward. Blue/green keeps the existing index serving reads while the new one is built beside it.
+
+Defaults are resolved by `ResolvedConfigBuilder.normalizeSchemaMismatchPolicy(raw, isProd)`: `null`/blank config resolves to `BLUE_GREEN_MIGRATE` in production, `REBUILD_BACKUP_FIRST` in dev.
 
 Override sources:
 
 - YAML: `index.schema_mismatch.policy`
 - Env/sysprop: `JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY` / `-Dindex.schema_mismatch.policy=...`
 
-## Enforcement status (2026-08)
+### Repeat-rebuild brake
 
-The parity half of the design above is **wired but not enforcing in any shipped run**. Verified at source during the sandbox round-10 investigation (tempdoc 804 §D1):
+Because the production default auto-starts a rebuild on a `SCHEMA_MISMATCH`, and an index that fails
+to build a valid Green presents the same mismatch again on the next boot, the Worker bounds how many
+times it will auto-start a rebuild targeting the same `index_fingerprint` before it stops and leaves
+the decision to an operator (`IndexGenerationManager`, tempdoc 915 §C):
 
-- `HeadlessApp.java:267` (`setupInfra`) and `HeadlessApp.java:607` (sidecar entry) both set `justsearch.index.parity.allow_mismatch=true` **unconditionally** — there is no dev/prod condition on either set-site — and `WorkerSpawner` forwards `INDEX_PARITY_ALLOW_MISMATCH` into the Worker JVM.
-- `IndexMetadataParityGuard.checkOnOpen()` therefore logs the diffs at WARN (`continuing in WARN mode`) and returns, so it never raises `SCHEMA_MISMATCH` for a rebuild-requiring parity key (`analyzer_fp` / `schema_ver` / `index_schema_fp`) and `index.schema_mismatch.policy` never sees one.
-- What still enforces: the `FieldInfos` inspection in `ComponentsFactory`, which fires only when the on-disk index genuinely cannot accept writes under the current field mapping. That is the detector the “reindex did nothing” failure mode needs.
-- **Deliberate, not an oversight to revert blindly.** With today’s content-hash fingerprint, enabling enforcement would refuse to start on indexes that are physically fine (round 10’s index was serving hybrid results while reporting `schema_mismatch`). Making the guard enforce is gated on a truthful fingerprint, not on flipping the flag.
+- `MAX_AUTO_REBUILD_ATTEMPTS = 3` — enough to absorb a transient failure (a crash mid-build, a full
+  disk that clears) and few enough that a genuinely unbuildable index stops costing a full rebuild on
+  every boot.
+- Tracked in `state.json` as `auto_rebuild_key` (the target `index_fingerprint`), `auto_rebuild_count`
+  (1-based attempt number), and `auto_rebuild_first_ms`. `recordAutoRebuildAttempt(targetKey)` is
+  persisted **before** the rebuild starts, not after it succeeds, so a rebuild that crashes the
+  process still consumes its attempt.
+- The count resets whenever `targetKey` differs from the last recorded one, so a new upgrade is never
+  refused because an older one exhausted the budget.
+- Cleared (`auto_rebuild_key`/`count`/`first_ms` all set back to `null`) on a successful cutover —
+  `IndexGenerationManager.promoteBuildingGenerationToActive()` releases the brake once the rebuild has
+  converged, so a future, unrelated upgrade starts with a full budget.
+
+## Enforcement status (2026-09)
+
+The parity guard now enforces. Tempdoc 915 removed the two unconditional set-sites in
+`HeadlessApp.java` (`setupInfra` and the sidecar entry) that used to set
+`justsearch.index.parity.allow_mismatch=true` on every boot — the reason the guard never enforced
+anything for its whole prior life (tempdoc 804 §D1).
+
+- `IndexMetadataParityGuard.checkOnOpen()` diffs the stored vs. expected `PARITY_KEYS`
+  (`ParityDiagnostics`: `index_fingerprint` and `boosts_fp`). On any diff it logs at WARN, then:
+  - if `justsearch.index.parity.allow_mismatch=true` is set (see below), continues in WARN mode
+    (the operator escape hatch);
+  - else if the diff includes `index_fingerprint` (a `REBUILD_REQUIRING_KEYS` member), raises
+    `IndexRuntimeIOException(SCHEMA_MISMATCH)`, which `index.schema_mismatch.policy` acts on;
+  - else (a `boosts_fp`-only diff — query-time config) throws `IllegalStateException`, marking the
+    shard read-only until the config is realigned; this is never a reindex trigger.
+- `justsearch.index.parity.allow_mismatch` / `JUSTSEARCH_INDEX_PARITY_ALLOW_MISMATCH` now survives
+  **only** as an explicit operator escape hatch — nothing sets it by default any more. An operator can
+  still set it to open a known-divergent index read-only for diagnosis, and nothing else.
+- What also still enforces, independently: the `FieldInfos` inspection in `ComponentsFactory`, which
+  fires only when the on-disk index genuinely cannot accept writes under the current field mapping.
+  That is the detector the “reindex did nothing” failure mode originally needed, and it is unaffected
+  by the 915 change.
 
 ## Blue/Green migration model (current MVP)
 

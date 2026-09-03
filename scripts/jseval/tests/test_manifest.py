@@ -32,7 +32,7 @@ def _fake_state_snapshots(*, ready=True):
             "/api/debug/state": {"worker": {"status": "IDLE", "doc_count": 100}},
             "/api/debug/commit-metadata": {
                 "schema_fp": "a" * 64, "field_catalog_hash": "b" * 64,
-                "analyzer_fp": "c" * 64, "index_schema_fp": "d" * 64,
+                "index_fingerprint": "d" * 64,
             },
             "/api/debug/session-policies": {"configStatus": "ok", "runtime": {}, "models": {}},
             "/api/telemetry/health": {"state": "LIFECYCLE_STATE_READY", "reason_code": None},
@@ -80,7 +80,6 @@ class TestNormaliseCommitMetadata:
             "field_catalog_hash": "def",
             "commit_id": "54b20e83-dfe1-4335-91f4-1724160d7fcf",
             "commit_time": "2026-04-22T01:53:03.026646500Z",
-            "schema_ver": 1,
             "grammar_ver": 2,
             "template_ver": 3,
             "prompt_pack_hash": "ghi",
@@ -94,7 +93,7 @@ class TestNormaliseCommitMetadata:
         assert "commit_id" not in out
         assert "commit_time" not in out
 
-    def test_retains_all_eight_identity_fields_when_present(self):
+    def test_retains_all_seven_identity_fields_when_present(self):
         raw = {k: k + "_value" for k in _COMMIT_METADATA_IDENTITY_FIELDS}
         out = _normalise_commit_metadata(raw)
         assert set(out.keys()) == _COMMIT_METADATA_IDENTITY_FIELDS
@@ -351,8 +350,7 @@ class TestCohortStabilityAgainstRuntimeState:
         a_snap["/api/debug/commit-metadata"] = {
             "schema_fp": "a" * 64,
             "field_catalog_hash": "b" * 64,
-            "analyzer_fp": "c" * 64,
-            "index_schema_fp": "d" * 64,
+            "index_fingerprint": "d" * 64,
             "commit_id": "54b20e83-dfe1-4335-91f4-1724160d7fcf",
             "commit_time": "2026-04-22T01:53:03.026646500Z",
         }
@@ -360,8 +358,7 @@ class TestCohortStabilityAgainstRuntimeState:
         b_snap["/api/debug/commit-metadata"] = {
             "schema_fp": "a" * 64,
             "field_catalog_hash": "b" * 64,
-            "analyzer_fp": "c" * 64,
-            "index_schema_fp": "d" * 64,
+            "index_fingerprint": "d" * 64,
             "commit_id": "15e5876c-b2c9-42c4-8f5f-16d72b3fbffb",
             "commit_time": "2026-04-22T01:57:03.229273100Z",
         }

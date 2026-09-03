@@ -451,8 +451,7 @@ _COMMIT_META = {
     "embedding_model_sha256": "e" * 64,
     "splade_model_sha256": "5" * 64,
     "field_catalog_hash": "fch",
-    "index_schema_fp": "isf",
-    "analyzer_fp": "afp",
+    "index_fingerprint": "isf",
     "synonyms_hash": "syn",
     "vector_format": "int8_sq",
     "build_state": "COMPLETE",
@@ -499,11 +498,11 @@ def test_compute_live_identity_missing_ner_unavailable(backend, git_repo: Path, 
 def test_compute_live_identity_missing_meta_field_unavailable(backend, git_repo: Path, tmp_path: Path):
     models = _make_models_dir(tmp_path)
     meta = dict(_COMMIT_META)
-    del meta["analyzer_fp"]
+    del meta["index_fingerprint"]
     backend.set("GET", "/api/debug/commit-metadata", 200, meta)
     with pytest.raises(IdentityUnavailable) as exc:
         compute_live_identity(backend.base_url, _live_env(git_repo, models))
-    assert "analyzer_fp" in exc.value.reason
+    assert "index_fingerprint" in exc.value.reason
 
 
 # ---- confirm_adoption scenario helpers ------------------------------------ #
@@ -588,11 +587,11 @@ def test_confirm_identity_mismatch_names_component(backend, git_repo: Path, tmp_
     env, entry_doc = _setup_green(backend, data_dir, git_repo, models)
     # Mutate a live commit-metadata field so the recomputed key diverges.
     changed = dict(_COMMIT_META)
-    changed["analyzer_fp"] = "DIFFERENT"
+    changed["index_fingerprint"] = "DIFFERENT"
     backend.set("GET", "/api/debug/commit-metadata", 200, changed)
     result = confirm_adoption(backend.base_url, entry_doc, data_dir, env)
     assert not result.ok
-    assert any(f.startswith("identity.analyzer_fp:") for f in result.failures), result.failures
+    assert any(f.startswith("identity.index_fingerprint:") for f in result.failures), result.failures
 
 
 def test_confirm_wrong_data_dir(backend, git_repo: Path, tmp_path: Path):
