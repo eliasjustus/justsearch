@@ -1,7 +1,7 @@
 ---
 title: "Separate the PR review record from the public squash record"
 type: tempdocs
-status: "TRANSPORT REFUTED (2026-09-03) — prerequisite merged in PR #625; live queue discarded the explicit body and published PR_BODY; redesign required before PR 1–3"
+status: "RESEARCHED + RETHEORIZED (2026-09-03) — gh auto-merge transport refuted; REST async queue transport is the leading unproved hypothesis; no rollout before a new live proof"
 created: 2026-09-03
 updated: 2026-09-03
 charter: "make rich agent PR evidence compatible with concise, durable public main history"
@@ -20,9 +20,11 @@ related:
 Read this file, then ADR-0045, tempdoc 653 from §Long-term design settlement onward,
 tempdoc 856 §3/§6, `.claude/skills/publish/SKILL.md`,
 `scripts/ci/preview-squash-message.mjs` and its tests, and the history-publication
-section of `docs/reference/contributing/agent-guide.md`. Start with the live proof in
-§8.1. Do not change the repository squash-body default until a queued squash has
-proved that `gh pr merge --body-file` survives this repository's merge queue exactly.
+section of `docs/reference/contributing/agent-guide.md`. Treat §§0–11 as the candidate
+design that existed before the failed PR #625 proof, then read §14 before planning any
+implementation. Do not retry `gh pr merge --body-file`, change the repository
+squash-body default, or start PRs 1–3. The next gate is a separately authorized live
+proof of the REST asynchronous queue transport described in §14.5.
 
 This is a forward-only design. Do not rewrite existing `main` history. Preserve the
 useful `Session-Id:` authority until tempdoc 856's measured retirement condition is
@@ -836,9 +838,168 @@ The prerequisite merged through PR #625 as commit
 the subject and `Session-Id` survived, but the queue published the full PR body instead
 of the explicit `--body-file` input. The repository default was not changed.
 
+## 14. Post-failure research and theorization — 2026-09-03
+
+This section is an investigation and option space, not a settled replacement design.
+It follows the failed PR #625 proof and deliberately stops before implementation or
+another GitHub mutation. No external code or text was copied into the repository.
+
+### 14.1 What the failed transport path actually was
+
+The failure was not a network or local-checkout failure. It was a semantic break across
+two server operations that the installed CLI presents as one command:
+
+1. `gh pr merge --body-file ... --match-head-commit ...` accepted the intended body and
+   head SHA locally.
+2. GitHub CLI v2.90.0 built a `mergePayload` containing `commitBody`, `setCommitBody`, and
+   `expectedHeadOid`.
+3. Once the CLI detected a merge queue, it set `payload.auto = true`.
+4. `http.go` routed every `auto=true` payload through GraphQL
+   `enablePullRequestAutoMerge`, not through the queue's `enqueuePullRequest` mutation.
+5. GitHub later enqueued and squashed the PR, but the queue used the repository's
+   `PR_BODY` default instead of the auto-merge mutation's explicit body.
+
+The tagged CLI source makes steps 2–4 explicit in
+[`merge.go`](https://github.com/cli/cli/blob/v2.90.0/pkg/cmd/pr/merge/merge.go)
+and
+[`http.go`](https://github.com/cli/cli/blob/v2.90.0/pkg/cmd/pr/merge/http.go).
+An open GitHub CLI bug independently identifies the same queue/auto-merge routing seam:
+[`gh pr merge` fails with merge queue when `allow_auto_merge` is disabled](https://github.com/cli/cli/issues/13398).
+
+A read-only live GraphQL schema query sharpened the boundary. On 2026-09-03,
+`EnablePullRequestAutoMergeInput` exposed `commitHeadline`, `commitBody`, `mergeMethod`,
+and `expectedHeadOid`, while `EnqueuePullRequestInput` exposed only
+`pullRequestId`, `jump`, and `expectedHeadOid` (plus `clientMutationId`). Therefore a
+direct GraphQL enqueue cannot carry the public projection. PR #625 supplies the missing
+server-side observation: values accepted by the auto-merge input are not preserved when
+the later queue operation constructs the squash commit.
+
+This explains why source inspection originally produced false confidence. It proved that
+the CLI serialized the field, not that the irreversible queue request owned or persisted
+the field.
+
+### 14.2 Newly available provider primitive
+
+GitHub's current REST API documents
+`PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge-async`. Its request has all five
+pieces the publication boundary needs:
+
+- `commit_title`;
+- `commit_message`;
+- expected head `sha`;
+- `merge_method`, including `squash`;
+- `merge_action`, including an explicit `merge_queue` value.
+
+The endpoint returns a UUID for a corresponding result endpoint. A pending result
+reports the merge method, merge action, and expected head SHA; completion reports the
+landed commit or a failure. GitHub documents `200` for an already merged or already
+queued PR, `202` for a newly accepted asynchronous request, and `409` when another
+asynchronous request already exists. See
+[Merge a pull request asynchronously](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10#merge-a-pull-request-asynchronously)
+and
+[Get the result of an asynchronous merge](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10#get-the-result-of-an-asynchronous-merge).
+
+This is a qualitatively better candidate than `gh pr merge --body-file`: title, message,
+head lock, merge method, and queue routing are members of one request, and the server
+returns a receipt for that request. GitHub's own
+[`github/gh-stack` client](https://github.com/github/gh-stack/blob/main/internal/github/merge_async.go)
+also uses the asynchronous endpoint and explicit merge action, which is evidence that
+this is an intended native path rather than an undocumented workaround. Its current
+implementation does not send a custom message, so it is not evidence that the queue
+preserves one.
+
+The endpoint documentation says `commit_message` is extra detail for the automatic
+commit message, but does not explicitly promise byte-for-byte persistence after a merge
+queue processes the request. The API shape raises the transport hypothesis from 2/10 to
+6/10; only a live queued squash can raise it to implementation confidence.
+
+### 14.3 Possible solution directions
+
+| Direction | What it buys | Main uncertainty or cost | Current posture |
+|---|---|---|---|
+| REST asynchronous merge with an explicit queue action and message | Keeps the rich PR body, native queue, SHA lock, and concise squash body; adds a pollable receipt. | The queue may still discard or transform `commit_message`; API availability and response recovery need fail-closed handling. | **Leading hypothesis; prove first.** |
+| Make the PR body itself commit-safe and move review evidence to a bot-managed PR comment or check summary | Works with GitHub's observed `PR_BODY` queue behavior and removes transport dependence. | The PR description stops being the single review index; comments/checks are less prominent and ownership/editability must be clear. | **Preferred fallback if REST proof fails.** |
+| Temporarily replace the PR body with the public projection, enqueue, then restore the review body | PR #611 suggests the queue snapshots the body at enqueue, so the mechanism could work. | No conditional body update binds `updatedAt`; concurrent human edits can be clobbered, crashes leave the wrong body, and it requires multiple external mutations around an irreversible action. | **Experimental recovery only; reject as the normal path.** |
+| Change the repository default to `BLANK` and publish subject-only commits | Safely prevents review debris even when publication bypasses custom tooling. | Loses durable rationale and today's `Session-Id` attribution until another authority replaces it. | **Safe degradation option, not equivalent to the charter.** |
+| Bypass the queue with a direct/admin merge carrying the message | The ordinary REST/GraphQL merge interfaces support custom messages. | Abandons the native queue and its current-main integration/required-check semantics. | **Reject for routine publication.** |
+| Rebuild queue behavior in a custom service or rewrite the landed commit afterward | Full control over commit construction. | Security and operational burden, or history rewriting and changed commit identities. | **Reject.** |
+
+Two seductive non-solutions remain excluded. HTML comments do not separate records
+because their bytes still enter the commit, and another heading convention cannot help
+unless the mutation that crosses the publication boundary can select that heading.
+
+### 14.4 A safer fallback shape if projection transport is impossible
+
+If the REST hypothesis is refuted, preserve the *separation principle* by separating
+storage rather than repeatedly editing one mutable field:
+
+- PR title: durable squash subject;
+- PR body: concise, commit-safe public record, including any still-required
+  `Session-Id` lines;
+- one bot-managed top-level comment or check summary: rich verification and review-state
+  record, with stable anchors and clear ownership;
+- linked artifacts: raw or bulky evidence whose retention and access are explicit.
+
+This reverses the original source/projection relationship: the commit-safe record is the
+provider-native source, while detailed evidence lives on review-only surfaces. It is
+less elegant for reviewers but more honest than depending on a transport the provider
+does not guarantee. Before choosing it, investigate whether one editable comment or one
+check summary gives better discoverability, edit history, permissions, and retention;
+do not scatter evidence across unowned comments.
+
+### 14.5 Falsifiable next experiment for the leading hypothesis
+
+The next publication experiment requires separate merge authorization. It should be one
+benign, single-purpose PR and one request; do not combine it with PR 1–3 implementation.
+
+1. Use a unique sentinel in a short public body and a different unique sentinel in the
+   PR-only review body.
+2. Read GitHub's live squash subject projection and the exact PR head SHA immediately
+   before mutation.
+3. Submit the asynchronous request with API version `2026-03-10`, explicit
+   `merge_action=merge_queue`, `merge_method=squash`, the expected `sha`, the exact live
+   subject as `commit_title`, and the public projection as `commit_message`.
+4. Require a new `202` response and persist its UUID. Treat `200` or `409` as an
+   ambiguous/already-enqueued stop: inspect state; never silently retry with possibly
+   different options.
+5. Poll the UUID with bounded waits. Treat transport loss or timeout as unknown state,
+   query before retrying, and never submit a second irreversible request merely because
+   the client missed the first response.
+6. After the queue lands, compare subject and body byte-for-byte with the sent values;
+   assert the public sentinel is present and the review sentinel absent; then verify the
+   merge-group and post-merge CI run.
+
+The experiment passes only on exact landed output. A `202`, an `enqueued` result, or a
+successful CI run proves request acceptance, not message preservation. If the endpoint
+returns `404`, the current GitHub host/token cannot use the candidate and publication
+must fail closed rather than fall back to direct merge.
+
+### 14.6 Broader principles worth carrying forward
+
+- **Bind the projection to the irreversible operation.** A field on a preparatory or
+  adjacent operation is not publication authority.
+- **Receipts beat inferred state.** Asynchronous mutations should return an identity that
+  can be polled after timeouts and process restarts.
+- **Separate records by storage when transport cannot separate them.** Temporal swapping
+  of one mutable record is concurrency control disguised as formatting.
+- **Distinguish serialization proof from persistence proof.** Client source, request
+  acceptance, queue entry, and landed bytes are four different claims.
+- **Fail closed at ambiguous queue states.** Retrying an irreversible request after a
+  lost response is less safe than reconciling by request ID and PR state.
+
+### 14.7 Theorization checkpoint
+
+Do not settle the final design yet. The REST asynchronous endpoint is sufficiently
+promising to justify one controlled proof and sufficiently new/underspecified to forbid
+building PRs 1–3 on assumption. If it passes, redesign the publication seam around the
+single asynchronous request and its UUID rather than around `gh pr merge`. If it fails,
+prefer durable storage separation over PR-body swapping. Repository `PR_BODY` remains
+unchanged until one of those paths is proved end to end.
+
 ## Status
 
-The stale branch-protection prerequisite is merged and verified. The proposed merge-
-queue body transport is refuted. Keep `PR_BODY`, do not start PRs 1–3, and redesign the
-publication seam from the observed PR #625 behavior before changing repository settings
-or enforcing a public-projection contract.
+The stale branch-protection prerequisite is merged and verified. The `gh pr merge`
+auto-merge transport is explained and refuted. A first-class REST asynchronous queue
+request is the leading but unproved replacement hypothesis. Keep `PR_BODY`, do not start
+PRs 1–3, and do not change repository settings until §14.5 passes or the storage-
+separation fallback is selected and designed.
